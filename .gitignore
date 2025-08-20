@@ -1,0 +1,141 @@
+# ======================================
+# Node / React Native / Expo frontend
+# ======================================
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Expo / React Native
+.expo/
+.expo-shared/
+.expo-dev/
+dist/
+web-build/
+*.expo
+.expo/*
+*.tar.gz
+
+# Metro bundler / React Native cache
+.expo/
+.expo-shared/
+.expo/*
+/.expo/web-build
+/metro-cache/
+.expo/dev
+
+# Misc build artifacts
+build/
+ios/build/
+android/app/build/
+android/.gradle/
+*.iml
+
+# Environment
+.env
+.env.*.local
+.env.local
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ======================================
+# Python backend (FastAPI, SQLAlchemy, Pydantic)
+# ======================================
+# Bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.env/
+.venv/
+venv/
+ENV/
+env/
+pip-wheel-metadata/
+pip-log.txt
+
+# Packaging
+*.egg
+*.egg-info/
+.eggs/
+build/
+develop-eggs/
+dist/
+wheels/
+*.manifest
+*.spec
+
+# Test / coverage
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+*.out
+*.pid
+
+# Jupyter
+.ipynb_checkpoints
+
+# Tooling
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.pytest_cache/
+
+# SQLAlchemy migrations (if auto-generated artifacts exist)
+migrations/versions/*.pyc
+migrations/versions/__pycache__/
+
+# Local config
+*.local
+secrets.json
+
+# ======================================
+# General project artifacts
+# ======================================
+# VSCode/JetBrains
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# ======================================
+# Keep these tracked
+# ======================================
+!*.example
+!.env.example
+!.gitignore
+

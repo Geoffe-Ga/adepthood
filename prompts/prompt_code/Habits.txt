@@ -1,0 +1,2379 @@
+// Habits.tsx
+
+import React, { useState, useEffect, useRef } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  Dimensions,
+  TouchableOpacity,
+  Alert,
+  Modal,
+  TextInput,
+  TouchableWithoutFeedback,
+  Platform,
+  Pressable,
+  ScrollView,
+  Switch,
+  Animated,
+  Vibration,
+} from "react-native";
+import DateTimePicker from '@react-native-community/datetimepicker';
+import * as Notifications from 'expo-notifications';
+import { Calendar } from 'react-native-calendars';
+import { LineChart, BarChart } from 'react-native-chart-kit';
+import DraggableFlatList from 'react-native-draggable-flatlist';
+
+//------------------
+// Type Definitions
+//------------------
+
+interface Habit {
+  id?: number;
+  stage: string;
+  name: string;
+  icon: string;
+  streak: number;
+  energy_cost: number;
+  energy_return: number;
+  start_date: Date;
+  goals: Goal[];
+  completions?: Completion[];
+  notificationIds?: string[];
+  notificationFrequency?: 'daily' | 'weekly' | 'off';
+  notificationTime?: string;
+  milestoneNotifications?: boolean;
+  last_completion_date?: Date;
+}
+
+interface Goal {
+  id?: number;
+  title: string;
+  tier: "low" | "clear" | "stretch";
+  target: number;
+  target_unit: string;
+  frequency: number;
+  frequency_unit: string;
+  is_additive: boolean;
+  progress?: number; // How many units completed today
+}
+
+interface Completion {
+  id?: number;
+  timestamp: Date;
+  completed_units: number;
+}
+
+interface HabitStatsData {
+  dates: string[];
+  values: number[];
+  completionsByDay: number[];
+  dayLabels: string[];
+  longestStreak: number;
+  totalCompletions: number;
+  completionRate: number;
+}
+
+interface OnboardingHabit {
+  name: string;
+  icon: string;
+  energy_cost: number;
+  energy_return: number;
+  stage: string;
+  start_date: Date;
+}
+
+//------------------
+// Constants & Helpers
+//------------------
+
+const STAGE_ORDER = [
+  "Clear Light",
+  "Ultraviolet",
+  "Turquoise",
+  "Yellow",
+  "Green",
+  "Orange",
+  "Blue",
+  "Red",
+  "Purple",
+  "Beige",
+];
+
+const STAGE_COLORS: Record<string, string> = {
+  "Beige": "#d8cbb8",
+  "Purple": "#a093c6",
+  "Red": "#cc5b5b",
+  "Blue": "#6fa3d3",
+  "Orange": "#f29f67",
+  "Green": "#6fcf97",
+  "Yellow": "#f2e96d",
+  "Turquoise": "#50c9c3",
+  "Ultraviolet": "#8e44ad",
+  "Clear Light": "#ffffff",
+};
+
+const DEFAULT_ICONS = [
+  "🧘", "🏃", "💧", "🥗", "💪", "📱", "🍷", "☕", "🎨", "💼", 
+  "🧠", "🌱", "🌞", "🌙", "📚", "✍️", "🤔", "🗣️", "👥", "❤️"
+];
+
+// Sample default habits – these might be loaded or saved to AsyncStorage
+const DEFAULT_HABITS: Habit[] = [
+  { 
+    id: 1,
+    stage: "Clear Light", 
+    name: "High Flow Activity", 
+    icon: "🎨", 
+    streak: 3, 
+    energy_cost: 7,
+    energy_return: 9,
+    start_date: new Date(2025, 3, 1),
+    goals: [
+      {
+        id: 1,
+        tier: "low",
+        title: "Minimal Flow",
+        target: 15,
+        target_unit: "minutes",
+        frequency: 3,
+        frequency_unit: "per_week",
+        is_additive: true,
+        progress: 5
+      },
+      {
+        id: 2,
+        tier: "clear",
+        title: "Regular Flow",
+        target: 30,
+        target_unit: "minutes",
+        frequency: 5,
+        frequency_unit: "per_week",
+        is_additive: true,
+        progress: 0
+      },
+      {
+        id: 3,
+        tier: "stretch",
+        title: "Deep Flow",
+        target: 60,
+        target_unit: "minutes",
+        frequency: 7,
+        frequency_unit: "per_week",
+        is_additive: true,
+        progress: 0
+      }
+    ]
+  },
+  { 
+    id: 2,
+    stage: "Ultraviolet", 
+    name: "Food Choices", 
+    icon: "🥗", 
+    streak: 5, 
+    energy_cost: 6,
+    energy_return: 8,
+    start_date: new Date(2025, 3, 5),
+    goals: [
+      {
+        id: 4,
+        tier: "low",
+        title: "Basic Nutrition",
+        target: 1,
+        target_unit: "meals",
+        frequency: 1,
+        frequency_unit: "per_day",
+        is_additive: true,
+        progress: 1
+      },
+      {
+        id: 5,
+        tier: "clear",
+        title: "Balanced Diet",
+        target: 2,
+        target_unit: "meals",
+        frequency: 1,
+        frequency_unit: "per_day",
+        is_additive: true,
+        progress: 0
+      },
+      {
+        id: 6,
+        tier: "stretch",
+        title: "Optimal Nutrition",
+        target: 3,
+        target_unit: "meals",
+        frequency: 1,
+        frequency_unit: "per_day",
+        is_additive: true,
+        progress: 0
+      }
+    ]
+  },
+  { 
+    id: 3,
+    stage: "Turquoise", 
+    name: "Caffeine", 
+    icon: "☕", 
+    streak: 2, 
+    energy_cost: 4,
+    energy_return: 5,
+    start_date: new Date(2025, 3, 10),
+    goals: [
+      {
+        id: 7,
+        tier: "low",
+        title: "Mindful Consumption",
+        target: 300,
+        target_unit: "mg",
+        frequency: 1,
+        frequency_unit: "per_day",
+        is_additive: false,
+        progress: 200
+      },
+      {
+        id: 8,
+        tier: "clear",
+        title: "Moderate Intake",
+        target: 200,
+        target_unit: "mg",
+        frequency: 1,
+        frequency_unit: "per_day",
+        is_additive: false,
+        progress: 200
+      },
+      {
+        id: 9,
+        tier: "stretch",
+        title: "Minimal Reliance",
+        target: 100,
+        target_unit: "mg",
+        frequency: 1,
+        frequency_unit: "per_day",
+        is_additive: false,
+        progress: 200
+      }
+    ]
+  },
+  { 
+    id: 4,
+    stage: "Yellow", 
+    name: "Meditation", 
+    icon: "🧘", 
+    streak: 8, 
+    energy_cost: 5,
+    energy_return: 8,
+    start_date: new Date(2025, 2, 25),
+    goals: [
+      {
+        id: 10,
+        tier: "low",
+        title: "Brief Presence",
+        target: 5,
+        target_unit: "minutes",
+        frequency: 5,
+        frequency_unit: "per_week",
+        is_additive: true,
+        progress: 5
+      },
+      {
+        id: 11,
+        tier: "clear",
+        title: "Daily Practice",
+        target: 15,
+        target_unit: "minutes",
+        frequency: 7,
+        frequency_unit: "per_week",
+        is_additive: true,
+        progress: 0
+      },
+      {
+        id: 12,
+        tier: "stretch",
+        title: "Deep Cultivation",
+        target: 30,
+        target_unit: "minutes",
+        frequency: 7,
+        frequency_unit: "per_week",
+        is_additive: true,
+        progress: 0
+      }
+    ]
+  },
+  { 
+    id: 5,
+    stage: "Green", 
+    name: "Sangha", 
+    icon: "🧘‍♀️", 
+    streak: 1, 
+    energy_cost: 8,
+    energy_return: 9,
+    start_date: new Date(2025, 3, 15),
+    goals: [
+      {
+        id: 13,
+        tier: "low",
+        title: "Community Contact",
+        target: 1,
+        target_unit: "sessions",
+        frequency: 1,
+        frequency_unit: "per_week",
+        is_additive: true,
+        progress: 1
+      },
+      {
+        id: 14,
+        tier: "clear",
+        title: "Regular Participation",
+        target: 2,
+        target_unit: "sessions",
+        frequency: 1,
+        frequency_unit: "per_week",
+        is_additive: true,
+        progress: 0
+      },
+      {
+        id: 15,
+        tier: "stretch",
+        title: "Deep Engagement",
+        target: 3,
+        target_unit: "sessions",
+        frequency: 1,
+        frequency_unit: "per_week",
+        is_additive: true,
+        progress: 0
+      }
+    ]
+  },
+  { 
+    id: 6,
+    stage: "Orange", 
+    name: "Exercise", 
+    icon: "🏃‍♂️", 
+    streak: 4, 
+    energy_cost: 7,
+    energy_return: 8,
+    start_date: new Date(2025, 2, 20),
+    goals: [
+      {
+        id: 16,
+        tier: "low",
+        title: "Basic Movement",
+        target: 15,
+        target_unit: "minutes",
+        frequency: 3,
+        frequency_unit: "per_week",
+        is_additive: true,
+        progress: 15
+      },
+      {
+        id: 17,
+        tier: "clear",
+        title: "Regular Training",
+        target: 30,
+        target_unit: "minutes",
+        frequency: 4,
+        frequency_unit: "per_week",
+        is_additive: true,
+        progress: 0
+      },
+      {
+        id: 18,
+        tier: "stretch",
+        title: "Advanced Regimen",
+        target: 60,
+        target_unit: "minutes",
+        frequency: 5,
+        frequency_unit: "per_week",
+        is_additive: true,
+        progress: 0
+      }
+    ]
+  },
+  { 
+    id: 7,
+    stage: "Blue", 
+    name: "Scrolling", 
+    icon: "📱", 
+    streak: 0, 
+    energy_cost: 3,
+    energy_return: 6,
+    start_date: new Date(2025, 3, 8),
+    goals: [
+      {
+        id: 19,
+        tier: "low",
+        title: "Mindful Usage",
+        target: 120,
+        target_unit: "minutes",
+        frequency: 1,
+        frequency_unit: "per_day",
+        is_additive: false,
+        progress: 45
+      },
+      {
+        id: 20,
+        tier: "clear",
+        title: "Reduced Consumption",
+        target: 60,
+        target_unit: "minutes",
+        frequency: 1,
+        frequency_unit: "per_day",
+        is_additive: false,
+        progress: 45
+      },
+      {
+        id: 21,
+        tier: "stretch",
+        title: "Digital Minimalism",
+        target: 30,
+        target_unit: "minutes",
+        frequency: 1,
+        frequency_unit: "per_day",
+        is_additive: false,
+        progress: 45
+      }
+    ]
+  },
+  { 
+    id: 8,
+    stage: "Red", 
+    name: "Alcohol/Intoxicants", 
+    icon: "🍷", 
+    streak: 6, 
+    energy_cost: 5,
+    energy_return: 7,
+    start_date: new Date(2025, 2, 28),
+    goals: [
+      {
+        id: 22,
+        tier: "low",
+        title: "Moderation",
+        target: 2,
+        target_unit: "drinks",
+        frequency: 1,
+        frequency_unit: "per_day",
+        is_additive: false,
+        progress: 0
+      },
+      {
+        id: 23,
+        tier: "clear",
+        title: "Occasional Only",
+        target: 4,
+        target_unit: "drinks",
+        frequency: 1,
+        frequency_unit: "per_week",
+        is_additive: false,
+        progress: 0
+      },
+      {
+        id: 24,
+        tier: "stretch",
+        title: "Full Abstention",
+        target: 0,
+        target_unit: "drinks",
+        frequency: 1,
+        frequency_unit: "per_week",
+        is_additive: false,
+        progress: 0
+      }
+    ]
+  },
+  { 
+    id: 9,
+    stage: "Purple", 
+    name: "Water & Vitamins", 
+    icon: "💧", 
+    streak: 7, 
+    energy_cost: 4,
+    energy_return: 7,
+    start_date: new Date(2025, 2, 15),
+    goals: [
+      {
+        id: 25,
+        tier: "low",
+        title: "Basic Hydration",
+        target: 4,
+        target_unit: "glasses",
+        frequency: 1,
+        frequency_unit: "per_day",
+        is_additive: true,
+        progress: 3
+      },
+      {
+        id: 26,
+        tier: "clear",
+        title: "Optimal Hydration",
+        target: 8,
+        target_unit: "glasses",
+        frequency: 1,
+        frequency_unit: "per_day",
+        is_additive: true,
+        progress: 3
+      },
+      {
+        id: 27,
+        tier: "stretch",
+        title: "Complete Protocol",
+        target: 10,
+        target_unit: "glasses + vitamins",
+        frequency: 1,
+        frequency_unit: "per_day",
+        is_additive: true,
+        progress: 3
+      }
+    ]
+  },
+  { 
+    id: 10,
+    stage: "Beige", 
+    name: "Take work seriously", 
+    icon: "💼", 
+    streak: 10,
+    energy_cost: 5,
+    energy_return: 8,
+    start_date: new Date(2025, 2, 5),
+    goals: [
+      {
+        id: 28,
+        tier: "low",
+        title: "Basic focus",
+        target: 2,
+        target_unit: "hours",
+        frequency: 5,
+        frequency_unit: "per_day",
+        is_additive: true,
+        progress: 2
+      },
+      {
+        id: 29,
+        tier: "clear",
+        title: "Good focus",
+        target: 4,
+        target_unit: "hours",
+        frequency: 5,
+        frequency_unit: "per_day",
+        is_additive: true,
+        progress: 2
+      },
+      {
+        id: 30,
+        tier: "stretch",
+        title: "Deep focus",
+        target: 6,
+        target_unit: "hours",
+        frequency: 5,
+        frequency_unit: "per_day",
+        is_additive: true,
+        progress: 2
+      }
+    ]
+  },
+];
+
+// Register for push notifications
+const registerForPushNotificationsAsync = async (): Promise<string | undefined> => {
+  try {
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+    if (finalStatus !== 'granted') {
+      return undefined;
+    }
+    const token = (await Notifications.getExpoPushTokenAsync()).data;
+    return token;
+  } catch (error) {
+    console.error('Failed to get push token:', error);
+    return undefined;
+  }
+};
+
+// Schedule a notification for a habit using its defined time and frequency
+const scheduleHabitNotification = async (
+  habit: Habit,
+  notificationTime: string
+): Promise<string> => {
+  const [hours, minutes] = notificationTime.split(':').map(Number);
+  let trigger: any;
+  if (habit.notificationFrequency === 'daily') {
+    trigger = { hour: hours, minute: minutes, repeats: true };
+  } else if (habit.notificationFrequency === 'weekly') {
+    trigger = { weekday: 1, hour: hours, minute: minutes, repeats: true };
+  } else {
+    trigger = { hour: hours, minute: minutes, repeats: true };
+  }
+  const notificationId = await Notifications.scheduleNotificationAsync({
+    content: {
+      title: `Time for: ${habit.name}`,
+      body: `Continue your ${habit.streak}-day streak! 💪`,
+      data: { habitId: habit.id },
+    },
+    trigger,
+  });
+  return notificationId;
+};
+
+// Update notifications for a habit (cancel old ones and schedule new)
+const updateHabitNotifications = async (habit: Habit): Promise<string[]> => {
+  if (!habit.id) return [];
+  if (habit.notificationIds && habit.notificationIds.length > 0) {
+    await Promise.all(
+      habit.notificationIds.map(id => Notifications.cancelScheduledNotificationAsync(id))
+    );
+  }
+  if (habit.notificationFrequency === 'off' || !habit.notificationTime) {
+    return [];
+  }
+  const notificationId = await scheduleHabitNotification(habit, habit.notificationTime);
+  return [notificationId];
+};
+
+//------------------
+// Components
+//------------------
+
+interface HabitTileProps {
+  habit: Habit;
+  revealed: boolean;
+  onOpenGoals: () => void;
+  onLogUnit: () => void;
+  onOpenStats: () => void;
+  onLongPress: () => void;
+}
+
+const HabitTile = ({
+  habit,
+  revealed,
+  onOpenGoals,
+  onLogUnit,
+  onOpenStats,
+  onLongPress,
+}: HabitTileProps) => {
+  const backgroundColor = revealed ? STAGE_COLORS[habit.stage] : "#222";
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const [lastTap, setLastTap] = useState<number | null>(null);
+  const DOUBLE_TAP_DELAY = 300; // ms
+
+  const animateIn = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 0.95,
+      friction: 5,
+      tension: 100,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const animateOut = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      friction: 5,
+      tension: 100,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handlePress = () => {
+    if (!revealed) return;
+    animateIn();
+    setTimeout(animateOut, 100);
+    const now = Date.now();
+    if (lastTap && now - lastTap < DOUBLE_TAP_DELAY) {
+      onLogUnit();
+      Vibration.vibrate(50);
+      setLastTap(null);
+    } else {
+      setLastTap(now);
+      onOpenGoals();
+    }
+  };
+
+  const handleLongPress = () => {
+    if (!revealed) return;
+    Vibration.vibrate(100);
+    onLongPress();
+  };
+
+  const lowGoal = habit.goals.find((g) => g.tier === "low");
+  const lowGoalProgress = lowGoal
+    ? lowGoal.is_additive
+      ? Math.min(lowGoal.progress || 0, lowGoal.target) / lowGoal.target
+      : Math.max(0, 1 - (lowGoal.progress || 0) / lowGoal.target)
+    : 0;
+
+  return (
+    <TouchableWithoutFeedback onPress={handlePress} onLongPress={handleLongPress}>
+      <Animated.View
+        style={[
+          styles.tile,
+          { backgroundColor, opacity: revealed ? 1 : 0.7, transform: [{ scale: scaleAnim }] },
+        ]}
+      >
+        <View style={styles.glowEffect} />
+        <Text style={styles.icon}>{habit.icon}</Text>
+        <Text style={[styles.name, { color: revealed ? "#111" : "#aaa" }]}>{habit.name}</Text>
+        {revealed && (
+          <View style={styles.streakContainer}>
+            <Text style={styles.streakText}>
+              {habit.streak} {habit.streak === 1 ? "day" : "days"}
+            </Text>
+          </View>
+        )}
+        {revealed && lowGoal && (
+          <View style={styles.progressBarContainer}>
+            <View style={[styles.progressBar, { width: `${lowGoalProgress * 100}%` }]} />
+          </View>
+        )}
+        {revealed && (
+          <TouchableOpacity style={styles.statsButton} onPress={onOpenStats}>
+            <Text style={styles.statsButtonText}>📊</Text>
+          </TouchableOpacity>
+        )}
+      </Animated.View>
+    </TouchableWithoutFeedback>
+  );
+};
+
+interface EditableGoalProps {
+  goal: Goal;
+  onUpdate: (updatedGoal: Goal) => void;
+  isEditing: boolean;
+}
+
+const EditableGoal = ({ goal, onUpdate, isEditing }: EditableGoalProps) => {
+  const [editedGoal, setEditedGoal] = useState<Goal>({ ...goal });
+
+  const handleChange = (field: keyof Goal, value: any) => {
+    setEditedGoal((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSave = () => {
+    onUpdate(editedGoal);
+  };
+
+  const getTierColor = (tier: string) => {
+    switch (tier) {
+      case "low":
+        return "rgba(144, 238, 144, 0.6)";
+      case "clear":
+        return "rgba(135, 206, 250, 0.6)";
+      case "stretch":
+        return "rgba(238, 130, 238, 0.6)";
+      default:
+        return "rgba(200, 200, 200, 0.6)";
+    }
+  };
+
+  const getProgressPercentage = () => {
+    if (goal.is_additive) {
+      return Math.min((goal.progress || 0) / goal.target, 1) * 100;
+    } else {
+      return Math.max(0, 1 - (goal.progress || 0) / goal.target) * 100;
+    }
+  };
+
+  useEffect(() => {
+    setEditedGoal({ ...goal });
+  }, [goal, isEditing]);
+
+  return (
+    <View style={[styles.goalItem, { backgroundColor: getTierColor(goal.tier) }]}>
+      <View style={styles.goalHeader}>
+        <Text style={styles.goalTier}>{goal.tier.toUpperCase()}</Text>
+        {isEditing && (
+          <TouchableOpacity onPress={handleSave} style={styles.saveButton}>
+            <Text style={styles.saveButtonText}>Save</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+      {isEditing ? (
+        <TextInput
+          style={styles.goalTitleInput}
+          value={editedGoal.title}
+          onChangeText={(text) => handleChange("title", text)}
+          placeholder="Goal title"
+        />
+      ) : (
+        <Text style={styles.goalTitle}>{goal.title}</Text>
+      )}
+      <View style={styles.goalDetailsContainer}>
+        {isEditing ? (
+          <>
+            <View style={styles.editRow}>
+              <Text style={styles.editLabel}>Target:</Text>
+              <TextInput
+                style={styles.editInput}
+                value={editedGoal.target.toString()}
+                onChangeText={(text) => handleChange("target", parseFloat(text) || 0)}
+                keyboardType="numeric"
+              />
+              <TextInput
+                style={styles.editInput}
+                value={editedGoal.target_unit}
+                onChangeText={(text) => handleChange("target_unit", text)}
+              />
+            </View>
+            <View style={styles.editRow}>
+              <Text style={styles.editLabel}>Frequency:</Text>
+              <TextInput
+                style={styles.editInput}
+                value={editedGoal.frequency.toString()}
+                onChangeText={(text) => handleChange("frequency", parseFloat(text) || 0)}
+                keyboardType="numeric"
+              />
+              <TextInput
+                style={styles.editInput}
+                value={editedGoal.frequency_unit.replace("_", " ")}
+                onChangeText={(text) => handleChange("frequency_unit", text.replace(" ", "_"))}
+              />
+            </View>
+            <View style={styles.editRow}>
+              <Text style={styles.editLabel}>Type:</Text>
+              <Pressable
+                style={[styles.toggleButton, { backgroundColor: editedGoal.is_additive ? "#4CAF50" : "#ccc" }]}
+                onPress={() => handleChange("is_additive", true)}
+              >
+                <Text style={styles.toggleText}>Additive</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.toggleButton, { backgroundColor: !editedGoal.is_additive ? "#F44336" : "#ccc" }]}
+                onPress={() => handleChange("is_additive", false)}
+              >
+                <Text style={styles.toggleText}>Subtractive</Text>
+              </Pressable>
+            </View>
+          </>
+        ) : (
+          <Text style={styles.goalDetails}>
+            {goal.is_additive ? "At least" : "No more than"} {goal.target} {goal.target_unit},{" "}
+            {goal.frequency} {goal.frequency_unit.replace("_", " ")}
+          </Text>
+        )}
+      </View>
+      <View style={styles.goalProgressContainer}>
+        <View style={styles.goalProgressBar}>
+          <View style={[styles.goalProgressFill, { width: `${getProgressPercentage()}%` }]} />
+        </View>
+        <Text style={styles.goalProgressText}>
+          {goal.progress || 0} / {goal.target} {goal.target_unit}
+        </Text>
+      </View>
+    </View>
+  );
+};
+
+interface GoalModalProps {
+  visible: boolean;
+  habit: Habit | null;
+  onClose: () => void;
+  onUpdateGoal: (habitId: number, updatedGoal: Goal) => void;
+  onLogUnit: (habitId: number, amount: number) => void;
+}
+
+const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: GoalModalProps) => {
+  const [activeGoal, setActiveGoal] = useState<Goal | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [logAmount, setLogAmount] = useState("1");
+
+  useEffect(() => {
+    if (!visible) {
+      setIsEditing(false);
+      setActiveGoal(null);
+      setLogAmount("1");
+    }
+  }, [visible]);
+
+  if (!habit) return null;
+
+  const handleUpdateGoal = (updatedGoal: Goal) => {
+    if (habit.id && updatedGoal.id) {
+      onUpdateGoal(habit.id, updatedGoal);
+      setIsEditing(false);
+    }
+  };
+
+  const handleLogUnit = () => {
+    if (habit.id) {
+      const amount = parseFloat(logAmount) || 1;
+      onLogUnit(habit.id, amount);
+      setLogAmount("1");
+    }
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <TouchableWithoutFeedback onPress={onClose}>
+        <View style={styles.modalOverlay}>
+          <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+            <View style={[styles.modalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>
+                  {habit.name} <Text style={styles.iconLarge}>{habit.icon}</Text>
+                </Text>
+                <Text style={styles.streakBadge}>
+                  {habit.streak} {habit.streak === 1 ? "day" : "days"}
+                </Text>
+                <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+                  <Text style={styles.closeButtonText}>×</Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={styles.goalsContainer}>
+                {habit.goals.map((goal, index) => (
+                  <EditableGoal
+                    key={index}
+                    goal={goal}
+                    onUpdate={handleUpdateGoal}
+                    isEditing={isEditing && activeGoal?.id === goal.id}
+                  />
+                ))}
+              </ScrollView>
+              <View style={styles.actionButtons}>
+                <View style={styles.logUnitContainer}>
+                  <TextInput
+                    style={styles.logUnitInput}
+                    value={logAmount}
+                    onChangeText={setLogAmount}
+                    keyboardType="numeric"
+                  />
+                  <TouchableOpacity style={styles.logUnitButton} onPress={handleLogUnit}>
+                    <Text style={styles.logUnitButtonText}>Log Units</Text>
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity
+                  style={styles.editButton}
+                  onPress={() => setIsEditing(!isEditing)}
+                >
+                  <Text style={styles.editButtonText}>
+                    {isEditing ? "Done Editing" : "Edit Goals"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </TouchableWithoutFeedback>
+        </View>
+      </TouchableWithoutFeedback>
+    </Modal>
+  );
+};
+
+interface StatsModalProps {
+  visible: boolean;
+  habit: Habit | null;
+  stats: HabitStatsData | null;
+  onClose: () => void;
+}
+
+const StatsModal = ({ visible, habit, stats, onClose }: StatsModalProps) => {
+  const [selectedTab, setSelectedTab] = useState("calendar");
+  if (!habit || !stats) return null;
+
+  const chartConfig = {
+    backgroundGradientFrom: "#1E2923",
+    backgroundGradientTo: "#08130D",
+    color: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+    strokeWidth: 2,
+    barPercentage: 0.7,
+    useShadowColorFromDataset: false,
+  };
+
+  const lineData = {
+    labels: stats.dates.slice(-7),
+    datasets: [
+      {
+        data: stats.values.slice(-7),
+        color: (opacity = 1) => STAGE_COLORS[habit.stage] || `rgba(134, 65, 244, ${opacity})`,
+        strokeWidth: 2,
+      },
+    ],
+    legend: ["Daily Progress"],
+  };
+
+  const barData = {
+    labels: stats.dayLabels,
+    datasets: [
+      {
+        data: stats.completionsByDay,
+        color: (opacity = 1) => STAGE_COLORS[habit.stage] || `rgba(134, 65, 244, ${opacity})`,
+      },
+    ],
+  };
+
+  const getMarkedDates = () => {
+    const marked: any = {};
+    if (!habit.completions) return marked;
+    habit.completions.forEach((completion) => {
+      const dateStr = new Date(completion.timestamp).toISOString().split("T")[0];
+      marked[dateStr] = { selected: true, selectedColor: STAGE_COLORS[habit.stage] || "#50cebb" };
+    });
+    return marked;
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <View style={[styles.statsModalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>
+              {habit.name} Stats <Text style={styles.iconLarge}>{habit.icon}</Text>
+            </Text>
+            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+              <Text style={styles.closeButtonText}>×</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.tabContainer}>
+            <TouchableOpacity
+              style={[styles.tabButton, selectedTab === "calendar" && styles.activeTab]}
+              onPress={() => setSelectedTab("calendar")}
+            >
+              <Text style={styles.tabButtonText}>Calendar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tabButton, selectedTab === "progress" && styles.activeTab]}
+              onPress={() => setSelectedTab("progress")}
+            >
+              <Text style={styles.tabButtonText}>Progress</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tabButton, selectedTab === "byDay" && styles.activeTab]}
+              onPress={() => setSelectedTab("byDay")}
+            >
+              <Text style={styles.tabButtonText}>By Day</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.statsContainer}>
+            {selectedTab === "calendar" && (
+              <View style={styles.calendarContainer}>
+                <Calendar
+                  markedDates={getMarkedDates()}
+                  theme={{
+                    todayTextColor: "#00adf5",
+                    selectedDayBackgroundColor: STAGE_COLORS[habit.stage],
+                    arrowColor: STAGE_COLORS[habit.stage],
+                  }}
+                />
+                <View style={styles.statsInfoContainer}>
+                  <View style={styles.statItem}>
+                    <Text style={styles.statLabel}>Longest Streak</Text>
+                    <Text style={styles.statValue}>{stats.longestStreak} days</Text>
+                  </View>
+                  <View style={styles.statItem}>
+                    <Text style={styles.statLabel}>Current Streak</Text>
+                    <Text style={styles.statValue}>{habit.streak} days</Text>
+                  </View>
+                  <View style={styles.statItem}>
+                    <Text style={styles.statLabel}>Completion Rate</Text>
+                    <Text style={styles.statValue}>{Math.round(stats.completionRate * 100)}%</Text>
+                  </View>
+                  <View style={styles.statItem}>
+                    <Text style={styles.statLabel}>Total Completions</Text>
+                    <Text style={styles.statValue}>{stats.totalCompletions}</Text>
+                  </View>
+                </View>
+              </View>
+            )}
+            {selectedTab === "progress" && (
+              <View style={styles.chartContainer}>
+                <Text style={styles.chartTitle}>Progress (Last 7 Days)</Text>
+                <LineChart
+                  data={lineData}
+                  width={Dimensions.get("window").width - 40}
+                  height={220}
+                  chartConfig={chartConfig}
+                  bezier
+                  style={styles.chart}
+                />
+              </View>
+            )}
+            {selectedTab === "byDay" && (
+              <View style={styles.chartContainer}>
+                <Text style={styles.chartTitle}>Completions by Day of Week</Text>
+                <BarChart
+                  data={barData}
+                  width={Dimensions.get("window").width - 40}
+                  height={220}
+                  chartConfig={chartConfig}
+                  yAxisLabel=""
+                  yAxisSuffix=""
+                  style={styles.chart}
+                  fromZero
+                />
+              </View>
+            )}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+interface HabitSettingsModalProps {
+  visible: boolean;
+  habit: Habit | null;
+  onClose: () => void;
+  onUpdate: (updatedHabit: Habit) => void;
+  onDelete: (habitId: number) => void;
+}
+
+const HabitSettingsModal = ({
+  visible,
+  habit,
+  onClose,
+  onUpdate,
+  onDelete,
+}: HabitSettingsModalProps) => {
+  const [editedHabit, setEditedHabit] = useState<Habit | null>(null);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+
+  useEffect(() => {
+    setEditedHabit(habit ? { ...habit } : null);
+  }, [habit, visible]);
+
+  if (!editedHabit) return null;
+
+  const handleChange = (field: keyof Habit, value: any) => {
+    setEditedHabit((prev) => (prev ? { ...prev, [field]: value } : null));
+  };
+
+  const handleSave = () => {
+    if (editedHabit && habit?.id) {
+      onUpdate({ ...editedHabit, id: habit.id });
+      onClose();
+    }
+  };
+
+  const handleDelete = () => {
+    if (habit?.id) {
+      Alert.alert(
+        "Delete Habit",
+        `Are you sure you want to delete "${habit.name}"?`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Delete",
+            style: "destructive",
+            onPress: () => {
+              onDelete(habit.id!);
+              onClose();
+            },
+          },
+        ]
+      );
+    }
+  };
+
+  const handleTimeChange = (event: any, selectedDate?: Date) => {
+    setShowTimePicker(Platform.OS === "ios");
+    if (selectedDate) {
+      const hours = selectedDate.getHours().toString().padStart(2, "0");
+      const minutes = selectedDate.getMinutes().toString().padStart(2, "0");
+      handleChange("notificationTime", `${hours}:${minutes}`);
+    }
+  };
+
+  const renderTimePicker = () => {
+    let defaultTime = new Date();
+    if (editedHabit.notificationTime) {
+      const [hours, minutes] = editedHabit.notificationTime.split(":").map(Number);
+      defaultTime.setHours(hours, minutes);
+    }
+    return (
+      <DateTimePicker
+        value={defaultTime}
+        mode="time"
+        is24Hour={true}
+        display="spinner"
+        onChange={handleTimeChange}
+      />
+    );
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <View style={[styles.settingsModalContent, { borderTopColor: STAGE_COLORS[editedHabit.stage] }]}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Edit Habit</Text>
+            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+              <Text style={styles.closeButtonText}>×</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.settingsContainer}>
+            <View style={styles.settingGroup}>
+              <Text style={styles.settingLabel}>Name</Text>
+              <TextInput
+                style={styles.settingInput}
+                value={editedHabit.name}
+                onChangeText={(text) => handleChange("name", text)}
+              />
+            </View>
+            <View style={styles.settingGroup}>
+              <Text style={styles.settingLabel}>Icon</Text>
+              <ScrollView horizontal style={styles.iconSelector}>
+                {DEFAULT_ICONS.map((icon) => (
+                  <TouchableOpacity
+                    key={icon}
+                    style={[
+                      styles.iconOption,
+                      editedHabit.icon === icon && styles.selectedIconOption,
+                    ]}
+                    onPress={() => handleChange("icon", icon)}
+                  >
+                    <Text style={styles.iconOptionText}>{icon}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+            <View style={styles.settingGroup}>
+              <Text style={styles.settingLabel}>Developmental Stage</Text>
+              <ScrollView horizontal style={styles.stageSelector}>
+                {STAGE_ORDER.map((stage) => (
+                  <TouchableOpacity
+                    key={stage}
+                    style={[
+                      styles.stageOption,
+                      { backgroundColor: STAGE_COLORS[stage] },
+                      editedHabit.stage === stage && styles.selectedStageOption,
+                    ]}
+                    onPress={() => handleChange("stage", stage)}
+                  >
+                    <Text style={styles.stageOptionText}>{stage}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+            <View style={styles.settingGroup}>
+              <Text style={styles.settingLabel}>Energy Rating</Text>
+              <View style={styles.energyContainer}>
+                <View style={styles.energyItem}>
+                  <Text style={styles.energyLabel}>Cost</Text>
+                  <TextInput
+                    style={styles.energyInput}
+                    value={editedHabit.energy_cost.toString()}
+                    onChangeText={(text) => handleChange("energy_cost", parseInt(text) || 0)}
+                    keyboardType="numeric"
+                  />
+                </View>
+                <View style={styles.energyItem}>
+                  <Text style={styles.energyLabel}>Return</Text>
+                  <TextInput
+                    style={styles.energyInput}
+                    value={editedHabit.energy_return.toString()}
+                    onChangeText={(text) => handleChange("energy_return", parseInt(text) || 0)}
+                    keyboardType="numeric"
+                  />
+                </View>
+              </View>
+            </View>
+            <View style={styles.settingGroup}>
+              <Text style={styles.settingLabel}>Start Date</Text>
+              <DateTimePicker
+                value={new Date(editedHabit.start_date)}
+                mode="date"
+                display="default"
+                onChange={(event, date) => date && handleChange("start_date", date)}
+              />
+            </View>
+            <View style={styles.settingGroup}>
+              <Text style={styles.settingLabel}>Notifications</Text>
+              <View style={styles.notificationOption}>
+                <Text style={styles.notificationLabel}>Frequency</Text>
+                <TouchableOpacity
+                  style={styles.frequencyButton}
+                  onPress={() => {
+                    const nextFreq = {
+                      off: "daily",
+                      daily: "weekly",
+                      weekly: "off",
+                    }[editedHabit.notificationFrequency || "off"] as "daily" | "weekly" | "off";
+                    handleChange("notificationFrequency", nextFreq);
+                  }}
+                >
+                  <Text style={styles.frequencyButtonText}>
+                    {editedHabit.notificationFrequency || "off"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              {editedHabit.notificationFrequency !== "off" && (
+                <View style={styles.notificationOption}>
+                  <Text style={styles.notificationLabel}>Time</Text>
+                  <TouchableOpacity style={styles.timeButton} onPress={() => setShowTimePicker(true)}>
+                    <Text style={styles.timeButtonText}>
+                      {editedHabit.notificationTime || "08:00"}
+                    </Text>
+                  </TouchableOpacity>
+                  {(Platform.OS === "ios" || Platform.OS === "android") && showTimePicker && renderTimePicker()}
+                </View>
+              )}
+              <View style={styles.notificationOption}>
+                <Text style={styles.notificationLabel}>Milestone Notifications</Text>
+                <Switch
+                  value={editedHabit.milestoneNotifications || false}
+                  onValueChange={(value) => handleChange("milestoneNotifications", value)}
+                />
+              </View>
+            </View>
+            <View style={styles.buttonGroup}>
+              <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
+                <Text style={styles.saveButtonText}>Save Changes</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
+                <Text style={styles.deleteButtonText}>Delete Habit</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+interface MissedDaysModalProps {
+  visible: boolean;
+  habit: Habit | null;
+  missedDays: Date[];
+  onClose: () => void;
+  onBackfill: (habitId: number, days: Date[]) => void;
+  onNewStartDate: (habitId: number, newStartDate: Date) => void;
+}
+
+const MissedDaysModal = ({
+  visible,
+  habit,
+  missedDays,
+  onClose,
+  onBackfill,
+  onNewStartDate,
+}: MissedDaysModalProps) => {
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  if (!habit || missedDays.length === 0) return null;
+
+  const handleBackfill = () => {
+    if (habit.id) {
+      onBackfill(habit.id, missedDays);
+      onClose();
+    }
+  };
+
+  const handleSelectNewDate = () => {
+    setShowCalendar(true);
+  };
+
+  const handleDateSelect = (date: any) => {
+    setSelectedDate(new Date(date.dateString));
+    setShowCalendar(false);
+    if (habit.id) {
+      onNewStartDate(habit.id, new Date(date.dateString));
+      onClose();
+    }
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <View style={styles.missedDaysContent}>
+          <Text style={styles.missedDaysTitle}>Missed you!</Text>
+          <Text style={styles.missedDaysSubtitle}>
+            We missed {missedDays.length} day{missedDays.length !== 1 ? "s" : ""} for "{habit.name}".
+          </Text>
+          <Text style={styles.missedDaysQuestion}>
+            Did you keep up with "{habit.name}" while you were gone?
+          </Text>
+          {showCalendar ? (
+            <Calendar
+              onDayPress={handleDateSelect}
+              markedDates={{
+                [selectedDate.toISOString().split("T")[0]]: {
+                  selected: true,
+                  selectedColor: STAGE_COLORS[habit.stage],
+                },
+              }}
+              minDate={new Date().toISOString()}
+            />
+          ) : (
+            <View style={styles.missedDaysButtons}>
+              <TouchableOpacity style={[styles.missedDaysButton, styles.yesButton]} onPress={handleBackfill}>
+                <Text style={styles.missedDaysButtonText}>Yes, I did it!</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.missedDaysButton, styles.resetButton]} onPress={handleSelectNewDate}>
+                <Text style={styles.missedDaysButtonText}>Set new start date</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.missedDaysButton, styles.cancelButton]} onPress={onClose}>
+                <Text style={styles.missedDaysButtonText}>Just continue</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+interface OnboardingModalProps {
+  visible: boolean;
+  onClose: () => void;
+  onSaveHabits: (habits: OnboardingHabit[]) => void;
+}
+
+const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingModalProps) => {
+  const [step, setStep] = useState(1);
+  const [habits, setHabits] = useState<OnboardingHabit[]>([]);
+  const [newHabitName, setNewHabitName] = useState("");
+  const [startDate, setStartDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
+  // Step 1: Add habits
+  const handleAddHabit = () => {
+    if (newHabitName.trim() === "") return;
+    setHabits((prev) => [
+      ...prev,
+      {
+        name: newHabitName.trim(),
+        icon: DEFAULT_ICONS[Math.floor(Math.random() * DEFAULT_ICONS.length)],
+        energy_cost: 5,
+        energy_return: 5,
+        stage: "Clear Light",
+        start_date: new Date(),
+      },
+    ]);
+    setNewHabitName("");
+  };
+
+  // Update energy values for a habit in onboarding
+  const updateHabitEnergy = (index: number, type: "cost" | "return", value: number) => {
+    setHabits((prev) =>
+      prev.map((habit, i) => (i === index ? { ...habit, [`energy_${type}`]: value } : habit))
+    );
+  };
+
+  const updateHabitIcon = (index: number, icon: string) => {
+    setHabits((prev) => prev.map((habit, i) => (i === index ? { ...habit, icon } : habit)));
+  };
+
+  const updateHabitStage = (index: number, stage: string) => {
+    setHabits((prev) => prev.map((habit, i) => (i === index ? { ...habit, stage } : habit)));
+  };
+
+  // Step 2: Energy rating
+  const renderEnergyStep = () => (
+    <View style={styles.onboardingStep}>
+      <Text style={styles.onboardingTitle}>Energy Investment & Return</Text>
+      <Text style={styles.onboardingSubtitle}>
+        Rate each habit from -10 to 10 for energy cost and return
+      </Text>
+      <FlatList
+        data={habits}
+        keyExtractor={(_, index) => index.toString()}
+        renderItem={({ item, index }) => (
+          <View style={styles.energyRatingItem}>
+            <Text style={styles.energyRatingName}>{item.name}</Text>
+            <View style={styles.energySliders}>
+              <View style={styles.energySlider}>
+                <Text style={styles.energySliderLabel}>Cost: {item.energy_cost}</Text>
+                <View style={styles.sliderContainer}>
+                  <TouchableOpacity
+                    style={styles.sliderButton}
+                    onPress={() =>
+                      updateHabitEnergy(index, "cost", Math.max(-10, item.energy_cost - 1))
+                    }
+                  >
+                    <Text style={styles.sliderButtonText}>-</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.sliderValue}>{item.energy_cost}</Text>
+                  <TouchableOpacity
+                    style={styles.sliderButton}
+                    onPress={() =>
+                      updateHabitEnergy(index, "cost", Math.min(10, item.energy_cost + 1))
+                    }
+                  >
+                    <Text style={styles.sliderButtonText}>+</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <View style={styles.energySlider}>
+                <Text style={styles.energySliderLabel}>Return: {item.energy_return}</Text>
+                <View style={styles.sliderContainer}>
+                  <TouchableOpacity
+                    style={styles.sliderButton}
+                    onPress={() =>
+                      updateHabitEnergy(index, "return", Math.max(-10, item.energy_return - 1))
+                    }
+                  >
+                    <Text style={styles.sliderButtonText}>-</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.sliderValue}>{item.energy_return}</Text>
+                  <TouchableOpacity
+                    style={styles.sliderButton}
+                    onPress={() =>
+                      updateHabitEnergy(index, "return", Math.min(10, item.energy_return + 1))
+                    }
+                  >
+                    <Text style={styles.sliderButtonText}>+</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
+      />
+      <TouchableOpacity
+        style={styles.onboardingContinueButton}
+        onPress={() => setStep(3)}
+        disabled={habits.length === 0}
+      >
+        <Text style={styles.onboardingContinueButtonText}>Continue</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  // Step 3: Reorder habits using drag & drop
+  const handleDragEnd = ({ data }: { data: OnboardingHabit[] }) => {
+    const updatedHabits = data.map((habit, index) => {
+      const habitStartDate = new Date(startDate);
+      habitStartDate.setDate(habitStartDate.getDate() + index * 21);
+      return { ...habit, start_date: habitStartDate };
+    });
+    setHabits(updatedHabits);
+  };
+
+  const renderReorderStep = () => (
+    <View style={styles.onboardingStep}>
+      <Text style={styles.onboardingTitle}>Reorder Your Habits</Text>
+      <Text style={styles.onboardingSubtitle}>
+        Drag and drop to reorder habits. This will set your start dates.
+      </Text>
+      <DraggableFlatList
+        data={habits}
+        keyExtractor={(_, index) => index.toString()}
+        renderItem={({ item, drag, isActive }) => (
+          <TouchableOpacity onLongPress={drag} style={[styles.habitListItem, isActive && { backgroundColor: "#ddd" }]}>
+            <Text style={styles.habitListItemText}>{item.name}</Text>
+          </TouchableOpacity>
+        )}
+        onDragEnd={handleDragEnd}
+      />
+      <TouchableOpacity style={styles.onboardingContinueButton} onPress={handleFinish}>
+        <Text style={styles.onboardingContinueButtonText}>Finish Onboarding</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  const handleFinish = () => {
+    onSaveHabits(habits);
+    onClose();
+  };
+
+  const handleDateChange = (event: any, selectedDate?: Date) => {
+    setShowDatePicker(Platform.OS === "ios");
+    if (selectedDate) {
+      setStartDate(selectedDate);
+      setHabits((prev) =>
+        prev.map((habit, index) => {
+          const habitStartDate = new Date(selectedDate);
+          habitStartDate.setDate(habitStartDate.getDate() + index * 21);
+          return { ...habit, start_date: habitStartDate };
+        })
+      );
+    }
+  };
+
+  const renderStep = () => {
+    switch (step) {
+      case 1:
+        return (
+          <View style={styles.onboardingStep}>
+            <Text style={styles.onboardingTitle}>Create Your Habits</Text>
+            <Text style={styles.onboardingSubtitle}>
+              Enter all the habits you'd like to build or break
+            </Text>
+            <View style={styles.addHabitContainer}>
+              <TextInput
+                style={styles.addHabitInput}
+                value={newHabitName}
+                onChangeText={setNewHabitName}
+                placeholder="Enter habit name"
+                onSubmitEditing={handleAddHabit}
+              />
+              <TouchableOpacity style={styles.addHabitButton} onPress={handleAddHabit}>
+                <Text style={styles.addHabitButtonText}>+</Text>
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={habits}
+              keyExtractor={(_, index) => index.toString()}
+              renderItem={({ item, index }) => (
+                <View style={styles.habitListItem}>
+                  <Text style={styles.habitListItemText}>{item.name}</Text>
+                  <TouchableOpacity
+                    style={styles.removeHabitButton}
+                    onPress={() => setHabits((prev) => prev.filter((_, i) => i !== index))}
+                  >
+                    <Text style={styles.removeHabitButtonText}>×</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              style={styles.habitList}
+            />
+            <TouchableOpacity
+              style={[styles.onboardingContinueButton, habits.length === 0 && styles.disabledButton]}
+              onPress={() => habits.length > 0 && setStep(2)}
+              disabled={habits.length === 0}
+            >
+              <Text style={styles.onboardingContinueButtonText}>Continue</Text>
+            </TouchableOpacity>
+          </View>
+        );
+      case 2:
+        return renderEnergyStep();
+      case 3:
+        return renderReorderStep();
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <View style={styles.onboardingModalContent}>
+          {showDatePicker && (
+            <DateTimePicker
+              value={startDate}
+              mode="date"
+              display="default"
+              onChange={handleDateChange}
+            />
+          )}
+          {renderStep()}
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+//------------------
+// Main Habits Screen Component
+//------------------
+
+const HabitsScreen = () => {
+  const [habits, setHabits] = useState<Habit[]>(DEFAULT_HABITS);
+  const [selectedHabit, setSelectedHabit] = useState<Habit | null>(null);
+  const [goalModalVisible, setGoalModalVisible] = useState(false);
+  const [statsModalVisible, setStatsModalVisible] = useState(false);
+  const [settingsModalVisible, setSettingsModalVisible] = useState(false);
+  const [missedDaysModalVisible, setMissedDaysModalVisible] = useState(false);
+  const [onboardingVisible, setOnboardingVisible] = useState(habits.length === 0);
+
+  // Example functions to update habit goals, log units, etc.
+  const handleUpdateGoal = (habitId: number, updatedGoal: Goal) => {
+    setHabits((prev) =>
+      prev.map((h) =>
+        h.id === habitId
+          ? { ...h, goals: h.goals.map((goal) => (goal.id === updatedGoal.id ? updatedGoal : goal)) }
+          : h
+      )
+    );
+  };
+
+  const handleLogUnit = (habitId: number, amount: number) => {
+    setHabits((prev) =>
+      prev.map((h) => {
+        if (h.id === habitId) {
+          const newStreak = h.streak + 1;
+          // Optionally update goals’ progress here
+          return { ...h, streak: newStreak, last_completion_date: new Date() };
+        }
+        return h;
+      })
+    );
+  };
+
+  const handleUpdateHabit = (updatedHabit: Habit) => {
+    setHabits((prev) =>
+      prev.map((h) => (h.id === updatedHabit.id ? updatedHabit : h))
+    );
+  };
+
+  const handleDeleteHabit = (habitId: number) => {
+    setHabits((prev) => prev.filter((h) => h.id !== habitId));
+  };
+
+  // Dummy stats for demonstration – in practice, calculate based on habit.completions
+  const dummyStats: HabitStatsData = {
+    dates: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    values: [1, 2, 3, 2, 4, 1, 0],
+    completionsByDay: [1, 1, 1, 1, 1, 0, 0],
+    dayLabels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    longestStreak: 5,
+    totalCompletions: 12,
+    completionRate: 0.75,
+  };
+
+  // Render a 2x5 grid; if more than 10 habits, add pagination (swipe)
+  const renderHabitTile = ({ item }: { item: Habit }) => (
+    <HabitTile
+      habit={item}
+      revealed={true}
+      onOpenGoals={() => {
+        setSelectedHabit(item);
+        setGoalModalVisible(true);
+      }}
+      onLogUnit={() => handleLogUnit(item.id!, 1)}
+      onOpenStats={() => {
+        setSelectedHabit(item);
+        setStatsModalVisible(true);
+      }}
+      onLongPress={() => {
+        setSelectedHabit(item);
+        setSettingsModalVisible(true);
+      }}
+    />
+  );
+
+  return (
+    <View style={styles.container}>
+      <FlatList
+        data={habits}
+        keyExtractor={(item) => (item.id ? item.id.toString() : Math.random().toString())}
+        renderItem={renderHabitTile}
+        numColumns={2}
+        contentContainerStyle={styles.habitsGrid}
+      />
+      {/* Modals */}
+      <GoalModal
+        visible={goalModalVisible}
+        habit={selectedHabit}
+        onClose={() => setGoalModalVisible(false)}
+        onUpdateGoal={handleUpdateGoal}
+        onLogUnit={handleLogUnit}
+      />
+      <StatsModal
+        visible={statsModalVisible}
+        habit={selectedHabit}
+        stats={dummyStats}
+        onClose={() => setStatsModalVisible(false)}
+      />
+      <HabitSettingsModal
+        visible={settingsModalVisible}
+        habit={selectedHabit}
+        onClose={() => setSettingsModalVisible(false)}
+        onUpdate={handleUpdateHabit}
+        onDelete={handleDeleteHabit}
+      />
+      <MissedDaysModal
+        visible={missedDaysModalVisible}
+        habit={selectedHabit}
+        missedDays={[]} // populate missed days as needed
+        onClose={() => setMissedDaysModalVisible(false)}
+        onBackfill={(habitId, days) => console.log("Backfilled", habitId, days)}
+        onNewStartDate={(habitId, newDate) => console.log("New start date", habitId, newDate)}
+      />
+      <OnboardingModal
+        visible={onboardingVisible}
+        onClose={() => setOnboardingVisible(false)}
+        onSaveHabits={(newHabits) => {
+          // Here you might merge the onboarding habits into your main habit list
+          console.log("Onboarding habits saved:", newHabits);
+          setHabits(newHabits.map((h, index) => ({
+            ...h,
+            id: index + 1,
+            streak: 0,       // Default streak value
+            goals: [],       // Default goals array (or your default goals)
+          })));
+        }}
+      />
+    </View>
+  );
+};
+
+export default HabitsScreen;
+
+//------------------
+// Styles (sample minimalist mystical style)
+//------------------
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#f8f8f8",
+    padding: 10,
+  },
+  habitsGrid: {
+    justifyContent: "space-between",
+  },
+  tile: {
+    flex: 1,
+    margin: 5,
+    padding: 10,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  glowEffect: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 12,
+    opacity: 0.2,
+    backgroundColor: "#fff",
+  },
+  icon: {
+    fontSize: 40,
+  },
+  name: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginTop: 5,
+  },
+  streakContainer: {
+    marginTop: 5,
+    backgroundColor: "rgba(255,255,255,0.7)",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  streakText: {
+    fontSize: 14,
+    fontWeight: "bold",
+  },
+  progressBarContainer: {
+    width: "100%",
+    height: 6,
+    backgroundColor: "#ddd",
+    borderRadius: 3,
+    marginTop: 5,
+    overflow: "hidden",
+  },
+  progressBar: {
+    height: "100%",
+    backgroundColor: "#4CAF50",
+  },
+  statsButton: {
+    position: "absolute",
+    top: 5,
+    right: 5,
+  },
+  statsButtonText: {
+    fontSize: 20,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalContent: {
+    width: "90%",
+    maxHeight: "80%",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 10,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderColor: "#ddd",
+    paddingBottom: 5,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+  },
+  closeButton: {
+    padding: 5,
+  },
+  closeButtonText: {
+    fontSize: 24,
+  },
+  iconLarge: {
+    fontSize: 22,
+  },
+  streakBadge: {
+    fontSize: 16,
+    backgroundColor: "#eee",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  goalsContainer: {
+    marginVertical: 10,
+  },
+  goalItem: {
+    marginVertical: 5,
+    padding: 10,
+    borderRadius: 8,
+  },
+  goalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  goalTier: {
+    fontSize: 14,
+    fontWeight: "bold",
+  },
+  saveButton: {
+    padding: 5,
+    backgroundColor: "#4CAF50",
+    borderRadius: 5,
+  },
+  saveButtonText: {
+    color: "#fff",
+  },
+  goalTitle: {
+    fontSize: 16,
+    marginVertical: 5,
+  },
+  goalTitleInput: {
+    fontSize: 16,
+    marginVertical: 5,
+    borderBottomWidth: 1,
+    borderColor: "#ccc",
+  },
+  goalDetailsContainer: {
+    marginVertical: 5,
+  },
+  goalDetails: {
+    fontSize: 14,
+  },
+  editRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: 3,
+  },
+  editLabel: {
+    width: 60,
+  },
+  editInput: {
+    borderWidth: 1,
+    borderColor: "#ccc",
+    padding: 4,
+    marginHorizontal: 5,
+    flex: 1,
+  },
+  toggleButton: {
+    padding: 5,
+    borderRadius: 5,
+    marginHorizontal: 3,
+  },
+  toggleText: {
+    color: "#fff",
+  },
+  goalProgressContainer: {
+    marginTop: 5,
+    alignItems: "center",
+  },
+  goalProgressBar: {
+    width: "100%",
+    height: 8,
+    backgroundColor: "#eee",
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  goalProgressFill: {
+    height: "100%",
+    backgroundColor: "#4CAF50",
+  },
+  goalProgressText: {
+    marginTop: 3,
+    fontSize: 12,
+  },
+  actionButtons: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 10,
+  },
+  logUnitContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  logUnitInput: {
+    borderWidth: 1,
+    borderColor: "#ccc",
+    padding: 5,
+    width: 50,
+    marginRight: 5,
+  },
+  logUnitButton: {
+    backgroundColor: "#4CAF50",
+    padding: 8,
+    borderRadius: 5,
+  },
+  logUnitButtonText: {
+    color: "#fff",
+  },
+  editButton: {
+    backgroundColor: "#2196F3",
+    padding: 8,
+    borderRadius: 5,
+  },
+  editButtonText: {
+    color: "#fff",
+  },
+  settingsModalContent: {
+    width: "90%",
+    maxHeight: "90%",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 10,
+  },
+  settingsContainer: {
+    marginTop: 10,
+  },
+  settingGroup: {
+    marginVertical: 8,
+  },
+  settingLabel: {
+    fontWeight: "bold",
+    marginBottom: 4,
+  },
+  settingInput: {
+    borderWidth: 1,
+    borderColor: "#ccc",
+    padding: 5,
+    borderRadius: 4,
+  },
+  iconSelector: {
+    flexDirection: "row",
+  },
+  iconOption: {
+    padding: 10,
+    marginRight: 5,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "#ccc",
+  },
+  selectedIconOption: {
+    borderColor: "#4CAF50",
+  },
+  iconOptionText: {
+    fontSize: 24,
+  },
+  stageSelector: {
+    flexDirection: "row",
+  },
+  stageOption: {
+    padding: 10,
+    marginRight: 5,
+    borderRadius: 5,
+  },
+  selectedStageOption: {
+    borderWidth: 2,
+    borderColor: "#000",
+  },
+  energyContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  energyItem: {
+    flex: 1,
+    alignItems: "center",
+  },
+  energyLabel: {
+    fontWeight: "bold",
+  },
+  energyInput: {
+    borderWidth: 1,
+    borderColor: "#ccc",
+    width: 40,
+    textAlign: "center",
+    marginTop: 5,
+  },
+  energyRatingItem: {
+    marginVertical: 8,
+    borderBottomWidth: 1,
+    borderColor: "#ddd",
+    paddingBottom: 8,
+  },
+  energyRatingName: {
+    fontSize: 16,
+    marginBottom: 4,
+  },
+  energySliders: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+  },
+  energySlider: {
+    flex: 1,
+    alignItems: "center",
+  },
+  energySliderLabel: {
+    fontSize: 14,
+  },
+  sliderContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 4,
+  },
+  sliderButton: {
+    backgroundColor: "#ccc",
+    padding: 5,
+    borderRadius: 5,
+  },
+  sliderButtonText: {
+    fontSize: 18,
+  },
+  sliderValue: {
+    marginHorizontal: 10,
+    fontSize: 16,
+  },
+  addHabitContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: 10,
+  },
+  addHabitInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "#ccc",
+    padding: 8,
+    borderRadius: 4,
+  },
+  addHabitButton: {
+    marginLeft: 8,
+    backgroundColor: "#4CAF50",
+    padding: 10,
+    borderRadius: 4,
+  },
+  addHabitButtonText: {
+    fontSize: 24,
+    color: "#fff",
+  },
+  habitList: {
+    maxHeight: 150,
+    marginVertical: 10,
+  },
+  habitListItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    padding: 8,
+    borderBottomWidth: 1,
+    borderColor: "#eee",
+  },
+  habitListItemText: {
+    fontSize: 16,
+  },
+  removeHabitButton: {
+    backgroundColor: "#F44336",
+    padding: 5,
+    borderRadius: 4,
+  },
+  removeHabitButtonText: {
+    color: "#fff",
+    fontSize: 18,
+  },
+  onboardingModalContent: {
+    width: "95%",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 15,
+  },
+  onboardingStep: {
+    marginVertical: 10,
+  },
+  onboardingTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    marginBottom: 5,
+    textAlign: "center",
+  },
+  onboardingSubtitle: {
+    fontSize: 14,
+    marginBottom: 10,
+    textAlign: "center",
+  },
+  onboardingContinueButton: {
+    backgroundColor: "#2196F3",
+    padding: 10,
+    borderRadius: 5,
+    marginTop: 15,
+    alignSelf: "center",
+  },
+  onboardingContinueButtonText: {
+    color: "#fff",
+    fontSize: 16,
+  },
+  disabledButton: {
+    opacity: 0.5,
+  },
+  statsModalContent: {
+    width: "90%",
+    maxHeight: "80%",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 10,
+  },
+  tabContainer: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    marginVertical: 10,
+  },
+  tabButton: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: "center",
+    borderBottomWidth: 2,
+    borderColor: "transparent",
+  },
+  activeTab: {
+    borderColor: "#4CAF50", // or any accent color matching your design
+  },
+  tabButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  statsContainer: {
+    padding: 10,
+  },
+  calendarContainer: {
+    marginVertical: 10,
+  },
+  statsInfoContainer: {
+    marginTop: 10,
+  },
+  statItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 4,
+  },
+  statLabel: {
+    fontSize: 14,
+    fontWeight: "bold",
+  },
+  statValue: {
+    fontSize: 14,
+  },
+  chartContainer: {
+    marginVertical: 10,
+    alignItems: "center",
+  },
+  chartTitle: {
+    fontSize: 16,
+    fontWeight: "bold",
+    marginBottom: 10,
+  },
+  chart: {
+    borderRadius: 12,
+  },  
+  // Styles for Delete Button
+  deleteButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  deleteButton: {
+    backgroundColor: "#F44336", // red tone for deletion
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 5,
+    marginTop: 10,
+    alignItems: "center",
+  },
+
+  // Grouping buttons together
+  buttonGroup: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginVertical: 10,
+  },
+
+  // Notification Option Styles
+  notificationLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 5,
+  },
+  notificationOption: {
+    marginVertical: 5,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  // Time Button Styles
+  timeButtonText: {
+    fontSize: 16,
+    color: "#fff",
+  },
+  timeButton: {
+    backgroundColor: "#2196F3",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 5,
+  },
+
+  // Frequency Button Styles
+  frequencyButtonText: {
+    fontSize: 16,
+    color: "#fff",
+  },
+  frequencyButton: {
+    backgroundColor: "#2196F3",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 5,
+  },
+
+  // Stage Option Text Style
+  stageOptionText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#fff", // white text works well on colored backgrounds
+  },
+  missedDaysContent: {
+    width: "90%",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 20,
+    alignItems: "center",
+  },
+  missedDaysTitle: {
+    fontSize: 22,
+    fontWeight: "bold",
+    marginBottom: 10,
+    textAlign: "center",
+  },
+  missedDaysSubtitle: {
+    fontSize: 16,
+    marginBottom: 10,
+    textAlign: "center",
+  },
+  missedDaysQuestion: {
+    fontSize: 16,
+    marginBottom: 15,
+    textAlign: "center",
+  },
+  missedDaysButtons: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    width: "100%",
+  },
+  missedDaysButton: {
+    flex: 1,
+    marginHorizontal: 5,
+    paddingVertical: 10,
+    alignItems: "center",
+    borderRadius: 5,
+  },
+  missedDaysButtonText: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: "#fff",
+  },
+  yesButton: {
+    backgroundColor: "#4CAF50", // green for positive action
+  },
+  resetButton: {
+    backgroundColor: "#FFA500", // orange for adjustment
+  },
+  cancelButton: {
+    backgroundColor: "#9E9E9E", // neutral gray for cancellation
+  },  
+});
+
