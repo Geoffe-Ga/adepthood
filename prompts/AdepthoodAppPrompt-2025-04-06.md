@@ -32,7 +32,7 @@ The experience is mystical, ritualistic, and deeply personal—an alchemical ble
    - Show a detailed history of each streak, including a calendar view with marked completion days.
    - Display statistics like longest streak, current streak, and overall completion rate.
    - Display line graphs showing cumulative progress
-   - Display bar graphs showing habit completion by "day of week" 
+   - Display bar graphs showing habit completion by "day of week"
 
 ### 2. Course Feature
 - Displays essays, summaries, prompts, and Practice/Habit instructions for current stage

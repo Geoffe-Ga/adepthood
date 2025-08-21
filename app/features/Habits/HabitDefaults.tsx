@@ -1,12 +1,12 @@
 import { Habit } from "./Habits.types";
 
 export const HABIT_DEFAULTS: Habit[] = [
-    { 
+    {
       id: 1,
-      stage: "Clear Light", 
-      name: "High Flow Activity", 
-      icon: "🎨", 
-      streak: 0, 
+      stage: "Clear Light",
+      name: "High Flow Activity",
+      icon: "🎨",
+      streak: 0,
       energy_cost: 7,
       energy_return: 9,
       start_date: new Date(2025, 3, 1),
@@ -44,12 +44,12 @@ export const HABIT_DEFAULTS: Habit[] = [
         }
       ]
     },
-    { 
+    {
       id: 2,
-      stage: "Ultraviolet", 
-      name: "Food Choices", 
-      icon: "🥗", 
-      streak: 0, 
+      stage: "Ultraviolet",
+      name: "Food Choices",
+      icon: "🥗",
+      streak: 0,
       energy_cost: 6,
       energy_return: 8,
       start_date: new Date(2025, 3, 5),
@@ -87,12 +87,12 @@ export const HABIT_DEFAULTS: Habit[] = [
         }
       ]
     },
-    { 
+    {
       id: 3,
-      stage: "Turquoise", 
-      name: "Limit Caffeine", 
-      icon: "☕", 
-      streak: 0, 
+      stage: "Turquoise",
+      name: "Limit Caffeine",
+      icon: "☕",
+      streak: 0,
       energy_cost: 4,
       energy_return: 5,
       start_date: new Date(2025, 3, 10),
@@ -130,12 +130,12 @@ export const HABIT_DEFAULTS: Habit[] = [
         }
       ]
     },
-    { 
+    {
       id: 4,
-      stage: "Yellow", 
-      name: "Blissy Meditation", 
-      icon: "🧘", 
-      streak: 0, 
+      stage: "Yellow",
+      name: "Blissy Meditation",
+      icon: "🧘",
+      streak: 0,
       energy_cost: 5,
       energy_return: 8,
       start_date: new Date(2025, 2, 25),
@@ -173,12 +173,12 @@ export const HABIT_DEFAULTS: Habit[] = [
         }
       ]
     },
-    { 
+    {
       id: 5,
-      stage: "Green", 
-      name: "Sangha", 
-      icon: "🧘‍♀️", 
-      streak: 1, 
+      stage: "Green",
+      name: "Sangha",
+      icon: "🧘‍♀️",
+      streak: 1,
       energy_cost: 8,
       energy_return: 9,
       start_date: new Date(2025, 3, 15),
@@ -216,12 +216,12 @@ export const HABIT_DEFAULTS: Habit[] = [
         }
       ]
     },
-    { 
+    {
       id: 6,
-      stage: "Orange", 
-      name: "Exercise", 
-      icon: "🏃‍♂️", 
-      streak: 4, 
+      stage: "Orange",
+      name: "Exercise",
+      icon: "🏃‍♂️",
+      streak: 4,
       energy_cost: 7,
       energy_return: 8,
       start_date: new Date(2025, 2, 20),
@@ -259,12 +259,12 @@ export const HABIT_DEFAULTS: Habit[] = [
         }
       ]
     },
-    { 
+    {
       id: 7,
-      stage: "Blue", 
-      name: "Scrolling", 
-      icon: "📱", 
-      streak: 0, 
+      stage: "Blue",
+      name: "Scrolling",
+      icon: "📱",
+      streak: 0,
       energy_cost: 3,
       energy_return: 6,
       start_date: new Date(2025, 3, 8),
@@ -302,12 +302,12 @@ export const HABIT_DEFAULTS: Habit[] = [
         }
       ]
     },
-    { 
+    {
       id: 8,
-      stage: "Red", 
-      name: "Alcohol/Intoxicants", 
-      icon: "🍷", 
-      streak: 6, 
+      stage: "Red",
+      name: "Alcohol/Intoxicants",
+      icon: "🍷",
+      streak: 6,
       energy_cost: 5,
       energy_return: 7,
       start_date: new Date(2025, 2, 28),
@@ -345,12 +345,12 @@ export const HABIT_DEFAULTS: Habit[] = [
         }
       ]
     },
-    { 
+    {
       id: 9,
-      stage: "Purple", 
-      name: "Water (and Vitamins!)", 
-      icon: "💧", 
-      streak: 7, 
+      stage: "Purple",
+      name: "Water (and Vitamins!)",
+      icon: "💧",
+      streak: 7,
       energy_cost: 4,
       energy_return: 7,
       start_date: new Date(2025, 2, 15),
@@ -388,11 +388,11 @@ export const HABIT_DEFAULTS: Habit[] = [
         }
       ]
     },
-    { 
+    {
       id: 10,
-      stage: "Beige", 
-      name: "Take work seriously", 
-      icon: "💼", 
+      stage: "Beige",
+      name: "Take work seriously",
+      icon: "💼",
       streak: 10,
       energy_cost: 5,
       energy_return: 8,

@@ -1,0 +1,63 @@
+name: Backend CI
+
+on:
+  push:
+    paths:
+      - "backend/**"
+      - ".pre-commit-config.yaml"
+      - ".github/workflows/backend-ci.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".pre-commit-config.yaml"
+      - ".github/workflows/backend-ci.yml"
+
+jobs:
+  backend-quality:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U aptitude -d aptitude"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install backend deps
+        run: |
+          uv pip install --system -r backend/requirements.txt
+          uv pip install --system pre-commit
+
+      - name: Run pre-commit (Python hooks only)
+        run: |
+          pre-commit run --all-files --hook-stage pre-commit -v
+
+      - name: Type-check (mypy)
+        run: |
+          uv pip install --system mypy
+          mypy --config-file backend/pyproject.toml
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://aptitude:aptitude@localhost:5432/aptitude
+        run: |
+          uv pip install --system pytest pytest-cov
+          pytest -q
+
+      - name: Security (pip-audit)
+        run: |
+          uv pip install --system pip-audit
+          pip-audit -r backend/requirements.txt

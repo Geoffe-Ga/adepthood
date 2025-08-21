@@ -1,0 +1,9 @@
+uvicorn
+bandit
+black
+isort
+mypy
+pre-commit
+pytest
+pytest-cov
+ruff

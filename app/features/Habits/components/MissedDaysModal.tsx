@@ -25,18 +25,18 @@ export const MissedDaysModal = ({
     const [showCalendar, setShowCalendar] = useState(false);
     const [selectedDate, setSelectedDate] = useState(new Date());
     if (!habit || missedDays.length === 0) return null;
-  
+
     const handleBackfill = () => {
       if (habit.id) {
         onBackfill(habit.id, missedDays);
         onClose();
       }
     };
-  
+
     const handleSelectNewDate = () => {
       setShowCalendar(true);
     };
-  
+
     const handleDateSelect = (date: any) => {
       setSelectedDate(new Date(date.dateString));
       setShowCalendar(false);
@@ -45,7 +45,7 @@ export const MissedDaysModal = ({
         onClose();
       }
     };
-  
+
     return (
       <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
         <View style={styles.modalOverlay}>

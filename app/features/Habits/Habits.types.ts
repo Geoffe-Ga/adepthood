@@ -22,7 +22,7 @@ export interface Habit {
     last_completion_date?: Date;
     revealed?: boolean;
   }
-  
+
   export interface Goal {
     id?: number;
     title: string;
@@ -34,13 +34,13 @@ export interface Habit {
     days_of_week?: string[];
     is_additive: boolean;
   }
-  
+
   export interface Completion {
     id?: number;
     timestamp: Date;
     completed_units: number;
   }
-  
+
   export interface HabitStatsData {
     dates: string[];
     values: number[];
@@ -50,7 +50,7 @@ export interface Habit {
     totalCompletions: number;
     completionRate: number;
   }
-  
+
   export interface OnboardingHabit {
     name: string;
     icon: string;
@@ -67,7 +67,7 @@ export interface Habit {
     onUpdateGoal: (habitId: number, updatedGoal: Goal) => void;
     onLogUnit: (habitId: number, amount: number) => void;
   }
-  
+
   export interface StatsModalProps {
     visible: boolean;
     habit: Habit | null;
@@ -88,7 +88,7 @@ export interface Habit {
     onOpenStats: () => void;
     onLongPress: () => void;
   }
-  
+
   export interface HabitSettingsModalProps {
     visible: boolean;
     habit: Habit | null;

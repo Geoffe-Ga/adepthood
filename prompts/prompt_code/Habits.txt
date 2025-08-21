@@ -115,18 +115,18 @@ const STAGE_COLORS: Record<string, string> = {
 };
 
 const DEFAULT_ICONS = [
-  "🧘", "🏃", "💧", "🥗", "💪", "📱", "🍷", "☕", "🎨", "💼", 
+  "🧘", "🏃", "💧", "🥗", "💪", "📱", "🍷", "☕", "🎨", "💼",
   "🧠", "🌱", "🌞", "🌙", "📚", "✍️", "🤔", "🗣️", "👥", "❤️"
 ];
 
 // Sample default habits – these might be loaded or saved to AsyncStorage
 const DEFAULT_HABITS: Habit[] = [
-  { 
+  {
     id: 1,
-    stage: "Clear Light", 
-    name: "High Flow Activity", 
-    icon: "🎨", 
-    streak: 3, 
+    stage: "Clear Light",
+    name: "High Flow Activity",
+    icon: "🎨",
+    streak: 3,
     energy_cost: 7,
     energy_return: 9,
     start_date: new Date(2025, 3, 1),
@@ -166,12 +166,12 @@ const DEFAULT_HABITS: Habit[] = [
       }
     ]
   },
-  { 
+  {
     id: 2,
-    stage: "Ultraviolet", 
-    name: "Food Choices", 
-    icon: "🥗", 
-    streak: 5, 
+    stage: "Ultraviolet",
+    name: "Food Choices",
+    icon: "🥗",
+    streak: 5,
     energy_cost: 6,
     energy_return: 8,
     start_date: new Date(2025, 3, 5),
@@ -211,12 +211,12 @@ const DEFAULT_HABITS: Habit[] = [
       }
     ]
   },
-  { 
+  {
     id: 3,
-    stage: "Turquoise", 
-    name: "Caffeine", 
-    icon: "☕", 
-    streak: 2, 
+    stage: "Turquoise",
+    name: "Caffeine",
+    icon: "☕",
+    streak: 2,
     energy_cost: 4,
     energy_return: 5,
     start_date: new Date(2025, 3, 10),
@@ -256,12 +256,12 @@ const DEFAULT_HABITS: Habit[] = [
       }
     ]
   },
-  { 
+  {
     id: 4,
-    stage: "Yellow", 
-    name: "Meditation", 
-    icon: "🧘", 
-    streak: 8, 
+    stage: "Yellow",
+    name: "Meditation",
+    icon: "🧘",
+    streak: 8,
     energy_cost: 5,
     energy_return: 8,
     start_date: new Date(2025, 2, 25),
@@ -301,12 +301,12 @@ const DEFAULT_HABITS: Habit[] = [
       }
     ]
   },
-  { 
+  {
     id: 5,
-    stage: "Green", 
-    name: "Sangha", 
-    icon: "🧘‍♀️", 
-    streak: 1, 
+    stage: "Green",
+    name: "Sangha",
+    icon: "🧘‍♀️",
+    streak: 1,
     energy_cost: 8,
     energy_return: 9,
     start_date: new Date(2025, 3, 15),
@@ -346,12 +346,12 @@ const DEFAULT_HABITS: Habit[] = [
       }
     ]
   },
-  { 
+  {
     id: 6,
-    stage: "Orange", 
-    name: "Exercise", 
-    icon: "🏃‍♂️", 
-    streak: 4, 
+    stage: "Orange",
+    name: "Exercise",
+    icon: "🏃‍♂️",
+    streak: 4,
     energy_cost: 7,
     energy_return: 8,
     start_date: new Date(2025, 2, 20),
@@ -391,12 +391,12 @@ const DEFAULT_HABITS: Habit[] = [
       }
     ]
   },
-  { 
+  {
     id: 7,
-    stage: "Blue", 
-    name: "Scrolling", 
-    icon: "📱", 
-    streak: 0, 
+    stage: "Blue",
+    name: "Scrolling",
+    icon: "📱",
+    streak: 0,
     energy_cost: 3,
     energy_return: 6,
     start_date: new Date(2025, 3, 8),
@@ -436,12 +436,12 @@ const DEFAULT_HABITS: Habit[] = [
       }
     ]
   },
-  { 
+  {
     id: 8,
-    stage: "Red", 
-    name: "Alcohol/Intoxicants", 
-    icon: "🍷", 
-    streak: 6, 
+    stage: "Red",
+    name: "Alcohol/Intoxicants",
+    icon: "🍷",
+    streak: 6,
     energy_cost: 5,
     energy_return: 7,
     start_date: new Date(2025, 2, 28),
@@ -481,12 +481,12 @@ const DEFAULT_HABITS: Habit[] = [
       }
     ]
   },
-  { 
+  {
     id: 9,
-    stage: "Purple", 
-    name: "Water & Vitamins", 
-    icon: "💧", 
-    streak: 7, 
+    stage: "Purple",
+    name: "Water & Vitamins",
+    icon: "💧",
+    streak: 7,
     energy_cost: 4,
     energy_return: 7,
     start_date: new Date(2025, 2, 15),
@@ -526,11 +526,11 @@ const DEFAULT_HABITS: Habit[] = [
       }
     ]
   },
-  { 
+  {
     id: 10,
-    stage: "Beige", 
-    name: "Take work seriously", 
-    icon: "💼", 
+    stage: "Beige",
+    name: "Take work seriously",
+    icon: "💼",
     streak: 10,
     energy_cost: 5,
     energy_return: 8,
@@ -2259,7 +2259,7 @@ const styles = StyleSheet.create({
   },
   chart: {
     borderRadius: 12,
-  },  
+  },
   // Styles for Delete Button
   deleteButtonText: {
     color: "#fff",
@@ -2374,6 +2374,5 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     backgroundColor: "#9E9E9E", // neutral gray for cancellation
-  },  
+  },
 });
-

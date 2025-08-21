@@ -5,18 +5,18 @@ The Adepthood app consists of four main screens: **Journal**, **Course**, **Habi
 ### Habits screen
 Create a React Native application that clones much of the functionality of the iOS "Streaks" app. The app should allow users to track habits, set goals, and log their progress daily. Include the following features:
 1. **Home Screen**:
-   - Display a grid of user-defined streaks ("Habits") with progress indicators. 
+   - Display a grid of user-defined streaks ("Habits") with progress indicators.
    - If more than 10 Habits are created, include pagination via swiping
    - Show the icon for each Habit, the current streak count for that Habit, and completion status for the day.
    - Allow users to double tap on a Habit to mark it as complete for the day.
    - Allow users to long press on a Habit to edit it.
-   - The icons for 10 Habits should fit on the screen once onboarding is done 
+   - The icons for 10 Habits should fit on the screen once onboarding is done
    - During onboarding, after showing all ten habits on the screen for a moment, the user taps again and whichever habits start dates (defined in 21 day increments earlier) have not yet arisen do not get displayed.
 2. **Habit Stats**:
    - Show a detailed history of each streak, including a calendar view with marked completion days.
    - Display statistics like longest streak, current streak, and overall completion rate.
    - Display line graphs showing cumulative progress
-   - Display bar graphs showing habit completion by "day of week" 
+   - Display bar graphs showing habit completion by "day of week"
 3. **Notifications**:
    - Implement push notifications to remind users to complete their streaks.
    - Make notification frequency customizable per streak.
@@ -67,16 +67,16 @@ Create a React Native screen called Course that serves as an educational space f
    - Include a title, subheadings, and text for each essay.
 2. **Navigation Menu**:
    - Allow users to navigate between stages (locked until unlocked by progress) or revisit past stages.
-   - Highlight the current stage for clarity. 
+   - Highlight the current stage for clarity.
 3. **Interactive Elements**:
-   - Add a 'Reflection' button at the end of each essay that redirects users to the Journal screen for further exploration. 
-   - Include a 'Mark as Read' button to track progress through the course content. 
+   - Add a 'Reflection' button at the end of each essay that redirects users to the Journal screen for further exploration.
+   - Include a 'Mark as Read' button to track progress through the course content.
 4. **Progress Tracker**:
    - Display a progress bar at the top of the screen indicating how much content the user has completed in their current stage.
 5. **UI/UX Design**:
-   - Use clean typography for readability and include small, symbolic graphics representing the stage's themes. 
+   - Use clean typography for readability and include small, symbolic graphics representing the stage's themes.
    - Ensure compatibility with both light and dark modes.
-   
+
 ### Map Screen
    Create a React Native screen called Map to visually represent the 10 stages of APTITUDE and their associated practices, qualities, and characteristics. This screen should include the following features:
 
@@ -96,18 +96,18 @@ Create a React Native screen called Course that serves as an educational space f
    - Make each stage clickable to reveal detailed information (like links to the Course material) and a library of infographics (that I have already created).
 2. **Stage Details**:
    - When a stage is selected, display a popup or new panel showing:
-     - Stage name and description. 
-     - Practices associated with that stage. 
-     - Key qualities and characteristics. 
+     - Stage name and description.
+     - Practices associated with that stage.
+     - Key qualities and characteristics.
      - Challenges and goals.
 3. **Progress Indicator**:
    - Visually indicate the user’s current stage (e.g., highlighted or with an icon) and any completed stages.
 4. **Stage Connections**:
    - Illustrate relationships between stages with lines or arcs that emphasize continuity and evolution.
 5. **Quick Actions**:
-   - Add buttons to 'Go to Course' or 'Open Journal' directly from the Map for seamless navigation. 
+   - Add buttons to 'Go to Course' or 'Open Journal' directly from the Map for seamless navigation.
 6. **UI/UX Design**:
-   - Create a mystical and aspirational aesthetic with thematic colors and symbolic designs. 
+   - Create a mystical and aspirational aesthetic with thematic colors and symbolic designs.
    - Use smooth animations for transitions between stages and panels to enhance the user experience.
 7. **Responsive Layout**:
    - Ensure the map adjusts well to different screen sizes and orientations."

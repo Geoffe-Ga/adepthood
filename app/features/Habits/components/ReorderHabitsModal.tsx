@@ -25,7 +25,7 @@ export const ReorderHabitsModal = ({
     const [orderedHabits, setOrderedHabits] = useState<Habit[]>([]);
     const [startDate, setStartDate] = useState(new Date());
     const [showDatePicker, setShowDatePicker] = useState(false);
-  
+
     useEffect(() => {
       // Sort habits by stage according to STAGE_ORDER
       if (visible && habits.length > 0) {
@@ -34,18 +34,18 @@ export const ReorderHabitsModal = ({
           const stageIndexB = STAGE_ORDER.indexOf(b.stage);
           return stageIndexA - stageIndexB;
         });
-        
+
         // Update start dates based on order
         const updatedHabits = sortedHabits.map((habit, index) => {
           const habitStartDate = new Date(startDate);
           habitStartDate.setDate(habitStartDate.getDate() + index * 21);
           return { ...habit, start_date: habitStartDate };
         });
-        
+
         setOrderedHabits(updatedHabits);
       }
     }, [visible, habits, startDate]);
-  
+
     const handleDragEnd = ({ data }: { data: Habit[] }) => {
       // Update dates based on new order
       const updatedHabits = data.map((habit, index) => {
@@ -53,35 +53,35 @@ export const ReorderHabitsModal = ({
         habitStartDate.setDate(habitStartDate.getDate() + index * 21);
         return { ...habit, start_date: habitStartDate };
       });
-      
+
       setOrderedHabits(updatedHabits);
     };
-  
+
     const handleDateChange = (event: any, selectedDate?: Date) => {
       setShowDatePicker(Platform.OS === "ios");
       if (selectedDate) {
         setStartDate(selectedDate);
-        
+
         // Update all start dates
         const updatedHabits = orderedHabits.map((habit, index) => {
           const habitStartDate = new Date(selectedDate);
           habitStartDate.setDate(habitStartDate.getDate() + index * 21);
           return { ...habit, start_date: habitStartDate };
         });
-        
+
         setOrderedHabits(updatedHabits);
       }
     };
-  
+
     const handleSave = () => {
       onSaveOrder(orderedHabits);
       onClose();
     };
-  
+
     const formatDate = (date: Date): string => {
       return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     };
-  
+
     return (
       <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
         <View style={styles.modalOverlay}>
@@ -92,7 +92,7 @@ export const ReorderHabitsModal = ({
                 <Text style={styles.closeButtonText}>×</Text>
               </TouchableOpacity>
             </View>
-            
+
             <View style={styles.datePickerContainer}>
               <Text style={styles.datePickerLabel}>First Habit Start Date:</Text>
               <TouchableOpacity
@@ -101,7 +101,7 @@ export const ReorderHabitsModal = ({
               >
                 <Text style={styles.datePickerButtonText}>{formatDate(startDate)}</Text>
               </TouchableOpacity>
-              
+
               {showDatePicker && (
                 <DateTimePicker
                   value={startDate}
@@ -111,11 +111,11 @@ export const ReorderHabitsModal = ({
                 />
               )}
             </View>
-            
+
             <Text style={styles.reorderInstructions}>
               Drag habits to reorder. Each habit starts 21 days after the previous one.
             </Text>
-            
+
             <View style={styles.reorderList}>
               <DraggableFlatList
                 data={orderedHabits}
@@ -143,7 +143,7 @@ export const ReorderHabitsModal = ({
                 onDragEnd={handleDragEnd}
               />
             </View>
-            
+
             <TouchableOpacity style={styles.saveOrderButton} onPress={handleSave}>
               <Text style={styles.saveOrderButtonText}>Save Order</Text>
             </TouchableOpacity>

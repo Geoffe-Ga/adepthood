@@ -13,11 +13,11 @@ import {
 
 import styles from "../Habits.styles"
 import { Goal, GoalModalProps, EditableGoalProps, Habit } from "../Habits.types"
-import { 
+import {
   calculateProgressIncrements,
-  STAGE_COLORS, 
-  TARGET_UNITS, 
-  FREQUENCY_UNITS, 
+  STAGE_COLORS,
+  TARGET_UNITS,
+  FREQUENCY_UNITS,
   DAYS_OF_WEEK,
   calculateHabitProgress,
   getGoalTarget,
@@ -36,7 +36,7 @@ const GOLDEN_GLOW_COLOR = "rgba(255, 215, 0, 0.6)";
 const calculateGoalProgress = (goal: Goal, habit: Habit): number => {
   const totalProgress = habit.progress || calculateHabitProgress(habit);
   const targetValue = getGoalTarget(goal);
-  
+
   if (goal.is_additive) {
     return Math.min((totalProgress / targetValue) * 100, 100);
   } else {
@@ -54,7 +54,7 @@ const calculateGoalProgress = (goal: Goal, habit: Habit): number => {
 const isGoalAchieved = (goal: Goal, habit: Habit): boolean => {
   const totalProgress = habit.progress || calculateHabitProgress(habit);
   const targetValue = getGoalTarget(goal);
-  
+
   if (goal.is_additive) {
     return totalProgress >= targetValue;
   } else {
@@ -97,7 +97,7 @@ const EditableGoal = ({ goal, habit, onUpdate, isEditing }: EditableGoalProps & 
     const currentDays = editedGoal.days_of_week || [];
     if (currentDays.includes(day)) {
       handleChange(
-        "days_of_week", 
+        "days_of_week",
         currentDays.filter(d => d !== day)
       );
     } else {
@@ -106,10 +106,10 @@ const EditableGoal = ({ goal, habit, onUpdate, isEditing }: EditableGoalProps & 
   };
 
   return (
-    <View 
+    <View
       style={[
-        styles.goalItem, 
-        { 
+        styles.goalItem,
+        {
           backgroundColor: getTierColor(goal.tier),
           borderWidth: achieved ? 2 : 0,
           borderColor: achieved ? GOLDEN_GLOW_COLOR : 'transparent',
@@ -127,7 +127,7 @@ const EditableGoal = ({ goal, habit, onUpdate, isEditing }: EditableGoalProps & 
           </TouchableOpacity>
         )}
       </View>
-      
+
       {isEditing ? (
         <TextInput
           style={styles.goalTitleInput}
@@ -138,7 +138,7 @@ const EditableGoal = ({ goal, habit, onUpdate, isEditing }: EditableGoalProps & 
       ) : (
         <Text style={styles.goalTitle}>{goal.title}</Text>
       )}
-      
+
       <View style={styles.goalDetailsContainer}>
         {isEditing ? (
           <>
@@ -150,14 +150,14 @@ const EditableGoal = ({ goal, habit, onUpdate, isEditing }: EditableGoalProps & 
                 onChangeText={(text) => handleChange("target", parseFloat(text) || 0)}
                 keyboardType="numeric"
               />
-              
-              <TouchableOpacity 
+
+              <TouchableOpacity
                 style={styles.unitDropdownButton}
                 onPress={() => setShowTargetUnitDropdown(!showTargetUnitDropdown)}
               >
                 <Text>{editedGoal.target_unit || "Select unit"}</Text>
               </TouchableOpacity>
-              
+
               {showTargetUnitDropdown && (
                 <ScrollView style={styles.dropdown} keyboardShouldPersistTaps="handled">
                   {TARGET_UNITS.map((unit) => (
@@ -175,7 +175,7 @@ const EditableGoal = ({ goal, habit, onUpdate, isEditing }: EditableGoalProps & 
                 </ScrollView>
               )}
             </View>
-            
+
             <View style={styles.editRow}>
               <Text style={styles.editLabel}>Frequency:</Text>
               <TextInput
@@ -184,14 +184,14 @@ const EditableGoal = ({ goal, habit, onUpdate, isEditing }: EditableGoalProps & 
                 onChangeText={(text) => handleChange("frequency", parseFloat(text) || 0)}
                 keyboardType="numeric"
               />
-              
-              <TouchableOpacity 
+
+              <TouchableOpacity
                 style={styles.unitDropdownButton}
                 onPress={() => setShowFrequencyUnitDropdown(!showFrequencyUnitDropdown)}
               >
                 <Text>{editedGoal.frequency_unit.replace("_", " ") || "Select frequency"}</Text>
               </TouchableOpacity>
-              
+
               {showFrequencyUnitDropdown && (
                 <ScrollView style={styles.dropdown} keyboardShouldPersistTaps="handled">
                   {FREQUENCY_UNITS.map((unit) => (
@@ -209,11 +209,11 @@ const EditableGoal = ({ goal, habit, onUpdate, isEditing }: EditableGoalProps & 
                 </ScrollView>
               )}
             </View>
-            
+
             {editedGoal.frequency_unit === "per_week" && (
               <View style={styles.editRow}>
                 <Text style={styles.editLabel}>Days:</Text>
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={styles.daysSelectorButton}
                   onPress={() => setShowDaysSelection(!showDaysSelection)}
                 >
@@ -223,7 +223,7 @@ const EditableGoal = ({ goal, habit, onUpdate, isEditing }: EditableGoalProps & 
                       : "Select days"}
                   </Text>
                 </TouchableOpacity>
-                
+
                 {showDaysSelection && (
                   <View style={styles.daysSelector}>
                     {DAYS_OF_WEEK.map((day) => (
@@ -242,7 +242,7 @@ const EditableGoal = ({ goal, habit, onUpdate, isEditing }: EditableGoalProps & 
                 )}
               </View>
             )}
-            
+
             <View style={styles.editRow}>
               <Text style={styles.editLabel}>Type:</Text>
               <Pressable
@@ -263,24 +263,24 @@ const EditableGoal = ({ goal, habit, onUpdate, isEditing }: EditableGoalProps & 
           <Text style={styles.goalDetails}>
             {goal.is_additive ? "At least" : "No more than"} {goal.target} {goal.target_unit},{" "}
             {goal.frequency} {goal.frequency_unit.replace("_", " ")}
-            {goal.days_of_week && goal.days_of_week.length > 0 && 
+            {goal.days_of_week && goal.days_of_week.length > 0 &&
               ` on ${goal.days_of_week.map(d => d.substring(0, 3)).join(", ")}`
             }
           </Text>
         )}
       </View>
-      
+
       <View style={styles.goalProgressContainer}>
         <View style={styles.goalProgressBar}>
           {/* Incremental markers */}
           {progressIncrements.map((increment, index) => {
             const position = (increment / goal.target) * 100;
             return (
-              <View 
+              <View
                 key={index}
                 style={[
                   styles.goalIncrementMarker,
-                  { 
+                  {
                     left: `${position}%`,
                     height: 7,
                     width: 2,
@@ -290,19 +290,19 @@ const EditableGoal = ({ goal, habit, onUpdate, isEditing }: EditableGoalProps & 
               />
             );
           })}
-          
-          <View 
+
+          <View
             style={[
-              styles.goalProgressFill, 
-              { 
+              styles.goalProgressFill,
+              {
                 width: `${progressPercentage}%`,
                 height: 12, // Thicker progress bar
                 backgroundColor: achieved ? GOLDEN_GLOW_COLOR : STAGE_COLORS[habit.stage],
               }
-            ]} 
+            ]}
           />
         </View>
-        
+
         {/* Progress text showing progress vs target */}
         <Text style={styles.goalProgressText}>
           {habit.progress || 0} / {goal.target} {goal.target_unit}
@@ -321,7 +321,7 @@ export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: 
   const [isEditing, setIsEditing] = useState(false);
   const [logAmount, setLogAmount] = useState("1");
   const [goalVisible, setGoalVisible] = useState<{[key: number]: boolean}>({});
-  
+
   // Initialize all goals to be visible initially
   useEffect(() => {
     if (habit && visible) {
@@ -356,7 +356,7 @@ export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: 
       const amount = parseFloat(logAmount) || 1;
       onLogUnit(habit.id, amount);
       setLogAmount("1");
-      
+
       // Show a feedback alert
       Alert.alert(
         "Progress Logged",
@@ -365,12 +365,12 @@ export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: 
       );
     }
   };
-  
+
   const handleEditGoal = (goal: Goal) => {
     setActiveGoal(goal);
     setIsEditing(true);
   };
-  
+
   const toggleGoalVisibility = (index: number) => {
     setGoalVisible(prev => ({
       ...prev,
@@ -380,7 +380,7 @@ export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: 
 
   // Calculate total habit progress for display
   const totalProgress = habit.progress || calculateHabitProgress(habit);
-  
+
   // Sort goals by tier for consistent display order
   const sortedGoals = [...habit.goals].sort((a, b) => {
     const tierOrder = { 'low': 1, 'clear': 2, 'stretch': 3 };
@@ -404,7 +404,7 @@ export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: 
                   <Text style={styles.closeButtonText}>×</Text>
                 </TouchableOpacity>
               </View>
-              
+
               {/* Habit summary section */}
               <View style={styles.habitSummary}>
                 <Text style={styles.habitSummaryText}>
@@ -414,11 +414,11 @@ export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: 
                   Energy: Cost {habit.energy_cost} · Return {habit.energy_return} · Net {habit.energy_return - habit.energy_cost}
                 </Text>
               </View>
-              
+
               <ScrollView style={styles.goalsContainer}>
                 {sortedGoals.map((goal, index) => (
                   <View key={index}>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       style={styles.goalHeaderToggle}
                       onPress={() => toggleGoalVisibility(index)}
                     >
@@ -426,9 +426,9 @@ export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: 
                         {goal.tier.toUpperCase()} GOAL {goalVisible[index] ? '▼' : '►'}
                       </Text>
                     </TouchableOpacity>
-                    
+
                     {goalVisible[index] && (
-                      <TouchableOpacity 
+                      <TouchableOpacity
                         onPress={() => handleEditGoal(goal)}
                       >
                         <EditableGoal
@@ -442,7 +442,7 @@ export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: 
                   </View>
                 ))}
               </ScrollView>
-              
+
               <View style={styles.actionButtons}>
                 <View style={styles.logUnitContainer}>
                   <TextInput
@@ -451,8 +451,8 @@ export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: 
                     onChangeText={setLogAmount}
                     keyboardType="numeric"
                   />
-                  <TouchableOpacity 
-                    style={styles.logUnitButton} 
+                  <TouchableOpacity
+                    style={styles.logUnitButton}
                     onPress={handleLogUnit}
                   >
                     <Text style={styles.logUnitButtonText}>Log Units</Text>
