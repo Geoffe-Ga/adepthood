@@ -14,8 +14,6 @@ repos:
         args: ["--maxkb=250"]
         exclude: |
           ^app/package-lock\.json$
-      - id: pretty-format-json
-        args: ["--autofix", "--indent", "2"]
 
   # Python format / lint / type-check
   - repo: https://github.com/psf/black

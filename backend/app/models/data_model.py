@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
+from sqlalchemy import Column, Integer, String
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -23,6 +25,8 @@ class User(SQLModel, table=True):
 
 
 class Habit(SQLModel, table=True):
+    """Tracks a user's habit and related goals."""
+
     id: int | None = Field(default=None, primary_key=True)
     name: str
     icon: str
@@ -59,7 +63,10 @@ class Goal(SQLModel, table=True):
     target_unit: str  # "minutes", "reps", etc.
     frequency: float  # e.g. 2.0 = 2x per frequency_unit
     frequency_unit: str  # "per_day", "per_week"
-    days_of_week: list[str] | None = Field(default=None, sa_column_kwargs={"type_": "text[]"})
+    days_of_week: list[str] | None = Field(
+        default=None,
+        sa_column=Column(ARRAY(String), nullable=True),
+    )
     track_with_timer: bool = False
     timer_duration_minutes: int | None = None
     origin: str | None = None
@@ -71,6 +78,8 @@ class Goal(SQLModel, table=True):
 
 
 class GoalGroup(SQLModel, table=True):
+    """Logical grouping for related goals."""
+
     id: int | None = Field(default=None, primary_key=True)
     name: str
     icon: str | None = None
@@ -102,6 +111,8 @@ class GoalCompletion(SQLModel, table=True):
 
 
 class Practice(SQLModel, table=True):
+    """Defines a single practice users can perform."""
+
     id: int | None = Field(default=None, primary_key=True)
     stage_number: int
     name: str
@@ -180,7 +191,10 @@ class StageProgress(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     current_stage: int
-    completed_stages: list[int] = Field(sa_column_kwargs={"type_": "integer[]"})
+    completed_stages: list[int] = Field(
+        default_factory=list,
+        sa_column=Column(ARRAY(Integer), nullable=False),
+    )
     user_id: int = Field(foreign_key="user.id", unique=True)
     user: User = Relationship(back_populates="stage_progress")
 
