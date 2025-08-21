@@ -15,16 +15,6 @@ on:
 jobs:
   backend-quality:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd="pg_isready -U aptitude -d aptitude"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-
     steps:
       - uses: actions/checkout@v4
 
@@ -51,8 +41,6 @@ jobs:
           mypy --config-file backend/pyproject.toml
 
       - name: Run tests
-        env:
-          DATABASE_URL: postgresql+asyncpg://aptitude:aptitude@localhost:5432/aptitude
         run: |
           uv pip install --system pytest pytest-cov
           pytest -q
