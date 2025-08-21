@@ -17,11 +17,13 @@ pip install pre-commit
 
 echo "📦 Installing Node dependencies..."
 if [ -d app ]; then
-  if [ -f app/package-lock.json ]; then
-    npm ci --prefix app
+  pushd app >/dev/null
+  if [ -f package-lock.json ]; then
+    npm ci
   else
-    npm install --prefix app
+    npm install
   fi
+  popd >/dev/null
 fi
 
 echo "✅ Installing pre-commit hooks..."
