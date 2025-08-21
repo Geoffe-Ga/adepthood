@@ -7,5 +7,5 @@ pre-commit
 pytest
 pytest-cov
 ruff
-pydantic
+pydantic[mypy]
 sqlmodel
