@@ -1,5 +1,7 @@
 # Bandit configuration
-[bandit]
-targets: backend
-exclude: tests
-skips: B101  # assert used
+exclude_dirs:
+  - tests
+skips:
+  - B101  # assert used
+targets:
+  - backend
