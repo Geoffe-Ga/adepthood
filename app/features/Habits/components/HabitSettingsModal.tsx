@@ -17,10 +17,10 @@ import {
     Habit,
     HabitSettingsModalProps
 } from "../Habits.types"
-import { 
+import {
     calculateNetEnergy,
-    STAGE_COLORS,  
-    DAYS_OF_WEEK 
+    STAGE_COLORS,
+    DAYS_OF_WEEK
 } from "../HabitsScreen";
 
 import styles from "../Habits.styles";
@@ -39,24 +39,24 @@ export const HabitSettingsModal = ({
     const [showEmojiSelector, setShowEmojiSelector] = useState(false);
     const [notificationTime, setNotificationTime] = useState("08:00");
     const [showDaysPicker, setShowDaysPicker] = useState(false);
-  
+
     useEffect(() => {
       setEditedHabit(habit ? { ...habit } : null);
     }, [habit, visible]);
-  
+
     if (!editedHabit) return null;
-  
+
     const handleChange = (field: keyof Habit, value: any) => {
       setEditedHabit((prev) => (prev ? { ...prev, [field]: value } : null));
     };
-  
+
     const handleSave = () => {
       if (editedHabit && habit?.id) {
         onUpdate({ ...editedHabit, id: habit.id });
         onClose();
       }
     };
-  
+
     const handleDelete = () => {
       if (habit?.id) {
         Alert.alert(
@@ -76,7 +76,7 @@ export const HabitSettingsModal = ({
         );
       }
     };
-  
+
     const handleTimeChange = (event: any, selectedDate?: Date) => {
       setShowTimePicker(Platform.OS === "ios");
       if (selectedDate) {
@@ -85,19 +85,19 @@ export const HabitSettingsModal = ({
         setNotificationTime(`${hours}:${minutes}`);
       }
     };
-  
+
     const handleAddNotificationTime = () => {
       const times = editedHabit.notificationTimes || [];
       if (!times.includes(notificationTime)) {
         handleChange("notificationTimes", [...times, notificationTime]);
       }
     };
-  
+
     const handleRemoveNotificationTime = (time: string) => {
       const times = editedHabit.notificationTimes || [];
       handleChange("notificationTimes", times.filter(t => t !== time));
     };
-  
+
     const handleToggleDay = (day: string) => {
       const days = editedHabit.notificationDays || [];
       if (days.includes(day)) {
@@ -106,12 +106,12 @@ export const HabitSettingsModal = ({
         handleChange("notificationDays", [...days, day]);
       }
     };
-  
+
     const renderTimePicker = () => {
       let defaultTime = new Date();
       const [hours, minutes] = notificationTime.split(":").map(Number);
       defaultTime.setHours(hours, minutes);
-      
+
       return (
         <DateTimePicker
           value={defaultTime}
@@ -122,10 +122,10 @@ export const HabitSettingsModal = ({
         />
       );
     };
-  
+
     // Calculate net energy
     const netEnergy = calculateNetEnergy(editedHabit.energy_cost, editedHabit.energy_return);
-  
+
     return (
       <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
         <View style={styles.modalOverlay}>
@@ -145,7 +145,7 @@ export const HabitSettingsModal = ({
                   onChangeText={(text) => handleChange("name", text)}
                 />
               </View>
-              
+
               <View style={styles.settingRow}>
                 <Text style={styles.settingLabel}>Icon:</Text>
                 <TouchableOpacity
@@ -156,7 +156,7 @@ export const HabitSettingsModal = ({
                   <Text style={styles.iconButtonText}>Change</Text>
                 </TouchableOpacity>
               </View>
-              
+
               {showEmojiSelector && (
                 <View style={styles.emojiSelectorContainer}>
                   <EmojiSelector
@@ -170,30 +170,30 @@ export const HabitSettingsModal = ({
                   />
                 </View>
               )}
-              
+
               <View style={styles.settingRow}>
                 <Text style={styles.settingLabel}>Stage:</Text>
                 <Text style={styles.settingValue}>{editedHabit.stage}</Text>
               </View>
-              
-              <TouchableOpacity 
+
+              <TouchableOpacity
                 style={styles.reorderButton}
                 onPress={() => onOpenReorderModal(allHabits)}
               >
                 <Text style={styles.reorderButtonText}>Reorder Habits</Text>
               </TouchableOpacity>
-              
+
               <View style={styles.settingRow}>
                 <Text style={styles.settingLabel}>Energy Rating:</Text>
               </View>
-              
+
               <View style={styles.energyContainer}>
                 <View style={styles.energyHeader}>
                   <Text style={styles.energyHeaderText}>Cost</Text>
                   <Text style={styles.energyHeaderText}>Return</Text>
                   <Text style={styles.energyHeaderText}>Net</Text>
                 </View>
-                
+
                 <View style={styles.energyRow}>
                   <TextInput
                     style={styles.energyInput}
@@ -219,12 +219,12 @@ export const HabitSettingsModal = ({
                   />
                   <Text style={styles.netEnergyValue}>{netEnergy}</Text>
                 </View>
-                
+
                 <View style={styles.validationNote}>
                   <Text style={styles.validationText}>Values must be between -10 and 10</Text>
                 </View>
               </View>
-              
+
               <View style={styles.settingRow}>
                 <Text style={styles.settingLabel}>Start Date:</Text>
                 <DateTimePicker
@@ -234,7 +234,7 @@ export const HabitSettingsModal = ({
                   onChange={(event, date) => date && handleChange("start_date", date)}
                 />
               </View>
-              
+
               <View style={styles.settingGroup}>
                 <View style={styles.settingRow}>
                   <Text style={styles.settingLabel}>Notifications:</Text>
@@ -245,7 +245,7 @@ export const HabitSettingsModal = ({
                     }}
                   />
                 </View>
-                
+
                 {editedHabit.notificationFrequency !== "off" && (
                   <>
                     <View style={styles.settingRow}>
@@ -266,7 +266,7 @@ export const HabitSettingsModal = ({
                         </Text>
                       </TouchableOpacity>
                     </View>
-                    
+
                     {editedHabit.notificationFrequency === "custom" && (
                       <View style={styles.settingRow}>
                         <Text style={styles.settingLabel}>Days:</Text>
@@ -282,7 +282,7 @@ export const HabitSettingsModal = ({
                         </TouchableOpacity>
                       </View>
                     )}
-                    
+
                     {showDaysPicker && (
                       <View style={styles.daysPicker}>
                         {DAYS_OF_WEEK.map(day => (
@@ -299,17 +299,17 @@ export const HabitSettingsModal = ({
                         ))}
                       </View>
                     )}
-                    
+
                     <View style={styles.settingRow}>
                       <Text style={styles.settingLabel}>Time:</Text>
                       <View style={styles.timeInputContainer}>
-                        <TouchableOpacity 
-                          style={styles.timeButton} 
+                        <TouchableOpacity
+                          style={styles.timeButton}
                           onPress={() => setShowTimePicker(true)}
                         >
                           <Text style={styles.timeButtonText}>{notificationTime}</Text>
                         </TouchableOpacity>
-                        
+
                         <TouchableOpacity
                           style={styles.addTimeButton}
                           onPress={handleAddNotificationTime}
@@ -318,9 +318,9 @@ export const HabitSettingsModal = ({
                         </TouchableOpacity>
                       </View>
                     </View>
-                    
+
                     {(Platform.OS === "ios" || Platform.OS === "android") && showTimePicker && renderTimePicker()}
-                    
+
                     {(editedHabit.notificationTimes || []).length > 0 && (
                       <View style={styles.timesList}>
                         {(editedHabit.notificationTimes || []).map((time, index) => (
@@ -338,7 +338,7 @@ export const HabitSettingsModal = ({
                     )}
                   </>
                 )}
-                
+
                 <View style={styles.settingRow}>
                   <Text style={styles.settingLabel}>Milestone Notifications:</Text>
                   <Switch
@@ -347,7 +347,7 @@ export const HabitSettingsModal = ({
                   />
                 </View>
               </View>
-              
+
               <View style={styles.buttonGroup}>
                 <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
                   <Text style={styles.saveButtonText}>Save Changes</Text>

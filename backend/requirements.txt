@@ -1,0 +1,9 @@
+# Only used by pip-audit hook in CI; adjust based on your actual deps.
+fastapi
+uvicorn
+pydantic
+sqlalchemy
+asyncpg
+pytest
+pytest-asyncio
+httpx

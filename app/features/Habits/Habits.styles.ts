@@ -6,20 +6,20 @@ import { StyleSheet, Dimensions } from 'react-native';
 
 const COLORS = {
   // Primary palette
-  primary: '#1a1910',      
+  primary: '#1a1910',
   secondary: '#413d2f',
-  success: '#535c46',      
-  warning: '#6c6b63',      
-  danger: '#7b3f30',       
-  neutral: '#8c8c8c',      
-  
+  success: '#535c46',
+  warning: '#6c6b63',
+  danger: '#7b3f30',
+  neutral: '#8c8c8c',
+
   // Background shades
   background: {
     primary: '#f8f8f8',    // Main app background
     card: '#ffffff',       // Card backgrounds
     accent: '#f0f0f0',     // Accent backgrounds
   },
-  
+
   // Text shades
   text: {
     primary: '#333333',    // Main text color
@@ -27,7 +27,7 @@ const COLORS = {
     tertiary: '#999999',   // Tertiary text color
     light: '#ffffff',      // Light text (on dark backgrounds)
   },
-  
+
   // Mystical gradients and effects
   mystical: {
     glowLight: 'rgba(255, 255, 255, 0.2)',
@@ -147,7 +147,7 @@ export const styles = StyleSheet.create({
     shadowRadius: SHADOWS.medium.shadowRadius,
     elevation: 2,
   },
-  
+
   // ===== Streaks =====
   streakContainer: {
     marginTop: SPACING.xs,
@@ -173,7 +173,7 @@ export const styles = StyleSheet.create({
   // ===== Progress Bars =====
   progressBarContainer: {
     width: "100%",
-    height: 16, 
+    height: 16,
     backgroundColor: COLORS.background.accent,
     borderRadius: BORDER_RADIUS.xs,
     marginTop: SPACING.xs,
@@ -209,17 +209,17 @@ export const styles = StyleSheet.create({
   },
   incrementMarker: {
     position: "absolute",
-    height: "70%", 
-    width: SPACING.xs, 
-    top: "15%", 
-    backgroundColor: COLORS.mystical.overlay, 
+    height: "70%",
+    width: SPACING.xs,
+    top: "15%",
+    backgroundColor: COLORS.mystical.overlay,
     zIndex: 1,
   },
   goalIncrementMarker: {
     position: "absolute",
     height: "70%",
     width: SPACING.xs,
-    top: "15%", 
+    top: "15%",
     backgroundColor: COLORS.mystical.overlay,
     zIndex: 1,
   },
@@ -288,7 +288,7 @@ export const styles = StyleSheet.create({
     fontWeight: "300",
     color: COLORS.text.secondary,
   },
-  
+
   // ===== Goal Items =====
   goalsContainer: {
     marginVertical: SPACING.md,
@@ -341,7 +341,7 @@ export const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.text.secondary,
   },
-  
+
   // ===== Edit Forms =====
   editRow: {
     flexDirection: "row",
@@ -388,7 +388,7 @@ export const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
   },
-  
+
   // ===== Days Selector =====
   daysSelectorButton: {
     backgroundColor: COLORS.background.accent,
@@ -416,7 +416,7 @@ export const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.text.primary,
   },
-  
+
   // ===== Toggle Buttons =====
   toggleButton: {
     paddingVertical: SPACING.sm,
@@ -429,19 +429,19 @@ export const styles = StyleSheet.create({
     color: COLORS.text.light,
     fontWeight: "500",
   },
-  
+
   // ===== Goal Progress =====
   goalProgressContainer: {
     marginTop: SPACING.sm,
   },
-  
+
   goalProgressText: {
     marginTop: 3,
     fontSize: 12,
     color: COLORS.text.tertiary,
     textAlign: "right",
   },
-  
+
   // ===== Action Buttons =====
   actionButtons: {
     flexDirection: "row",
@@ -461,7 +461,7 @@ export const styles = StyleSheet.create({
       fontWeight: "600",
       fontSize: 15,
     },
-    
+
     // Improved input field
     logUnitInput: {
       borderWidth: 1,
@@ -491,7 +491,7 @@ export const styles = StyleSheet.create({
     color: COLORS.text.light,
     fontWeight: "600",
   },
-  
+
   // ===== Settings Modal =====
   settingsModalContent: {
     width: "90%",
@@ -535,7 +535,7 @@ export const styles = StyleSheet.create({
     flex: 1,
     marginLeft: SPACING.md,
   },
-  
+
   // ===== Icon Selector =====
   iconSelectorButton: {
     flexDirection: "row",
@@ -562,7 +562,7 @@ export const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.md,
     overflow: "hidden",
   },
-  
+
   // ===== Reorder Button =====
   reorderButton: {
     backgroundColor: COLORS.primary,
@@ -578,7 +578,7 @@ export const styles = StyleSheet.create({
     fontWeight: "600",
     fontSize: 16,
   },
-  
+
   // ===== Energy Container =====
   energyContainer: {
     marginVertical: SPACING.md,
@@ -626,7 +626,7 @@ export const styles = StyleSheet.create({
     color: COLORS.text.secondary,
     fontStyle: "italic",
   },
-  
+
   // ===== Time Input =====
   timeInputContainer: {
     flexDirection: "row",
@@ -688,7 +688,7 @@ export const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "bold",
   },
-  
+
   // ===== Days Button =====
   daysButton: {
     backgroundColor: COLORS.secondary,
@@ -709,7 +709,7 @@ export const styles = StyleSheet.create({
     marginTop: SPACING.md,
     justifyContent: "space-between",
   },
-  
+
   // ===== Button Groups =====
   buttonGroup: {
     marginVertical: SPACING.lg,
@@ -728,7 +728,7 @@ export const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "bold",
   },
-  
+
   // ===== Frequency Button =====
   frequencyButton: {
     backgroundColor: COLORS.secondary,
@@ -743,7 +743,7 @@ export const styles = StyleSheet.create({
     color: COLORS.text.light,
     fontSize: 16,
   },
-  
+
   // ===== Stats Modal =====
   statsModalContent: {
     width: "90%",
@@ -817,7 +817,7 @@ export const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.xs,
   },
-  
+
   // ===== Reorder Modal =====
   reorderModalContent: {
     width: "90%",
@@ -897,7 +897,7 @@ export const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "bold",
   },
-  
+
   // ===== Missed Days Modal =====
   missedDaysContent: {
     width: "90%",
@@ -952,7 +952,7 @@ export const styles = StyleSheet.create({
   cancelButton: {
     backgroundColor: COLORS.neutral,
   },
-  
+
   // ===== Onboarding Modal =====
   onboardingModalContent: {
     width: "95%",
@@ -1035,7 +1035,7 @@ export const styles = StyleSheet.create({
   iconEditButtonText: {
     fontSize: 18,
   },
-  
+
   // ===== Energy Rating =====
   energyRatingItem: {
     backgroundColor: COLORS.background.primary,
@@ -1092,7 +1092,7 @@ export const styles = StyleSheet.create({
     minWidth: 24,
     textAlign: "center",
     color: COLORS.text.primary,
-  },  
+  },
   netEnergyContainer: {
     flex: 1,
     alignItems: "center",
@@ -1107,7 +1107,7 @@ export const styles = StyleSheet.create({
     fontWeight: "bold",
     color: COLORS.text.primary,
   },
-  
+
   // ===== Start Date =====
   startDateContainer: {
     flexDirection: "row",
@@ -1135,7 +1135,7 @@ export const styles = StyleSheet.create({
     color: COLORS.text.light,
     fontSize: 16,
   },
-  
+
   // ===== Habits List =====
   habitsList: {
     flex: 1,
@@ -1176,7 +1176,7 @@ export const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 16,
   },
-  
+
   // ===== Emoji Picker =====
   emojiPickerModal: {
     position: "absolute",
@@ -1211,7 +1211,7 @@ export const styles = StyleSheet.create({
     fontWeight: "300",
     color: COLORS.text.secondary,
   },
-  
+
   // ===== Onboarding Buttons =====
   onboardingContinueButton: {
     backgroundColor: COLORS.secondary,
@@ -1230,7 +1230,7 @@ export const styles = StyleSheet.create({
   disabledButton: {
     opacity: 0.5,
   },
-  
+
   // ===== Energy Scaffolding Button =====
   energyScaffoldingButton: {
     position: "absolute",
@@ -1259,7 +1259,7 @@ export const styles = StyleSheet.create({
     marginBottom: 4,
     color: '#333',
   },
-  
+
   // Goal header toggle styles
   goalHeaderToggle: {
     backgroundColor: 'rgba(0, 0, 0, 0.1)',
@@ -1273,7 +1273,7 @@ export const styles = StyleSheet.create({
     fontSize: 13,
     color: '#444',
   },
-  
+
   // Enhanced progress bar styles
   goalProgressBar: {
     height: 12,
@@ -1292,7 +1292,7 @@ export const styles = StyleSheet.create({
     top: 0,
     borderRadius: SPACING.md,
   },
-  
+
   // Achievement indicator styles
   achievementBadge: {
     position: 'absolute',

@@ -1,51 +1,34 @@
 {
   "compilerOptions": {
-    "target": "esnext",
-    "module": "esnext",
-    "lib": [
-      "dom",
-      "esnext"
-    ],
-    "jsx": "react-native",
-    "moduleResolution": "node",
-    "allowSyntheticDefaultImports": true,
+    "allowJs": false,
+    "baseUrl": ".",
     "esModuleInterop": true,
-    "strict": true,
-    "noImplicitAny": false,
-    "noEmit": true,
-    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
-    "skipLibCheck": true,
-    "baseUrl": "./",
+    "jsx": "react-jsx",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "noUncheckedIndexedAccess": true,
     "paths": {
-      "@components/*": [
-        "app/components/*"
-      ],
-      "@features/*": [
-        "app/features/*"
-      ],
-      "@styles/*": [
-        "app/styles/*"
-      ],
-      "@constants/*": [
-        "app/constants/*"
-      ],
-      "@services/*": [
-        "app/services/*"
-      ],
-      "@utils/*": [
-        "app/utils/*"
-      ],
-      "@hooks/*": [
-        "app/hooks/*"
-      ],
-      "@context/*": [
-        "app/context/*"
+      "@/*": [
+        "./src/*"
       ]
     },
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022",
     "types": [
+      "jest",
       "react",
-      "react-native"
+      "react-native",
+      "expo"
     ]
   },
   "exclude": [
@@ -54,5 +37,8 @@
     "metro.config.js",
     "jest.config.js"
   ],
-  "extends": "expo/tsconfig.base"
+  "include": [
+    "**/*.ts",
+    "**/*.tsx"
+  ]
 }

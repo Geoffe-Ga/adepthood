@@ -17,7 +17,7 @@ import { STAGE_COLORS } from "../HabitsScreen"
 export const StatsModal = ({ visible, habit, stats, onClose }: StatsModalProps) => {
     const [selectedTab, setSelectedTab] = useState("calendar");
     if (!habit || !stats) return null;
-  
+
     const chartConfig = {
       backgroundGradientFrom: "#1E2923",
       backgroundGradientTo: "#08130D",
@@ -26,7 +26,7 @@ export const StatsModal = ({ visible, habit, stats, onClose }: StatsModalProps) 
       barPercentage: 0.7,
       useShadowColorFromDataset: false,
     };
-  
+
     const lineData = {
       labels: stats.dates.slice(-7),
       datasets: [
@@ -38,7 +38,7 @@ export const StatsModal = ({ visible, habit, stats, onClose }: StatsModalProps) 
       ],
       legend: ["Daily Progress"],
     };
-  
+
     const barData = {
       labels: stats.dayLabels,
       datasets: [
@@ -48,7 +48,7 @@ export const StatsModal = ({ visible, habit, stats, onClose }: StatsModalProps) 
         },
       ],
     };
-  
+
     const getMarkedDates = () => {
       const marked: any = {};
       if (!habit.completions) return marked;
@@ -58,7 +58,7 @@ export const StatsModal = ({ visible, habit, stats, onClose }: StatsModalProps) 
       });
       return marked;
     };
-  
+
     return (
       <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
         <View style={styles.modalOverlay}>
@@ -156,5 +156,5 @@ export const StatsModal = ({ visible, habit, stats, onClose }: StatsModalProps) 
       </Modal>
     );
   };
-  
+
 export default StatsModal

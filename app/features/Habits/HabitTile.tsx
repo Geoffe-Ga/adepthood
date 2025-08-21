@@ -40,7 +40,7 @@ export const HabitTile = ({
     return goal.is_additive
       ? Math.min(progress / goal.target, 1)
       : Math.max(0, 1 - progress / goal.target);
-  };  
+  };
 
   const lowProgress = calculateProgress(lowGoal);
   const clearProgress = calculateProgress(clearGoal);
@@ -132,7 +132,7 @@ export const HabitTile = ({
         clearToStretchRatio +
         ((stretchProgress - clearToStretchRatio) / (1 - clearToStretchRatio)) *
           (1 - clearToStretchRatio);
-      
+
       if (stretchProgress >= 1) {
         goalStatus = "completed";
         hasCompletedGoal = true;
@@ -161,7 +161,7 @@ export const HabitTile = ({
   // For subtractive goals, normalize against lowGoal (the leftmost marker)
   const getMarkerPositions = () => {
     if (!lowGoal) return { low: 0, clear: 0, stretch: 0 };
-    
+
     if (lowGoal.is_additive) {
       // For additive goals, if there's a clear goal, use it as the base
       if (clearGoal) {
@@ -170,31 +170,31 @@ export const HabitTile = ({
         const clearPosition = 100;
         // Stretch goal is beyond the visible bar
         const stretchPosition = stretchGoal ? 100 : 0;
-        
+
         return { low: lowPosition, clear: clearPosition, stretch: stretchPosition };
-      } 
+      }
       // If no clear goal, just use low goal
       else {
         return { low: 100, clear: 0, stretch: 0 };
       }
-    } 
-    // For subtractive goals 
+    }
+    // For subtractive goals
     else {
       // For subtractive goals, if there's a low goal, use it as the base
       if (lowGoal) {
         const maxTarget = lowGoal.target;
         const minTarget = stretchGoal ? stretchGoal.target : 0;
-      
+
         // Normalize based on the range: lowTarget (max) to stretchTarget (min)
         const normalize = (value: number) =>
           ((value - minTarget) / (maxTarget - minTarget)) * 100;
-      
+
         const lowPosition = 0; // far left
         const clearPosition = clearGoal ? normalize(clearGoal.target) : 50;
         const stretchPosition = 100; // far right
-      
+
         return { low: lowPosition, clear: clearPosition, stretch: stretchPosition };
-      } 
+      }
       else {
         return { low: 0, clear: 0, stretch: 0 };
       }
@@ -211,7 +211,7 @@ export const HabitTile = ({
   // Show marker tooltip on hover/press
   const showMarkerInfo = (tier) => {
     setShowMarkerTooltip(tier);
-    
+
     // Auto-hide tooltip after a delay
     setTimeout(() => {
       setShowMarkerTooltip(null);
@@ -221,9 +221,9 @@ export const HabitTile = ({
   // Format the marker tooltip text
   const getMarkerTooltipText = (tier) => {
     const goal = tier === "low" ? lowGoal : tier === "clear" ? clearGoal : stretchGoal;
-    
+
     if (!goal) return "";
-    
+
     // Create descriptive tooltip
     return `${tier.charAt(0).toUpperCase() + tier.slice(1)} Goal: ${goal.target} ${goal.target_unit} ${goal.frequency_unit}`;
   };
@@ -232,9 +232,9 @@ export const HabitTile = ({
     <Animated.View
       style={[
         styles.tile,
-        { 
-          backgroundColor, 
-          opacity: habit.revealed ? 1 : 0.5, 
+        {
+          backgroundColor,
+          opacity: habit.revealed ? 1 : 0.5,
           transform: [{ scale: scaleAnim }],
           borderWidth: hasCompletedGoal ? 2 : 1,
           borderColor: hasCompletedGoal ? stageColor : "#ddd",
@@ -266,7 +266,7 @@ export const HabitTile = ({
 
       {/* Mobile Menu */}
       {isMobile && (
-        <TouchableOpacity 
+        <TouchableOpacity
           style={{
             position: "absolute",
             top: 8,
@@ -295,7 +295,7 @@ export const HabitTile = ({
             borderColor: "#eee",
           }}
         >
-          <TouchableOpacity 
+          <TouchableOpacity
             style={{ flexDirection: "row", alignItems: "center", padding: 8 }}
             onPress={() => {
               onOpenStats();
@@ -305,8 +305,8 @@ export const HabitTile = ({
             <BarChart size={18} color="#333" style={{ marginRight: 8 }} />
             <Text>Stats</Text>
           </TouchableOpacity>
-          
-          <TouchableOpacity 
+
+          <TouchableOpacity
             style={{ flexDirection: "row", alignItems: "center", padding: 8 }}
             onPress={() => {
               onLongPress();
@@ -316,8 +316,8 @@ export const HabitTile = ({
             <Edit size={18} color="#333" style={{ marginRight: 8 }} />
             <Text>Edit</Text>
           </TouchableOpacity>
-          
-          <TouchableOpacity 
+
+          <TouchableOpacity
             style={{ flexDirection: "row", alignItems: "center", padding: 8 }}
             onPress={() => {
               onLogUnit();
@@ -339,21 +339,21 @@ export const HabitTile = ({
           flexDirection: "row",
           zIndex: 5,
         }}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={{ padding: 6 }}
             onPress={onOpenStats}
           >
             <BarChart size={18} color="#333" />
           </TouchableOpacity>
-          
-          <TouchableOpacity 
+
+          <TouchableOpacity
             style={{ padding: 6 }}
             onPress={onLongPress}
           >
             <Edit size={18} color="#333" />
           </TouchableOpacity>
-          
-          <TouchableOpacity 
+
+          <TouchableOpacity
             style={{ padding: 6 }}
             onPress={onLogUnit}
           >
@@ -371,7 +371,7 @@ export const HabitTile = ({
       >
         <Text style={styles.icon}>{habit.icon}</Text>
         <Text style={[styles.name, { color: habit.revealed ? "#333" : "#aaa" }]}>{habit.name}</Text>
-        
+
         {habit.revealed && (
           <View style={styles.streakContainer}>
             <Text style={styles.streakText}>
@@ -379,16 +379,16 @@ export const HabitTile = ({
             </Text>
           </View>
         )}
-        
+
         {/* Progress Bar */}
         {habit.revealed && lowGoal && (
           <View style={[styles.progressBarContainer, { marginTop: 12 }]}>
-            <View 
+            <View
               style={[
-                styles.progressBar, 
-                { 
+                styles.progressBar,
+                {
                   height: 12,
-                  backgroundColor: "#eee", 
+                  backgroundColor: "#eee",
                   borderRadius: 6,
                   overflow: "visible",
                 }
@@ -398,8 +398,8 @@ export const HabitTile = ({
               {lowGoal && lowMarkerPosition > 0 && (
                 <TouchableOpacity
                   style={[
-                    styles.goalMarker, 
-                    { 
+                    styles.goalMarker,
+                    {
                       left: `${lowMarkerPosition}%`,
                       height: 16,
                       width: 4,
@@ -411,12 +411,12 @@ export const HabitTile = ({
                   onPress={() => showMarkerInfo("low")}
                 />
               )}
-              
+
               {clearGoal && clearMarkerPosition > 0 && (
                 <TouchableOpacity
                   style={[
-                    styles.goalMarker, 
-                    { 
+                    styles.goalMarker,
+                    {
                       left: `${clearMarkerPosition}%`,
                       height: 16,
                       width: 4,
@@ -428,12 +428,12 @@ export const HabitTile = ({
                   onPress={() => showMarkerInfo("clear")}
                 />
               )}
-              
+
               {stretchGoal && stretchMarkerPosition > 0 && (
                 <TouchableOpacity
                   style={[
-                    styles.goalMarker, 
-                    { 
+                    styles.goalMarker,
+                    {
                       left: `${stretchMarkerPosition}%`,
                       height: 16,
                       width: 4,
@@ -445,13 +445,13 @@ export const HabitTile = ({
                   onPress={() => showMarkerInfo("stretch")}
                 />
               )}
-              
+
               {/* Enhanced marker tooltips */}
               {showMarkerTooltip && (
                 <View style={{
                   position: "absolute",
                   top: -40,
-                  left: showMarkerTooltip === "low" ? `${lowMarkerPosition}%` : 
+                  left: showMarkerTooltip === "low" ? `${lowMarkerPosition}%` :
                       (showMarkerTooltip === "clear" ? `${clearMarkerPosition}%` : `${stretchMarkerPosition}%`),
                   transform: [{ translateX: -50 }],
                   backgroundColor: "rgba(0,0,0,0.8)",
@@ -466,12 +466,12 @@ export const HabitTile = ({
                   </Text>
                 </View>
               )}
-                          
+
               {/* Progress fill with stage color */}
-              <View 
+              <View
                 style={[
-                  styles.progressBarFill, 
-                  { 
+                  styles.progressBarFill,
+                  {
                     width: `${progressBarWidth * 100}%`,
                     backgroundColor: stageColor,
                     height: "100%",
@@ -481,10 +481,10 @@ export const HabitTile = ({
             </View>
           </View>
         )}
-        
+
         {/* Achievement indicator */}
         {hasCompletedGoal ? (
-            <View 
+            <View
                 style={{
                 marginTop: 3,
                 marginBottom: 10,
@@ -494,19 +494,19 @@ export const HabitTile = ({
                 backgroundColor: stageColor,
                 }}
             >
-                <Text style={{ 
-                    fontSize: 12, 
-                    fontWeight: 'bold', 
+                <Text style={{
+                    fontSize: 12,
+                    fontWeight: 'bold',
                     color: "#ffffff",
                     textShadowColor: '#000',
                     textShadowOffset: { width: 1, height: 1 },
-                    textShadowRadius: 2, 
+                    textShadowRadius: 2,
                     }}>
                 Goal Achieved!
                 </Text>
             </View>
             ) : (
-            <View 
+            <View
                 style={{
                 paddingVertical: 15,
                 }}

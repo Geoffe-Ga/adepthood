@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["migrations", ".venv", "venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "I", "UP", "B", "C4", "TID", "SIM", "A", "ARG", "N", "PIE",
+  "PTH", "SLF", "ANN", "Q", "PL", "RUF"
+]
+ignore = [
+  "ANN101",  # missing type for self
+  "ANN102",  # missing type for cls
+  "D100", "D101", "D102", "D103", "D104",  # pydocstyle (optional)
+]
+fixable = ["ALL"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_configs = true
+disallow_any_generics = true
+disallow_untyped_defs = true
+disallow_untyped_calls = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+strict_equality = true
+show_error_codes = true
+pretty = true
+explicit_package_bases = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers --strict-config --cov=backend --cov-report=xml --cov-report=term-missing"
+testpaths = ["tests"]
+xfail_strict = true
+
+[tool.coverage.run]
+branch = true
+parallel = true
+source = ["backend"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+  "pragma: no cover",
+  "if __name__ == .__main__.:",
+]
