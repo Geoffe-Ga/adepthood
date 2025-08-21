@@ -1,12 +1,5 @@
 import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  Dimensions,
-  TouchableOpacity,
-  Modal,
-  ScrollView,
-} from 'react-native';
+import { View, Text, Dimensions, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { Calendar, type MarkingProps } from 'react-native-calendars';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 
@@ -14,12 +7,7 @@ import styles from '../Habits.styles';
 import type { StatsModalProps } from '../Habits.types';
 import { STAGE_COLORS } from '../HabitsScreen';
 
-export const StatsModal = ({
-  visible,
-  habit,
-  stats,
-  onClose,
-}: StatsModalProps) => {
+export const StatsModal = ({ visible, habit, stats, onClose }: StatsModalProps) => {
   const [selectedTab, setSelectedTab] = useState('calendar');
   if (!habit || !stats) return null;
 
@@ -37,8 +25,7 @@ export const StatsModal = ({
     datasets: [
       {
         data: stats.values.slice(-7),
-        color: (opacity = 1) =>
-          STAGE_COLORS[habit.stage] || `rgba(134, 65, 244, ${opacity})`,
+        color: (opacity = 1) => STAGE_COLORS[habit.stage] || `rgba(134, 65, 244, ${opacity})`,
         strokeWidth: 2,
       },
     ],
@@ -50,8 +37,7 @@ export const StatsModal = ({
     datasets: [
       {
         data: stats.completionsByDay,
-        color: (opacity = 1) =>
-          STAGE_COLORS[habit.stage] || `rgba(134, 65, 244, ${opacity})`,
+        color: (opacity = 1) => STAGE_COLORS[habit.stage] || `rgba(134, 65, 244, ${opacity})`,
       },
     ],
   };
@@ -60,9 +46,7 @@ export const StatsModal = ({
     const marked: Record<string, MarkingProps> = {};
     if (!habit.completions) return marked;
     habit.completions.forEach((completion) => {
-      const dateStr = new Date(completion.timestamp)
-        .toISOString()
-        .split('T')[0];
+      const dateStr = new Date(completion.timestamp).toISOString().split('T')[0];
       marked[dateStr] = {
         selected: true,
         selectedColor: STAGE_COLORS[habit.stage] || '#50cebb',
@@ -72,23 +56,12 @@ export const StatsModal = ({
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
-        <View
-          style={[
-            styles.statsModalContent,
-            { borderTopColor: STAGE_COLORS[habit.stage] },
-          ]}
-        >
+        <View style={[styles.statsModalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>
-              {habit.name} Stats{' '}
-              <Text style={styles.iconLarge}>{habit.icon}</Text>
+              {habit.name} Stats <Text style={styles.iconLarge}>{habit.icon}</Text>
             </Text>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
               <Text style={styles.closeButtonText}>×</Text>
@@ -96,28 +69,19 @@ export const StatsModal = ({
           </View>
           <View style={styles.tabContainer}>
             <TouchableOpacity
-              style={[
-                styles.tabButton,
-                selectedTab === 'calendar' && styles.activeTab,
-              ]}
+              style={[styles.tabButton, selectedTab === 'calendar' && styles.activeTab]}
               onPress={() => setSelectedTab('calendar')}
             >
               <Text style={styles.tabButtonText}>Calendar</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[
-                styles.tabButton,
-                selectedTab === 'progress' && styles.activeTab,
-              ]}
+              style={[styles.tabButton, selectedTab === 'progress' && styles.activeTab]}
               onPress={() => setSelectedTab('progress')}
             >
               <Text style={styles.tabButtonText}>Progress</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[
-                styles.tabButton,
-                selectedTab === 'byDay' && styles.activeTab,
-              ]}
+              style={[styles.tabButton, selectedTab === 'byDay' && styles.activeTab]}
               onPress={() => setSelectedTab('byDay')}
             >
               <Text style={styles.tabButtonText}>By Day</Text>
@@ -137,9 +101,7 @@ export const StatsModal = ({
                 <View style={styles.statsInfoContainer}>
                   <View style={styles.statsRow}>
                     <Text style={styles.statLabel}>Longest Streak:</Text>
-                    <Text style={styles.statValue}>
-                      {stats.longestStreak} days
-                    </Text>
+                    <Text style={styles.statValue}>{stats.longestStreak} days</Text>
                   </View>
                   <View style={styles.statsRow}>
                     <Text style={styles.statLabel}>Current Streak:</Text>
@@ -147,15 +109,11 @@ export const StatsModal = ({
                   </View>
                   <View style={styles.statsRow}>
                     <Text style={styles.statLabel}>Completion Rate:</Text>
-                    <Text style={styles.statValue}>
-                      {Math.round(stats.completionRate * 100)}%
-                    </Text>
+                    <Text style={styles.statValue}>{Math.round(stats.completionRate * 100)}%</Text>
                   </View>
                   <View style={styles.statsRow}>
                     <Text style={styles.statLabel}>Total Completions:</Text>
-                    <Text style={styles.statValue}>
-                      {stats.totalCompletions}
-                    </Text>
+                    <Text style={styles.statValue}>{stats.totalCompletions}</Text>
                   </View>
                 </View>
               </View>
@@ -175,9 +133,7 @@ export const StatsModal = ({
             )}
             {selectedTab === 'byDay' && (
               <View style={styles.chartContainer}>
-                <Text style={styles.chartTitle}>
-                  Completions by Day of Week
-                </Text>
+                <Text style={styles.chartTitle}>Completions by Day of Week</Text>
                 <BarChart
                   data={barData}
                   width={Dimensions.get('window').width - 40}

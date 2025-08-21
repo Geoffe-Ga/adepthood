@@ -26,6 +26,11 @@ if [ -d app ]; then
   popd >/dev/null
 fi
 
+echo "📦 Ensuring Expo dependencies are aligned..."
+pushd app >/dev/null
+npx expo install
+popd >/dev/null
+
 echo "✅ Installing pre-commit hooks..."
 pre-commit install --install-hooks
 pre-commit install --hook-type commit-msg

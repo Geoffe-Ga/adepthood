@@ -9,3 +9,6 @@ pytest-cov
 ruff
 pydantic[mypy]
 sqlmodel
+types-requests
+types-ujson
+types-orjson

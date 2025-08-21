@@ -12,6 +12,8 @@ repos:
       - id: trailing-whitespace
       - id: check-added-large-files
         args: ["--maxkb=250"]
+        exclude: |
+          ^app/package-lock\.json$
       - id: pretty-format-json
         args: ["--autofix", "--indent", "2"]
 
@@ -38,6 +40,8 @@ repos:
       - id: mypy
         files: ^backend/
         args: ["--config-file=backend/pyproject.toml"]
+        additional_dependencies: [ "types-requests", "pydantic", "sqlmodel", "fastapi", "starlette"]
+
 
   - repo: https://github.com/PyCQA/isort
     rev: 6.0.1
@@ -73,9 +77,10 @@ repos:
     hooks:
       - id: app-eslint
         name: app eslint
-        entry: bash -lc 'cd app && npx eslint . --max-warnings=0'
         language: system
-        files: ^app/.*\.(js|jsx|ts|tsx)$
+        entry: bash -lc 'cd app && npm run lint'
+        pass_filenames: false
+        files: ^app/
         exclude: ^app/(?:node_modules|dist|build|coverage)/
 
       - id: app-prettier
@@ -100,6 +105,14 @@ repos:
         pass_filenames: false
         files: ^app/
         exclude: ^app/(?:node_modules|dist|build|coverage)/
+
+      - id: backend-tests-coverage
+        name: backend tests (coverage required)
+        language: system
+        entry: bash -lc 'cd backend && pytest'
+        pass_filenames: false
+        files: ^backend/
+        stages: [ pre-commit, pre-push ]
 
       - id: commitlint
         name: commitlint (conventional commits)

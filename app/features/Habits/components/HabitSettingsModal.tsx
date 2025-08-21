@@ -10,17 +10,11 @@ import {
   ScrollView,
   Switch,
 } from 'react-native';
-import DateTimePicker, {
-  type DateTimePickerEvent,
-} from '@react-native-community/datetimepicker';
+import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import EmojiSelector from 'react-native-emoji-selector';
 
 import type { Habit, HabitSettingsModalProps } from '../Habits.types';
-import {
-  calculateNetEnergy,
-  STAGE_COLORS,
-  DAYS_OF_WEEK,
-} from '../HabitsScreen';
+import { calculateNetEnergy, STAGE_COLORS, DAYS_OF_WEEK } from '../HabitsScreen';
 
 import styles from '../Habits.styles';
 
@@ -58,28 +52,21 @@ export const HabitSettingsModal = ({
 
   const handleDelete = () => {
     if (habit?.id) {
-      Alert.alert(
-        'Delete Habit',
-        `Are you sure you want to delete "${habit.name}"?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Delete',
-            style: 'destructive',
-            onPress: () => {
-              onDelete(habit.id!);
-              onClose();
-            },
+      Alert.alert('Delete Habit', `Are you sure you want to delete "${habit.name}"?`, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            onDelete(habit.id!);
+            onClose();
           },
-        ],
-      );
+        },
+      ]);
     }
   };
 
-  const handleTimeChange = (
-    _event: DateTimePickerEvent,
-    selectedDate?: Date,
-  ) => {
+  const handleTimeChange = (_event: DateTimePickerEvent, selectedDate?: Date) => {
     setShowTimePicker(Platform.OS === 'ios');
     if (selectedDate) {
       const hours = selectedDate.getHours().toString().padStart(2, '0');
@@ -132,24 +119,13 @@ export const HabitSettingsModal = ({
   };
 
   // Calculate net energy
-  const netEnergy = calculateNetEnergy(
-    editedHabit.energy_cost,
-    editedHabit.energy_return,
-  );
+  const netEnergy = calculateNetEnergy(editedHabit.energy_cost, editedHabit.energy_return);
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
         <View
-          style={[
-            styles.settingsModalContent,
-            { borderTopColor: STAGE_COLORS[editedHabit.stage] },
-          ]}
+          style={[styles.settingsModalContent, { borderTopColor: STAGE_COLORS[editedHabit.stage] }]}
         >
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Edit Habit</Text>
@@ -242,9 +218,7 @@ export const HabitSettingsModal = ({
               </View>
 
               <View style={styles.validationNote}>
-                <Text style={styles.validationText}>
-                  Values must be between -10 and 10
-                </Text>
+                <Text style={styles.validationText}>Values must be between -10 and 10</Text>
               </View>
             </View>
 
@@ -254,9 +228,7 @@ export const HabitSettingsModal = ({
                 value={new Date(editedHabit.start_date)}
                 mode="date"
                 display="default"
-                onChange={(event, date) =>
-                  date && handleChange('start_date', date)
-                }
+                onChange={(event, date) => date && handleChange('start_date', date)}
               />
             </View>
 
@@ -266,10 +238,7 @@ export const HabitSettingsModal = ({
                 <Switch
                   value={editedHabit.notificationFrequency !== 'off'}
                   onValueChange={(value) => {
-                    handleChange(
-                      'notificationFrequency',
-                      value ? 'daily' : 'off',
-                    );
+                    handleChange('notificationFrequency', value ? 'daily' : 'off');
                   }}
                 />
               </View>
@@ -306,11 +275,8 @@ export const HabitSettingsModal = ({
                         onPress={() => setShowDaysPicker(!showDaysPicker)}
                       >
                         <Text style={styles.daysButtonText}>
-                          {editedHabit.notificationDays &&
-                          editedHabit.notificationDays.length > 0
-                            ? editedHabit.notificationDays
-                                .map((d) => d.substring(0, 3))
-                                .join(', ')
+                          {editedHabit.notificationDays && editedHabit.notificationDays.length > 0
+                            ? editedHabit.notificationDays.map((d) => d.substring(0, 3)).join(', ')
                             : 'Select days'}
                         </Text>
                       </TouchableOpacity>
@@ -324,15 +290,12 @@ export const HabitSettingsModal = ({
                           key={day}
                           style={[
                             styles.dayOption,
-                            (editedHabit.notificationDays || []).includes(
-                              day,
-                            ) && styles.selectedDayOption,
+                            (editedHabit.notificationDays || []).includes(day) &&
+                              styles.selectedDayOption,
                           ]}
                           onPress={() => handleToggleDay(day)}
                         >
-                          <Text style={styles.dayOptionText}>
-                            {day.substring(0, 3)}
-                          </Text>
+                          <Text style={styles.dayOptionText}>{day.substring(0, 3)}</Text>
                         </TouchableOpacity>
                       ))}
                     </View>
@@ -345,9 +308,7 @@ export const HabitSettingsModal = ({
                         style={styles.timeButton}
                         onPress={() => setShowTimePicker(true)}
                       >
-                        <Text style={styles.timeButtonText}>
-                          {notificationTime}
-                        </Text>
+                        <Text style={styles.timeButtonText}>{notificationTime}</Text>
                       </TouchableOpacity>
 
                       <TouchableOpacity
@@ -365,33 +326,27 @@ export const HabitSettingsModal = ({
 
                   {(editedHabit.notificationTimes || []).length > 0 && (
                     <View style={styles.timesList}>
-                      {(editedHabit.notificationTimes || []).map(
-                        (time, index) => (
-                          <View key={index} style={styles.timeItem}>
-                            <Text style={styles.timeText}>{time}</Text>
-                            <TouchableOpacity
-                              style={styles.removeTimeButton}
-                              onPress={() => handleRemoveNotificationTime(time)}
-                            >
-                              <Text style={styles.removeTimeButtonText}>×</Text>
-                            </TouchableOpacity>
-                          </View>
-                        ),
-                      )}
+                      {(editedHabit.notificationTimes || []).map((time, index) => (
+                        <View key={index} style={styles.timeItem}>
+                          <Text style={styles.timeText}>{time}</Text>
+                          <TouchableOpacity
+                            style={styles.removeTimeButton}
+                            onPress={() => handleRemoveNotificationTime(time)}
+                          >
+                            <Text style={styles.removeTimeButtonText}>×</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ))}
                     </View>
                   )}
                 </>
               )}
 
               <View style={styles.settingRow}>
-                <Text style={styles.settingLabel}>
-                  Milestone Notifications:
-                </Text>
+                <Text style={styles.settingLabel}>Milestone Notifications:</Text>
                 <Switch
                   value={editedHabit.milestoneNotifications || false}
-                  onValueChange={(value) =>
-                    handleChange('milestoneNotifications', value)
-                  }
+                  onValueChange={(value) => handleChange('milestoneNotifications', value)}
                 />
               </View>
             </View>
@@ -400,10 +355,7 @@ export const HabitSettingsModal = ({
               <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
                 <Text style={styles.saveButtonText}>Save Changes</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.deleteButton}
-                onPress={handleDelete}
-              >
+              <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
                 <Text style={styles.deleteButtonText}>Delete Habit</Text>
               </TouchableOpacity>
             </View>

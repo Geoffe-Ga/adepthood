@@ -1,6 +1,21 @@
 [run]
 branch = True
 source = backend
+omit =
+    # Tests and helpers
+    */tests/*
+    */test_*.py
+    */conftest.py
+
+    # Generated / migration code
+    */migrations/*
+    */alembic/*
+
+    # Declarations & scaffolding that aren't business logic
+    backend/models/data_model.py
+    */__init__.py
+    */settings.py
+    */config.py
 
 [report]
 show_missing = True
