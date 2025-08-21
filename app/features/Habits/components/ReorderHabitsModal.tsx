@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Modal, Platform } from 'react-native';
-import DateTimePicker, {
-  type DateTimePickerEvent,
-} from '@react-native-community/datetimepicker';
+import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 
 import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
@@ -50,10 +48,7 @@ export const ReorderHabitsModal = ({
     setOrderedHabits(updatedHabits);
   };
 
-  const handleDateChange = (
-    event: DateTimePickerEvent,
-    selectedDate?: Date,
-  ) => {
+  const handleDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
     setShowDatePicker(Platform.OS === 'ios');
     if (selectedDate) {
       setStartDate(selectedDate);
@@ -83,12 +78,7 @@ export const ReorderHabitsModal = ({
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
         <View style={styles.reorderModalContent}>
           <View style={styles.modalHeader}>
@@ -104,9 +94,7 @@ export const ReorderHabitsModal = ({
               style={styles.datePickerButton}
               onPress={() => setShowDatePicker(true)}
             >
-              <Text style={styles.datePickerButtonText}>
-                {formatDate(startDate)}
-              </Text>
+              <Text style={styles.datePickerButtonText}>{formatDate(startDate)}</Text>
             </TouchableOpacity>
 
             {showDatePicker && (
@@ -120,16 +108,13 @@ export const ReorderHabitsModal = ({
           </View>
 
           <Text style={styles.reorderInstructions}>
-            Drag habits to reorder. Each habit starts 21 days after the previous
-            one.
+            Drag habits to reorder. Each habit starts 21 days after the previous one.
           </Text>
 
           <View style={styles.reorderList}>
             <DraggableFlatList
               data={orderedHabits}
-              keyExtractor={(item) =>
-                item.id ? item.id.toString() : Math.random().toString()
-              }
+              keyExtractor={(item) => (item.id ? item.id.toString() : Math.random().toString())}
               renderItem={({ item, drag, isActive }) => (
                 <TouchableOpacity
                   onLongPress={drag}

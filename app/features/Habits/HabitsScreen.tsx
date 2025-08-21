@@ -13,13 +13,7 @@ import StatsModal from './components/StatsModal';
 import { HABIT_DEFAULTS } from './HabitDefaults';
 import HabitTile from './HabitTile';
 import styles from './Habits.styles';
-import type {
-  Completion,
-  Goal,
-  Habit,
-  HabitStatsData,
-  OnboardingHabit,
-} from './Habits.types';
+import type { Completion, Goal, Habit, HabitStatsData, OnboardingHabit } from './Habits.types';
 
 //------------------
 // Constants & Helpers
@@ -113,12 +107,7 @@ export const TARGET_UNITS = [
   'days',
 ];
 
-export const FREQUENCY_UNITS = [
-  'per_day',
-  'per_week',
-  'per_month',
-  'per_session',
-];
+export const FREQUENCY_UNITS = ['per_day', 'per_week', 'per_month', 'per_session'];
 
 export const DAYS_OF_WEEK = [
   'Monday',
@@ -138,12 +127,9 @@ const DEFAULT_HABITS: Habit[] = HABIT_DEFAULTS.map((habit) => ({
 }));
 
 // Register for push notifications
-const registerForPushNotificationsAsync = async (): Promise<
-  string | undefined
-> => {
+const registerForPushNotificationsAsync = async (): Promise<string | undefined> => {
   try {
-    const { status: existingStatus } =
-      await Notifications.getPermissionsAsync();
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
     if (existingStatus !== 'granted') {
       const { status } = await Notifications.requestPermissionsAsync();
@@ -223,9 +209,7 @@ const updateHabitNotifications = async (habit: Habit): Promise<string[]> => {
   if (!habit.id) return [];
   if (habit.notificationIds && habit.notificationIds.length > 0) {
     await Promise.all(
-      habit.notificationIds.map((id) =>
-        Notifications.cancelScheduledNotificationAsync(id),
-      ),
+      habit.notificationIds.map((id) => Notifications.cancelScheduledNotificationAsync(id)),
     );
   }
 
@@ -240,10 +224,7 @@ const updateHabitNotifications = async (habit: Habit): Promise<string[]> => {
   const notificationIds: string[] = [];
 
   for (const notificationTime of habit.notificationTimes) {
-    const notificationId = await scheduleHabitNotification(
-      habit,
-      notificationTime,
-    );
+    const notificationId = await scheduleHabitNotification(habit, notificationTime);
     notificationIds.push(notificationId);
   }
 
@@ -251,10 +232,7 @@ const updateHabitNotifications = async (habit: Habit): Promise<string[]> => {
 };
 
 // Calculate net energy for a habit
-export const calculateNetEnergy = (
-  cost: number,
-  returnValue: number,
-): number => {
+export const calculateNetEnergy = (cost: number, returnValue: number): number => {
   return returnValue - cost;
 };
 
@@ -267,9 +245,7 @@ export const calculateProgressIncrements = (goal: Goal): number[] => {
   } else if (target <= 10) {
     return Array.from({ length: 5 }, (_, i) => ((i + 1) * target) / 5);
   } else if (target <= 100) {
-    return Array.from({ length: 5 }, (_, i) =>
-      Math.ceil(((i + 1) * target) / 5),
-    );
+    return Array.from({ length: 5 }, (_, i) => Math.ceil(((i + 1) * target) / 5));
   } else {
     // For very large targets, show 5 evenly spaced markers
     const increment = Math.ceil(target / 5);
@@ -781,9 +757,7 @@ const HabitsScreen = () => {
         style={styles.energyScaffoldingButton}
         onPress={() => setOnboardingVisible(true)}
       >
-        <Text style={styles.energyScaffoldingButtonText}>
-          Perform Energy Scaffolding
-        </Text>
+        <Text style={styles.energyScaffoldingButtonText}>Perform Energy Scaffolding</Text>
       </TouchableOpacity>
 
       {/* Modals */}

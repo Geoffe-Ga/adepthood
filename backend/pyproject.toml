@@ -22,8 +22,6 @@ select = [
   "PTH", "SLF", "ANN", "Q", "PL", "RUF"
 ]
 ignore = [
-  "ANN101",  # missing type for self
-  "ANN102",  # missing type for cls
   "D100", "D101", "D102", "D103", "D104",  # pydocstyle (optional)
 ]
 fixable = ["ALL"]
@@ -47,6 +45,8 @@ show_error_codes = true
 pretty = true
 explicit_package_bases = true
 plugins = ["pydantic.mypy"]
+mypy_path = ["backend"]
+namespace_packages = true
 
 [tool.pytest.ini_options]
 addopts = "-q --strict-markers --strict-config --cov=backend --cov-report=xml --cov-report=term-missing"

@@ -12,12 +12,7 @@ import {
 } from 'react-native';
 
 import styles from '../Habits.styles';
-import type {
-  Goal,
-  GoalModalProps,
-  EditableGoalProps,
-  Habit,
-} from '../Habits.types';
+import type { Goal, GoalModalProps, EditableGoalProps, Habit } from '../Habits.types';
 import {
   calculateProgressIncrements,
   STAGE_COLORS,
@@ -78,8 +73,7 @@ const EditableGoal = ({
 }: EditableGoalProps & { habit: Habit }) => {
   const [editedGoal, setEditedGoal] = useState<Goal>({ ...goal });
   const [showTargetUnitDropdown, setShowTargetUnitDropdown] = useState(false);
-  const [showFrequencyUnitDropdown, setShowFrequencyUnitDropdown] =
-    useState(false);
+  const [showFrequencyUnitDropdown, setShowFrequencyUnitDropdown] = useState(false);
   const [showDaysSelection, setShowDaysSelection] = useState(false);
 
   // Reset edited goal when goal or editing status changes
@@ -144,7 +138,7 @@ const EditableGoal = ({
           style={styles.goalTitleInput}
           value={editedGoal.title}
           onChangeText={(text) => handleChange('title', text)}
-          placeholder='Goal title'
+          placeholder="Goal title"
         />
       ) : (
         <Text style={styles.goalTitle}>{goal.title}</Text>
@@ -158,26 +152,19 @@ const EditableGoal = ({
               <TextInput
                 style={styles.editInput}
                 value={editedGoal.target.toString()}
-                onChangeText={(text) =>
-                  handleChange('target', parseFloat(text) || 0)
-                }
-                keyboardType='numeric'
+                onChangeText={(text) => handleChange('target', parseFloat(text) || 0)}
+                keyboardType="numeric"
               />
 
               <TouchableOpacity
                 style={styles.unitDropdownButton}
-                onPress={() =>
-                  setShowTargetUnitDropdown(!showTargetUnitDropdown)
-                }
+                onPress={() => setShowTargetUnitDropdown(!showTargetUnitDropdown)}
               >
                 <Text>{editedGoal.target_unit || 'Select unit'}</Text>
               </TouchableOpacity>
 
               {showTargetUnitDropdown && (
-                <ScrollView
-                  style={styles.dropdown}
-                  keyboardShouldPersistTaps='handled'
-                >
+                <ScrollView style={styles.dropdown} keyboardShouldPersistTaps="handled">
                   {TARGET_UNITS.map((unit) => (
                     <TouchableOpacity
                       key={unit}
@@ -199,29 +186,19 @@ const EditableGoal = ({
               <TextInput
                 style={styles.editInput}
                 value={editedGoal.frequency.toString()}
-                onChangeText={(text) =>
-                  handleChange('frequency', parseFloat(text) || 0)
-                }
-                keyboardType='numeric'
+                onChangeText={(text) => handleChange('frequency', parseFloat(text) || 0)}
+                keyboardType="numeric"
               />
 
               <TouchableOpacity
                 style={styles.unitDropdownButton}
-                onPress={() =>
-                  setShowFrequencyUnitDropdown(!showFrequencyUnitDropdown)
-                }
+                onPress={() => setShowFrequencyUnitDropdown(!showFrequencyUnitDropdown)}
               >
-                <Text>
-                  {editedGoal.frequency_unit.replace('_', ' ') ||
-                    'Select frequency'}
-                </Text>
+                <Text>{editedGoal.frequency_unit.replace('_', ' ') || 'Select frequency'}</Text>
               </TouchableOpacity>
 
               {showFrequencyUnitDropdown && (
-                <ScrollView
-                  style={styles.dropdown}
-                  keyboardShouldPersistTaps='handled'
-                >
+                <ScrollView style={styles.dropdown} keyboardShouldPersistTaps="handled">
                   {FREQUENCY_UNITS.map((unit) => (
                     <TouchableOpacity
                       key={unit}
@@ -246,11 +223,8 @@ const EditableGoal = ({
                   onPress={() => setShowDaysSelection(!showDaysSelection)}
                 >
                   <Text>
-                    {editedGoal.days_of_week &&
-                    editedGoal.days_of_week.length > 0
-                      ? editedGoal.days_of_week
-                          .map((d) => d.substring(0, 3))
-                          .join(', ')
+                    {editedGoal.days_of_week && editedGoal.days_of_week.length > 0
+                      ? editedGoal.days_of_week.map((d) => d.substring(0, 3)).join(', ')
                       : 'Select days'}
                   </Text>
                 </TouchableOpacity>
@@ -262,14 +236,11 @@ const EditableGoal = ({
                         key={day}
                         style={[
                           styles.dayOption,
-                          (editedGoal.days_of_week || []).includes(day) &&
-                            styles.selectedDayOption,
+                          (editedGoal.days_of_week || []).includes(day) && styles.selectedDayOption,
                         ]}
                         onPress={() => toggleDaySelection(day)}
                       >
-                        <Text style={styles.dayOptionText}>
-                          {day.substring(0, 3)}
-                        </Text>
+                        <Text style={styles.dayOptionText}>{day.substring(0, 3)}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -283,9 +254,7 @@ const EditableGoal = ({
                 style={[
                   styles.toggleButton,
                   {
-                    backgroundColor: editedGoal.is_additive
-                      ? '#4CAF50'
-                      : '#ccc',
+                    backgroundColor: editedGoal.is_additive ? '#4CAF50' : '#ccc',
                   },
                 ]}
                 onPress={() => handleChange('is_additive', true)}
@@ -296,9 +265,7 @@ const EditableGoal = ({
                 style={[
                   styles.toggleButton,
                   {
-                    backgroundColor: !editedGoal.is_additive
-                      ? '#F44336'
-                      : '#ccc',
+                    backgroundColor: !editedGoal.is_additive ? '#F44336' : '#ccc',
                   },
                 ]}
                 onPress={() => handleChange('is_additive', false)}
@@ -309,9 +276,8 @@ const EditableGoal = ({
           </>
         ) : (
           <Text style={styles.goalDetails}>
-            {goal.is_additive ? 'At least' : 'No more than'} {goal.target}{' '}
-            {goal.target_unit}, {goal.frequency}{' '}
-            {goal.frequency_unit.replace('_', ' ')}
+            {goal.is_additive ? 'At least' : 'No more than'} {goal.target} {goal.target_unit},{' '}
+            {goal.frequency} {goal.frequency_unit.replace('_', ' ')}
             {goal.days_of_week &&
               goal.days_of_week.length > 0 &&
               ` on ${goal.days_of_week.map((d) => d.substring(0, 3)).join(', ')}`}
@@ -346,9 +312,7 @@ const EditableGoal = ({
               {
                 width: `${progressPercentage}%`,
                 height: 12, // Thicker progress bar
-                backgroundColor: achieved
-                  ? GOLDEN_GLOW_COLOR
-                  : STAGE_COLORS[habit.stage],
+                backgroundColor: achieved ? GOLDEN_GLOW_COLOR : STAGE_COLORS[habit.stage],
               },
             ]}
           />
@@ -367,19 +331,11 @@ const EditableGoal = ({
 /**
  * Main GoalModal component to display and manage habit goals
  */
-export const GoalModal = ({
-  visible,
-  habit,
-  onClose,
-  onUpdateGoal,
-  onLogUnit,
-}: GoalModalProps) => {
+export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: GoalModalProps) => {
   const [activeGoal, setActiveGoal] = useState<Goal | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [logAmount, setLogAmount] = useState('1');
-  const [goalVisible, setGoalVisible] = useState<{ [key: number]: boolean }>(
-    {},
-  );
+  const [goalVisible, setGoalVisible] = useState<{ [key: number]: boolean }>({});
 
   // Initialize all goals to be visible initially
   useEffect(() => {
@@ -447,25 +403,14 @@ export const GoalModal = ({
   });
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType='slide'
-      onRequestClose={onClose}
-    >
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <TouchableWithoutFeedback onPress={onClose}>
         <View style={styles.modalOverlay}>
           <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
-            <View
-              style={[
-                styles.modalContent,
-                { borderTopColor: STAGE_COLORS[habit.stage] },
-              ]}
-            >
+            <View style={[styles.modalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>
-                  {habit.name}{' '}
-                  <Text style={styles.iconLarge}>{habit.icon}</Text>
+                  {habit.name} <Text style={styles.iconLarge}>{habit.icon}</Text>
                 </Text>
                 <Text style={styles.streakBadge}>
                   {habit.streak} {habit.streak === 1 ? 'day' : 'days'}
@@ -478,12 +423,10 @@ export const GoalModal = ({
               {/* Habit summary section */}
               <View style={styles.habitSummary}>
                 <Text style={styles.habitSummaryText}>
-                  Total Progress: {totalProgress}{' '}
-                  {sortedGoals[0]?.target_unit || 'units'}
+                  Total Progress: {totalProgress} {sortedGoals[0]?.target_unit || 'units'}
                 </Text>
                 <Text style={styles.habitSummaryText}>
-                  Energy: Cost {habit.energy_cost} · Return{' '}
-                  {habit.energy_return} · Net{' '}
+                  Energy: Cost {habit.energy_cost} · Return {habit.energy_return} · Net{' '}
                   {habit.energy_return - habit.energy_cost}
                 </Text>
               </View>
@@ -496,8 +439,7 @@ export const GoalModal = ({
                       onPress={() => toggleGoalVisibility(index)}
                     >
                       <Text style={styles.goalHeaderToggleText}>
-                        {goal.tier.toUpperCase()} GOAL{' '}
-                        {goalVisible[index] ? '▼' : '►'}
+                        {goal.tier.toUpperCase()} GOAL {goalVisible[index] ? '▼' : '►'}
                       </Text>
                     </TouchableOpacity>
 
@@ -521,12 +463,9 @@ export const GoalModal = ({
                     style={styles.logUnitInput}
                     value={logAmount}
                     onChangeText={setLogAmount}
-                    keyboardType='numeric'
+                    keyboardType="numeric"
                   />
-                  <TouchableOpacity
-                    style={styles.logUnitButton}
-                    onPress={handleLogUnit}
-                  >
+                  <TouchableOpacity style={styles.logUnitButton} onPress={handleLogUnit}>
                     <Text style={styles.logUnitButtonText}>Log Units</Text>
                   </TouchableOpacity>
                 </View>

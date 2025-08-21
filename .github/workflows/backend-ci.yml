@@ -29,12 +29,12 @@ jobs:
       - name: Install backend deps
         run: |
           uv pip install --system -r backend/requirements.txt
+          uv pip install --system -r backend/requirements-dev.txt
           uv pip install --system pre-commit
 
       - name: Run pre-commit (Python hooks only)
         run: |
-          pre-commit run --all-files --hook-stage pre-commit -v
-
+          pre-commit run --hook-stage pre-commit --files $(git ls-files 'backend')
       - name: Type-check (mypy)
         run: |
           uv pip install --system mypy
