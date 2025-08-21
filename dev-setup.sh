@@ -11,6 +11,10 @@ pip install --upgrade pip
 pip install -r backend/requirements.txt
 pip install -r backend/requirements-dev.txt
 
+echo "⬇️ Installing pre-commit..."
+# Some environments may skip dev dependencies; ensure pre-commit is present.
+pip install pre-commit
+
 echo "📦 Installing Node dependencies..."
 if [ -d app ]; then
   if [ -f app/package-lock.json ]; then
