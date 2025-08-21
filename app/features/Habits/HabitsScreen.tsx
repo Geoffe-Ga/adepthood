@@ -14,6 +14,7 @@ import { HABIT_DEFAULTS } from './HabitDefaults';
 import HabitTile from './HabitTile';
 import styles from './Habits.styles';
 import type { Completion, Goal, Habit, HabitStatsData, OnboardingHabit } from './Habits.types';
+import { STAGE_COLORS } from '../../constants/stageColors';
 
 //------------------
 // Constants & Helpers
@@ -32,7 +33,7 @@ export const STAGE_ORDER = [
   'Clear Light',
 ];
 
-export const getTierColor = (tier: string) => {
+export const getTierColor = (tier: 'low' | 'clear' | 'stretch') => {
   switch (tier) {
     case 'low':
       return '#bc845d';
@@ -43,19 +44,6 @@ export const getTierColor = (tier: string) => {
     default:
       return '#dad9d4';
   }
-};
-
-export const STAGE_COLORS: Record<string, string> = {
-  Beige: '#d8cbb8',
-  Purple: '#a093c6',
-  Red: '#cc5b5b',
-  Blue: '#6fa3d3',
-  Orange: '#f29f67',
-  Green: '#6fcf97',
-  Yellow: '#f2e96d',
-  Turquoise: '#50c9c3',
-  Ultraviolet: '#8e44ad',
-  'Clear Light': '#ffffff',
 };
 
 // Victory color - shown when Clear goal is met and moving to Stretch goal
