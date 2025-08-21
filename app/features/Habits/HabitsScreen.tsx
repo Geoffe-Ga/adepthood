@@ -379,7 +379,7 @@ export const calculateHabitProgress = (habit: Habit): number => {
 export const calculateProgressPercentage = (
   habit: Habit,
   currentGoal: Goal,
-  nextGoal: Goal | null
+  nextGoal: Goal | null,
 ): number => {
   const totalProgress = calculateHabitProgress(habit);
   const isAdditive = currentGoal.is_additive;
@@ -396,7 +396,10 @@ export const calculateProgressPercentage = (
         // If we're past the clear goal and working on stretch
         if (totalProgress >= currentTarget) {
           // Percentage between clear and stretch goals
-          return Math.min(100, ((totalProgress - currentTarget) / (nextTarget - currentTarget)) * 100 + 33);
+          return Math.min(
+            100,
+            ((totalProgress - currentTarget) / (nextTarget - currentTarget)) * 100 + 33,
+          );
         }
       }
 
@@ -404,7 +407,10 @@ export const calculateProgressPercentage = (
       if (currentGoal.tier === 'low' && nextGoal.tier === 'clear') {
         // If we're past the low goal and working on clear
         if (totalProgress >= currentTarget) {
-          return Math.min(100, ((totalProgress - currentTarget) / (nextTarget - currentTarget)) * 100);
+          return Math.min(
+            100,
+            ((totalProgress - currentTarget) / (nextTarget - currentTarget)) * 100,
+          );
         }
       }
     }
@@ -435,7 +441,7 @@ export const getProgressBarColor = (
   habit: Habit,
   currentGoal: Goal,
   nextGoal: Goal | null,
-  completedAllGoals: boolean
+  completedAllGoals: boolean,
 ): string => {
   const isAdditive = currentGoal.is_additive;
   const totalProgress = calculateHabitProgress(habit);
@@ -448,8 +454,12 @@ export const getProgressBarColor = (
   // For additive goals
   if (isAdditive) {
     // If we're working on the stretch goal (after completing clear)
-    if (nextGoal && currentGoal.tier === 'clear' && nextGoal.tier === 'stretch' &&
-        totalProgress >= getGoalTarget(currentGoal)) {
+    if (
+      nextGoal &&
+      currentGoal.tier === 'clear' &&
+      nextGoal.tier === 'stretch' &&
+      totalProgress >= getGoalTarget(currentGoal)
+    ) {
       return VICTORY_COLOR;
     }
 
@@ -487,9 +497,9 @@ const HabitsScreen = () => {
   // Recalculate progress for all habits
   useEffect(() => {
     // This effect ensures progress is properly calculated from completions
-    const updatedHabits = habits.map(habit => ({
+    const updatedHabits = habits.map((habit) => ({
       ...habit,
-      progress: calculateHabitProgress(habit)
+      progress: calculateHabitProgress(habit),
     }));
 
     setHabits(updatedHabits);
@@ -500,9 +510,12 @@ const HabitsScreen = () => {
     setHabits((prev) =>
       prev.map((h) =>
         h.id === habitId
-          ? { ...h, goals: h.goals.map((goal) => (goal.id === updatedGoal.id ? updatedGoal : goal)) }
-          : h
-      )
+          ? {
+              ...h,
+              goals: h.goals.map((goal) => (goal.id === updatedGoal.id ? updatedGoal : goal)),
+            }
+          : h,
+      ),
     );
   };
 
@@ -518,23 +531,25 @@ const HabitsScreen = () => {
           const newCompletion: Completion = {
             id: Math.random(), // Generate a unique ID in a real app
             timestamp: now,
-            completed_units: amount
+            completed_units: amount,
           };
 
           // Add the new completion to the array
-          const updatedCompletions = h.completions ? [...h.completions, newCompletion] : [newCompletion];
+          const updatedCompletions = h.completions
+            ? [...h.completions, newCompletion]
+            : [newCompletion];
 
           // Calculate new total progress from all completions
           const newProgress = updatedCompletions.reduce(
             (sum, completion) => sum + completion.completed_units,
-            0
+            0,
           );
 
           // Get current goal info
           const { currentGoal, nextGoal } = getGoalTier({
             ...h,
             progress: newProgress,
-            completions: updatedCompletions
+            completions: updatedCompletions,
           });
 
           // Check if we should show achievement alert
@@ -542,32 +557,40 @@ const HabitsScreen = () => {
             const currentTarget = getGoalTarget(currentGoal);
 
             // If just achieved the low goal
-            if (h.progress < currentTarget && newProgress >= currentTarget && currentGoal.tier === 'low') {
+            if (
+              h.progress < currentTarget &&
+              newProgress >= currentTarget &&
+              currentGoal.tier === 'low'
+            ) {
               Alert.alert(
-                "Goal Achieved!",
-                `You've reached your Low Goal for ${h.name}! Keep going for the Clear Goal.`
+                'Goal Achieved!',
+                `You've reached your Low Goal for ${h.name}! Keep going for the Clear Goal.`,
               );
             }
 
             // If just achieved the clear goal
-            if (nextGoal &&
-                currentGoal.tier === 'clear' &&
-                h.progress < getGoalTarget(currentGoal) &&
-                newProgress >= getGoalTarget(currentGoal)) {
+            if (
+              nextGoal &&
+              currentGoal.tier === 'clear' &&
+              h.progress < getGoalTarget(currentGoal) &&
+              newProgress >= getGoalTarget(currentGoal)
+            ) {
               Alert.alert(
-                "Clear Goal Achieved!",
-                `Congratulations! You've reached your Clear Goal for ${h.name}! Now aim for the Stretch Goal!`
+                'Clear Goal Achieved!',
+                `Congratulations! You've reached your Clear Goal for ${h.name}! Now aim for the Stretch Goal!`,
               );
             }
 
             // If just achieved the stretch goal
-            if (nextGoal &&
-                currentGoal.tier === 'stretch' &&
-                h.progress < getGoalTarget(currentGoal) &&
-                newProgress >= getGoalTarget(currentGoal)) {
+            if (
+              nextGoal &&
+              currentGoal.tier === 'stretch' &&
+              h.progress < getGoalTarget(currentGoal) &&
+              newProgress >= getGoalTarget(currentGoal)
+            ) {
               Alert.alert(
-                "Stretch Goal Achieved!",
-                `Amazing! You've reached your Stretch Goal for ${h.name}!`
+                'Stretch Goal Achieved!',
+                `Amazing! You've reached your Stretch Goal for ${h.name}!`,
               );
             }
           }
@@ -577,19 +600,17 @@ const HabitsScreen = () => {
             streak: newStreak,
             last_completion_date: now,
             progress: newProgress,
-            completions: updatedCompletions
+            completions: updatedCompletions,
           };
         }
         return h;
-      })
+      }),
     );
   };
 
   // Update habit details
   const handleUpdateHabit = (updatedHabit: Habit) => {
-    setHabits((prev) =>
-      prev.map((h) => (h.id === updatedHabit.id ? updatedHabit : h))
-    );
+    setHabits((prev) => prev.map((h) => (h.id === updatedHabit.id ? updatedHabit : h)));
   };
 
   // Delete a habit
@@ -612,10 +633,10 @@ const HabitsScreen = () => {
   const generateStatsForHabit = (habit: Habit): HabitStatsData => {
     // For demonstration purposes - in a real app, calculate based on habit.completions
     return {
-      dates: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+      dates: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
       values: [1, 2, 3, 2, 4, 1, 0],
       completionsByDay: [1, 1, 1, 1, 1, 0, 0],
-      dayLabels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+      dayLabels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
       longestStreak: habit.streak || 5,
       totalCompletions: habit.completions?.length || 12,
       completionRate: 0.75,
@@ -624,14 +645,14 @@ const HabitsScreen = () => {
 
   // Handle backfilling missed days
   const handleBackfillMissedDays = (habitId: number, days: Date[]) => {
-    setHabits(prev =>
-      prev.map(habit => {
+    setHabits((prev) =>
+      prev.map((habit) => {
         if (habit.id === habitId) {
           // Create completion entries for each missed day
-          const newCompletions = days.map(day => ({
+          const newCompletions = days.map((day) => ({
             id: Math.random(), // Generate a unique ID in a real app
             timestamp: day,
-            completed_units: 1 // Default to 1 unit per missed day
+            completed_units: 1, // Default to 1 unit per missed day
           }));
 
           const updatedCompletions = habit.completions
@@ -641,7 +662,7 @@ const HabitsScreen = () => {
           // Recalculate total progress
           const newProgress = updatedCompletions.reduce(
             (sum, completion) => sum + completion.completed_units,
-            0
+            0,
           );
 
           return {
@@ -649,18 +670,18 @@ const HabitsScreen = () => {
             streak: habit.streak + days.length,
             last_completion_date: new Date(),
             completions: updatedCompletions,
-            progress: newProgress
+            progress: newProgress,
           };
         }
         return habit;
-      })
+      }),
     );
   };
 
   // Reset habit to a new start date
   const handleSetNewStartDate = (habitId: number, newDate: Date) => {
-    setHabits(prev =>
-      prev.map(habit => {
+    setHabits((prev) =>
+      prev.map((habit) => {
         if (habit.id === habitId) {
           return {
             ...habit,
@@ -668,11 +689,11 @@ const HabitsScreen = () => {
             streak: 0,
             last_completion_date: undefined,
             completions: [], // Reset completions
-            progress: 0
+            progress: 0,
           };
         }
         return habit;
-      })
+      }),
     );
   };
 
@@ -684,43 +705,43 @@ const HabitsScreen = () => {
       id: index + 1,
       streak: 0,
       progress: 0,
-      revealed: habit.stage === "Beige", // Only reveal Beige stage habits initially
+      revealed: habit.stage === 'Beige', // Only reveal Beige stage habits initially
       completions: [], // Initialize empty completions array
       goals: [
         {
           id: index * 3 + 1,
           title: `Low goal for ${habit.name}`,
-          tier: "low" as "low",
+          tier: 'low' as 'low',
           target: 1,
-          target_unit: "units",
+          target_unit: 'units',
           frequency: 1,
-          frequency_unit: "per_day",
+          frequency_unit: 'per_day',
           is_additive: true,
-          progress: 0
+          progress: 0,
         },
         {
           id: index * 3 + 2,
           title: `Clear goal for ${habit.name}`,
-          tier: "clear" as "clear",
+          tier: 'clear' as 'clear',
           target: 2,
-          target_unit: "units",
+          target_unit: 'units',
           frequency: 1,
-          frequency_unit: "per_day",
+          frequency_unit: 'per_day',
           is_additive: true,
-          progress: 0
+          progress: 0,
         },
         {
           id: index * 3 + 3,
           title: `Stretch goal for ${habit.name}`,
-          tier: "stretch" as "stretch",
+          tier: 'stretch' as 'stretch',
           target: 3,
-          target_unit: "units",
+          target_unit: 'units',
           frequency: 1,
-          frequency_unit: "per_day",
+          frequency_unit: 'per_day',
           is_additive: true,
-          progress: 0
-        }
-      ]
+          progress: 0,
+        },
+      ],
     }));
 
     setHabits(fullHabits);
@@ -749,7 +770,7 @@ const HabitsScreen = () => {
   return (
     <View style={styles.container}>
       <FlatList
-        data={habits.filter(h => h.revealed)} // Only show revealed habits
+        data={habits.filter((h) => h.revealed)} // Only show revealed habits
         keyExtractor={(item) => (item.id ? item.id.toString() : Math.random().toString())}
         renderItem={renderHabitTile}
         numColumns={2}
