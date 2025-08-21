@@ -3,6 +3,7 @@ fastapi
 uvicorn
 pydantic
 sqlalchemy
+sqlmodel
 asyncpg
 pytest
 pytest-asyncio
