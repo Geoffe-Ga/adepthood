@@ -11,6 +11,15 @@ pip install --upgrade pip
 pip install -r backend/requirements.txt
 pip install -r backend/requirements-dev.txt
 
+echo "📦 Installing Node dependencies..."
+if [ -d app ]; then
+  if [ -f app/package-lock.json ]; then
+    npm ci --prefix app
+  else
+    npm install --prefix app
+  fi
+fi
+
 echo "✅ Installing pre-commit hooks..."
 pre-commit install --install-hooks
 pre-commit install --hook-type commit-msg

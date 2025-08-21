@@ -68,43 +68,43 @@ repos:
       - id: detect-secrets
         args: ["--baseline", ".secrets.baseline"]
 
-  # Frontend checks using local hooks (requires Node in the environment)
+  # App (React Native) checks using local hooks (requires Node in the environment)
   - repo: local
     hooks:
-      - id: frontend-eslint
-        name: frontend eslint
-        entry: bash -lc 'cd frontend && npx --yes eslint . --max-warnings=0'
+      - id: app-eslint
+        name: app eslint
+        entry: bash -lc 'cd app && npx eslint . --max-warnings=0'
         language: system
-        files: ^frontend/.*\.(js|jsx|ts|tsx)$
-        exclude: ^frontend/(?:node_modules|dist|build|coverage)/
+        files: ^app/.*\.(js|jsx|ts|tsx)$
+        exclude: ^app/(?:node_modules|dist|build|coverage)/
 
-      - id: frontend-prettier
-        name: frontend prettier (write)
-        entry: bash -lc 'cd frontend && npx --yes prettier --write .'
+      - id: app-prettier
+        name: app prettier (write)
+        entry: bash -lc 'cd app && npx prettier --write .'
         language: system
-        files: ^frontend/.*\.(js|jsx|ts|tsx|json|css|md|ya?ml)$
-        exclude: ^frontend/(?:node_modules|dist|build|coverage)/
+        files: ^app/.*\.(js|jsx|ts|tsx|json|css|md|ya?ml)$
+        exclude: ^app/(?:node_modules|dist|build|coverage)/
 
-      - id: frontend-typecheck
-        name: frontend typecheck
-        entry: bash -lc 'cd frontend && npx --yes tsc -p tsconfig.json --noEmit'
+      - id: app-typecheck
+        name: app typecheck
+        entry: bash -lc 'cd app && npx tsc -p tsconfig.json --noEmit'
         language: system
         pass_filenames: false
-        files: ^frontend/.*\.(ts|tsx)$
-        exclude: ^frontend/(?:node_modules|dist|build|coverage)/
+        files: ^app/.*\.(ts|tsx)$
+        exclude: ^app/(?:node_modules|dist|build|coverage)/
 
-      - id: frontend-tests
-        name: frontend tests
-        entry: bash -lc 'cd frontend && npx --yes jest --passWithNoTests'
+      - id: app-tests
+        name: app tests
+        entry: bash -lc 'cd app && npx jest --passWithNoTests'
         language: system
         pass_filenames: false
-        files: ^frontend/
-        exclude: ^frontend/(?:node_modules|dist|build|coverage)/
+        files: ^app/
+        exclude: ^app/(?:node_modules|dist|build|coverage)/
 
       - id: commitlint
         name: commitlint (conventional commits)
         language: system
-        entry: bash -lc 'npx --yes @commitlint/cli --extends @commitlint/config-conventional --edit "$1"'
+        entry: bash -lc 'npx --prefix app commitlint --extends @commitlint/config-conventional --edit "$1"'
         stages: [ commit-msg ]
         # IMPORTANT: commit-msg hooks receive the commit message path as $1
         # so do NOT set pass_filenames: false here.
