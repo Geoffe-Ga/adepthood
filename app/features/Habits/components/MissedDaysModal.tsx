@@ -3,7 +3,10 @@ import { Modal, Text, TouchableOpacity, View } from 'react-native';
 import { Calendar, type DateData } from 'react-native-calendars';
 
 import { STAGE_COLORS } from '../../../constants/stageColors';
+
 import styles from '../Habits.styles';
+import type { MissedDaysModalProps } from '../Habits.types';
+
 import type { MissedDaysModalProps } from '../Habits.types';
 
 export const MissedDaysModal = ({
@@ -38,6 +41,8 @@ export const MissedDaysModal = ({
     }
   };
 
+  const selectedDateString = selectedDate.toISOString().split('T')[0]!;
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
@@ -55,7 +60,7 @@ export const MissedDaysModal = ({
               onDayPress={handleDateSelect}
               markedDates={{
                 // Default to an empty key if parsing fails to satisfy typing
-                [selectedDate.toISOString().split('T')[0] ?? '']: {
+                [selectedDateString ?? '']: {
                   selected: true,
                   selectedColor: STAGE_COLORS[habit.stage],
                 },
