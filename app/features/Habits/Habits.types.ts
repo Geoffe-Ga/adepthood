@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 //------------------
 // Type Definitions
 //------------------
@@ -64,8 +65,8 @@ export interface GoalModalProps {
   visible: boolean;
   habit: Habit | null;
   onClose: () => void;
-  onUpdateGoal: (habitId: number, updatedGoal: Goal) => void;
-  onLogUnit: (habitId: number, amount: number) => void;
+  onUpdateGoal: (_habitId: number, _updatedGoal: Goal) => void;
+  onLogUnit: (_habitId: number, _amount: number) => void;
 }
 
 export interface StatsModalProps {
@@ -77,7 +78,7 @@ export interface StatsModalProps {
 
 export interface EditableGoalProps {
   goal: Goal;
-  onUpdate: (updatedGoal: Goal) => void;
+  onUpdate: (_updatedGoal: Goal) => void;
   isEditing: boolean;
 }
 
@@ -93,9 +94,9 @@ export interface HabitSettingsModalProps {
   visible: boolean;
   habit: Habit | null;
   onClose: () => void;
-  onUpdate: (updatedHabit: Habit) => void;
-  onDelete: (habitId: number) => void;
-  onOpenReorderModal: (habits: Habit[]) => void;
+  onUpdate: (_updatedHabit: Habit) => void;
+  onDelete: (_habitId: number) => void;
+  onOpenReorderModal: (_habits: Habit[]) => void;
   allHabits: Habit[];
 }
 
@@ -104,19 +105,19 @@ export interface MissedDaysModalProps {
   habit: Habit | null;
   missedDays: Date[];
   onClose: () => void;
-  onBackfill: (habitId: number, days: Date[]) => void;
-  onNewStartDate: (habitId: number, newStartDate: Date) => void;
+  onBackfill: (_habitId: number, _days: Date[]) => void;
+  onNewStartDate: (_habitId: number, _newStartDate: Date) => void;
 }
 
 export interface OnboardingModalProps {
   visible: boolean;
   onClose: () => void;
-  onSaveHabits: (habits: OnboardingHabit[]) => void;
+  onSaveHabits: (_habits: OnboardingHabit[]) => void;
 }
 
 export interface ReorderHabitsModalProps {
   visible: boolean;
   habits: Habit[];
   onClose: () => void;
-  onSaveOrder: (habits: Habit[]) => void;
+  onSaveOrder: (_habits: Habit[]) => void;
 }
