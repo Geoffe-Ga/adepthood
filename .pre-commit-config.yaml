@@ -38,8 +38,7 @@ repos:
       - id: mypy
         files: ^backend/
         args: ["--config-file=backend/pyproject.toml"]
-        additional_dependencies:
-          ["types-requests", "pydantic", "sqlmodel", "fastapi", "starlette"]
+        additional_dependencies: ["types-requests", "pydantic", "sqlmodel", "fastapi", "starlette"]
 
   - repo: https://github.com/PyCQA/isort
     rev: 6.0.1
