@@ -15,7 +15,6 @@ import styles from '../Habits.styles';
 import type { Goal, GoalModalProps, EditableGoalProps, Habit } from '../Habits.types';
 import {
   calculateProgressIncrements,
-  STAGE_COLORS,
   TARGET_UNITS,
   FREQUENCY_UNITS,
   DAYS_OF_WEEK,
@@ -23,6 +22,7 @@ import {
   getGoalTarget,
   getTierColor,
 } from '../HabitsScreen';
+import { STAGE_COLORS } from '../../../constants/stageColors';
 
 // Constant for golden glow color to match with HabitTile
 const GOLDEN_GLOW_COLOR = 'rgba(255, 215, 0, 0.6)';
