@@ -73,6 +73,14 @@ repos:
   # App (React Native) checks using local hooks (requires Node in the environment)
   - repo: local
     hooks:
+      - id: backend-tests-coverage
+        name: backend tests (coverage required)
+        language: system
+        entry: bash -lc 'cd backend && pytest'
+        pass_filenames: false
+        files: ^backend/
+        stages: [ pre-commit, pre-push ]
+
       - id: app-eslint
         name: app eslint
         language: system
@@ -103,14 +111,6 @@ repos:
         pass_filenames: false
         files: ^app/
         exclude: ^app/(?:node_modules|dist|build|coverage)/
-
-      - id: backend-tests-coverage
-        name: backend tests (coverage required)
-        language: system
-        entry: bash -lc 'cd backend && pytest'
-        pass_filenames: false
-        files: ^backend/
-        stages: [ pre-commit, pre-push ]
 
       - id: commitlint
         name: commitlint (conventional commits)

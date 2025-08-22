@@ -4,7 +4,9 @@ import { Calendar } from 'react-native-calendars';
 import type { DateData } from 'react-native-calendars';
 
 import { STAGE_COLORS } from '../../../constants/stageColors';
+
 import styles from '../Habits.styles';
+
 import type { MissedDaysModalProps } from '../Habits.types';
 
 export const MissedDaysModal = ({
