@@ -14,7 +14,8 @@ import DateTimePicker, { type DateTimePickerEvent } from '@react-native-communit
 import EmojiSelector from 'react-native-emoji-selector';
 
 import type { Habit, HabitSettingsModalProps } from '../Habits.types';
-import { calculateNetEnergy, STAGE_COLORS, DAYS_OF_WEEK } from '../HabitsScreen';
+import { calculateNetEnergy, DAYS_OF_WEEK } from '../HabitsScreen';
+import { STAGE_COLORS } from '../../../constants/stageColors';
 
 import styles from '../Habits.styles';
 
