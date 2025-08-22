@@ -335,12 +335,12 @@ export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: 
   const [activeGoal, setActiveGoal] = useState<Goal | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [logAmount, setLogAmount] = useState('1');
-  const [goalVisible, setGoalVisible] = useState<{ [key: number]: boolean }>({});
+  const [goalVisible, setGoalVisible] = useState<Record<number, boolean>>({});
 
   // Initialize all goals to be visible initially
   useEffect(() => {
     if (habit && visible) {
-      const visibilityMap = {};
+      const visibilityMap: Record<number, boolean> = {};
       habit.goals.forEach((goal, index) => {
         visibilityMap[index] = true;
       });
