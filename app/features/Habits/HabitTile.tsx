@@ -4,8 +4,9 @@ import { MoreHorizontal, Edit, CheckCircle, BarChart } from 'lucide-react';
 
 // Reuse the existing style imports
 import { Goal, HabitTileProps } from './Habits.types';
-import { STAGE_COLORS, getTierColor } from './HabitsScreen';
+import { getTierColor } from './HabitsScreen';
 import styles from './Habits.styles';
+import { STAGE_COLORS } from '../../constants/stageColors';
 
 // Constants
 const TOOLTIP_DISPLAY_TIME = 2000; // 2 seconds to display tooltip
