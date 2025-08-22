@@ -1,4 +1,8 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["**/*.ts", "**/*.tsx", "eslint.config.cjs"]
+  "compilerOptions": {
+    "allowJs": true
+  },
+  "exclude": ["node_modules", "babel.config.js", "metro.config.js"],
+  "include": ["**/*.ts", "**/*.tsx", "eslint.config.cjs", "jest.config.js"]
 }

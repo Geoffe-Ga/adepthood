@@ -140,7 +140,8 @@ const scheduleHabitNotification = async (
   habit: Habit,
   notificationTime: string,
 ): Promise<string[]> => {
-  const [hours, minutes] = notificationTime.split(':').map(Number);
+  // Ensure we always pass numeric values to the notification trigger
+  const [hours = 0, minutes = 0] = notificationTime.split(':').map(Number);
 
   const schedule = async (trigger: Notifications.NotificationTriggerInput): Promise<string> => {
     return Notifications.scheduleNotificationAsync({
@@ -155,9 +156,9 @@ const scheduleHabitNotification = async (
 
   if (habit.notificationFrequency === 'daily') {
     const dailyTrigger: Notifications.DailyTriggerInput = {
+      type: Notifications.SchedulableTriggerInputTypes.DAILY,
       hour: hours,
       minute: minutes,
-      repeats: true,
     };
 
     return [await schedule(dailyTrigger)];
@@ -165,10 +166,10 @@ const scheduleHabitNotification = async (
 
   if (habit.notificationFrequency === 'weekly') {
     const weeklyTrigger: Notifications.WeeklyTriggerInput = {
+      type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
       weekday: 1,
       hour: hours,
       minute: minutes,
-      repeats: true,
     };
 
     return [await schedule(weeklyTrigger)];
@@ -185,10 +186,10 @@ const scheduleHabitNotification = async (
     for (const day of habit.notificationDays) {
       const weekday = DAYS_OF_WEEK.indexOf(day) + 1; // 1-7, where 1 is Monday
       const customTrigger: Notifications.WeeklyTriggerInput = {
+        type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
         weekday,
         hour: hours,
         minute: minutes,
-        repeats: true,
       };
 
       const id = await schedule(customTrigger);
@@ -199,9 +200,9 @@ const scheduleHabitNotification = async (
   }
 
   const fallbackTrigger: Notifications.DailyTriggerInput = {
+    type: Notifications.SchedulableTriggerInputTypes.DAILY,
     hour: hours,
     minute: minutes,
-    repeats: true,
   };
 
   return [await schedule(fallbackTrigger)];
@@ -266,55 +267,56 @@ export const getGoalTier = (
   const sortedGoals = [...habit.goals].sort((a, b) => {
     const tierOrder = { low: 1, clear: 2, stretch: 3 };
     return tierOrder[a.tier] - tierOrder[b.tier];
-  });
+  }) as [Goal, Goal, Goal];
 
+  const [lowGoal, clearGoal, stretchGoal] = sortedGoals;
   const totalProgress = calculateHabitProgress(habit);
-  let currentGoal = sortedGoals[0];
+  let currentGoal = lowGoal;
   let nextGoal: Goal | null = null;
   let completedAllGoals = false;
 
   // For additive goals - find which goal tier we're currently working on
-  if (currentGoal.is_additive) {
-    if (totalProgress >= getGoalTarget(sortedGoals[2])) {
+  if (lowGoal.is_additive) {
+    if (totalProgress >= getGoalTarget(stretchGoal)) {
       // We've completed all goals including stretch
-      currentGoal = sortedGoals[2];
+      currentGoal = stretchGoal;
       completedAllGoals = true;
-    } else if (totalProgress >= getGoalTarget(sortedGoals[1])) {
+    } else if (totalProgress >= getGoalTarget(clearGoal)) {
       // We're working on the stretch goal
-      currentGoal = sortedGoals[1];
-      nextGoal = sortedGoals[2];
-    } else if (totalProgress >= getGoalTarget(sortedGoals[0])) {
+      currentGoal = clearGoal;
+      nextGoal = stretchGoal;
+    } else if (totalProgress >= getGoalTarget(lowGoal)) {
       // We've completed the low goal, working on clear goal
-      currentGoal = sortedGoals[0];
-      nextGoal = sortedGoals[1];
+      currentGoal = lowGoal;
+      nextGoal = clearGoal;
     } else {
       // We're still working on the low goal
-      currentGoal = sortedGoals[0];
-      // Don't set nextGoal to sortedGoals[0], keep it null for the lowest tier
+      currentGoal = lowGoal;
+      // Don't set nextGoal to lowGoal, keep it null for the lowest tier
     }
   } else {
     // For subtractive goals - find which goal tier we're currently at
     // For subtractive, lower target is better (e.g., 0 drinks is better than 3)
-    const lowTarget = getGoalTarget(sortedGoals[0]);
-    const clearTarget = getGoalTarget(sortedGoals[1]);
-    const stretchTarget = getGoalTarget(sortedGoals[2]);
+    const lowTarget = getGoalTarget(lowGoal);
+    const clearTarget = getGoalTarget(clearGoal);
+    const stretchTarget = getGoalTarget(stretchGoal);
 
     if (totalProgress <= stretchTarget) {
       // We're at or better than the stretch goal
-      currentGoal = sortedGoals[2];
+      currentGoal = stretchGoal;
       completedAllGoals = true;
     } else if (totalProgress <= clearTarget) {
       // We're at or better than the clear goal
-      currentGoal = sortedGoals[1];
-      nextGoal = sortedGoals[2];
+      currentGoal = clearGoal;
+      nextGoal = stretchGoal;
     } else if (totalProgress <= lowTarget) {
       // We're at or better than the low goal
-      currentGoal = sortedGoals[0];
-      nextGoal = sortedGoals[1];
+      currentGoal = lowGoal;
+      nextGoal = clearGoal;
     } else {
       // We haven't reached any goal yet
-      currentGoal = sortedGoals[0];
-      // Don't set nextGoal to sortedGoals[0], keep it null if no goal is reached
+      currentGoal = lowGoal;
+      // Don't set nextGoal to lowGoal, keep it null if no goal is reached
     }
   }
 
@@ -443,7 +445,7 @@ export const getProgressBarColor = (
     }
 
     // Otherwise use stage color
-    return STAGE_COLORS[habit.stage];
+    return STAGE_COLORS[habit.stage] ?? '#000';
   }
   // For subtractive goals
   else {
@@ -455,7 +457,7 @@ export const getProgressBarColor = (
     }
 
     // Otherwise use stage color
-    return STAGE_COLORS[habit.stage];
+    return STAGE_COLORS[habit.stage] ?? '#000';
   }
 };
 

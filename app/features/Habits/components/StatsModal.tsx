@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, Dimensions, TouchableOpacity, Modal, ScrollView } from 'react-native';
-import { Calendar, type MarkingProps } from 'react-native-calendars';
+import { Calendar } from 'react-native-calendars';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 
 import { STAGE_COLORS } from '../../../constants/stageColors';
@@ -43,14 +43,16 @@ export const StatsModal = ({ visible, habit, stats, onClose }: StatsModalProps) 
   };
 
   const getMarkedDates = () => {
-    const marked: Record<string, MarkingProps> = {};
+    const marked: Record<string, { selected: boolean; selectedColor: string }> = {};
     if (!habit.completions) return marked;
     habit.completions.forEach((completion) => {
-      const dateStr = new Date(completion.timestamp).toISOString().split('T')[0];
-      marked[dateStr] = {
-        selected: true,
-        selectedColor: STAGE_COLORS[habit.stage] || '#50cebb',
-      };
+      const dateStr = new Date(completion.timestamp).toISOString().split('T')[0] ?? '';
+      if (dateStr) {
+        marked[dateStr] = {
+          selected: true,
+          selectedColor: STAGE_COLORS[habit.stage] || '#50cebb',
+        };
+      }
     });
     return marked;
   };

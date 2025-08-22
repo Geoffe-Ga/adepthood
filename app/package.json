@@ -60,7 +60,8 @@
     "ios": "expo start --ios",
     "lint": "eslint . --max-warnings=0",
     "start": "expo start",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "test": "jest --passWithNoTests"
   },
   "version": "1.0.0"
 }
