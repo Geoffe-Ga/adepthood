@@ -4,6 +4,8 @@ import * as Notifications from 'expo-notifications';
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, Text, TouchableOpacity, View } from 'react-native';
 
+import { STAGE_COLORS } from '../../constants/stageColors';
+
 import GoalModal from './components/GoalModal';
 import HabitSettingsModal from './components/HabitSettingsModal';
 import MissedDaysModal from './components/MissedDaysModal';
@@ -11,10 +13,9 @@ import OnboardingModal from './components/OnboardingModal';
 import ReorderHabitsModal from './components/ReorderHabitsModal';
 import StatsModal from './components/StatsModal';
 import { HABIT_DEFAULTS } from './HabitDefaults';
-import HabitTile from './HabitTile';
 import styles from './Habits.styles';
 import type { Completion, Goal, Habit, HabitStatsData, OnboardingHabit } from './Habits.types';
-import { STAGE_COLORS } from '../../constants/stageColors';
+import HabitTile from './HabitTile';
 
 //------------------
 // Constants & Helpers
@@ -475,12 +476,17 @@ const HabitsScreen = () => {
   // Recalculate progress for all habits
   useEffect(() => {
     // This effect ensures progress is properly calculated from completions
-    const updatedHabits = habits.map((habit) => ({
-      ...habit,
-      progress: calculateHabitProgress(habit),
-    }));
+    setHabits((prevHabits) =>
+      prevHabits.map((habit) => ({
+        ...habit,
+        progress: calculateHabitProgress(habit),
+      })),
+    );
+  }, []);
 
-    setHabits(updatedHabits);
+  // Register for push notifications on mount
+  useEffect(() => {
+    void registerForPushNotificationsAsync();
   }, []);
 
   // Handle goal updates
@@ -589,6 +595,7 @@ const HabitsScreen = () => {
   // Update habit details
   const handleUpdateHabit = (updatedHabit: Habit) => {
     setHabits((prev) => prev.map((h) => (h.id === updatedHabit.id ? updatedHabit : h)));
+    void updateHabitNotifications(updatedHabit);
   };
 
   // Delete a habit
