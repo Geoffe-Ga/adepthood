@@ -21,17 +21,18 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
   // Step 1: Add habits
   const handleAddHabit = () => {
     if (newHabitName.trim() === '') return;
-    setHabits((prev) => [
-      ...prev,
-      {
-        name: newHabitName.trim(),
-        icon: DEFAULT_ICONS[Math.floor(Math.random() * DEFAULT_ICONS.length)],
-        energy_cost: 5,
-        energy_return: 5,
-        stage: 'Beige', // Default stage
-        start_date: new Date(),
-      },
-    ]);
+    const randomIcon = DEFAULT_ICONS[Math.floor(Math.random() * DEFAULT_ICONS.length)] ?? '⭐';
+
+    const newHabit: OnboardingHabit = {
+      name: newHabitName.trim(),
+      icon: randomIcon,
+      energy_cost: 5,
+      energy_return: 5,
+      stage: 'Beige', // Default stage
+      start_date: new Date(),
+    };
+
+    setHabits((prev) => [...prev, newHabit]);
     setNewHabitName('');
   };
 
