@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,14 +11,12 @@ import {
   ScrollView,
   Switch,
 } from 'react-native';
-import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import EmojiSelector from 'react-native-emoji-selector';
 
+import { STAGE_COLORS } from '../../../constants/stageColors';
+import styles from '../Habits.styles';
 import type { Habit, HabitSettingsModalProps } from '../Habits.types';
 import { calculateNetEnergy, DAYS_OF_WEEK } from '../HabitsScreen';
-import { STAGE_COLORS } from '../../../constants/stageColors';
-
-import styles from '../Habits.styles';
 
 export const HabitSettingsModal = ({
   visible,
