@@ -1,0 +1,207 @@
+import { STAGE_COLORS } from '../../constants/stageColors';
+
+import type { Goal, Habit } from './Habits.types';
+
+export const STAGE_ORDER = [
+  'Beige',
+  'Purple',
+  'Red',
+  'Blue',
+  'Orange',
+  'Green',
+  'Yellow',
+  'Turquoise',
+  'Ultraviolet',
+  'Clear Light',
+];
+
+export const getTierColor = (tier: 'low' | 'clear' | 'stretch') => {
+  switch (tier) {
+    case 'low':
+      return '#bc845d';
+    case 'clear':
+      return '#807f66';
+    case 'stretch':
+      return '#b0ae91';
+    default:
+      return '#dad9d4';
+  }
+};
+
+export const VICTORY_COLOR = '#27ae60';
+
+export const calculateProgressIncrements = (goal: Goal): number[] => {
+  const { target } = goal;
+
+  if (target <= 5) {
+    return Array.from({ length: target }, (_, i) => i + 1);
+  } else if (target <= 10) {
+    return Array.from({ length: 5 }, (_, i) => ((i + 1) * target) / 5);
+  } else if (target <= 100) {
+    return Array.from({ length: 5 }, (_, i) => Math.ceil(((i + 1) * target) / 5));
+  } else {
+    const increment = Math.ceil(target / 5);
+    return Array.from({ length: 4 }, (_, i) => (i + 1) * increment);
+  }
+};
+
+export const getGoalTarget = (goal: Goal): number => {
+  if (!goal) return 0;
+  if (goal.frequency_unit === 'per_day') {
+    return goal.target;
+  }
+  if (goal.frequency_unit === 'per_week') {
+    return (goal.target / 7) * goal.frequency;
+  }
+  if (goal.frequency_unit === 'per_month') {
+    return (goal.target / 30) * goal.frequency;
+  }
+  return goal.target;
+};
+
+export const calculateHabitProgress = (habit: Habit): number => {
+  if (!habit.completions || habit.completions.length === 0) {
+    return 0;
+  }
+  return habit.completions.reduce((sum, c) => sum + c.completed_units, 0);
+};
+
+export const getGoalTier = (
+  habit: Habit,
+): {
+  currentGoal: Goal;
+  nextGoal: Goal | null;
+  completedAllGoals: boolean;
+} => {
+  const sortedGoals = [...habit.goals].sort((a, b) => {
+    const tierOrder = { low: 1, clear: 2, stretch: 3 } as const;
+    return tierOrder[a.tier] - tierOrder[b.tier];
+  }) as [Goal, Goal, Goal];
+
+  const [lowGoal, clearGoal, stretchGoal] = sortedGoals;
+  const totalProgress = calculateHabitProgress(habit);
+  let currentGoal = lowGoal;
+  let nextGoal: Goal | null = null;
+  let completedAllGoals = false;
+
+  if (lowGoal.is_additive) {
+    if (totalProgress >= getGoalTarget(stretchGoal)) {
+      currentGoal = stretchGoal;
+      completedAllGoals = true;
+    } else if (totalProgress >= getGoalTarget(clearGoal)) {
+      currentGoal = clearGoal;
+      nextGoal = stretchGoal;
+    } else if (totalProgress >= getGoalTarget(lowGoal)) {
+      currentGoal = lowGoal;
+      nextGoal = clearGoal;
+    } else {
+      currentGoal = lowGoal;
+    }
+  } else {
+    const lowTarget = getGoalTarget(lowGoal);
+    const clearTarget = getGoalTarget(clearGoal);
+    const stretchTarget = getGoalTarget(stretchGoal);
+
+    if (totalProgress <= stretchTarget) {
+      currentGoal = stretchGoal;
+      completedAllGoals = true;
+    } else if (totalProgress <= clearTarget) {
+      currentGoal = clearGoal;
+      nextGoal = stretchGoal;
+    } else if (totalProgress <= lowTarget) {
+      currentGoal = lowGoal;
+      nextGoal = clearGoal;
+    } else {
+      currentGoal = lowGoal;
+    }
+  }
+
+  return { currentGoal, nextGoal, completedAllGoals };
+};
+
+export const calculateProgressPercentage = (
+  habit: Habit,
+  currentGoal: Goal,
+  nextGoal: Goal | null,
+): number => {
+  const totalProgress = calculateHabitProgress(habit);
+  const isAdditive = currentGoal.is_additive;
+
+  if (isAdditive) {
+    const currentTarget = getGoalTarget(currentGoal);
+
+    if (nextGoal) {
+      const nextTarget = getGoalTarget(nextGoal);
+
+      if (currentGoal.tier === 'clear' && nextGoal.tier === 'stretch') {
+        if (totalProgress >= currentTarget) {
+          return Math.min(
+            100,
+            ((totalProgress - currentTarget) / (nextTarget - currentTarget)) * 67 + 33,
+          );
+        }
+      }
+
+      if (currentGoal.tier === 'low' && nextGoal.tier === 'clear') {
+        if (totalProgress >= currentTarget) {
+          return Math.min(
+            100,
+            ((totalProgress - currentTarget) / (nextTarget - currentTarget)) * 100,
+          );
+        }
+      }
+    }
+
+    return Math.min(100, (totalProgress / currentTarget) * 100);
+  } else {
+    const lowGoal = habit.goals.find((g) => g.tier === 'low')!;
+    const stretchGoal = habit.goals.find((g) => g.tier === 'stretch')!;
+    const lowTarget = getGoalTarget(lowGoal);
+    const stretchTarget = getGoalTarget(stretchGoal);
+
+    if (totalProgress <= stretchTarget) {
+      return 100;
+    }
+    if (totalProgress >= lowTarget) {
+      return 0;
+    }
+
+    return 100 - ((totalProgress - stretchTarget) / (lowTarget - stretchTarget)) * 100;
+  }
+};
+
+export const getProgressBarColor = (
+  habit: Habit,
+  currentGoal: Goal,
+  nextGoal: Goal | null,
+  completedAllGoals: boolean,
+): string => {
+  const isAdditive = currentGoal.is_additive;
+  const totalProgress = calculateHabitProgress(habit);
+
+  if (completedAllGoals) {
+    return VICTORY_COLOR;
+  }
+
+  if (isAdditive) {
+    if (
+      nextGoal &&
+      currentGoal.tier === 'clear' &&
+      nextGoal.tier === 'stretch' &&
+      totalProgress >= getGoalTarget(currentGoal)
+    ) {
+      return VICTORY_COLOR;
+    }
+
+    return STAGE_COLORS[habit.stage] ?? '#000';
+  } else {
+    const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');
+    const stretchTarget = stretchGoal ? getGoalTarget(stretchGoal) : 0;
+
+    if (totalProgress <= stretchTarget) {
+      return VICTORY_COLOR;
+    }
+
+    return STAGE_COLORS[habit.stage] ?? '#000';
+  }
+};

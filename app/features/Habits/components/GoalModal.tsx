@@ -14,15 +14,13 @@ import {
 import { STAGE_COLORS } from '../../../constants/stageColors';
 import styles from '../Habits.styles';
 import type { Goal, GoalModalProps, EditableGoalProps, Habit } from '../Habits.types';
+import { TARGET_UNITS, FREQUENCY_UNITS, DAYS_OF_WEEK } from '../HabitsScreen';
 import {
   calculateProgressIncrements,
-  TARGET_UNITS,
-  FREQUENCY_UNITS,
-  DAYS_OF_WEEK,
   calculateHabitProgress,
   getGoalTarget,
   getTierColor,
-} from '../HabitsScreen';
+} from '../HabitUtils';
 
 // Constant for golden glow color to match with HabitTile
 const GOLDEN_GLOW_COLOR = 'rgba(255, 215, 0, 0.6)';
@@ -34,7 +32,7 @@ const GOLDEN_GLOW_COLOR = 'rgba(255, 215, 0, 0.6)';
  * @returns Progress percentage (0-100)
  */
 const calculateGoalProgress = (goal: Goal, habit: Habit): number => {
-  const totalProgress = habit.progress || calculateHabitProgress(habit);
+  const totalProgress = calculateHabitProgress(habit);
   const targetValue = getGoalTarget(goal);
 
   if (goal.is_additive) {
@@ -52,7 +50,7 @@ const calculateGoalProgress = (goal: Goal, habit: Habit): number => {
  * @returns True if goal is achieved
  */
 const isGoalAchieved = (goal: Goal, habit: Habit): boolean => {
-  const totalProgress = habit.progress || calculateHabitProgress(habit);
+  const totalProgress = calculateHabitProgress(habit);
   const targetValue = getGoalTarget(goal);
 
   if (goal.is_additive) {
@@ -320,7 +318,7 @@ const EditableGoal = ({
 
         {/* Progress text showing progress vs target */}
         <Text style={styles.goalProgressText}>
-          {habit.progress || 0} / {goal.target} {goal.target_unit}
+          {calculateHabitProgress(habit)} / {goal.target} {goal.target_unit}
           {achieved && ' (Achieved!)'}
         </Text>
       </View>
@@ -394,7 +392,7 @@ export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: 
   };
 
   // Calculate total habit progress for display
-  const totalProgress = habit.progress || calculateHabitProgress(habit);
+  const totalProgress = calculateHabitProgress(habit);
 
   // Sort goals by tier for consistent display order
   const sortedGoals = [...habit.goals].sort((a, b) => {

@@ -6,7 +6,12 @@ import { STAGE_COLORS } from '../../constants/stageColors';
 
 import styles from './Habits.styles';
 import type { Goal, HabitTileProps } from './Habits.types';
-import { getTierColor } from './HabitsScreen';
+import {
+  calculateProgressPercentage,
+  getGoalTier,
+  getProgressBarColor,
+  getTierColor,
+} from './HabitUtils';
 
 // Constants
 const TOOLTIP_DISPLAY_TIME = 2000; // 2 seconds to display tooltip
@@ -32,22 +37,11 @@ export const HabitTile = ({
   const clearGoal = habit.goals.find((g) => g.tier === 'clear');
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');
 
-  // Helper to get progress percentage for goal
-  const calculateProgress = (goal: Goal | undefined) => {
-    if (!goal) return 0;
-    // Use habit.progress (accessible via the component's scope) instead of goal.progress
-    const progress = habit.progress || 0;
-    return goal.is_additive
-      ? Math.min(progress / goal.target, 1)
-      : Math.max(0, 1 - progress / goal.target);
-  };
-
-  const lowProgress = calculateProgress(lowGoal);
-  const clearProgress = calculateProgress(clearGoal);
-  const stretchProgress = calculateProgress(stretchGoal);
-
-  // Determine if a goal is subtractive (requires abstaining)
-  const isSubtractive = lowGoal && !lowGoal.is_additive;
+  const { currentGoal, nextGoal, completedAllGoals } = getGoalTier(habit);
+  const progressPercentage = calculateProgressPercentage(habit, currentGoal, nextGoal);
+  const progressBarColor = getProgressBarColor(habit, currentGoal, nextGoal, completedAllGoals);
+  const progressBarWidth = progressPercentage / 100;
+  const hasCompletedGoal = completedAllGoals || progressPercentage >= 100;
 
   // Show flash message when a clear goal is achieved
   useEffect(() => {
@@ -105,48 +99,6 @@ export const HabitTile = ({
     onOpenGoals();
   };
 
-  // Determine which progress bar(s) to show and their colors
-  // Always use stage color for the progress bar
-  let progressBarWidth = 0;
-  let hasCompletedGoal = false;
-
-  if (isSubtractive) {
-    // Subtractive goals start full and decrease
-    if (stretchProgress < 1) {
-      progressBarWidth = stretchProgress;
-    } else {
-      progressBarWidth = 1; // Start full
-      hasCompletedGoal = true;
-    }
-  } else {
-    // Additive goals
-    if (clearProgress >= 1 && clearGoal && stretchGoal) {
-      // Clear goal met, show progress to stretch goal
-      // Calculate the ratio only if both clearGoal and stretchGoal exist
-      const clearToStretchRatio = clearGoal.target / stretchGoal.target;
-      progressBarWidth =
-        clearToStretchRatio +
-        ((stretchProgress - clearToStretchRatio) / (1 - clearToStretchRatio)) *
-          (1 - clearToStretchRatio);
-
-      if (stretchProgress >= 1) {
-        hasCompletedGoal = true;
-      } else {
-        hasCompletedGoal = true;
-      }
-    } else if (lowProgress >= 1 && clearGoal && lowGoal) {
-      // Low goal met; show progress toward clear goal if clearGoal is defined
-      const lowToClearRatio = lowGoal.target / clearGoal.target;
-      progressBarWidth =
-        lowToClearRatio +
-        ((clearProgress - lowToClearRatio) / (1 - lowToClearRatio)) * (1 - lowToClearRatio);
-      hasCompletedGoal = true;
-    } else {
-      // Working on the low goal (or fallback if clearGoal is not set)
-      progressBarWidth = lowProgress;
-    }
-  }
-
   // Calculate marker positions
   // For additive goals, normalize against clearGoal
   // For subtractive goals, normalize against lowGoal (the leftmost marker)
@@ -171,17 +123,14 @@ export const HabitTile = ({
     }
     // For subtractive goals
     else {
-      // For subtractive goals, if there's a low goal, use it as the base
       if (lowGoal) {
         const maxTarget = lowGoal.target;
         const minTarget = stretchGoal ? stretchGoal.target : 0;
-
-        // Normalize based on the range: lowTarget (max) to stretchTarget (min)
         const normalize = (value: number) => ((value - minTarget) / (maxTarget - minTarget)) * 100;
 
-        const lowPosition = 0; // far left
+        const stretchPosition = 0; // best at far left
         const clearPosition = clearGoal ? normalize(clearGoal.target) : 50;
-        const stretchPosition = 100; // far right
+        const lowPosition = 100; // worst at far right
 
         return { low: lowPosition, clear: clearPosition, stretch: stretchPosition };
       } else {
@@ -379,7 +328,7 @@ export const HabitTile = ({
               ]}
             >
               {/* Goal markers with improved visibility and correct positioning */}
-              {lowGoal && lowMarkerPosition > 0 && (
+              {lowGoal && lowMarkerPosition >= 0 && (
                 <TouchableOpacity
                   style={[
                     styles.goalMarker,
@@ -396,7 +345,7 @@ export const HabitTile = ({
                 />
               )}
 
-              {clearGoal && clearMarkerPosition > 0 && (
+              {clearGoal && clearMarkerPosition >= 0 && (
                 <TouchableOpacity
                   style={[
                     styles.goalMarker,
@@ -413,7 +362,7 @@ export const HabitTile = ({
                 />
               )}
 
-              {stretchGoal && stretchMarkerPosition > 0 && (
+              {stretchGoal && stretchMarkerPosition >= 0 && (
                 <TouchableOpacity
                   style={[
                     styles.goalMarker,
@@ -457,13 +406,13 @@ export const HabitTile = ({
                 </View>
               )}
 
-              {/* Progress fill with stage color */}
+              {/* Progress fill */}
               <View
                 style={[
                   styles.progressBarFill,
                   {
                     width: `${progressBarWidth * 100}%`,
-                    backgroundColor: stageColor,
+                    backgroundColor: progressBarColor,
                     height: '100%',
                   },
                 ]}
@@ -481,7 +430,7 @@ export const HabitTile = ({
               borderRadius: 4,
               paddingHorizontal: 6,
               paddingVertical: 2,
-              backgroundColor: stageColor,
+              backgroundColor: progressBarColor,
             }}
           >
             <Text

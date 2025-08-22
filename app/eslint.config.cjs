@@ -11,7 +11,17 @@ const path = require('node:path');
 
 module.exports = tseslint.config(
   // Ignore build artifacts
-  { ignores: ['node_modules/', 'dist/', 'build/', 'coverage/', 'android/', 'ios/'] },
+  {
+    ignores: [
+      'node_modules/',
+      'dist/',
+      'build/',
+      'coverage/',
+      'android/',
+      'ios/',
+      'babel.config.js',
+    ],
+  },
 
   {
     files: ['**/*.{ts,tsx,js,jsx}'],
