@@ -1,13 +1,12 @@
+import DateTimePicker from '@react-native-community/datetimepicker';
 import React, { useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, Modal, TextInput, Platform } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
 
+import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { DEFAULT_ICONS } from '../HabitsScreen';
-
-import styles from '../Habits.styles';
 
 export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingModalProps) => {
   const [step, setStep] = useState(1);
@@ -49,10 +48,6 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     setHabits((prev) => prev.map((habit, i) => (i === index ? { ...habit, icon } : habit)));
     setShowEmojiPicker(false);
     setSelectedHabitIndex(null);
-  };
-
-  const updateHabitStage = (index: number, stage: string) => {
-    setHabits((prev) => prev.map((habit, i) => (i === index ? { ...habit, stage } : habit)));
   };
 
   // Sort habits by net energy for step 3
