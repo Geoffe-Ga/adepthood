@@ -15,7 +15,6 @@ import styles from '../Habits.styles';
 import type { Goal, GoalModalProps, EditableGoalProps, Habit } from '../Habits.types';
 import {
   calculateProgressIncrements,
-  STAGE_COLORS,
   TARGET_UNITS,
   FREQUENCY_UNITS,
   DAYS_OF_WEEK,
@@ -23,6 +22,7 @@ import {
   getGoalTarget,
   getTierColor,
 } from '../HabitsScreen';
+import { STAGE_COLORS } from '../../../constants/stageColors';
 
 // Constant for golden glow color to match with HabitTile
 const GOLDEN_GLOW_COLOR = 'rgba(255, 215, 0, 0.6)';
@@ -335,12 +335,12 @@ export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: 
   const [activeGoal, setActiveGoal] = useState<Goal | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [logAmount, setLogAmount] = useState('1');
-  const [goalVisible, setGoalVisible] = useState<{ [key: number]: boolean }>({});
+  const [goalVisible, setGoalVisible] = useState<Record<number, boolean>>({});
 
   // Initialize all goals to be visible initially
   useEffect(() => {
     if (habit && visible) {
-      const visibilityMap = {};
+      const visibilityMap: Record<number, boolean> = {};
       habit.goals.forEach((goal, index) => {
         visibilityMap[index] = true;
       });
