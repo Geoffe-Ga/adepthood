@@ -89,7 +89,7 @@ const BORDER_RADIUS = {
 };
 
 // Device dimensions (for responsive layouts)
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 //------------------
 // Styles (modernized mystical minimalist style)
