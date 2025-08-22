@@ -86,7 +86,7 @@ repos:
         entry: bash -lc 'cd app && npx prettier --write .'
         language: system
         files: ^app/.*\.(js|jsx|ts|tsx|json|css|md|ya?ml)$
-        exclude: ^app/(?:node_modules|dist|build|coverage)/
+        exclude: ^app/(?:node_modules|dist|build|coverage)/|^app/(?:tsconfig\.json|package-lock\.json)$
 
       - id: app-typecheck
         name: app typecheck
