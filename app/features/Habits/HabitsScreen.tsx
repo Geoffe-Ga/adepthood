@@ -138,15 +138,42 @@ const registerForPushNotificationsAsync = async (): Promise<string | undefined> 
 const scheduleHabitNotification = async (
   habit: Habit,
   notificationTime: string,
-): Promise<string> => {
+): Promise<string[]> => {
   const [hours, minutes] = notificationTime.split(':').map(Number);
-  let trigger: Notifications.NotificationTriggerInput;
+
+  const schedule = async (trigger: Notifications.NotificationTriggerInput): Promise<string> => {
+    return Notifications.scheduleNotificationAsync({
+      content: {
+        title: `Time for: ${habit.name}`,
+        body: `Continue your ${habit.streak}-day streak! 💪`,
+        data: { habitId: habit.id },
+      },
+      trigger,
+    });
+  };
 
   if (habit.notificationFrequency === 'daily') {
-    trigger = { hour: hours, minute: minutes, repeats: true };
-  } else if (habit.notificationFrequency === 'weekly') {
-    trigger = { weekday: 1, hour: hours, minute: minutes, repeats: true };
-  } else if (
+    const dailyTrigger: Notifications.DailyTriggerInput = {
+      hour: hours,
+      minute: minutes,
+      repeats: true,
+    };
+
+    return [await schedule(dailyTrigger)];
+  }
+
+  if (habit.notificationFrequency === 'weekly') {
+    const weeklyTrigger: Notifications.WeeklyTriggerInput = {
+      weekday: 1,
+      hour: hours,
+      minute: minutes,
+      repeats: true,
+    };
+
+    return [await schedule(weeklyTrigger)];
+  }
+
+  if (
     habit.notificationFrequency === 'custom' &&
     habit.notificationDays &&
     habit.notificationDays.length > 0
@@ -156,40 +183,27 @@ const scheduleHabitNotification = async (
 
     for (const day of habit.notificationDays) {
       const weekday = DAYS_OF_WEEK.indexOf(day) + 1; // 1-7, where 1 is Monday
-      const customTrigger = {
+      const customTrigger: Notifications.WeeklyTriggerInput = {
         weekday,
         hour: hours,
         minute: minutes,
         repeats: true,
       };
 
-      const id = await Notifications.scheduleNotificationAsync({
-        content: {
-          title: `Time for: ${habit.name}`,
-          body: `Continue your ${habit.streak}-day streak! 💪`,
-          data: { habitId: habit.id },
-        },
-        trigger: customTrigger,
-      });
-
+      const id = await schedule(customTrigger);
       notificationIds.push(id);
     }
 
-    return notificationIds[0]; // Return the first ID
-  } else {
-    trigger = { hour: hours, minute: minutes, repeats: true };
+    return notificationIds;
   }
 
-  const notificationId = await Notifications.scheduleNotificationAsync({
-    content: {
-      title: `Time for: ${habit.name}`,
-      body: `Continue your ${habit.streak}-day streak! 💪`,
-      data: { habitId: habit.id },
-    },
-    trigger,
-  });
+  const fallbackTrigger: Notifications.DailyTriggerInput = {
+    hour: hours,
+    minute: minutes,
+    repeats: true,
+  };
 
-  return notificationId;
+  return [await schedule(fallbackTrigger)];
 };
 
 // Update notifications for a habit (cancel old ones and schedule new)
@@ -212,8 +226,8 @@ const updateHabitNotifications = async (habit: Habit): Promise<string[]> => {
   const notificationIds: string[] = [];
 
   for (const notificationTime of habit.notificationTimes) {
-    const notificationId = await scheduleHabitNotification(habit, notificationTime);
-    notificationIds.push(notificationId);
+    const ids = await scheduleHabitNotification(habit, notificationTime);
+    notificationIds.push(...ids);
   }
 
   return notificationIds;
