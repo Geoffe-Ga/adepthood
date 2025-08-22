@@ -1,12 +1,12 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Animated, Platform } from 'react-native';
 import { MoreHorizontal, Edit, CheckCircle, BarChart } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, Platform, Text, TouchableOpacity, View } from 'react-native';
 
-// Reuse the existing style imports
-import { Goal, HabitTileProps } from './Habits.types';
-import { getTierColor } from './HabitsScreen';
-import styles from './Habits.styles';
 import { STAGE_COLORS } from '../../constants/stageColors';
+
+import styles from './Habits.styles';
+import type { Goal, HabitTileProps } from './Habits.types';
+import { getTierColor } from './HabitsScreen';
 
 // Constants
 const TOOLTIP_DISPLAY_TIME = 2000; // 2 seconds to display tooltip
@@ -21,7 +21,6 @@ export const HabitTile = ({
   const backgroundColor = '#f8f8f8'; // Neutral background for all habits
   const stageColor = STAGE_COLORS[habit.stage];
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  const [showTooltip, setShowTooltip] = useState(false);
   const [showMarkerTooltip, setShowMarkerTooltip] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [goalAchievedMessage, setGoalAchievedMessage] = useState('');
@@ -99,7 +98,6 @@ export const HabitTile = ({
   const handlePressOut = () => {
     if (!habit.revealed) return;
     animateOut();
-    setShowTooltip(false);
   };
 
   const handlePress = () => {
@@ -110,17 +108,14 @@ export const HabitTile = ({
   // Determine which progress bar(s) to show and their colors
   // Always use stage color for the progress bar
   let progressBarWidth = 0;
-  let goalStatus = '';
   let hasCompletedGoal = false;
 
   if (isSubtractive) {
     // Subtractive goals start full and decrease
     if (stretchProgress < 1) {
       progressBarWidth = stretchProgress;
-      goalStatus = 'in-progress';
     } else {
       progressBarWidth = 1; // Start full
-      goalStatus = 'maintaining';
       hasCompletedGoal = true;
     }
   } else {
@@ -135,10 +130,8 @@ export const HabitTile = ({
           (1 - clearToStretchRatio);
 
       if (stretchProgress >= 1) {
-        goalStatus = 'completed';
         hasCompletedGoal = true;
       } else {
-        goalStatus = 'clear-met';
         hasCompletedGoal = true;
       }
     } else if (lowProgress >= 1 && clearGoal && lowGoal) {
@@ -147,12 +140,10 @@ export const HabitTile = ({
       progressBarWidth =
         lowToClearRatio +
         ((clearProgress - lowToClearRatio) / (1 - lowToClearRatio)) * (1 - lowToClearRatio);
-      goalStatus = 'low-met';
       hasCompletedGoal = true;
     } else {
       // Working on the low goal (or fallback if clearGoal is not set)
       progressBarWidth = lowProgress;
-      goalStatus = 'starting';
     }
   }
 
