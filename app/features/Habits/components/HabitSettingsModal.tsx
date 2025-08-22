@@ -104,7 +104,7 @@ export const HabitSettingsModal = ({
 
   const renderTimePicker = () => {
     let defaultTime = new Date();
-    const [hours, minutes] = notificationTime.split(':').map(Number);
+    const [hours = 0, minutes = 0] = notificationTime.split(':').map(Number);
     defaultTime.setHours(hours, minutes);
 
     return (
@@ -250,15 +250,14 @@ export const HabitSettingsModal = ({
                     <TouchableOpacity
                       style={styles.frequencyButton}
                       onPress={() => {
-                        const nextFreq = {
-                          daily: 'weekly',
-                          weekly: 'custom',
-                          custom: 'daily',
-                        }[editedHabit.notificationFrequency || 'daily'] as
-                          | 'daily'
-                          | 'weekly'
-                          | 'custom';
-                        handleChange('notificationFrequency', nextFreq);
+                        const current = editedHabit.notificationFrequency;
+                        const next: 'daily' | 'weekly' | 'custom' =
+                          current === 'daily'
+                            ? 'weekly'
+                            : current === 'weekly'
+                              ? 'custom'
+                              : 'daily';
+                        handleChange('notificationFrequency', next);
                       }}
                     >
                       <Text style={styles.frequencyButtonText}>

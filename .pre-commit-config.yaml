@@ -38,8 +38,7 @@ repos:
       - id: mypy
         files: ^backend/
         args: ["--config-file=backend/pyproject.toml"]
-        additional_dependencies: [ "types-requests", "pydantic", "sqlmodel", "fastapi", "starlette"]
-
+        additional_dependencies: ["types-requests", "pydantic", "sqlmodel", "fastapi", "starlette"]
 
   - repo: https://github.com/PyCQA/isort
     rev: 6.0.1
@@ -73,14 +72,6 @@ repos:
   # App (React Native) checks using local hooks (requires Node in the environment)
   - repo: local
     hooks:
-      - id: backend-tests-coverage
-        name: backend tests (coverage required)
-        language: system
-        entry: bash -lc 'cd backend && pytest'
-        pass_filenames: false
-        files: ^backend/
-        stages: [ pre-commit, pre-push ]
-
       - id: app-eslint
         name: app eslint
         language: system
@@ -112,10 +103,18 @@ repos:
         files: ^app/
         exclude: ^app/(?:node_modules|dist|build|coverage)/
 
+      - id: backend-tests-coverage
+        name: backend tests (coverage required)
+        language: system
+        entry: bash -lc 'cd backend && pytest'
+        pass_filenames: false
+        files: ^backend/
+        stages: [pre-commit, pre-push]
+
       - id: commitlint
         name: commitlint (conventional commits)
         language: system
-        entry: bash -lc 'npx --prefix app commitlint --extends @commitlint/config-conventional --edit "$1"'
-        stages: [ commit-msg ]
+        entry: bash -lc 'npx commitlint --cwd app --extends @commitlint/config-conventional --edit "$1"'
+        stages: [commit-msg]
         # IMPORTANT: commit-msg hooks receive the commit message path as $1
         # so do NOT set pass_filenames: false here.

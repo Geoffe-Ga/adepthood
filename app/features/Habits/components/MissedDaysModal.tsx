@@ -1,12 +1,9 @@
 import React, { useState } from 'react';
 import { Modal, Text, TouchableOpacity, View } from 'react-native';
-import { Calendar } from 'react-native-calendars';
-import type { DateData } from 'react-native-calendars';
+import { Calendar, type DateData } from 'react-native-calendars';
 
 import { STAGE_COLORS } from '../../../constants/stageColors';
-
 import styles from '../Habits.styles';
-
 import type { MissedDaysModalProps } from '../Habits.types';
 
 export const MissedDaysModal = ({
@@ -59,7 +56,8 @@ export const MissedDaysModal = ({
             <Calendar
               onDayPress={handleDateSelect}
               markedDates={{
-                [selectedDateString]: {
+                // Default to an empty key if parsing fails to satisfy typing
+                [selectedDateString ?? '']: {
                   selected: true,
                   selectedColor: STAGE_COLORS[habit.stage],
                 },

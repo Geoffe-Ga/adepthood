@@ -1,7 +1,8 @@
 /** @type {import('jest').Config} */
 module.exports = {
-  preset: 'jest-expo',
-  testEnvironment: 'jsdom',
+  // Use the react-native preset to avoid requiring Expo-specific tooling
+  preset: 'react-native',
+  testEnvironment: 'node',
   setupFilesAfterEnv: ['@testing-library/jest-native/extend-expect'],
   transformIgnorePatterns: [
     'node_modules/(?!(' +

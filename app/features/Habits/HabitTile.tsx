@@ -21,7 +21,7 @@ export const HabitTile = ({
   const backgroundColor = '#f8f8f8'; // Neutral background for all habits
   const stageColor = STAGE_COLORS[habit.stage];
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  const [showMarkerTooltip, setShowMarkerTooltip] = useState(null);
+  const [showMarkerTooltip, setShowMarkerTooltip] = useState<Goal['tier'] | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [goalAchievedMessage, setGoalAchievedMessage] = useState('');
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -202,7 +202,7 @@ export const HabitTile = ({
   };
 
   // Show marker tooltip on hover/press
-  const showMarkerInfo = (tier) => {
+  const showMarkerInfo = (tier: Goal['tier']) => {
     setShowMarkerTooltip(tier);
 
     // Auto-hide tooltip after a delay
@@ -212,7 +212,7 @@ export const HabitTile = ({
   };
 
   // Format the marker tooltip text
-  const getMarkerTooltipText = (tier) => {
+  const getMarkerTooltipText = (tier: Goal['tier']) => {
     const goal = tier === 'low' ? lowGoal : tier === 'clear' ? clearGoal : stretchGoal;
 
     if (!goal) return '';
