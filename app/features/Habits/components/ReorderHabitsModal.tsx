@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Modal, Platform } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import React, { useEffect, useState } from 'react';
+import { Modal, Platform, Text, TouchableOpacity, View } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 
-import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
-import { STAGE_ORDER, STAGE_COLORS } from '../HabitsScreen';
+import { STAGE_COLORS } from '../../../constants/stageColors';
 import styles from '../Habits.styles';
+import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
+import { STAGE_ORDER } from '../HabitsScreen';
 
 export const ReorderHabitsModal = ({
   visible,
