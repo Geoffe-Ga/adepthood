@@ -3,7 +3,7 @@ import { Modal, Text, TouchableOpacity, View } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import type { DateData } from 'react-native-calendars';
 
-import { STAGE_COLORS } from '../HabitsScreen';
+import { STAGE_COLORS } from '../../../constants/stageColors';
 import type { MissedDaysModalProps } from '../Habits.types';
 
 import styles from '../Habits.styles';
