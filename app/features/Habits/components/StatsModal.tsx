@@ -3,9 +3,9 @@ import { View, Text, Dimensions, TouchableOpacity, Modal, ScrollView } from 'rea
 import { Calendar, type MarkingProps } from 'react-native-calendars';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 
+import { STAGE_COLORS } from '../../../constants/stageColors';
 import styles from '../Habits.styles';
 import type { StatsModalProps } from '../Habits.types';
-import { STAGE_COLORS } from '../HabitsScreen';
 
 export const StatsModal = ({ visible, habit, stats, onClose }: StatsModalProps) => {
   const [selectedTab, setSelectedTab] = useState('calendar');
