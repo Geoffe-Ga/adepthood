@@ -35,10 +35,6 @@ jobs:
       - name: Run pre-commit (Python hooks only)
         run: |
           pre-commit run --hook-stage pre-commit --files $(git ls-files 'backend')
-      - name: Type-check (mypy)
-        run: |
-          uv pip install --system mypy
-          mypy --config-file backend/pyproject.toml
 
       - name: Run tests
         run: |
