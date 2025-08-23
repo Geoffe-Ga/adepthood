@@ -11,7 +11,15 @@ export interface Habit {
   streak: number;
   energy_cost: number;
   energy_return: number;
-  progress: number;
+  /**
+   * Total progress toward the habit goals.
+   *
+   * This value is derived from the sum of all completion units
+   * recorded in the `completions` array and should not be set
+   * directly. It is kept optional to encourage calculating the
+   * current progress programmatically via `calculateHabitProgress`.
+   */
+  progress?: number;
   start_date: Date;
   goals: Goal[];
   completions?: Completion[];

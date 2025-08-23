@@ -10,7 +10,6 @@ export const HABIT_DEFAULTS: Habit[] = [
     energy_cost: 7,
     energy_return: 9,
     start_date: new Date(2025, 3, 1),
-    progress: 0,
     goals: [
       {
         id: 1,
@@ -53,7 +52,6 @@ export const HABIT_DEFAULTS: Habit[] = [
     energy_cost: 6,
     energy_return: 8,
     start_date: new Date(2025, 3, 5),
-    progress: 0,
     goals: [
       {
         id: 4,
@@ -96,7 +94,6 @@ export const HABIT_DEFAULTS: Habit[] = [
     energy_cost: 4,
     energy_return: 5,
     start_date: new Date(2025, 3, 10),
-    progress: 0,
     goals: [
       {
         id: 7,
@@ -139,7 +136,6 @@ export const HABIT_DEFAULTS: Habit[] = [
     energy_cost: 5,
     energy_return: 8,
     start_date: new Date(2025, 2, 25),
-    progress: 0,
     goals: [
       {
         id: 10,
@@ -182,7 +178,6 @@ export const HABIT_DEFAULTS: Habit[] = [
     energy_cost: 8,
     energy_return: 9,
     start_date: new Date(2025, 3, 15),
-    progress: 0,
     goals: [
       {
         id: 13,
@@ -225,7 +220,6 @@ export const HABIT_DEFAULTS: Habit[] = [
     energy_cost: 7,
     energy_return: 8,
     start_date: new Date(2025, 2, 20),
-    progress: 0,
     goals: [
       {
         id: 16,
@@ -268,7 +262,6 @@ export const HABIT_DEFAULTS: Habit[] = [
     energy_cost: 3,
     energy_return: 6,
     start_date: new Date(2025, 3, 8),
-    progress: 0,
     goals: [
       {
         id: 19,
@@ -311,7 +304,6 @@ export const HABIT_DEFAULTS: Habit[] = [
     energy_cost: 5,
     energy_return: 7,
     start_date: new Date(2025, 2, 28),
-    progress: 0,
     goals: [
       {
         id: 22,
@@ -354,7 +346,6 @@ export const HABIT_DEFAULTS: Habit[] = [
     energy_cost: 4,
     energy_return: 7,
     start_date: new Date(2025, 2, 15),
-    progress: 0,
     goals: [
       {
         id: 25,
@@ -397,7 +388,6 @@ export const HABIT_DEFAULTS: Habit[] = [
     energy_cost: 5,
     energy_return: 8,
     start_date: new Date(2025, 2, 5),
-    progress: 0,
     goals: [
       {
         id: 28,

@@ -6,7 +6,7 @@ import DraggableFlatList from 'react-native-draggable-flatlist';
 import { STAGE_COLORS } from '../../../constants/stageColors';
 import styles from '../Habits.styles';
 import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
-import { STAGE_ORDER } from '../HabitsScreen';
+import { STAGE_ORDER } from '../HabitUtils';
 
 export const ReorderHabitsModal = ({
   visible,
