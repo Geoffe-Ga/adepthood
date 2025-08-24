@@ -8,6 +8,8 @@ import {
   getGoalTier,
   getProgressBarColor,
   VICTORY_COLOR,
+  getMarkerPositions,
+  clampPercentage,
 } from '../HabitUtils';
 
 describe('habit progress utilities', () => {
@@ -172,5 +174,25 @@ describe('habit progress utilities', () => {
         brokenTier.completedAllGoals,
       ),
     ).toBe(STAGE_COLORS[brokenHabit.stage]);
+  });
+
+  it('clamps percentage values between 0 and 100', () => {
+    expect(clampPercentage(150)).toBe(100);
+    expect(clampPercentage(-20)).toBe(0);
+  });
+
+  it('computes marker positions for additive goals', () => {
+    const [low, clear, stretch] = additiveGoals;
+    const pos = getMarkerPositions(low, clear, stretch);
+    expect(pos.low).toBeCloseTo(50);
+    expect(pos.clear).toBe(100);
+  });
+
+  it('computes marker positions for subtractive goals', () => {
+    const [low, clear, stretch] = subtractiveGoals;
+    const pos = getMarkerPositions(low, clear, stretch);
+    expect(pos.low).toBe(100);
+    expect(pos.stretch).toBe(0);
+    expect(pos.clear).toBeGreaterThan(0);
   });
 });
