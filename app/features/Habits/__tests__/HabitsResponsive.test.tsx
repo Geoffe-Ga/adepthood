@@ -1,9 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { jest, describe, afterEach, it, expect } from '@jest/globals';
 
-const renderer = require('react-test-renderer');
-
 const HabitsScreen = require('../HabitsScreen').default;
+
+const renderer = require('react-test-renderer');
 
 jest.mock('expo-notifications', () => ({
   getPermissionsAsync: (jest.fn() as any).mockResolvedValue({ status: 'granted' }),
