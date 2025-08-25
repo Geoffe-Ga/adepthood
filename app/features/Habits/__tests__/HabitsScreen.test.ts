@@ -7,7 +7,8 @@ import {
   calculateProgressPercentage,
   getGoalTier,
   getProgressBarColor,
-  VICTORY_COLOR,
+  getMarkerPositions,
+  clampPercentage,
 } from '../HabitUtils';
 
 describe('habit progress utilities', () => {
@@ -135,8 +136,8 @@ describe('habit progress utilities', () => {
     expect(percentage).toBeCloseTo(50);
   });
 
-  it('uses victory color until stretch goal is broken for subtractive habits', () => {
-    const baseHabit: Habit = {
+  it('returns the stage color for progress bars', () => {
+    const habit: Habit = {
       id: 4,
       stage: 'Blue',
       name: 'Subtractive',
@@ -149,28 +150,26 @@ describe('habit progress utilities', () => {
       completions: [],
     };
 
-    const goodTier = getGoalTier(baseHabit);
-    expect(
-      getProgressBarColor(
-        baseHabit,
-        goodTier.currentGoal,
-        goodTier.nextGoal,
-        goodTier.completedAllGoals,
-      ),
-    ).toBe(VICTORY_COLOR);
+    expect(getProgressBarColor(habit)).toBe(STAGE_COLORS[habit.stage]);
+  });
 
-    const brokenHabit = {
-      ...baseHabit,
-      completions: [{ id: 1, timestamp: new Date(), completed_units: 1 }],
-    };
-    const brokenTier = getGoalTier(brokenHabit);
-    expect(
-      getProgressBarColor(
-        brokenHabit,
-        brokenTier.currentGoal,
-        brokenTier.nextGoal,
-        brokenTier.completedAllGoals,
-      ),
-    ).toBe(STAGE_COLORS[brokenHabit.stage]);
+  it('clamps percentage values between 0 and 100', () => {
+    expect(clampPercentage(150)).toBe(100);
+    expect(clampPercentage(-20)).toBe(0);
+  });
+
+  it('computes marker positions for additive goals', () => {
+    const [low, clear, stretch] = additiveGoals;
+    const pos = getMarkerPositions(low, clear, stretch);
+    expect(pos.low).toBeCloseTo(50);
+    expect(pos.clear).toBe(100);
+  });
+
+  it('computes marker positions for subtractive goals', () => {
+    const [low, clear, stretch] = subtractiveGoals;
+    const pos = getMarkerPositions(low, clear, stretch);
+    expect(pos.low).toBe(100);
+    expect(pos.stretch).toBe(0);
+    expect(pos.clear).toBeGreaterThan(0);
   });
 });

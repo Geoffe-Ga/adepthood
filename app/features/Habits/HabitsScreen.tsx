@@ -1,8 +1,13 @@
 // HabitsScreen.tsx
 
 import * as Notifications from 'expo-notifications';
+import { MoreHorizontal } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { spacing } from '../../Sources/design/DesignSystem';
+import useResponsive from '../../Sources/design/useResponsive';
 
 import GoalModal from './components/GoalModal';
 import HabitSettingsModal from './components/HabitSettingsModal';
@@ -214,6 +219,7 @@ export const calculateNetEnergy = (cost: number, returnValue: number): number =>
 const HabitsScreen = () => {
   const [habits, setHabits] = useState<Habit[]>(DEFAULT_HABITS);
   const [selectedHabit, setSelectedHabit] = useState<Habit | null>(null);
+  const [menuVisible, setMenuVisible] = useState(false);
   const [goalModalVisible, setGoalModalVisible] = useState(false);
   const [statsModalVisible, setStatsModalVisible] = useState(false);
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
@@ -448,17 +454,15 @@ const HabitsScreen = () => {
   };
 
   // Render a habit tile
+  const { columns, gridGutter, scale, isLG, isXL } = useResponsive();
+  const screenPadding = spacing(isLG || isXL ? 2 : 1, scale);
+
   const renderHabitTile = ({ item }: { item: Habit }) => (
     <HabitTile
       habit={item}
       onOpenGoals={() => {
         setSelectedHabit(item);
         setGoalModalVisible(true);
-      }}
-      onLogUnit={() => handleLogUnit(item.id!, 1)}
-      onOpenStats={() => {
-        setSelectedHabit(item);
-        setStatsModalVisible(true);
       }}
       onLongPress={() => {
         setSelectedHabit(item);
@@ -468,13 +472,75 @@ const HabitsScreen = () => {
   );
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={[styles.container, { padding: screenPadding }]}>
+      <View style={{ alignItems: 'flex-end' }}>
+        <TouchableOpacity
+          testID="overflow-menu-toggle"
+          onPress={() => setMenuVisible((v) => !v)}
+          style={{ padding: spacing(1, scale) }}
+        >
+          <MoreHorizontal size={spacing(3, scale)} />
+        </TouchableOpacity>
+        {menuVisible && (
+          <View
+            testID="overflow-menu"
+            style={{
+              position: 'absolute',
+              top: spacing(5, scale),
+              right: spacing(1, scale),
+              backgroundColor: '#fff',
+              padding: spacing(1, scale),
+              borderRadius: spacing(1, scale),
+              elevation: 2,
+              zIndex: 1000,
+            }}
+          >
+            <TouchableOpacity
+              onPress={() => {
+                if (selectedHabit) handleLogUnit(selectedHabit.id!, 1);
+                setMenuVisible(false);
+              }}
+              style={{ paddingVertical: spacing(0.5, scale) }}
+            >
+              <Text>Quick Log</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                if (selectedHabit) setStatsModalVisible(true);
+                setMenuVisible(false);
+              }}
+              style={{ paddingVertical: spacing(0.5, scale) }}
+            >
+              <Text>Stats</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                if (selectedHabit) setSettingsModalVisible(true);
+                setMenuVisible(false);
+              }}
+              style={{ paddingVertical: spacing(0.5, scale) }}
+            >
+              <Text>Edit</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+
       <FlatList
-        data={habits.filter((h) => h.revealed)} // Only show revealed habits
-        keyExtractor={(item) => (item.id ? item.id.toString() : Math.random().toString())}
+        key={`cols-${columns}`}
+        testID="habits-list"
+        data={habits.filter((h) => h.revealed)}
+        keyExtractor={(item) => item.id?.toString() ?? item.name}
         renderItem={renderHabitTile}
-        numColumns={2}
-        contentContainerStyle={styles.habitsGrid}
+        numColumns={columns}
+        columnWrapperStyle={columns > 1 ? { gap: gridGutter } : undefined}
+        contentContainerStyle={[
+          styles.habitsGrid,
+          {
+            padding: gridGutter / 2,
+            paddingBottom: gridGutter / 2,
+          },
+        ]}
       />
 
       <TouchableOpacity
@@ -526,7 +592,7 @@ const HabitsScreen = () => {
         onClose={() => setOnboardingVisible(false)}
         onSaveHabits={handleOnboardingSave}
       />
-    </View>
+    </SafeAreaView>
   );
 };
 

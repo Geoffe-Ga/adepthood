@@ -93,8 +93,6 @@ export interface EditableGoalProps {
 export interface HabitTileProps {
   habit: Habit;
   onOpenGoals: () => void;
-  onLogUnit: () => void;
-  onOpenStats: () => void;
   onLongPress: () => void;
 }
 
