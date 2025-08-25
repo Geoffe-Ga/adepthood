@@ -251,8 +251,15 @@ const HabitsScreen = () => {
     setHabits((prev) =>
       prev.map((h) => {
         if (h.id === habitId) {
-          const newStreak = h.streak + 1;
           const now = new Date();
+
+          // Prevent logging more than once per calendar day
+          const lastDate = h.last_completion_date ? new Date(h.last_completion_date) : undefined;
+          if (lastDate && lastDate.toDateString() === now.toDateString()) {
+            return h;
+          }
+
+          const newStreak = h.streak + 1;
 
           // Create a new completion record
           const newCompletion: Completion = {

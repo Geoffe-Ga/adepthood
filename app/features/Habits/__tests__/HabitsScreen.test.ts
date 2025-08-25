@@ -4,7 +4,7 @@ import { STAGE_COLORS } from '../../../constants/stageColors';
 import type { Habit, Goal } from '../Habits.types';
 import {
   calculateHabitProgress,
-  calculateProgressPercentage,
+  getProgressPercentage,
   getGoalTier,
   getProgressBarColor,
   getMarkerPositions,
@@ -113,7 +113,7 @@ describe('habit progress utilities', () => {
     };
 
     const { currentGoal, nextGoal } = getGoalTier(habit);
-    const percentage = calculateProgressPercentage(habit, currentGoal, nextGoal);
+    const percentage = getProgressPercentage(habit, currentGoal, nextGoal);
     expect(percentage).toBeCloseTo(33);
   });
 
@@ -132,7 +132,7 @@ describe('habit progress utilities', () => {
     };
 
     const { currentGoal, nextGoal } = getGoalTier(habit);
-    const percentage = calculateProgressPercentage(habit, currentGoal, nextGoal);
+    const percentage = getProgressPercentage(habit, currentGoal, nextGoal);
     expect(percentage).toBeCloseTo(50);
   });
 

@@ -145,7 +145,12 @@ export const getGoalTier = (
   return { currentGoal, nextGoal, completedAllGoals };
 };
 
-export const calculateProgressPercentage = (
+// Returns current progress as a percentage between 0 and 100.
+//
+// The calculation supports both additive (e.g. "do X more") and
+// subtractive (e.g. "drink X less") habit types. The function also
+// ensures progress never overflows beyond the 0-100 range.
+export const getProgressPercentage = (
   habit: Habit,
   currentGoal: Goal,
   nextGoal: Goal | null,

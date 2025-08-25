@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Text, TouchableOpacity, View } from 'react-native';
 
 import { STAGE_COLORS } from '../../constants/stageColors';
 import { spacing } from '../../Sources/design/DesignSystem';
@@ -7,7 +7,7 @@ import useResponsive from '../../Sources/design/useResponsive';
 
 import type { HabitTileProps } from './Habits.types';
 import {
-  calculateProgressPercentage,
+  getProgressPercentage,
   clampPercentage,
   getGoalTier,
   getMarkerPositions,
@@ -24,9 +24,7 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');
 
   const { currentGoal, nextGoal, completedAllGoals } = getGoalTier(habit);
-  const progressPercentage = clampPercentage(
-    calculateProgressPercentage(habit, currentGoal, nextGoal),
-  );
+  const progressPercentage = clampPercentage(getProgressPercentage(habit, currentGoal, nextGoal));
   const progressBarColor = getProgressBarColor(habit);
   const hasCompletedGoal = completedAllGoals || progressPercentage >= 100;
   const streakText =
@@ -136,7 +134,7 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
           }}
         >
           {lowGoal && lowMarker >= 0 && (
-            <View
+            <TouchableOpacity
               style={{
                 position: 'absolute',
                 left: `${clampPercentage(lowMarker)}%`,
@@ -145,10 +143,16 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                 width: 2,
                 backgroundColor: getTierColor('low'),
               }}
+              onLongPress={() =>
+                Alert.alert(
+                  'Low Goal',
+                  `${lowGoal.target} ${lowGoal.target_unit} ${lowGoal.frequency_unit}`,
+                )
+              }
             />
           )}
           {clearGoal && clearMarker >= 0 && (
-            <View
+            <TouchableOpacity
               style={{
                 position: 'absolute',
                 left: `${clampPercentage(clearMarker)}%`,
@@ -157,10 +161,16 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                 width: 2,
                 backgroundColor: getTierColor('clear'),
               }}
+              onLongPress={() =>
+                Alert.alert(
+                  'Clear Goal',
+                  `${clearGoal.target} ${clearGoal.target_unit} ${clearGoal.frequency_unit}`,
+                )
+              }
             />
           )}
           {stretchGoal && stretchMarker >= 0 && (
-            <View
+            <TouchableOpacity
               style={{
                 position: 'absolute',
                 left: `${clampPercentage(stretchMarker)}%`,
@@ -169,6 +179,12 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                 width: 2,
                 backgroundColor: getTierColor('stretch'),
               }}
+              onLongPress={() =>
+                Alert.alert(
+                  'Stretch Goal',
+                  `${stretchGoal.target} ${stretchGoal.target_unit} ${stretchGoal.frequency_unit}`,
+                )
+              }
             />
           )}
           <View
@@ -179,6 +195,47 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
               backgroundColor: progressBarColor,
             }}
           />
+        </View>
+        <View style={{ position: 'relative', marginTop: spacing(0.5, scale) }}>
+          {lowGoal && lowMarker >= 0 && (
+            <Text
+              style={{
+                position: 'absolute',
+                left: `${clampPercentage(lowMarker)}%`,
+                transform: [{ translateX: -6 }],
+                fontSize: spacing(1.5, scale),
+                color: getTierColor('low'),
+              }}
+            >
+              LG
+            </Text>
+          )}
+          {clearGoal && clearMarker >= 0 && (
+            <Text
+              style={{
+                position: 'absolute',
+                left: `${clampPercentage(clearMarker)}%`,
+                transform: [{ translateX: -6 }],
+                fontSize: spacing(1.5, scale),
+                color: getTierColor('clear'),
+              }}
+            >
+              CG
+            </Text>
+          )}
+          {stretchGoal && stretchMarker >= 0 && (
+            <Text
+              style={{
+                position: 'absolute',
+                left: `${clampPercentage(stretchMarker)}%`,
+                transform: [{ translateX: -6 }],
+                fontSize: spacing(1.5, scale),
+                color: getTierColor('stretch'),
+              }}
+            >
+              SG
+            </Text>
+          )}
         </View>
       </View>
     </TouchableOpacity>
