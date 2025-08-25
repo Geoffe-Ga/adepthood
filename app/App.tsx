@@ -1,16 +1,19 @@
 // app/App.tsx
 
 import React from 'react';
-import { SafeAreaView, StatusBar, StyleSheet } from 'react-native';
+import { StatusBar, StyleSheet } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import HabitsScreen from './features/Habits/HabitsScreen';
 
 export default function App(): React.JSX.Element {
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" />
-      <HabitsScreen />
-    </SafeAreaView>
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="dark-content" />
+        <HabitsScreen />
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 

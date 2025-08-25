@@ -2,7 +2,11 @@
 
 import * as Notifications from 'expo-notifications';
 import React, { useEffect, useState } from 'react';
-import { Alert, FlatList, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, Text, TouchableOpacity } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { spacing } from '../../Sources/design/DesignSystem';
+import useResponsive from '../../Sources/design/useResponsive';
 
 import GoalModal from './components/GoalModal';
 import HabitSettingsModal from './components/HabitSettingsModal';
@@ -448,6 +452,8 @@ const HabitsScreen = () => {
   };
 
   // Render a habit tile
+  const { columns, gridGutter, scale } = useResponsive();
+
   const renderHabitTile = ({ item }: { item: Habit }) => (
     <HabitTile
       habit={item}
@@ -468,13 +474,21 @@ const HabitsScreen = () => {
   );
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={[styles.container, { padding: spacing(3, scale) }]}>
       <FlatList
-        data={habits.filter((h) => h.revealed)} // Only show revealed habits
-        keyExtractor={(item) => (item.id ? item.id.toString() : Math.random().toString())}
+        testID="habits-list"
+        data={habits.filter((h) => h.revealed)}
+        keyExtractor={(item) => item.id?.toString() ?? item.name}
         renderItem={renderHabitTile}
-        numColumns={2}
-        contentContainerStyle={styles.habitsGrid}
+        numColumns={columns}
+        columnWrapperStyle={columns > 1 ? { gap: gridGutter } : undefined}
+        contentContainerStyle={[
+          styles.habitsGrid,
+          {
+            padding: gridGutter / 2,
+            paddingBottom: gridGutter / 2,
+          },
+        ]}
       />
 
       <TouchableOpacity
@@ -526,7 +540,7 @@ const HabitsScreen = () => {
         onClose={() => setOnboardingVisible(false)}
         onSaveHabits={handleOnboardingSave}
       />
-    </View>
+    </SafeAreaView>
   );
 };
 

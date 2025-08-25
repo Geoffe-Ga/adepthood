@@ -28,7 +28,33 @@ export const getTierColor = (tier: 'low' | 'clear' | 'stretch') => {
   }
 };
 
-export const VICTORY_COLOR = '#27ae60';
+export const clampPercentage = (value: number): number => Math.min(100, Math.max(0, value));
+
+export const getMarkerPositions = (
+  lowGoal?: Goal,
+  clearGoal?: Goal,
+  stretchGoal?: Goal,
+): { low: number; clear: number; stretch: number } => {
+  if (!lowGoal) return { low: 0, clear: 0, stretch: 0 };
+
+  if (lowGoal.is_additive) {
+    if (clearGoal) {
+      const low = clampPercentage((lowGoal.target / clearGoal.target) * 100);
+      const clear = 100;
+      const stretch = stretchGoal ? 100 : 0;
+      return { low, clear, stretch };
+    }
+    return { low: 100, clear: 0, stretch: 0 };
+  }
+
+  const maxTarget = lowGoal.target;
+  const minTarget = stretchGoal ? stretchGoal.target : 0;
+  const normalize = (v: number) => ((v - minTarget) / (maxTarget - minTarget)) * 100;
+  const stretch = 0;
+  const clear = clearGoal ? clampPercentage(normalize(clearGoal.target)) : 50;
+  const low = 100;
+  return { low, clear, stretch };
+};
 
 export const calculateProgressIncrements = (goal: Goal): number[] => {
   const { target } = goal;
@@ -170,38 +196,6 @@ export const calculateProgressPercentage = (
   }
 };
 
-export const getProgressBarColor = (
-  habit: Habit,
-  currentGoal: Goal,
-  nextGoal: Goal | null,
-  completedAllGoals: boolean,
-): string => {
-  const isAdditive = currentGoal.is_additive;
-  const totalProgress = calculateHabitProgress(habit);
-
-  if (completedAllGoals) {
-    return VICTORY_COLOR;
-  }
-
-  if (isAdditive) {
-    if (
-      nextGoal &&
-      currentGoal.tier === 'clear' &&
-      nextGoal.tier === 'stretch' &&
-      totalProgress >= getGoalTarget(currentGoal)
-    ) {
-      return VICTORY_COLOR;
-    }
-
-    return STAGE_COLORS[habit.stage] ?? '#000';
-  } else {
-    const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');
-    const stretchTarget = stretchGoal ? getGoalTarget(stretchGoal) : 0;
-
-    if (totalProgress <= stretchTarget) {
-      return VICTORY_COLOR;
-    }
-
-    return STAGE_COLORS[habit.stage] ?? '#000';
-  }
+export const getProgressBarColor = (habit: Habit): string => {
+  return STAGE_COLORS[habit.stage] ?? '#000';
 };
