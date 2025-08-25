@@ -454,7 +454,8 @@ const HabitsScreen = () => {
   };
 
   // Render a habit tile
-  const { columns, gridGutter, scale } = useResponsive();
+  const { columns, gridGutter, scale, isLG, isXL } = useResponsive();
+  const screenPadding = spacing(isLG || isXL ? 2 : 1, scale);
 
   const renderHabitTile = ({ item }: { item: Habit }) => (
     <HabitTile
@@ -471,7 +472,7 @@ const HabitsScreen = () => {
   );
 
   return (
-    <SafeAreaView style={[styles.container, { padding: spacing(1, scale) }]}>
+    <SafeAreaView style={[styles.container, { padding: screenPadding }]}>
       <View style={{ alignItems: 'flex-end' }}>
         <TouchableOpacity
           onPress={() => setMenuVisible((v) => !v)}

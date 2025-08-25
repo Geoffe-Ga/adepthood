@@ -63,6 +63,9 @@ describe('HabitsScreen responsive layout', () => {
 
         const maxTileHeight = (height * expectedColumns) / 10;
         expect(tileHeight).toBeLessThanOrEqual(maxTileHeight);
+        if (expectedColumns === 2) {
+          expect(style.flex).toBe(1);
+        }
         expect(colorValues).toContain(style.borderColor);
 
         const fill = t.findByProps({ testID: 'progress-fill' });
@@ -72,6 +75,14 @@ describe('HabitsScreen responsive layout', () => {
         expect(val).toBeLessThanOrEqual(100);
         expect(fillStyle.backgroundColor).toBe(style.borderColor);
       });
+
+      const iconTopExpected = expectedColumns === 2 && w / expectedColumns >= 400;
+      const iconTopNodes = tree.findAllByProps({ testID: 'habit-icon-top' });
+      if (iconTopExpected) {
+        expect(iconTopNodes.length).toBeGreaterThan(0);
+      } else {
+        expect(iconTopNodes.length).toBe(0);
+      }
     });
   });
 

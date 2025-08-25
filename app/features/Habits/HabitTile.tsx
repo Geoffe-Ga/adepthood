@@ -16,7 +16,7 @@ import {
 } from './HabitUtils';
 
 export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) => {
-  const { scale } = useResponsive();
+  const { width, height, columns, scale, gridGutter } = useResponsive();
   const stageColor = STAGE_COLORS[habit.stage];
 
   const lowGoal = habit.goals.find((g) => g.tier === 'low');
@@ -33,6 +33,10 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
     `${habit.streak} days${hasCompletedGoal ? ' — Achieved Today!' : ''}`.toUpperCase();
 
   const barHeight = Math.max(8, spacing(2, scale));
+  const rows = columns === 2 ? 5 : 10;
+  const tileMinHeight = height / rows - 2 * spacing(1, scale) - gridGutter;
+  const tileWidth = width / columns;
+  const iconInline = columns === 1 || tileWidth < 400;
 
   const {
     low: lowMarker,
@@ -44,45 +48,82 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
     <TouchableOpacity
       testID="habit-tile"
       style={{
+        flex: 1,
         borderWidth: 1,
         borderColor: stageColor,
         padding: spacing(1, scale),
-        margin: spacing(0.5, scale),
-        minHeight: spacing(6, scale),
+        margin: gridGutter / 2,
+        minHeight: tileMinHeight,
         borderRadius: spacing(1, scale),
         backgroundColor: '#f8f8f8',
       }}
       onPress={onOpenGoals}
       onLongPress={onLongPress}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <Text style={{ fontSize: spacing(3, scale), marginRight: spacing(1, scale) }}>
-          {habit.icon}
-        </Text>
-        <Text
-          style={{
-            flex: 1,
-            fontSize: spacing(2, scale),
-            fontWeight: '700',
-            textTransform: 'uppercase',
-          }}
-        >
-          {habit.name}
-        </Text>
-        <Text
-          style={[
-            { fontSize: spacing(1.5, scale), textTransform: 'uppercase' },
-            hasCompletedGoal && {
-              backgroundColor: stageColor,
-              color: '#fff',
-              paddingHorizontal: spacing(0.5, scale),
-              borderRadius: spacing(0.5, scale),
-            },
-          ]}
-        >
-          {streakText}
-        </Text>
-      </View>
+      {iconInline ? (
+        <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={{ fontSize: spacing(3, scale), marginRight: spacing(1, scale) }}>
+            {habit.icon}
+          </Text>
+          <Text
+            style={{
+              flex: 1,
+              fontSize: spacing(2, scale),
+              fontWeight: '700',
+              textTransform: 'uppercase',
+            }}
+          >
+            {habit.name}
+          </Text>
+          <Text
+            style={[
+              { fontSize: spacing(1.5, scale), textTransform: 'uppercase' },
+              hasCompletedGoal && {
+                backgroundColor: stageColor,
+                color: '#fff',
+                paddingHorizontal: spacing(0.5, scale),
+                borderRadius: spacing(0.5, scale),
+              },
+            ]}
+          >
+            {streakText}
+          </Text>
+        </View>
+      ) : (
+        <>
+          <View
+            testID="habit-icon-top"
+            style={{ alignItems: 'center', marginBottom: spacing(1, scale) }}
+          >
+            <Text style={{ fontSize: spacing(4, scale) }}>{habit.icon}</Text>
+          </View>
+          <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text
+              style={{
+                flex: 1,
+                fontSize: spacing(2, scale),
+                fontWeight: '700',
+                textTransform: 'uppercase',
+              }}
+            >
+              {habit.name}
+            </Text>
+            <Text
+              style={[
+                { fontSize: spacing(1.5, scale), textTransform: 'uppercase' },
+                hasCompletedGoal && {
+                  backgroundColor: stageColor,
+                  color: '#fff',
+                  paddingHorizontal: spacing(0.5, scale),
+                  borderRadius: spacing(0.5, scale),
+                },
+              ]}
+            >
+              {streakText}
+            </Text>
+          </View>
+        </>
+      )}
 
       <View style={{ marginTop: spacing(1, scale) }}>
         <View
