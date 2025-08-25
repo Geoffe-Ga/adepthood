@@ -28,7 +28,10 @@ jest.mock('../components/HabitSettingsModal', () => () => null);
 jest.mock('../components/MissedDaysModal', () => () => null);
 jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
-jest.mock('../components/StatsModal', () => () => null);
+jest.mock('../components/StatsModal', () => ({
+  __esModule: true,
+  default: jest.fn(() => null),
+}));
 
 const widths = [320, 390, 600, 900, 1200];
 
@@ -126,5 +129,67 @@ describe('HabitsScreen responsive layout', () => {
       : menu.props.style;
 
     expect(style.zIndex).toBeGreaterThan(0);
+  });
+
+  it('opens stats modal when stats mode is enabled', () => {
+    jest
+      .spyOn(require('react-native'), 'useWindowDimensions')
+      .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
+
+    const StatsModal = require('../components/StatsModal').default as jest.Mock;
+
+    const testRenderer = renderer.create(<HabitsScreen />);
+    const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
+
+    renderer.act(() => {
+      toggle.props.onPress();
+    });
+
+    const { TouchableOpacity, Text } = require('react-native');
+    const options = testRenderer.root.findAll(
+      (n: any) =>
+        n.type === TouchableOpacity &&
+        n.findAllByType(Text).some((t: any) => t.props.children === 'Stats'),
+    );
+    renderer.act(() => {
+      options[0].props.onPress();
+    });
+
+    const tiles = testRenderer.root.findAllByProps({ testID: 'habit-tile' });
+    renderer.act(() => {
+      tiles[0].props.onPress();
+    });
+
+    expect(StatsModal).toHaveBeenCalled();
+    const call = StatsModal.mock.calls.pop() as any;
+    expect(call?.[0].visible).toBe(true);
+  });
+
+  it('archives energy scaffolding button into menu', () => {
+    jest
+      .spyOn(require('react-native'), 'useWindowDimensions')
+      .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
+
+    const { Text } = require('react-native');
+    const testRenderer = renderer.create(<HabitsScreen />);
+    const archive = testRenderer.root.findByProps({ testID: 'archive-energy-cta' });
+
+    renderer.act(() => {
+      archive.props.onPress();
+    });
+
+    const texts = testRenderer.root.findAllByType(Text).map((t: any) => t.props.children);
+    expect(texts).not.toContain('Perform Energy Scaffolding');
+    expect(texts).toContain('Energy Scaffolding button moved to menu.');
+
+    const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
+    renderer.act(() => {
+      toggle.props.onPress();
+    });
+
+    const hasMenuItem = testRenderer.root
+      .findAllByType(Text)
+      .some((t: any) => t.props.children === 'Energy Scaffolding');
+    expect(hasMenuItem).toBe(true);
   });
 });

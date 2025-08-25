@@ -1,7 +1,7 @@
 // HabitsScreen.tsx
 
 import * as Notifications from 'expo-notifications';
-import { MoreHorizontal } from 'lucide-react';
+import { BarChart2, Check, MoreHorizontal, Pencil, Zap } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -222,10 +222,12 @@ const HabitsScreen = () => {
   const [menuVisible, setMenuVisible] = useState(false);
   const [goalModalVisible, setGoalModalVisible] = useState(false);
   const [statsModalVisible, setStatsModalVisible] = useState(false);
+  const [statsMode, setStatsMode] = useState(false);
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const [reorderModalVisible, setReorderModalVisible] = useState(false);
   const [missedDaysModalVisible, setMissedDaysModalVisible] = useState(false);
   const [onboardingVisible, setOnboardingVisible] = useState(habits.length === 0);
+  const [showEnergyCTA, setShowEnergyCTA] = useState(true);
 
   // Register for push notifications on mount
   useEffect(() => {
@@ -462,7 +464,12 @@ const HabitsScreen = () => {
       habit={item}
       onOpenGoals={() => {
         setSelectedHabit(item);
-        setGoalModalVisible(true);
+        if (statsMode) {
+          setStatsModalVisible(true);
+          setStatsMode(false);
+        } else {
+          setGoalModalVisible(true);
+        }
       }}
       onLongPress={() => {
         setSelectedHabit(item);
@@ -502,16 +509,22 @@ const HabitsScreen = () => {
               }}
               style={{ paddingVertical: spacing(0.5, scale) }}
             >
-              <Text>Quick Log</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Check size={spacing(2, scale)} style={{ marginRight: spacing(1, scale) }} />
+                <Text>Quick Log</Text>
+              </View>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => {
-                if (selectedHabit) setStatsModalVisible(true);
+                setStatsMode(true);
                 setMenuVisible(false);
               }}
               style={{ paddingVertical: spacing(0.5, scale) }}
             >
-              <Text>Stats</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <BarChart2 size={spacing(2, scale)} style={{ marginRight: spacing(1, scale) }} />
+                <Text>Stats</Text>
+              </View>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => {
@@ -520,7 +533,22 @@ const HabitsScreen = () => {
               }}
               style={{ paddingVertical: spacing(0.5, scale) }}
             >
-              <Text>Edit</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Pencil size={spacing(2, scale)} style={{ marginRight: spacing(1, scale) }} />
+                <Text>Edit</Text>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                setOnboardingVisible(true);
+                setMenuVisible(false);
+              }}
+              style={{ paddingVertical: spacing(0.5, scale) }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Zap size={spacing(2, scale)} style={{ marginRight: spacing(1, scale) }} />
+                <Text>Energy Scaffolding</Text>
+              </View>
             </TouchableOpacity>
           </View>
         )}
@@ -543,12 +571,25 @@ const HabitsScreen = () => {
         ]}
       />
 
-      <TouchableOpacity
-        style={styles.energyScaffoldingButton}
-        onPress={() => setOnboardingVisible(true)}
-      >
-        <Text style={styles.energyScaffoldingButtonText}>Perform Energy Scaffolding</Text>
-      </TouchableOpacity>
+      {showEnergyCTA ? (
+        <View style={styles.energyScaffoldingContainer}>
+          <TouchableOpacity
+            style={styles.energyScaffoldingButton}
+            onPress={() => setOnboardingVisible(true)}
+          >
+            <Text style={styles.energyScaffoldingButtonText}>Perform Energy Scaffolding</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            testID="archive-energy-cta"
+            onPress={() => setShowEnergyCTA(false)}
+            style={styles.archiveEnergyButton}
+          >
+            <Text>Archive This</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <Text style={styles.archivedMessage}>Energy Scaffolding button moved to menu.</Text>
+      )}
 
       {/* Modals */}
       <GoalModal

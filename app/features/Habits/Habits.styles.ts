@@ -1229,21 +1229,33 @@ export const styles = StyleSheet.create({
   },
 
   // ===== Energy Scaffolding Button =====
-  energyScaffoldingButton: {
+  energyScaffoldingContainer: {
     position: 'absolute',
     bottom: 20,
     left: 20,
     right: 20,
+    alignItems: 'center',
+  },
+  energyScaffoldingButton: {
     backgroundColor: COLORS.primary,
     paddingVertical: SPACING.md,
     borderRadius: BORDER_RADIUS.xxl,
     alignItems: 'center',
+    width: '100%',
     ...SHADOWS.medium,
+  },
+  archiveEnergyButton: {
+    marginTop: SPACING.sm,
   },
   energyScaffoldingButtonText: {
     color: COLORS.text.light,
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  archivedMessage: {
+    textAlign: 'center',
+    marginTop: SPACING.md,
+    color: COLORS.text.tertiary,
   },
   habitSummary: {
     backgroundColor: 'rgba(0, 0, 0, 0.05)',
