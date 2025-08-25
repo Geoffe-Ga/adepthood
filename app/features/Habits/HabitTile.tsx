@@ -5,7 +5,7 @@ import { STAGE_COLORS } from '../../constants/stageColors';
 import { spacing } from '../../Sources/design/DesignSystem';
 import useResponsive from '../../Sources/design/useResponsive';
 
-import type { HabitTileProps } from './Habits.types';
+import type { HabitTileProps, Goal } from './Habits.types';
 import {
   getProgressPercentage,
   clampPercentage,
@@ -17,6 +17,8 @@ import {
 
 export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) => {
   const { width, height, columns, scale, gridGutter } = useResponsive();
+  const formatGoalTooltip = (g: Goal) =>
+    `${g.target} ${g.target_unit} ${g.frequency_unit.replace('_', ' ')}`;
   const stageColor = STAGE_COLORS[habit.stage];
 
   const lowGoal = habit.goals.find((g) => g.tier === 'low');
@@ -133,6 +135,14 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
             position: 'relative',
           }}
         >
+          <View
+            testID="progress-fill"
+            style={{
+              height: '100%',
+              width: `${progressPercentage}%`,
+              backgroundColor: progressBarColor,
+            }}
+          />
           {lowGoal && lowMarker >= 0 && (
             <TouchableOpacity
               style={{
@@ -142,13 +152,19 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                 bottom: 0,
                 width: 2,
                 backgroundColor: getTierColor('low'),
+                zIndex: 1,
+                transform: [
+                  {
+                    translateX:
+                      clampPercentage(lowMarker) === 0
+                        ? 0
+                        : clampPercentage(lowMarker) === 100
+                          ? -2
+                          : -1,
+                  },
+                ],
               }}
-              onLongPress={() =>
-                Alert.alert(
-                  'Low Goal',
-                  `${lowGoal.target} ${lowGoal.target_unit} ${lowGoal.frequency_unit}`,
-                )
-              }
+              onLongPress={() => Alert.alert('Low Grit', formatGoalTooltip(lowGoal))}
             />
           )}
           {clearGoal && clearMarker >= 0 && (
@@ -160,13 +176,19 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                 bottom: 0,
                 width: 2,
                 backgroundColor: getTierColor('clear'),
+                zIndex: 2,
+                transform: [
+                  {
+                    translateX:
+                      clampPercentage(clearMarker) === 0
+                        ? 0
+                        : clampPercentage(clearMarker) === 100
+                          ? -2
+                          : -1,
+                  },
+                ],
               }}
-              onLongPress={() =>
-                Alert.alert(
-                  'Clear Goal',
-                  `${clearGoal.target} ${clearGoal.target_unit} ${clearGoal.frequency_unit}`,
-                )
-              }
+              onLongPress={() => Alert.alert('Clear Goal', formatGoalTooltip(clearGoal))}
             />
           )}
           {stretchGoal && stretchMarker >= 0 && (
@@ -178,23 +200,21 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                 bottom: 0,
                 width: 2,
                 backgroundColor: getTierColor('stretch'),
+                zIndex: 3,
+                transform: [
+                  {
+                    translateX:
+                      clampPercentage(stretchMarker) === 0
+                        ? 0
+                        : clampPercentage(stretchMarker) === 100
+                          ? -2
+                          : -1,
+                  },
+                ],
               }}
-              onLongPress={() =>
-                Alert.alert(
-                  'Stretch Goal',
-                  `${stretchGoal.target} ${stretchGoal.target_unit} ${stretchGoal.frequency_unit}`,
-                )
-              }
+              onLongPress={() => Alert.alert('Stretch Goal', formatGoalTooltip(stretchGoal))}
             />
           )}
-          <View
-            testID="progress-fill"
-            style={{
-              height: '100%',
-              width: `${progressPercentage}%`,
-              backgroundColor: progressBarColor,
-            }}
-          />
         </View>
         <View style={{ position: 'relative', marginTop: spacing(0.5, scale) }}>
           {lowGoal && lowMarker >= 0 && (
@@ -202,9 +222,19 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
               style={{
                 position: 'absolute',
                 left: `${clampPercentage(lowMarker)}%`,
-                transform: [{ translateX: -6 }],
+                transform: [
+                  {
+                    translateX:
+                      clampPercentage(lowMarker) === 0
+                        ? 0
+                        : clampPercentage(lowMarker) === 100
+                          ? -12
+                          : -6,
+                  },
+                ],
                 fontSize: spacing(1.5, scale),
                 color: getTierColor('low'),
+                zIndex: 1,
               }}
             >
               LG
@@ -215,9 +245,19 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
               style={{
                 position: 'absolute',
                 left: `${clampPercentage(clearMarker)}%`,
-                transform: [{ translateX: -6 }],
+                transform: [
+                  {
+                    translateX:
+                      clampPercentage(clearMarker) === 0
+                        ? 0
+                        : clampPercentage(clearMarker) === 100
+                          ? -12
+                          : -6,
+                  },
+                ],
                 fontSize: spacing(1.5, scale),
                 color: getTierColor('clear'),
+                zIndex: 2,
               }}
             >
               CG
@@ -228,9 +268,19 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
               style={{
                 position: 'absolute',
                 left: `${clampPercentage(stretchMarker)}%`,
-                transform: [{ translateX: -6 }],
+                transform: [
+                  {
+                    translateX:
+                      clampPercentage(stretchMarker) === 0
+                        ? 0
+                        : clampPercentage(stretchMarker) === 100
+                          ? -12
+                          : -6,
+                  },
+                ],
                 fontSize: spacing(1.5, scale),
                 color: getTierColor('stretch'),
+                zIndex: 3,
               }}
             >
               SG

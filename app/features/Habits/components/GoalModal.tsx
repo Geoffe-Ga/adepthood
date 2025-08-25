@@ -16,32 +16,20 @@ import styles from '../Habits.styles';
 import type { Goal, GoalModalProps, EditableGoalProps, Habit } from '../Habits.types';
 import { TARGET_UNITS, FREQUENCY_UNITS, DAYS_OF_WEEK } from '../HabitsScreen';
 import {
-  calculateProgressIncrements,
   calculateHabitProgress,
   getGoalTarget,
   getTierColor,
+  getGoalTier,
+  getMarkerPositions,
+  getProgressPercentage,
+  getProgressBarColor,
+  clampPercentage,
 } from '../HabitUtils';
 
 // Constant for golden glow color to match with HabitTile
 const GOLDEN_GLOW_COLOR = 'rgba(255, 215, 0, 0.6)';
-
-/**
- * Calculate progress for a specific goal based on habit's total progress
- * @param goal The goal to calculate progress for
- * @param habit The parent habit containing the progress data
- * @returns Progress percentage (0-100)
- */
-const calculateGoalProgress = (goal: Goal, habit: Habit): number => {
-  const totalProgress = calculateHabitProgress(habit);
-  const targetValue = getGoalTarget(goal);
-
-  if (goal.is_additive) {
-    return Math.min((totalProgress / targetValue) * 100, 100);
-  } else {
-    // For subtractive goals, start at 100% and decrease with progress
-    return Math.max(0, 100 - (totalProgress / targetValue) * 100);
-  }
-};
+const formatGoal = (g: Goal) =>
+  `${g.target} ${g.target_unit} ${g.frequency_unit.replace('_', ' ')}`;
 
 /**
  * Determine if a goal has been achieved
@@ -86,12 +74,6 @@ const EditableGoal = ({
   const handleSave = () => {
     onUpdate(editedGoal);
   };
-
-  // Get progress increments for the goal
-  const progressIncrements = calculateProgressIncrements(goal);
-
-  // Calculate progress percentage for this specific goal
-  const progressPercentage = calculateGoalProgress(goal, habit);
 
   // Check if goal is achieved
   const achieved = isGoalAchieved(goal, habit);
@@ -283,45 +265,7 @@ const EditableGoal = ({
         )}
       </View>
 
-      <View style={styles.goalProgressContainer}>
-        <View style={styles.goalProgressBar}>
-          {/* Incremental markers */}
-          {progressIncrements.map((increment, index) => {
-            const position = (increment / goal.target) * 100;
-            return (
-              <View
-                key={index}
-                style={[
-                  styles.goalIncrementMarker,
-                  {
-                    left: `${position}%`,
-                    height: 7,
-                    width: 2,
-                    backgroundColor: 'rgba(0,0,0,0.4)',
-                  },
-                ]}
-              />
-            );
-          })}
-
-          <View
-            style={[
-              styles.goalProgressFill,
-              {
-                width: `${progressPercentage}%`,
-                height: 12, // Thicker progress bar
-                backgroundColor: achieved ? GOLDEN_GLOW_COLOR : STAGE_COLORS[habit.stage],
-              },
-            ]}
-          />
-        </View>
-
-        {/* Progress text showing progress vs target */}
-        <Text style={styles.goalProgressText}>
-          {calculateHabitProgress(habit)} / {goal.target} {goal.target_unit}
-          {achieved && ' (Achieved!)'}
-        </Text>
-      </View>
+      {/* Progress removed in favor of unified bar at top */}
     </View>
   );
 };
@@ -394,6 +338,18 @@ export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: 
   // Calculate total habit progress for display
   const totalProgress = calculateHabitProgress(habit);
 
+  const lowGoal = habit.goals.find((g) => g.tier === 'low');
+  const clearGoal = habit.goals.find((g) => g.tier === 'clear');
+  const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');
+  const { currentGoal, nextGoal } = getGoalTier(habit);
+  const progressPercentage = clampPercentage(getProgressPercentage(habit, currentGoal, nextGoal));
+  const {
+    low: lowMarker,
+    clear: clearMarker,
+    stretch: stretchMarker,
+  } = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
+  const progressBarColor = getProgressBarColor(habit);
+
   // Sort goals by tier for consistent display order
   const sortedGoals = [...habit.goals].sort((a, b) => {
     const tierOrder = { low: 1, clear: 2, stretch: 3 };
@@ -427,6 +383,173 @@ export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: 
                   Energy: Cost {habit.energy_cost} · Return {habit.energy_return} · Net{' '}
                   {habit.energy_return - habit.energy_cost}
                 </Text>
+              </View>
+
+              {/* Unified progress bar with markers */}
+              <View style={{ marginVertical: 16 }}>
+                <View
+                  style={{
+                    height: 12,
+                    backgroundColor: '#eee',
+                    borderRadius: 6,
+                    overflow: 'hidden',
+                    position: 'relative',
+                  }}
+                >
+                  <View
+                    style={{
+                      height: '100%',
+                      width: `${progressPercentage}%`,
+                      backgroundColor: progressBarColor,
+                    }}
+                  />
+                  {lowGoal && (
+                    <TouchableOpacity
+                      style={{
+                        position: 'absolute',
+                        left: `${clampPercentage(lowMarker)}%`,
+                        top: 0,
+                        bottom: 0,
+                        width: 2,
+                        backgroundColor: getTierColor('low'),
+                        zIndex: 1,
+                        transform: [
+                          {
+                            translateX:
+                              clampPercentage(lowMarker) === 0
+                                ? 0
+                                : clampPercentage(lowMarker) === 100
+                                  ? -2
+                                  : -1,
+                          },
+                        ],
+                      }}
+                      onPress={() => handleEditGoal(lowGoal)}
+                      onLongPress={() => Alert.alert('Low Grit', formatGoal(lowGoal))}
+                    />
+                  )}
+                  {clearGoal && (
+                    <TouchableOpacity
+                      style={{
+                        position: 'absolute',
+                        left: `${clampPercentage(clearMarker)}%`,
+                        top: 0,
+                        bottom: 0,
+                        width: 2,
+                        backgroundColor: getTierColor('clear'),
+                        zIndex: 2,
+                        transform: [
+                          {
+                            translateX:
+                              clampPercentage(clearMarker) === 0
+                                ? 0
+                                : clampPercentage(clearMarker) === 100
+                                  ? -2
+                                  : -1,
+                          },
+                        ],
+                      }}
+                      onPress={() => handleEditGoal(clearGoal)}
+                      onLongPress={() => Alert.alert('Clear Goal', formatGoal(clearGoal))}
+                    />
+                  )}
+                  {stretchGoal && (
+                    <TouchableOpacity
+                      style={{
+                        position: 'absolute',
+                        left: `${clampPercentage(stretchMarker)}%`,
+                        top: 0,
+                        bottom: 0,
+                        width: 2,
+                        backgroundColor: getTierColor('stretch'),
+                        zIndex: 3,
+                        transform: [
+                          {
+                            translateX:
+                              clampPercentage(stretchMarker) === 0
+                                ? 0
+                                : clampPercentage(stretchMarker) === 100
+                                  ? -2
+                                  : -1,
+                          },
+                        ],
+                      }}
+                      onPress={() => handleEditGoal(stretchGoal)}
+                      onLongPress={() => Alert.alert('Stretch Goal', formatGoal(stretchGoal))}
+                    />
+                  )}
+                </View>
+                <View style={{ position: 'relative', marginTop: 4 }}>
+                  {lowGoal && (
+                    <Text
+                      style={{
+                        position: 'absolute',
+                        left: `${clampPercentage(lowMarker)}%`,
+                        transform: [
+                          {
+                            translateX:
+                              clampPercentage(lowMarker) === 0
+                                ? 0
+                                : clampPercentage(lowMarker) === 100
+                                  ? -12
+                                  : -6,
+                          },
+                        ],
+                        fontSize: 10,
+                        color: getTierColor('low'),
+                        zIndex: 1,
+                      }}
+                    >
+                      LG
+                    </Text>
+                  )}
+                  {clearGoal && (
+                    <Text
+                      style={{
+                        position: 'absolute',
+                        left: `${clampPercentage(clearMarker)}%`,
+                        transform: [
+                          {
+                            translateX:
+                              clampPercentage(clearMarker) === 0
+                                ? 0
+                                : clampPercentage(clearMarker) === 100
+                                  ? -12
+                                  : -6,
+                          },
+                        ],
+                        fontSize: 10,
+                        color: getTierColor('clear'),
+                        zIndex: 2,
+                      }}
+                    >
+                      CG
+                    </Text>
+                  )}
+                  {stretchGoal && (
+                    <Text
+                      style={{
+                        position: 'absolute',
+                        left: `${clampPercentage(stretchMarker)}%`,
+                        transform: [
+                          {
+                            translateX:
+                              clampPercentage(stretchMarker) === 0
+                                ? 0
+                                : clampPercentage(stretchMarker) === 100
+                                  ? -12
+                                  : -6,
+                          },
+                        ],
+                        fontSize: 10,
+                        color: getTierColor('stretch'),
+                        zIndex: 3,
+                      }}
+                    >
+                      SG
+                    </Text>
+                  )}
+                </View>
               </View>
 
               <ScrollView style={styles.goalsContainer}>

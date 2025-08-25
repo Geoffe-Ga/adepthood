@@ -1,6 +1,6 @@
 import { STAGE_COLORS } from '../../constants/stageColors';
 
-import type { Goal, Habit } from './Habits.types';
+import type { Goal, Habit, Completion } from './Habits.types';
 
 export const STAGE_ORDER = [
   'Beige',
@@ -203,4 +203,26 @@ export const getProgressPercentage = (
 
 export const getProgressBarColor = (habit: Habit): string => {
   return STAGE_COLORS[habit.stage] ?? '#000';
+};
+
+// Logs a number of units for the given habit. Multiple logs can occur within
+// the same day; however, the streak counter will only increment once per
+// calendar day. Returns the updated habit object.
+export const logHabitUnits = (habit: Habit, amount: number, date: Date = new Date()): Habit => {
+  const alreadyLoggedToday =
+    habit.last_completion_date &&
+    new Date(habit.last_completion_date).toDateString() === date.toDateString();
+
+  const completion: Completion = {
+    id: Math.random(),
+    timestamp: date,
+    completed_units: amount,
+  };
+
+  return {
+    ...habit,
+    streak: alreadyLoggedToday ? habit.streak : habit.streak + 1,
+    last_completion_date: date,
+    completions: habit.completions ? [...habit.completions, completion] : [completion],
+  };
 };
