@@ -14,7 +14,7 @@ export const useResponsive = () => {
   const heightScale = height < 700 ? 0.85 : 1;
   const scale = baseScale * heightScale;
   const columns = width > height ? 2 : 1;
-  const gridGutter = spacing(2, scale);
+  const gridGutter = spacing(1, scale);
 
   return {
     width,

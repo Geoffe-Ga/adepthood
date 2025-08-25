@@ -474,7 +474,7 @@ const HabitsScreen = () => {
   );
 
   return (
-    <SafeAreaView style={[styles.container, { padding: spacing(3, scale) }]}>
+    <SafeAreaView style={[styles.container, { padding: spacing(1, scale) }]}>
       <FlatList
         testID="habits-list"
         data={habits.filter((h) => h.revealed)}

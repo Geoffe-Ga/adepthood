@@ -54,8 +54,14 @@ describe('HabitsScreen responsive layout', () => {
       const colorValues = Object.values(STAGE_COLORS);
 
       tiles.forEach((t: any) => {
-        const style = Array.isArray(t.props.style) ? t.props.style[1] : t.props.style;
-        expect(style.minHeight).toBeLessThanOrEqual(height / 5);
+        const style = Array.isArray(t.props.style)
+          ? t.props.style.reduce((acc: any, s: any) => ({ ...acc, ...s }), {})
+          : t.props.style;
+
+        const tileHeight =
+          (style.minHeight ?? 0) + 2 * (style.padding ?? 0) + 2 * (style.margin ?? 0);
+
+        expect(tileHeight).toBeLessThanOrEqual(height / 5);
         expect(colorValues).toContain(style.borderColor);
 
         const fill = t.findByProps({ testID: 'progress-fill' });

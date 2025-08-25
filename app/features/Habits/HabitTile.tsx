@@ -148,9 +148,9 @@ export const HabitTile = ({
           transform: [{ scale: scaleAnim }],
           borderWidth: hasCompletedGoal ? 2 : 1,
           borderColor: stageColor,
-          margin: spacing(1, scale),
-          padding: spacing(3, scale),
-          minHeight: spacing(14, scale),
+          margin: spacing(0.5, scale),
+          padding: spacing(2, scale),
+          minHeight: spacing(8, scale),
         },
       ]}
     >
