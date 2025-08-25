@@ -107,4 +107,24 @@ describe('HabitsScreen responsive layout', () => {
     const secondList = testRenderer.root.findByType(FlatList);
     expect(secondList.props.numColumns).toBe(1);
   });
+
+  it('renders overflow menu above tiles', () => {
+    jest
+      .spyOn(require('react-native'), 'useWindowDimensions')
+      .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
+
+    const testRenderer = renderer.create(<HabitsScreen />);
+    const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
+
+    renderer.act(() => {
+      toggle.props.onPress();
+    });
+
+    const menu = testRenderer.root.findByProps({ testID: 'overflow-menu' });
+    const style = Array.isArray(menu.props.style)
+      ? menu.props.style.reduce((acc: any, s: any) => ({ ...acc, ...s }), {})
+      : menu.props.style;
+
+    expect(style.zIndex).toBeGreaterThan(0);
+  });
 });

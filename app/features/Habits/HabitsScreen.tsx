@@ -475,6 +475,7 @@ const HabitsScreen = () => {
     <SafeAreaView style={[styles.container, { padding: screenPadding }]}>
       <View style={{ alignItems: 'flex-end' }}>
         <TouchableOpacity
+          testID="overflow-menu-toggle"
           onPress={() => setMenuVisible((v) => !v)}
           style={{ padding: spacing(1, scale) }}
         >
@@ -482,6 +483,7 @@ const HabitsScreen = () => {
         </TouchableOpacity>
         {menuVisible && (
           <View
+            testID="overflow-menu"
             style={{
               position: 'absolute',
               top: spacing(5, scale),
@@ -490,6 +492,7 @@ const HabitsScreen = () => {
               padding: spacing(1, scale),
               borderRadius: spacing(1, scale),
               elevation: 2,
+              zIndex: 1000,
             }}
           >
             <TouchableOpacity
