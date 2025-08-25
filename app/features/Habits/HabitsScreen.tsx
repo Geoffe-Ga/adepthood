@@ -1,8 +1,9 @@
 // HabitsScreen.tsx
 
 import * as Notifications from 'expo-notifications';
+import { MoreHorizontal } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
-import { Alert, FlatList, Text, TouchableOpacity } from 'react-native';
+import { Alert, FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { spacing } from '../../Sources/design/DesignSystem';
@@ -218,6 +219,7 @@ export const calculateNetEnergy = (cost: number, returnValue: number): number =>
 const HabitsScreen = () => {
   const [habits, setHabits] = useState<Habit[]>(DEFAULT_HABITS);
   const [selectedHabit, setSelectedHabit] = useState<Habit | null>(null);
+  const [menuVisible, setMenuVisible] = useState(false);
   const [goalModalVisible, setGoalModalVisible] = useState(false);
   const [statsModalVisible, setStatsModalVisible] = useState(false);
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
@@ -461,11 +463,6 @@ const HabitsScreen = () => {
         setSelectedHabit(item);
         setGoalModalVisible(true);
       }}
-      onLogUnit={() => handleLogUnit(item.id!, 1)}
-      onOpenStats={() => {
-        setSelectedHabit(item);
-        setStatsModalVisible(true);
-      }}
       onLongPress={() => {
         setSelectedHabit(item);
         setSettingsModalVisible(true);
@@ -475,6 +472,56 @@ const HabitsScreen = () => {
 
   return (
     <SafeAreaView style={[styles.container, { padding: spacing(1, scale) }]}>
+      <View style={{ alignItems: 'flex-end' }}>
+        <TouchableOpacity
+          onPress={() => setMenuVisible((v) => !v)}
+          style={{ padding: spacing(1, scale) }}
+        >
+          <MoreHorizontal size={spacing(3, scale)} />
+        </TouchableOpacity>
+        {menuVisible && (
+          <View
+            style={{
+              position: 'absolute',
+              top: spacing(5, scale),
+              right: spacing(1, scale),
+              backgroundColor: '#fff',
+              padding: spacing(1, scale),
+              borderRadius: spacing(1, scale),
+              elevation: 2,
+            }}
+          >
+            <TouchableOpacity
+              onPress={() => {
+                if (selectedHabit) handleLogUnit(selectedHabit.id!, 1);
+                setMenuVisible(false);
+              }}
+              style={{ paddingVertical: spacing(0.5, scale) }}
+            >
+              <Text>Quick Log</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                if (selectedHabit) setStatsModalVisible(true);
+                setMenuVisible(false);
+              }}
+              style={{ paddingVertical: spacing(0.5, scale) }}
+            >
+              <Text>Stats</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                if (selectedHabit) setSettingsModalVisible(true);
+                setMenuVisible(false);
+              }}
+              style={{ paddingVertical: spacing(0.5, scale) }}
+            >
+              <Text>Edit</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+
       <FlatList
         key={`cols-${columns}`}
         testID="habits-list"

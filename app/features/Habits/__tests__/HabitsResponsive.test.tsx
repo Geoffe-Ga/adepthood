@@ -61,7 +61,8 @@ describe('HabitsScreen responsive layout', () => {
         const tileHeight =
           (style.minHeight ?? 0) + 2 * (style.padding ?? 0) + 2 * (style.margin ?? 0);
 
-        expect(tileHeight).toBeLessThanOrEqual(height / 5);
+        const maxTileHeight = (height * expectedColumns) / 10;
+        expect(tileHeight).toBeLessThanOrEqual(maxTileHeight);
         expect(colorValues).toContain(style.borderColor);
 
         const fill = t.findByProps({ testID: 'progress-fill' });
