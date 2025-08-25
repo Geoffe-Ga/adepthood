@@ -13,6 +13,7 @@ import {
   getMarkerPositions,
   getProgressBarColor,
   getTierColor,
+  isGoalAchieved,
 } from './HabitUtils';
 
 export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) => {
@@ -43,6 +44,7 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
     clear: clearMarker,
     stretch: stretchMarker,
   } = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
+  const hasCleared = clearGoal ? isGoalAchieved(clearGoal, habit) : false;
 
   return (
     <TouchableOpacity
@@ -148,10 +150,13 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
               style={{
                 position: 'absolute',
                 left: `${clampPercentage(lowMarker)}%`,
-                top: 0,
-                bottom: 0,
-                width: 2,
-                backgroundColor: getTierColor('low'),
+                top: -6 + barHeight / 2,
+                width: 12,
+                height: 12,
+                borderRadius: 6,
+                backgroundColor: '#fffdf7',
+                borderWidth: 2,
+                borderColor: getTierColor('low'),
                 zIndex: 1,
                 transform: [
                   {
@@ -159,8 +164,8 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                       clampPercentage(lowMarker) === 0
                         ? 0
                         : clampPercentage(lowMarker) === 100
-                          ? -2
-                          : -1,
+                          ? -12
+                          : -6,
                   },
                 ],
               }}
@@ -172,10 +177,13 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
               style={{
                 position: 'absolute',
                 left: `${clampPercentage(clearMarker)}%`,
-                top: 0,
-                bottom: 0,
-                width: 2,
-                backgroundColor: getTierColor('clear'),
+                top: -6 + barHeight / 2,
+                width: 12,
+                height: 12,
+                borderRadius: 6,
+                backgroundColor: '#fffdf7',
+                borderWidth: 2,
+                borderColor: getTierColor('clear'),
                 zIndex: 2,
                 transform: [
                   {
@@ -183,23 +191,26 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                       clampPercentage(clearMarker) === 0
                         ? 0
                         : clampPercentage(clearMarker) === 100
-                          ? -2
-                          : -1,
+                          ? -12
+                          : -6,
                   },
                 ],
               }}
               onLongPress={() => Alert.alert('Clear Goal', formatGoalTooltip(clearGoal))}
             />
           )}
-          {stretchGoal && stretchMarker >= 0 && (
+          {stretchGoal && stretchMarker >= 0 && hasCleared && (
             <TouchableOpacity
               style={{
                 position: 'absolute',
                 left: `${clampPercentage(stretchMarker)}%`,
-                top: 0,
-                bottom: 0,
-                width: 2,
-                backgroundColor: getTierColor('stretch'),
+                top: -6 + barHeight / 2,
+                width: 12,
+                height: 12,
+                borderRadius: 6,
+                backgroundColor: '#fffdf7',
+                borderWidth: 2,
+                borderColor: getTierColor('stretch'),
                 zIndex: 3,
                 transform: [
                   {
@@ -207,8 +218,8 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                       clampPercentage(stretchMarker) === 0
                         ? 0
                         : clampPercentage(stretchMarker) === 100
-                          ? -2
-                          : -1,
+                          ? -12
+                          : -6,
                   },
                 ],
               }}
@@ -263,7 +274,7 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
               CG
             </Text>
           )}
-          {stretchGoal && stretchMarker >= 0 && (
+          {stretchGoal && stretchMarker >= 0 && hasCleared && (
             <Text
               style={{
                 position: 'absolute',

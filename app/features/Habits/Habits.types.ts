@@ -75,6 +75,7 @@ export interface GoalModalProps {
   onClose: () => void;
   onUpdateGoal: (_habitId: number, _updatedGoal: Goal) => void;
   onLogUnit: (_habitId: number, _amount: number) => void;
+  onUpdateHabit: (_updatedHabit: Habit) => void;
 }
 
 export interface StatsModalProps {

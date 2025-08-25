@@ -545,6 +545,7 @@ const HabitsScreen = () => {
         onClose={() => setGoalModalVisible(false)}
         onUpdateGoal={handleUpdateGoal}
         onLogUnit={handleLogUnit}
+        onUpdateHabit={handleUpdateHabit}
       />
       <StatsModal
         visible={statsModalVisible}

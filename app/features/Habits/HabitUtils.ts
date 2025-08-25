@@ -30,6 +30,12 @@ export const getTierColor = (tier: 'low' | 'clear' | 'stretch') => {
 
 export const clampPercentage = (value: number): number => Math.min(100, Math.max(0, value));
 
+export const isGoalAchieved = (goal: Goal, habit: Habit): boolean => {
+  const totalProgress = calculateHabitProgress(habit);
+  const targetValue = getGoalTarget(goal);
+  return goal.is_additive ? totalProgress >= targetValue : totalProgress <= targetValue;
+};
+
 export const getMarkerPositions = (
   lowGoal?: Goal,
   clearGoal?: Goal,
