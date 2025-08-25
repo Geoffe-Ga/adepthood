@@ -476,6 +476,7 @@ const HabitsScreen = () => {
   return (
     <SafeAreaView style={[styles.container, { padding: spacing(1, scale) }]}>
       <FlatList
+        key={`cols-${columns}`}
         testID="habits-list"
         data={habits.filter((h) => h.revealed)}
         keyExtractor={(item) => item.id?.toString() ?? item.name}

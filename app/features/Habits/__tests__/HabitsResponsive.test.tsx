@@ -73,4 +73,26 @@ describe('HabitsScreen responsive layout', () => {
       });
     });
   });
+
+  it('remounts list when column count changes', () => {
+    const dimSpy = jest
+      .spyOn(require('react-native'), 'useWindowDimensions')
+      .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
+
+    const { FlatList } = require('react-native');
+    const testRenderer = renderer.create(<HabitsScreen />);
+    const firstList = testRenderer.root.findByType(FlatList);
+    expect(firstList.props.numColumns).toBe(2);
+
+    dimSpy.mockReturnValue({ width: 320, height: 800, scale: 1, fontScale: 1 });
+
+    expect(() => {
+      renderer.act(() => {
+        testRenderer.update(<HabitsScreen />);
+      });
+    }).not.toThrow();
+
+    const secondList = testRenderer.root.findByType(FlatList);
+    expect(secondList.props.numColumns).toBe(1);
+  });
 });
