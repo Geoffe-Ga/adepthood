@@ -117,6 +117,12 @@ describe('HabitsScreen responsive layout', () => {
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
     const testRenderer = renderer.create(<HabitsScreen />);
+    const { StyleSheet } = require('react-native');
+    const wrapper = testRenderer.root.findByProps({ testID: 'overflow-menu-wrapper' });
+    const wrapperStyle = StyleSheet.flatten(wrapper.props.style);
+    expect(wrapperStyle.position).toBe('absolute');
+    expect(wrapperStyle.zIndex).toBeGreaterThan(0);
+
     const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
 
     renderer.act(() => {
@@ -174,6 +180,7 @@ describe('HabitsScreen responsive layout', () => {
     const testRenderer = renderer.create(<HabitsScreen />);
     const archive = testRenderer.root.findByProps({ testID: 'archive-energy-cta' });
 
+    jest.useFakeTimers();
     renderer.act(() => {
       archive.props.onPress();
     });
@@ -181,6 +188,13 @@ describe('HabitsScreen responsive layout', () => {
     const texts = testRenderer.root.findAllByType(Text).map((t: any) => t.props.children);
     expect(texts).not.toContain('Perform Energy Scaffolding');
     expect(texts).toContain('Energy Scaffolding button moved to menu.');
+
+    renderer.act(() => {
+      jest.advanceTimersByTime(3000);
+    });
+
+    const postTimerTexts = testRenderer.root.findAllByType(Text).map((t: any) => t.props.children);
+    expect(postTimerTexts).not.toContain('Energy Scaffolding button moved to menu.');
 
     const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
     renderer.act(() => {
@@ -191,5 +205,6 @@ describe('HabitsScreen responsive layout', () => {
       .findAllByType(Text)
       .some((t: any) => t.props.children === 'Energy Scaffolding');
     expect(hasMenuItem).toBe(true);
+    jest.useRealTimers();
   });
 });

@@ -228,6 +228,7 @@ const HabitsScreen = () => {
   const [missedDaysModalVisible, setMissedDaysModalVisible] = useState(false);
   const [onboardingVisible, setOnboardingVisible] = useState(habits.length === 0);
   const [showEnergyCTA, setShowEnergyCTA] = useState(true);
+  const [showArchiveMessage, setShowArchiveMessage] = useState(false);
 
   // Register for push notifications on mount
   useEffect(() => {
@@ -480,7 +481,7 @@ const HabitsScreen = () => {
 
   return (
     <SafeAreaView style={[styles.container, { padding: screenPadding }]}>
-      <View style={{ alignItems: 'flex-end' }}>
+      <View style={styles.overflowMenuContainer} testID="overflow-menu-wrapper">
         <TouchableOpacity
           testID="overflow-menu-toggle"
           onPress={() => setMenuVisible((v) => !v)}
@@ -491,16 +492,7 @@ const HabitsScreen = () => {
         {menuVisible && (
           <View
             testID="overflow-menu"
-            style={{
-              position: 'absolute',
-              top: spacing(5, scale),
-              right: spacing(1, scale),
-              backgroundColor: '#fff',
-              padding: spacing(1, scale),
-              borderRadius: spacing(1, scale),
-              elevation: 2,
-              zIndex: 1000,
-            }}
+            style={[styles.mobileMenu, { top: spacing(4, scale), right: 0 }]}
           >
             <TouchableOpacity
               onPress={() => {
@@ -581,15 +573,19 @@ const HabitsScreen = () => {
           </TouchableOpacity>
           <TouchableOpacity
             testID="archive-energy-cta"
-            onPress={() => setShowEnergyCTA(false)}
+            onPress={() => {
+              setShowEnergyCTA(false);
+              setShowArchiveMessage(true);
+              setTimeout(() => setShowArchiveMessage(false), 3000);
+            }}
             style={styles.archiveEnergyButton}
           >
             <Text>Archive This</Text>
           </TouchableOpacity>
         </View>
-      ) : (
+      ) : showArchiveMessage ? (
         <Text style={styles.archivedMessage}>Energy Scaffolding button moved to menu.</Text>
-      )}
+      ) : null}
 
       {/* Modals */}
       <GoalModal

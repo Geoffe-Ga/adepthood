@@ -1234,18 +1234,25 @@ export const styles = StyleSheet.create({
     bottom: 20,
     left: 20,
     right: 20,
+    flexDirection: 'row',
     alignItems: 'center',
   },
   energyScaffoldingButton: {
+    flex: 1,
     backgroundColor: COLORS.primary,
     paddingVertical: SPACING.md,
     borderRadius: BORDER_RADIUS.xxl,
     alignItems: 'center',
-    width: '100%',
+    marginRight: SPACING.sm,
     ...SHADOWS.medium,
   },
   archiveEnergyButton: {
-    marginTop: SPACING.sm,
+    backgroundColor: COLORS.background.accent,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.md,
+    borderRadius: BORDER_RADIUS.xxl,
+    alignItems: 'center',
+    ...SHADOWS.small,
   },
   energyScaffoldingButtonText: {
     color: COLORS.text.light,
@@ -1256,6 +1263,14 @@ export const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: SPACING.md,
     color: COLORS.text.tertiary,
+  },
+
+  // ===== Overflow Menu =====
+  overflowMenuContainer: {
+    position: 'absolute',
+    top: SPACING.sm,
+    right: SPACING.sm,
+    zIndex: 20,
   },
   habitSummary: {
     backgroundColor: 'rgba(0, 0, 0, 0.05)',
