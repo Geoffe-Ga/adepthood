@@ -1,4 +1,4 @@
-import { StyleSheet, Dimensions } from 'react-native';
+import { StyleSheet } from 'react-native';
 
 //------------------
 // Theme Configuration (easier to maintain and change)
@@ -89,7 +89,6 @@ const BORDER_RADIUS = {
 };
 
 // Device dimensions (for responsive layouts)
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 //------------------
 // Styles (modernized mystical minimalist style)
@@ -118,7 +117,6 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     position: 'relative',
     ...SHADOWS.medium,
-    height: SCREEN_HEIGHT * 0.175,
   },
   glowEffect: {
     ...StyleSheet.absoluteFillObject,
@@ -1359,6 +1357,7 @@ export const styles = StyleSheet.create({
     backgroundColor: '#eee',
     borderRadius: 6,
     overflow: 'hidden',
+    position: 'relative',
   },
   markerTooltip: {
     position: 'absolute',

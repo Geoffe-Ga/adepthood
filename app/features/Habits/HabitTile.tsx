@@ -3,6 +3,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Platform, Text, TouchableOpacity, View } from 'react-native';
 
 import { STAGE_COLORS } from '../../constants/stageColors';
+import { spacing } from '../../Sources/design/DesignSystem';
+import useResponsive from '../../Sources/design/useResponsive';
 
 import styles from './Habits.styles';
 import type { Goal, HabitTileProps } from './Habits.types';
@@ -11,6 +13,8 @@ import {
   getGoalTier,
   getProgressBarColor,
   getTierColor,
+  getMarkerPositions,
+  clampPercentage,
 } from './HabitUtils';
 
 // Constants
@@ -23,6 +27,7 @@ export const HabitTile = ({
   onOpenStats,
   onLongPress,
 }: HabitTileProps) => {
+  const { scale } = useResponsive();
   const backgroundColor = '#f8f8f8'; // Neutral background for all habits
   const stageColor = STAGE_COLORS[habit.stage];
   const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -38,7 +43,9 @@ export const HabitTile = ({
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');
 
   const { currentGoal, nextGoal, completedAllGoals } = getGoalTier(habit);
-  const progressPercentage = calculateProgressPercentage(habit, currentGoal, nextGoal);
+  const progressPercentage = clampPercentage(
+    calculateProgressPercentage(habit, currentGoal, nextGoal),
+  );
   const progressBarColor = getProgressBarColor(habit, currentGoal, nextGoal, completedAllGoals);
   const progressBarWidth = progressPercentage / 100;
   const hasCompletedGoal = completedAllGoals || progressPercentage >= 100;
@@ -99,51 +106,11 @@ export const HabitTile = ({
     onOpenGoals();
   };
 
-  // Calculate marker positions
-  // For additive goals, normalize against clearGoal
-  // For subtractive goals, normalize against lowGoal (the leftmost marker)
-  const getMarkerPositions = () => {
-    if (!lowGoal) return { low: 0, clear: 0, stretch: 0 };
-
-    if (lowGoal.is_additive) {
-      // For additive goals, if there's a clear goal, use it as the base
-      if (clearGoal) {
-        const lowPosition = (lowGoal.target / clearGoal.target) * 100;
-        // Clear goal is always at 100% of the progress bar
-        const clearPosition = 100;
-        // Stretch goal is beyond the visible bar
-        const stretchPosition = stretchGoal ? 100 : 0;
-
-        return { low: lowPosition, clear: clearPosition, stretch: stretchPosition };
-      }
-      // If no clear goal, just use low goal
-      else {
-        return { low: 100, clear: 0, stretch: 0 };
-      }
-    }
-    // For subtractive goals
-    else {
-      if (lowGoal) {
-        const maxTarget = lowGoal.target;
-        const minTarget = stretchGoal ? stretchGoal.target : 0;
-        const normalize = (value: number) => ((value - minTarget) / (maxTarget - minTarget)) * 100;
-
-        const stretchPosition = 0; // best at far left
-        const clearPosition = clearGoal ? normalize(clearGoal.target) : 50;
-        const lowPosition = 100; // worst at far right
-
-        return { low: lowPosition, clear: clearPosition, stretch: stretchPosition };
-      } else {
-        return { low: 0, clear: 0, stretch: 0 };
-      }
-    }
-  };
-
   const {
     low: lowMarkerPosition,
     clear: clearMarkerPosition,
     stretch: stretchMarkerPosition,
-  } = getMarkerPositions();
+  } = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
 
   // Show action menu (for mobile)
   const toggleMenu = () => {
@@ -180,6 +147,9 @@ export const HabitTile = ({
           transform: [{ scale: scaleAnim }],
           borderWidth: hasCompletedGoal ? 2 : 1,
           borderColor: hasCompletedGoal ? stageColor : '#ddd',
+          margin: spacing(1, scale),
+          padding: spacing(4, scale),
+          minHeight: spacing(20, scale),
         },
       ]}
     >
@@ -302,8 +272,12 @@ export const HabitTile = ({
         onPressOut={handlePressOut}
         style={{ width: '100%', alignItems: 'center' }}
       >
-        <Text style={styles.icon}>{habit.icon}</Text>
-        <Text style={[styles.name, { color: habit.revealed ? '#333' : '#aaa' }]}>{habit.name}</Text>
+        <Text style={[styles.icon, { fontSize: 32 * scale }]}>{habit.icon}</Text>
+        <Text
+          style={[styles.name, { color: habit.revealed ? '#333' : '#aaa', fontSize: 16 * scale }]}
+        >
+          {habit.name}
+        </Text>
 
         {habit.revealed && (
           <View style={styles.streakContainer}>
@@ -315,17 +289,9 @@ export const HabitTile = ({
 
         {/* Progress Bar */}
         {habit.revealed && lowGoal && (
-          <View style={[styles.progressBarContainer, { marginTop: 12 }]}>
+          <View style={[styles.progressBarContainer, { marginTop: spacing(1.5, scale) }]}>
             <View
-              style={[
-                styles.progressBar,
-                {
-                  height: 12,
-                  backgroundColor: '#eee',
-                  borderRadius: 6,
-                  overflow: 'visible',
-                },
-              ]}
+              style={[styles.progressBar, { height: Math.max(8, 10 * scale), overflow: 'visible' }]}
             >
               {/* Goal markers with improved visibility and correct positioning */}
               {lowGoal && lowMarkerPosition >= 0 && (
@@ -333,14 +299,15 @@ export const HabitTile = ({
                   style={[
                     styles.goalMarker,
                     {
-                      left: `${lowMarkerPosition}%`,
-                      height: 16,
+                      left: `${clampPercentage(lowMarkerPosition)}%`,
+                      height: Math.max(16, spacing(2, scale)),
                       width: 4,
                       top: -2,
                       backgroundColor: getTierColor('low'),
                       borderRadius: 2,
                     },
                   ]}
+                  hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
                   onPress={() => showMarkerInfo('low')}
                 />
               )}
@@ -350,14 +317,15 @@ export const HabitTile = ({
                   style={[
                     styles.goalMarker,
                     {
-                      left: `${clearMarkerPosition}%`,
-                      height: 16,
+                      left: `${clampPercentage(clearMarkerPosition)}%`,
+                      height: Math.max(16, spacing(2, scale)),
                       width: 4,
                       top: -2,
                       backgroundColor: getTierColor('clear'),
                       borderRadius: 2,
                     },
                   ]}
+                  hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
                   onPress={() => showMarkerInfo('clear')}
                 />
               )}
@@ -367,14 +335,15 @@ export const HabitTile = ({
                   style={[
                     styles.goalMarker,
                     {
-                      left: `${stretchMarkerPosition}%`,
-                      height: 16,
+                      left: `${clampPercentage(stretchMarkerPosition)}%`,
+                      height: Math.max(16, spacing(2, scale)),
                       width: 4,
                       top: -2,
                       backgroundColor: getTierColor('stretch'),
                       borderRadius: 2,
                     },
                   ]}
+                  hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
                   onPress={() => showMarkerInfo('stretch')}
                 />
               )}
@@ -387,11 +356,28 @@ export const HabitTile = ({
                     top: -40,
                     left:
                       showMarkerTooltip === 'low'
-                        ? `${lowMarkerPosition}%`
+                        ? `${clampPercentage(lowMarkerPosition)}%`
                         : showMarkerTooltip === 'clear'
-                          ? `${clearMarkerPosition}%`
-                          : `${stretchMarkerPosition}%`,
-                    transform: [{ translateX: -50 }],
+                          ? `${clampPercentage(clearMarkerPosition)}%`
+                          : `${clampPercentage(stretchMarkerPosition)}%`,
+                    transform: [
+                      {
+                        translateX:
+                          (showMarkerTooltip === 'low'
+                            ? lowMarkerPosition
+                            : showMarkerTooltip === 'clear'
+                              ? clearMarkerPosition
+                              : stretchMarkerPosition) < 10
+                            ? 0
+                            : (showMarkerTooltip === 'low'
+                                  ? lowMarkerPosition
+                                  : showMarkerTooltip === 'clear'
+                                    ? clearMarkerPosition
+                                    : stretchMarkerPosition) > 90
+                              ? -100
+                              : -50,
+                      },
+                    ],
                     backgroundColor: 'rgba(0,0,0,0.8)',
                     padding: 8,
                     borderRadius: 4,
@@ -408,6 +394,7 @@ export const HabitTile = ({
 
               {/* Progress fill */}
               <View
+                testID="progress-fill"
                 style={[
                   styles.progressBarFill,
                   {
