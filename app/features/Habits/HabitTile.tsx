@@ -15,7 +15,7 @@ import {
   getTierColor,
 } from './HabitUtils';
 
-export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) => {
+export const HabitTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: HabitTileProps) => {
   const { width, height, columns, scale, gridGutter } = useResponsive();
   const stageColor = STAGE_COLORS[habit.stage];
 
@@ -62,7 +62,11 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
     >
       {iconInline ? (
         <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Text style={{ fontSize: spacing(3, scale), marginRight: spacing(1, scale) }}>
+          <Text
+            style={{ fontSize: spacing(3, scale), marginRight: spacing(1, scale) }}
+            onPress={onIconPress}
+            testID="habit-icon"
+          >
             {habit.icon}
           </Text>
           <Text
@@ -95,7 +99,13 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
             testID="habit-icon-top"
             style={{ alignItems: 'center', marginBottom: spacing(1, scale) }}
           >
-            <Text style={{ fontSize: spacing(4, scale) }}>{habit.icon}</Text>
+            <Text
+              style={{ fontSize: spacing(4, scale) }}
+              onPress={onIconPress}
+              testID="habit-icon-top-text"
+            >
+              {habit.icon}
+            </Text>
           </View>
           <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Text

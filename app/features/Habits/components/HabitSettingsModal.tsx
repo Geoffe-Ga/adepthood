@@ -14,9 +14,10 @@ import {
 import EmojiSelector from 'react-native-emoji-selector';
 
 import { STAGE_COLORS } from '../../../constants/stageColors';
+import { calculateNetEnergy } from '../EnergyUtils';
 import styles from '../Habits.styles';
 import type { Habit, HabitSettingsModalProps } from '../Habits.types';
-import { calculateNetEnergy, DAYS_OF_WEEK } from '../HabitsScreen';
+import { DAYS_OF_WEEK } from '../HabitsScreen';
 
 export const HabitSettingsModal = ({
   visible,
@@ -26,6 +27,7 @@ export const HabitSettingsModal = ({
   onDelete,
   onOpenReorderModal,
   allHabits,
+  startWithEmojiPicker,
 }: HabitSettingsModalProps) => {
   const [editedHabit, setEditedHabit] = useState<Habit | null>(null);
   const [showTimePicker, setShowTimePicker] = useState(false);
@@ -35,7 +37,10 @@ export const HabitSettingsModal = ({
 
   useEffect(() => {
     setEditedHabit(habit ? { ...habit } : null);
-  }, [habit, visible]);
+    if (startWithEmojiPicker) {
+      setShowEmojiSelector(true);
+    }
+  }, [habit, visible, startWithEmojiPicker]);
 
   if (!editedHabit) return null;
 
@@ -145,13 +150,13 @@ export const HabitSettingsModal = ({
 
             <View style={styles.settingRow}>
               <Text style={styles.settingLabel}>Icon:</Text>
-              <TouchableOpacity
-                style={styles.iconSelectorButton}
+              <Text
+                style={styles.currentIcon}
                 onPress={() => setShowEmojiSelector(!showEmojiSelector)}
+                testID="settings-icon"
               >
-                <Text style={styles.currentIcon}>{editedHabit.icon}</Text>
-                <Text style={styles.iconButtonText}>Change</Text>
-              </TouchableOpacity>
+                {editedHabit.icon}
+              </Text>
             </View>
 
             {showEmojiSelector && (

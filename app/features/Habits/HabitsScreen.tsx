@@ -205,11 +205,6 @@ const updateHabitNotifications = async (habit: Habit): Promise<string[]> => {
   return notificationIds;
 };
 
-// Calculate net energy for a habit
-export const calculateNetEnergy = (cost: number, returnValue: number): number => {
-  return returnValue - cost;
-};
-
 // Calculate progress increments for a goal based on its target
 
 //------------------
@@ -223,6 +218,7 @@ const HabitsScreen = () => {
   const [goalModalVisible, setGoalModalVisible] = useState(false);
   const [statsModalVisible, setStatsModalVisible] = useState(false);
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
+  const [openSettingsWithEmoji, setOpenSettingsWithEmoji] = useState(false);
   const [reorderModalVisible, setReorderModalVisible] = useState(false);
   const [missedDaysModalVisible, setMissedDaysModalVisible] = useState(false);
   const [onboardingVisible, setOnboardingVisible] = useState(habits.length === 0);
@@ -466,6 +462,12 @@ const HabitsScreen = () => {
       }}
       onLongPress={() => {
         setSelectedHabit(item);
+        setOpenSettingsWithEmoji(false);
+        setSettingsModalVisible(true);
+      }}
+      onIconPress={() => {
+        setSelectedHabit(item);
+        setOpenSettingsWithEmoji(true);
         setSettingsModalVisible(true);
       }}
     />
@@ -567,11 +569,15 @@ const HabitsScreen = () => {
       <HabitSettingsModal
         visible={settingsModalVisible}
         habit={selectedHabit}
-        onClose={() => setSettingsModalVisible(false)}
+        onClose={() => {
+          setSettingsModalVisible(false);
+          setOpenSettingsWithEmoji(false);
+        }}
         onUpdate={handleUpdateHabit}
         onDelete={handleDeleteHabit}
         onOpenReorderModal={handleOpenReorderModal}
         allHabits={habits}
+        startWithEmojiPicker={openSettingsWithEmoji}
       />
       <ReorderHabitsModal
         visible={reorderModalVisible}

@@ -1,12 +1,22 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
 import React, { useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Modal, TextInput, Platform } from 'react-native';
+import {
+  View,
+  Text,
+  FlatList,
+  TouchableOpacity,
+  Modal,
+  TextInput,
+  Platform,
+  Alert,
+} from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
 
 import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { DEFAULT_ICONS } from '../HabitsScreen';
+import { getStaggeredStartDate } from '../OnboardingUtils';
 
 export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingModalProps) => {
   const [step, setStep] = useState(1);
@@ -25,10 +35,12 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     const newHabit: OnboardingHabit = {
       name: newHabitName.trim(),
       icon: randomIcon,
-      energy_cost: 5,
-      energy_return: 5,
+      energy_cost: 0,
+      energy_return: 0,
       stage: 'Beige', // Default stage
       start_date: new Date(),
+      costEntered: false,
+      returnEntered: false,
     };
 
     setHabits((prev) => [...prev, newHabit]);
@@ -37,10 +49,18 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
 
   // Update energy values for a habit in onboarding
   const updateHabitEnergy = (index: number, type: 'cost' | 'return', value: number) => {
-    if (value < -10 || value > 10) return; // Validate range
+    if (value < -10 || value > 10) return;
 
     setHabits((prev) =>
-      prev.map((habit, i) => (i === index ? { ...habit, [`energy_${type}`]: value } : habit)),
+      prev.map((habit, i) =>
+        i === index
+          ? {
+              ...habit,
+              [`energy_${type}`]: value,
+              ...(type === 'cost' ? { costEntered: true } : { returnEntered: true }),
+            }
+          : habit,
+      ),
     );
   };
 
@@ -66,11 +86,10 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     });
 
     // Update start dates based on the sorted order
-    const habitsWithDates = sortedHabits.map((habit, index) => {
-      const habitStartDate = new Date(startDate);
-      habitStartDate.setDate(habitStartDate.getDate() + index * 21);
-      return { ...habit, start_date: habitStartDate };
-    });
+    const habitsWithDates = sortedHabits.map((habit, index) => ({
+      ...habit,
+      start_date: getStaggeredStartDate(startDate, index),
+    }));
 
     setHabits(habitsWithDates);
     setStep(3);
@@ -89,7 +108,16 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
         renderItem={({ item, index }) => (
           <View style={styles.energyRatingItem}>
             <Text style={styles.energyRatingName}>
-              {item.icon} {item.name}
+              <Text
+                testID={`icon-picker-${index}`}
+                onPress={() => {
+                  setSelectedHabitIndex(index);
+                  setShowEmojiPicker(true);
+                }}
+              >
+                {item.icon}
+              </Text>
+              {` ${item.name}`}
             </Text>
             <View style={styles.energyRatingDetails}>
               <View style={styles.energySliders}>
@@ -138,10 +166,14 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
                   </View>
                 </View>
               </View>
-              <View style={styles.netEnergyContainer}>
-                <Text style={styles.netEnergyLabel}>Net:</Text>
-                <Text style={styles.netEnergyValue}>{item.energy_return - item.energy_cost}</Text>
-              </View>
+              {item.costEntered && item.returnEntered && (
+                <View style={styles.netEnergyContainer}>
+                  <Text style={styles.netEnergyLabel}>Net:</Text>
+                  <Text style={styles.netEnergyValue} testID={`net-${index}`}>
+                    {item.energy_return - item.energy_cost}
+                  </Text>
+                </View>
+              )}
             </View>
           </View>
         )}
@@ -149,7 +181,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
       <TouchableOpacity
         style={styles.onboardingContinueButton}
         onPress={sortHabits}
-        disabled={habits.length === 0}
+        disabled={!habits.every((h) => h.costEntered && h.returnEntered)}
       >
         <Text style={styles.onboardingContinueButtonText}>Continue</Text>
       </TouchableOpacity>
@@ -158,11 +190,10 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
 
   // Step 3: Reorder habits using drag & drop
   const handleDragEnd = ({ data }: { data: OnboardingHabit[] }) => {
-    const updatedHabits = data.map((habit, index) => {
-      const habitStartDate = new Date(startDate);
-      habitStartDate.setDate(habitStartDate.getDate() + index * 21);
-      return { ...habit, start_date: habitStartDate };
-    });
+    const updatedHabits = data.map((habit, index) => ({
+      ...habit,
+      start_date: getStaggeredStartDate(startDate, index),
+    }));
     setHabits(updatedHabits);
   };
 
@@ -194,13 +225,11 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
               setShowDatePicker(Platform.OS === 'ios');
               if (selectedDate) {
                 setStartDate(selectedDate);
-                // Update all start dates
                 setHabits((prev) =>
-                  prev.map((habit, index) => {
-                    const newDate = new Date(selectedDate);
-                    newDate.setDate(newDate.getDate() + index * 21);
-                    return { ...habit, start_date: newDate };
-                  }),
+                  prev.map((habit, index) => ({
+                    ...habit,
+                    start_date: getStaggeredStartDate(selectedDate, index),
+                  })),
                 );
               }
             }}
@@ -228,17 +257,16 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
                     })}
                   </Text>
                   <Text style={styles.habitListItemText}>
-                    {item.icon} {item.name}
+                    <Text
+                      onPress={() => {
+                        setSelectedHabitIndex(index);
+                        setShowEmojiPicker(true);
+                      }}
+                    >
+                      {item.icon}
+                    </Text>
+                    {` ${item.name}`}
                   </Text>
-                  <TouchableOpacity
-                    style={styles.iconEditButton}
-                    onPress={() => {
-                      setSelectedHabitIndex(index);
-                      setShowEmojiPicker(true);
-                    }}
-                  >
-                    <Text style={styles.iconEditButtonText}>📝</Text>
-                  </TouchableOpacity>
                 </View>
 
                 <View style={styles.habitEnergyInfo}>
@@ -285,6 +313,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
   const handleFinish = () => {
     onSaveHabits(habits);
     onClose();
+    Alert.alert('Next Steps', 'Tap a habit tile to edit its goals.');
   };
 
   const renderStep = () => {
