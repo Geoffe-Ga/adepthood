@@ -267,6 +267,7 @@ const HabitsScreen = () => {
 
   // Log progress units for a habit
   const handleLogUnit = (habitId: number, amount: number) => {
+    let updated: Habit | null = null;
     setHabits((prev) =>
       prev.map((h) => {
         if (h.id !== habitId) return h;
@@ -274,6 +275,7 @@ const HabitsScreen = () => {
         const updatedHabit = logHabitUnits(h, amount);
         const newProgress = calculateHabitProgress(updatedHabit);
         const { currentGoal, nextGoal } = getGoalTier(updatedHabit);
+        updated = updatedHabit;
 
         if (currentGoal.is_additive) {
           const currentTarget = getGoalTarget(currentGoal);
@@ -311,6 +313,9 @@ const HabitsScreen = () => {
         return updatedHabit;
       }),
     );
+    if (selectedHabit?.id === habitId && updated) {
+      setSelectedHabit(updated);
+    }
   };
 
   // Update habit details

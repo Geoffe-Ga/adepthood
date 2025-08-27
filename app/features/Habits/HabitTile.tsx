@@ -14,12 +14,17 @@ import {
   getProgressBarColor,
   getTierColor,
   isGoalAchieved,
+  calculateHabitProgress,
 } from './HabitUtils';
 
 export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) => {
   const { width, height, columns, scale, gridGutter } = useResponsive();
-  const formatGoalTooltip = (g: Goal) =>
-    `${g.target} ${g.target_unit} ${g.frequency_unit.replace('_', ' ')}`;
+  const formatGoalTooltip = (g: Goal) => {
+    const label =
+      g.tier === 'low' ? 'Low Grit' : g.tier === 'clear' ? 'Clear Goal' : 'Stretch Goal';
+    const progress = calculateHabitProgress(habit);
+    return `${label}: ${progress}/${g.target} ${g.target_unit}`;
+  };
   const stageColor = STAGE_COLORS[habit.stage];
 
   const [tooltip, setTooltip] = useState<null | 'low' | 'clear' | 'stretch'>(null);
@@ -130,23 +135,25 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
       )}
 
       <View style={{ marginTop: spacing(1, scale) }}>
-        <View
-          style={{
-            height: barHeight,
-            backgroundColor: '#eee',
-            borderRadius: barHeight / 2,
-            overflow: 'hidden',
-            position: 'relative',
-          }}
-        >
+        <View style={{ height: barHeight, position: 'relative' }}>
           <View
-            testID="progress-fill"
             style={{
               height: '100%',
-              width: `${progressPercentage}%`,
-              backgroundColor: progressBarColor,
+              backgroundColor: '#eee',
+              borderRadius: barHeight / 2,
+              overflow: 'hidden',
             }}
-          />
+          >
+            <View
+              testID="progress-fill"
+              style={{
+                height: '100%',
+                width: `${progressPercentage}%`,
+                backgroundColor: progressBarColor,
+                borderRadius: barHeight / 2,
+              }}
+            />
+          </View>
           {lowGoal && lowMarker >= 0 && (
             <View
               style={{
@@ -190,6 +197,10 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                 testID="marker-low"
                 onPressIn={() => setTooltip('low')}
                 onPressOut={() => setTooltip(null)}
+                // @ts-ignore react-native-web hover props
+                onMouseEnter={() => setTooltip('low')}
+                // @ts-ignore react-native-web hover props
+                onMouseLeave={() => setTooltip(null)}
                 style={{
                   width: 12,
                   height: 12,
@@ -244,6 +255,10 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                 testID="marker-clear"
                 onPressIn={() => setTooltip('clear')}
                 onPressOut={() => setTooltip(null)}
+                // @ts-ignore react-native-web hover props
+                onMouseEnter={() => setTooltip('clear')}
+                // @ts-ignore react-native-web hover props
+                onMouseLeave={() => setTooltip(null)}
                 style={{
                   width: 12,
                   height: 12,
@@ -298,6 +313,10 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                 testID="marker-stretch"
                 onPressIn={() => setTooltip('stretch')}
                 onPressOut={() => setTooltip(null)}
+                // @ts-ignore react-native-web hover props
+                onMouseEnter={() => setTooltip('stretch')}
+                // @ts-ignore react-native-web hover props
+                onMouseLeave={() => setTooltip(null)}
                 style={{
                   width: 12,
                   height: 12,

@@ -7,6 +7,7 @@ import renderer from 'react-test-renderer';
 
 import { GoalModal } from '../components/GoalModal';
 import type { Habit, Goal } from '../Habits.types';
+import { logHabitUnits } from '../HabitUtils';
 
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
@@ -83,5 +84,41 @@ describe('GoalModal hook order', () => {
         );
       });
     }).not.toThrow();
+  });
+});
+
+describe('GoalModal progress', () => {
+  it('shows stretch marker and updates progress fill when habit changes', () => {
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={() => {}}
+        onUpdateGoal={() => {}}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    expect(testRenderer.root.findByProps({ testID: 'modal-marker-stretch' })).toBeTruthy();
+    const initialFill = testRenderer.root.findByProps({ testID: 'modal-progress-fill' });
+    expect(initialFill.props.style.width).toBe('0%');
+
+    const updatedHabit = logHabitUnits(sampleHabit, 1);
+    renderer.act(() => {
+      testRenderer.update(
+        <GoalModal
+          visible
+          habit={updatedHabit}
+          onClose={() => {}}
+          onUpdateGoal={() => {}}
+          onLogUnit={() => {}}
+          onUpdateHabit={() => {}}
+        />,
+      );
+    });
+
+    const updatedFill = testRenderer.root.findByProps({ testID: 'modal-progress-fill' });
+    expect(parseFloat(updatedFill.props.style.width)).toBeCloseTo(33.33, 1);
   });
 });

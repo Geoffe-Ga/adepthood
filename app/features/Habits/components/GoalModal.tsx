@@ -16,14 +16,12 @@ import { STAGE_COLORS } from '../../../constants/stageColors';
 import styles from '../Habits.styles';
 import type { GoalModalProps } from '../Habits.types';
 import {
-  getGoalTier,
   getMarkerPositions,
   getProgressBarColor,
-  getProgressPercentage,
   clampPercentage,
   getTierColor,
   getGoalTarget,
-  isGoalAchieved,
+  calculateHabitProgress,
 } from '../HabitUtils';
 
 const bubbleStyle = (color: string, leftPct: number): ViewStyle => ({
@@ -74,12 +72,17 @@ export const GoalModal = ({
   const lowGoal = habit?.goals.find((g) => g.tier === 'low');
   const clearGoal = habit?.goals.find((g) => g.tier === 'clear');
   const stretchGoal = habit?.goals.find((g) => g.tier === 'stretch');
-  const { currentGoal, nextGoal } = habit
-    ? getGoalTier(habit)
-    : { currentGoal: lowGoal || null, nextGoal: clearGoal || null };
+  const totalProgress = habit ? calculateHabitProgress(habit) : 0;
   const progressPercentage =
-    habit && currentGoal
-      ? clampPercentage(getProgressPercentage(habit, currentGoal, nextGoal ?? null))
+    habit && stretchGoal
+      ? lowGoal?.is_additive
+        ? clampPercentage((totalProgress / getGoalTarget(stretchGoal)) * 100)
+        : clampPercentage(
+            100 -
+              ((totalProgress - getGoalTarget(stretchGoal)) /
+                (getGoalTarget(lowGoal!) - getGoalTarget(stretchGoal))) *
+                100,
+          )
       : 0;
   const progressBarColor = habit ? getProgressBarColor(habit) : '#eee';
   const markers = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
@@ -185,36 +188,44 @@ export const GoalModal = ({
               )}
 
               <View style={{ marginVertical: 16 }} onLayout={handleBarLayout}>
-                <View
-                  style={{
-                    height: 12,
-                    backgroundColor: '#eee',
-                    borderRadius: 6,
-                    overflow: 'hidden',
-                    position: 'relative',
-                  }}
-                >
+                <View style={{ height: 12, position: 'relative' }}>
                   <View
                     style={{
                       height: '100%',
-                      width: `${progressPercentage}%`,
-                      backgroundColor: progressBarColor,
+                      backgroundColor: '#eee',
+                      borderRadius: 6,
+                      overflow: 'hidden',
                     }}
-                  />
+                  >
+                    <View
+                      testID="modal-progress-fill"
+                      style={{
+                        height: '100%',
+                        width: `${progressPercentage}%`,
+                        backgroundColor: progressBarColor,
+                        borderRadius: 6,
+                      }}
+                    />
+                  </View>
                   {lowGoal && (
                     <View
+                      testID="modal-marker-low"
                       {...lowPan.panHandlers}
                       style={bubbleStyle(getTierColor('low'), lowMarker)}
                     />
                   )}
                   {clearGoal && (
                     <View
+                      testID="modal-marker-clear"
                       {...clearPan.panHandlers}
                       style={bubbleStyle(getTierColor('clear'), clearMarker)}
                     />
                   )}
-                  {stretchGoal && isGoalAchieved(clearGoal!, habit) && (
-                    <View style={bubbleStyle(getTierColor('stretch'), stretchMarker)} />
+                  {stretchGoal && (
+                    <View
+                      testID="modal-marker-stretch"
+                      style={bubbleStyle(getTierColor('stretch'), stretchMarker)}
+                    />
                   )}
                 </View>
                 <View style={{ position: 'relative', marginTop: 4 }}>
@@ -222,7 +233,7 @@ export const GoalModal = ({
                   {clearGoal && (
                     <Text style={labelStyle(getTierColor('clear'), clearMarker)}>CG</Text>
                   )}
-                  {stretchGoal && isGoalAchieved(clearGoal!, habit) && (
+                  {stretchGoal && (
                     <Text style={labelStyle(getTierColor('stretch'), stretchMarker)}>SG</Text>
                   )}
                 </View>
