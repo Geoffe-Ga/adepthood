@@ -127,40 +127,252 @@ export const HabitSettingsModal = ({
   const netEnergy = calculateNetEnergy(editedHabit.energy_cost, editedHabit.energy_return);
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View
-          style={[styles.settingsModalContent, { borderTopColor: STAGE_COLORS[editedHabit.stage] }]}
-        >
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Edit Habit</Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Text style={styles.closeButtonText}>×</Text>
-            </TouchableOpacity>
-          </View>
-          <ScrollView style={styles.settingsContainer}>
-            <View style={styles.settingRow}>
-              <Text style={styles.settingLabel}>Name:</Text>
-              <TextInput
-                style={styles.settingInput}
-                value={editedHabit.name}
-                onChangeText={(text) => handleChange('name', text)}
-              />
+    <>
+      <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+        <View style={styles.modalOverlay}>
+          <View
+            style={[
+              styles.settingsModalContent,
+              { borderTopColor: STAGE_COLORS[editedHabit.stage] },
+            ]}
+          >
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Edit Habit</Text>
+              <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+                <Text style={styles.closeButtonText}>×</Text>
+              </TouchableOpacity>
             </View>
+            <ScrollView style={styles.settingsContainer}>
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>Name:</Text>
+                <TextInput
+                  style={styles.settingInput}
+                  value={editedHabit.name}
+                  onChangeText={(text) => handleChange('name', text)}
+                />
+              </View>
 
-            <View style={styles.settingRow}>
-              <Text style={styles.settingLabel}>Icon:</Text>
-              <Text
-                style={styles.currentIcon}
-                onPress={() => setShowEmojiSelector(!showEmojiSelector)}
-                testID="settings-icon"
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>Icon:</Text>
+                <Text
+                  style={styles.currentIcon}
+                  onPress={() => setShowEmojiSelector(!showEmojiSelector)}
+                  testID="settings-icon"
+                >
+                  {editedHabit.icon}
+                </Text>
+              </View>
+
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>Stage:</Text>
+                <Text style={styles.settingValue}>{editedHabit.stage}</Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.reorderButton}
+                onPress={() => onOpenReorderModal(allHabits)}
               >
-                {editedHabit.icon}
-              </Text>
-            </View>
+                <Text style={styles.reorderButtonText}>Reorder Habits</Text>
+              </TouchableOpacity>
 
-            {showEmojiSelector && (
-              <View style={styles.emojiSelectorContainer}>
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>Energy Rating:</Text>
+              </View>
+
+              <View style={styles.energyContainer}>
+                <View style={styles.energyHeader}>
+                  <Text style={styles.energyHeaderText}>Cost</Text>
+                  <Text style={styles.energyHeaderText}>Return</Text>
+                  <Text style={styles.energyHeaderText}>Net</Text>
+                </View>
+
+                <View style={styles.energyRow}>
+                  <TextInput
+                    style={styles.energyInput}
+                    value={editedHabit.energy_cost.toString()}
+                    onChangeText={(text) => {
+                      const value = parseInt(text) || 0;
+                      if (value >= -10 && value <= 10) {
+                        handleChange('energy_cost', value);
+                      }
+                    }}
+                    keyboardType="numeric"
+                  />
+                  <TextInput
+                    style={styles.energyInput}
+                    value={editedHabit.energy_return.toString()}
+                    onChangeText={(text) => {
+                      const value = parseInt(text) || 0;
+                      if (value >= -10 && value <= 10) {
+                        handleChange('energy_return', value);
+                      }
+                    }}
+                    keyboardType="numeric"
+                  />
+                  <Text style={styles.netEnergyValue}>{netEnergy}</Text>
+                </View>
+
+                <View style={styles.validationNote}>
+                  <Text style={styles.validationText}>Values must be between -10 and 10</Text>
+                </View>
+              </View>
+
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>Start Date:</Text>
+                <DateTimePicker
+                  value={new Date(editedHabit.start_date)}
+                  mode="date"
+                  display="default"
+                  onChange={(event, date) => date && handleChange('start_date', date)}
+                />
+              </View>
+
+              <View style={styles.settingGroup}>
+                <View style={styles.settingRow}>
+                  <Text style={styles.settingLabel}>Notifications:</Text>
+                  <Switch
+                    value={editedHabit.notificationFrequency !== 'off'}
+                    onValueChange={(value) => {
+                      handleChange('notificationFrequency', value ? 'daily' : 'off');
+                    }}
+                  />
+                </View>
+
+                {editedHabit.notificationFrequency !== 'off' && (
+                  <>
+                    <View style={styles.settingRow}>
+                      <Text style={styles.settingLabel}>Frequency:</Text>
+                      <TouchableOpacity
+                        style={styles.frequencyButton}
+                        onPress={() => {
+                          const current = editedHabit.notificationFrequency;
+                          const next: 'daily' | 'weekly' | 'custom' =
+                            current === 'daily'
+                              ? 'weekly'
+                              : current === 'weekly'
+                                ? 'custom'
+                                : 'daily';
+                          handleChange('notificationFrequency', next);
+                        }}
+                      >
+                        <Text style={styles.frequencyButtonText}>
+                          {editedHabit.notificationFrequency || 'daily'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {editedHabit.notificationFrequency === 'custom' && (
+                      <View style={styles.settingRow}>
+                        <Text style={styles.settingLabel}>Days:</Text>
+                        <TouchableOpacity
+                          style={styles.daysButton}
+                          onPress={() => setShowDaysPicker(!showDaysPicker)}
+                        >
+                          <Text style={styles.daysButtonText}>
+                            {editedHabit.notificationDays && editedHabit.notificationDays.length > 0
+                              ? editedHabit.notificationDays
+                                  .map((d) => d.substring(0, 3))
+                                  .join(', ')
+                              : 'Select days'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+
+                    {showDaysPicker && (
+                      <View style={styles.daysPicker}>
+                        {DAYS_OF_WEEK.map((day) => (
+                          <TouchableOpacity
+                            key={day}
+                            style={[
+                              styles.dayOption,
+                              (editedHabit.notificationDays || []).includes(day) &&
+                                styles.selectedDayOption,
+                            ]}
+                            onPress={() => handleToggleDay(day)}
+                          >
+                            <Text style={styles.dayOptionText}>{day.substring(0, 3)}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+
+                    <View style={styles.settingRow}>
+                      <Text style={styles.settingLabel}>Time:</Text>
+                      <View style={styles.timeInputContainer}>
+                        <TouchableOpacity
+                          style={styles.timeButton}
+                          onPress={() => setShowTimePicker(true)}
+                        >
+                          <Text style={styles.timeButtonText}>{notificationTime}</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.addTimeButton}
+                          onPress={handleAddNotificationTime}
+                        >
+                          <Text style={styles.addTimeButtonText}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {(Platform.OS === 'ios' || Platform.OS === 'android') &&
+                      showTimePicker &&
+                      renderTimePicker()}
+
+                    {(editedHabit.notificationTimes || []).length > 0 && (
+                      <View style={styles.timesList}>
+                        {(editedHabit.notificationTimes || []).map((time, index) => (
+                          <View key={index} style={styles.timeItem}>
+                            <Text style={styles.timeText}>{time}</Text>
+                            <TouchableOpacity
+                              style={styles.removeTimeButton}
+                              onPress={() => handleRemoveNotificationTime(time)}
+                            >
+                              <Text style={styles.removeTimeButtonText}>×</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </>
+                )}
+
+                <View style={styles.settingRow}>
+                  <Text style={styles.settingLabel}>Milestone Notifications:</Text>
+                  <Switch
+                    value={editedHabit.milestoneNotifications || false}
+                    onValueChange={(value) => handleChange('milestoneNotifications', value)}
+                  />
+                </View>
+              </View>
+
+              <View style={styles.buttonGroup}>
+                <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
+                  <Text style={styles.saveButtonText}>Save Changes</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
+                  <Text style={styles.deleteButtonText}>Delete Habit</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+      {showEmojiSelector && (
+        <Modal transparent animationType="slide" visible>
+          <View style={styles.modalOverlay}>
+            <View style={styles.emojiPickerModal}>
+              <View style={styles.emojiPickerHeader}>
+                <Text style={styles.emojiPickerTitle}>Select Icon</Text>
+                <TouchableOpacity
+                  style={styles.closeEmojiPicker}
+                  onPress={() => setShowEmojiSelector(false)}
+                >
+                  <Text style={styles.closeEmojiPickerText}>×</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={{ height: 250 }}>
                 <EmojiSelector
                   onEmojiSelected={(emoji) => {
                     handleChange('icon', emoji);
@@ -168,205 +380,13 @@ export const HabitSettingsModal = ({
                   }}
                   showSearchBar
                   columns={8}
-                  placeholder="Search emoji..."
-                />
-              </View>
-            )}
-
-            <View style={styles.settingRow}>
-              <Text style={styles.settingLabel}>Stage:</Text>
-              <Text style={styles.settingValue}>{editedHabit.stage}</Text>
-            </View>
-
-            <TouchableOpacity
-              style={styles.reorderButton}
-              onPress={() => onOpenReorderModal(allHabits)}
-            >
-              <Text style={styles.reorderButtonText}>Reorder Habits</Text>
-            </TouchableOpacity>
-
-            <View style={styles.settingRow}>
-              <Text style={styles.settingLabel}>Energy Rating:</Text>
-            </View>
-
-            <View style={styles.energyContainer}>
-              <View style={styles.energyHeader}>
-                <Text style={styles.energyHeaderText}>Cost</Text>
-                <Text style={styles.energyHeaderText}>Return</Text>
-                <Text style={styles.energyHeaderText}>Net</Text>
-              </View>
-
-              <View style={styles.energyRow}>
-                <TextInput
-                  style={styles.energyInput}
-                  value={editedHabit.energy_cost.toString()}
-                  onChangeText={(text) => {
-                    const value = parseInt(text) || 0;
-                    if (value >= -10 && value <= 10) {
-                      handleChange('energy_cost', value);
-                    }
-                  }}
-                  keyboardType="numeric"
-                />
-                <TextInput
-                  style={styles.energyInput}
-                  value={editedHabit.energy_return.toString()}
-                  onChangeText={(text) => {
-                    const value = parseInt(text) || 0;
-                    if (value >= -10 && value <= 10) {
-                      handleChange('energy_return', value);
-                    }
-                  }}
-                  keyboardType="numeric"
-                />
-                <Text style={styles.netEnergyValue}>{netEnergy}</Text>
-              </View>
-
-              <View style={styles.validationNote}>
-                <Text style={styles.validationText}>Values must be between -10 and 10</Text>
-              </View>
-            </View>
-
-            <View style={styles.settingRow}>
-              <Text style={styles.settingLabel}>Start Date:</Text>
-              <DateTimePicker
-                value={new Date(editedHabit.start_date)}
-                mode="date"
-                display="default"
-                onChange={(event, date) => date && handleChange('start_date', date)}
-              />
-            </View>
-
-            <View style={styles.settingGroup}>
-              <View style={styles.settingRow}>
-                <Text style={styles.settingLabel}>Notifications:</Text>
-                <Switch
-                  value={editedHabit.notificationFrequency !== 'off'}
-                  onValueChange={(value) => {
-                    handleChange('notificationFrequency', value ? 'daily' : 'off');
-                  }}
-                />
-              </View>
-
-              {editedHabit.notificationFrequency !== 'off' && (
-                <>
-                  <View style={styles.settingRow}>
-                    <Text style={styles.settingLabel}>Frequency:</Text>
-                    <TouchableOpacity
-                      style={styles.frequencyButton}
-                      onPress={() => {
-                        const current = editedHabit.notificationFrequency;
-                        const next: 'daily' | 'weekly' | 'custom' =
-                          current === 'daily'
-                            ? 'weekly'
-                            : current === 'weekly'
-                              ? 'custom'
-                              : 'daily';
-                        handleChange('notificationFrequency', next);
-                      }}
-                    >
-                      <Text style={styles.frequencyButtonText}>
-                        {editedHabit.notificationFrequency || 'daily'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {editedHabit.notificationFrequency === 'custom' && (
-                    <View style={styles.settingRow}>
-                      <Text style={styles.settingLabel}>Days:</Text>
-                      <TouchableOpacity
-                        style={styles.daysButton}
-                        onPress={() => setShowDaysPicker(!showDaysPicker)}
-                      >
-                        <Text style={styles.daysButtonText}>
-                          {editedHabit.notificationDays && editedHabit.notificationDays.length > 0
-                            ? editedHabit.notificationDays.map((d) => d.substring(0, 3)).join(', ')
-                            : 'Select days'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
-
-                  {showDaysPicker && (
-                    <View style={styles.daysPicker}>
-                      {DAYS_OF_WEEK.map((day) => (
-                        <TouchableOpacity
-                          key={day}
-                          style={[
-                            styles.dayOption,
-                            (editedHabit.notificationDays || []).includes(day) &&
-                              styles.selectedDayOption,
-                          ]}
-                          onPress={() => handleToggleDay(day)}
-                        >
-                          <Text style={styles.dayOptionText}>{day.substring(0, 3)}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  )}
-
-                  <View style={styles.settingRow}>
-                    <Text style={styles.settingLabel}>Time:</Text>
-                    <View style={styles.timeInputContainer}>
-                      <TouchableOpacity
-                        style={styles.timeButton}
-                        onPress={() => setShowTimePicker(true)}
-                      >
-                        <Text style={styles.timeButtonText}>{notificationTime}</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={styles.addTimeButton}
-                        onPress={handleAddNotificationTime}
-                      >
-                        <Text style={styles.addTimeButtonText}>+</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-
-                  {(Platform.OS === 'ios' || Platform.OS === 'android') &&
-                    showTimePicker &&
-                    renderTimePicker()}
-
-                  {(editedHabit.notificationTimes || []).length > 0 && (
-                    <View style={styles.timesList}>
-                      {(editedHabit.notificationTimes || []).map((time, index) => (
-                        <View key={index} style={styles.timeItem}>
-                          <Text style={styles.timeText}>{time}</Text>
-                          <TouchableOpacity
-                            style={styles.removeTimeButton}
-                            onPress={() => handleRemoveNotificationTime(time)}
-                          >
-                            <Text style={styles.removeTimeButtonText}>×</Text>
-                          </TouchableOpacity>
-                        </View>
-                      ))}
-                    </View>
-                  )}
-                </>
-              )}
-
-              <View style={styles.settingRow}>
-                <Text style={styles.settingLabel}>Milestone Notifications:</Text>
-                <Switch
-                  value={editedHabit.milestoneNotifications || false}
-                  onValueChange={(value) => handleChange('milestoneNotifications', value)}
                 />
               </View>
             </View>
-
-            <View style={styles.buttonGroup}>
-              <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-                <Text style={styles.saveButtonText}>Save Changes</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
-                <Text style={styles.deleteButtonText}>Delete Habit</Text>
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
+          </View>
+        </Modal>
+      )}
+    </>
   );
 };
 

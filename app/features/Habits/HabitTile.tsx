@@ -18,6 +18,7 @@ import {
 export const HabitTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: HabitTileProps) => {
   const { width, height, columns, scale, gridGutter } = useResponsive();
   const stageColor = STAGE_COLORS[habit.stage];
+  const isUpcoming = new Date(habit.start_date) > new Date();
 
   const lowGoal = habit.goals.find((g) => g.tier === 'low');
   const clearGoal = habit.goals.find((g) => g.tier === 'clear');
@@ -56,6 +57,7 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: Habi
         minHeight: tileMinHeight,
         borderRadius: spacing(1, scale),
         backgroundColor: '#f8f8f8',
+        opacity: isUpcoming ? 0.4 : 1,
       }}
       onPress={onOpenGoals}
       onLongPress={onLongPress}

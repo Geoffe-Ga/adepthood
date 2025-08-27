@@ -1,4 +1,3 @@
-import DateTimePicker from '@react-native-community/datetimepicker';
 import React, { useState } from 'react';
 import {
   View,
@@ -7,23 +6,24 @@ import {
   TouchableOpacity,
   Modal,
   TextInput,
-  Platform,
   Alert,
+  Platform,
 } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
+import DateTimePickerModal from 'react-native-modal-datetime-picker';
 
 import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { DEFAULT_ICONS } from '../HabitsScreen';
-import { getStaggeredStartDate } from '../OnboardingUtils';
+import { getStaggeredStartDate, getStageByIndex } from '../OnboardingUtils';
 
 export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingModalProps) => {
   const [step, setStep] = useState(1);
   const [habits, setHabits] = useState<OnboardingHabit[]>([]);
   const [newHabitName, setNewHabitName] = useState('');
   const [startDate, setStartDate] = useState(new Date());
-  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [isDatePickerVisible, setDatePickerVisible] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectedHabitIndex, setSelectedHabitIndex] = useState<number | null>(null);
 
@@ -70,7 +70,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     setSelectedHabitIndex(null);
   };
 
-  // Sort habits by net energy for step 3
+  // Sort habits by net energy for final step
   const sortHabits = () => {
     const sortedHabits = [...habits].sort((a, b) => {
       const netEnergyA = a.energy_return - a.energy_cost;
@@ -85,23 +85,22 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
       }
     });
 
-    // Update start dates based on the sorted order
-    const habitsWithDates = sortedHabits.map((habit, index) => ({
+    // Update start dates and stages based on the sorted order
+    const habitsWithMeta = sortedHabits.map((habit, index) => ({
       ...habit,
       start_date: getStaggeredStartDate(startDate, index),
+      stage: getStageByIndex(index),
     }));
 
-    setHabits(habitsWithDates);
-    setStep(3);
+    setHabits(habitsWithMeta);
+    setStep(4);
   };
 
-  // Step 2: Energy rating
-  const renderEnergyStep = () => (
+  // Step 2: enter energy cost
+  const renderCostStep = () => (
     <View style={styles.onboardingStep}>
-      <Text style={styles.onboardingTitle}>Energy Investment & Return</Text>
-      <Text style={styles.onboardingSubtitle}>
-        Rate each habit from -10 to 10 for energy cost and return
-      </Text>
+      <Text style={styles.onboardingTitle}>Energy Investment</Text>
+      <Text style={styles.onboardingSubtitle}>Set the energy cost for each habit (-10 to 10)</Text>
       <FlatList
         data={habits}
         keyExtractor={(_, index) => index.toString()}
@@ -121,59 +120,87 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
             </Text>
             <View style={styles.energyRatingDetails}>
               <View style={styles.energySliders}>
-                <View style={styles.energySliders}>
-                  <Text style={styles.energySliderLabel}>Cost:</Text>
-                  <View style={styles.sliderContainer}>
-                    <TouchableOpacity
-                      style={styles.sliderButton}
-                      onPress={() =>
-                        updateHabitEnergy(index, 'cost', Math.max(-10, item.energy_cost - 1))
-                      }
-                    >
-                      <Text style={styles.sliderButtonText}>-</Text>
-                    </TouchableOpacity>
-                    <Text style={styles.sliderValue}>{item.energy_cost}</Text>
-                    <TouchableOpacity
-                      style={styles.sliderButton}
-                      onPress={() =>
-                        updateHabitEnergy(index, 'cost', Math.min(10, item.energy_cost + 1))
-                      }
-                    >
-                      <Text style={styles.sliderButtonText}>+</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-                <View style={styles.energySliders}>
-                  <Text style={styles.energySliderLabel}>Return:</Text>
-                  <View style={styles.sliderContainer}>
-                    <TouchableOpacity
-                      style={styles.sliderButton}
-                      onPress={() =>
-                        updateHabitEnergy(index, 'return', Math.max(-10, item.energy_return - 1))
-                      }
-                    >
-                      <Text style={styles.sliderButtonText}>-</Text>
-                    </TouchableOpacity>
-                    <Text style={styles.sliderValue}>{item.energy_return}</Text>
-                    <TouchableOpacity
-                      style={styles.sliderButton}
-                      onPress={() =>
-                        updateHabitEnergy(index, 'return', Math.min(10, item.energy_return + 1))
-                      }
-                    >
-                      <Text style={styles.sliderButtonText}>+</Text>
-                    </TouchableOpacity>
-                  </View>
+                <Text style={styles.energySliderLabel}>Cost:</Text>
+                <View style={styles.sliderContainer}>
+                  <TouchableOpacity
+                    style={styles.sliderButton}
+                    onPress={() =>
+                      updateHabitEnergy(index, 'cost', Math.max(-10, item.energy_cost - 1))
+                    }
+                  >
+                    <Text style={styles.sliderButtonText}>-</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.sliderValue}>{item.energy_cost}</Text>
+                  <TouchableOpacity
+                    style={styles.sliderButton}
+                    onPress={() =>
+                      updateHabitEnergy(index, 'cost', Math.min(10, item.energy_cost + 1))
+                    }
+                  >
+                    <Text style={styles.sliderButtonText}>+</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
-              {item.costEntered && item.returnEntered && (
-                <View style={styles.netEnergyContainer}>
-                  <Text style={styles.netEnergyLabel}>Net:</Text>
-                  <Text style={styles.netEnergyValue} testID={`net-${index}`}>
-                    {item.energy_return - item.energy_cost}
-                  </Text>
+            </View>
+          </View>
+        )}
+      />
+      <TouchableOpacity
+        style={styles.onboardingContinueButton}
+        onPress={() => setStep(3)}
+        disabled={!habits.every((h) => h.costEntered)}
+      >
+        <Text style={styles.onboardingContinueButtonText}>Continue</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  // Step 3: enter energy return
+  const renderReturnStep = () => (
+    <View style={styles.onboardingStep}>
+      <Text style={styles.onboardingTitle}>Energy Return</Text>
+      <Text style={styles.onboardingSubtitle}>
+        Set the energy return for each habit (-10 to 10)
+      </Text>
+      <FlatList
+        data={habits}
+        keyExtractor={(_, index) => index.toString()}
+        renderItem={({ item, index }) => (
+          <View style={styles.energyRatingItem}>
+            <Text style={styles.energyRatingName}>
+              <Text
+                onPress={() => {
+                  setSelectedHabitIndex(index);
+                  setShowEmojiPicker(true);
+                }}
+              >
+                {item.icon}
+              </Text>
+              {` ${item.name}`}
+            </Text>
+            <View style={styles.energyRatingDetails}>
+              <View style={styles.energySliders}>
+                <Text style={styles.energySliderLabel}>Return:</Text>
+                <View style={styles.sliderContainer}>
+                  <TouchableOpacity
+                    style={styles.sliderButton}
+                    onPress={() =>
+                      updateHabitEnergy(index, 'return', Math.max(-10, item.energy_return - 1))
+                    }
+                  >
+                    <Text style={styles.sliderButtonText}>-</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.sliderValue}>{item.energy_return}</Text>
+                  <TouchableOpacity
+                    style={styles.sliderButton}
+                    onPress={() =>
+                      updateHabitEnergy(index, 'return', Math.min(10, item.energy_return + 1))
+                    }
+                  >
+                    <Text style={styles.sliderButtonText}>+</Text>
+                  </TouchableOpacity>
                 </View>
-              )}
+              </View>
             </View>
           </View>
         )}
@@ -181,9 +208,9 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
       <TouchableOpacity
         style={styles.onboardingContinueButton}
         onPress={sortHabits}
-        disabled={!habits.every((h) => h.costEntered && h.returnEntered)}
+        disabled={!habits.every((h) => h.returnEntered)}
       >
-        <Text style={styles.onboardingContinueButtonText}>Continue</Text>
+        <Text style={styles.onboardingContinueButtonText}>See Results</Text>
       </TouchableOpacity>
     </View>
   );
@@ -197,16 +224,16 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     setHabits(updatedHabits);
   };
 
-  const renderReorderStep = () => (
+  const renderResultsStep = () => (
     <View style={styles.onboardingStep}>
-      <Text style={styles.onboardingTitle}>Reorder Your Habits</Text>
+      <Text style={styles.onboardingTitle}>Net Energy Results</Text>
       <Text style={styles.onboardingSubtitle}>
-        Habits are ordered by energy efficiency. You can drag to reorder if needed.
+        Habits are ordered by energy efficiency. Drag to adjust if needed.
       </Text>
 
       <View style={styles.startDateContainer}>
         <Text style={styles.startDateLabel}>First habit starts on:</Text>
-        <TouchableOpacity style={styles.startDateButton} onPress={() => setShowDatePicker(true)}>
+        <TouchableOpacity style={styles.startDateButton} onPress={() => setDatePickerVisible(true)}>
           <Text style={styles.startDateButtonText}>
             {startDate.toLocaleDateString('en-US', {
               month: 'short',
@@ -216,25 +243,23 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
           </Text>
         </TouchableOpacity>
 
-        {showDatePicker && (
-          <DateTimePicker
-            value={startDate}
-            mode="date"
-            display="default"
-            onChange={(event, selectedDate) => {
-              setShowDatePicker(Platform.OS === 'ios');
-              if (selectedDate) {
-                setStartDate(selectedDate);
-                setHabits((prev) =>
-                  prev.map((habit, index) => ({
-                    ...habit,
-                    start_date: getStaggeredStartDate(selectedDate, index),
-                  })),
-                );
-              }
-            }}
-          />
-        )}
+        <DateTimePickerModal
+          isVisible={isDatePickerVisible}
+          mode="date"
+          onConfirm={(selectedDate) => {
+            setDatePickerVisible(false);
+            if (selectedDate) {
+              setStartDate(selectedDate);
+              setHabits((prev) =>
+                prev.map((habit, index) => ({
+                  ...habit,
+                  start_date: getStaggeredStartDate(selectedDate, index),
+                })),
+              );
+            }
+          }}
+          onCancel={() => setDatePickerVisible(false)}
+        />
       </View>
 
       <View style={styles.habitsList}>
@@ -282,28 +307,6 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
         />
       </View>
 
-      {showEmojiPicker && selectedHabitIndex !== null && (
-        <View style={styles.emojiPickerModal}>
-          <View style={styles.emojiPickerHeader}>
-            <Text style={styles.emojiPickerTitle}>Select Icon</Text>
-            <TouchableOpacity
-              style={styles.closeEmojiPicker}
-              onPress={() => {
-                setShowEmojiPicker(false);
-                setSelectedHabitIndex(null);
-              }}
-            >
-              <Text style={styles.closeEmojiPickerText}>×</Text>
-            </TouchableOpacity>
-          </View>
-          <EmojiSelector
-            onEmojiSelected={(emoji) => updateHabitIcon(selectedHabitIndex, emoji)}
-            showSearchBar
-            columns={8}
-          />
-        </View>
-      )}
-
       <TouchableOpacity style={styles.onboardingContinueButton} onPress={handleFinish}>
         <Text style={styles.onboardingContinueButtonText}>Finish Setup</Text>
       </TouchableOpacity>
@@ -313,7 +316,11 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
   const handleFinish = () => {
     onSaveHabits(habits);
     onClose();
-    Alert.alert('Next Steps', 'Tap a habit tile to edit its goals.');
+    if (Platform.OS === 'web') {
+      window.alert('Tap a habit tile to edit its goals.');
+    } else {
+      Alert.alert('Next Steps', 'Tap a habit tile to edit its goals.');
+    }
   };
 
   const renderStep = () => {
@@ -368,20 +375,51 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
           </View>
         );
       case 2:
-        return renderEnergyStep();
+        return renderCostStep();
       case 3:
-        return renderReorderStep();
+        return renderReturnStep();
+      case 4:
+        return renderResultsStep();
       default:
         return null;
     }
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.onboardingModalContent}>{renderStep()}</View>
-      </View>
-    </Modal>
+    <>
+      <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.onboardingModalContent}>{renderStep()}</View>
+        </View>
+      </Modal>
+      {showEmojiPicker && selectedHabitIndex !== null && (
+        <Modal transparent animationType="slide" visible>
+          <View style={styles.modalOverlay}>
+            <View style={styles.emojiPickerModal}>
+              <View style={styles.emojiPickerHeader}>
+                <Text style={styles.emojiPickerTitle}>Select Icon</Text>
+                <TouchableOpacity
+                  style={styles.closeEmojiPicker}
+                  onPress={() => {
+                    setShowEmojiPicker(false);
+                    setSelectedHabitIndex(null);
+                  }}
+                >
+                  <Text style={styles.closeEmojiPickerText}>×</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={{ height: 250 }}>
+                <EmojiSelector
+                  onEmojiSelected={(emoji) => updateHabitIcon(selectedHabitIndex, emoji)}
+                  showSearchBar
+                  columns={8}
+                />
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+    </>
   );
 };
 

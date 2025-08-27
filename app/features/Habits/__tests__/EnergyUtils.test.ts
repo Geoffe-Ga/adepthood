@@ -1,7 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 
 import { calculateNetEnergy } from '../EnergyUtils';
-import { getStaggeredStartDate } from '../OnboardingUtils';
+import { getStaggeredStartDate, getStageByIndex } from '../OnboardingUtils';
 
 describe('energy utilities', () => {
   it('calculates net energy as return minus cost', () => {
@@ -16,5 +16,11 @@ describe('energy utilities', () => {
     const diff10 = (tenth.getTime() - ninth.getTime()) / (1000 * 60 * 60 * 24);
     expect(diff9).toBe(189);
     expect(diff10).toBe(42);
+  });
+
+  it('assigns stages in fixed sequence', () => {
+    expect(getStageByIndex(0)).toBe('Beige');
+    expect(getStageByIndex(1)).toBe('Purple');
+    expect(getStageByIndex(9)).toBe('Clear Light');
   });
 });

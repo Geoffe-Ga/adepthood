@@ -1176,16 +1176,11 @@ export const styles = StyleSheet.create({
 
   // ===== Emoji Picker =====
   emojiPickerModal: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
     backgroundColor: COLORS.background.card,
-    height: 300,
-    borderTopLeftRadius: BORDER_RADIUS.xl,
-    borderTopRightRadius: BORDER_RADIUS.xl,
+    width: '90%',
+    maxHeight: 300,
+    borderRadius: BORDER_RADIUS.xl,
     ...SHADOWS.large,
-    zIndex: 1000,
   },
   emojiPickerHeader: {
     flexDirection: 'row',

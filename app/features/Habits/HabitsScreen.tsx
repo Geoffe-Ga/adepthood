@@ -410,7 +410,7 @@ const HabitsScreen = () => {
       ...habit,
       id: index + 1,
       streak: 0,
-      revealed: habit.stage === 'Beige', // Only reveal Beige stage habits initially
+      revealed: true,
       completions: [], // Initialize empty completions array
       goals: [
         {
@@ -531,7 +531,7 @@ const HabitsScreen = () => {
       <FlatList
         key={`cols-${columns}`}
         testID="habits-list"
-        data={habits.filter((h) => h.revealed)}
+        data={habits}
         keyExtractor={(item) => item.id?.toString() ?? item.name}
         renderItem={renderHabitTile}
         numColumns={columns}
