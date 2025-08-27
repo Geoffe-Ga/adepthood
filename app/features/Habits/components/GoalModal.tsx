@@ -71,18 +71,20 @@ export const GoalModal = ({
   const [lowMarker, setLowMarker] = useState(0);
   const [clearMarker, setClearMarker] = useState(0);
 
-  if (!habit) return null;
-
-  const lowGoal = habit.goals.find((g) => g.tier === 'low');
-  const clearGoal = habit.goals.find((g) => g.tier === 'clear');
-  const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');
-  const { currentGoal, nextGoal } = getGoalTier(habit);
-  const progressPercentage = clampPercentage(getProgressPercentage(habit, currentGoal, nextGoal));
-  const progressBarColor = getProgressBarColor(habit);
+  const lowGoal = habit?.goals.find((g) => g.tier === 'low');
+  const clearGoal = habit?.goals.find((g) => g.tier === 'clear');
+  const stretchGoal = habit?.goals.find((g) => g.tier === 'stretch');
+  const { currentGoal, nextGoal } = habit
+    ? getGoalTier(habit)
+    : { currentGoal: lowGoal || null, nextGoal: clearGoal || null };
+  const progressPercentage =
+    habit && currentGoal
+      ? clampPercentage(getProgressPercentage(habit, currentGoal, nextGoal ?? null))
+      : 0;
+  const progressBarColor = habit ? getProgressBarColor(habit) : '#eee';
   const markers = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
   const stretchMarker = markers.stretch;
 
-  // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
     setLowMarker(markers.low);
     setClearMarker(markers.clear);
@@ -94,7 +96,7 @@ export const GoalModal = ({
 
   const confirmUpdate = (tier: 'low' | 'clear', percent: number) => {
     const goal = tier === 'low' ? lowGoal : clearGoal;
-    if (!goal || !habit.id) return;
+    if (!goal || !habit?.id) return;
     const stretchTarget = stretchGoal ? getGoalTarget(stretchGoal) : goal.target;
     const newTarget = Math.max(1, Math.round((percent / 100) * stretchTarget));
     Alert.alert(
@@ -138,18 +140,18 @@ export const GoalModal = ({
       },
     });
 
-  // eslint-disable-next-line react-hooks/rules-of-hooks
   const lowPan = useRef(createPanResponder('low')).current;
-  // eslint-disable-next-line react-hooks/rules-of-hooks
   const clearPan = useRef(createPanResponder('clear')).current;
 
   const handleLogUnit = () => {
-    if (habit.id) {
+    if (habit?.id) {
       const amount = parseFloat(logAmount) || 1;
       onLogUnit(habit.id, amount);
       setLogAmount('1');
     }
   };
+
+  if (!habit) return null;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>

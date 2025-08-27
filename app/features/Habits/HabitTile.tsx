@@ -1,5 +1,5 @@
-import React from 'react';
-import { Alert, Text, TouchableOpacity, View } from 'react-native';
+import React, { useState } from 'react';
+import { Text, TouchableOpacity, View } from 'react-native';
 
 import { STAGE_COLORS } from '../../constants/stageColors';
 import { spacing } from '../../Sources/design/DesignSystem';
@@ -21,6 +21,8 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
   const formatGoalTooltip = (g: Goal) =>
     `${g.target} ${g.target_unit} ${g.frequency_unit.replace('_', ' ')}`;
   const stageColor = STAGE_COLORS[habit.stage];
+
+  const [tooltip, setTooltip] = useState<null | 'low' | 'clear' | 'stretch'>(null);
 
   const lowGoal = habit.goals.find((g) => g.tier === 'low');
   const clearGoal = habit.goals.find((g) => g.tier === 'clear');
@@ -146,18 +148,11 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
             }}
           />
           {lowGoal && lowMarker >= 0 && (
-            <TouchableOpacity
+            <View
               style={{
                 position: 'absolute',
                 left: `${clampPercentage(lowMarker)}%`,
                 top: -6 + barHeight / 2,
-                width: 12,
-                height: 12,
-                borderRadius: 6,
-                backgroundColor: '#fffdf7',
-                borderWidth: 2,
-                borderColor: getTierColor('low'),
-                zIndex: 1,
                 transform: [
                   {
                     translateX:
@@ -168,23 +163,50 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                           : -6,
                   },
                 ],
+                zIndex: 1,
+                alignItems: 'center',
               }}
-              onLongPress={() => Alert.alert('Low Grit', formatGoalTooltip(lowGoal))}
-            />
+            >
+              {tooltip === 'low' && (
+                <View
+                  testID="tooltip-low"
+                  style={{
+                    position: 'absolute',
+                    bottom: 16,
+                    backgroundColor: '#fffdf7',
+                    borderWidth: 1,
+                    borderColor: getTierColor('low'),
+                    borderRadius: 4,
+                    paddingHorizontal: 4,
+                    paddingVertical: 2,
+                  }}
+                >
+                  <Text style={{ fontSize: spacing(1.5, scale), color: '#333' }}>
+                    {formatGoalTooltip(lowGoal)}
+                  </Text>
+                </View>
+              )}
+              <TouchableOpacity
+                testID="marker-low"
+                onPressIn={() => setTooltip('low')}
+                onPressOut={() => setTooltip(null)}
+                style={{
+                  width: 12,
+                  height: 12,
+                  borderRadius: 6,
+                  backgroundColor: '#fffdf7',
+                  borderWidth: 2,
+                  borderColor: getTierColor('low'),
+                }}
+              />
+            </View>
           )}
           {clearGoal && clearMarker >= 0 && (
-            <TouchableOpacity
+            <View
               style={{
                 position: 'absolute',
                 left: `${clampPercentage(clearMarker)}%`,
                 top: -6 + barHeight / 2,
-                width: 12,
-                height: 12,
-                borderRadius: 6,
-                backgroundColor: '#fffdf7',
-                borderWidth: 2,
-                borderColor: getTierColor('clear'),
-                zIndex: 2,
                 transform: [
                   {
                     translateX:
@@ -195,23 +217,50 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                           : -6,
                   },
                 ],
+                zIndex: 2,
+                alignItems: 'center',
               }}
-              onLongPress={() => Alert.alert('Clear Goal', formatGoalTooltip(clearGoal))}
-            />
+            >
+              {tooltip === 'clear' && (
+                <View
+                  testID="tooltip-clear"
+                  style={{
+                    position: 'absolute',
+                    bottom: 16,
+                    backgroundColor: '#fffdf7',
+                    borderWidth: 1,
+                    borderColor: getTierColor('clear'),
+                    borderRadius: 4,
+                    paddingHorizontal: 4,
+                    paddingVertical: 2,
+                  }}
+                >
+                  <Text style={{ fontSize: spacing(1.5, scale), color: '#333' }}>
+                    {formatGoalTooltip(clearGoal)}
+                  </Text>
+                </View>
+              )}
+              <TouchableOpacity
+                testID="marker-clear"
+                onPressIn={() => setTooltip('clear')}
+                onPressOut={() => setTooltip(null)}
+                style={{
+                  width: 12,
+                  height: 12,
+                  borderRadius: 6,
+                  backgroundColor: '#fffdf7',
+                  borderWidth: 2,
+                  borderColor: getTierColor('clear'),
+                }}
+              />
+            </View>
           )}
           {stretchGoal && stretchMarker >= 0 && hasCleared && (
-            <TouchableOpacity
+            <View
               style={{
                 position: 'absolute',
                 left: `${clampPercentage(stretchMarker)}%`,
                 top: -6 + barHeight / 2,
-                width: 12,
-                height: 12,
-                borderRadius: 6,
-                backgroundColor: '#fffdf7',
-                borderWidth: 2,
-                borderColor: getTierColor('stretch'),
-                zIndex: 3,
                 transform: [
                   {
                     translateX:
@@ -222,9 +271,43 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                           : -6,
                   },
                 ],
+                zIndex: 3,
+                alignItems: 'center',
               }}
-              onLongPress={() => Alert.alert('Stretch Goal', formatGoalTooltip(stretchGoal))}
-            />
+            >
+              {tooltip === 'stretch' && (
+                <View
+                  testID="tooltip-stretch"
+                  style={{
+                    position: 'absolute',
+                    bottom: 16,
+                    backgroundColor: '#fffdf7',
+                    borderWidth: 1,
+                    borderColor: getTierColor('stretch'),
+                    borderRadius: 4,
+                    paddingHorizontal: 4,
+                    paddingVertical: 2,
+                  }}
+                >
+                  <Text style={{ fontSize: spacing(1.5, scale), color: '#333' }}>
+                    {formatGoalTooltip(stretchGoal)}
+                  </Text>
+                </View>
+              )}
+              <TouchableOpacity
+                testID="marker-stretch"
+                onPressIn={() => setTooltip('stretch')}
+                onPressOut={() => setTooltip(null)}
+                style={{
+                  width: 12,
+                  height: 12,
+                  borderRadius: 6,
+                  backgroundColor: '#fffdf7',
+                  borderWidth: 2,
+                  borderColor: getTierColor('stretch'),
+                }}
+              />
+            </View>
           )}
         </View>
         <View style={{ position: 'relative', marginTop: spacing(0.5, scale) }}>
