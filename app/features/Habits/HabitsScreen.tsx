@@ -17,9 +17,9 @@ import ReorderHabitsModal from './components/ReorderHabitsModal';
 import StatsModal from './components/StatsModal';
 import { HABIT_DEFAULTS } from './HabitDefaults';
 import styles from './Habits.styles';
-import type { Completion, Goal, Habit, HabitStatsData, OnboardingHabit } from './Habits.types';
+import type { Goal, Habit, HabitStatsData, OnboardingHabit } from './Habits.types';
 import HabitTile from './HabitTile';
-import { getGoalTier, getGoalTarget, calculateHabitProgress } from './HabitUtils';
+import { getGoalTier, getGoalTarget, calculateHabitProgress, logHabitUnits } from './HabitUtils';
 export const DEFAULT_ICONS = [
   '🧘',
   '🏃',
@@ -235,94 +235,87 @@ const HabitsScreen = () => {
   // Handle goal updates
   const handleUpdateGoal = (habitId: number, updatedGoal: Goal) => {
     setHabits((prev) =>
-      prev.map((h) =>
-        h.id === habitId
-          ? {
-              ...h,
-              goals: h.goals.map((goal) => (goal.id === updatedGoal.id ? updatedGoal : goal)),
-            }
-          : h,
-      ),
+      prev.map((h) => {
+        if (h.id !== habitId) return h;
+        const goals = h.goals.map((goal) => (goal.id === updatedGoal.id ? updatedGoal : goal));
+        const low = goals.find((g) => g.tier === 'low');
+        const clear = goals.find((g) => g.tier === 'clear');
+        const stretch = goals.find((g) => g.tier === 'stretch');
+        if (low && clear && stretch) {
+          // Enforce consistent units/frequency
+          const unit = updatedGoal.target_unit;
+          const freq = updatedGoal.frequency;
+          const freqUnit = updatedGoal.frequency_unit;
+          goals.forEach((g) => {
+            g.target_unit = unit;
+            g.frequency = freq;
+            g.frequency_unit = freqUnit;
+          });
+
+          if (low.is_additive) {
+            if (low.target > clear.target) clear.target = low.target;
+            if (clear.target > stretch.target) stretch.target = clear.target;
+          } else {
+            if (clear.target < stretch.target) clear.target = stretch.target;
+            if (low.target < clear.target) low.target = clear.target;
+          }
+        }
+        return { ...h, goals };
+      }),
     );
   };
 
   // Log progress units for a habit
   const handleLogUnit = (habitId: number, amount: number) => {
+    let updated: Habit | null = null;
     setHabits((prev) =>
       prev.map((h) => {
-        if (h.id === habitId) {
-          const newStreak = h.streak + 1;
-          const now = new Date();
+        if (h.id !== habitId) return h;
+        const oldProgress = calculateHabitProgress(h);
+        const updatedHabit = logHabitUnits(h, amount);
+        const newProgress = calculateHabitProgress(updatedHabit);
+        const { currentGoal, nextGoal } = getGoalTier(updatedHabit);
+        updated = updatedHabit;
 
-          // Create a new completion record
-          const newCompletion: Completion = {
-            id: Math.random(), // Generate a unique ID in a real app
-            timestamp: now,
-            completed_units: amount,
-          };
-
-          // Add the new completion to the array
-          const updatedCompletions = h.completions
-            ? [...h.completions, newCompletion]
-            : [newCompletion];
-
-          const oldProgress = calculateHabitProgress(h);
-          const newProgress = calculateHabitProgress({
-            ...h,
-            completions: updatedCompletions,
-          });
-
-          const { currentGoal, nextGoal } = getGoalTier({
-            ...h,
-            completions: updatedCompletions,
-          });
-
-          if (currentGoal.is_additive) {
-            const currentTarget = getGoalTarget(currentGoal);
-
-            if (
-              oldProgress < currentTarget &&
-              newProgress >= currentTarget &&
-              currentGoal.tier === 'low'
-            ) {
-              Alert.alert(
-                'Goal Achieved!',
-                `You've reached your Low Goal for ${h.name}! Keep going for the Clear Goal.`,
-              );
-            }
-
-            if (
-              nextGoal &&
-              currentGoal.tier === 'clear' &&
-              oldProgress < getGoalTarget(currentGoal) &&
-              newProgress >= getGoalTarget(currentGoal)
-            ) {
-              Alert.alert('Achieved! Keep going for the Stretch Goal!');
-            }
-
-            if (
-              nextGoal &&
-              currentGoal.tier === 'stretch' &&
-              oldProgress < getGoalTarget(currentGoal) &&
-              newProgress >= getGoalTarget(currentGoal)
-            ) {
-              Alert.alert(
-                'Stretch Goal Achieved!',
-                `Amazing! You've reached your Stretch Goal for ${h.name}!`,
-              );
-            }
+        if (currentGoal.is_additive) {
+          const currentTarget = getGoalTarget(currentGoal);
+          if (
+            oldProgress < currentTarget &&
+            newProgress >= currentTarget &&
+            currentGoal.tier === 'low'
+          ) {
+            Alert.alert(
+              'Goal Achieved!',
+              `You've reached your Low Goal for ${h.name}! Keep going for the Clear Goal.`,
+            );
           }
-
-          return {
-            ...h,
-            streak: newStreak,
-            last_completion_date: now,
-            completions: updatedCompletions,
-          };
+          if (
+            nextGoal &&
+            currentGoal.tier === 'clear' &&
+            oldProgress < getGoalTarget(currentGoal) &&
+            newProgress >= getGoalTarget(currentGoal)
+          ) {
+            Alert.alert('Achieved! Keep going for the Stretch Goal!');
+          }
+          if (
+            nextGoal &&
+            currentGoal.tier === 'stretch' &&
+            oldProgress < getGoalTarget(currentGoal) &&
+            newProgress >= getGoalTarget(currentGoal)
+          ) {
+            Alert.alert(
+              'Stretch Goal Achieved!',
+              `Amazing! You've reached your Stretch Goal for ${h.name}!`,
+            );
+          }
         }
-        return h;
+
+        return updatedHabit;
       }),
     );
+    if (selectedHabit?.id === habitId && updated) {
+      setSelectedHabit(updated);
+    }
   };
 
   // Update habit details
@@ -557,6 +550,7 @@ const HabitsScreen = () => {
         onClose={() => setGoalModalVisible(false)}
         onUpdateGoal={handleUpdateGoal}
         onLogUnit={handleLogUnit}
+        onUpdateHabit={handleUpdateHabit}
       />
       <StatsModal
         visible={statsModalVisible}

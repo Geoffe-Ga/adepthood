@@ -1,404 +1,199 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
-  View,
-  Text,
-  Pressable,
-  TouchableOpacity,
-  Modal,
-  TextInput,
-  TouchableWithoutFeedback,
-  ScrollView,
   Alert,
+  Modal,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View,
+  PanResponder,
 } from 'react-native';
+import type { LayoutChangeEvent, ViewStyle, TextStyle } from 'react-native';
+import EmojiSelector from 'react-native-emoji-selector';
 
 import { STAGE_COLORS } from '../../../constants/stageColors';
 import styles from '../Habits.styles';
-import type { Goal, GoalModalProps, EditableGoalProps, Habit } from '../Habits.types';
-import { TARGET_UNITS, FREQUENCY_UNITS, DAYS_OF_WEEK } from '../HabitsScreen';
+import type { GoalModalProps, Goal } from '../Habits.types';
 import {
-  calculateProgressIncrements,
-  calculateHabitProgress,
-  getGoalTarget,
+  getMarkerPositions,
+  getProgressBarColor,
+  clampPercentage,
   getTierColor,
+  getGoalTarget,
+  calculateHabitProgress,
 } from '../HabitUtils';
 
-// Constant for golden glow color to match with HabitTile
-const GOLDEN_GLOW_COLOR = 'rgba(255, 215, 0, 0.6)';
+const markerContainerStyle = (leftPct: number, z: number): ViewStyle => ({
+  position: 'absolute',
+  // @ts-ignore percentage positioning not typed
+  left: `${clampPercentage(leftPct)}%`,
+  top: -6,
+  transform: [
+    {
+      translateX: clampPercentage(leftPct) === 0 ? 0 : clampPercentage(leftPct) === 100 ? -12 : -6,
+    },
+  ],
+  zIndex: z,
+  alignItems: 'center',
+});
 
-/**
- * Calculate progress for a specific goal based on habit's total progress
- * @param goal The goal to calculate progress for
- * @param habit The parent habit containing the progress data
- * @returns Progress percentage (0-100)
- */
-const calculateGoalProgress = (goal: Goal, habit: Habit): number => {
-  const totalProgress = calculateHabitProgress(habit);
-  const targetValue = getGoalTarget(goal);
+const circleStyle = (color: string): ViewStyle => ({
+  width: 12,
+  height: 12,
+  borderRadius: 6,
+  backgroundColor: '#fffdf7',
+  borderWidth: 2,
+  borderColor: color,
+});
 
-  if (goal.is_additive) {
-    return Math.min((totalProgress / targetValue) * 100, 100);
-  } else {
-    // For subtractive goals, start at 100% and decrease with progress
-    return Math.max(0, 100 - (totalProgress / targetValue) * 100);
-  }
+const labelContainerStyle = (leftPct: number, z: number): ViewStyle => ({
+  position: 'absolute',
+  // @ts-ignore percentage positioning not typed
+  left: `${clampPercentage(leftPct)}%`,
+  transform: [
+    {
+      translateX: clampPercentage(leftPct) === 0 ? 0 : clampPercentage(leftPct) === 100 ? -12 : -6,
+    },
+  ],
+  zIndex: z,
+  backgroundColor: '#fffdf7',
+  paddingHorizontal: 2,
+  borderRadius: 2,
+});
+
+const labelTextStyle = (color: string): TextStyle => ({ fontSize: 10, color });
+
+const tooltipStyle = (color: string): ViewStyle => ({
+  position: 'absolute',
+  bottom: 16,
+  backgroundColor: '#fffdf7',
+  borderWidth: 1,
+  borderColor: color,
+  borderRadius: 4,
+  paddingHorizontal: 4,
+  paddingVertical: 2,
+});
+
+const tooltipTextStyle: TextStyle = {
+  fontSize: 10,
+  color: '#333',
+  fontFamily: 'serif',
+  fontStyle: 'italic',
+  letterSpacing: 0.5,
 };
 
-/**
- * Determine if a goal has been achieved
- * @param goal The goal to check
- * @param habit The parent habit containing the progress data
- * @returns True if goal is achieved
- */
-const isGoalAchieved = (goal: Goal, habit: Habit): boolean => {
-  const totalProgress = calculateHabitProgress(habit);
-  const targetValue = getGoalTarget(goal);
-
-  if (goal.is_additive) {
-    return totalProgress >= targetValue;
-  } else {
-    return totalProgress <= targetValue;
-  }
-};
-
-/**
- * Editable goal component to display and modify a habit goal
- */
-const EditableGoal = ({
-  goal,
+export const GoalModal = ({
+  visible,
   habit,
-  onUpdate,
-  isEditing,
-}: EditableGoalProps & { habit: Habit }) => {
-  const [editedGoal, setEditedGoal] = useState<Goal>({ ...goal });
-  const [showTargetUnitDropdown, setShowTargetUnitDropdown] = useState(false);
-  const [showFrequencyUnitDropdown, setShowFrequencyUnitDropdown] = useState(false);
-  const [showDaysSelection, setShowDaysSelection] = useState(false);
-
-  // Reset edited goal when goal or editing status changes
-  useEffect(() => {
-    setEditedGoal({ ...goal });
-  }, [goal, isEditing]);
-
-  const handleChange = (field: keyof Goal, value: Goal[keyof Goal]) => {
-    setEditedGoal((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const handleSave = () => {
-    onUpdate(editedGoal);
-  };
-
-  // Get progress increments for the goal
-  const progressIncrements = calculateProgressIncrements(goal);
-
-  // Calculate progress percentage for this specific goal
-  const progressPercentage = calculateGoalProgress(goal, habit);
-
-  // Check if goal is achieved
-  const achieved = isGoalAchieved(goal, habit);
-
-  const toggleDaySelection = (day: string) => {
-    const currentDays = editedGoal.days_of_week || [];
-    if (currentDays.includes(day)) {
-      handleChange(
-        'days_of_week',
-        currentDays.filter((d) => d !== day),
-      );
-    } else {
-      handleChange('days_of_week', [...currentDays, day]);
-    }
-  };
-
-  return (
-    <View
-      style={[
-        styles.goalItem,
-        {
-          backgroundColor: getTierColor(goal.tier),
-          borderWidth: achieved ? 2 : 0,
-          borderColor: achieved ? GOLDEN_GLOW_COLOR : 'transparent',
-        },
-      ]}
-    >
-      <View style={styles.goalHeader}>
-        <Text style={styles.goalTier}>
-          {goal.tier.toUpperCase()}
-          {achieved && ' ✓'}
-        </Text>
-        {isEditing && (
-          <TouchableOpacity onPress={handleSave} style={styles.saveButton}>
-            <Text style={styles.saveButtonText}>Save</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
-      {isEditing ? (
-        <TextInput
-          style={styles.goalTitleInput}
-          value={editedGoal.title}
-          onChangeText={(text) => handleChange('title', text)}
-          placeholder="Goal title"
-        />
-      ) : (
-        <Text style={styles.goalTitle}>{goal.title}</Text>
-      )}
-
-      <View style={styles.goalDetailsContainer}>
-        {isEditing ? (
-          <>
-            <View style={styles.editRow}>
-              <Text style={styles.editLabel}>Target:</Text>
-              <TextInput
-                style={styles.editInput}
-                value={editedGoal.target.toString()}
-                onChangeText={(text) => handleChange('target', parseFloat(text) || 0)}
-                keyboardType="numeric"
-              />
-
-              <TouchableOpacity
-                style={styles.unitDropdownButton}
-                onPress={() => setShowTargetUnitDropdown(!showTargetUnitDropdown)}
-              >
-                <Text>{editedGoal.target_unit || 'Select unit'}</Text>
-              </TouchableOpacity>
-
-              {showTargetUnitDropdown && (
-                <ScrollView style={styles.dropdown} keyboardShouldPersistTaps="handled">
-                  {TARGET_UNITS.map((unit) => (
-                    <TouchableOpacity
-                      key={unit}
-                      style={styles.dropdownItem}
-                      onPress={() => {
-                        handleChange('target_unit', unit);
-                        setShowTargetUnitDropdown(false);
-                      }}
-                    >
-                      <Text>{unit}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              )}
-            </View>
-
-            <View style={styles.editRow}>
-              <Text style={styles.editLabel}>Frequency:</Text>
-              <TextInput
-                style={styles.editInput}
-                value={editedGoal.frequency.toString()}
-                onChangeText={(text) => handleChange('frequency', parseFloat(text) || 0)}
-                keyboardType="numeric"
-              />
-
-              <TouchableOpacity
-                style={styles.unitDropdownButton}
-                onPress={() => setShowFrequencyUnitDropdown(!showFrequencyUnitDropdown)}
-              >
-                <Text>{editedGoal.frequency_unit.replace('_', ' ') || 'Select frequency'}</Text>
-              </TouchableOpacity>
-
-              {showFrequencyUnitDropdown && (
-                <ScrollView style={styles.dropdown} keyboardShouldPersistTaps="handled">
-                  {FREQUENCY_UNITS.map((unit) => (
-                    <TouchableOpacity
-                      key={unit}
-                      style={styles.dropdownItem}
-                      onPress={() => {
-                        handleChange('frequency_unit', unit);
-                        setShowFrequencyUnitDropdown(false);
-                      }}
-                    >
-                      <Text>{unit.replace('_', ' ')}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              )}
-            </View>
-
-            {editedGoal.frequency_unit === 'per_week' && (
-              <View style={styles.editRow}>
-                <Text style={styles.editLabel}>Days:</Text>
-                <TouchableOpacity
-                  style={styles.daysSelectorButton}
-                  onPress={() => setShowDaysSelection(!showDaysSelection)}
-                >
-                  <Text>
-                    {editedGoal.days_of_week && editedGoal.days_of_week.length > 0
-                      ? editedGoal.days_of_week.map((d) => d.substring(0, 3)).join(', ')
-                      : 'Select days'}
-                  </Text>
-                </TouchableOpacity>
-
-                {showDaysSelection && (
-                  <View style={styles.daysSelector}>
-                    {DAYS_OF_WEEK.map((day) => (
-                      <TouchableOpacity
-                        key={day}
-                        style={[
-                          styles.dayOption,
-                          (editedGoal.days_of_week || []).includes(day) && styles.selectedDayOption,
-                        ]}
-                        onPress={() => toggleDaySelection(day)}
-                      >
-                        <Text style={styles.dayOptionText}>{day.substring(0, 3)}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                )}
-              </View>
-            )}
-
-            <View style={styles.editRow}>
-              <Text style={styles.editLabel}>Type:</Text>
-              <Pressable
-                style={[
-                  styles.toggleButton,
-                  {
-                    backgroundColor: editedGoal.is_additive ? '#4CAF50' : '#ccc',
-                  },
-                ]}
-                onPress={() => handleChange('is_additive', true)}
-              >
-                <Text style={styles.toggleText}>Additive</Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.toggleButton,
-                  {
-                    backgroundColor: !editedGoal.is_additive ? '#F44336' : '#ccc',
-                  },
-                ]}
-                onPress={() => handleChange('is_additive', false)}
-              >
-                <Text style={styles.toggleText}>Subtractive</Text>
-              </Pressable>
-            </View>
-          </>
-        ) : (
-          <Text style={styles.goalDetails}>
-            {goal.is_additive ? 'At least' : 'No more than'} {goal.target} {goal.target_unit},{' '}
-            {goal.frequency} {goal.frequency_unit.replace('_', ' ')}
-            {goal.days_of_week &&
-              goal.days_of_week.length > 0 &&
-              ` on ${goal.days_of_week.map((d) => d.substring(0, 3)).join(', ')}`}
-          </Text>
-        )}
-      </View>
-
-      <View style={styles.goalProgressContainer}>
-        <View style={styles.goalProgressBar}>
-          {/* Incremental markers */}
-          {progressIncrements.map((increment, index) => {
-            const position = (increment / goal.target) * 100;
-            return (
-              <View
-                key={index}
-                style={[
-                  styles.goalIncrementMarker,
-                  {
-                    left: `${position}%`,
-                    height: 7,
-                    width: 2,
-                    backgroundColor: 'rgba(0,0,0,0.4)',
-                  },
-                ]}
-              />
-            );
-          })}
-
-          <View
-            style={[
-              styles.goalProgressFill,
-              {
-                width: `${progressPercentage}%`,
-                height: 12, // Thicker progress bar
-                backgroundColor: achieved ? GOLDEN_GLOW_COLOR : STAGE_COLORS[habit.stage],
-              },
-            ]}
-          />
-        </View>
-
-        {/* Progress text showing progress vs target */}
-        <Text style={styles.goalProgressText}>
-          {calculateHabitProgress(habit)} / {goal.target} {goal.target_unit}
-          {achieved && ' (Achieved!)'}
-        </Text>
-      </View>
-    </View>
-  );
-};
-
-/**
- * Main GoalModal component to display and manage habit goals
- */
-export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: GoalModalProps) => {
-  const [activeGoal, setActiveGoal] = useState<Goal | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
+  onClose,
+  onUpdateGoal,
+  onLogUnit,
+  onUpdateHabit,
+}: GoalModalProps) => {
   const [logAmount, setLogAmount] = useState('1');
-  const [goalVisible, setGoalVisible] = useState<Record<number, boolean>>({});
+  const [showEmojiSelector, setShowEmojiSelector] = useState(false);
+  const barWidth = useRef(0);
+  const [lowMarker, setLowMarker] = useState(0);
+  const [clearMarker, setClearMarker] = useState(0);
+  const [tooltip, setTooltip] = useState<null | 'low' | 'clear' | 'stretch'>(null);
 
-  // Initialize all goals to be visible initially
-  useEffect(() => {
-    if (habit && visible) {
-      const visibilityMap: Record<number, boolean> = {};
-      habit.goals.forEach((goal, index) => {
-        visibilityMap[index] = true;
-      });
-      setGoalVisible(visibilityMap);
-    }
-  }, [habit, visible]);
+  const lowGoal = habit?.goals.find((g) => g.tier === 'low');
+  const clearGoal = habit?.goals.find((g) => g.tier === 'clear');
+  const stretchGoal = habit?.goals.find((g) => g.tier === 'stretch');
+  const totalProgress = habit ? calculateHabitProgress(habit) : 0;
+  const progressPercentage =
+    habit && stretchGoal
+      ? lowGoal?.is_additive
+        ? clampPercentage((totalProgress / getGoalTarget(stretchGoal)) * 100)
+        : clampPercentage(
+            100 -
+              ((totalProgress - getGoalTarget(stretchGoal)) /
+                (getGoalTarget(lowGoal!) - getGoalTarget(stretchGoal))) *
+                100,
+          )
+      : 0;
+  const progressBarColor = habit ? getProgressBarColor(habit) : '#eee';
+  const markers = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
+  const stretchMarker = markers.stretch;
 
-  // Reset state when modal is closed
-  useEffect(() => {
-    if (!visible) {
-      setIsEditing(false);
-      setActiveGoal(null);
-      setLogAmount('1');
-    }
-  }, [visible]);
-
-  if (!habit) return null;
-
-  const handleUpdateGoal = (updatedGoal: Goal) => {
-    if (habit.id && updatedGoal.id) {
-      onUpdateGoal(habit.id, updatedGoal);
-      setIsEditing(false);
-    }
+  const formatGoalTooltip = (g: Goal | undefined) => {
+    if (!g) return '';
+    const label =
+      g.tier === 'low' ? 'Low Grit' : g.tier === 'clear' ? 'Clear Goal' : 'Stretch Goal';
+    return `${label}: ${g.target} ${g.target_unit} per ${g.frequency_unit.replace('_', ' ')}`;
   };
+
+  useEffect(() => {
+    setLowMarker(markers.low);
+    setClearMarker(markers.clear);
+  }, [markers.low, markers.clear]);
+
+  const handleBarLayout = (e: LayoutChangeEvent) => {
+    barWidth.current = e.nativeEvent.layout.width;
+  };
+
+  const confirmUpdate = (tier: 'low' | 'clear', percent: number) => {
+    const goal = tier === 'low' ? lowGoal : clearGoal;
+    if (!goal || !habit?.id) return;
+    const stretchTarget = stretchGoal ? getGoalTarget(stretchGoal) : goal.target;
+    const newTarget = Math.max(1, Math.round((percent / 100) * stretchTarget));
+    Alert.alert(
+      tier === 'low' ? 'Edit Low Goal' : 'Edit Clear Goal',
+      `Edit the ${tier === 'low' ? 'Low Grit' : 'Clear Goal'} to be ${newTarget} ${goal.target_unit} ${goal.frequency_unit.replace(
+        '_',
+        ' ',
+      )}?`,
+      [
+        {
+          text: 'No',
+          style: 'cancel',
+          onPress: () => {
+            if (tier === 'low') setLowMarker(markers.low);
+            else setClearMarker(markers.clear);
+          },
+        },
+        {
+          text: 'Yes',
+          onPress: () => onUpdateGoal(habit.id!, { ...goal, target: newTarget }),
+        },
+      ],
+    );
+  };
+
+  const createPanResponder = (tier: 'low' | 'clear') =>
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => setTooltip(tier),
+      onPanResponderMove: (_, gesture) => {
+        const init = tier === 'low' ? markers.low : markers.clear;
+        const percent = (((init / 100) * barWidth.current + gesture.dx) / barWidth.current) * 100;
+        if (tier === 'low') {
+          setLowMarker(Math.min(clampPercentage(percent), clearMarker - 5));
+        } else {
+          setClearMarker(Math.max(clampPercentage(percent), lowMarker + 5));
+        }
+      },
+      onPanResponderRelease: () => {
+        const percent = tier === 'low' ? lowMarker : clearMarker;
+        setTooltip(null);
+        confirmUpdate(tier, percent);
+      },
+      onPanResponderTerminate: () => setTooltip(null),
+    });
+
+  const lowPan = useRef(createPanResponder('low')).current;
+  const clearPan = useRef(createPanResponder('clear')).current;
 
   const handleLogUnit = () => {
-    if (habit.id) {
+    if (habit?.id) {
       const amount = parseFloat(logAmount) || 1;
       onLogUnit(habit.id, amount);
       setLogAmount('1');
-
-      // Show a feedback alert
-      Alert.alert(
-        'Progress Logged',
-        `Added ${amount} ${amount === 1 ? 'unit' : 'units'} to ${habit.name}`,
-        [{ text: 'OK', onPress: () => {} }],
-      );
     }
   };
 
-  const handleEditGoal = (goal: Goal) => {
-    setActiveGoal(goal);
-    setIsEditing(true);
-  };
-
-  const toggleGoalVisibility = (index: number) => {
-    setGoalVisible((prev) => ({
-      ...prev,
-      [index]: !prev[index],
-    }));
-  };
-
-  // Calculate total habit progress for display
-  const totalProgress = calculateHabitProgress(habit);
-
-  // Sort goals by tier for consistent display order
-  const sortedGoals = [...habit.goals].sort((a, b) => {
-    const tierOrder = { low: 1, clear: 2, stretch: 3 };
-    return tierOrder[a.tier] - tierOrder[b.tier];
-  });
+  if (!habit) return null;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -407,53 +202,130 @@ export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: 
           <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
             <View style={[styles.modalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}>
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>
-                  {habit.name} <Text style={styles.iconLarge}>{habit.icon}</Text>
-                </Text>
-                <Text style={styles.streakBadge}>
-                  {habit.streak} {habit.streak === 1 ? 'day' : 'days'}
-                </Text>
+                <Text style={styles.modalTitle}>{habit.name}</Text>
+                <TouchableOpacity onPress={() => setShowEmojiSelector(true)}>
+                  <Text style={styles.iconLarge}>{habit.icon}</Text>
+                </TouchableOpacity>
                 <TouchableOpacity onPress={onClose} style={styles.closeButton}>
                   <Text style={styles.closeButtonText}>×</Text>
                 </TouchableOpacity>
               </View>
 
-              {/* Habit summary section */}
-              <View style={styles.habitSummary}>
-                <Text style={styles.habitSummaryText}>
-                  Total Progress: {totalProgress} {sortedGoals[0]?.target_unit || 'units'}
-                </Text>
-                <Text style={styles.habitSummaryText}>
-                  Energy: Cost {habit.energy_cost} · Return {habit.energy_return} · Net{' '}
-                  {habit.energy_return - habit.energy_cost}
-                </Text>
-              </View>
+              {showEmojiSelector && (
+                <View style={styles.emojiSelectorContainer}>
+                  <EmojiSelector
+                    onEmojiSelected={(emoji) => {
+                      onUpdateHabit({ ...habit, icon: emoji });
+                      setShowEmojiSelector(false);
+                    }}
+                    showSearchBar
+                    columns={6}
+                    // @ts-ignore react-native-emoji-selector missing emojiSize typing
+                    emojiSize={28}
+                  />
+                </View>
+              )}
 
-              <ScrollView style={styles.goalsContainer}>
-                {sortedGoals.map((goal, index) => (
-                  <View key={index}>
-                    <TouchableOpacity
-                      style={styles.goalHeaderToggle}
-                      onPress={() => toggleGoalVisibility(index)}
-                    >
-                      <Text style={styles.goalHeaderToggleText}>
-                        {goal.tier.toUpperCase()} GOAL {goalVisible[index] ? '▼' : '►'}
-                      </Text>
-                    </TouchableOpacity>
-
-                    {goalVisible[index] && (
-                      <TouchableOpacity onPress={() => handleEditGoal(goal)}>
-                        <EditableGoal
-                          goal={goal}
-                          habit={habit}
-                          onUpdate={handleUpdateGoal}
-                          isEditing={isEditing && activeGoal?.id === goal.id}
-                        />
-                      </TouchableOpacity>
-                    )}
+              <View style={{ marginVertical: 16 }} onLayout={handleBarLayout}>
+                <View style={{ height: 12, position: 'relative' }}>
+                  <View
+                    style={{
+                      height: '100%',
+                      backgroundColor: '#eee',
+                      borderRadius: 6,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <View
+                      testID="modal-progress-fill"
+                      style={{
+                        height: '100%',
+                        width: `${progressPercentage}%`,
+                        backgroundColor: progressBarColor,
+                        borderRadius: 6,
+                      }}
+                    />
                   </View>
-                ))}
-              </ScrollView>
+                  {lowGoal && (
+                    <View
+                      testID="modal-marker-low"
+                      {...lowPan.panHandlers}
+                      // @ts-ignore react-native-web hover props
+                      onMouseEnter={() => setTooltip('low')}
+                      // @ts-ignore react-native-web hover props
+                      onMouseLeave={() => setTooltip(null)}
+                      style={markerContainerStyle(lowMarker, 1)}
+                    >
+                      {tooltip === 'low' && (
+                        <View testID="modal-tooltip-low" style={tooltipStyle(getTierColor('low'))}>
+                          <Text style={tooltipTextStyle}>{formatGoalTooltip(lowGoal)}</Text>
+                        </View>
+                      )}
+                      <View style={circleStyle(getTierColor('low'))} />
+                    </View>
+                  )}
+                  {clearGoal && (
+                    <View
+                      testID="modal-marker-clear"
+                      {...clearPan.panHandlers}
+                      // @ts-ignore react-native-web hover props
+                      onMouseEnter={() => setTooltip('clear')}
+                      // @ts-ignore react-native-web hover props
+                      onMouseLeave={() => setTooltip(null)}
+                      style={markerContainerStyle(clearMarker, 2)}
+                    >
+                      {tooltip === 'clear' && (
+                        <View
+                          testID="modal-tooltip-clear"
+                          style={tooltipStyle(getTierColor('clear'))}
+                        >
+                          <Text style={tooltipTextStyle}>{formatGoalTooltip(clearGoal)}</Text>
+                        </View>
+                      )}
+                      <View style={circleStyle(getTierColor('clear'))} />
+                    </View>
+                  )}
+                  {stretchGoal && (
+                    <TouchableOpacity
+                      testID="modal-marker-stretch"
+                      onPressIn={() => setTooltip('stretch')}
+                      onPressOut={() => setTooltip(null)}
+                      // @ts-ignore hover props
+                      onMouseEnter={() => setTooltip('stretch')}
+                      // @ts-ignore hover props
+                      onMouseLeave={() => setTooltip(null)}
+                      style={markerContainerStyle(stretchMarker, 3)}
+                    >
+                      {tooltip === 'stretch' && (
+                        <View
+                          testID="modal-tooltip-stretch"
+                          style={tooltipStyle(getTierColor('stretch'))}
+                        >
+                          <Text style={tooltipTextStyle}>{formatGoalTooltip(stretchGoal)}</Text>
+                        </View>
+                      )}
+                      <View style={circleStyle(getTierColor('stretch'))} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <View style={{ position: 'relative', marginTop: 4 }}>
+                  {lowGoal && (
+                    <View style={labelContainerStyle(lowMarker, 1)}>
+                      <Text style={labelTextStyle(getTierColor('low'))}>LG</Text>
+                    </View>
+                  )}
+                  {clearGoal && (
+                    <View style={labelContainerStyle(clearMarker, 2)}>
+                      <Text style={labelTextStyle(getTierColor('clear'))}>CG</Text>
+                    </View>
+                  )}
+                  {stretchGoal && (
+                    <View style={labelContainerStyle(stretchMarker, 3)}>
+                      <Text style={labelTextStyle(getTierColor('stretch'))}>SG</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
 
               <View style={styles.actionButtons}>
                 <View style={styles.logUnitContainer}>
@@ -467,14 +339,6 @@ export const GoalModal = ({ visible, habit, onClose, onUpdateGoal, onLogUnit }: 
                     <Text style={styles.logUnitButtonText}>Log Units</Text>
                   </TouchableOpacity>
                 </View>
-                <TouchableOpacity
-                  style={styles.editButton}
-                  onPress={() => setIsEditing(!isEditing)}
-                >
-                  <Text style={styles.editButtonText}>
-                    {isEditing ? 'Done Editing' : 'Edit Goals'}
-                  </Text>
-                </TouchableOpacity>
               </View>
             </View>
           </TouchableWithoutFeedback>

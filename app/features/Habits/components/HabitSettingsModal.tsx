@@ -145,12 +145,8 @@ export const HabitSettingsModal = ({
 
             <View style={styles.settingRow}>
               <Text style={styles.settingLabel}>Icon:</Text>
-              <TouchableOpacity
-                style={styles.iconSelectorButton}
-                onPress={() => setShowEmojiSelector(!showEmojiSelector)}
-              >
+              <TouchableOpacity onPress={() => setShowEmojiSelector(!showEmojiSelector)}>
                 <Text style={styles.currentIcon}>{editedHabit.icon}</Text>
-                <Text style={styles.iconButtonText}>Change</Text>
               </TouchableOpacity>
             </View>
 
@@ -162,7 +158,9 @@ export const HabitSettingsModal = ({
                     setShowEmojiSelector(false);
                   }}
                   showSearchBar
-                  columns={8}
+                  columns={6}
+                  // @ts-ignore react-native-emoji-selector typing
+                  emojiSize={28}
                   placeholder="Search emoji..."
                 />
               </View>

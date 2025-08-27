@@ -545,19 +545,19 @@ export const styles = StyleSheet.create({
   },
   currentIcon: {
     fontSize: 24,
-    marginRight: SPACING.sm,
   },
   iconButtonText: {
     color: COLORS.secondary,
     fontWeight: '500',
   },
   emojiSelectorContainer: {
-    height: 250,
+    height: 200,
     marginVertical: SPACING.md,
     borderWidth: 1,
     borderColor: '#ddd',
     borderRadius: BORDER_RADIUS.md,
     overflow: 'hidden',
+    backgroundColor: '#fff',
   },
 
   // ===== Reorder Button =====
@@ -1180,8 +1180,8 @@ export const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: COLORS.background.card,
-    height: 300,
+    backgroundColor: '#fff',
+    height: 280,
     borderTopLeftRadius: BORDER_RADIUS.xl,
     borderTopRightRadius: BORDER_RADIUS.xl,
     ...SHADOWS.large,

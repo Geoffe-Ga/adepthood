@@ -1,6 +1,6 @@
 import { STAGE_COLORS } from '../../constants/stageColors';
 
-import type { Goal, Habit } from './Habits.types';
+import type { Goal, Habit, Completion } from './Habits.types';
 
 export const STAGE_ORDER = [
   'Beige',
@@ -29,6 +29,12 @@ export const getTierColor = (tier: 'low' | 'clear' | 'stretch') => {
 };
 
 export const clampPercentage = (value: number): number => Math.min(100, Math.max(0, value));
+
+export const isGoalAchieved = (goal: Goal, habit: Habit): boolean => {
+  const totalProgress = calculateHabitProgress(habit);
+  const targetValue = getGoalTarget(goal);
+  return goal.is_additive ? totalProgress >= targetValue : totalProgress <= targetValue;
+};
 
 export const getMarkerPositions = (
   lowGoal?: Goal,
@@ -145,7 +151,12 @@ export const getGoalTier = (
   return { currentGoal, nextGoal, completedAllGoals };
 };
 
-export const calculateProgressPercentage = (
+// Returns current progress as a percentage between 0 and 100.
+//
+// The calculation supports both additive (e.g. "do X more") and
+// subtractive (e.g. "drink X less") habit types. The function also
+// ensures progress never overflows beyond the 0-100 range.
+export const getProgressPercentage = (
   habit: Habit,
   currentGoal: Goal,
   nextGoal: Goal | null,
@@ -198,4 +209,26 @@ export const calculateProgressPercentage = (
 
 export const getProgressBarColor = (habit: Habit): string => {
   return STAGE_COLORS[habit.stage] ?? '#000';
+};
+
+// Logs a number of units for the given habit. Multiple logs can occur within
+// the same day; however, the streak counter will only increment once per
+// calendar day. Returns the updated habit object.
+export const logHabitUnits = (habit: Habit, amount: number, date: Date = new Date()): Habit => {
+  const alreadyLoggedToday =
+    habit.last_completion_date &&
+    new Date(habit.last_completion_date).toDateString() === date.toDateString();
+
+  const completion: Completion = {
+    id: Math.random(),
+    timestamp: date,
+    completed_units: amount,
+  };
+
+  return {
+    ...habit,
+    streak: alreadyLoggedToday ? habit.streak : habit.streak + 1,
+    last_completion_date: date,
+    completions: habit.completions ? [...habit.completions, completion] : [completion],
+  };
 };
