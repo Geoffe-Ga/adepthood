@@ -67,6 +67,8 @@ export interface OnboardingHabit {
   energy_return: number;
   stage: string;
   start_date: Date;
+  costEntered?: boolean;
+  returnEntered?: boolean;
 }
 
 export interface GoalModalProps {
@@ -94,6 +96,7 @@ export interface HabitTileProps {
   habit: Habit;
   onOpenGoals: () => void;
   onLongPress: () => void;
+  onIconPress?: () => void;
 }
 
 export interface HabitSettingsModalProps {
@@ -104,6 +107,7 @@ export interface HabitSettingsModalProps {
   onDelete: (_habitId: number) => void;
   onOpenReorderModal: (_habits: Habit[]) => void;
   allHabits: Habit[];
+  startWithEmojiPicker?: boolean;
 }
 
 export interface MissedDaysModalProps {

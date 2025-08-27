@@ -15,9 +15,10 @@ import {
   getTierColor,
 } from './HabitUtils';
 
-export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) => {
+export const HabitTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: HabitTileProps) => {
   const { width, height, columns, scale, gridGutter } = useResponsive();
   const stageColor = STAGE_COLORS[habit.stage];
+  const isUpcoming = new Date(habit.start_date) > new Date();
 
   const lowGoal = habit.goals.find((g) => g.tier === 'low');
   const clearGoal = habit.goals.find((g) => g.tier === 'clear');
@@ -56,13 +57,18 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
         minHeight: tileMinHeight,
         borderRadius: spacing(1, scale),
         backgroundColor: '#f8f8f8',
+        opacity: isUpcoming ? 0.4 : 1,
       }}
       onPress={onOpenGoals}
       onLongPress={onLongPress}
     >
       {iconInline ? (
         <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Text style={{ fontSize: spacing(3, scale), marginRight: spacing(1, scale) }}>
+          <Text
+            style={{ fontSize: spacing(3, scale), marginRight: spacing(1, scale) }}
+            onPress={onIconPress}
+            testID="habit-icon"
+          >
             {habit.icon}
           </Text>
           <Text
@@ -95,7 +101,13 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
             testID="habit-icon-top"
             style={{ alignItems: 'center', marginBottom: spacing(1, scale) }}
           >
-            <Text style={{ fontSize: spacing(4, scale) }}>{habit.icon}</Text>
+            <Text
+              style={{ fontSize: spacing(4, scale) }}
+              onPress={onIconPress}
+              testID="habit-icon-top-text"
+            >
+              {habit.icon}
+            </Text>
           </View>
           <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Text
