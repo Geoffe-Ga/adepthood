@@ -1,15 +1,15 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  FlatList,
-  TouchableOpacity,
-  Modal,
-  TextInput,
-  Platform,
   Alert,
-  TouchableWithoutFeedback,
+  FlatList,
+  Modal,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
@@ -374,22 +374,24 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={handleAttemptClose}>
-      <TouchableWithoutFeedback onPress={handleAttemptClose} testID="onboarding-overlay">
-        <View style={styles.modalOverlay}>
-          <TouchableWithoutFeedback onPress={() => {}}>
-            <View style={styles.onboardingModalContent}>
-              <TouchableOpacity
-                testID="onboarding-close"
-                style={styles.modalClose}
-                onPress={handleAttemptClose}
-              >
-                <Text style={styles.modalCloseText}>×</Text>
-              </TouchableOpacity>
-              {renderStep()}
-            </View>
-          </TouchableWithoutFeedback>
+      <View style={styles.modalOverlay}>
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={handleAttemptClose}
+          style={StyleSheet.absoluteFill}
+          testID="onboarding-overlay"
+        />
+        <View style={styles.onboardingModalContent}>
+          <TouchableOpacity
+            testID="onboarding-close"
+            style={styles.modalClose}
+            onPress={handleAttemptClose}
+          >
+            <Text style={styles.modalCloseText}>×</Text>
+          </TouchableOpacity>
+          {renderStep()}
         </View>
-      </TouchableWithoutFeedback>
+      </View>
     </Modal>
   );
 };
