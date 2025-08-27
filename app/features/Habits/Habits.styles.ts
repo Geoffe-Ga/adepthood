@@ -959,6 +959,16 @@ export const styles = StyleSheet.create({
     maxHeight: '90%',
     ...SHADOWS.large,
   },
+  modalClose: {
+    position: 'absolute',
+    top: SPACING.sm,
+    right: SPACING.sm,
+    zIndex: 1,
+  },
+  modalCloseText: {
+    fontSize: 24,
+    color: COLORS.text.secondary,
+  },
   onboardingStep: {
     flex: 1,
   },
@@ -1266,10 +1276,12 @@ export const styles = StyleSheet.create({
   },
 
   // ===== Overflow Menu =====
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginBottom: SPACING.sm,
+  },
   overflowMenuContainer: {
-    position: 'absolute',
-    top: SPACING.sm,
-    right: SPACING.sm,
     zIndex: 20,
   },
   habitSummary: {

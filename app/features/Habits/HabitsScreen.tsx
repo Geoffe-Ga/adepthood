@@ -223,6 +223,8 @@ const HabitsScreen = () => {
   const [goalModalVisible, setGoalModalVisible] = useState(false);
   const [statsModalVisible, setStatsModalVisible] = useState(false);
   const [statsMode, setStatsMode] = useState(false);
+  const [quickLogMode, setQuickLogMode] = useState(false);
+  const [editMode, setEditMode] = useState(false);
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const [reorderModalVisible, setReorderModalVisible] = useState(false);
   const [missedDaysModalVisible, setMissedDaysModalVisible] = useState(false);
@@ -467,7 +469,10 @@ const HabitsScreen = () => {
         setSelectedHabit(item);
         if (statsMode) {
           setStatsModalVisible(true);
-          setStatsMode(false);
+        } else if (editMode) {
+          setSettingsModalVisible(true);
+        } else if (quickLogMode) {
+          handleLogUnit(item.id!, 1);
         } else {
           setGoalModalVisible(true);
         }
@@ -481,69 +486,77 @@ const HabitsScreen = () => {
 
   return (
     <SafeAreaView style={[styles.container, { padding: screenPadding }]}>
-      <View style={styles.overflowMenuContainer} testID="overflow-menu-wrapper">
-        <TouchableOpacity
-          testID="overflow-menu-toggle"
-          onPress={() => setMenuVisible((v) => !v)}
-          style={{ padding: spacing(1, scale) }}
-        >
-          <MoreHorizontal size={spacing(3, scale)} />
-        </TouchableOpacity>
-        {menuVisible && (
-          <View
-            testID="overflow-menu"
-            style={[styles.mobileMenu, { top: spacing(4, scale), right: 0 }]}
+      <View style={styles.topBar}>
+        <View style={styles.overflowMenuContainer} testID="overflow-menu-wrapper">
+          <TouchableOpacity
+            testID="overflow-menu-toggle"
+            onPress={() => setMenuVisible((v) => !v)}
+            style={{ padding: spacing(1, scale) }}
           >
-            <TouchableOpacity
-              onPress={() => {
-                if (selectedHabit) handleLogUnit(selectedHabit.id!, 1);
-                setMenuVisible(false);
-              }}
-              style={{ paddingVertical: spacing(0.5, scale) }}
+            <MoreHorizontal size={spacing(3, scale)} />
+          </TouchableOpacity>
+          {menuVisible && (
+            <View
+              testID="overflow-menu"
+              style={[styles.mobileMenu, { top: spacing(4, scale), right: 0 }]}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Check size={spacing(2, scale)} style={{ marginRight: spacing(1, scale) }} />
-                <Text>Quick Log</Text>
-              </View>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => {
-                setStatsMode(true);
-                setMenuVisible(false);
-              }}
-              style={{ paddingVertical: spacing(0.5, scale) }}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <BarChart2 size={spacing(2, scale)} style={{ marginRight: spacing(1, scale) }} />
-                <Text>Stats</Text>
-              </View>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => {
-                if (selectedHabit) setSettingsModalVisible(true);
-                setMenuVisible(false);
-              }}
-              style={{ paddingVertical: spacing(0.5, scale) }}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Pencil size={spacing(2, scale)} style={{ marginRight: spacing(1, scale) }} />
-                <Text>Edit</Text>
-              </View>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => {
-                setOnboardingVisible(true);
-                setMenuVisible(false);
-              }}
-              style={{ paddingVertical: spacing(0.5, scale) }}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Zap size={spacing(2, scale)} style={{ marginRight: spacing(1, scale) }} />
-                <Text>Energy Scaffolding</Text>
-              </View>
-            </TouchableOpacity>
-          </View>
-        )}
+              <TouchableOpacity
+                onPress={() => {
+                  setQuickLogMode(true);
+                  setStatsMode(false);
+                  setEditMode(false);
+                  setMenuVisible(false);
+                }}
+                style={{ paddingVertical: spacing(0.5, scale) }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Check size={spacing(2, scale)} style={{ marginRight: spacing(1, scale) }} />
+                  <Text>Quick Log</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  setStatsMode(true);
+                  setQuickLogMode(false);
+                  setEditMode(false);
+                  setMenuVisible(false);
+                }}
+                style={{ paddingVertical: spacing(0.5, scale) }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <BarChart2 size={spacing(2, scale)} style={{ marginRight: spacing(1, scale) }} />
+                  <Text>Stats</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  setEditMode(true);
+                  setQuickLogMode(false);
+                  setStatsMode(false);
+                  setMenuVisible(false);
+                }}
+                style={{ paddingVertical: spacing(0.5, scale) }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Pencil size={spacing(2, scale)} style={{ marginRight: spacing(1, scale) }} />
+                  <Text>Edit</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  setOnboardingVisible(true);
+                  setMenuVisible(false);
+                }}
+                style={{ paddingVertical: spacing(0.5, scale) }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Zap size={spacing(2, scale)} style={{ marginRight: spacing(1, scale) }} />
+                  <Text>Energy Scaffolding</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
       </View>
 
       <FlatList
@@ -563,7 +576,7 @@ const HabitsScreen = () => {
         ]}
       />
 
-      {showEnergyCTA ? (
+      {showEnergyCTA && !(statsMode || editMode || quickLogMode) ? (
         <View style={styles.energyScaffoldingContainer}>
           <TouchableOpacity
             style={styles.energyScaffoldingButton}
@@ -586,6 +599,27 @@ const HabitsScreen = () => {
       ) : showArchiveMessage ? (
         <Text style={styles.archivedMessage}>Energy Scaffolding button moved to menu.</Text>
       ) : null}
+
+      {(statsMode || editMode || quickLogMode) && (
+        <View style={styles.energyScaffoldingContainer}>
+          <View style={styles.energyScaffoldingButton}>
+            <Text style={styles.energyScaffoldingButtonText}>
+              {statsMode ? 'Stats Mode' : editMode ? 'Edit Mode' : 'Quick Log Mode'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            testID="exit-mode"
+            onPress={() => {
+              setStatsMode(false);
+              setEditMode(false);
+              setQuickLogMode(false);
+            }}
+            style={styles.archiveEnergyButton}
+          >
+            <Text>Exit</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Modals */}
       <GoalModal

@@ -111,7 +111,7 @@ describe('HabitsScreen responsive layout', () => {
     expect(secondList.props.numColumns).toBe(1);
   });
 
-  it('renders overflow menu above tiles', () => {
+  it('renders overflow menu in top bar', () => {
     jest
       .spyOn(require('react-native'), 'useWindowDimensions')
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
@@ -120,7 +120,7 @@ describe('HabitsScreen responsive layout', () => {
     const { StyleSheet } = require('react-native');
     const wrapper = testRenderer.root.findByProps({ testID: 'overflow-menu-wrapper' });
     const wrapperStyle = StyleSheet.flatten(wrapper.props.style);
-    expect(wrapperStyle.position).toBe('absolute');
+    expect(wrapperStyle.position).toBeUndefined();
     expect(wrapperStyle.zIndex).toBeGreaterThan(0);
 
     const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
@@ -169,6 +169,68 @@ describe('HabitsScreen responsive layout', () => {
     expect(StatsModal).toHaveBeenCalled();
     const call = StatsModal.mock.calls.pop() as any;
     expect(call?.[0].visible).toBe(true);
+  });
+
+  it('shows and exits stats mode banner', () => {
+    jest
+      .spyOn(require('react-native'), 'useWindowDimensions')
+      .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
+
+    const testRenderer = renderer.create(<HabitsScreen />);
+    const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
+
+    renderer.act(() => {
+      toggle.props.onPress();
+    });
+
+    const { TouchableOpacity, Text } = require('react-native');
+    const statsOption = testRenderer.root.findAll(
+      (n: any) =>
+        n.type === TouchableOpacity &&
+        n.findAllByType(Text).some((t: any) => t.props.children === 'Stats'),
+    )[0];
+
+    renderer.act(() => {
+      statsOption.props.onPress();
+    });
+
+    const texts = testRenderer.root.findAllByType(Text).map((t: any) => t.props.children);
+    expect(texts).toContain('Stats Mode');
+
+    const exit = testRenderer.root.findByProps({ testID: 'exit-mode' });
+    renderer.act(() => {
+      exit.props.onPress();
+    });
+
+    const postTexts = testRenderer.root.findAllByType(Text).map((t: any) => t.props.children);
+    expect(postTexts).not.toContain('Stats Mode');
+  });
+
+  it('shows quick log mode banner', () => {
+    jest
+      .spyOn(require('react-native'), 'useWindowDimensions')
+      .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
+
+    const testRenderer = renderer.create(<HabitsScreen />);
+    const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
+
+    renderer.act(() => {
+      toggle.props.onPress();
+    });
+
+    const { TouchableOpacity, Text } = require('react-native');
+    const quickOption = testRenderer.root.findAll(
+      (n: any) =>
+        n.type === TouchableOpacity &&
+        n.findAllByType(Text).some((t: any) => t.props.children === 'Quick Log'),
+    )[0];
+
+    renderer.act(() => {
+      quickOption.props.onPress();
+    });
+
+    const texts = testRenderer.root.findAllByType(Text).map((t: any) => t.props.children);
+    expect(texts).toContain('Quick Log Mode');
   });
 
   it('archives energy scaffolding button into menu', () => {
