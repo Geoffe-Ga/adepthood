@@ -137,6 +137,36 @@ describe('HabitsScreen responsive layout', () => {
     expect(style.zIndex).toBeGreaterThan(0);
   });
 
+  it('places overflow menu above habit tiles', () => {
+    jest
+      .spyOn(require('react-native'), 'useWindowDimensions')
+      .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
+
+    const { StyleSheet, TouchableOpacity, Text } = require('react-native');
+    const testRenderer = renderer.create(<HabitsScreen />);
+
+    const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
+    renderer.act(() => {
+      toggle.props.onPress();
+    });
+
+    const menu = testRenderer.root.findByProps({ testID: 'overflow-menu' });
+    const menuStyle = StyleSheet.flatten(menu.props.style);
+
+    const firstTile = testRenderer.root.findAllByProps({ testID: 'habit-tile' })[0];
+    const tileStyle = StyleSheet.flatten(firstTile.props.style);
+
+    const tileZ = typeof tileStyle.zIndex === 'number' ? tileStyle.zIndex : 0;
+    expect(menuStyle.zIndex).toBeGreaterThan(tileZ);
+
+    // ensure menu options are tappable
+    const options = menu.findAllByType(TouchableOpacity);
+    const quickLog = options.find((o: any) =>
+      o.findAllByType(Text).some((t: any) => t.props.children === 'Quick Log'),
+    );
+    expect(quickLog).toBeDefined();
+  });
+
   it('opens stats modal when stats mode is enabled', () => {
     jest
       .spyOn(require('react-native'), 'useWindowDimensions')

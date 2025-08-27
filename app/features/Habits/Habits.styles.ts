@@ -1280,9 +1280,10 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'flex-end',
     marginBottom: SPACING.sm,
+    zIndex: 1000,
   },
   overflowMenuContainer: {
-    zIndex: 20,
+    zIndex: 1001,
   },
   habitSummary: {
     backgroundColor: 'rgba(0, 0, 0, 0.05)',
@@ -1365,12 +1366,12 @@ export const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 8,
     padding: 8,
-    zIndex: 10,
+    zIndex: 1002,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 4,
-    elevation: 3,
+    elevation: 10,
   },
   contentContainer: {
     width: '100%',
