@@ -188,7 +188,15 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                     paddingVertical: 2,
                   }}
                 >
-                  <Text style={{ fontSize: spacing(1.5, scale), color: '#333' }}>
+                  <Text
+                    style={{
+                      fontSize: spacing(1.5, scale),
+                      color: '#333',
+                      fontFamily: 'serif',
+                      fontStyle: 'italic',
+                      letterSpacing: 0.5,
+                    }}
+                  >
                     {formatGoalTooltip(lowGoal)}
                   </Text>
                 </View>
@@ -246,7 +254,15 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                     paddingVertical: 2,
                   }}
                 >
-                  <Text style={{ fontSize: spacing(1.5, scale), color: '#333' }}>
+                  <Text
+                    style={{
+                      fontSize: spacing(1.5, scale),
+                      color: '#333',
+                      fontFamily: 'serif',
+                      fontStyle: 'italic',
+                      letterSpacing: 0.5,
+                    }}
+                  >
                     {formatGoalTooltip(clearGoal)}
                   </Text>
                 </View>
@@ -304,7 +320,15 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                     paddingVertical: 2,
                   }}
                 >
-                  <Text style={{ fontSize: spacing(1.5, scale), color: '#333' }}>
+                  <Text
+                    style={{
+                      fontSize: spacing(1.5, scale),
+                      color: '#333',
+                      fontFamily: 'serif',
+                      fontStyle: 'italic',
+                      letterSpacing: 0.5,
+                    }}
+                  >
                     {formatGoalTooltip(stretchGoal)}
                   </Text>
                 </View>
@@ -331,7 +355,7 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
         </View>
         <View style={{ position: 'relative', marginTop: spacing(0.5, scale) }}>
           {lowGoal && lowMarker >= 0 && (
-            <Text
+            <View
               style={{
                 position: 'absolute',
                 left: `${clampPercentage(lowMarker)}%`,
@@ -345,16 +369,17 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                           : -6,
                   },
                 ],
-                fontSize: spacing(1.5, scale),
-                color: getTierColor('low'),
                 zIndex: 1,
+                backgroundColor: '#fffdf7',
+                paddingHorizontal: 2,
+                borderRadius: 2,
               }}
             >
-              LG
-            </Text>
+              <Text style={{ fontSize: spacing(1.5, scale), color: getTierColor('low') }}>LG</Text>
+            </View>
           )}
           {clearGoal && clearMarker >= 0 && (
-            <Text
+            <View
               style={{
                 position: 'absolute',
                 left: `${clampPercentage(clearMarker)}%`,
@@ -368,16 +393,19 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                           : -6,
                   },
                 ],
-                fontSize: spacing(1.5, scale),
-                color: getTierColor('clear'),
                 zIndex: 2,
+                backgroundColor: '#fffdf7',
+                paddingHorizontal: 2,
+                borderRadius: 2,
               }}
             >
-              CG
-            </Text>
+              <Text style={{ fontSize: spacing(1.5, scale), color: getTierColor('clear') }}>
+                CG
+              </Text>
+            </View>
           )}
           {stretchGoal && stretchMarker >= 0 && hasCleared && (
-            <Text
+            <View
               style={{
                 position: 'absolute',
                 left: `${clampPercentage(stretchMarker)}%`,
@@ -391,13 +419,16 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
                           : -6,
                   },
                 ],
-                fontSize: spacing(1.5, scale),
-                color: getTierColor('stretch'),
                 zIndex: 3,
+                backgroundColor: '#fffdf7',
+                paddingHorizontal: 2,
+                borderRadius: 2,
               }}
             >
-              SG
-            </Text>
+              <Text style={{ fontSize: spacing(1.5, scale), color: getTierColor('stretch') }}>
+                SG
+              </Text>
+            </View>
           )}
         </View>
       </View>

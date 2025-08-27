@@ -122,3 +122,28 @@ describe('GoalModal progress', () => {
     expect(parseFloat(updatedFill.props.style.width)).toBeCloseTo(33.33, 1);
   });
 });
+
+describe('GoalModal tooltips', () => {
+  it('shows tooltip when hovering over markers', () => {
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={() => {}}
+        onUpdateGoal={() => {}}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    const lowMarker = testRenderer.root.findByProps({ testID: 'modal-marker-low' });
+    renderer.act(() => {
+      lowMarker.props.onMouseEnter();
+    });
+    expect(testRenderer.root.findByProps({ testID: 'modal-tooltip-low' })).toBeTruthy();
+    renderer.act(() => {
+      lowMarker.props.onMouseLeave();
+    });
+    expect(() => testRenderer.root.findByProps({ testID: 'modal-tooltip-low' })).toThrow();
+  });
+});

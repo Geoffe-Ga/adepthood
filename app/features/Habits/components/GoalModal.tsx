@@ -14,7 +14,7 @@ import EmojiSelector from 'react-native-emoji-selector';
 
 import { STAGE_COLORS } from '../../../constants/stageColors';
 import styles from '../Habits.styles';
-import type { GoalModalProps } from '../Habits.types';
+import type { GoalModalProps, Goal } from '../Habits.types';
 import {
   getMarkerPositions,
   getProgressBarColor,
@@ -24,25 +24,30 @@ import {
   calculateHabitProgress,
 } from '../HabitUtils';
 
-const bubbleStyle = (color: string, leftPct: number): ViewStyle => ({
+const markerContainerStyle = (leftPct: number, z: number): ViewStyle => ({
   position: 'absolute',
   // @ts-ignore percentage positioning not typed
   left: `${clampPercentage(leftPct)}%`,
   top: -6,
+  transform: [
+    {
+      translateX: clampPercentage(leftPct) === 0 ? 0 : clampPercentage(leftPct) === 100 ? -12 : -6,
+    },
+  ],
+  zIndex: z,
+  alignItems: 'center',
+});
+
+const circleStyle = (color: string): ViewStyle => ({
   width: 12,
   height: 12,
   borderRadius: 6,
   backgroundColor: '#fffdf7',
   borderWidth: 2,
   borderColor: color,
-  transform: [
-    {
-      translateX: clampPercentage(leftPct) === 0 ? 0 : clampPercentage(leftPct) === 100 ? -12 : -6,
-    },
-  ],
 });
 
-const labelStyle = (color: string, leftPct: number): TextStyle => ({
+const labelContainerStyle = (leftPct: number, z: number): ViewStyle => ({
   position: 'absolute',
   // @ts-ignore percentage positioning not typed
   left: `${clampPercentage(leftPct)}%`,
@@ -51,9 +56,32 @@ const labelStyle = (color: string, leftPct: number): TextStyle => ({
       translateX: clampPercentage(leftPct) === 0 ? 0 : clampPercentage(leftPct) === 100 ? -12 : -6,
     },
   ],
-  fontSize: 10,
-  color,
+  zIndex: z,
+  backgroundColor: '#fffdf7',
+  paddingHorizontal: 2,
+  borderRadius: 2,
 });
+
+const labelTextStyle = (color: string): TextStyle => ({ fontSize: 10, color });
+
+const tooltipStyle = (color: string): ViewStyle => ({
+  position: 'absolute',
+  bottom: 16,
+  backgroundColor: '#fffdf7',
+  borderWidth: 1,
+  borderColor: color,
+  borderRadius: 4,
+  paddingHorizontal: 4,
+  paddingVertical: 2,
+});
+
+const tooltipTextStyle: TextStyle = {
+  fontSize: 10,
+  color: '#333',
+  fontFamily: 'serif',
+  fontStyle: 'italic',
+  letterSpacing: 0.5,
+};
 
 export const GoalModal = ({
   visible,
@@ -68,6 +96,7 @@ export const GoalModal = ({
   const barWidth = useRef(0);
   const [lowMarker, setLowMarker] = useState(0);
   const [clearMarker, setClearMarker] = useState(0);
+  const [tooltip, setTooltip] = useState<null | 'low' | 'clear' | 'stretch'>(null);
 
   const lowGoal = habit?.goals.find((g) => g.tier === 'low');
   const clearGoal = habit?.goals.find((g) => g.tier === 'clear');
@@ -87,6 +116,13 @@ export const GoalModal = ({
   const progressBarColor = habit ? getProgressBarColor(habit) : '#eee';
   const markers = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
   const stretchMarker = markers.stretch;
+
+  const formatGoalTooltip = (g: Goal | undefined) => {
+    if (!g) return '';
+    const label =
+      g.tier === 'low' ? 'Low Grit' : g.tier === 'clear' ? 'Clear Goal' : 'Stretch Goal';
+    return `${label}: ${g.target} ${g.target_unit} per ${g.frequency_unit.replace('_', ' ')}`;
+  };
 
   useEffect(() => {
     setLowMarker(markers.low);
@@ -128,6 +164,7 @@ export const GoalModal = ({
   const createPanResponder = (tier: 'low' | 'clear') =>
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => setTooltip(tier),
       onPanResponderMove: (_, gesture) => {
         const init = tier === 'low' ? markers.low : markers.clear;
         const percent = (((init / 100) * barWidth.current + gesture.dx) / barWidth.current) * 100;
@@ -139,8 +176,10 @@ export const GoalModal = ({
       },
       onPanResponderRelease: () => {
         const percent = tier === 'low' ? lowMarker : clearMarker;
+        setTooltip(null);
         confirmUpdate(tier, percent);
       },
+      onPanResponderTerminate: () => setTooltip(null),
     });
 
   const lowPan = useRef(createPanResponder('low')).current;
@@ -211,30 +250,79 @@ export const GoalModal = ({
                     <View
                       testID="modal-marker-low"
                       {...lowPan.panHandlers}
-                      style={bubbleStyle(getTierColor('low'), lowMarker)}
-                    />
+                      // @ts-ignore react-native-web hover props
+                      onMouseEnter={() => setTooltip('low')}
+                      // @ts-ignore react-native-web hover props
+                      onMouseLeave={() => setTooltip(null)}
+                      style={markerContainerStyle(lowMarker, 1)}
+                    >
+                      {tooltip === 'low' && (
+                        <View testID="modal-tooltip-low" style={tooltipStyle(getTierColor('low'))}>
+                          <Text style={tooltipTextStyle}>{formatGoalTooltip(lowGoal)}</Text>
+                        </View>
+                      )}
+                      <View style={circleStyle(getTierColor('low'))} />
+                    </View>
                   )}
                   {clearGoal && (
                     <View
                       testID="modal-marker-clear"
                       {...clearPan.panHandlers}
-                      style={bubbleStyle(getTierColor('clear'), clearMarker)}
-                    />
+                      // @ts-ignore react-native-web hover props
+                      onMouseEnter={() => setTooltip('clear')}
+                      // @ts-ignore react-native-web hover props
+                      onMouseLeave={() => setTooltip(null)}
+                      style={markerContainerStyle(clearMarker, 2)}
+                    >
+                      {tooltip === 'clear' && (
+                        <View
+                          testID="modal-tooltip-clear"
+                          style={tooltipStyle(getTierColor('clear'))}
+                        >
+                          <Text style={tooltipTextStyle}>{formatGoalTooltip(clearGoal)}</Text>
+                        </View>
+                      )}
+                      <View style={circleStyle(getTierColor('clear'))} />
+                    </View>
                   )}
                   {stretchGoal && (
-                    <View
+                    <TouchableOpacity
                       testID="modal-marker-stretch"
-                      style={bubbleStyle(getTierColor('stretch'), stretchMarker)}
-                    />
+                      onPressIn={() => setTooltip('stretch')}
+                      onPressOut={() => setTooltip(null)}
+                      // @ts-ignore hover props
+                      onMouseEnter={() => setTooltip('stretch')}
+                      // @ts-ignore hover props
+                      onMouseLeave={() => setTooltip(null)}
+                      style={markerContainerStyle(stretchMarker, 3)}
+                    >
+                      {tooltip === 'stretch' && (
+                        <View
+                          testID="modal-tooltip-stretch"
+                          style={tooltipStyle(getTierColor('stretch'))}
+                        >
+                          <Text style={tooltipTextStyle}>{formatGoalTooltip(stretchGoal)}</Text>
+                        </View>
+                      )}
+                      <View style={circleStyle(getTierColor('stretch'))} />
+                    </TouchableOpacity>
                   )}
                 </View>
                 <View style={{ position: 'relative', marginTop: 4 }}>
-                  {lowGoal && <Text style={labelStyle(getTierColor('low'), lowMarker)}>LG</Text>}
+                  {lowGoal && (
+                    <View style={labelContainerStyle(lowMarker, 1)}>
+                      <Text style={labelTextStyle(getTierColor('low'))}>LG</Text>
+                    </View>
+                  )}
                   {clearGoal && (
-                    <Text style={labelStyle(getTierColor('clear'), clearMarker)}>CG</Text>
+                    <View style={labelContainerStyle(clearMarker, 2)}>
+                      <Text style={labelTextStyle(getTierColor('clear'))}>CG</Text>
+                    </View>
                   )}
                   {stretchGoal && (
-                    <Text style={labelStyle(getTierColor('stretch'), stretchMarker)}>SG</Text>
+                    <View style={labelContainerStyle(stretchMarker, 3)}>
+                      <Text style={labelTextStyle(getTierColor('stretch'))}>SG</Text>
+                    </View>
                   )}
                 </View>
               </View>
