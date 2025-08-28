@@ -1,7 +1,7 @@
 // HabitsScreen.tsx
 
 import * as Notifications from 'expo-notifications';
-import { MoreHorizontal } from 'lucide-react';
+import { BarChart2, Check, MoreHorizontal, Pencil, Zap } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -222,10 +222,15 @@ const HabitsScreen = () => {
   const [menuVisible, setMenuVisible] = useState(false);
   const [goalModalVisible, setGoalModalVisible] = useState(false);
   const [statsModalVisible, setStatsModalVisible] = useState(false);
+  const [statsMode, setStatsMode] = useState(false);
+  const [quickLogMode, setQuickLogMode] = useState(false);
+  const [editMode, setEditMode] = useState(false);
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const [reorderModalVisible, setReorderModalVisible] = useState(false);
   const [missedDaysModalVisible, setMissedDaysModalVisible] = useState(false);
   const [onboardingVisible, setOnboardingVisible] = useState(habits.length === 0);
+  const [showEnergyCTA, setShowEnergyCTA] = useState(true);
+  const [showArchiveMessage, setShowArchiveMessage] = useState(false);
 
   // Register for push notifications on mount
   useEffect(() => {
@@ -455,7 +460,15 @@ const HabitsScreen = () => {
       habit={item}
       onOpenGoals={() => {
         setSelectedHabit(item);
-        setGoalModalVisible(true);
+        if (statsMode) {
+          setStatsModalVisible(true);
+        } else if (editMode) {
+          setSettingsModalVisible(true);
+        } else if (quickLogMode) {
+          handleLogUnit(item.id!, 1);
+        } else {
+          setGoalModalVisible(true);
+        }
       }}
       onLongPress={() => {
         setSelectedHabit(item);
@@ -466,57 +479,77 @@ const HabitsScreen = () => {
 
   return (
     <SafeAreaView style={[styles.container, { padding: screenPadding }]}>
-      <View style={{ alignItems: 'flex-end' }}>
-        <TouchableOpacity
-          testID="overflow-menu-toggle"
-          onPress={() => setMenuVisible((v) => !v)}
-          style={{ padding: spacing(1, scale) }}
-        >
-          <MoreHorizontal size={spacing(3, scale)} />
-        </TouchableOpacity>
-        {menuVisible && (
-          <View
-            testID="overflow-menu"
-            style={{
-              position: 'absolute',
-              top: spacing(5, scale),
-              right: spacing(1, scale),
-              backgroundColor: '#fff',
-              padding: spacing(1, scale),
-              borderRadius: spacing(1, scale),
-              elevation: 2,
-              zIndex: 1000,
-            }}
+      <View style={styles.topBar}>
+        <View style={styles.overflowMenuContainer} testID="overflow-menu-wrapper">
+          <TouchableOpacity
+            testID="overflow-menu-toggle"
+            onPress={() => setMenuVisible((v) => !v)}
+            style={{ padding: spacing(1, scale) }}
           >
-            <TouchableOpacity
-              onPress={() => {
-                if (selectedHabit) handleLogUnit(selectedHabit.id!, 1);
-                setMenuVisible(false);
-              }}
-              style={{ paddingVertical: spacing(0.5, scale) }}
+            <MoreHorizontal size={spacing(3, scale)} />
+          </TouchableOpacity>
+          {menuVisible && (
+            <View
+              testID="overflow-menu"
+              style={[styles.mobileMenu, { top: spacing(4, scale), right: 0 }]}
             >
-              <Text>Quick Log</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => {
-                if (selectedHabit) setStatsModalVisible(true);
-                setMenuVisible(false);
-              }}
-              style={{ paddingVertical: spacing(0.5, scale) }}
-            >
-              <Text>Stats</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => {
-                if (selectedHabit) setSettingsModalVisible(true);
-                setMenuVisible(false);
-              }}
-              style={{ paddingVertical: spacing(0.5, scale) }}
-            >
-              <Text>Edit</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+              <TouchableOpacity
+                onPress={() => {
+                  setQuickLogMode(true);
+                  setStatsMode(false);
+                  setEditMode(false);
+                  setMenuVisible(false);
+                }}
+                style={{ paddingVertical: spacing(0.5, scale) }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Check size={spacing(2, scale)} style={{ marginRight: spacing(1, scale) }} />
+                  <Text>Quick Log</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  setStatsMode(true);
+                  setQuickLogMode(false);
+                  setEditMode(false);
+                  setMenuVisible(false);
+                }}
+                style={{ paddingVertical: spacing(0.5, scale) }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <BarChart2 size={spacing(2, scale)} style={{ marginRight: spacing(1, scale) }} />
+                  <Text>Stats</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  setEditMode(true);
+                  setQuickLogMode(false);
+                  setStatsMode(false);
+                  setMenuVisible(false);
+                }}
+                style={{ paddingVertical: spacing(0.5, scale) }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Pencil size={spacing(2, scale)} style={{ marginRight: spacing(1, scale) }} />
+                  <Text>Edit</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  setOnboardingVisible(true);
+                  setMenuVisible(false);
+                }}
+                style={{ paddingVertical: spacing(0.5, scale) }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Zap size={spacing(2, scale)} style={{ marginRight: spacing(1, scale) }} />
+                  <Text>Energy Scaffolding</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
       </View>
 
       <FlatList
@@ -536,12 +569,50 @@ const HabitsScreen = () => {
         ]}
       />
 
-      <TouchableOpacity
-        style={styles.energyScaffoldingButton}
-        onPress={() => setOnboardingVisible(true)}
-      >
-        <Text style={styles.energyScaffoldingButtonText}>Perform Energy Scaffolding</Text>
-      </TouchableOpacity>
+      {showEnergyCTA && !(statsMode || editMode || quickLogMode) ? (
+        <View style={styles.energyScaffoldingContainer}>
+          <TouchableOpacity
+            style={styles.energyScaffoldingButton}
+            onPress={() => setOnboardingVisible(true)}
+          >
+            <Text style={styles.energyScaffoldingButtonText}>Perform Energy Scaffolding</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            testID="archive-energy-cta"
+            onPress={() => {
+              setShowEnergyCTA(false);
+              setShowArchiveMessage(true);
+              setTimeout(() => setShowArchiveMessage(false), 3000);
+            }}
+            style={styles.archiveEnergyButton}
+          >
+            <Text>Archive This</Text>
+          </TouchableOpacity>
+        </View>
+      ) : showArchiveMessage ? (
+        <Text style={styles.archivedMessage}>Energy Scaffolding button moved to menu.</Text>
+      ) : null}
+
+      {(statsMode || editMode || quickLogMode) && (
+        <View style={styles.energyScaffoldingContainer}>
+          <View style={styles.energyScaffoldingButton}>
+            <Text style={styles.energyScaffoldingButtonText}>
+              {statsMode ? 'Stats Mode' : editMode ? 'Edit Mode' : 'Quick Log Mode'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            testID="exit-mode"
+            onPress={() => {
+              setStatsMode(false);
+              setEditMode(false);
+              setQuickLogMode(false);
+            }}
+            style={styles.archiveEnergyButton}
+          >
+            <Text>Exit</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Modals */}
       <GoalModal

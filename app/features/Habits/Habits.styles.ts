@@ -959,6 +959,51 @@ export const styles = StyleSheet.create({
     maxHeight: '90%',
     ...SHADOWS.large,
   },
+  modalClose: {
+    position: 'absolute',
+    top: SPACING.sm,
+    right: SPACING.sm,
+    zIndex: 1,
+  },
+  modalCloseText: {
+    fontSize: 24,
+    color: COLORS.text.secondary,
+  },
+  discardModal: {
+    width: '80%',
+    backgroundColor: COLORS.background.card,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.lg,
+    ...SHADOWS.large,
+  },
+  discardTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: COLORS.text.primary,
+    marginBottom: SPACING.sm,
+  },
+  discardMessage: {
+    fontSize: 16,
+    color: COLORS.text.secondary,
+    marginBottom: SPACING.lg,
+  },
+  discardActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  discardButton: {
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    marginLeft: SPACING.md,
+  },
+  discardButtonText: {
+    color: COLORS.text.primary,
+    fontSize: 16,
+  },
+  discardExitText: {
+    color: COLORS.danger,
+    fontSize: 16,
+  },
   onboardingStep: {
     flex: 1,
   },
@@ -1229,21 +1274,51 @@ export const styles = StyleSheet.create({
   },
 
   // ===== Energy Scaffolding Button =====
-  energyScaffoldingButton: {
+  energyScaffoldingContainer: {
     position: 'absolute',
     bottom: 20,
     left: 20,
     right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  energyScaffoldingButton: {
+    flex: 1,
     backgroundColor: COLORS.primary,
     paddingVertical: SPACING.md,
     borderRadius: BORDER_RADIUS.xxl,
     alignItems: 'center',
+    marginRight: SPACING.sm,
     ...SHADOWS.medium,
+  },
+  archiveEnergyButton: {
+    backgroundColor: COLORS.background.accent,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.md,
+    borderRadius: BORDER_RADIUS.xxl,
+    alignItems: 'center',
+    ...SHADOWS.small,
   },
   energyScaffoldingButtonText: {
     color: COLORS.text.light,
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  archivedMessage: {
+    textAlign: 'center',
+    marginTop: SPACING.md,
+    color: COLORS.text.tertiary,
+  },
+
+  // ===== Overflow Menu =====
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginBottom: SPACING.sm,
+    zIndex: 1000,
+  },
+  overflowMenuContainer: {
+    zIndex: 1001,
   },
   habitSummary: {
     backgroundColor: 'rgba(0, 0, 0, 0.05)',
@@ -1326,12 +1401,12 @@ export const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 8,
     padding: 8,
-    zIndex: 10,
+    zIndex: 1002,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 4,
-    elevation: 3,
+    elevation: 10,
   },
   contentContainer: {
     width: '100%',

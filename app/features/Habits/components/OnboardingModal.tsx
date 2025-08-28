@@ -1,6 +1,15 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
 import React, { useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Modal, TextInput, Platform } from 'react-native';
+import {
+  FlatList,
+  Modal,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
 
@@ -16,6 +25,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectedHabitIndex, setSelectedHabitIndex] = useState<number | null>(null);
+  const [showDiscardDialog, setShowDiscardDialog] = useState(false);
 
   // Step 1: Add habits
   const handleAddHabit = () => {
@@ -165,6 +175,19 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     });
     setHabits(updatedHabits);
   };
+
+  const handleAttemptClose = () => {
+    setShowDiscardDialog(true);
+  };
+
+  const handleConfirmDiscard = () => {
+    setStep(1);
+    setHabits([]);
+    setShowDiscardDialog(false);
+    onClose();
+  };
+
+  const handleCancelDiscard = () => setShowDiscardDialog(false);
 
   const renderReorderStep = () => (
     <View style={styles.onboardingStep}>
@@ -350,11 +373,60 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.onboardingModalContent}>{renderStep()}</View>
-      </View>
-    </Modal>
+    <>
+      <Modal
+        visible={visible}
+        transparent
+        animationType="slide"
+        onRequestClose={handleAttemptClose}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={handleAttemptClose}
+            style={StyleSheet.absoluteFill}
+            testID="onboarding-overlay"
+          />
+          <View style={styles.onboardingModalContent}>
+            <TouchableOpacity
+              testID="onboarding-close"
+              style={styles.modalClose}
+              onPress={handleAttemptClose}
+            >
+              <Text style={styles.modalCloseText}>×</Text>
+            </TouchableOpacity>
+            {renderStep()}
+          </View>
+        </View>
+      </Modal>
+
+      {showDiscardDialog && (
+        <Modal transparent animationType="fade">
+          <View style={styles.modalOverlay} testID="discard-confirm">
+            <View style={styles.discardModal}>
+              <Text style={styles.discardTitle}>Discard all changes?</Text>
+              <Text style={styles.discardMessage}>You'll lose what you've written.</Text>
+              <View style={styles.discardActions}>
+                <TouchableOpacity
+                  onPress={handleCancelDiscard}
+                  style={styles.discardButton}
+                  testID="discard-cancel"
+                >
+                  <Text style={styles.discardButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={handleConfirmDiscard}
+                  style={styles.discardButton}
+                  testID="discard-exit"
+                >
+                  <Text style={styles.discardExitText}>Exit</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+    </>
   );
 };
 
