@@ -969,6 +969,41 @@ export const styles = StyleSheet.create({
     fontSize: 24,
     color: COLORS.text.secondary,
   },
+  discardModal: {
+    width: '80%',
+    backgroundColor: COLORS.background.card,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.lg,
+    ...SHADOWS.large,
+  },
+  discardTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: COLORS.text.primary,
+    marginBottom: SPACING.sm,
+  },
+  discardMessage: {
+    fontSize: 16,
+    color: COLORS.text.secondary,
+    marginBottom: SPACING.lg,
+  },
+  discardActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  discardButton: {
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    marginLeft: SPACING.md,
+  },
+  discardButtonText: {
+    color: COLORS.text.primary,
+    fontSize: 16,
+  },
+  discardExitText: {
+    color: COLORS.danger,
+    fontSize: 16,
+  },
   onboardingStep: {
     flex: 1,
   },

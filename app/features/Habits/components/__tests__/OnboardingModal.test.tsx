@@ -1,7 +1,6 @@
 /* eslint-disable import/order */
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
-import { Alert } from 'react-native';
 import renderer from 'react-test-renderer';
 
 const OnboardingModal = require('../OnboardingModal').default;
@@ -12,11 +11,8 @@ jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
 
 describe('OnboardingModal close behaviour', () => {
-  it('confirms before exiting via close button', () => {
+  it('shows discard dialog and exits on confirmation', () => {
     const onClose = jest.fn();
-    jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
-      buttons?.[1]?.onPress?.();
-    });
 
     const tree = renderer.create(
       <OnboardingModal visible onClose={onClose} onSaveHabits={jest.fn()} />,
@@ -27,24 +23,33 @@ describe('OnboardingModal close behaviour', () => {
       close.props.onPress();
     });
 
+    const dialog = tree.root.findByProps({ testID: 'discard-confirm' });
+    const exit = dialog.findByProps({ testID: 'discard-exit' });
+    renderer.act(() => {
+      exit.props.onPress();
+    });
+
     expect(onClose).toHaveBeenCalled();
   });
 
-  it('confirms before exiting via backdrop', () => {
+  it('cancels discard and keeps modal open', () => {
     const onClose = jest.fn();
-    jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
-      buttons?.[1]?.onPress?.();
-    });
 
     const tree = renderer.create(
       <OnboardingModal visible onClose={onClose} onSaveHabits={jest.fn()} />,
     );
 
-    const overlay = tree.root.findByProps({ testID: 'onboarding-overlay' });
+    const close = tree.root.findByProps({ testID: 'onboarding-close' });
     renderer.act(() => {
-      overlay.props.onPress();
+      close.props.onPress();
     });
 
-    expect(onClose).toHaveBeenCalled();
+    const dialog = tree.root.findByProps({ testID: 'discard-confirm' });
+    const cancel = dialog.findByProps({ testID: 'discard-cancel' });
+    renderer.act(() => {
+      cancel.props.onPress();
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
   });
 });
