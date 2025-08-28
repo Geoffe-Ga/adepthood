@@ -123,6 +123,7 @@ export interface OnboardingModalProps {
   visible: boolean;
   onClose: () => void;
   onSaveHabits: (_habits: OnboardingHabit[]) => void;
+  initialStep?: number;
 }
 
 export interface ReorderHabitsModalProps {

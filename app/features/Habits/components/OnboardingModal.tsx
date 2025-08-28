@@ -1,3 +1,4 @@
+import DateTimePicker from '@react-native-community/datetimepicker';
 import React, { useState } from 'react';
 import {
   View,
@@ -11,15 +12,19 @@ import {
 } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
-import DateTimePickerModal from 'react-native-modal-datetime-picker';
 
 import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { DEFAULT_ICONS } from '../HabitsScreen';
 import { getStaggeredStartDate, getStageByIndex } from '../OnboardingUtils';
 
-export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingModalProps) => {
-  const [step, setStep] = useState(1);
+export const OnboardingModal = ({
+  visible,
+  onClose,
+  onSaveHabits,
+  initialStep = 1,
+}: OnboardingModalProps) => {
+  const [step, setStep] = useState(initialStep);
   const [habits, setHabits] = useState<OnboardingHabit[]>([]);
   const [newHabitName, setNewHabitName] = useState('');
   const [startDate, setStartDate] = useState(new Date());
@@ -233,7 +238,11 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
 
       <View style={styles.startDateContainer}>
         <Text style={styles.startDateLabel}>First habit starts on:</Text>
-        <TouchableOpacity style={styles.startDateButton} onPress={() => setDatePickerVisible(true)}>
+        <TouchableOpacity
+          testID="start-date-button"
+          style={styles.startDateButton}
+          onPress={() => setDatePickerVisible(true)}
+        >
           <Text style={styles.startDateButtonText}>
             {startDate.toLocaleDateString('en-US', {
               month: 'short',
@@ -243,23 +252,26 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
           </Text>
         </TouchableOpacity>
 
-        <DateTimePickerModal
-          isVisible={isDatePickerVisible}
-          mode="date"
-          onConfirm={(selectedDate) => {
-            setDatePickerVisible(false);
-            if (selectedDate) {
-              setStartDate(selectedDate);
-              setHabits((prev) =>
-                prev.map((habit, index) => ({
-                  ...habit,
-                  start_date: getStaggeredStartDate(selectedDate, index),
-                })),
-              );
-            }
-          }}
-          onCancel={() => setDatePickerVisible(false)}
-        />
+        {isDatePickerVisible && (
+          <DateTimePicker
+            testID="start-date-picker"
+            value={startDate}
+            mode="date"
+            display="default"
+            onChange={(event, selectedDate) => {
+              setDatePickerVisible(false);
+              if (selectedDate) {
+                setStartDate(selectedDate);
+                setHabits((prev) =>
+                  prev.map((habit, index) => ({
+                    ...habit,
+                    start_date: getStaggeredStartDate(selectedDate, index),
+                  })),
+                );
+              }
+            }}
+          />
+        )}
       </View>
 
       <View style={styles.habitsList}>
@@ -413,6 +425,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
                   onEmojiSelected={(emoji) => updateHabitIcon(selectedHabitIndex, emoji)}
                   showSearchBar
                   columns={8}
+                  {...({ emojiSize: 28 } as unknown as { emojiSize: number })}
                 />
               </View>
             </View>

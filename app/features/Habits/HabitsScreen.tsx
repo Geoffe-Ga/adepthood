@@ -535,12 +535,15 @@ const HabitsScreen = () => {
         keyExtractor={(item) => item.id?.toString() ?? item.name}
         renderItem={renderHabitTile}
         numColumns={columns}
-        columnWrapperStyle={columns > 1 ? { gap: gridGutter } : undefined}
+        columnWrapperStyle={
+          columns > 1 ? { gap: gridGutter, flexDirection: 'row-reverse' } : undefined
+        }
         contentContainerStyle={[
           styles.habitsGrid,
           {
             padding: gridGutter / 2,
             paddingBottom: gridGutter / 2,
+            flexDirection: 'column-reverse',
           },
         ]}
       />

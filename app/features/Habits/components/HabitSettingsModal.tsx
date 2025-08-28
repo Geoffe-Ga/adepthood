@@ -380,6 +380,7 @@ export const HabitSettingsModal = ({
                   }}
                   showSearchBar
                   columns={8}
+                  {...({ emojiSize: 28 } as unknown as { emojiSize: number })}
                 />
               </View>
             </View>
