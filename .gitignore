@@ -131,6 +131,9 @@ secrets.json
 *.swp
 *.swo
 
+# Development-only assets
+app/local-assets/
+
 # ======================================
 # Keep these tracked
 # ======================================
