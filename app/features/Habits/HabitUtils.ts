@@ -15,6 +15,21 @@ export const STAGE_ORDER = [
   'Clear Light',
 ];
 
+/**
+ * Calculate the start date for a habit based on its order in the onboarding
+ * flow. Habits 1–8 begin 21 days apart while habits 9–10 begin 42 days apart.
+ *
+ * @param baseDate - The starting date selected by the user
+ * @param index - Zero-based habit index in the ordered list
+ * @returns A new Date representing the habit's start date
+ */
+export const calculateHabitStartDate = (baseDate: Date, index: number): Date => {
+  const date = new Date(baseDate);
+  const offset = index < 8 ? index * 21 : 7 * 21 + (index - 7) * 42;
+  date.setDate(date.getDate() + offset);
+  return date;
+};
+
 export const getTierColor = (tier: 'low' | 'clear' | 'stretch') => {
   switch (tier) {
     case 'low':

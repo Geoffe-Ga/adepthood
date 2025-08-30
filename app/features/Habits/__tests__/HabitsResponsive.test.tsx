@@ -32,6 +32,7 @@ jest.mock('../components/StatsModal', () => ({
   __esModule: true,
   default: jest.fn(() => null),
 }));
+jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
 const widths = [320, 390, 600, 900, 1200];
 

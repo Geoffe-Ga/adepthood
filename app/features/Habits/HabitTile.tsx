@@ -17,7 +17,7 @@ import {
   calculateHabitProgress,
 } from './HabitUtils';
 
-export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) => {
+export const HabitTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: HabitTileProps) => {
   const { width, height, columns, scale, gridGutter } = useResponsive();
   const formatGoalTooltip = (g: Goal) => {
     const label =
@@ -53,6 +53,8 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
   } = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
   const hasCleared = clearGoal ? isGoalAchieved(clearGoal, habit) : false;
 
+  const isFutureStart = new Date(habit.start_date).getTime() > Date.now();
+
   return (
     <TouchableOpacity
       testID="habit-tile"
@@ -65,15 +67,20 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
         minHeight: tileMinHeight,
         borderRadius: spacing(1, scale),
         backgroundColor: '#f8f8f8',
+        opacity: isFutureStart ? 0.5 : 1,
       }}
       onPress={onOpenGoals}
       onLongPress={onLongPress}
     >
       {iconInline ? (
         <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Text style={{ fontSize: spacing(3, scale), marginRight: spacing(1, scale) }}>
-            {habit.icon}
-          </Text>
+          <TouchableOpacity
+            onPress={onIconPress}
+            testID="habit-icon"
+            style={{ marginRight: spacing(1, scale) }}
+          >
+            <Text style={{ fontSize: spacing(3, scale) }}>{habit.icon}</Text>
+          </TouchableOpacity>
           <Text
             style={{
               flex: 1,
@@ -104,7 +111,9 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress }: HabitTileProps) =
             testID="habit-icon-top"
             style={{ alignItems: 'center', marginBottom: spacing(1, scale) }}
           >
-            <Text style={{ fontSize: spacing(4, scale) }}>{habit.icon}</Text>
+            <TouchableOpacity onPress={onIconPress} testID="habit-icon">
+              <Text style={{ fontSize: spacing(4, scale) }}>{habit.icon}</Text>
+            </TouchableOpacity>
           </View>
           <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Text

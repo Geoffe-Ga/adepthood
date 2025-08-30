@@ -6,7 +6,7 @@ import DraggableFlatList from 'react-native-draggable-flatlist';
 import { STAGE_COLORS } from '../../../constants/stageColors';
 import styles from '../Habits.styles';
 import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
-import { STAGE_ORDER } from '../HabitUtils';
+import { STAGE_ORDER, calculateHabitStartDate } from '../HabitUtils';
 
 export const ReorderHabitsModal = ({
   visible,
@@ -28,11 +28,10 @@ export const ReorderHabitsModal = ({
       });
 
       // Update start dates based on order
-      const updatedHabits = sortedHabits.map((habit, index) => {
-        const habitStartDate = new Date(startDate);
-        habitStartDate.setDate(habitStartDate.getDate() + index * 21);
-        return { ...habit, start_date: habitStartDate };
-      });
+      const updatedHabits = sortedHabits.map((habit, index) => ({
+        ...habit,
+        start_date: calculateHabitStartDate(startDate, index),
+      }));
 
       setOrderedHabits(updatedHabits);
     }
@@ -40,11 +39,10 @@ export const ReorderHabitsModal = ({
 
   const handleDragEnd = ({ data }: { data: Habit[] }) => {
     // Update dates based on new order
-    const updatedHabits = data.map((habit, index) => {
-      const habitStartDate = new Date(startDate);
-      habitStartDate.setDate(habitStartDate.getDate() + index * 21);
-      return { ...habit, start_date: habitStartDate };
-    });
+    const updatedHabits = data.map((habit, index) => ({
+      ...habit,
+      start_date: calculateHabitStartDate(startDate, index),
+    }));
 
     setOrderedHabits(updatedHabits);
   };
@@ -55,11 +53,10 @@ export const ReorderHabitsModal = ({
       setStartDate(selectedDate);
 
       // Update all start dates
-      const updatedHabits = orderedHabits.map((habit, index) => {
-        const habitStartDate = new Date(selectedDate);
-        habitStartDate.setDate(habitStartDate.getDate() + index * 21);
-        return { ...habit, start_date: habitStartDate };
-      });
+      const updatedHabits = orderedHabits.map((habit, index) => ({
+        ...habit,
+        start_date: calculateHabitStartDate(selectedDate, index),
+      }));
 
       setOrderedHabits(updatedHabits);
     }
@@ -109,7 +106,7 @@ export const ReorderHabitsModal = ({
           </View>
 
           <Text style={styles.reorderInstructions}>
-            Drag habits to reorder. Each habit starts 21 days after the previous one.
+            Drag habits to reorder. Habits 1–8 start 21 days apart, habits 9–10 start 42 days apart.
           </Text>
 
           <View style={styles.reorderList}>
