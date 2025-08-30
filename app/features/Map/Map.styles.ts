@@ -10,18 +10,13 @@ import { radius, spacing } from '../../Sources/design/DesignSystem';
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  },
-  background: {
-    flex: 1,
-    resizeMode: 'cover',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   hotspot: {
     position: 'absolute',
-    padding: spacing(1),
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
+    // Transparent but still receives touch events
+    backgroundColor: 'rgba(255,255,255,0.01)',
   },
   modalOverlay: {
     flex: 1,

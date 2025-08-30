@@ -1,8 +1,18 @@
 // app/features/Map/MapScreen.tsx
 
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { useNavigation } from '@react-navigation/native';
-import React, { useState } from 'react';
-import { ImageBackground, Modal, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import {
+  Image,
+  ImageBackground,
+  Modal,
+  Text,
+  TouchableOpacity,
+  View,
+  useWindowDimensions,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { MAP_BACKGROUND_URI } from '../../constants/images';
 
@@ -17,27 +27,47 @@ import type { StageData } from './stageData';
 const MapScreen = (): React.JSX.Element => {
   const navigation = useNavigation();
   const [activeStage, setActiveStage] = useState<StageData | null>(null);
+  const { width, height } = useWindowDimensions();
+  const tabBarHeight = useBottomTabBarHeight();
+  const insets = useSafeAreaInsets();
+  const [aspectRatio, setAspectRatio] = useState(1);
+
+  useEffect(() => {
+    Image.getSize(MAP_BACKGROUND_URI, (w, h) => setAspectRatio(w / h));
+  }, []);
+
+  const isPortrait = height >= width;
+  const availableHeight = height - tabBarHeight - insets.top;
+  const backgroundStyle = isPortrait
+    ? { width, height: width / aspectRatio }
+    : { height: availableHeight, width: availableHeight * aspectRatio };
 
   return (
     <View style={styles.container}>
       <ImageBackground
         source={{ uri: MAP_BACKGROUND_URI }}
-        style={styles.background}
+        style={backgroundStyle}
+        resizeMode="contain"
         testID="map-background"
       >
-        {STAGES.map((stage) => (
-          <TouchableOpacity
-            key={stage.id}
-            testID={`stage-hotspot-${stage.stageNumber}`}
-            style={[
-              styles.hotspot,
-              { top: `${stage.position.top}%`, left: `${stage.position.left}%` },
-            ]}
-            onPress={() => setActiveStage(stage)}
-          >
-            <Text style={[styles.label, { color: stage.color }]}>{stage.title}</Text>
-          </TouchableOpacity>
-        ))}
+        {STAGES.flatMap((stage) =>
+          stage.hotspots.map((hs, index) => (
+            <TouchableOpacity
+              key={`${stage.id}-${index}`}
+              testID={`stage-hotspot-${stage.stageNumber}-${index}`}
+              style={[
+                styles.hotspot,
+                {
+                  top: `${hs.top}%`,
+                  left: `${hs.left}%`,
+                  width: `${hs.width}%`,
+                  height: `${hs.height}%`,
+                },
+              ]}
+              onPress={() => setActiveStage(stage)}
+            />
+          )),
+        )}
       </ImageBackground>
 
       <Modal
