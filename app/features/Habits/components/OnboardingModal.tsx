@@ -255,6 +255,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
         <DraggableFlatList
           data={habits}
           keyExtractor={(_, index) => index.toString()}
+          contentContainerStyle={styles.habitsListContent}
           renderItem={({ item, drag, isActive }) => {
             const index = habits.findIndex((h) => h === item);
 

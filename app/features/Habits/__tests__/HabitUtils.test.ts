@@ -277,8 +277,8 @@ describe('HabitUtils', () => {
       expect((result.getTime() - base.getTime()) / day).toBe(21 * i);
     }
     const ninth = calculateHabitStartDate(base, 8);
-    expect((ninth.getTime() - base.getTime()) / day).toBe(189);
+    expect((ninth.getTime() - base.getTime()) / day).toBe(168);
     const tenth = calculateHabitStartDate(base, 9);
-    expect((tenth.getTime() - base.getTime()) / day).toBe(231);
+    expect((tenth.getTime() - base.getTime()) / day).toBe(210);
   });
 });

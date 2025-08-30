@@ -1183,6 +1183,9 @@ export const styles = StyleSheet.create({
     flex: 1,
     marginVertical: SPACING.lg,
   },
+  habitsListContent: {
+    paddingBottom: SPACING.xxl,
+  },
   habitListItem: {
     flexDirection: 'row',
     alignItems: 'center',
