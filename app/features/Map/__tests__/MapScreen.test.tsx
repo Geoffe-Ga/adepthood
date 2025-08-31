@@ -58,4 +58,26 @@ describe('MapScreen', () => {
     });
     expect(mockNavigate).toHaveBeenCalledWith('Practice');
   });
+
+  it('closes modal when X is pressed', () => {
+    const tree = create(<MapScreen />);
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-1-0' }).props.onPress();
+    });
+    act(() => {
+      tree.root.findByProps({ testID: 'close-modal' }).props.onPress();
+    });
+    expect(() => tree.root.findByProps({ testID: 'stage-modal' })).toThrow();
+  });
+
+  it('closes modal when tapping outside content', () => {
+    const tree = create(<MapScreen />);
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-1-0' }).props.onPress();
+    });
+    act(() => {
+      tree.root.findByProps({ testID: 'modal-overlay' }).props.onPress();
+    });
+    expect(() => tree.root.findByProps({ testID: 'stage-modal' })).toThrow();
+  });
 });

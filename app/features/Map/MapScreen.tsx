@@ -7,6 +7,7 @@ import {
   Image,
   ImageBackground,
   Modal,
+  Pressable,
   Text,
   TouchableOpacity,
   View,
@@ -76,10 +77,21 @@ const MapScreen = (): React.JSX.Element => {
         animationType="fade"
         onRequestClose={() => setActiveStage(null)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent} testID="stage-modal">
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setActiveStage(null)}
+          testID="modal-overlay"
+        >
+          <Pressable style={styles.modalContent} onPress={() => {}} testID="stage-modal">
             {activeStage && (
               <>
+                <TouchableOpacity
+                  testID="close-modal"
+                  style={styles.closeButton}
+                  onPress={() => setActiveStage(null)}
+                >
+                  <Text style={styles.closeText}>×</Text>
+                </TouchableOpacity>
                 <Text style={styles.modalTitle}>{activeStage.title}</Text>
                 <Text style={styles.modalSubtitle}>{activeStage.subtitle}</Text>
                 <View style={styles.progressBar}>
@@ -111,8 +123,8 @@ const MapScreen = (): React.JSX.Element => {
                 </View>
               </>
             )}
-          </View>
-        </View>
+          </Pressable>
+        </Pressable>
       </Modal>
     </View>
   );

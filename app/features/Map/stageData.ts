@@ -82,8 +82,11 @@ const HOTSPOTS: Hotspot[][] = [
   ],
 ] as const;
 
+// Stages are ordered from top (stage 10) to bottom (stage 1) to match the
+// background artwork where the spiral begins with 10 at the top and ends with
+// 1 at the bottom.
 export const STAGES: StageData[] = Array.from({ length: 10 }, (_, index) => {
-  const stageNumber = index + 1;
+  const stageNumber = 10 - index;
   return {
     id: stageNumber,
     title: `Stage ${stageNumber}`,
@@ -93,7 +96,7 @@ export const STAGES: StageData[] = Array.from({ length: 10 }, (_, index) => {
     progress: stageNumber === 1 ? 0.5 : 0,
     goals: [`Goal for stage ${stageNumber}`],
     practices: [`Practice for stage ${stageNumber}`],
-    color: COLORS[index]!,
+    color: COLORS[stageNumber - 1]!,
     hotspots: HOTSPOTS[index]!,
   };
 });

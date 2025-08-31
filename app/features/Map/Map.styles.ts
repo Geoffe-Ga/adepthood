@@ -29,6 +29,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     padding: spacing(2),
     borderRadius: radius.md,
+    position: 'relative',
   },
   modalTitle: {
     fontSize: 16,
@@ -63,6 +64,16 @@ const styles = StyleSheet.create({
   actionText: {
     fontSize: 14,
     color: '#1e1e1e',
+  },
+  closeButton: {
+    position: 'absolute',
+    top: spacing(1),
+    right: spacing(1),
+    padding: spacing(0.5),
+  },
+  closeText: {
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 
