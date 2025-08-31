@@ -9,6 +9,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Alert,
 } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
@@ -219,7 +220,11 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
 
       <View style={styles.startDateContainer}>
         <Text style={styles.startDateLabel}>First habit starts on:</Text>
-        <TouchableOpacity style={styles.startDateButton} onPress={() => setShowDatePicker(true)}>
+        <TouchableOpacity
+          testID="start-date-button"
+          style={styles.startDateButton}
+          onPress={() => setShowDatePicker(true)}
+        >
           <Text style={styles.startDateButtonText}>
             {startDate.toLocaleDateString('en-US', {
               month: 'short',
@@ -230,29 +235,32 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
         </TouchableOpacity>
 
         {showDatePicker && (
-          <DateTimePicker
-            value={startDate}
-            mode="date"
-            display="default"
-            onChange={(event, selectedDate) => {
-              setShowDatePicker(Platform.OS === 'ios');
-              if (selectedDate) {
-                setStartDate(selectedDate);
-                // Update all start dates
-                setHabits((prev) =>
-                  prev.map((habit, index) => ({
-                    ...habit,
-                    start_date: calculateHabitStartDate(selectedDate, index),
-                  })),
-                );
-              }
-            }}
-          />
+          <Modal transparent testID="date-picker-modal">
+            <DateTimePicker
+              value={startDate}
+              mode="date"
+              display="default"
+              onChange={(event, selectedDate) => {
+                setShowDatePicker(Platform.OS === 'ios');
+                if (selectedDate) {
+                  setStartDate(selectedDate);
+                  // Update all start dates
+                  setHabits((prev) =>
+                    prev.map((habit, index) => ({
+                      ...habit,
+                      start_date: calculateHabitStartDate(selectedDate, index),
+                    })),
+                  );
+                }
+              }}
+            />
+          </Modal>
         )}
       </View>
 
       <View style={styles.habitsList}>
         <DraggableFlatList
+          style={{ flex: 1 }}
           data={habits}
           keyExtractor={(_, index) => index.toString()}
           contentContainerStyle={styles.habitsListContent}
@@ -322,7 +330,11 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
         </View>
       )}
 
-      <TouchableOpacity style={styles.onboardingContinueButton} onPress={handleFinish}>
+      <TouchableOpacity
+        testID="finish-setup"
+        style={styles.onboardingContinueButton}
+        onPress={handleFinish}
+      >
         <Text style={styles.onboardingContinueButtonText}>Finish Setup</Text>
       </TouchableOpacity>
     </View>
@@ -331,6 +343,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
   const handleFinish = () => {
     onSaveHabits(habits);
     onClose();
+    Alert.alert('Next steps', 'Tap a habit tile to edit its goals.');
   };
 
   const renderStep = () => {

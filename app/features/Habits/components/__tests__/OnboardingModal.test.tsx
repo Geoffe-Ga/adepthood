@@ -2,6 +2,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import renderer from 'react-test-renderer';
+import { Alert, Text, TextInput, TouchableOpacity } from 'react-native';
 
 const OnboardingModal = require('../OnboardingModal').default;
 
@@ -51,5 +52,64 @@ describe('OnboardingModal close behaviour', () => {
     });
 
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('shows date picker and next steps alert on finish', () => {
+    const onClose = jest.fn();
+    const onSave = jest.fn();
+    const tree = renderer.create(
+      <OnboardingModal visible onClose={onClose} onSaveHabits={onSave} />,
+    );
+    const root = tree.root;
+
+    // Step 1: add a habit and continue through steps
+    const input = root.findByType(TextInput);
+    renderer.act(() => {
+      input.props.onChangeText('Test');
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const plus = root.findAllByType(Text).find((t: any) => t.props.children === '+');
+    if (!plus) throw new Error('Plus button not found');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let plusParent: any = plus.parent;
+    while (plusParent && plusParent.type !== TouchableOpacity) {
+      plusParent = plusParent.parent;
+    }
+    if (!plusParent) throw new Error('Plus button not found');
+    renderer.act(() => {
+      plusParent.props.onPress();
+    });
+
+    const pressContinue = () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const text = root.findAllByType(Text).find((t: any) => t.props.children === 'Continue');
+      if (!text) throw new Error('Continue button not found');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let parent: any = text.parent;
+      while (parent && parent.type !== TouchableOpacity) {
+        parent = parent.parent;
+      }
+      if (!parent) throw new Error('Continue button not found');
+      renderer.act(() => {
+        parent.props.onPress();
+      });
+    };
+    pressContinue(); // to cost step
+    pressContinue(); // to return step
+    pressContinue(); // to reorder step
+
+    const startBtn = root.findByProps({ testID: 'start-date-button' });
+    renderer.act(() => {
+      startBtn.props.onPress();
+    });
+    expect(root.findByProps({ testID: 'date-picker-modal' })).toBeTruthy();
+
+    jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const finish = root.findByProps({ testID: 'finish-setup' });
+    renderer.act(() => {
+      finish.props.onPress();
+    });
+    expect(Alert.alert).toHaveBeenCalledWith('Next steps', 'Tap a habit tile to edit its goals.');
+    expect(onSave).toHaveBeenCalled();
   });
 });

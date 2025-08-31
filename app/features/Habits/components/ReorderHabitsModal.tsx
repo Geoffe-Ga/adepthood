@@ -89,6 +89,7 @@ export const ReorderHabitsModal = ({
           <View style={styles.datePickerContainer}>
             <Text style={styles.datePickerLabel}>First Habit Start Date:</Text>
             <TouchableOpacity
+              testID="reorder-start-date"
               style={styles.datePickerButton}
               onPress={() => setShowDatePicker(true)}
             >
@@ -96,12 +97,14 @@ export const ReorderHabitsModal = ({
             </TouchableOpacity>
 
             {showDatePicker && (
-              <DateTimePicker
-                value={startDate}
-                mode="date"
-                display="default"
-                onChange={handleDateChange}
-              />
+              <Modal transparent testID="reorder-date-picker-modal">
+                <DateTimePicker
+                  value={startDate}
+                  mode="date"
+                  display="default"
+                  onChange={handleDateChange}
+                />
+              </Modal>
             )}
           </View>
 
@@ -111,6 +114,7 @@ export const ReorderHabitsModal = ({
 
           <View style={styles.reorderList}>
             <DraggableFlatList
+              style={{ flex: 1 }}
               data={orderedHabits}
               keyExtractor={(item) => (item.id ? item.id.toString() : Math.random().toString())}
               renderItem={({ item, drag, isActive }) => (
