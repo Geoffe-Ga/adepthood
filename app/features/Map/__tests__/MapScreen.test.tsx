@@ -36,7 +36,7 @@ describe('MapScreen', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       stages.map((s: any) => s.props.testID as string),
     );
-    expect(unique.size).toBe(20);
+    expect(unique.size).toBe(21);
   });
 
   it('shows modal with stage details when a hotspot is tapped', () => {

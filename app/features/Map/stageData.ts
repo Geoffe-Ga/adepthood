@@ -36,49 +36,50 @@ const COLORS = [
   '#ea580c',
 ];
 
-// Rough percentage-based hotspot layout matching the spiral image. Each stage has
-// two tappable regions: the colored text on the left and the arrow in the
-// middle. Adjust these values when the final background asset is available.
+// Percentage-based hotspot layout matching the spiral image. Each stage has a
+// tappable region over the colored text on the left and another over its spiral
+// arrow. Arrows alternate sides as the spiral winds; stage 9 has two arrows.
 const HOTSPOTS: Hotspot[][] = [
   [
-    { top: 8, left: 4, width: 32, height: 8 },
-    { top: 8, left: 42, width: 32, height: 8 },
+    { top: 4, left: 4, width: 32, height: 6 },
+    { top: 4, left: 34, width: 40, height: 6 },
   ],
   [
-    { top: 16, left: 4, width: 32, height: 8 },
-    { top: 16, left: 42, width: 32, height: 8 },
+    { top: 12, left: 4, width: 32, height: 6 },
+    { top: 12, left: 34, width: 40, height: 6 },
+    { top: 12, left: 50, width: 40, height: 6 },
   ],
   [
-    { top: 24, left: 4, width: 32, height: 8 },
-    { top: 24, left: 42, width: 32, height: 8 },
+    { top: 20, left: 4, width: 32, height: 6 },
+    { top: 20, left: 34, width: 40, height: 6 },
   ],
   [
-    { top: 32, left: 4, width: 32, height: 8 },
-    { top: 32, left: 42, width: 32, height: 8 },
+    { top: 28, left: 4, width: 32, height: 6 },
+    { top: 28, left: 50, width: 40, height: 6 },
   ],
   [
-    { top: 40, left: 4, width: 32, height: 8 },
-    { top: 40, left: 42, width: 32, height: 8 },
+    { top: 36, left: 4, width: 32, height: 6 },
+    { top: 36, left: 34, width: 40, height: 6 },
   ],
   [
-    { top: 48, left: 4, width: 32, height: 8 },
-    { top: 48, left: 42, width: 32, height: 8 },
+    { top: 44, left: 4, width: 32, height: 6 },
+    { top: 44, left: 50, width: 40, height: 6 },
   ],
   [
-    { top: 56, left: 4, width: 32, height: 8 },
-    { top: 56, left: 42, width: 32, height: 8 },
+    { top: 52, left: 4, width: 32, height: 6 },
+    { top: 52, left: 34, width: 40, height: 6 },
   ],
   [
-    { top: 64, left: 4, width: 32, height: 8 },
-    { top: 64, left: 42, width: 32, height: 8 },
+    { top: 60, left: 4, width: 32, height: 6 },
+    { top: 60, left: 50, width: 40, height: 6 },
   ],
   [
-    { top: 72, left: 4, width: 32, height: 8 },
-    { top: 72, left: 42, width: 32, height: 8 },
+    { top: 68, left: 4, width: 32, height: 6 },
+    { top: 68, left: 34, width: 40, height: 6 },
   ],
   [
-    { top: 80, left: 4, width: 32, height: 8 },
-    { top: 80, left: 42, width: 32, height: 8 },
+    { top: 76, left: 4, width: 32, height: 6 },
+    { top: 76, left: 50, width: 40, height: 6 },
   ],
 ] as const;
 
