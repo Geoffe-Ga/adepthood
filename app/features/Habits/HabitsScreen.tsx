@@ -452,6 +452,7 @@ const HabitsScreen = () => {
     }));
 
     setHabits(fullHabits);
+    Alert.alert('Next steps', 'Tap a habit tile to edit its goals.');
   };
 
   // Render a habit tile

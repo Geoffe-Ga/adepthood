@@ -2,7 +2,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import renderer from 'react-test-renderer';
-import { Alert, Text, TextInput, TouchableOpacity } from 'react-native';
+import { Text, TextInput, TouchableOpacity } from 'react-native';
 
 const OnboardingModal = require('../OnboardingModal').default;
 
@@ -54,7 +54,7 @@ describe('OnboardingModal close behaviour', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('shows date picker and next steps alert on finish', () => {
+  it('shows date picker and saves habits on finish', () => {
     const onClose = jest.fn();
     const onSave = jest.fn();
     const tree = renderer.create(
@@ -104,12 +104,10 @@ describe('OnboardingModal close behaviour', () => {
     });
     expect(root.findByProps({ testID: 'date-picker-modal' })).toBeTruthy();
 
-    jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     const finish = root.findByProps({ testID: 'finish-setup' });
     renderer.act(() => {
       finish.props.onPress();
     });
-    expect(Alert.alert).toHaveBeenCalledWith('Next steps', 'Tap a habit tile to edit its goals.');
     expect(onSave).toHaveBeenCalled();
   });
 });

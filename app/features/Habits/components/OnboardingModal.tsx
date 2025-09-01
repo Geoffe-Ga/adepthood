@@ -9,7 +9,6 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  Alert,
 } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
@@ -223,7 +222,26 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
         <TouchableOpacity
           testID="start-date-button"
           style={styles.startDateButton}
-          onPress={() => setShowDatePicker(true)}
+          onPress={() => {
+            if (Platform.OS === 'web') {
+              const input = window.prompt(
+                'Select start date (YYYY-MM-DD)',
+                startDate.toISOString().slice(0, 10),
+              );
+              if (input) {
+                const selectedDate = new Date(input);
+                setStartDate(selectedDate);
+                setHabits((prev) =>
+                  prev.map((habit, index) => ({
+                    ...habit,
+                    start_date: calculateHabitStartDate(selectedDate, index),
+                  })),
+                );
+              }
+            } else {
+              setShowDatePicker(true);
+            }
+          }}
         >
           <Text style={styles.startDateButtonText}>
             {startDate.toLocaleDateString('en-US', {
@@ -234,7 +252,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
           </Text>
         </TouchableOpacity>
 
-        {showDatePicker && (
+        {showDatePicker && Platform.OS !== 'web' && (
           <Modal transparent testID="date-picker-modal">
             <DateTimePicker
               value={startDate}
@@ -270,6 +288,8 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
             return (
               <TouchableOpacity
                 onLongPress={drag}
+                onPressIn={Platform.OS === 'web' ? drag : undefined}
+                delayLongPress={150}
                 style={[styles.habitListItem, isActive && { backgroundColor: '#eaeaea' }]}
               >
                 <View style={styles.habitDragInfo}>
@@ -343,7 +363,6 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
   const handleFinish = () => {
     onSaveHabits(habits);
     onClose();
-    Alert.alert('Next steps', 'Tap a habit tile to edit its goals.');
   };
 
   const renderStep = () => {
