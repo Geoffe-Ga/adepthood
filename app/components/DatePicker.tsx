@@ -22,7 +22,22 @@ export interface DatePickerProps {
   stageColor?: string;
 }
 
-export const toISODate = (date: Date): string => date.toISOString().slice(0, 10);
+export const toISODate = (date: Date): string => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+export const parseISODate = (iso: string): Date => {
+  const [yStr, mStr, dStr] = iso.split('-');
+  const y = Number(yStr);
+  const m = Number(mStr ?? 1);
+  const d = Number(dStr ?? 1);
+  return new Date(y, m - 1, d);
+};
 
 export const formatDisplayDate = (date: Date, locale = 'en-US'): string =>
   date.toLocaleDateString(locale, {
@@ -75,39 +90,41 @@ const DatePicker: React.FC<DatePickerProps> = ({
   locale = 'en-US',
 }) => {
   const [textValue, setTextValue] = useState(
-    value ? formatDisplayDate(new Date(value), locale) : '',
+    value ? formatDisplayDate(parseISODate(value), locale) : '',
   );
   const [error, setError] = useState<string | null>(null);
   const [pickerVisible, setPickerVisible] = useState(false);
 
   useEffect(() => {
     if (value) {
-      setTextValue(formatDisplayDate(new Date(value), locale));
+      setTextValue(formatDisplayDate(parseISODate(value), locale));
     }
   }, [value, locale]);
 
   const commitDate = (date: Date) => {
+    const normalized = new Date(date);
+    normalized.setHours(0, 0, 0, 0);
     if (minDate || maxDate || disabledDate) {
-      const min = minDate ? new Date(minDate) : undefined;
-      const max = maxDate ? new Date(maxDate) : undefined;
-      if (!isDateWithinRange(date, min, max)) {
-        setError(`Date must be between ${minDate ?? '-∞'} and ${maxDate ?? '∞'}`);
+      const min = minDate ? parseISODate(minDate) : undefined;
+      const max = maxDate ? parseISODate(maxDate) : undefined;
+      if (!isDateWithinRange(normalized, min, max)) {
+        setError(`between ${minDate ?? ''} and ${maxDate ?? ''}`);
         return;
       }
-      if (disabledDate && disabledDate(date)) {
-        setError('This date is unavailable');
+      if (disabledDate && disabledDate(normalized)) {
+        setError('that day is blocked');
         return;
       }
     }
     setError(null);
-    onChange(toISODate(date));
+    onChange(toISODate(normalized));
   };
 
   const handleChangeText = (t: string) => {
     setTextValue(t);
     const parsed = parseDateInput(t);
     if (!parsed) {
-      setError('Enter a date like 2025-09-01');
+      setError('use YYYY-MM-DD');
       return;
     }
     commitDate(parsed);
@@ -135,7 +152,7 @@ const DatePicker: React.FC<DatePickerProps> = ({
           value={value}
           min={minDate}
           max={maxDate}
-          onChange={(e) => commitDate(new Date(e.target.value))}
+          onChange={(e) => commitDate(parseISODate(e.target.value))}
         />
       ) : (
         <TextInput
@@ -151,9 +168,9 @@ const DatePicker: React.FC<DatePickerProps> = ({
         <DateTimePickerModal
           isVisible={pickerVisible}
           mode="date"
-          date={value ? new Date(value) : new Date()}
-          minimumDate={minDate ? new Date(minDate) : undefined}
-          maximumDate={maxDate ? new Date(maxDate) : undefined}
+          date={value ? parseISODate(value) : new Date()}
+          minimumDate={minDate ? parseISODate(minDate) : undefined}
+          maximumDate={maxDate ? parseISODate(maxDate) : undefined}
           onConfirm={(date: Date) => {
             setPickerVisible(false);
             commitDate(date);
@@ -163,21 +180,21 @@ const DatePicker: React.FC<DatePickerProps> = ({
       )}
       <View style={{ flexDirection: 'row', marginTop: 8 }}>
         <TouchableOpacity onPress={quickToday} accessibilityLabel="Select today">
-          <Text>Today</Text>
+          <Text>today</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={quickNextMonday}
           style={{ marginLeft: 12 }}
           accessibilityLabel="Select next Monday"
         >
-          <Text>Next Monday</Text>
+          <Text>next monday</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={quickFirstNextMonth}
           style={{ marginLeft: 12 }}
           accessibilityLabel="Select first of next month"
         >
-          <Text>First of Next Month</Text>
+          <Text>first of next month</Text>
         </TouchableOpacity>
       </View>
     </View>

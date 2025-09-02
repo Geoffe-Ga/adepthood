@@ -4,7 +4,12 @@ import { describe, expect, test, jest, beforeAll, afterAll } from '@jest/globals
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 
-import DatePicker, { parseDateInput, isDateWithinRange } from '../components/DatePicker';
+import DatePicker, {
+  parseDateInput,
+  isDateWithinRange,
+  parseISODate,
+  toISODate,
+} from '../components/DatePicker';
 
 jest.mock('react-native-modal-datetime-picker', () => ({
   __esModule: true,
@@ -60,7 +65,7 @@ describe('DatePicker component', () => {
       input.props.onChangeText('2024-12-31');
     });
     const error = tree!.root.findByProps({ accessibilityRole: 'alert' });
-    expect(error.props.children).toBe('Date must be between 2025-01-01 and 2025-12-31');
+    expect(error.props.children).toBe('between 2025-01-01 and 2025-12-31');
     act(() => {
       input.props.onChangeText('2025-10-10');
     });
@@ -79,5 +84,23 @@ describe('DatePicker component', () => {
       btn.props.onPress();
     });
     expect(handleChange).toHaveBeenLastCalledWith('2025-06-15');
+  });
+});
+
+describe('ISO helpers', () => {
+  const originalTZ = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = 'America/Los_Angeles';
+  });
+  afterAll(() => {
+    process.env.TZ = originalTZ;
+  });
+
+  test('parseISODate preserves local day', () => {
+    const d = parseISODate('2025-09-10');
+    expect(d.getFullYear()).toBe(2025);
+    expect(d.getMonth()).toBe(8);
+    expect(d.getDate()).toBe(10);
+    expect(toISODate(d)).toBe('2025-09-10');
   });
 });

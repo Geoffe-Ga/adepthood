@@ -12,7 +12,7 @@ import {
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
 
-import DatePicker from '../../../components/DatePicker';
+import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
 import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { DEFAULT_ICONS } from '../HabitsScreen';
@@ -219,11 +219,11 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
       <View style={styles.startDateContainer}>
         <Text style={styles.startDateLabel}>First habit starts on:</Text>
         <DatePicker
-          value={startDate.toISOString().slice(0, 10)}
-          minDate={new Date().toISOString().slice(0, 10)}
+          value={toISODate(startDate)}
+          minDate={toISODate(new Date())}
           mode="scaffoldingStart"
           onChange={(iso) => {
-            const selectedDate = new Date(iso);
+            const selectedDate = parseISODate(iso);
             setStartDate(selectedDate);
             setHabits((prev) =>
               prev.map((habit, index) => ({
