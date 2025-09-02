@@ -98,11 +98,10 @@ describe('OnboardingModal close behaviour', () => {
     pressContinue(); // to return step
     pressContinue(); // to reorder step
 
-    const startBtn = root.findByProps({ testID: 'start-date-button' });
+    const dateInput = root.findByProps({ accessibilityLabel: 'Date' });
     renderer.act(() => {
-      startBtn.props.onPress();
+      dateInput.props.onChangeText('2025-09-10');
     });
-    expect(root.findByProps({ testID: 'date-picker-modal' })).toBeTruthy();
 
     const finish = root.findByProps({ testID: 'finish-setup' });
     renderer.act(() => {
