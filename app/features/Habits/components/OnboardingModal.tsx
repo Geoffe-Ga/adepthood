@@ -16,6 +16,7 @@ import EmojiSelector from 'react-native-emoji-selector';
 import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { DEFAULT_ICONS } from '../HabitsScreen';
+import { calculateHabitStartDate } from '../HabitUtils';
 
 export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingModalProps) => {
   const [step, setStep] = useState(1);
@@ -61,7 +62,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
   };
 
   // Sort habits by net energy for step 3
-  const sortHabits = () => {
+  const prepareHabitsForReorder = () => {
     const sortedHabits = [...habits].sort((a, b) => {
       const netEnergyA = a.energy_return - a.energy_cost;
       const netEnergyB = b.energy_return - b.energy_cost;
@@ -76,22 +77,71 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     });
 
     // Update start dates based on the sorted order
-    const habitsWithDates = sortedHabits.map((habit, index) => {
-      const habitStartDate = new Date(startDate);
-      habitStartDate.setDate(habitStartDate.getDate() + index * 21);
-      return { ...habit, start_date: habitStartDate };
-    });
+    const habitsWithDates = sortedHabits.map((habit, index) => ({
+      ...habit,
+      start_date: calculateHabitStartDate(startDate, index),
+    }));
 
     setHabits(habitsWithDates);
-    setStep(3);
+    setStep(4);
   };
 
-  // Step 2: Energy rating
-  const renderEnergyStep = () => (
+  // Step 2: Cost entry
+  const renderCostStep = () => (
     <View style={styles.onboardingStep}>
-      <Text style={styles.onboardingTitle}>Energy Investment & Return</Text>
+      <Text style={styles.onboardingTitle}>Energy Cost</Text>
+      <Text style={styles.onboardingSubtitle}>Rate each habit from -10 to 10 for energy cost</Text>
+      <FlatList
+        data={habits}
+        keyExtractor={(_, index) => index.toString()}
+        renderItem={({ item, index }) => (
+          <View style={styles.energyRatingItem}>
+            <Text style={styles.energyRatingName}>
+              {item.icon} {item.name}
+            </Text>
+            <View style={styles.energyRatingDetails}>
+              <View style={styles.energySliders}>
+                <Text style={styles.energySliderLabel}>Cost:</Text>
+                <View style={styles.sliderContainer}>
+                  <TouchableOpacity
+                    style={styles.sliderButton}
+                    onPress={() =>
+                      updateHabitEnergy(index, 'cost', Math.max(-10, item.energy_cost - 1))
+                    }
+                  >
+                    <Text style={styles.sliderButtonText}>-</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.sliderValue}>{item.energy_cost}</Text>
+                  <TouchableOpacity
+                    style={styles.sliderButton}
+                    onPress={() =>
+                      updateHabitEnergy(index, 'cost', Math.min(10, item.energy_cost + 1))
+                    }
+                  >
+                    <Text style={styles.sliderButtonText}>+</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
+      />
+      <TouchableOpacity
+        style={styles.onboardingContinueButton}
+        onPress={() => setStep(3)}
+        disabled={habits.length === 0}
+      >
+        <Text style={styles.onboardingContinueButtonText}>Continue</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  // Step 3: Return entry
+  const renderReturnStep = () => (
+    <View style={styles.onboardingStep}>
+      <Text style={styles.onboardingTitle}>Energy Return</Text>
       <Text style={styles.onboardingSubtitle}>
-        Rate each habit from -10 to 10 for energy cost and return
+        Rate each habit from -10 to 10 for energy return
       </Text>
       <FlatList
         data={habits}
@@ -103,54 +153,26 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
             </Text>
             <View style={styles.energyRatingDetails}>
               <View style={styles.energySliders}>
-                <View style={styles.energySliders}>
-                  <Text style={styles.energySliderLabel}>Cost:</Text>
-                  <View style={styles.sliderContainer}>
-                    <TouchableOpacity
-                      style={styles.sliderButton}
-                      onPress={() =>
-                        updateHabitEnergy(index, 'cost', Math.max(-10, item.energy_cost - 1))
-                      }
-                    >
-                      <Text style={styles.sliderButtonText}>-</Text>
-                    </TouchableOpacity>
-                    <Text style={styles.sliderValue}>{item.energy_cost}</Text>
-                    <TouchableOpacity
-                      style={styles.sliderButton}
-                      onPress={() =>
-                        updateHabitEnergy(index, 'cost', Math.min(10, item.energy_cost + 1))
-                      }
-                    >
-                      <Text style={styles.sliderButtonText}>+</Text>
-                    </TouchableOpacity>
-                  </View>
+                <Text style={styles.energySliderLabel}>Return:</Text>
+                <View style={styles.sliderContainer}>
+                  <TouchableOpacity
+                    style={styles.sliderButton}
+                    onPress={() =>
+                      updateHabitEnergy(index, 'return', Math.max(-10, item.energy_return - 1))
+                    }
+                  >
+                    <Text style={styles.sliderButtonText}>-</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.sliderValue}>{item.energy_return}</Text>
+                  <TouchableOpacity
+                    style={styles.sliderButton}
+                    onPress={() =>
+                      updateHabitEnergy(index, 'return', Math.min(10, item.energy_return + 1))
+                    }
+                  >
+                    <Text style={styles.sliderButtonText}>+</Text>
+                  </TouchableOpacity>
                 </View>
-                <View style={styles.energySliders}>
-                  <Text style={styles.energySliderLabel}>Return:</Text>
-                  <View style={styles.sliderContainer}>
-                    <TouchableOpacity
-                      style={styles.sliderButton}
-                      onPress={() =>
-                        updateHabitEnergy(index, 'return', Math.max(-10, item.energy_return - 1))
-                      }
-                    >
-                      <Text style={styles.sliderButtonText}>-</Text>
-                    </TouchableOpacity>
-                    <Text style={styles.sliderValue}>{item.energy_return}</Text>
-                    <TouchableOpacity
-                      style={styles.sliderButton}
-                      onPress={() =>
-                        updateHabitEnergy(index, 'return', Math.min(10, item.energy_return + 1))
-                      }
-                    >
-                      <Text style={styles.sliderButtonText}>+</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </View>
-              <View style={styles.netEnergyContainer}>
-                <Text style={styles.netEnergyLabel}>Net:</Text>
-                <Text style={styles.netEnergyValue}>{item.energy_return - item.energy_cost}</Text>
               </View>
             </View>
           </View>
@@ -158,7 +180,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
       />
       <TouchableOpacity
         style={styles.onboardingContinueButton}
-        onPress={sortHabits}
+        onPress={prepareHabitsForReorder}
         disabled={habits.length === 0}
       >
         <Text style={styles.onboardingContinueButtonText}>Continue</Text>
@@ -168,11 +190,10 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
 
   // Step 3: Reorder habits using drag & drop
   const handleDragEnd = ({ data }: { data: OnboardingHabit[] }) => {
-    const updatedHabits = data.map((habit, index) => {
-      const habitStartDate = new Date(startDate);
-      habitStartDate.setDate(habitStartDate.getDate() + index * 21);
-      return { ...habit, start_date: habitStartDate };
-    });
+    const updatedHabits = data.map((habit, index) => ({
+      ...habit,
+      start_date: calculateHabitStartDate(startDate, index),
+    }));
     setHabits(updatedHabits);
   };
 
@@ -198,7 +219,30 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
 
       <View style={styles.startDateContainer}>
         <Text style={styles.startDateLabel}>First habit starts on:</Text>
-        <TouchableOpacity style={styles.startDateButton} onPress={() => setShowDatePicker(true)}>
+        <TouchableOpacity
+          testID="start-date-button"
+          style={styles.startDateButton}
+          onPress={() => {
+            if (Platform.OS === 'web') {
+              const input = window.prompt(
+                'Select start date (YYYY-MM-DD)',
+                startDate.toISOString().slice(0, 10),
+              );
+              if (input) {
+                const selectedDate = new Date(input);
+                setStartDate(selectedDate);
+                setHabits((prev) =>
+                  prev.map((habit, index) => ({
+                    ...habit,
+                    start_date: calculateHabitStartDate(selectedDate, index),
+                  })),
+                );
+              }
+            } else {
+              setShowDatePicker(true);
+            }
+          }}
+        >
           <Text style={styles.startDateButtonText}>
             {startDate.toLocaleDateString('en-US', {
               month: 'short',
@@ -208,39 +252,44 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
           </Text>
         </TouchableOpacity>
 
-        {showDatePicker && (
-          <DateTimePicker
-            value={startDate}
-            mode="date"
-            display="default"
-            onChange={(event, selectedDate) => {
-              setShowDatePicker(Platform.OS === 'ios');
-              if (selectedDate) {
-                setStartDate(selectedDate);
-                // Update all start dates
-                setHabits((prev) =>
-                  prev.map((habit, index) => {
-                    const newDate = new Date(selectedDate);
-                    newDate.setDate(newDate.getDate() + index * 21);
-                    return { ...habit, start_date: newDate };
-                  }),
-                );
-              }
-            }}
-          />
+        {showDatePicker && Platform.OS !== 'web' && (
+          <Modal transparent testID="date-picker-modal">
+            <DateTimePicker
+              value={startDate}
+              mode="date"
+              display="default"
+              onChange={(event, selectedDate) => {
+                setShowDatePicker(Platform.OS === 'ios');
+                if (selectedDate) {
+                  setStartDate(selectedDate);
+                  // Update all start dates
+                  setHabits((prev) =>
+                    prev.map((habit, index) => ({
+                      ...habit,
+                      start_date: calculateHabitStartDate(selectedDate, index),
+                    })),
+                  );
+                }
+              }}
+            />
+          </Modal>
         )}
       </View>
 
       <View style={styles.habitsList}>
         <DraggableFlatList
+          style={{ flex: 1 }}
           data={habits}
           keyExtractor={(_, index) => index.toString()}
+          contentContainerStyle={styles.habitsListContent}
           renderItem={({ item, drag, isActive }) => {
             const index = habits.findIndex((h) => h === item);
 
             return (
               <TouchableOpacity
                 onLongPress={drag}
+                onPressIn={Platform.OS === 'web' ? drag : undefined}
+                delayLongPress={150}
                 style={[styles.habitListItem, isActive && { backgroundColor: '#eaeaea' }]}
               >
                 <View style={styles.habitDragInfo}>
@@ -301,7 +350,11 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
         </View>
       )}
 
-      <TouchableOpacity style={styles.onboardingContinueButton} onPress={handleFinish}>
+      <TouchableOpacity
+        testID="finish-setup"
+        style={styles.onboardingContinueButton}
+        onPress={handleFinish}
+      >
         <Text style={styles.onboardingContinueButtonText}>Finish Setup</Text>
       </TouchableOpacity>
     </View>
@@ -364,8 +417,10 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
           </View>
         );
       case 2:
-        return renderEnergyStep();
+        return renderCostStep();
       case 3:
+        return renderReturnStep();
+      case 4:
         return renderReorderStep();
       default:
         return null;

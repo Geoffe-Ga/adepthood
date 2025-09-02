@@ -3,7 +3,8 @@
 import * as Notifications from 'expo-notifications';
 import { BarChart2, Check, MoreHorizontal, Pencil, Zap } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
-import { Alert, FlatList, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, Text, TouchableOpacity, View, Modal } from 'react-native';
+import EmojiSelector from 'react-native-emoji-selector';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { spacing } from '../../Sources/design/DesignSystem';
@@ -231,6 +232,8 @@ const HabitsScreen = () => {
   const [onboardingVisible, setOnboardingVisible] = useState(habits.length === 0);
   const [showEnergyCTA, setShowEnergyCTA] = useState(true);
   const [showArchiveMessage, setShowArchiveMessage] = useState(false);
+  const [emojiPickerVisible, setEmojiPickerVisible] = useState(false);
+  const [emojiHabitIndex, setEmojiHabitIndex] = useState<number | null>(null);
 
   // Register for push notifications on mount
   useEffect(() => {
@@ -449,13 +452,27 @@ const HabitsScreen = () => {
     }));
 
     setHabits(fullHabits);
+    Alert.alert('Next steps', 'Tap a habit tile to edit its goals.');
   };
 
   // Render a habit tile
   const { columns, gridGutter, scale, isLG, isXL } = useResponsive();
   const screenPadding = spacing(isLG || isXL ? 2 : 1, scale);
 
-  const renderHabitTile = ({ item }: { item: Habit }) => (
+  const handleIconPress = (index: number) => {
+    setEmojiHabitIndex(index);
+    setEmojiPickerVisible(true);
+  };
+
+  const handleEmojiSelect = (emoji: string) => {
+    if (emojiHabitIndex !== null) {
+      setHabits((prev) => prev.map((h, i) => (i === emojiHabitIndex ? { ...h, icon: emoji } : h)));
+      setEmojiPickerVisible(false);
+      setEmojiHabitIndex(null);
+    }
+  };
+
+  const renderHabitTile = ({ item, index }: { item: Habit; index: number }) => (
     <HabitTile
       habit={item}
       onOpenGoals={() => {
@@ -474,6 +491,7 @@ const HabitsScreen = () => {
         setSelectedHabit(item);
         setSettingsModalVisible(true);
       }}
+      onIconPress={() => handleIconPress(index)}
     />
   );
 
@@ -657,6 +675,33 @@ const HabitsScreen = () => {
         onClose={() => setOnboardingVisible(false)}
         onSaveHabits={handleOnboardingSave}
       />
+      {emojiPickerVisible && (
+        <Modal transparent animationType="fade">
+          <View style={styles.modalOverlay}>
+            <View style={styles.emojiPickerModal}>
+              <View style={styles.emojiPickerHeader}>
+                <Text style={styles.emojiPickerTitle}>Select Icon</Text>
+                <TouchableOpacity
+                  style={styles.closeEmojiPicker}
+                  onPress={() => {
+                    setEmojiPickerVisible(false);
+                    setEmojiHabitIndex(null);
+                  }}
+                >
+                  <Text style={styles.closeEmojiPickerText}>×</Text>
+                </TouchableOpacity>
+              </View>
+              <EmojiSelector
+                onEmojiSelected={handleEmojiSelect}
+                showSearchBar
+                columns={6}
+                // @ts-ignore typing issue
+                emojiSize={28}
+              />
+            </View>
+          </View>
+        </Modal>
+      )}
     </SafeAreaView>
   );
 };

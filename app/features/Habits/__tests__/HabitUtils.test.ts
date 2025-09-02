@@ -7,6 +7,7 @@ import {
   getGoalTier,
   calculateHabitProgress,
   logHabitUnits,
+  calculateHabitStartDate,
 } from '../HabitUtils';
 
 describe('HabitUtils', () => {
@@ -266,5 +267,18 @@ describe('HabitUtils', () => {
     expect(habit.streak).toBe(1);
     habit = logHabitUnits(habit, 1, new Date('2023-01-02T09:00:00'));
     expect(habit.streak).toBe(2);
+  });
+
+  test('calculateHabitStartDate offsets correctly', () => {
+    const base = new Date('2024-01-01');
+    const day = 24 * 60 * 60 * 1000;
+    for (let i = 0; i < 8; i++) {
+      const result = calculateHabitStartDate(base, i);
+      expect((result.getTime() - base.getTime()) / day).toBe(21 * i);
+    }
+    const ninth = calculateHabitStartDate(base, 8);
+    expect((ninth.getTime() - base.getTime()) / day).toBe(168);
+    const tenth = calculateHabitStartDate(base, 9);
+    expect((tenth.getTime() - base.getTime()) / day).toBe(210);
   });
 });

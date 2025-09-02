@@ -818,7 +818,7 @@ export const styles = StyleSheet.create({
   // ===== Reorder Modal =====
   reorderModalContent: {
     width: '90%',
-    maxHeight: '85%',
+    height: '85%',
     backgroundColor: COLORS.background.card,
     borderRadius: BORDER_RADIUS.xl,
     padding: SPACING.lg,
@@ -956,7 +956,7 @@ export const styles = StyleSheet.create({
     backgroundColor: COLORS.background.card,
     borderRadius: BORDER_RADIUS.xl,
     padding: SPACING.xl,
-    maxHeight: '90%',
+    height: '90%',
     ...SHADOWS.large,
   },
   modalClose: {
@@ -1182,6 +1182,9 @@ export const styles = StyleSheet.create({
   habitsList: {
     flex: 1,
     marginVertical: SPACING.lg,
+  },
+  habitsListContent: {
+    paddingBottom: SPACING.xxl * 2,
   },
   habitListItem: {
     flexDirection: 'row',
