@@ -1,4 +1,3 @@
-import DateTimePicker from '@react-native-community/datetimepicker';
 import React, { useState } from 'react';
 import {
   FlatList,
@@ -13,6 +12,7 @@ import {
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
 
+import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
 import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { DEFAULT_ICONS } from '../HabitsScreen';
@@ -23,7 +23,6 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
   const [habits, setHabits] = useState<OnboardingHabit[]>([]);
   const [newHabitName, setNewHabitName] = useState('');
   const [startDate, setStartDate] = useState(new Date());
-  const [showDatePicker, setShowDatePicker] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectedHabitIndex, setSelectedHabitIndex] = useState<number | null>(null);
   const [showDiscardDialog, setShowDiscardDialog] = useState(false);
@@ -219,61 +218,21 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
 
       <View style={styles.startDateContainer}>
         <Text style={styles.startDateLabel}>First habit starts on:</Text>
-        <TouchableOpacity
-          testID="start-date-button"
-          style={styles.startDateButton}
-          onPress={() => {
-            if (Platform.OS === 'web') {
-              const input = window.prompt(
-                'Select start date (YYYY-MM-DD)',
-                startDate.toISOString().slice(0, 10),
-              );
-              if (input) {
-                const selectedDate = new Date(input);
-                setStartDate(selectedDate);
-                setHabits((prev) =>
-                  prev.map((habit, index) => ({
-                    ...habit,
-                    start_date: calculateHabitStartDate(selectedDate, index),
-                  })),
-                );
-              }
-            } else {
-              setShowDatePicker(true);
-            }
+        <DatePicker
+          value={toISODate(startDate)}
+          minDate={toISODate(new Date())}
+          mode="scaffoldingStart"
+          onChange={(iso) => {
+            const selectedDate = parseISODate(iso);
+            setStartDate(selectedDate);
+            setHabits((prev) =>
+              prev.map((habit, index) => ({
+                ...habit,
+                start_date: calculateHabitStartDate(selectedDate, index),
+              })),
+            );
           }}
-        >
-          <Text style={styles.startDateButtonText}>
-            {startDate.toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-              year: 'numeric',
-            })}
-          </Text>
-        </TouchableOpacity>
-
-        {showDatePicker && Platform.OS !== 'web' && (
-          <Modal transparent testID="date-picker-modal">
-            <DateTimePicker
-              value={startDate}
-              mode="date"
-              display="default"
-              onChange={(event, selectedDate) => {
-                setShowDatePicker(Platform.OS === 'ios');
-                if (selectedDate) {
-                  setStartDate(selectedDate);
-                  // Update all start dates
-                  setHabits((prev) =>
-                    prev.map((habit, index) => ({
-                      ...habit,
-                      start_date: calculateHabitStartDate(selectedDate, index),
-                    })),
-                  );
-                }
-              }}
-            />
-          </Modal>
-        )}
+        />
       </View>
 
       <View style={styles.habitsList}>
