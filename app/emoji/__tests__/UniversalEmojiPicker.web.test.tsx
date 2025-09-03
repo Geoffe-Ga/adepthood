@@ -4,6 +4,12 @@ import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 
 import { EmojiPreferencesProvider } from '../emoji-prefs';
+import {
+  GLYPH_SIZE,
+  NUM_COLUMNS,
+  PANEL_HEIGHT,
+  PANEL_WIDTH,
+} from '../emojiPickerLayout';
 import { UniversalEmojiPicker } from '../UniversalEmojiPicker';
 
 interface PickerMockProps {
@@ -62,12 +68,12 @@ describe('UniversalEmojiPicker web layout', () => {
       );
     });
     expect(mockPicker).toHaveBeenCalled();
-    const props = mockPicker.mock.calls[0][0] as PickerMockProps;
-    expect(props.emojiSize).toBe(24);
-    expect(props.perLine).toBe(8);
+    const props = mockPicker.mock.calls[0]![0] as PickerMockProps;
+    expect(props.emojiSize).toBe(GLYPH_SIZE);
+    expect(props.perLine).toBe(NUM_COLUMNS);
     expect(props.dynamicWidth).toBe(false);
-    expect(props.style).toMatchObject({ width: 320 });
-    expect(props.style).toMatchObject({ maxHeight: 300 });
-    expect(props.style).toMatchObject({ fontSize: 24 });
+    expect(props.style).toMatchObject({ width: PANEL_WIDTH });
+    expect(props.style).toMatchObject({ height: PANEL_HEIGHT });
+    expect(props.style).toMatchObject({ fontSize: GLYPH_SIZE });
   });
 });
