@@ -1,12 +1,11 @@
+import data from '@emoji-mart/data';
+import PickerWeb from '@emoji-mart/react';
+import PickerNative from 'emoji-mart-native';
 import React from 'react';
 import { Button, Modal, Platform, View } from 'react-native';
 
-import data from '@emoji-mart/data';
-import PickerWeb from '@emoji-mart/react';
-
 import type { EmojiSelectionPayload } from '../types/emoji';
 import { useEmojiPreferences } from './emoji-prefs';
-import PickerNative from 'emoji-mart-native';
 
 export interface UniversalEmojiPickerProps {
   visible: boolean;
@@ -61,7 +60,12 @@ export const UniversalEmojiPicker: React.FC<UniversalEmojiPickerProps> = ({
           perLine={WEB_PER_LINE}
           dynamicWidth={false}
           previewPosition="none"
-          style={{ width: WEB_PICKER_WIDTH, maxHeight: WEB_PICKER_MAX_HEIGHT, overflowY: 'auto' }}
+          style={{
+            width: WEB_PICKER_WIDTH,
+            maxHeight: WEB_PICKER_MAX_HEIGHT,
+            overflowY: 'auto',
+            fontSize: WEB_EMOJI_SIZE,
+          }}
           categories={[
             'frequent',
             'people',

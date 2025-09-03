@@ -6,19 +6,28 @@ import TestRenderer, { act } from 'react-test-renderer';
 import { EmojiPreferencesProvider } from '../emoji-prefs';
 import { UniversalEmojiPicker } from '../UniversalEmojiPicker';
 
+interface PickerMockProps {
+  emojiSize: number;
+  perLine: number;
+  dynamicWidth: boolean;
+  style: Record<string, unknown>;
+}
+
 jest.mock('react-native', () => {
   const React = require('react');
   return {
     Platform: { OS: 'web' },
-    View: (props: any) => React.createElement('div', props, props.children),
-    Button: (props: any) => React.createElement('button', props, props.children),
+    View: (props: { children?: React.ReactNode } & Record<string, unknown>) =>
+      React.createElement('div', props, props.children),
+    Button: (props: { children?: React.ReactNode } & Record<string, unknown>) =>
+      React.createElement('button', props, props.children),
   };
 });
 
 const mockPicker = jest.fn();
 jest.mock(
   '@emoji-mart/react',
-  () => (props: any) => {
+  () => (props: PickerMockProps) => {
     mockPicker(props);
     return null;
   },
@@ -53,11 +62,12 @@ describe('UniversalEmojiPicker web layout', () => {
       );
     });
     expect(mockPicker).toHaveBeenCalled();
-    const props = mockPicker.mock.calls[0][0];
+    const props = mockPicker.mock.calls[0][0] as PickerMockProps;
     expect(props.emojiSize).toBe(24);
     expect(props.perLine).toBe(8);
     expect(props.dynamicWidth).toBe(false);
     expect(props.style).toMatchObject({ width: 320 });
     expect(props.style).toMatchObject({ maxHeight: 300 });
+    expect(props.style).toMatchObject({ fontSize: 24 });
   });
 });
