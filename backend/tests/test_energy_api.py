@@ -10,8 +10,8 @@ client = TestClient(app)
 def sample_payload() -> dict[str, Any]:
     return {
         "habits": [
-            {"id": 1, "name": "Run", "energy": 3},
-            {"id": 2, "name": "Sleep", "energy": -1},
+            {"id": 1, "name": "Run", "energy_cost": 2, "energy_return": 5},
+            {"id": 2, "name": "Sleep", "energy_cost": 1, "energy_return": 0},
         ],
         "start_date": "2024-01-01",
     }
@@ -23,6 +23,8 @@ def test_energy_plan_endpoint_returns_plan() -> None:
     data = res.json()
     assert data["reason_code"] == "generated_21_day_plan"
     assert len(data["plan"]["items"]) == 21  # noqa: PLR2004
+    expected_net = (5 - 2) * 11 + (0 - 1) * 10
+    assert data["plan"]["net_energy"] == expected_net
 
 
 def test_energy_plan_endpoint_idempotency() -> None:

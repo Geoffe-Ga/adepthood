@@ -94,7 +94,8 @@ export interface components {
     Habit: {
       id: number;
       name: string;
-      energy: number;
+      energy_cost: number;
+      energy_return: number;
     };
     PracticeSession: {
       id: number;
