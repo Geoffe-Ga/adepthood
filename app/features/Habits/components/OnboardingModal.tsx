@@ -1,13 +1,17 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   FlatList,
   Modal,
   Platform,
+  SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
+  type NativeSyntheticEvent,
+  type TextInputKeyPressEventData,
 } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
@@ -26,10 +30,18 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectedHabitIndex, setSelectedHabitIndex] = useState<number | null>(null);
   const [showDiscardDialog, setShowDiscardDialog] = useState(false);
+  const inputRef = useRef<TextInput>(null);
+  const [error, setError] = useState('');
+  const [showCountWarning, setShowCountWarning] = useState(false);
 
   // Step 1: Add habits
   const handleAddHabit = () => {
     if (newHabitName.trim() === '') return;
+    if (habits.length >= 10) {
+      setError('You can only add up to 10 habits.');
+      return;
+    }
+
     const randomIcon = DEFAULT_ICONS[Math.floor(Math.random() * DEFAULT_ICONS.length)] ?? '⭐';
 
     const newHabit: OnboardingHabit = {
@@ -43,7 +55,36 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
 
     setHabits((prev) => [...prev, newHabit]);
     setNewHabitName('');
+    setError('');
+    inputRef.current?.focus();
   };
+
+  const handleKeyPress = (
+    e: NativeSyntheticEvent<TextInputKeyPressEventData & { metaKey?: boolean; ctrlKey?: boolean }>,
+  ) => {
+    if (e.nativeEvent.key === 'Enter') {
+      if (e.nativeEvent.metaKey || e.nativeEvent.ctrlKey) {
+        if (habits.length > 0) setStep(2);
+      } else {
+        handleAddHabit();
+      }
+    }
+  };
+
+  const handleContinuePress = () => {
+    if (habits.length < 10) {
+      setShowCountWarning(true);
+    } else {
+      setStep(2);
+    }
+  };
+
+  const confirmCountWarning = () => {
+    setShowCountWarning(false);
+    setStep(2);
+  };
+
+  const cancelCountWarning = () => setShowCountWarning(false);
 
   // Update energy values for a habit in onboarding
   const updateHabitEnergy = (index: number, type: 'cost' | 'return', value: number) => {
@@ -126,6 +167,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
         )}
       />
       <TouchableOpacity
+        testID="continue-button"
         style={styles.onboardingContinueButton}
         onPress={() => setStep(3)}
         disabled={habits.length === 0}
@@ -178,6 +220,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
         )}
       />
       <TouchableOpacity
+        testID="continue-button"
         style={styles.onboardingContinueButton}
         onPress={prepareHabitsForReorder}
         disabled={habits.length === 0}
@@ -328,52 +371,71 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     switch (step) {
       case 1:
         return (
-          <View style={styles.onboardingStep}>
+          <SafeAreaView style={styles.onboardingStep}>
             <Text style={styles.onboardingTitle}>Create Your Habits</Text>
             <Text style={styles.onboardingSubtitle}>
               Enter all the habits you'd like to build or break
             </Text>
             <View style={styles.addHabitContainer}>
               <TextInput
+                ref={inputRef}
                 style={styles.addHabitInput}
                 value={newHabitName}
                 onChangeText={setNewHabitName}
                 placeholder="Enter habit name"
-                onSubmitEditing={handleAddHabit}
+                blurOnSubmit={false}
+                onKeyPress={handleKeyPress}
+                testID="habit-input"
               />
-              <TouchableOpacity style={styles.addHabitButton} onPress={handleAddHabit}>
+              <TouchableOpacity
+                testID="add-habit-button"
+                style={[
+                  styles.addHabitButton,
+                  (newHabitName.trim() === '' || habits.length >= 10) && styles.disabledButton,
+                ]}
+                onPress={handleAddHabit}
+                disabled={newHabitName.trim() === '' || habits.length >= 10}
+              >
                 <Text style={styles.addHabitButtonText}>+</Text>
               </TouchableOpacity>
             </View>
-            <FlatList
-              data={habits}
-              keyExtractor={(_, index) => index.toString()}
-              renderItem={({ item, index }) => (
-                <View style={styles.habitListItem}>
-                  <Text style={styles.habitListItemText}>
+            {error !== '' && (
+              <Text style={styles.habitError} testID="habit-error">
+                {error}
+              </Text>
+            )}
+            <ScrollView style={styles.habitsList} contentContainerStyle={styles.habitChipContainer}>
+              {habits.map((item, index) => (
+                <View key={index} style={styles.habitChip} testID="habit-chip">
+                  <Text style={styles.habitChipText}>
                     {item.icon} {item.name}
                   </Text>
                   <TouchableOpacity
-                    style={styles.removeHabitButton}
+                    style={styles.removeHabitChip}
                     onPress={() => setHabits((prev) => prev.filter((_, i) => i !== index))}
                   >
-                    <Text style={styles.removeHabitButtonText}>×</Text>
+                    <Text style={styles.removeHabitChipText}>×</Text>
                   </TouchableOpacity>
                 </View>
-              )}
-              style={styles.habitList}
-            />
-            <TouchableOpacity
-              style={[
-                styles.onboardingContinueButton,
-                habits.length === 0 && styles.disabledButton,
-              ]}
-              onPress={() => habits.length > 0 && setStep(2)}
-              disabled={habits.length === 0}
-            >
-              <Text style={styles.onboardingContinueButtonText}>Continue</Text>
-            </TouchableOpacity>
-          </View>
+              ))}
+            </ScrollView>
+            <View style={styles.bottomContainer}>
+              <Text style={styles.habitCount} testID="habit-count">
+                {`${habits.length} / 10`}
+              </Text>
+              <TouchableOpacity
+                testID="continue-button"
+                style={[
+                  styles.onboardingContinueButton,
+                  habits.length === 0 && styles.disabledButton,
+                ]}
+                onPress={handleContinuePress}
+                disabled={habits.length === 0}
+              >
+                <Text style={styles.onboardingContinueButtonText}>Continue</Text>
+              </TouchableOpacity>
+            </View>
+          </SafeAreaView>
         );
       case 2:
         return renderCostStep();
@@ -434,6 +496,34 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
                   testID="discard-exit"
                 >
                   <Text style={styles.discardExitText}>Exit</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {showCountWarning && (
+        <Modal transparent animationType="fade">
+          <View style={styles.modalOverlay} testID="count-warning-modal">
+            <View style={styles.discardModal}>
+              <Text style={styles.discardTitle}>
+                {`You've entered ${habits.length} of 10. Continue anyway?`}
+              </Text>
+              <View style={styles.discardActions}>
+                <TouchableOpacity
+                  onPress={cancelCountWarning}
+                  style={styles.discardButton}
+                  testID="count-warning-keep"
+                >
+                  <Text style={styles.discardButtonText}>Keep Adding</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={confirmCountWarning}
+                  style={styles.discardButton}
+                  testID="count-warning-continue"
+                >
+                  <Text style={styles.discardExitText}>Continue</Text>
                 </TouchableOpacity>
               </View>
             </View>

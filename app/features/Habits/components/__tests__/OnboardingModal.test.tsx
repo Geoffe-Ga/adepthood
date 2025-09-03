@@ -81,18 +81,16 @@ describe('OnboardingModal close behaviour', () => {
     });
 
     const pressContinue = () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const text = root.findAllByType(Text).find((t: any) => t.props.children === 'Continue');
-      if (!text) throw new Error('Continue button not found');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let parent: any = text.parent;
-      while (parent && parent.type !== TouchableOpacity) {
-        parent = parent.parent;
-      }
-      if (!parent) throw new Error('Continue button not found');
+      const button = root.findByProps({ testID: 'continue-button' });
       renderer.act(() => {
-        parent.props.onPress();
+        button.props.onPress();
       });
+      const modalContinue = root.findAllByProps({ testID: 'count-warning-continue' });
+      if (modalContinue.length > 0) {
+        renderer.act(() => {
+          modalContinue[0].props.onPress();
+        });
+      }
     };
     pressContinue(); // to cost step
     pressContinue(); // to return step
@@ -137,16 +135,16 @@ describe('OnboardingModal close behaviour', () => {
     });
 
     const pressContinue = () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const text = root.findAllByType(Text).find((t: any) => t.props.children === 'Continue');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let parent: any = text.parent;
-      while (parent && parent.type !== TouchableOpacity) {
-        parent = parent.parent;
-      }
+      const button = root.findByProps({ testID: 'continue-button' });
       renderer.act(() => {
-        parent.props.onPress();
+        button.props.onPress();
       });
+      const modalContinue = root.findAllByProps({ testID: 'count-warning-continue' });
+      if (modalContinue.length > 0) {
+        renderer.act(() => {
+          modalContinue[0].props.onPress();
+        });
+      }
     };
     pressContinue();
     pressContinue();

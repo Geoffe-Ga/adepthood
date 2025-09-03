@@ -1222,6 +1222,46 @@ export const styles = StyleSheet.create({
     lineHeight: 16,
   },
 
+  habitChipContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingBottom: SPACING.lg,
+  },
+  habitChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.background.primary,
+    borderRadius: BORDER_RADIUS.lg,
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.md,
+    margin: SPACING.xs,
+    ...SHADOWS.small,
+  },
+  habitChipText: {
+    fontSize: 14,
+    color: COLORS.text.primary,
+  },
+  removeHabitChip: {
+    marginLeft: SPACING.xs,
+  },
+  removeHabitChipText: {
+    fontSize: 16,
+    color: COLORS.danger,
+  },
+  habitError: {
+    color: COLORS.danger,
+    textAlign: 'center',
+  },
+  bottomContainer: {
+    marginTop: 'auto',
+    alignItems: 'center',
+  },
+  habitCount: {
+    textAlign: 'center',
+    color: COLORS.text.secondary,
+    marginBottom: SPACING.md,
+  },
+
   // ===== Emoji Picker =====
   emojiPickerModal: {
     position: 'absolute',
