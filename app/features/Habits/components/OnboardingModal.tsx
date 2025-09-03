@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   FlatList,
   Modal,
@@ -13,6 +13,7 @@ import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
 
 import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
+import ScalarSelector from '../../../src/components/ScalarSelector';
 import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { DEFAULT_ICONS } from '../HabitsScreen';
@@ -26,6 +27,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectedHabitIndex, setSelectedHabitIndex] = useState<number | null>(null);
   const [showDiscardDialog, setShowDiscardDialog] = useState(false);
+  const costListRef = useRef<FlatList<OnboardingHabit>>(null);
 
   // Step 1: Add habits
   const handleAddHabit = () => {
@@ -47,12 +49,18 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
 
   // Update energy values for a habit in onboarding
   const updateHabitEnergy = (index: number, type: 'cost' | 'return', value: number) => {
-    if (value < -10 || value > 10) return; // Validate range
-
+    const clamped =
+      type === 'cost' ? Math.min(10, Math.max(0, value)) : Math.min(10, Math.max(-10, value));
     setHabits((prev) =>
-      prev.map((habit, i) => (i === index ? { ...habit, [`energy_${type}`]: value } : habit)),
+      prev.map((habit, i) => (i === index ? { ...habit, [`energy_${type}`]: clamped } : habit)),
     );
   };
+
+  useEffect(() => {
+    if (visible && step === 2) {
+      costListRef.current?.scrollToOffset({ offset: 0, animated: false });
+    }
+  }, [visible, step]);
 
   const updateHabitIcon = (index: number, icon: string) => {
     setHabits((prev) => prev.map((habit, i) => (i === index ? { ...habit, icon } : habit)));
@@ -89,49 +97,39 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
   const renderCostStep = () => (
     <View style={styles.onboardingStep}>
       <Text style={styles.onboardingTitle}>Energy Cost</Text>
-      <Text style={styles.onboardingSubtitle}>Rate each habit from -10 to 10 for energy cost</Text>
+      <Text style={styles.onboardingSubtitle}>
+        0 = effortless, like breathing. 10 = herculean lift that drains you.
+      </Text>
       <FlatList
+        ref={costListRef}
         data={habits}
         keyExtractor={(_, index) => index.toString()}
+        contentContainerStyle={styles.costList}
         renderItem={({ item, index }) => (
-          <View style={styles.energyRatingItem}>
-            <Text style={styles.energyRatingName}>
+          <View style={styles.costTile} testID={`cost-tile-${index}`}>
+            <Text style={styles.costTileText}>
               {item.icon} {item.name}
             </Text>
-            <View style={styles.energyRatingDetails}>
-              <View style={styles.energySliders}>
-                <Text style={styles.energySliderLabel}>Cost:</Text>
-                <View style={styles.sliderContainer}>
-                  <TouchableOpacity
-                    style={styles.sliderButton}
-                    onPress={() =>
-                      updateHabitEnergy(index, 'cost', Math.max(-10, item.energy_cost - 1))
-                    }
-                  >
-                    <Text style={styles.sliderButtonText}>-</Text>
-                  </TouchableOpacity>
-                  <Text style={styles.sliderValue}>{item.energy_cost}</Text>
-                  <TouchableOpacity
-                    style={styles.sliderButton}
-                    onPress={() =>
-                      updateHabitEnergy(index, 'cost', Math.min(10, item.energy_cost + 1))
-                    }
-                  >
-                    <Text style={styles.sliderButtonText}>+</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
+            <ScalarSelector
+              value={item.energy_cost}
+              onChange={(val) => updateHabitEnergy(index, 'cost', val)}
+              testID={`cost-selector-${index}`}
+            />
           </View>
         )}
       />
-      <TouchableOpacity
-        style={styles.onboardingContinueButton}
-        onPress={() => setStep(3)}
-        disabled={habits.length === 0}
-      >
-        <Text style={styles.onboardingContinueButtonText}>Continue</Text>
-      </TouchableOpacity>
+      <View style={styles.onboardingFooter}>
+        <TouchableOpacity style={styles.onboardingBackButton} onPress={() => setStep(1)}>
+          <Text style={styles.onboardingBackButtonText}>Back</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.onboardingContinueButton}
+          onPress={() => setStep(3)}
+          disabled={habits.length === 0}
+        >
+          <Text style={styles.onboardingContinueButtonText}>Continue</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
