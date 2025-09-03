@@ -11,6 +11,10 @@ const OnboardingModal = require('../OnboardingModal').default;
 jest.mock('../../HabitsScreen', () => ({ DEFAULT_ICONS: ['⭐'] }));
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
+jest.mock('react-native-gesture-handler', () => {
+  const { View } = require('react-native');
+  return { GestureHandlerRootView: View };
+});
 
 // Provide a basic draggable list mock that renders items via FlatList
 jest.mock('react-native-draggable-flatlist', () => {
@@ -23,7 +27,14 @@ jest.mock('react-native-draggable-flatlist', () => {
       renderItem={(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         info: any,
-      ) => renderItem({ ...info, drag: jest.fn(), isActive: false })}
+      ) =>
+        renderItem({
+          ...info,
+          drag: jest.fn(),
+          isActive: false,
+          getIndex: () => info.index,
+        })
+      }
       onDragEnd={onDragEnd}
     />
   );

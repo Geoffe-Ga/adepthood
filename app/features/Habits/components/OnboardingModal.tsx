@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
 import { STAGE_COLORS } from '../../../constants/stageColors';
@@ -239,14 +240,14 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
         />
       </View>
 
-      <View style={styles.habitsList}>
+      <GestureHandlerRootView style={styles.habitsList}>
         <DraggableFlatList<OnboardingHabit>
           style={{ flex: 1 }}
           data={habits}
           keyExtractor={(_, index) => index.toString()}
           contentContainerStyle={styles.habitsListContent}
-          renderItem={({ item, drag, isActive }) => {
-            const index = habits.indexOf(item);
+          renderItem={({ item, drag, isActive, getIndex }) => {
+            const index = getIndex() ?? 0;
             const stage = (STAGE_ORDER[index] ?? STAGE_ORDER[STAGE_ORDER.length - 1]) as string;
             const color = STAGE_COLORS[stage as keyof typeof STAGE_COLORS] || '#ccc';
 
@@ -300,7 +301,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
           }}
           onDragEnd={handleDragEnd}
         />
-      </View>
+      </GestureHandlerRootView>
 
       {showEmojiPicker && selectedHabitIndex !== null && (
         <View style={styles.emojiPickerModal}>
