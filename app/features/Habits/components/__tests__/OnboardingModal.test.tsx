@@ -4,8 +4,6 @@ import React from 'react';
 import renderer from 'react-test-renderer';
 import { Text, TextInput, TouchableOpacity } from 'react-native';
 
-const OnboardingModal = require('../OnboardingModal').default;
-
 jest.mock('../../HabitsScreen', () => ({ DEFAULT_ICONS: ['⭐'] }));
 jest.mock('react-native-draggable-flatlist', () => 'DraggableFlatList');
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
@@ -14,6 +12,8 @@ jest.mock('react-native-gesture-handler', () => {
   const { View } = require('react-native');
   return { GestureHandlerRootView: View };
 });
+
+const OnboardingModal = require('../OnboardingModal').default;
 
 describe('OnboardingModal close behaviour', () => {
   it('shows discard dialog and exits on confirmation', () => {
