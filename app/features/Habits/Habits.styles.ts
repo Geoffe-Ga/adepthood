@@ -1,10 +1,10 @@
-import { StyleSheet } from 'react-native';
+import { StyleSheet, type ViewStyle } from 'react-native';
 
 //------------------
 // Theme Configuration (easier to maintain and change)
 //------------------
 
-const COLORS = {
+export const COLORS = {
   // Primary palette
   primary: '#1a1910',
   secondary: '#413d2f',
@@ -1096,10 +1096,22 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  energySlider: {
+  energySliderContainer: {
     flex: 1,
     marginRight: SPACING.sm,
+    backgroundColor: COLORS.background.accent,
+    borderRadius: BORDER_RADIUS.sm,
+    paddingHorizontal: SPACING.sm,
+    justifyContent: 'center',
+    ...SHADOWS.small,
   },
+  energySlider: {
+    width: '100%',
+    height: SPACING.lg,
+  },
+  energySliderWeb: {
+    cursor: 'ew-resize',
+  } as unknown as ViewStyle,
   sliderValue: {
     fontSize: 16,
     fontWeight: '600',

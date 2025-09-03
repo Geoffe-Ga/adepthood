@@ -1,4 +1,4 @@
-import Slider from '@react-native-community/slider';
+import Slider, { type SliderProps } from '@react-native-community/slider';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Modal,
@@ -17,10 +17,18 @@ import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
 
 import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
-import styles from '../Habits.styles';
+import styles, { COLORS } from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { DEFAULT_ICONS } from '../HabitsScreen';
 import { calculateHabitStartDate } from '../HabitUtils';
+
+interface SmoothSliderProps extends SliderProps {
+  animateTransitions?: boolean;
+  animationType?: 'timing' | 'spring';
+  animationConfig?: Record<string, unknown>;
+}
+
+const SmoothSlider = Slider as React.ComponentType<SmoothSliderProps>;
 
 export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingModalProps) => {
   const [step, setStep] = useState(1);
@@ -172,15 +180,23 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
                   {habit.icon} {habit.name}
                 </Text>
                 <View style={styles.energySliderRow}>
-                  <Slider
-                    testID={`${type}-slider`}
-                    minimumValue={0}
-                    maximumValue={10}
-                    step={1}
-                    value={value}
-                    onValueChange={(v) => updateHabitEnergy(index, type, v)}
-                    style={styles.energySlider}
-                  />
+                  <View style={styles.energySliderContainer}>
+                    <SmoothSlider
+                      testID={`${type}-slider`}
+                      minimumValue={0}
+                      maximumValue={10}
+                      step={1}
+                      value={value}
+                      onValueChange={(v) => updateHabitEnergy(index, type, v)}
+                      animateTransitions
+                      animationType="timing"
+                      animationConfig={{ duration: 150 }}
+                      minimumTrackTintColor={COLORS.secondary}
+                      maximumTrackTintColor={COLORS.mystical.glowLight}
+                      thumbTintColor={COLORS.secondary}
+                      style={[styles.energySlider, Platform.OS === 'web' && styles.energySliderWeb]}
+                    />
+                  </View>
                   <Text style={styles.sliderValue}>{value}</Text>
                 </View>
               </View>

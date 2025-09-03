@@ -2,6 +2,8 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { render, fireEvent } from '@testing-library/react-native';
 import React from 'react';
 
+import { COLORS } from '../../Habits.styles';
+
 const OnboardingModal = require('../OnboardingModal').default;
 
 jest.mock('../../HabitsScreen', () => ({ DEFAULT_ICONS: ['⭐'] }));
@@ -33,5 +35,13 @@ describe('OnboardingModal cost step', () => {
     const { getByTestId } = setupToCostStep();
     const tile = getByTestId('energy-tile-0');
     expect(tile.props.style).toMatchSnapshot();
+  });
+
+  it('applies mystical slider styling', () => {
+    const { getAllByTestId } = setupToCostStep();
+    const slider = getAllByTestId('cost-slider')[0];
+    expect(slider.props.animateTransitions).toBe(true);
+    expect(slider.props.minimumTrackTintColor).toBe(COLORS.secondary);
+    expect(slider.props.thumbTintColor).toBe(COLORS.secondary);
   });
 });
