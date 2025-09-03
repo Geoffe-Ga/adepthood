@@ -1,17 +1,19 @@
 /* eslint-env jest */
-import { describe, expect, it, jest } from '@jest/globals';
 import fs from 'fs';
 import path from 'path';
+
+import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import renderer from 'react-test-renderer';
 
 import App from '../App';
 
+import renderer from 'react-test-renderer';
+
 jest.mock('expo-notifications', () => ({
-  getPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
+  getPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' } as never),
   requestPermissionsAsync: jest.fn(),
-  getExpoPushTokenAsync: jest.fn().mockResolvedValue({ data: 'token' }),
+  getExpoPushTokenAsync: jest.fn().mockResolvedValue({ data: 'token' } as never),
   scheduleNotificationAsync: jest.fn(),
   cancelScheduledNotificationAsync: jest.fn(),
 }));

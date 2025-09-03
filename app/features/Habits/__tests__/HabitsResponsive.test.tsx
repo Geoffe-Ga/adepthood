@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import type React from 'react';
 
 import { STAGE_COLORS } from '../../../constants/stageColors';
 import HabitsScreen from '../HabitsScreen';
@@ -7,11 +8,11 @@ import renderer from 'react-test-renderer';
 import type { ReactTestInstance } from 'react-test-renderer';
 
 jest.mock('expo-notifications', () => ({
-  getPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
+  getPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' } as never),
   requestPermissionsAsync: jest.fn(),
   scheduleNotificationAsync: jest.fn(),
   cancelScheduledNotificationAsync: jest.fn(),
-  getExpoPushTokenAsync: jest.fn().mockResolvedValue({ data: 'token' }),
+  getExpoPushTokenAsync: jest.fn().mockResolvedValue({ data: 'token' } as never),
 }));
 
 jest.mock('react-native-safe-area-context', () => {
@@ -220,7 +221,9 @@ describe('HabitsScreen responsive layout', () => {
       statsOption.props.onPress();
     });
 
-    const texts = testRenderer.root.findAllByType(Text).map((t: ReactTestInstance) => t.props.children);
+    const texts = testRenderer.root
+      .findAllByType(Text)
+      .map((t: ReactTestInstance) => t.props.children);
     expect(texts).toContain('Stats Mode');
 
     const exit = testRenderer.root.findByProps({ testID: 'exit-mode' });
@@ -228,7 +231,9 @@ describe('HabitsScreen responsive layout', () => {
       exit.props.onPress();
     });
 
-    const postTexts = testRenderer.root.findAllByType(Text).map((t: ReactTestInstance) => t.props.children);
+    const postTexts = testRenderer.root
+      .findAllByType(Text)
+      .map((t: ReactTestInstance) => t.props.children);
     expect(postTexts).not.toContain('Stats Mode');
   });
 
@@ -255,7 +260,9 @@ describe('HabitsScreen responsive layout', () => {
       quickOption.props.onPress();
     });
 
-    const texts = testRenderer.root.findAllByType(Text).map((t: ReactTestInstance) => t.props.children);
+    const texts = testRenderer.root
+      .findAllByType(Text)
+      .map((t: ReactTestInstance) => t.props.children);
     expect(texts).toContain('Quick Log Mode');
   });
 
@@ -273,7 +280,9 @@ describe('HabitsScreen responsive layout', () => {
       archive.props.onPress();
     });
 
-    const texts = testRenderer.root.findAllByType(Text).map((t: ReactTestInstance) => t.props.children);
+    const texts = testRenderer.root
+      .findAllByType(Text)
+      .map((t: ReactTestInstance) => t.props.children);
     expect(texts).not.toContain('Perform Energy Scaffolding');
     expect(texts).toContain('Energy Scaffolding button moved to menu.');
 
@@ -281,7 +290,9 @@ describe('HabitsScreen responsive layout', () => {
       jest.advanceTimersByTime(3000);
     });
 
-    const postTimerTexts = testRenderer.root.findAllByType(Text).map((t: ReactTestInstance) => t.props.children);
+    const postTimerTexts = testRenderer.root
+      .findAllByType(Text)
+      .map((t: ReactTestInstance) => t.props.children);
     expect(postTimerTexts).not.toContain('Energy Scaffolding button moved to menu.');
 
     const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });

@@ -1,16 +1,13 @@
 /* eslint-env jest */
+
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
-import TestRenderer, { act } from 'react-test-renderer';
 
 import { EmojiPreferencesProvider } from '../emoji-prefs';
-import {
-  GLYPH_SIZE,
-  NUM_COLUMNS,
-  PANEL_HEIGHT,
-  PANEL_WIDTH,
-} from '../emojiPickerLayout';
+import { GLYPH_SIZE, NUM_COLUMNS, PANEL_HEIGHT, PANEL_WIDTH } from '../emojiPickerLayout';
 import { UniversalEmojiPicker } from '../UniversalEmojiPicker';
+
+import TestRenderer, { act } from 'react-test-renderer';
 
 interface PickerMockProps {
   emojiSize: number;
