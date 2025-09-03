@@ -6,6 +6,19 @@ from pydantic import BaseModel
 
 
 class Goal(BaseModel):
+    """Public representation of a :class:`models.data_model.Goal`.
+
+    This schema mirrors the SQLModel definition so API consumers can rely on a
+    stable contract. Only fields exposed over the wire are included.
+    """
+
     id: int
+    habit_id: int
+    title: str
+    description: str | None = None
+    tier: str
     target: float
-    mode: str = "additive"
+    target_unit: str
+    frequency: float
+    frequency_unit: str
+    is_additive: bool = True
