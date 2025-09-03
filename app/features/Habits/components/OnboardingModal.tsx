@@ -13,10 +13,11 @@ import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
 
 import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
+import { STAGE_COLORS } from '../../../constants/stageColors';
 import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { DEFAULT_ICONS } from '../HabitsScreen';
-import { calculateHabitStartDate } from '../HabitUtils';
+import { STAGE_ORDER, calculateHabitStartDate } from '../HabitUtils';
 
 export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingModalProps) => {
   const [step, setStep] = useState(1);
@@ -75,10 +76,11 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
       }
     });
 
-    // Update start dates based on the sorted order
+    // Update start dates and stages based on the sorted order
     const habitsWithDates = sortedHabits.map((habit, index) => ({
       ...habit,
       start_date: calculateHabitStartDate(startDate, index),
+      stage: STAGE_ORDER[index] ?? habit.stage,
     }));
 
     setHabits(habitsWithDates);
@@ -192,6 +194,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     const updatedHabits = data.map((habit, index) => ({
       ...habit,
       start_date: calculateHabitStartDate(startDate, index),
+      stage: STAGE_ORDER[index] ?? habit.stage,
     }));
     setHabits(updatedHabits);
   };
@@ -229,6 +232,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
               prev.map((habit, index) => ({
                 ...habit,
                 start_date: calculateHabitStartDate(selectedDate, index),
+                stage: STAGE_ORDER[index] ?? habit.stage,
               })),
             );
           }}
@@ -236,22 +240,35 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
       </View>
 
       <View style={styles.habitsList}>
-        <DraggableFlatList
+        <DraggableFlatList<OnboardingHabit>
           style={{ flex: 1 }}
           data={habits}
           keyExtractor={(_, index) => index.toString()}
           contentContainerStyle={styles.habitsListContent}
           renderItem={({ item, drag, isActive }) => {
-            const index = habits.findIndex((h) => h === item);
+            const index = habits.indexOf(item);
+            const stage = (STAGE_ORDER[index] ?? STAGE_ORDER[STAGE_ORDER.length - 1]) as string;
+            const color = STAGE_COLORS[stage as keyof typeof STAGE_COLORS] || '#ccc';
 
             return (
-              <TouchableOpacity
-                onLongPress={drag}
-                onPressIn={Platform.OS === 'web' ? drag : undefined}
-                delayLongPress={150}
-                style={[styles.habitListItem, isActive && { backgroundColor: '#eaeaea' }]}
+              <View
+                testID={`reorder-item-${index}`}
+                style={[
+                  styles.habitListItem,
+                  isActive && { backgroundColor: '#eaeaea' },
+                  { borderLeftColor: color, borderLeftWidth: 4 },
+                ]}
               >
                 <View style={styles.habitDragInfo}>
+                  <TouchableOpacity
+                    onLongPress={drag}
+                    onPressIn={Platform.OS === 'web' ? drag : undefined}
+                    delayLongPress={150}
+                    accessibilityLabel={`Reorder ${item.name}`}
+                    style={styles.dragHandle}
+                  >
+                    <Text style={styles.dragHandleText}>≡</Text>
+                  </TouchableOpacity>
                   <Text style={styles.habitListItemDate}>
                     {new Date(item.start_date).toLocaleDateString('en-US', {
                       month: 'short',
@@ -274,11 +291,11 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
 
                 <View style={styles.habitEnergyInfo}>
                   <Text style={styles.habitEnergyText}>
-                    Cost: {item.energy_cost} | Return: {item.energy_return} | Net:{' '}
+                    Cost: {item.energy_cost} | Return: {item.energy_return} | Net{' '}
                     {item.energy_return - item.energy_cost}
                   </Text>
                 </View>
-              </TouchableOpacity>
+              </View>
             );
           }}
           onDragEnd={handleDragEnd}
@@ -314,7 +331,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
         style={styles.onboardingContinueButton}
         onPress={handleFinish}
       >
-        <Text style={styles.onboardingContinueButtonText}>Finish Setup</Text>
+        <Text style={styles.onboardingContinueButtonText}>Done</Text>
       </TouchableOpacity>
     </View>
   );
@@ -401,7 +418,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
             style={StyleSheet.absoluteFill}
             testID="onboarding-overlay"
           />
-          <View style={styles.onboardingModalContent}>
+          <View style={styles.onboardingModalContent} testID="onboarding-modal-content">
             <TouchableOpacity
               testID="onboarding-close"
               style={styles.modalClose}

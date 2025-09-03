@@ -957,6 +957,8 @@ export const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.xl,
     padding: SPACING.xl,
     height: '90%',
+    maxHeight: '90%',
+    overflow: 'hidden',
     ...SHADOWS.large,
   },
   modalClose: {
@@ -1076,6 +1078,14 @@ export const styles = StyleSheet.create({
   },
   iconEditButtonText: {
     fontSize: 18,
+  },
+  dragHandle: {
+    paddingHorizontal: SPACING.sm,
+    marginRight: SPACING.md,
+  },
+  dragHandleText: {
+    fontSize: 18,
+    color: COLORS.text.secondary,
   },
 
   // ===== Energy Rating =====
