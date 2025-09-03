@@ -17,6 +17,10 @@ jest.mock('../components/OnboardingModal', () =>
 jest.mock('../components/MissedDaysModal', () => () => null);
 jest.mock('../components/StatsModal', () => () => null);
 
+jest.mock('../notifications', () => ({
+  registerForPushNotificationsAsync: jest.fn(() => Promise.resolve(undefined)),
+}));
+
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 jest.mock('react-native-draggable-flatlist', () => 'DraggableFlatList');
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
