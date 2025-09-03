@@ -1,7 +1,8 @@
-/* eslint-disable import/order */
+/* eslint-disable import/order, no-unused-vars, @typescript-eslint/no-explicit-any */
 import { describe, expect, it, jest } from '@jest/globals';
-import renderer from 'react-test-renderer';
+import React from 'react';
 import { FlatList, StyleSheet, Text, TextInput, TouchableOpacity } from 'react-native';
+import renderer from 'react-test-renderer';
 
 import { STAGE_COLORS } from '../../../../constants/stageColors';
 import { STAGE_ORDER } from '../../HabitUtils';
@@ -17,15 +18,26 @@ jest.mock('react-native-gesture-handler', () => {
 // Provide a basic draggable list mock that renders items via FlatList
 jest.mock('react-native-draggable-flatlist', () => {
   const { FlatList } = require('react-native');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return ({ data, renderItem, onDragEnd, ...rest }: any) => (
+  return ({
+    data,
+    renderItem,
+    onDragEnd,
+    ...rest
+  }: {
+    data: any[];
+    renderItem: (info: {
+      item: any;
+      index: number;
+      drag: () => void;
+      isActive: boolean;
+      getIndex: () => number;
+    }) => React.ReactElement;
+    onDragEnd: (event: { data: any[] }) => void;
+  } & Record<string, unknown>) => (
     <FlatList
       {...rest}
       data={data}
-      renderItem={(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        info: any,
-      ) =>
+      renderItem={(info: { item: any; index: number }) =>
         renderItem({
           ...info,
           drag: jest.fn(),
@@ -41,36 +53,34 @@ jest.mock('react-native-draggable-flatlist', () => {
 const OnboardingModal = require('../OnboardingModal').default;
 
 describe('OnboardingModal reorder stage colours', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const addHabit = (root: any, name: string) => {
     const input = root.findByType(TextInput);
     renderer.act(() => {
       input.props.onChangeText(name);
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const plus = root.findAllByType(Text).find((t: any) => t.props.children === '+');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let plusParent: any = plus?.parent;
     while (plusParent && plusParent.type !== TouchableOpacity) {
       plusParent = plusParent.parent;
     }
-    renderer.act(() => {
-      plusParent.props.onPress();
-    });
+    if (plusParent) {
+      renderer.act(() => {
+        plusParent.props.onPress();
+      });
+    }
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const advance = (root: any) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const text = root.findAllByType(Text).find((t: any) => t.props.children === 'Continue');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let parent: any = text?.parent;
     while (parent && parent.type !== TouchableOpacity) {
       parent = parent.parent;
     }
-    renderer.act(() => {
-      parent.props.onPress();
-    });
+    if (parent) {
+      renderer.act(() => {
+        parent.props.onPress();
+      });
+    }
   };
 
   it('applies stage colours based on order and updates after drag', () => {
