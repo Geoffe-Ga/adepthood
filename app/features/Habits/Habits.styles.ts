@@ -1,10 +1,10 @@
-import { StyleSheet } from 'react-native';
+import { StyleSheet, type ViewStyle } from 'react-native';
 
 //------------------
 // Theme Configuration (easier to maintain and change)
 //------------------
 
-const COLORS = {
+export const COLORS = {
   // Primary palette
   primary: '#1a1910',
   secondary: '#413d2f',
@@ -1079,74 +1079,44 @@ export const styles = StyleSheet.create({
   },
 
   // ===== Energy Rating =====
-  energyRatingItem: {
+  energyTile: {
     backgroundColor: COLORS.background.primary,
-    padding: SPACING.lg,
+    padding: SPACING.sm,
     borderRadius: BORDER_RADIUS.md,
-    marginVertical: SPACING.sm,
-    ...SHADOWS.small,
-  },
-  energyRatingName: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: SPACING.md,
-    color: COLORS.text.primary,
-  },
-  energyRatingDetails: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  energySliders: {
-    flex: 3,
-  },
-  energySliderLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.text.primary,
-    marginRight: SPACING.md,
-  },
-  sliderContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: SPACING.md,
-    marginTop: SPACING.xs,
     marginBottom: SPACING.sm,
-  },
-  sliderButton: {
-    width: 32,
-    height: 32,
-    borderRadius: BORDER_RADIUS.md,
-    backgroundColor: COLORS.background.accent,
-    justifyContent: 'center',
-    alignItems: 'center',
     ...SHADOWS.small,
   },
-  sliderButtonText: {
-    fontSize: 20,
-    fontWeight: 'bold',
+  energyTileName: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: SPACING.xs,
     color: COLORS.text.primary,
   },
+  energySliderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  energySliderContainer: {
+    flex: 1,
+    marginRight: SPACING.sm,
+    backgroundColor: COLORS.background.accent,
+    borderRadius: BORDER_RADIUS.sm,
+    paddingHorizontal: SPACING.sm,
+    justifyContent: 'center',
+    ...SHADOWS.small,
+  },
+  energySlider: {
+    width: '100%',
+    height: SPACING.lg,
+  },
+  energySliderWeb: {
+    cursor: 'ew-resize',
+  } as unknown as ViewStyle,
   sliderValue: {
     fontSize: 16,
     fontWeight: '600',
-    minWidth: 24,
+    width: 24,
     textAlign: 'center',
-    color: COLORS.text.primary,
-  },
-  netEnergyContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.background.accent,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.md,
-    marginLeft: SPACING.md,
-  },
-  netEnergyLabel: {
-    fontSize: 14,
-    fontWeight: 'bold',
     color: COLORS.text.primary,
   },
 
@@ -1311,6 +1281,34 @@ export const styles = StyleSheet.create({
     color: COLORS.text.light,
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  onboardingFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    borderTopWidth: 1,
+    borderColor: '#eee',
+    backgroundColor: COLORS.background.card,
+  },
+  onboardingBackButton: {
+    flex: 1,
+    marginRight: SPACING.sm,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    borderRadius: BORDER_RADIUS.xs,
+    alignItems: 'center',
+    backgroundColor: COLORS.background.accent,
+  },
+  onboardingBackButtonText: {
+    color: COLORS.text.primary,
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  footerContinue: {
+    flex: 1,
+    marginLeft: SPACING.sm,
   },
   disabledButton: {
     opacity: 0.5,

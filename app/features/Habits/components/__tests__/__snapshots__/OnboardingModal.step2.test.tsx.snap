@@ -1,0 +1,18 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`OnboardingModal cost step renders compact habit tiles 1`] = `
+{
+  "backgroundColor": "#f8f8f8",
+  "borderRadius": 8,
+  "elevation": 2,
+  "marginBottom": 8,
+  "padding": 8,
+  "shadowColor": "#000000",
+  "shadowOffset": {
+    "height": 1,
+    "width": 0,
+  },
+  "shadowOpacity": 0.1,
+  "shadowRadius": 2,
+}
+`;

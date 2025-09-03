@@ -1,6 +1,6 @@
-import React, { useRef, useState } from 'react';
+import Slider, { type SliderProps } from '@react-native-community/slider';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  FlatList,
   Modal,
   Platform,
   SafeAreaView,
@@ -17,10 +17,18 @@ import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
 
 import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
-import styles from '../Habits.styles';
+import styles, { COLORS } from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { DEFAULT_ICONS } from '../HabitsScreen';
 import { calculateHabitStartDate } from '../HabitUtils';
+
+interface SmoothSliderProps extends SliderProps {
+  animateTransitions?: boolean;
+  animationType?: 'timing' | 'spring';
+  animationConfig?: Record<string, unknown>;
+}
+
+const SmoothSlider = Slider as React.ComponentType<SmoothSliderProps>;
 
 export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingModalProps) => {
   const [step, setStep] = useState(1);
@@ -33,6 +41,52 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
   const inputRef = useRef<TextInput>(null);
   const [error, setError] = useState('');
   const [showCountWarning, setShowCountWarning] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    if (step === 2 || step === 3) {
+      scrollRef.current?.scrollTo({ y: 0, animated: false });
+    }
+  }, [step]);
+
+  const prepareHabitsForReorder = useCallback(() => {
+    const sortedHabits = [...habits].sort((a, b) => {
+      const netEnergyA = a.energy_return - a.energy_cost;
+      const netEnergyB = b.energy_return - b.energy_cost;
+
+      if (netEnergyA !== netEnergyB) {
+        return netEnergyB - netEnergyA; // Highest net energy first
+      } else if (a.energy_cost !== b.energy_cost) {
+        return a.energy_cost - b.energy_cost; // Lowest cost as tiebreaker
+      } else {
+        return b.energy_return - a.energy_return; // Highest return as second tiebreaker
+      }
+    });
+
+    const habitsWithDates = sortedHabits.map((habit, index) => ({
+      ...habit,
+      start_date: calculateHabitStartDate(startDate, index),
+    }));
+
+    setHabits(habitsWithDates);
+    setStep(4);
+  }, [habits, startDate]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' && (step === 2 || step === 3)) {
+      const handler = (e: KeyboardEvent) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+          if (step === 2) {
+            setStep(3);
+          } else if (step === 3) {
+            prepareHabitsForReorder();
+          }
+        }
+      };
+      document.addEventListener('keydown', handler);
+      return () => document.removeEventListener('keydown', handler);
+    }
+  }, [step, prepareHabitsForReorder]);
 
   // Step 1: Add habits
   const handleAddHabit = () => {
@@ -88,10 +142,12 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
 
   // Update energy values for a habit in onboarding
   const updateHabitEnergy = (index: number, type: 'cost' | 'return', value: number) => {
-    if (value < -10 || value > 10) return; // Validate range
+    if (value < 0 || value > 10) return;
 
     setHabits((prev) =>
-      prev.map((habit, i) => (i === index ? { ...habit, [`energy_${type}`]: value } : habit)),
+      prev.map((habit, i) =>
+        i === index ? { ...habit, [`energy_${type}`]: Math.round(value) } : habit,
+      ),
     );
   };
 
@@ -101,134 +157,68 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     setSelectedHabitIndex(null);
   };
 
-  // Sort habits by net energy for step 3
-  const prepareHabitsForReorder = () => {
-    const sortedHabits = [...habits].sort((a, b) => {
-      const netEnergyA = a.energy_return - a.energy_cost;
-      const netEnergyB = b.energy_return - b.energy_cost;
+  // Step 2 & 3: Energy entry
+  const renderEnergyStep = (type: 'cost' | 'return') => {
+    const title = type === 'cost' ? 'Energy Cost' : 'Energy Return';
+    const subtitle =
+      type === 'cost'
+        ? '0 = effortless, easy as breathing. 10 = effort so big you might dread it.'
+        : '0 = almost no change to your overall vibe. 10 = lights you up and feels deeply rewarding.';
+    const onBack = () => setStep(type === 'cost' ? 1 : 2);
+    const onContinue = type === 'cost' ? () => setStep(3) : prepareHabitsForReorder;
 
-      if (netEnergyA !== netEnergyB) {
-        return netEnergyB - netEnergyA; // Highest net energy first
-      } else if (a.energy_cost !== b.energy_cost) {
-        return a.energy_cost - b.energy_cost; // Lowest cost as tiebreaker
-      } else {
-        return b.energy_return - a.energy_return; // Highest return as second tiebreaker
-      }
-    });
-
-    // Update start dates based on the sorted order
-    const habitsWithDates = sortedHabits.map((habit, index) => ({
-      ...habit,
-      start_date: calculateHabitStartDate(startDate, index),
-    }));
-
-    setHabits(habitsWithDates);
-    setStep(4);
+    return (
+      <SafeAreaView style={styles.onboardingStep}>
+        <ScrollView ref={scrollRef}>
+          <Text style={styles.onboardingTitle}>{title}</Text>
+          <Text style={styles.onboardingSubtitle}>{subtitle}</Text>
+          {habits.map((habit, index) => {
+            const value = type === 'cost' ? habit.energy_cost : habit.energy_return;
+            return (
+              <View key={index} style={styles.energyTile} testID={`energy-tile-${index}`}>
+                <Text style={styles.energyTileName}>
+                  {habit.icon} {habit.name}
+                </Text>
+                <View style={styles.energySliderRow}>
+                  <View style={styles.energySliderContainer}>
+                    <SmoothSlider
+                      testID={`${type}-slider`}
+                      minimumValue={0}
+                      maximumValue={10}
+                      step={1}
+                      value={value}
+                      onValueChange={(v) => updateHabitEnergy(index, type, v)}
+                      animateTransitions
+                      animationType="timing"
+                      animationConfig={{ duration: 150 }}
+                      minimumTrackTintColor={COLORS.secondary}
+                      maximumTrackTintColor={COLORS.mystical.glowLight}
+                      thumbTintColor={COLORS.secondary}
+                      style={[styles.energySlider, Platform.OS === 'web' && styles.energySliderWeb]}
+                    />
+                  </View>
+                  <Text style={styles.sliderValue}>{value}</Text>
+                </View>
+              </View>
+            );
+          })}
+        </ScrollView>
+        <View style={styles.onboardingFooter}>
+          <TouchableOpacity style={styles.onboardingBackButton} onPress={onBack}>
+            <Text style={styles.onboardingBackButtonText}>Back</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            testID="continue-button"
+            style={[styles.onboardingContinueButton, styles.footerContinue]}
+            onPress={onContinue}
+            disabled={habits.length === 0}
+          >
+            <Text style={styles.onboardingContinueButtonText}>Continue</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
   };
-
-  // Step 2: Cost entry
-  const renderCostStep = () => (
-    <View style={styles.onboardingStep}>
-      <Text style={styles.onboardingTitle}>Energy Cost</Text>
-      <Text style={styles.onboardingSubtitle}>Rate each habit from -10 to 10 for energy cost</Text>
-      <FlatList
-        data={habits}
-        keyExtractor={(_, index) => index.toString()}
-        renderItem={({ item, index }) => (
-          <View style={styles.energyRatingItem}>
-            <Text style={styles.energyRatingName}>
-              {item.icon} {item.name}
-            </Text>
-            <View style={styles.energyRatingDetails}>
-              <View style={styles.energySliders}>
-                <Text style={styles.energySliderLabel}>Cost:</Text>
-                <View style={styles.sliderContainer}>
-                  <TouchableOpacity
-                    style={styles.sliderButton}
-                    onPress={() =>
-                      updateHabitEnergy(index, 'cost', Math.max(-10, item.energy_cost - 1))
-                    }
-                  >
-                    <Text style={styles.sliderButtonText}>-</Text>
-                  </TouchableOpacity>
-                  <Text style={styles.sliderValue}>{item.energy_cost}</Text>
-                  <TouchableOpacity
-                    style={styles.sliderButton}
-                    onPress={() =>
-                      updateHabitEnergy(index, 'cost', Math.min(10, item.energy_cost + 1))
-                    }
-                  >
-                    <Text style={styles.sliderButtonText}>+</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
-          </View>
-        )}
-      />
-      <TouchableOpacity
-        testID="continue-button"
-        style={styles.onboardingContinueButton}
-        onPress={() => setStep(3)}
-        disabled={habits.length === 0}
-      >
-        <Text style={styles.onboardingContinueButtonText}>Continue</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  // Step 3: Return entry
-  const renderReturnStep = () => (
-    <View style={styles.onboardingStep}>
-      <Text style={styles.onboardingTitle}>Energy Return</Text>
-      <Text style={styles.onboardingSubtitle}>
-        Rate each habit from -10 to 10 for energy return
-      </Text>
-      <FlatList
-        data={habits}
-        keyExtractor={(_, index) => index.toString()}
-        renderItem={({ item, index }) => (
-          <View style={styles.energyRatingItem}>
-            <Text style={styles.energyRatingName}>
-              {item.icon} {item.name}
-            </Text>
-            <View style={styles.energyRatingDetails}>
-              <View style={styles.energySliders}>
-                <Text style={styles.energySliderLabel}>Return:</Text>
-                <View style={styles.sliderContainer}>
-                  <TouchableOpacity
-                    style={styles.sliderButton}
-                    onPress={() =>
-                      updateHabitEnergy(index, 'return', Math.max(-10, item.energy_return - 1))
-                    }
-                  >
-                    <Text style={styles.sliderButtonText}>-</Text>
-                  </TouchableOpacity>
-                  <Text style={styles.sliderValue}>{item.energy_return}</Text>
-                  <TouchableOpacity
-                    style={styles.sliderButton}
-                    onPress={() =>
-                      updateHabitEnergy(index, 'return', Math.min(10, item.energy_return + 1))
-                    }
-                  >
-                    <Text style={styles.sliderButtonText}>+</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
-          </View>
-        )}
-      />
-      <TouchableOpacity
-        testID="continue-button"
-        style={styles.onboardingContinueButton}
-        onPress={prepareHabitsForReorder}
-        disabled={habits.length === 0}
-      >
-        <Text style={styles.onboardingContinueButtonText}>Continue</Text>
-      </TouchableOpacity>
-    </View>
-  );
 
   // Step 3: Reorder habits using drag & drop
   const handleDragEnd = ({ data }: { data: OnboardingHabit[] }) => {
@@ -438,9 +428,9 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
           </SafeAreaView>
         );
       case 2:
-        return renderCostStep();
+        return renderEnergyStep('cost');
       case 3:
-        return renderReturnStep();
+        return renderEnergyStep('return');
       case 4:
         return renderReorderStep();
       default:
