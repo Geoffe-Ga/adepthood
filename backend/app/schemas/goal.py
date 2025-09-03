@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 
 class Goal(BaseModel):
-    """Public representation of a :class:`models.data_model.Goal`.
+    """Public representation of a :class:`models.goal.Goal`.
 
     This schema mirrors the SQLModel definition so API consumers can rely on a
     stable contract. Only fields exposed over the wire are included.

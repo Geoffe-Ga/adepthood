@@ -1,4 +1,4 @@
-from app.models.data_model import Goal as GoalModel
+from app.models import Goal as GoalModel
 from app.schemas.goal import Goal as GoalSchema
 
 
