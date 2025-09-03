@@ -2,8 +2,8 @@
 
 from fastapi import FastAPI
 
-from .practice import router as practice_router
 from .routers.energy import router as energy_router
+from .routers.practice import router as practice_router
 
 app = FastAPI()
 
