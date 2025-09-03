@@ -3,23 +3,24 @@
 from __future__ import annotations
 
 
-def compute_progress(current: float, target: float, mode: str = "additive") -> tuple[float, str]:
+def compute_progress(
+    current: float, target: float, *, is_additive: bool = True
+) -> tuple[float, str]:
     """Compute progress toward ``target``.
 
-    ``mode`` can be ``additive`` or ``subtractive``.
+    ``is_additive`` mirrors the ``Goal.is_additive`` model field. When ``True``
+    progress increases toward the target; when ``False`` progress reflects how
+    much remains before exceeding the target.
     Returns a tuple of ``progress`` (0-1) and ``reason_code``.
     """
 
     if target <= 0:
         raise ValueError("target must be positive")
-    if mode not in {"additive", "subtractive"}:
-        raise ValueError("mode must be 'additive' or 'subtractive'")
 
-    if mode == "additive":
+    if is_additive:
         progress = max(0.0, min(current / target, 1.0))
         return progress, "additive_progress"
 
-    # subtractive
     remaining = max(target - current, 0)
     progress = max(0.0, min(remaining / target, 1.0))
     return progress, "subtractive_progress"
