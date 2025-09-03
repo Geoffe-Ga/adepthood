@@ -21,6 +21,7 @@ import styles from './Habits.styles';
 import type { Goal, Habit, HabitStatsData, OnboardingHabit } from './Habits.types';
 import HabitTile from './HabitTile';
 import { getGoalTier, getGoalTarget, calculateHabitProgress, logHabitUnits } from './HabitUtils';
+import { registerForPushNotificationsAsync } from './notifications';
 export const DEFAULT_ICONS = [
   '🧘',
   '🏃',
@@ -85,26 +86,6 @@ const DEFAULT_HABITS: Habit[] = HABIT_DEFAULTS.map((habit) => ({
   revealed: true,
   completions: [], // Initialize empty completions array
 }));
-
-// Register for push notifications
-const registerForPushNotificationsAsync = async (): Promise<string | undefined> => {
-  try {
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
-    let finalStatus = existingStatus;
-    if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
-    }
-    if (finalStatus !== 'granted') {
-      return undefined;
-    }
-    const token = (await Notifications.getExpoPushTokenAsync()).data;
-    return token;
-  } catch (error) {
-    console.error('Failed to get push token:', error);
-    return undefined;
-  }
-};
 
 // Schedule a notification for a habit using its defined time and frequency
 const scheduleHabitNotification = async (
