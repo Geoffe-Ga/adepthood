@@ -1,13 +1,15 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-/* eslint-disable import/order */
+
 import { jest } from '@jest/globals';
 import React from 'react';
-import renderer from 'react-test-renderer';
+
 
 import { GoalModal } from '../components/GoalModal';
-import type { Habit, Goal } from '../Habits.types';
+import type { Goal, Habit } from '../Habits.types';
 import { logHabitUnits } from '../HabitUtils';
+
+import renderer from 'react-test-renderer';
 
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 

@@ -1,11 +1,13 @@
 /* eslint-env jest */
-/* eslint-disable import/order */
+
+import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
-import { describe, it, expect, jest } from '@jest/globals';
+
+import type { Habit } from '../Habits.types';
+import { HabitTile } from '../HabitTile';
+
 import renderer from 'react-test-renderer';
 
-import { HabitTile } from '../HabitTile';
-import type { Habit } from '../Habits.types';
 
 describe('HabitTile interactions', () => {
   it('dims tiles with future start dates and responds to icon press', () => {

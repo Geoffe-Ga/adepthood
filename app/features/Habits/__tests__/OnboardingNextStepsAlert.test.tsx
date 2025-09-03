@@ -7,13 +7,10 @@ import renderer from 'react-test-renderer';
 const HabitsScreen = require('../HabitsScreen').default;
 
 const mockOnboardingModal = jest.fn();
-jest.mock('../components/OnboardingModal', () =>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (props: any) => {
-    mockOnboardingModal(props);
-    return null;
-  },
-);
+jest.mock('../components/OnboardingModal', () => (props: unknown) => {
+  mockOnboardingModal(props);
+  return null;
+});
 jest.mock('../components/MissedDaysModal', () => () => null);
 jest.mock('../components/StatsModal', () => () => null);
 
@@ -34,8 +31,7 @@ describe('Onboarding completion', () => {
     renderer.create(<HabitsScreen />);
     const call = mockOnboardingModal.mock.calls[0];
     if (!call) throw new Error('OnboardingModal not rendered');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const props = call[0] as any;
+    const props = call[0] as { onSaveHabits: (habits: unknown[]) => void };
     const sampleHabit = {
       name: 'Test',
       icon: '⭐',

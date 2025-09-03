@@ -50,6 +50,7 @@ module.exports = tseslint.config(
     rules: {
       // Base JS
       ...js.configs.recommended.rules,
+      'no-unused-vars': 'off',
 
       // TS strict + stylistic (type-checked)
       ...tseslint.configs.recommendedTypeChecked[0].rules,

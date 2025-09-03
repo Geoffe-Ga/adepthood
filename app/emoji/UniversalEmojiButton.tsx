@@ -8,8 +8,7 @@ import { UniversalEmojiPicker } from './UniversalEmojiPicker';
 
 export interface UniversalEmojiButtonProps {
   value: string;
-  // eslint-disable-next-line no-unused-vars
-  onChange: (_: EmojiSelectionPayload) => void;
+  onChange: (selection: EmojiSelectionPayload) => void;
   size?: number;
   disabled?: boolean;
 }

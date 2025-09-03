@@ -1,20 +1,17 @@
-/* eslint-disable import/order, @typescript-eslint/no-explicit-any */
+import App from '../App';
+import { describe, expect, it, jest } from '@jest/globals';
 import fs from 'fs';
 import path from 'path';
-
-import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import renderer from 'react-test-renderer';
 
-import App from '../App';
-
 jest.mock('expo-notifications', () => ({
-  getPermissionsAsync: (jest.fn() as any).mockResolvedValue({ status: 'granted' }),
-  requestPermissionsAsync: jest.fn() as any,
-  getExpoPushTokenAsync: (jest.fn() as any).mockResolvedValue({ data: 'token' }),
-  scheduleNotificationAsync: jest.fn() as any,
-  cancelScheduledNotificationAsync: jest.fn() as any,
+  getPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
+  requestPermissionsAsync: jest.fn(),
+  getExpoPushTokenAsync: jest.fn().mockResolvedValue({ data: 'token' }),
+  scheduleNotificationAsync: jest.fn(),
+  cancelScheduledNotificationAsync: jest.fn(),
 }));
 
 jest.mock('../features/Habits/components/GoalModal', () => () => null);

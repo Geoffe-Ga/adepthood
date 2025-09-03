@@ -1,4 +1,3 @@
-/* eslint-disable import/order */
 import data from '@emoji-mart/data';
 import PickerWeb from '@emoji-mart/react';
 import PickerNative from 'emoji-mart-native';
@@ -12,8 +11,7 @@ import { useEmojiPreferences } from './emoji-prefs';
 export interface UniversalEmojiPickerProps {
   visible: boolean;
   onClose: () => void;
-  // eslint-disable-next-line no-unused-vars
-  onSelect: (_: EmojiSelectionPayload) => void;
+  onSelect: (selection: EmojiSelectionPayload) => void;
   anchorRect?: { x: number; y: number };
   theme?: 'light' | 'dark' | 'auto';
 }
@@ -26,8 +24,14 @@ export const UniversalEmojiPicker: React.FC<UniversalEmojiPickerProps> = ({
 }) => {
   const { recents, clearRecents, preferredSkinTone, pushRecent } = useEmojiPreferences();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handleSelect = (emoji: any) => {
+  interface PickerEmoji {
+    native: string;
+    unified: string;
+    shortcodes?: string;
+    skin?: number;
+  }
+
+  const handleSelect = (emoji: PickerEmoji) => {
     const selection: EmojiSelectionPayload = {
       emoji: emoji.native,
       unified: emoji.unified,

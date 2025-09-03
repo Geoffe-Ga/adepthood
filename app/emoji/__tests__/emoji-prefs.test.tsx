@@ -1,16 +1,17 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-/* eslint-disable import/order */
 import { jest } from '@jest/globals';
 import React from 'react';
-import TestRenderer, { act } from 'react-test-renderer';
 
 import {
   EmojiPreferencesProvider,
-  useEmojiPreferences,
   mergeRecents,
+  useEmojiPreferences,
   type EmojiPreferencesContextValue,
 } from '../emoji-prefs';
+
+import TestRenderer, { act } from 'react-test-renderer';
+
 
 jest.mock('@react-native-async-storage/async-storage', () => {
   const store: Record<string, string> = {};

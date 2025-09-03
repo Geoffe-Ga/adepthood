@@ -1,11 +1,12 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-/* eslint-disable import/order */
-import React from 'react';
-import renderer from 'react-test-renderer';
 
-import { HabitTile } from '../HabitTile';
+import React from 'react';
+
 import type { Habit } from '../Habits.types';
+import { HabitTile } from '../HabitTile';
+
+import renderer from 'react-test-renderer';
 
 const habit: Habit = {
   id: 1,

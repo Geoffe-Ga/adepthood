@@ -9,10 +9,8 @@ export const SKIN_KEY = 'emoji.skin.v1';
 export interface EmojiPreferencesContextValue {
   recents: string[];
   preferredSkinTone?: number;
-  // eslint-disable-next-line no-unused-vars
-  pushRecent: (unified: string) => Promise<void>;
-  // eslint-disable-next-line no-unused-vars
-  setPreferredSkinTone: (tone: number) => Promise<void>;
+  pushRecent: (_unified: string) => Promise<void>;
+  setPreferredSkinTone: (_tone: number) => Promise<void>;
   clearRecents: () => Promise<void>;
 }
 
@@ -43,39 +41,43 @@ export const EmojiPreferencesProvider: React.FC<{ children: React.ReactNode }> =
 
   // Hydrate from storage and server on mount
   useEffect(() => {
+    let mounted = true;
     const hydrate = async () => {
       try {
         const [storedRecents, storedTone] = await Promise.all([
           AsyncStorage.getItem(RECENTS_KEY),
           AsyncStorage.getItem(SKIN_KEY),
         ]);
+
+        let localRecents: string[] = [];
         if (storedRecents) {
-          setRecents(JSON.parse(storedRecents));
+          localRecents = JSON.parse(storedRecents);
+          if (mounted) setRecents(localRecents);
         }
         if (storedTone) {
-          setPreferredSkinToneState(Number(storedTone));
+          const tone = Number(storedTone);
+          if (mounted) setPreferredSkinToneState(tone);
         }
-      } catch (error) {
-        console.error('Failed to load emoji prefs from storage', error);
-      }
 
-      try {
         const server = await getEmojiPrefs();
         if (server.recents) {
-          const merged = mergeRecents(recents, server.recents);
-          setRecents(merged);
+          const merged = mergeRecents(localRecents, server.recents);
+          if (mounted) setRecents(merged);
           await AsyncStorage.setItem(RECENTS_KEY, JSON.stringify(merged));
+          localRecents = merged;
         }
         if (server.preferred_skin_tone != null) {
-          setPreferredSkinToneState(server.preferred_skin_tone);
+          if (mounted) setPreferredSkinToneState(server.preferred_skin_tone);
           await AsyncStorage.setItem(SKIN_KEY, String(server.preferred_skin_tone));
         }
       } catch (error) {
-        console.error('Failed to fetch emoji prefs', error);
+        console.error('Failed to hydrate emoji prefs', error);
       }
     };
     hydrate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const pushRecent = async (unified: string) => {

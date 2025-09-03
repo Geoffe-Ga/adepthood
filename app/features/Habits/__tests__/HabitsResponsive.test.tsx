@@ -1,24 +1,23 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { jest, describe, afterEach, it, expect } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import { STAGE_COLORS } from '../../../constants/stageColors';
+import HabitsScreen from '../HabitsScreen';
 
-const HabitsScreen = require('../HabitsScreen').default;
-
-const renderer = require('react-test-renderer');
+import renderer from 'react-test-renderer';
+import type { ReactTestInstance } from 'react-test-renderer';
 
 jest.mock('expo-notifications', () => ({
-  getPermissionsAsync: (jest.fn() as any).mockResolvedValue({ status: 'granted' }),
-  requestPermissionsAsync: jest.fn() as any,
-  scheduleNotificationAsync: jest.fn() as any,
-  cancelScheduledNotificationAsync: jest.fn() as any,
-  getExpoPushTokenAsync: (jest.fn() as any).mockResolvedValue({ data: 'token' }),
+  getPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
+  requestPermissionsAsync: jest.fn(),
+  scheduleNotificationAsync: jest.fn(),
+  cancelScheduledNotificationAsync: jest.fn(),
+  getExpoPushTokenAsync: jest.fn().mockResolvedValue({ data: 'token' }),
 }));
 
 jest.mock('react-native-safe-area-context', () => {
   const React = require('react');
   return {
-    SafeAreaView: ({ children }: { children: any }) => <>{children}</>,
+    SafeAreaView: ({ children }: { children: React.ReactNode }) => <>{children}</>,
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
   };
 });
@@ -57,27 +56,25 @@ describe('HabitsScreen responsive layout', () => {
       const tiles = tree.findAllByProps({ testID: 'habit-tile' });
       const colorValues = Object.values(STAGE_COLORS);
 
-      tiles.forEach((t: any) => {
-        const style = Array.isArray(t.props.style)
-          ? t.props.style.reduce((acc: any, s: any) => ({ ...acc, ...s }), {})
-          : t.props.style;
+      tiles.forEach((t: ReactTestInstance) => {
+        const style = require('react-native').StyleSheet.flatten(t.props.style);
 
         const tileHeight =
-          (style.minHeight ?? 0) + 2 * (style.padding ?? 0) + 2 * (style.margin ?? 0);
+          (style?.minHeight ?? 0) + 2 * (style?.padding ?? 0) + 2 * (style?.margin ?? 0);
 
         const maxTileHeight = (height * expectedColumns) / 10;
         expect(tileHeight).toBeLessThanOrEqual(maxTileHeight);
         if (expectedColumns === 2) {
-          expect(style.flex).toBe(1);
+          expect(style?.flex).toBe(1);
         }
-        expect(colorValues).toContain(style.borderColor);
+        expect(colorValues).toContain(style?.borderColor);
 
         const fill = t.findByProps({ testID: 'progress-fill' });
-        const fillStyle = Array.isArray(fill.props.style) ? fill.props.style[1] : fill.props.style;
-        const val = parseFloat(fillStyle.width);
+        const fillStyle = require('react-native').StyleSheet.flatten(fill.props.style);
+        const val = parseFloat(String(fillStyle.width));
         expect(val).toBeGreaterThanOrEqual(0);
         expect(val).toBeLessThanOrEqual(100);
-        expect(fillStyle.backgroundColor).toBe(style.borderColor);
+        expect(fillStyle.backgroundColor).toBe(style?.borderColor);
       });
 
       const iconTopExpected = expectedColumns === 2 && w / expectedColumns >= 400;
@@ -131,9 +128,7 @@ describe('HabitsScreen responsive layout', () => {
     });
 
     const menu = testRenderer.root.findByProps({ testID: 'overflow-menu' });
-    const style = Array.isArray(menu.props.style)
-      ? menu.props.style.reduce((acc: any, s: any) => ({ ...acc, ...s }), {})
-      : menu.props.style;
+    const style = require('react-native').StyleSheet.flatten(menu.props.style);
 
     expect(style.zIndex).toBeGreaterThan(0);
   });
@@ -162,8 +157,8 @@ describe('HabitsScreen responsive layout', () => {
 
     // ensure menu options are tappable
     const options = menu.findAllByType(TouchableOpacity);
-    const quickLog = options.find((o: any) =>
-      o.findAllByType(Text).some((t: any) => t.props.children === 'Quick Log'),
+    const quickLog = options.find((o: ReactTestInstance) =>
+      o.findAllByType(Text).some((t: ReactTestInstance) => t.props.children === 'Quick Log'),
     );
     expect(quickLog).toBeDefined();
   });
@@ -184,9 +179,9 @@ describe('HabitsScreen responsive layout', () => {
 
     const { TouchableOpacity, Text } = require('react-native');
     const options = testRenderer.root.findAll(
-      (n: any) =>
+      (n: ReactTestInstance) =>
         n.type === TouchableOpacity &&
-        n.findAllByType(Text).some((t: any) => t.props.children === 'Stats'),
+        n.findAllByType(Text).some((t: ReactTestInstance) => t.props.children === 'Stats'),
     );
     renderer.act(() => {
       options[0].props.onPress();
@@ -198,7 +193,7 @@ describe('HabitsScreen responsive layout', () => {
     });
 
     expect(StatsModal).toHaveBeenCalled();
-    const call = StatsModal.mock.calls.pop() as any;
+    const call = StatsModal.mock.calls.pop() as [{ visible: boolean }] | undefined;
     expect(call?.[0].visible).toBe(true);
   });
 
@@ -216,16 +211,16 @@ describe('HabitsScreen responsive layout', () => {
 
     const { TouchableOpacity, Text } = require('react-native');
     const statsOption = testRenderer.root.findAll(
-      (n: any) =>
+      (n: ReactTestInstance) =>
         n.type === TouchableOpacity &&
-        n.findAllByType(Text).some((t: any) => t.props.children === 'Stats'),
+        n.findAllByType(Text).some((t: ReactTestInstance) => t.props.children === 'Stats'),
     )[0];
 
     renderer.act(() => {
       statsOption.props.onPress();
     });
 
-    const texts = testRenderer.root.findAllByType(Text).map((t: any) => t.props.children);
+    const texts = testRenderer.root.findAllByType(Text).map((t: ReactTestInstance) => t.props.children);
     expect(texts).toContain('Stats Mode');
 
     const exit = testRenderer.root.findByProps({ testID: 'exit-mode' });
@@ -233,7 +228,7 @@ describe('HabitsScreen responsive layout', () => {
       exit.props.onPress();
     });
 
-    const postTexts = testRenderer.root.findAllByType(Text).map((t: any) => t.props.children);
+    const postTexts = testRenderer.root.findAllByType(Text).map((t: ReactTestInstance) => t.props.children);
     expect(postTexts).not.toContain('Stats Mode');
   });
 
@@ -251,16 +246,16 @@ describe('HabitsScreen responsive layout', () => {
 
     const { TouchableOpacity, Text } = require('react-native');
     const quickOption = testRenderer.root.findAll(
-      (n: any) =>
+      (n: ReactTestInstance) =>
         n.type === TouchableOpacity &&
-        n.findAllByType(Text).some((t: any) => t.props.children === 'Quick Log'),
+        n.findAllByType(Text).some((t: ReactTestInstance) => t.props.children === 'Quick Log'),
     )[0];
 
     renderer.act(() => {
       quickOption.props.onPress();
     });
 
-    const texts = testRenderer.root.findAllByType(Text).map((t: any) => t.props.children);
+    const texts = testRenderer.root.findAllByType(Text).map((t: ReactTestInstance) => t.props.children);
     expect(texts).toContain('Quick Log Mode');
   });
 
@@ -278,7 +273,7 @@ describe('HabitsScreen responsive layout', () => {
       archive.props.onPress();
     });
 
-    const texts = testRenderer.root.findAllByType(Text).map((t: any) => t.props.children);
+    const texts = testRenderer.root.findAllByType(Text).map((t: ReactTestInstance) => t.props.children);
     expect(texts).not.toContain('Perform Energy Scaffolding');
     expect(texts).toContain('Energy Scaffolding button moved to menu.');
 
@@ -286,7 +281,7 @@ describe('HabitsScreen responsive layout', () => {
       jest.advanceTimersByTime(3000);
     });
 
-    const postTimerTexts = testRenderer.root.findAllByType(Text).map((t: any) => t.props.children);
+    const postTimerTexts = testRenderer.root.findAllByType(Text).map((t: ReactTestInstance) => t.props.children);
     expect(postTimerTexts).not.toContain('Energy Scaffolding button moved to menu.');
 
     const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
@@ -296,7 +291,7 @@ describe('HabitsScreen responsive layout', () => {
 
     const hasMenuItem = testRenderer.root
       .findAllByType(Text)
-      .some((t: any) => t.props.children === 'Energy Scaffolding');
+      .some((t: ReactTestInstance) => t.props.children === 'Energy Scaffolding');
     expect(hasMenuItem).toBe(true);
     jest.useRealTimers();
   });

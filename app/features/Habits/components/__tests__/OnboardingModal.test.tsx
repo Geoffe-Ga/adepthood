@@ -1,10 +1,12 @@
-/* eslint-disable import/order */
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
-import renderer from 'react-test-renderer';
 import { Text, TextInput, TouchableOpacity } from 'react-native';
 
-const OnboardingModal = require('../OnboardingModal').default;
+import OnboardingModal from '../OnboardingModal';
+
+import renderer from 'react-test-renderer';
+import type { ReactTestInstance } from 'react-test-renderer';
+
 
 jest.mock('../../HabitsScreen', () => ({ DEFAULT_ICONS: ['⭐'] }));
 jest.mock('react-native-draggable-flatlist', () => 'DraggableFlatList');
@@ -67,11 +69,9 @@ describe('OnboardingModal close behaviour', () => {
     renderer.act(() => {
       input.props.onChangeText('Test');
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const plus = root.findAllByType(Text).find((t: any) => t.props.children === '+');
+    const plus = root.findAllByType(Text).find((t: ReactTestInstance) => t.props.children === '+');
     if (!plus) throw new Error('Plus button not found');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let plusParent: any = plus.parent;
+    let plusParent: ReactTestInstance | null = plus.parent;
     while (plusParent && plusParent.type !== TouchableOpacity) {
       plusParent = plusParent.parent;
     }
@@ -81,11 +81,9 @@ describe('OnboardingModal close behaviour', () => {
     });
 
     const pressContinue = () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const text = root.findAllByType(Text).find((t: any) => t.props.children === 'Continue');
+      const text = root.findAllByType(Text).find((t: ReactTestInstance) => t.props.children === 'Continue');
       if (!text) throw new Error('Continue button not found');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let parent: any = text.parent;
+      let parent: ReactTestInstance | null = text.parent;
       while (parent && parent.type !== TouchableOpacity) {
         parent = parent.parent;
       }
