@@ -1,10 +1,12 @@
-import App from '../App';
+/* eslint-env jest */
 import { describe, expect, it, jest } from '@jest/globals';
 import fs from 'fs';
 import path from 'path';
 import React from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import renderer from 'react-test-renderer';
+
+import App from '../App';
 
 jest.mock('expo-notifications', () => ({
   getPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
