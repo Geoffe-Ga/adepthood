@@ -10,7 +10,8 @@ from pydantic import BaseModel
 class Habit(BaseModel):
     id: int
     name: str
-    energy: int
+    energy_cost: int
+    energy_return: int
 
 
 class EnergyPlanItem(BaseModel):
