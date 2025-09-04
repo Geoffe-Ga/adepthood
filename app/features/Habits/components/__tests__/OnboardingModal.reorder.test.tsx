@@ -155,4 +155,27 @@ describe('OnboardingModal reorder stage colours', () => {
     expect(flattened.maxHeight).toBe('90%');
     expect(flattened.overflow).toBe('hidden');
   });
+
+  it('enables scrolling when list content exceeds height', () => {
+    const tree = renderer.create(
+      <OnboardingModal visible onClose={jest.fn()} onSaveHabits={jest.fn()} />,
+    );
+    const root = tree.root;
+
+    for (let i = 0; i < 12; i++) {
+      addHabit(root, `H${i}`);
+    }
+
+    advance(root);
+    advance(root);
+    advance(root);
+
+    let list = root.findByProps({ testID: 'habit-reorder-list' });
+    renderer.act(() => {
+      list.props.onLayout({ nativeEvent: { layout: { height: 200 } } });
+      list.props.onContentSizeChange(0, 600);
+    });
+    list = root.findByProps({ testID: 'habit-reorder-list' });
+    expect(list.props.scrollEnabled).toBe(true);
+  });
 });

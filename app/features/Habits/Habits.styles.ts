@@ -1194,7 +1194,7 @@ export const styles = StyleSheet.create({
     marginVertical: SPACING.lg,
   },
   habitsListContent: {
-    paddingBottom: SPACING.xxl * 2,
+    paddingBottom: SPACING.xxl,
   },
   habitListItem: {
     flexDirection: 'row',
