@@ -1,16 +1,11 @@
 /* eslint-disable import/order */
 import { describe, expect, it, jest } from '@jest/globals';
-import type { ReactElement, ReactNode } from 'react';
+import type React from 'react';
 import renderer from 'react-test-renderer';
 import { Text, TextInput, TouchableOpacity } from 'react-native';
 
 jest.mock('../../HabitsScreen', () => ({ DEFAULT_ICONS: ['⭐'] }));
-jest.mock('react-native-draggable-flatlist', () => {
-  const { View } = require('react-native');
-  return ({ ListFooterComponent }: { ListFooterComponent?: ReactElement }) => (
-    <View>{ListFooterComponent}</View>
-  );
-});
+jest.mock('react-native-draggable-flatlist', () => 'DraggableFlatList');
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
 jest.mock('react-native-gesture-handler', () => {
@@ -24,7 +19,7 @@ jest.mock('react-native-gesture-handler', () => {
   };
   return {
     GestureHandlerRootView: View,
-    GestureDetector: ({ children }: { children: ReactNode }) => <View>{children}</View>,
+    GestureDetector: ({ children }: { children: React.ReactNode }) => <View>{children}</View>,
     Gesture: {
       LongPress: () => mockGesture,
       Pan: () => mockGesture,
