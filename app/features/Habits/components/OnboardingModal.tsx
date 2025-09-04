@@ -253,47 +253,47 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
           const startDrag = Gesture.Race(longPress, mouseGrab);
 
           return (
-            <GestureDetector gesture={startDrag}>
-              <Animated.View
-                testID={`reorder-item-${index}`}
-                style={[
-                  styles.habitListItem,
-                  isActive && { backgroundColor: '#eaeaea' },
-                  { borderLeftColor: color, borderLeftWidth: 4 },
-                ]}
-              >
-                <View style={styles.habitDragInfo}>
+            <Animated.View
+              testID={`reorder-item-${index}`}
+              style={[
+                styles.habitListItem,
+                isActive && { backgroundColor: '#eaeaea' },
+                { borderLeftColor: color, borderLeftWidth: 4 },
+              ]}
+            >
+              <View style={styles.habitDragInfo}>
+                <GestureDetector gesture={startDrag}>
                   <View accessibilityLabel={`Reorder ${item.name}`} style={styles.dragHandle}>
                     <Text style={styles.dragHandleText}>≡</Text>
                   </View>
-                  <Text style={styles.habitListItemDate}>
-                    {new Date(item.start_date).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                    })}
-                  </Text>
-                  <Text style={styles.habitListItemText}>
-                    {item.icon} {item.name}
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.iconEditButton}
-                    onPress={() => {
-                      setSelectedHabitIndex(index);
-                      setShowEmojiPicker(true);
-                    }}
-                  >
-                    <Text style={styles.iconEditButtonText}>📝</Text>
-                  </TouchableOpacity>
-                </View>
+                </GestureDetector>
+                <Text style={styles.habitListItemDate}>
+                  {new Date(item.start_date).toLocaleDateString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                  })}
+                </Text>
+                <Text style={styles.habitListItemText}>
+                  {item.icon} {item.name}
+                </Text>
+                <TouchableOpacity
+                  style={styles.iconEditButton}
+                  onPress={() => {
+                    setSelectedHabitIndex(index);
+                    setShowEmojiPicker(true);
+                  }}
+                >
+                  <Text style={styles.iconEditButtonText}>📝</Text>
+                </TouchableOpacity>
+              </View>
 
-                <View style={styles.habitEnergyInfo}>
-                  <Text style={styles.habitEnergyText}>
-                    Cost: {item.energy_cost} | Return: {item.energy_return} | Net{' '}
-                    {item.energy_return - item.energy_cost}
-                  </Text>
-                </View>
-              </Animated.View>
-            </GestureDetector>
+              <View style={styles.habitEnergyInfo}>
+                <Text style={styles.habitEnergyText}>
+                  Cost: {item.energy_cost} | Return: {item.energy_return} | Net{' '}
+                  {item.energy_return - item.energy_cost}
+                </Text>
+              </View>
+            </Animated.View>
           );
         }}
         onDragEnd={handleDragEnd}
@@ -328,7 +328,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
         style={styles.onboardingContinueButton}
         onPress={handleFinish}
       >
-        <Text style={styles.onboardingContinueButtonText}>Done</Text>
+        <Text style={styles.onboardingContinueButtonText}>Complete Energy Scaffolding</Text>
       </TouchableOpacity>
     </View>
   );

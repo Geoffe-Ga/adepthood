@@ -126,6 +126,8 @@ describe('OnboardingModal reorder stage colours', () => {
     expect(style1.borderLeftColor).toBe(STAGE_COLORS[STAGE_ORDER[1] as keyof typeof STAGE_COLORS]);
 
     const list = root.findByType(FlatList);
+    const listStyle = StyleSheet.flatten(list.props.style);
+    expect(listStyle.flex).toBe(1);
     const swapped = [list.props.data[1], list.props.data[0]];
     renderer.act(() => {
       list.props.onDragEnd({ data: swapped });

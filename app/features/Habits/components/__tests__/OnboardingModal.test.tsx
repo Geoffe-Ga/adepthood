@@ -128,6 +128,8 @@ describe('OnboardingModal close behaviour', () => {
     });
 
     const finish = root.findByProps({ testID: 'finish-setup' });
+    const finishText = finish.findByType(Text);
+    expect(finishText.props.children).toBe('Complete Energy Scaffolding');
     renderer.act(() => {
       finish.props.onPress();
     });
@@ -182,6 +184,8 @@ describe('OnboardingModal close behaviour', () => {
     });
 
     const finish = root.findByProps({ testID: 'finish-setup' });
+    const finishText = finish.findByType(Text);
+    expect(finishText.props.children).toBe('Complete Energy Scaffolding');
     renderer.act(() => {
       finish.props.onPress();
     });
