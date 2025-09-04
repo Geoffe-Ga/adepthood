@@ -41,6 +41,7 @@ describe('Onboarding completion', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const props = call[0] as any;
     const sampleHabit = {
+      id: '1',
       name: 'Test',
       icon: '⭐',
       energy_cost: 1,

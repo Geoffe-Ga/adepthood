@@ -1,6 +1,6 @@
 /* eslint-disable import/order, no-unused-vars, @typescript-eslint/no-explicit-any */
 import { describe, expect, it, jest } from '@jest/globals';
-import React from 'react';
+import type React from 'react';
 import { FlatList, StyleSheet, Text, TextInput, TouchableOpacity } from 'react-native';
 import renderer from 'react-test-renderer';
 
@@ -11,8 +11,28 @@ jest.mock('../../HabitsScreen', () => ({ DEFAULT_ICONS: ['⭐'] }));
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
 jest.mock('react-native-gesture-handler', () => {
+  const React = require('react');
   const { View } = require('react-native');
-  return { GestureHandlerRootView: View };
+  const mockGesture = {
+    minDuration: () => mockGesture,
+    onStart: () => mockGesture,
+    activateAfterLongPress: () => mockGesture,
+    onBegin: () => mockGesture,
+  };
+  return {
+    GestureHandlerRootView: View,
+    GestureDetector: ({ children }: { children: React.ReactNode }) => <View>{children}</View>,
+    Gesture: {
+      LongPress: () => mockGesture,
+      Pan: () => mockGesture,
+      Race: () => mockGesture,
+    },
+  };
+});
+jest.mock('react-native-reanimated', () => {
+  const { View } = require('react-native');
+  const Animated = { View };
+  return { __esModule: true, default: Animated, View };
 });
 
 // Provide a basic draggable list mock that renders items via FlatList
@@ -22,6 +42,7 @@ jest.mock('react-native-draggable-flatlist', () => {
     data,
     renderItem,
     onDragEnd,
+    activationDistance, // eslint-disable-line @typescript-eslint/no-unused-vars
     ...rest
   }: {
     data: any[];
@@ -33,6 +54,7 @@ jest.mock('react-native-draggable-flatlist', () => {
       getIndex: () => number;
     }) => React.ReactElement;
     onDragEnd: (event: { data: any[] }) => void;
+    activationDistance?: number;
   } & Record<string, unknown>) => (
     <FlatList
       {...rest}

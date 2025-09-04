@@ -1,6 +1,6 @@
 /* eslint-disable import/order */
 import { describe, expect, it, jest } from '@jest/globals';
-import React from 'react';
+import type React from 'react';
 import renderer from 'react-test-renderer';
 import { Text, TextInput, TouchableOpacity } from 'react-native';
 
@@ -9,8 +9,28 @@ jest.mock('react-native-draggable-flatlist', () => 'DraggableFlatList');
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
 jest.mock('react-native-gesture-handler', () => {
+  const React = require('react');
   const { View } = require('react-native');
-  return { GestureHandlerRootView: View };
+  const mockGesture = {
+    minDuration: () => mockGesture,
+    onStart: () => mockGesture,
+    activateAfterLongPress: () => mockGesture,
+    onBegin: () => mockGesture,
+  };
+  return {
+    GestureHandlerRootView: View,
+    GestureDetector: ({ children }: { children: React.ReactNode }) => <View>{children}</View>,
+    Gesture: {
+      LongPress: () => mockGesture,
+      Pan: () => mockGesture,
+      Race: () => mockGesture,
+    },
+  };
+});
+jest.mock('react-native-reanimated', () => {
+  const { View } = require('react-native');
+  const Animated = { View };
+  return { __esModule: true, default: Animated, View };
 });
 
 const OnboardingModal = require('../OnboardingModal').default;

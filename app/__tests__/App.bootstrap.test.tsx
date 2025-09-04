@@ -24,6 +24,10 @@ jest.mock('../features/Habits/components/OnboardingModal', () => () => null);
 jest.mock('../features/Habits/components/ReorderHabitsModal', () => () => null);
 jest.mock('../features/Habits/components/StatsModal', () => () => null);
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
+jest.mock('react-native-gesture-handler', () => {
+  const { View } = require('react-native');
+  return { GestureHandlerRootView: View };
+});
 
 describe('App bootstrap', () => {
   it('includes SafeAreaProvider at the root', () => {

@@ -1,17 +1,9 @@
 import React, { useState } from 'react';
-import {
-  FlatList,
-  Modal,
-  Platform,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { FlatList, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated from 'react-native-reanimated';
 
 import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
 import { STAGE_COLORS } from '../../../constants/stageColors';
@@ -35,6 +27,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     const randomIcon = DEFAULT_ICONS[Math.floor(Math.random() * DEFAULT_ICONS.length)] ?? '⭐';
 
     const newHabit: OnboardingHabit = {
+      id: `${Date.now()}-${Math.random()}`,
       name: newHabitName.trim(),
       icon: randomIcon,
       energy_cost: 5,
@@ -95,7 +88,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
       <Text style={styles.onboardingSubtitle}>Rate each habit from -10 to 10 for energy cost</Text>
       <FlatList
         data={habits}
-        keyExtractor={(_, index) => index.toString()}
+        keyExtractor={(item) => item.id}
         renderItem={({ item, index }) => (
           <View style={styles.energyRatingItem}>
             <Text style={styles.energyRatingName}>
@@ -147,7 +140,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
       </Text>
       <FlatList
         data={habits}
-        keyExtractor={(_, index) => index.toString()}
+        keyExtractor={(item) => item.id}
         renderItem={({ item, index }) => (
           <View style={styles.energyRatingItem}>
             <Text style={styles.energyRatingName}>
@@ -240,19 +233,28 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
         />
       </View>
 
-      <GestureHandlerRootView style={styles.habitsList}>
-        <DraggableFlatList<OnboardingHabit>
-          style={{ flex: 1 }}
-          data={habits}
-          keyExtractor={(_, index) => index.toString()}
-          contentContainerStyle={styles.habitsListContent}
-          renderItem={({ item, drag, isActive, getIndex }) => {
-            const index = getIndex() ?? 0;
-            const stage = (STAGE_ORDER[index] ?? STAGE_ORDER[STAGE_ORDER.length - 1]) as string;
-            const color = STAGE_COLORS[stage as keyof typeof STAGE_COLORS] || '#ccc';
+      <DraggableFlatList<OnboardingHabit>
+        style={{ flex: 1 }}
+        data={habits}
+        keyExtractor={(item) => item.id}
+        activationDistance={8}
+        contentContainerStyle={styles.habitsListContent}
+        renderItem={({ item, drag, isActive, getIndex }) => {
+          const index = getIndex() ?? 0;
+          const stage = (STAGE_ORDER[index] ?? STAGE_ORDER[STAGE_ORDER.length - 1]) as string;
+          const color = STAGE_COLORS[stage as keyof typeof STAGE_COLORS] || '#ccc';
 
-            return (
-              <View
+          const longPress = Gesture.LongPress()
+            .minDuration(150)
+            .onStart(() => drag());
+          const mouseGrab = Gesture.Pan()
+            .activateAfterLongPress(0)
+            .onBegin(() => drag());
+          const startDrag = Gesture.Race(longPress, mouseGrab);
+
+          return (
+            <GestureDetector gesture={startDrag}>
+              <Animated.View
                 testID={`reorder-item-${index}`}
                 style={[
                   styles.habitListItem,
@@ -261,15 +263,9 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
                 ]}
               >
                 <View style={styles.habitDragInfo}>
-                  <TouchableOpacity
-                    onLongPress={drag}
-                    onPressIn={Platform.OS === 'web' ? drag : undefined}
-                    delayLongPress={150}
-                    accessibilityLabel={`Reorder ${item.name}`}
-                    style={styles.dragHandle}
-                  >
+                  <View accessibilityLabel={`Reorder ${item.name}`} style={styles.dragHandle}>
                     <Text style={styles.dragHandleText}>≡</Text>
-                  </TouchableOpacity>
+                  </View>
                   <Text style={styles.habitListItemDate}>
                     {new Date(item.start_date).toLocaleDateString('en-US', {
                       month: 'short',
@@ -296,12 +292,12 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
                     {item.energy_return - item.energy_cost}
                   </Text>
                 </View>
-              </View>
-            );
-          }}
-          onDragEnd={handleDragEnd}
-        />
-      </GestureHandlerRootView>
+              </Animated.View>
+            </GestureDetector>
+          );
+        }}
+        onDragEnd={handleDragEnd}
+      />
 
       {showEmojiPicker && selectedHabitIndex !== null && (
         <View style={styles.emojiPickerModal}>
@@ -365,7 +361,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
             </View>
             <FlatList
               data={habits}
-              keyExtractor={(_, index) => index.toString()}
+              keyExtractor={(item) => item.id}
               renderItem={({ item, index }) => (
                 <View style={styles.habitListItem}>
                   <Text style={styles.habitListItemText}>
@@ -412,7 +408,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
         animationType="slide"
         onRequestClose={handleAttemptClose}
       >
-        <View style={styles.modalOverlay}>
+        <GestureHandlerRootView style={styles.modalOverlay}>
           <TouchableOpacity
             activeOpacity={1}
             onPress={handleAttemptClose}
@@ -429,7 +425,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
             </TouchableOpacity>
             {renderStep()}
           </View>
-        </View>
+        </GestureHandlerRootView>
       </Modal>
 
       {showDiscardDialog && (
