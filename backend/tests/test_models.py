@@ -9,14 +9,14 @@ from typing import ClassVar
 from sqlmodel import SQLModel
 
 
-class TestDataModel(unittest.TestCase):
-    """Structural tests for ``app.models.data_model``.
+class TestModels(unittest.TestCase):
+    """Structural tests for ``app.models`` package.
 
-    Importing the module executes model class bodies (fields/relationships),
-    which suffices to fully cover a declarative models module without a DB.
+    Importing the package executes model class bodies (fields/relationships),
+    which suffices to fully cover a declarative models package without a DB.
     """
 
-    MODULE_PATH: ClassVar[str] = "app.models.data_model"
+    MODULE_PATH: ClassVar[str] = "app.models"
     mod: ClassVar[ModuleType]
 
     @classmethod

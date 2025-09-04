@@ -20,7 +20,15 @@ Agents working on this project must abide by the following operating principles:
 
   - CI should pass green on every merge to main.
 
-  - If CI fails, fix it before continuing. You are not permitted to “comment out the failing test.”
+  - If CI fails, fix it before continuing. You are not permitted to
+
+    - Comment out the failing test.
+
+    - Add "disable" tags before or after code in order to get tests to pass.
+
+    - Modify test config files to bypass rules that the code is failing
+
+    - Any other behavior that resembles the above.
 
   - Agents must:
 

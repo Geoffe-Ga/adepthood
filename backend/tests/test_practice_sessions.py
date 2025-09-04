@@ -4,7 +4,7 @@ from itertools import count
 import pytest  # type: ignore[import-not-found]
 from fastapi.testclient import TestClient
 
-import app.practice as practice_module
+import app.routers.practice as practice_module
 from app.main import app
 
 client = TestClient(app)

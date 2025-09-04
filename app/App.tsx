@@ -1,11 +1,12 @@
 // app/App.tsx
 
+import { NavigationContainer } from '@react-navigation/native';
 import React from 'react';
 import { StatusBar, StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
-import HabitsScreen from './features/Habits/HabitsScreen';
+import BottomTabs from './navigation/BottomTabs';
 
 export default function App(): React.JSX.Element {
   return (
