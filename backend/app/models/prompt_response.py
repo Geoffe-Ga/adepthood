@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlmodel import Field, Relationship, SQLModel
@@ -19,6 +19,6 @@ class PromptResponse(SQLModel, table=True):
     week_number: int
     question: str
     response: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     user_id: int = Field(foreign_key="user.id")
     user: User = Relationship(back_populates="responses")

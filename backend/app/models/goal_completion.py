@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlmodel import Field, Relationship, SQLModel
@@ -23,7 +23,7 @@ class GoalCompletion(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     goal_id: int = Field(foreign_key="goal.id")
     user_id: int = Field(foreign_key="user.id")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_units: float
     via_timer: bool = False
     goal: Goal = Relationship(back_populates="completions")

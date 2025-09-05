@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlmodel import Field, SQLModel
 
@@ -13,5 +13,5 @@ class PracticeSession(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     user_practice_id: int = Field(foreign_key="userpractice.id")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     duration_minutes: float

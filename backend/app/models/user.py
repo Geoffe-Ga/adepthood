@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlmodel import Field, Relationship, SQLModel
@@ -22,7 +22,7 @@ class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     offering_balance: int = Field(default=0)
     email: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     habits: list[Habit] = Relationship(back_populates="user")
     journals: list[JournalEntry] = Relationship(back_populates="user")
     responses: list[PromptResponse] = Relationship(back_populates="user")

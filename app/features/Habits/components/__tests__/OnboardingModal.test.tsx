@@ -46,7 +46,7 @@ jest.mock('react-native-gesture-handler', () => ({
   GestureDetector: ({ children }: { children: React.ReactNode }) => children,
   Gesture: {
     LongPress: () => ({ minDuration: () => ({ onStart: () => ({}) }) }),
-    Pan: () => ({ activateAfterLongPress: () => ({ onBegin: () => ({}) }) }),
+    Pan: () => ({ onBegin: () => ({}) }),
     Race: () => ({}),
   },
 }));
