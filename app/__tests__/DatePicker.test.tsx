@@ -9,7 +9,7 @@ import DatePicker, {
   isDateWithinRange,
   parseISODate,
   toISODate,
-} from '../components/DatePicker';
+} from '../src/components/DatePicker';
 
 jest.mock('react-native-modal-datetime-picker', () => ({
   __esModule: true,
@@ -34,7 +34,10 @@ describe('date utilities', () => {
     const originalTZ = process.env.TZ;
     process.env.TZ = 'America/Los_Angeles';
     jest.isolateModules(() => {
-      const { parseDateInput: parseInput, toISODate: toISO } = require('../components/DatePicker');
+      const {
+        parseDateInput: parseInput,
+        toISODate: toISO,
+      } = require('../src/components/DatePicker');
       const parsed = parseInput('2025-09-10');
       expect(parsed).not.toBeNull();
       expect(toISO(parsed!)).toBe('2025-09-10');

@@ -55,7 +55,7 @@
     "typescript-eslint": "^8.40.0"
   },
   "license": "MIT",
-  "main": "index.ts",
+  "main": "src/index.ts",
   "name": "frontend",
   "private": true,
   "scripts": {

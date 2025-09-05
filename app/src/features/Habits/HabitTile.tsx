@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 
+import { spacing } from '../../../Sources/design/DesignSystem';
+import useResponsive from '../../../Sources/design/useResponsive';
 import { STAGE_COLORS } from '../../constants/stageColors';
-import { spacing } from '../../Sources/design/DesignSystem';
-import useResponsive from '../../Sources/design/useResponsive';
 
 import type { HabitTileProps, Goal } from './Habits.types';
 import {

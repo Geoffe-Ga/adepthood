@@ -1,8 +1,4 @@
-import {
-  createEnergyPlan,
-  type EnergyPlanRequest,
-  type EnergyPlanResponse,
-} from '../src/api/client';
+import { createEnergyPlan, type EnergyPlanRequest, type EnergyPlanResponse } from '../api/client';
 
 const BASE_URL = 'http://localhost:8000';
 

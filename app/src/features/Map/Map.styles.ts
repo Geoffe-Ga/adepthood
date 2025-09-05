@@ -2,7 +2,7 @@
 
 import { StyleSheet } from 'react-native';
 
-import { radius, spacing } from '../../Sources/design/DesignSystem';
+import { radius, spacing } from '../../../Sources/design/DesignSystem';
 
 /**
  * Styles for the Map screen hotspot layout and modal.
