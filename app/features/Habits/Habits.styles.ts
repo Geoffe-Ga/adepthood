@@ -1,4 +1,4 @@
-import { StyleSheet, type ViewStyle } from 'react-native';
+import { Platform, StyleSheet, type ViewStyle } from 'react-native';
 
 //------------------
 // Theme Configuration (easier to maintain and change)
@@ -957,8 +957,18 @@ export const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.xl,
     padding: SPACING.xl,
     height: '90%',
-    overflow: 'hidden',
     ...SHADOWS.large,
+  },
+  reorderListWindow: {
+    maxHeight: '92%',
+    flexGrow: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web'
+      ? {
+          overflowY: 'auto',
+          overscrollBehavior: 'contain',
+        }
+      : {}),
   },
   modalClose: {
     position: 'absolute',
@@ -1007,6 +1017,7 @@ export const styles = StyleSheet.create({
   },
   onboardingStep: {
     flex: 1,
+    minHeight: 0,
   },
   onboardingTitle: {
     fontSize: 24,
