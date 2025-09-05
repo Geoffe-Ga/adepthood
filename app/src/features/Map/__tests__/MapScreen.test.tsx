@@ -1,6 +1,5 @@
 /* eslint-env jest */
 /* global describe, it, expect, beforeEach, jest */
-/* eslint-disable import/order */
 import React from 'react';
 import { Image } from 'react-native';
 import { act, create } from 'react-test-renderer';

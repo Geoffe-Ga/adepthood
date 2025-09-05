@@ -3,9 +3,9 @@ import { jest, describe, afterEach, it, expect } from '@jest/globals';
 
 import { STAGE_COLORS } from '../../../constants/stageColors';
 
-const HabitsScreen = require('../HabitsScreen').default;
-
 const renderer = require('react-test-renderer');
+
+const HabitsScreen = require('../HabitsScreen').default;
 
 jest.mock('expo-notifications', () => ({
   getPermissionsAsync: (jest.fn() as any).mockResolvedValue({ status: 'granted' }),

@@ -1,7 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import { Alert } from 'react-native';
-
 import renderer from 'react-test-renderer';
 
 const HabitsScreen = require('../HabitsScreen').default;

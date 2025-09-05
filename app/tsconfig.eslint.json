@@ -4,5 +4,13 @@
     "allowJs": true
   },
   "exclude": ["node_modules", "babel.config.js", "metro.config.js"],
-  "include": ["**/*.ts", "**/*.tsx", "eslint.config.cjs", "jest.config.js"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "__tests__/**/*.ts",
+    "__tests__/**/*.tsx",
+    "@types/**/*.d.ts",
+    "eslint.config.cjs",
+    "jest.config.js"
+  ]
 }

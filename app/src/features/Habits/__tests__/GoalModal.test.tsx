@@ -1,6 +1,5 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-/* eslint-disable import/order */
 import { jest } from '@jest/globals';
 import React from 'react';
 import renderer from 'react-test-renderer';
