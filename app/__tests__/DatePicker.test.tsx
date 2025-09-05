@@ -30,6 +30,18 @@ describe('date utilities', () => {
     expect(parseDateInput('invalid')).toBeNull();
   });
 
+  test('parseDateInput preserves local day for ISO input', () => {
+    const originalTZ = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+    jest.isolateModules(() => {
+      const { parseDateInput: parseInput, toISODate: toISO } = require('../components/DatePicker');
+      const parsed = parseInput('2025-09-10');
+      expect(parsed).not.toBeNull();
+      expect(toISO(parsed!)).toBe('2025-09-10');
+    });
+    process.env.TZ = originalTZ;
+  });
+
   test('isDateWithinRange validates correctly', () => {
     const min = new Date('2025-01-01');
     const max = new Date('2025-12-31');

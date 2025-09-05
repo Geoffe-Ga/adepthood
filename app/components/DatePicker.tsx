@@ -70,6 +70,11 @@ export const parseDateInput = (input: string): Date | null => {
       return new Date(md);
     }
   }
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const date = parseISODate(trimmed);
+    return toISODate(date) === trimmed ? date : null;
+  }
 
   const parsed = new Date(trimmed);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
