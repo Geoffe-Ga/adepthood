@@ -1,4 +1,4 @@
-from app.domain.goals import compute_progress
+from src.domain.goals import compute_progress
 
 
 def test_additive_progress() -> None:

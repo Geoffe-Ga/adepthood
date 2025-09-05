@@ -3,12 +3,12 @@ name: Frontend CI
 on:
   push:
     paths:
-      - "app/**"
+      - "frontend/**"
       - ".github/workflows/frontend-ci.yml"
       - ".pre-commit-config.yaml"
   pull_request:
     paths:
-      - "app/**"
+      - "frontend/**"
       - ".github/workflows/frontend-ci.yml"
       - ".pre-commit-config.yaml"
 
@@ -22,26 +22,26 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version-file: "app/.nvmrc"
+          node-version-file: "frontend/.nvmrc"
           cache: "npm"
-          cache-dependency-path: "app/package.json"
+          cache-dependency-path: "frontend/package.json"
 
       - name: Install dependencies
-        working-directory: app
+        working-directory: frontend
         run: npm ci || npm install
 
       - name: Lint
-        working-directory: app
+        working-directory: frontend
         run: npx eslint . --max-warnings=0
 
       - name: Type-check
-        working-directory: app
+        working-directory: frontend
         run: npx tsc -p tsconfig.json --noEmit
 
       - name: Format check
-        working-directory: app
+        working-directory: frontend
         run: npx prettier -c .
 
       - name: Tests
-        working-directory: app
+        working-directory: frontend
         run: npx jest --passWithNoTests

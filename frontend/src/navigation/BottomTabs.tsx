@@ -1,4 +1,4 @@
-// app/navigation/BottomTabs.tsx
+// frontend/navigation/BottomTabs.tsx
 
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import React from 'react';

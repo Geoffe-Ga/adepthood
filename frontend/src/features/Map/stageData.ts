@@ -1,4 +1,4 @@
-// app/features/Map/stageData.ts
+// frontend/features/Map/stageData.ts
 
 /**
  * Static placeholder data for the ten APTITUDE stages.
