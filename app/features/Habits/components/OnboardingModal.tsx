@@ -301,14 +301,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
             const stage = (STAGE_ORDER[index] ??
               STAGE_ORDER[STAGE_ORDER.length - 1]) as keyof typeof STAGE_COLORS;
             const color = STAGE_COLORS[stage] || '#ccc';
-
-            const longPress = Gesture.LongPress()
-              .minDuration(150)
-              .onStart(() => drag());
-            const mouseGrab = Gesture.Pan()
-              .activateAfterLongPress(0)
-              .onBegin(() => drag());
-            const startDrag = Gesture.Race(longPress, mouseGrab);
+            const startDrag = Gesture.Pan().onBegin(() => drag());
 
             return (
               <GestureDetector gesture={startDrag}>

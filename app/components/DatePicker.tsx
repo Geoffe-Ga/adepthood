@@ -130,12 +130,18 @@ const DatePicker: React.FC<DatePickerProps> = ({
     commitDate(parsed);
   };
 
-  const quickToday = () => commitDate(new Date());
+  const quickToday = () => {
+    const now = new Date();
+    const utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    commitDate(utc);
+  };
   const quickNextMonday = () => {
-    const d = new Date();
-    const add = (8 - d.getDay()) % 7 || 7;
-    d.setDate(d.getDate() + add);
-    commitDate(d);
+    const now = new Date();
+    const utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const dow = utc.getUTCDay(); // 0..6 (Sun..Sat) in UTC
+    const add = (8 - dow) % 7 || 7; // next Monday
+    utc.setUTCDate(utc.getUTCDate() + add); // add whole UTC days
+    commitDate(utc);
   };
   const quickFirstNextMonth = () => {
     const d = new Date();

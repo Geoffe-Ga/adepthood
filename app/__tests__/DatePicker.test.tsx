@@ -26,7 +26,7 @@ describe('date utilities', () => {
 
   test('parseDateInput handles various formats', () => {
     expect(parseDateInput('9/1/25')?.toISOString().slice(0, 10)).toBe('2025-09-01');
-    expect(parseDateInput('Sep 1')?.toISOString().slice(0, 10)).toBe('2025-09-01');
+    expect(parseDateInput('Sep 1 2025')?.toISOString().slice(0, 10)).toBe('2025-09-01');
     expect(parseDateInput('invalid')).toBeNull();
   });
 

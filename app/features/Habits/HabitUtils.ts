@@ -27,7 +27,7 @@ export const calculateHabitStartDate = (baseDate: Date, index: number): Date => 
   const date = new Date(baseDate);
   const durations = [21, 21, 21, 21, 21, 21, 21, 21, 42, 42];
   const offset = durations.slice(0, index).reduce((sum, d) => sum + d, 0);
-  date.setDate(date.getDate() + offset);
+  date.setUTCDate(date.getUTCDate() + offset);
   return date;
 };
 
