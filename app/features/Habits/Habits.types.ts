@@ -61,6 +61,7 @@ export interface HabitStatsData {
 }
 
 export interface OnboardingHabit {
+  id: string;
   name: string;
   icon: string;
   energy_cost: number;

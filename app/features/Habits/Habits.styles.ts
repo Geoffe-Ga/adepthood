@@ -957,6 +957,7 @@ export const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.xl,
     padding: SPACING.xl,
     height: '90%',
+    overflow: 'hidden',
     ...SHADOWS.large,
   },
   modalClose: {
@@ -1055,6 +1056,15 @@ export const styles = StyleSheet.create({
   habitDragInfo: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  dragHandle: {
+    width: 20,
+    alignItems: 'center',
+    marginRight: SPACING.md,
+  },
+  dragHandleText: {
+    fontSize: 20,
+    color: COLORS.text.secondary,
   },
   habitListItemDate: {
     fontSize: 14,
