@@ -1,4 +1,4 @@
-import { StyleSheet, type ViewStyle } from 'react-native';
+import { Platform, StyleSheet, type ViewStyle } from 'react-native';
 
 //------------------
 // Theme Configuration (easier to maintain and change)
@@ -959,6 +959,17 @@ export const styles = StyleSheet.create({
     height: '90%',
     ...SHADOWS.large,
   },
+  reorderListWindow: {
+    maxHeight: '92%',
+    flexGrow: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web'
+      ? {
+          overflowY: 'auto',
+          overscrollBehavior: 'contain',
+        }
+      : {}),
+  },
   modalClose: {
     position: 'absolute',
     top: SPACING.sm,
@@ -1006,6 +1017,7 @@ export const styles = StyleSheet.create({
   },
   onboardingStep: {
     flex: 1,
+    minHeight: 0,
   },
   onboardingTitle: {
     fontSize: 24,
@@ -1055,6 +1067,15 @@ export const styles = StyleSheet.create({
   habitDragInfo: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  dragHandle: {
+    width: 20,
+    alignItems: 'center',
+    marginRight: SPACING.md,
+  },
+  dragHandleText: {
+    fontSize: 20,
+    color: COLORS.text.secondary,
   },
   habitListItemDate: {
     fontSize: 14,

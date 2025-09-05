@@ -15,12 +15,15 @@ import {
 } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import EmojiSelector from 'react-native-emoji-selector';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated from 'react-native-reanimated';
 
 import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
+import { STAGE_COLORS } from '../../../constants/stageColors';
 import styles, { COLORS } from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { DEFAULT_ICONS } from '../HabitsScreen';
-import { calculateHabitStartDate } from '../HabitUtils';
+import { STAGE_ORDER, calculateHabitStartDate } from '../HabitUtils';
 
 interface SmoothSliderProps extends SliderProps {
   animateTransitions?: boolean;
@@ -66,6 +69,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     const habitsWithDates = sortedHabits.map((habit, index) => ({
       ...habit,
       start_date: calculateHabitStartDate(startDate, index),
+      stage: STAGE_ORDER[index] ?? 'Clear Light',
     }));
 
     setHabits(habitsWithDates);
@@ -99,6 +103,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     const randomIcon = DEFAULT_ICONS[Math.floor(Math.random() * DEFAULT_ICONS.length)] ?? '⭐';
 
     const newHabit: OnboardingHabit = {
+      id: Date.now().toString(),
       name: newHabitName.trim(),
       icon: randomIcon,
       energy_cost: 5,
@@ -225,6 +230,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     const updatedHabits = data.map((habit, index) => ({
       ...habit,
       start_date: calculateHabitStartDate(startDate, index),
+      stage: STAGE_ORDER[index] ?? 'Clear Light',
     }));
     setHabits(updatedHabits);
   };
@@ -244,80 +250,106 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
 
   const renderReorderStep = () => (
     <View style={styles.onboardingStep}>
-      <Text style={styles.onboardingTitle}>Reorder Your Habits</Text>
-      <Text style={styles.onboardingSubtitle}>
-        Habits are ordered by energy efficiency. You can drag to reorder if needed.
-      </Text>
-
-      <View style={styles.startDateContainer}>
-        <Text style={styles.startDateLabel}>First habit starts on:</Text>
-        <DatePicker
-          value={toISODate(startDate)}
-          minDate={toISODate(new Date())}
-          mode="scaffoldingStart"
-          onChange={(iso) => {
-            const selectedDate = parseISODate(iso);
-            setStartDate(selectedDate);
-            setHabits((prev) =>
-              prev.map((habit, index) => ({
-                ...habit,
-                start_date: calculateHabitStartDate(selectedDate, index),
-              })),
-            );
-          }}
-        />
-      </View>
-
-      <View style={styles.habitsList}>
+      <View style={styles.reorderListWindow}>
         <DraggableFlatList
-          style={{ flex: 1 }}
+          testID="reorder-list"
           data={habits}
-          keyExtractor={(_, index) => index.toString()}
+          keyExtractor={(item) => item.id}
+          activationDistance={8}
           contentContainerStyle={styles.habitsListContent}
-          renderItem={({ item, drag, isActive }) => {
-            const index = habits.findIndex((h) => h === item);
+          scrollEnabled
+          nestedScrollEnabled
+          autoscrollThreshold={40}
+          autoscrollSpeed={300}
+          ListHeaderComponent={
+            <>
+              <Text style={styles.onboardingTitle}>Reorder Your Habits</Text>
+              <Text style={styles.onboardingSubtitle}>
+                Habits are ordered by energy efficiency. You can drag to reorder if needed.
+              </Text>
+              <View style={styles.startDateContainer}>
+                <Text style={styles.startDateLabel}>First habit starts on:</Text>
+                <DatePicker
+                  value={toISODate(startDate)}
+                  minDate={toISODate(new Date())}
+                  mode="scaffoldingStart"
+                  onChange={(iso) => {
+                    const selectedDate = parseISODate(iso);
+                    setStartDate(selectedDate);
+                    setHabits((prev) =>
+                      prev.map((habit, index) => ({
+                        ...habit,
+                        start_date: calculateHabitStartDate(selectedDate, index),
+                      })),
+                    );
+                  }}
+                />
+              </View>
+            </>
+          }
+          ListFooterComponent={
+            <TouchableOpacity
+              testID="finish-setup"
+              style={styles.onboardingContinueButton}
+              onPress={handleFinish}
+            >
+              <Text style={styles.onboardingContinueButtonText}>Done</Text>
+            </TouchableOpacity>
+          }
+          renderItem={({ item, drag, isActive, getIndex }) => {
+            const index = getIndex() ?? 0;
+            const stage = (STAGE_ORDER[index] ??
+              STAGE_ORDER[STAGE_ORDER.length - 1]) as keyof typeof STAGE_COLORS;
+            const color = STAGE_COLORS[stage] || '#ccc';
+            const startDrag = Gesture.Pan().onBegin(() => drag());
 
             return (
-              <TouchableOpacity
-                onLongPress={drag}
-                onPressIn={Platform.OS === 'web' ? drag : undefined}
-                delayLongPress={150}
-                style={[styles.habitListItem, isActive && { backgroundColor: '#eaeaea' }]}
-              >
-                <View style={styles.habitDragInfo}>
-                  <Text style={styles.habitListItemDate}>
-                    {new Date(item.start_date).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                    })}
-                  </Text>
-                  <Text style={styles.habitListItemText}>
-                    {item.icon} {item.name}
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.iconEditButton}
-                    onPress={() => {
-                      setSelectedHabitIndex(index);
-                      setShowEmojiPicker(true);
-                    }}
-                  >
-                    <Text style={styles.iconEditButtonText}>📝</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.habitEnergyInfo}>
-                  <Text style={styles.habitEnergyText}>
-                    Cost: {item.energy_cost} | Return: {item.energy_return} | Net:{' '}
-                    {item.energy_return - item.energy_cost}
-                  </Text>
-                </View>
-              </TouchableOpacity>
+              <GestureDetector gesture={startDrag}>
+                <Animated.View
+                  testID={`reorder-item-${item.id}`}
+                  style={[
+                    styles.habitListItem,
+                    isActive && { backgroundColor: '#eaeaea' },
+                    { borderLeftColor: color, borderLeftWidth: 4 },
+                  ]}
+                >
+                  <View style={styles.habitDragInfo}>
+                    <View accessibilityLabel={`Reorder ${item.name}`} style={styles.dragHandle}>
+                      <Text style={styles.dragHandleText}>≡</Text>
+                    </View>
+                    <Text style={styles.habitListItemDate}>
+                      {new Date(item.start_date).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                      })}
+                    </Text>
+                    <Text style={styles.habitListItemText}>
+                      {item.icon} {item.name}
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.iconEditButton}
+                      onPress={() => {
+                        const currentIndex = getIndex() ?? 0;
+                        setSelectedHabitIndex(currentIndex);
+                        setShowEmojiPicker(true);
+                      }}
+                    >
+                      <Text style={styles.iconEditButtonText}>📝</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.habitEnergyInfo}>
+                    <Text style={styles.habitEnergyText}>
+                      Cost: {item.energy_cost} | Return: {item.energy_return} | Net:{' '}
+                      {item.energy_return - item.energy_cost}
+                    </Text>
+                  </View>
+                </Animated.View>
+              </GestureDetector>
             );
           }}
           onDragEnd={handleDragEnd}
         />
       </View>
-
       {showEmojiPicker && selectedHabitIndex !== null && (
         <View style={styles.emojiPickerModal}>
           <View style={styles.emojiPickerHeader}>
@@ -341,14 +373,6 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
           />
         </View>
       )}
-
-      <TouchableOpacity
-        testID="finish-setup"
-        style={styles.onboardingContinueButton}
-        onPress={handleFinish}
-      >
-        <Text style={styles.onboardingContinueButtonText}>Finish Setup</Text>
-      </TouchableOpacity>
     </View>
   );
 
@@ -453,7 +477,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
             style={StyleSheet.absoluteFill}
             testID="onboarding-overlay"
           />
-          <View style={styles.onboardingModalContent}>
+          <View style={styles.onboardingModalContent} testID="onboarding-modal-content">
             <TouchableOpacity
               testID="onboarding-close"
               style={styles.modalClose}

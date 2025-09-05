@@ -11,6 +11,19 @@ jest.mock('react-native-draggable-flatlist', () => 'DraggableFlatList');
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
 jest.mock('@react-native-community/slider', () => 'Slider');
+jest.mock('react-native-gesture-handler', () => ({
+  GestureDetector: ({ children }: { children: React.ReactNode }) => children,
+  Gesture: {
+    LongPress: () => ({ minDuration: () => ({ onStart: () => ({}) }) }),
+    Pan: () => ({ activateAfterLongPress: () => ({ onBegin: () => ({}) }) }),
+    Race: () => ({}),
+  },
+}));
+jest.mock('react-native-reanimated', () => ({
+  __esModule: true,
+  default: { View: require('react-native').View },
+  View: require('react-native').View,
+}));
 
 describe('OnboardingModal cost step', () => {
   const setupToCostStep = () => {
