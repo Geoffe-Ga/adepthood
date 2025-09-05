@@ -301,6 +301,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
             const stage = (STAGE_ORDER[index] ??
               STAGE_ORDER[STAGE_ORDER.length - 1]) as keyof typeof STAGE_COLORS;
             const color = STAGE_COLORS[stage] || '#ccc';
+
             const startDrag = Gesture.Pan().onBegin(() => drag());
 
             return (
