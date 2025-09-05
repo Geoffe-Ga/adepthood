@@ -16,6 +16,8 @@ Agents working on this project must abide by the following operating principles:
   - Every bug fix must include a failing test that reproduces the bug before it is resolved.
 
 2. **CI is Your Feedback Loop**
+  - Always run `pre-commit run --all-files` before attempting a commit
+
   - GitHub Actions is the source of truth for project health.
 
   - CI should pass green on every merge to main.
