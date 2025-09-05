@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from itertools import count
 
 import pytest  # type: ignore[import-not-found]
@@ -40,7 +40,7 @@ def test_week_count_ignores_old_sessions() -> None:
         practice_id=1,
         stage_number=1,
         duration_minutes=5,
-        timestamp=datetime.utcnow() - timedelta(days=8),
+        timestamp=datetime.now(UTC) - timedelta(days=8),
     )
     practice_module._sessions.append(old)  # noqa: SLF001
     response = client.get("/practice_sessions/1/week_count")

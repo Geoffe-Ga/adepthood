@@ -106,7 +106,7 @@ repos:
       - id: backend-tests-coverage
         name: backend tests (coverage required)
         language: system
-        entry: bash -lc 'if [ -f .venv/bin/activate ]; then source .venv/bin/activate; fi; cd backend && pytest'
+        entry: bash -lc 'if [ ! -f .venv/bin/activate ]; then echo "missing .venv; run scripts/dev-setup.sh" >&2; exit 1; fi; source .venv/bin/activate && cd backend && pytest'
         pass_filenames: false
         files: ^backend/
         stages: [pre-commit, pre-push]

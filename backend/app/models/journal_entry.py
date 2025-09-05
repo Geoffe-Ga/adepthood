@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlmodel import Field, Relationship, SQLModel
@@ -16,7 +16,7 @@ class JournalEntry(SQLModel, table=True):
     """
 
     id: int | None = Field(default=None, primary_key=True)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     message: str
     sender: str  # 'user' or 'bot'
     user_id: int = Field(foreign_key="user.id")
