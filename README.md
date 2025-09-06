@@ -22,8 +22,9 @@ Adepthood is a React Native + FastAPI app that guides users through the 36-week 
 .
 ├── backend/   # FastAPI service
 ├── frontend/  # React Native + Expo client
-├── prompts/   # LLM prompt and specification documents
-└── scripts/   # Development and CI helper scripts
+├── prompts/   # LLM prompt history and specification documents
+├── scripts/   # Development and CI helper scripts
+├── AGENTS.md  # Necessary instructions for AI collaborators
 ```
 
 ## 🚀 Getting Started
@@ -33,8 +34,7 @@ Run the development setup script to install shared tooling:
 ```bash
 bash scripts/dev-setup.sh
 ```
-
-### Prerequisites
+ **Prerequisites** (Handled by Setup Script)
 - Node.js (v18+)
 - Python (3.10+)
 - PostgreSQL
@@ -55,9 +55,11 @@ uvicorn src.main:app --reload
 
 ## 📖 Program Background
 
-APTITUDE is a 36-week developmental journey through 10 stages:
-- **Being** → **Awareness** → **Understanding** → **Wisdom**
-- Each stage introduces **habits**, **practices**, and **exercises** to progressively build stability, resilience, and alignment with Source.
+APTITUDE is a 36-week **developmental** journey based on Ken Wilber's _Integral Theory_,
+Clare Graves' _Spiral Dynamics_, five years of intensive _research_, 10 years of _practice_,
+and 20 years of deep self-examination in talk _therapy_.
+
+Each stage introduces **habits**, **practices**, and **exercises** to progressively build stability, resilience, and alignment with Source.
 
 ## 🤝 Contributing
 
