@@ -1,4 +1,4 @@
-// app/features/Map/MapScreen.tsx
+// frontend/features/Map/MapScreen.tsx
 
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { useNavigation } from '@react-navigation/native';

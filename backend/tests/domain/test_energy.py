@@ -1,6 +1,6 @@
 from datetime import date
 
-from app.domain.energy import EnergyPlanItem, Habit, generate_plan
+from src.domain.energy import EnergyPlanItem, Habit, generate_plan
 
 
 def test_generate_plan_creates_21_day_schedule() -> None:

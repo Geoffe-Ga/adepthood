@@ -1,4 +1,4 @@
-// app/features/Practice/PracticeScreen.tsx
+// frontend/features/Practice/PracticeScreen.tsx
 
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';

@@ -1,16 +1,16 @@
-// app/features/Course/CourseScreen.tsx
+// frontend/features/Journal/JournalScreen.tsx
 
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 /**
- * Placeholder course screen.
- * The full version will present the APTITUDE curriculum content.
+ * Placeholder journal screen.
+ * Users will log reflections here in future iterations.
  */
-const CourseScreen = (): React.JSX.Element => {
+const JournalScreen = (): React.JSX.Element => {
   return (
     <View style={styles.container}>
-      <Text style={styles.text}>Course Screen</Text>
+      <Text style={styles.text}>Journal Screen</Text>
     </View>
   );
 };
@@ -26,4 +26,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default CourseScreen;
+export default JournalScreen;

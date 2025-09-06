@@ -13,7 +13,7 @@ repos:
       - id: check-added-large-files
         args: ["--maxkb=250"]
         exclude: |
-          ^app/package-lock\.json$
+          ^frontend/package-lock\.json$
 
   # Python format / lint / type-check
   - repo: https://github.com/psf/black
@@ -23,13 +23,19 @@ repos:
         files: ^backend/
         args: ["--config=backend/pyproject.toml"]
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.9
+  - repo: local
     hooks:
-      - id: ruff
+      - id: backend-ruff
+        name: ruff
+        entry: bash -lc 'cd backend && ruff check . --fix'
+        language: system
+        pass_filenames: false
         files: ^backend/
-        args: ["--config=backend/pyproject.toml", "--fix"]
-      - id: ruff-format
+      - id: backend-ruff-format
+        name: ruff format
+        entry: bash -lc 'cd backend && ruff format .'
+        language: system
+        pass_filenames: false
         files: ^backend/
 
   - repo: https://github.com/pre-commit/mirrors-mypy
@@ -39,13 +45,6 @@ repos:
         files: ^backend/
         args: ["--config-file=backend/pyproject.toml"]
         additional_dependencies: ["types-requests", "pydantic", "sqlmodel", "fastapi", "starlette"]
-
-  - repo: https://github.com/PyCQA/isort
-    rev: 6.0.1
-    hooks:
-      - id: isort
-        files: ^backend/
-        args: ["--settings-path=backend/pyproject.toml"]
 
   - repo: https://github.com/PyCQA/bandit
     rev: 1.8.6
@@ -69,39 +68,39 @@ repos:
       - id: detect-secrets
         args: ["--baseline", ".secrets.baseline"]
 
-  # App (React Native) checks using local hooks (requires Node in the environment)
+  # Frontend (React Native) checks using local hooks (requires Node in the environment)
   - repo: local
     hooks:
-      - id: app-eslint
-        name: app eslint
+      - id: frontend-eslint
+        name: frontend eslint
         language: system
-        entry: bash -lc 'cd app && npm run lint'
+        entry: bash -lc 'cd frontend && npm run lint'
         pass_filenames: false
-        files: ^app/
-        exclude: ^app/(?:node_modules|dist|build|coverage)/
+        files: ^frontend/
+        exclude: ^frontend/(?:node_modules|dist|build|coverage)/
 
-      - id: app-prettier
-        name: app prettier (write)
-        entry: bash -lc 'cd app && npx prettier --write .'
+      - id: frontend-prettier
+        name: frontend prettier (write)
+        entry: bash -lc 'cd frontend && npx prettier --write .'
         language: system
-        files: ^app/.*\.(js|jsx|ts|tsx|json|css|md|ya?ml)$
-        exclude: ^app/(?:node_modules|dist|build|coverage)/|^app/(?:tsconfig\.json|package-lock\.json)$
+        files: ^frontend/.*\.(js|jsx|ts|tsx|json|css|md|ya?ml)$
+        exclude: ^frontend/(?:node_modules|dist|build|coverage)/|^frontend/(?:tsconfig\.json|package-lock\.json)$
 
-      - id: app-typecheck
-        name: app typecheck
-        entry: bash -lc 'cd app && npx tsc -p tsconfig.json --noEmit'
-        language: system
-        pass_filenames: false
-        files: ^app/.*\.(ts|tsx)$
-        exclude: ^app/(?:node_modules|dist|build|coverage)/
-
-      - id: app-tests
-        name: app tests
-        entry: bash -lc 'cd app && npx jest --passWithNoTests'
+      - id: frontend-typecheck
+        name: frontend typecheck
+        entry: bash -lc 'cd frontend && npx tsc -p tsconfig.json --noEmit'
         language: system
         pass_filenames: false
-        files: ^app/
-        exclude: ^app/(?:node_modules|dist|build|coverage)/
+        files: ^frontend/.*\.(ts|tsx)$
+        exclude: ^frontend/(?:node_modules|dist|build|coverage)/
+
+      - id: frontend-tests
+        name: frontend tests
+        entry: bash -lc 'cd frontend && npx jest --passWithNoTests'
+        language: system
+        pass_filenames: false
+        files: ^frontend/
+        exclude: ^frontend/(?:node_modules|dist|build|coverage)/
 
       - id: backend-tests-coverage
         name: backend tests (coverage required)
@@ -114,7 +113,7 @@ repos:
       - id: commitlint
         name: commitlint (conventional commits)
         language: system
-        entry: bash -lc 'npx commitlint --cwd app --extends @commitlint/config-conventional --edit "$1"'
+        entry: bash -lc 'npx commitlint --cwd frontend --extends @commitlint/config-conventional --edit "$1"'
         stages: [commit-msg]
         # IMPORTANT: commit-msg hooks receive the commit message path as $1
         # so do NOT set pass_filenames: false here.

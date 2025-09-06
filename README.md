@@ -25,7 +25,7 @@ Adepthood is a React Native + FastAPI app that guides users through the 36-week 
 
 ### Frontend
 ```bash
-cd app
+cd frontend
 npm install
 npx expo start
 ```
@@ -34,7 +34,7 @@ npx expo start
 ```bash
 cd backend
 pip install -r requirements.txt
-uvicorn main:app --reload
+uvicorn src.main:app --reload
 ```
 
 ## 📖 Program Background
