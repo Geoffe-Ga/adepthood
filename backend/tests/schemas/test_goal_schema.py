@@ -1,5 +1,5 @@
-from src.models import Goal as GoalModel
-from src.schemas.goal import Goal as GoalSchema
+from models import Goal as GoalModel
+from schemas.goal import Goal as GoalSchema
 
 
 def test_goal_schema_fields_match_model() -> None:

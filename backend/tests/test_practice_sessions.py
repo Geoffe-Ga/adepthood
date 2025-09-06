@@ -4,8 +4,8 @@ from itertools import count
 import pytest  # type: ignore[import-not-found]
 from fastapi.testclient import TestClient
 
-import src.routers.practice as practice_module
-from src.main import app
+from main import app
+from routers import practice as practice_module
 
 client = TestClient(app)
 OK = 200

@@ -16,7 +16,7 @@ class TestModels(unittest.TestCase):
     which suffices to fully cover a declarative models package without a DB.
     """
 
-    MODULE_PATH: ClassVar[str] = "src.models"
+    MODULE_PATH: ClassVar[str] = "models"
     mod: ClassVar[ModuleType]
 
     @classmethod

@@ -5,4 +5,4 @@ from pathlib import Path
 REPO_ROOT = (Path(__file__).parent / "..").resolve()
 
 # Add backend/ to sys.path, regardless of where pytest is called from
-sys.path.insert(0, str(REPO_ROOT / "backend"))
+sys.path.insert(0, str(REPO_ROOT / "backend/src"))

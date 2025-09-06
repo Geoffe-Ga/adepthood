@@ -7,9 +7,9 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, Header
 
-from src.domain.energy import Habit as DomainHabit
-from src.domain.energy import generate_plan
-from src.schemas import EnergyPlan, EnergyPlanRequest, EnergyPlanResponse
+from domain.energy import Habit as DomainHabit
+from domain.energy import generate_plan
+from schemas import EnergyPlan, EnergyPlanRequest, EnergyPlanResponse
 
 router = APIRouter(prefix="/v1/energy", tags=["energy"])
 
