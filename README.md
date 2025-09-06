@@ -16,7 +16,23 @@ Adepthood is a React Native + FastAPI app that guides users through the 36-week 
 - **Backend**: [FastAPI](https://fastapi.tiangolo.com/) with PostgreSQL
 - **Mobile & Web**: Runs on iOS, Android, and Web via Expo
 
+## 🗂️ Repository Structure
+
+```
+.
+├── backend/   # FastAPI service
+├── frontend/  # React Native + Expo client
+├── prompts/   # LLM prompt and specification documents
+└── scripts/   # Development and CI helper scripts
+```
+
 ## 🚀 Getting Started
+
+Run the development setup script to install shared tooling:
+
+```bash
+bash scripts/dev-setup.sh
+```
 
 ### Prerequisites
 - Node.js (v18+)
