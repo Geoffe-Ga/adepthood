@@ -1,4 +1,4 @@
-// app/features/Map/Map.styles.ts
+// frontend/features/Map/Map.styles.ts
 
 import { StyleSheet } from 'react-native';
 

@@ -1,4 +1,4 @@
-from app.domain.milestones import achieved_milestones
+from domain.milestones import achieved_milestones
 
 
 def test_milestones() -> None:

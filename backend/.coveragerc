@@ -1,6 +1,8 @@
 [run]
 branch = True
-source = backend
+source =
+    backend/src
+
 omit =
     # Tests and helpers
     */tests/*
@@ -12,7 +14,6 @@ omit =
     */alembic/*
 
     # Declarations & scaffolding that aren't business logic
-    backend/models/data_model.py
     */__init__.py
     */settings.py
     */config.py

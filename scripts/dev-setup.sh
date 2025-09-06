@@ -16,8 +16,8 @@ echo "⬇️ Installing pre-commit..."
 pip install pre-commit
 
 echo "📦 Installing Node dependencies..."
-if [ -d app ]; then
-  pushd app >/dev/null
+if [ -d frontend ]; then
+  pushd frontend >/dev/null
   if [ -f package-lock.json ]; then
     npm ci
   else
@@ -27,7 +27,7 @@ if [ -d app ]; then
 fi
 
 echo "📦 Ensuring Expo dependencies are aligned..."
-pushd app >/dev/null
+pushd frontend >/dev/null
 npx expo install
 popd >/dev/null
 

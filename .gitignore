@@ -132,7 +132,7 @@ secrets.json
 *.swo
 
 # Development-only assets
-app/local-assets/
+frontend/local-assets/
 
 # ======================================
 # Keep these tracked

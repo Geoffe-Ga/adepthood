@@ -1,7 +1,20 @@
-# Bandit configuration
-exclude_dirs:
-  - tests
-skips:
-  - B101  # assert used
+---
+# backend/.bandit  (YAML)
+
+# Only scan your backend app code (adjust if needed)
 targets:
   - backend
+
+# Don’t descend into third-party / generated / caches
+exclude_dirs:
+  - backend/.venv
+  - backend/tests
+  - backend/migrations
+  - backend/**/__pycache__
+  - backend/**/.mypy_cache
+  - backend/**/.pytest_cache
+  - backend/**/*.dist-info
+
+# Keep your explicit skip(s)
+skips:
+  - B101

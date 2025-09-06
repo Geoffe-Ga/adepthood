@@ -10,13 +10,13 @@ from sqlmodel import SQLModel
 
 
 class TestModels(unittest.TestCase):
-    """Structural tests for ``app.models`` package.
+    """Structural tests for ``src.models`` package.
 
     Importing the package executes model class bodies (fields/relationships),
     which suffices to fully cover a declarative models package without a DB.
     """
 
-    MODULE_PATH: ClassVar[str] = "app.models"
+    MODULE_PATH: ClassVar[str] = "models"
     mod: ClassVar[ModuleType]
 
     @classmethod

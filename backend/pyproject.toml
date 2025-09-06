@@ -10,8 +10,11 @@ profile = "black"
 line_length = 100
 multi_line_output = 3
 include_trailing_comma = true
+known_first_party = ["src"]
+src_paths = ["src"]
 
 [tool.ruff]
+src = ["backend/src"]
 line-length = 100
 target-version = "py312"
 extend-exclude = ["migrations", ".venv", "venv", "build", "dist"]
@@ -45,8 +48,7 @@ show_error_codes = true
 pretty = true
 explicit_package_bases = true
 plugins = ["pydantic.mypy"]
-mypy_path = ["backend"]
-namespace_packages = true
+mypy_path = ["backend/src"]
 
 [tool.pytest.ini_options]
 addopts = "-q --strict-markers --strict-config --cov=backend --cov-report=xml --cov-report=term-missing"

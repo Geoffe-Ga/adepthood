@@ -1,4 +1,4 @@
-// app/App.tsx
+// frontend/src/App.tsx
 
 import { NavigationContainer } from '@react-navigation/native';
 import React from 'react';

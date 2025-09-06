@@ -1,4 +1,4 @@
-from app.domain.streaks import update_streak
+from domain.streaks import update_streak
 
 
 def test_streak_increment() -> None:

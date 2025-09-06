@@ -1,15 +1,15 @@
 """Pydantic schemas for API models."""
 
-from .checkin import CheckInRequest, CheckInResult
-from .energy import (
+from schemas.checkin import CheckInRequest, CheckInResult
+from schemas.energy import (
     EnergyPlan,
     EnergyPlanItem,
     EnergyPlanRequest,
     EnergyPlanResponse,
     Habit,
 )
-from .goal import Goal
-from .milestone import Milestone
+from schemas.goal import Goal
+from schemas.milestone import Milestone
 
 __all__ = [
     "CheckInRequest",
