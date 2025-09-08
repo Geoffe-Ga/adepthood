@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 
 from routers.energy import router as energy_router
+from routers.goals import router as goals_router
 from routers.practice import router as practice_router
 
 app = FastAPI()
@@ -10,6 +11,7 @@ app = FastAPI()
 # Register feature routers
 app.include_router(practice_router)
 app.include_router(energy_router)
+app.include_router(goals_router)
 
 
 @app.get("/")
