@@ -1,6 +1,9 @@
+from datetime import UTC, datetime, timedelta
+
 from fastapi.testclient import TestClient
 
 from main import app
+from routers import auth
 
 client = TestClient(app)
 
@@ -56,3 +59,18 @@ def test_login_fails_with_bad_credentials() -> None:
     }
     practice = client.post("/practice_sessions/", json=payload, headers=headers)
     assert practice.status_code == UNAUTHORIZED
+
+
+def test_expired_token_rejected() -> None:
+    signup = client.post(
+        "/auth/signup",
+        json={"username": "tim", "password": "secret"},  # pragma: allowlist secret
+    )
+    token = signup.json()["token"]
+    auth._tokens[token] = (  # noqa: SLF001
+        auth._tokens[token][0],  # noqa: SLF001
+        datetime.now(UTC) - timedelta(seconds=1),
+    )
+    headers = {"Authorization": f"Bearer {token}"}  # pragma: allowlist secret
+    resp = client.get("/practice_sessions/1/week_count", headers=headers)
+    assert resp.status_code == UNAUTHORIZED

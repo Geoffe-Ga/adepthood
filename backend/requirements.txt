@@ -5,6 +5,7 @@ pydantic
 sqlalchemy
 sqlmodel
 asyncpg
+bcrypt
 pytest
 pytest-asyncio
 httpx

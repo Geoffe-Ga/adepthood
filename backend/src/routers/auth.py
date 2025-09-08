@@ -2,18 +2,28 @@
 
 from __future__ import annotations
 
-import hashlib
 import secrets
+from datetime import UTC, datetime, timedelta
 from itertools import count
+from typing import cast
 
+import bcrypt  # type: ignore[import-not-found]
 from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-_users: dict[str, tuple[str, int]] = {}
-_tokens: dict[str, int] = {}
+_users: dict[str, tuple[bytes, int]] = {}
+_tokens: dict[str, tuple[int, datetime]] = {}
 _id_counter = count(1)
+_TOKEN_TTL = timedelta(hours=1)
+
+
+def _cleanup_tokens() -> None:
+    now = datetime.now(UTC)
+    expired = [t for t, (_, exp) in _tokens.items() if exp < now]
+    for token in expired:
+        _tokens.pop(token, None)
 
 
 class AuthRequest(BaseModel):
@@ -26,13 +36,16 @@ class AuthResponse(BaseModel):
     user_id: int
 
 
-def _hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+def _hash_password(password: str) -> bytes:
+    hashed = cast(bytes, bcrypt.hashpw(password.encode(), bcrypt.gensalt()))
+    return hashed
 
 
 def _create_token(user_id: int) -> str:
+    _cleanup_tokens()
     token = secrets.token_hex(16)
-    _tokens[token] = user_id
+    expires = datetime.now(UTC) + _TOKEN_TTL
+    _tokens[token] = (user_id, expires)
     return token
 
 
@@ -49,7 +62,7 @@ def signup(payload: AuthRequest) -> AuthResponse:
 @router.post("/login", response_model=AuthResponse)
 def login(payload: AuthRequest) -> AuthResponse:
     record = _users.get(payload.username)
-    if not record or record[0] != _hash_password(payload.password):
+    if not record or not bcrypt.checkpw(payload.password.encode(), record[0]):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
     user_id = record[1]
     token = _create_token(user_id)
@@ -57,10 +70,15 @@ def login(payload: AuthRequest) -> AuthResponse:
 
 
 def get_current_user(authorization: str | None = Header(default=None)) -> int:
+    _cleanup_tokens()
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing token")
     token = authorization.split(" ", 1)[1]
-    user_id = _tokens.get(token)
-    if user_id is None:
+    data = _tokens.get(token)
+    if data is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token")
+    user_id, expires = data
+    if expires < datetime.now(UTC):
+        _tokens.pop(token, None)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "expired token")
     return user_id
