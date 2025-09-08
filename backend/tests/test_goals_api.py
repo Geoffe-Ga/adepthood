@@ -9,7 +9,7 @@ from routers import goals as goals_module
 
 client = TestClient(app)
 OK = 200
-CREATED = 200  # FastAPI default for POST without status_code
+CREATED = 201
 NOT_FOUND = 404
 
 
@@ -34,8 +34,8 @@ def create_sample_goal(habit_id: int = 1) -> dict[str, Any]:
         "frequency_unit": "per_day",
         "is_additive": True,
     }
-    response = client.post("/goals/", json=payload)
-    assert response.status_code == OK
+    response = client.post("/v1/goals/", json=payload)
+    assert response.status_code == CREATED
     return cast(dict[str, Any], response.json())
 
 
@@ -46,8 +46,8 @@ def create_sample_group() -> dict[str, Any]:
         "description": "Reading goals",
         "user_id": 1,
     }
-    response = client.post("/goal_groups/", json=payload)
-    assert response.status_code == OK
+    response = client.post("/v1/goals/groups", json=payload)
+    assert response.status_code == CREATED
     return cast(dict[str, Any], response.json())
 
 
@@ -59,7 +59,7 @@ def test_create_goal() -> None:
 
 def test_get_goal() -> None:
     created = create_sample_goal()
-    response = client.get(f"/goals/{created['id']}")
+    response = client.get(f"/v1/goals/{created['id']}")
     assert response.status_code == OK
     assert response.json()["id"] == created["id"]
 
@@ -67,17 +67,17 @@ def test_get_goal() -> None:
 def test_update_goal() -> None:
     created = create_sample_goal()
     payload = {"title": "Read more"}
-    response = client.put(f"/goals/{created['id']}", json=payload)
+    response = client.put(f"/v1/goals/{created['id']}", json=payload)
     assert response.status_code == OK
     assert response.json()["title"] == "Read more"
 
 
 def test_delete_goal() -> None:
     created = create_sample_goal()
-    response = client.delete(f"/goals/{created['id']}")
+    response = client.delete(f"/v1/goals/{created['id']}")
     assert response.status_code == OK
     # ensure it's gone
-    response = client.get(f"/goals/{created['id']}")
+    response = client.get(f"/v1/goals/{created['id']}")
     assert response.status_code == NOT_FOUND
 
 
@@ -89,7 +89,7 @@ def test_create_goal_group() -> None:
 
 def test_get_goal_group() -> None:
     created = create_sample_group()
-    response = client.get(f"/goal_groups/{created['id']}")
+    response = client.get(f"/v1/goals/groups/{created['id']}")
     assert response.status_code == OK
     assert response.json()["id"] == created["id"]
 
@@ -97,23 +97,23 @@ def test_get_goal_group() -> None:
 def test_update_goal_group() -> None:
     created = create_sample_group()
     payload = {"description": "Updated"}
-    response = client.put(f"/goal_groups/{created['id']}", json=payload)
+    response = client.put(f"/v1/goals/groups/{created['id']}", json=payload)
     assert response.status_code == OK
     assert response.json()["description"] == "Updated"
 
 
 def test_delete_goal_group() -> None:
     created = create_sample_group()
-    response = client.delete(f"/goal_groups/{created['id']}")
+    response = client.delete(f"/v1/goals/groups/{created['id']}")
     assert response.status_code == OK
-    response = client.get(f"/goal_groups/{created['id']}")
+    response = client.get(f"/v1/goals/groups/{created['id']}")
     assert response.status_code == NOT_FOUND
 
 
 def test_list_goals_by_habit() -> None:
     create_sample_goal(habit_id=1)
     create_sample_goal(habit_id=2)
-    response = client.get("/habits/1/goals")
+    response = client.get("/v1/habits/1/goals")
     assert response.status_code == OK
     data = response.json()
     assert len(data) == 1
