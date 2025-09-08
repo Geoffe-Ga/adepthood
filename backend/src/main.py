@@ -3,12 +3,14 @@
 from fastapi import FastAPI
 
 from routers.energy import router as energy_router
+from routers.habits import router as habits_router
 from routers.practice import router as practice_router
 
 app = FastAPI()
 
 # Register feature routers
 app.include_router(practice_router)
+app.include_router(habits_router)
 app.include_router(energy_router)
 
 

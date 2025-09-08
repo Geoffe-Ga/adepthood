@@ -6,14 +6,16 @@ from schemas.energy import (
     EnergyPlanItem,
     EnergyPlanRequest,
     EnergyPlanResponse,
-    Habit,
 )
+from schemas.energy import Habit as EnergyHabit
 from schemas.goal import Goal
+from schemas.habit import Habit
 from schemas.milestone import Milestone
 
 __all__ = [
     "CheckInRequest",
     "CheckInResult",
+    "EnergyHabit",
     "EnergyPlan",
     "EnergyPlanItem",
     "EnergyPlanRequest",
