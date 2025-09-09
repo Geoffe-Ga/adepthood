@@ -12,6 +12,7 @@ import {
 import type { LayoutChangeEvent, ViewStyle, TextStyle } from 'react-native';
 import EmojiSelector from 'react-native-emoji-selector';
 
+import { createGoal, updateGoal } from '../../../api/habits';
 import { STAGE_COLORS } from '../../../constants/stageColors';
 import styles from '../Habits.styles';
 import type { GoalModalProps, Goal } from '../Habits.types';
@@ -135,15 +136,14 @@ export const GoalModal = ({
 
   const confirmUpdate = (tier: 'low' | 'clear', percent: number) => {
     const goal = tier === 'low' ? lowGoal : clearGoal;
-    if (!goal || !habit?.id) return;
-    const stretchTarget = stretchGoal ? getGoalTarget(stretchGoal) : goal.target;
+    if (!habit?.id) return;
+    const stretchTarget = stretchGoal ? getGoalTarget(stretchGoal) : goal?.target ?? 1;
     const newTarget = Math.max(1, Math.round((percent / 100) * stretchTarget));
     Alert.alert(
       tier === 'low' ? 'Edit Low Goal' : 'Edit Clear Goal',
-      `Edit the ${tier === 'low' ? 'Low Grit' : 'Clear Goal'} to be ${newTarget} ${goal.target_unit} ${goal.frequency_unit.replace(
-        '_',
-        ' ',
-      )}?`,
+      `Edit the ${tier === 'low' ? 'Low Grit' : 'Clear Goal'} to be ${newTarget} ${
+        (goal ?? lowGoal ?? clearGoal)?.target_unit
+      } ${(goal ?? lowGoal ?? clearGoal)?.frequency_unit.replace('_', ' ')}?`,
       [
         {
           text: 'No',
@@ -155,7 +155,28 @@ export const GoalModal = ({
         },
         {
           text: 'Yes',
-          onPress: () => onUpdateGoal(habit.id!, { ...goal, target: newTarget }),
+          onPress: async () => {
+            try {
+              if (goal && goal.id) {
+                const updated = await updateGoal(habit.id!, { ...goal, target: newTarget });
+                onUpdateGoal(habit.id!, updated);
+              } else {
+                const base = {
+                  title: tier,
+                  tier,
+                  target: newTarget,
+                  target_unit: lowGoal?.target_unit || clearGoal?.target_unit || 'units',
+                  frequency: lowGoal?.frequency || clearGoal?.frequency || 1,
+                  frequency_unit: lowGoal?.frequency_unit || clearGoal?.frequency_unit || 'per_day',
+                  is_additive: lowGoal?.is_additive ?? clearGoal?.is_additive ?? true,
+                };
+                const created = await createGoal(habit.id!, base);
+                onUpdateGoal(habit.id!, created);
+              }
+            } catch (error) {
+              console.error(error);
+            }
+          },
         },
       ],
     );

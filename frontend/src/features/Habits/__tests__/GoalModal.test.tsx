@@ -2,13 +2,19 @@
 /* global describe, it, expect */
 import { jest } from '@jest/globals';
 import React from 'react';
+import { Alert } from 'react-native';
 import renderer from 'react-test-renderer';
 
+import { updateGoal } from '../../../api/habits';
 import { GoalModal } from '../components/GoalModal';
 import type { Habit, Goal } from '../Habits.types';
 import { logHabitUnits } from '../HabitUtils';
 
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
+jest.mock('../../../api/habits', () => ({
+  updateGoal: jest.fn(() => Promise.resolve({})),
+  createGoal: jest.fn(() => Promise.resolve({})),
+}));
 
 const sampleGoals: Goal[] = [
   {
@@ -144,5 +150,33 @@ describe('GoalModal tooltips', () => {
       lowMarker.props.onMouseLeave();
     });
     expect(() => testRenderer.root.findByProps({ testID: 'modal-tooltip-low' })).toThrow();
+  });
+});
+
+describe('GoalModal API calls', () => {
+  it('calls updateGoal when confirming goal update', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((_, __, buttons) => {
+      const yes = buttons && buttons.find((b) => b.text === 'Yes');
+      yes?.onPress?.();
+    });
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={() => {}}
+        onUpdateGoal={() => {}}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    const lowMarker = testRenderer.root.findByProps({ testID: 'modal-marker-low' });
+    await renderer.act(async () => {
+      lowMarker.props.onResponderRelease?.();
+      await Promise.resolve();
+    });
+
+    expect(updateGoal).toHaveBeenCalled();
+    alertSpy.mockRestore();
   });
 });
