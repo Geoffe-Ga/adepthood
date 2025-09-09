@@ -9,6 +9,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { spacing } from '../../../Sources/design/DesignSystem';
 import useResponsive from '../../../Sources/design/useResponsive';
+import {
+  getHabits,
+  createHabit as apiCreateHabit,
+  updateHabit as apiUpdateHabit,
+  deleteHabit as apiDeleteHabit,
+} from '../../api/habits';
 
 import GoalModal from './components/GoalModal';
 import HabitSettingsModal from './components/HabitSettingsModal';
@@ -16,7 +22,6 @@ import MissedDaysModal from './components/MissedDaysModal';
 import OnboardingModal from './components/OnboardingModal';
 import ReorderHabitsModal from './components/ReorderHabitsModal';
 import StatsModal from './components/StatsModal';
-import { HABIT_DEFAULTS } from './HabitDefaults';
 import styles from './Habits.styles';
 import type { Goal, Habit, HabitStatsData, OnboardingHabit } from './Habits.types';
 import HabitTile from './HabitTile';
@@ -78,13 +83,6 @@ export const DAYS_OF_WEEK = [
   'Saturday',
   'Sunday',
 ];
-
-// Sample default habits – these might be loaded or saved to AsyncStorage
-const DEFAULT_HABITS: Habit[] = HABIT_DEFAULTS.map((habit) => ({
-  ...habit,
-  revealed: true,
-  completions: [], // Initialize empty completions array
-}));
 
 // Register for push notifications
 const registerForPushNotificationsAsync = async (): Promise<string | undefined> => {
@@ -218,7 +216,7 @@ export const calculateNetEnergy = (cost: number, returnValue: number): number =>
 //------------------
 
 const HabitsScreen = () => {
-  const [habits, setHabits] = useState<Habit[]>(DEFAULT_HABITS);
+  const [habits, setHabits] = useState<Habit[]>([]);
   const [selectedHabit, setSelectedHabit] = useState<Habit | null>(null);
   const [menuVisible, setMenuVisible] = useState(false);
   const [goalModalVisible, setGoalModalVisible] = useState(false);
@@ -229,11 +227,24 @@ const HabitsScreen = () => {
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const [reorderModalVisible, setReorderModalVisible] = useState(false);
   const [missedDaysModalVisible, setMissedDaysModalVisible] = useState(false);
-  const [onboardingVisible, setOnboardingVisible] = useState(habits.length === 0);
+  const [onboardingVisible, setOnboardingVisible] = useState(false);
   const [showEnergyCTA, setShowEnergyCTA] = useState(true);
   const [showArchiveMessage, setShowArchiveMessage] = useState(false);
   const [emojiPickerVisible, setEmojiPickerVisible] = useState(false);
   const [emojiHabitIndex, setEmojiHabitIndex] = useState<number | null>(null);
+
+  // Load habits from API on mount
+  useEffect(() => {
+    void (async () => {
+      try {
+        const data = await getHabits();
+        setHabits(data);
+        setOnboardingVisible(data.length === 0);
+      } catch (error) {
+        console.error('Failed to load habits', error);
+      }
+    })();
+  }, []);
 
   // Register for push notifications on mount
   useEffect(() => {
@@ -327,13 +338,15 @@ const HabitsScreen = () => {
   };
 
   // Update habit details
-  const handleUpdateHabit = (updatedHabit: Habit) => {
-    setHabits((prev) => prev.map((h) => (h.id === updatedHabit.id ? updatedHabit : h)));
-    void updateHabitNotifications(updatedHabit);
+  const handleUpdateHabit = async (updatedHabit: Habit) => {
+    const saved = await apiUpdateHabit(updatedHabit);
+    setHabits((prev) => prev.map((h) => (h.id === saved.id ? saved : h)));
+    void updateHabitNotifications(saved);
   };
 
   // Delete a habit
-  const handleDeleteHabit = (habitId: number) => {
+  const handleDeleteHabit = async (habitId: number) => {
+    await apiDeleteHabit(habitId);
     setHabits((prev) => prev.filter((h) => h.id !== habitId));
   };
 
@@ -409,49 +422,10 @@ const HabitsScreen = () => {
   };
 
   // Handle onboarding completion
-  const handleOnboardingSave = (newHabits: OnboardingHabit[]) => {
-    // Convert onboarding habits to full habits with IDs and goals
-    const fullHabits = newHabits.map((habit, index) => ({
-      ...habit,
-      id: index + 1,
-      streak: 0,
-      revealed: habit.stage === 'Beige', // Only reveal Beige stage habits initially
-      completions: [], // Initialize empty completions array
-      goals: [
-        {
-          id: index * 3 + 1,
-          title: `Low goal for ${habit.name}`,
-          tier: 'low' as 'low',
-          target: 1,
-          target_unit: 'units',
-          frequency: 1,
-          frequency_unit: 'per_day',
-          is_additive: true,
-        },
-        {
-          id: index * 3 + 2,
-          title: `Clear goal for ${habit.name}`,
-          tier: 'clear' as 'clear',
-          target: 2,
-          target_unit: 'units',
-          frequency: 1,
-          frequency_unit: 'per_day',
-          is_additive: true,
-        },
-        {
-          id: index * 3 + 3,
-          title: `Stretch goal for ${habit.name}`,
-          tier: 'stretch' as 'stretch',
-          target: 3,
-          target_unit: 'units',
-          frequency: 1,
-          frequency_unit: 'per_day',
-          is_additive: true,
-        },
-      ],
-    }));
-
-    setHabits(fullHabits);
+  const handleOnboardingSave = async (newHabits: OnboardingHabit[]) => {
+    const created = await Promise.all(newHabits.map((h) => apiCreateHabit(h as unknown as Habit)));
+    setHabits(created);
+    setOnboardingVisible(false);
     Alert.alert('Next steps', 'Tap a habit tile to edit its goals.');
   };
 
