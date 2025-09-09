@@ -9,6 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { spacing } from '../../../Sources/design/DesignSystem';
 import useResponsive from '../../../Sources/design/useResponsive';
+import { logCompletion } from '../../services/habitsApi';
 
 import GoalModal from './components/GoalModal';
 import HabitSettingsModal from './components/HabitSettingsModal';
@@ -20,7 +21,7 @@ import { HABIT_DEFAULTS } from './HabitDefaults';
 import styles from './Habits.styles';
 import type { Goal, Habit, HabitStatsData, OnboardingHabit } from './Habits.types';
 import HabitTile from './HabitTile';
-import { getGoalTier, getGoalTarget, calculateHabitProgress, logHabitUnits } from './HabitUtils';
+import { getGoalTier, getGoalTarget, calculateHabitProgress } from './HabitUtils';
 export const DEFAULT_ICONS = [
   '🧘',
   '🏃',
@@ -274,55 +275,55 @@ const HabitsScreen = () => {
   };
 
   // Log progress units for a habit
-  const handleLogUnit = (habitId: number, amount: number) => {
-    let updated: Habit | null = null;
-    setHabits((prev) =>
-      prev.map((h) => {
-        if (h.id !== habitId) return h;
-        const oldProgress = calculateHabitProgress(h);
-        const updatedHabit = logHabitUnits(h, amount);
-        const newProgress = calculateHabitProgress(updatedHabit);
-        const { currentGoal, nextGoal } = getGoalTier(updatedHabit);
-        updated = updatedHabit;
+  const handleLogUnit = async (habitId: number, amount: number) => {
+    const habit = habits.find((h) => h.id === habitId);
+    if (!habit) return;
 
-        if (currentGoal.is_additive) {
-          const currentTarget = getGoalTarget(currentGoal);
-          if (
-            oldProgress < currentTarget &&
-            newProgress >= currentTarget &&
-            currentGoal.tier === 'low'
-          ) {
-            Alert.alert(
-              'Goal Achieved!',
-              `You've reached your Low Goal for ${h.name}! Keep going for the Clear Goal.`,
-            );
-          }
-          if (
-            nextGoal &&
-            currentGoal.tier === 'clear' &&
-            oldProgress < getGoalTarget(currentGoal) &&
-            newProgress >= getGoalTarget(currentGoal)
-          ) {
-            Alert.alert('Achieved! Keep going for the Stretch Goal!');
-          }
-          if (
-            nextGoal &&
-            currentGoal.tier === 'stretch' &&
-            oldProgress < getGoalTarget(currentGoal) &&
-            newProgress >= getGoalTarget(currentGoal)
-          ) {
-            Alert.alert(
-              'Stretch Goal Achieved!',
-              `Amazing! You've reached your Stretch Goal for ${h.name}!`,
-            );
-          }
+    const oldProgress = calculateHabitProgress(habit);
+    try {
+      const updatedHabit = await logCompletion(habitId, amount);
+      const newProgress = calculateHabitProgress(updatedHabit);
+      const { currentGoal, nextGoal } = getGoalTier(updatedHabit);
+
+      if (currentGoal.is_additive) {
+        const currentTarget = getGoalTarget(currentGoal);
+        if (
+          oldProgress < currentTarget &&
+          newProgress >= currentTarget &&
+          currentGoal.tier === 'low'
+        ) {
+          Alert.alert(
+            'Goal Achieved!',
+            `You've reached your Low Goal for ${habit.name}! Keep going for the Clear Goal.`,
+          );
         }
+        if (
+          nextGoal &&
+          currentGoal.tier === 'clear' &&
+          oldProgress < getGoalTarget(currentGoal) &&
+          newProgress >= getGoalTarget(currentGoal)
+        ) {
+          Alert.alert('Achieved! Keep going for the Stretch Goal!');
+        }
+        if (
+          nextGoal &&
+          currentGoal.tier === 'stretch' &&
+          oldProgress < getGoalTarget(currentGoal) &&
+          newProgress >= getGoalTarget(currentGoal)
+        ) {
+          Alert.alert(
+            'Stretch Goal Achieved!',
+            `Amazing! You've reached your Stretch Goal for ${habit.name}!`,
+          );
+        }
+      }
 
-        return updatedHabit;
-      }),
-    );
-    if (selectedHabit?.id === habitId && updated) {
-      setSelectedHabit(updated);
+      setHabits((prev) => prev.map((h) => (h.id === habitId ? updatedHabit : h)));
+      if (selectedHabit?.id === habitId) {
+        setSelectedHabit(updatedHabit);
+      }
+    } catch (error) {
+      console.error(error);
     }
   };
 
