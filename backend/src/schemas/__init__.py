@@ -9,6 +9,7 @@ from schemas.energy import (
     Habit,
 )
 from schemas.goal import Goal
+from schemas.habit_stats import GoalStats, HabitStats
 from schemas.milestone import Milestone
 
 __all__ = [
@@ -19,6 +20,8 @@ __all__ = [
     "EnergyPlanRequest",
     "EnergyPlanResponse",
     "Goal",
+    "GoalStats",
     "Habit",
+    "HabitStats",
     "Milestone",
 ]
