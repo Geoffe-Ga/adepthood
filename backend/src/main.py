@@ -5,6 +5,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from routers.auth import router as auth_router
 from routers.energy import router as energy_router
 from routers.practice import router as practice_router
 
@@ -33,6 +34,7 @@ app.add_middleware(
 )
 
 # Register feature routers
+app.include_router(auth_router)
 app.include_router(practice_router)
 app.include_router(energy_router)
 
