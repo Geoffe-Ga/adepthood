@@ -1,4 +1,37 @@
-const API_BASE_URL = 'http://localhost:8000';
+import { API_BASE_URL } from '@/config';
+
+interface RequestOptions {
+  method?: string;
+  body?: unknown;
+  token?: string;
+}
+
+async function request<T>(
+  path: string,
+  { method = 'GET', body, token }: RequestOptions = {},
+): Promise<T> {
+  const headers: Record<string, string> = {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+  const init: RequestInit = {};
+  if (method !== 'GET') {
+    init.method = method;
+  }
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+  if (Object.keys(headers).length > 0) {
+    init.headers = headers;
+  }
+  const res = Object.keys(init).length
+    ? await fetch(`${API_BASE_URL}${path}`, init)
+    : await fetch(`${API_BASE_URL}${path}`);
+  if (!res.ok) {
+    throw new Error(`Request failed with status ${res.status}`);
+  }
+  return (await res.json()) as T;
+}
 
 // Habit types and client
 export interface Habit {
@@ -6,9 +39,8 @@ export interface Habit {
   name: string;
 }
 export const habits = {
-  async list(): Promise<Habit[]> {
-    const res = await fetch(`${API_BASE_URL}/habits`);
-    return (await res.json()) as Habit[];
+  list(token?: string): Promise<Habit[]> {
+    return request<Habit[]>('/habits', { token });
   },
 };
 
@@ -18,13 +50,12 @@ export interface JournalEntry {
   content: string;
 }
 export const journal = {
-  async create(entry: JournalEntry): Promise<JournalEntry> {
-    const res = await fetch(`${API_BASE_URL}/journal`, {
+  create(entry: JournalEntry, token?: string): Promise<JournalEntry> {
+    return request<JournalEntry>('/journal', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(entry),
+      body: entry,
+      token,
     });
-    return (await res.json()) as JournalEntry;
   },
 };
 
@@ -34,9 +65,8 @@ export interface Stage {
   title: string;
 }
 export const stages = {
-  async list(): Promise<Stage[]> {
-    const res = await fetch(`${API_BASE_URL}/stages`);
-    return (await res.json()) as Stage[];
+  list(token?: string): Promise<Stage[]> {
+    return request<Stage[]>('/stages', { token });
   },
 };
 
@@ -49,13 +79,12 @@ export interface PracticeSession extends PracticeSessionCreate {
   id: number;
 }
 export const practice = {
-  async log(session: PracticeSessionCreate): Promise<PracticeSession> {
-    const res = await fetch(`${API_BASE_URL}/practice_sessions`, {
+  log(session: PracticeSessionCreate, token?: string): Promise<PracticeSession> {
+    return request<PracticeSession>('/practice_sessions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(session),
+      body: session,
+      token,
     });
-    return (await res.json()) as PracticeSession;
   },
 };
 
@@ -68,13 +97,11 @@ export interface AuthResponse {
   token: string;
 }
 export const auth = {
-  async login(credentials: AuthRequest): Promise<AuthResponse> {
-    const res = await fetch(`${API_BASE_URL}/auth/login`, {
+  login(credentials: AuthRequest): Promise<AuthResponse> {
+    return request<AuthResponse>('/auth/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(credentials),
+      body: credentials,
     });
-    return (await res.json()) as AuthResponse;
   },
 };
 
