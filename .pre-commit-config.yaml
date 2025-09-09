@@ -106,9 +106,9 @@ repos:
       - id: backend-tests-coverage
         name: backend tests (coverage required)
         language: system
-        # Ensure the project's virtual environment is used so that pytest-cov
-        # and other dev dependencies are available when running tests.
-        entry: bash -lc 'source .venv/bin/activate && cd backend && pytest'
+        # Activate the project's virtual environment if available so that
+        # dev dependencies (e.g., pytest-cov) are accessible when running tests.
+        entry: bash -lc 'if [ -f .venv/bin/activate ]; then source .venv/bin/activate; fi; cd backend && pytest'
         pass_filenames: false
         files: ^backend/
         stages: [pre-commit, pre-push]
