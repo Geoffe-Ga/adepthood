@@ -21,7 +21,7 @@ if os.getenv("ENV", "development") == "development":
     ]
 else:
     origins = [
-        os.getenv("PROD_DOMAIN", "")
+        os.getenv("PROD_DOMAIN", ""),
     ]
 
 app.add_middleware(
