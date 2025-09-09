@@ -21,8 +21,7 @@ if os.getenv("ENV", "development") == "development":
     ]
 else:
     origins = [
-        "https://yourdomain.com",
-        "https://www.yourdomain.com",
+        os.getenv("PROD_DOMAIN", "")
     ]
 
 app.add_middleware(
