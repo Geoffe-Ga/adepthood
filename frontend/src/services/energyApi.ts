@@ -1,10 +1,10 @@
 import { createEnergyPlan, type EnergyPlanRequest, type EnergyPlanResponse } from '../api/client';
 
-const BASE_URL = 'http://localhost:8000';
+import { API_BASE_URL } from '@/config';
 
 export async function fetchEnergyPlan(
   payload: EnergyPlanRequest,
   idempotencyKey?: string,
 ): Promise<EnergyPlanResponse> {
-  return createEnergyPlan(BASE_URL, payload, idempotencyKey);
+  return createEnergyPlan(API_BASE_URL, payload, idempotencyKey);
 }

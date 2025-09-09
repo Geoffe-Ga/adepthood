@@ -21,6 +21,10 @@ import styles from './Map.styles';
 import { STAGES } from './stageData';
 import type { StageData } from './stageData';
 
+import { stages } from '@/api';
+
+void stages;
+
 /**
  * Displays the ten APTITUDE stages over a background image.
  * Tapping a stage reveals a modal with quick links to Practice and Course.
