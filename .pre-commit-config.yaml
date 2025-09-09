@@ -106,7 +106,7 @@ repos:
       - id: backend-tests-coverage
         name: backend tests (coverage required)
         language: system
-        entry: bash -lc 'cd backend && pytest'
+        entry: bash -c 'cd backend && pytest --cov=. --cov-report=term-missing --cov-fail-under=90'
         pass_filenames: false
         files: ^backend/
         stages: [pre-commit, pre-push]

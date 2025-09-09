@@ -3,10 +3,13 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { journal } from '@/api';
+
 /**
  * Placeholder journal screen.
  * Users will log reflections here in future iterations.
  */
+void journal;
 const JournalScreen = (): React.JSX.Element => {
   return (
     <View style={styles.container}>

@@ -7,6 +7,9 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import BottomTabs from './navigation/BottomTabs';
 
+import { auth } from '@/api';
+
+void auth;
 export default function App(): React.JSX.Element {
   return (
     <SafeAreaProvider>

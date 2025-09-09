@@ -3,10 +3,13 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { practice } from '@/api';
+
 /**
  * Placeholder practice screen.
  * The real implementation will host guided exercises for each stage.
  */
+void practice;
 const PracticeScreen = (): React.JSX.Element => {
   return (
     <View style={styles.container}>
