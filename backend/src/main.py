@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from routers.auth import router as auth_router
 from routers.energy import router as energy_router
 from routers.goal_completions import router as goal_completion_router
+from routers.goals import router as goals_router
 from routers.habits import router as habits_router
 from routers.practice import router as practice_router
 
@@ -41,6 +42,7 @@ app.include_router(practice_router)
 app.include_router(habits_router)
 app.include_router(energy_router)
 app.include_router(goal_completion_router)
+app.include_router(goals_router)
 
 
 @app.get("/")

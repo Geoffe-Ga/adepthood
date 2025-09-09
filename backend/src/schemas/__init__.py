@@ -9,6 +9,8 @@ from schemas.energy import (
 )
 from schemas.energy import Habit as EnergyHabit
 from schemas.goal import Goal
+from schemas.goal_completion import GoalCompletion, GoalCompletionCreate
+from schemas.goal_group import GoalGroup, GoalGroupCreate
 from schemas.habit import Habit
 from schemas.milestone import Milestone
 
@@ -21,6 +23,10 @@ __all__ = [
     "EnergyPlanRequest",
     "EnergyPlanResponse",
     "Goal",
+    "GoalCompletion",
+    "GoalCompletionCreate",
+    "GoalGroup",
+    "GoalGroupCreate",
     "Habit",
     "Milestone",
 ]

@@ -32,8 +32,10 @@ def test_cross_origin_get_allowed() -> None:
 def test_cross_origin_post_with_credentials() -> None:
     """POST requests with credentials are permitted for allowed origins."""
     headers = {"Origin": ALLOWED_ORIGIN}
+    signup = client.post("/auth/signup", json={"username": "u", "password": "p"}).json()
+    headers["Authorization"] = f"Bearer {signup['token']}"
     payload = {
-        "user_id": 1,
+        "user_id": signup["user_id"],
         "practice_id": 1,
         "stage_number": 1,
         "duration_minutes": 10,
