@@ -21,6 +21,9 @@ import styles from './Habits.styles';
 import type { Goal, Habit, HabitStatsData, OnboardingHabit } from './Habits.types';
 import HabitTile from './HabitTile';
 import { getGoalTier, getGoalTarget, calculateHabitProgress, logHabitUnits } from './HabitUtils';
+
+import { habits } from '@/api';
+void habits;
 export const DEFAULT_ICONS = [
   '🧘',
   '🏃',
