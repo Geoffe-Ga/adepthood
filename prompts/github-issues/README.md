@@ -33,15 +33,41 @@ Restructure HabitsScreen, add state management, clean up dead code. Pure refacto
 | 07 | [Consistent error responses](phase-2-07-consistent-error-responses.md) | Backend | ~125 |
 
 ## Phase 3 — Build Missing Features (Medium)
-Implement the 3 placeholder screens and connect the Map to real data.
+Implement the 3 placeholder screens, connect the Map, and build the deep-link ecosystem between features. **Expanded from 5 → 14 issues** after cross-referencing the project spec documents (`AdepthoodAppPrompt-2025-04-06.md`, `AdepthoodAppPrompt-2025-04-01.md`).
 
+### Backend Infrastructure
 | # | Issue | Scope | Est. LoC |
 |---|-------|-------|----------|
-| 01 | [Journal feature](phase-3-01-journal-feature.md) | Full-stack | ~600 |
-| 02 | [Practice screen](phase-3-02-practice-screen.md) | Frontend | ~300 |
-| 03 | [Course feature](phase-3-03-course-feature.md) | Full-stack | ~500 |
-| 04 | [Map → real progress](phase-3-04-map-real-progress.md) | Frontend | ~175 |
-| 05 | [Stages backend](phase-3-05-stages-backend.md) | Backend | ~225 |
+| 01 | [Stages + progress backend](phase-3-01-stages-backend.md) | Backend | ~275 |
+| 02 | [Course backend: drip-feed content](phase-3-02-course-backend.md) | Backend | ~225 |
+| 03 | [Journal backend: chat, tags, search](phase-3-03-journal-backend.md) | Backend | ~275 |
+| 04 | [Practice backend: UserPractice + sessions](phase-3-04-practice-backend.md) | Backend | ~275 |
+| 05 | [Weekly prompts backend](phase-3-05-weekly-prompts-backend.md) | Backend | ~175 |
+
+### Frontend — Journal (Chat with BotMason)
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| 06 | [Journal chat UI + message history](phase-3-06-journal-chat-ui.md) | Frontend | ~300 |
+| 07 | [BotMason AI + offering_balance](phase-3-07-botmason-ai.md) | Full-stack | ~350 |
+| 08 | [Journal search + tagging UI](phase-3-08-journal-search-tags.md) | Frontend | ~200 |
+
+### Frontend — Practice
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| 09 | [Practice screen: selection + timer + sound](phase-3-09-practice-screen.md) | Frontend | ~300 |
+| 10 | [Post-practice → Journal linking](phase-3-10-practice-journal-link.md) | Frontend | ~125 |
+
+### Frontend — Course
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| 11 | [Course screen: drip-feed + CMS URLs](phase-3-11-course-screen.md) | Frontend | ~300 |
+| 12 | [Course → Journal reflection deep links](phase-3-12-course-journal-deeplink.md) | Frontend | ~90 |
+
+### Frontend — Map & Goals
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| 13 | [Map: real progress + rich metadata](phase-3-13-map-real-progress.md) | Frontend | ~225 |
+| 14 | [GoalGroup support](phase-3-14-goal-groups.md) | Full-stack | ~225 |
 
 ## Phase 4 — Polish & Harden (Lower)
 Type safety, security hardening, test coverage, documentation.
@@ -78,10 +104,29 @@ phase-1-03 + phase-1-07 + phase-1-09
 Phase 2 can start after Phase 1 core (01-03, 07)
 Phase 3 can start after Phase 1 complete
 Phase 4 can run in parallel with Phase 3
+
+Phase 3 internal dependencies:
+  phase-3-01 (Stages backend)
+    ├── phase-3-02 (Course backend)
+    │     └── phase-3-11 (Course screen) → phase-3-12 (Course→Journal)
+    ├── phase-3-13 (Map real progress)
+    └── phase-3-04 (Practice backend)
+          └── phase-3-09 (Practice screen) → phase-3-10 (Practice→Journal)
+
+  phase-3-03 (Journal backend)
+    └── phase-3-06 (Journal chat UI)
+          ├── phase-3-07 (BotMason AI)
+          ├── phase-3-08 (Search + tags)
+          ├── phase-3-10 (Practice→Journal)
+          └── phase-3-12 (Course→Journal)
+
+  phase-3-05 (Weekly prompts) → phase-3-06 (Journal chat UI)
+  phase-3-14 (GoalGroups) independent, can start after phase-1
 ```
 
 ## Total Estimated Scope
 
-- **31 issues** across 4 phases
-- **~5,000 LoC** of changes (net, including deletions)
+- **40 issues** across 4 phases (11 + 7 + 14 + 8)
+- **~7,500 LoC** of changes (net, including deletions)
 - Phase 1 is the critical path — everything else depends on it
+- Phase 3 is the largest phase, reflecting 4 features + cross-feature deep links
