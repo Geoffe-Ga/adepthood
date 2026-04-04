@@ -1,5 +1,5 @@
 from datetime import date
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
@@ -21,11 +21,11 @@ class Habit(SQLModel, table=True):
     energy_cost: int
     energy_return: int
     user_id: int = Field(foreign_key="user.id")
-    notification_times: Optional[list[str]] = Field(
+    notification_times: list[str] | None = Field(
         default=None, sa_column=Column(PG_ARRAY(String), nullable=True)
     )
     notification_frequency: str | None = None
-    notification_days: Optional[list[str]] = Field(
+    notification_days: list[str] | None = Field(
         default=None, sa_column=Column(PG_ARRAY(String), nullable=True)
     )
     milestone_notifications: bool = Field(default=False)

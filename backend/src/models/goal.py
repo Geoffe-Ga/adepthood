@@ -35,7 +35,7 @@ class Goal(SQLModel, table=True):
     target_unit: str  # "minutes", "reps", etc.
     frequency: float  # e.g. 2.0 = 2x per frequency_unit
     frequency_unit: str  # "per_day", "per_week"
-    days_of_week: Optional[list[str]] = Field(
+    days_of_week: list[str] | None = Field(
         default=None,
         sa_column=Column(PG_ARRAY(String), nullable=True),
     )

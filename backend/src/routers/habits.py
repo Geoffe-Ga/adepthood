@@ -9,8 +9,8 @@ from sqlmodel import select
 from database import get_session
 from models.habit import Habit
 from routers.auth import get_current_user
-from schemas.habit import HabitCreate
 from schemas.habit import Habit as HabitSchema
+from schemas.habit import HabitCreate
 
 router = APIRouter(prefix="/habits", tags=["habits"])
 
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/habits", tags=["habits"])
 @router.post("/", response_model=HabitSchema)
 async def create_habit(
     payload: HabitCreate,
-    current_user: int = Depends(get_current_user),  # noqa: B008
+    current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> Habit:
     """Create a habit for the authenticated user."""
@@ -31,14 +31,12 @@ async def create_habit(
 
 @router.get("/", response_model=list[HabitSchema])
 async def list_habits(
-    current_user: int = Depends(get_current_user),  # noqa: B008
+    current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> list[Habit]:
     """Return all habits for the authenticated user, sorted by sort_order."""
     statement = (
-        select(Habit)
-        .where(Habit.user_id == current_user)
-        .order_by(Habit.sort_order.asc())  # type: ignore[union-attr]
+        select(Habit).where(Habit.user_id == current_user).order_by(Habit.sort_order.asc())  # type: ignore[union-attr]
     )
     result = await session.execute(statement)
     return list(result.scalars().all())
@@ -47,7 +45,7 @@ async def list_habits(
 @router.get("/{habit_id}", response_model=HabitSchema)
 async def get_habit(
     habit_id: int,
-    current_user: int = Depends(get_current_user),  # noqa: B008
+    current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> Habit:
     """Return a single habit by id, scoped to the authenticated user."""
@@ -61,7 +59,7 @@ async def get_habit(
 async def update_habit(
     habit_id: int,
     payload: HabitCreate,
-    current_user: int = Depends(get_current_user),  # noqa: B008
+    current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> Habit:
     """Replace an existing habit's fields."""
@@ -79,7 +77,7 @@ async def update_habit(
 @router.delete("/{habit_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_habit(
     habit_id: int,
-    current_user: int = Depends(get_current_user),  # noqa: B008
+    current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> Response:
     """Delete a habit. Returns 204 No Content on success."""

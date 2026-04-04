@@ -41,7 +41,7 @@ async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str
     """Create a user and return auth headers."""
     resp = await client.post(
         "/auth/signup",
-        json={"username": username, "password": "secret123"},
+        json={"username": username, "password": "secret123"},  # pragma: allowlist secret
     )
     assert resp.status_code == HTTPStatus.OK
     token = resp.json()["token"]
@@ -133,7 +133,9 @@ async def test_delete_habit_returns_204(async_client: AsyncClient) -> None:
 async def test_user_cannot_see_other_users_habits(async_client: AsyncClient) -> None:
     alice_headers = await _signup(async_client, "alice")
     bob_headers = await _signup(async_client, "bob")
-    await async_client.post("/habits/", json=sample_payload(name="Alice Habit"), headers=alice_headers)
+    await async_client.post(
+        "/habits/", json=sample_payload(name="Alice Habit"), headers=alice_headers
+    )
     resp = await async_client.get("/habits/", headers=bob_headers)
     assert resp.status_code == HTTPStatus.OK
     assert resp.json() == []
@@ -143,9 +145,7 @@ async def test_user_cannot_see_other_users_habits(async_client: AsyncClient) -> 
 async def test_user_cannot_get_other_users_habit(async_client: AsyncClient) -> None:
     alice_headers = await _signup(async_client, "alice")
     bob_headers = await _signup(async_client, "bob")
-    create_resp = await async_client.post(
-        "/habits/", json=sample_payload(), headers=alice_headers
-    )
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=alice_headers)
     habit_id = create_resp.json()["id"]
     resp = await async_client.get(f"/habits/{habit_id}", headers=bob_headers)
     assert resp.status_code == HTTPStatus.NOT_FOUND
@@ -155,9 +155,7 @@ async def test_user_cannot_get_other_users_habit(async_client: AsyncClient) -> N
 async def test_user_cannot_delete_other_users_habit(async_client: AsyncClient) -> None:
     alice_headers = await _signup(async_client, "alice")
     bob_headers = await _signup(async_client, "bob")
-    create_resp = await async_client.post(
-        "/habits/", json=sample_payload(), headers=alice_headers
-    )
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=alice_headers)
     habit_id = create_resp.json()["id"]
     resp = await async_client.delete(f"/habits/{habit_id}", headers=bob_headers)
     assert resp.status_code == HTTPStatus.NOT_FOUND
