@@ -2,12 +2,15 @@
 
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import React from 'react';
+import { StyleSheet, Text, TouchableOpacity } from 'react-native';
 
 import CourseScreen from '../features/Course/CourseScreen';
 import HabitsScreen from '../features/Habits/HabitsScreen';
 import JournalScreen from '../features/Journal/JournalScreen';
 import MapScreen from '../features/Map/MapScreen';
 import PracticeScreen from '../features/Practice/PracticeScreen';
+
+import { useAuth } from '@/context/AuthContext';
 
 export type RootTabParamList = {
   Habits: undefined;
@@ -24,8 +27,19 @@ const Tab = createBottomTabNavigator<RootTabParamList>();
  * Each tab corresponds to a major feature area.
  */
 const BottomTabs = (): React.JSX.Element => {
+  const { logout } = useAuth();
+
   return (
-    <Tab.Navigator initialRouteName="Habits">
+    <Tab.Navigator
+      initialRouteName="Habits"
+      screenOptions={{
+        headerRight: () => (
+          <TouchableOpacity onPress={logout} style={styles.logoutButton}>
+            <Text style={styles.logoutText}>Logout</Text>
+          </TouchableOpacity>
+        ),
+      }}
+    >
       <Tab.Screen name="Habits" component={HabitsScreen} />
       <Tab.Screen name="Practice" component={PracticeScreen} />
       <Tab.Screen name="Course" component={CourseScreen} />
@@ -34,5 +48,10 @@ const BottomTabs = (): React.JSX.Element => {
     </Tab.Navigator>
   );
 };
+
+const styles = StyleSheet.create({
+  logoutButton: { marginRight: 12 },
+  logoutText: { color: '#4a90d9', fontSize: 14, fontWeight: '600' },
+});
 
 export default BottomTabs;

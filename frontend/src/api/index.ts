@@ -21,9 +21,14 @@ export class ApiError extends Error {
 }
 
 let tokenGetter: (() => string | null) | null = null;
+let onUnauthorizedCallback: (() => void) | null = null;
 
 export function setTokenGetter(getter: (() => string | null) | null) {
   tokenGetter = getter;
+}
+
+export function setOnUnauthorized(callback: (() => void) | null) {
+  onUnauthorizedCallback = callback;
 }
 
 interface RequestOptions {
@@ -66,6 +71,9 @@ async function request<T>(
       }
     } catch {
       // response body wasn't JSON — use default
+    }
+    if (res.status === 401 && onUnauthorizedCallback) {
+      onUnauthorizedCallback();
     }
     throw new ApiError(res.status, detail);
   }
@@ -214,4 +222,14 @@ export const energy = {
   },
 };
 
-export default { habits, goalCompletions, journal, stages, practice, auth, energy };
+export default {
+  habits,
+  goalCompletions,
+  journal,
+  stages,
+  practice,
+  auth,
+  energy,
+  setTokenGetter,
+  setOnUnauthorized,
+};
