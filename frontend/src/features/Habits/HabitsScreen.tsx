@@ -3,12 +3,22 @@
 import * as Notifications from 'expo-notifications';
 import { BarChart2, Check, MoreHorizontal, Pencil, Zap } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
-import { Alert, FlatList, Text, TouchableOpacity, View, Modal } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Text,
+  TouchableOpacity,
+  View,
+  Modal,
+} from 'react-native';
 import EmojiSelector from 'react-native-emoji-selector';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { spacing } from '../../../Sources/design/DesignSystem';
 import useResponsive from '../../../Sources/design/useResponsive';
+import { habits as habitsApi, goalCompletions as goalCompletionsApi } from '../../api';
+import type { HabitCreatePayload } from '../../api';
 
 import GoalModal from './components/GoalModal';
 import HabitSettingsModal from './components/HabitSettingsModal';
@@ -18,9 +28,16 @@ import ReorderHabitsModal from './components/ReorderHabitsModal';
 import StatsModal from './components/StatsModal';
 import { HABIT_DEFAULTS } from './HabitDefaults';
 import styles from './Habits.styles';
-import type { Goal, Habit, HabitStatsData, OnboardingHabit } from './Habits.types';
+import type { Goal, Habit, OnboardingHabit } from './Habits.types';
 import HabitTile from './HabitTile';
-import { getGoalTier, getGoalTarget, calculateHabitProgress, logHabitUnits } from './HabitUtils';
+import {
+  getGoalTier,
+  getGoalTarget,
+  calculateHabitProgress,
+  logHabitUnits,
+  generateStatsForHabit,
+  calculateMissedDays,
+} from './HabitUtils';
 
 export const DEFAULT_ICONS = [
   '🧘',
@@ -80,11 +97,11 @@ export const DAYS_OF_WEEK = [
   'Sunday',
 ];
 
-// Sample default habits – these might be loaded or saved to AsyncStorage
-const DEFAULT_HABITS: Habit[] = HABIT_DEFAULTS.map((habit) => ({
+// Fallback habits for first-time users when the server returns an empty list
+const FALLBACK_HABITS: Habit[] = HABIT_DEFAULTS.map((habit) => ({
   ...habit,
   revealed: true,
-  completions: [], // Initialize empty completions array
+  completions: [],
 }));
 
 // Register for push notifications
@@ -219,7 +236,9 @@ export const calculateNetEnergy = (cost: number, returnValue: number): number =>
 //------------------
 
 const HabitsScreen = () => {
-  const [habits, setHabits] = useState<Habit[]>(DEFAULT_HABITS);
+  const [habits, setHabits] = useState<Habit[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedHabit, setSelectedHabit] = useState<Habit | null>(null);
   const [menuVisible, setMenuVisible] = useState(false);
   const [goalModalVisible, setGoalModalVisible] = useState(false);
@@ -230,16 +249,76 @@ const HabitsScreen = () => {
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const [reorderModalVisible, setReorderModalVisible] = useState(false);
   const [missedDaysModalVisible, setMissedDaysModalVisible] = useState(false);
-  const [onboardingVisible, setOnboardingVisible] = useState(habits.length === 0);
+  const [onboardingVisible, setOnboardingVisible] = useState(false);
   const [showEnergyCTA, setShowEnergyCTA] = useState(true);
   const [showArchiveMessage, setShowArchiveMessage] = useState(false);
   const [emojiPickerVisible, setEmojiPickerVisible] = useState(false);
   const [emojiHabitIndex, setEmojiHabitIndex] = useState<number | null>(null);
 
+  // Load habits from API on mount
+  const loadHabits = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const apiHabits = await habitsApi.list();
+      if (apiHabits.length === 0) {
+        // First-time user — show defaults and onboarding
+        setHabits(FALLBACK_HABITS);
+        setOnboardingVisible(true);
+      } else {
+        // Map API response to frontend Habit type
+        const mapped: Habit[] = apiHabits.map((h) => ({
+          id: h.id,
+          stage: '',
+          name: h.name,
+          icon: h.icon,
+          streak: 0,
+          energy_cost: h.energy_cost,
+          energy_return: h.energy_return,
+          start_date: new Date(h.start_date),
+          goals: [],
+          completions: [],
+          revealed: true,
+          notificationTimes: h.notification_times ?? undefined,
+          notificationFrequency:
+            (h.notification_frequency as Habit['notificationFrequency']) ?? undefined,
+          notificationDays: h.notification_days ?? undefined,
+          milestoneNotifications: h.milestone_notifications,
+        }));
+        setHabits(mapped);
+      }
+    } catch (err) {
+      console.error('Failed to load habits:', err);
+      setError('Failed to load habits. Please try again.');
+      // Fall back to defaults so the screen isn't empty
+      setHabits(FALLBACK_HABITS);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadHabits();
+  }, []);
+
   // Register for push notifications on mount
   useEffect(() => {
     void registerForPushNotificationsAsync();
   }, []);
+
+  // Helper to build API payload from a frontend Habit
+  const toApiPayload = (h: Habit): HabitCreatePayload => ({
+    name: h.name,
+    icon: h.icon,
+    start_date:
+      h.start_date instanceof Date ? h.start_date.toISOString().slice(0, 10) : String(h.start_date),
+    energy_cost: h.energy_cost,
+    energy_return: h.energy_return,
+    notification_times: h.notificationTimes ?? null,
+    notification_frequency: h.notificationFrequency ?? null,
+    notification_days: h.notificationDays ?? null,
+    milestone_notifications: h.milestoneNotifications ?? false,
+  });
 
   // Handle goal updates
   const handleUpdateGoal = (habitId: number, updatedGoal: Goal) => {
@@ -274,11 +353,14 @@ const HabitsScreen = () => {
     );
   };
 
-  // Log progress units for a habit
+  // Log progress units for a habit (optimistic update + API persist)
   const handleLogUnit = (habitId: number, amount: number) => {
     let updated: Habit | null = null;
-    setHabits((prev) =>
-      prev.map((h) => {
+    let previousHabits: Habit[] = [];
+
+    setHabits((prev) => {
+      previousHabits = prev;
+      return prev.map((h) => {
         if (h.id !== habitId) return h;
         const oldProgress = calculateHabitProgress(h);
         const updatedHabit = logHabitUnits(h, amount);
@@ -320,22 +402,56 @@ const HabitsScreen = () => {
         }
 
         return updatedHabit;
-      }),
-    );
+      });
+    });
+
     if (selectedHabit?.id === habitId && updated) {
       setSelectedHabit(updated);
     }
+
+    // Persist to API — find the current goal and record the completion
+    const habit = updated ?? habits.find((h) => h.id === habitId);
+    if (habit && habit.goals.length > 0) {
+      const { currentGoal } = getGoalTier(habit);
+      if (currentGoal.id) {
+        goalCompletionsApi.create({ goal_id: currentGoal.id, did_complete: true }).catch(() => {
+          // Revert optimistic update on failure
+          setHabits(previousHabits);
+          Alert.alert('Error', 'Failed to save progress. Please try again.');
+        });
+      }
+    }
   };
 
-  // Update habit details
+  // Update habit details (optimistic + API)
   const handleUpdateHabit = (updatedHabit: Habit) => {
-    setHabits((prev) => prev.map((h) => (h.id === updatedHabit.id ? updatedHabit : h)));
+    let previousHabits: Habit[] = [];
+    setHabits((prev) => {
+      previousHabits = prev;
+      return prev.map((h) => (h.id === updatedHabit.id ? updatedHabit : h));
+    });
     void updateHabitNotifications(updatedHabit);
+
+    if (updatedHabit.id) {
+      habitsApi.update(updatedHabit.id, toApiPayload(updatedHabit)).catch(() => {
+        setHabits(previousHabits);
+        Alert.alert('Error', 'Failed to update habit. Please try again.');
+      });
+    }
   };
 
-  // Delete a habit
+  // Delete a habit (optimistic + API)
   const handleDeleteHabit = (habitId: number) => {
-    setHabits((prev) => prev.filter((h) => h.id !== habitId));
+    let previousHabits: Habit[] = [];
+    setHabits((prev) => {
+      previousHabits = prev;
+      return prev.filter((h) => h.id !== habitId);
+    });
+
+    habitsApi.delete(habitId).catch(() => {
+      setHabits(previousHabits);
+      Alert.alert('Error', 'Failed to delete habit. Please try again.');
+    });
   };
 
   // Save the order of habits
@@ -349,19 +465,7 @@ const HabitsScreen = () => {
     setReorderModalVisible(true);
   };
 
-  // Generate stats data based on completions (in a real app, this would use actual data)
-  const generateStatsForHabit = (habit: Habit): HabitStatsData => {
-    // For demonstration purposes - in a real app, calculate based on habit.completions
-    return {
-      dates: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-      values: [1, 2, 3, 2, 4, 1, 0],
-      completionsByDay: [1, 1, 1, 1, 1, 0, 0],
-      dayLabels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-      longestStreak: habit.streak || 5,
-      totalCompletions: habit.completions?.length || 12,
-      completionRate: 0.75,
-    };
-  };
+  // Stats and missed days are now computed from real data via HabitUtils
 
   // Handle backfilling missed days
   const handleBackfillMissedDays = (habitId: number, days: Date[]) => {
@@ -409,20 +513,19 @@ const HabitsScreen = () => {
     );
   };
 
-  // Handle onboarding completion
-  const handleOnboardingSave = (newHabits: OnboardingHabit[]) => {
-    // Convert onboarding habits to full habits with IDs and goals
+  // Handle onboarding completion — persist each new habit to the API
+  const handleOnboardingSave = async (newHabits: OnboardingHabit[]) => {
     const fullHabits = newHabits.map((habit, index) => ({
       ...habit,
       id: index + 1,
       streak: 0,
-      revealed: habit.stage === 'Beige', // Only reveal Beige stage habits initially
-      completions: [], // Initialize empty completions array
+      revealed: habit.stage === 'Beige',
+      completions: [] as Habit['completions'],
       goals: [
         {
           id: index * 3 + 1,
           title: `Low goal for ${habit.name}`,
-          tier: 'low' as 'low',
+          tier: 'low' as const,
           target: 1,
           target_unit: 'units',
           frequency: 1,
@@ -432,7 +535,7 @@ const HabitsScreen = () => {
         {
           id: index * 3 + 2,
           title: `Clear goal for ${habit.name}`,
-          tier: 'clear' as 'clear',
+          tier: 'clear' as const,
           target: 2,
           target_unit: 'units',
           frequency: 1,
@@ -442,7 +545,7 @@ const HabitsScreen = () => {
         {
           id: index * 3 + 3,
           title: `Stretch goal for ${habit.name}`,
-          tier: 'stretch' as 'stretch',
+          tier: 'stretch' as const,
           target: 3,
           target_unit: 'units',
           frequency: 1,
@@ -452,8 +555,19 @@ const HabitsScreen = () => {
       ],
     }));
 
+    // Optimistically show the habits
     setHabits(fullHabits);
     Alert.alert('Next steps', 'Tap a habit tile to edit its goals.');
+
+    // Persist each habit to the server in the background
+    for (const habit of fullHabits) {
+      try {
+        await habitsApi.create(toApiPayload(habit as Habit));
+      } catch {
+        // Best-effort: habits are shown locally even if persist fails
+        console.error(`Failed to save habit "${habit.name}" to server`);
+      }
+    }
   };
 
   // Render a habit tile
@@ -571,22 +685,41 @@ const HabitsScreen = () => {
         </View>
       </View>
 
-      <FlatList
-        key={`cols-${columns}`}
-        testID="habits-list"
-        data={habits.filter((h) => h.revealed)}
-        keyExtractor={(item) => item.id?.toString() ?? item.name}
-        renderItem={renderHabitTile}
-        numColumns={columns}
-        columnWrapperStyle={columns > 1 ? { gap: gridGutter } : undefined}
-        contentContainerStyle={[
-          styles.habitsGrid,
-          {
-            padding: gridGutter / 2,
-            paddingBottom: gridGutter / 2,
-          },
-        ]}
-      />
+      {error && (
+        <View style={styles.energyScaffoldingContainer}>
+          <Text style={{ color: '#c00', marginBottom: 8 }}>{error}</Text>
+          <TouchableOpacity
+            testID="retry-button"
+            onPress={() => void loadHabits()}
+            style={styles.energyScaffoldingButton}
+          >
+            <Text style={styles.energyScaffoldingButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {loading ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator testID="loading-spinner" size="large" />
+        </View>
+      ) : (
+        <FlatList
+          key={`cols-${columns}`}
+          testID="habits-list"
+          data={habits.filter((h) => h.revealed)}
+          keyExtractor={(item) => item.id?.toString() ?? item.name}
+          renderItem={renderHabitTile}
+          numColumns={columns}
+          columnWrapperStyle={columns > 1 ? { gap: gridGutter } : undefined}
+          contentContainerStyle={[
+            styles.habitsGrid,
+            {
+              padding: gridGutter / 2,
+              paddingBottom: gridGutter / 2,
+            },
+          ]}
+        />
+      )}
 
       {showEnergyCTA && !(statsMode || editMode || quickLogMode) ? (
         <View style={styles.energyScaffoldingContainer}>
@@ -666,7 +799,7 @@ const HabitsScreen = () => {
       <MissedDaysModal
         visible={missedDaysModalVisible}
         habit={selectedHabit}
-        missedDays={[new Date(), new Date(Date.now() - 86400000)]} // Example: today and yesterday
+        missedDays={selectedHabit ? calculateMissedDays(selectedHabit) : []}
         onClose={() => setMissedDaysModalVisible(false)}
         onBackfill={handleBackfillMissedDays}
         onNewStartDate={handleSetNewStartDate}
