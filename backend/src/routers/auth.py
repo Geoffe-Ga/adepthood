@@ -1,33 +1,37 @@
-"""Simple authentication endpoints issuing session tokens."""
+"""Authentication endpoints with JWT tokens and database-backed users."""
 
 from __future__ import annotations
 
-import secrets
+import os
 from datetime import UTC, datetime, timedelta
-from itertools import count
-from typing import cast
 
-import bcrypt  # type: ignore[import-not-found]
-from fastapi import APIRouter, Header, HTTPException, status
+import bcrypt
+import jwt
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
+
+from database import get_session
+from models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-_users: dict[str, tuple[bytes, int]] = {}
-_tokens: dict[str, tuple[int, datetime]] = {}
-_id_counter = count(1)
+SECRET_KEY = os.getenv("SECRET_KEY", "")
+_JWT_ALGORITHM = "HS256"
 _TOKEN_TTL = timedelta(hours=1)
+_MIN_PASSWORD_LENGTH = 8
 
 
-def _cleanup_tokens() -> None:
-    now = datetime.now(UTC)
-    expired = [t for t, (_, exp) in _tokens.items() if exp < now]
-    for token in expired:
-        _tokens.pop(token, None)
+def _get_secret_key() -> str:
+    if not SECRET_KEY or SECRET_KEY == "replace-me":  # nosec B105  # pragma: allowlist secret
+        msg = "SECRET_KEY environment variable must be set to a secure value"
+        raise RuntimeError(msg)
+    return SECRET_KEY
 
 
 class AuthRequest(BaseModel):
-    username: str
+    email: str
     password: str
 
 
@@ -36,49 +40,75 @@ class AuthResponse(BaseModel):
     user_id: int
 
 
-def _hash_password(password: str) -> bytes:
-    hashed = cast(bytes, bcrypt.hashpw(password.encode(), bcrypt.gensalt()))
-    return hashed
+def _hash_password(password: str) -> str:
+    hashed: bytes = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12))
+    return hashed.decode("utf-8")
+
+
+def _verify_password(password: str, password_hash: str) -> bool:
+    return bool(bcrypt.checkpw(password.encode(), password_hash.encode("utf-8")))
 
 
 def _create_token(user_id: int) -> str:
-    _cleanup_tokens()
-    token = secrets.token_hex(16)
-    expires = datetime.now(UTC) + _TOKEN_TTL
-    _tokens[token] = (user_id, expires)
-    return token
+    payload = {
+        "sub": str(user_id),
+        "exp": datetime.now(UTC) + _TOKEN_TTL,
+        "iat": datetime.now(UTC),
+    }
+    return str(jwt.encode(payload, _get_secret_key(), algorithm=_JWT_ALGORITHM))
 
 
 @router.post("/signup", response_model=AuthResponse)
-def signup(payload: AuthRequest) -> AuthResponse:
-    if payload.username in _users:
+async def signup(
+    payload: AuthRequest,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> AuthResponse:
+    if len(payload.password) < _MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"password must be at least {_MIN_PASSWORD_LENGTH} characters",
+        )
+    result = await session.execute(select(User).where(User.email == payload.email))
+    if result.scalars().first() is not None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "user exists")
-    user_id = next(_id_counter)
-    _users[payload.username] = (_hash_password(payload.password), user_id)
-    token = _create_token(user_id)
-    return AuthResponse(token=token, user_id=user_id)
+
+    user = User(
+        email=payload.email,
+        password_hash=_hash_password(payload.password),
+    )
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+
+    assert user.id is not None
+    token = _create_token(user.id)
+    return AuthResponse(token=token, user_id=user.id)
 
 
 @router.post("/login", response_model=AuthResponse)
-def login(payload: AuthRequest) -> AuthResponse:
-    record = _users.get(payload.username)
-    if not record or not bcrypt.checkpw(payload.password.encode(), record[0]):
+async def login(
+    payload: AuthRequest,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> AuthResponse:
+    result = await session.execute(select(User).where(User.email == payload.email))
+    user = result.scalars().first()
+    if user is None or not _verify_password(payload.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
-    user_id = record[1]
-    token = _create_token(user_id)
-    return AuthResponse(token=token, user_id=user_id)
+
+    assert user.id is not None
+    token = _create_token(user.id)
+    return AuthResponse(token=token, user_id=user.id)
 
 
 def get_current_user(authorization: str | None = Header(default=None)) -> int:
-    _cleanup_tokens()
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing token")
     token = authorization.split(" ", 1)[1]
-    data = _tokens.get(token)
-    if data is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token")
-    user_id, expires = data
-    if expires < datetime.now(UTC):
-        _tokens.pop(token, None)
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "expired token")
+    try:
+        payload = jwt.decode(token, _get_secret_key(), algorithms=[_JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "expired token")  # noqa: B904
+    except jwt.InvalidTokenError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token")  # noqa: B904
+    user_id = int(payload["sub"])
     return user_id

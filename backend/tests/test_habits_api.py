@@ -3,20 +3,9 @@
 from __future__ import annotations
 
 from http import HTTPStatus
-from itertools import count
 
 import pytest
 from httpx import AsyncClient
-
-from routers import auth as auth_module
-
-
-@pytest.fixture(autouse=True)
-def _reset_auth_state() -> None:
-    """Clear in-memory auth state between tests."""
-    auth_module._users.clear()  # noqa: SLF001
-    auth_module._tokens.clear()  # noqa: SLF001
-    auth_module._id_counter = count(1)  # noqa: SLF001
 
 
 def sample_payload(**overrides: object) -> dict[str, object]:
@@ -41,7 +30,10 @@ async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str
     """Create a user and return auth headers."""
     resp = await client.post(
         "/auth/signup",
-        json={"username": username, "password": "secret123"},  # pragma: allowlist secret
+        json={
+            "email": f"{username}@example.com",
+            "password": "secret12345",  # pragma: allowlist secret
+        },
     )
     assert resp.status_code == HTTPStatus.OK
     token = resp.json()["token"]

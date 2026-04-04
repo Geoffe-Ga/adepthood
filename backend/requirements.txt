@@ -7,6 +7,7 @@ sqlmodel
 asyncpg
 aiosqlite
 bcrypt
+PyJWT
 pytest
 pytest-asyncio
 httpx
