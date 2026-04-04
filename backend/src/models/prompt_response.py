@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -21,4 +19,4 @@ class PromptResponse(SQLModel, table=True):
     response: str
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     user_id: int = Field(foreign_key="user.id")
-    user: User = Relationship(back_populates="responses")
+    user: "User" = Relationship(back_populates="responses")

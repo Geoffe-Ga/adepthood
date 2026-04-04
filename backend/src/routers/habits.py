@@ -1,58 +1,91 @@
-"""Habit CRUD API endpoints."""
+"""Habit CRUD API endpoints backed by the database."""
 
 from __future__ import annotations
 
-from itertools import count
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
-from fastapi import APIRouter, HTTPException
-
-from schemas.habit import Habit, HabitCreate
+from database import get_session
+from models.habit import Habit
+from routers.auth import get_current_user
+from schemas.habit import HabitCreate
+from schemas.habit import Habit as HabitSchema
 
 router = APIRouter(prefix="/habits", tags=["habits"])
 
-_habits: list[Habit] = []
-_id_counter = count(1)
 
-
-@router.post("/", response_model=Habit)
-def create_habit(payload: HabitCreate) -> Habit:
-    """Create a habit and store it in memory."""
-    habit = Habit(id=next(_id_counter), **payload.model_dump())
-    _habits.append(habit)
+@router.post("/", response_model=HabitSchema)
+async def create_habit(
+    payload: HabitCreate,
+    current_user: int = Depends(get_current_user),  # noqa: B008
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> Habit:
+    """Create a habit for the authenticated user."""
+    habit = Habit(user_id=current_user, **payload.model_dump())
+    session.add(habit)
+    await session.commit()
+    await session.refresh(habit)
     return habit
 
 
-@router.get("/", response_model=list[Habit])
-def list_habits() -> list[Habit]:
-    """Return all habits sorted by their sort order."""
-    return sorted(_habits, key=lambda h: (h.sort_order if h.sort_order is not None else h.id))
+@router.get("/", response_model=list[HabitSchema])
+async def list_habits(
+    current_user: int = Depends(get_current_user),  # noqa: B008
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> list[Habit]:
+    """Return all habits for the authenticated user, sorted by sort_order."""
+    statement = (
+        select(Habit)
+        .where(Habit.user_id == current_user)
+        .order_by(Habit.sort_order.asc())  # type: ignore[union-attr]
+    )
+    result = await session.execute(statement)
+    return list(result.scalars().all())
 
 
-@router.get("/{habit_id}", response_model=Habit)
-def get_habit(habit_id: int) -> Habit:
-    """Return a single habit by id."""
-    for habit in _habits:
-        if habit.id == habit_id:
-            return habit
-    raise HTTPException(status_code=404, detail="Habit not found")
+@router.get("/{habit_id}", response_model=HabitSchema)
+async def get_habit(
+    habit_id: int,
+    current_user: int = Depends(get_current_user),  # noqa: B008
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> Habit:
+    """Return a single habit by id, scoped to the authenticated user."""
+    habit = await session.get(Habit, habit_id)
+    if habit is None or habit.user_id != current_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Habit not found")
+    return habit
 
 
-@router.put("/{habit_id}", response_model=Habit)
-def update_habit(habit_id: int, payload: HabitCreate) -> Habit:
-    """Replace an existing habit."""
-    for index, habit in enumerate(_habits):
-        if habit.id == habit_id:
-            updated = Habit(id=habit_id, **payload.model_dump())
-            _habits[index] = updated
-            return updated
-    raise HTTPException(status_code=404, detail="Habit not found")
+@router.put("/{habit_id}", response_model=HabitSchema)
+async def update_habit(
+    habit_id: int,
+    payload: HabitCreate,
+    current_user: int = Depends(get_current_user),  # noqa: B008
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> Habit:
+    """Replace an existing habit's fields."""
+    habit = await session.get(Habit, habit_id)
+    if habit is None or habit.user_id != current_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Habit not found")
+    for key, value in payload.model_dump().items():
+        setattr(habit, key, value)
+    session.add(habit)
+    await session.commit()
+    await session.refresh(habit)
+    return habit
 
 
-@router.delete("/{habit_id}")
-def delete_habit(habit_id: int) -> None:
-    """Delete a habit from the in-memory store."""
-    for index, habit in enumerate(_habits):
-        if habit.id == habit_id:
-            del _habits[index]
-            return None
-    raise HTTPException(status_code=404, detail="Habit not found")
+@router.delete("/{habit_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_habit(
+    habit_id: int,
+    current_user: int = Depends(get_current_user),  # noqa: B008
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> Response:
+    """Delete a habit. Returns 204 No Content on success."""
+    habit = await session.get(Habit, habit_id)
+    if habit is None or habit.user_id != current_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Habit not found")
+    await session.delete(habit)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

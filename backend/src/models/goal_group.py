@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 from sqlmodel import Field, Relationship, SQLModel
@@ -18,4 +16,4 @@ class GoalGroup(SQLModel, table=True):
     user_id: int | None = Field(default=None, foreign_key="user.id")
     shared_template: bool = False
     source: str | None = None
-    goals: list[Goal] = Relationship(back_populates="goal_group")
+    goals: list["Goal"] = Relationship(back_populates="goal_group")
