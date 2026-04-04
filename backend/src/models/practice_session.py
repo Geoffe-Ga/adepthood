@@ -10,6 +10,9 @@ class PracticeSession(SQLModel, table=True):
     """
 
     id: int | None = Field(default=None, primary_key=True)
-    user_practice_id: int = Field(foreign_key="userpractice.id")
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    user_id: int = Field(foreign_key="user.id")
+    practice_id: int
+    stage_number: int
     duration_minutes: float
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    reflection: str | None = None

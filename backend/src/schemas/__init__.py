@@ -11,6 +11,7 @@ from schemas.energy import Habit as EnergyHabit
 from schemas.goal import Goal
 from schemas.habit import Habit
 from schemas.milestone import Milestone
+from schemas.practice import PracticeSessionCreate, PracticeSessionSchema
 
 __all__ = [
     "CheckInRequest",
@@ -23,4 +24,6 @@ __all__ = [
     "Goal",
     "Habit",
     "Milestone",
+    "PracticeSessionCreate",
+    "PracticeSessionSchema",
 ]
