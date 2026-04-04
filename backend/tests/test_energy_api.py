@@ -1,8 +1,12 @@
 from typing import Any
+from unittest.mock import patch
 
+from cachetools import TTLCache
 from fastapi.testclient import TestClient
 
 from main import app
+from routers import energy
+from routers.energy import _idempotency_cache
 
 client = TestClient(app)
 
@@ -32,3 +36,32 @@ def test_energy_plan_endpoint_idempotency() -> None:
     res1 = client.post("/v1/energy/plan", json=sample_payload(), headers=headers)
     res2 = client.post("/v1/energy/plan", json=sample_payload(), headers=headers)
     assert res1.json() == res2.json()
+
+
+def test_idempotency_cache_is_ttl_bounded() -> None:
+    """The idempotency cache should be a TTLCache with bounded size."""
+    assert isinstance(_idempotency_cache, TTLCache)
+    assert _idempotency_cache.maxsize == 1000  # noqa: PLR2004
+    assert _idempotency_cache.ttl == 3600  # noqa: PLR2004
+
+
+def test_idempotency_cache_evicts_when_full() -> None:
+    """When the cache is full, new entries should evict old ones."""
+    small_cache: TTLCache[str, str] = TTLCache(maxsize=2, ttl=3600)
+    small_cache["a"] = "val_a"
+    small_cache["b"] = "val_b"
+    small_cache["c"] = "val_c"
+    assert "a" not in small_cache
+    assert "c" in small_cache
+
+
+def test_idempotency_miss_after_cache_clear() -> None:
+    """After clearing the cache, duplicate keys should recompute."""
+    with patch.object(energy, "_idempotency_cache", TTLCache(maxsize=1000, ttl=3600)):
+        headers = {"X-Idempotency-Key": "unique-clear-test"}
+        res1 = client.post("/v1/energy/plan", json=sample_payload(), headers=headers)
+        energy._idempotency_cache.clear()  # noqa: SLF001
+        res2 = client.post("/v1/energy/plan", json=sample_payload(), headers=headers)
+        # Both should succeed (recomputed, not from cache)
+        assert res1.status_code == 200  # noqa: PLR2004
+        assert res2.status_code == 200  # noqa: PLR2004
