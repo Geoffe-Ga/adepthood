@@ -45,7 +45,7 @@ Make HabitsScreen load data from the API on mount and persist changes back to th
 
 2. **Persist mutations to the API**
    - `handleLogUnit`: After updating local state, call a `habits.logCompletion(habitId, amount)` endpoint (may need a new backend endpoint for completions specifically)
-   - `handleUpdateGoal`: Call `goals.update(goalId, updatedGoal)` 
+   - `handleUpdateGoal`: Call `goals.update(goalId, updatedGoal)`
    - `handleUpdateHabit`: Call `habits.update(habitId, payload)`
    - `handleDeleteHabit`: Call `habits.delete(habitId)`
    - `handleOnboardingSave`: Call `habits.create(habit)` for each new habit
