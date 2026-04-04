@@ -1,0 +1,57 @@
+export const DEFAULT_ICONS = [
+  '🧘',
+  '🏃',
+  '💧',
+  '🥗',
+  '💪',
+  '📱',
+  '🍷',
+  '☕',
+  '🎨',
+  '💼',
+  '🧠',
+  '🌱',
+  '🌞',
+  '🌙',
+  '📚',
+  '✍️',
+  '🤔',
+  '🗣️',
+  '👥',
+  '❤️',
+];
+
+export const TARGET_UNITS = [
+  'minutes',
+  'hours',
+  'reps',
+  'sets',
+  'cups',
+  'liters',
+  'ml',
+  'oz',
+  'pages',
+  'sessions',
+  'steps',
+  'calories',
+  'times',
+  'units',
+  'mg',
+  'g',
+  'kg',
+  'lbs',
+  'points',
+  'days',
+];
+
+export const FREQUENCY_UNITS = ['per_day', 'per_week', 'per_month', 'per_session'];
+
+export const DAYS_OF_WEEK = [
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+  'Sunday',
+];

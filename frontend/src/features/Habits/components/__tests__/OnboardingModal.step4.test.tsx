@@ -9,7 +9,7 @@ import { STAGE_ORDER } from '../../HabitUtils';
 
 const OnboardingModal = require('../OnboardingModal').default;
 
-jest.mock('../../HabitsScreen', () => ({ DEFAULT_ICONS: ['⭐'] }));
+jest.mock('../../constants', () => ({ DEFAULT_ICONS: ['⭐'] }));
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
 jest.mock('react-native-gesture-handler', () => ({

@@ -14,9 +14,10 @@ import {
 import EmojiSelector from 'react-native-emoji-selector';
 
 import { STAGE_COLORS } from '../../../constants/stageColors';
+import { DAYS_OF_WEEK } from '../constants';
 import styles from '../Habits.styles';
 import type { Habit, HabitSettingsModalProps } from '../Habits.types';
-import { calculateNetEnergy, DAYS_OF_WEEK } from '../HabitsScreen';
+import { calculateNetEnergy } from '../HabitUtils';
 
 export const HabitSettingsModal = ({
   visible,

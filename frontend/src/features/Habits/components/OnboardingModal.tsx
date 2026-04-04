@@ -20,9 +20,9 @@ import Animated from 'react-native-reanimated';
 
 import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
 import { STAGE_COLORS } from '../../../constants/stageColors';
+import { DEFAULT_ICONS } from '../constants';
 import styles, { COLORS } from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
-import { DEFAULT_ICONS } from '../HabitsScreen';
 import { STAGE_ORDER, calculateHabitStartDate } from '../HabitUtils';
 
 interface SmoothSliderProps extends SliderProps {
