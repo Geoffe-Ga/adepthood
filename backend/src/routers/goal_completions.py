@@ -1,15 +1,24 @@
+"""Goal completion API endpoints backed by the database."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, select
 
+from database import get_session
 from domain.milestones import achieved_milestones
 from domain.streaks import update_streak
+from models.goal import Goal
+from models.goal_completion import GoalCompletion
+from models.habit import Habit
+from routers.auth import get_current_user
 from schemas import CheckInResult, Milestone
 
 router = APIRouter(prefix="/goal_completions", tags=["goals"])
+
+_DEFAULT_THRESHOLDS = [1, 3, 7, 14, 30]
 
 
 class GoalCompletionRequest(BaseModel):
@@ -19,29 +28,46 @@ class GoalCompletionRequest(BaseModel):
     did_complete: bool = True
 
 
-@dataclass
-class GoalState:
-    """In-memory goal state used for demo purposes."""
-
-    streak: int
-    thresholds: list[int]
-
-
-# simple in-memory store of goal progress and milestone thresholds
-_goal_state: dict[int, GoalState] = {1: GoalState(streak=0, thresholds=[1, 3])}
-
-
 @router.post("/", response_model=CheckInResult)
-def create_goal_completion(payload: GoalCompletionRequest) -> CheckInResult:
-    """Update streak and return any achieved milestones for a goal."""
-    state = _goal_state.get(payload.goal_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="goal_not_found")
+async def create_goal_completion(
+    payload: GoalCompletionRequest,
+    current_user: int = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> CheckInResult:
+    """Record a check-in and return updated streak and milestones."""
+    goal = await session.get(Goal, payload.goal_id)
+    if goal is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="goal_not_found")
 
-    new_streak, reason = update_streak(state.streak, payload.did_complete)
-    state.streak = new_streak
+    habit = await session.get(Habit, goal.habit_id)
+    if habit is None or habit.user_id != current_user:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not_owner")
 
-    reached, _ = achieved_milestones(new_streak, state.thresholds)
+    # Compute current streak from consecutive completions (newest first)
+    assert goal.id is not None
+    rows = await session.execute(
+        select(GoalCompletion.completed_units)
+        .where(GoalCompletion.goal_id == goal.id, GoalCompletion.user_id == current_user)
+        .order_by(col(GoalCompletion.timestamp).desc())
+    )
+    current_streak = 0
+    for (units,) in rows:
+        if units > 0:
+            current_streak += 1
+        else:
+            break
+
+    new_streak, reason = update_streak(current_streak, payload.did_complete)
+
+    session.add(
+        GoalCompletion(
+            goal_id=payload.goal_id,
+            user_id=current_user,
+            completed_units=goal.target if payload.did_complete else 0,
+        )
+    )
+    await session.commit()
+
+    reached, _ = achieved_milestones(new_streak, _DEFAULT_THRESHOLDS)
     milestones = [Milestone(threshold=t) for t in reached]
-
     return CheckInResult(streak=new_streak, milestones=milestones, reason_code=reason)
