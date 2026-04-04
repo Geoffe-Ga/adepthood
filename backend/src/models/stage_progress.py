@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Column, Integer
@@ -23,4 +21,4 @@ class StageProgress(SQLModel, table=True):
         sa_column=Column(ARRAY(Integer), nullable=False),
     )
     user_id: int = Field(foreign_key="user.id", unique=True)
-    user: User = Relationship(back_populates="stage_progress")
+    user: "User" = Relationship(back_populates="stage_progress")

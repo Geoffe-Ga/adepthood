@@ -1,19 +1,27 @@
+"""Tests for the habits CRUD API — DB-backed with authentication."""
+
+from __future__ import annotations
+
+from http import HTTPStatus
 from itertools import count
 
 import pytest
-from fastapi.testclient import TestClient
+from httpx import AsyncClient
 
-from main import app
-from routers import habits as habits_module
+from routers import auth as auth_module
 
-client = TestClient(app)
-OK = 200
-NOT_FOUND = 404
+
+@pytest.fixture(autouse=True)
+def _reset_auth_state() -> None:
+    """Clear in-memory auth state between tests."""
+    auth_module._users.clear()  # noqa: SLF001
+    auth_module._tokens.clear()  # noqa: SLF001
+    auth_module._id_counter = count(1)  # noqa: SLF001
 
 
 def sample_payload(**overrides: object) -> dict[str, object]:
+    """Return a valid habit creation payload."""
     payload: dict[str, object] = {
-        "user_id": 1,
         "name": "Drink Water",
         "icon": "💧",
         "start_date": "2024-01-01",
@@ -29,40 +37,132 @@ def sample_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
-@pytest.fixture(autouse=True)
-def clear_store() -> None:
-    habits_module._habits.clear()  # noqa: SLF001
-    habits_module._id_counter = count(1)  # noqa: SLF001
+async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str]:
+    """Create a user and return auth headers."""
+    resp = await client.post(
+        "/auth/signup",
+        json={"username": username, "password": "secret123"},  # pragma: allowlist secret
+    )
+    assert resp.status_code == HTTPStatus.OK
+    token = resp.json()["token"]
+    return {"Authorization": f"Bearer {token}"}
 
 
-def test_create_habit() -> None:
-    response = client.post("/habits/", json=sample_payload())
-    assert response.status_code == OK
-    data = response.json()
-    assert data["id"] == 1
+# ── Unauthenticated access ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_create_returns_401(async_client: AsyncClient) -> None:
+    resp = await async_client.post("/habits/", json=sample_payload())
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_list_returns_401(async_client: AsyncClient) -> None:
+    resp = await async_client.get("/habits/")
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+# ── CRUD ─────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_create_habit(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert data["name"] == "Drink Water"
     assert data["notification_times"] == ["08:00"]
+    assert data["id"] is not None
 
 
-def test_list_habits_sorted() -> None:
-    client.post("/habits/", json=sample_payload(name="Two", sort_order=2))
-    client.post("/habits/", json=sample_payload(name="One", sort_order=1))
-    response = client.get("/habits/")
-    assert response.status_code == OK
-    names = [h["name"] for h in response.json()]
+@pytest.mark.asyncio
+async def test_list_habits_sorted(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    await async_client.post(
+        "/habits/", json=sample_payload(name="Two", sort_order=2), headers=headers
+    )
+    await async_client.post(
+        "/habits/", json=sample_payload(name="One", sort_order=1), headers=headers
+    )
+    resp = await async_client.get("/habits/", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    names = [h["name"] for h in resp.json()]
     assert names == ["One", "Two"]
 
 
-def test_get_update_delete_habit() -> None:
-    client.post("/habits/", json=sample_payload())
-    # Get
-    response = client.get("/habits/1")
-    assert response.status_code == OK
-    # Update
-    response = client.put("/habits/1", json=sample_payload(name="Updated"))
-    assert response.status_code == OK
-    assert response.json()["name"] == "Updated"
-    # Delete
-    delete_resp = client.delete("/habits/1")
-    assert delete_resp.status_code == OK
-    missing = client.get("/habits/1")
-    assert missing.status_code == NOT_FOUND
+@pytest.mark.asyncio
+async def test_get_habit(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    habit_id = create_resp.json()["id"]
+    resp = await async_client.get(f"/habits/{habit_id}", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["name"] == "Drink Water"
+
+
+@pytest.mark.asyncio
+async def test_update_habit(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    habit_id = create_resp.json()["id"]
+    resp = await async_client.put(
+        f"/habits/{habit_id}", json=sample_payload(name="Updated"), headers=headers
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["name"] == "Updated"
+
+
+@pytest.mark.asyncio
+async def test_delete_habit_returns_204(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    habit_id = create_resp.json()["id"]
+    resp = await async_client.delete(f"/habits/{habit_id}", headers=headers)
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    # Confirm gone
+    get_resp = await async_client.get(f"/habits/{habit_id}", headers=headers)
+    assert get_resp.status_code == HTTPStatus.NOT_FOUND
+
+
+# ── User isolation ───────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_user_cannot_see_other_users_habits(async_client: AsyncClient) -> None:
+    alice_headers = await _signup(async_client, "alice")
+    bob_headers = await _signup(async_client, "bob")
+    await async_client.post(
+        "/habits/", json=sample_payload(name="Alice Habit"), headers=alice_headers
+    )
+    resp = await async_client.get("/habits/", headers=bob_headers)
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_user_cannot_get_other_users_habit(async_client: AsyncClient) -> None:
+    alice_headers = await _signup(async_client, "alice")
+    bob_headers = await _signup(async_client, "bob")
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=alice_headers)
+    habit_id = create_resp.json()["id"]
+    resp = await async_client.get(f"/habits/{habit_id}", headers=bob_headers)
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_user_cannot_delete_other_users_habit(async_client: AsyncClient) -> None:
+    alice_headers = await _signup(async_client, "alice")
+    bob_headers = await _signup(async_client, "bob")
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=alice_headers)
+    habit_id = create_resp.json()["id"]
+    resp = await async_client.delete(f"/habits/{habit_id}", headers=bob_headers)
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_get_nonexistent_habit_returns_404(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    resp = await async_client.get("/habits/9999", headers=headers)
+    assert resp.status_code == HTTPStatus.NOT_FOUND

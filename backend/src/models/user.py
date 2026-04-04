@@ -1,7 +1,5 @@
-from __future__ import annotations
-
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -23,7 +21,7 @@ class User(SQLModel, table=True):
     offering_balance: int = Field(default=0)
     email: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    habits: list[Habit] = Relationship(back_populates="user")
-    journals: list[JournalEntry] = Relationship(back_populates="user")
-    responses: list[PromptResponse] = Relationship(back_populates="user")
-    stage_progress: StageProgress | None = Relationship(back_populates="user")
+    habits: list["Habit"] = Relationship(back_populates="user")
+    journals: list["JournalEntry"] = Relationship(back_populates="user")
+    responses: list["PromptResponse"] = Relationship(back_populates="user")
+    stage_progress: Optional["StageProgress"] = Relationship(back_populates="user")

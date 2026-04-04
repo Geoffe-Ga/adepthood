@@ -1,9 +1,7 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import Column, String
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -39,13 +37,13 @@ class Goal(SQLModel, table=True):
     frequency_unit: str  # "per_day", "per_week"
     days_of_week: list[str] | None = Field(
         default=None,
-        sa_column=Column(ARRAY(String), nullable=True),
+        sa_column=Column(PG_ARRAY(String), nullable=True),
     )
     track_with_timer: bool = False
     timer_duration_minutes: int | None = None
     origin: str | None = None
     goal_group_id: int | None = Field(default=None, foreign_key="goalgroup.id")
-    goal_group: GoalGroup | None = Relationship(back_populates="goals")
+    goal_group: Optional["GoalGroup"] = Relationship(back_populates="goals")
     is_additive: bool = True
-    habit: Habit = Relationship(back_populates="goals")
-    completions: list[GoalCompletion] = Relationship(back_populates="goal")
+    habit: "Habit" = Relationship(back_populates="goals")
+    completions: list["GoalCompletion"] = Relationship(back_populates="goal")

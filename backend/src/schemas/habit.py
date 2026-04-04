@@ -29,9 +29,12 @@ class Habit(BaseModel):
 
 
 class HabitCreate(BaseModel):
-    """Payload for creating/updating a habit."""
+    """Payload for creating/updating a habit.
 
-    user_id: int
+    ``user_id`` is intentionally omitted — the server derives it from the
+    authenticated user's token so clients cannot impersonate other users.
+    """
+
     name: str
     icon: str
     start_date: date

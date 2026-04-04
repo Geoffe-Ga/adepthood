@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -25,4 +23,4 @@ class JournalEntry(SQLModel, table=True):
     is_habit_note: bool = False
     practice_session_id: int | None = Field(default=None, foreign_key="practicesession.id")
     user_practice_id: int | None = Field(default=None, foreign_key="userpractice.id")
-    user: User = Relationship(back_populates="journals")
+    user: "User" = Relationship(back_populates="journals")

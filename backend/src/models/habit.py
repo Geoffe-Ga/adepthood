@@ -1,8 +1,9 @@
-from __future__ import annotations
-
 from datetime import date
 from typing import TYPE_CHECKING
 
+from sqlalchemy import Column
+from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
+from sqlalchemy.types import String
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -20,5 +21,14 @@ class Habit(SQLModel, table=True):
     energy_cost: int
     energy_return: int
     user_id: int = Field(foreign_key="user.id")
-    user: User = Relationship(back_populates="habits")
-    goals: list[Goal] = Relationship(back_populates="habit")
+    notification_times: list[str] | None = Field(
+        default=None, sa_column=Column(PG_ARRAY(String), nullable=True)
+    )
+    notification_frequency: str | None = None
+    notification_days: list[str] | None = Field(
+        default=None, sa_column=Column(PG_ARRAY(String), nullable=True)
+    )
+    milestone_notifications: bool = Field(default=False)
+    sort_order: int | None = None
+    user: "User" = Relationship(back_populates="habits")
+    goals: list["Goal"] = Relationship(back_populates="habit")
