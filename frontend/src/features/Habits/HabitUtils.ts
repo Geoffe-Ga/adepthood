@@ -1,6 +1,6 @@
 import { STAGE_COLORS } from '../../constants/stageColors';
 
-import type { Goal, Habit, Completion } from './Habits.types';
+import type { Goal, Habit, Completion, HabitStatsData } from './Habits.types';
 
 export const STAGE_ORDER = [
   'Beige',
@@ -225,6 +225,113 @@ export const getProgressPercentage = (
 
 export const getProgressBarColor = (habit: Habit): string => {
   return STAGE_COLORS[habit.stage] ?? '#000';
+};
+
+/**
+ * Compute real stats from a habit's completions array.
+ *
+ * Day-of-week indices: 0=Sun, 1=Mon, … 6=Sat (matching JS `getDay()`).
+ */
+export const generateStatsForHabit = (habit: Habit): HabitStatsData => {
+  const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const empty: HabitStatsData = {
+    dates: dayLabels,
+    values: new Array(7).fill(0) as number[],
+    completionsByDay: new Array(7).fill(0) as number[],
+    dayLabels,
+    longestStreak: 0,
+    totalCompletions: 0,
+    completionRate: 0,
+  };
+
+  const completions = habit.completions;
+  if (!completions || completions.length === 0) return empty;
+
+  // Aggregate units per day-of-week
+  const unitsByDay = new Array(7).fill(0) as number[];
+  const daysWithCompletions = new Set<string>();
+
+  for (const c of completions) {
+    const d = new Date(c.timestamp);
+    const dayIdx = d.getDay();
+    unitsByDay[dayIdx] = unitsByDay[dayIdx]! + c.completed_units;
+    daysWithCompletions.add(d.toDateString());
+  }
+
+  // completionsByDay: 1 if that day-of-week ever had a completion, else 0
+  const presenceByDay = new Array(7).fill(0) as number[];
+  for (const c of completions) {
+    presenceByDay[new Date(c.timestamp).getDay()] = 1;
+  }
+
+  // Longest streak: consecutive calendar days with at least one completion
+  const sortedDays = Array.from(daysWithCompletions)
+    .map((s) => new Date(s))
+    .sort((a, b) => a.getTime() - b.getTime());
+
+  let longestStreak = 0;
+  let currentStreak = 0;
+  for (let i = 0; i < sortedDays.length; i++) {
+    const day = sortedDays[i]!;
+    if (i === 0) {
+      currentStreak = 1;
+    } else {
+      const prev = sortedDays[i - 1]!;
+      const diff = (day.getTime() - prev.getTime()) / (1000 * 60 * 60 * 24);
+      currentStreak = diff === 1 ? currentStreak + 1 : 1;
+    }
+    if (currentStreak > longestStreak) longestStreak = currentStreak;
+  }
+
+  // Completion rate: days-with-completions / span of days
+  const firstDay = sortedDays[0]!;
+  const lastDay = sortedDays[sortedDays.length - 1]!;
+  const spanDays = Math.round((lastDay.getTime() - firstDay.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+  const completionRate = spanDays > 0 ? daysWithCompletions.size / spanDays : 0;
+
+  return {
+    dates: dayLabels,
+    values: unitsByDay,
+    completionsByDay: presenceByDay,
+    dayLabels,
+    longestStreak,
+    totalCompletions: completions.length,
+    completionRate,
+  };
+};
+
+/**
+ * Calculate days without completions between the first and last completion.
+ */
+export const calculateMissedDays = (habit: Habit): Date[] => {
+  const completions = habit.completions;
+  if (!completions || completions.length === 0) return [];
+
+  const completedDates = new Set<string>();
+  for (const c of completions) {
+    completedDates.add(new Date(c.timestamp).toDateString());
+  }
+
+  const sorted = Array.from(completedDates)
+    .map((s) => new Date(s))
+    .sort((a, b) => a.getTime() - b.getTime());
+
+  if (sorted.length < 2) return [];
+
+  const missed: Date[] = [];
+  const first = sorted[0]!;
+  const last = sorted[sorted.length - 1]!;
+  const cursor = new Date(first);
+  cursor.setDate(cursor.getDate() + 1);
+
+  while (cursor < last) {
+    if (!completedDates.has(cursor.toDateString())) {
+      missed.push(new Date(cursor));
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return missed;
 };
 
 // Logs a number of units for the given habit. Multiple logs can occur within

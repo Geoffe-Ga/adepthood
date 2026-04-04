@@ -7,6 +7,17 @@ const renderer = require('react-test-renderer');
 
 const HabitsScreen = require('../HabitsScreen').default;
 
+// Mock the API so HabitsScreen loads instantly with an empty list (triggers fallback defaults)
+jest.mock('../../../api', () => ({
+  habits: {
+    list: (jest.fn() as any).mockResolvedValue([]),
+    create: jest.fn() as any,
+    update: jest.fn() as any,
+    delete: jest.fn() as any,
+  },
+  goalCompletions: { create: jest.fn() as any },
+}));
+
 jest.mock('expo-notifications', () => ({
   getPermissionsAsync: (jest.fn() as any).mockResolvedValue({ status: 'granted' }),
   requestPermissionsAsync: jest.fn() as any,
@@ -42,13 +53,17 @@ describe('HabitsScreen responsive layout', () => {
   });
 
   widths.forEach((w) => {
-    it(`renders correctly at width ${w}`, () => {
+    it(`renders correctly at width ${w}`, async () => {
       const height = w > 800 ? 600 : 800;
       jest
         .spyOn(require('react-native'), 'useWindowDimensions')
         .mockReturnValue({ width: w, height, scale: 1, fontScale: 1 });
 
-      const tree = renderer.create(<HabitsScreen />).root;
+      let testRenderer: any;
+      await renderer.act(async () => {
+        testRenderer = renderer.create(<HabitsScreen />);
+      });
+      const tree = testRenderer.root;
       const list = tree.findByProps({ testID: 'habits-list' });
       const expectedColumns = w > height ? 2 : 1;
       expect(list.props.numColumns).toBe(expectedColumns);
@@ -90,34 +105,40 @@ describe('HabitsScreen responsive layout', () => {
     });
   });
 
-  it('remounts list when column count changes', () => {
+  it('remounts list when column count changes', async () => {
     const dimSpy = jest
       .spyOn(require('react-native'), 'useWindowDimensions')
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
     const { FlatList } = require('react-native');
-    const testRenderer = renderer.create(<HabitsScreen />);
+    let testRenderer: any;
+    await renderer.act(async () => {
+      testRenderer = renderer.create(<HabitsScreen />);
+    });
     const firstList = testRenderer.root.findByType(FlatList);
     expect(firstList.props.numColumns).toBe(2);
 
     dimSpy.mockReturnValue({ width: 320, height: 800, scale: 1, fontScale: 1 });
 
-    expect(() => {
-      renderer.act(() => {
+    await expect(
+      renderer.act(async () => {
         testRenderer.update(<HabitsScreen />);
-      });
-    }).not.toThrow();
+      }),
+    ).resolves.not.toThrow();
 
     const secondList = testRenderer.root.findByType(FlatList);
     expect(secondList.props.numColumns).toBe(1);
   });
 
-  it('renders overflow menu in top bar', () => {
+  it('renders overflow menu in top bar', async () => {
     jest
       .spyOn(require('react-native'), 'useWindowDimensions')
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
-    const testRenderer = renderer.create(<HabitsScreen />);
+    let testRenderer: any;
+    await renderer.act(async () => {
+      testRenderer = renderer.create(<HabitsScreen />);
+    });
     const { StyleSheet } = require('react-native');
     const wrapper = testRenderer.root.findByProps({ testID: 'overflow-menu-wrapper' });
     const wrapperStyle = StyleSheet.flatten(wrapper.props.style);
@@ -138,13 +159,16 @@ describe('HabitsScreen responsive layout', () => {
     expect(style.zIndex).toBeGreaterThan(0);
   });
 
-  it('places overflow menu above habit tiles', () => {
+  it('places overflow menu above habit tiles', async () => {
     jest
       .spyOn(require('react-native'), 'useWindowDimensions')
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
     const { StyleSheet, TouchableOpacity, Text } = require('react-native');
-    const testRenderer = renderer.create(<HabitsScreen />);
+    let testRenderer: any;
+    await renderer.act(async () => {
+      testRenderer = renderer.create(<HabitsScreen />);
+    });
 
     const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
     renderer.act(() => {
@@ -168,14 +192,17 @@ describe('HabitsScreen responsive layout', () => {
     expect(quickLog).toBeDefined();
   });
 
-  it('opens stats modal when stats mode is enabled', () => {
+  it('opens stats modal when stats mode is enabled', async () => {
     jest
       .spyOn(require('react-native'), 'useWindowDimensions')
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
     const StatsModal = require('../components/StatsModal').default as jest.Mock;
 
-    const testRenderer = renderer.create(<HabitsScreen />);
+    let testRenderer: any;
+    await renderer.act(async () => {
+      testRenderer = renderer.create(<HabitsScreen />);
+    });
     const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
 
     renderer.act(() => {
@@ -202,12 +229,15 @@ describe('HabitsScreen responsive layout', () => {
     expect(call?.[0].visible).toBe(true);
   });
 
-  it('shows and exits stats mode banner', () => {
+  it('shows and exits stats mode banner', async () => {
     jest
       .spyOn(require('react-native'), 'useWindowDimensions')
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
-    const testRenderer = renderer.create(<HabitsScreen />);
+    let testRenderer: any;
+    await renderer.act(async () => {
+      testRenderer = renderer.create(<HabitsScreen />);
+    });
     const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
 
     renderer.act(() => {
@@ -237,12 +267,15 @@ describe('HabitsScreen responsive layout', () => {
     expect(postTexts).not.toContain('Stats Mode');
   });
 
-  it('shows quick log mode banner', () => {
+  it('shows quick log mode banner', async () => {
     jest
       .spyOn(require('react-native'), 'useWindowDimensions')
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
-    const testRenderer = renderer.create(<HabitsScreen />);
+    let testRenderer: any;
+    await renderer.act(async () => {
+      testRenderer = renderer.create(<HabitsScreen />);
+    });
     const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
 
     renderer.act(() => {
@@ -264,13 +297,16 @@ describe('HabitsScreen responsive layout', () => {
     expect(texts).toContain('Quick Log Mode');
   });
 
-  it('archives energy scaffolding button into menu', () => {
+  it('archives energy scaffolding button into menu', async () => {
     jest
       .spyOn(require('react-native'), 'useWindowDimensions')
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
     const { Text } = require('react-native');
-    const testRenderer = renderer.create(<HabitsScreen />);
+    let testRenderer: any;
+    await renderer.act(async () => {
+      testRenderer = renderer.create(<HabitsScreen />);
+    });
     const archive = testRenderer.root.findByProps({ testID: 'archive-energy-cta' });
 
     jest.useFakeTimers();

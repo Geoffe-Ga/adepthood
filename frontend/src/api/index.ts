@@ -69,14 +69,74 @@ async function request<T>(
     }
     throw new ApiError(res.status, detail);
   }
+  if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
 // Habit types and client
+// The OpenAPI-generated Habit type is incomplete (only id/name/energy_cost/energy_return).
+// This interface matches the full backend schema (schemas/habit.py).
+export interface ApiHabit {
+  id: number;
+  user_id: number;
+  name: string;
+  icon: string;
+  start_date: string;
+  energy_cost: number;
+  energy_return: number;
+  notification_times?: string[] | null;
+  notification_frequency?: string | null;
+  notification_days?: string[] | null;
+  milestone_notifications: boolean;
+  sort_order?: number | null;
+}
+
+/** @deprecated Use ApiHabit instead — this only includes the OpenAPI subset. */
 export type Habit = components['schemas']['Habit'];
+
+export interface HabitCreatePayload {
+  name: string;
+  icon: string;
+  start_date: string;
+  energy_cost: number;
+  energy_return: number;
+  notification_times?: string[] | null;
+  notification_frequency?: string | null;
+  notification_days?: string[] | null;
+  milestone_notifications?: boolean;
+  sort_order?: number | null;
+}
+
 export const habits = {
-  list(token?: string): Promise<Habit[]> {
-    return request<Habit[]>('/habits', { token });
+  list(token?: string): Promise<ApiHabit[]> {
+    return request<ApiHabit[]>('/habits', { token });
+  },
+  create(payload: HabitCreatePayload, token?: string): Promise<ApiHabit> {
+    return request<ApiHabit>('/habits', { method: 'POST', body: payload, token });
+  },
+  update(habitId: number, payload: HabitCreatePayload, token?: string): Promise<ApiHabit> {
+    return request<ApiHabit>(`/habits/${habitId}`, { method: 'PUT', body: payload, token });
+  },
+  delete(habitId: number, token?: string): Promise<void> {
+    return request<void>(`/habits/${habitId}`, { method: 'DELETE', token });
+  },
+};
+
+// Goal completion types and client
+export interface GoalCompletionPayload {
+  goal_id: number;
+  did_complete?: boolean;
+}
+
+export interface CheckInResult {
+  streak: number;
+  milestones: Array<{ threshold: number }>;
+  reason_code: string;
+}
+
+export const goalCompletions = {
+  create(payload: GoalCompletionPayload, token?: string): Promise<CheckInResult> {
+    return request<CheckInResult>('/goal_completions', { method: 'POST', body: payload, token });
   },
 };
 
@@ -154,4 +214,4 @@ export const energy = {
   },
 };
 
-export default { habits, journal, stages, practice, auth, energy };
+export default { habits, goalCompletions, journal, stages, practice, auth, energy };

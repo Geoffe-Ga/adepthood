@@ -5,6 +5,18 @@ import renderer from 'react-test-renderer';
 
 const HabitsScreen = require('../HabitsScreen').default;
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+jest.mock('../../../api', () => ({
+  habits: {
+    list: (jest.fn() as any).mockResolvedValue([]),
+    create: (jest.fn() as any).mockResolvedValue({}),
+    update: jest.fn(),
+    delete: jest.fn(),
+  },
+  goalCompletions: { create: jest.fn() },
+}));
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 const mockOnboardingModal = jest.fn();
 jest.mock('../components/OnboardingModal', () =>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,9 +40,11 @@ jest.mock('expo-notifications', () => ({
 }));
 
 describe('Onboarding completion', () => {
-  it('shows next steps alert after saving habits', () => {
+  it('shows next steps alert after saving habits', async () => {
     jest.spyOn(Alert, 'alert').mockImplementation(() => {});
-    renderer.create(<HabitsScreen />);
+    await renderer.act(async () => {
+      renderer.create(<HabitsScreen />);
+    });
     const call = mockOnboardingModal.mock.calls[0];
     if (!call) throw new Error('OnboardingModal not rendered');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
