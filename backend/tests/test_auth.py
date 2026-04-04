@@ -1,76 +1,189 @@
-from datetime import UTC, datetime, timedelta
+"""Tests for database-backed auth with JWT tokens."""
 
-from fastapi.testclient import TestClient
+from __future__ import annotations
 
-from main import app
-from routers import auth
+from http import HTTPStatus
 
-client = TestClient(app)
+import jwt
+import pytest
+from httpx import AsyncClient
 
-OK = 200
-UNAUTHORIZED = 401
+SIGNUP_URL = "/auth/signup"
+LOGIN_URL = "/auth/login"
+SECRET_KEY = "test-secret-key-for-unit-tests-only"  # pragma: allowlist secret
 
 
-def test_signup_and_login_flow() -> None:
-    signup = client.post(
-        "/auth/signup",
-        json={"username": "bob", "password": "secret"},  # pragma: allowlist secret
+async def _signup(
+    client: AsyncClient,
+    email: str = "alice@example.com",
+    password: str = "securepassword123",
+) -> dict[str, object]:
+    resp = await client.post(
+        SIGNUP_URL,
+        json={"email": email, "password": password},
     )
-    assert signup.status_code == OK
-    data = signup.json()
-    user_id = data["user_id"]
+    result: dict[str, object] = resp.json()
+    return result
 
-    login = client.post(
-        "/auth/login",
-        json={"username": "bob", "password": "secret"},  # pragma: allowlist secret
+
+# ── Signup ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_signup_returns_token_and_user_id(async_client: AsyncClient) -> None:
+    resp = await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "alice@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
     )
-    assert login.status_code == OK
-    login_token = login.json()["token"]
-
-    payload = {
-        "user_id": user_id,
-        "practice_id": 1,
-        "stage_number": 1,
-        "duration_minutes": 10,
-    }
-    headers = {"Authorization": f"Bearer {login_token}"}  # pragma: allowlist secret
-    practice = client.post("/practice_sessions/", json=payload, headers=headers)
-    assert practice.status_code == OK
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert "token" in data
+    assert "user_id" in data
+    assert isinstance(data["user_id"], int)
 
 
-def test_login_fails_with_bad_credentials() -> None:
-    client.post(
-        "/auth/signup",
-        json={"username": "eve", "password": "pw"},  # pragma: allowlist secret
+@pytest.mark.asyncio
+async def test_signup_duplicate_email_returns_400(async_client: AsyncClient) -> None:
+    await _signup(async_client, email="dup@example.com")
+    resp = await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "dup@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
     )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert "user exists" in resp.json()["detail"]
 
-    bad = client.post(
-        "/auth/login",
-        json={"username": "eve", "password": "wrong"},  # pragma: allowlist secret
+
+@pytest.mark.asyncio
+async def test_signup_short_password_returns_400(async_client: AsyncClient) -> None:
+    resp = await async_client.post(
+        SIGNUP_URL,
+        json={"email": "short@example.com", "password": "short"},  # pragma: allowlist secret
     )
-    assert bad.status_code == UNAUTHORIZED
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert "at least 8 characters" in resp.json()["detail"]
 
+
+# ── Login ───────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_login_returns_token(async_client: AsyncClient) -> None:
+    await _signup(async_client)
+    resp = await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "alice@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert "token" in data
+    assert "user_id" in data
+
+
+@pytest.mark.asyncio
+async def test_login_wrong_password_returns_401(async_client: AsyncClient) -> None:
+    await _signup(async_client)
+    resp = await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "alice@example.com",
+            "password": "wrongpassword123",  # pragma: allowlist secret
+        },  # pragma: allowlist secret
+    )
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_login_nonexistent_user_returns_401(async_client: AsyncClient) -> None:
+    resp = await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "nobody@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+# ── Token validation ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_valid_token_accesses_protected_endpoint(async_client: AsyncClient) -> None:
+    data = await _signup(async_client)
+    headers = {"Authorization": f"Bearer {data['token']}"}
+    resp = await async_client.get("/habits/", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+async def test_missing_token_returns_401(async_client: AsyncClient) -> None:
+    resp = await async_client.get("/habits/")
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_invalid_token_returns_401(async_client: AsyncClient) -> None:
     headers = {"Authorization": "Bearer badtoken"}  # pragma: allowlist secret
-    payload = {
-        "user_id": 1,
-        "practice_id": 1,
-        "stage_number": 1,
-        "duration_minutes": 1,
+    resp = await async_client.get("/habits/", headers=headers)
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_expired_token_returns_401(async_client: AsyncClient) -> None:
+    data = await _signup(async_client)
+    user_id = data["user_id"]
+    # Create an already-expired JWT
+    expired_payload = {
+        "sub": str(user_id),
+        "exp": 0,  # epoch = already expired
+        "iat": 0,
     }
-    practice = client.post("/practice_sessions/", json=payload, headers=headers)
-    assert practice.status_code == UNAUTHORIZED
+    expired_token = jwt.encode(expired_payload, SECRET_KEY, algorithm="HS256")
+    headers = {"Authorization": f"Bearer {expired_token}"}
+    resp = await async_client.get("/habits/", headers=headers)
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
 
 
-def test_expired_token_rejected() -> None:
-    signup = client.post(
-        "/auth/signup",
-        json={"username": "tim", "password": "secret"},  # pragma: allowlist secret
+# ── Full flow ───────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_signup_login_use_token_flow(async_client: AsyncClient) -> None:
+    # Signup
+    signup_resp = await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "flow@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
     )
-    token = signup.json()["token"]
-    auth._tokens[token] = (  # noqa: SLF001
-        auth._tokens[token][0],  # noqa: SLF001
-        datetime.now(UTC) - timedelta(seconds=1),
+    assert signup_resp.status_code == HTTPStatus.OK
+    user_id = signup_resp.json()["user_id"]
+
+    # Login
+    login_resp = await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "flow@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
     )
-    headers = {"Authorization": f"Bearer {token}"}  # pragma: allowlist secret
-    resp = client.get("/practice_sessions/1/week_count", headers=headers)
-    assert resp.status_code == UNAUTHORIZED
+    assert login_resp.status_code == HTTPStatus.OK
+    token = login_resp.json()["token"]
+
+    # Use token to access protected endpoint
+    headers = {"Authorization": f"Bearer {token}"}
+    habits_resp = await async_client.get("/habits/", headers=headers)
+    assert habits_resp.status_code == HTTPStatus.OK
+
+    # Same user_id from login as signup
+    assert login_resp.json()["user_id"] == user_id

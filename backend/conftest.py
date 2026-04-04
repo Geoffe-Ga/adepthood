@@ -1,6 +1,10 @@
+import os
 import sys
 from collections.abc import AsyncGenerator
 from pathlib import Path
+
+# Set SECRET_KEY for tests before any app modules are imported
+os.environ.setdefault("SECRET_KEY", "test-secret-key-for-unit-tests-only")
 
 # Absolute path to the repo root (directory that contains 'backend')
 REPO_ROOT = (Path(__file__).parent / "..").resolve()

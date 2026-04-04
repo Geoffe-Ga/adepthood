@@ -19,7 +19,8 @@ class User(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     offering_balance: int = Field(default=0)
-    email: str
+    email: str = Field(unique=True, index=True)
+    password_hash: str = Field(default="")
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     habits: list["Habit"] = Relationship(back_populates="user")
     journals: list["JournalEntry"] = Relationship(back_populates="user")
