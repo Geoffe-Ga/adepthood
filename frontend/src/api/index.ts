@@ -1,6 +1,7 @@
 import type { components, paths } from './types';
 
 import { API_BASE_URL } from '@/config';
+import type { Habit as LocalHabit } from '@/features/Habits/Habits.types';
 
 // Re-export OpenAPI types for convenience
 export type EnergyPlanRequest =
@@ -82,8 +83,23 @@ async function request<T>(
 }
 
 // Habit types and client
-// The OpenAPI-generated Habit type is incomplete (only id/name/energy_cost/energy_return).
-// This interface matches the full backend schema (schemas/habit.py).
+// These interfaces match the backend schemas (schemas/habit.py, schemas/goal.py).
+
+export type NotificationFrequency = 'daily' | 'weekly' | 'custom' | 'off';
+
+export interface ApiGoal {
+  id: number;
+  habit_id: number;
+  title: string;
+  description?: string | null;
+  tier: string;
+  target: number;
+  target_unit: string;
+  frequency: number;
+  frequency_unit: string;
+  is_additive: boolean;
+}
+
 export interface ApiHabit {
   id: number;
   user_id: number;
@@ -93,10 +109,16 @@ export interface ApiHabit {
   energy_cost: number;
   energy_return: number;
   notification_times?: string[] | null;
-  notification_frequency?: string | null;
+  notification_frequency?: NotificationFrequency | null;
   notification_days?: string[] | null;
   milestone_notifications: boolean;
   sort_order?: number | null;
+  stage: string;
+  streak: number;
+}
+
+export interface ApiHabitWithGoals extends ApiHabit {
+  goals: ApiGoal[];
 }
 
 /** @deprecated Use ApiHabit instead — this only includes the OpenAPI subset. */
@@ -109,15 +131,54 @@ export interface HabitCreatePayload {
   energy_cost: number;
   energy_return: number;
   notification_times?: string[] | null;
-  notification_frequency?: string | null;
+  notification_frequency?: NotificationFrequency | null;
   notification_days?: string[] | null;
   milestone_notifications?: boolean;
   sort_order?: number | null;
+  stage?: string;
+}
+
+/**
+ * Convert an API habit response (with goals) to the local Habit type used
+ * throughout the frontend. Dates are converted from ISO strings to Date
+ * objects and notification fields are mapped from snake_case API names to
+ * the camelCase local convention.
+ */
+export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
+  return {
+    id: apiHabit.id,
+    name: apiHabit.name,
+    icon: apiHabit.icon,
+    stage: apiHabit.stage,
+    streak: apiHabit.streak,
+    energy_cost: apiHabit.energy_cost,
+    energy_return: apiHabit.energy_return,
+    start_date: new Date(apiHabit.start_date),
+    goals: apiHabit.goals.map((g) => ({
+      id: g.id,
+      title: g.title,
+      tier: g.tier as 'low' | 'clear' | 'stretch',
+      target: g.target,
+      target_unit: g.target_unit,
+      frequency: g.frequency,
+      frequency_unit: g.frequency_unit,
+      is_additive: g.is_additive,
+    })),
+    completions: [],
+    notificationTimes: apiHabit.notification_times ?? undefined,
+    notificationFrequency:
+      (apiHabit.notification_frequency as LocalHabit['notificationFrequency']) ?? undefined,
+    notificationDays: apiHabit.notification_days ?? undefined,
+    milestoneNotifications: apiHabit.milestone_notifications,
+  };
 }
 
 export const habits = {
-  list(token?: string): Promise<ApiHabit[]> {
-    return request<ApiHabit[]>('/habits', { token });
+  list(token?: string): Promise<ApiHabitWithGoals[]> {
+    return request<ApiHabitWithGoals[]>('/habits', { token });
+  },
+  get(habitId: number, token?: string): Promise<ApiHabitWithGoals> {
+    return request<ApiHabitWithGoals>(`/habits/${habitId}`, { token });
   },
   create(payload: HabitCreatePayload, token?: string): Promise<ApiHabit> {
     return request<ApiHabit>('/habits', { method: 'POST', body: payload, token });

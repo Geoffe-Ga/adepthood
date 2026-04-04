@@ -4,13 +4,22 @@
 //------------------
 
 export interface Habit {
-  id?: number;
+  // --- Fields from API (matches backend HabitWithGoals schema) ---
+  id: number;
   stage: string;
   name: string;
   icon: string;
   streak: number;
   energy_cost: number;
   energy_return: number;
+  start_date: Date;
+  goals: Goal[];
+  notificationTimes?: string[];
+  notificationFrequency?: 'daily' | 'weekly' | 'custom' | 'off';
+  notificationDays?: string[];
+  milestoneNotifications?: boolean;
+
+  // --- Client-only fields (not from API) ---
   /**
    * Total progress toward the habit goals.
    *
@@ -20,14 +29,9 @@ export interface Habit {
    * current progress programmatically via `calculateHabitProgress`.
    */
   progress?: number;
-  start_date: Date;
-  goals: Goal[];
   completions?: Completion[];
+  /** Device-local notification IDs managed by expo-notifications. */
   notificationIds?: string[];
-  notificationTimes?: string[];
-  notificationFrequency?: 'daily' | 'weekly' | 'custom' | 'off';
-  notificationDays?: string[];
-  milestoneNotifications?: boolean;
   last_completion_date?: Date;
   revealed?: boolean;
 }

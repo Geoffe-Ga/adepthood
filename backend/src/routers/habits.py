@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlmodel import select
 
 from database import get_session
 from models.habit import Habit
 from routers.auth import get_current_user
 from schemas.habit import Habit as HabitSchema
-from schemas.habit import HabitCreate
+from schemas.habit import HabitCreate, HabitWithGoals
 
 router = APIRouter(prefix="/habits", tags=["habits"])
 
@@ -29,27 +30,34 @@ async def create_habit(
     return habit
 
 
-@router.get("/", response_model=list[HabitSchema])
+@router.get("/", response_model=list[HabitWithGoals])
 async def list_habits(
     current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> list[Habit]:
     """Return all habits for the authenticated user, sorted by sort_order."""
     statement = (
-        select(Habit).where(Habit.user_id == current_user).order_by(Habit.sort_order.asc())  # type: ignore[union-attr]
+        select(Habit)
+        .where(Habit.user_id == current_user)
+        .options(selectinload(Habit.goals))  # type: ignore[arg-type]
+        .order_by(Habit.sort_order.asc())  # type: ignore[union-attr]
     )
     result = await session.execute(statement)
     return list(result.scalars().all())
 
 
-@router.get("/{habit_id}", response_model=HabitSchema)
+@router.get("/{habit_id}", response_model=HabitWithGoals)
 async def get_habit(
     habit_id: int,
     current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> Habit:
     """Return a single habit by id, scoped to the authenticated user."""
-    habit = await session.get(Habit, habit_id)
+    statement = (
+        select(Habit).where(Habit.id == habit_id).options(selectinload(Habit.goals))  # type: ignore[arg-type]
+    )
+    result = await session.execute(statement)
+    habit = result.scalars().first()
     if habit is None or habit.user_id != current_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Habit not found")
     return habit
