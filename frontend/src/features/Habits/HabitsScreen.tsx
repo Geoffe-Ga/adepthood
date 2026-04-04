@@ -19,6 +19,10 @@ import { spacing } from '../../../Sources/design/DesignSystem';
 import useResponsive from '../../../Sources/design/useResponsive';
 import { habits as habitsApi, goalCompletions as goalCompletionsApi } from '../../api';
 import type { HabitCreatePayload } from '../../api';
+import {
+  saveHabits as persistHabits,
+  loadHabits as loadCachedHabits,
+} from '../../storage/habitStorage';
 
 import GoalModal from './components/GoalModal';
 import HabitSettingsModal from './components/HabitSettingsModal';
@@ -255,50 +259,72 @@ const HabitsScreen = () => {
   const [emojiPickerVisible, setEmojiPickerVisible] = useState(false);
   const [emojiHabitIndex, setEmojiHabitIndex] = useState<number | null>(null);
 
-  // Load habits from API on mount
-  const loadHabits = async () => {
-    setLoading(true);
-    setError(null);
+  // Map API response to frontend Habit type
+  const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.list>>): Habit[] =>
+    apiHabits.map((h) => ({
+      id: h.id,
+      stage: '',
+      name: h.name,
+      icon: h.icon,
+      streak: 0,
+      energy_cost: h.energy_cost,
+      energy_return: h.energy_return,
+      start_date: new Date(h.start_date),
+      goals: [],
+      completions: [],
+      revealed: true,
+      notificationTimes: h.notification_times ?? undefined,
+      notificationFrequency:
+        (h.notification_frequency as Habit['notificationFrequency']) ?? undefined,
+      notificationDays: h.notification_days ?? undefined,
+      milestoneNotifications: h.milestone_notifications,
+    }));
+
+  // Fetch fresh data from API and update state + cache
+  const fetchFromApi = async (hasCachedData: boolean) => {
     try {
       const apiHabits = await habitsApi.list();
-      if (apiHabits.length === 0) {
+      if (apiHabits.length === 0 && !hasCachedData) {
         // First-time user — show defaults and onboarding
         setHabits(FALLBACK_HABITS);
         setOnboardingVisible(true);
-      } else {
-        // Map API response to frontend Habit type
-        const mapped: Habit[] = apiHabits.map((h) => ({
-          id: h.id,
-          stage: '',
-          name: h.name,
-          icon: h.icon,
-          streak: 0,
-          energy_cost: h.energy_cost,
-          energy_return: h.energy_return,
-          start_date: new Date(h.start_date),
-          goals: [],
-          completions: [],
-          revealed: true,
-          notificationTimes: h.notification_times ?? undefined,
-          notificationFrequency:
-            (h.notification_frequency as Habit['notificationFrequency']) ?? undefined,
-          notificationDays: h.notification_days ?? undefined,
-          milestoneNotifications: h.milestone_notifications,
-        }));
+      } else if (apiHabits.length > 0) {
+        const mapped = mapApiHabits(apiHabits);
         setHabits(mapped);
+        void persistHabits(mapped);
       }
+      setError(null);
     } catch (err) {
       console.error('Failed to load habits:', err);
-      setError('Failed to load habits. Please try again.');
-      // Fall back to defaults so the screen isn't empty
-      setHabits(FALLBACK_HABITS);
-    } finally {
+      if (!hasCachedData) {
+        setError('Failed to load habits. Please try again.');
+        setHabits(FALLBACK_HABITS);
+      }
+      // If we have cached data, silently keep using it
+    }
+  };
+
+  // Stale-while-revalidate: load cache first, then fetch from API
+  const loadHabits = async () => {
+    setLoading(true);
+    setError(null);
+
+    // 1. Try loading from cache for instant display
+    const cached = await loadCachedHabits();
+    const hasCachedData = cached !== null && cached.length > 0;
+    if (hasCachedData) {
+      setHabits(cached);
       setLoading(false);
     }
+
+    // 2. Fetch fresh data from API in background
+    await fetchFromApi(hasCachedData);
+    setLoading(false);
   };
 
   useEffect(() => {
     void loadHabits();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Register for push notifications on mount
@@ -409,6 +435,12 @@ const HabitsScreen = () => {
       setSelectedHabit(updated);
     }
 
+    // Persist updated habits to local cache
+    setHabits((current) => {
+      void persistHabits(current);
+      return current;
+    });
+
     // Persist to API — find the current goal and record the completion
     const habit = updated ?? habits.find((h) => h.id === habitId);
     if (habit && habit.goals.length > 0) {
@@ -432,6 +464,12 @@ const HabitsScreen = () => {
     });
     void updateHabitNotifications(updatedHabit);
 
+    // Persist to local cache
+    setHabits((current) => {
+      void persistHabits(current);
+      return current;
+    });
+
     if (updatedHabit.id) {
       habitsApi.update(updatedHabit.id, toApiPayload(updatedHabit)).catch(() => {
         setHabits(previousHabits);
@@ -448,6 +486,12 @@ const HabitsScreen = () => {
       return prev.filter((h) => h.id !== habitId);
     });
 
+    // Persist to local cache
+    setHabits((current) => {
+      void persistHabits(current);
+      return current;
+    });
+
     habitsApi.delete(habitId).catch(() => {
       setHabits(previousHabits);
       Alert.alert('Error', 'Failed to delete habit. Please try again.');
@@ -457,6 +501,7 @@ const HabitsScreen = () => {
   // Save the order of habits
   const handleSaveHabitOrder = (orderedHabits: Habit[]) => {
     setHabits(orderedHabits);
+    void persistHabits(orderedHabits);
   };
 
   // Open reorder modal
