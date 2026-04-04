@@ -1,28 +1,13 @@
 // HabitsScreen.tsx
 
-import * as Notifications from 'expo-notifications';
 import { BarChart2, Check, MoreHorizontal, Pencil, Zap } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Text,
-  TouchableOpacity,
-  View,
-  Modal,
-} from 'react-native';
+import React from 'react';
+import { ActivityIndicator, FlatList, Text, TouchableOpacity, View, Modal } from 'react-native';
 import EmojiSelector from 'react-native-emoji-selector';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { spacing } from '../../../Sources/design/DesignSystem';
 import useResponsive from '../../../Sources/design/useResponsive';
-import { habits as habitsApi, goalCompletions as goalCompletionsApi } from '../../api';
-import type { HabitCreatePayload } from '../../api';
-import {
-  saveHabits as persistHabits,
-  loadHabits as loadCachedHabits,
-} from '../../storage/habitStorage';
 
 import GoalModal from './components/GoalModal';
 import HabitSettingsModal from './components/HabitSettingsModal';
@@ -30,628 +15,47 @@ import MissedDaysModal from './components/MissedDaysModal';
 import OnboardingModal from './components/OnboardingModal';
 import ReorderHabitsModal from './components/ReorderHabitsModal';
 import StatsModal from './components/StatsModal';
-import { HABIT_DEFAULTS } from './HabitDefaults';
 import styles from './Habits.styles';
-import type { Goal, Habit, OnboardingHabit } from './Habits.types';
+import type { Habit } from './Habits.types';
 import HabitTile from './HabitTile';
-import {
-  getGoalTier,
-  getGoalTarget,
-  calculateHabitProgress,
-  logHabitUnits,
-  generateStatsForHabit,
-  calculateMissedDays,
-} from './HabitUtils';
+import { generateStatsForHabit, calculateMissedDays } from './HabitUtils';
+import { useHabits } from './hooks/useHabits';
+import { useModalCoordinator } from './hooks/useModalCoordinator';
 
-export const DEFAULT_ICONS = [
-  '🧘',
-  '🏃',
-  '💧',
-  '🥗',
-  '💪',
-  '📱',
-  '🍷',
-  '☕',
-  '🎨',
-  '💼',
-  '🧠',
-  '🌱',
-  '🌞',
-  '🌙',
-  '📚',
-  '✍️',
-  '🤔',
-  '🗣️',
-  '👥',
-  '❤️',
-];
-
-export const TARGET_UNITS = [
-  'minutes',
-  'hours',
-  'reps',
-  'sets',
-  'cups',
-  'liters',
-  'ml',
-  'oz',
-  'pages',
-  'sessions',
-  'steps',
-  'calories',
-  'times',
-  'units',
-  'mg',
-  'g',
-  'kg',
-  'lbs',
-  'points',
-  'days',
-];
-
-export const FREQUENCY_UNITS = ['per_day', 'per_week', 'per_month', 'per_session'];
-
-export const DAYS_OF_WEEK = [
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday',
-  'Sunday',
-];
-
-// Fallback habits for first-time users when the server returns an empty list
-const FALLBACK_HABITS: Habit[] = HABIT_DEFAULTS.map((habit) => ({
-  ...habit,
-  revealed: true,
-  completions: [],
-}));
-
-// Register for push notifications
-const registerForPushNotificationsAsync = async (): Promise<string | undefined> => {
-  try {
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
-    let finalStatus = existingStatus;
-    if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
-    }
-    if (finalStatus !== 'granted') {
-      return undefined;
-    }
-    const token = (await Notifications.getExpoPushTokenAsync()).data;
-    return token;
-  } catch (error) {
-    console.error('Failed to get push token:', error);
-    return undefined;
-  }
-};
-
-// Schedule a notification for a habit using its defined time and frequency
-const scheduleHabitNotification = async (
-  habit: Habit,
-  notificationTime: string,
-): Promise<string[]> => {
-  // Ensure we always pass numeric values to the notification trigger
-  const [hours = 0, minutes = 0] = notificationTime.split(':').map(Number);
-
-  const schedule = async (trigger: Notifications.NotificationTriggerInput): Promise<string> => {
-    return Notifications.scheduleNotificationAsync({
-      content: {
-        title: `Time for: ${habit.name}`,
-        body: `Continue your ${habit.streak}-day streak! 💪`,
-        data: { habitId: habit.id },
-      },
-      trigger,
-    });
-  };
-
-  if (habit.notificationFrequency === 'daily') {
-    const dailyTrigger: Notifications.DailyTriggerInput = {
-      type: Notifications.SchedulableTriggerInputTypes.DAILY,
-      hour: hours,
-      minute: minutes,
-    };
-
-    return [await schedule(dailyTrigger)];
-  }
-
-  if (habit.notificationFrequency === 'weekly') {
-    const weeklyTrigger: Notifications.WeeklyTriggerInput = {
-      type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
-      weekday: 1,
-      hour: hours,
-      minute: minutes,
-    };
-
-    return [await schedule(weeklyTrigger)];
-  }
-
-  if (
-    habit.notificationFrequency === 'custom' &&
-    habit.notificationDays &&
-    habit.notificationDays.length > 0
-  ) {
-    // For the custom frequency, we'll schedule multiple notifications
-    const notificationIds: string[] = [];
-
-    for (const day of habit.notificationDays) {
-      const weekday = DAYS_OF_WEEK.indexOf(day) + 1; // 1-7, where 1 is Monday
-      const customTrigger: Notifications.WeeklyTriggerInput = {
-        type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
-        weekday,
-        hour: hours,
-        minute: minutes,
-      };
-
-      const id = await schedule(customTrigger);
-      notificationIds.push(id);
-    }
-
-    return notificationIds;
-  }
-
-  const fallbackTrigger: Notifications.DailyTriggerInput = {
-    type: Notifications.SchedulableTriggerInputTypes.DAILY,
-    hour: hours,
-    minute: minutes,
-  };
-
-  return [await schedule(fallbackTrigger)];
-};
-
-// Update notifications for a habit (cancel old ones and schedule new)
-const updateHabitNotifications = async (habit: Habit): Promise<string[]> => {
-  if (!habit.id) return [];
-  if (habit.notificationIds && habit.notificationIds.length > 0) {
-    await Promise.all(
-      habit.notificationIds.map((id) => Notifications.cancelScheduledNotificationAsync(id)),
-    );
-  }
-
-  if (
-    habit.notificationFrequency === 'off' ||
-    !habit.notificationTimes ||
-    habit.notificationTimes.length === 0
-  ) {
-    return [];
-  }
-
-  const notificationIds: string[] = [];
-
-  for (const notificationTime of habit.notificationTimes) {
-    const ids = await scheduleHabitNotification(habit, notificationTime);
-    notificationIds.push(...ids);
-  }
-
-  return notificationIds;
-};
-
-// Calculate net energy for a habit
-export const calculateNetEnergy = (cost: number, returnValue: number): number => {
-  return returnValue - cost;
-};
-
-// Calculate progress increments for a goal based on its target
-
-//------------------
-// Main Habits Screen Component
-//------------------
+export { DEFAULT_ICONS, TARGET_UNITS, FREQUENCY_UNITS, DAYS_OF_WEEK } from './constants';
+export { calculateNetEnergy } from './HabitUtils';
 
 const HabitsScreen = () => {
-  const [habits, setHabits] = useState<Habit[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedHabit, setSelectedHabit] = useState<Habit | null>(null);
-  const [menuVisible, setMenuVisible] = useState(false);
-  const [goalModalVisible, setGoalModalVisible] = useState(false);
-  const [statsModalVisible, setStatsModalVisible] = useState(false);
-  const [statsMode, setStatsMode] = useState(false);
-  const [quickLogMode, setQuickLogMode] = useState(false);
-  const [editMode, setEditMode] = useState(false);
-  const [settingsModalVisible, setSettingsModalVisible] = useState(false);
-  const [reorderModalVisible, setReorderModalVisible] = useState(false);
-  const [missedDaysModalVisible, setMissedDaysModalVisible] = useState(false);
-  const [onboardingVisible, setOnboardingVisible] = useState(false);
-  const [showEnergyCTA, setShowEnergyCTA] = useState(true);
-  const [showArchiveMessage, setShowArchiveMessage] = useState(false);
-  const [emojiPickerVisible, setEmojiPickerVisible] = useState(false);
-  const [emojiHabitIndex, setEmojiHabitIndex] = useState<number | null>(null);
+  const { habits, loading, error, selectedHabit, setSelectedHabit, mode, setMode, actions, ui } =
+    useHabits();
 
-  // Map API response to frontend Habit type
-  const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.list>>): Habit[] =>
-    apiHabits.map((h) => ({
-      id: h.id,
-      stage: '',
-      name: h.name,
-      icon: h.icon,
-      streak: 0,
-      energy_cost: h.energy_cost,
-      energy_return: h.energy_return,
-      start_date: new Date(h.start_date),
-      goals: [],
-      completions: [],
-      revealed: true,
-      notificationTimes: h.notification_times ?? undefined,
-      notificationFrequency:
-        (h.notification_frequency as Habit['notificationFrequency']) ?? undefined,
-      notificationDays: h.notification_days ?? undefined,
-      milestoneNotifications: h.milestone_notifications,
-    }));
-
-  // Fetch fresh data from API and update state + cache
-  const fetchFromApi = async (hasCachedData: boolean) => {
-    try {
-      const apiHabits = await habitsApi.list();
-      if (apiHabits.length === 0 && !hasCachedData) {
-        // First-time user — show defaults and onboarding
-        setHabits(FALLBACK_HABITS);
-        setOnboardingVisible(true);
-      } else if (apiHabits.length > 0) {
-        const mapped = mapApiHabits(apiHabits);
-        setHabits(mapped);
-        void persistHabits(mapped);
-      }
-      setError(null);
-    } catch (err) {
-      console.error('Failed to load habits:', err);
-      if (!hasCachedData) {
-        setError('Failed to load habits. Please try again.');
-        setHabits(FALLBACK_HABITS);
-      }
-      // If we have cached data, silently keep using it
-    }
-  };
-
-  // Stale-while-revalidate: load cache first, then fetch from API
-  const loadHabits = async () => {
-    setLoading(true);
-    setError(null);
-
-    // 1. Try loading from cache for instant display
-    const cached = await loadCachedHabits();
-    const hasCachedData = cached !== null && cached.length > 0;
-    if (hasCachedData) {
-      setHabits(cached);
-      setLoading(false);
-    }
-
-    // 2. Fetch fresh data from API in background
-    await fetchFromApi(hasCachedData);
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    void loadHabits();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Register for push notifications on mount
-  useEffect(() => {
-    void registerForPushNotificationsAsync();
-  }, []);
-
-  // Helper to build API payload from a frontend Habit
-  const toApiPayload = (h: Habit): HabitCreatePayload => ({
-    name: h.name,
-    icon: h.icon,
-    start_date:
-      h.start_date instanceof Date ? h.start_date.toISOString().slice(0, 10) : String(h.start_date),
-    energy_cost: h.energy_cost,
-    energy_return: h.energy_return,
-    notification_times: h.notificationTimes ?? null,
-    notification_frequency: h.notificationFrequency ?? null,
-    notification_days: h.notificationDays ?? null,
-    milestone_notifications: h.milestoneNotifications ?? false,
-  });
-
-  // Handle goal updates
-  const handleUpdateGoal = (habitId: number, updatedGoal: Goal) => {
-    setHabits((prev) =>
-      prev.map((h) => {
-        if (h.id !== habitId) return h;
-        const goals = h.goals.map((goal) => (goal.id === updatedGoal.id ? updatedGoal : goal));
-        const low = goals.find((g) => g.tier === 'low');
-        const clear = goals.find((g) => g.tier === 'clear');
-        const stretch = goals.find((g) => g.tier === 'stretch');
-        if (low && clear && stretch) {
-          // Enforce consistent units/frequency
-          const unit = updatedGoal.target_unit;
-          const freq = updatedGoal.frequency;
-          const freqUnit = updatedGoal.frequency_unit;
-          goals.forEach((g) => {
-            g.target_unit = unit;
-            g.frequency = freq;
-            g.frequency_unit = freqUnit;
-          });
-
-          if (low.is_additive) {
-            if (low.target > clear.target) clear.target = low.target;
-            if (clear.target > stretch.target) stretch.target = clear.target;
-          } else {
-            if (clear.target < stretch.target) clear.target = stretch.target;
-            if (low.target < clear.target) low.target = clear.target;
-          }
-        }
-        return { ...h, goals };
-      }),
-    );
-  };
-
-  // Log progress units for a habit (optimistic update + API persist)
-  const handleLogUnit = (habitId: number, amount: number) => {
-    let updated: Habit | null = null;
-    let previousHabits: Habit[] = [];
-
-    setHabits((prev) => {
-      previousHabits = prev;
-      return prev.map((h) => {
-        if (h.id !== habitId) return h;
-        const oldProgress = calculateHabitProgress(h);
-        const updatedHabit = logHabitUnits(h, amount);
-        const newProgress = calculateHabitProgress(updatedHabit);
-        const { currentGoal, nextGoal } = getGoalTier(updatedHabit);
-        updated = updatedHabit;
-
-        if (currentGoal.is_additive) {
-          const currentTarget = getGoalTarget(currentGoal);
-          if (
-            oldProgress < currentTarget &&
-            newProgress >= currentTarget &&
-            currentGoal.tier === 'low'
-          ) {
-            Alert.alert(
-              'Goal Achieved!',
-              `You've reached your Low Goal for ${h.name}! Keep going for the Clear Goal.`,
-            );
-          }
-          if (
-            nextGoal &&
-            currentGoal.tier === 'clear' &&
-            oldProgress < getGoalTarget(currentGoal) &&
-            newProgress >= getGoalTarget(currentGoal)
-          ) {
-            Alert.alert('Achieved! Keep going for the Stretch Goal!');
-          }
-          if (
-            nextGoal &&
-            currentGoal.tier === 'stretch' &&
-            oldProgress < getGoalTarget(currentGoal) &&
-            newProgress >= getGoalTarget(currentGoal)
-          ) {
-            Alert.alert(
-              'Stretch Goal Achieved!',
-              `Amazing! You've reached your Stretch Goal for ${h.name}!`,
-            );
-          }
-        }
-
-        return updatedHabit;
-      });
-    });
-
-    if (selectedHabit?.id === habitId && updated) {
-      setSelectedHabit(updated);
-    }
-
-    // Persist updated habits to local cache
-    setHabits((current) => {
-      void persistHabits(current);
-      return current;
-    });
-
-    // Persist to API — find the current goal and record the completion
-    const habit = updated ?? habits.find((h) => h.id === habitId);
-    if (habit && habit.goals.length > 0) {
-      const { currentGoal } = getGoalTier(habit);
-      if (currentGoal.id) {
-        goalCompletionsApi.create({ goal_id: currentGoal.id, did_complete: true }).catch(() => {
-          // Revert optimistic update on failure
-          setHabits(previousHabits);
-          Alert.alert('Error', 'Failed to save progress. Please try again.');
-        });
-      }
-    }
-  };
-
-  // Update habit details (optimistic + API)
-  const handleUpdateHabit = (updatedHabit: Habit) => {
-    let previousHabits: Habit[] = [];
-    setHabits((prev) => {
-      previousHabits = prev;
-      return prev.map((h) => (h.id === updatedHabit.id ? updatedHabit : h));
-    });
-    void updateHabitNotifications(updatedHabit);
-
-    // Persist to local cache
-    setHabits((current) => {
-      void persistHabits(current);
-      return current;
-    });
-
-    if (updatedHabit.id) {
-      habitsApi.update(updatedHabit.id, toApiPayload(updatedHabit)).catch(() => {
-        setHabits(previousHabits);
-        Alert.alert('Error', 'Failed to update habit. Please try again.');
-      });
-    }
-  };
-
-  // Delete a habit (optimistic + API)
-  const handleDeleteHabit = (habitId: number) => {
-    let previousHabits: Habit[] = [];
-    setHabits((prev) => {
-      previousHabits = prev;
-      return prev.filter((h) => h.id !== habitId);
-    });
-
-    // Persist to local cache
-    setHabits((current) => {
-      void persistHabits(current);
-      return current;
-    });
-
-    habitsApi.delete(habitId).catch(() => {
-      setHabits(previousHabits);
-      Alert.alert('Error', 'Failed to delete habit. Please try again.');
-    });
-  };
-
-  // Save the order of habits
-  const handleSaveHabitOrder = (orderedHabits: Habit[]) => {
-    setHabits(orderedHabits);
-    void persistHabits(orderedHabits);
-  };
-
-  // Open reorder modal
-  const handleOpenReorderModal = () => {
-    setSettingsModalVisible(false);
-    setReorderModalVisible(true);
-  };
-
-  // Stats and missed days are now computed from real data via HabitUtils
-
-  // Handle backfilling missed days
-  const handleBackfillMissedDays = (habitId: number, days: Date[]) => {
-    setHabits((prev) =>
-      prev.map((habit) => {
-        if (habit.id === habitId) {
-          // Create completion entries for each missed day
-          const newCompletions = days.map((day) => ({
-            id: Math.random(), // Generate a unique ID in a real app
-            timestamp: day,
-            completed_units: 1, // Default to 1 unit per missed day
-          }));
-
-          const updatedCompletions = habit.completions
-            ? [...habit.completions, ...newCompletions]
-            : newCompletions;
-
-          return {
-            ...habit,
-            streak: habit.streak + days.length,
-            last_completion_date: new Date(),
-            completions: updatedCompletions,
-          };
-        }
-        return habit;
-      }),
-    );
-  };
-
-  // Reset habit to a new start date
-  const handleSetNewStartDate = (habitId: number, newDate: Date) => {
-    setHabits((prev) =>
-      prev.map((habit) => {
-        if (habit.id === habitId) {
-          return {
-            ...habit,
-            start_date: newDate,
-            streak: 0,
-            last_completion_date: undefined,
-            completions: [], // Reset completions
-          };
-        }
-        return habit;
-      }),
-    );
-  };
-
-  // Handle onboarding completion — persist each new habit to the API
-  const handleOnboardingSave = async (newHabits: OnboardingHabit[]) => {
-    const fullHabits = newHabits.map((habit, index) => ({
-      ...habit,
-      id: index + 1,
-      streak: 0,
-      revealed: habit.stage === 'Beige',
-      completions: [] as Habit['completions'],
-      goals: [
-        {
-          id: index * 3 + 1,
-          title: `Low goal for ${habit.name}`,
-          tier: 'low' as const,
-          target: 1,
-          target_unit: 'units',
-          frequency: 1,
-          frequency_unit: 'per_day',
-          is_additive: true,
-        },
-        {
-          id: index * 3 + 2,
-          title: `Clear goal for ${habit.name}`,
-          tier: 'clear' as const,
-          target: 2,
-          target_unit: 'units',
-          frequency: 1,
-          frequency_unit: 'per_day',
-          is_additive: true,
-        },
-        {
-          id: index * 3 + 3,
-          title: `Stretch goal for ${habit.name}`,
-          tier: 'stretch' as const,
-          target: 3,
-          target_unit: 'units',
-          frequency: 1,
-          frequency_unit: 'per_day',
-          is_additive: true,
-        },
-      ],
-    }));
-
-    // Optimistically show the habits
-    setHabits(fullHabits);
-    Alert.alert('Next steps', 'Tap a habit tile to edit its goals.');
-
-    // Persist each habit to the server in the background
-    for (const habit of fullHabits) {
-      try {
-        await habitsApi.create(toApiPayload(habit as Habit));
-      } catch {
-        // Best-effort: habits are shown locally even if persist fails
-        console.error(`Failed to save habit "${habit.name}" to server`);
-      }
-    }
-  };
-
-  // Render a habit tile
+  const modals = useModalCoordinator();
   const { columns, gridGutter, scale, isLG, isXL } = useResponsive();
   const screenPadding = spacing(isLG || isXL ? 2 : 1, scale);
-
-  const handleIconPress = (index: number) => {
-    setEmojiHabitIndex(index);
-    setEmojiPickerVisible(true);
-  };
-
-  const handleEmojiSelect = (emoji: string) => {
-    if (emojiHabitIndex !== null) {
-      setHabits((prev) => prev.map((h, i) => (i === emojiHabitIndex ? { ...h, icon: emoji } : h)));
-      setEmojiPickerVisible(false);
-      setEmojiHabitIndex(null);
-    }
-  };
 
   const renderHabitTile = ({ item, index }: { item: Habit; index: number }) => (
     <HabitTile
       habit={item}
       onOpenGoals={() => {
         setSelectedHabit(item);
-        if (statsMode) {
-          setStatsModalVisible(true);
-        } else if (editMode) {
-          setSettingsModalVisible(true);
-        } else if (quickLogMode) {
-          handleLogUnit(item.id!, 1);
+        if (mode === 'stats') {
+          modals.open('stats');
+        } else if (mode === 'edit') {
+          modals.open('settings');
+        } else if (mode === 'quickLog') {
+          actions.logUnit(item.id!, 1);
         } else {
-          setGoalModalVisible(true);
+          modals.open('goal');
         }
       }}
       onLongPress={() => {
         setSelectedHabit(item);
-        setSettingsModalVisible(true);
+        modals.open('settings');
       }}
-      onIconPress={() => handleIconPress(index)}
+      onIconPress={() => {
+        actions.iconPress(index);
+        modals.open('emojiPicker');
+      }}
     />
   );
 
@@ -661,22 +65,20 @@ const HabitsScreen = () => {
         <View style={styles.overflowMenuContainer} testID="overflow-menu-wrapper">
           <TouchableOpacity
             testID="overflow-menu-toggle"
-            onPress={() => setMenuVisible((v) => !v)}
+            onPress={modals.toggleMenu}
             style={{ padding: spacing(1, scale) }}
           >
             <MoreHorizontal size={spacing(3, scale)} />
           </TouchableOpacity>
-          {menuVisible && (
+          {modals.menu && (
             <View
               testID="overflow-menu"
               style={[styles.mobileMenu, { top: spacing(4, scale), right: 0 }]}
             >
               <TouchableOpacity
                 onPress={() => {
-                  setQuickLogMode(true);
-                  setStatsMode(false);
-                  setEditMode(false);
-                  setMenuVisible(false);
+                  setMode('quickLog');
+                  modals.closeAll();
                 }}
                 style={{ paddingVertical: spacing(0.5, scale) }}
               >
@@ -687,10 +89,8 @@ const HabitsScreen = () => {
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => {
-                  setStatsMode(true);
-                  setQuickLogMode(false);
-                  setEditMode(false);
-                  setMenuVisible(false);
+                  setMode('stats');
+                  modals.closeAll();
                 }}
                 style={{ paddingVertical: spacing(0.5, scale) }}
               >
@@ -701,10 +101,8 @@ const HabitsScreen = () => {
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => {
-                  setEditMode(true);
-                  setQuickLogMode(false);
-                  setStatsMode(false);
-                  setMenuVisible(false);
+                  setMode('edit');
+                  modals.closeAll();
                 }}
                 style={{ paddingVertical: spacing(0.5, scale) }}
               >
@@ -715,8 +113,7 @@ const HabitsScreen = () => {
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => {
-                  setOnboardingVisible(true);
-                  setMenuVisible(false);
+                  modals.open('onboarding');
                 }}
                 style={{ paddingVertical: spacing(0.5, scale) }}
               >
@@ -735,7 +132,7 @@ const HabitsScreen = () => {
           <Text style={{ color: '#c00', marginBottom: 8 }}>{error}</Text>
           <TouchableOpacity
             testID="retry-button"
-            onPress={() => void loadHabits()}
+            onPress={() => void actions.loadHabits()}
             style={styles.energyScaffoldingButton}
           >
             <Text style={styles.energyScaffoldingButtonText}>Retry</Text>
@@ -766,44 +163,36 @@ const HabitsScreen = () => {
         />
       )}
 
-      {showEnergyCTA && !(statsMode || editMode || quickLogMode) ? (
+      {ui.showEnergyCTA && mode === 'normal' ? (
         <View style={styles.energyScaffoldingContainer}>
           <TouchableOpacity
             style={styles.energyScaffoldingButton}
-            onPress={() => setOnboardingVisible(true)}
+            onPress={() => modals.open('onboarding')}
           >
             <Text style={styles.energyScaffoldingButtonText}>Perform Energy Scaffolding</Text>
           </TouchableOpacity>
           <TouchableOpacity
             testID="archive-energy-cta"
-            onPress={() => {
-              setShowEnergyCTA(false);
-              setShowArchiveMessage(true);
-              setTimeout(() => setShowArchiveMessage(false), 3000);
-            }}
+            onPress={ui.archiveEnergyCTA}
             style={styles.archiveEnergyButton}
           >
             <Text>Archive This</Text>
           </TouchableOpacity>
         </View>
-      ) : showArchiveMessage ? (
+      ) : ui.showArchiveMessage ? (
         <Text style={styles.archivedMessage}>Energy Scaffolding button moved to menu.</Text>
       ) : null}
 
-      {(statsMode || editMode || quickLogMode) && (
+      {mode !== 'normal' && (
         <View style={styles.energyScaffoldingContainer}>
           <View style={styles.energyScaffoldingButton}>
             <Text style={styles.energyScaffoldingButtonText}>
-              {statsMode ? 'Stats Mode' : editMode ? 'Edit Mode' : 'Quick Log Mode'}
+              {mode === 'stats' ? 'Stats Mode' : mode === 'edit' ? 'Edit Mode' : 'Quick Log Mode'}
             </Text>
           </View>
           <TouchableOpacity
             testID="exit-mode"
-            onPress={() => {
-              setStatsMode(false);
-              setEditMode(false);
-              setQuickLogMode(false);
-            }}
+            onPress={() => setMode('normal')}
             style={styles.archiveEnergyButton}
           >
             <Text>Exit</Text>
@@ -811,50 +200,52 @@ const HabitsScreen = () => {
         </View>
       )}
 
-      {/* Modals */}
       <GoalModal
-        visible={goalModalVisible}
+        visible={modals.goal}
         habit={selectedHabit}
-        onClose={() => setGoalModalVisible(false)}
-        onUpdateGoal={handleUpdateGoal}
-        onLogUnit={handleLogUnit}
-        onUpdateHabit={handleUpdateHabit}
+        onClose={() => modals.close('goal')}
+        onUpdateGoal={actions.updateGoal}
+        onLogUnit={actions.logUnit}
+        onUpdateHabit={actions.updateHabit}
       />
       <StatsModal
-        visible={statsModalVisible}
+        visible={modals.stats}
         habit={selectedHabit}
         stats={selectedHabit ? generateStatsForHabit(selectedHabit) : null}
-        onClose={() => setStatsModalVisible(false)}
+        onClose={() => modals.close('stats')}
       />
       <HabitSettingsModal
-        visible={settingsModalVisible}
+        visible={modals.settings}
         habit={selectedHabit}
-        onClose={() => setSettingsModalVisible(false)}
-        onUpdate={handleUpdateHabit}
-        onDelete={handleDeleteHabit}
-        onOpenReorderModal={handleOpenReorderModal}
+        onClose={() => modals.close('settings')}
+        onUpdate={actions.updateHabit}
+        onDelete={actions.deleteHabit}
+        onOpenReorderModal={() => {
+          modals.close('settings');
+          modals.open('reorder');
+        }}
         allHabits={habits}
       />
       <ReorderHabitsModal
-        visible={reorderModalVisible}
+        visible={modals.reorder}
         habits={habits}
-        onClose={() => setReorderModalVisible(false)}
-        onSaveOrder={handleSaveHabitOrder}
+        onClose={() => modals.close('reorder')}
+        onSaveOrder={actions.saveHabitOrder}
       />
       <MissedDaysModal
-        visible={missedDaysModalVisible}
+        visible={modals.missedDays}
         habit={selectedHabit}
         missedDays={selectedHabit ? calculateMissedDays(selectedHabit) : []}
-        onClose={() => setMissedDaysModalVisible(false)}
-        onBackfill={handleBackfillMissedDays}
-        onNewStartDate={handleSetNewStartDate}
+        onClose={() => modals.close('missedDays')}
+        onBackfill={actions.backfillMissedDays}
+        onNewStartDate={actions.setNewStartDate}
       />
       <OnboardingModal
-        visible={onboardingVisible}
-        onClose={() => setOnboardingVisible(false)}
-        onSaveHabits={handleOnboardingSave}
+        visible={modals.onboarding}
+        onClose={() => modals.close('onboarding')}
+        onSaveHabits={actions.onboardingSave}
       />
-      {emojiPickerVisible && (
+      {modals.emojiPicker && (
         <Modal transparent animationType="fade">
           <View style={styles.modalOverlay}>
             <View style={styles.emojiPickerModal}>
@@ -862,16 +253,13 @@ const HabitsScreen = () => {
                 <Text style={styles.emojiPickerTitle}>Select Icon</Text>
                 <TouchableOpacity
                   style={styles.closeEmojiPicker}
-                  onPress={() => {
-                    setEmojiPickerVisible(false);
-                    setEmojiHabitIndex(null);
-                  }}
+                  onPress={() => modals.close('emojiPicker')}
                 >
                   <Text style={styles.closeEmojiPickerText}>×</Text>
                 </TouchableOpacity>
               </View>
               <EmojiSelector
-                onEmojiSelected={handleEmojiSelect}
+                onEmojiSelected={actions.emojiSelect}
                 showSearchBar
                 columns={6}
                 // @ts-ignore typing issue

@@ -355,3 +355,7 @@ export const logHabitUnits = (habit: Habit, amount: number, date: Date = new Dat
     completions: habit.completions ? [...habit.completions, completion] : [completion],
   };
 };
+
+export const calculateNetEnergy = (cost: number, returnValue: number): number => {
+  return returnValue - cost;
+};
