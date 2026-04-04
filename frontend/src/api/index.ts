@@ -1,17 +1,47 @@
+import type { components, paths } from './types';
+
 import { API_BASE_URL } from '@/config';
+
+// Re-export OpenAPI types for convenience
+export type EnergyPlanRequest =
+  paths['/v1/energy/plan']['post']['requestBody']['content']['application/json'];
+export type EnergyPlanResponse =
+  paths['/v1/energy/plan']['post']['responses']['200']['content']['application/json'];
+
+export class ApiError extends Error {
+  status: number;
+  detail: string;
+
+  constructor(status: number, detail: string) {
+    super(`Request failed with status ${status}: ${detail}`);
+    this.name = 'ApiError';
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+let tokenGetter: (() => string | null) | null = null;
+
+export function setTokenGetter(getter: (() => string | null) | null) {
+  tokenGetter = getter;
+}
 
 interface RequestOptions {
   method?: string;
   body?: unknown;
   token?: string;
+  headers?: Record<string, string>;
 }
 
 async function request<T>(
   path: string,
-  { method = 'GET', body, token }: RequestOptions = {},
+  { method = 'GET', body, token, headers: extraHeaders }: RequestOptions = {},
 ): Promise<T> {
+  const resolvedToken = token ?? tokenGetter?.() ?? null;
+
   const headers: Record<string, string> = {
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(resolvedToken ? { Authorization: `Bearer ${resolvedToken}` } : {}),
+    ...extraHeaders,
   };
   const init: RequestInit = {};
   if (method !== 'GET') {
@@ -28,16 +58,22 @@ async function request<T>(
     ? await fetch(`${API_BASE_URL}${path}`, init)
     : await fetch(`${API_BASE_URL}${path}`);
   if (!res.ok) {
-    throw new Error(`Request failed with status ${res.status}`);
+    let detail = 'Request failed';
+    try {
+      const errBody = await res.json();
+      if (errBody.detail && typeof errBody.detail === 'string') {
+        detail = errBody.detail;
+      }
+    } catch {
+      // response body wasn't JSON — use default
+    }
+    throw new ApiError(res.status, detail);
   }
   return (await res.json()) as T;
 }
 
 // Habit types and client
-export interface Habit {
-  id: number;
-  name: string;
-}
+export type Habit = components['schemas']['Habit'];
 export const habits = {
   list(token?: string): Promise<Habit[]> {
     return request<Habit[]>('/habits', { token });
@@ -71,13 +107,8 @@ export const stages = {
 };
 
 // Practice session types and client
-export interface PracticeSessionCreate {
-  practiceId: number;
-  duration: number;
-}
-export interface PracticeSession extends PracticeSessionCreate {
-  id: number;
-}
+export type PracticeSessionCreate = components['schemas']['PracticeSessionCreate'];
+export type PracticeSession = components['schemas']['PracticeSession'];
 export const practice = {
   log(session: PracticeSessionCreate, token?: string): Promise<PracticeSession> {
     return request<PracticeSession>('/practice_sessions', {
@@ -95,6 +126,7 @@ export interface AuthRequest {
 }
 export interface AuthResponse {
   token: string;
+  user_id?: number;
 }
 export const auth = {
   login(credentials: AuthRequest): Promise<AuthResponse> {
@@ -103,6 +135,23 @@ export const auth = {
       body: credentials,
     });
   },
+  signup(credentials: AuthRequest): Promise<AuthResponse> {
+    return request<AuthResponse>('/auth/signup', {
+      method: 'POST',
+      body: credentials,
+    });
+  },
 };
 
-export default { habits, journal, stages, practice, auth };
+// Energy plan client
+export const energy = {
+  createPlan(body: EnergyPlanRequest, idempotencyKey?: string): Promise<EnergyPlanResponse> {
+    return request<EnergyPlanResponse>('/v1/energy/plan', {
+      method: 'POST',
+      body,
+      headers: idempotencyKey ? { 'X-Idempotency-Key': idempotencyKey } : undefined,
+    });
+  },
+};
+
+export default { habits, journal, stages, practice, auth, energy };

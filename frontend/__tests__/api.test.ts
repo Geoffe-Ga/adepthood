@@ -55,6 +55,16 @@ describe('API client request composition', () => {
     });
   });
 
+  it('signs up via POST /auth/signup', async () => {
+    const creds = { username: 'u', password: 'p' }; // pragma: allowlist secret
+    await api.auth.signup(creds);
+    expect(fetch).toHaveBeenCalledWith(`${mockBaseUrl}/auth/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(creds),
+    });
+  });
+
   it('adds auth header when token provided', async () => {
     await api.habits.list('token');
     expect(fetch).toHaveBeenCalledWith(`${mockBaseUrl}/habits`, {
@@ -62,13 +72,127 @@ describe('API client request composition', () => {
     });
   });
 
-  it('throws on non-ok response', async () => {
-    (fetch as jest.Mock).mockResolvedValueOnce({ ok: false, status: 500 });
-    await expect(api.habits.list()).rejects.toThrow('Request failed with status 500');
+  it('uses token getter when set and no explicit token given', async () => {
+    api.setTokenGetter(() => 'auto-token');
+    await api.habits.list();
+    expect(fetch).toHaveBeenCalledWith(`${mockBaseUrl}/habits`, {
+      headers: { Authorization: 'Bearer auto-token' },
+    });
   });
 
-  it('propagates network errors', async () => {
-    (fetch as jest.Mock).mockRejectedValueOnce(new Error('network'));
+  it('explicit token overrides token getter', async () => {
+    api.setTokenGetter(() => 'auto-token');
+    await api.habits.list('explicit-token');
+    expect(fetch).toHaveBeenCalledWith(`${mockBaseUrl}/habits`, {
+      headers: { Authorization: 'Bearer explicit-token' },
+    });
+  });
+
+  it('token getter returning null sends no auth header', async () => {
+    api.setTokenGetter(() => null);
+    await api.habits.list();
+    expect(fetch).toHaveBeenCalledWith(`${mockBaseUrl}/habits`);
+  });
+});
+
+describe('ApiError', () => {
+  beforeEach(() => {
+    jest.resetModules();
+    jest.mock('@/config', () => ({ API_BASE_URL: mockBaseUrl }));
+    api = require('@/api');
+  });
+
+  it('throws ApiError with status and detail on non-ok response', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({ detail: 'Validation failed' }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any;
+
+    try {
+      await api.habits.list();
+      throw new Error('should have thrown');
+    } catch (err: unknown) {
+      expect(err).toBeInstanceOf(api.ApiError);
+      const apiErr = err as InstanceType<typeof api.ApiError>;
+      expect(apiErr.status).toBe(422);
+      expect(apiErr.detail).toBe('Validation failed');
+      expect(apiErr.message).toBe('Request failed with status 422: Validation failed');
+    }
+  });
+
+  it('falls back to status text when response body is not JSON', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => {
+        throw new SyntaxError('Unexpected token');
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any;
+
+    try {
+      await api.habits.list();
+      throw new Error('should have thrown');
+    } catch (err: unknown) {
+      expect(err).toBeInstanceOf(api.ApiError);
+      const apiErr = err as InstanceType<typeof api.ApiError>;
+      expect(apiErr.status).toBe(500);
+      expect(apiErr.detail).toBe('Request failed');
+    }
+  });
+
+  it('propagates network errors as-is', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    global.fetch = jest.fn().mockRejectedValue(new Error('network')) as any;
     await expect(api.habits.list()).rejects.toThrow('network');
+  });
+});
+
+describe('energy plan', () => {
+  beforeEach(() => {
+    jest.resetModules();
+    jest.mock('@/config', () => ({ API_BASE_URL: mockBaseUrl }));
+    api = require('@/api');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({}) }) as any;
+  });
+
+  it('creates energy plan with POST /v1/energy/plan', async () => {
+    const body = { habits: [], start_date: '2025-01-01' };
+    await api.energy.createPlan(body);
+    expect(fetch).toHaveBeenCalledWith(`${mockBaseUrl}/v1/energy/plan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  });
+
+  it('includes idempotency key header when provided', async () => {
+    const body = { habits: [], start_date: '2025-01-01' };
+    await api.energy.createPlan(body, 'abc-123');
+    expect(fetch).toHaveBeenCalledWith(`${mockBaseUrl}/v1/energy/plan`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': 'abc-123',
+      },
+      body: JSON.stringify(body),
+    });
+  });
+
+  it('includes auth token when token getter is set', async () => {
+    api.setTokenGetter(() => 'my-token');
+    const body = { habits: [], start_date: '2025-01-01' };
+    await api.energy.createPlan(body);
+    expect(fetch).toHaveBeenCalledWith(`${mockBaseUrl}/v1/energy/plan`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer my-token',
+      },
+      body: JSON.stringify(body),
+    });
   });
 });
