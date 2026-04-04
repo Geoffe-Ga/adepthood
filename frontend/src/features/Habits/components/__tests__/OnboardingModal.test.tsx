@@ -191,9 +191,14 @@ describe('OnboardingModal close behaviour', () => {
     pressContinue();
     pressContinue();
 
+    // Use a date guaranteed to be in the future so the DatePicker minDate
+    // constraint doesn't reject it.
+    const futureYear = new Date().getFullYear() + 1;
+    const futureDate = `${futureYear}-09-10`;
+
     const dateInput = root.findByProps({ accessibilityLabel: 'Date' });
     renderer.act(() => {
-      dateInput.props.onChangeText('2025-09-10');
+      dateInput.props.onChangeText(futureDate);
     });
 
     const finish = root.findByProps({ testID: 'finish-setup' });
@@ -203,7 +208,7 @@ describe('OnboardingModal close behaviour', () => {
 
     const saved = (onSave.mock.calls[0]?.[0] as { start_date: Date }[] | undefined)?.[0];
     expect(saved).toBeDefined();
-    expect(saved!.start_date.getFullYear()).toBe(2025);
+    expect(saved!.start_date.getFullYear()).toBe(futureYear);
     expect(saved!.start_date.getMonth()).toBe(8);
     expect(saved!.start_date.getDate()).toBe(10);
     process.env.TZ = originalTZ;

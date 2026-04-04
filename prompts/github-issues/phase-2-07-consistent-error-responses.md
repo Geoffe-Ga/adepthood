@@ -56,13 +56,13 @@ Standardize all error responses and add domain exception handling.
 2. **Create `backend/src/errors.py` helper**
    ```python
    from fastapi import HTTPException, status
-   
+
    def not_found(resource: str) -> HTTPException:
        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{resource}_not_found")
-   
+
    def forbidden(reason: str = "forbidden") -> HTTPException:
        return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=reason)
-   
+
    def bad_request(reason: str) -> HTTPException:
        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=reason)
    ```

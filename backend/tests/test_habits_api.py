@@ -1,6 +1,6 @@
 from itertools import count
 
-import pytest  # type: ignore[import-not-found]
+import pytest
 from fastapi.testclient import TestClient
 
 from main import app
