@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict
 
+from cachetools import TTLCache
 from fastapi import APIRouter, Header
 
 from domain.energy import Habit as DomainHabit
@@ -13,8 +14,8 @@ from schemas import EnergyPlan, EnergyPlanRequest, EnergyPlanResponse
 
 router = APIRouter(prefix="/v1/energy", tags=["energy"])
 
-# simple in-memory idempotency cache
-_idempotency_cache: dict[str, EnergyPlanResponse] = {}
+# TTL-bounded idempotency cache: max 1000 entries, 1 hour TTL
+_idempotency_cache: TTLCache[str, EnergyPlanResponse] = TTLCache(maxsize=1000, ttl=3600)
 
 
 @router.post("/plan", response_model=EnergyPlanResponse)
