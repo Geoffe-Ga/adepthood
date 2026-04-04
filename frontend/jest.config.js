@@ -8,6 +8,9 @@ module.exports = {
   moduleDirectories: ['node_modules', 'src'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
+    '^@react-native-async-storage/async-storage$':
+      '<rootDir>/node_modules/@react-native-async-storage/async-storage/jest/async-storage-mock.js',
+    '^expo-secure-store$': '<rootDir>/src/__mocks__/expo-secure-store.js',
   },
   transformIgnorePatterns: [
     'node_modules/(?!(' +
