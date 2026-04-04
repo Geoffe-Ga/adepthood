@@ -150,6 +150,54 @@ describe('ApiError', () => {
   });
 });
 
+describe('401 unauthorized callback', () => {
+  beforeEach(() => {
+    jest.resetModules();
+    jest.mock('@/config', () => ({ API_BASE_URL: mockBaseUrl }));
+    api = require('@/api');
+  });
+
+  it('calls onUnauthorized callback when a 401 response is received', async () => {
+    const onUnauthorized = jest.fn();
+    api.setOnUnauthorized(onUnauthorized);
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({ detail: 'Token expired' }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any;
+
+    try {
+      await api.habits.list();
+    } catch {
+      // expected
+    }
+
+    expect(onUnauthorized).toHaveBeenCalled();
+  });
+
+  it('does not call onUnauthorized for non-401 errors', async () => {
+    const onUnauthorized = jest.fn();
+    api.setOnUnauthorized(onUnauthorized);
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ detail: 'Server error' }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any;
+
+    try {
+      await api.habits.list();
+    } catch {
+      // expected
+    }
+
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+});
+
 describe('energy plan', () => {
   beforeEach(() => {
     jest.resetModules();
