@@ -30,7 +30,7 @@ def test_cross_origin_get_allowed() -> None:
 
 
 def test_cross_origin_post_with_credentials() -> None:
-    """POST requests with credentials are permitted for allowed origins."""
+    """POST requests with credentials include CORS headers even when auth fails."""
     headers = {"Origin": ALLOWED_ORIGIN}
     payload = {
         "user_id": 1,
@@ -45,7 +45,9 @@ def test_cross_origin_post_with_credentials() -> None:
         headers=headers,
         cookies=cookies,
     )
-    assert response.status_code == HTTPStatus.OK
+    # The endpoint requires Bearer auth, so we get 401, but CORS headers
+    # must still be present so the browser can read the response.
+    assert response.status_code == HTTPStatus.UNAUTHORIZED
     assert response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
     assert response.headers.get("access-control-allow-credentials") == "true"
 
