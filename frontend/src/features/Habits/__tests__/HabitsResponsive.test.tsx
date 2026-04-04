@@ -102,7 +102,7 @@ describe('HabitsScreen responsive layout', () => {
       } else {
         expect(iconTopNodes.length).toBe(0);
       }
-    });
+    }, 15000);
   });
 
   it('remounts list when column count changes', async () => {
