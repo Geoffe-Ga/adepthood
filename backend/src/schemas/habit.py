@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel
+
+from schemas.goal import Goal
+
+NOTIFICATION_FREQUENCY = Literal["daily", "weekly", "custom", "off"]
 
 
 class Habit(BaseModel):
@@ -22,10 +27,18 @@ class Habit(BaseModel):
     energy_cost: int
     energy_return: int
     notification_times: list[str] | None = None
-    notification_frequency: str | None = None
+    notification_frequency: NOTIFICATION_FREQUENCY | None = None
     notification_days: list[str] | None = None
     milestone_notifications: bool = False
     sort_order: int | None = None
+    stage: str = ""
+    streak: int = 0
+
+
+class HabitWithGoals(Habit):
+    """Habit response that includes nested goals."""
+
+    goals: list[Goal] = []
 
 
 class HabitCreate(BaseModel):
@@ -41,7 +54,8 @@ class HabitCreate(BaseModel):
     energy_cost: int
     energy_return: int
     notification_times: list[str] | None = None
-    notification_frequency: str | None = None
+    notification_frequency: NOTIFICATION_FREQUENCY | None = None
     notification_days: list[str] | None = None
     milestone_notifications: bool = False
     sort_order: int | None = None
+    stage: str = ""

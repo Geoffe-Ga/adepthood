@@ -30,5 +30,7 @@ class Habit(SQLModel, table=True):
     )
     milestone_notifications: bool = Field(default=False)
     sort_order: int | None = None
+    stage: str = ""
+    streak: int = 0
     user: "User" = Relationship(back_populates="habits")
     goals: list["Goal"] = Relationship(back_populates="habit")

@@ -9,7 +9,7 @@ from schemas.energy import (
 )
 from schemas.energy import Habit as EnergyHabit
 from schemas.goal import Goal
-from schemas.habit import Habit
+from schemas.habit import Habit, HabitWithGoals
 from schemas.milestone import Milestone
 from schemas.practice import PracticeSessionCreate, PracticeSessionSchema
 
@@ -23,6 +23,7 @@ __all__ = [
     "EnergyPlanResponse",
     "Goal",
     "Habit",
+    "HabitWithGoals",
     "Milestone",
     "PracticeSessionCreate",
     "PracticeSessionSchema",
