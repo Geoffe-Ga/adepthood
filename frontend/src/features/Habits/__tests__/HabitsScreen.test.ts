@@ -78,6 +78,8 @@ describe('habit progress utilities', () => {
     },
   ];
 
+  const FIXED_DATE = new Date('2023-01-01T00:00:00Z');
+
   it('sums completion units for habit progress', () => {
     const habit: Habit = {
       id: 1,
@@ -87,11 +89,11 @@ describe('habit progress utilities', () => {
       streak: 0,
       energy_cost: 0,
       energy_return: 0,
-      start_date: new Date(),
+      start_date: FIXED_DATE,
       goals: additiveGoals,
       completions: [
-        { id: 1, timestamp: new Date(), completed_units: 1 },
-        { id: 2, timestamp: new Date(), completed_units: 2.5 },
+        { id: 1, timestamp: FIXED_DATE, completed_units: 1 },
+        { id: 2, timestamp: FIXED_DATE, completed_units: 2.5 },
       ],
     };
 
@@ -107,9 +109,9 @@ describe('habit progress utilities', () => {
       streak: 0,
       energy_cost: 0,
       energy_return: 0,
-      start_date: new Date(),
+      start_date: FIXED_DATE,
       goals: additiveGoals,
-      completions: [{ id: 1, timestamp: new Date(), completed_units: 2 }],
+      completions: [{ id: 1, timestamp: FIXED_DATE, completed_units: 2 }],
     };
 
     const { currentGoal, nextGoal } = getGoalTier(habit);
@@ -126,9 +128,9 @@ describe('habit progress utilities', () => {
       streak: 0,
       energy_cost: 0,
       energy_return: 0,
-      start_date: new Date(),
+      start_date: FIXED_DATE,
       goals: subtractiveGoals,
-      completions: [{ id: 1, timestamp: new Date(), completed_units: 150 }],
+      completions: [{ id: 1, timestamp: FIXED_DATE, completed_units: 150 }],
     };
 
     const { currentGoal, nextGoal } = getGoalTier(habit);
@@ -145,7 +147,7 @@ describe('habit progress utilities', () => {
       streak: 0,
       energy_cost: 0,
       energy_return: 0,
-      start_date: new Date(),
+      start_date: FIXED_DATE,
       goals: subtractiveGoals,
       completions: [],
     };
