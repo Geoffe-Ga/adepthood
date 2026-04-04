@@ -56,7 +56,7 @@ Replace three booleans with a single discriminated union type.
    else if (editMode) { ... }
    else if (quickLogMode) { ... }
    else { ... }
-   
+
    // After:
    switch (mode) {
      case 'stats': ...; break;
