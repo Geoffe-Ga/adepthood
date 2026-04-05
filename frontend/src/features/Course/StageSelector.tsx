@@ -8,13 +8,11 @@ import styles from './Course.styles';
 
 const TOTAL_STAGES = 10;
 
-/* eslint-disable no-unused-vars */
 interface StageSelectorProps {
   stages: Stage[];
   selectedStage: number;
-  onSelectStage: (stageNumber: number) => void;
+  onSelectStage: (_stageNumber: number) => void;
 }
-/* eslint-enable no-unused-vars */
 
 /** Get the spiral dynamics color for a stage number (1-indexed). */
 function getStageColor(stageNumber: number, stages: Stage[]): string {

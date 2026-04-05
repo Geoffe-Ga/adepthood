@@ -160,7 +160,6 @@ export const HabitSettingsModal = ({
                   }}
                   showSearchBar
                   columns={6}
-                  // @ts-ignore react-native-emoji-selector typing
                   emojiSize={28}
                   placeholder="Search emoji..."
                 />

@@ -22,7 +22,6 @@ const TAG_OPTIONS: Array<{ key: keyof MessageTags; label: string }> = [
 ];
 
 interface ChatInputProps {
-  // eslint-disable-next-line no-unused-vars
   onSend: (_text: string, _tags?: MessageTags) => void;
   disabled?: boolean;
 }

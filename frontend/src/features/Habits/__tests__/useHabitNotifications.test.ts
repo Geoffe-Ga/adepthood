@@ -33,7 +33,17 @@ jest.mock('../../../storage/notificationStorage', () => ({
   loadPushToken: jest.fn(() => Promise.resolve(null)),
 }));
 
-const mockNotifications = Notifications as jest.Mocked<typeof Notifications>;
+interface MockedNotifications {
+  getPermissionsAsync: jest.Mock<() => Promise<{ status: string }>>;
+  requestPermissionsAsync: jest.Mock<() => Promise<{ status: string }>>;
+  getExpoPushTokenAsync: jest.Mock<() => Promise<{ data: string }>>;
+  scheduleNotificationAsync: jest.Mock<() => Promise<string>>;
+  cancelScheduledNotificationAsync: jest.Mock<() => Promise<void>>;
+  getAllScheduledNotificationsAsync: jest.Mock<() => Promise<Array<{ identifier: string }>>>;
+  SchedulableTriggerInputTypes: typeof Notifications.SchedulableTriggerInputTypes;
+}
+
+const mockNotifications = Notifications as unknown as MockedNotifications;
 const mockStorage = notifStorage as jest.Mocked<typeof notifStorage>;
 
 const baseHabit: Habit = {
@@ -65,10 +75,10 @@ describe('registerForPushNotificationsAsync', () => {
     mockStorage.loadPushToken.mockResolvedValue(null);
     mockNotifications.getPermissionsAsync.mockResolvedValue({
       status: 'granted',
-    } as never);
+    });
     mockNotifications.getExpoPushTokenAsync.mockResolvedValue({
       data: 'ExponentPushToken[abc123]',
-    } as never);
+    });
 
     const token = await registerForPushNotificationsAsync();
     expect(token).toBe('ExponentPushToken[abc123]');
@@ -79,13 +89,13 @@ describe('registerForPushNotificationsAsync', () => {
     mockStorage.loadPushToken.mockResolvedValue(null);
     mockNotifications.getPermissionsAsync.mockResolvedValue({
       status: 'undetermined',
-    } as never);
+    });
     mockNotifications.requestPermissionsAsync.mockResolvedValue({
       status: 'granted',
-    } as never);
+    });
     mockNotifications.getExpoPushTokenAsync.mockResolvedValue({
       data: 'ExponentPushToken[xyz]',
-    } as never);
+    });
 
     const token = await registerForPushNotificationsAsync();
     expect(mockNotifications.requestPermissionsAsync).toHaveBeenCalled();
@@ -96,10 +106,10 @@ describe('registerForPushNotificationsAsync', () => {
     mockStorage.loadPushToken.mockResolvedValue(null);
     mockNotifications.getPermissionsAsync.mockResolvedValue({
       status: 'denied',
-    } as never);
+    });
     mockNotifications.requestPermissionsAsync.mockResolvedValue({
       status: 'denied',
-    } as never);
+    });
 
     const token = await registerForPushNotificationsAsync();
     expect(token).toBeUndefined();
@@ -157,7 +167,7 @@ describe('updateHabitNotifications', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockNotifications.scheduleNotificationAsync.mockResolvedValue('new-notif-id');
-    mockNotifications.cancelScheduledNotificationAsync.mockResolvedValue(undefined as never);
+    mockNotifications.cancelScheduledNotificationAsync.mockResolvedValue(undefined);
     mockStorage.loadNotificationIds.mockResolvedValue([]);
   });
 
@@ -251,14 +261,14 @@ describe('updateHabitNotifications', () => {
 describe('reconcileNotifications', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockNotifications.cancelScheduledNotificationAsync.mockResolvedValue(undefined as never);
+    mockNotifications.cancelScheduledNotificationAsync.mockResolvedValue(undefined);
   });
 
   it('cancels orphaned notifications not in persisted records', async () => {
     mockStorage.loadAllNotificationMappings.mockResolvedValue({ 1: ['a'] });
     mockNotifications.getAllScheduledNotificationsAsync.mockResolvedValue([
-      { identifier: 'a' } as never,
-      { identifier: 'orphan-1' } as never,
+      { identifier: 'a' },
+      { identifier: 'orphan-1' },
     ]);
 
     await reconcileNotifications();
@@ -268,9 +278,7 @@ describe('reconcileNotifications', () => {
 
   it('cleans up persisted records for notifications no longer scheduled', async () => {
     mockStorage.loadAllNotificationMappings.mockResolvedValue({ 1: ['a', 'b'] });
-    mockNotifications.getAllScheduledNotificationsAsync.mockResolvedValue([
-      { identifier: 'a' } as never,
-    ]);
+    mockNotifications.getAllScheduledNotificationsAsync.mockResolvedValue([{ identifier: 'a' }]);
 
     await reconcileNotifications();
     expect(mockStorage.saveNotificationIds).toHaveBeenCalledWith(1, ['a']);
@@ -286,9 +294,7 @@ describe('reconcileNotifications', () => {
 
   it('does nothing when everything is in sync', async () => {
     mockStorage.loadAllNotificationMappings.mockResolvedValue({ 1: ['a'] });
-    mockNotifications.getAllScheduledNotificationsAsync.mockResolvedValue([
-      { identifier: 'a' } as never,
-    ]);
+    mockNotifications.getAllScheduledNotificationsAsync.mockResolvedValue([{ identifier: 'a' }]);
 
     await reconcileNotifications();
     expect(mockNotifications.cancelScheduledNotificationAsync).not.toHaveBeenCalled();
@@ -306,7 +312,7 @@ describe('reconcileNotifications', () => {
 describe('cancelForHabit', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockNotifications.cancelScheduledNotificationAsync.mockResolvedValue(undefined as never);
+    mockNotifications.cancelScheduledNotificationAsync.mockResolvedValue(undefined);
   });
 
   it('cancels all persisted notifications and clears storage', async () => {

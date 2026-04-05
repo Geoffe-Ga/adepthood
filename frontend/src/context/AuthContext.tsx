@@ -3,8 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { auth as authApi, setOnUnauthorized, setTokenGetter } from '@/api';
 import { clearToken, loadToken, saveToken } from '@/storage/authStorage';
 
-// eslint-disable-next-line no-unused-vars
-type LoginOrSignup = (emailOrUsername: string, pw: string) => Promise<void>;
+type LoginOrSignup = (_emailOrUsername: string, _pw: string) => Promise<void>;
 
 interface AuthContextValue {
   token: string | null;

@@ -30,7 +30,6 @@ function toStageData(apiStage: Stage): StageData {
   };
 }
 
-/* eslint-disable no-unused-vars */
 export interface StageStoreState {
   stages: StageData[];
   currentStage: number;
@@ -42,7 +41,6 @@ export interface StageStoreState {
   updateStageProgress: (_stageNumber: number, _progress: number) => void;
   fetchStages: (_token?: string) => Promise<void>;
 }
-/* eslint-enable no-unused-vars */
 
 export const useStageStore = create<StageStoreState>((set) => ({
   stages: [],

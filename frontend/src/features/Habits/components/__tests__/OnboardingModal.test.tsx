@@ -169,8 +169,7 @@ describe('OnboardingModal close behaviour', () => {
   it('uses selected start date for first habit', async () => {
     const originalTZ = process.env.TZ;
     process.env.TZ = 'America/Los_Angeles';
-    // eslint-disable-next-line no-unused-vars
-    const onSave = jest.fn((_: { start_date: Date }[]) => undefined);
+    const onSave = jest.fn((_habits: { start_date: Date }[]) => undefined);
     const tree = renderer.create(
       <OnboardingModal visible onClose={jest.fn()} onSaveHabits={onSave} />,
     );
