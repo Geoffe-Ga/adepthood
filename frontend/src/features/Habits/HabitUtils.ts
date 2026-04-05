@@ -4,6 +4,17 @@ import type { Goal, Habit, Completion, HabitStatsData } from './Habits.types';
 
 export { STAGE_ORDER };
 
+/** Milliseconds in one calendar day, used for date-difference arithmetic. */
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+/**
+ * Number of days per APTITUDE stage. The 36-week program has 10 stages:
+ * stages 1–8 are 21-day cycles (3 weeks each, totaling 24 weeks) and
+ * stages 9–10 are 42-day cycles (6 weeks each, totaling 12 weeks).
+ * Grand total: 24 + 12 = 36 weeks.
+ */
+export const STAGE_DURATIONS_DAYS = [21, 21, 21, 21, 21, 21, 21, 21, 42, 42] as const;
+
 /**
  * Calculate the start date for a habit based on its order in the onboarding
  * flow. Habits 1–8 begin 21 days apart while habits 9–10 begin 42 days apart.
@@ -14,8 +25,7 @@ export { STAGE_ORDER };
  */
 export const calculateHabitStartDate = (baseDate: Date, index: number): Date => {
   const date = new Date(baseDate);
-  const durations = [21, 21, 21, 21, 21, 21, 21, 21, 42, 42];
-  const offset = durations.slice(0, index).reduce((sum, d) => sum + d, 0);
+  const offset = STAGE_DURATIONS_DAYS.slice(0, index).reduce((sum, d) => sum + d, 0);
   date.setUTCDate(date.getUTCDate() + offset);
   return date;
 };
@@ -67,20 +77,42 @@ export const getMarkerPositions = (
   return { low, clear, stretch };
 };
 
+/**
+ * Generate evenly-spaced increment values for a goal's progress stepper.
+ *
+ * The number of steps shown depends on the target magnitude:
+ * - target <= 5: one button per unit (e.g. 1, 2, 3 for target=3)
+ * - target <= 10: 5 evenly-spaced fractions
+ * - target <= 100: 5 evenly-spaced increments, rounded up
+ * - target > 100: 4 increments (avoids crowding the UI with a 5th
+ *   button when increments are already large)
+ */
+const MAX_INCREMENT_STEPS = 5;
+const LARGE_TARGET_STEPS = 4;
+
 export const calculateProgressIncrements = (goal: Goal): number[] => {
   const { target } = goal;
 
-  if (target <= 5) {
+  if (target <= MAX_INCREMENT_STEPS) {
     return Array.from({ length: target }, (_, i) => i + 1);
   } else if (target <= 10) {
-    return Array.from({ length: 5 }, (_, i) => ((i + 1) * target) / 5);
+    return Array.from(
+      { length: MAX_INCREMENT_STEPS },
+      (_, i) => ((i + 1) * target) / MAX_INCREMENT_STEPS,
+    );
   } else if (target <= 100) {
-    return Array.from({ length: 5 }, (_, i) => Math.ceil(((i + 1) * target) / 5));
+    return Array.from({ length: MAX_INCREMENT_STEPS }, (_, i) =>
+      Math.ceil(((i + 1) * target) / MAX_INCREMENT_STEPS),
+    );
   } else {
-    const increment = Math.ceil(target / 5);
-    return Array.from({ length: 4 }, (_, i) => (i + 1) * increment);
+    const increment = Math.ceil(target / MAX_INCREMENT_STEPS);
+    return Array.from({ length: LARGE_TARGET_STEPS }, (_, i) => (i + 1) * increment);
   }
 };
+
+const DAYS_PER_WEEK = 7;
+/** Approximate days per month used for daily-equivalent normalization. */
+const APPROX_DAYS_PER_MONTH = 30;
 
 export const getGoalTarget = (goal: Goal): number => {
   if (!goal) return 0;
@@ -88,10 +120,10 @@ export const getGoalTarget = (goal: Goal): number => {
     return goal.target;
   }
   if (goal.frequency_unit === 'per_week') {
-    return (goal.target / 7) * goal.frequency;
+    return (goal.target / DAYS_PER_WEEK) * goal.frequency;
   }
   if (goal.frequency_unit === 'per_month') {
-    return (goal.target / 30) * goal.frequency;
+    return (goal.target / APPROX_DAYS_PER_MONTH) * goal.frequency;
   }
   return goal.target;
 };
@@ -177,9 +209,16 @@ export const getProgressPercentage = (
 
       if (currentGoal.tier === 'clear' && nextGoal.tier === 'stretch') {
         if (totalProgress >= currentTarget) {
+          // The progress bar is split into thirds visually: the first 33%
+          // represents low→clear progress, and the remaining 67% represents
+          // clear→stretch. This weighting reflects that reaching stretch
+          // goals requires proportionally more effort than reaching clear.
+          const STRETCH_SEGMENT_PCT = 67;
+          const CLEAR_OFFSET_PCT = 33;
           return Math.min(
             100,
-            ((totalProgress - currentTarget) / (nextTarget - currentTarget)) * 67 + 33,
+            ((totalProgress - currentTarget) / (nextTarget - currentTarget)) * STRETCH_SEGMENT_PCT +
+              CLEAR_OFFSET_PCT,
           );
         }
       }
@@ -266,7 +305,7 @@ export const generateStatsForHabit = (habit: Habit): HabitStatsData => {
       currentStreak = 1;
     } else {
       const prev = sortedDays[i - 1]!;
-      const diff = (day.getTime() - prev.getTime()) / (1000 * 60 * 60 * 24);
+      const diff = (day.getTime() - prev.getTime()) / MS_PER_DAY;
       currentStreak = diff === 1 ? currentStreak + 1 : 1;
     }
     if (currentStreak > longestStreak) longestStreak = currentStreak;
@@ -275,7 +314,8 @@ export const generateStatsForHabit = (habit: Habit): HabitStatsData => {
   // Completion rate: days-with-completions / span of days
   const firstDay = sortedDays[0]!;
   const lastDay = sortedDays[sortedDays.length - 1]!;
-  const spanDays = Math.round((lastDay.getTime() - firstDay.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+  // +1 to count both the first and last day inclusively
+  const spanDays = Math.round((lastDay.getTime() - firstDay.getTime()) / MS_PER_DAY) + 1;
   const completionRate = spanDays > 0 ? daysWithCompletions.size / spanDays : 0;
 
   return {
