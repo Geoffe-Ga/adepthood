@@ -147,9 +147,15 @@ export const getGoalTier = (
   const sortedGoals = [...habit.goals].sort((a, b) => {
     const tierOrder = { low: 1, clear: 2, stretch: 3 } as const;
     return tierOrder[a.tier] - tierOrder[b.tier];
-  }) as [Goal, Goal, Goal];
+  });
 
-  const [lowGoal, clearGoal, stretchGoal] = sortedGoals;
+  const lowGoal = sortedGoals[0];
+  const clearGoal = sortedGoals[1];
+  const stretchGoal = sortedGoals[2];
+
+  if (!lowGoal || !clearGoal || !stretchGoal) {
+    return { currentGoal: habit.goals[0]!, nextGoal: null, completedAllGoals: false };
+  }
   const totalProgress = calculateHabitProgress(habit);
   let currentGoal = lowGoal;
   let nextGoal: Goal | null = null;

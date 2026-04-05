@@ -59,7 +59,6 @@ const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.list>>): Ha
     milestoneNotifications: h.milestone_notifications,
   }));
 
-/* eslint-disable no-unused-vars */
 export interface UseHabitsReturn {
   habits: Habit[];
   loading: boolean;
@@ -90,7 +89,6 @@ export interface UseHabitsReturn {
   /** Exposed only for testing — do not use in production code. */
   setHabitsForTesting: (_habits: Habit[]) => void;
 }
-/* eslint-enable no-unused-vars */
 
 export const useHabits = (): UseHabitsReturn => {
   // Core state from Zustand store (shared across screens)

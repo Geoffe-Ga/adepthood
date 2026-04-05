@@ -5,13 +5,11 @@ export interface UserPreferences {
   notificationsEnabled: boolean;
 }
 
-/* eslint-disable no-unused-vars */
 export interface UserStoreState {
   preferences: UserPreferences;
 
   updatePreferences: (_prefs: Partial<UserPreferences>) => void;
 }
-/* eslint-enable no-unused-vars */
 
 export const useUserStore = create<UserStoreState>((set) => ({
   preferences: {

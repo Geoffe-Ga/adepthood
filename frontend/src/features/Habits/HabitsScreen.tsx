@@ -262,7 +262,6 @@ const HabitsScreen = () => {
                 onEmojiSelected={actions.emojiSelect}
                 showSearchBar
                 columns={6}
-                // @ts-ignore typing issue
                 emojiSize={28}
               />
             </View>

@@ -28,7 +28,7 @@ describe('MessageBubble', () => {
   it('renders user message text', () => {
     const tree = renderer.create(<MessageBubble message={makeMessage()} />);
     const root = tree.root;
-    const texts = root.findAllByType('Text' as never) as unknown as TextInstance[];
+    const texts = root.findAllByType('Text') as TextInstance[];
     const messageText = texts.find((t) => t.props.children === 'Hello world');
     expect(messageText).toBeTruthy();
   });
@@ -37,7 +37,7 @@ describe('MessageBubble', () => {
     const msg = makeMessage({ sender: 'bot', message: 'I am BotMason' });
     const tree = renderer.create(<MessageBubble message={msg} />);
     const root = tree.root;
-    const texts = root.findAllByType('Text' as never) as unknown as TextInstance[];
+    const texts = root.findAllByType('Text') as TextInstance[];
     const avatarText = texts.find((t) => t.props.children === 'B');
     expect(avatarText).toBeTruthy();
     const botText = texts.find((t) => t.props.children === 'I am BotMason');
@@ -47,7 +47,7 @@ describe('MessageBubble', () => {
   it('does not render avatar for user messages', () => {
     const tree = renderer.create(<MessageBubble message={makeMessage()} />);
     const root = tree.root;
-    const texts = root.findAllByType('Text' as never) as unknown as TextInstance[];
+    const texts = root.findAllByType('Text') as TextInstance[];
     const avatarText = texts.find((t) => t.props.children === 'B');
     expect(avatarText).toBeUndefined();
   });
@@ -56,7 +56,7 @@ describe('MessageBubble', () => {
     const msg = makeMessage({ is_stage_reflection: true, is_practice_note: true });
     const tree = renderer.create(<MessageBubble message={msg} />);
     const root = tree.root;
-    const texts = root.findAllByType('Text' as never) as unknown as TextInstance[];
+    const texts = root.findAllByType('Text') as TextInstance[];
     const reflectionTag = texts.find((t) => t.props.children === 'Reflection');
     const practiceTag = texts.find((t) => t.props.children === 'Practice');
     expect(reflectionTag).toBeTruthy();
@@ -66,7 +66,7 @@ describe('MessageBubble', () => {
   it('does not display tags when none are set', () => {
     const tree = renderer.create(<MessageBubble message={makeMessage()} />);
     const root = tree.root;
-    const texts = root.findAllByType('Text' as never) as unknown as TextInstance[];
+    const texts = root.findAllByType('Text') as TextInstance[];
     const tagTexts = texts.filter((t) =>
       ['Reflection', 'Practice', 'Habit'].includes(t.props.children as string),
     );
@@ -76,7 +76,7 @@ describe('MessageBubble', () => {
   it('displays formatted timestamp', () => {
     const tree = renderer.create(<MessageBubble message={makeMessage()} />);
     const root = tree.root;
-    const texts = root.findAllByType('Text' as never) as unknown as TextInstance[];
+    const texts = root.findAllByType('Text') as TextInstance[];
     const timestampTexts = texts.filter((t) => {
       const content = t.props.children;
       return typeof content === 'string' && /\d{1,2}:\d{2}/.test(content);

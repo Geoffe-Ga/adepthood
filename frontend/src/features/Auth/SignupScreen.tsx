@@ -4,8 +4,7 @@ import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-nativ
 import { useAuth } from '@/context/AuthContext';
 
 interface Props {
-  // eslint-disable-next-line no-unused-vars
-  navigation: { navigate: (screen: string) => void };
+  navigation: { navigate: (_screen: string) => void };
 }
 
 export default function SignupScreen({ navigation }: Props) {

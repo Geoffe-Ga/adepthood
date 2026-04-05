@@ -10,7 +10,7 @@ import {
   PanResponder,
   StyleSheet,
 } from 'react-native';
-import type { LayoutChangeEvent, ViewStyle, TextStyle } from 'react-native';
+import type { DimensionValue, LayoutChangeEvent, ViewStyle, TextStyle } from 'react-native';
 import EmojiSelector from 'react-native-emoji-selector';
 
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
@@ -28,8 +28,7 @@ import {
 
 const markerContainerStyle = (leftPct: number, z: number): ViewStyle => ({
   position: 'absolute',
-  // @ts-ignore percentage positioning not typed
-  left: `${clampPercentage(leftPct)}%`,
+  left: `${clampPercentage(leftPct)}%` as DimensionValue,
   top: -6,
   transform: [
     {
@@ -51,8 +50,7 @@ const circleStyle = (color: string): ViewStyle => ({
 
 const labelContainerStyle = (leftPct: number, z: number): ViewStyle => ({
   position: 'absolute',
-  // @ts-ignore percentage positioning not typed
-  left: `${clampPercentage(leftPct)}%`,
+  left: `${clampPercentage(leftPct)}%` as DimensionValue,
   transform: [
     {
       translateX: clampPercentage(leftPct) === 0 ? 0 : clampPercentage(leftPct) === 100 ? -12 : -6,
@@ -243,7 +241,6 @@ export const GoalModal = ({
                     }}
                     showSearchBar
                     columns={6}
-                    // @ts-ignore react-native-emoji-selector missing emojiSize typing
                     emojiSize={28}
                   />
                 </View>
@@ -273,9 +270,7 @@ export const GoalModal = ({
                     <View
                       testID="modal-marker-low"
                       {...lowPan.panHandlers}
-                      // @ts-ignore react-native-web hover props
                       onMouseEnter={() => setTooltip('low')}
-                      // @ts-ignore react-native-web hover props
                       onMouseLeave={() => setTooltip(null)}
                       style={markerContainerStyle(lowMarker, 1)}
                     >
@@ -291,9 +286,7 @@ export const GoalModal = ({
                     <View
                       testID="modal-marker-clear"
                       {...clearPan.panHandlers}
-                      // @ts-ignore react-native-web hover props
                       onMouseEnter={() => setTooltip('clear')}
-                      // @ts-ignore react-native-web hover props
                       onMouseLeave={() => setTooltip(null)}
                       style={markerContainerStyle(clearMarker, 2)}
                     >
@@ -313,9 +306,7 @@ export const GoalModal = ({
                       testID="modal-marker-stretch"
                       onPressIn={() => setTooltip('stretch')}
                       onPressOut={() => setTooltip(null)}
-                      // @ts-ignore hover props
                       onMouseEnter={() => setTooltip('stretch')}
-                      // @ts-ignore hover props
                       onMouseLeave={() => setTooltip(null)}
                       style={markerContainerStyle(stretchMarker, 3)}
                     >
