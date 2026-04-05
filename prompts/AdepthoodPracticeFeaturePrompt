@@ -1,0 +1,50 @@
+# Adepthood App — Practice Feature Spec
+
+**Adepthood** is a spiritual habit-tracking and personal development app that guides users through the 10-stage **APTITUDE** program. Based on Integral Theory, Spiral Dynamics, and an original model called **The Archetypal Wavelength**, it helps users **cultivate Free Will, transcend karmic cycles, and realize their fullest self**.
+
+The experience is mystical, ritualistic, and deeply personal—an alchemical blend of **habit formation**, **inner practice**, **course learning**, and **AI-guided reflection**.
+
+Your output should be clean, dry, well-formatted, functional, running,
+production-ready code. I intend to run the code that you provide exactly as it is provided.
+The final result should be a beautiful website that is mobile and desktop
+friendly and that adheres to a style that mixes modern minimalism with a touch
+of the mystical.
+
+You have access to the repo. We will focus on the Practice Feature.
+
+---
+
+## Screens & Features
+
+### 5. Practice Feature
+- Pick a Practice per stage (custom or recommended, as described in the `.docx` introduction attached)
+- Timer-based (with sound cues)
+- Tracks completions (target min 4x/week)
+- Reflections can be journaled post-practice
+
+---
+## Navigation & Architecture
+- Responsive across mobile + web
+- Use a modern, clean, and user-friendly design.
+- Use an aesthetic that blends minimalism with elements of mysticism (e.g., soft gradients, symbolic icons).
+---
+## Tech Stack
+
+- **Frontend**: React Native + Expo
+- **Backend**: FastAPI + PostgreSQL
+- **ORM**: SQLAlchemy + Pydantic
+- **AI Assistant**: OpenAI or Local LLM
+- **Hosting**: Undecided
+- **CMS**: Squarespace
+
+---
+
+## Development Guidelines
+
+You are helping me learn full-stack development.
+
+- READ AND ADHERE TO `AGENTS.md`
+- Teach clearly
+- Use clean, annotated code
+- Favor scalable, modular design
+- A fully functional codebase meeting all the specified requirements.
