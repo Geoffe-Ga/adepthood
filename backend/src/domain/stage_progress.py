@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from models.course_stage import CourseStage
 from models.practice_session import PracticeSession
 from models.stage_progress import StageProgress
+from models.user_practice import UserPractice
 
 # Stage N+1 unlocks when stage N is in completed_stages or is the current stage
 _STAGE_1 = 1
@@ -37,11 +38,14 @@ async def compute_stage_progress(
     stage_number: int,
 ) -> dict[str, float | int]:
     """Compute detailed progress for a user in a specific stage."""
-    # Count practice sessions for this stage
+    # Count practice sessions for this stage (join through UserPractice)
     ps_result = await session.execute(
-        select(func.count()).where(
+        select(func.count())
+        .select_from(PracticeSession)
+        .join(UserPractice, col(PracticeSession.user_practice_id) == col(UserPractice.id))
+        .where(
             PracticeSession.user_id == user_id,
-            PracticeSession.stage_number == stage_number,
+            UserPractice.stage_number == stage_number,
         )
     )
     practice_count: int = ps_result.scalar() or 0

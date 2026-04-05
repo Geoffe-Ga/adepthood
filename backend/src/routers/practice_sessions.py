@@ -1,0 +1,80 @@
+"""Practice session API — log sessions linked to UserPractice selections."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import func, select
+
+from database import get_session
+from errors import forbidden, not_found
+from models.practice_session import PracticeSession
+from models.user_practice import UserPractice
+from routers.auth import get_current_user
+from schemas.practice import PracticeSessionCreate, PracticeSessionResponse
+
+router = APIRouter(prefix="/practice-sessions", tags=["practice-sessions"])
+
+
+@router.post("/", response_model=PracticeSessionResponse)
+async def create_session(
+    payload: PracticeSessionCreate,
+    current_user: int = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> PracticeSession:
+    """Log a practice session against a user-practice selection."""
+    result = await session.execute(
+        select(UserPractice).where(UserPractice.id == payload.user_practice_id)
+    )
+    user_practice = result.scalars().first()
+    if user_practice is None:
+        raise not_found("user_practice")
+    if user_practice.user_id != current_user:
+        raise forbidden()
+
+    practice_session = PracticeSession(
+        user_id=current_user,
+        user_practice_id=payload.user_practice_id,
+        duration_minutes=payload.duration_minutes,
+        reflection=payload.reflection,
+    )
+    session.add(practice_session)
+    await session.commit()
+    await session.refresh(practice_session)
+    return practice_session
+
+
+@router.get("/", response_model=list[PracticeSessionResponse])
+async def list_sessions(
+    user_practice_id: int,
+    current_user: int = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> list[PracticeSession]:
+    """List sessions for a specific user-practice."""
+    result = await session.execute(
+        select(PracticeSession).where(
+            PracticeSession.user_practice_id == user_practice_id,
+            PracticeSession.user_id == current_user,
+        )
+    )
+    return list(result.scalars().all())
+
+
+@router.get("/week-count")
+async def week_count(
+    current_user: int = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, int]:
+    """Return the number of sessions the authenticated user completed this week."""
+    now = datetime.now(UTC)
+    start_of_week = now - timedelta(days=now.weekday())
+    start_of_week = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+    statement = select(func.count()).where(
+        PracticeSession.user_id == current_user,
+        PracticeSession.timestamp >= start_of_week,
+    )
+    result = await session.execute(statement)
+    count = result.scalar_one()
+    return {"count": count}
