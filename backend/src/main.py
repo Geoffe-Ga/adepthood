@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from routers.auth import router as auth_router
+from routers.botmason import router as botmason_router
 from routers.course import router as course_router
 from routers.energy import router as energy_router
 from routers.goal_completions import router as goal_completion_router
@@ -58,6 +59,7 @@ app.add_middleware(
 
 # Register feature routers
 app.include_router(auth_router)
+app.include_router(botmason_router)
 app.include_router(course_router)
 app.include_router(practices_router)
 app.include_router(user_practices_router)
