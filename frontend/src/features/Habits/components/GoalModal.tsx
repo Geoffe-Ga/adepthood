@@ -8,10 +8,12 @@ import {
   TouchableWithoutFeedback,
   View,
   PanResponder,
+  StyleSheet,
 } from 'react-native';
 import type { LayoutChangeEvent, ViewStyle, TextStyle } from 'react-native';
 import EmojiSelector from 'react-native-emoji-selector';
 
+import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
 import { STAGE_COLORS } from '../../../design/tokens';
 import styles from '../Habits.styles';
 import type { GoalModalProps, Goal } from '../Habits.types';
@@ -93,6 +95,7 @@ export const GoalModal = ({
 }: GoalModalProps) => {
   const [logAmount, setLogAmount] = useState('1');
   const [showEmojiSelector, setShowEmojiSelector] = useState(false);
+  const [goalGroup, setGoalGroup] = useState<ApiGoalGroup | null>(null);
   const barWidth = useRef(0);
   const [lowMarker, setLowMarker] = useState(0);
   const [clearMarker, setClearMarker] = useState(0);
@@ -128,6 +131,18 @@ export const GoalModal = ({
     setLowMarker(markers.low);
     setClearMarker(markers.clear);
   }, [markers.low, markers.clear]);
+
+  useEffect(() => {
+    const groupId = habit?.goals.find((g) => g.goal_group_id)?.goal_group_id;
+    if (groupId) {
+      goalGroupsApi
+        .get(groupId)
+        .then(setGoalGroup)
+        .catch(() => setGoalGroup(null));
+    } else {
+      setGoalGroup(null);
+    }
+  }, [habit]);
 
   const handleBarLayout = (e: LayoutChangeEvent) => {
     barWidth.current = e.nativeEvent.layout.width;
@@ -210,6 +225,14 @@ export const GoalModal = ({
                   <Text style={styles.closeButtonText}>×</Text>
                 </TouchableOpacity>
               </View>
+
+              {goalGroup && (
+                <View testID="goal-group-badge" style={goalGroupBadgeStyles.container}>
+                  <Text style={goalGroupBadgeStyles.text}>
+                    {goalGroup.icon ?? '📁'} {goalGroup.name}
+                  </Text>
+                </View>
+              )}
 
               {showEmojiSelector && (
                 <View style={styles.emojiSelectorContainer}>
@@ -347,5 +370,21 @@ export const GoalModal = ({
     </Modal>
   );
 };
+
+const goalGroupBadgeStyles = StyleSheet.create({
+  container: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#f0ede6',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginBottom: 8,
+  },
+  text: {
+    fontSize: 12,
+    color: '#555',
+    fontStyle: 'italic',
+  },
+});
 
 export default GoalModal;
