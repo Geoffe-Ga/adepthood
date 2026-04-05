@@ -128,9 +128,39 @@ Phase 3 internal dependencies:
   phase-3-14 (GoalGroups) independent, can start after phase-1
 ```
 
+## Phase 5 — Prompt Alignment & UX Refinement (Medium)
+Discrepancies found between the original feature prompts and the shipped implementation, where the prompt's vision was stronger. All 7 issues are fully independent and can run in parallel.
+
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| 01 | [Greyed-out locked habits](phase-5-01-greyed-locked-habits.md) | Frontend | ~125 |
+| 02 | [Milestone toasts (not alerts)](phase-5-02-milestone-toasts.md) | Frontend | ~150 |
+| 03 | [Victory color system](phase-5-03-victory-color-system.md) | Frontend | ~100 |
+| 04 | [Map stage history](phase-5-04-map-stage-history.md) | Full-stack | ~200 |
+| 05 | [Journal tags enum](phase-5-05-journal-tags-enum.md) | Full-stack | ~225 |
+| 06 | [Scaffolding reveal animation](phase-5-06-scaffolding-reveal-animation.md) | Frontend | ~100 |
+| 07 | [Manual habit unlock](phase-5-07-manual-habit-unlock.md) | Frontend | ~125 |
+
+## Dependency Graph (Phase 5)
+
+```
+All 7 issues are fully independent — no internal dependencies.
+All assume Phases 1–4 are complete.
+
+  phase-5-01 (Greyed tiles) — HabitsScreen + HabitTile
+  phase-5-02 (Toasts) — useHabits + new Toast component
+  phase-5-03 (Victory color) — HabitUtils + HabitTile
+  phase-5-04 (Map history) — MapScreen + stages API
+  phase-5-05 (Journal tags) — journal model + router + frontend (full-stack)
+  phase-5-06 (Scaffolding reveal) — OnboardingModal
+  phase-5-07 (Manual unlock) — HabitsScreen + useHabits
+      └── optional enhancement if phase-5-01 is done first (per-habit unlock on locked tiles)
+```
+
 ## Total Estimated Scope
 
-- **42 issues** across 4 phases (11 + 7 + 14 + 10)
-- **~8,025 LoC** of changes (net, including deletions)
+- **49 issues** across 5 phases (11 + 7 + 14 + 10 + 7)
+- **~9,050 LoC** of changes (net, including deletions)
 - Phase 1 is the critical path — everything else depends on it
 - Phase 3 is the largest phase, reflecting 4 features + cross-feature deep links
+- Phase 5 is fully parallelizable — all 7 issues can be worked simultaneously
