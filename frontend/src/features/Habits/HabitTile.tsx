@@ -40,7 +40,13 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: Habi
     `${habit.streak} days${hasCompletedGoal ? ' — Achieved Today!' : ''}`.toUpperCase();
 
   const barHeight = Math.max(8, spacing(2, scale));
-  const rows = columns === 2 ? 5 : 10;
+
+  // The app displays 10 habit tiles total. In a 2-column grid layout each
+  // column shows 5 rows; in a single-column layout all 10 tiles stack
+  // vertically. This determines the tile's minimum height so all tiles
+  // fit on screen without scrolling.
+  const TOTAL_HABITS = 10;
+  const rows = columns === 2 ? TOTAL_HABITS / columns : TOTAL_HABITS;
   const tileMinHeight = height / rows - 2 * spacing(1, scale) - gridGutter;
   const tileWidth = width / columns;
   const iconInline = columns === 1 || tileWidth < 400;

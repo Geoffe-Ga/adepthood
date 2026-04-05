@@ -15,8 +15,15 @@ from schemas import EnergyPlan, EnergyPlanRequest, EnergyPlanResponse
 
 router = APIRouter(prefix="/v1/energy", tags=["energy"])
 
-# TTL-bounded idempotency cache: max 1000 entries, 1 hour TTL
-_idempotency_cache: TTLCache[str, EnergyPlanResponse] = TTLCache(maxsize=1000, ttl=3600)
+# Idempotency cache prevents duplicate plan generation within the same session.
+# - maxsize=1000: supports ~1000 concurrent users before eviction (LRU).
+# - ttl=3600 (1 hour): matches _TOKEN_TTL in auth.py so cached plans expire
+#   alongside the JWT that initiated them.
+_CACHE_MAX_ENTRIES = 1000
+_CACHE_TTL_SECONDS = 3600
+_idempotency_cache: TTLCache[str, EnergyPlanResponse] = TTLCache(
+    maxsize=_CACHE_MAX_ENTRIES, ttl=_CACHE_TTL_SECONDS
+)
 
 
 @router.post("/plan", response_model=EnergyPlanResponse)

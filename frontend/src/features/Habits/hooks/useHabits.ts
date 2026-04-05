@@ -15,6 +15,8 @@ import { getGoalTier, getGoalTarget, calculateHabitProgress, logHabitUnits } fro
 import {
   registerForPushNotificationsAsync,
   updateHabitNotifications,
+  reconcileNotifications,
+  cancelForHabit,
 } from './useHabitNotifications';
 
 export type HabitMode = 'normal' | 'stats' | 'quickLog' | 'edit';
@@ -151,6 +153,7 @@ export const useHabits = (): UseHabitsReturn => {
 
   useEffect(() => {
     void registerForPushNotificationsAsync();
+    void reconcileNotifications();
   }, []);
 
   const updateGoal = useCallback(
@@ -282,6 +285,7 @@ export const useHabits = (): UseHabitsReturn => {
       const newHabits = habits.filter((h) => h.id !== habitId);
       storeSetHabits(newHabits);
       void persistHabits(newHabits);
+      void cancelForHabit(habitId);
 
       habitsApi.delete(habitId).catch(() => {
         storeSetHabits(previousHabits);

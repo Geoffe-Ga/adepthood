@@ -18,6 +18,7 @@ import EmojiSelector from 'react-native-emoji-selector';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 
+import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
 import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
 import { colors, STAGE_COLORS } from '../../../design/tokens';
 import { DEFAULT_ICONS } from '../constants';
@@ -45,6 +46,7 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
   const [error, setError] = useState('');
   const [showCountWarning, setShowCountWarning] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
+  const [goalGroupTemplates, setGoalGroupTemplates] = useState<ApiGoalGroup[]>([]);
 
   useEffect(() => {
     if (step === 2 || step === 3) {
@@ -289,11 +291,11 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
           }
           ListFooterComponent={
             <TouchableOpacity
-              testID="finish-setup"
+              testID="continue-to-templates"
               style={styles.onboardingContinueButton}
-              onPress={handleFinish}
+              onPress={handleGoToTemplates}
             >
-              <Text style={styles.onboardingContinueButtonText}>Done</Text>
+              <Text style={styles.onboardingContinueButtonText}>Continue</Text>
             </TouchableOpacity>
           }
           renderItem={({ item, drag, isActive, getIndex }) => {
@@ -377,10 +379,88 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     </View>
   );
 
+  const handleGoToTemplates = () => {
+    goalGroupsApi
+      .list()
+      .then((templates) => {
+        setGoalGroupTemplates(templates.filter((t) => t.shared_template));
+        setStep(5);
+      })
+      .catch(() => {
+        // If templates can't be loaded, skip to finish
+        onSaveHabits(habits);
+        onClose();
+      });
+  };
+
   const handleFinish = () => {
     onSaveHabits(habits);
     onClose();
   };
+
+  const assignTemplate = (habitIndex: number, groupId: number | null) => {
+    setHabits((prev) =>
+      prev.map((habit, i) => (i === habitIndex ? { ...habit, goal_group_id: groupId } : habit)),
+    );
+  };
+
+  const renderTemplateStep = () => (
+    <SafeAreaView style={styles.onboardingStep}>
+      <ScrollView ref={scrollRef}>
+        <Text style={styles.onboardingTitle}>Goal Templates</Text>
+        <Text style={styles.onboardingSubtitle}>
+          Optionally assign a goal group template to each habit. Templates pre-fill low, clear, and
+          stretch goal tiers.
+        </Text>
+        {habits.map((habit, index) => (
+          <View key={habit.id} style={styles.energyTile} testID={`template-tile-${index}`}>
+            <Text style={styles.energyTileName}>
+              {habit.icon} {habit.name}
+            </Text>
+            <View style={templatePickerStyles.options}>
+              <TouchableOpacity
+                testID={`template-none-${index}`}
+                style={[
+                  templatePickerStyles.option,
+                  habit.goal_group_id == null && templatePickerStyles.optionSelected,
+                ]}
+                onPress={() => assignTemplate(index, null)}
+              >
+                <Text style={templatePickerStyles.optionText}>None</Text>
+              </TouchableOpacity>
+              {goalGroupTemplates.map((template) => (
+                <TouchableOpacity
+                  key={template.id}
+                  testID={`template-${template.id}-${index}`}
+                  style={[
+                    templatePickerStyles.option,
+                    habit.goal_group_id === template.id && templatePickerStyles.optionSelected,
+                  ]}
+                  onPress={() => assignTemplate(index, template.id)}
+                >
+                  <Text style={templatePickerStyles.optionText}>
+                    {template.icon ?? ''} {template.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        ))}
+      </ScrollView>
+      <View style={styles.onboardingFooter}>
+        <TouchableOpacity style={styles.onboardingBackButton} onPress={() => setStep(4)}>
+          <Text style={styles.onboardingBackButtonText}>Back</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          testID="finish-setup"
+          style={[styles.onboardingContinueButton, styles.footerContinue]}
+          onPress={handleFinish}
+        >
+          <Text style={styles.onboardingContinueButtonText}>Done</Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
 
   const renderStep = () => {
     switch (step) {
@@ -458,6 +538,8 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
         return renderEnergyStep('return');
       case 4:
         return renderReorderStep();
+      case 5:
+        return renderTemplateStep();
       default:
         return null;
     }
@@ -548,5 +630,30 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     </>
   );
 };
+
+const templatePickerStyles = StyleSheet.create({
+  options: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  option: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.mystical.glowLight,
+    backgroundColor: '#fffdf7',
+  },
+  optionSelected: {
+    borderColor: colors.secondary,
+    backgroundColor: colors.mystical.glowLight,
+  },
+  optionText: {
+    fontSize: 13,
+    color: '#333',
+  },
+});
 
 export default OnboardingModal;

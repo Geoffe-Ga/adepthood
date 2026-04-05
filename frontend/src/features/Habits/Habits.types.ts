@@ -46,6 +46,18 @@ export interface Goal {
   frequency_unit: string;
   days_of_week?: string[];
   is_additive: boolean;
+  goal_group_id?: number | null;
+}
+
+export interface GoalGroup {
+  id: number;
+  name: string;
+  icon?: string | null;
+  description?: string | null;
+  user_id?: number | null;
+  shared_template: boolean;
+  source?: string | null;
+  goals: Goal[];
 }
 
 export interface Completion {
@@ -72,6 +84,7 @@ export interface OnboardingHabit {
   energy_return: number;
   stage: string;
   start_date: Date;
+  goal_group_id?: number | null;
 }
 
 export interface GoalModalProps {
