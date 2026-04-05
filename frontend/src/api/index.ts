@@ -98,6 +98,26 @@ export interface ApiGoal {
   frequency: number;
   frequency_unit: string;
   is_additive: boolean;
+  goal_group_id?: number | null;
+}
+
+export interface ApiGoalGroup {
+  id: number;
+  name: string;
+  icon?: string | null;
+  description?: string | null;
+  user_id?: number | null;
+  shared_template: boolean;
+  source?: string | null;
+  goals: ApiGoal[];
+}
+
+export interface GoalGroupCreatePayload {
+  name: string;
+  icon?: string | null;
+  description?: string | null;
+  shared_template?: boolean;
+  source?: string | null;
 }
 
 export interface ApiHabit {
@@ -163,6 +183,7 @@ export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
       frequency: g.frequency,
       frequency_unit: g.frequency_unit,
       is_additive: g.is_additive,
+      goal_group_id: g.goal_group_id ?? null,
     })),
     completions: [],
     notificationTimes: apiHabit.notification_times ?? undefined,
@@ -206,6 +227,29 @@ export interface CheckInResult {
 export const goalCompletions = {
   create(payload: GoalCompletionPayload, token?: string): Promise<CheckInResult> {
     return request<CheckInResult>('/goal_completions', { method: 'POST', body: payload, token });
+  },
+};
+
+// Goal group client
+export const goalGroups = {
+  list(token?: string): Promise<ApiGoalGroup[]> {
+    return request<ApiGoalGroup[]>('/goal-groups/', { token });
+  },
+  get(groupId: number, token?: string): Promise<ApiGoalGroup> {
+    return request<ApiGoalGroup>(`/goal-groups/${groupId}`, { token });
+  },
+  create(payload: GoalGroupCreatePayload, token?: string): Promise<ApiGoalGroup> {
+    return request<ApiGoalGroup>('/goal-groups/', { method: 'POST', body: payload, token });
+  },
+  update(groupId: number, payload: GoalGroupCreatePayload, token?: string): Promise<ApiGoalGroup> {
+    return request<ApiGoalGroup>(`/goal-groups/${groupId}`, {
+      method: 'PUT',
+      body: payload,
+      token,
+    });
+  },
+  delete(groupId: number, token?: string): Promise<void> {
+    return request<void>(`/goal-groups/${groupId}`, { method: 'DELETE', token });
   },
 };
 
@@ -463,6 +507,7 @@ export const energy = {
 export default {
   habits,
   goalCompletions,
+  goalGroups,
   journal,
   botmason,
   prompts,

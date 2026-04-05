@@ -22,3 +22,4 @@ class Goal(BaseModel):
     frequency: float
     frequency_unit: str
     is_additive: bool = True
+    goal_group_id: int | None = None

@@ -55,6 +55,15 @@ jest.mock('react-native-reanimated', () => ({
   default: { View: require('react-native').View },
   View: require('react-native').View,
 }));
+jest.mock('../../../../api', () => ({
+  goalGroups: {
+    list: jest.fn(() =>
+      Promise.resolve([
+        { id: 1, name: 'Meditation Goals', icon: '🧘', shared_template: true, goals: [] },
+      ]),
+    ),
+  },
+}));
 
 describe('OnboardingModal close behaviour', () => {
   it('shows discard dialog and exits on confirmation', () => {
@@ -99,7 +108,7 @@ describe('OnboardingModal close behaviour', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('shows date picker and saves habits on finish', () => {
+  it('shows date picker and saves habits on finish', async () => {
     const onClose = jest.fn();
     const onSave = jest.fn();
     const tree = renderer.create(
@@ -144,6 +153,12 @@ describe('OnboardingModal close behaviour', () => {
       dateInput.props.onChangeText('2025-09-10');
     });
 
+    const continueToTemplates = root.findByProps({ testID: 'continue-to-templates' });
+    await renderer.act(async () => {
+      continueToTemplates.props.onPress();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
     const finish = root.findByProps({ testID: 'finish-setup' });
     renderer.act(() => {
       finish.props.onPress();
@@ -151,7 +166,7 @@ describe('OnboardingModal close behaviour', () => {
     expect(onSave).toHaveBeenCalled();
   });
 
-  it('uses selected start date for first habit', () => {
+  it('uses selected start date for first habit', async () => {
     const originalTZ = process.env.TZ;
     process.env.TZ = 'America/Los_Angeles';
     // eslint-disable-next-line no-unused-vars
@@ -199,6 +214,12 @@ describe('OnboardingModal close behaviour', () => {
     const dateInput = root.findByProps({ accessibilityLabel: 'Date' });
     renderer.act(() => {
       dateInput.props.onChangeText(futureDate);
+    });
+
+    const continueToTemplates = root.findByProps({ testID: 'continue-to-templates' });
+    await renderer.act(async () => {
+      continueToTemplates.props.onPress();
+      await new Promise((r) => setTimeout(r, 10));
     });
 
     const finish = root.findByProps({ testID: 'finish-setup' });
