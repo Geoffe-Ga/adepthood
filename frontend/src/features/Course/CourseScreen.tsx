@@ -9,6 +9,7 @@ import {
   type CourseProgress,
   type Stage,
 } from '../../api';
+import { STAGE_COLORS } from '../../design/tokens';
 
 import ContentCard from './ContentCard';
 import ContentViewer from './ContentViewer';
@@ -174,7 +175,7 @@ const CourseScreen = (): React.JSX.Element => {
               {
                 width: `${progressPercent}%`,
                 backgroundColor: selectedStageData
-                  ? selectedStageData.spiral_dynamics_color
+                  ? STAGE_COLORS[selectedStageData.spiral_dynamics_color] ?? '#888'
                   : '#888',
               },
             ]}

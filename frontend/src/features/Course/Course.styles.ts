@@ -192,9 +192,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.text.primary,
   },
-  viewerWebView: {
-    flex: 1,
-  },
   viewerFooter: {
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
