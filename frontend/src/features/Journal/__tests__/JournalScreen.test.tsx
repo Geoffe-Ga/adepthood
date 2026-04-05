@@ -118,6 +118,15 @@ jest.mock('react-native-safe-area-context', () => {
 const { render, waitFor, fireEvent, act } = require('@testing-library/react-native');
 const JournalScreen = require('../JournalScreen').default;
 
+const makeRoute = (params?: Record<string, unknown>) => ({
+  key: 'Journal-test',
+  name: 'Journal' as const,
+  params: params ?? undefined,
+});
+
+const renderJournal = (params?: Record<string, unknown>) =>
+  render(<JournalScreen route={makeRoute(params)} />);
+
 describe('JournalScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -141,12 +150,12 @@ describe('JournalScreen', () => {
     mockPromptsCurrent.mockReturnValue(new Promise(() => {}));
     mockBotmasonGetBalance.mockReturnValue(new Promise(() => {}));
 
-    const { getByTestId } = render(<JournalScreen />);
+    const { getByTestId } = renderJournal();
     expect(getByTestId('journal-loading')).toBeTruthy();
   });
 
   it('renders messages after loading', async () => {
-    const { getByText } = render(<JournalScreen />);
+    const { getByText } = renderJournal();
 
     await waitFor(() => {
       expect(getByText('My first reflection.')).toBeTruthy();
@@ -155,7 +164,7 @@ describe('JournalScreen', () => {
   });
 
   it('shows weekly prompt banner when prompt is available', async () => {
-    const { getByTestId, getByText } = render(<JournalScreen />);
+    const { getByTestId, getByText } = renderJournal();
 
     await waitFor(() => {
       expect(getByTestId('weekly-prompt-banner')).toBeTruthy();
@@ -166,7 +175,7 @@ describe('JournalScreen', () => {
   it('hides weekly prompt banner when prompt is already responded', async () => {
     mockPromptsCurrent.mockResolvedValue({ ...samplePrompt, has_responded: true });
 
-    const { queryByTestId } = render(<JournalScreen />);
+    const { queryByTestId } = renderJournal();
 
     await waitFor(() => {
       expect(queryByTestId('weekly-prompt-banner')).toBeNull();
@@ -174,7 +183,7 @@ describe('JournalScreen', () => {
   });
 
   it('sends a message via BotMason chat when balance > 0', async () => {
-    const { getByTestId, getByText } = render(<JournalScreen />);
+    const { getByTestId, getByText } = renderJournal();
 
     await waitFor(() => {
       expect(getByText('My first reflection.')).toBeTruthy();
@@ -198,7 +207,7 @@ describe('JournalScreen', () => {
   it('sends freeform journal when balance is 0', async () => {
     mockBotmasonGetBalance.mockResolvedValue({ balance: 0 });
 
-    const { getByTestId, getByText } = render(<JournalScreen />);
+    const { getByTestId, getByText } = renderJournal();
 
     await waitFor(() => {
       expect(getByText('My first reflection.')).toBeTruthy();
@@ -216,13 +225,20 @@ describe('JournalScreen', () => {
       fireEvent.press(sendBtn);
     });
 
-    expect(mockJournalCreate).toHaveBeenCalledWith({ message: 'Freeform thought' });
+    expect(mockJournalCreate).toHaveBeenCalledWith({
+      message: 'Freeform thought',
+      is_stage_reflection: false,
+      is_practice_note: false,
+      is_habit_note: false,
+      practice_session_id: null,
+      user_practice_id: null,
+    });
     expect(mockBotmasonChat).not.toHaveBeenCalled();
   });
 
   it('sends a message with tags when tags are selected', async () => {
     mockBotmasonGetBalance.mockResolvedValue({ balance: 0 });
-    const { getByTestId, getByText } = render(<JournalScreen />);
+    const { getByTestId, getByText } = renderJournal();
 
     await waitFor(() => {
       expect(getByText('My first reflection.')).toBeTruthy();
@@ -251,13 +267,15 @@ describe('JournalScreen', () => {
       is_stage_reflection: true,
       is_practice_note: false,
       is_habit_note: false,
+      practice_session_id: null,
+      user_practice_id: null,
     });
   });
 
   it('shows empty state when there are no messages', async () => {
     mockJournalList.mockResolvedValue({ items: [], total: 0, has_more: false });
 
-    const { getByText } = render(<JournalScreen />);
+    const { getByText } = renderJournal();
 
     await waitFor(() => {
       expect(getByText('Your Journal Awaits')).toBeTruthy();
@@ -265,7 +283,7 @@ describe('JournalScreen', () => {
   });
 
   it('calls journal.list with pagination params', async () => {
-    render(<JournalScreen />);
+    renderJournal();
 
     await waitFor(() => {
       expect(mockJournalList).toHaveBeenCalledWith({ limit: 50, offset: 0 });
@@ -275,7 +293,7 @@ describe('JournalScreen', () => {
   it('shows balance counter when balance > 0', async () => {
     mockBotmasonGetBalance.mockResolvedValue({ balance: 10 });
 
-    const { getByTestId } = render(<JournalScreen />);
+    const { getByTestId } = renderJournal();
 
     await waitFor(() => {
       expect(getByTestId('balance-counter')).toBeTruthy();
@@ -285,7 +303,7 @@ describe('JournalScreen', () => {
   it('shows "BotMason is resting" banner when balance is 0', async () => {
     mockBotmasonGetBalance.mockResolvedValue({ balance: 0 });
 
-    const { getByTestId, getByText } = render(<JournalScreen />);
+    const { getByTestId, getByText } = renderJournal();
 
     await waitFor(() => {
       expect(getByTestId('balance-empty-banner')).toBeTruthy();
@@ -298,7 +316,7 @@ describe('JournalScreen', () => {
   it('does not show balance banner when balance is positive', async () => {
     mockBotmasonGetBalance.mockResolvedValue({ balance: 5 });
 
-    const { queryByTestId } = render(<JournalScreen />);
+    const { queryByTestId } = renderJournal();
 
     await waitFor(() => {
       expect(queryByTestId('balance-empty-banner')).toBeNull();
@@ -306,7 +324,7 @@ describe('JournalScreen', () => {
   });
 
   it('fetches balance on mount', async () => {
-    render(<JournalScreen />);
+    renderJournal();
 
     await waitFor(() => {
       expect(mockBotmasonGetBalance).toHaveBeenCalled();
@@ -314,7 +332,7 @@ describe('JournalScreen', () => {
   });
 
   it('renders search bar and tag filter', async () => {
-    const { getByTestId, getByText } = render(<JournalScreen />);
+    const { getByTestId, getByText } = renderJournal();
 
     await waitFor(() => {
       expect(getByTestId('search-toggle')).toBeTruthy();
@@ -324,7 +342,7 @@ describe('JournalScreen', () => {
   });
 
   it('filters messages by tag when tag chip is pressed', async () => {
-    const { getByText } = render(<JournalScreen />);
+    const { getByText } = renderJournal();
 
     await waitFor(() => {
       expect(getByText('My first reflection.')).toBeTruthy();
@@ -350,7 +368,7 @@ describe('JournalScreen', () => {
   it('searches messages when search query is entered', async () => {
     jest.useFakeTimers();
 
-    const { getByTestId, getByText } = render(<JournalScreen />);
+    const { getByTestId, getByText } = renderJournal();
 
     await waitFor(() => {
       expect(getByText('My first reflection.')).toBeTruthy();
@@ -382,5 +400,61 @@ describe('JournalScreen', () => {
     });
 
     jest.useRealTimers();
+  });
+
+  it('shows practice reflection header when practiceSessionId is passed', async () => {
+    const { getByTestId, getByText } = renderJournal({
+      practiceSessionId: 42,
+      userPracticeId: 10,
+      practiceName: 'Breath Awareness',
+      practiceDuration: 10,
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('practice-reflection-header')).toBeTruthy();
+      expect(getByText(/Reflection on Breath Awareness/)).toBeTruthy();
+      expect(getByText(/10 minutes/)).toBeTruthy();
+    });
+  });
+
+  it('does not show practice reflection header without practice params', async () => {
+    const { queryByTestId } = renderJournal();
+
+    await waitFor(() => {
+      expect(queryByTestId('practice-reflection-header')).toBeNull();
+    });
+  });
+
+  it('sends journal entry with practice session data when in reflection mode', async () => {
+    mockBotmasonGetBalance.mockResolvedValue({ balance: 0 });
+
+    const { getByTestId, getByText } = renderJournal({
+      practiceSessionId: 42,
+      userPracticeId: 10,
+      practiceName: 'Breath Awareness',
+      practiceDuration: 10,
+    });
+
+    await waitFor(() => {
+      expect(getByText('My first reflection.')).toBeTruthy();
+    });
+
+    const input = getByTestId('chat-input');
+    await act(async () => {
+      fireEvent.changeText(input, 'Great session');
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('send-button'));
+    });
+
+    expect(mockJournalCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Great session',
+        is_practice_note: true,
+        practice_session_id: 42,
+        user_practice_id: 10,
+      }),
+    );
   });
 });

@@ -16,7 +16,16 @@ export type RootTabParamList = {
   Habits: undefined;
   Practice: { stageNumber?: number } | undefined;
   Course: { stageNumber?: number } | undefined;
-  Journal: { stageReflection?: boolean; stageNumber?: number } | undefined;
+  Journal:
+    | {
+        stageReflection?: boolean;
+        stageNumber?: number;
+        practiceSessionId?: number;
+        userPracticeId?: number;
+        practiceName?: string;
+        practiceDuration?: number;
+      }
+    | undefined;
   Map: undefined;
 };
 
