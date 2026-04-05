@@ -1,12 +1,19 @@
-"""Tests for database-backed auth with JWT tokens."""
+"""Tests for database-backed auth with JWT tokens, rate limiting, and account lockout."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
+from unittest.mock import patch
 
 import jwt
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
+
+from models.login_attempt import LoginAttempt
+from routers.auth import LOCKOUT_DURATION, MAX_FAILED_ATTEMPTS
 
 SIGNUP_URL = "/auth/signup"
 LOGIN_URL = "/auth/login"
@@ -24,6 +31,17 @@ async def _signup(
     )
     result: dict[str, object] = resp.json()
     return result
+
+
+async def _fail_login(
+    client: AsyncClient,
+    email: str = "alice@example.com",
+) -> None:
+    """Perform a single failed login attempt."""
+    await client.post(
+        LOGIN_URL,
+        json={"email": email, "password": "wrongpassword999"},  # pragma: allowlist secret
+    )
 
 
 # ── Signup ──────────────────────────────────────────────────────────────
@@ -187,3 +205,236 @@ async def test_signup_login_use_token_flow(async_client: AsyncClient) -> None:
 
     # Same user_id from login as signup
     assert login_resp.json()["user_id"] == user_id
+
+
+# ── Account lockout ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_account_locks_after_max_failed_attempts(async_client: AsyncClient) -> None:
+    """After MAX_FAILED_ATTEMPTS consecutive failures, login is blocked."""
+    await _signup(async_client)
+
+    for _ in range(MAX_FAILED_ATTEMPTS):
+        await _fail_login(async_client)
+
+    # The next attempt should still return 401 with the same generic message,
+    # even with the correct password (account is locked)
+    resp = await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "alice@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+    assert resp.json()["detail"] == "invalid_credentials"
+
+
+@pytest.mark.asyncio
+async def test_lockout_expires_after_duration(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """After LOCKOUT_DURATION, the account is unlocked and login works again."""
+    await _signup(async_client)
+
+    # Create old failed attempts that are outside the lockout window
+    expired_time = datetime.now(UTC) - LOCKOUT_DURATION - timedelta(minutes=1)
+    for _ in range(MAX_FAILED_ATTEMPTS):
+        attempt = LoginAttempt(
+            email="alice@example.com",
+            ip_address="127.0.0.1",
+            success=False,
+            created_at=expired_time,
+        )
+        db_session.add(attempt)
+    await db_session.commit()
+
+    # Login should succeed because all failures are outside the lockout window
+    resp = await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "alice@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_successful_login_resets_lockout(async_client: AsyncClient) -> None:
+    """A successful login resets the failure count so lockout doesn't trigger."""
+    await _signup(async_client)
+
+    # Accumulate failures just below the threshold
+    for _ in range(MAX_FAILED_ATTEMPTS - 1):
+        await _fail_login(async_client)
+
+    # Successful login breaks the streak
+    resp = await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "alice@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+
+    # Now fail again — the previous success reset the window, so we're not locked
+    for _ in range(MAX_FAILED_ATTEMPTS - 1):
+        await _fail_login(async_client)
+
+    resp = await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "alice@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_lockout_returns_generic_message(async_client: AsyncClient) -> None:
+    """Locked accounts return 'invalid_credentials', not 'account_locked'."""
+    await _signup(async_client)
+
+    for _ in range(MAX_FAILED_ATTEMPTS):
+        await _fail_login(async_client)
+
+    resp = await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "alice@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    # Must be generic to prevent account enumeration
+    assert resp.json()["detail"] == "invalid_credentials"
+
+
+# ── Audit logging ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_login_records_attempt_on_failure(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Failed login creates a LoginAttempt record with success=False."""
+    await _signup(async_client)
+    await _fail_login(async_client)
+
+    result = await db_session.execute(select(LoginAttempt))
+    attempts = result.scalars().all()
+    failed_attempts = [a for a in attempts if not a.success]
+    assert len(failed_attempts) >= 1
+    assert failed_attempts[0].email == "alice@example.com"
+
+
+@pytest.mark.asyncio
+async def test_login_records_attempt_on_success(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Successful login creates a LoginAttempt record with success=True."""
+    await _signup(async_client)
+    await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "alice@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+
+    result = await db_session.execute(select(LoginAttempt))
+    attempts = result.scalars().all()
+    success_attempts = [a for a in attempts if a.success]
+    assert len(success_attempts) >= 1
+    assert success_attempts[0].email == "alice@example.com"
+
+
+# ── Security headers ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_security_headers_present(async_client: AsyncClient) -> None:
+    """All responses include X-Content-Type-Options and X-Frame-Options."""
+    resp = await async_client.get("/")
+    assert resp.headers.get("x-content-type-options") == "nosniff"
+    assert resp.headers.get("x-frame-options") == "DENY"
+
+
+@pytest.mark.asyncio
+async def test_hsts_header_in_production(async_client: AsyncClient) -> None:
+    """Strict-Transport-Security is set when ENV=production."""
+    with patch.dict("os.environ", {"ENV": "production"}):
+        resp = await async_client.get("/")
+    assert "strict-transport-security" in resp.headers
+    assert "max-age=31536000" in resp.headers["strict-transport-security"]
+
+
+@pytest.mark.asyncio
+async def test_no_hsts_header_in_development(async_client: AsyncClient) -> None:
+    """Strict-Transport-Security is NOT set in development."""
+    resp = await async_client.get("/")
+    assert "strict-transport-security" not in resp.headers
+
+
+# ── Rate limiting ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_login_rate_limit_returns_429(async_client: AsyncClient) -> None:
+    """Login endpoint returns 429 after exceeding 5 requests/minute."""
+    await _signup(async_client)
+
+    # Make 5 requests (the limit)
+    for _ in range(5):
+        await async_client.post(
+            LOGIN_URL,
+            json={
+                "email": "alice@example.com",
+                "password": "securepassword123",  # pragma: allowlist secret
+            },
+        )
+
+    # The 6th request should be rate-limited
+    resp = await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "alice@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert resp.json()["detail"] == "rate_limit_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_signup_rate_limit_returns_429(async_client: AsyncClient) -> None:
+    """Signup endpoint returns 429 after exceeding 3 requests/minute."""
+    # Make 3 requests (the limit)
+    for i in range(3):
+        await async_client.post(
+            SIGNUP_URL,
+            json={
+                "email": f"user{i}@example.com",
+                "password": "securepassword123",  # pragma: allowlist secret
+            },
+        )
+
+    # The 4th request should be rate-limited
+    resp = await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "user99@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert resp.json()["detail"] == "rate_limit_exceeded"

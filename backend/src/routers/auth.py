@@ -1,20 +1,25 @@
-"""Authentication endpoints with JWT tokens and database-backed users."""
+"""Authentication endpoints with JWT tokens, rate limiting, and account lockout."""
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
 import jwt
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from database import get_session
 from errors import bad_request
+from models.login_attempt import LoginAttempt
 from models.user import User
+from rate_limit import limiter
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -27,6 +32,12 @@ _JWT_ALGORITHM = "HS256"
 _TOKEN_TTL = timedelta(hours=1)
 
 _MIN_PASSWORD_LENGTH = 8
+
+# Account lockout: lock after this many consecutive failed attempts.
+MAX_FAILED_ATTEMPTS = 5
+
+# How long the lockout lasts before the user can try again.
+LOCKOUT_DURATION = timedelta(minutes=15)
 
 
 def _get_secret_key() -> str:
@@ -67,8 +78,72 @@ def _create_token(user_id: int) -> str:
     return str(jwt.encode(payload, _get_secret_key(), algorithm=_JWT_ALGORITHM))
 
 
+def _get_client_ip(request: Request) -> str:
+    """Extract client IP from the request, respecting X-Forwarded-For."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        # First address in the chain is the original client
+        return forwarded.split(",")[0].strip()
+    client = request.client
+    if client is not None:
+        return client.host
+    return "unknown"
+
+
+async def _record_attempt(
+    session: AsyncSession,
+    email: str,
+    ip_address: str,
+    *,
+    success: bool,
+) -> None:
+    """Persist a login attempt record for auditing and lockout tracking."""
+    attempt = LoginAttempt(
+        email=email,
+        ip_address=ip_address,
+        success=success,
+    )
+    session.add(attempt)
+    await session.commit()
+
+    logger.info(
+        "auth_attempt",
+        extra={
+            "email": email,
+            "ip_address": ip_address,
+            "success": success,
+            "timestamp": datetime.now(UTC).isoformat(),
+        },
+    )
+
+
+async def _is_account_locked(session: AsyncSession, email: str) -> bool:
+    """Check whether the account is locked due to excessive failed attempts.
+
+    An account is locked when the most recent MAX_FAILED_ATTEMPTS login
+    attempts are all failures and the oldest of those failures is within
+    the LOCKOUT_DURATION window.
+    """
+    cutoff = datetime.now(UTC) - LOCKOUT_DURATION
+    result = await session.execute(
+        select(LoginAttempt)
+        .where(LoginAttempt.email == email, LoginAttempt.created_at >= cutoff)
+        .order_by(LoginAttempt.created_at.desc())  # type: ignore[attr-defined]
+        .limit(MAX_FAILED_ATTEMPTS)
+    )
+    recent_attempts = result.scalars().all()
+
+    if len(recent_attempts) < MAX_FAILED_ATTEMPTS:
+        return False
+
+    # All recent attempts within the window must be failures to trigger lockout
+    return all(not attempt.success for attempt in recent_attempts)
+
+
 @router.post("/signup", response_model=AuthResponse)
+@limiter.limit("3/minute")
 async def signup(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     payload: AuthRequest,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> AuthResponse:
@@ -92,14 +167,37 @@ async def signup(
 
 
 @router.post("/login", response_model=AuthResponse)
+@limiter.limit("5/minute")
 async def login(
+    request: Request,
     payload: AuthRequest,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> AuthResponse:
+    ip_address = _get_client_ip(request)
+
+    # Check lockout before even verifying credentials — prevents timing attacks
+    if await _is_account_locked(session, payload.email):
+        logger.info(
+            "auth_attempt_blocked",
+            extra={
+                "email": payload.email,
+                "ip_address": ip_address,
+                "reason": "account_locked",
+                "timestamp": datetime.now(UTC).isoformat(),
+            },
+        )
+        # Return the same generic message to prevent account enumeration
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials")
+
     result = await session.execute(select(User).where(User.email == payload.email))
     user = result.scalars().first()
+
     if user is None or not _verify_password(payload.password, user.password_hash):
+        await _record_attempt(session, payload.email, ip_address, success=False)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials")
+
+    # Successful login — record and reset the failure window
+    await _record_attempt(session, payload.email, ip_address, success=True)
 
     assert user.id is not None
     token = _create_token(user.id)

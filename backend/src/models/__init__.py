@@ -7,6 +7,7 @@ from .goal_completion import GoalCompletion
 from .goal_group import GoalGroup
 from .habit import Habit
 from .journal_entry import JournalEntry
+from .login_attempt import LoginAttempt
 from .practice import Practice
 from .practice_session import PracticeSession
 from .prompt_response import PromptResponse
@@ -23,6 +24,7 @@ __all__ = [
     "GoalGroup",
     "Habit",
     "JournalEntry",
+    "LoginAttempt",
     "Practice",
     "PracticeSession",
     "PromptResponse",
