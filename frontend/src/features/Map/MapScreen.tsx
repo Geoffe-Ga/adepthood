@@ -16,9 +16,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { MAP_BACKGROUND_URI } from '../../constants/images';
+import { useStageStore } from '../../store/useStageStore';
 
 import styles from './Map.styles';
-import { STAGES } from './stageData';
 import type { StageData } from './stageData';
 
 /**
@@ -27,6 +27,7 @@ import type { StageData } from './stageData';
  */
 const MapScreen = (): React.JSX.Element => {
   const navigation = useNavigation();
+  const stages = useStageStore((s) => s.stages);
   const [activeStage, setActiveStage] = useState<StageData | null>(null);
   const { width, height } = useWindowDimensions();
   const tabBarHeight = useBottomTabBarHeight();
@@ -51,7 +52,7 @@ const MapScreen = (): React.JSX.Element => {
         resizeMode="contain"
         testID="map-background"
       >
-        {STAGES.flatMap((stage) =>
+        {stages.flatMap((stage) =>
           stage.hotspots.map((hs, index) => (
             <TouchableOpacity
               key={`${stage.id}-${index}`}
