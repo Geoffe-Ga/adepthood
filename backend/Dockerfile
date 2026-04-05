@@ -24,10 +24,10 @@ RUN apt-get update && \
 COPY --from=builder /install /usr/local
 COPY src/ src/
 
-# Copy Alembic config and migrations if they exist.
-# The trailing wildcard makes the COPY a no-op when the file is absent.
+# Copy Alembic config and migrations.
+# The glob (alembic.ini*) is a no-op when the file is absent.
 COPY alembic.ini* ./
-COPY migration[s]/ migrations/
+COPY migrations/ migrations/
 
 # Create non-root user
 RUN useradd --create-home appuser
