@@ -411,9 +411,7 @@ export const useHabits = (): UseHabitsReturn => {
   const emojiSelect = useCallback(
     (emoji: string) => {
       if (emojiHabitIndex !== null) {
-        storeSetHabits(
-          habits.map((h, i) => (i === emojiHabitIndex ? { ...h, icon: emoji } : h)),
-        );
+        storeSetHabits(habits.map((h, i) => (i === emojiHabitIndex ? { ...h, icon: emoji } : h)));
       }
       setEmojiHabitIndex(null);
     },

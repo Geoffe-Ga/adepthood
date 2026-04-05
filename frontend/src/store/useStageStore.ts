@@ -22,8 +22,6 @@ export const useStageStore = create<StageStoreState>((set) => ({
   setCurrentStage: (currentStage) => set({ currentStage }),
   updateStageProgress: (stageNumber, progress) =>
     set((state) => ({
-      stages: state.stages.map((s) =>
-        s.stageNumber === stageNumber ? { ...s, progress } : s,
-      ),
+      stages: state.stages.map((s) => (s.stageNumber === stageNumber ? { ...s, progress } : s)),
     })),
 }));
