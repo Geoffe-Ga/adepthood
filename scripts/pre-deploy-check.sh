@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Pre-deploy Checklist ==="
+
+echo "1. Running backend tests..."
+cd backend && source ../.venv/bin/activate
+pytest --cov=. --cov-report=term-missing --cov-fail-under=90
+echo "  Backend tests pass with >=90% coverage"
+
+echo "2. Running frontend tests..."
+cd ../frontend
+npm test -- --watchAll=false
+echo "  Frontend tests pass"
+
+echo "3. Running pre-commit hooks..."
+cd ..
+pre-commit run --all-files
+echo "  All pre-commit hooks pass"
+
+echo "4. Building Docker image..."
+cd backend
+docker build -t adepthood-backend-check .
+echo "  Docker image builds successfully"
+
+echo ""
+echo "=== All checks passed. Ready to deploy! ==="
