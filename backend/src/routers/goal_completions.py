@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -10,6 +10,7 @@ from sqlmodel import col, select
 from database import get_session
 from domain.milestones import achieved_milestones
 from domain.streaks import update_streak
+from errors import forbidden, not_found
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
@@ -37,11 +38,11 @@ async def create_goal_completion(
     """Record a check-in and return updated streak and milestones."""
     goal = await session.get(Goal, payload.goal_id)
     if goal is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="goal_not_found")
+        raise not_found("goal")
 
     habit = await session.get(Habit, goal.habit_id)
     if habit is None or habit.user_id != current_user:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not_owner")
+        raise forbidden("not_owner")
 
     # Compute current streak from consecutive completions (newest first)
     assert goal.id is not None

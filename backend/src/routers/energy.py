@@ -10,6 +10,7 @@ from fastapi import APIRouter, Header
 
 from domain.energy import Habit as DomainHabit
 from domain.energy import generate_plan
+from errors import bad_request
 from schemas import EnergyPlan, EnergyPlanRequest, EnergyPlanResponse
 
 router = APIRouter(prefix="/v1/energy", tags=["energy"])
@@ -28,7 +29,10 @@ def create_plan(
         return _idempotency_cache[x_idempotency_key]
 
     habits = [DomainHabit(**h.model_dump()) for h in payload.habits]
-    plan, reason = generate_plan(habits, payload.start_date)
+    try:
+        plan, reason = generate_plan(habits, payload.start_date)
+    except ValueError as exc:
+        raise bad_request(str(exc).replace(" ", "_")) from exc
     plan_model = EnergyPlan.model_validate(asdict(plan))
     response = EnergyPlanResponse(plan=plan_model, reason_code=reason)
     logging.info("energy_plan", extra={"reason_code": reason})
