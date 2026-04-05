@@ -116,7 +116,7 @@ export const ReorderHabitsModal = ({
             <DraggableFlatList
               style={{ flex: 1 }}
               data={orderedHabits}
-              keyExtractor={(item) => (item.id ? item.id.toString() : Math.random().toString())}
+              keyExtractor={(item) => (item.id ? item.id.toString() : item.name)}
               renderItem={({ item, drag, isActive }) => (
                 <TouchableOpacity
                   onLongPress={drag}
