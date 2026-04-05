@@ -35,10 +35,10 @@ describe('API client request composition', () => {
     expect(fetch).toHaveBeenCalledWith(`${mockBaseUrl}/stages`);
   });
 
-  it('logs practice session with POST /practice_sessions', async () => {
-    const session = { practiceId: 1, duration: 10 };
-    await api.practice.log(session);
-    expect(fetch).toHaveBeenCalledWith(`${mockBaseUrl}/practice_sessions`, {
+  it('creates practice session with POST /practice-sessions/', async () => {
+    const session = { user_practice_id: 1, duration_minutes: 10 };
+    await api.practiceSessions.create(session);
+    expect(fetch).toHaveBeenCalledWith(`${mockBaseUrl}/practice-sessions/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(session),
