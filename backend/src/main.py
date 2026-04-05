@@ -25,6 +25,47 @@ from routers.prompts import router as prompts_router
 from routers.stages import router as stages_router
 from routers.user_practices import router as user_practices_router
 
+VALID_ENVIRONMENTS = {"development", "staging", "production"}
+
+DEV_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:8080",
+    "http://127.0.0.1:3000",
+]
+
+
+def get_cors_origins(env: str | None = None) -> list[str]:
+    """Build the CORS allowed-origins list based on the current environment.
+
+    Raises ``RuntimeError`` for invalid configuration so the server fails fast
+    rather than silently accepting bad requests.
+    """
+    if env is None:
+        env = os.getenv("ENV", "development")
+
+    if env not in VALID_ENVIRONMENTS:
+        raise RuntimeError(
+            f"Unknown ENV value '{env}'. Must be one of: {', '.join(sorted(VALID_ENVIRONMENTS))}"
+        )
+
+    if env == "development":
+        return list(DEV_ORIGINS)
+
+    # staging and production both require PROD_DOMAIN
+    prod_domain = os.getenv("PROD_DOMAIN")
+    if not prod_domain:
+        raise RuntimeError("PROD_DOMAIN must be set in production/staging")
+
+    origins = [d.strip() for d in prod_domain.split(",") if d.strip()]
+    if not origins:
+        raise RuntimeError("PROD_DOMAIN must not be empty")
+
+    for origin in origins:
+        if not origin.startswith("https://"):
+            raise RuntimeError(f"PROD_DOMAIN entries must use HTTPS, got '{origin}'")
+
+    return origins
+
 
 @asynccontextmanager
 async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
@@ -36,19 +77,7 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(lifespan=lifespan)
 
-# Configure allowed CORS origins based on environment to avoid wildcard usage
-# with credentials enabled which is disallowed by browsers. Default to a
-# development setup with local origins.
-if os.getenv("ENV", "development") == "development":
-    origins = [
-        "http://localhost:3000",
-        "http://localhost:8080",
-        "http://127.0.0.1:3000",
-    ]
-else:
-    origins = [
-        os.getenv("PROD_DOMAIN", ""),
-    ]
+origins = get_cors_origins()
 
 app.add_middleware(
     CORSMiddleware,
