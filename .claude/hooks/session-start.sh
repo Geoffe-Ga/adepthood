@@ -7,17 +7,28 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
 fi
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-/home/user/adepthood}"
+cd "$PROJECT_DIR"
 
 echo "Installing frontend dependencies..."
 cd "$PROJECT_DIR/frontend"
-npm install
+if [ -f package-lock.json ]; then
+  npm ci
+else
+  npm install
+fi
 
 echo "Installing backend dependencies..."
-cd "$PROJECT_DIR/backend"
-pip install -r requirements.txt -r requirements-dev.txt
+cd "$PROJECT_DIR"
+if [ ! -d .venv ]; then
+  python3 -m venv .venv
+fi
+source .venv/bin/activate
+pip install -q -r backend/requirements.txt -r backend/requirements-dev.txt
 
 echo "Installing pre-commit hooks..."
-cd "$PROJECT_DIR"
+pip install -q pre-commit
 pre-commit install
+pre-commit install --hook-type commit-msg
+pre-commit install --hook-type pre-push
 
 echo "Session setup complete."
