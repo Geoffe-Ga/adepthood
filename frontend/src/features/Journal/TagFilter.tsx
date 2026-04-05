@@ -1,0 +1,60 @@
+import React from 'react';
+import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+
+import styles from './Journal.styles';
+
+export type JournalTag = 'stage_reflection' | 'practice_note' | 'habit_note';
+
+interface TagChip {
+  label: string;
+  value: JournalTag | null;
+}
+
+const TAG_CHIPS: TagChip[] = [
+  { label: 'All', value: null },
+  { label: 'Reflections', value: 'stage_reflection' },
+  { label: 'Practice Notes', value: 'practice_note' },
+  { label: 'Habit Notes', value: 'habit_note' },
+];
+
+interface TagFilterProps {
+  activeTag: JournalTag | null;
+  // eslint-disable-next-line no-unused-vars
+  onSelectTag: (_tag: JournalTag | null) => void;
+}
+
+const TagFilter = ({ activeTag, onSelectTag }: TagFilterProps): React.JSX.Element => {
+  return (
+    <View style={styles.tagFilterContainer}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        {TAG_CHIPS.map((chip) => {
+          const isActive = chip.value === activeTag;
+          const testId = `tag-chip-${chip.value ?? 'all'}`;
+
+          const handlePress = () => {
+            if (chip.value === null) {
+              onSelectTag(null);
+            } else {
+              onSelectTag(isActive ? null : chip.value);
+            }
+          };
+
+          return (
+            <TouchableOpacity
+              key={testId}
+              testID={testId}
+              style={[styles.filterChip, isActive && styles.filterChipActive]}
+              onPress={handlePress}
+            >
+              <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
+                {chip.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+};
+
+export default TagFilter;

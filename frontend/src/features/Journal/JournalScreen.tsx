@@ -11,9 +11,11 @@ import {
   ApiError,
 } from '../../api';
 
-import ChatInput from './ChatInput';
+import ChatInput, { type MessageTags } from './ChatInput';
 import styles from './Journal.styles';
 import MessageBubble from './MessageBubble';
+import SearchBar from './SearchBar';
+import TagFilter, { type JournalTag } from './TagFilter';
 import WeeklyPromptBanner from './WeeklyPromptBanner';
 
 const PAGE_SIZE = 50;
@@ -28,19 +30,40 @@ const JournalScreen = (): React.JSX.Element => {
   const [offeringBalance, setOfferingBalance] = useState<number | null>(null);
   const [awaitingBot, setAwaitingBot] = useState(false);
 
-  const loadMessages = useCallback(async (offset = 0) => {
-    try {
-      const result = await journalApi.list({ limit: PAGE_SIZE, offset });
-      if (offset === 0) {
-        setMessages(result.items);
-      } else {
-        setMessages((prev) => [...prev, ...result.items]);
+  // Search and filter state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeTag, setActiveTag] = useState<JournalTag | null>(null);
+  const [searchResultCount, setSearchResultCount] = useState<number | undefined>(undefined);
+  const isFiltering = searchQuery.length > 0 || activeTag !== null;
+
+  const loadMessages = useCallback(
+    async (offset = 0) => {
+      try {
+        const params: Parameters<typeof journalApi.list>[0] = {
+          limit: PAGE_SIZE,
+          offset,
+        };
+        if (searchQuery) params.search = searchQuery;
+        if (activeTag) params.tag = activeTag;
+
+        const result = await journalApi.list(params);
+        if (offset === 0) {
+          setMessages(result.items);
+          if (isFiltering) {
+            setSearchResultCount(result.total);
+          } else {
+            setSearchResultCount(undefined);
+          }
+        } else {
+          setMessages((prev) => [...prev, ...result.items]);
+        }
+        setHasMore(result.has_more);
+      } catch (err) {
+        console.error('Failed to load journal messages:', err);
       }
-      setHasMore(result.has_more);
-    } catch (err) {
-      console.error('Failed to load journal messages:', err);
-    }
-  }, []);
+    },
+    [searchQuery, activeTag, isFiltering],
+  );
 
   const loadPrompt = useCallback(async () => {
     try {
@@ -79,7 +102,7 @@ const JournalScreen = (): React.JSX.Element => {
   }, [loadingMore, hasMore, messages.length, loadMessages]);
 
   const handleSend = useCallback(
-    async (text: string) => {
+    async (text: string, tags?: MessageTags) => {
       setSending(true);
 
       // Optimistic update — add a temporary user message immediately
@@ -89,9 +112,9 @@ const JournalScreen = (): React.JSX.Element => {
         sender: 'user',
         user_id: 0,
         timestamp: new Date().toISOString(),
-        is_stage_reflection: false,
-        is_practice_note: false,
-        is_habit_note: false,
+        is_stage_reflection: tags?.is_stage_reflection ?? false,
+        is_practice_note: tags?.is_practice_note ?? false,
+        is_habit_note: tags?.is_habit_note ?? false,
         practice_session_id: null,
         user_practice_id: null,
       };
@@ -105,8 +128,7 @@ const JournalScreen = (): React.JSX.Element => {
           setAwaitingBot(true);
           const chatResult = await botmasonApi.chat({ message: text });
 
-          // Replace optimistic message with real user message from journal
-          // and prepend bot response
+          // Replace optimistic message with real messages from journal
           await loadMessages(0);
           setOfferingBalance(chatResult.remaining_balance);
         } catch (err) {
@@ -114,7 +136,10 @@ const JournalScreen = (): React.JSX.Element => {
             // Balance ran out between check and request — fall back to freeform
             setOfferingBalance(0);
             try {
-              const created = await journalApi.create({ message: text });
+              const created = await journalApi.create({
+                message: text,
+                ...(tags ?? {}),
+              });
               setMessages((prev) => prev.map((m) => (m.id === optimistic.id ? created : m)));
             } catch (createErr) {
               console.error('Failed to send freeform message:', createErr);
@@ -130,7 +155,10 @@ const JournalScreen = (): React.JSX.Element => {
       } else {
         // Freeform journaling (no AI)
         try {
-          const created = await journalApi.create({ message: text });
+          const created = await journalApi.create({
+            message: text,
+            ...(tags ?? {}),
+          });
           setMessages((prev) => prev.map((m) => (m.id === optimistic.id ? created : m)));
         } catch (err) {
           console.error('Failed to send message:', err);
@@ -160,6 +188,14 @@ const JournalScreen = (): React.JSX.Element => {
     void sendPromptResponse();
   }, [prompt, loadMessages]);
 
+  const handleSearch = useCallback((query: string) => {
+    setSearchQuery(query);
+  }, []);
+
+  const handleSelectTag = useCallback((tag: JournalTag | null) => {
+    setActiveTag(tag);
+  }, []);
+
   const renderMessage = useCallback(
     ({ item }: { item: JournalMessage }) => <MessageBubble message={item} />,
     [],
@@ -176,6 +212,16 @@ const JournalScreen = (): React.JSX.Element => {
 
   const renderEmpty = useCallback(() => {
     if (loading) return null;
+    if (isFiltering) {
+      return (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyTitle}>No Results</Text>
+          <Text style={styles.emptySubtitle}>
+            No journal entries match your search. Try different keywords or filters.
+          </Text>
+        </View>
+      );
+    }
     return (
       <View style={styles.emptyContainer}>
         <Text style={styles.emptyIcon}>{'~'}</Text>
@@ -185,7 +231,7 @@ const JournalScreen = (): React.JSX.Element => {
         </Text>
       </View>
     );
-  }, [loading]);
+  }, [loading, isFiltering]);
 
   if (loading) {
     return (
@@ -201,7 +247,15 @@ const JournalScreen = (): React.JSX.Element => {
 
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
-      {prompt && <WeeklyPromptBanner prompt={prompt} onRespond={handlePromptRespond} />}
+      <SearchBar
+        onSearch={handleSearch}
+        resultCount={searchResultCount}
+        searchQuery={searchQuery}
+      />
+      <TagFilter activeTag={activeTag} onSelectTag={handleSelectTag} />
+      {prompt && !isFiltering && (
+        <WeeklyPromptBanner prompt={prompt} onRespond={handlePromptRespond} />
+      )}
       {balanceIsZero && (
         <View testID="balance-empty-banner" style={styles.balanceBanner}>
           <Text style={styles.balanceBannerText}>

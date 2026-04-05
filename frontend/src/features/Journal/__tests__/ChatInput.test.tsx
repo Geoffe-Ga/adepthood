@@ -26,7 +26,7 @@ describe('ChatInput', () => {
     fireEvent.changeText(input, '  Hello world  ');
     fireEvent.press(sendBtn);
 
-    expect(onSend).toHaveBeenCalledWith('Hello world');
+    expect(onSend).toHaveBeenCalledWith('Hello world', undefined);
     expect(input.props.value).toBe('');
   });
 
@@ -55,5 +55,53 @@ describe('ChatInput', () => {
     const sendBtn = getByTestId('send-button');
 
     expect(sendBtn.props.accessibilityState?.disabled).toBe(true);
+  });
+
+  it('renders tag toggle button', () => {
+    const { getByTestId } = render(<ChatInput onSend={onSend} />);
+    expect(getByTestId('tag-toggle')).toBeTruthy();
+  });
+
+  it('shows tag picker when tag toggle is pressed', () => {
+    const { getByTestId, queryByTestId } = render(<ChatInput onSend={onSend} />);
+
+    expect(queryByTestId('tag-picker')).toBeNull();
+
+    fireEvent.press(getByTestId('tag-toggle'));
+
+    expect(getByTestId('tag-picker')).toBeTruthy();
+    expect(getByTestId('tag-option-is_stage_reflection')).toBeTruthy();
+    expect(getByTestId('tag-option-is_practice_note')).toBeTruthy();
+    expect(getByTestId('tag-option-is_habit_note')).toBeTruthy();
+  });
+
+  it('sends tags with message when tags are selected', () => {
+    const { getByTestId } = render(<ChatInput onSend={onSend} />);
+
+    // Open tag picker and select a tag
+    fireEvent.press(getByTestId('tag-toggle'));
+    fireEvent.press(getByTestId('tag-option-is_stage_reflection'));
+
+    // Type and send
+    fireEvent.changeText(getByTestId('chat-input'), 'Tagged message');
+    fireEvent.press(getByTestId('send-button'));
+
+    expect(onSend).toHaveBeenCalledWith('Tagged message', {
+      is_stage_reflection: true,
+      is_practice_note: false,
+      is_habit_note: false,
+    });
+  });
+
+  it('resets tags after sending', () => {
+    const { getByTestId, queryByTestId } = render(<ChatInput onSend={onSend} />);
+
+    fireEvent.press(getByTestId('tag-toggle'));
+    fireEvent.press(getByTestId('tag-option-is_habit_note'));
+    fireEvent.changeText(getByTestId('chat-input'), 'Test');
+    fireEvent.press(getByTestId('send-button'));
+
+    // Tag picker should be hidden after send
+    expect(queryByTestId('tag-picker')).toBeNull();
   });
 });
