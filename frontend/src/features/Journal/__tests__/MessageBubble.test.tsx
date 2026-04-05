@@ -73,6 +73,23 @@ describe('MessageBubble', () => {
     expect(tagTexts).toHaveLength(0);
   });
 
+  it('displays Practice Session badge when practice_session_id is set', () => {
+    const msg = makeMessage({ practice_session_id: 42, user_practice_id: 10 });
+    const tree = renderer.create(<MessageBubble message={msg} />);
+    const root = tree.root;
+    const texts = root.findAllByType('Text') as TextInstance[];
+    const badge = texts.find((t) => t.props.children === 'Practice Session');
+    expect(badge).toBeTruthy();
+  });
+
+  it('does not display Practice Session badge when practice_session_id is null', () => {
+    const tree = renderer.create(<MessageBubble message={makeMessage()} />);
+    const root = tree.root;
+    const texts = root.findAllByType('Text') as TextInstance[];
+    const badge = texts.find((t) => t.props.children === 'Practice Session');
+    expect(badge).toBeUndefined();
+  });
+
   it('displays formatted timestamp', () => {
     const tree = renderer.create(<MessageBubble message={makeMessage()} />);
     const root = tree.root;

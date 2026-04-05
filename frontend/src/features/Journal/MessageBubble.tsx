@@ -43,8 +43,13 @@ const MessageBubble = ({ message }: MessageBubbleProps): React.JSX.Element => {
         <Text style={[styles.bubbleText, isUser ? styles.bubbleTextUser : styles.bubbleTextBot]}>
           {message.message}
         </Text>
-        {tags.length > 0 && (
+        {(tags.length > 0 || message.practice_session_id !== null) && (
           <View style={styles.tagRow}>
+            {message.practice_session_id !== null && (
+              <View style={styles.tag} testID="practice-session-badge">
+                <Text style={styles.tagText}>Practice Session</Text>
+              </View>
+            )}
             {tags.map((tag) => (
               <View key={tag} style={styles.tag}>
                 <Text style={styles.tagText}>{TAG_LABELS[tag]}</Text>
