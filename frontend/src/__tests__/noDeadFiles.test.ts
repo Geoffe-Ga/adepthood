@@ -1,6 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { describe, expect, it } from '@jest/globals';
+
 const DEAD_FILES = [
   'src/features/Habits/HabitCard.tsx',
   'src/features/Habits/HabitCard.styles.ts',
