@@ -24,11 +24,16 @@ const TAG_OPTIONS: Array<{ key: keyof MessageTags; label: string }> = [
 interface ChatInputProps {
   onSend: (_text: string, _tags?: MessageTags) => void;
   disabled?: boolean;
+  initialTags?: MessageTags;
 }
 
-const ChatInput = ({ onSend, disabled = false }: ChatInputProps): React.JSX.Element => {
+const ChatInput = ({
+  onSend,
+  disabled = false,
+  initialTags,
+}: ChatInputProps): React.JSX.Element => {
   const [text, setText] = useState('');
-  const [tags, setTags] = useState<MessageTags>(DEFAULT_TAGS);
+  const [tags, setTags] = useState<MessageTags>(initialTags ?? DEFAULT_TAGS);
   const [showTagPicker, setShowTagPicker] = useState(false);
 
   const hasActiveTags = tags.is_stage_reflection || tags.is_practice_note || tags.is_habit_note;

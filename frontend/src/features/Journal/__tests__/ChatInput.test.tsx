@@ -104,4 +104,23 @@ describe('ChatInput', () => {
     // Tag picker should be hidden after send
     expect(queryByTestId('tag-picker')).toBeNull();
   });
+
+  it('uses initialTags when provided', () => {
+    const initialTags = {
+      is_stage_reflection: false,
+      is_practice_note: true,
+      is_habit_note: false,
+    };
+
+    const { getByTestId } = render(<ChatInput onSend={onSend} initialTags={initialTags} />);
+
+    fireEvent.changeText(getByTestId('chat-input'), 'Practice reflection');
+    fireEvent.press(getByTestId('send-button'));
+
+    expect(onSend).toHaveBeenCalledWith('Practice reflection', {
+      is_stage_reflection: false,
+      is_practice_note: true,
+      is_habit_note: false,
+    });
+  });
 });
