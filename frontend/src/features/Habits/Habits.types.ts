@@ -3,6 +3,8 @@
 // Type Definitions
 //------------------
 
+export type HabitScreenMode = 'normal' | 'stats' | 'quickLog' | 'edit';
+
 export interface Habit {
   // --- Fields from API (matches backend HabitWithGoals schema) ---
   id: number;
