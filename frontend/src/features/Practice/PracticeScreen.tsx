@@ -1,3 +1,5 @@
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import { useNavigation } from '@react-navigation/native';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -12,15 +14,24 @@ import PracticeSelector from './PracticeSelector';
 import PracticeTimer from './PracticeTimer';
 import WeeklyProgress from './WeeklyProgress';
 
-import type { PracticeItem, PracticeSessionCreate, UserPractice } from '@/api';
+import type {
+  PracticeItem,
+  PracticeSessionCreate,
+  PracticeSessionResponse,
+  UserPractice,
+} from '@/api';
 import { practices, userPractices, practiceSessions } from '@/api';
 import { colors, SPACING, BORDER_RADIUS, shadows } from '@/design/tokens';
+import type { RootTabParamList } from '@/navigation/BottomTabs';
 
-type ScreenView = 'selection' | 'timer' | 'summary';
+type PracticeNavProp = BottomTabNavigationProp<RootTabParamList, 'Practice'>;
+
+type ScreenView = 'selection' | 'timer' | 'summary' | 'reflection';
 
 const DEFAULT_STAGE_NUMBER = 1;
 
 const PracticeScreen = (): React.JSX.Element => {
+  const navigation = useNavigation<PracticeNavProp>();
   const [view, setView] = useState<ScreenView>('selection');
   const [stageNumber] = useState(DEFAULT_STAGE_NUMBER);
 
@@ -30,6 +41,7 @@ const PracticeScreen = (): React.JSX.Element => {
   const [selectedPractice, setSelectedPractice] = useState<PracticeItem | null>(null);
   const [weekCount, setWeekCount] = useState(0);
   const [completedMinutes, setCompletedMinutes] = useState(0);
+  const [savedSession, setSavedSession] = useState<PracticeSessionResponse | null>(null);
 
   // Loading states
   const [isLoadingPractices, setIsLoadingPractices] = useState(true);
@@ -113,15 +125,33 @@ const PracticeScreen = (): React.JSX.Element => {
         user_practice_id: activeUserPractice.id,
         duration_minutes: completedMinutes,
       };
-      await practiceSessions.create(payload);
+      const session = await practiceSessions.create(payload);
       setWeekCount((prev) => prev + 1);
-      setView('selection');
+      setSavedSession(session);
+      setView('reflection');
     } catch {
       setError('Failed to save session. Please try again.');
     } finally {
       setIsSavingSession(false);
     }
   }, [activeUserPractice, completedMinutes]);
+
+  const handleWriteReflection = useCallback(() => {
+    if (!savedSession || !selectedPractice) return;
+    navigation.navigate('Journal', {
+      practiceSessionId: savedSession.id,
+      userPracticeId: savedSession.user_practice_id,
+      practiceName: selectedPractice.name,
+      practiceDuration: completedMinutes,
+    });
+    setSavedSession(null);
+    setView('selection');
+  }, [savedSession, selectedPractice, completedMinutes, navigation]);
+
+  const handleSkipReflection = useCallback(() => {
+    setSavedSession(null);
+    setView('selection');
+  }, []);
 
   if (isLoadingPractices && view === 'selection') {
     return (
@@ -176,6 +206,31 @@ const PracticeScreen = (): React.JSX.Element => {
           style={styles.skipButton}
           onPress={() => setView('selection')}
           testID="skip-save-button"
+        >
+          <Text style={styles.skipButtonText}>Skip</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (view === 'reflection') {
+    return (
+      <View style={styles.centered} testID="reflection-view">
+        <Text style={styles.summaryTitle}>Write a Reflection?</Text>
+        <Text style={styles.summaryDuration}>
+          Capture your thoughts from this practice session in your journal.
+        </Text>
+        <TouchableOpacity
+          style={styles.saveButton}
+          onPress={handleWriteReflection}
+          testID="write-reflection-button"
+        >
+          <Text style={styles.saveButtonText}>Yes, Write a Reflection</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.skipButton}
+          onPress={handleSkipReflection}
+          testID="skip-reflection-button"
         >
           <Text style={styles.skipButtonText}>Skip</Text>
         </TouchableOpacity>

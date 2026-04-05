@@ -64,6 +64,11 @@ jest.mock('../../../api', () => ({
   },
 }));
 
+const mockNavigate = jest.fn();
+jest.mock('@react-navigation/native', () => ({
+  useNavigation: () => ({ navigate: mockNavigate }),
+}));
+
 jest.mock('expo-av', () => ({
   Audio: {
     Sound: {
@@ -97,6 +102,7 @@ describe('PracticeScreen', () => {
     mockUserPracticesList.mockResolvedValue([]);
     mockWeekCount.mockResolvedValue({ count: 2 });
     mockUserPracticesCreate.mockResolvedValue(sampleUserPractice);
+    mockNavigate.mockClear();
   });
 
   it('shows loading indicator initially', () => {
@@ -278,5 +284,138 @@ describe('PracticeScreen', () => {
     await waitFor(() => {
       expect(mockWeekCount).toHaveBeenCalled();
     });
+  });
+
+  it('shows reflection prompt after saving a session', async () => {
+    jest.useFakeTimers();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice]);
+
+    const { getByTestId, getByText } = render(<PracticeScreen />);
+
+    await waitFor(() => {
+      expect(getByTestId('start-practice-button')).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('start-practice-button'));
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('start-button'));
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(601000);
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('save-session-button')).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('save-session-button'));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('reflection-view')).toBeTruthy();
+      expect(getByText('Write a Reflection?')).toBeTruthy();
+      expect(getByTestId('write-reflection-button')).toBeTruthy();
+      expect(getByTestId('skip-reflection-button')).toBeTruthy();
+    });
+
+    jest.useRealTimers();
+  });
+
+  it('navigates to Journal when Write Reflection is pressed', async () => {
+    jest.useFakeTimers();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice]);
+
+    const { getByTestId } = render(<PracticeScreen />);
+
+    await waitFor(() => {
+      expect(getByTestId('start-practice-button')).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('start-practice-button'));
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('start-button'));
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(601000);
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('save-session-button')).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('save-session-button'));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('write-reflection-button')).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('write-reflection-button'));
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('Journal', {
+      practiceSessionId: 100,
+      userPracticeId: 10,
+      practiceName: 'Breath Awareness',
+      practiceDuration: 10,
+    });
+
+    jest.useRealTimers();
+  });
+
+  it('returns to selection when Skip Reflection is pressed', async () => {
+    jest.useFakeTimers();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice]);
+
+    const { getByTestId } = render(<PracticeScreen />);
+
+    await waitFor(() => {
+      expect(getByTestId('start-practice-button')).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('start-practice-button'));
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('start-button'));
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(601000);
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('save-session-button')).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('save-session-button'));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('skip-reflection-button')).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('skip-reflection-button'));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('selection-view')).toBeTruthy();
+    });
+
+    jest.useRealTimers();
   });
 });
