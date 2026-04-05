@@ -105,6 +105,11 @@ jest.mock('../../../api', () => ({
   },
 }));
 
+let mockRouteParams: Record<string, unknown> | undefined;
+jest.mock('../../../navigation/hooks', () => ({
+  useAppRoute: () => ({ key: 'Journal-test', name: 'Journal', params: mockRouteParams }),
+}));
+
 jest.mock('react-native-safe-area-context', () => {
   const React = require('react');
   return {
@@ -118,14 +123,10 @@ jest.mock('react-native-safe-area-context', () => {
 const { render, waitFor, fireEvent, act } = require('@testing-library/react-native');
 const JournalScreen = require('../JournalScreen').default;
 
-const makeRoute = (params?: Record<string, unknown>) => ({
-  key: 'Journal-test',
-  name: 'Journal' as const,
-  params: params ?? undefined,
-});
-
-const renderJournal = (params?: Record<string, unknown>) =>
-  render(<JournalScreen route={makeRoute(params)} />);
+const renderJournal = (params?: Record<string, unknown>) => {
+  mockRouteParams = params;
+  return render(<JournalScreen />);
+};
 
 describe('JournalScreen', () => {
   beforeEach(() => {

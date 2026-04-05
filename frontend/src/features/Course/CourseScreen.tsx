@@ -10,15 +10,20 @@ import {
   type Stage,
 } from '../../api';
 import { STAGE_COLORS } from '../../design/tokens';
+import { useAppRoute } from '../../navigation/hooks';
 
 import ContentCard from './ContentCard';
 import ContentViewer from './ContentViewer';
 import styles from './Course.styles';
 import StageSelector from './StageSelector';
 
+const DEFAULT_STAGE_NUMBER = 1;
+
 const CourseScreen = (): React.JSX.Element => {
+  const route = useAppRoute<'Course'>();
+  const routeStageNumber = route.params?.stageNumber ?? null;
   const [allStages, setAllStages] = useState<Stage[]>([]);
-  const [selectedStage, setSelectedStage] = useState(1);
+  const [selectedStage, setSelectedStage] = useState(routeStageNumber ?? DEFAULT_STAGE_NUMBER);
   const [content, setContent] = useState<ContentItem[]>([]);
   const [progress, setProgress] = useState<CourseProgress | null>(null);
   const [loading, setLoading] = useState(true);
@@ -32,12 +37,14 @@ const CourseScreen = (): React.JSX.Element => {
       try {
         const stagesList = await stagesApi.list();
         setAllStages(stagesList);
-        // Select user's current unlocked stage by default
-        const currentUnlocked = stagesList
-          .filter((s) => s.is_unlocked)
-          .sort((a, b) => b.stage_number - a.stage_number);
-        if (currentUnlocked.length > 0) {
-          setSelectedStage(currentUnlocked[0]!.stage_number);
+        // Only auto-select highest unlocked stage when no route param was provided
+        if (routeStageNumber === null) {
+          const currentUnlocked = stagesList
+            .filter((s) => s.is_unlocked)
+            .sort((a, b) => b.stage_number - a.stage_number);
+          if (currentUnlocked.length > 0) {
+            setSelectedStage(currentUnlocked[0]!.stage_number);
+          }
         }
       } catch (err) {
         console.error('Failed to load stages:', err);
@@ -46,7 +53,7 @@ const CourseScreen = (): React.JSX.Element => {
       }
     };
     void init();
-  }, []);
+  }, [routeStageNumber]);
 
   // Load content and progress when selected stage changes
   useEffect(() => {

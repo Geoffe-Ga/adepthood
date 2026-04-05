@@ -1,5 +1,3 @@
-import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import { useNavigation } from '@react-navigation/native';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -22,18 +20,17 @@ import type {
 } from '@/api';
 import { practices, userPractices, practiceSessions } from '@/api';
 import { colors, SPACING, BORDER_RADIUS, shadows } from '@/design/tokens';
-import type { RootTabParamList } from '@/navigation/BottomTabs';
-
-type PracticeNavProp = BottomTabNavigationProp<RootTabParamList, 'Practice'>;
+import { useAppNavigation, useAppRoute } from '@/navigation/hooks';
 
 type ScreenView = 'selection' | 'timer' | 'summary' | 'reflection';
 
 const DEFAULT_STAGE_NUMBER = 1;
 
 const PracticeScreen = (): React.JSX.Element => {
-  const navigation = useNavigation<PracticeNavProp>();
+  const navigation = useAppNavigation();
+  const route = useAppRoute<'Practice'>();
+  const stageNumber = route.params?.stageNumber ?? DEFAULT_STAGE_NUMBER;
   const [view, setView] = useState<ScreenView>('selection');
-  const [stageNumber] = useState(DEFAULT_STAGE_NUMBER);
 
   // Data
   const [availablePractices, setAvailablePractices] = useState<PracticeItem[]>([]);

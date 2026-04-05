@@ -93,6 +93,10 @@ jest.mock('../../../api', () => ({
   },
 }));
 
+jest.mock('../../../navigation/hooks', () => ({
+  useAppRoute: () => ({ key: 'Course-test', name: 'Course', params: undefined }),
+}));
+
 jest.mock('react-native-safe-area-context', () => {
   const React = require('react');
   return {

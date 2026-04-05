@@ -1,4 +1,3 @@
-import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,7 +10,7 @@ import {
   type PromptDetail,
   ApiError,
 } from '../../api';
-import type { RootTabParamList } from '../../navigation/BottomTabs';
+import { useAppRoute } from '../../navigation/hooks';
 
 import ChatInput, { type MessageTags } from './ChatInput';
 import styles from './Journal.styles';
@@ -22,9 +21,8 @@ import WeeklyPromptBanner from './WeeklyPromptBanner';
 
 const PAGE_SIZE = 50;
 
-type JournalScreenProps = BottomTabScreenProps<RootTabParamList, 'Journal'>;
-
-const JournalScreen = ({ route }: JournalScreenProps): React.JSX.Element => {
+const JournalScreen = (): React.JSX.Element => {
+  const route = useAppRoute<'Journal'>();
   const practiceSessionId = route.params?.practiceSessionId ?? null;
   const userPracticeId = route.params?.userPracticeId ?? null;
   const practiceName = route.params?.practiceName ?? null;
