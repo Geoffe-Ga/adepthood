@@ -210,17 +210,104 @@ export const goalCompletions = {
 };
 
 // Journal types and client
-export interface JournalEntry {
-  id?: number;
-  content: string;
+export interface JournalMessageCreate {
+  message: string;
+  is_stage_reflection?: boolean;
+  is_practice_note?: boolean;
+  is_habit_note?: boolean;
+  practice_session_id?: number | null;
+  user_practice_id?: number | null;
 }
+
+export interface JournalMessage {
+  id: number;
+  message: string;
+  sender: 'user' | 'bot';
+  user_id: number;
+  timestamp: string;
+  is_stage_reflection: boolean;
+  is_practice_note: boolean;
+  is_habit_note: boolean;
+  practice_session_id: number | null;
+  user_practice_id: number | null;
+}
+
+export interface JournalListResponse {
+  items: JournalMessage[];
+  total: number;
+  has_more: boolean;
+}
+
+export interface JournalListParams {
+  search?: string;
+  tag?: string;
+  practice_session_id?: number;
+  limit?: number;
+  offset?: number;
+}
+
 export const journal = {
-  create(entry: JournalEntry, token?: string): Promise<JournalEntry> {
-    return request<JournalEntry>('/journal', {
+  list(params: JournalListParams = {}, token?: string): Promise<JournalListResponse> {
+    const query = new URLSearchParams();
+    if (params.search) query.set('search', params.search);
+    if (params.tag) query.set('tag', params.tag);
+    if (params.practice_session_id != null)
+      query.set('practice_session_id', String(params.practice_session_id));
+    if (params.limit != null) query.set('limit', String(params.limit));
+    if (params.offset != null) query.set('offset', String(params.offset));
+    const qs = query.toString();
+    return request<JournalListResponse>(`/journal${qs ? `?${qs}` : ''}`, { token });
+  },
+  get(entryId: number, token?: string): Promise<JournalMessage> {
+    return request<JournalMessage>(`/journal/${entryId}`, { token });
+  },
+  create(entry: JournalMessageCreate, token?: string): Promise<JournalMessage> {
+    return request<JournalMessage>('/journal', {
       method: 'POST',
       body: entry,
       token,
     });
+  },
+  delete(entryId: number, token?: string): Promise<void> {
+    return request<void>(`/journal/${entryId}`, { method: 'DELETE', token });
+  },
+};
+
+// Prompts types and client
+export interface PromptDetail {
+  week_number: number;
+  question: string;
+  has_responded: boolean;
+  response: string | null;
+  timestamp: string | null;
+}
+
+export interface PromptListResponse {
+  items: PromptDetail[];
+  total: number;
+  has_more: boolean;
+}
+
+export const prompts = {
+  current(token?: string): Promise<PromptDetail> {
+    return request<PromptDetail>('/prompts/current', { token });
+  },
+  respond(weekNumber: number, response: string, token?: string): Promise<PromptDetail> {
+    return request<PromptDetail>(`/prompts/${weekNumber}/respond`, {
+      method: 'POST',
+      body: { response },
+      token,
+    });
+  },
+  history(
+    params: { limit?: number; offset?: number } = {},
+    token?: string,
+  ): Promise<PromptListResponse> {
+    const query = new URLSearchParams();
+    if (params.limit != null) query.set('limit', String(params.limit));
+    if (params.offset != null) query.set('offset', String(params.offset));
+    const qs = query.toString();
+    return request<PromptListResponse>(`/prompts/history${qs ? `?${qs}` : ''}`, { token });
   },
 };
 
@@ -287,6 +374,7 @@ export default {
   habits,
   goalCompletions,
   journal,
+  prompts,
   stages,
   practice,
   auth,

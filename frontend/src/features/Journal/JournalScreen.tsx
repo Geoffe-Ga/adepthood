@@ -1,29 +1,174 @@
-// frontend/features/Journal/JournalScreen.tsx
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, FlatList, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import {
+  journal as journalApi,
+  prompts as promptsApi,
+  type JournalMessage,
+  type PromptDetail,
+} from '../../api';
 
-/**
- * Placeholder journal screen.
- * Users will log reflections here in future iterations.
- */
+import ChatInput from './ChatInput';
+import styles from './Journal.styles';
+import MessageBubble from './MessageBubble';
+import WeeklyPromptBanner from './WeeklyPromptBanner';
+
+const PAGE_SIZE = 50;
+
 const JournalScreen = (): React.JSX.Element => {
+  const [messages, setMessages] = useState<JournalMessage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [prompt, setPrompt] = useState<PromptDetail | null>(null);
+
+  const loadMessages = useCallback(async (offset = 0) => {
+    try {
+      const result = await journalApi.list({ limit: PAGE_SIZE, offset });
+      if (offset === 0) {
+        setMessages(result.items);
+      } else {
+        setMessages((prev) => [...prev, ...result.items]);
+      }
+      setHasMore(result.has_more);
+    } catch (err) {
+      console.error('Failed to load journal messages:', err);
+    }
+  }, []);
+
+  const loadPrompt = useCallback(async () => {
+    try {
+      const detail = await promptsApi.current();
+      if (!detail.has_responded) {
+        setPrompt(detail);
+      }
+    } catch {
+      // Prompt fetch is non-critical
+    }
+  }, []);
+
+  useEffect(() => {
+    const init = async () => {
+      setLoading(true);
+      await Promise.all([loadMessages(0), loadPrompt()]);
+      setLoading(false);
+    };
+    void init();
+  }, [loadMessages, loadPrompt]);
+
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    await loadMessages(messages.length);
+    setLoadingMore(false);
+  }, [loadingMore, hasMore, messages.length, loadMessages]);
+
+  const handleSend = useCallback(async (text: string) => {
+    setSending(true);
+
+    // Optimistic update — add a temporary message immediately
+    const optimistic: JournalMessage = {
+      id: -Date.now(),
+      message: text,
+      sender: 'user',
+      user_id: 0,
+      timestamp: new Date().toISOString(),
+      is_stage_reflection: false,
+      is_practice_note: false,
+      is_habit_note: false,
+      practice_session_id: null,
+      user_practice_id: null,
+    };
+    setMessages((prev) => [optimistic, ...prev]);
+
+    try {
+      const created = await journalApi.create({ message: text });
+      setMessages((prev) => prev.map((m) => (m.id === optimistic.id ? created : m)));
+    } catch (err) {
+      console.error('Failed to send message:', err);
+      // Remove the optimistic message on failure
+      setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
+    } finally {
+      setSending(false);
+    }
+  }, []);
+
+  const handlePromptRespond = useCallback(() => {
+    if (!prompt) return;
+    // Pre-fill the prompt question as context and send as a stage reflection
+    const sendPromptResponse = async () => {
+      setSending(true);
+      try {
+        await promptsApi.respond(prompt.week_number, prompt.question);
+        setPrompt(null);
+        // Reload messages to include the new journal entry created by the prompt response
+        await loadMessages(0);
+      } catch (err) {
+        console.error('Failed to respond to prompt:', err);
+      } finally {
+        setSending(false);
+      }
+    };
+    void sendPromptResponse();
+  }, [prompt, loadMessages]);
+
+  const renderMessage = useCallback(
+    ({ item }: { item: JournalMessage }) => <MessageBubble message={item} />,
+    [],
+  );
+
+  const renderFooter = useCallback(() => {
+    if (!loadingMore) return null;
+    return (
+      <View style={styles.loadingMore}>
+        <ActivityIndicator size="small" />
+      </View>
+    );
+  }, [loadingMore]);
+
+  const renderEmpty = useCallback(() => {
+    if (loading) return null;
+    return (
+      <View style={styles.emptyContainer}>
+        <Text style={styles.emptyIcon}>{'~'}</Text>
+        <Text style={styles.emptyTitle}>Your Journal Awaits</Text>
+        <Text style={styles.emptySubtitle}>
+          Write your first reflection below. BotMason will be here to accompany your journey.
+        </Text>
+      </View>
+    );
+  }, [loading]);
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator testID="journal-loading" size="large" />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.text}>Journal Screen</Text>
-    </View>
+    <SafeAreaView style={styles.container} edges={['bottom']}>
+      {prompt && <WeeklyPromptBanner prompt={prompt} onRespond={handlePromptRespond} />}
+      <FlatList
+        testID="message-list"
+        data={messages}
+        renderItem={renderMessage}
+        keyExtractor={(item) => String(item.id)}
+        inverted
+        contentContainerStyle={[styles.messageList, messages.length === 0 && { flexGrow: 1 }]}
+        ListFooterComponent={renderFooter}
+        ListEmptyComponent={renderEmpty}
+        onEndReached={handleLoadMore}
+        onEndReachedThreshold={0.3}
+      />
+      <ChatInput onSend={handleSend} disabled={sending} />
+    </SafeAreaView>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  text: {
-    fontSize: 18,
-  },
-});
 
 export default JournalScreen;
