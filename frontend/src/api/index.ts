@@ -273,6 +273,41 @@ export const journal = {
   },
 };
 
+// BotMason AI chat types and client
+export interface ChatRequest {
+  message: string;
+}
+
+export interface ChatResponse {
+  response: string;
+  remaining_balance: number;
+  bot_entry_id: number;
+}
+
+export interface BalanceResponse {
+  balance: number;
+}
+
+export const botmason = {
+  chat(payload: ChatRequest, token?: string): Promise<ChatResponse> {
+    return request<ChatResponse>('/journal/chat', {
+      method: 'POST',
+      body: payload,
+      token,
+    });
+  },
+  getBalance(token?: string): Promise<BalanceResponse> {
+    return request<BalanceResponse>('/user/balance', { token });
+  },
+  addBalance(amount: number, token?: string): Promise<{ balance: number; added: number }> {
+    return request<{ balance: number; added: number }>('/user/balance/add', {
+      method: 'POST',
+      body: { amount },
+      token,
+    });
+  },
+};
+
 // Prompts types and client
 export interface PromptDetail {
   week_number: number;
@@ -374,6 +409,7 @@ export default {
   habits,
   goalCompletions,
   journal,
+  botmason,
   prompts,
   stages,
   practice,

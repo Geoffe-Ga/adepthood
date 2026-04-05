@@ -18,3 +18,8 @@ def forbidden(reason: str = "forbidden") -> HTTPException:
 def bad_request(reason: str) -> HTTPException:
     """Return a 400 HTTPException."""
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=reason)
+
+
+def payment_required(reason: str = "payment_required") -> HTTPException:
+    """Return a 402 HTTPException for insufficient credits."""
+    return HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=reason)

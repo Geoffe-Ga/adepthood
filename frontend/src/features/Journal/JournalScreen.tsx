@@ -3,10 +3,12 @@ import { ActivityIndicator, FlatList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
+  botmason as botmasonApi,
   journal as journalApi,
   prompts as promptsApi,
   type JournalMessage,
   type PromptDetail,
+  ApiError,
 } from '../../api';
 
 import ChatInput from './ChatInput';
@@ -23,6 +25,8 @@ const JournalScreen = (): React.JSX.Element => {
   const [hasMore, setHasMore] = useState(false);
   const [sending, setSending] = useState(false);
   const [prompt, setPrompt] = useState<PromptDetail | null>(null);
+  const [offeringBalance, setOfferingBalance] = useState<number | null>(null);
+  const [awaitingBot, setAwaitingBot] = useState(false);
 
   const loadMessages = useCallback(async (offset = 0) => {
     try {
@@ -49,14 +53,23 @@ const JournalScreen = (): React.JSX.Element => {
     }
   }, []);
 
+  const loadBalance = useCallback(async () => {
+    try {
+      const result = await botmasonApi.getBalance();
+      setOfferingBalance(result.balance);
+    } catch {
+      // Balance fetch is non-critical; default to null (unknown)
+    }
+  }, []);
+
   useEffect(() => {
     const init = async () => {
       setLoading(true);
-      await Promise.all([loadMessages(0), loadPrompt()]);
+      await Promise.all([loadMessages(0), loadPrompt(), loadBalance()]);
       setLoading(false);
     };
     void init();
-  }, [loadMessages, loadPrompt]);
+  }, [loadMessages, loadPrompt, loadBalance]);
 
   const handleLoadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return;
@@ -65,45 +78,78 @@ const JournalScreen = (): React.JSX.Element => {
     setLoadingMore(false);
   }, [loadingMore, hasMore, messages.length, loadMessages]);
 
-  const handleSend = useCallback(async (text: string) => {
-    setSending(true);
+  const handleSend = useCallback(
+    async (text: string) => {
+      setSending(true);
 
-    // Optimistic update — add a temporary message immediately
-    const optimistic: JournalMessage = {
-      id: -Date.now(),
-      message: text,
-      sender: 'user',
-      user_id: 0,
-      timestamp: new Date().toISOString(),
-      is_stage_reflection: false,
-      is_practice_note: false,
-      is_habit_note: false,
-      practice_session_id: null,
-      user_practice_id: null,
-    };
-    setMessages((prev) => [optimistic, ...prev]);
+      // Optimistic update — add a temporary user message immediately
+      const optimistic: JournalMessage = {
+        id: -Date.now(),
+        message: text,
+        sender: 'user',
+        user_id: 0,
+        timestamp: new Date().toISOString(),
+        is_stage_reflection: false,
+        is_practice_note: false,
+        is_habit_note: false,
+        practice_session_id: null,
+        user_practice_id: null,
+      };
+      setMessages((prev) => [optimistic, ...prev]);
 
-    try {
-      const created = await journalApi.create({ message: text });
-      setMessages((prev) => prev.map((m) => (m.id === optimistic.id ? created : m)));
-    } catch (err) {
-      console.error('Failed to send message:', err);
-      // Remove the optimistic message on failure
-      setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
-    } finally {
+      const hasBalance = offeringBalance !== null && offeringBalance > 0;
+
+      if (hasBalance) {
+        // Use BotMason AI chat endpoint
+        try {
+          setAwaitingBot(true);
+          const chatResult = await botmasonApi.chat({ message: text });
+
+          // Replace optimistic message with real user message from journal
+          // and prepend bot response
+          await loadMessages(0);
+          setOfferingBalance(chatResult.remaining_balance);
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 402) {
+            // Balance ran out between check and request — fall back to freeform
+            setOfferingBalance(0);
+            try {
+              const created = await journalApi.create({ message: text });
+              setMessages((prev) => prev.map((m) => (m.id === optimistic.id ? created : m)));
+            } catch (createErr) {
+              console.error('Failed to send freeform message:', createErr);
+              setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
+            }
+          } else {
+            console.error('BotMason chat failed:', err);
+            setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
+          }
+        } finally {
+          setAwaitingBot(false);
+        }
+      } else {
+        // Freeform journaling (no AI)
+        try {
+          const created = await journalApi.create({ message: text });
+          setMessages((prev) => prev.map((m) => (m.id === optimistic.id ? created : m)));
+        } catch (err) {
+          console.error('Failed to send message:', err);
+          setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
+        }
+      }
+
       setSending(false);
-    }
-  }, []);
+    },
+    [offeringBalance, loadMessages],
+  );
 
   const handlePromptRespond = useCallback(() => {
     if (!prompt) return;
-    // Pre-fill the prompt question as context and send as a stage reflection
     const sendPromptResponse = async () => {
       setSending(true);
       try {
         await promptsApi.respond(prompt.week_number, prompt.question);
         setPrompt(null);
-        // Reload messages to include the new journal entry created by the prompt response
         await loadMessages(0);
       } catch (err) {
         console.error('Failed to respond to prompt:', err);
@@ -151,9 +197,23 @@ const JournalScreen = (): React.JSX.Element => {
     );
   }
 
+  const balanceIsZero = offeringBalance !== null && offeringBalance <= 0;
+
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
       {prompt && <WeeklyPromptBanner prompt={prompt} onRespond={handlePromptRespond} />}
+      {balanceIsZero && (
+        <View testID="balance-empty-banner" style={styles.balanceBanner}>
+          <Text style={styles.balanceBannerText}>
+            BotMason is resting. You can still write freeform reflections.
+          </Text>
+        </View>
+      )}
+      {offeringBalance !== null && offeringBalance > 0 && (
+        <View testID="balance-counter" style={styles.balanceCounter}>
+          <Text style={styles.balanceCounterText}>Offerings: {offeringBalance}</Text>
+        </View>
+      )}
       <FlatList
         testID="message-list"
         data={messages}
@@ -166,6 +226,11 @@ const JournalScreen = (): React.JSX.Element => {
         onEndReached={handleLoadMore}
         onEndReachedThreshold={0.3}
       />
+      {awaitingBot && (
+        <View testID="typing-indicator" style={styles.typingIndicator}>
+          <Text style={styles.typingIndicatorText}>BotMason is typing...</Text>
+        </View>
+      )}
       <ChatInput onSend={handleSend} disabled={sending} />
     </SafeAreaView>
   );
