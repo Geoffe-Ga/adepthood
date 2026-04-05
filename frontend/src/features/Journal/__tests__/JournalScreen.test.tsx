@@ -426,6 +426,58 @@ describe('JournalScreen', () => {
     });
   });
 
+  it('shows course reflection header when stageReflection params are passed', async () => {
+    const { getByTestId, getByText } = renderJournal({
+      stageReflection: true,
+      stageNumber: 3,
+      contentTitle: 'The Hero Journey',
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('course-reflection-header')).toBeTruthy();
+      expect(getByText(/Reflecting on: The Hero Journey/)).toBeTruthy();
+      expect(getByText(/Stage 3/)).toBeTruthy();
+    });
+  });
+
+  it('does not show course reflection header without stageReflection param', async () => {
+    const { queryByTestId } = renderJournal();
+
+    await waitFor(() => {
+      expect(queryByTestId('course-reflection-header')).toBeNull();
+    });
+  });
+
+  it('sends journal entry with is_stage_reflection when in course reflection mode', async () => {
+    mockBotmasonGetBalance.mockResolvedValue({ balance: 0 });
+
+    const { getByTestId, getByText } = renderJournal({
+      stageReflection: true,
+      stageNumber: 3,
+      contentTitle: 'The Hero Journey',
+    });
+
+    await waitFor(() => {
+      expect(getByText('My first reflection.')).toBeTruthy();
+    });
+
+    const input = getByTestId('chat-input');
+    await act(async () => {
+      fireEvent.changeText(input, 'This essay changed my perspective');
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('send-button'));
+    });
+
+    expect(mockJournalCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'This essay changed my perspective',
+        is_stage_reflection: true,
+      }),
+    );
+  });
+
   it('sends journal entry with practice session data when in reflection mode', async () => {
     mockBotmasonGetBalance.mockResolvedValue({ balance: 0 });
 

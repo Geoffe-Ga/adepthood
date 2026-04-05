@@ -10,7 +10,7 @@ import {
   type Stage,
 } from '../../api';
 import { STAGE_COLORS } from '../../design/tokens';
-import { useAppRoute } from '../../navigation/hooks';
+import { useAppNavigation, useAppRoute } from '../../navigation/hooks';
 
 import ContentCard from './ContentCard';
 import ContentViewer from './ContentViewer';
@@ -20,8 +20,10 @@ import StageSelector from './StageSelector';
 const DEFAULT_STAGE_NUMBER = 1;
 
 const CourseScreen = (): React.JSX.Element => {
+  const navigation = useAppNavigation();
   const route = useAppRoute<'Course'>();
   const routeStageNumber = route.params?.stageNumber ?? null;
+
   const [allStages, setAllStages] = useState<Stage[]>([]);
   const [selectedStage, setSelectedStage] = useState(routeStageNumber ?? DEFAULT_STAGE_NUMBER);
   const [content, setContent] = useState<ContentItem[]>([]);
@@ -94,6 +96,16 @@ const CourseScreen = (): React.JSX.Element => {
     setViewingItem(null);
   }, []);
 
+  const handleReflect = useCallback(() => {
+    if (!viewingItem) return;
+    navigation.navigate('Journal', {
+      stageReflection: true,
+      stageNumber: selectedStage,
+      contentTitle: viewingItem.title,
+    });
+    setViewingItem(null);
+  }, [viewingItem, selectedStage, navigation]);
+
   const handleMarkRead = useCallback(() => {
     // Refresh content and progress after marking as read
     const refresh = async () => {
@@ -134,7 +146,12 @@ const CourseScreen = (): React.JSX.Element => {
   // Show content viewer if viewing an item
   if (viewingItem) {
     return (
-      <ContentViewer item={viewingItem} onBack={handleBackFromViewer} onMarkRead={handleMarkRead} />
+      <ContentViewer
+        item={viewingItem}
+        onBack={handleBackFromViewer}
+        onMarkRead={handleMarkRead}
+        onReflect={handleReflect}
+      />
     );
   }
 

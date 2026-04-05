@@ -9,9 +9,15 @@ interface ContentViewerProps {
   item: ContentItem;
   onBack: () => void;
   onMarkRead: () => void;
+  onReflect?: () => void;
 }
 
-const ContentViewer = ({ item, onBack, onMarkRead }: ContentViewerProps): React.JSX.Element => {
+const ContentViewer = ({
+  item,
+  onBack,
+  onMarkRead,
+  onReflect,
+}: ContentViewerProps): React.JSX.Element => {
   const [marking, setMarking] = useState(false);
   const [isRead, setIsRead] = useState(item.is_read);
 
@@ -78,6 +84,17 @@ const ContentViewer = ({ item, onBack, onMarkRead }: ContentViewerProps): React.
             </Text>
           )}
         </TouchableOpacity>
+        {isRead && onReflect && (
+          <TouchableOpacity
+            testID="reflect-button"
+            onPress={onReflect}
+            style={styles.reflectButton}
+            accessibilityRole="button"
+            accessibilityLabel="Reflect in Journal"
+          >
+            <Text style={styles.reflectText}>Reflect in Journal</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );

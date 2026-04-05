@@ -114,4 +114,52 @@ describe('ContentViewer', () => {
     fireEvent.press(getByTestId('mark-read-button'));
     expect(mockMarkRead).not.toHaveBeenCalled();
   });
+
+  it('shows reflect button when item has been read', () => {
+    const item = makeItem({ is_read: true });
+    const onReflect = jest.fn() as any;
+    const { getByTestId, getByText } = render(
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} onReflect={onReflect} />,
+    );
+    expect(getByTestId('reflect-button')).toBeTruthy();
+    expect(getByText('Reflect in Journal')).toBeTruthy();
+  });
+
+  it('shows reflect button after marking content as read', async () => {
+    const item = makeItem({ is_read: false });
+    const onReflect = jest.fn() as any;
+    const { getByTestId, queryByTestId } = render(
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} onReflect={onReflect} />,
+    );
+
+    // Initially no reflect button
+    expect(queryByTestId('reflect-button')).toBeNull();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('mark-read-button'));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('reflect-button')).toBeTruthy();
+    });
+  });
+
+  it('calls onReflect when reflect button is pressed', () => {
+    const item = makeItem({ is_read: true });
+    const onReflect = jest.fn() as any;
+    const { getByTestId } = render(
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} onReflect={onReflect} />,
+    );
+
+    fireEvent.press(getByTestId('reflect-button'));
+    expect(onReflect).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not render reflect button when onReflect is not provided', () => {
+    const item = makeItem({ is_read: true });
+    const { queryByTestId } = render(
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+    );
+    expect(queryByTestId('reflect-button')).toBeNull();
+  });
 });

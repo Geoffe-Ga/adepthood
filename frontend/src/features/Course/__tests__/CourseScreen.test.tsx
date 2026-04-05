@@ -93,8 +93,10 @@ jest.mock('../../../api', () => ({
   },
 }));
 
+const mockNavigate = jest.fn() as any;
 jest.mock('../../../navigation/hooks', () => ({
   useAppRoute: () => ({ key: 'Course-test', name: 'Course', params: undefined }),
+  useAppNavigation: () => ({ navigate: mockNavigate }),
 }));
 
 jest.mock('react-native-safe-area-context', () => {
@@ -254,6 +256,47 @@ describe('CourseScreen', () => {
 
     await waitFor(() => {
       expect(getByText('No Content Yet')).toBeTruthy();
+    });
+  });
+
+  it('navigates to Journal with reflection params when Reflect is pressed', async () => {
+    // Use content that is already read so the reflect button appears
+    mockStageContent.mockResolvedValue([
+      {
+        id: 1,
+        title: 'Welcome Essay',
+        content_type: 'essay',
+        release_day: 0,
+        url: 'https://example.com/essay',
+        is_locked: false,
+        is_read: true,
+      },
+    ]);
+
+    const { getByText, getByTestId } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(getByText('Welcome Essay')).toBeTruthy();
+    });
+
+    // Open the content viewer
+    await act(async () => {
+      fireEvent.press(getByTestId('content-card-1'));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('content-viewer')).toBeTruthy();
+    });
+
+    // Press reflect button
+    await act(async () => {
+      fireEvent.press(getByTestId('reflect-button'));
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('Journal', {
+      stageReflection: true,
+      stageNumber: 2,
+      contentTitle: 'Welcome Essay',
     });
   });
 });
