@@ -9,7 +9,7 @@ type TimerState = 'idle' | 'running' | 'paused' | 'completed';
 
 interface PracticeTimerProps {
   durationMinutes: number;
-  onComplete: (_minutes: number) => void; // eslint-disable-line no-unused-vars
+  onComplete: (_minutes: number) => void;
   onCancel: () => void;
 }
 
