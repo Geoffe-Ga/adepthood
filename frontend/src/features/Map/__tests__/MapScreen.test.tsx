@@ -6,8 +6,8 @@ import { act, create } from 'react-test-renderer';
 
 // Mock navigation so we can observe tab linking behaviour.
 const mockNavigate = jest.fn();
-jest.mock('@react-navigation/native', () => ({
-  useNavigation: () => ({ navigate: mockNavigate }),
+jest.mock('../../../navigation/hooks', () => ({
+  useAppNavigation: () => ({ navigate: mockNavigate }),
 }));
 jest.mock('@react-navigation/bottom-tabs', () => ({
   useBottomTabBarHeight: () => 0,

@@ -1,7 +1,5 @@
 // frontend/features/Map/MapScreen.tsx
 
-import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import { useNavigation } from '@react-navigation/native';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -17,13 +15,11 @@ import {
 } from 'react-native';
 
 import { MAP_BACKGROUND_URI } from '../../constants/images';
-import type { RootTabParamList } from '../../navigation/BottomTabs';
+import { useAppNavigation } from '../../navigation/hooks';
 import { useStageStore } from '../../store/useStageStore';
 
 import styles from './Map.styles';
 import type { StageData } from './stageData';
-
-type MapNavProp = BottomTabNavigationProp<RootTabParamList, 'Map'>;
 
 const FULL_PROGRESS = 1;
 
@@ -33,7 +29,7 @@ const FULL_PROGRESS = 1;
  * in the detail modal with quick links to Practice, Course, and Journal.
  */
 const MapScreen = (): React.JSX.Element => {
-  const navigation = useNavigation<MapNavProp>();
+  const navigation = useAppNavigation();
   const { stages, loading, error, fetchStages, currentStage } = useStageStore();
   const [activeStage, setActiveStage] = useState<StageData | null>(null);
   const { width, height } = useWindowDimensions();

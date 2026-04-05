@@ -65,8 +65,10 @@ jest.mock('../../../api', () => ({
 }));
 
 const mockNavigate = jest.fn();
-jest.mock('@react-navigation/native', () => ({
-  useNavigation: () => ({ navigate: mockNavigate }),
+const mockRouteParams: Record<string, unknown> = {};
+jest.mock('../../../navigation/hooks', () => ({
+  useAppNavigation: () => ({ navigate: mockNavigate }),
+  useAppRoute: () => ({ key: 'Practice-test', name: 'Practice', params: mockRouteParams }),
 }));
 
 jest.mock('expo-av', () => ({
