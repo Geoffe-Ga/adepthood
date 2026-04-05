@@ -1,5 +1,6 @@
 """Database models package."""
 
+from .content_completion import ContentCompletion
 from .course_stage import CourseStage
 from .goal import Goal
 from .goal_completion import GoalCompletion
@@ -15,6 +16,7 @@ from .user import User
 from .user_practice import UserPractice
 
 __all__ = [
+    "ContentCompletion",
     "CourseStage",
     "Goal",
     "GoalCompletion",

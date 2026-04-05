@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -121,6 +123,7 @@ async def update_progress(
         completed = list(range(1, payload.current_stage))
         existing.current_stage = payload.current_stage
         existing.completed_stages = completed
+        existing.stage_started_at = datetime.now(UTC)
         session.add(existing)
         await session.commit()
         await session.refresh(existing)
