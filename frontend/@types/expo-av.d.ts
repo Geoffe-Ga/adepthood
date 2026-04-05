@@ -9,7 +9,7 @@ declare module 'expo-av' {
   }
 
   interface SoundStatic {
-    createAsync(_source: number | { uri: string }): Promise<CreateAsyncResult>; // eslint-disable-line no-unused-vars
+    createAsync(_source: number | { uri: string }): Promise<CreateAsyncResult>;
   }
 
   export const Audio: {

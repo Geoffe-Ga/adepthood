@@ -1,6 +1,6 @@
 import os
 import sys
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 
 # Set SECRET_KEY for tests before any app modules are imported
@@ -12,6 +12,7 @@ REPO_ROOT = (Path(__file__).parent / "..").resolve()
 # Add backend/src to sys.path — must happen before importing app modules
 sys.path.insert(0, str(REPO_ROOT / "backend/src"))
 
+import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy import JSON  # noqa: E402
@@ -26,6 +27,7 @@ from sqlmodel import SQLModel  # noqa: E402
 import models as _models  # noqa: E402, F401
 from database import get_session  # noqa: E402
 from main import app  # noqa: E402
+from rate_limit import limiter  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Test database: SQLite in-memory (no external services needed)
@@ -73,3 +75,19 @@ async def async_client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, 
         yield client
 
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter() -> Generator[None, None, None]:
+    """Clear the rate limiter's in-memory storage between tests."""
+    limiter.reset()
+    yield
+    limiter.reset()
+
+
+@pytest.fixture
+def disable_rate_limit() -> Generator[None, None, None]:
+    """Temporarily disable rate limiting for tests that need many requests."""
+    limiter.enabled = False
+    yield
+    limiter.enabled = True

@@ -4,13 +4,16 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from database import get_session
+from rate_limit import limiter
 from routers.auth import router as auth_router
 from routers.botmason import router as botmason_router
 from routers.course import router as course_router
@@ -67,6 +70,35 @@ def get_cors_origins(env: str | None = None) -> list[str]:
     return origins
 
 
+def _rate_limit_exceeded_handler(_request: Request, _exc: RateLimitExceeded) -> JSONResponse:
+    """Return a JSON 429 response when the rate limit is exceeded."""
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "rate_limit_exceeded"},
+    )
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to every response.
+
+    - X-Content-Type-Options: nosniff — prevents MIME-type sniffing
+    - X-Frame-Options: DENY — prevents clickjacking via iframes
+    - Strict-Transport-Security — enforces HTTPS in production/staging
+    """
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+
+        env = os.getenv("ENV", "development")
+        if env in ("production", "staging"):
+            # max-age of 1 year (31536000 seconds) per OWASP recommendation
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        return response
+
+
 @asynccontextmanager
 async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown lifecycle for the application."""
@@ -76,6 +108,13 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(lifespan=lifespan)
+
+# Attach the rate limiter to the app so slowapi can find it
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+# Security headers on all responses
+app.add_middleware(SecurityHeadersMiddleware)
 
 origins = get_cors_origins()
 
