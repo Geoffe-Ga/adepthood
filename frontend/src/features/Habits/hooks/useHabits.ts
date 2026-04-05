@@ -9,7 +9,7 @@ import {
 } from '../../../storage/habitStorage';
 import { useHabitStore } from '../../../store/useHabitStore';
 import { HABIT_DEFAULTS } from '../HabitDefaults';
-import type { Goal, Habit, OnboardingHabit } from '../Habits.types';
+import type { Goal, Habit, HabitScreenMode, OnboardingHabit } from '../Habits.types';
 import { getGoalTier, getGoalTarget, calculateHabitProgress, logHabitUnits } from '../HabitUtils';
 
 import {
@@ -18,8 +18,6 @@ import {
   reconcileNotifications,
   cancelForHabit,
 } from './useHabitNotifications';
-
-export type HabitMode = 'normal' | 'stats' | 'quickLog' | 'edit';
 
 const FALLBACK_HABITS: Habit[] = HABIT_DEFAULTS.map((habit) => ({
   ...habit,
@@ -67,8 +65,8 @@ export interface UseHabitsReturn {
   error: string | null;
   selectedHabit: Habit | null;
   setSelectedHabit: (_habit: Habit | null) => void;
-  mode: HabitMode;
-  setMode: (_mode: HabitMode) => void;
+  mode: HabitScreenMode;
+  setMode: (_mode: HabitScreenMode) => void;
   actions: {
     loadHabits: () => Promise<void>;
     updateGoal: (_habitId: number, _updatedGoal: Goal) => void;
@@ -104,7 +102,7 @@ export const useHabits = (): UseHabitsReturn => {
 
   // Local UI state (screen-specific, not shared)
   const [selectedHabit, setSelectedHabit] = useState<Habit | null>(null);
-  const [mode, setMode] = useState<HabitMode>('normal');
+  const [mode, setMode] = useState<HabitScreenMode>('normal');
   const [showEnergyCTA, setShowEnergyCTA] = useState(true);
   const [showArchiveMessage, setShowArchiveMessage] = useState(false);
   const [emojiHabitIndex, setEmojiHabitIndex] = useState<number | null>(null);
