@@ -64,11 +64,11 @@ describe('generateStatsForHabit', () => {
       ...baseHabit,
       completions: [
         // Monday 2024-01-01
-        { id: 1, timestamp: new Date('2024-01-01T08:00:00'), completed_units: 2 },
+        { id: 'c-1', timestamp: new Date('2024-01-01T08:00:00'), completed_units: 2 },
         // Monday 2024-01-01 (second log same day)
-        { id: 2, timestamp: new Date('2024-01-01T12:00:00'), completed_units: 1 },
+        { id: 'c-2', timestamp: new Date('2024-01-01T12:00:00'), completed_units: 1 },
         // Wednesday 2024-01-03
-        { id: 3, timestamp: new Date('2024-01-03T10:00:00'), completed_units: 3 },
+        { id: 'c-3', timestamp: new Date('2024-01-03T10:00:00'), completed_units: 3 },
       ],
     };
     const stats = generateStatsForHabit(habit);
@@ -83,12 +83,12 @@ describe('generateStatsForHabit', () => {
     const habit: Habit = {
       ...baseHabit,
       completions: [
-        { id: 1, timestamp: new Date('2024-01-01T08:00:00'), completed_units: 1 },
-        { id: 2, timestamp: new Date('2024-01-02T08:00:00'), completed_units: 1 },
-        { id: 3, timestamp: new Date('2024-01-03T08:00:00'), completed_units: 1 },
+        { id: 'c-1', timestamp: new Date('2024-01-01T08:00:00'), completed_units: 1 },
+        { id: 'c-2', timestamp: new Date('2024-01-02T08:00:00'), completed_units: 1 },
+        { id: 'c-3', timestamp: new Date('2024-01-03T08:00:00'), completed_units: 1 },
         // gap on Jan 4
-        { id: 4, timestamp: new Date('2024-01-05T08:00:00'), completed_units: 1 },
-        { id: 5, timestamp: new Date('2024-01-06T08:00:00'), completed_units: 1 },
+        { id: 'c-4', timestamp: new Date('2024-01-05T08:00:00'), completed_units: 1 },
+        { id: 'c-5', timestamp: new Date('2024-01-06T08:00:00'), completed_units: 1 },
       ],
     };
     const stats = generateStatsForHabit(habit);
@@ -100,9 +100,9 @@ describe('generateStatsForHabit', () => {
       ...baseHabit,
       start_date: new Date('2024-01-01'),
       completions: [
-        { id: 1, timestamp: new Date('2024-01-01T08:00:00'), completed_units: 1 },
+        { id: 'c-1', timestamp: new Date('2024-01-01T08:00:00'), completed_units: 1 },
         // gap on Jan 2
-        { id: 2, timestamp: new Date('2024-01-03T08:00:00'), completed_units: 1 },
+        { id: 'c-2', timestamp: new Date('2024-01-03T08:00:00'), completed_units: 1 },
       ],
     };
     // From Jan 1 to Jan 3 = 3 days span, completed on 2 of them
@@ -115,9 +115,9 @@ describe('generateStatsForHabit', () => {
       ...baseHabit,
       completions: [
         // Monday
-        { id: 1, timestamp: new Date('2024-01-01T08:00:00'), completed_units: 2 },
+        { id: 'c-1', timestamp: new Date('2024-01-01T08:00:00'), completed_units: 2 },
         // Wednesday
-        { id: 2, timestamp: new Date('2024-01-03T08:00:00'), completed_units: 3 },
+        { id: 'c-2', timestamp: new Date('2024-01-03T08:00:00'), completed_units: 3 },
       ],
     };
     const stats = generateStatsForHabit(habit);
@@ -183,9 +183,9 @@ describe('calculateMissedDays', () => {
     const habit: Habit = {
       ...baseHabit,
       completions: [
-        { id: 1, timestamp: new Date('2024-01-01T08:00:00'), completed_units: 1 },
+        { id: 'c-1', timestamp: new Date('2024-01-01T08:00:00'), completed_units: 1 },
         // gap on Jan 2
-        { id: 2, timestamp: new Date('2024-01-03T08:00:00'), completed_units: 1 },
+        { id: 'c-2', timestamp: new Date('2024-01-03T08:00:00'), completed_units: 1 },
       ],
     };
     const missed = calculateMissedDays(habit);
@@ -197,9 +197,9 @@ describe('calculateMissedDays', () => {
     const habit: Habit = {
       ...baseHabit,
       completions: [
-        { id: 1, timestamp: new Date('2024-01-01T08:00:00'), completed_units: 1 },
-        { id: 2, timestamp: new Date('2024-01-02T08:00:00'), completed_units: 1 },
-        { id: 3, timestamp: new Date('2024-01-03T08:00:00'), completed_units: 1 },
+        { id: 'c-1', timestamp: new Date('2024-01-01T08:00:00'), completed_units: 1 },
+        { id: 'c-2', timestamp: new Date('2024-01-02T08:00:00'), completed_units: 1 },
+        { id: 'c-3', timestamp: new Date('2024-01-03T08:00:00'), completed_units: 1 },
       ],
     };
     const missed = calculateMissedDays(habit);
@@ -210,10 +210,10 @@ describe('calculateMissedDays', () => {
     const habit: Habit = {
       ...baseHabit,
       completions: [
-        { id: 1, timestamp: new Date('2024-01-01T08:00:00'), completed_units: 1 },
-        { id: 2, timestamp: new Date('2024-01-01T12:00:00'), completed_units: 1 },
+        { id: 'c-1', timestamp: new Date('2024-01-01T08:00:00'), completed_units: 1 },
+        { id: 'c-2', timestamp: new Date('2024-01-01T12:00:00'), completed_units: 1 },
         // gap on Jan 2
-        { id: 3, timestamp: new Date('2024-01-03T08:00:00'), completed_units: 1 },
+        { id: 'c-3', timestamp: new Date('2024-01-03T08:00:00'), completed_units: 1 },
       ],
     };
     const missed = calculateMissedDays(habit);

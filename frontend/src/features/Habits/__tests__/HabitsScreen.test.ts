@@ -90,8 +90,8 @@ describe('habit progress utilities', () => {
       start_date: new Date(),
       goals: additiveGoals,
       completions: [
-        { id: 1, timestamp: new Date(), completed_units: 1 },
-        { id: 2, timestamp: new Date(), completed_units: 2.5 },
+        { id: 'c-1', timestamp: new Date(), completed_units: 1 },
+        { id: 'c-2', timestamp: new Date(), completed_units: 2.5 },
       ],
     };
 
@@ -109,7 +109,7 @@ describe('habit progress utilities', () => {
       energy_return: 0,
       start_date: new Date(),
       goals: additiveGoals,
-      completions: [{ id: 1, timestamp: new Date(), completed_units: 2 }],
+      completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 2 }],
     };
 
     const { currentGoal, nextGoal } = getGoalTier(habit);
@@ -128,7 +128,7 @@ describe('habit progress utilities', () => {
       energy_return: 0,
       start_date: new Date(),
       goals: subtractiveGoals,
-      completions: [{ id: 1, timestamp: new Date(), completed_units: 150 }],
+      completions: [{ id: 'c-2', timestamp: new Date(), completed_units: 150 }],
     };
 
     const { currentGoal, nextGoal } = getGoalTier(habit);

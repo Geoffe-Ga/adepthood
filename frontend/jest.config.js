@@ -23,7 +23,8 @@ module.exports = {
       '@unimodules/.*|' +
       'unimodules|' +
       'sentry-expo|' +
-      'native-base' +
+      'native-base|' +
+      'uuid' +
       ')/)',
   ],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],

@@ -1,5 +1,7 @@
 /* eslint-env jest */
 /* global describe, test, expect */
+import { validate as uuidValidate } from 'uuid';
+
 import type { Habit, Goal } from '../Habits.types';
 import {
   getProgressPercentage,
@@ -59,7 +61,7 @@ describe('HabitUtils', () => {
     const habit: Habit = {
       ...baseHabit,
       goals,
-      completions: [{ id: 1, timestamp: new Date(), completed_units: 7 }],
+      completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 7 }],
     };
     const { currentGoal, nextGoal } = getGoalTier(habit);
     expect(getProgressPercentage(habit, currentGoal, nextGoal)).toBe(100);
@@ -101,7 +103,7 @@ describe('HabitUtils', () => {
     const habit: Habit = {
       ...baseHabit,
       goals,
-      completions: [{ id: 1, timestamp: new Date(), completed_units: 6 }],
+      completions: [{ id: 'c-2', timestamp: new Date(), completed_units: 6 }],
     };
     const { currentGoal, nextGoal } = getGoalTier(habit);
     const pct = getProgressPercentage(habit, currentGoal, nextGoal);
@@ -287,5 +289,23 @@ describe('HabitUtils', () => {
     expect((ninth.getTime() - base.getTime()) / day).toBe(168);
     const tenth = calculateHabitStartDate(base, 9);
     expect((tenth.getTime() - base.getTime()) / day).toBe(210);
+  });
+
+  test('logHabitUnits generates valid UUID string IDs for completions', () => {
+    let habit: Habit = { ...baseHabit, goals: [], completions: [], streak: 0 };
+    habit = logHabitUnits(habit, 1);
+    const completion = habit.completions![0]!;
+    expect(typeof completion.id).toBe('string');
+    expect(uuidValidate(completion.id!)).toBe(true);
+  });
+
+  test('logHabitUnits generates unique IDs for each completion', () => {
+    let habit: Habit = { ...baseHabit, goals: [], completions: [], streak: 0 };
+    habit = logHabitUnits(habit, 1, new Date('2023-01-01'));
+    habit = logHabitUnits(habit, 2, new Date('2023-01-02'));
+    const ids = habit.completions!.map((c) => c.id);
+    expect(ids[0]).not.toBe(ids[1]);
+    expect(uuidValidate(ids[0]!)).toBe(true);
+    expect(uuidValidate(ids[1]!)).toBe(true);
   });
 });

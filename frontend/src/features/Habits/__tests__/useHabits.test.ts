@@ -204,7 +204,7 @@ describe('useHabits', () => {
   it('setNewStartDate resets habit completions and streak', () => {
     const habit = makeHabit({
       streak: 10,
-      completions: [{ id: 1, timestamp: new Date(), completed_units: 1 }],
+      completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
     });
     const { result } = renderHook(() => useHabits());
 

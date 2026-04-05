@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert } from 'react-native';
+import { v4 as uuidv4 } from 'uuid';
 
 import { habits as habitsApi, goalCompletions as goalCompletionsApi } from '../../../api';
 import type { HabitCreatePayload } from '../../../api';
@@ -309,7 +310,7 @@ export const useHabits = (): UseHabitsReturn => {
         habits.map((habit) => {
           if (habit.id === habitId) {
             const newCompletions = days.map((day) => ({
-              id: Math.random(),
+              id: uuidv4(),
               timestamp: day,
               completed_units: 1,
             }));

@@ -1,3 +1,5 @@
+import { v4 as uuidv4 } from 'uuid';
+
 import { colors, STAGE_COLORS, STAGE_ORDER } from '../../design/tokens';
 
 import type { Goal, Habit, Completion, HabitStatsData } from './Habits.types';
@@ -372,7 +374,7 @@ export const logHabitUnits = (habit: Habit, amount: number, date: Date = new Dat
     new Date(habit.last_completion_date).toDateString() === date.toDateString();
 
   const completion: Completion = {
-    id: Math.random(),
+    id: uuidv4(),
     timestamp: date,
     completed_units: amount,
   };

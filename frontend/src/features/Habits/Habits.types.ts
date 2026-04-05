@@ -61,7 +61,7 @@ export interface GoalGroup {
 }
 
 export interface Completion {
-  id?: number;
+  id?: string;
   timestamp: Date;
   completed_units: number;
 }
