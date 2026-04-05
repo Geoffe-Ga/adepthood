@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from http import HTTPStatus
 
 import pytest
@@ -9,8 +10,10 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.course_stage import CourseStage
+from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.stage_progress import StageProgress
+from models.user_practice import UserPractice
 
 
 def _stage_data(stage_number: int = 1, **overrides: object) -> dict[str, object]:
@@ -208,12 +211,32 @@ async def test_get_stage_progress_counts_practice_sessions(
 ) -> None:
     headers, user_id = await _signup(async_client)
     await _seed_stages(db_session, count=1)
-    # Add practice sessions for stage 1
+    # Create a practice and user-practice selection for stage 1
+    practice = Practice(
+        stage_number=1,
+        name="Meditation",
+        description="Sit",
+        instructions="Breathe",
+        default_duration_minutes=10,
+        approved=True,
+    )
+    db_session.add(practice)
+    await db_session.commit()
+    await db_session.refresh(practice)
+    user_practice = UserPractice(
+        user_id=user_id,
+        practice_id=practice.id,
+        stage_number=1,
+        start_date=datetime.now(UTC).date(),
+    )
+    db_session.add(user_practice)
+    await db_session.commit()
+    await db_session.refresh(user_practice)
+    # Add practice sessions linked to the user-practice
     for _ in range(3):
         session = PracticeSession(
             user_id=user_id,
-            practice_id=1,
-            stage_number=1,
+            user_practice_id=user_practice.id,
             duration_minutes=10.0,
         )
         db_session.add(session)

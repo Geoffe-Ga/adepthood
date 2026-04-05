@@ -9,7 +9,11 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.practice import Practice
 from models.practice_session import PracticeSession
+
+_DEFAULT_DURATION = 5.0
+_EXPECTED_SESSION_COUNT = 2
 
 
 async def _signup(
@@ -28,79 +32,174 @@ async def _signup(
     return {"Authorization": f"Bearer {data['token']}"}, data["user_id"]
 
 
-def _session_payload(**overrides: object) -> dict[str, object]:
+async def _create_user_practice(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    headers: dict[str, str],
+    *,
+    stage_number: int = 1,
+) -> int:
+    """Seed a practice and select it, returning the user_practice id."""
+    practice = Practice(
+        stage_number=stage_number,
+        name="Meditation",
+        description="Sit quietly",
+        instructions="Close your eyes and breathe",
+        default_duration_minutes=10,
+        approved=True,
+    )
+    db_session.add(practice)
+    await db_session.commit()
+    await db_session.refresh(practice)
+
+    resp = await async_client.post(
+        "/user-practices/",
+        json={"practice_id": practice.id, "stage_number": stage_number},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    result: int = resp.json()["id"]
+    return result
+
+
+def _session_payload(user_practice_id: int, **overrides: object) -> dict[str, object]:
     """Return a valid practice session creation payload."""
     payload: dict[str, object] = {
-        "practice_id": 2,
-        "stage_number": 1,
-        "duration_minutes": 5.0,
+        "user_practice_id": user_practice_id,
+        "duration_minutes": _DEFAULT_DURATION,
     }
     payload.update(overrides)
     return payload
 
 
-# ── Unauthenticated access ──────────────────────────────────────────────
+# -- Unauthenticated access -------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_create_session_requires_auth(async_client: AsyncClient) -> None:
-    resp = await async_client.post("/practice_sessions/", json=_session_payload())
+    resp = await async_client.post(
+        "/practice-sessions/",
+        json={"user_practice_id": 1, "duration_minutes": _DEFAULT_DURATION},
+    )
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
 
 
 @pytest.mark.asyncio
 async def test_week_count_requires_auth(async_client: AsyncClient) -> None:
-    resp = await async_client.get("/practice_sessions/week_count")
+    resp = await async_client.get("/practice-sessions/week-count")
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
 
 
-# ── Create session ──────────────────────────────────────────────────────
+# -- Create session ----------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_create_session(async_client: AsyncClient) -> None:
-    headers, _user_id = await _signup(async_client)
-    payload = _session_payload(reflection="felt calm")
-    resp = await async_client.post("/practice_sessions/", json=payload, headers=headers)
+async def test_create_session(async_client: AsyncClient, db_session: AsyncSession) -> None:
+    headers, user_id = await _signup(async_client)
+    up_id = await _create_user_practice(async_client, db_session, headers)
+
+    payload = _session_payload(up_id, reflection="felt calm")
+    resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
-    assert data["reflection"] == payload["reflection"]
-    assert data["practice_id"] == payload["practice_id"]
-    assert data["stage_number"] == payload["stage_number"]
-    assert data["duration_minutes"] == payload["duration_minutes"]
+    assert data["reflection"] == "felt calm"
+    assert data["user_practice_id"] == up_id
+    assert data["duration_minutes"] == _DEFAULT_DURATION
     assert data["id"] is not None
-    assert data["user_id"] == _user_id
+    assert data["user_id"] == user_id
 
 
 @pytest.mark.asyncio
-async def test_create_session_without_reflection(async_client: AsyncClient) -> None:
+async def test_create_session_without_reflection(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
     headers, _user_id = await _signup(async_client)
-    resp = await async_client.post("/practice_sessions/", json=_session_payload(), headers=headers)
+    up_id = await _create_user_practice(async_client, db_session, headers)
+
+    resp = await async_client.post(
+        "/practice-sessions/", json=_session_payload(up_id), headers=headers
+    )
     assert resp.status_code == HTTPStatus.OK
     assert resp.json()["reflection"] is None
 
 
-# ── Week count ──────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_create_session_invalid_user_practice(
+    async_client: AsyncClient,
+) -> None:
+    headers, _ = await _signup(async_client)
+    resp = await async_client.post(
+        "/practice-sessions/",
+        json={"user_practice_id": 999, "duration_minutes": _DEFAULT_DURATION},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_create_session_other_users_practice(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    alice_headers, _alice_id = await _signup(async_client, "alice")
+    bob_headers, _ = await _signup(async_client, "bob")
+    up_id = await _create_user_practice(async_client, db_session, alice_headers)
+
+    resp = await async_client.post(
+        "/practice-sessions/",
+        json=_session_payload(up_id),
+        headers=bob_headers,
+    )
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+# -- List sessions -----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_by_user_practice(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers, _user_id = await _signup(async_client)
+    up_id = await _create_user_practice(async_client, db_session, headers)
+
+    await async_client.post("/practice-sessions/", json=_session_payload(up_id), headers=headers)
+    await async_client.post(
+        "/practice-sessions/",
+        json=_session_payload(up_id, duration_minutes=10.0),
+        headers=headers,
+    )
+
+    resp = await async_client.get(
+        "/practice-sessions/", params={"user_practice_id": up_id}, headers=headers
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert len(resp.json()) == _EXPECTED_SESSION_COUNT
+
+
+# -- Week count --------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_week_count_returns_zero_when_empty(async_client: AsyncClient) -> None:
-    headers, _user_id = await _signup(async_client)
-    resp = await async_client.get("/practice_sessions/week_count", headers=headers)
+    headers, _ = await _signup(async_client)
+    resp = await async_client.get("/practice-sessions/week-count", headers=headers)
     assert resp.status_code == HTTPStatus.OK
     assert resp.json()["count"] == 0
 
 
 @pytest.mark.asyncio
-async def test_week_count_counts_current_week(async_client: AsyncClient) -> None:
+async def test_week_count_counts_current_week(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
     headers, _user_id = await _signup(async_client)
-    # Create two sessions via the API
-    await async_client.post("/practice_sessions/", json=_session_payload(), headers=headers)
-    await async_client.post("/practice_sessions/", json=_session_payload(), headers=headers)
-    resp = await async_client.get("/practice_sessions/week_count", headers=headers)
+    up_id = await _create_user_practice(async_client, db_session, headers)
+
+    await async_client.post("/practice-sessions/", json=_session_payload(up_id), headers=headers)
+    await async_client.post("/practice-sessions/", json=_session_payload(up_id), headers=headers)
+
+    resp = await async_client.get("/practice-sessions/week-count", headers=headers)
     assert resp.status_code == HTTPStatus.OK
-    expected_count = 2
-    assert resp.json()["count"] == expected_count
+    assert resp.json()["count"] == _EXPECTED_SESSION_COUNT
 
 
 @pytest.mark.asyncio
@@ -108,34 +207,37 @@ async def test_week_count_ignores_old_sessions(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     headers, user_id = await _signup(async_client)
+    up_id = await _create_user_practice(async_client, db_session, headers)
     # Insert an old session directly into DB (8 days ago)
     old_session = PracticeSession(
         user_id=user_id,
-        practice_id=1,
-        stage_number=1,
-        duration_minutes=5.0,
+        user_practice_id=up_id,
+        duration_minutes=_DEFAULT_DURATION,
         timestamp=datetime.now(UTC) - timedelta(days=8),
     )
     db_session.add(old_session)
     await db_session.commit()
 
-    resp = await async_client.get("/practice_sessions/week_count", headers=headers)
+    resp = await async_client.get("/practice-sessions/week-count", headers=headers)
     assert resp.status_code == HTTPStatus.OK
     assert resp.json()["count"] == 0
 
 
-# ── User isolation ──────────────────────────────────────────────────────
+# -- User isolation ----------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_week_count_scoped_to_user(async_client: AsyncClient) -> None:
+async def test_week_count_scoped_to_user(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
     alice_headers, _alice_id = await _signup(async_client, "alice")
-    bob_headers, _bob_id = await _signup(async_client, "bob")
+    bob_headers, _ = await _signup(async_client, "bob")
+    up_id = await _create_user_practice(async_client, db_session, alice_headers)
 
-    # Alice creates a session
-    await async_client.post("/practice_sessions/", json=_session_payload(), headers=alice_headers)
+    await async_client.post(
+        "/practice-sessions/", json=_session_payload(up_id), headers=alice_headers
+    )
 
-    # Bob's count should be 0
-    resp = await async_client.get("/practice_sessions/week_count", headers=bob_headers)
+    resp = await async_client.get("/practice-sessions/week-count", headers=bob_headers)
     assert resp.status_code == HTTPStatus.OK
     assert resp.json()["count"] == 0

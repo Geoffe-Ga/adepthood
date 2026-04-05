@@ -33,14 +33,12 @@ def test_cross_origin_post_with_credentials() -> None:
     """POST requests with credentials include CORS headers even when auth fails."""
     headers = {"Origin": ALLOWED_ORIGIN}
     payload = {
-        "user_id": 1,
-        "practice_id": 1,
-        "stage_number": 1,
+        "user_practice_id": 1,
         "duration_minutes": 10,
     }
     cookies = {"session": "abc"}
     response = client.post(
-        "/practice_sessions/",
+        "/practice-sessions/",
         json=payload,
         headers=headers,
         cookies=cookies,
