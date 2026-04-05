@@ -82,6 +82,8 @@ Type safety, security hardening, test coverage, documentation.
 | 06 | [Integration + E2E tests](phase-4-06-integration-e2e-tests.md) | Full-stack | ~300 |
 | 07 | [Document magic numbers](phase-4-07-document-magic-numbers.md) | Full-stack | ~65 |
 | 08 | [CORS production fix](phase-4-08-cors-production-fix.md) | Backend | ~40 |
+| 09 | [Complexity & maintainability linters](phase-4-09-complexity-maintainability-linters.md) | Full-stack | ~175 |
+| 10 | [Railway deployment setup](phase-4-10-railway-deployment-setup.md) | Full-stack | ~350 |
 
 ## Dependency Graph
 
@@ -104,6 +106,8 @@ phase-1-03 + phase-1-07 + phase-1-09
 Phase 2 can start after Phase 1 core (01-03, 07)
 Phase 3 can start after Phase 1 complete
 Phase 4 can run in parallel with Phase 3
+phase-4-09 (Complexity linters) independent — can start anytime
+phase-4-08 (CORS fix) → phase-4-10 (Railway deployment)
 
 Phase 3 internal dependencies:
   phase-3-01 (Stages backend)
@@ -126,7 +130,7 @@ Phase 3 internal dependencies:
 
 ## Total Estimated Scope
 
-- **40 issues** across 4 phases (11 + 7 + 14 + 8)
-- **~7,500 LoC** of changes (net, including deletions)
+- **42 issues** across 4 phases (11 + 7 + 14 + 10)
+- **~8,025 LoC** of changes (net, including deletions)
 - Phase 1 is the critical path — everything else depends on it
 - Phase 3 is the largest phase, reflecting 4 features + cross-feature deep links
