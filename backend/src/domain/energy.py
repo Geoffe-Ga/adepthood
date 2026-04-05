@@ -30,16 +30,23 @@ class EnergyPlanItem:
 
 @dataclass(frozen=True)
 class EnergyPlan:
-    """A 21-day schedule of habits and its cumulative energy."""
+    """A schedule of habits covering one stage cycle and its cumulative energy."""
 
     items: list[EnergyPlanItem]
     net_energy: int
 
 
-def generate_plan(habits: Sequence[Habit], start_date: date) -> tuple[EnergyPlan, str]:
-    """Generate a 21-day energy plan cycling through ``habits``.
+# One standard stage cycle in the APTITUDE program. Stages 1-8 each last
+# 21 days (3 weeks). Energy plans are generated for this duration so the
+# user has a full stage's worth of scheduled habits at a time.
+PLAN_DURATION_DAYS = 21
 
-    Returns the plan and a ``reason_code`` for auditability.
+
+def generate_plan(habits: Sequence[Habit], start_date: date) -> tuple[EnergyPlan, str]:
+    """Generate a single-stage energy plan cycling through ``habits``.
+
+    The plan covers :data:`PLAN_DURATION_DAYS` (21 days, one standard stage
+    cycle). Returns the plan and a ``reason_code`` for auditability.
     """
 
     if not habits:
@@ -47,7 +54,7 @@ def generate_plan(habits: Sequence[Habit], start_date: date) -> tuple[EnergyPlan
 
     items: list[EnergyPlanItem] = []
     net_energy = 0
-    for offset in range(21):
+    for offset in range(PLAN_DURATION_DAYS):
         habit = habits[offset % len(habits)]
         items.append(EnergyPlanItem(habit_id=habit.id, date=start_date + timedelta(days=offset)))
         net_energy += habit.net_energy

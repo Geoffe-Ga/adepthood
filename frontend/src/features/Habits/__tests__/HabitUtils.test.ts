@@ -8,6 +8,7 @@ import {
   calculateHabitProgress,
   logHabitUnits,
   calculateHabitStartDate,
+  STAGE_DURATIONS_DAYS,
 } from '../HabitUtils';
 
 describe('HabitUtils', () => {
@@ -267,6 +268,12 @@ describe('HabitUtils', () => {
     expect(habit.streak).toBe(1);
     habit = logHabitUnits(habit, 1, new Date('2023-01-02T09:00:00'));
     expect(habit.streak).toBe(2);
+  });
+
+  test('STAGE_DURATIONS_DAYS sums to 36 weeks (252 days)', () => {
+    expect(STAGE_DURATIONS_DAYS).toHaveLength(10);
+    const totalDays = STAGE_DURATIONS_DAYS.reduce((sum, d) => sum + d, 0);
+    expect(totalDays).toBe(36 * 7);
   });
 
   test('calculateHabitStartDate offsets correctly', () => {

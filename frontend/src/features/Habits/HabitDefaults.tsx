@@ -1,5 +1,18 @@
 import type { Habit } from './Habits.types';
 
+/**
+ * Default habit definitions for the APTITUDE onboarding flow.
+ *
+ * Energy values use a 1–10 scale where:
+ * - **energy_cost** represents the effort/willpower required to perform the
+ *   habit (1 = trivial, 10 = extremely demanding).
+ * - **energy_return** represents the wellbeing/vitality gained after
+ *   performing the habit (1 = negligible benefit, 10 = transformative).
+ *
+ * A habit with `energy_return > energy_cost` yields a net positive energy
+ * contribution to the user's daily balance, encouraging sustainable
+ * habit-building. The net energy for each habit is `energy_return - energy_cost`.
+ */
 export const HABIT_DEFAULTS: Habit[] = [
   {
     id: 1,

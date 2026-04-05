@@ -20,7 +20,12 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 _JWT_ALGORITHM = "HS256"
+
+# JWT token lifetime. One hour balances security (limits the window for a
+# stolen token to be misused) with UX (a typical session lasts under an
+# hour, so most users won't be interrupted by forced re-authentication).
 _TOKEN_TTL = timedelta(hours=1)
+
 _MIN_PASSWORD_LENGTH = 8
 
 
@@ -42,6 +47,9 @@ class AuthResponse(BaseModel):
 
 
 def _hash_password(password: str) -> str:
+    # 12 rounds of bcrypt hashing (~250 ms on modern hardware). This is the
+    # OWASP-recommended minimum; it makes brute-force attacks prohibitively
+    # expensive while keeping login latency acceptable for users.
     hashed: bytes = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12))
     return hashed.decode("utf-8")
 
