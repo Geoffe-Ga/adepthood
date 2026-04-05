@@ -219,9 +219,7 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: Habi
                 testID="marker-low"
                 onPressIn={() => setTooltip('low')}
                 onPressOut={() => setTooltip(null)}
-                // @ts-ignore react-native-web hover props
                 onMouseEnter={() => setTooltip('low')}
-                // @ts-ignore react-native-web hover props
                 onMouseLeave={() => setTooltip(null)}
                 style={{
                   width: 12,
@@ -285,9 +283,7 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: Habi
                 testID="marker-clear"
                 onPressIn={() => setTooltip('clear')}
                 onPressOut={() => setTooltip(null)}
-                // @ts-ignore react-native-web hover props
                 onMouseEnter={() => setTooltip('clear')}
-                // @ts-ignore react-native-web hover props
                 onMouseLeave={() => setTooltip(null)}
                 style={{
                   width: 12,
@@ -351,9 +347,7 @@ export const HabitTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: Habi
                 testID="marker-stretch"
                 onPressIn={() => setTooltip('stretch')}
                 onPressOut={() => setTooltip(null)}
-                // @ts-ignore react-native-web hover props
                 onMouseEnter={() => setTooltip('stretch')}
-                // @ts-ignore react-native-web hover props
                 onMouseLeave={() => setTooltip(null)}
                 style={{
                   width: 12,

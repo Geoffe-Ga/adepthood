@@ -36,7 +36,7 @@ const sampleHabit: Habit = {
   ],
   completions: [
     {
-      id: 1,
+      id: 'c-1',
       timestamp: new Date('2024-06-10T08:30:00.000Z'),
       completed_units: 15,
     },

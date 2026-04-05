@@ -467,16 +467,80 @@ export const course = {
   },
 };
 
-// Practice session types and client
-export type PracticeSessionCreate = components['schemas']['PracticeSessionCreate'];
-export type PracticeSession = components['schemas']['PracticeSession'];
-export const practice = {
-  log(session: PracticeSessionCreate, token?: string): Promise<PracticeSession> {
-    return request<PracticeSession>('/practice_sessions', {
+// Practice types and client
+
+export interface PracticeItem {
+  id: number;
+  stage_number: number;
+  name: string;
+  description: string;
+  instructions: string;
+  default_duration_minutes: number;
+  submitted_by_user_id: number | null;
+  approved: boolean;
+}
+
+export interface UserPractice {
+  id: number;
+  user_id: number;
+  practice_id: number;
+  stage_number: number;
+  start_date: string;
+  end_date: string | null;
+}
+
+export interface UserPracticeCreate {
+  practice_id: number;
+  stage_number: number;
+}
+
+export interface PracticeSessionCreate {
+  user_practice_id: number;
+  duration_minutes: number;
+  reflection?: string | null;
+}
+
+export interface PracticeSessionResponse {
+  id: number;
+  user_id: number;
+  user_practice_id: number;
+  duration_minutes: number;
+  timestamp: string;
+  reflection: string | null;
+}
+
+export interface WeekCountResponse {
+  count: number;
+}
+
+export const practices = {
+  list(stageNumber: number, token?: string): Promise<PracticeItem[]> {
+    return request<PracticeItem[]>(`/practices/?stage_number=${stageNumber}`, { token });
+  },
+  get(practiceId: number, token?: string): Promise<PracticeItem> {
+    return request<PracticeItem>(`/practices/${practiceId}`, { token });
+  },
+};
+
+export const userPractices = {
+  create(payload: UserPracticeCreate, token?: string): Promise<UserPractice> {
+    return request<UserPractice>('/user-practices/', { method: 'POST', body: payload, token });
+  },
+  list(token?: string): Promise<UserPractice[]> {
+    return request<UserPractice[]>('/user-practices/', { token });
+  },
+};
+
+export const practiceSessions = {
+  create(payload: PracticeSessionCreate, token?: string): Promise<PracticeSessionResponse> {
+    return request<PracticeSessionResponse>('/practice-sessions/', {
       method: 'POST',
-      body: session,
+      body: payload,
       token,
     });
+  },
+  weekCount(token?: string): Promise<WeekCountResponse> {
+    return request<WeekCountResponse>('/practice-sessions/week-count', { token });
   },
 };
 
@@ -524,7 +588,9 @@ export default {
   prompts,
   stages,
   course,
-  practice,
+  practices,
+  userPractices,
+  practiceSessions,
   auth,
   energy,
   setTokenGetter,

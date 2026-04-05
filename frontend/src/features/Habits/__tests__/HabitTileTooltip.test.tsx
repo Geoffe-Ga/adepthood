@@ -45,7 +45,7 @@ const habit: Habit = {
       is_additive: true,
     },
   ],
-  completions: [{ id: 1, timestamp: new Date(), completed_units: 5 }],
+  completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 5 }],
 };
 
 describe('HabitTile tooltips', () => {

@@ -2,7 +2,6 @@ import { create } from 'zustand';
 
 import type { Habit } from '../features/Habits/Habits.types';
 
-/* eslint-disable no-unused-vars */
 export interface HabitStoreState {
   habits: Habit[];
   loading: boolean;
@@ -14,7 +13,6 @@ export interface HabitStoreState {
   updateHabit: (_habit: Habit) => void;
   removeHabit: (_habitId: number) => void;
 }
-/* eslint-enable no-unused-vars */
 
 export const useHabitStore = create<HabitStoreState>((set) => ({
   habits: [],

@@ -371,7 +371,6 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
             onEmojiSelected={(emoji) => updateHabitIcon(selectedHabitIndex, emoji)}
             showSearchBar
             columns={6}
-            // @ts-ignore react-native-emoji-selector typing
             emojiSize={28}
           />
         </View>

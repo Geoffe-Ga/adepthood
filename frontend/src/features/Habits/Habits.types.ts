@@ -1,7 +1,8 @@
-/* eslint-disable no-unused-vars */
 //------------------
 // Type Definitions
 //------------------
+
+export type HabitScreenMode = 'normal' | 'stats' | 'quickLog' | 'edit';
 
 export interface Habit {
   // --- Fields from API (matches backend HabitWithGoals schema) ---
@@ -61,7 +62,7 @@ export interface GoalGroup {
 }
 
 export interface Completion {
-  id?: number;
+  id?: string;
   timestamp: Date;
   completed_units: number;
 }

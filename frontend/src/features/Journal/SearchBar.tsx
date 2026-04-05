@@ -6,7 +6,6 @@ import styles from './Journal.styles';
 const DEBOUNCE_DELAY_MS = 300;
 
 interface SearchBarProps {
-  // eslint-disable-next-line no-unused-vars
   onSearch: (_query: string) => void;
   resultCount?: number;
   searchQuery?: string;

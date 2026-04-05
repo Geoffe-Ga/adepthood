@@ -29,7 +29,6 @@ const INITIAL_STATE: ModalState = {
   emojiPicker: false,
 };
 
-/* eslint-disable no-unused-vars */
 export interface ModalCoordinator extends ModalState {
   menu: boolean;
   open: (_name: ModalName) => void;
@@ -37,7 +36,6 @@ export interface ModalCoordinator extends ModalState {
   closeAll: () => void;
   toggleMenu: () => void;
 }
-/* eslint-enable no-unused-vars */
 
 export const useModalCoordinator = (): ModalCoordinator => {
   const [modals, setModals] = useState<ModalState>(INITIAL_STATE);

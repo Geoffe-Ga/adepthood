@@ -23,12 +23,10 @@ const CONTENT_TYPE_COLORS: Record<string, string> = {
 const DEFAULT_ICON = '📄';
 const DEFAULT_COLOR = colors.background.accent;
 
-/* eslint-disable no-unused-vars */
 interface ContentCardProps {
   item: ContentItem;
-  onPress: (item: ContentItem) => void;
+  onPress: (_item: ContentItem) => void;
 }
-/* eslint-enable no-unused-vars */
 
 const ContentCard = ({ item, onPress }: ContentCardProps): React.JSX.Element => {
   const icon = CONTENT_TYPE_ICONS[item.content_type] ?? DEFAULT_ICON;

@@ -13,10 +13,10 @@ if (Platform.OS !== 'web') {
 
 export interface DatePickerProps {
   value: string;
-  onChange: (value: string) => void; // eslint-disable-line no-unused-vars
+  onChange: (_value: string) => void;
   minDate?: string;
   maxDate?: string;
-  disabledDate?: (date: Date) => boolean; // eslint-disable-line no-unused-vars
+  disabledDate?: (_date: Date) => boolean;
   locale?: string;
   mode?: 'scaffoldingStart' | 'courseStart';
   stageColor?: string;

@@ -19,7 +19,6 @@ const TAG_CHIPS: TagChip[] = [
 
 interface TagFilterProps {
   activeTag: JournalTag | null;
-  // eslint-disable-next-line no-unused-vars
   onSelectTag: (_tag: JournalTag | null) => void;
 }
 
