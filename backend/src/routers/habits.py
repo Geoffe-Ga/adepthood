@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
 
 from database import get_session
+from errors import not_found
 from models.habit import Habit
 from routers.auth import get_current_user
 from schemas.habit import Habit as HabitSchema
@@ -59,7 +60,7 @@ async def get_habit(
     result = await session.execute(statement)
     habit = result.scalars().first()
     if habit is None or habit.user_id != current_user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Habit not found")
+        raise not_found("habit")
     return habit
 
 
@@ -73,7 +74,7 @@ async def update_habit(
     """Replace an existing habit's fields."""
     habit = await session.get(Habit, habit_id)
     if habit is None or habit.user_id != current_user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Habit not found")
+        raise not_found("habit")
     for key, value in payload.model_dump().items():
         setattr(habit, key, value)
     session.add(habit)
@@ -91,7 +92,7 @@ async def delete_habit(
     """Delete a habit. Returns 204 No Content on success."""
     habit = await session.get(Habit, habit_id)
     if habit is None or habit.user_id != current_user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Habit not found")
+        raise not_found("habit")
     await session.delete(habit)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -55,6 +55,13 @@ def test_idempotency_cache_evicts_when_full() -> None:
     assert "c" in small_cache
 
 
+def test_empty_habits_returns_400() -> None:
+    """POST with empty habits list should return 400, not 500."""
+    res = client.post("/v1/energy/plan", json={"habits": [], "start_date": "2024-01-01"})
+    assert res.status_code == 400  # noqa: PLR2004
+    assert res.json()["detail"] == "habits_must_not_be_empty"
+
+
 def test_idempotency_miss_after_cache_clear() -> None:
     """After clearing the cache, duplicate keys should recompute."""
     with patch.object(energy, "_idempotency_cache", TTLCache(maxsize=1000, ttl=3600)):

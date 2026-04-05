@@ -56,7 +56,7 @@ async def test_signup_duplicate_email_returns_400(async_client: AsyncClient) -> 
         },
     )
     assert resp.status_code == HTTPStatus.BAD_REQUEST
-    assert "user exists" in resp.json()["detail"]
+    assert resp.json()["detail"] == "user_already_exists"
 
 
 @pytest.mark.asyncio
@@ -66,7 +66,7 @@ async def test_signup_short_password_returns_400(async_client: AsyncClient) -> N
         json={"email": "short@example.com", "password": "short"},  # pragma: allowlist secret
     )
     assert resp.status_code == HTTPStatus.BAD_REQUEST
-    assert "at least 8 characters" in resp.json()["detail"]
+    assert resp.json()["detail"] == "password_too_short"
 
 
 # ── Login ───────────────────────────────────────────────────────────────

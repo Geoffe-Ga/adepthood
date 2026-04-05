@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from database import get_session
+from errors import bad_request
 from models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -64,13 +65,10 @@ async def signup(
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> AuthResponse:
     if len(payload.password) < _MIN_PASSWORD_LENGTH:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"password must be at least {_MIN_PASSWORD_LENGTH} characters",
-        )
+        raise bad_request("password_too_short")
     result = await session.execute(select(User).where(User.email == payload.email))
     if result.scalars().first() is not None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "user exists")
+        raise bad_request("user_already_exists")
 
     user = User(
         email=payload.email,
@@ -93,7 +91,7 @@ async def login(
     result = await session.execute(select(User).where(User.email == payload.email))
     user = result.scalars().first()
     if user is None or not _verify_password(payload.password, user.password_hash):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials")
 
     assert user.id is not None
     token = _create_token(user.id)
@@ -102,13 +100,17 @@ async def login(
 
 def get_current_user(authorization: str | None = Header(default=None)) -> int:
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing_token")
     token = authorization.split(" ", 1)[1]
     try:
         payload = jwt.decode(token, _get_secret_key(), algorithms=[_JWT_ALGORITHM])
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "expired token")  # noqa: B904
-    except jwt.InvalidTokenError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token")  # noqa: B904
+    except jwt.ExpiredSignatureError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="expired_token"
+        ) from exc
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_token"
+        ) from exc
     user_id = int(payload["sub"])
     return user_id
