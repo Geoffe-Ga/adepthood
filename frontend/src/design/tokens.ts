@@ -64,7 +64,7 @@ export const STAGE_COLORS: Record<string, string> = {
   'Clear Light': '#ffffff',
 };
 
-export const STAGE_ORDER = [
+export const STAGE_ORDER: readonly string[] = [
   'Beige',
   'Purple',
   'Red',
@@ -75,7 +75,7 @@ export const STAGE_ORDER = [
   'Turquoise',
   'Ultraviolet',
   'Clear Light',
-] as const;
+];
 
 /** Colors for the map spiral visualization (indexed by stageNumber - 1). */
 export const MAP_STAGE_COLORS = [

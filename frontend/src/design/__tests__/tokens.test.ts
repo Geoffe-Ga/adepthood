@@ -1,6 +1,17 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-import { colors, spacing, radius, shadows, typography, STAGE_COLORS, STAGE_ORDER } from '../tokens';
+import {
+  BORDER_RADIUS,
+  MAP_STAGE_COLORS,
+  SPACING,
+  STAGE_COLORS,
+  STAGE_ORDER,
+  colors,
+  radius,
+  shadows,
+  spacing,
+  typography,
+} from '../tokens';
 
 describe('design tokens', () => {
   describe('colors', () => {
@@ -82,11 +93,9 @@ describe('design tokens', () => {
   });
 
   describe('MAP_STAGE_COLORS', () => {
-    it('is re-exported from tokens for the map spiral', () => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const tokens = require('../tokens');
-      expect(tokens.MAP_STAGE_COLORS).toHaveLength(10);
-      expect(tokens.MAP_STAGE_COLORS[0]).toBe('#7f1d1d');
+    it('exports colors for the map spiral', () => {
+      expect(MAP_STAGE_COLORS).toHaveLength(10);
+      expect(MAP_STAGE_COLORS[0]).toBe('#7f1d1d');
     });
   });
 
@@ -104,14 +113,12 @@ describe('design tokens', () => {
     });
 
     it('exports named spacing constants', () => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const tokens = require('../tokens');
-      expect(tokens.SPACING.xs).toBe(4);
-      expect(tokens.SPACING.sm).toBe(8);
-      expect(tokens.SPACING.md).toBe(12);
-      expect(tokens.SPACING.lg).toBe(16);
-      expect(tokens.SPACING.xl).toBe(20);
-      expect(tokens.SPACING.xxl).toBe(30);
+      expect(SPACING.xs).toBe(4);
+      expect(SPACING.sm).toBe(8);
+      expect(SPACING.md).toBe(12);
+      expect(SPACING.lg).toBe(16);
+      expect(SPACING.xl).toBe(20);
+      expect(SPACING.xxl).toBe(30);
     });
   });
 
@@ -123,15 +130,13 @@ describe('design tokens', () => {
     });
 
     it('exports extended radius values for habits UI', () => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const tokens = require('../tokens');
-      expect(tokens.BORDER_RADIUS.xs).toBe(2);
-      expect(tokens.BORDER_RADIUS.sm).toBe(4);
-      expect(tokens.BORDER_RADIUS.md).toBe(8);
-      expect(tokens.BORDER_RADIUS.lg).toBe(12);
-      expect(tokens.BORDER_RADIUS.xl).toBe(15);
-      expect(tokens.BORDER_RADIUS.xxl).toBe(30);
-      expect(tokens.BORDER_RADIUS.circle).toBe(9999);
+      expect(BORDER_RADIUS.xs).toBe(2);
+      expect(BORDER_RADIUS.sm).toBe(4);
+      expect(BORDER_RADIUS.md).toBe(8);
+      expect(BORDER_RADIUS.lg).toBe(12);
+      expect(BORDER_RADIUS.xl).toBe(15);
+      expect(BORDER_RADIUS.xxl).toBe(30);
+      expect(BORDER_RADIUS.circle).toBe(9999);
     });
   });
 

@@ -1,11 +1,6 @@
 import { Platform, StyleSheet, type ViewStyle } from 'react-native';
 
-import {
-  colors as COLORS,
-  shadows as SHADOWS,
-  SPACING,
-  BORDER_RADIUS,
-} from '../../design/tokens';
+import { colors as COLORS, shadows as SHADOWS, SPACING, BORDER_RADIUS } from '../../design/tokens';
 
 export { colors as COLORS } from '../../design/tokens';
 
