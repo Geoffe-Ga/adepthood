@@ -1,11 +1,11 @@
 // frontend/features/Map/stageData.ts
 
-import { MAP_STAGE_COLORS } from '../../design/tokens';
-
 /**
- * Static placeholder data for the ten APTITUDE stages.
- * In a full implementation these would be fetched from the backend `CourseStage` model.
+ * Type definitions and static hotspot layout for the Map screen.
+ * Stage content is fetched from the backend API — only tap-target
+ * geometry remains hardcoded since it maps to the background artwork.
  */
+
 export interface Hotspot {
   top: number;
   left: number;
@@ -19,16 +19,25 @@ export interface StageData {
   subtitle: string;
   stageNumber: number;
   progress: number; // 0–1 completion percentage
-  goals: string[];
-  practices: string[];
   color: string;
+  isUnlocked: boolean;
+  // Rich metadata from backend
+  category: string;
+  aspect: string;
+  spiralDynamicsColor: string;
+  growingUpStage: string;
+  divineGenderPolarity: string;
+  relationshipToFreeWill: string;
+  freeWillDescription: string;
+  overviewUrl: string;
   hotspots: Hotspot[]; // areas that respond to taps
 }
 
 // Percentage-based hotspot layout matching the spiral image. Each stage has a
 // tappable region over the colored text on the left and another over its spiral
 // arrow. Arrows alternate sides as the spiral winds; stage 9 has two arrows.
-const HOTSPOTS: Hotspot[][] = [
+// Indexed 0–9 where index 0 = stage 10 (top) and index 9 = stage 1 (bottom).
+export const HOTSPOTS: readonly Hotspot[][] = [
   [
     { top: 4, left: 4, width: 32, height: 6 },
     { top: 4, left: 34, width: 40, height: 6 },
@@ -72,21 +81,5 @@ const HOTSPOTS: Hotspot[][] = [
   ],
 ] as const;
 
-// Stages are ordered from top (stage 10) to bottom (stage 1) to match the
-// background artwork where the spiral begins with 10 at the top and ends with
-// 1 at the bottom.
-export const STAGES: StageData[] = Array.from({ length: 10 }, (_, index) => {
-  const stageNumber = 10 - index;
-  return {
-    id: stageNumber,
-    title: `Stage ${stageNumber}`,
-    subtitle: `Subtitle ${stageNumber}`,
-    stageNumber,
-    // Simple demo progress – first stage partially complete, others locked
-    progress: stageNumber === 1 ? 0.5 : 0,
-    goals: [`Goal for stage ${stageNumber}`],
-    practices: [`Practice for stage ${stageNumber}`],
-    color: MAP_STAGE_COLORS[stageNumber - 1]!,
-    hotspots: HOTSPOTS[index]!,
-  };
-});
+/** Total number of APTITUDE stages. */
+export const STAGE_COUNT = 10;

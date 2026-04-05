@@ -14,9 +14,9 @@ import { useAuth } from '@/context/AuthContext';
 
 export type RootTabParamList = {
   Habits: undefined;
-  Practice: undefined;
-  Course: undefined;
-  Journal: undefined;
+  Practice: { stageNumber?: number } | undefined;
+  Course: { stageNumber?: number } | undefined;
+  Journal: { stageReflection?: boolean; stageNumber?: number } | undefined;
   Map: undefined;
 };
 

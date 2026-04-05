@@ -407,12 +407,23 @@ export interface Stage {
   is_unlocked: boolean;
   progress: number;
 }
+
+export interface StageProgressDetail {
+  habits_progress: number;
+  practice_sessions_completed: number;
+  course_items_completed: number;
+  overall_progress: number;
+}
+
 export const stages = {
   list(token?: string): Promise<Stage[]> {
     return request<Stage[]>('/stages', { token });
   },
   get(stageNumber: number, token?: string): Promise<Stage> {
     return request<Stage>(`/stages/${stageNumber}`, { token });
+  },
+  progress(stageNumber: number, token?: string): Promise<StageProgressDetail> {
+    return request<StageProgressDetail>(`/stages/${stageNumber}/progress`, { token });
   },
 };
 
