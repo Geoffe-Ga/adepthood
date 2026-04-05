@@ -315,10 +315,65 @@ export const prompts = {
 export interface Stage {
   id: number;
   title: string;
+  subtitle: string;
+  stage_number: number;
+  overview_url: string;
+  category: string;
+  aspect: string;
+  spiral_dynamics_color: string;
+  growing_up_stage: string;
+  divine_gender_polarity: string;
+  relationship_to_free_will: string;
+  free_will_description: string;
+  is_unlocked: boolean;
+  progress: number;
 }
 export const stages = {
   list(token?: string): Promise<Stage[]> {
     return request<Stage[]>('/stages', { token });
+  },
+  get(stageNumber: number, token?: string): Promise<Stage> {
+    return request<Stage>(`/stages/${stageNumber}`, { token });
+  },
+};
+
+// Course content types and client
+export interface ContentItem {
+  id: number;
+  title: string;
+  content_type: string;
+  release_day: number;
+  url: string | null;
+  is_locked: boolean;
+  is_read: boolean;
+}
+
+export interface CourseProgress {
+  total_items: number;
+  read_items: number;
+  progress_percent: number;
+  next_unlock_day: number | null;
+}
+
+export interface ContentCompletion {
+  id: number;
+  user_id: number;
+  content_id: number;
+  completed_at: string;
+}
+
+export const course = {
+  stageContent(stageNumber: number, token?: string): Promise<ContentItem[]> {
+    return request<ContentItem[]>(`/course/stages/${stageNumber}/content`, { token });
+  },
+  markRead(contentId: number, token?: string): Promise<ContentCompletion> {
+    return request<ContentCompletion>(`/course/content/${contentId}/mark-read`, {
+      method: 'POST',
+      token,
+    });
+  },
+  stageProgress(stageNumber: number, token?: string): Promise<CourseProgress> {
+    return request<CourseProgress>(`/course/stages/${stageNumber}/progress`, { token });
   },
 };
 
@@ -376,6 +431,7 @@ export default {
   journal,
   prompts,
   stages,
+  course,
   practice,
   auth,
   energy,
