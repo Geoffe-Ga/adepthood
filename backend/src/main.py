@@ -4,7 +4,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
@@ -152,12 +152,14 @@ def read_root() -> dict[str, str]:
 async def health_check(
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, str]:
-    """Health check that validates database connectivity."""
+    """Health check that validates database connectivity.
+
+    Returns a 200 with ``{"status": "healthy", "database": "connected"}`` when
+    the database is reachable.  Railway pings this endpoint to determine
+    service health; a 503 signals an unhealthy container.
+    """
     try:
         await session.execute(text("SELECT 1"))
-        return {"status": "ok", "database": "connected"}
-    except Exception:
-        return JSONResponse(  # type: ignore[return-value]
-            status_code=503,
-            content={"status": "error", "database": "disconnected"},
-        )
+        return {"status": "healthy", "database": "connected"}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc

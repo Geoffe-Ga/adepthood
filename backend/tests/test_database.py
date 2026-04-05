@@ -7,6 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from database import normalize_database_url
 from main import app
 
 
@@ -16,7 +17,7 @@ async def test_health_returns_db_status(async_client: AsyncClient) -> None:
     response = await async_client.get("/health")
     assert response.status_code == HTTPStatus.OK
     data = response.json()
-    assert data["status"] == "ok"
+    assert data["status"] == "healthy"
     assert data["database"] == "connected"
 
 
@@ -35,6 +36,34 @@ async def test_get_session_yields_session(db_session: AsyncSession) -> None:
     """The test fixture should provide a working async session."""
     result = await db_session.execute(text("SELECT 1"))
     assert result.scalar() == 1
+
+
+def test_normalize_database_url_adds_asyncpg_prefix() -> None:
+    """Railway provides postgresql:// — we need postgresql+asyncpg://."""
+    raw = "postgresql://user:pass@host:5432/dbname"  # pragma: allowlist secret
+    assert (
+        normalize_database_url(raw) == "postgresql+asyncpg://user:pass@host:5432/dbname"
+    )  # pragma: allowlist secret
+
+
+def test_normalize_database_url_preserves_asyncpg_prefix() -> None:
+    """URLs already using asyncpg should remain unchanged."""
+    raw = "postgresql+asyncpg://user:pass@host:5432/dbname"  # pragma: allowlist secret
+    assert normalize_database_url(raw) == raw
+
+
+def test_normalize_database_url_preserves_sqlite() -> None:
+    """SQLite URLs for local dev/testing should pass through unchanged."""
+    raw = "sqlite+aiosqlite:///:memory:"
+    assert normalize_database_url(raw) == raw
+
+
+def test_normalize_database_url_handles_postgres_shorthand() -> None:
+    """Some providers use postgres:// instead of postgresql://."""
+    raw = "postgres://user:pass@host:5432/dbname"  # pragma: allowlist secret
+    assert (
+        normalize_database_url(raw) == "postgresql+asyncpg://user:pass@host:5432/dbname"
+    )  # pragma: allowlist secret
 
 
 @pytest.mark.asyncio
