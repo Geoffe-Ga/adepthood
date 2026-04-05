@@ -11,6 +11,57 @@ interface SearchBarProps {
   searchQuery?: string;
 }
 
+const CollapsedSearchBar = ({ onToggle }: { onToggle: () => void }): React.JSX.Element => (
+  <View style={styles.searchBarCollapsed}>
+    <TouchableOpacity testID="search-toggle" onPress={onToggle} style={styles.searchToggle}>
+      <Text style={styles.searchIcon}>?</Text>
+    </TouchableOpacity>
+  </View>
+);
+
+interface ExpandedSearchBarProps {
+  text: string;
+  onChangeText: (_value: string) => void;
+  onToggle: () => void;
+  onClear: () => void;
+  searchQuery?: string;
+  resultCount?: number;
+}
+
+const ExpandedSearchBarContent = ({
+  text,
+  onChangeText,
+  onToggle,
+  onClear,
+  searchQuery,
+  resultCount,
+}: ExpandedSearchBarProps): React.JSX.Element => (
+  <View style={styles.searchBarExpanded}>
+    <View style={styles.searchInputRow}>
+      <TouchableOpacity testID="search-toggle" onPress={onToggle} style={styles.searchToggle}>
+        <Text style={styles.searchIcon}>?</Text>
+      </TouchableOpacity>
+      <TextInput
+        testID="search-input"
+        style={styles.searchTextInput}
+        value={text}
+        onChangeText={onChangeText}
+        placeholder="Search journal..."
+        placeholderTextColor="#999"
+        autoFocus
+      />
+      <TouchableOpacity testID="search-clear" onPress={onClear} style={styles.searchClear}>
+        <Text style={styles.searchClearText}>X</Text>
+      </TouchableOpacity>
+    </View>
+    {searchQuery && resultCount != null && (
+      <Text style={styles.searchResultCount}>
+        {resultCount} results for &apos;{searchQuery}&apos;
+      </Text>
+    )}
+  </View>
+);
+
 const SearchBar = ({ onSearch, resultCount, searchQuery }: SearchBarProps): React.JSX.Element => {
   const [expanded, setExpanded] = useState(!!searchQuery);
   const [text, setText] = useState(searchQuery ?? '');
@@ -45,40 +96,18 @@ const SearchBar = ({ onSearch, resultCount, searchQuery }: SearchBarProps): Reac
   }, [onSearch]);
 
   if (!expanded) {
-    return (
-      <View style={styles.searchBarCollapsed}>
-        <TouchableOpacity testID="search-toggle" onPress={handleToggle} style={styles.searchToggle}>
-          <Text style={styles.searchIcon}>?</Text>
-        </TouchableOpacity>
-      </View>
-    );
+    return <CollapsedSearchBar onToggle={handleToggle} />;
   }
 
   return (
-    <View style={styles.searchBarExpanded}>
-      <View style={styles.searchInputRow}>
-        <TouchableOpacity testID="search-toggle" onPress={handleToggle} style={styles.searchToggle}>
-          <Text style={styles.searchIcon}>?</Text>
-        </TouchableOpacity>
-        <TextInput
-          testID="search-input"
-          style={styles.searchTextInput}
-          value={text}
-          onChangeText={handleChangeText}
-          placeholder="Search journal..."
-          placeholderTextColor="#999"
-          autoFocus
-        />
-        <TouchableOpacity testID="search-clear" onPress={handleClear} style={styles.searchClear}>
-          <Text style={styles.searchClearText}>X</Text>
-        </TouchableOpacity>
-      </View>
-      {searchQuery && resultCount != null && (
-        <Text style={styles.searchResultCount}>
-          {resultCount} results for &apos;{searchQuery}&apos;
-        </Text>
-      )}
-    </View>
+    <ExpandedSearchBarContent
+      text={text}
+      onChangeText={handleChangeText}
+      onToggle={handleToggle}
+      onClear={handleClear}
+      searchQuery={searchQuery}
+      resultCount={resultCount}
+    />
   );
 };
 

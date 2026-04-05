@@ -6,7 +6,9 @@ mypy
 pre-commit
 pytest
 pytest-cov
+radon>=6.0
 ruff
+xenon>=0.9
 pydantic[mypy]
 sqlmodel
 types-requests

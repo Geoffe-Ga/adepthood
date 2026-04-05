@@ -78,38 +78,58 @@ CONTENT_DEFINITIONS: list[dict[str, str | int]] = [
 ]
 
 
+def _build_content_item(
+    definition: dict[str, str | int],
+    stage_map: dict[int, int],
+    existing_titles: set[tuple[int, str]],
+) -> StageContent | None:
+    """Create a StageContent from a definition.
+
+    Returns None if it already exists or the stage is missing.
+    """
+    stage_num = int(definition["stage_number"])
+    course_stage_id = stage_map.get(stage_num)
+    if course_stage_id is None:
+        return None
+
+    if (course_stage_id, definition["title"]) in existing_titles:
+        return None
+
+    return StageContent(
+        course_stage_id=course_stage_id,
+        title=str(definition["title"]),
+        content_type=str(definition["content_type"]),
+        release_day=int(definition["release_day"]),
+        url=str(definition["url"]),
+    )
+
+
+async def _load_stage_map(session: AsyncSession) -> dict[int, int]:
+    """Build a map of stage_number → CourseStage.id from the database."""
+    result = await session.execute(select(CourseStage))
+    return {s.stage_number: s.id for s in result.scalars().all() if s.id is not None}
+
+
+async def _load_existing_titles(session: AsyncSession) -> set[tuple[int, str]]:
+    """Return set of (course_stage_id, title) pairs already in the database."""
+    result = await session.execute(select(StageContent))
+    return {(sc.course_stage_id, sc.title) for sc in result.scalars().all()}
+
+
 async def seed_content(session: AsyncSession) -> int:
     """Insert placeholder content for stages 1-3 if not already present.
 
     Returns the number of items inserted.
     """
-    # Build a map of stage_number → CourseStage.id
-    result = await session.execute(select(CourseStage))
-    stage_map = {s.stage_number: s.id for s in result.scalars().all()}
-
-    # Check existing content to avoid duplicates
-    existing_result = await session.execute(select(StageContent))
-    existing_titles = {(sc.course_stage_id, sc.title) for sc in existing_result.scalars().all()}
+    stage_map = await _load_stage_map(session)
+    existing_titles = await _load_existing_titles(session)
 
     inserted = 0
     for definition in CONTENT_DEFINITIONS:
-        stage_num = int(definition["stage_number"])
-        course_stage_id = stage_map.get(stage_num)
-        if course_stage_id is None:
-            continue
-
-        if (course_stage_id, definition["title"]) in existing_titles:
-            continue
-
-        content = StageContent(
-            course_stage_id=course_stage_id,
-            title=str(definition["title"]),
-            content_type=str(definition["content_type"]),
-            release_day=int(definition["release_day"]),
-            url=str(definition["url"]),
-        )
-        session.add(content)
-        inserted += 1
+        content = _build_content_item(definition, stage_map, existing_titles)
+        if content is not None:
+            session.add(content)
+            inserted += 1
 
     if inserted:
         await session.commit()

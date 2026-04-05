@@ -17,17 +17,15 @@ const KEEP_AWAKE_TAG = 'practice-timer';
 const TIMER_INTERVAL_MS = 1000;
 const SECONDS_PER_MINUTE = 60;
 
-/** Play a bundled sound asset. Errors are silently swallowed to avoid crashing the timer. */
 async function playSound(source: number): Promise<void> {
   try {
     const { sound } = await Audio.Sound.createAsync(source);
     await sound.playAsync();
-    // Unload after a short delay to let the sound finish
     setTimeout(() => {
       sound.unloadAsync();
     }, 3000);
   } catch {
-    // Audio playback is best-effort; don't break the timer
+    // best-effort
   }
 }
 
@@ -41,17 +39,13 @@ function formatTime(totalSeconds: number): string {
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
-const PracticeTimer: React.FC<PracticeTimerProps> = ({ durationMinutes, onComplete, onCancel }) => {
-  const totalSeconds = durationMinutes * SECONDS_PER_MINUTE;
-  const halfwaySeconds = Math.floor(totalSeconds / 2);
+// --- Hook: timer state management ---
 
+function useTimerState(totalSeconds: number) {
   const [remaining, setRemaining] = useState(totalSeconds);
   const [state, setState] = useState<TimerState>('idle');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const halfwayPlayedRef = useRef(false);
-
-  const elapsed = totalSeconds - remaining;
-  const progress = totalSeconds > 0 ? elapsed / totalSeconds : 0;
 
   const clearTimer = useCallback(() => {
     if (intervalRef.current !== null) {
@@ -60,22 +54,45 @@ const PracticeTimer: React.FC<PracticeTimerProps> = ({ durationMinutes, onComple
     }
   }, []);
 
+  const elapsed = totalSeconds - remaining;
+  const progress = totalSeconds > 0 ? elapsed / totalSeconds : 0;
+
+  return {
+    remaining,
+    setRemaining,
+    state,
+    setState,
+    intervalRef,
+    halfwayPlayedRef,
+    clearTimer,
+    progress,
+  };
+}
+
+// --- Hook: timer actions ---
+
+function useTimerActions(
+  totalSeconds: number,
+  ts: ReturnType<typeof useTimerState>,
+  onCancel: () => void,
+) {
+  const { setState, setRemaining, halfwayPlayedRef, clearTimer } = ts;
+
   const handleStart = useCallback(() => {
     setState('running');
     halfwayPlayedRef.current = false;
     setRemaining(totalSeconds);
     playSound(SOUND_START);
     activateKeepAwakeAsync(KEEP_AWAKE_TAG);
-  }, [totalSeconds]);
+  }, [totalSeconds, setState, setRemaining, halfwayPlayedRef]);
 
   const handlePause = useCallback(() => {
     setState('paused');
     clearTimer();
-  }, [clearTimer]);
-
+  }, [setState, clearTimer]);
   const handleResume = useCallback(() => {
     setState('running');
-  }, []);
+  }, [setState]);
 
   const handleCancel = useCallback(() => {
     clearTimer();
@@ -84,132 +101,185 @@ const PracticeTimer: React.FC<PracticeTimerProps> = ({ durationMinutes, onComple
     setRemaining(totalSeconds);
     halfwayPlayedRef.current = false;
     onCancel();
-  }, [clearTimer, onCancel, totalSeconds]);
+  }, [clearTimer, setState, setRemaining, halfwayPlayedRef, onCancel, totalSeconds]);
 
-  // Tick effect
+  const tick = useCallback(() => {
+    setRemaining((prev) => (prev - 1 <= 0 ? 0 : prev - 1));
+  }, [setRemaining]);
+
+  return { handleStart, handlePause, handleResume, handleCancel, tick };
+}
+
+// --- Hook: timer effects ---
+
+function useTimerEffects(
+  ts: ReturnType<typeof useTimerState>,
+  tick: () => void,
+  onComplete: (_m: number) => void,
+  durationMinutes: number,
+  totalSeconds: number,
+) {
+  const { state, remaining, clearTimer, setState, intervalRef, halfwayPlayedRef } = ts;
+  const halfwaySeconds = Math.floor(totalSeconds / 2);
+
   useEffect(() => {
     if (state !== 'running') return;
-
-    intervalRef.current = setInterval(() => {
-      setRemaining((prev) => {
-        const next = prev - 1;
-        if (next <= 0) {
-          return 0;
-        }
-        return next;
-      });
-    }, TIMER_INTERVAL_MS);
-
+    intervalRef.current = setInterval(tick, TIMER_INTERVAL_MS);
     return () => {
       clearTimer();
     };
-  }, [state, clearTimer]);
+  }, [state, clearTimer, intervalRef, tick]);
 
-  // Halfway sound effect
   useEffect(() => {
     if (state === 'running' && remaining <= halfwaySeconds && !halfwayPlayedRef.current) {
       halfwayPlayedRef.current = true;
       playSound(SOUND_HALF);
     }
-  }, [remaining, state, halfwaySeconds]);
+  }, [remaining, state, halfwayPlayedRef, halfwaySeconds]);
 
-  // Completion effect
   useEffect(() => {
-    if (state === 'running' && remaining <= 0) {
-      clearTimer();
-      deactivateKeepAwake(KEEP_AWAKE_TAG);
-      setState('completed');
-      playSound(SOUND_END);
-      Vibration.vibrate([0, 200, 100, 200, 100, 200]);
-      onComplete(durationMinutes);
-    }
-  }, [remaining, state, clearTimer, durationMinutes, onComplete]);
+    if (state !== 'running' || remaining > 0) return;
+    clearTimer();
+    deactivateKeepAwake(KEEP_AWAKE_TAG);
+    setState('completed');
+    playSound(SOUND_END);
+    Vibration.vibrate([0, 200, 100, 200, 100, 200]);
+    onComplete(durationMinutes);
+  }, [remaining, state, clearTimer, setState, durationMinutes, onComplete]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       clearTimer();
       deactivateKeepAwake(KEEP_AWAKE_TAG);
     };
   }, [clearTimer]);
+}
+
+// --- Sub-components ---
+
+interface TimerDisplayProps {
+  remaining: number;
+  progress: number;
+  isCompleted: boolean;
+}
+
+const TimerDisplay = ({
+  remaining,
+  progress,
+  isCompleted,
+}: TimerDisplayProps): React.JSX.Element => (
+  <View style={timerStyles.ringContainer}>
+    <View style={timerStyles.ring} testID="timer-ring">
+      <View style={timerStyles.timeDisplay}>
+        <Text style={timerStyles.timeText} testID="time-remaining">
+          {formatTime(remaining)}
+        </Text>
+        {isCompleted && (
+          <Text style={timerStyles.completeLabel} testID="timer-complete-label">
+            Complete
+          </Text>
+        )}
+      </View>
+    </View>
+    <View
+      style={[timerStyles.progressArc, { opacity: progress }]}
+      testID="progress-indicator"
+      accessibilityValue={{ min: 0, max: 100, now: Math.round(progress * 100) }}
+    />
+  </View>
+);
+
+const IdleControls = ({ onStart }: { onStart: () => void }): React.JSX.Element => (
+  <TouchableOpacity style={timerStyles.startButton} onPress={onStart} testID="start-button">
+    <Text style={timerStyles.startButtonText}>Start</Text>
+  </TouchableOpacity>
+);
+
+const RunningControls = ({
+  onPause,
+  onCancel,
+}: {
+  onPause: () => void;
+  onCancel: () => void;
+}): React.JSX.Element => (
+  <View style={timerStyles.buttonRow}>
+    <TouchableOpacity style={timerStyles.pauseButton} onPress={onPause} testID="pause-button">
+      <Text style={timerStyles.pauseButtonText}>Pause</Text>
+    </TouchableOpacity>
+    <TouchableOpacity style={timerStyles.cancelButton} onPress={onCancel} testID="cancel-button">
+      <Text style={timerStyles.cancelButtonText}>Cancel</Text>
+    </TouchableOpacity>
+  </View>
+);
+
+const PausedControls = ({
+  onResume,
+  onCancel,
+}: {
+  onResume: () => void;
+  onCancel: () => void;
+}): React.JSX.Element => (
+  <View style={timerStyles.buttonRow}>
+    <TouchableOpacity style={timerStyles.startButton} onPress={onResume} testID="resume-button">
+      <Text style={timerStyles.startButtonText}>Resume</Text>
+    </TouchableOpacity>
+    <TouchableOpacity style={timerStyles.cancelButton} onPress={onCancel} testID="cancel-button">
+      <Text style={timerStyles.cancelButtonText}>Cancel</Text>
+    </TouchableOpacity>
+  </View>
+);
+
+interface TimerControlsProps {
+  state: TimerState;
+  onStart: () => void;
+  onPause: () => void;
+  onResume: () => void;
+  onCancel: () => void;
+}
+
+const TimerControls = ({
+  state,
+  onStart,
+  onPause,
+  onResume,
+  onCancel,
+}: TimerControlsProps): React.JSX.Element => (
+  <View style={timerStyles.controls}>
+    {state === 'idle' && <IdleControls onStart={onStart} />}
+    {state === 'running' && <RunningControls onPause={onPause} onCancel={onCancel} />}
+    {state === 'paused' && <PausedControls onResume={onResume} onCancel={onCancel} />}
+  </View>
+);
+
+// --- Main component ---
+
+const PracticeTimer: React.FC<PracticeTimerProps> = ({ durationMinutes, onComplete, onCancel }) => {
+  const totalSeconds = durationMinutes * SECONDS_PER_MINUTE;
+  const ts = useTimerState(totalSeconds);
+  const controls = useTimerActions(totalSeconds, ts, onCancel);
+  useTimerEffects(ts, controls.tick, onComplete, durationMinutes, totalSeconds);
 
   return (
-    <View style={styles.container} testID="practice-timer">
-      {/* Circular progress ring */}
-      <View style={styles.ringContainer}>
-        <View style={styles.ring} testID="timer-ring">
-          <View style={styles.timeDisplay}>
-            <Text style={styles.timeText} testID="time-remaining">
-              {formatTime(remaining)}
-            </Text>
-            {state === 'completed' && (
-              <Text style={styles.completeLabel} testID="timer-complete-label">
-                Complete
-              </Text>
-            )}
-          </View>
-        </View>
-        {/* Visual progress indicator */}
-        <View
-          style={[styles.progressArc, { opacity: progress }]}
-          testID="progress-indicator"
-          accessibilityValue={{ min: 0, max: 100, now: Math.round(progress * 100) }}
-        />
-      </View>
-
-      {/* Controls */}
-      <View style={styles.controls}>
-        {state === 'idle' && (
-          <TouchableOpacity style={styles.startButton} onPress={handleStart} testID="start-button">
-            <Text style={styles.startButtonText}>Start</Text>
-          </TouchableOpacity>
-        )}
-
-        {state === 'running' && (
-          <View style={styles.buttonRow}>
-            <TouchableOpacity
-              style={styles.pauseButton}
-              onPress={handlePause}
-              testID="pause-button"
-            >
-              <Text style={styles.pauseButtonText}>Pause</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={handleCancel}
-              testID="cancel-button"
-            >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {state === 'paused' && (
-          <View style={styles.buttonRow}>
-            <TouchableOpacity
-              style={styles.startButton}
-              onPress={handleResume}
-              testID="resume-button"
-            >
-              <Text style={styles.startButtonText}>Resume</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={handleCancel}
-              testID="cancel-button"
-            >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </View>
+    <View style={timerStyles.container} testID="practice-timer">
+      <TimerDisplay
+        remaining={ts.remaining}
+        progress={ts.progress}
+        isCompleted={ts.state === 'completed'}
+      />
+      <TimerControls
+        state={ts.state}
+        onStart={controls.handleStart}
+        onPause={controls.handlePause}
+        onResume={controls.handleResume}
+        onCancel={controls.handleCancel}
+      />
     </View>
   );
 };
 
 const RING_SIZE = 220;
 
-const styles = StyleSheet.create({
+const timerStyles = StyleSheet.create({
   container: {
     alignItems: 'center',
     padding: SPACING.xl,

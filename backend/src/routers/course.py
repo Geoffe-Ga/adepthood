@@ -57,6 +57,21 @@ async def _read_ids_for_user(
     return set(result.scalars().all())
 
 
+def _items_to_raw_dicts(items: list[StageContent]) -> list[dict[str, object]]:
+    """Convert StageContent rows to plain dicts for the filter function."""
+    return [
+        {
+            "id": item.id,
+            "title": item.title,
+            "content_type": item.content_type,
+            "release_day": item.release_day,
+            "url": item.url,
+        }
+        for item in items
+        if item.id is not None
+    ]
+
+
 @router.get("/stages/{stage_number}/content", response_model=list[ContentItemResponse])
 async def list_stage_content(
     stage_number: int,
@@ -71,28 +86,13 @@ async def list_stage_content(
         .where(StageContent.course_stage_id == stage.id)
         .order_by(col(StageContent.release_day).asc())
     )
-    items = result.scalars().all()
+    items = list(result.scalars().all())
 
-    days = await _days_for_user_stage(session, current_user, stage_number)
-    # If user is not on this stage, treat as day -1 (everything locked)
-    if days < 0:
-        days = -1
-
+    days = max(await _days_for_user_stage(session, current_user, stage_number), -1)
     content_ids = [item.id for item in items if item.id is not None]
     read_ids = await _read_ids_for_user(session, current_user, content_ids)
 
-    raw = [
-        {
-            "id": item.id,
-            "title": item.title,
-            "content_type": item.content_type,
-            "release_day": item.release_day,
-            "url": item.url,
-        }
-        for item in items
-        if item.id is not None
-    ]
-
+    raw = _items_to_raw_dicts(items)
     filtered = filter_content_for_user(raw, days_elapsed=days, read_content_ids=read_ids)
     return [ContentItemResponse(**f) for f in filtered]
 
@@ -178,6 +178,18 @@ async def mark_content_read(
     )
 
 
+def _empty_progress() -> CourseProgressResponse:
+    """Return a zero-progress response for stages with no content."""
+    return CourseProgressResponse(
+        total_items=0, read_items=0, progress_percent=0.0, next_unlock_day=None
+    )
+
+
+def _content_ids_from_items(items: list[StageContent]) -> list[int]:
+    """Extract non-None IDs from a list of StageContent."""
+    return [item.id for item in items if item.id is not None]
+
+
 @router.get("/stages/{stage_number}/progress", response_model=CourseProgressResponse)
 async def get_course_progress(
     stage_number: int,
@@ -189,37 +201,23 @@ async def get_course_progress(
         raise not_found("stage")
 
     stage = await _get_stage_by_number(session, stage_number)
-
     result = await session.execute(
         select(StageContent).where(StageContent.course_stage_id == stage.id)
     )
-    items = result.scalars().all()
-    total = len(items)
+    items = list(result.scalars().all())
 
-    if total == 0:
-        return CourseProgressResponse(
-            total_items=0,
-            read_items=0,
-            progress_percent=0.0,
-            next_unlock_day=None,
-        )
+    if not items:
+        return _empty_progress()
 
-    content_ids = [item.id for item in items if item.id is not None]
-    read_ids = await _read_ids_for_user(session, current_user, content_ids)
-    read_count = len(read_ids)
-
-    progress_pct = round((read_count / total) * 100, 2)
-
-    days = await _days_for_user_stage(session, current_user, stage_number)
-    if days < 0:
-        days = -1
-
-    release_days = [item.release_day for item in items]
-    next_day = next_unlock_day(release_days=release_days, days_elapsed=days)
+    read_ids = await _read_ids_for_user(session, current_user, _content_ids_from_items(items))
+    progress_pct = round((len(read_ids) / len(items)) * 100, 2)
+    days = max(await _days_for_user_stage(session, current_user, stage_number), -1)
 
     return CourseProgressResponse(
-        total_items=total,
-        read_items=read_count,
+        total_items=len(items),
+        read_items=len(read_ids),
         progress_percent=progress_pct,
-        next_unlock_day=next_day,
+        next_unlock_day=next_unlock_day(
+            release_days=[item.release_day for item in items], days_elapsed=days
+        ),
     )

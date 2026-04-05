@@ -90,40 +90,224 @@ export interface UseHabitsReturn {
   setHabitsForTesting: (_habits: Habit[]) => void;
 }
 
-export const useHabits = (): UseHabitsReturn => {
-  // Core state from Zustand store (shared across screens)
-  const habits = useHabitStore((s) => s.habits);
-  const loading = useHabitStore((s) => s.loading);
-  const error = useHabitStore((s) => s.error);
+const normalizeGoalUnits = (goals: Goal[], updatedGoal: Goal): void => {
+  const { target_unit: unit, frequency: freq, frequency_unit: freqUnit } = updatedGoal;
+  for (const g of goals) {
+    g.target_unit = unit;
+    g.frequency = freq;
+    g.frequency_unit = freqUnit;
+  }
+};
+
+const clampAdditiveTargets = (low: Goal, clear: Goal, stretch: Goal): void => {
+  if (low.target > clear.target) clear.target = low.target;
+  if (clear.target > stretch.target) stretch.target = clear.target;
+};
+
+const clampSubtractiveTargets = (low: Goal, clear: Goal, stretch: Goal): void => {
+  if (clear.target < stretch.target) clear.target = stretch.target;
+  if (low.target < clear.target) low.target = clear.target;
+};
+
+const normalizeGoalTiers = (goals: Goal[], updatedGoal: Goal): void => {
+  const low = goals.find((g) => g.tier === 'low');
+  const clear = goals.find((g) => g.tier === 'clear');
+  const stretch = goals.find((g) => g.tier === 'stretch');
+  if (!low || !clear || !stretch) return;
+
+  normalizeGoalUnits(goals, updatedGoal);
+  if (low.is_additive) clampAdditiveTargets(low, clear, stretch);
+  else clampSubtractiveTargets(low, clear, stretch);
+};
+
+const checkMilestoneAlerts = (
+  habitName: string,
+  oldProgress: number,
+  newProgress: number,
+  currentGoal: Goal,
+  nextGoal: Goal | null,
+): void => {
+  if (!currentGoal.is_additive) return;
+
+  const currentTarget = getGoalTarget(currentGoal);
+  const justReached = oldProgress < currentTarget && newProgress >= currentTarget;
+  if (!justReached) return;
+
+  if (currentGoal.tier === 'low') {
+    Alert.alert(
+      'Goal Achieved!',
+      `You've reached your Low Goal for ${habitName}! Keep going for the Clear Goal.`,
+    );
+  } else if (currentGoal.tier === 'clear' && nextGoal) {
+    Alert.alert('Achieved! Keep going for the Stretch Goal!');
+  } else if (currentGoal.tier === 'stretch' && nextGoal) {
+    Alert.alert(
+      'Stretch Goal Achieved!',
+      `Amazing! You've reached your Stretch Goal for ${habitName}!`,
+    );
+  }
+};
+
+const backfillHabit = (habit: Habit, days: Date[]): Habit => {
+  const newCompletions = days.map((day) => ({
+    id: uuidv4(),
+    timestamp: day,
+    completed_units: 1,
+  }));
+  const updatedCompletions = habit.completions
+    ? [...habit.completions, ...newCompletions]
+    : newCompletions;
+  return {
+    ...habit,
+    streak: habit.streak + days.length,
+    last_completion_date: new Date(),
+    completions: updatedCompletions,
+  };
+};
+
+const resetHabitStart = (habit: Habit, newDate: Date): Habit => ({
+  ...habit,
+  start_date: newDate,
+  streak: 0,
+  last_completion_date: undefined,
+  completions: [],
+});
+
+const DEFAULT_GOAL_CONFIG = {
+  target_unit: 'units',
+  frequency: 1,
+  frequency_unit: 'per_day',
+  is_additive: true,
+};
+const GOAL_TIERS = [
+  { tier: 'low' as const, target: 1, label: 'Low' },
+  { tier: 'clear' as const, target: 2, label: 'Clear' },
+  { tier: 'stretch' as const, target: 3, label: 'Stretch' },
+];
+
+const buildOnboardingHabits = (newHabits: OnboardingHabit[]) =>
+  newHabits.map((habit, index) => ({
+    ...habit,
+    id: index + 1,
+    streak: 0,
+    revealed: habit.stage === 'Beige',
+    completions: [] as Habit['completions'],
+    goals: GOAL_TIERS.map((t, ti) => ({
+      id: index * 3 + ti + 1,
+      title: `${t.label} goal for ${habit.name}`,
+      ...DEFAULT_GOAL_CONFIG,
+      tier: t.tier,
+      target: t.target,
+    })),
+  }));
+
+const syncOnboardingHabits = async (fullHabits: ReturnType<typeof buildOnboardingHabits>) => {
+  for (const habit of fullHabits) {
+    try {
+      await habitsApi.create(toApiPayload(habit as Habit));
+    } catch {
+      console.error(`Failed to save habit "${habit.name}" to server`);
+    }
+  }
+};
+
+const syncGoalCompletion = (
+  habit: Habit | undefined | null,
+  previousHabits: Habit[],
+  setHabits: (_h: Habit[]) => void,
+) => {
+  if (!habit || habit.goals.length === 0) return;
+  const { currentGoal } = getGoalTier(habit);
+  if (!currentGoal.id) return;
+  goalCompletionsApi.create({ goal_id: currentGoal.id, did_complete: true }).catch(() => {
+    setHabits(previousHabits);
+    Alert.alert('Error', 'Failed to save progress. Please try again.');
+  });
+};
+
+const syncHabitUpdate = (
+  updatedHabit: Habit,
+  previousHabits: Habit[],
+  setHabits: (_h: Habit[]) => void,
+) => {
+  if (!updatedHabit.id) return;
+  habitsApi.update(updatedHabit.id, toApiPayload(updatedHabit)).catch(() => {
+    setHabits(previousHabits);
+    Alert.alert('Error', 'Failed to update habit. Please try again.');
+  });
+};
+
+const syncHabitDelete = (
+  habitId: number,
+  previousHabits: Habit[],
+  setHabits: (_h: Habit[]) => void,
+) => {
+  habitsApi.delete(habitId).catch(() => {
+    setHabits(previousHabits);
+    Alert.alert('Error', 'Failed to delete habit. Please try again.');
+  });
+};
+
+const handleApiSuccess = (
+  apiHabits: Awaited<ReturnType<typeof habitsApi.list>>,
+  hasCachedData: boolean,
+  setHabits: (_h: Habit[]) => void,
+) => {
+  if (apiHabits.length === 0 && !hasCachedData) {
+    setHabits(FALLBACK_HABITS);
+    return;
+  }
+  if (apiHabits.length > 0) {
+    const mapped = mapApiHabits(apiHabits);
+    setHabits(mapped);
+    void persistHabits(mapped);
+  }
+};
+
+const handleApiError = (
+  err: unknown,
+  hasCachedData: boolean,
+  setHabits: (_h: Habit[]) => void,
+  setError: (_e: string | null) => void,
+) => {
+  console.error('Failed to load habits:', err);
+  if (!hasCachedData) {
+    setError('Failed to load habits. Please try again.');
+    setHabits(FALLBACK_HABITS);
+  }
+};
+
+const applyGoalUpdate = (habits: Habit[], habitId: number, updatedGoal: Goal): Habit[] =>
+  habits.map((h) => {
+    if (h.id !== habitId) return h;
+    const goals = h.goals.map((goal) => (goal.id === updatedGoal.id ? updatedGoal : goal));
+    normalizeGoalTiers(goals, updatedGoal);
+    return { ...h, goals };
+  });
+
+const applyLogUnit = (
+  habit: Habit,
+  amount: number,
+): { updatedHabit: Habit; oldProgress: number; newProgress: number } => {
+  const oldProgress = calculateHabitProgress(habit);
+  const updatedHabit = logHabitUnits(habit, amount);
+  const newProgress = calculateHabitProgress(updatedHabit);
+  return { updatedHabit, oldProgress, newProgress };
+};
+
+const useHabitLoader = () => {
   const storeSetHabits = useHabitStore((s) => s.setHabits);
   const storeSetLoading = useHabitStore((s) => s.setLoading);
   const storeSetError = useHabitStore((s) => s.setError);
-
-  // Local UI state (screen-specific, not shared)
-  const [selectedHabit, setSelectedHabit] = useState<Habit | null>(null);
-  const [mode, setMode] = useState<HabitScreenMode>('normal');
-  const [showEnergyCTA, setShowEnergyCTA] = useState(true);
-  const [showArchiveMessage, setShowArchiveMessage] = useState(false);
-  const [emojiHabitIndex, setEmojiHabitIndex] = useState<number | null>(null);
 
   const fetchFromApi = useCallback(
     async (hasCachedData: boolean) => {
       try {
         const apiHabits = await habitsApi.list();
-        if (apiHabits.length === 0 && !hasCachedData) {
-          storeSetHabits(FALLBACK_HABITS);
-        } else if (apiHabits.length > 0) {
-          const mapped = mapApiHabits(apiHabits);
-          storeSetHabits(mapped);
-          void persistHabits(mapped);
-        }
+        handleApiSuccess(apiHabits, hasCachedData, storeSetHabits);
         storeSetError(null);
       } catch (err) {
-        console.error('Failed to load habits:', err);
-        if (!hasCachedData) {
-          storeSetError('Failed to load habits. Please try again.');
-          storeSetHabits(FALLBACK_HABITS);
-        }
+        handleApiError(err, hasCachedData, storeSetHabits, storeSetError);
       }
     },
     [storeSetHabits, storeSetError],
@@ -132,14 +316,12 @@ export const useHabits = (): UseHabitsReturn => {
   const loadHabits = useCallback(async () => {
     storeSetLoading(true);
     storeSetError(null);
-
     const cached = await loadCachedHabits();
     const hasCachedData = cached !== null && cached.length > 0;
     if (hasCachedData) {
       storeSetHabits(cached);
       storeSetLoading(false);
     }
-
     await fetchFromApi(hasCachedData);
     storeSetLoading(false);
   }, [fetchFromApi, storeSetHabits, storeSetLoading, storeSetError]);
@@ -147,262 +329,112 @@ export const useHabits = (): UseHabitsReturn => {
   useEffect(() => {
     void loadHabits();
   }, [loadHabits]);
-
   useEffect(() => {
     void registerForPushNotificationsAsync();
     void reconcileNotifications();
   }, []);
 
+  return loadHabits;
+};
+
+const useHabitMutations = () => {
+  const habits = useHabitStore((s) => s.habits);
+  const storeSetHabits = useHabitStore((s) => s.setHabits);
   const updateGoal = useCallback(
     (habitId: number, updatedGoal: Goal) => {
-      storeSetHabits(
-        habits.map((h) => {
-          if (h.id !== habitId) return h;
-          const goals = h.goals.map((goal) => (goal.id === updatedGoal.id ? updatedGoal : goal));
-          const low = goals.find((g) => g.tier === 'low');
-          const clear = goals.find((g) => g.tier === 'clear');
-          const stretch = goals.find((g) => g.tier === 'stretch');
-          if (low && clear && stretch) {
-            const unit = updatedGoal.target_unit;
-            const freq = updatedGoal.frequency;
-            const freqUnit = updatedGoal.frequency_unit;
-            goals.forEach((g) => {
-              g.target_unit = unit;
-              g.frequency = freq;
-              g.frequency_unit = freqUnit;
-            });
-
-            if (low.is_additive) {
-              if (low.target > clear.target) clear.target = low.target;
-              if (clear.target > stretch.target) stretch.target = clear.target;
-            } else {
-              if (clear.target < stretch.target) clear.target = stretch.target;
-              if (low.target < clear.target) low.target = clear.target;
-            }
-          }
-          return { ...h, goals };
-        }),
-      );
+      storeSetHabits(applyGoalUpdate(habits, habitId, updatedGoal));
     },
     [habits, storeSetHabits],
   );
+  const updateHabit = useCallback(
+    (updatedHabit: Habit) => {
+      const prev = habits;
+      const next = habits.map((h) => (h.id === updatedHabit.id ? updatedHabit : h));
+      storeSetHabits(next);
+      void updateHabitNotifications(updatedHabit);
+      void persistHabits(next);
+      syncHabitUpdate(updatedHabit, prev, storeSetHabits);
+    },
+    [habits, storeSetHabits],
+  );
+  const deleteHabit = useCallback(
+    (habitId: number) => {
+      const prev = habits;
+      const next = habits.filter((h) => h.id !== habitId);
+      storeSetHabits(next);
+      void persistHabits(next);
+      void cancelForHabit(habitId);
+      syncHabitDelete(habitId, prev, storeSetHabits);
+    },
+    [habits, storeSetHabits],
+  );
+  const saveHabitOrder = useCallback(
+    (ordered: Habit[]) => {
+      storeSetHabits(ordered);
+      void persistHabits(ordered);
+    },
+    [storeSetHabits],
+  );
+  return { habits, storeSetHabits, updateGoal, updateHabit, deleteHabit, saveHabitOrder };
+};
+
+const useHabitCrud = () => {
+  const mutations = useHabitMutations();
+  const { habits, storeSetHabits } = mutations;
+  const backfillMissedDays = useCallback(
+    (habitId: number, days: Date[]) => {
+      storeSetHabits(habits.map((h) => (h.id === habitId ? backfillHabit(h, days) : h)));
+    },
+    [habits, storeSetHabits],
+  );
+  const setNewStartDate = useCallback(
+    (habitId: number, newDate: Date) => {
+      storeSetHabits(habits.map((h) => (h.id === habitId ? resetHabitStart(h, newDate) : h)));
+    },
+    [habits, storeSetHabits],
+  );
+  const onboardingSave = useCallback(
+    async (newHabits: OnboardingHabit[]) => {
+      const fullHabits = buildOnboardingHabits(newHabits);
+      storeSetHabits(fullHabits);
+      Alert.alert('Next steps', 'Tap a habit tile to edit its goals.');
+      await syncOnboardingHabits(fullHabits);
+    },
+    [storeSetHabits],
+  );
+  return { ...mutations, backfillMissedDays, setNewStartDate, onboardingSave };
+};
+
+const useHabitActions = (
+  selectedHabit: Habit | null,
+  setSelectedHabit: (_h: Habit | null) => void,
+) => {
+  const crud = useHabitCrud();
+  const { habits, storeSetHabits } = crud;
+  const [emojiHabitIndex, setEmojiHabitIndex] = useState<number | null>(null);
 
   const logUnit = useCallback(
     (habitId: number, amount: number) => {
-      let updated: Habit | null = null;
       const previousHabits = habits;
-
+      let updated: Habit | null = null;
       const newHabits = habits.map((h) => {
         if (h.id !== habitId) return h;
-        const oldProgress = calculateHabitProgress(h);
-        const updatedHabit = logHabitUnits(h, amount);
-        const newProgress = calculateHabitProgress(updatedHabit);
-        const { currentGoal, nextGoal } = getGoalTier(updatedHabit);
-        updated = updatedHabit;
-
-        if (currentGoal.is_additive) {
-          const currentTarget = getGoalTarget(currentGoal);
-          if (
-            oldProgress < currentTarget &&
-            newProgress >= currentTarget &&
-            currentGoal.tier === 'low'
-          ) {
-            Alert.alert(
-              'Goal Achieved!',
-              `You've reached your Low Goal for ${h.name}! Keep going for the Clear Goal.`,
-            );
-          }
-          if (
-            nextGoal &&
-            currentGoal.tier === 'clear' &&
-            oldProgress < getGoalTarget(currentGoal) &&
-            newProgress >= getGoalTarget(currentGoal)
-          ) {
-            Alert.alert('Achieved! Keep going for the Stretch Goal!');
-          }
-          if (
-            nextGoal &&
-            currentGoal.tier === 'stretch' &&
-            oldProgress < getGoalTarget(currentGoal) &&
-            newProgress >= getGoalTarget(currentGoal)
-          ) {
-            Alert.alert(
-              'Stretch Goal Achieved!',
-              `Amazing! You've reached your Stretch Goal for ${h.name}!`,
-            );
-          }
-        }
-
-        return updatedHabit;
+        const result = applyLogUnit(h, amount);
+        updated = result.updatedHabit;
+        const { currentGoal, nextGoal } = getGoalTier(result.updatedHabit);
+        checkMilestoneAlerts(h.name, result.oldProgress, result.newProgress, currentGoal, nextGoal);
+        return result.updatedHabit;
       });
-
       storeSetHabits(newHabits);
-
-      if (selectedHabit?.id === habitId && updated) {
-        setSelectedHabit(updated);
-      }
-
+      if (selectedHabit?.id === habitId && updated) setSelectedHabit(updated);
       void persistHabits(newHabits);
-
-      const habit = updated ?? habits.find((h) => h.id === habitId);
-      if (habit && habit.goals.length > 0) {
-        const { currentGoal } = getGoalTier(habit);
-        if (currentGoal.id) {
-          goalCompletionsApi.create({ goal_id: currentGoal.id, did_complete: true }).catch(() => {
-            storeSetHabits(previousHabits);
-            Alert.alert('Error', 'Failed to save progress. Please try again.');
-          });
-        }
-      }
-    },
-    [selectedHabit, habits, storeSetHabits],
-  );
-
-  const updateHabit = useCallback(
-    (updatedHabit: Habit) => {
-      const previousHabits = habits;
-      const newHabits = habits.map((h) => (h.id === updatedHabit.id ? updatedHabit : h));
-      storeSetHabits(newHabits);
-      void updateHabitNotifications(updatedHabit);
-      void persistHabits(newHabits);
-
-      if (updatedHabit.id) {
-        habitsApi.update(updatedHabit.id, toApiPayload(updatedHabit)).catch(() => {
-          storeSetHabits(previousHabits);
-          Alert.alert('Error', 'Failed to update habit. Please try again.');
-        });
-      }
-    },
-    [habits, storeSetHabits],
-  );
-
-  const deleteHabit = useCallback(
-    (habitId: number) => {
-      const previousHabits = habits;
-      const newHabits = habits.filter((h) => h.id !== habitId);
-      storeSetHabits(newHabits);
-      void persistHabits(newHabits);
-      void cancelForHabit(habitId);
-
-      habitsApi.delete(habitId).catch(() => {
-        storeSetHabits(previousHabits);
-        Alert.alert('Error', 'Failed to delete habit. Please try again.');
-      });
-    },
-    [habits, storeSetHabits],
-  );
-
-  const saveHabitOrder = useCallback(
-    (orderedHabits: Habit[]) => {
-      storeSetHabits(orderedHabits);
-      void persistHabits(orderedHabits);
-    },
-    [storeSetHabits],
-  );
-
-  const backfillMissedDays = useCallback(
-    (habitId: number, days: Date[]) => {
-      storeSetHabits(
-        habits.map((habit) => {
-          if (habit.id === habitId) {
-            const newCompletions = days.map((day) => ({
-              id: uuidv4(),
-              timestamp: day,
-              completed_units: 1,
-            }));
-
-            const updatedCompletions = habit.completions
-              ? [...habit.completions, ...newCompletions]
-              : newCompletions;
-
-            return {
-              ...habit,
-              streak: habit.streak + days.length,
-              last_completion_date: new Date(),
-              completions: updatedCompletions,
-            };
-          }
-          return habit;
-        }),
+      syncGoalCompletion(
+        updated ?? habits.find((h) => h.id === habitId),
+        previousHabits,
+        storeSetHabits,
       );
     },
-    [habits, storeSetHabits],
-  );
-
-  const setNewStartDate = useCallback(
-    (habitId: number, newDate: Date) => {
-      storeSetHabits(
-        habits.map((habit) => {
-          if (habit.id === habitId) {
-            return {
-              ...habit,
-              start_date: newDate,
-              streak: 0,
-              last_completion_date: undefined,
-              completions: [],
-            };
-          }
-          return habit;
-        }),
-      );
-    },
-    [habits, storeSetHabits],
-  );
-
-  const onboardingSave = useCallback(
-    async (newHabits: OnboardingHabit[]) => {
-      const fullHabits = newHabits.map((habit, index) => ({
-        ...habit,
-        id: index + 1,
-        streak: 0,
-        revealed: habit.stage === 'Beige',
-        completions: [] as Habit['completions'],
-        goals: [
-          {
-            id: index * 3 + 1,
-            title: `Low goal for ${habit.name}`,
-            tier: 'low' as const,
-            target: 1,
-            target_unit: 'units',
-            frequency: 1,
-            frequency_unit: 'per_day',
-            is_additive: true,
-          },
-          {
-            id: index * 3 + 2,
-            title: `Clear goal for ${habit.name}`,
-            tier: 'clear' as const,
-            target: 2,
-            target_unit: 'units',
-            frequency: 1,
-            frequency_unit: 'per_day',
-            is_additive: true,
-          },
-          {
-            id: index * 3 + 3,
-            title: `Stretch goal for ${habit.name}`,
-            tier: 'stretch' as const,
-            target: 3,
-            target_unit: 'units',
-            frequency: 1,
-            frequency_unit: 'per_day',
-            is_additive: true,
-          },
-        ],
-      }));
-
-      storeSetHabits(fullHabits);
-      Alert.alert('Next steps', 'Tap a habit tile to edit its goals.');
-
-      for (const habit of fullHabits) {
-        try {
-          await habitsApi.create(toApiPayload(habit as Habit));
-        } catch {
-          console.error(`Failed to save habit "${habit.name}" to server`);
-        }
-      }
-    },
-    [storeSetHabits],
+    [selectedHabit, habits, storeSetHabits, setSelectedHabit],
   );
 
   const iconPress = useCallback((index: number) => {
@@ -411,19 +443,40 @@ export const useHabits = (): UseHabitsReturn => {
 
   const emojiSelect = useCallback(
     (emoji: string) => {
-      if (emojiHabitIndex !== null) {
+      if (emojiHabitIndex !== null)
         storeSetHabits(habits.map((h, i) => (i === emojiHabitIndex ? { ...h, icon: emoji } : h)));
-      }
       setEmojiHabitIndex(null);
     },
     [emojiHabitIndex, habits, storeSetHabits],
   );
+
+  return { ...crud, logUnit, iconPress, emojiSelect, emojiHabitIndex };
+};
+
+const useHabitUI = () => {
+  const [showEnergyCTA, setShowEnergyCTA] = useState(true);
+  const [showArchiveMessage, setShowArchiveMessage] = useState(false);
 
   const archiveEnergyCTA = useCallback(() => {
     setShowEnergyCTA(false);
     setShowArchiveMessage(true);
     setTimeout(() => setShowArchiveMessage(false), 3000);
   }, []);
+
+  return { showEnergyCTA, showArchiveMessage, archiveEnergyCTA };
+};
+
+export const useHabits = (): UseHabitsReturn => {
+  const habits = useHabitStore((s) => s.habits);
+  const loading = useHabitStore((s) => s.loading);
+  const error = useHabitStore((s) => s.error);
+  const storeSetHabits = useHabitStore((s) => s.setHabits);
+  const [selectedHabit, setSelectedHabit] = useState<Habit | null>(null);
+  const [mode, setMode] = useState<HabitScreenMode>('normal');
+
+  const loadHabits = useHabitLoader();
+  const actionsHook = useHabitActions(selectedHabit, setSelectedHabit);
+  const ui = useHabitUI();
 
   return {
     habits,
@@ -435,23 +488,18 @@ export const useHabits = (): UseHabitsReturn => {
     setMode,
     actions: {
       loadHabits,
-      updateGoal,
-      logUnit,
-      updateHabit,
-      deleteHabit,
-      saveHabitOrder,
-      backfillMissedDays,
-      setNewStartDate,
-      onboardingSave,
-      iconPress,
-      emojiSelect,
+      updateGoal: actionsHook.updateGoal,
+      logUnit: actionsHook.logUnit,
+      updateHabit: actionsHook.updateHabit,
+      deleteHabit: actionsHook.deleteHabit,
+      saveHabitOrder: actionsHook.saveHabitOrder,
+      backfillMissedDays: actionsHook.backfillMissedDays,
+      setNewStartDate: actionsHook.setNewStartDate,
+      onboardingSave: actionsHook.onboardingSave,
+      iconPress: actionsHook.iconPress,
+      emojiSelect: actionsHook.emojiSelect,
     },
-    ui: {
-      showEnergyCTA,
-      showArchiveMessage,
-      archiveEnergyCTA,
-      emojiHabitIndex,
-    },
+    ui: { ...ui, emojiHabitIndex: actionsHook.emojiHabitIndex },
     setHabitsForTesting: storeSetHabits,
   };
 };

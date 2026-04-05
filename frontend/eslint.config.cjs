@@ -6,6 +6,7 @@ const react = require('eslint-plugin-react');
 const reactHooks = require('eslint-plugin-react-hooks');
 const importPlugin = require('eslint-plugin-import');
 const unicorn = require('eslint-plugin-unicorn');
+const sonarjs = require('eslint-plugin-sonarjs');
 const prettier = require('eslint-config-prettier');
 const path = require('node:path');
 
@@ -42,6 +43,7 @@ module.exports = tseslint.config(
       'react-hooks': reactHooks,
       import: importPlugin,
       unicorn,
+      sonarjs,
     },
     settings: {
       react: { version: 'detect' },
@@ -78,6 +80,31 @@ module.exports = tseslint.config(
       '@typescript-eslint/no-explicit-any': 'warn',
       'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+
+      // Complexity limits
+      complexity: ['error', { max: 10 }],
+      'max-depth': ['error', { max: 3 }],
+      'max-nested-callbacks': ['error', { max: 2 }],
+      'max-lines-per-function': ['error', { max: 50, skipBlankLines: true, skipComments: true }],
+
+      // SonarJS cognitive complexity and code smells
+      'sonarjs/cognitive-complexity': ['error', 10],
+      'sonarjs/no-duplicate-string': ['error', { threshold: 3 }],
+      'sonarjs/no-identical-functions': 'error',
+      'sonarjs/no-collapsible-if': 'error',
+      'sonarjs/prefer-single-boolean-return': 'error',
+      'sonarjs/no-redundant-jump': 'error',
+      'sonarjs/no-small-switch': 'error',
+    },
+  },
+
+  // Test files: relax rules that conflict with describe/it/expect nesting
+  {
+    files: ['**/__tests__/**', '**/*.test.{ts,tsx,js,jsx}'],
+    rules: {
+      'max-nested-callbacks': ['error', { max: 5 }],
+      'max-lines-per-function': 'off',
+      'sonarjs/no-duplicate-string': 'off',
     },
   },
 

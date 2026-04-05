@@ -27,6 +27,76 @@ interface ChatInputProps {
   initialTags?: MessageTags;
 }
 
+interface TagPickerProps {
+  tags: MessageTags;
+  onToggleTag: (_key: keyof MessageTags) => void;
+}
+
+const TagPicker = ({ tags, onToggleTag }: TagPickerProps): React.JSX.Element => (
+  <View style={styles.tagPickerContainer} testID="tag-picker">
+    {TAG_OPTIONS.map(({ key, label }) => (
+      <TouchableOpacity
+        key={key}
+        testID={`tag-option-${key}`}
+        style={[styles.tagPickerOption, tags[key] && styles.tagPickerOptionActive]}
+        onPress={() => onToggleTag(key)}
+      >
+        <Text style={[styles.tagPickerText, tags[key] && styles.tagPickerTextActive]}>{label}</Text>
+      </TouchableOpacity>
+    ))}
+  </View>
+);
+
+interface InputRowProps {
+  text: string;
+  onChangeText: (_text: string) => void;
+  disabled: boolean;
+  canSend: boolean;
+  onSend: () => void;
+  hasActiveTags: boolean;
+  onToggleTagPicker: () => void;
+}
+
+const InputRow = ({
+  text,
+  onChangeText,
+  disabled,
+  canSend,
+  onSend,
+  hasActiveTags,
+  onToggleTagPicker,
+}: InputRowProps): React.JSX.Element => (
+  <View style={styles.inputContainer}>
+    <TextInput
+      testID="chat-input"
+      style={styles.textInput}
+      value={text}
+      onChangeText={onChangeText}
+      placeholder="Write a reflection..."
+      placeholderTextColor="#999"
+      multiline
+      editable={!disabled}
+    />
+    <TouchableOpacity
+      testID="tag-toggle"
+      style={[styles.tagToggleButton, hasActiveTags && styles.tagToggleButtonActive]}
+      onPress={onToggleTagPicker}
+      accessibilityLabel="Toggle tag picker"
+    >
+      <Text style={styles.tagToggleText}>#</Text>
+    </TouchableOpacity>
+    <TouchableOpacity
+      testID="send-button"
+      style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
+      onPress={onSend}
+      disabled={!canSend}
+      accessibilityLabel="Send message"
+    >
+      <Text style={styles.sendButtonText}>{'>'}</Text>
+    </TouchableOpacity>
+  </View>
+);
+
 const ChatInput = ({
   onSend,
   disabled = false,
@@ -59,51 +129,16 @@ const ChatInput = ({
 
   return (
     <View>
-      {showTagPicker && (
-        <View style={styles.tagPickerContainer} testID="tag-picker">
-          {TAG_OPTIONS.map(({ key, label }) => (
-            <TouchableOpacity
-              key={key}
-              testID={`tag-option-${key}`}
-              style={[styles.tagPickerOption, tags[key] && styles.tagPickerOptionActive]}
-              onPress={() => toggleTag(key)}
-            >
-              <Text style={[styles.tagPickerText, tags[key] && styles.tagPickerTextActive]}>
-                {label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
-      <View style={styles.inputContainer}>
-        <TextInput
-          testID="chat-input"
-          style={styles.textInput}
-          value={text}
-          onChangeText={setText}
-          placeholder="Write a reflection..."
-          placeholderTextColor="#999"
-          multiline
-          editable={!disabled}
-        />
-        <TouchableOpacity
-          testID="tag-toggle"
-          style={[styles.tagToggleButton, hasActiveTags && styles.tagToggleButtonActive]}
-          onPress={toggleTagPicker}
-          accessibilityLabel="Toggle tag picker"
-        >
-          <Text style={styles.tagToggleText}>#</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          testID="send-button"
-          style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
-          onPress={handleSend}
-          disabled={!canSend}
-          accessibilityLabel="Send message"
-        >
-          <Text style={styles.sendButtonText}>{'>'}</Text>
-        </TouchableOpacity>
-      </View>
+      {showTagPicker && <TagPicker tags={tags} onToggleTag={toggleTag} />}
+      <InputRow
+        text={text}
+        onChangeText={setText}
+        disabled={disabled}
+        canSend={canSend}
+        onSend={handleSend}
+        hasActiveTags={hasActiveTags}
+        onToggleTagPicker={toggleTagPicker}
+      />
     </View>
   );
 };

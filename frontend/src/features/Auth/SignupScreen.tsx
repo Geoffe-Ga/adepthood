@@ -7,6 +7,72 @@ interface Props {
   navigation: { navigate: (_screen: string) => void };
 }
 
+interface SignupFieldsProps {
+  email: string;
+  setEmail: (_v: string) => void;
+  password: string;
+  setPassword: (_v: string) => void;
+  confirmPassword: string;
+  setConfirmPassword: (_v: string) => void;
+}
+
+function SignupFields({
+  email,
+  setEmail,
+  password,
+  setPassword,
+  confirmPassword,
+  setConfirmPassword,
+}: SignupFieldsProps) {
+  return (
+    <>
+      <TextInput
+        style={styles.input}
+        placeholder="Email"
+        value={email}
+        onChangeText={setEmail}
+        autoCapitalize="none"
+        keyboardType="email-address"
+      />
+      <TextInput
+        style={styles.input}
+        placeholder="Password"
+        value={password}
+        onChangeText={setPassword}
+        secureTextEntry
+      />
+      <TextInput
+        style={styles.input}
+        placeholder="Confirm Password"
+        value={confirmPassword}
+        onChangeText={setConfirmPassword}
+        secureTextEntry
+      />
+    </>
+  );
+}
+
+interface SignupActionsProps {
+  onSignup: () => void;
+  onNavigateLogin: () => void;
+  submitting: boolean;
+}
+
+function SignupActions({ onSignup, onNavigateLogin, submitting }: SignupActionsProps) {
+  return (
+    <>
+      <TouchableOpacity style={styles.button} onPress={onSignup} disabled={submitting}>
+        <Text style={styles.buttonText}>{submitting ? 'Creating account...' : 'Sign Up'}</Text>
+      </TouchableOpacity>
+      <TouchableOpacity onPress={onNavigateLogin}>
+        <Text style={styles.link}>
+          Already have an account? <Text style={styles.linkBold}>Log In</Text>
+        </Text>
+      </TouchableOpacity>
+    </>
+  );
+}
+
 export default function SignupScreen({ navigation }: Props) {
   const { signup } = useAuth();
   const [email, setEmail] = useState('');
@@ -42,37 +108,20 @@ export default function SignupScreen({ navigation }: Props) {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Create Account</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        value={email}
-        onChangeText={setEmail}
-        autoCapitalize="none"
-        keyboardType="email-address"
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Confirm Password"
-        value={confirmPassword}
-        onChangeText={setConfirmPassword}
-        secureTextEntry
+      <SignupFields
+        email={email}
+        setEmail={setEmail}
+        password={password}
+        setPassword={setPassword}
+        confirmPassword={confirmPassword}
+        setConfirmPassword={setConfirmPassword}
       />
       {error && <Text style={styles.error}>{error}</Text>}
-      <TouchableOpacity style={styles.button} onPress={handleSignup} disabled={submitting}>
-        <Text style={styles.buttonText}>{submitting ? 'Creating account...' : 'Sign Up'}</Text>
-      </TouchableOpacity>
-      <TouchableOpacity onPress={() => navigation.navigate('Login')}>
-        <Text style={styles.link}>
-          Already have an account? <Text style={styles.linkBold}>Log In</Text>
-        </Text>
-      </TouchableOpacity>
+      <SignupActions
+        onSignup={handleSignup}
+        onNavigateLogin={() => navigation.navigate('Login')}
+        submitting={submitting}
+      />
     </View>
   );
 }
