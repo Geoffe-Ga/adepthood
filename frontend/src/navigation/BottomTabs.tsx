@@ -20,6 +20,7 @@ export type RootTabParamList = {
     | {
         stageReflection?: boolean;
         stageNumber?: number;
+        contentTitle?: string;
         practiceSessionId?: number;
         userPracticeId?: number;
         practiceName?: string;

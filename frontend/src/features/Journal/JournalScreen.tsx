@@ -23,6 +23,12 @@ const PAGE_SIZE = 50;
 
 const JournalScreen = (): React.JSX.Element => {
   const route = useAppRoute<'Journal'>();
+
+  const stageReflection = route.params?.stageReflection ?? false;
+  const stageNumber = route.params?.stageNumber ?? null;
+  const contentTitle = route.params?.contentTitle ?? null;
+  const isCourseReflection = stageReflection && contentTitle !== null;
+
   const practiceSessionId = route.params?.practiceSessionId ?? null;
   const userPracticeId = route.params?.userPracticeId ?? null;
   const practiceName = route.params?.practiceName ?? null;
@@ -113,9 +119,9 @@ const JournalScreen = (): React.JSX.Element => {
     async (text: string, tags?: MessageTags) => {
       setSending(true);
 
-      // Merge practice context into tags when navigated from a practice session
+      // Merge deep-link context into tags when navigated from course or practice
       const mergedTags: MessageTags = {
-        is_stage_reflection: tags?.is_stage_reflection ?? false,
+        is_stage_reflection: isCourseReflection || (tags?.is_stage_reflection ?? false),
         is_practice_note: isPracticeReflection || (tags?.is_practice_note ?? false),
         is_habit_note: tags?.is_habit_note ?? false,
       };
@@ -187,7 +193,14 @@ const JournalScreen = (): React.JSX.Element => {
 
       setSending(false);
     },
-    [offeringBalance, loadMessages, isPracticeReflection, practiceSessionId, userPracticeId],
+    [
+      offeringBalance,
+      loadMessages,
+      isCourseReflection,
+      isPracticeReflection,
+      practiceSessionId,
+      userPracticeId,
+    ],
   );
 
   const handlePromptRespond = useCallback(() => {
@@ -287,6 +300,14 @@ const JournalScreen = (): React.JSX.Element => {
           <Text style={styles.balanceCounterText}>Offerings: {offeringBalance}</Text>
         </View>
       )}
+      {isCourseReflection && (
+        <View testID="course-reflection-header" style={styles.balanceBanner}>
+          <Text style={styles.balanceBannerText}>
+            Reflecting on: {contentTitle}
+            {stageNumber !== null ? ` \u2014 Stage ${stageNumber}` : ''}
+          </Text>
+        </View>
+      )}
       {isPracticeReflection && (
         <View testID="practice-reflection-header" style={styles.balanceBanner}>
           <Text style={styles.balanceBannerText}>
@@ -316,9 +337,11 @@ const JournalScreen = (): React.JSX.Element => {
         onSend={handleSend}
         disabled={sending}
         initialTags={
-          isPracticeReflection
-            ? { is_stage_reflection: false, is_practice_note: true, is_habit_note: false }
-            : undefined
+          isCourseReflection
+            ? { is_stage_reflection: true, is_practice_note: false, is_habit_note: false }
+            : isPracticeReflection
+              ? { is_stage_reflection: false, is_practice_note: true, is_habit_note: false }
+              : undefined
         }
       />
     </SafeAreaView>

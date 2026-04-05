@@ -217,6 +217,19 @@ const styles = StyleSheet.create({
   markReadTextDone: {
     color: colors.text.secondary,
   },
+  reflectButton: {
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.lg,
+    borderRadius: radius.md,
+    backgroundColor: colors.secondary,
+    alignItems: 'center',
+    marginTop: SPACING.sm,
+  },
+  reflectText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.text.light,
+  },
 
   // Loading and empty states
   loadingContainer: {
