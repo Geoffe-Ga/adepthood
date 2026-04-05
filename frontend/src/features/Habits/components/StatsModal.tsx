@@ -1,11 +1,14 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, Dimensions, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 
+import { habits as habitsApi } from '../../../api';
+import type { ApiHabitStats } from '../../../api';
 import { STAGE_COLORS } from '../../../design/tokens';
 import styles from '../Habits.styles';
-import type { StatsModalProps } from '../Habits.types';
+import type { HabitStatsData, StatsModalProps } from '../Habits.types';
+import { generateStatsForHabit } from '../HabitUtils';
 
 const CHART_CONFIG = {
   backgroundGradientFrom: '#1E2923',
@@ -54,15 +57,15 @@ const TAB_LABELS: Record<string, string> = {
   byDay: 'By Day',
 };
 
-const buildLineData = (stats: StatsModalProps['stats'], color: string) => ({
-  labels: stats!.dates.slice(-7),
-  datasets: [{ data: stats!.values.slice(-7), color: () => color, strokeWidth: 2 }],
+const buildLineData = (stats: HabitStatsData, color: string) => ({
+  labels: stats.dates.slice(-7),
+  datasets: [{ data: stats.values.slice(-7), color: () => color, strokeWidth: 2 }],
   legend: ['Daily Progress'],
 });
 
-const buildBarData = (stats: StatsModalProps['stats'], color: string) => ({
-  labels: stats!.dayLabels,
-  datasets: [{ data: stats!.completionsByDay, color: () => color }],
+const buildBarData = (stats: HabitStatsData, color: string) => ({
+  labels: stats.dayLabels,
+  datasets: [{ data: stats.completionsByDay, color: () => color }],
 });
 
 interface TabBarProps {
@@ -86,13 +89,7 @@ const TabBar = ({ selectedTab, onSelect }: TabBarProps) => (
 
 interface CalendarTabProps {
   habit: { stage: string };
-  stats: {
-    longestStreak: number;
-    currentStreak: number;
-    completionRate: number;
-    totalCompletions: number;
-    completionDates: string[];
-  };
+  stats: HabitStatsData;
 }
 
 const CalendarTab = ({ habit, stats }: CalendarTabProps) => (
@@ -143,48 +140,123 @@ const StatsModalHeader = ({
   </View>
 );
 
-export const StatsModal = ({ visible, habit, stats, onClose }: StatsModalProps) => {
-  const [selectedTab, setSelectedTab] = useState('calendar');
-  if (!habit || !stats) return null;
+/**
+ * Convert an API stats response to the local HabitStatsData shape.
+ */
+function apiStatsToLocal(api: ApiHabitStats): HabitStatsData {
+  return {
+    dates: api.completion_dates,
+    values: api.values,
+    completionsByDay: api.completions_by_day,
+    dayLabels: api.day_labels,
+    longestStreak: api.longest_streak,
+    currentStreak: api.current_streak,
+    totalCompletions: api.total_completions,
+    completionRate: api.completion_rate,
+    completionDates: api.completion_dates,
+  };
+}
 
+interface StatsContentProps {
+  habit: NonNullable<StatsModalProps['habit']>;
+  stats: HabitStatsData;
+  selectedTab: string;
+  onSelectTab: (_tab: string) => void;
+  onClose: () => void;
+  loading: boolean;
+}
+
+const StatsContent = (props: StatsContentProps) => {
+  const { habit, stats, selectedTab, onSelectTab, onClose, loading } = props;
   const chartColor = getStageColor(habit.stage, FALLBACK_CHART_COLOR);
+
+  return (
+    <View style={[styles.statsModalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}>
+      <StatsModalHeader habit={habit} onClose={onClose} />
+      <TabBar selectedTab={selectedTab} onSelect={onSelectTab} />
+      <ScrollView style={styles.statsContainer}>
+        {loading && (
+          <View style={styles.statsInfoContainer}>
+            <Text style={styles.statLabel}>Loading stats...</Text>
+          </View>
+        )}
+        {selectedTab === 'calendar' && <CalendarTab habit={habit} stats={stats} />}
+        {selectedTab === 'progress' && (
+          <ChartTab title="Progress (Last 7 Days)">
+            <LineChart
+              data={buildLineData(stats, chartColor)}
+              width={CHART_WIDTH}
+              height={CHART_HEIGHT}
+              chartConfig={CHART_CONFIG}
+              bezier
+              style={styles.chart}
+            />
+          </ChartTab>
+        )}
+        {selectedTab === 'byDay' && (
+          <ChartTab title="Completions by Day of Week">
+            <BarChart
+              data={buildBarData(stats, chartColor)}
+              width={CHART_WIDTH}
+              height={CHART_HEIGHT}
+              chartConfig={CHART_CONFIG}
+              yAxisLabel=""
+              yAxisSuffix=""
+              style={styles.chart}
+              fromZero
+            />
+          </ChartTab>
+        )}
+      </ScrollView>
+    </View>
+  );
+};
+
+export const StatsModal = ({ visible, habit, stats: localStats, onClose }: StatsModalProps) => {
+  const [selectedTab, setSelectedTab] = useState('calendar');
+  const [apiStats, setApiStats] = useState<HabitStatsData | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!visible || !habit) {
+      setApiStats(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    habitsApi
+      .getStats(habit.id)
+      .then((response) => {
+        if (!cancelled) setApiStats(apiStatsToLocal(response));
+      })
+      .catch(() => {
+        if (!cancelled) setApiStats(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, habit]);
+
+  if (!habit) return null;
+
+  const stats = apiStats ?? localStats ?? generateStatsForHabit(habit);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
-        <View style={[styles.statsModalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}>
-          <StatsModalHeader habit={habit} onClose={onClose} />
-          <TabBar selectedTab={selectedTab} onSelect={setSelectedTab} />
-          <ScrollView style={styles.statsContainer}>
-            {selectedTab === 'calendar' && <CalendarTab habit={habit} stats={stats} />}
-            {selectedTab === 'progress' && (
-              <ChartTab title="Progress (Last 7 Days)">
-                <LineChart
-                  data={buildLineData(stats, chartColor)}
-                  width={CHART_WIDTH}
-                  height={CHART_HEIGHT}
-                  chartConfig={CHART_CONFIG}
-                  bezier
-                  style={styles.chart}
-                />
-              </ChartTab>
-            )}
-            {selectedTab === 'byDay' && (
-              <ChartTab title="Completions by Day of Week">
-                <BarChart
-                  data={buildBarData(stats, chartColor)}
-                  width={CHART_WIDTH}
-                  height={CHART_HEIGHT}
-                  chartConfig={CHART_CONFIG}
-                  yAxisLabel=""
-                  yAxisSuffix=""
-                  style={styles.chart}
-                  fromZero
-                />
-              </ChartTab>
-            )}
-          </ScrollView>
-        </View>
+        <StatsContent
+          habit={habit}
+          stats={stats}
+          selectedTab={selectedTab}
+          onSelectTab={setSelectedTab}
+          onClose={onClose}
+          loading={loading}
+        />
       </View>
     </Modal>
   );
