@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { STAGES } from '../features/Map/stageData';
 import type { StageData } from '../features/Map/stageData';
 
+/* eslint-disable no-unused-vars */
 export interface StageStoreState {
   stages: StageData[];
   currentStage: number;
@@ -11,6 +12,7 @@ export interface StageStoreState {
   setCurrentStage: (_stageNumber: number) => void;
   updateStageProgress: (_stageNumber: number, _progress: number) => void;
 }
+/* eslint-enable no-unused-vars */
 
 export const useStageStore = create<StageStoreState>((set) => ({
   stages: STAGES,

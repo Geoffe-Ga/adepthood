@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from '@jest/globals';
+import { describe, expect, it, beforeEach, jest } from '@jest/globals';
 import { act } from '@testing-library/react-native';
 
 describe('useUserStore', () => {
