@@ -7,7 +7,7 @@ import { colors, SPACING, BORDER_RADIUS, shadows } from '@/design/tokens';
 interface PracticeSelectorProps {
   practices: PracticeItem[];
   selectedPracticeId: number | null;
-  onSelect: (_id: number) => void; // eslint-disable-line no-unused-vars
+  onSelect: (_id: number) => void;
   isLoading: boolean;
 }
 
