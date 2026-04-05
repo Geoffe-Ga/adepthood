@@ -12,7 +12,7 @@ import {
 import type { LayoutChangeEvent, ViewStyle, TextStyle } from 'react-native';
 import EmojiSelector from 'react-native-emoji-selector';
 
-import { STAGE_COLORS } from '../../../constants/stageColors';
+import { STAGE_COLORS } from '../../../design/tokens';
 import styles from '../Habits.styles';
 import type { GoalModalProps, Goal } from '../Habits.types';
 import {

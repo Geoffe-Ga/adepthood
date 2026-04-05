@@ -6,8 +6,8 @@ import { ActivityIndicator, FlatList, Text, TouchableOpacity, View, Modal } from
 import EmojiSelector from 'react-native-emoji-selector';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { spacing } from '../../../Sources/design/DesignSystem';
-import useResponsive from '../../../Sources/design/useResponsive';
+import { spacing } from '../../design/tokens';
+import useResponsive from '../../design/useResponsive';
 
 import GoalModal from './components/GoalModal';
 import HabitSettingsModal from './components/HabitSettingsModal';
