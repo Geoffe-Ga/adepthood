@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 
+import type { ApiHabitStats } from '../../api';
 import { colors, STAGE_COLORS, STAGE_ORDER } from '../../design/tokens';
 
 import type { Goal, Habit, Completion, HabitStatsData } from './Habits.types';
@@ -276,8 +277,10 @@ export const generateStatsForHabit = (habit: Habit): HabitStatsData => {
     completionsByDay: new Array(7).fill(0) as number[],
     dayLabels,
     longestStreak: 0,
+    currentStreak: habit.streak,
     totalCompletions: 0,
     completionRate: 0,
+    completionDates: [],
   };
 
   const completions = habit.completions;
@@ -326,16 +329,53 @@ export const generateStatsForHabit = (habit: Habit): HabitStatsData => {
   const spanDays = Math.round((lastDay.getTime() - firstDay.getTime()) / MS_PER_DAY) + 1;
   const completionRate = spanDays > 0 ? daysWithCompletions.size / spanDays : 0;
 
+  // Current streak: consecutive days ending at the most recent date
+  let endStreak = 0;
+  for (let i = sortedDays.length - 1; i >= 0; i--) {
+    const day = sortedDays[i]!;
+    if (i === sortedDays.length - 1) {
+      endStreak = 1;
+    } else {
+      const nextDay = sortedDays[i + 1]!;
+      const diff = (nextDay.getTime() - day.getTime()) / MS_PER_DAY;
+      if (diff === 1) {
+        endStreak += 1;
+      } else {
+        break;
+      }
+    }
+  }
+
+  // Collect unique ISO date strings for calendar marking
+  const completionDates = sortedDays.map((d) => d.toISOString().split('T')[0] ?? '');
+
   return {
     dates: dayLabels,
     values: unitsByDay,
     completionsByDay: presenceByDay,
     dayLabels,
     longestStreak,
+    currentStreak: endStreak,
     totalCompletions: completions.length,
     completionRate,
+    completionDates,
   };
 };
+
+/**
+ * Convert an API habit stats response (snake_case) to local HabitStatsData (camelCase).
+ */
+export const toLocalHabitStats = (api: ApiHabitStats): HabitStatsData => ({
+  dates: api.day_labels,
+  values: api.values,
+  completionsByDay: api.completions_by_day,
+  dayLabels: api.day_labels,
+  longestStreak: api.longest_streak,
+  currentStreak: api.current_streak,
+  totalCompletions: api.total_completions,
+  completionRate: api.completion_rate,
+  completionDates: api.completion_dates,
+});
 
 /**
  * Calculate days without completions between the first and last completion.

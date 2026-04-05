@@ -79,6 +79,28 @@ describe('habits API client', () => {
     expect(url).toBe('http://test/habits/1');
     expect(init.method).toBe('DELETE');
   });
+
+  test('habits.getStats sends GET to /habits/{id}/stats', async () => {
+    const stats = {
+      day_labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+      values: [0, 3, 0, 3, 0, 0, 0],
+      completions_by_day: [0, 1, 0, 1, 0, 0, 0],
+      longest_streak: 3,
+      current_streak: 2,
+      total_completions: 5,
+      completion_rate: 0.67,
+      completion_dates: ['2024-01-01', '2024-01-03'],
+    };
+    mockFetch.mockReturnValueOnce(jsonResponse(stats));
+
+    const result = await habits.getStats(42, 'test-token');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/habits/42/stats');
+    expect(init.method).toBeUndefined(); // GET is default
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer test-token' });
+    expect(result).toEqual(stats);
+  });
 });
 
 describe('goalCompletions API client', () => {

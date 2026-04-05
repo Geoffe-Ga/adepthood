@@ -73,8 +73,10 @@ export interface HabitStatsData {
   completionsByDay: number[];
   dayLabels: string[];
   longestStreak: number;
+  currentStreak: number;
   totalCompletions: number;
   completionRate: number;
+  completionDates: string[];
 }
 
 export interface OnboardingHabit {

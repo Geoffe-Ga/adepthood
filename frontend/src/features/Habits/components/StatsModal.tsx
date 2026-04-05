@@ -44,16 +44,12 @@ export const StatsModal = ({ visible, habit, stats, onClose }: StatsModalProps) 
 
   const getMarkedDates = () => {
     const marked: Record<string, { selected: boolean; selectedColor: string }> = {};
-    if (!habit.completions) return marked;
-    habit.completions.forEach((completion) => {
-      const dateStr = new Date(completion.timestamp).toISOString().split('T')[0] ?? '';
-      if (dateStr) {
-        marked[dateStr] = {
-          selected: true,
-          selectedColor: STAGE_COLORS[habit.stage] || '#50cebb',
-        };
-      }
-    });
+    for (const dateStr of stats.completionDates) {
+      marked[dateStr] = {
+        selected: true,
+        selectedColor: STAGE_COLORS[habit.stage] || '#50cebb',
+      };
+    }
     return marked;
   };
 
@@ -107,7 +103,7 @@ export const StatsModal = ({ visible, habit, stats, onClose }: StatsModalProps) 
                   </View>
                   <View style={styles.statsRow}>
                     <Text style={styles.statLabel}>Current Streak:</Text>
-                    <Text style={styles.statValue}>{habit.streak} days</Text>
+                    <Text style={styles.statValue}>{stats.currentStreak} days</Text>
                   </View>
                   <View style={styles.statsRow}>
                     <Text style={styles.statLabel}>Completion Rate:</Text>

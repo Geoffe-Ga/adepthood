@@ -1,11 +1,13 @@
 // HabitsScreen.tsx
 
 import { BarChart2, Check, MoreHorizontal, Pencil, Zap } from 'lucide-react';
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, TouchableOpacity, View, Modal } from 'react-native';
 import EmojiSelector from 'react-native-emoji-selector';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { habits as habitsApi } from '../../api';
+import { useAuth } from '../../context/AuthContext';
 import { spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 
@@ -16,9 +18,9 @@ import OnboardingModal from './components/OnboardingModal';
 import ReorderHabitsModal from './components/ReorderHabitsModal';
 import StatsModal from './components/StatsModal';
 import styles from './Habits.styles';
-import type { Habit } from './Habits.types';
+import type { Habit, HabitStatsData } from './Habits.types';
 import HabitTile from './HabitTile';
-import { generateStatsForHabit, calculateMissedDays } from './HabitUtils';
+import { generateStatsForHabit, toLocalHabitStats, calculateMissedDays } from './HabitUtils';
 import { useHabits } from './hooks/useHabits';
 import { useModalCoordinator } from './hooks/useModalCoordinator';
 
@@ -28,8 +30,29 @@ export { calculateNetEnergy } from './HabitUtils';
 const HabitsScreen = () => {
   const { habits, loading, error, selectedHabit, setSelectedHabit, mode, setMode, actions, ui } =
     useHabits();
+  const { token } = useAuth();
+  const [habitStats, setHabitStats] = useState<HabitStatsData | null>(null);
 
   const modals = useModalCoordinator();
+
+  const fetchStats = useCallback(
+    (habit: Habit) => {
+      if (habit.id == null) return;
+      habitsApi
+        .getStats(habit.id, token ?? undefined)
+        .then((apiStats) => setHabitStats(toLocalHabitStats(apiStats)))
+        .catch(() => setHabitStats(generateStatsForHabit(habit)));
+    },
+    [token],
+  );
+
+  useEffect(() => {
+    if (modals.stats && selectedHabit) {
+      fetchStats(selectedHabit);
+    } else {
+      setHabitStats(null);
+    }
+  }, [modals.stats, selectedHabit, fetchStats]);
   const { columns, gridGutter, scale, isLG, isXL } = useResponsive();
   const screenPadding = spacing(isLG || isXL ? 2 : 1, scale);
 
@@ -211,7 +234,7 @@ const HabitsScreen = () => {
       <StatsModal
         visible={modals.stats}
         habit={selectedHabit}
-        stats={selectedHabit ? generateStatsForHabit(selectedHabit) : null}
+        stats={habitStats}
         onClose={() => modals.close('stats')}
       />
       <HabitSettingsModal
