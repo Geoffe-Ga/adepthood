@@ -2,7 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { render, fireEvent } from '@testing-library/react-native';
 import React from 'react';
 
-import { COLORS } from '../../Habits.styles';
+import { colors as COLORS } from '../../../../design/tokens';
 
 const OnboardingModal = require('../OnboardingModal').default;
 

@@ -1,6 +1,6 @@
 import { useWindowDimensions } from 'react-native';
 
-import { breakpoints, spacing } from './DesignSystem';
+import { breakpoints, spacing } from './tokens';
 
 export const useResponsive = () => {
   const { width, height } = useWindowDimensions();

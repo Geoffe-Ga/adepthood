@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { jest, describe, afterEach, it, expect } from '@jest/globals';
 
-import { STAGE_COLORS } from '../../../constants/stageColors';
+import { STAGE_COLORS } from '../../../design/tokens';
 
 const renderer = require('react-test-renderer');
 

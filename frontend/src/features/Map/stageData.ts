@@ -1,5 +1,7 @@
 // frontend/features/Map/stageData.ts
 
+import { MAP_STAGE_COLORS } from '../../design/tokens';
+
 /**
  * Static placeholder data for the ten APTITUDE stages.
  * In a full implementation these would be fetched from the backend `CourseStage` model.
@@ -22,19 +24,6 @@ export interface StageData {
   color: string;
   hotspots: Hotspot[]; // areas that respond to taps
 }
-
-const COLORS = [
-  '#7f1d1d',
-  '#9f1239',
-  '#c026d3',
-  '#6d28d9',
-  '#1d4ed8',
-  '#0ea5e9',
-  '#059669',
-  '#65a30d',
-  '#ca8a04',
-  '#ea580c',
-];
 
 // Percentage-based hotspot layout matching the spiral image. Each stage has a
 // tappable region over the colored text on the left and another over its spiral
@@ -97,7 +86,7 @@ export const STAGES: StageData[] = Array.from({ length: 10 }, (_, index) => {
     progress: stageNumber === 1 ? 0.5 : 0,
     goals: [`Goal for stage ${stageNumber}`],
     practices: [`Practice for stage ${stageNumber}`],
-    color: COLORS[stageNumber - 1]!,
+    color: MAP_STAGE_COLORS[stageNumber - 1]!,
     hotspots: HOTSPOTS[index]!,
   };
 });

@@ -1,19 +1,8 @@
-import { STAGE_COLORS } from '../../constants/stageColors';
+import { colors, STAGE_COLORS, STAGE_ORDER } from '../../design/tokens';
 
 import type { Goal, Habit, Completion, HabitStatsData } from './Habits.types';
 
-export const STAGE_ORDER = [
-  'Beige',
-  'Purple',
-  'Red',
-  'Blue',
-  'Orange',
-  'Green',
-  'Yellow',
-  'Turquoise',
-  'Ultraviolet',
-  'Clear Light',
-];
+export { STAGE_ORDER };
 
 /**
  * Calculate the start date for a habit based on its order in the onboarding
@@ -34,13 +23,13 @@ export const calculateHabitStartDate = (baseDate: Date, index: number): Date => 
 export const getTierColor = (tier: 'low' | 'clear' | 'stretch') => {
   switch (tier) {
     case 'low':
-      return '#bc845d';
+      return colors.tier.low;
     case 'clear':
-      return '#807f66';
+      return colors.tier.clear;
     case 'stretch':
-      return '#b0ae91';
+      return colors.tier.stretch;
     default:
-      return '#dad9d4';
+      return colors.tier.default;
   }
 };
 

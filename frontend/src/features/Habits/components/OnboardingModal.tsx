@@ -19,9 +19,9 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 
 import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
-import { STAGE_COLORS } from '../../../constants/stageColors';
+import { colors, STAGE_COLORS } from '../../../design/tokens';
 import { DEFAULT_ICONS } from '../constants';
-import styles, { COLORS } from '../Habits.styles';
+import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { STAGE_ORDER, calculateHabitStartDate } from '../HabitUtils';
 
@@ -196,9 +196,9 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
                       animateTransitions
                       animationType="timing"
                       animationConfig={{ duration: 150 }}
-                      minimumTrackTintColor={COLORS.secondary}
-                      maximumTrackTintColor={COLORS.mystical.glowLight}
-                      thumbTintColor={COLORS.secondary}
+                      minimumTrackTintColor={colors.secondary}
+                      maximumTrackTintColor={colors.mystical.glowLight}
+                      thumbTintColor={colors.secondary}
                       style={[styles.energySlider, Platform.OS === 'web' && styles.energySliderWeb]}
                     />
                   </View>

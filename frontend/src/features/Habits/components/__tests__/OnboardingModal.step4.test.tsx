@@ -4,7 +4,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { render, fireEvent } from '@testing-library/react-native';
 import type { ReactNode } from 'react';
 
-import { STAGE_COLORS } from '../../../../constants/stageColors';
+import { STAGE_COLORS } from '../../../../design/tokens';
 import { STAGE_ORDER } from '../../HabitUtils';
 
 const OnboardingModal = require('../OnboardingModal').default;

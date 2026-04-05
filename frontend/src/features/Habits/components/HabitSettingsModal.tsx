@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import EmojiSelector from 'react-native-emoji-selector';
 
-import { STAGE_COLORS } from '../../../constants/stageColors';
+import { STAGE_COLORS } from '../../../design/tokens';
 import { DAYS_OF_WEEK } from '../constants';
 import styles from '../Habits.styles';
 import type { Habit, HabitSettingsModalProps } from '../Habits.types';

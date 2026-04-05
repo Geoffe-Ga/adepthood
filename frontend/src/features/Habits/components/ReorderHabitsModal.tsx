@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { Modal, Platform, Text, TouchableOpacity, View } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 
-import { STAGE_COLORS } from '../../../constants/stageColors';
+import { STAGE_COLORS } from '../../../design/tokens';
 import styles from '../Habits.styles';
 import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
 import { STAGE_ORDER, calculateHabitStartDate } from '../HabitUtils';

@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-import { STAGE_COLORS } from '../../../constants/stageColors';
+import { STAGE_COLORS } from '../../../design/tokens';
 import type { Habit, Goal } from '../Habits.types';
 import {
   calculateHabitProgress,
