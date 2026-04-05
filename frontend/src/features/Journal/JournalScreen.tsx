@@ -1,3 +1,4 @@
+import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,6 +11,7 @@ import {
   type PromptDetail,
   ApiError,
 } from '../../api';
+import type { RootTabParamList } from '../../navigation/BottomTabs';
 
 import ChatInput, { type MessageTags } from './ChatInput';
 import styles from './Journal.styles';
@@ -20,7 +22,15 @@ import WeeklyPromptBanner from './WeeklyPromptBanner';
 
 const PAGE_SIZE = 50;
 
-const JournalScreen = (): React.JSX.Element => {
+type JournalScreenProps = BottomTabScreenProps<RootTabParamList, 'Journal'>;
+
+const JournalScreen = ({ route }: JournalScreenProps): React.JSX.Element => {
+  const practiceSessionId = route.params?.practiceSessionId ?? null;
+  const userPracticeId = route.params?.userPracticeId ?? null;
+  const practiceName = route.params?.practiceName ?? null;
+  const practiceDuration = route.params?.practiceDuration ?? null;
+  const isPracticeReflection = practiceSessionId !== null;
+
   const [messages, setMessages] = useState<JournalMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -105,6 +115,13 @@ const JournalScreen = (): React.JSX.Element => {
     async (text: string, tags?: MessageTags) => {
       setSending(true);
 
+      // Merge practice context into tags when navigated from a practice session
+      const mergedTags: MessageTags = {
+        is_stage_reflection: tags?.is_stage_reflection ?? false,
+        is_practice_note: isPracticeReflection || (tags?.is_practice_note ?? false),
+        is_habit_note: tags?.is_habit_note ?? false,
+      };
+
       // Optimistic update — add a temporary user message immediately
       const optimistic: JournalMessage = {
         id: -Date.now(),
@@ -112,11 +129,11 @@ const JournalScreen = (): React.JSX.Element => {
         sender: 'user',
         user_id: 0,
         timestamp: new Date().toISOString(),
-        is_stage_reflection: tags?.is_stage_reflection ?? false,
-        is_practice_note: tags?.is_practice_note ?? false,
-        is_habit_note: tags?.is_habit_note ?? false,
-        practice_session_id: null,
-        user_practice_id: null,
+        is_stage_reflection: mergedTags.is_stage_reflection,
+        is_practice_note: mergedTags.is_practice_note,
+        is_habit_note: mergedTags.is_habit_note,
+        practice_session_id: practiceSessionId,
+        user_practice_id: userPracticeId,
       };
       setMessages((prev) => [optimistic, ...prev]);
 
@@ -138,7 +155,9 @@ const JournalScreen = (): React.JSX.Element => {
             try {
               const created = await journalApi.create({
                 message: text,
-                ...(tags ?? {}),
+                ...mergedTags,
+                practice_session_id: practiceSessionId,
+                user_practice_id: userPracticeId,
               });
               setMessages((prev) => prev.map((m) => (m.id === optimistic.id ? created : m)));
             } catch (createErr) {
@@ -157,7 +176,9 @@ const JournalScreen = (): React.JSX.Element => {
         try {
           const created = await journalApi.create({
             message: text,
-            ...(tags ?? {}),
+            ...mergedTags,
+            practice_session_id: practiceSessionId,
+            user_practice_id: userPracticeId,
           });
           setMessages((prev) => prev.map((m) => (m.id === optimistic.id ? created : m)));
         } catch (err) {
@@ -168,7 +189,7 @@ const JournalScreen = (): React.JSX.Element => {
 
       setSending(false);
     },
-    [offeringBalance, loadMessages],
+    [offeringBalance, loadMessages, isPracticeReflection, practiceSessionId, userPracticeId],
   );
 
   const handlePromptRespond = useCallback(() => {
@@ -268,6 +289,14 @@ const JournalScreen = (): React.JSX.Element => {
           <Text style={styles.balanceCounterText}>Offerings: {offeringBalance}</Text>
         </View>
       )}
+      {isPracticeReflection && (
+        <View testID="practice-reflection-header" style={styles.balanceBanner}>
+          <Text style={styles.balanceBannerText}>
+            Reflection on {practiceName}
+            {practiceDuration !== null ? ` \u2014 ${practiceDuration} minutes` : ''}
+          </Text>
+        </View>
+      )}
       <FlatList
         testID="message-list"
         data={messages}
@@ -285,7 +314,15 @@ const JournalScreen = (): React.JSX.Element => {
           <Text style={styles.typingIndicatorText}>BotMason is typing...</Text>
         </View>
       )}
-      <ChatInput onSend={handleSend} disabled={sending} />
+      <ChatInput
+        onSend={handleSend}
+        disabled={sending}
+        initialTags={
+          isPracticeReflection
+            ? { is_stage_reflection: false, is_practice_note: true, is_habit_note: false }
+            : undefined
+        }
+      />
     </SafeAreaView>
   );
 };
