@@ -47,6 +47,30 @@ jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
 const widths = [320, 390, 600, 900, 1200];
 
+const colorValues = Object.values(STAGE_COLORS);
+
+const assertTileLayout = (tile: any, height: number, expectedColumns: number): void => {
+  const style = Array.isArray(tile.props.style)
+    ? tile.props.style.reduce((acc: any, s: any) => ({ ...acc, ...s }), {})
+    : tile.props.style;
+
+  const tileHeight = (style.minHeight ?? 0) + 2 * (style.padding ?? 0) + 2 * (style.margin ?? 0);
+
+  const maxTileHeight = (height * expectedColumns) / 10;
+  expect(tileHeight).toBeLessThanOrEqual(maxTileHeight);
+  if (expectedColumns === 2) {
+    expect(style.flex).toBe(1);
+  }
+  expect(colorValues).toContain(style.borderColor);
+
+  const fill = tile.findByProps({ testID: 'progress-fill' });
+  const fillStyle = Array.isArray(fill.props.style) ? fill.props.style[1] : fill.props.style;
+  const val = parseFloat(fillStyle.width);
+  expect(val).toBeGreaterThanOrEqual(0);
+  expect(val).toBeLessThanOrEqual(100);
+  expect(fillStyle.backgroundColor).toBe(style.borderColor);
+};
+
 describe('HabitsScreen responsive layout', () => {
   afterEach(() => {
     jest.clearAllMocks();
@@ -70,30 +94,7 @@ describe('HabitsScreen responsive layout', () => {
       expect(list.props.horizontal).not.toBe(true);
 
       const tiles = tree.findAllByProps({ testID: 'habit-tile' });
-      const colorValues = Object.values(STAGE_COLORS);
-
-      tiles.forEach((t: any) => {
-        const style = Array.isArray(t.props.style)
-          ? t.props.style.reduce((acc: any, s: any) => ({ ...acc, ...s }), {})
-          : t.props.style;
-
-        const tileHeight =
-          (style.minHeight ?? 0) + 2 * (style.padding ?? 0) + 2 * (style.margin ?? 0);
-
-        const maxTileHeight = (height * expectedColumns) / 10;
-        expect(tileHeight).toBeLessThanOrEqual(maxTileHeight);
-        if (expectedColumns === 2) {
-          expect(style.flex).toBe(1);
-        }
-        expect(colorValues).toContain(style.borderColor);
-
-        const fill = t.findByProps({ testID: 'progress-fill' });
-        const fillStyle = Array.isArray(fill.props.style) ? fill.props.style[1] : fill.props.style;
-        const val = parseFloat(fillStyle.width);
-        expect(val).toBeGreaterThanOrEqual(0);
-        expect(val).toBeLessThanOrEqual(100);
-        expect(fillStyle.backgroundColor).toBe(style.borderColor);
-      });
+      tiles.forEach((t: any) => assertTileLayout(t, height, expectedColumns));
 
       const iconTopExpected = expectedColumns === 2 && w / expectedColumns >= 400;
       const iconTopNodes = tree.findAllByProps({ testID: 'habit-icon-top' });

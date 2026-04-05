@@ -14,3 +14,4 @@ sqlmodel
 types-requests
 types-ujson
 types-orjson
+xenon>=0.9
