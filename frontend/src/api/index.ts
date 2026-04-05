@@ -98,6 +98,26 @@ export interface ApiGoal {
   frequency: number;
   frequency_unit: string;
   is_additive: boolean;
+  goal_group_id?: number | null;
+}
+
+export interface ApiGoalGroup {
+  id: number;
+  name: string;
+  icon?: string | null;
+  description?: string | null;
+  user_id?: number | null;
+  shared_template: boolean;
+  source?: string | null;
+  goals: ApiGoal[];
+}
+
+export interface GoalGroupCreatePayload {
+  name: string;
+  icon?: string | null;
+  description?: string | null;
+  shared_template?: boolean;
+  source?: string | null;
 }
 
 export interface ApiHabit {
@@ -163,6 +183,7 @@ export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
       frequency: g.frequency,
       frequency_unit: g.frequency_unit,
       is_additive: g.is_additive,
+      goal_group_id: g.goal_group_id ?? null,
     })),
     completions: [],
     notificationTimes: apiHabit.notification_times ?? undefined,
@@ -206,6 +227,29 @@ export interface CheckInResult {
 export const goalCompletions = {
   create(payload: GoalCompletionPayload, token?: string): Promise<CheckInResult> {
     return request<CheckInResult>('/goal_completions', { method: 'POST', body: payload, token });
+  },
+};
+
+// Goal group client
+export const goalGroups = {
+  list(token?: string): Promise<ApiGoalGroup[]> {
+    return request<ApiGoalGroup[]>('/goal-groups/', { token });
+  },
+  get(groupId: number, token?: string): Promise<ApiGoalGroup> {
+    return request<ApiGoalGroup>(`/goal-groups/${groupId}`, { token });
+  },
+  create(payload: GoalGroupCreatePayload, token?: string): Promise<ApiGoalGroup> {
+    return request<ApiGoalGroup>('/goal-groups/', { method: 'POST', body: payload, token });
+  },
+  update(groupId: number, payload: GoalGroupCreatePayload, token?: string): Promise<ApiGoalGroup> {
+    return request<ApiGoalGroup>(`/goal-groups/${groupId}`, {
+      method: 'PUT',
+      body: payload,
+      token,
+    });
+  },
+  delete(groupId: number, token?: string): Promise<void> {
+    return request<void>(`/goal-groups/${groupId}`, { method: 'DELETE', token });
   },
 };
 
@@ -270,6 +314,41 @@ export const journal = {
   },
   delete(entryId: number, token?: string): Promise<void> {
     return request<void>(`/journal/${entryId}`, { method: 'DELETE', token });
+  },
+};
+
+// BotMason AI chat types and client
+export interface ChatRequest {
+  message: string;
+}
+
+export interface ChatResponse {
+  response: string;
+  remaining_balance: number;
+  bot_entry_id: number;
+}
+
+export interface BalanceResponse {
+  balance: number;
+}
+
+export const botmason = {
+  chat(payload: ChatRequest, token?: string): Promise<ChatResponse> {
+    return request<ChatResponse>('/journal/chat', {
+      method: 'POST',
+      body: payload,
+      token,
+    });
+  },
+  getBalance(token?: string): Promise<BalanceResponse> {
+    return request<BalanceResponse>('/user/balance', { token });
+  },
+  addBalance(amount: number, token?: string): Promise<{ balance: number; added: number }> {
+    return request<{ balance: number; added: number }>('/user/balance/add', {
+      method: 'POST',
+      body: { amount },
+      token,
+    });
   },
 };
 
@@ -348,6 +427,46 @@ export const stages = {
   },
 };
 
+// Course content types and client
+export interface ContentItem {
+  id: number;
+  title: string;
+  content_type: string;
+  release_day: number;
+  url: string | null;
+  is_locked: boolean;
+  is_read: boolean;
+}
+
+export interface CourseProgress {
+  total_items: number;
+  read_items: number;
+  progress_percent: number;
+  next_unlock_day: number | null;
+}
+
+export interface ContentCompletion {
+  id: number;
+  user_id: number;
+  content_id: number;
+  completed_at: string;
+}
+
+export const course = {
+  stageContent(stageNumber: number, token?: string): Promise<ContentItem[]> {
+    return request<ContentItem[]>(`/course/stages/${stageNumber}/content`, { token });
+  },
+  markRead(contentId: number, token?: string): Promise<ContentCompletion> {
+    return request<ContentCompletion>(`/course/content/${contentId}/mark-read`, {
+      method: 'POST',
+      token,
+    });
+  },
+  stageProgress(stageNumber: number, token?: string): Promise<CourseProgress> {
+    return request<CourseProgress>(`/course/stages/${stageNumber}/progress`, { token });
+  },
+};
+
 // Practice session types and client
 export type PracticeSessionCreate = components['schemas']['PracticeSessionCreate'];
 export type PracticeSession = components['schemas']['PracticeSession'];
@@ -399,9 +518,12 @@ export const energy = {
 export default {
   habits,
   goalCompletions,
+  goalGroups,
   journal,
+  botmason,
   prompts,
   stages,
+  course,
   practice,
   auth,
   energy,
