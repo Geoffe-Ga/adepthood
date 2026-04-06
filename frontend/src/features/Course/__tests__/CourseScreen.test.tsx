@@ -294,7 +294,7 @@ describe('CourseScreen', () => {
     });
 
     expect(mockNavigate).toHaveBeenCalledWith('Journal', {
-      stageReflection: true,
+      tag: 'stage_reflection',
       stageNumber: 2,
       contentTitle: 'Welcome Essay',
     });

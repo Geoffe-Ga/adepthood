@@ -15,6 +15,7 @@ describe('TagFilter', () => {
   it('renders all filter chips', () => {
     const { getByText } = render(<TagFilter activeTag={null} onSelectTag={onSelectTag} />);
     expect(getByText('All')).toBeTruthy();
+    expect(getByText('Freeform')).toBeTruthy();
     expect(getByText('Reflections')).toBeTruthy();
     expect(getByText('Practice Notes')).toBeTruthy();
     expect(getByText('Habit Notes')).toBeTruthy();
@@ -24,6 +25,12 @@ describe('TagFilter', () => {
     const { getByText } = render(<TagFilter activeTag={null} onSelectTag={onSelectTag} />);
     fireEvent.press(getByText('Reflections'));
     expect(onSelectTag).toHaveBeenCalledWith('stage_reflection');
+  });
+
+  it('calls onSelectTag with freeform when Freeform chip is pressed', () => {
+    const { getByText } = render(<TagFilter activeTag={null} onSelectTag={onSelectTag} />);
+    fireEvent.press(getByText('Freeform'));
+    expect(onSelectTag).toHaveBeenCalledWith('freeform');
   });
 
   it('calls onSelectTag with null when All is pressed', () => {

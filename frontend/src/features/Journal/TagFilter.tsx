@@ -1,9 +1,9 @@
 import React from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
-import styles from './Journal.styles';
+import type { JournalTag } from '../../api';
 
-export type JournalTag = 'stage_reflection' | 'practice_note' | 'habit_note';
+import styles from './Journal.styles';
 
 interface TagChip {
   label: string;
@@ -12,6 +12,7 @@ interface TagChip {
 
 const TAG_CHIPS: TagChip[] = [
   { label: 'All', value: null },
+  { label: 'Freeform', value: 'freeform' },
   { label: 'Reflections', value: 'stage_reflection' },
   { label: 'Practice Notes', value: 'practice_note' },
   { label: 'Habit Notes', value: 'habit_note' },

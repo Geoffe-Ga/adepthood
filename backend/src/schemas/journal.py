@@ -6,6 +6,8 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from models.journal_entry import JournalTag
+
 
 class JournalMessageCreate(BaseModel):
     """Payload for creating a user journal message.
@@ -15,9 +17,7 @@ class JournalMessageCreate(BaseModel):
     """
 
     message: str
-    is_stage_reflection: bool = False
-    is_practice_note: bool = False
-    is_habit_note: bool = False
+    tag: JournalTag = JournalTag.FREEFORM
     practice_session_id: int | None = None
     user_practice_id: int | None = None
 
@@ -27,9 +27,7 @@ class JournalBotMessageCreate(BaseModel):
 
     message: str
     user_id: int
-    is_stage_reflection: bool = False
-    is_practice_note: bool = False
-    is_habit_note: bool = False
+    tag: JournalTag = JournalTag.FREEFORM
     practice_session_id: int | None = None
     user_practice_id: int | None = None
 
@@ -42,9 +40,7 @@ class JournalMessageResponse(BaseModel):
     sender: str
     user_id: int
     timestamp: datetime
-    is_stage_reflection: bool
-    is_practice_note: bool
-    is_habit_note: bool
+    tag: str
     practice_session_id: int | None
     user_practice_id: int | None
 

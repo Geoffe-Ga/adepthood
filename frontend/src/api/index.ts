@@ -304,11 +304,11 @@ export const goalGroups = {
 };
 
 // Journal types and client
+export type JournalTag = 'freeform' | 'stage_reflection' | 'practice_note' | 'habit_note';
+
 export interface JournalMessageCreate {
   message: string;
-  is_stage_reflection?: boolean;
-  is_practice_note?: boolean;
-  is_habit_note?: boolean;
+  tag?: JournalTag;
   practice_session_id?: number | null;
   user_practice_id?: number | null;
 }
@@ -319,9 +319,7 @@ export interface JournalMessage {
   sender: 'user' | 'bot';
   user_id: number;
   timestamp: string;
-  is_stage_reflection: boolean;
-  is_practice_note: boolean;
-  is_habit_note: boolean;
+  tag: JournalTag;
   practice_session_id: number | null;
   user_practice_id: number | null;
 }

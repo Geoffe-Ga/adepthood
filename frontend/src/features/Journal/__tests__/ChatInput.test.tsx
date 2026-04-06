@@ -18,7 +18,7 @@ describe('ChatInput', () => {
     expect(getByTestId('send-button')).toBeTruthy();
   });
 
-  it('calls onSend with trimmed text and clears input', () => {
+  it('calls onSend with trimmed text and no tag when none selected', () => {
     const { getByTestId } = render(<ChatInput onSend={onSend} />);
     const input = getByTestId('chat-input');
     const sendBtn = getByTestId('send-button');
@@ -70,34 +70,44 @@ describe('ChatInput', () => {
     fireEvent.press(getByTestId('tag-toggle'));
 
     expect(getByTestId('tag-picker')).toBeTruthy();
-    expect(getByTestId('tag-option-is_stage_reflection')).toBeTruthy();
-    expect(getByTestId('tag-option-is_practice_note')).toBeTruthy();
-    expect(getByTestId('tag-option-is_habit_note')).toBeTruthy();
+    expect(getByTestId('tag-option-stage_reflection')).toBeTruthy();
+    expect(getByTestId('tag-option-practice_note')).toBeTruthy();
+    expect(getByTestId('tag-option-habit_note')).toBeTruthy();
   });
 
-  it('sends tags with message when tags are selected', () => {
+  it('sends tag with message when a tag is selected', () => {
     const { getByTestId } = render(<ChatInput onSend={onSend} />);
 
     // Open tag picker and select a tag
     fireEvent.press(getByTestId('tag-toggle'));
-    fireEvent.press(getByTestId('tag-option-is_stage_reflection'));
+    fireEvent.press(getByTestId('tag-option-stage_reflection'));
 
     // Type and send
     fireEvent.changeText(getByTestId('chat-input'), 'Tagged message');
     fireEvent.press(getByTestId('send-button'));
 
-    expect(onSend).toHaveBeenCalledWith('Tagged message', {
-      is_stage_reflection: true,
-      is_practice_note: false,
-      is_habit_note: false,
-    });
+    expect(onSend).toHaveBeenCalledWith('Tagged message', 'stage_reflection');
   });
 
-  it('resets tags after sending', () => {
+  it('deselects tag when same tag is pressed again', () => {
+    const { getByTestId } = render(<ChatInput onSend={onSend} />);
+
+    fireEvent.press(getByTestId('tag-toggle'));
+    fireEvent.press(getByTestId('tag-option-stage_reflection'));
+    // Press again to deselect
+    fireEvent.press(getByTestId('tag-option-stage_reflection'));
+
+    fireEvent.changeText(getByTestId('chat-input'), 'No tag');
+    fireEvent.press(getByTestId('send-button'));
+
+    expect(onSend).toHaveBeenCalledWith('No tag', undefined);
+  });
+
+  it('resets tag after sending', () => {
     const { getByTestId, queryByTestId } = render(<ChatInput onSend={onSend} />);
 
     fireEvent.press(getByTestId('tag-toggle'));
-    fireEvent.press(getByTestId('tag-option-is_habit_note'));
+    fireEvent.press(getByTestId('tag-option-habit_note'));
     fireEvent.changeText(getByTestId('chat-input'), 'Test');
     fireEvent.press(getByTestId('send-button'));
 
@@ -105,22 +115,12 @@ describe('ChatInput', () => {
     expect(queryByTestId('tag-picker')).toBeNull();
   });
 
-  it('uses initialTags when provided', () => {
-    const initialTags = {
-      is_stage_reflection: false,
-      is_practice_note: true,
-      is_habit_note: false,
-    };
-
-    const { getByTestId } = render(<ChatInput onSend={onSend} initialTags={initialTags} />);
+  it('uses initialTag when provided', () => {
+    const { getByTestId } = render(<ChatInput onSend={onSend} initialTag="practice_note" />);
 
     fireEvent.changeText(getByTestId('chat-input'), 'Practice reflection');
     fireEvent.press(getByTestId('send-button'));
 
-    expect(onSend).toHaveBeenCalledWith('Practice reflection', {
-      is_stage_reflection: false,
-      is_practice_note: true,
-      is_habit_note: false,
-    });
+    expect(onSend).toHaveBeenCalledWith('Practice reflection', 'practice_note');
   });
 });
