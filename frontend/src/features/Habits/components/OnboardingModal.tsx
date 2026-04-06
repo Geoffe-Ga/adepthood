@@ -1,6 +1,7 @@
 import Slider, { type SliderProps } from '@react-native-community/slider';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  LayoutAnimation,
   Modal,
   Platform,
   SafeAreaView,
@@ -9,6 +10,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  UIManager,
   View,
   type NativeSyntheticEvent,
   type TextInputKeyPressEventData,
@@ -26,6 +28,10 @@ import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { STAGE_ORDER, calculateHabitStartDate } from '../HabitUtils';
 
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
 interface SmoothSliderProps extends SliderProps {
   animateTransitions?: boolean;
   animationType?: 'timing' | 'spring';
@@ -36,6 +42,11 @@ const SmoothSlider = Slider as React.ComponentType<SmoothSliderProps>;
 
 const MAX_HABITS = 10;
 const DEFAULT_ENERGY = 5;
+
+const REVEAL_STAGGER_MS = 150;
+const REVEAL_SORT_PAUSE_MS = 500;
+
+type RevealPhase = 'idle' | 'showing-scores' | 'sorting' | 'complete';
 
 const sortByNetEnergy = (habits: OnboardingHabit[]): OnboardingHabit[] =>
   [...habits].sort((a, b) => {
@@ -406,13 +417,18 @@ const EnergyStep = ({
 interface ReorderHeaderProps {
   startDate: Date;
   onDateChange: (_iso: string) => void;
+  postReveal?: boolean;
 }
 
-const ReorderHeader = ({ startDate, onDateChange }: ReorderHeaderProps) => (
+const ReorderHeader = ({ startDate, onDateChange, postReveal }: ReorderHeaderProps) => (
   <>
-    <Text style={styles.onboardingTitle}>Reorder Your Habits</Text>
+    <Text style={styles.onboardingTitle}>
+      {postReveal ? 'Your optimal habit order:' : 'Reorder Your Habits'}
+    </Text>
     <Text style={styles.onboardingSubtitle}>
-      Habits are ordered by energy efficiency. You can drag to reorder if needed.
+      {postReveal
+        ? 'Sorted by energy efficiency. You can drag to reorder if needed.'
+        : 'Habits are ordered by energy efficiency. You can drag to reorder if needed.'}
     </Text>
     <View style={styles.startDateContainer}>
       <Text style={styles.startDateLabel}>First habit starts on:</Text>
@@ -454,11 +470,48 @@ const ContinueToTemplatesButton = ({ onPress }: { onPress: () => void }) => (
   </TouchableOpacity>
 );
 
+interface RevealStepProps {
+  habits: OnboardingHabit[];
+  revealedScoreCount: number;
+  revealPhase: RevealPhase;
+}
+
+const RevealStep = ({ habits, revealedScoreCount, revealPhase }: RevealStepProps) => {
+  const headerText =
+    revealPhase === 'complete' ? 'Your optimal habit order:' : 'Calculating your energy order...';
+
+  return (
+    <SafeAreaView style={styles.onboardingStep}>
+      <ScrollView>
+        <Text style={styles.onboardingTitle}>{headerText}</Text>
+        <Text style={styles.onboardingSubtitle}>
+          {revealPhase === 'complete'
+            ? 'Habits sorted by energy efficiency — highest net energy first.'
+            : 'Analyzing your energy data...'}
+        </Text>
+        {habits.map((habit, index) => (
+          <View key={habit.id} style={revealStyles.tile}>
+            <Text style={revealStyles.habitName}>
+              {habit.icon} {habit.name}
+            </Text>
+            {index < revealedScoreCount && (
+              <Text testID="reveal-score" style={revealStyles.score}>
+                Net: {habit.energy_return - habit.energy_cost}
+              </Text>
+            )}
+          </View>
+        ))}
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
 interface ReorderStepProps {
   habits: OnboardingHabit[];
   startDate: Date;
   showEmojiPicker: boolean;
   selectedHabitIndex: number | null;
+  postReveal?: boolean;
   onDragEnd: (_data: { data: OnboardingHabit[] }) => void;
   onEditIcon: (_index: number) => void;
   onDateChange: (_iso: string) => void;
@@ -472,6 +525,7 @@ const ReorderStep = ({
   startDate,
   showEmojiPicker,
   selectedHabitIndex,
+  postReveal,
   onDragEnd,
   onEditIcon,
   onDateChange,
@@ -491,7 +545,13 @@ const ReorderStep = ({
         nestedScrollEnabled
         autoscrollThreshold={40}
         autoscrollSpeed={300}
-        ListHeaderComponent={<ReorderHeader startDate={startDate} onDateChange={onDateChange} />}
+        ListHeaderComponent={
+          <ReorderHeader
+            startDate={startDate}
+            onDateChange={onDateChange}
+            postReveal={postReveal}
+          />
+        }
         ListFooterComponent={<ContinueToTemplatesButton onPress={onGoToTemplates} />}
         renderItem={({ item, drag, isActive, getIndex }) => (
           <ReorderItem
@@ -757,7 +817,113 @@ const useOnboardingNavigation = (
   };
 };
 
-const useOnboardingState = (
+const scheduleScoreReveals = (
+  habitCount: number,
+  setRevealedScoreCount: React.Dispatch<React.SetStateAction<number>>,
+  timers: ReturnType<typeof setTimeout>[],
+) => {
+  for (let i = 0; i < habitCount; i++) {
+    const timer = setTimeout(() => setRevealedScoreCount(i + 1), REVEAL_STAGGER_MS * (i + 1));
+    timers.push(timer);
+  }
+};
+
+const scheduleSortAndComplete = (
+  delayMs: number,
+  setRevealPhase: React.Dispatch<React.SetStateAction<RevealPhase>>,
+  applySort: () => void,
+  timers: ReturnType<typeof setTimeout>[],
+) => {
+  const sortTimer = setTimeout(() => {
+    setRevealPhase('sorting');
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.spring);
+    applySort();
+    timers.push(setTimeout(() => setRevealPhase('complete'), 100));
+  }, delayMs);
+  timers.push(sortTimer);
+};
+
+const useRevealAnimation = (
+  step: number,
+  unsortedHabits: OnboardingHabit[],
+  setHabits: React.Dispatch<React.SetStateAction<OnboardingHabit[]>>,
+  startDate: Date,
+) => {
+  const [revealPhase, setRevealPhase] = useState<RevealPhase>('idle');
+  const [revealedScoreCount, setRevealedScoreCount] = useState(0);
+  const hasRevealedOnce = useRef(false);
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const clearTimers = useCallback(() => {
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [];
+  }, []);
+
+  const startReveal = useCallback(() => {
+    if (hasRevealedOnce.current) return false;
+    hasRevealedOnce.current = true;
+    setRevealPhase('showing-scores');
+    setRevealedScoreCount(0);
+    clearTimers();
+
+    const habitCount = unsortedHabits.length;
+    scheduleScoreReveals(habitCount, setRevealedScoreCount, timersRef.current);
+
+    const applySort = () =>
+      setHabits(assignDatesAndStages(sortByNetEnergy(unsortedHabits), startDate));
+    const sortDelay = REVEAL_STAGGER_MS * habitCount + REVEAL_SORT_PAUSE_MS;
+    scheduleSortAndComplete(sortDelay, setRevealPhase, applySort, timersRef.current);
+
+    return true;
+  }, [unsortedHabits, startDate, setHabits, clearTimers]);
+
+  useEffect(() => clearTimers, [clearTimers]);
+
+  useEffect(() => {
+    if (step !== 4) {
+      setRevealPhase('idle');
+      setRevealedScoreCount(0);
+    }
+  }, [step]);
+
+  return {
+    revealPhase,
+    revealedScoreCount,
+    isRevealing: revealPhase !== 'idle' && revealPhase !== 'complete',
+    startReveal,
+    hasRevealedOnce,
+  };
+};
+
+const useRevealIntegration = (
+  step: number,
+  habits: OnboardingHabit[],
+  setHabits: React.Dispatch<React.SetStateAction<OnboardingHabit[]>>,
+  setStep: React.Dispatch<React.SetStateAction<number>>,
+  startDate: Date,
+) => {
+  const [unsortedHabits, setUnsortedHabits] = useState<OnboardingHabit[]>([]);
+  const reveal = useRevealAnimation(step, unsortedHabits, setHabits, startDate);
+
+  const prepareHabitsForReorder = useCallback(() => {
+    if (reveal.hasRevealedOnce.current) {
+      setHabits(assignDatesAndStages(sortByNetEnergy(habits), startDate));
+    } else {
+      setUnsortedHabits([...habits]);
+    }
+    setStep(4);
+  }, [habits, startDate, reveal.hasRevealedOnce, setHabits, setStep]);
+
+  useEffect(() => {
+    if (step === 4 && unsortedHabits.length > 0 && !reveal.hasRevealedOnce.current) {
+      reveal.startReveal();
+    }
+  }, [step, unsortedHabits, reveal]);
+
+  return { reveal, unsortedHabits, prepareHabitsForReorder };
+};
+
+const useComposedState = (
   onClose: () => void,
   onSaveHabits: OnboardingModalProps['onSaveHabits'],
 ) => {
@@ -768,19 +934,47 @@ const useOnboardingState = (
   const [selectedHabitIndex, setSelectedHabitIndex] = useState<number | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const [goalGroupTemplates, setGoalGroupTemplates] = useState<ApiGoalGroup[]>([]);
+  return {
+    step,
+    setStep,
+    habits,
+    setHabits,
+    startDate,
+    setStartDate,
+    showEmojiPicker,
+    setShowEmojiPicker,
+    selectedHabitIndex,
+    setSelectedHabitIndex,
+    scrollRef,
+    goalGroupTemplates,
+    setGoalGroupTemplates,
+    onClose,
+    onSaveHabits,
+  };
+};
 
-  const prepareHabitsForReorder = useCallback(() => {
-    setHabits(assignDatesAndStages(sortByNetEnergy(habits), startDate));
-    setStep(4);
-  }, [habits, startDate]);
+const useOnboardingState = (
+  onClose: () => void,
+  onSaveHabits: OnboardingModalProps['onSaveHabits'],
+) => {
+  const cs = useComposedState(onClose, onSaveHabits);
+  const { step, habits, setHabits, setStep, startDate } = cs;
 
-  useOnboardingEffects(step, scrollRef, prepareHabitsForReorder);
+  const { reveal, unsortedHabits, prepareHabitsForReorder } = useRevealIntegration(
+    step,
+    habits,
+    setHabits,
+    setStep,
+    startDate,
+  );
+
+  useOnboardingEffects(step, cs.scrollRef, prepareHabitsForReorder);
   const input = useHabitInput(habits, setHabits, setStep);
   const nav = useOnboardingNavigation(
     habits,
     setHabits,
     setStep,
-    setGoalGroupTemplates,
+    cs.setGoalGroupTemplates,
     onClose,
     onSaveHabits,
   );
@@ -788,10 +982,10 @@ const useOnboardingState = (
     habits,
     setHabits,
     startDate,
-    setStartDate,
-    selectedHabitIndex,
-    setSelectedHabitIndex,
-    setShowEmojiPicker,
+    cs.setStartDate,
+    cs.selectedHabitIndex,
+    cs.setSelectedHabitIndex,
+    cs.setShowEmojiPicker,
   );
 
   return {
@@ -799,11 +993,13 @@ const useOnboardingState = (
     setStep,
     habits,
     startDate,
-    showEmojiPicker,
-    selectedHabitIndex,
-    scrollRef,
-    goalGroupTemplates,
+    showEmojiPicker: cs.showEmojiPicker,
+    selectedHabitIndex: cs.selectedHabitIndex,
+    scrollRef: cs.scrollRef,
+    goalGroupTemplates: cs.goalGroupTemplates,
     prepareHabitsForReorder,
+    unsortedHabits,
+    reveal,
     ...nav,
     ...input,
     ...act,
@@ -830,6 +1026,7 @@ const OnboardingStepReorder = ({ s }: { s: ReturnType<typeof useOnboardingState>
     startDate={s.startDate}
     showEmojiPicker={s.showEmojiPicker}
     selectedHabitIndex={s.selectedHabitIndex}
+    postReveal={s.reveal.revealPhase === 'complete'}
     onDragEnd={s.handleDragEnd}
     onEditIcon={s.openEmojiForIndex}
     onDateChange={s.handleDateChange}
@@ -838,6 +1035,20 @@ const OnboardingStepReorder = ({ s }: { s: ReturnType<typeof useOnboardingState>
     onEmojiSelected={s.onEmojiSelected}
   />
 );
+
+const OnboardingStepRevealOrReorder = ({ s }: { s: ReturnType<typeof useOnboardingState> }) => {
+  if (s.reveal.isRevealing) {
+    const habits = s.reveal.revealPhase === 'sorting' ? s.habits : s.unsortedHabits;
+    return (
+      <RevealStep
+        habits={habits}
+        revealedScoreCount={s.reveal.revealedScoreCount}
+        revealPhase={s.reveal.revealPhase}
+      />
+    );
+  }
+  return <OnboardingStepReorder s={s} />;
+};
 
 const renderOnboardingStep = (s: ReturnType<typeof useOnboardingState>) => {
   switch (s.step) {
@@ -866,7 +1077,7 @@ const renderOnboardingStep = (s: ReturnType<typeof useOnboardingState>) => {
         />
       );
     case 4:
-      return <OnboardingStepReorder s={s} />;
+      return <OnboardingStepRevealOrReorder s={s} />;
     case 5:
       return (
         <TemplateStep
@@ -948,6 +1159,32 @@ export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingMo
     </>
   );
 };
+
+const revealStyles = StyleSheet.create({
+  tile: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginVertical: 4,
+    borderRadius: 8,
+    backgroundColor: '#fffdf7',
+    borderWidth: 1,
+    borderColor: colors.mystical.glowLight,
+  },
+  habitName: {
+    fontSize: 16,
+    color: '#333',
+    flex: 1,
+  },
+  score: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.secondary,
+    marginLeft: 8,
+  },
+});
 
 const templatePickerStyles = StyleSheet.create({
   options: {
