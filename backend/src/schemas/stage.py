@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -46,3 +48,30 @@ class StageProgressRecord(BaseModel):
     user_id: int
     current_stage: int
     completed_stages: list[int]
+
+
+class PracticeHistoryItem(BaseModel):
+    """A practice's aggregated history within a stage."""
+
+    name: str
+    sessions_completed: int
+    total_minutes: float
+    last_session: datetime | None
+
+
+class HabitHistoryItem(BaseModel):
+    """A habit's aggregated history within a stage."""
+
+    name: str
+    icon: str
+    goals_achieved: dict[str, bool]
+    best_streak: int
+    total_completions: int
+
+
+class StageHistoryResponse(BaseModel):
+    """Aggregated history of practices and habits for a stage."""
+
+    stage_number: int
+    practices: list[PracticeHistoryItem]
+    habits: list[HabitHistoryItem]

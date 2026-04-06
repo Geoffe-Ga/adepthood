@@ -465,6 +465,27 @@ export interface StageProgressDetail {
   overall_progress: number;
 }
 
+export interface PracticeHistoryItem {
+  name: string;
+  sessions_completed: number;
+  total_minutes: number;
+  last_session: string | null;
+}
+
+export interface HabitHistoryItem {
+  name: string;
+  icon: string;
+  goals_achieved: Record<string, boolean>;
+  best_streak: number;
+  total_completions: number;
+}
+
+export interface StageHistoryResponse {
+  stage_number: number;
+  practices: PracticeHistoryItem[];
+  habits: HabitHistoryItem[];
+}
+
 export const stages = {
   list(token?: string): Promise<Stage[]> {
     return request<Stage[]>('/stages', { token });
@@ -474,6 +495,9 @@ export const stages = {
   },
   progress(stageNumber: number, token?: string): Promise<StageProgressDetail> {
     return request<StageProgressDetail>(`/stages/${stageNumber}/progress`, { token });
+  },
+  history(stageNumber: number, token?: string): Promise<StageHistoryResponse> {
+    return request<StageHistoryResponse>(`/stages/${stageNumber}/history`, { token });
   },
 };
 
