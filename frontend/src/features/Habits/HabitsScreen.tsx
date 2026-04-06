@@ -332,24 +332,40 @@ const useHabitTileRenderer = (
   actions: ReturnType<typeof useHabits>['actions'],
   setSelectedHabit: (_h: Habit) => void,
 ) => {
-  const renderHabitTile = ({ item, index }: { item: Habit; index: number }) => (
-    <HabitTile
-      habit={item}
-      onOpenGoals={() => {
-        setSelectedHabit(item);
-        openModalForMode(mode, modals, actions, item.id!);
-      }}
-      onLongPress={() => {
-        setSelectedHabit(item);
-        modals.open('settings');
-      }}
-      onIconPress={() => {
-        actions.iconPress(index);
-        modals.open('emojiPicker');
-      }}
-      onUnlockHabit={actions.unlockHabit}
-    />
-  );
+  const renderHabitTile = ({ item, index }: { item: Habit; index: number }) => {
+    const isLocked = item.revealed === false;
+    return (
+      <HabitTile
+        habit={item}
+        locked={isLocked}
+        onOpenGoals={
+          isLocked
+            ? undefined
+            : () => {
+                setSelectedHabit(item);
+                openModalForMode(mode, modals, actions, item.id!);
+              }
+        }
+        onLongPress={
+          isLocked
+            ? undefined
+            : () => {
+                setSelectedHabit(item);
+                modals.open('settings');
+              }
+        }
+        onIconPress={
+          isLocked
+            ? undefined
+            : () => {
+                actions.iconPress(index);
+                modals.open('emojiPicker');
+              }
+        }
+        onUnlockHabit={actions.unlockHabit}
+      />
+    );
+  };
   return renderHabitTile;
 };
 

@@ -11,9 +11,7 @@ const sampleMessages: JournalMessage[] = [
     sender: 'bot',
     user_id: 1,
     timestamp: '2026-01-15T10:31:00Z',
-    is_stage_reflection: false,
-    is_practice_note: false,
-    is_habit_note: false,
+    tag: 'freeform',
     practice_session_id: null,
     user_practice_id: null,
   },
@@ -23,9 +21,7 @@ const sampleMessages: JournalMessage[] = [
     sender: 'user',
     user_id: 1,
     timestamp: '2026-01-15T10:30:00Z',
-    is_stage_reflection: true,
-    is_practice_note: false,
-    is_habit_note: false,
+    tag: 'stage_reflection',
     practice_session_id: null,
     user_practice_id: null,
   },
@@ -46,16 +42,14 @@ const mockJournalList = (jest.fn() as any).mockResolvedValue({
 });
 
 const mockJournalCreate = (jest.fn() as any).mockImplementation(
-  (payload: { message: string; is_stage_reflection?: boolean }) =>
+  (payload: { message: string; tag?: string }) =>
     Promise.resolve({
       id: 99,
       message: payload.message,
       sender: 'user',
       user_id: 1,
       timestamp: new Date().toISOString(),
-      is_stage_reflection: payload.is_stage_reflection ?? false,
-      is_practice_note: false,
-      is_habit_note: false,
+      tag: payload.tag ?? 'freeform',
       practice_session_id: null,
       user_practice_id: null,
     }),
@@ -228,16 +222,14 @@ describe('JournalScreen', () => {
 
     expect(mockJournalCreate).toHaveBeenCalledWith({
       message: 'Freeform thought',
-      is_stage_reflection: false,
-      is_practice_note: false,
-      is_habit_note: false,
+      tag: 'freeform',
       practice_session_id: null,
       user_practice_id: null,
     });
     expect(mockBotmasonChat).not.toHaveBeenCalled();
   });
 
-  it('sends a message with tags when tags are selected', async () => {
+  it('sends a message with tag when a tag is selected', async () => {
     mockBotmasonGetBalance.mockResolvedValue({ balance: 0 });
     const { getByTestId, getByText } = renderJournal();
 
@@ -251,7 +243,7 @@ describe('JournalScreen', () => {
     });
 
     await act(async () => {
-      fireEvent.press(getByTestId('tag-option-is_stage_reflection'));
+      fireEvent.press(getByTestId('tag-option-stage_reflection'));
     });
 
     const input = getByTestId('chat-input');
@@ -265,9 +257,7 @@ describe('JournalScreen', () => {
 
     expect(mockJournalCreate).toHaveBeenCalledWith({
       message: 'Tagged message',
-      is_stage_reflection: true,
-      is_practice_note: false,
-      is_habit_note: false,
+      tag: 'stage_reflection',
       practice_session_id: null,
       user_practice_id: null,
     });
@@ -405,6 +395,7 @@ describe('JournalScreen', () => {
 
   it('shows practice reflection header when practiceSessionId is passed', async () => {
     const { getByTestId, getByText } = renderJournal({
+      tag: 'practice_note',
       practiceSessionId: 42,
       userPracticeId: 10,
       practiceName: 'Breath Awareness',
@@ -426,9 +417,9 @@ describe('JournalScreen', () => {
     });
   });
 
-  it('shows course reflection header when stageReflection params are passed', async () => {
+  it('shows course reflection header when tag is stage_reflection with content', async () => {
     const { getByTestId, getByText } = renderJournal({
-      stageReflection: true,
+      tag: 'stage_reflection',
       stageNumber: 3,
       contentTitle: 'The Hero Journey',
     });
@@ -440,7 +431,7 @@ describe('JournalScreen', () => {
     });
   });
 
-  it('does not show course reflection header without stageReflection param', async () => {
+  it('does not show course reflection header without tag param', async () => {
     const { queryByTestId } = renderJournal();
 
     await waitFor(() => {
@@ -448,11 +439,11 @@ describe('JournalScreen', () => {
     });
   });
 
-  it('sends journal entry with is_stage_reflection when in course reflection mode', async () => {
+  it('sends journal entry with stage_reflection tag when in course reflection mode', async () => {
     mockBotmasonGetBalance.mockResolvedValue({ balance: 0 });
 
     const { getByTestId, getByText } = renderJournal({
-      stageReflection: true,
+      tag: 'stage_reflection',
       stageNumber: 3,
       contentTitle: 'The Hero Journey',
     });
@@ -473,7 +464,7 @@ describe('JournalScreen', () => {
     expect(mockJournalCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         message: 'This essay changed my perspective',
-        is_stage_reflection: true,
+        tag: 'stage_reflection',
       }),
     );
   });
@@ -482,6 +473,7 @@ describe('JournalScreen', () => {
     mockBotmasonGetBalance.mockResolvedValue({ balance: 0 });
 
     const { getByTestId, getByText } = renderJournal({
+      tag: 'practice_note',
       practiceSessionId: 42,
       userPracticeId: 10,
       practiceName: 'Breath Awareness',
@@ -504,7 +496,7 @@ describe('JournalScreen', () => {
     expect(mockJournalCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         message: 'Great session',
-        is_practice_note: true,
+        tag: 'practice_note',
         practice_session_id: 42,
         user_practice_id: 10,
       }),

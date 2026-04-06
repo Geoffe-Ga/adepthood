@@ -7,9 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from models.course_stage import CourseStage
+from models.goal import Goal
+from models.goal_completion import GoalCompletion
+from models.habit import Habit
+from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.stage_progress import StageProgress
 from models.user_practice import UserPractice
+from schemas.stage import HabitHistoryItem, PracticeHistoryItem
 
 # Stage N+1 unlocks when stage N is in completed_stages or is the current stage
 _STAGE_1 = 1
@@ -76,3 +81,92 @@ async def stage_exists(session: AsyncSession, stage_number: int) -> bool:
         select(CourseStage).where(CourseStage.stage_number == stage_number)
     )
     return result.scalars().first() is not None
+
+
+async def get_stage_practice_history(
+    session: AsyncSession,
+    user_id: int,
+    stage_number: int,
+) -> list[PracticeHistoryItem]:
+    """Aggregate practice session history for a user in a specific stage."""
+    # Get all user-practices for this stage, joined with Practice for names
+    result = await session.execute(
+        select(
+            Practice.name,
+            func.count(col(PracticeSession.id)).label("sessions_completed"),
+            func.coalesce(func.sum(PracticeSession.duration_minutes), 0).label("total_minutes"),
+            func.max(PracticeSession.timestamp).label("last_session"),
+        )
+        .select_from(PracticeSession)
+        .join(UserPractice, col(PracticeSession.user_practice_id) == col(UserPractice.id))
+        .join(Practice, col(UserPractice.practice_id) == col(Practice.id))
+        .where(
+            PracticeSession.user_id == user_id,
+            UserPractice.stage_number == stage_number,
+        )
+        .group_by(Practice.name)
+    )
+    rows = result.all()
+    return [
+        PracticeHistoryItem(
+            name=row.name,
+            sessions_completed=row.sessions_completed,
+            total_minutes=float(row.total_minutes),
+            last_session=row.last_session,
+        )
+        for row in rows
+    ]
+
+
+async def get_stage_habit_history(
+    session: AsyncSession,
+    user_id: int,
+    stage_number: int,
+) -> list[HabitHistoryItem]:
+    """Aggregate habit and goal history for a user in a specific stage.
+
+    Habits are matched by their ``stage`` field against the stage_number
+    (converted to string).
+    """
+    stage_str = str(stage_number)
+    result = await session.execute(
+        select(Habit).where(Habit.user_id == user_id, Habit.stage == stage_str)
+    )
+    habits = result.scalars().all()
+
+    items: list[HabitHistoryItem] = []
+    for habit in habits:
+        # Count total goal completions for this habit's goals
+        completion_count_result = await session.execute(
+            select(func.count())
+            .select_from(GoalCompletion)
+            .join(Goal, col(GoalCompletion.goal_id) == col(Goal.id))
+            .where(GoalCompletion.user_id == user_id, Goal.habit_id == habit.id)
+        )
+        total_completions = completion_count_result.scalar() or 0
+
+        # Determine which goal tiers are achieved (have at least one completion)
+        goals_result = await session.execute(select(Goal).where(Goal.habit_id == habit.id))
+        goals = goals_result.scalars().all()
+
+        goals_achieved: dict[str, bool] = {}
+        for goal in goals:
+            gc_result = await session.execute(
+                select(func.count())
+                .select_from(GoalCompletion)
+                .where(GoalCompletion.goal_id == goal.id, GoalCompletion.user_id == user_id)
+            )
+            count = gc_result.scalar() or 0
+            goals_achieved[goal.tier] = count > 0
+
+        items.append(
+            HabitHistoryItem(
+                name=habit.name,
+                icon=habit.icon,
+                goals_achieved=goals_achieved,
+                best_streak=habit.streak,
+                total_completions=total_completions,
+            )
+        )
+
+    return items

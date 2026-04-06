@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-import { STAGE_COLORS } from '../../../design/tokens';
+import { STAGE_COLORS, VICTORY_COLOR } from '../../../design/tokens';
 import type { Habit, Goal } from '../Habits.types';
 import {
   calculateHabitProgress,
@@ -136,9 +136,43 @@ describe('habit progress utilities', () => {
     expect(percentage).toBeCloseTo(50);
   });
 
-  it('returns the stage color for progress bars', () => {
+  it('returns the stage color when goals are not met (additive)', () => {
     const habit: Habit = {
       id: 4,
+      stage: 'Blue',
+      name: 'Additive',
+      icon: '🔥',
+      streak: 0,
+      energy_cost: 0,
+      energy_return: 0,
+      start_date: new Date(),
+      goals: additiveGoals,
+      completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
+    };
+
+    expect(getProgressBarColor(habit)).toBe(STAGE_COLORS[habit.stage]);
+  });
+
+  it('returns victory color when clear goal is met (additive)', () => {
+    const habit: Habit = {
+      id: 5,
+      stage: 'Blue',
+      name: 'Additive',
+      icon: '🔥',
+      streak: 0,
+      energy_cost: 0,
+      energy_return: 0,
+      start_date: new Date(),
+      goals: additiveGoals,
+      completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 2 }],
+    };
+
+    expect(getProgressBarColor(habit)).toBe(VICTORY_COLOR);
+  });
+
+  it('returns victory color when under stretch target (subtractive)', () => {
+    const habit: Habit = {
+      id: 6,
       stage: 'Blue',
       name: 'Subtractive',
       icon: '❄️',
@@ -147,6 +181,42 @@ describe('habit progress utilities', () => {
       energy_return: 0,
       start_date: new Date(),
       goals: subtractiveGoals,
+      completions: [],
+    };
+
+    // No completions = 0 progress, which is <= stretch target (0) → victory
+    expect(getProgressBarColor(habit)).toBe(VICTORY_COLOR);
+  });
+
+  it('returns stage color when stretch threshold is broken (subtractive)', () => {
+    const habit: Habit = {
+      id: 7,
+      stage: 'Blue',
+      name: 'Subtractive',
+      icon: '❄️',
+      streak: 0,
+      energy_cost: 0,
+      energy_return: 0,
+      start_date: new Date(),
+      goals: subtractiveGoals,
+      completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 150 }],
+    };
+
+    // 150 > stretch target (0) → stage color
+    expect(getProgressBarColor(habit)).toBe(STAGE_COLORS[habit.stage]);
+  });
+
+  it('returns stage color for habit with no goals', () => {
+    const habit: Habit = {
+      id: 8,
+      stage: 'Green',
+      name: 'No Goals',
+      icon: '🌿',
+      streak: 0,
+      energy_cost: 0,
+      energy_return: 0,
+      start_date: new Date(),
+      goals: [],
       completions: [],
     };
 

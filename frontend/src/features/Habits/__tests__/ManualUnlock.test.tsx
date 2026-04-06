@@ -114,12 +114,7 @@ describe('HabitTile locked tile long-press', () => {
     const onUnlockHabit = jest.fn();
     const habit = makeFutureHabit({ revealed: false });
     const component = renderer.create(
-      <HabitTile
-        habit={habit}
-        onOpenGoals={() => {}}
-        onLongPress={() => {}}
-        onUnlockHabit={onUnlockHabit}
-      />,
+      <HabitTile habit={habit} locked onUnlockHabit={onUnlockHabit} />,
     );
     const tile = component.root.findByProps({ testID: 'habit-tile' });
     renderer.act(() => {
@@ -139,12 +134,7 @@ describe('HabitTile locked tile long-press', () => {
     const onUnlockHabit = jest.fn();
     const habit = makeFutureHabit({ revealed: false });
     const component = renderer.create(
-      <HabitTile
-        habit={habit}
-        onOpenGoals={() => {}}
-        onLongPress={() => {}}
-        onUnlockHabit={onUnlockHabit}
-      />,
+      <HabitTile habit={habit} locked onUnlockHabit={onUnlockHabit} />,
     );
     const tile = component.root.findByProps({ testID: 'habit-tile' });
     renderer.act(() => {

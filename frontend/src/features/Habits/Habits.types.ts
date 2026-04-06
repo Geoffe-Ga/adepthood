@@ -114,8 +114,9 @@ export interface EditableGoalProps {
 
 export interface HabitTileProps {
   habit: Habit;
-  onOpenGoals: () => void;
-  onLongPress: () => void;
+  locked?: boolean;
+  onOpenGoals?: () => void;
+  onLongPress?: () => void;
   onIconPress?: () => void;
   onUnlockHabit?: (_habitId: number) => void;
 }

@@ -1,5 +1,13 @@
-import React, { useState } from 'react';
-import { Alert, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Alert,
+  Animated,
+  Easing,
+  Text,
+  TouchableOpacity,
+  View,
+  type DimensionValue,
+} from 'react-native';
 
 import { STAGE_COLORS, spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
@@ -333,6 +341,62 @@ const LabelList = ({ markers, scale }: { markers: GoalMarkerEntry[]; scale: numb
   </>
 );
 
+const COLOR_TRANSITION_MS = 400;
+
+const useColorTransition = (color: string) => {
+  const fadeAnim = useRef(new Animated.Value(1)).current;
+  const prevColorRef = useRef(color);
+
+  useEffect(() => {
+    if (prevColorRef.current !== color) {
+      fadeAnim.setValue(0);
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: COLOR_TRANSITION_MS,
+        easing: Easing.linear,
+        useNativeDriver: false,
+      }).start(() => {
+        prevColorRef.current = color;
+      });
+    }
+  }, [color, fadeAnim]);
+
+  return { fadeAnim, prevColor: prevColorRef.current };
+};
+
+interface AnimatedFillProps {
+  width: DimensionValue;
+  color: string;
+  prevColor: string;
+  fadeAnim: Animated.Value;
+  borderRadius: number;
+}
+
+const AnimatedFill = ({ width, color, prevColor, fadeAnim, borderRadius }: AnimatedFillProps) => (
+  <>
+    <View
+      style={{
+        position: 'absolute',
+        height: '100%',
+        width,
+        backgroundColor: prevColor,
+        borderRadius,
+      }}
+    />
+    <Animated.View
+      testID="progress-fill"
+      style={{
+        position: 'absolute',
+        height: '100%',
+        width,
+        backgroundColor: color,
+        borderRadius,
+        opacity: fadeAnim,
+      }}
+    />
+  </>
+);
+
 const ProgressBar = ({
   habit,
   barHeight,
@@ -342,41 +406,45 @@ const ProgressBar = ({
   scale,
   tooltip,
   setTooltip,
-}: ProgressBarProps) => (
-  <View style={{ marginTop: spacing(1, scale) }}>
-    <View style={{ height: barHeight, position: 'relative' }}>
-      <View
-        style={{
-          height: '100%',
-          backgroundColor: '#eee',
-          borderRadius: barHeight / 2,
-          overflow: 'hidden',
-        }}
-      >
+}: ProgressBarProps) => {
+  const { fadeAnim, prevColor } = useColorTransition(progressBarColor);
+  const widthStyle: DimensionValue = `${progressPercentage}%`;
+  const borderR = barHeight / 2;
+
+  return (
+    <View style={{ marginTop: spacing(1, scale) }}>
+      <View style={{ height: barHeight, position: 'relative' }}>
         <View
-          testID="progress-fill"
           style={{
             height: '100%',
-            width: `${progressPercentage}%`,
-            backgroundColor: progressBarColor,
-            borderRadius: barHeight / 2,
+            backgroundColor: '#eee',
+            borderRadius: borderR,
+            overflow: 'hidden',
           }}
+        >
+          <AnimatedFill
+            width={widthStyle}
+            color={progressBarColor}
+            prevColor={prevColor}
+            fadeAnim={fadeAnim}
+            borderRadius={borderR}
+          />
+        </View>
+        <MarkerList
+          markers={markers}
+          habit={habit}
+          barHeight={barHeight}
+          scale={scale}
+          tooltip={tooltip}
+          setTooltip={setTooltip}
         />
       </View>
-      <MarkerList
-        markers={markers}
-        habit={habit}
-        barHeight={barHeight}
-        scale={scale}
-        tooltip={tooltip}
-        setTooltip={setTooltip}
-      />
+      <View style={{ position: 'relative', marginTop: spacing(0.5, scale) }}>
+        <LabelList markers={markers} scale={scale} />
+      </View>
     </View>
-    <View style={{ position: 'relative', marginTop: spacing(0.5, scale) }}>
-      <LabelList markers={markers} scale={scale} />
-    </View>
-  </View>
-);
+  );
+};
 
 const useHabitTileData = (habit: Habit) => {
   const lowGoal = habit.goals.find((g) => g.tier === 'low');
@@ -434,17 +502,33 @@ const showUnlockConfirmation = (habit: Habit, onUnlock: (_id: number) => void) =
   );
 };
 
-const getTileOpacity = (isLocked: boolean, isFutureStart: boolean): number => {
-  if (isLocked) return 0.4;
-  if (isFutureStart) return 0.5;
-  return 1;
+const LOCKED_BACKGROUND = '#e8e8e8';
+const LOCKED_OPACITY = 0.4;
+const MS_PER_DAY = 86_400_000;
+
+const calculateDaysUntilUnlock = (startDate: Date): number => {
+  const now = new Date();
+  const start = new Date(startDate);
+  return Math.max(0, Math.ceil((start.getTime() - now.getTime()) / MS_PER_DAY));
 };
 
-const getTileStyle = (
+const getUnlockLabel = (habit: Habit): string => {
+  const days = calculateDaysUntilUnlock(habit.start_date);
+  if (days > 0) return `Unlocks in ${days} day${days === 1 ? '' : 's'}`;
+  return `Stage ${habit.stage} · Locked`;
+};
+
+interface LockedTileProps {
+  habit: Habit;
+  stageColor: string;
+  scale: number;
+  gridGutter: number;
+  tileMinHeight: number;
+  onUnlockHabit?: (_habitId: number) => void;
+}
+
+const getLockedTileStyle = (
   stageColor: string,
-  earlyUnlocked: boolean,
-  isLocked: boolean,
-  isFutureStart: boolean,
   scale: number,
   gridGutter: number,
   tileMinHeight: number,
@@ -452,84 +536,102 @@ const getTileStyle = (
   flex: 1 as const,
   borderWidth: 1,
   borderColor: stageColor,
-  borderStyle: earlyUnlocked ? ('dashed' as const) : undefined,
   padding: spacing(1, scale),
   margin: gridGutter / 2,
   minHeight: tileMinHeight,
   borderRadius: spacing(1, scale),
-  backgroundColor: '#f8f8f8',
-  opacity: getTileOpacity(isLocked, isFutureStart),
+  backgroundColor: LOCKED_BACKGROUND,
+  opacity: LOCKED_OPACITY,
 });
 
-const buildLongPressHandler = (
-  habit: Habit,
-  isLocked: boolean,
-  onLongPress: () => void,
-  onUnlockHabit?: (_id: number) => void,
-) => {
-  if (isLocked && onUnlockHabit) {
-    return () => showUnlockConfirmation(habit, onUnlockHabit);
-  }
-  return onLongPress;
+const LOCKED_NAME_STYLE = {
+  flex: 1 as const,
+  fontWeight: '700' as const,
+  textTransform: 'uppercase' as const,
+  color: '#999',
 };
 
-const getStreakLabel = (streak: number, hasCompletedGoal: boolean): string =>
-  `${streak} days${hasCompletedGoal ? ' — Achieved Today!' : ''}`.toUpperCase();
-
-const useHabitTileState = (habit: Habit) => {
-  const layout = useTileLayout();
-  const stageColor = STAGE_COLORS[habit.stage] ?? '#000';
-  const data = useHabitTileData(habit);
-  const isFutureStart = new Date(habit.start_date).getTime() > Date.now();
-  const isLocked = habit.revealed === false;
-  const tileStyle = getTileStyle(
-    stageColor,
-    isEarlyUnlocked(habit),
-    isLocked,
-    isFutureStart,
-    layout.scale,
-    layout.gridGutter,
-    layout.tileMinHeight,
-  );
-  return { ...layout, stageColor, ...data, isLocked, tileStyle };
-};
-
-export const HabitTile = ({
+const LockedTile = ({
   habit,
-  onOpenGoals,
-  onLongPress,
-  onIconPress,
+  stageColor,
+  scale,
+  gridGutter,
+  tileMinHeight,
   onUnlockHabit,
-}: HabitTileProps) => {
-  const {
-    scale,
-    iconInline,
-    stageColor,
-    isLocked,
-    tileStyle,
-    progressPercentage,
-    progressBarColor,
-    hasCompletedGoal,
-    markers,
-  } = useHabitTileState(habit);
+}: LockedTileProps) => {
+  const handleLongPress = onUnlockHabit
+    ? () => showUnlockConfirmation(habit, onUnlockHabit)
+    : undefined;
+  return (
+    <TouchableOpacity
+      testID="habit-tile"
+      accessibilityLabel={`${habit.name} locked`}
+      onLongPress={handleLongPress}
+      style={getLockedTileStyle(stageColor, scale, gridGutter, tileMinHeight)}
+    >
+      <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <Text style={{ fontSize: spacing(2, scale), marginRight: spacing(1, scale) }}>🔒</Text>
+        <Text style={{ ...LOCKED_NAME_STYLE, fontSize: spacing(2, scale) }}>{habit.name}</Text>
+      </View>
+      <Text
+        testID="unlock-label"
+        style={{
+          fontSize: spacing(1.5, scale),
+          color: '#999',
+          marginTop: spacing(0.5, scale),
+          fontStyle: 'italic',
+        }}
+      >
+        {getUnlockLabel(habit)}
+      </Text>
+    </TouchableOpacity>
+  );
+};
+
+interface UnlockedTileProps {
+  habit: Habit;
+  onOpenGoals?: () => void;
+  onLongPress?: () => void;
+  onIconPress?: () => void;
+}
+
+const UnlockedTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: UnlockedTileProps) => {
+  const { scale, gridGutter, tileMinHeight, iconInline } = useTileLayout();
+  const stageColor = STAGE_COLORS[habit.stage] ?? '#000';
   const [tooltip, setTooltip] = useState<TierType | null>(null);
+  const { progressPercentage, progressBarColor, hasCompletedGoal, markers } =
+    useHabitTileData(habit);
+
+  const streakText =
+    `${habit.streak} days${hasCompletedGoal ? ' — Achieved Today!' : ''}`.toUpperCase();
   const barHeight = Math.max(8, spacing(2, scale));
+  const earlyUnlocked = isEarlyUnlocked(habit);
 
   return (
     <TouchableOpacity
       testID="habit-tile"
-      style={tileStyle}
-      onPress={isLocked ? undefined : onOpenGoals}
-      onLongPress={buildLongPressHandler(habit, isLocked, onLongPress, onUnlockHabit)}
+      style={{
+        flex: 1,
+        borderWidth: 1,
+        borderColor: stageColor,
+        borderStyle: earlyUnlocked ? 'dashed' : undefined,
+        padding: spacing(1, scale),
+        margin: gridGutter / 2,
+        minHeight: tileMinHeight,
+        borderRadius: spacing(1, scale),
+        backgroundColor: '#f8f8f8',
+      }}
+      onPress={onOpenGoals}
+      onLongPress={onLongPress}
     >
       <HabitHeader
         habit={habit}
         stageColor={stageColor}
         scale={scale}
-        streakText={getStreakLabel(habit.streak, hasCompletedGoal)}
+        streakText={streakText}
         hasCompletedGoal={hasCompletedGoal}
         iconInline={iconInline}
-        onIconPress={isLocked ? undefined : onIconPress}
+        onIconPress={onIconPress}
       />
       <ProgressBar
         habit={habit}
@@ -542,6 +644,40 @@ export const HabitTile = ({
         setTooltip={setTooltip}
       />
     </TouchableOpacity>
+  );
+};
+
+export const HabitTile = ({
+  habit,
+  locked,
+  onOpenGoals,
+  onLongPress,
+  onIconPress,
+  onUnlockHabit,
+}: HabitTileProps) => {
+  const { scale, gridGutter, tileMinHeight } = useTileLayout();
+  const stageColor = STAGE_COLORS[habit.stage] ?? '#000';
+
+  if (locked) {
+    return (
+      <LockedTile
+        habit={habit}
+        stageColor={stageColor}
+        scale={scale}
+        gridGutter={gridGutter}
+        tileMinHeight={tileMinHeight}
+        onUnlockHabit={onUnlockHabit}
+      />
+    );
+  }
+
+  return (
+    <UnlockedTile
+      habit={habit}
+      onOpenGoals={onOpenGoals}
+      onLongPress={onLongPress}
+      onIconPress={onIconPress}
+    />
   );
 };
 

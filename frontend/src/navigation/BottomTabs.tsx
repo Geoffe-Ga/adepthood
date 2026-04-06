@@ -4,6 +4,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity } from 'react-native';
 
+import type { JournalTag } from '../api';
 import CourseScreen from '../features/Course/CourseScreen';
 import HabitsScreen from '../features/Habits/HabitsScreen';
 import JournalScreen from '../features/Journal/JournalScreen';
@@ -18,7 +19,7 @@ export type RootTabParamList = {
   Course: { stageNumber?: number } | undefined;
   Journal:
     | {
-        stageReflection?: boolean;
+        tag?: JournalTag;
         stageNumber?: number;
         contentTitle?: string;
         practiceSessionId?: number;

@@ -4,6 +4,9 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { habits as habitsApi, goalCompletions as goalCompletionsApi } from '../../../api';
 import type { HabitCreatePayload } from '../../../api';
+import type { ToastConfig } from '../../../components/Toast';
+import { useToast } from '../../../components/ToastProvider';
+import { colors } from '../../../design/tokens';
 import {
   saveHabits as persistHabits,
   loadHabits as loadCachedHabits,
@@ -123,32 +126,46 @@ const normalizeGoalTiers = (goals: Goal[], updatedGoal: Goal): void => {
   else clampSubtractiveTargets(low, clear, stretch);
 };
 
-const checkMilestoneAlerts = (
+/** Milestone icon per goal tier. */
+const MILESTONE_ICONS: Record<string, string> = {
+  low: '\u{1F3C5}',
+  clear: '\u{1F3AF}',
+  stretch: '\u{1F31F}',
+};
+
+const buildMilestoneToast = (
   habitName: string,
   oldProgress: number,
   newProgress: number,
   currentGoal: Goal,
   nextGoal: Goal | null,
-): void => {
-  if (!currentGoal.is_additive) return;
+): ToastConfig | null => {
+  if (!currentGoal.is_additive) return null;
 
   const currentTarget = getGoalTarget(currentGoal);
   const justReached = oldProgress < currentTarget && newProgress >= currentTarget;
-  if (!justReached) return;
+  if (!justReached) return null;
 
   if (currentGoal.tier === 'low') {
-    Alert.alert(
-      'Goal Achieved!',
-      `You've reached your Low Goal for ${habitName}! Keep going for the Clear Goal.`,
-    );
+    return {
+      message: `Low Goal achieved for ${habitName}! Keep going for the Clear Goal.`,
+      icon: MILESTONE_ICONS.low,
+      color: colors.tier.low,
+    };
   } else if (currentGoal.tier === 'clear' && nextGoal) {
-    Alert.alert('Achieved! Keep going for the Stretch Goal!');
-  } else if (currentGoal.tier === 'stretch' && nextGoal) {
-    Alert.alert(
-      'Stretch Goal Achieved!',
-      `Amazing! You've reached your Stretch Goal for ${habitName}!`,
-    );
+    return {
+      message: 'Clear Goal achieved! Keep going for the Stretch Goal!',
+      icon: MILESTONE_ICONS.clear,
+      color: colors.tier.clear,
+    };
+  } else if (currentGoal.tier === 'stretch') {
+    return {
+      message: `Stretch Goal achieved for ${habitName}! Amazing!`,
+      icon: MILESTONE_ICONS.stretch,
+      color: colors.tier.stretch,
+    };
   }
+  return null;
 };
 
 const backfillHabit = (habit: Habit, days: Date[]): Habit => {
@@ -410,7 +427,9 @@ const useHabitReveal = (habits: Habit[], storeSetHabits: (_h: Habit[]) => void) 
   return { revealAllHabits, lockUnstartedHabits, unlockHabit };
 };
 
-const useHabitCrud = () => {
+const INSTRUCTIONAL_TOAST_DURATION_MS = 5000;
+
+const useHabitCrud = (showToast: (_config: ToastConfig) => void) => {
   const mutations = useHabitMutations();
   const { habits, storeSetHabits } = mutations;
   const backfillMissedDays = useCallback(
@@ -429,21 +448,46 @@ const useHabitCrud = () => {
     async (newHabits: OnboardingHabit[]) => {
       const fullHabits = buildOnboardingHabits(newHabits);
       storeSetHabits(fullHabits);
-      Alert.alert('Next steps', 'Tap a habit tile to edit its goals.');
+      showToast({
+        message: 'Tap a habit tile to edit its goals.',
+        icon: '\u{1F449}',
+        duration: INSTRUCTIONAL_TOAST_DURATION_MS,
+      });
       await syncOnboardingHabits(fullHabits);
     },
-    [storeSetHabits],
+    [storeSetHabits, showToast],
   );
   const reveal = useHabitReveal(habits, storeSetHabits);
 
   return { ...mutations, backfillMissedDays, setNewStartDate, onboardingSave, ...reveal };
 };
 
+const logAndToast = (
+  habit: Habit,
+  habitId: number,
+  amount: number,
+  showToast: (_config: ToastConfig) => void,
+): Habit | null => {
+  if (habit.id !== habitId) return null;
+  const result = applyLogUnit(habit, amount);
+  const { currentGoal, nextGoal } = getGoalTier(result.updatedHabit);
+  const toast = buildMilestoneToast(
+    habit.name,
+    result.oldProgress,
+    result.newProgress,
+    currentGoal,
+    nextGoal,
+  );
+  if (toast) showToast(toast);
+  return result.updatedHabit;
+};
+
 const useHabitActions = (
   selectedHabit: Habit | null,
   setSelectedHabit: (_h: Habit | null) => void,
+  showToast: (_config: ToastConfig) => void,
 ) => {
-  const crud = useHabitCrud();
+  const crud = useHabitCrud(showToast);
   const { habits, storeSetHabits } = crud;
   const [emojiHabitIndex, setEmojiHabitIndex] = useState<number | null>(null);
 
@@ -452,12 +496,10 @@ const useHabitActions = (
       const previousHabits = habits;
       let updated: Habit | null = null;
       const newHabits = habits.map((h) => {
-        if (h.id !== habitId) return h;
-        const result = applyLogUnit(h, amount);
-        updated = result.updatedHabit;
-        const { currentGoal, nextGoal } = getGoalTier(result.updatedHabit);
-        checkMilestoneAlerts(h.name, result.oldProgress, result.newProgress, currentGoal, nextGoal);
-        return result.updatedHabit;
+        const result = logAndToast(h, habitId, amount, showToast);
+        if (!result) return h;
+        updated = result;
+        return result;
       });
       storeSetHabits(newHabits);
       if (selectedHabit?.id === habitId && updated) setSelectedHabit(updated);
@@ -468,7 +510,7 @@ const useHabitActions = (
         storeSetHabits,
       );
     },
-    [selectedHabit, habits, storeSetHabits, setSelectedHabit],
+    [selectedHabit, habits, storeSetHabits, setSelectedHabit, showToast],
   );
 
   const iconPress = useCallback((index: number) => {
@@ -505,11 +547,12 @@ export const useHabits = (): UseHabitsReturn => {
   const loading = useHabitStore((s) => s.loading);
   const error = useHabitStore((s) => s.error);
   const storeSetHabits = useHabitStore((s) => s.setHabits);
+  const { showToast } = useToast();
   const [selectedHabit, setSelectedHabit] = useState<Habit | null>(null);
   const [mode, setMode] = useState<HabitScreenMode>('normal');
 
   const loadHabits = useHabitLoader();
-  const actionsHook = useHabitActions(selectedHabit, setSelectedHabit);
+  const actionsHook = useHabitActions(selectedHabit, setSelectedHabit, showToast);
   const ui = useHabitUI();
 
   return {

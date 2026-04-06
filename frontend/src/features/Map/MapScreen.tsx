@@ -14,6 +14,8 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
+import type { HabitHistoryItem, PracticeHistoryItem, StageHistoryResponse } from '../../api';
+import { stages as stagesApi } from '../../api';
 import { MAP_BACKGROUND_URI } from '../../constants/images';
 import { useAppNavigation } from '../../navigation/hooks';
 import { useStageStore } from '../../store/useStageStore';
@@ -178,6 +180,153 @@ const ActionLinks = ({ stage, onNavigate }: ActionLinksProps): React.JSX.Element
   </View>
 );
 
+const GOAL_TIER_COLORS: Record<string, string> = {
+  low: '#CD7F32',
+  clear: '#C0C0C0',
+  stretch: '#FFD700',
+};
+
+const GOAL_TIER_LABELS: Record<string, string> = {
+  low: 'L',
+  clear: 'C',
+  stretch: 'S',
+};
+
+const MINUTES_PER_HOUR = 60;
+
+const formatMinutes = (minutes: number): string => {
+  if (minutes >= MINUTES_PER_HOUR) {
+    const hours = Math.round(minutes / MINUTES_PER_HOUR);
+    return `${hours} hr${hours !== 1 ? 's' : ''}`;
+  }
+  return `${Math.round(minutes)} min`;
+};
+
+const PracticeHistoryRow = ({ item }: { item: PracticeHistoryItem }): React.JSX.Element => (
+  <View style={styles.historyItem} testID="practice-history-item">
+    <Text style={styles.historyItemIcon}>🧘</Text>
+    <Text style={styles.historyItemName}>{item.name}</Text>
+    <Text style={styles.historyItemDetail}>
+      {item.sessions_completed} sessions, {formatMinutes(item.total_minutes)}
+    </Text>
+  </View>
+);
+
+const HabitHistoryRow = ({ item }: { item: HabitHistoryItem }): React.JSX.Element => (
+  <View style={styles.historyItem} testID="habit-history-item">
+    <Text style={styles.historyItemIcon}>{item.icon}</Text>
+    <Text style={styles.historyItemName}>
+      {item.name} · {item.best_streak}d streak
+    </Text>
+    <View style={styles.goalBadges}>
+      {Object.entries(item.goals_achieved).map(([tier, achieved]) => (
+        <View
+          key={tier}
+          style={[
+            styles.goalBadge,
+            {
+              backgroundColor: achieved
+                ? GOAL_TIER_COLORS[tier] ?? '#888'
+                : 'rgba(255,255,255,0.15)',
+            },
+          ]}
+          testID={`goal-badge-${tier}`}
+        >
+          <Text style={styles.goalBadgeText}>{GOAL_TIER_LABELS[tier] ?? tier[0]}</Text>
+        </View>
+      ))}
+    </View>
+  </View>
+);
+
+const HistoryContent = ({ history }: { history: StageHistoryResponse }): React.JSX.Element => (
+  <View testID="history-content">
+    {history.practices.length > 0 && (
+      <>
+        <Text style={styles.historySubheading}>Practices</Text>
+        {history.practices.map((p) => (
+          <PracticeHistoryRow key={p.name} item={p} />
+        ))}
+      </>
+    )}
+    {history.habits.length > 0 && (
+      <>
+        <Text style={styles.historySubheading}>Habits</Text>
+        {history.habits.map((h) => (
+          <HabitHistoryRow key={h.name} item={h} />
+        ))}
+      </>
+    )}
+  </View>
+);
+
+const HistoryBody = ({
+  loading,
+  history,
+}: {
+  loading: boolean;
+  history: StageHistoryResponse | null;
+}): React.JSX.Element | null => {
+  const hasContent =
+    history !== null && (history.practices.length > 0 || history.habits.length > 0);
+
+  if (loading) {
+    return (
+      <View style={styles.historyLoading} testID="history-loading">
+        <ActivityIndicator size="small" color="#fff" />
+      </View>
+    );
+  }
+  if (!hasContent) {
+    return (
+      <Text style={styles.historyEmpty} testID="history-empty">
+        Begin this stage to start tracking your journey
+      </Text>
+    );
+  }
+  return history !== null ? <HistoryContent history={history} /> : null;
+};
+
+interface StageHistorySectionProps {
+  stageNumber: number;
+  isUnlocked: boolean;
+}
+
+const StageHistorySection = ({
+  stageNumber,
+  isUnlocked,
+}: StageHistorySectionProps): React.JSX.Element | null => {
+  const [expanded, setExpanded] = useState(false);
+  const [history, setHistory] = useState<StageHistoryResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!expanded || !isUnlocked || history !== null) return;
+    setLoading(true);
+    stagesApi
+      .history(stageNumber)
+      .then(setHistory)
+      .catch(() => setHistory(null))
+      .finally(() => setLoading(false));
+  }, [expanded, stageNumber, isUnlocked, history]);
+
+  if (!isUnlocked) return null;
+
+  return (
+    <View style={styles.historySection} testID="history-section">
+      <TouchableOpacity
+        style={styles.historyHeader}
+        onPress={() => setExpanded((prev) => !prev)}
+        testID="history-toggle"
+      >
+        <Text style={styles.historyTitle}>Your Journey</Text>
+        <Text style={styles.historyToggle}>{expanded ? '▲' : '▼'}</Text>
+      </TouchableOpacity>
+      {expanded && <HistoryBody loading={loading} history={history} />}
+    </View>
+  );
+};
+
 interface ModalBodyProps {
   stage: StageData;
   onClose: () => void;
@@ -196,6 +345,7 @@ const ModalBody = ({ stage, onClose, onNavigate }: ModalBodyProps): React.JSX.El
     <Text style={styles.modalSubtitle}>{stage.subtitle}</Text>
     <StageProgressSection stage={stage} />
     <StageMetadataSection stage={stage} />
+    <StageHistorySection stageNumber={stage.stageNumber} isUnlocked={stage.isUnlocked} />
     <View style={styles.separator} />
     <ActionLinks stage={stage} onNavigate={onNavigate} />
   </ScrollView>
@@ -291,7 +441,7 @@ const MapScreen = (): React.JSX.Element => {
     (screen: 'Practice' | 'Course' | 'Journal', stage: StageData) => {
       setActiveStage(null);
       if (screen === 'Journal') {
-        navigation.navigate('Journal', { stageReflection: true, stageNumber: stage.stageNumber });
+        navigation.navigate('Journal', { tag: 'stage_reflection', stageNumber: stage.stageNumber });
       } else {
         navigation.navigate(screen, { stageNumber: stage.stageNumber });
       }

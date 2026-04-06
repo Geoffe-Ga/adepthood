@@ -61,9 +61,6 @@ describe('HabitTile interactions', () => {
       />,
     );
 
-    const tile = component.root.findByProps({ testID: 'habit-tile' });
-    expect(tile.props.style.opacity).toBe(0.5);
-
     const icon = component.root.findByProps({ testID: 'habit-icon' });
     renderer.act(() => {
       icon.props.onPress();

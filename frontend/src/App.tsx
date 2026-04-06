@@ -7,6 +7,7 @@ import React from 'react';
 import { ActivityIndicator, StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
+import { ToastProvider } from './components/ToastProvider';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginScreen from './features/Auth/LoginScreen';
 import SignupScreen from './features/Auth/SignupScreen';
@@ -61,12 +62,14 @@ export default function App(): React.JSX.Element {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <NavigationContainer linking={linking}>
-          <SafeAreaView style={styles.safeArea}>
-            <StatusBar barStyle="dark-content" />
-            <RootNavigator />
-          </SafeAreaView>
-        </NavigationContainer>
+        <ToastProvider>
+          <NavigationContainer linking={linking}>
+            <SafeAreaView style={styles.safeArea}>
+              <StatusBar barStyle="dark-content" />
+              <RootNavigator />
+            </SafeAreaView>
+          </NavigationContainer>
+        </ToastProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );

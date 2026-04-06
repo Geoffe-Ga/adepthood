@@ -1,7 +1,8 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
-import { Alert } from 'react-native';
 import renderer from 'react-test-renderer';
+
+import { ToastProvider } from '../../../components/ToastProvider';
 
 const HabitsScreen = require('../HabitsScreen').default;
 
@@ -54,10 +55,25 @@ jest.mock('expo-notifications', () => ({
 }));
 
 describe('Onboarding completion', () => {
-  it('shows next steps alert after saving habits', async () => {
-    jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    renderer.act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    jest.useRealTimers();
+  });
+
+  it('shows next steps toast after saving habits', async () => {
+    let root: ReturnType<typeof renderer.create>;
     await renderer.act(async () => {
-      renderer.create(<HabitsScreen />);
+      root = renderer.create(
+        <ToastProvider>
+          <HabitsScreen />
+        </ToastProvider>,
+      );
     });
     const call = mockOnboardingModal.mock.calls[0];
     if (!call) throw new Error('OnboardingModal not rendered');
@@ -71,9 +87,12 @@ describe('Onboarding completion', () => {
       stage: 'Beige',
       start_date: new Date(),
     };
-    renderer.act(() => {
+    await renderer.act(async () => {
       props.onSaveHabits([sampleHabit]);
     });
-    expect(Alert.alert).toHaveBeenCalledWith('Next steps', 'Tap a habit tile to edit its goals.');
+    // Verify toast is rendered with the instructional message
+    const toastMessage = root!.root.findAllByProps({ testID: 'toast-message' });
+    expect(toastMessage.length).toBeGreaterThan(0);
+    expect(toastMessage[0].props.children).toBe('Tap a habit tile to edit its goals.');
   });
 });

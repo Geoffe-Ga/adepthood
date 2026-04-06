@@ -367,6 +367,7 @@ describe('PracticeScreen', () => {
     });
 
     expect(mockNavigate).toHaveBeenCalledWith('Journal', {
+      tag: 'practice_note',
       practiceSessionId: 100,
       userPracticeId: 10,
       practiceName: 'Breath Awareness',

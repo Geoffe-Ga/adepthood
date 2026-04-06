@@ -1,7 +1,7 @@
 /* eslint-env jest */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { describe, expect, it, jest } from '@jest/globals';
-import { render, fireEvent } from '@testing-library/react-native';
+import { describe, expect, it, jest, beforeEach, afterEach } from '@jest/globals';
+import { render, fireEvent, act } from '@testing-library/react-native';
 import type { ReactNode } from 'react';
 
 import { STAGE_COLORS } from '../../../../design/tokens';
@@ -51,11 +51,22 @@ jest.mock('react-native-draggable-flatlist', () => {
 });
 
 describe('OnboardingModal reorder step', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  const REVEAL_TOTAL_MS = 150 * 2 + 500 + 100; // 2 habits × 150ms stagger + 500ms pause + 100ms settle
+
   const setupToReorder = () => {
     const result = render(<OnboardingModal visible onClose={jest.fn()} onSaveHabits={jest.fn()} />);
     const input = result.getByPlaceholderText('Enter habit name');
     fireEvent.changeText(input, 'Habit A');
     fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
+    jest.advanceTimersByTime(1); // ensure unique Date.now() IDs
     fireEvent.changeText(input, 'Habit B');
     fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
     const advance = () => {
@@ -65,7 +76,13 @@ describe('OnboardingModal reorder step', () => {
     };
     advance();
     advance();
-    advance();
+    act(() => {
+      advance();
+    });
+    // Advance through the reveal animation
+    act(() => {
+      jest.advanceTimersByTime(REVEAL_TOTAL_MS);
+    });
     return result;
   };
 

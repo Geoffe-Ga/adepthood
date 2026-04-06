@@ -16,9 +16,7 @@ const makeMessage = (overrides: Partial<JournalMessage> = {}): JournalMessage =>
   sender: 'user',
   user_id: 1,
   timestamp: '2026-01-15T10:30:00Z',
-  is_stage_reflection: false,
-  is_practice_note: false,
-  is_habit_note: false,
+  tag: 'freeform',
   practice_session_id: null,
   user_practice_id: null,
   ...overrides,
@@ -52,18 +50,25 @@ describe('MessageBubble', () => {
     expect(avatarText).toBeUndefined();
   });
 
-  it('displays tag badges when tags are set', () => {
-    const msg = makeMessage({ is_stage_reflection: true, is_practice_note: true });
+  it('displays tag badge when tag is set', () => {
+    const msg = makeMessage({ tag: 'stage_reflection' });
     const tree = renderer.create(<MessageBubble message={msg} />);
     const root = tree.root;
     const texts = root.findAllByType('Text') as TextInstance[];
     const reflectionTag = texts.find((t) => t.props.children === 'Reflection');
-    const practiceTag = texts.find((t) => t.props.children === 'Practice');
     expect(reflectionTag).toBeTruthy();
+  });
+
+  it('displays practice tag badge', () => {
+    const msg = makeMessage({ tag: 'practice_note' });
+    const tree = renderer.create(<MessageBubble message={msg} />);
+    const root = tree.root;
+    const texts = root.findAllByType('Text') as TextInstance[];
+    const practiceTag = texts.find((t) => t.props.children === 'Practice');
     expect(practiceTag).toBeTruthy();
   });
 
-  it('does not display tags when none are set', () => {
+  it('does not display tag badge for freeform entries', () => {
     const tree = renderer.create(<MessageBubble message={makeMessage()} />);
     const root = tree.root;
     const texts = root.findAllByType('Text') as TextInstance[];

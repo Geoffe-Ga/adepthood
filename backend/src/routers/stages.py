@@ -11,6 +11,8 @@ from sqlmodel import col, select
 from database import get_session
 from domain.stage_progress import (
     compute_stage_progress,
+    get_stage_habit_history,
+    get_stage_practice_history,
     get_user_progress,
     is_stage_unlocked,
     stage_exists,
@@ -20,6 +22,7 @@ from models.course_stage import CourseStage
 from models.stage_progress import StageProgress
 from routers.auth import get_current_user
 from schemas.stage import (
+    StageHistoryResponse,
     StageProgressRecord,
     StageProgressResponse,
     StageProgressUpdate,
@@ -105,6 +108,26 @@ async def get_stage_progress(
 
     data = await compute_stage_progress(session, current_user, stage_number)
     return StageProgressResponse(**data)
+
+
+@router.get("/{stage_number}/history", response_model=StageHistoryResponse)
+async def get_stage_history(
+    stage_number: int,
+    current_user: int = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> StageHistoryResponse:
+    """Aggregated practice and habit history for a stage."""
+    if not await stage_exists(session, stage_number):
+        raise not_found("stage")
+
+    practices = await get_stage_practice_history(session, current_user, stage_number)
+    habits = await get_stage_habit_history(session, current_user, stage_number)
+
+    return StageHistoryResponse(
+        stage_number=stage_number,
+        practices=practices,
+        habits=habits,
+    )
 
 
 @router.put("/progress", response_model=StageProgressRecord)

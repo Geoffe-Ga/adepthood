@@ -13,7 +13,7 @@ from sqlmodel import col, select
 from database import get_session
 from domain.weekly_prompts import TOTAL_WEEKS, get_prompt_for_week
 from errors import bad_request, not_found
-from models.journal_entry import JournalEntry
+from models.journal_entry import JournalEntry, JournalTag
 from models.prompt_response import PromptResponse
 from models.stage_progress import StageProgress
 from models.user import User
@@ -190,7 +190,7 @@ async def submit_prompt_response(
         message=payload.response,
         sender="user",
         user_id=current_user,
-        is_stage_reflection=True,
+        tag=JournalTag.STAGE_REFLECTION,
     )
     session.add(journal_entry)
 

@@ -7,16 +7,17 @@ import {
   journal as journalApi,
   prompts as promptsApi,
   type JournalMessage,
+  type JournalTag,
   type PromptDetail,
   ApiError,
 } from '../../api';
 import { useAppRoute } from '../../navigation/hooks';
 
-import ChatInput, { type MessageTags } from './ChatInput';
+import ChatInput from './ChatInput';
 import styles from './Journal.styles';
 import MessageBubble from './MessageBubble';
 import SearchBar from './SearchBar';
-import TagFilter, { type JournalTag } from './TagFilter';
+import TagFilter from './TagFilter';
 import WeeklyPromptBanner from './WeeklyPromptBanner';
 
 const PAGE_SIZE = 50;
@@ -230,11 +231,11 @@ function useFreeformSend(
   removeOptimistic: (_id: number) => void,
 ) {
   return useCallback(
-    async (text: string, mergedTags: MessageTags, optimisticId: number) => {
+    async (text: string, tag: JournalTag, optimisticId: number) => {
       try {
         const created = await journalApi.create({
           message: text,
-          ...mergedTags,
+          tag,
           practice_session_id: practiceSessionId,
           user_practice_id: userPracticeId,
         });
@@ -254,12 +255,12 @@ function useBotSend(
   loadMessages: (_offset?: number) => Promise<void>,
   setOfferingBalance: (_b: number) => void,
   removeOptimistic: (_id: number) => void,
-  sendFreeform: (_text: string, _tags: MessageTags, _id: number) => Promise<void>,
+  sendFreeform: (_text: string, _tag: JournalTag, _id: number) => Promise<void>,
 ) {
   const [awaitingBot, setAwaitingBot] = useState(false);
 
   const sendWithBot = useCallback(
-    async (text: string, mergedTags: MessageTags, optimisticId: number) => {
+    async (text: string, tag: JournalTag, optimisticId: number) => {
       try {
         setAwaitingBot(true);
         const chatResult = await botmasonApi.chat({ message: text });
@@ -268,7 +269,7 @@ function useBotSend(
       } catch (err) {
         if (err instanceof ApiError && err.status === 402) {
           setOfferingBalance(0);
-          await sendFreeform(text, mergedTags, optimisticId);
+          await sendFreeform(text, tag, optimisticId);
         } else {
           console.error('BotMason chat failed:', err);
           removeOptimistic(optimisticId);
@@ -285,21 +286,16 @@ function useBotSend(
 
 // --- Pure helpers ---
 
-function buildMergedTags(
-  tags: MessageTags | undefined,
-  isCourseReflection: boolean,
-  isPracticeReflection: boolean,
-): MessageTags {
-  return {
-    is_stage_reflection: isCourseReflection || (tags?.is_stage_reflection ?? false),
-    is_practice_note: isPracticeReflection || (tags?.is_practice_note ?? false),
-    is_habit_note: tags?.is_habit_note ?? false,
-  };
+function resolveTag(
+  userTag: JournalTag | undefined,
+  contextTag: JournalTag | undefined,
+): JournalTag {
+  return contextTag ?? userTag ?? 'freeform';
 }
 
 function buildOptimisticMessage(
   text: string,
-  mergedTags: MessageTags,
+  tag: JournalTag,
   practiceSessionId: number | null,
   userPracticeId: number | null,
 ): JournalMessage {
@@ -309,9 +305,7 @@ function buildOptimisticMessage(
     sender: 'user',
     user_id: 0,
     timestamp: new Date().toISOString(),
-    is_stage_reflection: mergedTags.is_stage_reflection,
-    is_practice_note: mergedTags.is_practice_note,
-    is_habit_note: mergedTags.is_habit_note,
+    tag,
     practice_session_id: practiceSessionId,
     user_practice_id: userPracticeId,
   };
@@ -417,6 +411,7 @@ interface JournalRouteParams {
   isCourseReflection: boolean;
   stageNumber: number | null;
   contentTitle: string | null;
+  contextTag: JournalTag | undefined;
 }
 
 type JournalParams = NonNullable<ReturnType<typeof useAppRoute<'Journal'>>['params']>;
@@ -430,21 +425,27 @@ const DEFAULT_ROUTE_PARAMS: JournalRouteParams = {
   isCourseReflection: false,
   stageNumber: null,
   contentTitle: null,
+  contextTag: undefined,
 };
 
 function extractFromParams(p: JournalParams): JournalRouteParams {
   const practiceSessionId = p.practiceSessionId ?? null;
   const contentTitle = p.contentTitle ?? null;
+  const tag = p.tag;
+
+  const isCourseReflection = tag === 'stage_reflection' && contentTitle !== null;
+  const isPracticeReflection = practiceSessionId !== null;
 
   return {
     practiceSessionId,
     userPracticeId: p.userPracticeId ?? null,
     practiceName: p.practiceName ?? null,
     practiceDuration: p.practiceDuration ?? null,
-    isPracticeReflection: practiceSessionId !== null,
-    isCourseReflection: (p.stageReflection ?? false) && contentTitle !== null,
+    isPracticeReflection,
+    isCourseReflection,
     stageNumber: p.stageNumber ?? null,
     contentTitle,
+    contextTag: tag,
   };
 }
 
@@ -504,27 +505,22 @@ function useJournalSend(
   rp: JournalRouteParams,
   offeringBalance: number | null,
   prependMessage: (_msg: JournalMessage) => void,
-  sendWithBot: (_text: string, _tags: MessageTags, _id: number) => Promise<void>,
-  sendFreeform: (_text: string, _tags: MessageTags, _id: number) => Promise<void>,
+  sendWithBot: (_text: string, _tag: JournalTag, _id: number) => Promise<void>,
+  sendFreeform: (_text: string, _tag: JournalTag, _id: number) => Promise<void>,
 ) {
   const [sending, setSending] = useState(false);
 
   const handleSend = useCallback(
-    async (text: string, tags?: MessageTags) => {
+    async (text: string, userTag?: JournalTag) => {
       setSending(true);
-      const mergedTags = buildMergedTags(tags, rp.isCourseReflection, rp.isPracticeReflection);
-      const optimistic = buildOptimisticMessage(
-        text,
-        mergedTags,
-        rp.practiceSessionId,
-        rp.userPracticeId,
-      );
+      const tag = resolveTag(userTag, rp.contextTag);
+      const optimistic = buildOptimisticMessage(text, tag, rp.practiceSessionId, rp.userPracticeId);
       prependMessage(optimistic);
       const hasBalance = offeringBalance !== null && offeringBalance > 0;
       if (hasBalance) {
-        await sendWithBot(text, mergedTags, optimistic.id);
+        await sendWithBot(text, tag, optimistic.id);
       } else {
-        await sendFreeform(text, mergedTags, optimistic.id);
+        await sendFreeform(text, tag, optimistic.id);
       }
       setSending(false);
     },
@@ -590,26 +586,6 @@ const TypingIndicator = ({ visible }: { visible: boolean }): React.JSX.Element |
   );
 };
 
-const PRACTICE_INITIAL_TAGS: MessageTags = {
-  is_stage_reflection: false,
-  is_practice_note: true,
-  is_habit_note: false,
-};
-
-const COURSE_INITIAL_TAGS: MessageTags = {
-  is_stage_reflection: true,
-  is_practice_note: false,
-  is_habit_note: false,
-};
-
-// --- Helper: resolve initial tags ---
-
-function resolveInitialTags(rp: JournalRouteParams): MessageTags | undefined {
-  if (rp.isCourseReflection) return COURSE_INITIAL_TAGS;
-  if (rp.isPracticeReflection) return PRACTICE_INITIAL_TAGS;
-  return undefined;
-}
-
 // --- Main component ---
 
 const JournalScreen = (): React.JSX.Element => {
@@ -650,7 +626,7 @@ const JournalScreen = (): React.JSX.Element => {
         onLoadMore={j.loader.handleLoadMore}
       />
       <TypingIndicator visible={j.awaitingBot} />
-      <ChatInput onSend={j.handleSend} disabled={j.sending} initialTags={resolveInitialTags(rp)} />
+      <ChatInput onSend={j.handleSend} disabled={j.sending} initialTag={rp.contextTag} />
     </SafeAreaView>
   );
 };
