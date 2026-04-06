@@ -26,27 +26,74 @@ type ScreenView = 'selection' | 'timer' | 'summary' | 'reflection';
 
 const DEFAULT_STAGE_NUMBER = 1;
 
-const PracticeScreen = (): React.JSX.Element => {
-  const navigation = useAppNavigation();
-  const route = useAppRoute<'Practice'>();
-  const stageNumber = route.params?.stageNumber ?? DEFAULT_STAGE_NUMBER;
-  const [view, setView] = useState<ScreenView>('selection');
+// --- Hook: practice list state ---
 
-  // Data
+function usePracticeListState() {
   const [availablePractices, setAvailablePractices] = useState<PracticeItem[]>([]);
   const [activeUserPractice, setActiveUserPractice] = useState<UserPractice | null>(null);
   const [selectedPractice, setSelectedPractice] = useState<PracticeItem | null>(null);
   const [weekCount, setWeekCount] = useState(0);
-  const [completedMinutes, setCompletedMinutes] = useState(0);
-  const [savedSession, setSavedSession] = useState<PracticeSessionResponse | null>(null);
-
-  // Loading states
-  const [isLoadingPractices, setIsLoadingPractices] = useState(true);
-  const [isSavingSession, setIsSavingSession] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadData = useCallback(async () => {
-    setIsLoadingPractices(true);
+  const incrementWeekCount = useCallback(() => setWeekCount((prev) => prev + 1), []);
+
+  return {
+    availablePractices,
+    setAvailablePractices,
+    activeUserPractice,
+    setActiveUserPractice,
+    selectedPractice,
+    setSelectedPractice,
+    weekCount,
+    setWeekCount,
+    isLoading,
+    setIsLoading,
+    error,
+    setError,
+    incrementWeekCount,
+  };
+}
+
+// --- Hook: load practice data ---
+
+function usePracticeSelect(
+  stageNumber: number,
+  availablePractices: PracticeItem[],
+  setActiveUserPractice: (_up: UserPractice) => void,
+  setSelectedPractice: (_p: PracticeItem | null) => void,
+  setError: (_e: string | null) => void,
+) {
+  return useCallback(
+    async (practiceId: number) => {
+      try {
+        const newUp = await userPractices.create({
+          practice_id: practiceId,
+          stage_number: stageNumber,
+        });
+        setActiveUserPractice(newUp);
+        const matching = availablePractices.find((p) => p.id === practiceId);
+        if (matching) setSelectedPractice(matching);
+      } catch {
+        setError('Failed to select practice. Please try again.');
+      }
+    },
+    [stageNumber, availablePractices, setActiveUserPractice, setSelectedPractice, setError],
+  );
+}
+
+function useLoadPracticeData(stageNumber: number, state: ReturnType<typeof usePracticeListState>) {
+  const {
+    setIsLoading,
+    setError,
+    setAvailablePractices,
+    setWeekCount,
+    setActiveUserPractice,
+    setSelectedPractice,
+  } = state;
+
+  return useCallback(async () => {
+    setIsLoading(true);
     setError(null);
     try {
       const [practiceList, userPracticeList, weekResult] = await Promise.all([
@@ -54,84 +101,265 @@ const PracticeScreen = (): React.JSX.Element => {
         userPractices.list(),
         practiceSessions.weekCount(),
       ]);
-
       setAvailablePractices(practiceList);
       setWeekCount(weekResult.count);
-
-      // Find user's active practice for the current stage
-      const activePractice = userPracticeList.find(
-        (up: UserPractice) => up.stage_number === stageNumber,
-      );
-      if (activePractice) {
-        setActiveUserPractice(activePractice);
-        const matchingPractice = practiceList.find(
-          (p: PracticeItem) => p.id === activePractice.practice_id,
-        );
-        if (matchingPractice) {
-          setSelectedPractice(matchingPractice);
-        }
+      const active = userPracticeList.find((up: UserPractice) => up.stage_number === stageNumber);
+      if (active) {
+        setActiveUserPractice(active);
+        const match = practiceList.find((p: PracticeItem) => p.id === active.practice_id);
+        if (match) setSelectedPractice(match);
       }
     } catch {
       setError('Failed to load practices. Please try again.');
     } finally {
-      setIsLoadingPractices(false);
+      setIsLoading(false);
     }
-  }, [stageNumber]);
+  }, [
+    stageNumber,
+    setIsLoading,
+    setError,
+    setAvailablePractices,
+    setWeekCount,
+    setActiveUserPractice,
+    setSelectedPractice,
+  ]);
+}
+
+function usePracticeLoader(stageNumber: number) {
+  const state = usePracticeListState();
+  const loadData = useLoadPracticeData(stageNumber, state);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  const handleSelectPractice = useCallback(
-    async (practiceId: number) => {
-      try {
-        const newUserPractice = await userPractices.create({
-          practice_id: practiceId,
-          stage_number: stageNumber,
-        });
-        setActiveUserPractice(newUserPractice);
-        const matching = availablePractices.find((p) => p.id === practiceId);
-        if (matching) {
-          setSelectedPractice(matching);
-        }
-      } catch {
-        setError('Failed to select practice. Please try again.');
-      }
-    },
-    [stageNumber, availablePractices],
+  const handleSelectPractice = usePracticeSelect(
+    stageNumber,
+    state.availablePractices,
+    state.setActiveUserPractice,
+    state.setSelectedPractice,
+    state.setError,
   );
 
-  const handleStartTimer = useCallback(() => {
-    setView('timer');
-  }, []);
+  return { ...state, loadData, handleSelectPractice };
+}
 
-  const handleTimerComplete = useCallback((actualMinutes: number) => {
-    setCompletedMinutes(actualMinutes);
-    setView('summary');
-  }, []);
+// --- Hook: session save/reflection flow ---
 
-  const handleTimerCancel = useCallback(() => {
-    setView('selection');
-  }, []);
+function useSessionFlow(activeUserPractice: UserPractice | null, incrementWeekCount: () => void) {
+  const [completedMinutes, setCompletedMinutes] = useState(0);
+  const [savedSession, setSavedSession] = useState<PracticeSessionResponse | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSaveSession = useCallback(async () => {
     if (!activeUserPractice) return;
-    setIsSavingSession(true);
+    setIsSaving(true);
     try {
       const payload: PracticeSessionCreate = {
         user_practice_id: activeUserPractice.id,
         duration_minutes: completedMinutes,
       };
       const session = await practiceSessions.create(payload);
-      setWeekCount((prev) => prev + 1);
+      incrementWeekCount();
       setSavedSession(session);
-      setView('reflection');
     } catch {
       setError('Failed to save session. Please try again.');
     } finally {
-      setIsSavingSession(false);
+      setIsSaving(false);
     }
-  }, [activeUserPractice, completedMinutes]);
+  }, [activeUserPractice, completedMinutes, incrementWeekCount]);
+
+  const clearSession = useCallback(() => {
+    setSavedSession(null);
+  }, []);
+
+  return {
+    completedMinutes,
+    setCompletedMinutes,
+    savedSession,
+    isSaving,
+    saveError: error,
+    handleSaveSession,
+    clearSession,
+  };
+}
+
+// --- Sub-components ---
+
+const LoadingView = (): React.JSX.Element => (
+  <View style={localStyles.centered} testID="practice-loading">
+    <ActivityIndicator size="large" color={colors.primary} />
+  </View>
+);
+
+const ErrorView = ({
+  error,
+  onRetry,
+}: {
+  error: string;
+  onRetry: () => void;
+}): React.JSX.Element => (
+  <View style={localStyles.centered} testID="practice-error">
+    <Text style={localStyles.errorText}>{error}</Text>
+    <TouchableOpacity style={localStyles.retryButton} onPress={onRetry} testID="retry-button">
+      <Text style={localStyles.retryButtonText}>Retry</Text>
+    </TouchableOpacity>
+  </View>
+);
+
+interface TimerViewProps {
+  practiceName: string;
+  durationMinutes: number;
+  onComplete: (_minutes: number) => void;
+  onCancel: () => void;
+}
+
+const TimerView = ({
+  practiceName,
+  durationMinutes,
+  onComplete,
+  onCancel,
+}: TimerViewProps): React.JSX.Element => (
+  <View style={localStyles.timerContainer} testID="timer-view">
+    <Text style={localStyles.timerTitle}>{practiceName}</Text>
+    <PracticeTimer durationMinutes={durationMinutes} onComplete={onComplete} onCancel={onCancel} />
+  </View>
+);
+
+interface SummaryViewProps {
+  completedMinutes: number;
+  isSaving: boolean;
+  onSave: () => void;
+  onSkip: () => void;
+}
+
+const SummaryView = ({
+  completedMinutes,
+  isSaving,
+  onSave,
+  onSkip,
+}: SummaryViewProps): React.JSX.Element => (
+  <View style={localStyles.centered} testID="summary-view">
+    <Text style={localStyles.summaryTitle}>Practice Complete</Text>
+    <Text style={localStyles.summaryDuration} testID="summary-duration">
+      {completedMinutes} minutes
+    </Text>
+    <TouchableOpacity
+      style={localStyles.saveButton}
+      onPress={onSave}
+      disabled={isSaving}
+      testID="save-session-button"
+    >
+      <Text style={localStyles.saveButtonText}>{isSaving ? 'Saving...' : 'Save Session'}</Text>
+    </TouchableOpacity>
+    <TouchableOpacity style={localStyles.skipButton} onPress={onSkip} testID="skip-save-button">
+      <Text style={localStyles.skipButtonText}>Skip</Text>
+    </TouchableOpacity>
+  </View>
+);
+
+const ReflectionView = ({
+  onWrite,
+  onSkip,
+}: {
+  onWrite: () => void;
+  onSkip: () => void;
+}): React.JSX.Element => (
+  <View style={localStyles.centered} testID="reflection-view">
+    <Text style={localStyles.summaryTitle}>Write a Reflection?</Text>
+    <Text style={localStyles.summaryDuration}>
+      Capture your thoughts from this practice session in your journal.
+    </Text>
+    <TouchableOpacity
+      style={localStyles.saveButton}
+      onPress={onWrite}
+      testID="write-reflection-button"
+    >
+      <Text style={localStyles.saveButtonText}>Yes, Write a Reflection</Text>
+    </TouchableOpacity>
+    <TouchableOpacity
+      style={localStyles.skipButton}
+      onPress={onSkip}
+      testID="skip-reflection-button"
+    >
+      <Text style={localStyles.skipButtonText}>Skip</Text>
+    </TouchableOpacity>
+  </View>
+);
+
+interface SelectionViewProps {
+  weekCount: number;
+  selectedPractice: PracticeItem | null;
+  activeUserPractice: UserPractice | null;
+  availablePractices: PracticeItem[];
+  onStartTimer: () => void;
+  onSelectPractice: (_id: number) => void;
+}
+
+const SelectionView = ({
+  weekCount,
+  selectedPractice,
+  activeUserPractice,
+  availablePractices,
+  onStartTimer,
+  onSelectPractice,
+}: SelectionViewProps): React.JSX.Element => (
+  <ScrollView style={localStyles.screen} testID="selection-view">
+    <WeeklyProgress count={weekCount} />
+    {selectedPractice && activeUserPractice ? (
+      <View style={localStyles.activePractice} testID="active-practice-card">
+        <Text style={localStyles.activePracticeLabel}>Your Practice</Text>
+        <Text style={localStyles.activePracticeName}>{selectedPractice.name}</Text>
+        <Text style={localStyles.activePracticeDesc}>{selectedPractice.description}</Text>
+        <TouchableOpacity
+          style={localStyles.startButton}
+          onPress={onStartTimer}
+          testID="start-practice-button"
+        >
+          <Text style={localStyles.startButtonText}>Start Practice</Text>
+        </TouchableOpacity>
+      </View>
+    ) : (
+      <PracticeSelector
+        practices={availablePractices}
+        selectedPracticeId={activeUserPractice?.practice_id ?? null}
+        onSelect={onSelectPractice}
+        isLoading={false}
+      />
+    )}
+  </ScrollView>
+);
+
+// --- Hook: view routing ---
+
+function usePracticeView(
+  loader: ReturnType<typeof usePracticeLoader>,
+  session: ReturnType<typeof useSessionFlow>,
+) {
+  const navigation = useAppNavigation();
+  const [view, setView] = useState<ScreenView>('selection');
+  const { setCompletedMinutes, handleSaveSession, clearSession, savedSession, completedMinutes } =
+    session;
+  const { selectedPractice } = loader;
+
+  const handleTimerComplete = useCallback(
+    (actualMinutes: number) => {
+      setCompletedMinutes(actualMinutes);
+      setView('summary');
+    },
+    [setCompletedMinutes],
+  );
+
+  const handleSaveAndAdvance = useCallback(async () => {
+    await handleSaveSession();
+    setView('reflection');
+  }, [handleSaveSession]);
+
+  const goToSelection = useCallback(() => {
+    clearSession();
+    setView('selection');
+  }, [clearSession]);
 
   const handleWriteReflection = useCallback(() => {
     if (!savedSession || !selectedPractice) return;
@@ -141,131 +369,87 @@ const PracticeScreen = (): React.JSX.Element => {
       practiceName: selectedPractice.name,
       practiceDuration: completedMinutes,
     });
-    setSavedSession(null);
+    clearSession();
     setView('selection');
-  }, [savedSession, selectedPractice, completedMinutes, navigation]);
+  }, [savedSession, selectedPractice, completedMinutes, clearSession, navigation]);
 
-  const handleSkipReflection = useCallback(() => {
-    setSavedSession(null);
-    setView('selection');
-  }, []);
+  return {
+    view,
+    setView,
+    handleTimerComplete,
+    handleSaveAndAdvance,
+    goToSelection,
+    handleWriteReflection,
+  };
+}
 
-  if (isLoadingPractices && view === 'selection') {
+// --- View router ---
+
+function PracticeViewRouter({
+  loader,
+  session,
+  pv,
+}: {
+  loader: ReturnType<typeof usePracticeLoader>;
+  session: ReturnType<typeof useSessionFlow>;
+  pv: ReturnType<typeof usePracticeView>;
+}): React.JSX.Element {
+  if (pv.view === 'timer' && loader.selectedPractice) {
     return (
-      <View style={styles.centered} testID="practice-loading">
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
+      <TimerView
+        practiceName={loader.selectedPractice.name}
+        durationMinutes={loader.selectedPractice.default_duration_minutes}
+        onComplete={pv.handleTimerComplete}
+        onCancel={pv.goToSelection}
+      />
     );
   }
 
-  if (error) {
+  if (pv.view === 'summary') {
     return (
-      <View style={styles.centered} testID="practice-error">
-        <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={loadData} testID="retry-button">
-          <Text style={styles.retryButtonText}>Retry</Text>
-        </TouchableOpacity>
-      </View>
+      <SummaryView
+        completedMinutes={session.completedMinutes}
+        isSaving={session.isSaving}
+        onSave={pv.handleSaveAndAdvance}
+        onSkip={pv.goToSelection}
+      />
     );
   }
 
-  if (view === 'timer' && selectedPractice) {
-    return (
-      <View style={styles.timerContainer} testID="timer-view">
-        <Text style={styles.timerTitle}>{selectedPractice.name}</Text>
-        <PracticeTimer
-          durationMinutes={selectedPractice.default_duration_minutes}
-          onComplete={handleTimerComplete}
-          onCancel={handleTimerCancel}
-        />
-      </View>
-    );
+  if (pv.view === 'reflection') {
+    return <ReflectionView onWrite={pv.handleWriteReflection} onSkip={pv.goToSelection} />;
   }
 
-  if (view === 'summary') {
-    return (
-      <View style={styles.centered} testID="summary-view">
-        <Text style={styles.summaryTitle}>Practice Complete</Text>
-        <Text style={styles.summaryDuration} testID="summary-duration">
-          {completedMinutes} minutes
-        </Text>
-        <TouchableOpacity
-          style={styles.saveButton}
-          onPress={handleSaveSession}
-          disabled={isSavingSession}
-          testID="save-session-button"
-        >
-          <Text style={styles.saveButtonText}>
-            {isSavingSession ? 'Saving...' : 'Save Session'}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.skipButton}
-          onPress={() => setView('selection')}
-          testID="skip-save-button"
-        >
-          <Text style={styles.skipButtonText}>Skip</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  if (view === 'reflection') {
-    return (
-      <View style={styles.centered} testID="reflection-view">
-        <Text style={styles.summaryTitle}>Write a Reflection?</Text>
-        <Text style={styles.summaryDuration}>
-          Capture your thoughts from this practice session in your journal.
-        </Text>
-        <TouchableOpacity
-          style={styles.saveButton}
-          onPress={handleWriteReflection}
-          testID="write-reflection-button"
-        >
-          <Text style={styles.saveButtonText}>Yes, Write a Reflection</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.skipButton}
-          onPress={handleSkipReflection}
-          testID="skip-reflection-button"
-        >
-          <Text style={styles.skipButtonText}>Skip</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  // Selection view
   return (
-    <ScrollView style={styles.screen} testID="selection-view">
-      <WeeklyProgress count={weekCount} />
-
-      {selectedPractice && activeUserPractice ? (
-        <View style={styles.activePractice} testID="active-practice-card">
-          <Text style={styles.activePracticeLabel}>Your Practice</Text>
-          <Text style={styles.activePracticeName}>{selectedPractice.name}</Text>
-          <Text style={styles.activePracticeDesc}>{selectedPractice.description}</Text>
-          <TouchableOpacity
-            style={styles.startButton}
-            onPress={handleStartTimer}
-            testID="start-practice-button"
-          >
-            <Text style={styles.startButtonText}>Start Practice</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <PracticeSelector
-          practices={availablePractices}
-          selectedPracticeId={activeUserPractice?.practice_id ?? null}
-          onSelect={handleSelectPractice}
-          isLoading={false}
-        />
-      )}
-    </ScrollView>
+    <SelectionView
+      weekCount={loader.weekCount}
+      selectedPractice={loader.selectedPractice}
+      activeUserPractice={loader.activeUserPractice}
+      availablePractices={loader.availablePractices}
+      onStartTimer={() => pv.setView('timer')}
+      onSelectPractice={loader.handleSelectPractice}
+    />
   );
+}
+
+// --- Main component ---
+
+const PracticeScreen = (): React.JSX.Element => {
+  const route = useAppRoute<'Practice'>();
+  const stageNumber = route.params?.stageNumber ?? DEFAULT_STAGE_NUMBER;
+  const loader = usePracticeLoader(stageNumber);
+  const session = useSessionFlow(loader.activeUserPractice, loader.incrementWeekCount);
+  const pv = usePracticeView(loader, session);
+
+  const combinedError = loader.error ?? session.saveError;
+
+  if (loader.isLoading && pv.view === 'selection') return <LoadingView />;
+  if (combinedError) return <ErrorView error={combinedError} onRetry={loader.loadData} />;
+
+  return <PracticeViewRouter loader={loader} session={session} pv={pv} />;
 };
 
-const styles = StyleSheet.create({
+const localStyles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background.primary,

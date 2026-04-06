@@ -39,47 +39,83 @@ interface RequestOptions {
   headers?: Record<string, string>;
 }
 
-async function request<T>(
-  path: string,
-  { method = 'GET', body, token, headers: extraHeaders }: RequestOptions = {},
-): Promise<T> {
-  const resolvedToken = token ?? tokenGetter?.() ?? null;
+function resolveToken(token?: string): string | null {
+  return token ?? tokenGetter?.() ?? null;
+}
 
+function buildHeaders(
+  resolvedToken: string | null,
+  body: unknown,
+  extraHeaders?: Record<string, string>,
+): Record<string, string> {
   const headers: Record<string, string> = {
     ...(resolvedToken ? { Authorization: `Bearer ${resolvedToken}` } : {}),
     ...extraHeaders,
   };
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+  return headers;
+}
+
+function buildFetchInit(
+  method: string,
+  body: unknown,
+  headers: Record<string, string>,
+): RequestInit | undefined {
   const init: RequestInit = {};
   if (method !== 'GET') {
     init.method = method;
   }
   if (body !== undefined) {
-    headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(body);
   }
   if (Object.keys(headers).length > 0) {
     init.headers = headers;
   }
-  const res = Object.keys(init).length
-    ? await fetch(`${API_BASE_URL}${path}`, init)
-    : await fetch(`${API_BASE_URL}${path}`);
-  if (!res.ok) {
-    let detail = 'Request failed';
-    try {
-      const errBody = await res.json();
-      if (errBody.detail && typeof errBody.detail === 'string') {
-        detail = errBody.detail;
-      }
-    } catch {
-      // response body wasn't JSON — use default
+  return Object.keys(init).length > 0 ? init : undefined;
+}
+
+async function extractErrorDetail(res: Response): Promise<string> {
+  try {
+    const errBody = await res.json();
+    if (errBody.detail && typeof errBody.detail === 'string') {
+      return errBody.detail;
     }
-    if (res.status === 401 && onUnauthorizedCallback) {
-      onUnauthorizedCallback();
-    }
-    throw new ApiError(res.status, detail);
+  } catch {
+    // response body wasn't JSON — use default
   }
+  return 'Request failed';
+}
+
+function handleUnauthorized(status: number): void {
+  if (status === 401 && onUnauthorizedCallback) {
+    onUnauthorizedCallback();
+  }
+}
+
+async function handleErrorResponse(res: Response): Promise<never> {
+  const detail = await extractErrorDetail(res);
+  handleUnauthorized(res.status);
+  throw new ApiError(res.status, detail);
+}
+
+async function parseResponse<T>(res: Response): Promise<T> {
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
+}
+
+async function request<T>(
+  path: string,
+  { method = 'GET', body, token, headers: extraHeaders }: RequestOptions = {},
+): Promise<T> {
+  const resolved = resolveToken(token);
+  const headers = buildHeaders(resolved, body, extraHeaders);
+  const init = buildFetchInit(method, body, headers);
+  const url = `${API_BASE_URL}${path}`;
+  const res = init ? await fetch(url, init) : await fetch(url);
+  if (!res.ok) return handleErrorResponse(res);
+  return parseResponse<T>(res);
 }
 
 // Habit types and client

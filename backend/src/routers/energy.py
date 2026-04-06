@@ -26,15 +26,8 @@ _idempotency_cache: TTLCache[str, EnergyPlanResponse] = TTLCache(
 )
 
 
-@router.post("/plan", response_model=EnergyPlanResponse)
-def create_plan(
-    payload: EnergyPlanRequest, x_idempotency_key: str | None = Header(default=None)
-) -> EnergyPlanResponse:
-    """Create an energy plan from submitted habits."""
-
-    if x_idempotency_key and x_idempotency_key in _idempotency_cache:
-        return _idempotency_cache[x_idempotency_key]
-
+def _build_energy_response(payload: EnergyPlanRequest) -> EnergyPlanResponse:
+    """Generate an energy plan from the request payload."""
     habits = [DomainHabit(**h.model_dump()) for h in payload.habits]
     try:
         plan, reason = generate_plan(habits, payload.start_date)
@@ -43,6 +36,18 @@ def create_plan(
     plan_model = EnergyPlan.model_validate(asdict(plan))
     response = EnergyPlanResponse(plan=plan_model, reason_code=reason)
     logging.info("energy_plan", extra={"reason_code": reason})
+    return response
+
+
+@router.post("/plan", response_model=EnergyPlanResponse)
+def create_plan(
+    payload: EnergyPlanRequest, x_idempotency_key: str | None = Header(default=None)
+) -> EnergyPlanResponse:
+    """Create an energy plan from submitted habits."""
+    if x_idempotency_key and x_idempotency_key in _idempotency_cache:
+        return _idempotency_cache[x_idempotency_key]
+
+    response = _build_energy_response(payload)
 
     if x_idempotency_key:
         _idempotency_cache[x_idempotency_key] = response

@@ -11,6 +11,40 @@ interface PracticeSelectorProps {
   isLoading: boolean;
 }
 
+interface PracticeCardProps {
+  practice: PracticeItem;
+  isSelected: boolean;
+  onSelect: (_id: number) => void;
+}
+
+const PracticeCard = ({ practice, isSelected, onSelect }: PracticeCardProps): React.JSX.Element => (
+  <View
+    key={practice.id}
+    style={[styles.card, isSelected && styles.cardSelected]}
+    testID={`practice-card-${practice.id}`}
+  >
+    <View style={styles.cardHeader}>
+      <Text style={styles.practiceName}>{practice.name}</Text>
+      {isSelected && (
+        <Text style={styles.checkmark} testID="selected-checkmark">
+          ✓
+        </Text>
+      )}
+    </View>
+    <Text style={styles.description}>{practice.description}</Text>
+    <Text style={styles.duration}>{practice.default_duration_minutes} min per session</Text>
+    {!isSelected && (
+      <TouchableOpacity
+        style={styles.selectButton}
+        onPress={() => onSelect(practice.id)}
+        testID={`select-practice-${practice.id}`}
+      >
+        <Text style={styles.selectButtonText}>Select</Text>
+      </TouchableOpacity>
+    )}
+  </View>
+);
+
 const PracticeSelector: React.FC<PracticeSelectorProps> = ({
   practices,
   selectedPracticeId,
@@ -36,36 +70,14 @@ const PracticeSelector: React.FC<PracticeSelectorProps> = ({
   return (
     <View style={styles.container} testID="practice-selector">
       <Text style={styles.heading}>Choose a Practice</Text>
-      {practices.map((practice) => {
-        const isSelected = practice.id === selectedPracticeId;
-        return (
-          <View
-            key={practice.id}
-            style={[styles.card, isSelected && styles.cardSelected]}
-            testID={`practice-card-${practice.id}`}
-          >
-            <View style={styles.cardHeader}>
-              <Text style={styles.practiceName}>{practice.name}</Text>
-              {isSelected && (
-                <Text style={styles.checkmark} testID="selected-checkmark">
-                  ✓
-                </Text>
-              )}
-            </View>
-            <Text style={styles.description}>{practice.description}</Text>
-            <Text style={styles.duration}>{practice.default_duration_minutes} min per session</Text>
-            {!isSelected && (
-              <TouchableOpacity
-                style={styles.selectButton}
-                onPress={() => onSelect(practice.id)}
-                testID={`select-practice-${practice.id}`}
-              >
-                <Text style={styles.selectButtonText}>Select</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        );
-      })}
+      {practices.map((practice) => (
+        <PracticeCard
+          key={practice.id}
+          practice={practice}
+          isSelected={practice.id === selectedPracticeId}
+          onSelect={onSelect}
+        />
+      ))}
     </View>
   );
 };

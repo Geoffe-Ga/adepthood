@@ -137,17 +137,56 @@ export const calculateHabitProgress = (habit: Habit): number => {
   return habit.completions.reduce((sum, c) => sum + c.completed_units, 0);
 };
 
-export const getGoalTier = (
-  habit: Habit,
-): {
+interface GoalTierResult {
   currentGoal: Goal;
   nextGoal: Goal | null;
   completedAllGoals: boolean;
-} => {
-  const sortedGoals = [...habit.goals].sort((a, b) => {
-    const tierOrder = { low: 1, clear: 2, stretch: 3 } as const;
-    return tierOrder[a.tier] - tierOrder[b.tier];
-  });
+}
+
+const resolveAdditiveTier = (
+  totalProgress: number,
+  lowGoal: Goal,
+  clearGoal: Goal,
+  stretchGoal: Goal,
+): GoalTierResult => {
+  if (totalProgress >= getGoalTarget(stretchGoal)) {
+    return { currentGoal: stretchGoal, nextGoal: null, completedAllGoals: true };
+  }
+  if (totalProgress >= getGoalTarget(clearGoal)) {
+    return { currentGoal: clearGoal, nextGoal: stretchGoal, completedAllGoals: false };
+  }
+  if (totalProgress >= getGoalTarget(lowGoal)) {
+    return { currentGoal: lowGoal, nextGoal: clearGoal, completedAllGoals: false };
+  }
+  return { currentGoal: lowGoal, nextGoal: null, completedAllGoals: false };
+};
+
+const resolveSubtractiveTier = (
+  totalProgress: number,
+  lowGoal: Goal,
+  clearGoal: Goal,
+  stretchGoal: Goal,
+): GoalTierResult => {
+  const lowTarget = getGoalTarget(lowGoal);
+  const clearTarget = getGoalTarget(clearGoal);
+  const stretchTarget = getGoalTarget(stretchGoal);
+
+  if (totalProgress <= stretchTarget) {
+    return { currentGoal: stretchGoal, nextGoal: null, completedAllGoals: true };
+  }
+  if (totalProgress <= clearTarget) {
+    return { currentGoal: clearGoal, nextGoal: stretchGoal, completedAllGoals: false };
+  }
+  if (totalProgress <= lowTarget) {
+    return { currentGoal: lowGoal, nextGoal: clearGoal, completedAllGoals: false };
+  }
+  return { currentGoal: lowGoal, nextGoal: null, completedAllGoals: false };
+};
+
+const TIER_ORDER = { low: 1, clear: 2, stretch: 3 } as const;
+
+export const getGoalTier = (habit: Habit): GoalTierResult => {
+  const sortedGoals = [...habit.goals].sort((a, b) => TIER_ORDER[a.tier] - TIER_ORDER[b.tier]);
 
   const lowGoal = sortedGoals[0];
   const clearGoal = sortedGoals[1];
@@ -156,44 +195,62 @@ export const getGoalTier = (
   if (!lowGoal || !clearGoal || !stretchGoal) {
     return { currentGoal: habit.goals[0]!, nextGoal: null, completedAllGoals: false };
   }
+
   const totalProgress = calculateHabitProgress(habit);
-  let currentGoal = lowGoal;
-  let nextGoal: Goal | null = null;
-  let completedAllGoals = false;
+  return lowGoal.is_additive
+    ? resolveAdditiveTier(totalProgress, lowGoal, clearGoal, stretchGoal)
+    : resolveSubtractiveTier(totalProgress, lowGoal, clearGoal, stretchGoal);
+};
 
-  if (lowGoal.is_additive) {
-    if (totalProgress >= getGoalTarget(stretchGoal)) {
-      currentGoal = stretchGoal;
-      completedAllGoals = true;
-    } else if (totalProgress >= getGoalTarget(clearGoal)) {
-      currentGoal = clearGoal;
-      nextGoal = stretchGoal;
-    } else if (totalProgress >= getGoalTarget(lowGoal)) {
-      currentGoal = lowGoal;
-      nextGoal = clearGoal;
-    } else {
-      currentGoal = lowGoal;
-    }
-  } else {
-    const lowTarget = getGoalTarget(lowGoal);
-    const clearTarget = getGoalTarget(clearGoal);
-    const stretchTarget = getGoalTarget(stretchGoal);
+// The progress bar is split into thirds visually: the first 33%
+// represents low->clear progress, and the remaining 67% represents
+// clear->stretch. This weighting reflects that reaching stretch
+// goals requires proportionally more effort than reaching clear.
+const STRETCH_SEGMENT_PCT = 67;
+const CLEAR_OFFSET_PCT = 33;
 
-    if (totalProgress <= stretchTarget) {
-      currentGoal = stretchGoal;
-      completedAllGoals = true;
-    } else if (totalProgress <= clearTarget) {
-      currentGoal = clearGoal;
-      nextGoal = stretchGoal;
-    } else if (totalProgress <= lowTarget) {
-      currentGoal = lowGoal;
-      nextGoal = clearGoal;
-    } else {
-      currentGoal = lowGoal;
-    }
+const getAdditiveSegmentPct = (
+  totalProgress: number,
+  currentGoal: Goal,
+  nextGoal: Goal,
+): number | null => {
+  const currentTarget = getGoalTarget(currentGoal);
+  const nextTarget = getGoalTarget(nextGoal);
+  if (totalProgress < currentTarget) return null;
+
+  if (currentGoal.tier === 'clear' && nextGoal.tier === 'stretch') {
+    const segmentPct =
+      ((totalProgress - currentTarget) / (nextTarget - currentTarget)) * STRETCH_SEGMENT_PCT +
+      CLEAR_OFFSET_PCT;
+    return Math.min(100, segmentPct);
   }
+  if (currentGoal.tier === 'low' && nextGoal.tier === 'clear') {
+    return Math.min(100, ((totalProgress - currentTarget) / (nextTarget - currentTarget)) * 100);
+  }
+  return null;
+};
 
-  return { currentGoal, nextGoal, completedAllGoals };
+const getAdditiveProgressPct = (
+  totalProgress: number,
+  currentGoal: Goal,
+  nextGoal: Goal | null,
+): number => {
+  if (nextGoal) {
+    const segmentPct = getAdditiveSegmentPct(totalProgress, currentGoal, nextGoal);
+    if (segmentPct !== null) return segmentPct;
+  }
+  return Math.min(100, (totalProgress / getGoalTarget(currentGoal)) * 100);
+};
+
+const getSubtractiveProgressPct = (habit: Habit, totalProgress: number): number => {
+  const lowGoal = habit.goals.find((g) => g.tier === 'low')!;
+  const stretchGoal = habit.goals.find((g) => g.tier === 'stretch')!;
+  const lowTarget = getGoalTarget(lowGoal);
+  const stretchTarget = getGoalTarget(stretchGoal);
+
+  if (totalProgress <= stretchTarget) return 100;
+  if (totalProgress >= lowTarget) return 0;
+  return 100 - ((totalProgress - stretchTarget) / (lowTarget - stretchTarget)) * 100;
 };
 
 // Returns current progress as a percentage between 0 and 100.
@@ -207,60 +264,67 @@ export const getProgressPercentage = (
   nextGoal: Goal | null,
 ): number => {
   const totalProgress = calculateHabitProgress(habit);
-  const isAdditive = currentGoal.is_additive;
-
-  if (isAdditive) {
-    const currentTarget = getGoalTarget(currentGoal);
-
-    if (nextGoal) {
-      const nextTarget = getGoalTarget(nextGoal);
-
-      if (currentGoal.tier === 'clear' && nextGoal.tier === 'stretch') {
-        if (totalProgress >= currentTarget) {
-          // The progress bar is split into thirds visually: the first 33%
-          // represents low→clear progress, and the remaining 67% represents
-          // clear→stretch. This weighting reflects that reaching stretch
-          // goals requires proportionally more effort than reaching clear.
-          const STRETCH_SEGMENT_PCT = 67;
-          const CLEAR_OFFSET_PCT = 33;
-          return Math.min(
-            100,
-            ((totalProgress - currentTarget) / (nextTarget - currentTarget)) * STRETCH_SEGMENT_PCT +
-              CLEAR_OFFSET_PCT,
-          );
-        }
-      }
-
-      if (currentGoal.tier === 'low' && nextGoal.tier === 'clear') {
-        if (totalProgress >= currentTarget) {
-          return Math.min(
-            100,
-            ((totalProgress - currentTarget) / (nextTarget - currentTarget)) * 100,
-          );
-        }
-      }
-    }
-
-    return Math.min(100, (totalProgress / currentTarget) * 100);
-  } else {
-    const lowGoal = habit.goals.find((g) => g.tier === 'low')!;
-    const stretchGoal = habit.goals.find((g) => g.tier === 'stretch')!;
-    const lowTarget = getGoalTarget(lowGoal);
-    const stretchTarget = getGoalTarget(stretchGoal);
-
-    if (totalProgress <= stretchTarget) {
-      return 100;
-    }
-    if (totalProgress >= lowTarget) {
-      return 0;
-    }
-
-    return 100 - ((totalProgress - stretchTarget) / (lowTarget - stretchTarget)) * 100;
-  }
+  return currentGoal.is_additive
+    ? getAdditiveProgressPct(totalProgress, currentGoal, nextGoal)
+    : getSubtractiveProgressPct(habit, totalProgress);
 };
 
 export const getProgressBarColor = (habit: Habit): string => {
   return STAGE_COLORS[habit.stage] ?? '#000';
+};
+
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DAYS_IN_WEEK = 7;
+
+const emptyStats = (): HabitStatsData => ({
+  dates: DAY_LABELS,
+  values: new Array(DAYS_IN_WEEK).fill(0) as number[],
+  completionsByDay: new Array(DAYS_IN_WEEK).fill(0) as number[],
+  dayLabels: DAY_LABELS,
+  longestStreak: 0,
+  totalCompletions: 0,
+  completionRate: 0,
+});
+
+const aggregateByDayOfWeek = (completions: Completion[]) => {
+  const unitsByDay = new Array(DAYS_IN_WEEK).fill(0) as number[];
+  const presenceByDay = new Array(DAYS_IN_WEEK).fill(0) as number[];
+  const daysWithCompletions = new Set<string>();
+
+  for (const c of completions) {
+    const d = new Date(c.timestamp);
+    const dayIdx = d.getDay();
+    unitsByDay[dayIdx] = unitsByDay[dayIdx]! + c.completed_units;
+    presenceByDay[dayIdx] = 1;
+    daysWithCompletions.add(d.toDateString());
+  }
+
+  return { unitsByDay, presenceByDay, daysWithCompletions };
+};
+
+const computeLongestStreak = (sortedDays: Date[]): number => {
+  let longest = 0;
+  let current = 0;
+  for (let i = 0; i < sortedDays.length; i++) {
+    const day = sortedDays[i]!;
+    if (i === 0) {
+      current = 1;
+    } else {
+      const prev = sortedDays[i - 1]!;
+      const diff = (day.getTime() - prev.getTime()) / MS_PER_DAY;
+      current = diff === 1 ? current + 1 : 1;
+    }
+    if (current > longest) longest = current;
+  }
+  return longest;
+};
+
+const computeCompletionRate = (sortedDays: Date[], totalUniqueDays: number): number => {
+  if (sortedDays.length === 0) return 0;
+  const firstDay = sortedDays[0]!;
+  const lastDay = sortedDays[sortedDays.length - 1]!;
+  const spanDays = Math.round((lastDay.getTime() - firstDay.getTime()) / MS_PER_DAY) + 1;
+  return spanDays > 0 ? totalUniqueDays / spanDays : 0;
 };
 
 /**
@@ -269,71 +333,23 @@ export const getProgressBarColor = (habit: Habit): string => {
  * Day-of-week indices: 0=Sun, 1=Mon, … 6=Sat (matching JS `getDay()`).
  */
 export const generateStatsForHabit = (habit: Habit): HabitStatsData => {
-  const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const empty: HabitStatsData = {
-    dates: dayLabels,
-    values: new Array(7).fill(0) as number[],
-    completionsByDay: new Array(7).fill(0) as number[],
-    dayLabels,
-    longestStreak: 0,
-    totalCompletions: 0,
-    completionRate: 0,
-  };
-
   const completions = habit.completions;
-  if (!completions || completions.length === 0) return empty;
+  if (!completions || completions.length === 0) return emptyStats();
 
-  // Aggregate units per day-of-week
-  const unitsByDay = new Array(7).fill(0) as number[];
-  const daysWithCompletions = new Set<string>();
+  const { unitsByDay, presenceByDay, daysWithCompletions } = aggregateByDayOfWeek(completions);
 
-  for (const c of completions) {
-    const d = new Date(c.timestamp);
-    const dayIdx = d.getDay();
-    unitsByDay[dayIdx] = unitsByDay[dayIdx]! + c.completed_units;
-    daysWithCompletions.add(d.toDateString());
-  }
-
-  // completionsByDay: 1 if that day-of-week ever had a completion, else 0
-  const presenceByDay = new Array(7).fill(0) as number[];
-  for (const c of completions) {
-    presenceByDay[new Date(c.timestamp).getDay()] = 1;
-  }
-
-  // Longest streak: consecutive calendar days with at least one completion
   const sortedDays = Array.from(daysWithCompletions)
     .map((s) => new Date(s))
     .sort((a, b) => a.getTime() - b.getTime());
 
-  let longestStreak = 0;
-  let currentStreak = 0;
-  for (let i = 0; i < sortedDays.length; i++) {
-    const day = sortedDays[i]!;
-    if (i === 0) {
-      currentStreak = 1;
-    } else {
-      const prev = sortedDays[i - 1]!;
-      const diff = (day.getTime() - prev.getTime()) / MS_PER_DAY;
-      currentStreak = diff === 1 ? currentStreak + 1 : 1;
-    }
-    if (currentStreak > longestStreak) longestStreak = currentStreak;
-  }
-
-  // Completion rate: days-with-completions / span of days
-  const firstDay = sortedDays[0]!;
-  const lastDay = sortedDays[sortedDays.length - 1]!;
-  // +1 to count both the first and last day inclusively
-  const spanDays = Math.round((lastDay.getTime() - firstDay.getTime()) / MS_PER_DAY) + 1;
-  const completionRate = spanDays > 0 ? daysWithCompletions.size / spanDays : 0;
-
   return {
-    dates: dayLabels,
+    dates: DAY_LABELS,
     values: unitsByDay,
     completionsByDay: presenceByDay,
-    dayLabels,
-    longestStreak,
+    dayLabels: DAY_LABELS,
+    longestStreak: computeLongestStreak(sortedDays),
     totalCompletions: completions.length,
-    completionRate,
+    completionRate: computeCompletionRate(sortedDays, daysWithCompletions.size),
   };
 };
 

@@ -72,6 +72,13 @@ omit = [
   "*/config.py",
 ]
 
+[tool.radon]
+cc_min = "A"
+mi_min = "A"
+exclude = "migrations,alembic,.venv,venv,tests"
+show_complexity = true
+average = true
+
 [tool.coverage.report]
 show_missing = true
 skip_covered = false

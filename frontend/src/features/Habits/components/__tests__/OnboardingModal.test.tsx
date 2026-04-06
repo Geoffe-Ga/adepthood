@@ -65,6 +65,19 @@ jest.mock('../../../../api', () => ({
   },
 }));
 
+const pressContinueFrom = (root: any) => {
+  const button = root.findByProps({ testID: 'continue-button' });
+  renderer.act(() => {
+    button.props.onPress();
+  });
+  const modalContinue = root.findAllByProps({ testID: 'count-warning-continue' });
+  if (modalContinue.length > 0) {
+    renderer.act(() => {
+      modalContinue[0].props.onPress();
+    });
+  }
+};
+
 describe('OnboardingModal close behaviour', () => {
   it('shows discard dialog and exits on confirmation', () => {
     const onClose = jest.fn();
@@ -132,18 +145,7 @@ describe('OnboardingModal close behaviour', () => {
       plusParent.props.onPress();
     });
 
-    const pressContinue = () => {
-      const button = root.findByProps({ testID: 'continue-button' });
-      renderer.act(() => {
-        button.props.onPress();
-      });
-      const modalContinue = root.findAllByProps({ testID: 'count-warning-continue' });
-      if (modalContinue.length > 0) {
-        renderer.act(() => {
-          modalContinue[0].props.onPress();
-        });
-      }
-    };
+    const pressContinue = () => pressContinueFrom(root);
     pressContinue(); // to cost step
     pressContinue(); // to return step
     pressContinue(); // to reorder step
@@ -189,18 +191,7 @@ describe('OnboardingModal close behaviour', () => {
       plusParent.props.onPress();
     });
 
-    const pressContinue = () => {
-      const button = root.findByProps({ testID: 'continue-button' });
-      renderer.act(() => {
-        button.props.onPress();
-      });
-      const modalContinue = root.findAllByProps({ testID: 'count-warning-continue' });
-      if (modalContinue.length > 0) {
-        renderer.act(() => {
-          modalContinue[0].props.onPress();
-        });
-      }
-    };
+    const pressContinue = () => pressContinueFrom(root);
     pressContinue();
     pressContinue();
     pressContinue();
