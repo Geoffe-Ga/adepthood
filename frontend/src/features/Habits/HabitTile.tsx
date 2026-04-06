@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, Easing, Text, TouchableOpacity, View, type DimensionValue } from 'react-native';
 
 import { STAGE_COLORS, spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
@@ -332,6 +332,62 @@ const LabelList = ({ markers, scale }: { markers: GoalMarkerEntry[]; scale: numb
   </>
 );
 
+const COLOR_TRANSITION_MS = 400;
+
+const useColorTransition = (color: string) => {
+  const fadeAnim = useRef(new Animated.Value(1)).current;
+  const prevColorRef = useRef(color);
+
+  useEffect(() => {
+    if (prevColorRef.current !== color) {
+      fadeAnim.setValue(0);
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: COLOR_TRANSITION_MS,
+        easing: Easing.linear,
+        useNativeDriver: false,
+      }).start(() => {
+        prevColorRef.current = color;
+      });
+    }
+  }, [color, fadeAnim]);
+
+  return { fadeAnim, prevColor: prevColorRef.current };
+};
+
+interface AnimatedFillProps {
+  width: DimensionValue;
+  color: string;
+  prevColor: string;
+  fadeAnim: Animated.Value;
+  borderRadius: number;
+}
+
+const AnimatedFill = ({ width, color, prevColor, fadeAnim, borderRadius }: AnimatedFillProps) => (
+  <>
+    <View
+      style={{
+        position: 'absolute',
+        height: '100%',
+        width,
+        backgroundColor: prevColor,
+        borderRadius,
+      }}
+    />
+    <Animated.View
+      testID="progress-fill"
+      style={{
+        position: 'absolute',
+        height: '100%',
+        width,
+        backgroundColor: color,
+        borderRadius,
+        opacity: fadeAnim,
+      }}
+    />
+  </>
+);
+
 const ProgressBar = ({
   habit,
   barHeight,
@@ -341,41 +397,45 @@ const ProgressBar = ({
   scale,
   tooltip,
   setTooltip,
-}: ProgressBarProps) => (
-  <View style={{ marginTop: spacing(1, scale) }}>
-    <View style={{ height: barHeight, position: 'relative' }}>
-      <View
-        style={{
-          height: '100%',
-          backgroundColor: '#eee',
-          borderRadius: barHeight / 2,
-          overflow: 'hidden',
-        }}
-      >
+}: ProgressBarProps) => {
+  const { fadeAnim, prevColor } = useColorTransition(progressBarColor);
+  const widthStyle: DimensionValue = `${progressPercentage}%`;
+  const borderR = barHeight / 2;
+
+  return (
+    <View style={{ marginTop: spacing(1, scale) }}>
+      <View style={{ height: barHeight, position: 'relative' }}>
         <View
-          testID="progress-fill"
           style={{
             height: '100%',
-            width: `${progressPercentage}%`,
-            backgroundColor: progressBarColor,
-            borderRadius: barHeight / 2,
+            backgroundColor: '#eee',
+            borderRadius: borderR,
+            overflow: 'hidden',
           }}
+        >
+          <AnimatedFill
+            width={widthStyle}
+            color={progressBarColor}
+            prevColor={prevColor}
+            fadeAnim={fadeAnim}
+            borderRadius={borderR}
+          />
+        </View>
+        <MarkerList
+          markers={markers}
+          habit={habit}
+          barHeight={barHeight}
+          scale={scale}
+          tooltip={tooltip}
+          setTooltip={setTooltip}
         />
       </View>
-      <MarkerList
-        markers={markers}
-        habit={habit}
-        barHeight={barHeight}
-        scale={scale}
-        tooltip={tooltip}
-        setTooltip={setTooltip}
-      />
+      <View style={{ position: 'relative', marginTop: spacing(0.5, scale) }}>
+        <LabelList markers={markers} scale={scale} />
+      </View>
     </View>
-    <View style={{ position: 'relative', marginTop: spacing(0.5, scale) }}>
-      <LabelList markers={markers} scale={scale} />
-    </View>
-  </View>
-);
+  );
+};
 
 const useHabitTileData = (habit: Habit) => {
   const lowGoal = habit.goals.find((g) => g.tier === 'low');
