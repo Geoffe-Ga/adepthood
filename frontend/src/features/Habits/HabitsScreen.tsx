@@ -1,11 +1,13 @@
 // HabitsScreen.tsx
 
 import { BarChart2, Check, MoreHorizontal, Pencil, Zap } from 'lucide-react';
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, TouchableOpacity, View, Modal } from 'react-native';
 import EmojiSelector from 'react-native-emoji-selector';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { habits as habitsApi } from '../../api';
+import { useAuth } from '../../context/AuthContext';
 import { spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 
@@ -16,9 +18,9 @@ import OnboardingModal from './components/OnboardingModal';
 import ReorderHabitsModal from './components/ReorderHabitsModal';
 import StatsModal from './components/StatsModal';
 import styles from './Habits.styles';
-import type { Habit } from './Habits.types';
+import type { Habit, HabitStatsData } from './Habits.types';
 import HabitTile from './HabitTile';
-import { generateStatsForHabit, calculateMissedDays } from './HabitUtils';
+import { generateStatsForHabit, toLocalHabitStats, calculateMissedDays } from './HabitUtils';
 import { useHabits } from './hooks/useHabits';
 import { useModalCoordinator } from './hooks/useModalCoordinator';
 
@@ -151,11 +153,17 @@ const EmojiPickerModal = ({
 interface HabitModalsProps {
   modals: ReturnType<typeof useModalCoordinator>;
   selectedHabit: Habit | null;
+  habitStats: HabitStatsData | null;
   habits: Habit[];
   actions: ReturnType<typeof useHabits>['actions'];
 }
 
-const HabitDataModals = ({ modals, selectedHabit, actions }: Omit<HabitModalsProps, 'habits'>) => (
+const HabitDataModals = ({
+  modals,
+  selectedHabit,
+  habitStats,
+  actions,
+}: Omit<HabitModalsProps, 'habits'>) => (
   <>
     <GoalModal
       visible={modals.goal}
@@ -168,7 +176,7 @@ const HabitDataModals = ({ modals, selectedHabit, actions }: Omit<HabitModalsPro
     <StatsModal
       visible={modals.stats}
       habit={selectedHabit}
-      stats={selectedHabit ? generateStatsForHabit(selectedHabit) : null}
+      stats={habitStats}
       onClose={() => modals.close('stats')}
     />
     <MissedDaysModal
@@ -182,9 +190,14 @@ const HabitDataModals = ({ modals, selectedHabit, actions }: Omit<HabitModalsPro
   </>
 );
 
-const HabitModals = ({ modals, selectedHabit, habits, actions }: HabitModalsProps) => (
+const HabitModals = ({ modals, selectedHabit, habitStats, habits, actions }: HabitModalsProps) => (
   <>
-    <HabitDataModals modals={modals} selectedHabit={selectedHabit} actions={actions} />
+    <HabitDataModals
+      modals={modals}
+      selectedHabit={selectedHabit}
+      habitStats={habitStats}
+      actions={actions}
+    />
     <HabitSettingsModal
       visible={modals.settings}
       habit={selectedHabit}
@@ -326,20 +339,55 @@ const useHabitTileRenderer = (
   return renderHabitTile;
 };
 
+const useHabitStats = (visible: boolean, habit: Habit | null): HabitStatsData | null => {
+  const { token } = useAuth();
+  const [stats, setStats] = useState<HabitStatsData | null>(null);
+
+  const fetchStats = useCallback(
+    (h: Habit) => {
+      if (h.id == null) return;
+      habitsApi
+        .getStats(h.id, token ?? undefined)
+        .then((apiStats) => setStats(toLocalHabitStats(apiStats)))
+        .catch(() => setStats(generateStatsForHabit(h)));
+    },
+    [token],
+  );
+
+  useEffect(() => {
+    if (visible && habit) {
+      fetchStats(habit);
+    } else {
+      setStats(null);
+    }
+  }, [visible, habit, fetchStats]);
+
+  return stats;
+};
+
+const useSelectMode = (
+  setMode: (_m: 'quickLog' | 'stats' | 'edit') => void,
+  closeAll: () => void,
+) =>
+  useCallback(
+    (m: 'quickLog' | 'stats' | 'edit') => {
+      setMode(m);
+      closeAll();
+    },
+    [setMode, closeAll],
+  );
+
 const HabitsScreen = () => {
   const { habits, loading, error, selectedHabit, setSelectedHabit, mode, setMode, actions, ui } =
     useHabits();
   const modals = useModalCoordinator();
+  const habitStats = useHabitStats(modals.stats, selectedHabit);
   const { columns, gridGutter, scale, isLG, isXL } = useResponsive();
-  const screenPadding = spacing(isLG || isXL ? 2 : 1, scale);
-  const handleSelectMode = (m: 'quickLog' | 'stats' | 'edit') => {
-    setMode(m);
-    modals.closeAll();
-  };
+  const handleSelectMode = useSelectMode(setMode, modals.closeAll);
   const renderHabitTile = useHabitTileRenderer(mode, modals, actions, setSelectedHabit);
 
   return (
-    <SafeAreaView style={[styles.container, { padding: screenPadding }]}>
+    <SafeAreaView style={[styles.container, { padding: spacing(isLG || isXL ? 2 : 1, scale) }]}>
       <View style={styles.topBar}>
         <OverflowMenu
           scale={scale}
@@ -371,6 +419,7 @@ const HabitsScreen = () => {
       <HabitModals
         modals={modals}
         selectedHabit={selectedHabit}
+        habitStats={habitStats}
         habits={habits}
         actions={actions}
       />

@@ -177,6 +177,17 @@ export interface ApiHabitWithGoals extends ApiHabit {
   goals: ApiGoal[];
 }
 
+export interface ApiHabitStats {
+  day_labels: string[];
+  values: number[];
+  completions_by_day: number[];
+  longest_streak: number;
+  current_streak: number;
+  total_completions: number;
+  completion_rate: number;
+  completion_dates: string[];
+}
+
 /** @deprecated Use ApiHabit instead — this only includes the OpenAPI subset. */
 export type Habit = components['schemas']['Habit'];
 
@@ -245,6 +256,9 @@ export const habits = {
   },
   delete(habitId: number, token?: string): Promise<void> {
     return request<void>(`/habits/${habitId}`, { method: 'DELETE', token });
+  },
+  getStats(habitId: number, token?: string): Promise<ApiHabitStats> {
+    return request<ApiHabitStats>(`/habits/${habitId}/stats`, { token });
   },
 };
 

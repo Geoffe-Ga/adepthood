@@ -12,10 +12,24 @@ jest.mock('../../../api', () => ({
     create: (jest.fn() as any).mockResolvedValue({}),
     update: jest.fn(),
     delete: jest.fn(),
+    getStats: (jest.fn() as any).mockResolvedValue({
+      day_labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+      values: [0, 0, 0, 0, 0, 0, 0],
+      completions_by_day: [0, 0, 0, 0, 0, 0, 0],
+      longest_streak: 0,
+      current_streak: 0,
+      total_completions: 0,
+      completion_rate: 0,
+      completion_dates: [],
+    }),
   },
   goalCompletions: { create: jest.fn() },
 }));
 /* eslint-enable @typescript-eslint/no-explicit-any */
+
+jest.mock('../../../context/AuthContext', () => ({
+  useAuth: () => ({ token: 'test-token' }),
+}));
 
 const mockOnboardingModal = jest.fn();
 jest.mock('../components/OnboardingModal', () =>

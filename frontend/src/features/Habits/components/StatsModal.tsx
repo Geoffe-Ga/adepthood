@@ -23,16 +23,14 @@ const FALLBACK_CALENDAR_COLOR = '#50cebb';
 
 const getStageColor = (stage: string, fallback: string): string => STAGE_COLORS[stage] || fallback;
 
-const buildMarkedDates = (habit: {
-  completions?: Array<{ timestamp: Date }>;
-  stage: string;
-}): Record<string, { selected: boolean; selectedColor: string }> => {
+const buildMarkedDates = (
+  completionDates: string[],
+  stage: string,
+): Record<string, { selected: boolean; selectedColor: string }> => {
   const marked: Record<string, { selected: boolean; selectedColor: string }> = {};
-  if (!habit.completions) return marked;
-  const selectedColor = getStageColor(habit.stage, FALLBACK_CALENDAR_COLOR);
-  for (const completion of habit.completions) {
-    const dateStr = new Date(completion.timestamp).toISOString().split('T')[0] ?? '';
-    if (dateStr) marked[dateStr] = { selected: true, selectedColor };
+  const selectedColor = getStageColor(stage, FALLBACK_CALENDAR_COLOR);
+  for (const dateStr of completionDates) {
+    marked[dateStr] = { selected: true, selectedColor };
   }
   return marked;
 };
@@ -87,14 +85,20 @@ const TabBar = ({ selectedTab, onSelect }: TabBarProps) => (
 );
 
 interface CalendarTabProps {
-  habit: { completions?: Array<{ timestamp: Date }>; stage: string; streak: number };
-  stats: { longestStreak: number; completionRate: number; totalCompletions: number };
+  habit: { stage: string };
+  stats: {
+    longestStreak: number;
+    currentStreak: number;
+    completionRate: number;
+    totalCompletions: number;
+    completionDates: string[];
+  };
 }
 
 const CalendarTab = ({ habit, stats }: CalendarTabProps) => (
   <View style={styles.calendarContainer}>
     <Calendar
-      markedDates={buildMarkedDates(habit)}
+      markedDates={buildMarkedDates(stats.completionDates, habit.stage)}
       theme={{
         todayTextColor: '#00adf5',
         selectedDayBackgroundColor: STAGE_COLORS[habit.stage],
@@ -103,7 +107,7 @@ const CalendarTab = ({ habit, stats }: CalendarTabProps) => (
     />
     <View style={styles.statsInfoContainer}>
       <StatRow label="Longest Streak:" value={`${stats.longestStreak} days`} />
-      <StatRow label="Current Streak:" value={`${habit.streak} days`} />
+      <StatRow label="Current Streak:" value={`${stats.currentStreak} days`} />
       <StatRow label="Completion Rate:" value={`${Math.round(stats.completionRate * 100)}%`} />
       <StatRow label="Total Completions:" value={`${stats.totalCompletions}`} />
     </View>

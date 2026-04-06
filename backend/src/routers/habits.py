@@ -8,11 +8,14 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import select
 
 from database import get_session
+from domain.habit_stats import compute_habit_stats
 from errors import not_found
+from models.goal import Goal
 from models.habit import Habit
 from routers.auth import get_current_user
 from schemas.habit import Habit as HabitSchema
 from schemas.habit import HabitCreate, HabitWithGoals
+from schemas.habit_stats import HabitStats
 
 router = APIRouter(prefix="/habits", tags=["habits"])
 
@@ -96,3 +99,31 @@ async def delete_habit(
     await session.delete(habit)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+async def _get_habit_with_completions(
+    habit_id: int, current_user: int, session: AsyncSession
+) -> Habit:
+    """Load a habit with goals+completions, raising 404 if not owned."""
+    statement = (
+        select(Habit)
+        .where(Habit.id == habit_id)
+        .options(selectinload(Habit.goals).selectinload(Goal.completions))  # type: ignore[arg-type]
+    )
+    result = await session.execute(statement)
+    habit = result.scalars().first()
+    if habit is None or habit.user_id != current_user:
+        raise not_found("habit")
+    return habit
+
+
+@router.get("/{habit_id}/stats", response_model=HabitStats)
+async def get_habit_stats(
+    habit_id: int,
+    current_user: int = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> HabitStats:
+    """Return aggregated statistics for a habit's goal completions."""
+    habit = await _get_habit_with_completions(habit_id, current_user, session)
+    completions = [c for goal in habit.goals for c in goal.completions if c.user_id == current_user]
+    return compute_habit_stats(completions)

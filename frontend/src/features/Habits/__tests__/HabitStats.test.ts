@@ -1,7 +1,7 @@
 /* eslint-env jest */
 /* global describe, test, expect */
 import type { Habit, Goal } from '../Habits.types';
-import { generateStatsForHabit, calculateMissedDays } from '../HabitUtils';
+import { generateStatsForHabit, toLocalHabitStats, calculateMissedDays } from '../HabitUtils';
 
 describe('generateStatsForHabit', () => {
   const goals: Goal[] = [
@@ -124,6 +124,60 @@ describe('generateStatsForHabit', () => {
     expect(stats.completionsByDay[1]).toBe(1); // Monday
     expect(stats.completionsByDay[2]).toBe(0); // Tuesday
     expect(stats.completionsByDay[3]).toBe(1); // Wednesday
+  });
+
+  test('includes currentStreak counting from the most recent date backwards', () => {
+    const habit: Habit = {
+      ...baseHabit,
+      completions: [
+        { id: 'c-1', timestamp: new Date('2024-01-01T08:00:00'), completed_units: 1 },
+        // gap on Jan 2
+        { id: 'c-2', timestamp: new Date('2024-01-03T08:00:00'), completed_units: 1 },
+        { id: 'c-3', timestamp: new Date('2024-01-04T08:00:00'), completed_units: 1 },
+      ],
+    };
+    const stats = generateStatsForHabit(habit);
+    expect(stats.currentStreak).toBe(2); // Jan 3-4
+  });
+
+  test('includes completionDates as ISO date strings', () => {
+    const habit: Habit = {
+      ...baseHabit,
+      completions: [
+        { id: 'c-1', timestamp: new Date('2024-01-01T08:00:00'), completed_units: 1 },
+        { id: 'c-2', timestamp: new Date('2024-01-01T12:00:00'), completed_units: 1 },
+        { id: 'c-3', timestamp: new Date('2024-01-03T08:00:00'), completed_units: 1 },
+      ],
+    };
+    const stats = generateStatsForHabit(habit);
+    expect(stats.completionDates).toContain('2024-01-01');
+    expect(stats.completionDates).toContain('2024-01-03');
+    expect(stats.completionDates).toHaveLength(2);
+  });
+});
+
+describe('toLocalHabitStats', () => {
+  test('converts snake_case API response to camelCase HabitStatsData', () => {
+    const api = {
+      day_labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+      values: [0, 3, 0, 3, 0, 0, 0],
+      completions_by_day: [0, 1, 0, 1, 0, 0, 0],
+      longest_streak: 3,
+      current_streak: 2,
+      total_completions: 5,
+      completion_rate: 0.67,
+      completion_dates: ['2024-01-01', '2024-01-03'],
+    };
+    const local = toLocalHabitStats(api);
+    expect(local.dayLabels).toEqual(api.day_labels);
+    expect(local.dates).toEqual(api.day_labels);
+    expect(local.values).toEqual(api.values);
+    expect(local.completionsByDay).toEqual(api.completions_by_day);
+    expect(local.longestStreak).toBe(3);
+    expect(local.currentStreak).toBe(2);
+    expect(local.totalCompletions).toBe(5);
+    expect(local.completionRate).toBe(0.67);
+    expect(local.completionDates).toEqual(['2024-01-01', '2024-01-03']);
   });
 });
 
