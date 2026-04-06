@@ -117,6 +117,7 @@ export interface HabitTileProps {
   onOpenGoals: () => void;
   onLongPress: () => void;
   onIconPress?: () => void;
+  onUnlockHabit?: (_habitId: number) => void;
 }
 
 export interface HabitSettingsModalProps {

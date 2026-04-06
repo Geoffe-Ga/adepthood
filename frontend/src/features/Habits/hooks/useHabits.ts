@@ -79,6 +79,9 @@ export interface UseHabitsReturn {
     onboardingSave: (_newHabits: OnboardingHabit[]) => Promise<void>;
     iconPress: (_index: number) => void;
     emojiSelect: (_emoji: string) => void;
+    revealAllHabits: () => void;
+    lockUnstartedHabits: () => void;
+    unlockHabit: (_habitId: number) => void;
   };
   ui: {
     showEnergyCTA: boolean;
@@ -378,6 +381,35 @@ const useHabitMutations = () => {
   return { habits, storeSetHabits, updateGoal, updateHabit, deleteHabit, saveHabitOrder };
 };
 
+const useHabitReveal = (habits: Habit[], storeSetHabits: (_h: Habit[]) => void) => {
+  const revealAllHabits = useCallback(() => {
+    const next = habits.map((h) => ({ ...h, revealed: true }));
+    storeSetHabits(next);
+    void persistHabits(next);
+  }, [habits, storeSetHabits]);
+
+  const lockUnstartedHabits = useCallback(() => {
+    const now = Date.now();
+    const next = habits.map((h) => ({
+      ...h,
+      revealed: new Date(h.start_date).getTime() <= now,
+    }));
+    storeSetHabits(next);
+    void persistHabits(next);
+  }, [habits, storeSetHabits]);
+
+  const unlockHabit = useCallback(
+    (habitId: number) => {
+      const next = habits.map((h) => (h.id === habitId ? { ...h, revealed: true } : h));
+      storeSetHabits(next);
+      void persistHabits(next);
+    },
+    [habits, storeSetHabits],
+  );
+
+  return { revealAllHabits, lockUnstartedHabits, unlockHabit };
+};
+
 const useHabitCrud = () => {
   const mutations = useHabitMutations();
   const { habits, storeSetHabits } = mutations;
@@ -402,7 +434,9 @@ const useHabitCrud = () => {
     },
     [storeSetHabits],
   );
-  return { ...mutations, backfillMissedDays, setNewStartDate, onboardingSave };
+  const reveal = useHabitReveal(habits, storeSetHabits);
+
+  return { ...mutations, backfillMissedDays, setNewStartDate, onboardingSave, ...reveal };
 };
 
 const useHabitActions = (
@@ -498,6 +532,9 @@ export const useHabits = (): UseHabitsReturn => {
       onboardingSave: actionsHook.onboardingSave,
       iconPress: actionsHook.iconPress,
       emojiSelect: actionsHook.emojiSelect,
+      revealAllHabits: actionsHook.revealAllHabits,
+      lockUnstartedHabits: actionsHook.lockUnstartedHabits,
+      unlockHabit: actionsHook.unlockHabit,
     },
     ui: { ...ui, emojiHabitIndex: actionsHook.emojiHabitIndex },
     setHabitsForTesting: storeSetHabits,

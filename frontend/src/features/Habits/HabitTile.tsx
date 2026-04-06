@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Text, TouchableOpacity, View } from 'react-native';
 
 import { STAGE_COLORS, spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
@@ -13,6 +13,7 @@ import {
   getProgressBarColor,
   getTierColor,
   isGoalAchieved,
+  isEarlyUnlocked,
   calculateHabitProgress,
 } from './HabitUtils';
 
@@ -421,44 +422,114 @@ const useHabitTileData = (habit: Habit) => {
   return { progressPercentage, progressBarColor, hasCompletedGoal, markers };
 };
 
-export const HabitTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: HabitTileProps) => {
-  const { scale, gridGutter, tileMinHeight, iconInline } = useTileLayout();
+const showUnlockConfirmation = (habit: Habit, onUnlock: (_id: number) => void) => {
+  const dateStr = new Date(habit.start_date).toLocaleDateString();
+  Alert.alert(
+    'Unlock Early?',
+    `Unlock "${habit.name}" early? The recommended start date is ${dateStr}.`,
+    [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Unlock', onPress: () => onUnlock(habit.id) },
+    ],
+  );
+};
+
+const getTileOpacity = (isLocked: boolean, isFutureStart: boolean): number => {
+  if (isLocked) return 0.4;
+  if (isFutureStart) return 0.5;
+  return 1;
+};
+
+const getTileStyle = (
+  stageColor: string,
+  earlyUnlocked: boolean,
+  isLocked: boolean,
+  isFutureStart: boolean,
+  scale: number,
+  gridGutter: number,
+  tileMinHeight: number,
+) => ({
+  flex: 1 as const,
+  borderWidth: 1,
+  borderColor: stageColor,
+  borderStyle: earlyUnlocked ? ('dashed' as const) : undefined,
+  padding: spacing(1, scale),
+  margin: gridGutter / 2,
+  minHeight: tileMinHeight,
+  borderRadius: spacing(1, scale),
+  backgroundColor: '#f8f8f8',
+  opacity: getTileOpacity(isLocked, isFutureStart),
+});
+
+const buildLongPressHandler = (
+  habit: Habit,
+  isLocked: boolean,
+  onLongPress: () => void,
+  onUnlockHabit?: (_id: number) => void,
+) => {
+  if (isLocked && onUnlockHabit) {
+    return () => showUnlockConfirmation(habit, onUnlockHabit);
+  }
+  return onLongPress;
+};
+
+const getStreakLabel = (streak: number, hasCompletedGoal: boolean): string =>
+  `${streak} days${hasCompletedGoal ? ' — Achieved Today!' : ''}`.toUpperCase();
+
+const useHabitTileState = (habit: Habit) => {
+  const layout = useTileLayout();
   const stageColor = STAGE_COLORS[habit.stage] ?? '#000';
-  const [tooltip, setTooltip] = useState<TierType | null>(null);
-
-  const { progressPercentage, progressBarColor, hasCompletedGoal, markers } =
-    useHabitTileData(habit);
-
-  const streakText =
-    `${habit.streak} days${hasCompletedGoal ? ' — Achieved Today!' : ''}`.toUpperCase();
-  const barHeight = Math.max(8, spacing(2, scale));
+  const data = useHabitTileData(habit);
   const isFutureStart = new Date(habit.start_date).getTime() > Date.now();
+  const isLocked = habit.revealed === false;
+  const tileStyle = getTileStyle(
+    stageColor,
+    isEarlyUnlocked(habit),
+    isLocked,
+    isFutureStart,
+    layout.scale,
+    layout.gridGutter,
+    layout.tileMinHeight,
+  );
+  return { ...layout, stageColor, ...data, isLocked, tileStyle };
+};
+
+export const HabitTile = ({
+  habit,
+  onOpenGoals,
+  onLongPress,
+  onIconPress,
+  onUnlockHabit,
+}: HabitTileProps) => {
+  const {
+    scale,
+    iconInline,
+    stageColor,
+    isLocked,
+    tileStyle,
+    progressPercentage,
+    progressBarColor,
+    hasCompletedGoal,
+    markers,
+  } = useHabitTileState(habit);
+  const [tooltip, setTooltip] = useState<TierType | null>(null);
+  const barHeight = Math.max(8, spacing(2, scale));
 
   return (
     <TouchableOpacity
       testID="habit-tile"
-      style={{
-        flex: 1,
-        borderWidth: 1,
-        borderColor: stageColor,
-        padding: spacing(1, scale),
-        margin: gridGutter / 2,
-        minHeight: tileMinHeight,
-        borderRadius: spacing(1, scale),
-        backgroundColor: '#f8f8f8',
-        opacity: isFutureStart ? 0.5 : 1,
-      }}
-      onPress={onOpenGoals}
-      onLongPress={onLongPress}
+      style={tileStyle}
+      onPress={isLocked ? undefined : onOpenGoals}
+      onLongPress={buildLongPressHandler(habit, isLocked, onLongPress, onUnlockHabit)}
     >
       <HabitHeader
         habit={habit}
         stageColor={stageColor}
         scale={scale}
-        streakText={streakText}
+        streakText={getStreakLabel(habit.streak, hasCompletedGoal)}
         hasCompletedGoal={hasCompletedGoal}
         iconInline={iconInline}
-        onIconPress={onIconPress}
+        onIconPress={isLocked ? undefined : onIconPress}
       />
       <ProgressBar
         habit={habit}

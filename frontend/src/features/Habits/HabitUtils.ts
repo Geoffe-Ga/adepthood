@@ -449,3 +449,8 @@ export const logHabitUnits = (habit: Habit, amount: number, date: Date = new Dat
 export const calculateNetEnergy = (cost: number, returnValue: number): number => {
   return returnValue - cost;
 };
+
+/** A habit is "early unlocked" if it has been manually revealed before its start_date. */
+export const isEarlyUnlocked = (habit: Habit): boolean => {
+  return habit.revealed === true && new Date(habit.start_date).getTime() > Date.now();
+};
