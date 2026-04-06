@@ -26,10 +26,12 @@ jest.mock('../../HabitUtils', () => ({
     dates: [],
     values: [0, 0, 0, 0, 0, 0, 0],
     completionsByDay: [0, 0, 0, 0, 0, 0, 0],
-    dayLabels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    dayLabels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     longestStreak: 0,
+    currentStreak: 0,
     totalCompletions: 0,
     completionRate: 0,
+    completionDates: [],
   })),
 }));
 
@@ -57,23 +59,23 @@ const localStats: HabitStatsData = {
   dates: [],
   values: [0, 0, 0, 0, 0, 0, 0],
   completionsByDay: [0, 0, 0, 0, 0, 0, 0],
-  dayLabels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+  dayLabels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
   longestStreak: 0,
+  currentStreak: 0,
   totalCompletions: 0,
   completionRate: 0,
+  completionDates: [],
 };
 
 const apiResponse = {
-  current_streak: 3,
+  day_labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+  values: [1, 3, 2, 2, 3, 2, 2],
+  completions_by_day: [1, 1, 1, 1, 1, 1, 1],
   longest_streak: 7,
+  current_streak: 3,
   total_completions: 15,
   completion_rate: 0.75,
-  completions_by_day_of_week: [3, 2, 2, 3, 2, 2, 1],
-  daily_completions: [
-    { date: '2024-01-01', total_units: 10 },
-    { date: '2024-01-02', total_units: 10 },
-    { date: '2024-01-03', total_units: 10 },
-  ],
+  completion_dates: ['2024-01-01', '2024-01-02', '2024-01-03'],
 };
 
 describe('StatsModal', () => {
@@ -117,6 +119,7 @@ describe('StatsModal', () => {
     const fallbackStats: HabitStatsData = {
       ...localStats,
       longestStreak: 2,
+      currentStreak: 1,
       totalCompletions: 4,
       completionRate: 0.5,
     };

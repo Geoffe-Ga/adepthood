@@ -241,20 +241,6 @@ export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
   };
 }
 
-export interface ApiDailyCompletion {
-  date: string;
-  total_units: number;
-}
-
-export interface ApiHabitStats {
-  current_streak: number;
-  longest_streak: number;
-  total_completions: number;
-  completion_rate: number;
-  completions_by_day_of_week: number[];
-  daily_completions: ApiDailyCompletion[];
-}
-
 export const habits = {
   list(token?: string): Promise<ApiHabitWithGoals[]> {
     return request<ApiHabitWithGoals[]>('/habits', { token });
