@@ -128,9 +128,49 @@ Phase 3 internal dependencies:
   phase-3-14 (GoalGroups) independent, can start after phase-1
 ```
 
+## Phase 5 — Test Coverage & Security Hardening (Critical)
+Backend test coverage is 52.9% (vs 90% required). Zero frontend tests. Multiple security gaps. Stale OpenAPI types.
+
+### Backend Test Coverage
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| 01 | [Test auth + habits routers](phase-5-01-test-auth-habits-routers.md) | Backend | ~300 |
+| 02 | [Test journal, botmason, prompts routers](phase-5-02-test-journal-botmason-prompts.md) | Backend | ~300 |
+| 03 | [Test practices, stages, course, goals routers](phase-5-03-test-practices-stages-course-goals.md) | Backend | ~300 |
+| 04 | [Test services + seed scripts](phase-5-04-test-services-seeds.md) | Backend | ~200 |
+
+### Security & Types
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| 05 | [Security hardening: LIKE injection, authz, auth gaps](phase-5-05-security-hardening.md) | Backend | ~175 |
+| 06 | [Regenerate OpenAPI types + align frontend](phase-5-06-regenerate-openapi-types.md) | Full-stack | ~200 |
+| 07 | [Move seed templates to app startup](phase-5-07-seed-templates-startup.md) | Backend | ~125 |
+
+### Frontend & Auth
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| 08 | [Frontend test coverage for core screens](phase-5-08-frontend-test-coverage.md) | Frontend | ~300 |
+| 09 | [JWT refresh token flow](phase-5-09-jwt-refresh-token.md) | Full-stack | ~275 |
+| 10 | [React error boundary](phase-5-10-react-error-boundary.md) | Frontend | ~200 |
+
+## Phase 5 Dependency Graph
+
+```
+phase-5-01 (auth+habits tests)  ─┐
+phase-5-02 (journal+bot tests)  ─┼─→ phase-5-05 (security fixes, needs tests first)
+phase-5-03 (practices+stages)   ─┘
+                                      phase-5-01 → phase-5-09 (refresh tokens, needs auth tests)
+phase-5-04 (services+seeds)     independent
+
+phase-5-06 (OpenAPI types)      → phase-5-08 (frontend tests, needs aligned types)
+phase-5-07 (seed startup)       independent
+phase-5-10 (error boundary)     independent
+```
+
 ## Total Estimated Scope
 
-- **42 issues** across 4 phases (11 + 7 + 14 + 10)
-- **~8,025 LoC** of changes (net, including deletions)
+- **52 issues** across 5 phases (11 + 7 + 14 + 10 + 10)
+- **~10,400 LoC** of changes (net, including deletions)
 - Phase 1 is the critical path — everything else depends on it
 - Phase 3 is the largest phase, reflecting 4 features + cross-feature deep links
+- **Phase 5 is the current priority** — test coverage and security block safe development
