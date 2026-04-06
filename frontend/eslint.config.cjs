@@ -75,6 +75,15 @@ module.exports = tseslint.config(
       'unicorn/prevent-abbreviations': 'off',
       'unicorn/no-null': 'off',
 
+      // Complexity enforcement
+      complexity: ['error', { max: 15 }],
+      'max-depth': ['error', { max: 4 }],
+      'max-nested-callbacks': ['error', { max: 4 }],
+      'sonarjs/cognitive-complexity': ['error', 15],
+      'sonarjs/no-collapsible-if': 'error',
+      'sonarjs/prefer-single-boolean-return': 'error',
+      'sonarjs/no-redundant-jump': 'error',
+
       // TS hygiene
       '@typescript-eslint/consistent-type-imports': 'error',
       '@typescript-eslint/no-explicit-any': 'warn',
