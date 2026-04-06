@@ -209,6 +209,79 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
+  // History section
+  historySection: {
+    marginTop: spacing(1),
+  },
+  historyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: spacing(1),
+  },
+  historyTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.text.light,
+  },
+  historyToggle: {
+    fontSize: 12,
+    color: colors.mystical.transparentLight,
+  },
+  historyLoading: {
+    paddingVertical: spacing(1.5),
+    alignItems: 'center',
+  },
+  historyEmpty: {
+    fontSize: 12,
+    color: colors.mystical.transparentLight,
+    fontStyle: 'italic',
+    paddingVertical: spacing(1),
+    textAlign: 'center',
+  },
+  historySubheading: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.mystical.transparentLight,
+    marginTop: spacing(1),
+    marginBottom: spacing(0.5),
+  },
+  historyItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing(0.5),
+  },
+  historyItemIcon: {
+    fontSize: 16,
+    marginRight: spacing(0.75),
+  },
+  historyItemName: {
+    fontSize: 12,
+    color: colors.text.light,
+    flex: 1,
+  },
+  historyItemDetail: {
+    fontSize: 11,
+    color: colors.mystical.transparentLight,
+  },
+  goalBadges: {
+    flexDirection: 'row',
+    gap: 4,
+    marginLeft: spacing(0.5),
+  },
+  goalBadge: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  goalBadgeText: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: colors.text.light,
+  },
+
   // Completed stage checkmark
   completedBadge: {
     position: 'absolute',
