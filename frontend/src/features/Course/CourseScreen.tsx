@@ -210,7 +210,7 @@ function useCourseViewer(selectedStage: number) {
   const handleReflect = useCallback(() => {
     if (!viewingItem) return;
     navigation.navigate('Journal', {
-      stageReflection: true,
+      tag: 'stage_reflection',
       stageNumber: selectedStage,
       contentTitle: viewingItem.title,
     });

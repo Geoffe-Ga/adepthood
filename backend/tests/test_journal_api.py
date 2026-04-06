@@ -57,22 +57,55 @@ async def test_create_journal_entry(async_client: AsyncClient) -> None:
     assert data["sender"] == "user"
     assert data["id"] is not None
     assert data["timestamp"] is not None
-    assert data["is_stage_reflection"] is False
+    assert data["tag"] == "freeform"
 
 
 @pytest.mark.asyncio
-async def test_create_journal_entry_with_tags(async_client: AsyncClient) -> None:
+async def test_create_journal_entry_with_tag(async_client: AsyncClient) -> None:
     headers = await _signup(async_client)
     resp = await async_client.post(
         "/journal/",
-        json=_message_payload(is_stage_reflection=True, is_habit_note=True),
+        json=_message_payload(tag="stage_reflection"),
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.json()
-    assert data["is_stage_reflection"] is True
-    assert data["is_habit_note"] is True
-    assert data["is_practice_note"] is False
+    assert data["tag"] == "stage_reflection"
+
+
+@pytest.mark.asyncio
+async def test_create_journal_entry_with_practice_note_tag(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    resp = await async_client.post(
+        "/journal/",
+        json=_message_payload(tag="practice_note"),
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    assert resp.json()["tag"] == "practice_note"
+
+
+@pytest.mark.asyncio
+async def test_create_journal_entry_with_habit_note_tag(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    resp = await async_client.post(
+        "/journal/",
+        json=_message_payload(tag="habit_note"),
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    assert resp.json()["tag"] == "habit_note"
+
+
+@pytest.mark.asyncio
+async def test_create_journal_entry_invalid_tag_returns_422(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    resp = await async_client.post(
+        "/journal/",
+        json=_message_payload(tag="nonexistent"),
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 @pytest.mark.asyncio
@@ -223,7 +256,7 @@ async def test_filter_by_tag_stage_reflection(async_client: AsyncClient) -> None
     headers = await _signup(async_client)
     await async_client.post(
         "/journal/",
-        json=_message_payload(message="Reflection on stage 2", is_stage_reflection=True),
+        json=_message_payload(message="Reflection on stage 2", tag="stage_reflection"),
         headers=headers,
     )
     await async_client.post(
@@ -233,7 +266,7 @@ async def test_filter_by_tag_stage_reflection(async_client: AsyncClient) -> None
     resp = await async_client.get("/journal/?tag=stage_reflection", headers=headers)
     data = resp.json()
     assert data["total"] == 1
-    assert data["items"][0]["is_stage_reflection"] is True
+    assert data["items"][0]["tag"] == "stage_reflection"
 
 
 @pytest.mark.asyncio
@@ -241,7 +274,7 @@ async def test_filter_by_tag_practice_note(async_client: AsyncClient) -> None:
     headers = await _signup(async_client)
     await async_client.post(
         "/journal/",
-        json=_message_payload(message="Practice went great", is_practice_note=True),
+        json=_message_payload(message="Practice went great", tag="practice_note"),
         headers=headers,
     )
     await async_client.post(
@@ -251,7 +284,7 @@ async def test_filter_by_tag_practice_note(async_client: AsyncClient) -> None:
     resp = await async_client.get("/journal/?tag=practice_note", headers=headers)
     data = resp.json()
     assert data["total"] == 1
-    assert data["items"][0]["is_practice_note"] is True
+    assert data["items"][0]["tag"] == "practice_note"
 
 
 @pytest.mark.asyncio
@@ -259,7 +292,7 @@ async def test_filter_by_tag_habit_note(async_client: AsyncClient) -> None:
     headers = await _signup(async_client)
     await async_client.post(
         "/journal/",
-        json=_message_payload(message="Habit streak broken", is_habit_note=True),
+        json=_message_payload(message="Habit streak broken", tag="habit_note"),
         headers=headers,
     )
 
@@ -269,10 +302,28 @@ async def test_filter_by_tag_habit_note(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_filter_by_invalid_tag_returns_400(async_client: AsyncClient) -> None:
+async def test_filter_by_tag_freeform(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    await async_client.post(
+        "/journal/", json=_message_payload(message="Freeform entry"), headers=headers
+    )
+    await async_client.post(
+        "/journal/",
+        json=_message_payload(message="Tagged entry", tag="habit_note"),
+        headers=headers,
+    )
+
+    resp = await async_client.get("/journal/?tag=freeform", headers=headers)
+    data = resp.json()
+    assert data["total"] == 1
+    assert data["items"][0]["tag"] == "freeform"
+
+
+@pytest.mark.asyncio
+async def test_filter_by_invalid_tag_returns_422(async_client: AsyncClient) -> None:
     headers = await _signup(async_client)
     resp = await async_client.get("/journal/?tag=nonexistent", headers=headers)
-    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 # ── Practice session filtering ───────────────────────────────────────────

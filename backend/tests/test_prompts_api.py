@@ -156,7 +156,7 @@ async def test_submit_response_invalid_week_returns_404(async_client: AsyncClien
 
 @pytest.mark.asyncio
 async def test_submit_response_creates_journal_entry(async_client: AsyncClient) -> None:
-    """Submitting a prompt response also creates a journal entry with is_stage_reflection."""
+    """Submitting a prompt response also creates a journal entry with stage_reflection tag."""
     headers = await _signup(async_client)
     await async_client.post(
         "/prompts/1/respond",
@@ -171,7 +171,7 @@ async def test_submit_response_creates_journal_entry(async_client: AsyncClient) 
     assert journal_data["total"] == 1
     entry = journal_data["items"][0]
     assert entry["message"] == "I reflected on grounding."
-    assert entry["is_stage_reflection"] is True
+    assert entry["tag"] == "stage_reflection"
     assert entry["sender"] == "user"
 
 

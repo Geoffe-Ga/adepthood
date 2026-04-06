@@ -291,7 +291,7 @@ const MapScreen = (): React.JSX.Element => {
     (screen: 'Practice' | 'Course' | 'Journal', stage: StageData) => {
       setActiveStage(null);
       if (screen === 'Journal') {
-        navigation.navigate('Journal', { stageReflection: true, stageNumber: stage.stageNumber });
+        navigation.navigate('Journal', { tag: 'stage_reflection', stageNumber: stage.stageNumber });
       } else {
         navigation.navigate(screen, { stageNumber: stage.stageNumber });
       }

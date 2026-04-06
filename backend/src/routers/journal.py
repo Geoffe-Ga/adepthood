@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
-from errors import bad_request, not_found
-from models.journal_entry import JournalEntry
+from errors import not_found
+from models.journal_entry import JournalEntry, JournalTag
 from routers.auth import get_current_user
 from schemas.journal import (
     JournalBotMessageCreate,
@@ -22,21 +22,13 @@ from schemas.journal import (
 
 router = APIRouter(prefix="/journal", tags=["journal"])
 
-_VALID_TAGS = {"stage_reflection", "practice_note", "habit_note"}
-
-_TAG_TO_FIELD = {
-    "stage_reflection": JournalEntry.is_stage_reflection,
-    "practice_note": JournalEntry.is_practice_note,
-    "habit_note": JournalEntry.is_habit_note,
-}
-
 
 @dataclass
 class _ListFilters:
     """Query parameters for listing journal entries."""
 
     search: str | None = Query(default=None)
-    tag: str | None = Query(default=None)
+    tag: JournalTag | None = None
     practice_session_id: int | None = Query(default=None)
     limit: int = Query(default=50, ge=1, le=200)
     offset: int = Query(default=0, ge=0)
@@ -62,7 +54,7 @@ def _build_filter_conditions(filters: _ListFilters) -> list[ColumnElement[bool]]
     if filters.search is not None:
         conditions.append(col(JournalEntry.message).ilike(f"%{filters.search}%"))
     if filters.tag is not None:
-        conditions.append(col(_TAG_TO_FIELD[filters.tag]).is_(True))
+        conditions.append(col(JournalEntry.tag) == filters.tag.value)
     if filters.practice_session_id is not None:
         conditions.append(col(JournalEntry.practice_session_id) == filters.practice_session_id)
     return conditions
@@ -75,9 +67,6 @@ async def list_journal_entries(
     filters: _ListFilters = Depends(),  # noqa: B008
 ) -> JournalListResponse:
     """List journal entries for the current user with optional filtering."""
-    if filters.tag is not None and filters.tag not in _VALID_TAGS:
-        raise bad_request("invalid_tag")
-
     conditions = _build_filter_conditions(filters)
     query = select(JournalEntry).where(JournalEntry.user_id == current_user, *conditions)
 

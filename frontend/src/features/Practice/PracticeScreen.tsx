@@ -364,6 +364,7 @@ function usePracticeView(
   const handleWriteReflection = useCallback(() => {
     if (!savedSession || !selectedPractice) return;
     navigation.navigate('Journal', {
+      tag: 'practice_note',
       practiceSessionId: savedSession.id,
       userPracticeId: savedSession.user_practice_id,
       practiceName: selectedPractice.name,

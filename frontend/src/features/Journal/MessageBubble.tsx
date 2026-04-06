@@ -11,14 +11,6 @@ const TAG_LABELS: Record<string, string> = {
   habit_note: 'Habit',
 };
 
-function getTags(message: JournalMessage): string[] {
-  const tags: string[] = [];
-  if (message.is_stage_reflection) tags.push('stage_reflection');
-  if (message.is_practice_note) tags.push('practice_note');
-  if (message.is_habit_note) tags.push('habit_note');
-  return tags;
-}
-
 function formatTimestamp(iso: string): string {
   const date = new Date(iso);
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -30,7 +22,7 @@ interface MessageBubbleProps {
 
 const MessageBubble = ({ message }: MessageBubbleProps): React.JSX.Element => {
   const isUser = message.sender === 'user';
-  const tags = getTags(message);
+  const tagLabel = TAG_LABELS[message.tag];
 
   return (
     <View style={[styles.bubbleRow, isUser ? styles.bubbleRowUser : styles.bubbleRowBot]}>
@@ -43,18 +35,18 @@ const MessageBubble = ({ message }: MessageBubbleProps): React.JSX.Element => {
         <Text style={[styles.bubbleText, isUser ? styles.bubbleTextUser : styles.bubbleTextBot]}>
           {message.message}
         </Text>
-        {(tags.length > 0 || message.practice_session_id !== null) && (
+        {(tagLabel !== undefined || message.practice_session_id !== null) && (
           <View style={styles.tagRow}>
             {message.practice_session_id !== null && (
               <View style={styles.tag} testID="practice-session-badge">
                 <Text style={styles.tagText}>Practice Session</Text>
               </View>
             )}
-            {tags.map((tag) => (
-              <View key={tag} style={styles.tag}>
-                <Text style={styles.tagText}>{TAG_LABELS[tag]}</Text>
+            {tagLabel !== undefined && (
+              <View style={styles.tag}>
+                <Text style={styles.tagText}>{tagLabel}</Text>
               </View>
-            ))}
+            )}
           </View>
         )}
         <Text style={[styles.timestamp, isUser ? styles.timestampUser : styles.timestampBot]}>
