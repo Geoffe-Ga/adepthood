@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, Query, Response, status
-from sqlalchemy import func
+from sqlalchemy import ColumnElement, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -56,6 +56,18 @@ async def create_journal_entry(
     return entry
 
 
+def _build_filter_conditions(filters: _ListFilters) -> list[ColumnElement[bool]]:
+    """Build SQLAlchemy where-clauses from the filter parameters."""
+    conditions: list[ColumnElement[bool]] = []
+    if filters.search is not None:
+        conditions.append(col(JournalEntry.message).ilike(f"%{filters.search}%"))
+    if filters.tag is not None:
+        conditions.append(col(_TAG_TO_FIELD[filters.tag]).is_(True))
+    if filters.practice_session_id is not None:
+        conditions.append(col(JournalEntry.practice_session_id) == filters.practice_session_id)
+    return conditions
+
+
 @router.get("/", response_model=JournalListResponse)
 async def list_journal_entries(
     current_user: int = Depends(get_current_user),
@@ -66,16 +78,8 @@ async def list_journal_entries(
     if filters.tag is not None and filters.tag not in _VALID_TAGS:
         raise bad_request("invalid_tag")
 
-    query = select(JournalEntry).where(JournalEntry.user_id == current_user)
-
-    if filters.search is not None:
-        query = query.where(col(JournalEntry.message).ilike(f"%{filters.search}%"))
-
-    if filters.tag is not None:
-        query = query.where(_TAG_TO_FIELD[filters.tag] == True)  # noqa: E712
-
-    if filters.practice_session_id is not None:
-        query = query.where(JournalEntry.practice_session_id == filters.practice_session_id)
+    conditions = _build_filter_conditions(filters)
+    query = select(JournalEntry).where(JournalEntry.user_id == current_user, *conditions)
 
     # Count total before pagination
     count_query = select(func.count()).select_from(query.subquery())

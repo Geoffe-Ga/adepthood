@@ -4,6 +4,8 @@ import { colors as COLORS, shadows as SHADOWS, SPACING, BORDER_RADIUS } from '..
 
 export { colors as COLORS } from '../../design/tokens';
 
+const JUSTIFY_SPACE_BETWEEN = 'space-between' as const;
+
 // Device dimensions (for responsive layouts)
 
 //------------------
@@ -19,7 +21,7 @@ export const styles = StyleSheet.create({
     padding: SPACING.md,
   },
   habitsGrid: {
-    justifyContent: 'space-between',
+    justifyContent: JUSTIFY_SPACE_BETWEEN,
   },
 
   // ===== Habit Tiles =====
@@ -179,7 +181,7 @@ export const styles = StyleSheet.create({
   },
   modalHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: JUSTIFY_SPACE_BETWEEN,
     alignItems: 'center',
     borderBottomWidth: 1,
     borderColor: '#eee',
@@ -215,7 +217,7 @@ export const styles = StyleSheet.create({
   },
   goalHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: JUSTIFY_SPACE_BETWEEN,
     alignItems: 'center',
     marginBottom: SPACING.xs,
   },
@@ -358,7 +360,7 @@ export const styles = StyleSheet.create({
   // ===== Action Buttons =====
   actionButtons: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: JUSTIFY_SPACE_BETWEEN,
     marginTop: SPACING.lg,
     paddingTop: SPACING.md,
     borderTopWidth: 1,
@@ -426,7 +428,7 @@ export const styles = StyleSheet.create({
   },
   settingRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: JUSTIFY_SPACE_BETWEEN,
     alignItems: 'center',
     marginVertical: SPACING.sm,
   },
@@ -498,7 +500,7 @@ export const styles = StyleSheet.create({
   },
   energyHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: JUSTIFY_SPACE_BETWEEN,
     paddingHorizontal: SPACING.xxl,
     marginBottom: SPACING.sm,
   },
@@ -511,7 +513,7 @@ export const styles = StyleSheet.create({
   },
   energyRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: JUSTIFY_SPACE_BETWEEN,
     paddingHorizontal: SPACING.xxl,
   },
   energyInput: {
@@ -576,7 +578,7 @@ export const styles = StyleSheet.create({
   },
   timeItem: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: JUSTIFY_SPACE_BETWEEN,
     alignItems: 'center',
     backgroundColor: COLORS.background.accent,
     paddingVertical: SPACING.sm,
@@ -620,7 +622,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     marginTop: SPACING.md,
-    justifyContent: 'space-between',
+    justifyContent: JUSTIFY_SPACE_BETWEEN,
   },
 
   // ===== Button Groups =====
@@ -701,7 +703,7 @@ export const styles = StyleSheet.create({
   },
   statsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: JUSTIFY_SPACE_BETWEEN,
     paddingVertical: SPACING.sm,
     borderBottomWidth: 1,
     borderColor: '#eee',
@@ -785,7 +787,7 @@ export const styles = StyleSheet.create({
   },
   reorderItemContent: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: JUSTIFY_SPACE_BETWEEN,
     alignItems: 'center',
   },
   reorderItemText: {
@@ -1096,7 +1098,7 @@ export const styles = StyleSheet.create({
   habitListItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: JUSTIFY_SPACE_BETWEEN,
     backgroundColor: COLORS.background.primary,
     paddingVertical: SPACING.md,
     paddingHorizontal: SPACING.lg,
@@ -1184,7 +1186,7 @@ export const styles = StyleSheet.create({
   },
   emojiPickerHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: JUSTIFY_SPACE_BETWEEN,
     alignItems: 'center',
     padding: SPACING.lg,
     borderBottomWidth: 1,
@@ -1221,7 +1223,7 @@ export const styles = StyleSheet.create({
   },
   onboardingFooter: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: JUSTIFY_SPACE_BETWEEN,
     alignItems: 'center',
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.sm,

@@ -37,6 +37,31 @@ DEV_ORIGINS = [
 ]
 
 
+def _validate_https_origins(origins: list[str]) -> None:
+    """Ensure every origin uses HTTPS; raise RuntimeError otherwise."""
+    for origin in origins:
+        if not origin.startswith("https://"):
+            raise RuntimeError(f"PROD_DOMAIN entries must use HTTPS, got '{origin}'")
+
+
+def _parse_prod_origins() -> list[str]:
+    """Parse and validate PROD_DOMAIN for staging/production environments.
+
+    Raises ``RuntimeError`` when PROD_DOMAIN is missing, empty, or contains
+    non-HTTPS entries — the server should fail fast on bad config.
+    """
+    prod_domain = os.getenv("PROD_DOMAIN")
+    if not prod_domain:
+        raise RuntimeError("PROD_DOMAIN must be set in production/staging")
+
+    origins = [d.strip() for d in prod_domain.split(",") if d.strip()]
+    if not origins:
+        raise RuntimeError("PROD_DOMAIN must not be empty")
+
+    _validate_https_origins(origins)
+    return origins
+
+
 def get_cors_origins(env: str | None = None) -> list[str]:
     """Build the CORS allowed-origins list based on the current environment.
 
@@ -54,20 +79,7 @@ def get_cors_origins(env: str | None = None) -> list[str]:
     if env == "development":
         return list(DEV_ORIGINS)
 
-    # staging and production both require PROD_DOMAIN
-    prod_domain = os.getenv("PROD_DOMAIN")
-    if not prod_domain:
-        raise RuntimeError("PROD_DOMAIN must be set in production/staging")
-
-    origins = [d.strip() for d in prod_domain.split(",") if d.strip()]
-    if not origins:
-        raise RuntimeError("PROD_DOMAIN must not be empty")
-
-    for origin in origins:
-        if not origin.startswith("https://"):
-            raise RuntimeError(f"PROD_DOMAIN entries must use HTTPS, got '{origin}'")
-
-    return origins
+    return _parse_prod_origins()
 
 
 def _rate_limit_exceeded_handler(_request: Request, _exc: RateLimitExceeded) -> JSONResponse:

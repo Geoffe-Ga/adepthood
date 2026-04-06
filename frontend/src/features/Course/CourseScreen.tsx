@@ -19,27 +19,22 @@ import StageSelector from './StageSelector';
 
 const DEFAULT_STAGE_NUMBER = 1;
 
-const CourseScreen = (): React.JSX.Element => {
-  const navigation = useAppNavigation();
+// --- Hook: load stages on mount ---
+
+function useStagesLoader() {
   const route = useAppRoute<'Course'>();
   const routeStageNumber = route.params?.stageNumber ?? null;
 
   const [allStages, setAllStages] = useState<Stage[]>([]);
   const [selectedStage, setSelectedStage] = useState(routeStageNumber ?? DEFAULT_STAGE_NUMBER);
-  const [content, setContent] = useState<ContentItem[]>([]);
-  const [progress, setProgress] = useState<CourseProgress | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadingContent, setLoadingContent] = useState(false);
-  const [viewingItem, setViewingItem] = useState<ContentItem | null>(null);
 
-  // Load all stages on mount
   useEffect(() => {
     const init = async () => {
       setLoading(true);
       try {
         const stagesList = await stagesApi.list();
         setAllStages(stagesList);
-        // Only auto-select highest unlocked stage when no route param was provided
         if (routeStageNumber === null) {
           const currentUnlocked = stagesList
             .filter((s) => s.is_unlocked)
@@ -57,44 +52,160 @@ const CourseScreen = (): React.JSX.Element => {
     void init();
   }, [routeStageNumber]);
 
-  // Load content and progress when selected stage changes
+  return { allStages, selectedStage, setSelectedStage, loading };
+}
+
+// --- Hook: load content for selected stage ---
+
+function useStageContent(selectedStage: number, stagesLoaded: boolean) {
+  const [content, setContent] = useState<ContentItem[]>([]);
+  const [progress, setProgress] = useState<CourseProgress | null>(null);
+  const [loadingContent, setLoadingContent] = useState(false);
+
+  const refreshContent = useCallback(async () => {
+    setLoadingContent(true);
+    try {
+      const [contentResult, progressResult] = await Promise.all([
+        courseApi.stageContent(selectedStage),
+        courseApi.stageProgress(selectedStage),
+      ]);
+      setContent(contentResult);
+      setProgress(progressResult);
+    } catch (err) {
+      console.error('Failed to load stage content:', err);
+      setContent([]);
+      setProgress(null);
+    } finally {
+      setLoadingContent(false);
+    }
+  }, [selectedStage]);
+
   useEffect(() => {
-    if (allStages.length === 0) return;
+    if (!stagesLoaded) return;
+    void refreshContent();
+  }, [stagesLoaded, refreshContent]);
 
-    const loadStageData = async () => {
-      setLoadingContent(true);
-      try {
-        const [contentResult, progressResult] = await Promise.all([
-          courseApi.stageContent(selectedStage),
-          courseApi.stageProgress(selectedStage),
-        ]);
-        setContent(contentResult);
-        setProgress(progressResult);
-      } catch (err) {
-        console.error('Failed to load stage content:', err);
-        setContent([]);
-        setProgress(null);
-      } finally {
-        setLoadingContent(false);
-      }
-    };
-    void loadStageData();
-  }, [selectedStage, allStages.length]);
+  const handleMarkRead = useCallback(() => {
+    void refreshContent();
+  }, [refreshContent]);
 
-  const handleStageSelect = useCallback((stageNumber: number) => {
-    setSelectedStage(stageNumber);
-    setViewingItem(null);
-  }, []);
+  return { content, progress, loadingContent, handleMarkRead };
+}
+
+// --- Sub-components ---
+
+const StageMetadata = ({ stage }: { stage: Stage }): React.JSX.Element => (
+  <View style={styles.stageMetadata} testID="stage-metadata">
+    <Text style={styles.stageTitle}>{stage.title}</Text>
+    <Text style={styles.stageSubtitle}>{stage.subtitle}</Text>
+    <View style={styles.stageDetailRow}>
+      <Text style={styles.stageDetailLabel}>Spiral Dynamics</Text>
+      <Text style={styles.stageDetailValue}>{stage.spiral_dynamics_color}</Text>
+    </View>
+    <View style={styles.stageDetailRow}>
+      <Text style={styles.stageDetailLabel}>Growing Up Stage</Text>
+      <Text style={styles.stageDetailValue}>{stage.growing_up_stage}</Text>
+    </View>
+  </View>
+);
+
+interface ProgressBarProps {
+  progress: CourseProgress | null;
+  spiralColor: string | undefined;
+}
+
+const CourseProgressBar = ({ progress, spiralColor }: ProgressBarProps): React.JSX.Element => {
+  const progressPercent = progress ? progress.progress_percent : 0;
+  const barColor = spiralColor ? STAGE_COLORS[spiralColor] ?? '#888' : '#888';
+
+  return (
+    <View style={styles.progressBarContainer} testID="progress-bar">
+      <View style={styles.progressBarTrack}>
+        <View
+          testID="progress-bar-fill"
+          style={[
+            styles.progressBarFill,
+            { width: `${progressPercent}%`, backgroundColor: barColor },
+          ]}
+        />
+      </View>
+      <Text style={styles.progressBarLabel}>
+        {progress ? `${progress.read_items}/${progress.total_items} completed` : 'Loading...'}
+      </Text>
+    </View>
+  );
+};
+
+const CourseEmptyState = (): React.JSX.Element => (
+  <View style={styles.emptyContainer}>
+    <Text style={styles.emptyIcon}>{'📚'}</Text>
+    <Text style={styles.emptyTitle}>No Content Yet</Text>
+    <Text style={styles.emptySubtitle}>
+      Content for this stage has not been added yet. Check back soon.
+    </Text>
+  </View>
+);
+
+const CourseLoadingState = (): React.JSX.Element => (
+  <SafeAreaView style={styles.container}>
+    <View style={styles.loadingContainer}>
+      <ActivityIndicator testID="course-loading" size="large" />
+    </View>
+  </SafeAreaView>
+);
+
+interface ContentAreaProps {
+  content: ContentItem[];
+  loadingContent: boolean;
+  onContentPress: (_item: ContentItem) => void;
+}
+
+const ContentArea = ({
+  content,
+  loadingContent,
+  onContentPress,
+}: ContentAreaProps): React.JSX.Element => {
+  const renderContentItem = useCallback(
+    ({ item }: { item: ContentItem }) => <ContentCard item={item} onPress={onContentPress} />,
+    [onContentPress],
+  );
+
+  const renderEmpty = useCallback(() => {
+    if (loadingContent) return null;
+    return <CourseEmptyState />;
+  }, [loadingContent]);
+
+  if (loadingContent) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator testID="content-loading" size="small" />
+      </View>
+    );
+  }
+
+  return (
+    <FlatList
+      testID="content-list"
+      style={styles.contentList}
+      data={content}
+      renderItem={renderContentItem}
+      keyExtractor={(item) => String(item.id)}
+      ListEmptyComponent={renderEmpty}
+    />
+  );
+};
+
+// --- Hook: viewer actions ---
+
+function useCourseViewer(selectedStage: number) {
+  const navigation = useAppNavigation();
+  const [viewingItem, setViewingItem] = useState<ContentItem | null>(null);
 
   const handleContentPress = useCallback((item: ContentItem) => {
-    if (!item.is_locked) {
-      setViewingItem(item);
-    }
+    if (!item.is_locked) setViewingItem(item);
   }, []);
 
-  const handleBackFromViewer = useCallback(() => {
-    setViewingItem(null);
-  }, []);
+  const handleBack = useCallback(() => setViewingItem(null), []);
 
   const handleReflect = useCallback(() => {
     if (!viewingItem) return;
@@ -106,66 +217,38 @@ const CourseScreen = (): React.JSX.Element => {
     setViewingItem(null);
   }, [viewingItem, selectedStage, navigation]);
 
-  const handleMarkRead = useCallback(() => {
-    // Refresh content and progress after marking as read
-    const refresh = async () => {
-      try {
-        const [contentResult, progressResult] = await Promise.all([
-          courseApi.stageContent(selectedStage),
-          courseApi.stageProgress(selectedStage),
-        ]);
-        setContent(contentResult);
-        setProgress(progressResult);
-      } catch {
-        // Non-critical refresh failure
-      }
-    };
-    void refresh();
-  }, [selectedStage]);
+  return { viewingItem, setViewingItem, handleContentPress, handleBack, handleReflect };
+}
 
-  const selectedStageData = allStages.find((s) => s.stage_number === selectedStage);
+// --- Main component ---
 
-  const renderContentItem = useCallback(
-    ({ item }: { item: ContentItem }) => <ContentCard item={item} onPress={handleContentPress} />,
-    [handleContentPress],
+const CourseScreen = (): React.JSX.Element => {
+  const { allStages, selectedStage, setSelectedStage, loading } = useStagesLoader();
+  const stageContent = useStageContent(selectedStage, allStages.length > 0);
+  const viewer = useCourseViewer(selectedStage);
+
+  const handleStageSelect = useCallback(
+    (stageNumber: number) => {
+      setSelectedStage(stageNumber);
+      viewer.setViewingItem(null);
+    },
+    [setSelectedStage, viewer],
   );
 
-  const renderEmpty = useCallback(() => {
-    if (loadingContent) return null;
-    return (
-      <View style={styles.emptyContainer}>
-        <Text style={styles.emptyIcon}>{'📚'}</Text>
-        <Text style={styles.emptyTitle}>No Content Yet</Text>
-        <Text style={styles.emptySubtitle}>
-          Content for this stage has not been added yet. Check back soon.
-        </Text>
-      </View>
-    );
-  }, [loadingContent]);
-
-  // Show content viewer if viewing an item
-  if (viewingItem) {
+  if (viewer.viewingItem) {
     return (
       <ContentViewer
-        item={viewingItem}
-        onBack={handleBackFromViewer}
-        onMarkRead={handleMarkRead}
-        onReflect={handleReflect}
+        item={viewer.viewingItem}
+        onBack={viewer.handleBack}
+        onMarkRead={stageContent.handleMarkRead}
+        onReflect={viewer.handleReflect}
       />
     );
   }
 
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator testID="course-loading" size="large" />
-        </View>
-      </SafeAreaView>
-    );
-  }
+  if (loading) return <CourseLoadingState />;
 
-  const progressPercent = progress ? progress.progress_percent : 0;
+  const selectedStageData = allStages.find((s) => s.stage_number === selectedStage);
 
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
@@ -174,56 +257,16 @@ const CourseScreen = (): React.JSX.Element => {
         selectedStage={selectedStage}
         onSelectStage={handleStageSelect}
       />
-
-      {selectedStageData && (
-        <View style={styles.stageMetadata} testID="stage-metadata">
-          <Text style={styles.stageTitle}>{selectedStageData.title}</Text>
-          <Text style={styles.stageSubtitle}>{selectedStageData.subtitle}</Text>
-          <View style={styles.stageDetailRow}>
-            <Text style={styles.stageDetailLabel}>Spiral Dynamics</Text>
-            <Text style={styles.stageDetailValue}>{selectedStageData.spiral_dynamics_color}</Text>
-          </View>
-          <View style={styles.stageDetailRow}>
-            <Text style={styles.stageDetailLabel}>Growing Up Stage</Text>
-            <Text style={styles.stageDetailValue}>{selectedStageData.growing_up_stage}</Text>
-          </View>
-        </View>
-      )}
-
-      <View style={styles.progressBarContainer} testID="progress-bar">
-        <View style={styles.progressBarTrack}>
-          <View
-            testID="progress-bar-fill"
-            style={[
-              styles.progressBarFill,
-              {
-                width: `${progressPercent}%`,
-                backgroundColor: selectedStageData
-                  ? STAGE_COLORS[selectedStageData.spiral_dynamics_color] ?? '#888'
-                  : '#888',
-              },
-            ]}
-          />
-        </View>
-        <Text style={styles.progressBarLabel}>
-          {progress ? `${progress.read_items}/${progress.total_items} completed` : 'Loading...'}
-        </Text>
-      </View>
-
-      {loadingContent ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator testID="content-loading" size="small" />
-        </View>
-      ) : (
-        <FlatList
-          testID="content-list"
-          style={styles.contentList}
-          data={content}
-          renderItem={renderContentItem}
-          keyExtractor={(item) => String(item.id)}
-          ListEmptyComponent={renderEmpty}
-        />
-      )}
+      {selectedStageData && <StageMetadata stage={selectedStageData} />}
+      <CourseProgressBar
+        progress={stageContent.progress}
+        spiralColor={selectedStageData?.spiral_dynamics_color}
+      />
+      <ContentArea
+        content={stageContent.content}
+        loadingContent={stageContent.loadingContent}
+        onContentPress={viewer.handleContentPress}
+      />
     </SafeAreaView>
   );
 };

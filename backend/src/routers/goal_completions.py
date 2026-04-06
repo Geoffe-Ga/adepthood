@@ -29,6 +29,37 @@ class GoalCompletionRequest(BaseModel):
     did_complete: bool = True
 
 
+async def _count_consecutive_streak(session: AsyncSession, goal_id: int, user_id: int) -> int:
+    """Count consecutive completed check-ins for a goal, newest first."""
+    rows = await session.execute(
+        select(GoalCompletion.completed_units)
+        .where(GoalCompletion.goal_id == goal_id, GoalCompletion.user_id == user_id)
+        .order_by(col(GoalCompletion.timestamp).desc())
+    )
+    streak = 0
+    for (units,) in rows:
+        if units > 0:
+            streak += 1
+        else:
+            break
+    return streak
+
+
+async def _get_owned_goal(session: AsyncSession, goal_id: int, user_id: int) -> Goal:
+    """Fetch a goal and verify ownership through its parent habit."""
+    goal = await session.get(Goal, goal_id)
+    if goal is None:
+        raise not_found("goal")
+
+    habit = await session.get(Habit, goal.habit_id)
+    if habit is None:
+        raise forbidden("not_owner")
+    if habit.user_id != user_id:
+        raise forbidden("not_owner")
+
+    return goal
+
+
 @router.post("/", response_model=CheckInResult)
 async def create_goal_completion(
     payload: GoalCompletionRequest,
@@ -36,39 +67,23 @@ async def create_goal_completion(
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> CheckInResult:
     """Record a check-in and return updated streak and milestones."""
-    goal = await session.get(Goal, payload.goal_id)
-    if goal is None:
-        raise not_found("goal")
+    goal = await _get_owned_goal(session, payload.goal_id, current_user)
 
-    habit = await session.get(Habit, goal.habit_id)
-    if habit is None or habit.user_id != current_user:
-        raise forbidden("not_owner")
-
-    # Compute current streak from consecutive completions (newest first)
     assert goal.id is not None
-    rows = await session.execute(
-        select(GoalCompletion.completed_units)
-        .where(GoalCompletion.goal_id == goal.id, GoalCompletion.user_id == current_user)
-        .order_by(col(GoalCompletion.timestamp).desc())
-    )
-    current_streak = 0
-    for (units,) in rows:
-        if units > 0:
-            current_streak += 1
-        else:
-            break
-
+    current_streak = await _count_consecutive_streak(session, goal.id, current_user)
     new_streak, reason = update_streak(current_streak, payload.did_complete)
 
+    completed_units = goal.target if payload.did_complete else 0
     session.add(
         GoalCompletion(
-            goal_id=payload.goal_id,
-            user_id=current_user,
-            completed_units=goal.target if payload.did_complete else 0,
+            goal_id=payload.goal_id, user_id=current_user, completed_units=completed_units
         )
     )
     await session.commit()
 
     reached, _ = achieved_milestones(new_streak, _DEFAULT_THRESHOLDS)
-    milestones = [Milestone(threshold=t) for t in reached]
-    return CheckInResult(streak=new_streak, milestones=milestones, reason_code=reason)
+    return CheckInResult(
+        streak=new_streak,
+        milestones=[Milestone(threshold=t) for t in reached],
+        reason_code=reason,
+    )

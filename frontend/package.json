@@ -50,6 +50,7 @@
     "eslint-plugin-import": "^2.32.0",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-sonarjs": "^4.0.2",
     "eslint-plugin-unicorn": "^55.0.0",
     "globals": "^16.3.0",
     "jest": "29.7.0",
@@ -69,7 +70,8 @@
     "lint": "eslint . --max-warnings=0",
     "start": "expo start",
     "web": "expo start --web",
-    "test": "jest --passWithNoTests"
+    "test": "jest --passWithNoTests",
+    "complexity": "eslint . --format json | node -e \"const r=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const msgs=r.flatMap(f=>f.messages.filter(m=>['complexity','sonarjs/cognitive-complexity'].includes(m.ruleId)).map(m=>({file:f.filePath,line:m.line,rule:m.ruleId,msg:m.message})));console.table(msgs);console.log('Total complexity warnings:',msgs.length)\""
   },
   "version": "1.0.0"
 }

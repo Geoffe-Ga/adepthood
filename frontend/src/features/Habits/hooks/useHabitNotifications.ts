@@ -47,68 +47,69 @@ const attemptPushRegistration = async (attempt: number): Promise<string | undefi
   }
 };
 
+const buildDailyTrigger = (hours: number, minutes: number): Notifications.DailyTriggerInput => ({
+  type: Notifications.SchedulableTriggerInputTypes.DAILY,
+  hour: hours,
+  minute: minutes,
+});
+
+const buildWeeklyTrigger = (
+  weekday: number,
+  hours: number,
+  minutes: number,
+): Notifications.WeeklyTriggerInput => ({
+  type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+  weekday,
+  hour: hours,
+  minute: minutes,
+});
+
+const scheduleOne = async (
+  habit: Habit,
+  trigger: Notifications.NotificationTriggerInput,
+): Promise<string> =>
+  Notifications.scheduleNotificationAsync({
+    content: {
+      title: `Time for: ${habit.name}`,
+      body: `Continue your ${habit.streak}-day streak! 💪`,
+      data: { habitId: habit.id },
+    },
+    trigger,
+  });
+
+const scheduleCustomDays = async (
+  habit: Habit,
+  hours: number,
+  minutes: number,
+): Promise<string[]> => {
+  const ids: string[] = [];
+  for (const day of habit.notificationDays ?? []) {
+    const weekday = DAYS_OF_WEEK.indexOf(day) + 1;
+    ids.push(await scheduleOne(habit, buildWeeklyTrigger(weekday, hours, minutes)));
+  }
+  return ids;
+};
+
 export const scheduleHabitNotification = async (
   habit: Habit,
   notificationTime: string,
 ): Promise<string[]> => {
   const [hours = 0, minutes = 0] = notificationTime.split(':').map(Number);
 
-  const schedule = async (trigger: Notifications.NotificationTriggerInput): Promise<string> => {
-    return Notifications.scheduleNotificationAsync({
-      content: {
-        title: `Time for: ${habit.name}`,
-        body: `Continue your ${habit.streak}-day streak! 💪`,
-        data: { habitId: habit.id },
-      },
-      trigger,
-    });
-  };
-
   if (habit.notificationFrequency === 'daily') {
-    const dailyTrigger: Notifications.DailyTriggerInput = {
-      type: Notifications.SchedulableTriggerInputTypes.DAILY,
-      hour: hours,
-      minute: minutes,
-    };
-    return [await schedule(dailyTrigger)];
+    return [await scheduleOne(habit, buildDailyTrigger(hours, minutes))];
   }
-
   if (habit.notificationFrequency === 'weekly') {
-    const weeklyTrigger: Notifications.WeeklyTriggerInput = {
-      type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
-      weekday: 1,
-      hour: hours,
-      minute: minutes,
-    };
-    return [await schedule(weeklyTrigger)];
+    return [await scheduleOne(habit, buildWeeklyTrigger(1, hours, minutes))];
   }
-
-  if (
+  const hasCustomDays =
     habit.notificationFrequency === 'custom' &&
     habit.notificationDays &&
-    habit.notificationDays.length > 0
-  ) {
-    const notificationIds: string[] = [];
-    for (const day of habit.notificationDays) {
-      const weekday = DAYS_OF_WEEK.indexOf(day) + 1;
-      const customTrigger: Notifications.WeeklyTriggerInput = {
-        type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
-        weekday,
-        hour: hours,
-        minute: minutes,
-      };
-      const id = await schedule(customTrigger);
-      notificationIds.push(id);
-    }
-    return notificationIds;
+    habit.notificationDays.length > 0;
+  if (hasCustomDays) {
+    return scheduleCustomDays(habit, hours, minutes);
   }
-
-  const fallbackTrigger: Notifications.DailyTriggerInput = {
-    type: Notifications.SchedulableTriggerInputTypes.DAILY,
-    hour: hours,
-    minute: minutes,
-  };
-  return [await schedule(fallbackTrigger)];
+  return [await scheduleOne(habit, buildDailyTrigger(hours, minutes))];
 };
 
 export const updateHabitNotifications = async (habit: Habit): Promise<string[]> => {
@@ -150,12 +151,13 @@ const scheduleNotificationsWithRetry = async (habit: Habit): Promise<string[]> =
     return await scheduleAllTimes(habit);
   } catch (firstError) {
     console.warn('Notification scheduling failed, retrying once:', firstError);
-    try {
-      return await scheduleAllTimes(habit);
-    } catch (retryError) {
-      console.error('Notification scheduling retry failed:', retryError);
-      throw retryError;
-    }
+  }
+  // Single retry outside the first catch to avoid nested try/catch
+  try {
+    return await scheduleAllTimes(habit);
+  } catch (retryError) {
+    console.error('Notification scheduling retry failed:', retryError);
+    throw retryError;
   }
 };
 
