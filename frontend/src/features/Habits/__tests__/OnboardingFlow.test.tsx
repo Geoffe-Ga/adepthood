@@ -44,6 +44,15 @@ jest.mock('expo-notifications', () => ({
 jest.mock('react-native', () => ({
   Alert: { alert: jest.fn() },
   Platform: { OS: 'ios' },
+  StyleSheet: { create: (s: Record<string, unknown>) => s },
+  Animated: {
+    Value: jest.fn(),
+    View: 'Animated.View',
+    timing: jest.fn(() => ({ start: jest.fn() })),
+    parallel: jest.fn(() => ({ start: jest.fn() })),
+  },
+  View: 'View',
+  Text: 'Text',
 }));
 
 // ---------------------------------------------------------------------------

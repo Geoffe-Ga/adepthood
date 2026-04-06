@@ -48,6 +48,20 @@ jest.mock('../../../storage/habitStorage', () => ({
   loadHabits: jest.fn(() => Promise.resolve(null)),
 }));
 
+jest.mock('react-native', () => ({
+  Alert: { alert: jest.fn() },
+  Platform: { OS: 'ios' },
+  StyleSheet: { create: (s: Record<string, unknown>) => s },
+  Animated: {
+    Value: jest.fn(),
+    View: 'Animated.View',
+    timing: jest.fn(() => ({ start: jest.fn() })),
+    parallel: jest.fn(() => ({ start: jest.fn() })),
+  },
+  View: 'View',
+  Text: 'Text',
+}));
+
 jest.mock('expo-notifications', () => ({
   getPermissionsAsync: jest.fn(() => Promise.resolve({ status: 'granted' })),
   requestPermissionsAsync: jest.fn(() => Promise.resolve({ status: 'granted' })),
@@ -56,11 +70,6 @@ jest.mock('expo-notifications', () => ({
   cancelScheduledNotificationAsync: jest.fn(() => Promise.resolve(undefined)),
   getAllScheduledNotificationsAsync: jest.fn(() => Promise.resolve([])),
   SchedulableTriggerInputTypes: { DAILY: 'daily', WEEKLY: 'weekly' },
-}));
-
-jest.mock('react-native', () => ({
-  Alert: { alert: jest.fn() },
-  Platform: { OS: 'ios' },
 }));
 
 const makeGoal = (tier: 'low' | 'clear' | 'stretch', target: number): Goal => ({
