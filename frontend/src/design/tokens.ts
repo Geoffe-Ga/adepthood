@@ -51,6 +51,9 @@ export const colors = {
 // Stage colors — maps stage name → hex color used across Habits and Map
 // ---------------------------------------------------------------------------
 
+/** Warm gold shown on progress bars when the user has met their clear goal. */
+export const VICTORY_COLOR = '#c9a44c';
+
 export const STAGE_COLORS: Record<string, string> = {
   Beige: '#d8cbb8',
   Purple: '#a093c6',

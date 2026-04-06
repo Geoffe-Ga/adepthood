@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 
 import type { ApiHabitStats } from '../../api';
-import { colors, STAGE_COLORS, STAGE_ORDER } from '../../design/tokens';
+import { colors, STAGE_COLORS, STAGE_ORDER, VICTORY_COLOR } from '../../design/tokens';
 
 import type { Goal, Habit, Completion, HabitStatsData } from './Habits.types';
 
@@ -271,7 +271,24 @@ export const getProgressPercentage = (
 };
 
 export const getProgressBarColor = (habit: Habit): string => {
-  return STAGE_COLORS[habit.stage] ?? '#000';
+  const stageColor = STAGE_COLORS[habit.stage] ?? '#000';
+  const clearGoal = habit.goals.find((g) => g.tier === 'clear');
+
+  if (!clearGoal) return stageColor;
+
+  const progress = calculateHabitProgress(habit);
+
+  if (clearGoal.is_additive) {
+    return progress >= getGoalTarget(clearGoal) ? VICTORY_COLOR : stageColor;
+  }
+
+  // Subtractive: victory when staying at or under stretch target
+  const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');
+  if (stretchGoal && progress <= getGoalTarget(stretchGoal)) {
+    return VICTORY_COLOR;
+  }
+
+  return stageColor;
 };
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];

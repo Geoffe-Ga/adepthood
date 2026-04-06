@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { jest, describe, afterEach, it, expect } from '@jest/globals';
 
-import { STAGE_COLORS } from '../../../design/tokens';
+import { STAGE_COLORS, VICTORY_COLOR } from '../../../design/tokens';
 
 const renderer = require('react-test-renderer');
 
@@ -78,11 +78,14 @@ const assertTileLayout = (tile: any, height: number, expectedColumns: number): v
   expect(colorValues).toContain(style.borderColor);
 
   const fill = tile.findByProps({ testID: 'progress-fill' });
-  const fillStyle = Array.isArray(fill.props.style) ? fill.props.style[1] : fill.props.style;
+  const fillStyle = Array.isArray(fill.props.style)
+    ? Object.assign({}, ...fill.props.style)
+    : fill.props.style;
   const val = parseFloat(fillStyle.width);
   expect(val).toBeGreaterThanOrEqual(0);
   expect(val).toBeLessThanOrEqual(100);
-  expect(fillStyle.backgroundColor).toBe(style.borderColor);
+  const validBarColors = [...colorValues, VICTORY_COLOR];
+  expect(validBarColors).toContain(fillStyle.backgroundColor);
 };
 
 describe('HabitsScreen responsive layout', () => {
