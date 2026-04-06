@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* eslint-disable import/order, @typescript-eslint/consistent-type-imports, @typescript-eslint/no-explicit-any */
-import { describe, expect, it, jest } from '@jest/globals';
+import { describe, expect, it, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { Text, TextInput, TouchableOpacity } from 'react-native';
@@ -78,7 +78,23 @@ const pressContinueFrom = (root: any) => {
   }
 };
 
+const REVEAL_TOTAL_MS = 150 * 1 + 500 + 100; // 1 habit × 150ms stagger + 500ms pause + 100ms settle
+
+const advanceRevealAnimation = () => {
+  renderer.act(() => {
+    jest.advanceTimersByTime(REVEAL_TOTAL_MS);
+  });
+};
+
 describe('OnboardingModal close behaviour', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('shows discard dialog and exits on confirmation', () => {
     const onClose = jest.fn();
 
@@ -148,7 +164,8 @@ describe('OnboardingModal close behaviour', () => {
     const pressContinue = () => pressContinueFrom(root);
     pressContinue(); // to cost step
     pressContinue(); // to return step
-    pressContinue(); // to reorder step
+    pressContinue(); // to reorder step (triggers reveal animation)
+    advanceRevealAnimation(); // complete the reveal
 
     const dateInput = root.findByProps({ accessibilityLabel: 'Date' });
     renderer.act(() => {
@@ -158,7 +175,7 @@ describe('OnboardingModal close behaviour', () => {
     const continueToTemplates = root.findByProps({ testID: 'continue-to-templates' });
     await renderer.act(async () => {
       continueToTemplates.props.onPress();
-      await new Promise((r) => setTimeout(r, 10));
+      await jest.advanceTimersByTimeAsync(10);
     });
 
     const finish = root.findByProps({ testID: 'finish-setup' });
@@ -195,6 +212,7 @@ describe('OnboardingModal close behaviour', () => {
     pressContinue();
     pressContinue();
     pressContinue();
+    advanceRevealAnimation(); // complete the reveal
 
     // Use a date guaranteed to be in the future so the DatePicker minDate
     // constraint doesn't reject it.
@@ -209,7 +227,7 @@ describe('OnboardingModal close behaviour', () => {
     const continueToTemplates = root.findByProps({ testID: 'continue-to-templates' });
     await renderer.act(async () => {
       continueToTemplates.props.onPress();
-      await new Promise((r) => setTimeout(r, 10));
+      await jest.advanceTimersByTimeAsync(10);
     });
 
     const finish = root.findByProps({ testID: 'finish-setup' });
