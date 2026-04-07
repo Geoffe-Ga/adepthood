@@ -1,5 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Text, TouchableOpacity, View, type DimensionValue } from 'react-native';
+import {
+  Alert,
+  Animated,
+  Easing,
+  Text,
+  TouchableOpacity,
+  View,
+  type DimensionValue,
+} from 'react-native';
 
 import { STAGE_COLORS, spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
@@ -13,6 +21,7 @@ import {
   getProgressBarColor,
   getTierColor,
   isGoalAchieved,
+  isEarlyUnlocked,
   calculateHabitProgress,
 } from './HabitUtils';
 
@@ -481,6 +490,18 @@ const useHabitTileData = (habit: Habit) => {
   return { progressPercentage, progressBarColor, hasCompletedGoal, markers };
 };
 
+const showUnlockConfirmation = (habit: Habit, onUnlock: (_id: number) => void) => {
+  const dateStr = new Date(habit.start_date).toLocaleDateString();
+  Alert.alert(
+    'Unlock Early?',
+    `Unlock "${habit.name}" early? The recommended start date is ${dateStr}.`,
+    [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Unlock', onPress: () => onUnlock(habit.id) },
+    ],
+  );
+};
+
 const LOCKED_BACKGROUND = '#e8e8e8';
 const LOCKED_OPACITY = 0.4;
 const MS_PER_DAY = 86_400_000;
@@ -503,51 +524,69 @@ interface LockedTileProps {
   scale: number;
   gridGutter: number;
   tileMinHeight: number;
+  onUnlockHabit?: (_habitId: number) => void;
 }
 
-const LockedTile = ({ habit, stageColor, scale, gridGutter, tileMinHeight }: LockedTileProps) => (
-  <View
-    testID="habit-tile"
-    accessibilityLabel={`${habit.name} locked`}
-    style={{
-      flex: 1,
-      borderWidth: 1,
-      borderColor: stageColor,
-      padding: spacing(1, scale),
-      margin: gridGutter / 2,
-      minHeight: tileMinHeight,
-      borderRadius: spacing(1, scale),
-      backgroundColor: LOCKED_BACKGROUND,
-      opacity: LOCKED_OPACITY,
-    }}
-  >
-    <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
-      <Text style={{ fontSize: spacing(2, scale), marginRight: spacing(1, scale) }}>🔒</Text>
+const getLockedTileStyle = (
+  stageColor: string,
+  scale: number,
+  gridGutter: number,
+  tileMinHeight: number,
+) => ({
+  flex: 1 as const,
+  borderWidth: 1,
+  borderColor: stageColor,
+  padding: spacing(1, scale),
+  margin: gridGutter / 2,
+  minHeight: tileMinHeight,
+  borderRadius: spacing(1, scale),
+  backgroundColor: LOCKED_BACKGROUND,
+  opacity: LOCKED_OPACITY,
+});
+
+const LOCKED_NAME_STYLE = {
+  flex: 1 as const,
+  fontWeight: '700' as const,
+  textTransform: 'uppercase' as const,
+  color: '#999',
+};
+
+const LockedTile = ({
+  habit,
+  stageColor,
+  scale,
+  gridGutter,
+  tileMinHeight,
+  onUnlockHabit,
+}: LockedTileProps) => {
+  const handleLongPress = onUnlockHabit
+    ? () => showUnlockConfirmation(habit, onUnlockHabit)
+    : undefined;
+  return (
+    <TouchableOpacity
+      testID="habit-tile"
+      accessibilityLabel={`${habit.name} locked`}
+      onLongPress={handleLongPress}
+      style={getLockedTileStyle(stageColor, scale, gridGutter, tileMinHeight)}
+    >
+      <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <Text style={{ fontSize: spacing(2, scale), marginRight: spacing(1, scale) }}>🔒</Text>
+        <Text style={{ ...LOCKED_NAME_STYLE, fontSize: spacing(2, scale) }}>{habit.name}</Text>
+      </View>
       <Text
+        testID="unlock-label"
         style={{
-          flex: 1,
-          fontSize: spacing(2, scale),
-          fontWeight: '700',
-          textTransform: 'uppercase',
+          fontSize: spacing(1.5, scale),
           color: '#999',
+          marginTop: spacing(0.5, scale),
+          fontStyle: 'italic',
         }}
       >
-        {habit.name}
+        {getUnlockLabel(habit)}
       </Text>
-    </View>
-    <Text
-      testID="unlock-label"
-      style={{
-        fontSize: spacing(1.5, scale),
-        color: '#999',
-        marginTop: spacing(0.5, scale),
-        fontStyle: 'italic',
-      }}
-    >
-      {getUnlockLabel(habit)}
-    </Text>
-  </View>
-);
+    </TouchableOpacity>
+  );
+};
 
 interface UnlockedTileProps {
   habit: Habit;
@@ -566,7 +605,7 @@ const UnlockedTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: Unlocked
   const streakText =
     `${habit.streak} days${hasCompletedGoal ? ' — Achieved Today!' : ''}`.toUpperCase();
   const barHeight = Math.max(8, spacing(2, scale));
-  const isFutureStart = new Date(habit.start_date).getTime() > Date.now();
+  const earlyUnlocked = isEarlyUnlocked(habit);
 
   return (
     <TouchableOpacity
@@ -575,12 +614,12 @@ const UnlockedTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: Unlocked
         flex: 1,
         borderWidth: 1,
         borderColor: stageColor,
+        borderStyle: earlyUnlocked ? 'dashed' : undefined,
         padding: spacing(1, scale),
         margin: gridGutter / 2,
         minHeight: tileMinHeight,
         borderRadius: spacing(1, scale),
         backgroundColor: '#f8f8f8',
-        opacity: isFutureStart ? 0.5 : 1,
       }}
       onPress={onOpenGoals}
       onLongPress={onLongPress}
@@ -614,6 +653,7 @@ export const HabitTile = ({
   onOpenGoals,
   onLongPress,
   onIconPress,
+  onUnlockHabit,
 }: HabitTileProps) => {
   const { scale, gridGutter, tileMinHeight } = useTileLayout();
   const stageColor = STAGE_COLORS[habit.stage] ?? '#000';
@@ -626,6 +666,7 @@ export const HabitTile = ({
         scale={scale}
         gridGutter={gridGutter}
         tileMinHeight={tileMinHeight}
+        onUnlockHabit={onUnlockHabit}
       />
     );
   }

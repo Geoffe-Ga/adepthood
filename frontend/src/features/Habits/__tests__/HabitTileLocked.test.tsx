@@ -1,7 +1,6 @@
 /* eslint-env jest */
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { View } from 'react-native';
 import renderer from 'react-test-renderer';
 
 import type { Habit } from '../Habits.types';
@@ -68,9 +67,6 @@ describe('HabitTile locked state', () => {
     );
 
     const tile = component.root.findByProps({ testID: 'habit-tile' });
-
-    // Should be a View (non-interactive), not TouchableOpacity
-    expect(tile.type).toBe(View);
 
     // Should have reduced opacity
     expect(tile.props.style.opacity).toBe(0.4);

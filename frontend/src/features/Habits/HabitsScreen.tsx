@@ -1,6 +1,6 @@
 // HabitsScreen.tsx
 
-import { BarChart2, Check, MoreHorizontal, Pencil, Zap } from 'lucide-react';
+import { BarChart2, Check, Lock, MoreHorizontal, Pencil, Unlock, Zap } from 'lucide-react';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, TouchableOpacity, View, Modal } from 'react-native';
 import EmojiSelector from 'react-native-emoji-selector';
@@ -78,6 +78,8 @@ interface OverflowMenuProps {
   onToggle: () => void;
   onSelectMode: (_mode: 'quickLog' | 'stats' | 'edit') => void;
   onOpenOnboarding: () => void;
+  allRevealed: boolean;
+  onToggleReveal: () => void;
 }
 
 const MENU_ITEMS: Array<{
@@ -97,8 +99,12 @@ const OverflowMenu = ({
   onToggle,
   onSelectMode,
   onOpenOnboarding,
+  allRevealed,
+  onToggleReveal,
 }: OverflowMenuProps) => {
   const iconMargin = { marginRight: spacing(1, scale) };
+  const RevealIcon = allRevealed ? Lock : Unlock;
+  const revealLabel = allRevealed ? 'Lock Unstarted Habits' : 'Reveal All Habits';
   return (
     <View style={styles.overflowMenuContainer} testID="overflow-menu-wrapper">
       <TouchableOpacity
@@ -122,6 +128,13 @@ const OverflowMenu = ({
               scale={scale}
             />
           ))}
+          <MenuItem
+            key="reveal-toggle"
+            icon={<RevealIcon size={spacing(2, scale)} style={iconMargin} />}
+            label={revealLabel}
+            onPress={onToggleReveal}
+            scale={scale}
+          />
         </View>
       )}
     </View>
@@ -349,6 +362,7 @@ const useHabitTileRenderer = (
                 modals.open('emojiPicker');
               }
         }
+        onUnlockHabit={actions.unlockHabit}
       />
     );
   };
@@ -393,15 +407,85 @@ const useSelectMode = (
     [setMode, closeAll],
   );
 
-const HabitsScreen = () => {
-  const { habits, loading, error, selectedHabit, setSelectedHabit, mode, setMode, actions, ui } =
-    useHabits();
-  const modals = useModalCoordinator();
-  const habitStats = useHabitStats(modals.stats, selectedHabit);
-  const { columns, gridGutter, scale, isLG, isXL } = useResponsive();
-  const handleSelectMode = useSelectMode(setMode, modals.closeAll);
-  const renderHabitTile = useHabitTileRenderer(mode, modals, actions, setSelectedHabit);
+const useToggleReveal = (
+  habits: ReturnType<typeof useHabits>['habits'],
+  actions: ReturnType<typeof useHabits>['actions'],
+  closeAll: () => void,
+) => {
+  const allRevealed = habits.every((h) => h.revealed !== false);
+  const handleToggleReveal = useCallback(() => {
+    if (allRevealed) {
+      actions.lockUnstartedHabits();
+    } else {
+      actions.revealAllHabits();
+    }
+    closeAll();
+  }, [allRevealed, actions, closeAll]);
+  return { allRevealed, handleToggleReveal };
+};
 
+interface HabitsContentProps {
+  habits: Habit[];
+  loading: boolean;
+  error: string | null;
+  columns: number;
+  gridGutter: number;
+  renderItem: (_info: { item: Habit; index: number }) => React.ReactElement;
+  onRetry: () => void;
+}
+
+const HabitsContent = ({
+  habits,
+  loading,
+  error,
+  columns,
+  gridGutter,
+  renderItem,
+  onRetry,
+}: HabitsContentProps) => (
+  <>
+    {error && <ErrorBanner error={error} onRetry={onRetry} />}
+    {loading ? (
+      <LoadingSpinner />
+    ) : (
+      <HabitList
+        habits={habits}
+        columns={columns}
+        gridGutter={gridGutter}
+        renderItem={renderItem}
+      />
+    )}
+  </>
+);
+
+const useHabitsScreenState = () => {
+  const habitsReturn = useHabits();
+  const modals = useModalCoordinator();
+  const habitStats = useHabitStats(modals.stats, habitsReturn.selectedHabit);
+  const responsive = useResponsive();
+  const handleSelectMode = useSelectMode(habitsReturn.setMode, modals.closeAll);
+  const renderHabitTile = useHabitTileRenderer(
+    habitsReturn.mode,
+    modals,
+    habitsReturn.actions,
+    habitsReturn.setSelectedHabit,
+  );
+  const reveal = useToggleReveal(habitsReturn.habits, habitsReturn.actions, modals.closeAll);
+  return {
+    ...habitsReturn,
+    modals,
+    habitStats,
+    responsive,
+    handleSelectMode,
+    renderHabitTile,
+    ...reveal,
+  };
+};
+
+const HabitsScreen = () => {
+  const state = useHabitsScreenState();
+  const { habits, loading, error, modals, actions, ui, responsive } = state;
+  const { columns, gridGutter, scale, isLG, isXL } = responsive;
   return (
     <SafeAreaView style={[styles.container, { padding: spacing(isLG || isXL ? 2 : 1, scale) }]}>
       <View style={styles.topBar}>
@@ -409,33 +493,33 @@ const HabitsScreen = () => {
           scale={scale}
           menuVisible={modals.menu}
           onToggle={modals.toggleMenu}
-          onSelectMode={handleSelectMode}
+          onSelectMode={state.handleSelectMode}
           onOpenOnboarding={() => modals.open('onboarding')}
+          allRevealed={state.allRevealed}
+          onToggleReveal={state.handleToggleReveal}
         />
       </View>
-      {error && <ErrorBanner error={error} onRetry={() => void actions.loadHabits()} />}
-      {loading ? (
-        <LoadingSpinner />
-      ) : (
-        <HabitList
-          habits={habits}
-          columns={columns}
-          gridGutter={gridGutter}
-          renderItem={renderHabitTile}
-        />
-      )}
+      <HabitsContent
+        habits={habits}
+        loading={loading}
+        error={error}
+        columns={columns}
+        gridGutter={gridGutter}
+        renderItem={state.renderHabitTile}
+        onRetry={() => void actions.loadHabits()}
+      />
       <EnergyFooter
         showCTA={ui.showEnergyCTA}
         showArchive={ui.showArchiveMessage}
-        mode={mode}
+        mode={state.mode}
         onOpen={() => modals.open('onboarding')}
         onArchive={ui.archiveEnergyCTA}
-        onExitMode={() => setMode('normal')}
+        onExitMode={() => state.setMode('normal')}
       />
       <HabitModals
         modals={modals}
-        selectedHabit={selectedHabit}
-        habitStats={habitStats}
+        selectedHabit={state.selectedHabit}
+        habitStats={state.habitStats}
         habits={habits}
         actions={actions}
       />
