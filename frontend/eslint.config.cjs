@@ -21,6 +21,7 @@ module.exports = tseslint.config(
       'android/',
       'ios/',
       'babel.config.js',
+      'metro.config.js',
     ],
   },
 
