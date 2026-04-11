@@ -135,15 +135,27 @@ def _import_optional(module_name: str, provider_label: str) -> ModuleType:
         raise RuntimeError(msg) from exc
 
 
+def _get_llm_api_key() -> str:
+    """Return the LLM API key, raising if unset or empty.
+
+    Follows the same fail-fast pattern as ``_get_secret_key`` in auth.py.
+    """
+    api_key = os.getenv("LLM_API_KEY", "")
+    if not api_key:
+        msg = "LLM_API_KEY environment variable must be set for non-stub providers"
+        raise RuntimeError(msg)
+    return api_key
+
+
 async def _call_openai(
     user_message: str,
     conversation_history: list[dict[str, str]],
     system_prompt: str,
 ) -> str:
     """Call the OpenAI chat completions API."""
+    api_key = _get_llm_api_key()
     openai_mod = _import_optional("openai", "OpenAI")
 
-    api_key = os.getenv("LLM_API_KEY", "")
     client = openai_mod.AsyncOpenAI(api_key=api_key)
     messages = _build_messages(user_message, conversation_history, system_prompt)
     completion = await client.chat.completions.create(
@@ -159,9 +171,9 @@ async def _call_anthropic(
     system_prompt: str,
 ) -> str:
     """Call the Anthropic messages API."""
+    api_key = _get_llm_api_key()
     anthropic_mod = _import_optional("anthropic", "Anthropic")
 
-    api_key = os.getenv("LLM_API_KEY", "")
     client = anthropic_mod.AsyncAnthropic(api_key=api_key)
     # Anthropic uses a separate system parameter, not a system message in the list.
     messages_for_api: list[dict[str, str]] = []

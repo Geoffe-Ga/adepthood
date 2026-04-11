@@ -332,3 +332,61 @@ async def test_system_prompt_allows_file_at_size_limit(
     monkeypatch.setenv("BOTMASON_SYSTEM_PROMPT", str(max_file))
     prompt = get_system_prompt()
     assert len(prompt) == 50 * 1024
+
+
+# ── LLM API key validation tests ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_raises_without_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenAI provider raises RuntimeError when LLM_API_KEY is not set."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="LLM_API_KEY"):
+        await generate_response("Hello", [])
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_raises_without_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Anthropic provider raises RuntimeError when LLM_API_KEY is not set."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "anthropic")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="LLM_API_KEY"):
+        await generate_response("Hello", [])
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_raises_with_empty_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenAI provider raises RuntimeError when LLM_API_KEY is empty string."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", "")
+    with pytest.raises(RuntimeError, match="LLM_API_KEY"):
+        await generate_response("Hello", [])
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_raises_with_empty_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Anthropic provider raises RuntimeError when LLM_API_KEY is empty string."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "anthropic")
+    monkeypatch.setenv("LLM_API_KEY", "")
+    with pytest.raises(RuntimeError, match="LLM_API_KEY"):
+        await generate_response("Hello", [])
+
+
+@pytest.mark.asyncio
+async def test_stub_provider_works_without_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stub provider continues to work without LLM_API_KEY."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    result = await generate_response("Hello", [])
+    assert "Hello" in result
