@@ -1,4 +1,4 @@
-# sec-01: Remaining unbounded string fields in request schemas and models
+# sec-15: Remaining unbounded string fields in request schemas and models
 
 **Labels:** `security`, `backend`, `priority-medium`
 **Severity:** MEDIUM

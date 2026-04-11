@@ -1,4 +1,4 @@
-# sec-03: Offering balance race condition allows free LLM usage
+# sec-17: Offering balance race condition allows free LLM usage
 
 **Labels:** `security`, `backend`, `priority-high`
 **Severity:** HIGH

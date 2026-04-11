@@ -1,4 +1,4 @@
-# sec-02: No rate limiting on data endpoints
+# sec-16: No rate limiting on data endpoints
 
 **Labels:** `security`, `backend`, `priority-medium`
 **Severity:** MEDIUM

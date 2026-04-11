@@ -4,12 +4,13 @@ Second-pass security audit after all 14 original findings were addressed.
 12 of 14 are fully resolved. 2 remain open (sec-11 rate limiting, sec-03
 input constraints), plus 2 new findings discovered in this pass.
 
-## Resolved in v1 (no longer tracked)
+## Resolved (sec-01 through sec-14)
 
-| Original # | Issue | Status |
-|------------|-------|--------|
+| # | Issue | Status |
+|---|-------|--------|
 | sec-01 | Account enumeration via signup endpoint | FIXED — dummy token + timing equalization |
 | sec-02 | Missing email format validation | FIXED — Pydantic `EmailStr` |
+| sec-03 | Unbounded string fields enable payload abuse | FIXED — `max_length` on core schemas |
 | sec-04 | JWT error messages leak token state | FIXED — unified `"unauthorized"` detail |
 | sec-05 | BotMason system prompt path traversal | FIXED — allowed directory + size limit |
 | sec-06 | LLM API key accepted as empty string | FIXED — fail-fast `_get_llm_api_key()` |
@@ -17,18 +18,19 @@ input constraints), plus 2 new findings discovered in this pass.
 | sec-08 | HTTP fallback in API base URL | FIXED — HTTPS enforced in production |
 | sec-09 | No token refresh or expiration handling | FIXED — proactive refresh + retry-after-401 |
 | sec-10 | Unvalidated URLs before Linking.openURL | FIXED — `isValidUrl()` allowlist |
+| sec-11 | No rate limiting on data endpoints | PARTIALLY FIXED — see sec-16 |
 | sec-12 | GitHub Actions not pinned to commit SHAs | FIXED — all actions use full SHAs |
 | sec-13 | Undocumented pip-audit vulnerability exemption | FIXED — `--ignore-vuln` removed |
 | sec-14 | Dependency versions not pinned for production | FIXED — `requirements-lock.txt` + Dependabot |
 
-## Open Issues (v2)
+## Open Issues (sec-15 through sec-18)
 
 | #  | Issue | Layer | Severity | Est. LoC |
 |----|-------|-------|----------|----------|
-| 01 | [Remaining unbounded string fields](sec-01-remaining-input-constraints.md) | Backend | MEDIUM | ~60 |
-| 02 | [No rate limiting on data endpoints](sec-02-data-endpoint-rate-limits.md) | Backend | MEDIUM | ~30 |
-| 03 | [Offering balance race condition](sec-03-offering-balance-race-condition.md) | Backend | HIGH | ~20 |
-| 04 | [Frontend nginx missing security headers](sec-04-nginx-security-headers.md) | Frontend | MEDIUM | ~15 |
+| 15 | [Remaining unbounded string fields](sec-15-remaining-input-constraints.md) | Backend | MEDIUM | ~60 |
+| 16 | [No rate limiting on data endpoints](sec-16-data-endpoint-rate-limits.md) | Backend | MEDIUM | ~30 |
+| 17 | [Offering balance race condition](sec-17-offering-balance-race-condition.md) | Backend | HIGH | ~20 |
+| 18 | [Frontend nginx missing security headers](sec-18-nginx-security-headers.md) | Frontend | MEDIUM | ~15 |
 
 ## Dependency Graph
 

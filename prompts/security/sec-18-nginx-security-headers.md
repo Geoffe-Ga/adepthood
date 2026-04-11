@@ -1,4 +1,4 @@
-# sec-04: Frontend nginx missing security headers
+# sec-18: Frontend nginx missing security headers
 
 **Labels:** `security`, `frontend`, `infrastructure`, `priority-medium`
 **Severity:** MEDIUM
