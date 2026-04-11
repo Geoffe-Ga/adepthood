@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from models.login_attempt import LoginAttempt
+from models.user import User
 from routers.auth import LOCKOUT_DURATION, MAX_FAILED_ATTEMPTS
 
 SIGNUP_URL = "/auth/signup"
@@ -64,17 +65,66 @@ async def test_signup_returns_token_and_user_id(async_client: AsyncClient) -> No
 
 
 @pytest.mark.asyncio
-async def test_signup_duplicate_email_returns_400(async_client: AsyncClient) -> None:
-    await _signup(async_client, email="dup@example.com")
-    resp = await async_client.post(
+async def test_signup_duplicate_email_returns_same_shape(async_client: AsyncClient) -> None:
+    """Signup with an existing email returns the same status and response shape
+    as a fresh signup — no information leakage about registered emails."""
+    first_resp = await async_client.post(
         SIGNUP_URL,
         json={
             "email": "dup@example.com",
             "password": "securepassword123",  # pragma: allowlist secret
         },
     )
-    assert resp.status_code == HTTPStatus.BAD_REQUEST
-    assert resp.json()["detail"] == "user_already_exists"
+    second_resp = await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "dup@example.com",
+            "password": "anotherpassword456",  # pragma: allowlist secret
+        },
+    )
+    assert second_resp.status_code == first_resp.status_code
+    first_data = first_resp.json()
+    second_data = second_resp.json()
+    assert set(first_data.keys()) == set(second_data.keys())
+    assert "token" in second_data
+    assert "user_id" in second_data
+    assert isinstance(second_data["user_id"], int)
+
+
+@pytest.mark.asyncio
+async def test_signup_duplicate_email_does_not_create_second_user(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A duplicate signup must not create a second user row."""
+    await _signup(async_client, email="nodupe@example.com")
+    await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "nodupe@example.com",
+            "password": "anotherpassword456",  # pragma: allowlist secret
+        },
+    )
+    result = await db_session.execute(select(User).where(User.email == "nodupe@example.com"))
+    users = result.scalars().all()
+    assert len(users) == 1
+
+
+@pytest.mark.asyncio
+async def test_signup_duplicate_email_token_is_not_valid(async_client: AsyncClient) -> None:
+    """The token returned for a duplicate signup must not grant access."""
+    await _signup(async_client, email="invalid-tok@example.com")
+    resp = await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "invalid-tok@example.com",
+            "password": "anotherpassword456",  # pragma: allowlist secret
+        },
+    )
+    fake_token = resp.json()["token"]
+    headers = {"Authorization": f"Bearer {fake_token}"}
+    protected_resp = await async_client.get("/habits/", headers=headers)
+    assert protected_resp.status_code == HTTPStatus.UNAUTHORIZED
 
 
 @pytest.mark.asyncio

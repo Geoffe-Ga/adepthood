@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
@@ -76,6 +77,21 @@ def _create_token(user_id: int) -> str:
         "iat": datetime.now(UTC),
     }
     return str(jwt.encode(payload, _get_secret_key(), algorithm=_JWT_ALGORITHM))
+
+
+def _create_dummy_token() -> str:
+    """Generate a structurally-valid JWT that will never decode with the real secret.
+
+    Used to return an indistinguishable response when a signup is attempted
+    with an already-registered email, preventing account enumeration.
+    """
+    nonce_key = secrets.token_hex(32)
+    payload = {
+        "sub": "0",
+        "exp": datetime.now(UTC) + _TOKEN_TTL,
+        "iat": datetime.now(UTC),
+    }
+    return str(jwt.encode(payload, nonce_key, algorithm=_JWT_ALGORITHM))
 
 
 def _get_client_ip(request: Request) -> str:
@@ -151,7 +167,10 @@ async def signup(
         raise bad_request("password_too_short")
     result = await session.execute(select(User).where(User.email == payload.email))
     if result.scalars().first() is not None:
-        raise bad_request("user_already_exists")
+        # Return an identical response shape to prevent account enumeration.
+        # The dummy token is signed with a random key and will fail validation,
+        # so it cannot be used to access the existing account.
+        return AuthResponse(token=_create_dummy_token(), user_id=0)
 
     user = User(
         email=payload.email,
