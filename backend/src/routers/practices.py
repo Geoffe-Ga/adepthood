@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from database import get_session
 from errors import not_found
 from models.practice import Practice
+from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.practice import PracticeCreate, PracticeResponse
 
@@ -46,7 +47,9 @@ async def get_practice(
 
 
 @router.post("/", response_model=PracticeResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("5/minute")
 async def submit_practice(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     payload: PracticeCreate,
     current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008

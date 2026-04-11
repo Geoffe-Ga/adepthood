@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy import ColumnElement, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -12,6 +12,7 @@ from sqlmodel import col, select
 from database import get_session
 from errors import not_found
 from models.journal_entry import JournalEntry, JournalTag
+from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.journal import (
     JournalBotMessageCreate,
@@ -61,7 +62,9 @@ def _build_filter_conditions(filters: _ListFilters) -> list[ColumnElement[bool]]
 
 
 @router.get("/", response_model=JournalListResponse)
+@limiter.limit("30/minute")
 async def list_journal_entries(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
     filters: _ListFilters = Depends(),  # noqa: B008
