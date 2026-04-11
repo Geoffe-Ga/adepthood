@@ -1,5 +1,5 @@
 /* eslint-env jest */
-/* global describe, it, expect, beforeEach, jest */
+/* global describe, it, expect, beforeEach, afterEach, jest */
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
@@ -10,9 +10,11 @@ jest.mock('@/api', () => ({
   auth: {
     login: jest.fn(),
     signup: jest.fn(),
+    refresh: jest.fn(),
   },
   setTokenGetter: jest.fn(),
   setOnUnauthorized: jest.fn(),
+  setOnTokenRefreshed: jest.fn(),
 }));
 
 // Mock authStorage
@@ -22,14 +24,25 @@ jest.mock('@/storage/authStorage', () => ({
   clearToken: jest.fn(() => Promise.resolve()),
 }));
 
+// Mock token utilities
+jest.mock('@/utils/token', () => ({
+  decodeJwtPayload: jest.fn(() => null),
+  isTokenExpired: jest.fn(() => false),
+  shouldRefreshToken: jest.fn(() => false),
+  REFRESH_BUFFER_SECONDS: 300,
+}));
+
 import { auth, setTokenGetter } from '@/api';
 import { saveToken, loadToken, clearToken } from '@/storage/authStorage';
+import { isTokenExpired, shouldRefreshToken } from '@/utils/token';
 
 const mockAuth = auth as jest.Mocked<typeof auth>;
 const mockLoadToken = loadToken as jest.MockedFunction<typeof loadToken>;
 const mockSaveToken = saveToken as jest.MockedFunction<typeof saveToken>;
 const mockClearToken = clearToken as jest.MockedFunction<typeof clearToken>;
 const mockSetTokenGetter = setTokenGetter as jest.MockedFunction<typeof setTokenGetter>;
+const mockIsTokenExpired = isTokenExpired as jest.MockedFunction<typeof isTokenExpired>;
+const mockShouldRefreshToken = shouldRefreshToken as jest.MockedFunction<typeof shouldRefreshToken>;
 
 function wrapper({ children }: { children: React.ReactNode }) {
   return <AuthProvider>{children}</AuthProvider>;
@@ -37,7 +50,14 @@ function wrapper({ children }: { children: React.ReactNode }) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.useFakeTimers();
   mockLoadToken.mockResolvedValue(null);
+  mockIsTokenExpired.mockReturnValue(false);
+  mockShouldRefreshToken.mockReturnValue(false);
+});
+
+afterEach(() => {
+  jest.useRealTimers();
 });
 
 describe('AuthContext', () => {
@@ -167,6 +187,62 @@ describe('AuthContext', () => {
 
       expect(mockClearToken).toHaveBeenCalled();
       expect(result.current.token).toBeNull();
+    });
+  });
+
+  describe('token expiration on startup', () => {
+    it('discards an expired stored token', async () => {
+      mockLoadToken.mockResolvedValue('expired-jwt');
+      mockIsTokenExpired.mockReturnValue(true);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      expect(result.current.token).toBeNull();
+      expect(mockClearToken).toHaveBeenCalled();
+    });
+
+    it('keeps a non-expired stored token', async () => {
+      mockLoadToken.mockResolvedValue('valid-jwt');
+      mockIsTokenExpired.mockReturnValue(false);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      expect(result.current.token).toBe('valid-jwt');
+      expect(mockClearToken).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('proactive token refresh', () => {
+    it('refreshes immediately when token is within the refresh buffer', async () => {
+      mockLoadToken.mockResolvedValue('near-expiry-jwt');
+      mockIsTokenExpired.mockReturnValue(false);
+      mockShouldRefreshToken.mockReturnValue(true);
+      mockAuth.refresh.mockResolvedValue({ token: 'refreshed-jwt', user_id: 1 });
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.token).toBe('refreshed-jwt'));
+
+      expect(mockAuth.refresh).toHaveBeenCalledWith('near-expiry-jwt');
+      expect(mockSaveToken).toHaveBeenCalledWith('refreshed-jwt');
+    });
+
+    it('does not crash when proactive refresh fails', async () => {
+      mockLoadToken.mockResolvedValue('near-expiry-jwt');
+      mockIsTokenExpired.mockReturnValue(false);
+      mockShouldRefreshToken.mockReturnValue(true);
+      mockAuth.refresh.mockRejectedValue(new Error('network error'));
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      // Token should remain as-is when refresh fails
+      expect(result.current.token).toBe('near-expiry-jwt');
     });
   });
 });

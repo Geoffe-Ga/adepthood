@@ -248,3 +248,19 @@ def get_current_user(authorization: str | None = Header(default=None)) -> int:
         ) from exc
     user_id = int(payload["sub"])
     return user_id
+
+
+@router.post("/refresh", response_model=AuthResponse)
+@limiter.limit("1/minute")
+async def refresh_token(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    user_id: int = Depends(get_current_user),
+) -> AuthResponse:
+    """Exchange a valid JWT for a fresh one.
+
+    Rate-limited to 1 request per minute to prevent abuse. The caller must
+    present a valid, non-expired token in the Authorization header; the
+    response contains a new token with a reset TTL for the same user.
+    """
+    new_token = _create_token(user_id)
+    return AuthResponse(token=new_token, user_id=user_id)
