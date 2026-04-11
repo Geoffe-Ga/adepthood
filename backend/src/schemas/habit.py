@@ -5,11 +5,15 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from schemas.goal import Goal
 
 NOTIFICATION_FREQUENCY = Literal["daily", "weekly", "custom", "off"]
+
+HABIT_NAME_MAX_LENGTH = 255
+HABIT_ICON_MAX_LENGTH = 100
+HABIT_STAGE_MAX_LENGTH = 100
 
 
 class Habit(BaseModel):
@@ -48,8 +52,8 @@ class HabitCreate(BaseModel):
     authenticated user's token so clients cannot impersonate other users.
     """
 
-    name: str
-    icon: str
+    name: str = Field(min_length=1, max_length=HABIT_NAME_MAX_LENGTH)
+    icon: str = Field(max_length=HABIT_ICON_MAX_LENGTH)
     start_date: date
     energy_cost: int
     energy_return: int
@@ -58,4 +62,4 @@ class HabitCreate(BaseModel):
     notification_days: list[str] | None = None
     milestone_notifications: bool = False
     sort_order: int | None = None
-    stage: str = ""
+    stage: str = Field(default="", max_length=HABIT_STAGE_MAX_LENGTH)
