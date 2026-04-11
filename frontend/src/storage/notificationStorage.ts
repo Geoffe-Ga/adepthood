@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 
 const KEY_PREFIX = '@adepthood/notifications';
 const PUSH_TOKEN_KEY = '@adepthood/push_token';
@@ -41,12 +42,12 @@ export async function loadAllNotificationMappings(): Promise<Record<number, stri
 }
 
 export async function savePushToken(token: string): Promise<void> {
-  await AsyncStorage.setItem(PUSH_TOKEN_KEY, token);
+  await SecureStore.setItemAsync(PUSH_TOKEN_KEY, token);
 }
 
 export async function loadPushToken(): Promise<string | null> {
   try {
-    return await AsyncStorage.getItem(PUSH_TOKEN_KEY);
+    return await SecureStore.getItemAsync(PUSH_TOKEN_KEY);
   } catch {
     return null;
   }
