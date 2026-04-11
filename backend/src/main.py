@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -82,11 +83,13 @@ def get_cors_origins(env: str | None = None) -> list[str]:
     return _parse_prod_origins()
 
 
-def _rate_limit_exceeded_handler(_request: Request, _exc: RateLimitExceeded) -> JSONResponse:
-    """Return a JSON 429 response when the rate limit is exceeded."""
+def _rate_limit_exceeded_handler(_request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """Return a JSON 429 response with Retry-After header when rate limit is exceeded."""
+    retry_after = getattr(exc, "retry_after", 60)
     return JSONResponse(
         status_code=429,
         content={"detail": "rate_limit_exceeded"},
+        headers={"Retry-After": str(retry_after)},
     )
 
 
@@ -127,6 +130,11 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # ty
 
 # Security headers on all responses
 app.add_middleware(SecurityHeadersMiddleware)
+
+# Apply default rate limits to all endpoints (including undecorated ones).
+# Must be added after SecurityHeaders and before CORS so that:
+#   CORS (outermost) → SlowAPI → SecurityHeaders → route handler
+app.add_middleware(SlowAPIMiddleware)
 
 origins = get_cors_origins()
 
