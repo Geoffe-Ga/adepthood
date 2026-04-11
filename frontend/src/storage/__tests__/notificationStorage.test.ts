@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, jest } from '@jest/globals';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 
 import {
   saveNotificationIds,
@@ -16,7 +17,13 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   removeItem: jest.fn(() => Promise.resolve()),
 }));
 
+jest.mock('expo-secure-store', () => ({
+  setItemAsync: jest.fn(() => Promise.resolve()),
+  getItemAsync: jest.fn(() => Promise.resolve(null)),
+}));
+
 const mockAsyncStorage = AsyncStorage as jest.Mocked<typeof AsyncStorage>;
+const mockSecureStore = SecureStore as jest.Mocked<typeof SecureStore>;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -139,9 +146,9 @@ describe('notificationStorage', () => {
   });
 
   describe('savePushToken', () => {
-    test('stores the push token', async () => {
+    test('stores the push token in SecureStore', async () => {
       await savePushToken('ExponentPushToken[abc]');
-      expect(mockAsyncStorage.setItem).toHaveBeenCalledWith(
+      expect(mockSecureStore.setItemAsync).toHaveBeenCalledWith(
         '@adepthood/push_token',
         'ExponentPushToken[abc]',
       );
@@ -154,14 +161,14 @@ describe('notificationStorage', () => {
       expect(result).toBeNull();
     });
 
-    test('returns stored token', async () => {
-      mockAsyncStorage.getItem.mockResolvedValueOnce('ExponentPushToken[abc]');
+    test('returns stored token from SecureStore', async () => {
+      mockSecureStore.getItemAsync.mockResolvedValueOnce('ExponentPushToken[abc]');
       const result = await loadPushToken();
       expect(result).toBe('ExponentPushToken[abc]');
     });
 
     test('returns null on storage error', async () => {
-      mockAsyncStorage.getItem.mockRejectedValueOnce(new Error('storage error'));
+      mockSecureStore.getItemAsync.mockRejectedValueOnce(new Error('storage error'));
       const result = await loadPushToken();
       expect(result).toBeNull();
     });
