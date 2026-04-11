@@ -60,8 +60,7 @@ repos:
       - id: pip-audit
         name: pip-audit (backend dependencies)
         files: ^backend/
-        args: ["-r", "backend/requirements.txt", "--ignore-vuln", "PYSEC-0000"]
-        # If you use Poetry/uv instead of requirements.txt, adjust accordingly.
+        args: ["-r", "backend/requirements.txt"]
 
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0
