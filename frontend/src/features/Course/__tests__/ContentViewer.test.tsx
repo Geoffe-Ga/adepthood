@@ -162,4 +162,40 @@ describe('ContentViewer', () => {
     );
     expect(queryByTestId('reflect-button')).toBeNull();
   });
+
+  it('does not open javascript: URLs', () => {
+    const openURLSpy = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined as any);
+    const item = makeItem({ url: 'javascript:alert(1)' });
+    const { getByTestId } = render(
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+    );
+
+    fireEvent.press(getByTestId('open-url-button'));
+    expect(openURLSpy).not.toHaveBeenCalled();
+    openURLSpy.mockRestore();
+  });
+
+  it('does not open tel: URLs', () => {
+    const openURLSpy = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined as any);
+    const item = makeItem({ url: 'tel:+1234567890' });
+    const { getByTestId } = render(
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+    );
+
+    fireEvent.press(getByTestId('open-url-button'));
+    expect(openURLSpy).not.toHaveBeenCalled();
+    openURLSpy.mockRestore();
+  });
+
+  it('does not open file: URLs', () => {
+    const openURLSpy = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined as any);
+    const item = makeItem({ url: 'file:///etc/passwd' });
+    const { getByTestId } = render(
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+    );
+
+    fireEvent.press(getByTestId('open-url-button'));
+    expect(openURLSpy).not.toHaveBeenCalled();
+    openURLSpy.mockRestore();
+  });
 });
