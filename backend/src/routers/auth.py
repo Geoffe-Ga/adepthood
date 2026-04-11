@@ -167,6 +167,10 @@ async def signup(
         raise bad_request("password_too_short")
     result = await session.execute(select(User).where(User.email == payload.email))
     if result.scalars().first() is not None:
+        # Perform a dummy hash so the response time is indistinguishable from
+        # a real signup (bcrypt takes ~250 ms). Without this, an attacker could
+        # use timing to detect whether the email already exists.
+        _hash_password(payload.password)
         # Return an identical response shape to prevent account enumeration.
         # The dummy token is signed with a random key and will fail validation,
         # so it cannot be used to access the existing account.
