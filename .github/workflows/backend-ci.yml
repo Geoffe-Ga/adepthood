@@ -28,7 +28,7 @@ jobs:
 
       - name: Install backend deps
         run: |
-          uv pip install --system -r backend/requirements.txt
+          uv pip install --system -r backend/requirements-lock.txt
           uv pip install --system -r backend/requirements-dev.txt
           uv pip install --system pre-commit
 
