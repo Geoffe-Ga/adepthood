@@ -390,3 +390,54 @@ async def test_stub_provider_works_without_api_key(
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     result = await generate_response("Hello", [])
     assert "Hello" in result
+
+
+# ── Atomic balance operations (sec-17) ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_atomic_decrement_exactly_one_success_with_balance_1(
+    async_client: AsyncClient,
+    disable_rate_limit: None,  # noqa: ARG001
+) -> None:
+    """With balance=1, only one chat succeeds; subsequent requests get 402."""
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=1)
+
+    # First request succeeds and atomically decrements
+    resp1 = await async_client.post("/journal/chat", json={"message": "First"}, headers=headers)
+    assert resp1.status_code == HTTPStatus.CREATED
+    assert resp1.json()["remaining_balance"] == 0
+
+    # All subsequent requests fail — balance was atomically consumed
+    for _ in range(3):
+        resp = await async_client.post(
+            "/journal/chat", json={"message": "Too late"}, headers=headers
+        )
+        assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED
+
+    # Confirm balance is exactly 0
+    resp = await async_client.get("/user/balance", headers=headers)
+    assert resp.json()["balance"] == 0
+
+
+@pytest.mark.asyncio
+async def test_balance_never_goes_negative(
+    async_client: AsyncClient,
+    disable_rate_limit: None,  # noqa: ARG001
+) -> None:
+    """Balance cannot be driven below zero — sequential exhaustion."""
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=3)
+
+    success_count = 0
+    for _ in range(6):
+        resp = await async_client.post("/journal/chat", json={"message": "Hello"}, headers=headers)
+        if resp.status_code == HTTPStatus.CREATED:
+            success_count += 1
+
+    assert success_count == 3  # noqa: PLR2004
+
+    # Verify balance is exactly zero, not negative
+    resp = await async_client.get("/user/balance", headers=headers)
+    assert resp.json()["balance"] == 0

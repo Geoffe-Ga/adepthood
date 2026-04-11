@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from fastapi import APIRouter, Depends, Request, status
+from sqlalchemy import update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -47,17 +51,25 @@ async def chat_with_botmason(
 ) -> ChatResponse:
     """Send a message to BotMason and receive an AI response.
 
-    1. Check offering_balance > 0
+    1. Atomically deduct 1 from offering_balance (prevents TOCTOU race)
     2. Store user's message as JournalEntry(sender='user')
     3. Load recent conversation history
     4. Call BotMason AI service
     5. Store bot's response as JournalEntry(sender='bot')
-    6. Deduct 1 from offering_balance
-    7. Return bot's response + remaining balance
+    6. Return bot's response + remaining balance
     """
-    user = await _get_user(current_user, session)
-
-    if user.offering_balance <= 0:
+    # Atomic decrement: single UPDATE that checks and deducts in one statement.
+    # This eliminates the TOCTOU race window where concurrent requests could
+    # all pass a balance > 0 check before any commit the decrement.
+    deduct_result = cast(
+        CursorResult[Any],
+        await session.execute(
+            update(User)
+            .where(col(User.id) == current_user, col(User.offering_balance) > 0)
+            .values(offering_balance=col(User.offering_balance) - 1)
+        ),
+    )
+    if deduct_result.rowcount == 0:
         raise payment_required("insufficient_offerings")
 
     # Store user's message
@@ -86,13 +98,11 @@ async def chat_with_botmason(
     bot_entry = JournalEntry(sender="bot", user_id=current_user, message=bot_text)
     session.add(bot_entry)
 
-    # Deduct offering
-    user.offering_balance -= 1
-    session.add(user)
-
     await session.commit()
     await session.refresh(bot_entry)
-    await session.refresh(user)
+
+    # Fetch updated balance for the response
+    user = await _get_user(current_user, session)
 
     return ChatResponse(
         response=bot_text,
@@ -123,10 +133,20 @@ async def add_balance(
     if payload.amount <= 0:
         raise bad_request("amount_must_be_positive")
 
-    user = await _get_user(current_user, session)
-    user.offering_balance += payload.amount
-    session.add(user)
-    await session.commit()
-    await session.refresh(user)
+    # Atomic increment: single UPDATE prevents lost updates from concurrent calls
+    add_result = cast(
+        CursorResult[Any],
+        await session.execute(
+            update(User)
+            .where(col(User.id) == current_user)
+            .values(offering_balance=col(User.offering_balance) + payload.amount)
+        ),
+    )
+    if add_result.rowcount == 0:
+        raise bad_request("user_not_found")
 
+    await session.commit()
+
+    # Fetch updated balance for the response
+    user = await _get_user(current_user, session)
     return BalanceAddResponse(balance=user.offering_balance, added=payload.amount)
