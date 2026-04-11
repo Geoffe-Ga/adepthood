@@ -55,7 +55,7 @@ describe('date utilities', () => {
 
 describe('DatePicker component', () => {
   beforeAll(() => {
-    jest.useFakeTimers().setSystemTime(new Date('2025-06-15'));
+    jest.useFakeTimers().setSystemTime(new Date('2025-06-15T12:00:00'));
   });
   afterAll(() => {
     jest.useRealTimers();

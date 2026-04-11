@@ -31,6 +31,7 @@
     "react-native-screens": "~4.4.0",
     "react-native-svg": "15.8.0",
     "react-native-web": "~0.19.13",
+    "styleq": "0.1.3",
     "uuid": "^13.0.0",
     "zustand": "^5.0.12"
   },
@@ -70,6 +71,7 @@
     "lint": "eslint . --max-warnings=0",
     "start": "expo start",
     "web": "expo start --web",
+    "web:build": "expo export --platform web",
     "test": "jest --passWithNoTests",
     "complexity": "eslint . --format json | node -e \"const r=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const msgs=r.flatMap(f=>f.messages.filter(m=>['complexity','sonarjs/cognitive-complexity'].includes(m.ruleId)).map(m=>({file:f.filePath,line:m.line,rule:m.ruleId,msg:m.message})));console.table(msgs);console.log('Total complexity warnings:',msgs.length)\""
   },
