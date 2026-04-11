@@ -1,7 +1,9 @@
-"""Tests for sec-03: input length constraints on user-facing string fields.
+"""Tests for input length constraints on user-facing string fields.
 
 Verifies that oversized payloads are rejected with 422 and that fields
 requiring non-empty input reject empty/whitespace-only strings.
+
+Covers sec-03 (journal, chat, practice, prompt) and sec-15 (habit, goal_group).
 """
 
 from __future__ import annotations
@@ -14,6 +16,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.practice import Practice
 from schemas.botmason import CHAT_MESSAGE_MAX_LENGTH
+from schemas.goal_group import (
+    GOAL_GROUP_DESCRIPTION_MAX_LENGTH,
+    GOAL_GROUP_ICON_MAX_LENGTH,
+    GOAL_GROUP_NAME_MAX_LENGTH,
+    GOAL_GROUP_SOURCE_MAX_LENGTH,
+)
+from schemas.habit import (
+    HABIT_ICON_MAX_LENGTH,
+    HABIT_NAME_MAX_LENGTH,
+    HABIT_STAGE_MAX_LENGTH,
+)
 from schemas.journal import JOURNAL_MESSAGE_MAX_LENGTH
 from schemas.practice import (
     PRACTICE_DESCRIPTION_MAX_LENGTH,
@@ -259,4 +272,126 @@ async def test_prompt_response_empty_returns_422(async_client: AsyncClient) -> N
         json={"response": ""},
         headers=headers,
     )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+# ── Habit creation length constraints ─────────────────────────────────
+
+
+def _habit_payload(**overrides: object) -> dict[str, object]:
+    """Return a valid habit creation payload."""
+    payload: dict[str, object] = {
+        "name": "Morning Run",
+        "icon": "🏃",
+        "start_date": "2025-01-01",
+        "energy_cost": 3,
+        "energy_return": 5,
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_habit_name_at_max_length(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    payload = _habit_payload(name="a" * HABIT_NAME_MAX_LENGTH)
+    resp = await async_client.post("/habits/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["name"] == "a" * HABIT_NAME_MAX_LENGTH
+
+
+@pytest.mark.asyncio
+async def test_habit_name_over_max_length_returns_422(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    payload = _habit_payload(name="a" * (HABIT_NAME_MAX_LENGTH + 1))
+    resp = await async_client.post("/habits/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_habit_name_empty_returns_422(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    payload = _habit_payload(name="")
+    resp = await async_client.post("/habits/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_habit_icon_over_max_length_returns_422(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    payload = _habit_payload(icon="a" * (HABIT_ICON_MAX_LENGTH + 1))
+    resp = await async_client.post("/habits/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_habit_stage_over_max_length_returns_422(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    payload = _habit_payload(stage="a" * (HABIT_STAGE_MAX_LENGTH + 1))
+    resp = await async_client.post("/habits/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+# ── GoalGroup creation length constraints ─────────────────────────────
+
+
+def _goal_group_payload(**overrides: object) -> dict[str, object]:
+    """Return a valid goal group creation payload."""
+    payload: dict[str, object] = {
+        "name": "Meditation Goals",
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_goal_group_name_at_max_length(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    payload = _goal_group_payload(name="a" * GOAL_GROUP_NAME_MAX_LENGTH)
+    resp = await async_client.post("/goal-groups/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.CREATED
+    assert resp.json()["name"] == "a" * GOAL_GROUP_NAME_MAX_LENGTH
+
+
+@pytest.mark.asyncio
+async def test_goal_group_name_over_max_length_returns_422(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    payload = _goal_group_payload(name="a" * (GOAL_GROUP_NAME_MAX_LENGTH + 1))
+    resp = await async_client.post("/goal-groups/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_goal_group_name_empty_returns_422(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    payload = _goal_group_payload(name="")
+    resp = await async_client.post("/goal-groups/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_goal_group_icon_over_max_length_returns_422(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    payload = _goal_group_payload(icon="a" * (GOAL_GROUP_ICON_MAX_LENGTH + 1))
+    resp = await async_client.post("/goal-groups/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_goal_group_description_over_max_length_returns_422(
+    async_client: AsyncClient,
+) -> None:
+    headers = await _signup(async_client)
+    payload = _goal_group_payload(description="a" * (GOAL_GROUP_DESCRIPTION_MAX_LENGTH + 1))
+    resp = await async_client.post("/goal-groups/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_goal_group_source_over_max_length_returns_422(
+    async_client: AsyncClient,
+) -> None:
+    headers = await _signup(async_client)
+    payload = _goal_group_payload(source="a" * (GOAL_GROUP_SOURCE_MAX_LENGTH + 1))
+    resp = await async_client.post("/goal-groups/", json=payload, headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY

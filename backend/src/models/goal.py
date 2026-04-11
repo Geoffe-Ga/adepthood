@@ -30,7 +30,7 @@ class Goal(SQLModel, table=True):
     habit_id: int = Field(foreign_key="habit.id")
     title: str = Field(max_length=255)
     description: str | None = Field(default=None, max_length=2_000)
-    tier: str  # "low", "clear", "stretch"
+    tier: str = Field(max_length=50)  # "low", "clear", "stretch"
     target: float
     target_unit: str = Field(max_length=50)  # "minutes", "reps", etc.
     frequency: float  # e.g. 2.0 = 2x per frequency_unit
@@ -41,7 +41,7 @@ class Goal(SQLModel, table=True):
     )
     track_with_timer: bool = False
     timer_duration_minutes: int | None = None
-    origin: str | None = None
+    origin: str | None = Field(default=None, max_length=255)
     goal_group_id: int | None = Field(default=None, foreign_key="goalgroup.id")
     goal_group: Optional["GoalGroup"] = Relationship(back_populates="goals")
     is_additive: bool = True
