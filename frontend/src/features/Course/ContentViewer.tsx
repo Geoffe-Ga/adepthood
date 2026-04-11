@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { ActivityIndicator, Linking, Text, TouchableOpacity, View } from 'react-native';
 
 import { course as courseApi, type ContentItem } from '../../api';
+import { isValidUrl } from '../../utils/url';
 
 import styles from './Course.styles';
 
@@ -102,7 +103,7 @@ const ContentViewer = ({
   }, [isRead, marking, item.id, onMarkRead]);
 
   const handleOpenUrl = useCallback(async () => {
-    if (!item.url) return;
+    if (!item.url || !isValidUrl(item.url)) return;
     try {
       await Linking.openURL(item.url);
     } catch (err) {
