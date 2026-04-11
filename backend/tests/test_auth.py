@@ -44,6 +44,60 @@ async def _fail_login(
     )
 
 
+# ── Email validation ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_email",
+    [
+        "not-an-email",
+        "missing-at-sign.com",
+        "@no-local-part.com",
+        "spaces in@email.com",
+        "",
+        "   ",
+    ],
+    ids=[
+        "plain-string",
+        "no-at-sign",
+        "no-local-part",
+        "spaces-in-local",
+        "empty-string",
+        "whitespace-only",
+    ],
+)
+async def test_signup_rejects_malformed_email(
+    async_client: AsyncClient,
+    bad_email: str,
+) -> None:
+    resp = await async_client.post(
+        SIGNUP_URL,
+        json={"email": bad_email, "password": "securepassword123"},  # pragma: allowlist secret
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_email",
+    [
+        "not-an-email",
+        "",
+    ],
+    ids=["plain-string", "empty-string"],
+)
+async def test_login_rejects_malformed_email(
+    async_client: AsyncClient,
+    bad_email: str,
+) -> None:
+    resp = await async_client.post(
+        LOGIN_URL,
+        json={"email": bad_email, "password": "securepassword123"},  # pragma: allowlist secret
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
 # ── Signup ──────────────────────────────────────────────────────────────
 
 

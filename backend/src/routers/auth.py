@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 import bcrypt
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -48,7 +48,7 @@ def _get_secret_key() -> str:
 
 
 class AuthRequest(BaseModel):
-    email: str
+    email: EmailStr
     password: str
 
 
