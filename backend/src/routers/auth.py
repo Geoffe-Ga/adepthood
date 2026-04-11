@@ -228,18 +228,23 @@ async def login(
 
 
 def get_current_user(authorization: str | None = Header(default=None)) -> int:
+    """Extract and validate the JWT from the Authorization header.
+
+    All rejection scenarios return an identical 401 with detail="unauthorized"
+    to prevent attackers from distinguishing token states (OWASP A07:2021,
+    sec-04). The specific reason is logged server-side for debugging.
+    """
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing_token")
+        logger.info("token_rejected", extra={"reason": "missing_or_malformed_header"})
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
     token = authorization.split(" ", 1)[1]
     try:
         payload = jwt.decode(token, _get_secret_key(), algorithms=[_JWT_ALGORITHM])
-    except jwt.ExpiredSignatureError as exc:
+    except jwt.PyJWTError as exc:
+        reason = "expired" if isinstance(exc, jwt.ExpiredSignatureError) else "invalid"
+        logger.info("token_rejected", extra={"reason": reason})
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="expired_token"
-        ) from exc
-    except jwt.InvalidTokenError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_token"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized"
         ) from exc
     user_id = int(payload["sub"])
     return user_id

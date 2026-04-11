@@ -247,20 +247,22 @@ async def test_valid_token_accesses_protected_endpoint(async_client: AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_missing_token_returns_401(async_client: AsyncClient) -> None:
+async def test_missing_token_returns_401_unauthorized(async_client: AsyncClient) -> None:
     resp = await async_client.get("/habits/")
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
+    assert resp.json()["detail"] == "unauthorized"
 
 
 @pytest.mark.asyncio
-async def test_invalid_token_returns_401(async_client: AsyncClient) -> None:
+async def test_invalid_token_returns_401_unauthorized(async_client: AsyncClient) -> None:
     headers = {"Authorization": "Bearer badtoken"}  # pragma: allowlist secret
     resp = await async_client.get("/habits/", headers=headers)
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
+    assert resp.json()["detail"] == "unauthorized"
 
 
 @pytest.mark.asyncio
-async def test_expired_token_returns_401(async_client: AsyncClient) -> None:
+async def test_expired_token_returns_401_unauthorized(async_client: AsyncClient) -> None:
     data = await _signup(async_client)
     user_id = data["user_id"]
     # Create an already-expired JWT
@@ -273,6 +275,41 @@ async def test_expired_token_returns_401(async_client: AsyncClient) -> None:
     headers = {"Authorization": f"Bearer {expired_token}"}
     resp = await async_client.get("/habits/", headers=headers)
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
+    assert resp.json()["detail"] == "unauthorized"
+
+
+@pytest.mark.asyncio
+async def test_all_token_errors_return_identical_response(async_client: AsyncClient) -> None:
+    """All token rejection scenarios must return the same detail to prevent
+    information leakage about token state (sec-04)."""
+    data = await _signup(async_client)
+    user_id = data["user_id"]
+
+    # Missing token
+    missing_resp = await async_client.get("/habits/")
+
+    # Invalid token
+    invalid_resp = await async_client.get(
+        "/habits/",
+        headers={"Authorization": "Bearer badtoken"},  # pragma: allowlist secret
+    )
+
+    # Expired token
+    expired_payload = {"sub": str(user_id), "exp": 0, "iat": 0}
+    expired_token = jwt.encode(expired_payload, SECRET_KEY, algorithm="HS256")
+    expired_resp = await async_client.get(
+        "/habits/", headers={"Authorization": f"Bearer {expired_token}"}
+    )
+
+    # Malformed Authorization header (no "Bearer " prefix)
+    no_prefix_resp = await async_client.get(
+        "/habits/", headers={"Authorization": "NotBearer sometoken"}
+    )
+
+    # All must return identical status + detail
+    for resp in (missing_resp, invalid_resp, expired_resp, no_prefix_resp):
+        assert resp.status_code == HTTPStatus.UNAUTHORIZED
+        assert resp.json()["detail"] == "unauthorized"
 
 
 # ── Full flow ───────────────────────────────────────────────────────────
