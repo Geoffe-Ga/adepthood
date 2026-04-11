@@ -579,3 +579,98 @@ async def test_signup_rate_limit_returns_429(async_client: AsyncClient) -> None:
     )
     assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
     assert resp.json()["detail"] == "rate_limit_exceeded"
+
+
+# ── Token refresh ─────────────────────────────────────────────────────
+
+REFRESH_URL = "/auth/refresh"
+
+
+@pytest.mark.asyncio
+async def test_refresh_returns_new_token(async_client: AsyncClient) -> None:
+    """A valid token can be exchanged for a fresh one with a reset TTL."""
+    data = await _signup(async_client)
+    headers = {"Authorization": f"Bearer {data['token']}"}
+
+    resp = await async_client.post(REFRESH_URL, headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert "token" in body
+    assert "user_id" in body
+
+    # Decode the refreshed token and verify its expiration is in the future
+    decoded = jwt.decode(body["token"], SECRET_KEY, algorithms=["HS256"])
+    assert int(decoded["sub"]) == data["user_id"]
+    assert decoded["exp"] > datetime.now(UTC).timestamp()
+
+
+@pytest.mark.asyncio
+async def test_refresh_token_is_valid(async_client: AsyncClient) -> None:
+    """The token returned by /auth/refresh grants access to protected endpoints."""
+    data = await _signup(async_client)
+    headers = {"Authorization": f"Bearer {data['token']}"}
+
+    resp = await async_client.post(REFRESH_URL, headers=headers)
+    new_token = resp.json()["token"]
+
+    protected_resp = await async_client.get(
+        "/habits/", headers={"Authorization": f"Bearer {new_token}"}
+    )
+    assert protected_resp.status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+async def test_refresh_preserves_user_id(async_client: AsyncClient) -> None:
+    """The refreshed token maps to the same user."""
+    data = await _signup(async_client)
+    headers = {"Authorization": f"Bearer {data['token']}"}
+
+    resp = await async_client.post(REFRESH_URL, headers=headers)
+    body = resp.json()
+    assert body["user_id"] == data["user_id"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_without_token_returns_401(async_client: AsyncClient) -> None:
+    """Refresh without Authorization header returns 401."""
+    resp = await async_client.post(REFRESH_URL)
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_refresh_with_expired_token_returns_401(async_client: AsyncClient) -> None:
+    """An expired token cannot be refreshed."""
+    data = await _signup(async_client)
+    expired_payload = {
+        "sub": str(data["user_id"]),
+        "exp": 0,
+        "iat": 0,
+    }
+    expired_token = jwt.encode(expired_payload, SECRET_KEY, algorithm="HS256")
+    headers = {"Authorization": f"Bearer {expired_token}"}
+
+    resp = await async_client.post(REFRESH_URL, headers=headers)
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_refresh_with_invalid_token_returns_401(async_client: AsyncClient) -> None:
+    """A garbage token cannot be refreshed."""
+    headers = {"Authorization": "Bearer not-a-real-token"}  # pragma: allowlist secret
+    resp = await async_client.post(REFRESH_URL, headers=headers)
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_refresh_rate_limit_returns_429(async_client: AsyncClient) -> None:
+    """Refresh endpoint returns 429 after exceeding 1 request/minute."""
+    data = await _signup(async_client)
+    headers = {"Authorization": f"Bearer {data['token']}"}
+
+    # First request should succeed
+    resp = await async_client.post(REFRESH_URL, headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+
+    # Second request within the same minute should be rate-limited
+    resp = await async_client.post(REFRESH_URL, headers=headers)
+    assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS

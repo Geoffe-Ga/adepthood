@@ -23,6 +23,7 @@ export class ApiError extends Error {
 
 let tokenGetter: (() => string | null) | null = null;
 let onUnauthorizedCallback: (() => void) | null = null;
+let onTokenRefreshedCallback: ((token: string) => void) | null = null;
 
 export function setTokenGetter(getter: (() => string | null) | null) {
   tokenGetter = getter;
@@ -30,6 +31,10 @@ export function setTokenGetter(getter: (() => string | null) | null) {
 
 export function setOnUnauthorized(callback: (() => void) | null) {
   onUnauthorizedCallback = callback;
+}
+
+export function setOnTokenRefreshed(callback: ((token: string) => void) | null) {
+  onTokenRefreshedCallback = callback;
 }
 
 interface RequestOptions {
@@ -88,21 +93,85 @@ async function extractErrorDetail(res: Response): Promise<string> {
   return 'Request failed';
 }
 
-function handleUnauthorized(status: number): void {
-  if (status === 401 && onUnauthorizedCallback) {
-    onUnauthorizedCallback();
-  }
-}
-
 async function handleErrorResponse(res: Response): Promise<never> {
   const detail = await extractErrorDetail(res);
-  handleUnauthorized(res.status);
   throw new ApiError(res.status, detail);
 }
 
 async function parseResponse<T>(res: Response): Promise<T> {
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
+}
+
+/**
+ * Try to refresh the current token. Returns the new token on success, or
+ * null if the refresh itself fails (e.g. the token is fully expired).
+ */
+async function attemptTokenRefresh(): Promise<string | null> {
+  const currentToken = tokenGetter?.();
+  if (!currentToken) return null;
+
+  try {
+    const refreshRes = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${currentToken}` },
+    });
+    if (!refreshRes.ok) return null;
+    const data = (await refreshRes.json()) as AuthResponse;
+    onTokenRefreshedCallback?.(data.token);
+    return data.token;
+  } catch {
+    return null;
+  }
+}
+
+function doFetch(url: string, init: RequestInit | undefined): Promise<Response> {
+  return init ? fetch(url, init) : fetch(url);
+}
+
+/**
+ * Attempt a token refresh and retry the original request once. Returns the
+ * parsed response on success, or null if refresh/retry is not applicable.
+ */
+async function retryWithRefresh<T>(
+  url: string,
+  method: string,
+  body: unknown,
+  extraHeaders: Record<string, string> | undefined,
+): Promise<T | null> {
+  const newToken = await attemptTokenRefresh();
+  if (!newToken) {
+    onUnauthorizedCallback?.();
+    return null;
+  }
+  const retryHeaders = buildHeaders(newToken, body, extraHeaders);
+  const retryInit = buildFetchInit(method, body, retryHeaders);
+  const retryRes = await doFetch(url, retryInit);
+  if (!retryRes.ok) {
+    if (retryRes.status === 401) onUnauthorizedCallback?.();
+    return handleErrorResponse(retryRes);
+  }
+  return parseResponse<T>(retryRes);
+}
+
+async function handleUnauthorizedRetry<T>(
+  path: string,
+  token: string | undefined,
+  url: string,
+  method: string,
+  body: unknown,
+  extraHeaders: Record<string, string> | undefined,
+): Promise<T | null> {
+  const isAuthPath = path.startsWith('/auth/');
+  if (isAuthPath) return null;
+
+  if (!token) {
+    const retried = await retryWithRefresh<T>(url, method, body, extraHeaders);
+    if (retried !== null) return retried;
+  } else {
+    onUnauthorizedCallback?.();
+  }
+  return null;
 }
 
 async function request<T>(
@@ -113,8 +182,22 @@ async function request<T>(
   const headers = buildHeaders(resolved, body, extraHeaders);
   const init = buildFetchInit(method, body, headers);
   const url = `${API_BASE_URL}${path}`;
-  const res = init ? await fetch(url, init) : await fetch(url);
-  if (!res.ok) return handleErrorResponse(res);
+  const res = await doFetch(url, init);
+
+  if (!res.ok) {
+    if (res.status === 401) {
+      const retried = await handleUnauthorizedRetry<T>(
+        path,
+        token,
+        url,
+        method,
+        body,
+        extraHeaders,
+      );
+      if (retried !== null) return retried;
+    }
+    return handleErrorResponse(res);
+  }
   return parseResponse<T>(res);
 }
 
@@ -638,6 +721,12 @@ export const auth = {
       body: credentials,
     });
   },
+  refresh(token: string): Promise<AuthResponse> {
+    return request<AuthResponse>('/auth/refresh', {
+      method: 'POST',
+      token,
+    });
+  },
 };
 
 // Energy plan client
@@ -667,4 +756,5 @@ export default {
   energy,
   setTokenGetter,
   setOnUnauthorized,
+  setOnTokenRefreshed,
 };
