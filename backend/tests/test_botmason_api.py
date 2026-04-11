@@ -8,6 +8,7 @@ from http import HTTPStatus
 import pytest
 from httpx import AsyncClient
 
+import services.botmason as botmason_mod
 from services.botmason import generate_response, get_system_prompt
 
 
@@ -229,8 +230,105 @@ async def test_system_prompt_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_system_prompt_from_file(monkeypatch: pytest.MonkeyPatch, tmp_path: object) -> None:
-    prompt_file = pathlib.Path(str(tmp_path)) / "prompt.txt"
+    """Valid prompt file inside the allowed directory is loaded."""
+    allowed_dir = pathlib.Path(str(tmp_path)) / "prompts"
+    allowed_dir.mkdir()
+    prompt_file = allowed_dir / "prompt.txt"
     prompt_file.write_text("File-based system prompt")
+
+    monkeypatch.setattr(botmason_mod, "_ALLOWED_PROMPT_DIR", allowed_dir)
     monkeypatch.setenv("BOTMASON_SYSTEM_PROMPT", str(prompt_file))
     prompt = get_system_prompt()
     assert prompt == "File-based system prompt"
+
+
+# ── Path traversal security tests ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_rejects_path_outside_allowed_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: object,
+) -> None:
+    """File path outside the allowed directory raises RuntimeError."""
+    allowed_dir = pathlib.Path(str(tmp_path)) / "prompts"
+    allowed_dir.mkdir()
+
+    # Create a file outside the allowed dir
+    outside_file = pathlib.Path(str(tmp_path)) / "evil.txt"
+    outside_file.write_text("stolen secrets")
+
+    monkeypatch.setattr(botmason_mod, "_ALLOWED_PROMPT_DIR", allowed_dir)
+    monkeypatch.setenv("BOTMASON_SYSTEM_PROMPT", str(outside_file))
+    with pytest.raises(RuntimeError, match="must be within"):
+        get_system_prompt()
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_rejects_path_traversal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: object,
+) -> None:
+    """Relative traversal paths (../../etc/passwd) are rejected."""
+    allowed_dir = pathlib.Path(str(tmp_path)) / "prompts"
+    allowed_dir.mkdir()
+
+    # Create a file via path traversal that resolves outside allowed dir
+    outside_file = pathlib.Path(str(tmp_path)) / "secret.txt"
+    outside_file.write_text("password data")
+    traversal_path = str(allowed_dir / ".." / "secret.txt")
+
+    monkeypatch.setattr(botmason_mod, "_ALLOWED_PROMPT_DIR", allowed_dir)
+    monkeypatch.setenv("BOTMASON_SYSTEM_PROMPT", traversal_path)
+    with pytest.raises(RuntimeError, match="must be within"):
+        get_system_prompt()
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_rejects_etc_passwd(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: object,
+) -> None:
+    """Absolute paths to sensitive system files are rejected."""
+    allowed_dir = pathlib.Path(str(tmp_path)) / "prompts"
+    allowed_dir.mkdir()
+
+    monkeypatch.setattr(botmason_mod, "_ALLOWED_PROMPT_DIR", allowed_dir)
+    monkeypatch.setenv("BOTMASON_SYSTEM_PROMPT", "/etc/passwd")
+    with pytest.raises(RuntimeError, match="must be within"):
+        get_system_prompt()
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_rejects_oversized_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: object,
+) -> None:
+    """Prompt files larger than the max size limit are rejected."""
+    allowed_dir = pathlib.Path(str(tmp_path)) / "prompts"
+    allowed_dir.mkdir()
+    large_file = allowed_dir / "huge.txt"
+    # Write a file just over the 50KB limit
+    large_file.write_text("x" * (50 * 1024 + 1))
+
+    monkeypatch.setattr(botmason_mod, "_ALLOWED_PROMPT_DIR", allowed_dir)
+    monkeypatch.setenv("BOTMASON_SYSTEM_PROMPT", str(large_file))
+    with pytest.raises(RuntimeError, match="exceeds maximum"):
+        get_system_prompt()
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_allows_file_at_size_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: object,
+) -> None:
+    """Prompt file exactly at the max size limit is accepted."""
+    allowed_dir = pathlib.Path(str(tmp_path)) / "prompts"
+    allowed_dir.mkdir()
+    max_file = allowed_dir / "max.txt"
+    max_file.write_text("x" * (50 * 1024))
+
+    monkeypatch.setattr(botmason_mod, "_ALLOWED_PROMPT_DIR", allowed_dir)
+    monkeypatch.setenv("BOTMASON_SYSTEM_PROMPT", str(max_file))
+    prompt = get_system_prompt()
+    assert len(prompt) == 50 * 1024

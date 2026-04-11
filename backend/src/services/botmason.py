@@ -24,21 +24,50 @@ _DEFAULT_SYSTEM_PROMPT = (
 # Maximum number of recent messages to include as conversation context.
 CONVERSATION_HISTORY_LIMIT = 20
 
+# Only allow prompt files from this directory to prevent path traversal.
+_ALLOWED_PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
+
+# Maximum prompt file size in bytes (50 KB).
+_MAX_PROMPT_FILE_SIZE = 50 * 1024
+
 
 def get_system_prompt() -> str:
     """Load the BotMason system prompt from config.
 
     Checks ``BOTMASON_SYSTEM_PROMPT`` env var first. If it points to a file
-    that exists, the file contents are returned. Otherwise the env var value
-    is used as inline text. Falls back to the built-in default prompt.
+    that exists **within the allowed prompts directory**, the file contents
+    are returned. Otherwise the env var value is used as inline text. Falls
+    back to the built-in default prompt.
+
+    Raises:
+        RuntimeError: If the file path resolves outside the allowed directory
+            or exceeds the maximum file size.
     """
     prompt_config = os.getenv("BOTMASON_SYSTEM_PROMPT", "")
-    if prompt_config:
-        prompt_path = Path(prompt_config)
-        if prompt_path.is_file():
-            return prompt_path.read_text().strip()
-        return prompt_config
-    return _DEFAULT_SYSTEM_PROMPT
+    if not prompt_config:
+        return _DEFAULT_SYSTEM_PROMPT
+
+    prompt_path = Path(prompt_config).resolve()
+    if prompt_path.is_file():
+        # Prevent path traversal — must be within the allowed directory
+        try:
+            prompt_path.relative_to(_ALLOWED_PROMPT_DIR.resolve())
+        except ValueError:
+            msg = f"BOTMASON_SYSTEM_PROMPT path must be within {_ALLOWED_PROMPT_DIR}"
+            raise RuntimeError(msg) from None
+
+        file_size = prompt_path.stat().st_size
+        if file_size > _MAX_PROMPT_FILE_SIZE:
+            msg = (
+                f"BOTMASON_SYSTEM_PROMPT file exceeds maximum size "
+                f"({file_size} > {_MAX_PROMPT_FILE_SIZE} bytes)"
+            )
+            raise RuntimeError(msg)
+
+        return prompt_path.read_text().strip()
+
+    # Treat as inline text
+    return prompt_config
 
 
 def _build_messages(
