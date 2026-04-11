@@ -72,7 +72,17 @@ Agents working on this project must abide by the following operating principles:
 
     - Checking network requests for accurate backend interaction
 
-6. **Respect the Archetypal Wavelength**
+6. **Pin GitHub Actions to Commit SHAs**
+
+  - All `uses:` references in `.github/workflows/` must use full 40-character commit SHAs, not mutable version tags.
+
+  - Include a version comment after the SHA for readability (e.g., `actions/checkout@<sha>  # v4.3.1`).
+
+  - Dependabot is configured (`.github/dependabot.yml`) to propose weekly updates for pinned actions.
+
+  - Never reference an action by tag alone (`@v4`, `@v1`) — tags can be force-pushed, enabling supply chain attacks.
+
+7. **Respect the Archetypal Wavelength**
 
   - Restoration leads to Rising.
 
