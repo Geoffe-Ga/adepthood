@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -10,6 +10,7 @@ from database import get_session
 from errors import bad_request, payment_required
 from models.journal_entry import JournalEntry
 from models.user import User
+from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.botmason import (
     BalanceAddRequest,
@@ -37,7 +38,9 @@ async def _get_user(user_id: int, session: AsyncSession) -> User:
     response_model=ChatResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit("10/minute")
 async def chat_with_botmason(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     payload: ChatRequest,
     current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
@@ -109,7 +112,9 @@ async def get_balance(
 
 
 @router.post("/user/balance/add", response_model=BalanceAddResponse)
+@limiter.limit("5/minute")
 async def add_balance(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     payload: BalanceAddRequest,
     current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
