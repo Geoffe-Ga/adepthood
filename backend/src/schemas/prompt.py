@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+PROMPT_RESPONSE_MAX_LENGTH = 10_000
 
 
 class PromptDetail(BaseModel):
@@ -20,7 +22,7 @@ class PromptDetail(BaseModel):
 class PromptSubmit(BaseModel):
     """Payload for submitting a response to a weekly prompt."""
 
-    response: str
+    response: str = Field(min_length=1, max_length=PROMPT_RESPONSE_MAX_LENGTH)
 
 
 class PromptListResponse(BaseModel):

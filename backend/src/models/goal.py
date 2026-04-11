@@ -28,13 +28,13 @@ class Goal(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     habit_id: int = Field(foreign_key="habit.id")
-    title: str
-    description: str | None = None
+    title: str = Field(max_length=255)
+    description: str | None = Field(default=None, max_length=2_000)
     tier: str  # "low", "clear", "stretch"
     target: float
-    target_unit: str  # "minutes", "reps", etc.
+    target_unit: str = Field(max_length=50)  # "minutes", "reps", etc.
     frequency: float  # e.g. 2.0 = 2x per frequency_unit
-    frequency_unit: str  # "per_day", "per_week"
+    frequency_unit: str = Field(max_length=50)  # "per_day", "per_week"
     days_of_week: list[str] | None = Field(
         default=None,
         sa_column=Column(PG_ARRAY(String), nullable=True),

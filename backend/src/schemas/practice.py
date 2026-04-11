@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+PRACTICE_NAME_MAX_LENGTH = 255
+PRACTICE_DESCRIPTION_MAX_LENGTH = 2_000
+PRACTICE_INSTRUCTIONS_MAX_LENGTH = 10_000
+PRACTICE_REFLECTION_MAX_LENGTH = 5_000
 
 # -- Practice ---------------------------------------------------------------
 
@@ -26,9 +31,9 @@ class PracticeCreate(BaseModel):
     """Payload for submitting a new user-created practice."""
 
     stage_number: int
-    name: str
-    description: str
-    instructions: str
+    name: str = Field(min_length=1, max_length=PRACTICE_NAME_MAX_LENGTH)
+    description: str = Field(max_length=PRACTICE_DESCRIPTION_MAX_LENGTH)
+    instructions: str = Field(max_length=PRACTICE_INSTRUCTIONS_MAX_LENGTH)
     default_duration_minutes: int
 
 
@@ -85,7 +90,7 @@ class PracticeSessionCreate(BaseModel):
 
     user_practice_id: int
     duration_minutes: float
-    reflection: str | None = None
+    reflection: str | None = Field(default=None, max_length=PRACTICE_REFLECTION_MAX_LENGTH)
 
 
 class PracticeSessionResponse(BaseModel):

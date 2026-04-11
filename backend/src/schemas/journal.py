@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from models.journal_entry import JournalTag
+
+JOURNAL_MESSAGE_MAX_LENGTH = 10_000
 
 
 class JournalMessageCreate(BaseModel):
@@ -16,7 +18,7 @@ class JournalMessageCreate(BaseModel):
     impersonate other users or forge bot messages.
     """
 
-    message: str
+    message: str = Field(max_length=JOURNAL_MESSAGE_MAX_LENGTH)
     tag: JournalTag = JournalTag.FREEFORM
     practice_session_id: int | None = None
     user_practice_id: int | None = None
@@ -25,7 +27,7 @@ class JournalMessageCreate(BaseModel):
 class JournalBotMessageCreate(BaseModel):
     """Payload for storing a BotMason response (internal use)."""
 
-    message: str
+    message: str = Field(max_length=JOURNAL_MESSAGE_MAX_LENGTH)
     user_id: int
     tag: JournalTag = JournalTag.FREEFORM
     practice_session_id: int | None = None

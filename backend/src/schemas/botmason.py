@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+CHAT_MESSAGE_MAX_LENGTH = 5_000
 
 
 class ChatRequest(BaseModel):
     """Payload for sending a message to BotMason."""
 
-    message: str
+    message: str = Field(min_length=1, max_length=CHAT_MESSAGE_MAX_LENGTH)
 
 
 class ChatResponse(BaseModel):

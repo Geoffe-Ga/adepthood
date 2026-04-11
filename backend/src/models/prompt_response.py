@@ -15,8 +15,8 @@ class PromptResponse(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     week_number: int
-    question: str
-    response: str
+    question: str = Field(max_length=1_000)
+    response: str = Field(max_length=10_000)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     user_id: int = Field(foreign_key="user.id")
     user: "User" = Relationship(back_populates="responses")
