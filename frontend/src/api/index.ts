@@ -734,7 +734,7 @@ export const practiceSessions = {
 
 // Auth types and client
 export interface AuthRequest {
-  username: string;
+  email: string;
   password: string;
 }
 export interface AuthResponse {

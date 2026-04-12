@@ -114,7 +114,7 @@ describe('AuthContext', () => {
       });
 
       expect(mockAuth.login).toHaveBeenCalledWith({
-        username: 'user@test.com',
+        email: 'user@test.com',
         password: 'password123', // pragma: allowlist secret
       });
       expect(mockSaveToken).toHaveBeenCalledWith('new-jwt');
@@ -150,7 +150,7 @@ describe('AuthContext', () => {
       });
 
       expect(mockAuth.signup).toHaveBeenCalledWith({
-        username: 'new@test.com',
+        email: 'new@test.com',
         password: 'password123', // pragma: allowlist secret
       });
       expect(mockSaveToken).toHaveBeenCalledWith('signup-jwt');
