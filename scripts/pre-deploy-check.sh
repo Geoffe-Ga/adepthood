@@ -19,8 +19,9 @@ pre-commit run --all-files
 echo "  All pre-commit hooks pass"
 
 echo "4. Building Docker image..."
-cd backend
-docker build -t adepthood-backend-check .
+# Build from the repo root — the Dockerfile expects the repo root as the
+# build context (matching Railway's default when dockerfilePath is set).
+docker build -f backend/Dockerfile -t adepthood-backend-check .
 echo "  Docker image builds successfully"
 
 echo ""
