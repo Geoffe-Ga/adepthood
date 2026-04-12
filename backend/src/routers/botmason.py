@@ -10,10 +10,14 @@ overspend either bucket (see ``tests/test_botmason_api.py::test_concurrent_*``).
 
 from __future__ import annotations
 
+import json
 import os
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -38,6 +42,7 @@ from services.botmason import (
     LLM_API_KEY_MAX_LENGTH,
     LLMResponse,
     generate_response,
+    generate_response_stream,
     get_provider,
     provider_requires_api_key,
     validate_llm_api_key_format,
@@ -161,6 +166,24 @@ async def _spend_one_message(
     return None
 
 
+async def _load_conversation_history(session: AsyncSession, user_id: int) -> list[dict[str, str]]:
+    """Return the last ``CONVERSATION_HISTORY_LIMIT`` messages in chronological order.
+
+    Centralising the query keeps the streaming and non-streaming endpoints in
+    sync: if the context window grows later, both inherit the new behaviour
+    without drift.
+    """
+    history_query = (
+        select(JournalEntry)
+        .where(JournalEntry.user_id == user_id)
+        .order_by(col(JournalEntry.id).desc())
+        .limit(CONVERSATION_HISTORY_LIMIT)
+    )
+    result = await session.execute(history_query)
+    entries = list(reversed(result.scalars().all()))
+    return [{"sender": entry.sender, "message": entry.message} for entry in entries]
+
+
 @router.post(
     "/journal/chat",
     response_model=ChatResponse,
@@ -218,19 +241,7 @@ async def chat_with_botmason(
     session.add(user_entry)
     await session.flush()
 
-    # Load recent conversation history for context
-    history_query = (
-        select(JournalEntry)
-        .where(JournalEntry.user_id == current_user)
-        .order_by(col(JournalEntry.id).desc())
-        .limit(CONVERSATION_HISTORY_LIMIT)
-    )
-    result = await session.execute(history_query)
-    history_entries = list(reversed(result.scalars().all()))
-
-    conversation_history = [
-        {"sender": entry.sender, "message": entry.message} for entry in history_entries
-    ]
+    conversation_history = await _load_conversation_history(session, current_user)
 
     # Generate AI response. ``api_key`` is passed by value for a single call
     # and is discarded when this function returns.
@@ -263,6 +274,190 @@ async def chat_with_botmason(
         remaining_messages=remaining_messages,
         monthly_reset_date=user_after.monthly_reset_date,
         bot_entry_id=bot_entry.id,
+    )
+
+
+# Server-Sent Events framing. Keeping the helper here (not in a shared module)
+# because SSE is only used by this router and the shape is tightly coupled to
+# the ChatResponse payload we send on completion.
+
+
+def _sse_event(event: str, data: dict[str, Any]) -> bytes:
+    """Encode a single named Server-Sent Event.
+
+    Each event follows the spec's ``event:``/``data:``/blank-line framing so
+    any standards-compliant client (EventSource or custom fetch reader) can
+    parse the stream without provider-specific shims. ``data`` is JSON-encoded
+    on a single line because multi-line ``data:`` fields would require extra
+    framing on both ends for no gain.
+    """
+    payload = json.dumps(data, separators=(",", ":"))
+    return f"event: {event}\ndata: {payload}\n\n".encode()
+
+
+@router.post("/journal/chat/stream")
+@limiter.limit("10/minute")
+async def chat_with_botmason_stream(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    payload: ChatRequest,
+    current_user: int = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+    x_llm_api_key: str | None = Header(default=None, alias=LLM_API_KEY_HEADER),
+) -> StreamingResponse:
+    """Stream a BotMason response as Server-Sent Events (SSE).
+
+    Emits three event types:
+
+    - ``event: chunk`` — ``{"text": "..."}`` for each incremental token(s)
+    - ``event: complete`` — the full :class:`ChatResponse` payload on success
+    - ``event: error`` — ``{"status": int, "detail": str}`` on provider failure
+
+    Pre-flight validation (auth, API key format, wallet capacity, rate limit)
+    still runs before the stream opens and raises real HTTP errors (400 / 401 /
+    402 / 429) so clients can distinguish "don't even try again" failures from
+    transient mid-stream ones. Once streaming has begun the HTTP status is
+    pinned to 200; any downstream failure is surfaced via an SSE ``error``
+    event followed by a clean close, and no partial state is committed.
+    """
+    # Pre-flight mirrors ``chat_with_botmason`` exactly so the two endpoints
+    # enforce identical auth / wallet / rate-limit semantics — clients can
+    # fall back between them without divergent error handling.
+    api_key = _resolve_api_key_for_chat(x_llm_api_key)
+
+    now = datetime.now(UTC)
+    monthly_cap = get_monthly_cap()
+
+    await _reset_monthly_usage_if_due(session, current_user, now)
+
+    spent = await _spend_one_message(session, current_user, monthly_cap)
+    if spent is None:
+        await _get_user(current_user, session)
+        raise payment_required("insufficient_offerings")
+    monthly_used, new_balance = spent
+    remaining_messages = max(monthly_cap - monthly_used, 0)
+
+    user_entry = JournalEntry(sender="user", user_id=current_user, message=payload.message)
+    session.add(user_entry)
+    await session.flush()
+
+    conversation_history = await _load_conversation_history(session, current_user)
+
+    async def event_stream() -> AsyncIterator[bytes]:
+        """Drive the provider stream and finalise persistence on the last yield.
+
+        Wallet deduction and the user-side JournalEntry are already staged on
+        the session by the pre-flight block. Committing happens here, only
+        after the final LLMResponse is in hand — so a provider failure rolls
+        back the pre-flight work and the user is not charged for an empty
+        stream.
+        """
+        try:
+            final_response = await _forward_provider_stream(
+                payload.message, conversation_history, api_key
+            )
+        except Exception as exc:
+            await session.rollback()
+            yield _sse_event("error", {"status": 502, "detail": "llm_provider_error"})
+            # Re-log nothing further; the rollback discards the wallet deduction
+            # and the user entry so the user can retry without being charged.
+            del exc
+            return
+
+        for chunk in final_response.chunks:
+            yield chunk
+        yield await _finalise_stream_commit(
+            session=session,
+            current_user=current_user,
+            final_response=final_response.response,
+            new_balance=new_balance,
+            remaining_messages=remaining_messages,
+        )
+
+    # ``X-Accel-Buffering: no`` disables proxy buffering so nginx / Railway
+    # forward bytes as soon as they are written. Without it the SSE stream
+    # stalls until the connection closes.
+    headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
+
+
+class _CollectedStream:
+    """Buffered view over a completed provider stream.
+
+    The provider iterator must be drained inside a ``try`` so we can convert
+    any mid-stream exception into a single SSE ``error`` event. That forces
+    us to buffer the chunks and only yield them once the stream finished
+    cleanly. The SSE-side latency is still proportional to the provider's
+    first-token latency in the happy path because the buffer is consumed
+    immediately after it fills.
+    """
+
+    __slots__ = ("chunks", "response")
+
+    def __init__(self, chunks: list[bytes], response: LLMResponse) -> None:
+        self.chunks = chunks
+        self.response = response
+
+
+async def _forward_provider_stream(
+    user_message: str,
+    conversation_history: list[dict[str, str]],
+    api_key: str | None,
+) -> _CollectedStream:
+    """Pull every chunk from the provider and return them as SSE-framed bytes.
+
+    Runs inside the router's try/except so any provider failure (timeout,
+    network error, SDK exception) is translated to a single SSE ``error``
+    event by the caller. Returning only after the stream closes keeps the
+    commit / rollback decision centralised.
+    """
+    final_response: LLMResponse | None = None
+    framed_chunks: list[bytes] = []
+    async for chunk_text, final in generate_response_stream(
+        user_message, conversation_history, api_key=api_key
+    ):
+        if chunk_text:
+            framed_chunks.append(_sse_event("chunk", {"text": chunk_text}))
+        if final is not None:
+            final_response = final
+    if final_response is None:  # pragma: no cover - defensive; stub/providers always yield final
+        msg = "provider stream ended without final response"
+        raise RuntimeError(msg)
+    return _CollectedStream(framed_chunks, final_response)
+
+
+async def _finalise_stream_commit(
+    *,
+    session: AsyncSession,
+    current_user: int,
+    final_response: LLMResponse,
+    new_balance: int,
+    remaining_messages: int,
+) -> bytes:
+    """Persist the bot entry + usage log and encode the terminal SSE event.
+
+    Split out so the main streaming generator stays linear and so this commit
+    path is easy to unit-test in isolation.
+    """
+    bot_entry = JournalEntry(sender="bot", user_id=current_user, message=final_response.text)
+    session.add(bot_entry)
+    await session.flush()
+
+    _record_llm_usage(session, current_user, bot_entry.id, final_response)
+
+    await session.commit()
+    await session.refresh(bot_entry)
+
+    user_after = await _get_user(current_user, session)
+
+    return _sse_event(
+        "complete",
+        {
+            "response": final_response.text,
+            "remaining_balance": new_balance,
+            "remaining_messages": remaining_messages,
+            "monthly_reset_date": user_after.monthly_reset_date.isoformat(),
+            "bot_entry_id": bot_entry.id,
+        },
     )
 
 
