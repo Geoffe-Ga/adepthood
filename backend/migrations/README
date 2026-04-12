@@ -1,0 +1,7 @@
+Alembic migrations live here.
+
+This directory is intentionally tracked in git before Alembic is
+configured so that the Docker build context reliably includes it.
+Once `alembic init migrations` is run, this placeholder can be removed.
+
+See DEPLOYMENT.md ("Database Migrations") for setup instructions.
