@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { API_BASE_URL, validateApiBaseUrl } from '../config';
+import { API_BASE_URL, CONFIG_ERROR, validateApiBaseUrl } from '../config';
 
 const HTTPS_URL = 'https://api.example.com';
 const HTTP_URL = 'http://api.example.com';
@@ -47,6 +47,10 @@ describe('config', () => {
   describe('API_BASE_URL module export', () => {
     it('defaults to http://localhost:8000 in development mode', () => {
       expect(API_BASE_URL).toBe(DEV_DEFAULT);
+    });
+
+    it('does not record a CONFIG_ERROR in development mode', () => {
+      expect(CONFIG_ERROR).toBeNull();
     });
   });
 });
