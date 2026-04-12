@@ -7,6 +7,7 @@ from .goal_completion import GoalCompletion
 from .goal_group import GoalGroup
 from .habit import Habit
 from .journal_entry import JournalEntry
+from .llm_usage_log import LLMUsageLog
 from .login_attempt import LoginAttempt
 from .practice import Practice
 from .practice_session import PracticeSession
@@ -24,6 +25,7 @@ __all__ = [
     "GoalGroup",
     "Habit",
     "JournalEntry",
+    "LLMUsageLog",
     "LoginAttempt",
     "Practice",
     "PracticeSession",

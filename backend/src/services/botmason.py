@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
@@ -38,6 +39,32 @@ LLM_API_KEY_MAX_LENGTH = 256
 # OpenAI, so their check is the more specific ``sk-ant-``.
 _OPENAI_KEY_PREFIX = "sk-"
 _ANTHROPIC_KEY_PREFIX = "sk-ant-"
+
+# Identifier the stub provider reports as its "model" in usage logs.  Kept as a
+# module constant so callers can branch on it without magic strings.
+STUB_MODEL_NAME = "stub"
+
+
+@dataclass(frozen=True, slots=True)
+class LLMResponse:
+    """Response from an LLM provider plus the token counts needed for metering.
+
+    ``text`` is the bot's reply that becomes a :class:`JournalEntry`; every
+    other field is metadata for the usage log.  The stub provider reports
+    zero tokens and the sentinel model :data:`STUB_MODEL_NAME` so downstream
+    accounting can treat it as a free no-op.
+    """
+
+    text: str
+    provider: str
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+
+    @property
+    def total_tokens(self) -> int:
+        """Sum of prompt and completion tokens — always derived, never stored."""
+        return self.prompt_tokens + self.completion_tokens
 
 
 def get_provider() -> str:
@@ -156,7 +183,7 @@ async def generate_response(
     conversation_history: list[dict[str, str]],
     system_prompt: str | None = None,
     api_key: str | None = None,
-) -> str:
+) -> LLMResponse:
     """Generate a BotMason response using the configured LLM provider.
 
     Currently supports the ``BOTMASON_PROVIDER`` env var with values:
@@ -169,6 +196,9 @@ async def generate_response(
     directly (e.g. sourced from a user-supplied header) to override the
     server-side ``LLM_API_KEY`` env var. When ``api_key`` is ``None`` the
     env var is used; the key is never persisted or logged by this layer.
+
+    Returns an :class:`LLMResponse` carrying both the generated text and the
+    token counts needed to log usage downstream.
     """
     resolved_prompt = system_prompt or get_system_prompt()
     provider = get_provider()
@@ -181,11 +211,23 @@ async def generate_response(
     return _stub_response(user_message)
 
 
-def _stub_response(user_message: str) -> str:
-    """Return a deterministic response for development and testing."""
-    return (
+def _stub_response(user_message: str) -> LLMResponse:
+    """Return a deterministic response for development and testing.
+
+    Token counts are zero because no real model is invoked — this keeps the
+    usage log's cost total honest when stub traffic is mixed with production
+    calls during load tests.
+    """
+    text = (
         f'BotMason hears you. You said: "{user_message}" — '
         "Let the Archetypal Wavelength guide your reflection."
+    )
+    return LLMResponse(
+        text=text,
+        provider="stub",
+        model=STUB_MODEL_NAME,
+        prompt_tokens=0,
+        completion_tokens=0,
     )
 
 
@@ -225,23 +267,51 @@ def _resolve_api_key(override: str | None) -> str:
     return _get_llm_api_key()
 
 
+def extract_token_count(source: object, *attrs: str) -> int:
+    """Return the first non-``None`` attribute value coerced to a non-negative int.
+
+    Providers occasionally drop ``usage`` from streaming or error responses.
+    Treating a missing value as zero keeps the usage log append even when
+    upstream returns incomplete metadata — accepting "unknown" costs less
+    than losing the whole observability trail.
+    """
+    if source is None:
+        return 0
+    for attr in attrs:
+        value = getattr(source, attr, None)
+        if value is not None:
+            try:
+                return max(int(value), 0)
+            except (TypeError, ValueError):
+                continue
+    return 0
+
+
 async def _call_openai(
     user_message: str,
     conversation_history: list[dict[str, str]],
     system_prompt: str,
     api_key: str | None = None,
-) -> str:
+) -> LLMResponse:
     """Call the OpenAI chat completions API."""
     key = _resolve_api_key(api_key)
     openai_mod = _import_optional("openai", "OpenAI")
 
     client = openai_mod.AsyncOpenAI(api_key=key)
     messages = _build_messages(user_message, conversation_history, system_prompt)
+    model = os.getenv("LLM_MODEL", "gpt-4o-mini")
     completion = await client.chat.completions.create(
-        model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
+        model=model,
         messages=messages,
     )
-    return str(completion.choices[0].message.content or "")
+    usage = getattr(completion, "usage", None)
+    return LLMResponse(
+        text=str(completion.choices[0].message.content or ""),
+        provider="openai",
+        model=model,
+        prompt_tokens=extract_token_count(usage, "prompt_tokens"),
+        completion_tokens=extract_token_count(usage, "completion_tokens"),
+    )
 
 
 async def _call_anthropic(
@@ -249,7 +319,7 @@ async def _call_anthropic(
     conversation_history: list[dict[str, str]],
     system_prompt: str,
     api_key: str | None = None,
-) -> str:
+) -> LLMResponse:
     """Call the Anthropic messages API."""
     key = _resolve_api_key(api_key)
     anthropic_mod = _import_optional("anthropic", "Anthropic")
@@ -262,11 +332,22 @@ async def _call_anthropic(
         messages_for_api.append({"role": role, "content": entry["message"]})
     messages_for_api.append({"role": "user", "content": user_message})
 
+    model = os.getenv("LLM_MODEL", "claude-sonnet-4-20250514")
     response = await client.messages.create(
-        model=os.getenv("LLM_MODEL", "claude-sonnet-4-20250514"),
+        model=model,
         max_tokens=1024,
         system=system_prompt,
         messages=messages_for_api,
     )
     block = response.content[0]
-    return str(block.text) if hasattr(block, "text") else str(block)
+    text = str(block.text) if hasattr(block, "text") else str(block)
+    usage = getattr(response, "usage", None)
+    return LLMResponse(
+        text=text,
+        provider="anthropic",
+        model=model,
+        # Anthropic exposes ``input_tokens`` / ``output_tokens`` where OpenAI
+        # uses ``prompt_tokens`` / ``completion_tokens``.
+        prompt_tokens=extract_token_count(usage, "input_tokens", "prompt_tokens"),
+        completion_tokens=extract_token_count(usage, "output_tokens", "completion_tokens"),
+    )
