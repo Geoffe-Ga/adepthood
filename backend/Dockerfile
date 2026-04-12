@@ -24,10 +24,20 @@ RUN apt-get update && \
 COPY --from=builder /install /usr/local
 COPY src/ src/
 
-# Copy Alembic config and migrations.
-# The glob (alembic.ini*) is a no-op when the file is absent.
+# Copy Alembic config if present. The trailing glob makes the COPY a no-op
+# when the file is absent, which is the current state (Alembic hasn't been
+# initialized yet).
 COPY alembic.ini* ./
-COPY migrations/ migrations/
+
+# Ensure migrations/ always exists so `alembic upgrade head` has a stable
+# target once Alembic is configured. We create it here rather than COPYing
+# from the build context because BuildKit on some platforms (e.g. Railway)
+# strips directories that contain only hidden files from the context, which
+# causes `COPY migrations/ migrations/` to fail with "/migrations: not found".
+# Once `alembic init migrations` lands real files in backend/migrations/, add:
+#     COPY migrations/ migrations/
+# back to this Dockerfile so the migration files make it into the image.
+RUN mkdir -p migrations
 
 # Create non-root user
 RUN useradd --create-home appuser
