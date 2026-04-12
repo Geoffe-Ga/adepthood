@@ -1,6 +1,10 @@
+# Paths in this file are resolved against Railway's "service root" — which
+# defaults to the repository root even when this config file lives in a
+# subdirectory.  Use the full `backend/...` path so Railway can locate the
+# Dockerfile and pass the correct build context (the repo root) to BuildKit.
 [build]
 builder = "dockerfile"
-dockerfilePath = "Dockerfile"
+dockerfilePath = "backend/Dockerfile"
 watchPatterns = ["backend/**"]
 
 [deploy]
