@@ -36,12 +36,12 @@ COPY backend/src/ src/
 # can resolve those imports at runtime.
 ENV PYTHONPATH=/app/src
 
-# Copy Alembic config (optional — glob is a no-op when the file is absent).
-# Once `alembic init migrations` is run and alembic.ini is committed,
-# add `COPY backend/migrations/ migrations/` below so `alembic upgrade head`
-# can find the revision scripts. Until then, the CMD guards on the
-# presence of alembic.ini and skips migrations entirely.
-COPY backend/alembic.ini* ./
+# Alembic config + migration scripts.  ``alembic upgrade head`` is invoked in
+# the CMD below and applies any pending schema changes on every deploy.
+# migrations/env.py itself reads DATABASE_URL (normalized to the asyncpg
+# driver) and sets ``sqlalchemy.url`` on the Alembic config.
+COPY backend/alembic.ini ./
+COPY backend/migrations/ migrations/
 
 # Create non-root user
 RUN useradd --create-home appuser
@@ -49,7 +49,7 @@ USER appuser
 
 EXPOSE 8000
 
-# Run migrations (when alembic.ini is present) then start the server.
-# We import `main:app` (not `src.main:app`) because PYTHONPATH is set to
-# /app/src; this matches the module layout used in tests.
-CMD ["sh", "-c", "if [ -f alembic.ini ]; then python -m alembic upgrade head; fi && python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2}"]
+# Run migrations then start the server.  We import `main:app` (not
+# `src.main:app`) because PYTHONPATH is set to /app/src; this matches the
+# module layout used in tests.
+CMD ["sh", "-c", "python -m alembic upgrade head && python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2}"]
