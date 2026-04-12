@@ -91,3 +91,33 @@ def disable_rate_limit() -> Generator[None, None, None]:
     limiter.enabled = False
     yield
     limiter.enabled = True
+
+
+@pytest_asyncio.fixture
+async def concurrent_async_client(tmp_path: Path) -> AsyncGenerator[AsyncClient, None]:
+    """HTTP client with per-request sessions for concurrency testing.
+
+    Uses a file-based SQLite database so each request gets its own connection,
+    enabling meaningful concurrency tests with ``asyncio.gather``.
+    """
+    db_url = f"sqlite+aiosqlite:///{tmp_path / 'concurrent.db'}"
+    concurrent_engine = create_async_engine(db_url, echo=False)
+    concurrent_factory = async_sessionmaker(
+        concurrent_engine, class_=AsyncSession, expire_on_commit=False
+    )
+
+    _replace_array_columns()
+    async with concurrent_engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+
+    async def _per_request_session() -> AsyncGenerator[AsyncSession, None]:
+        async with concurrent_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = _per_request_session
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+    app.dependency_overrides.clear()
+    await concurrent_engine.dispose()

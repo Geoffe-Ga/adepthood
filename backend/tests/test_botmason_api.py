@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import pathlib
 from http import HTTPStatus
 
@@ -390,3 +391,98 @@ async def test_stub_provider_works_without_api_key(
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     result = await generate_response("Hello", [])
     assert "Hello" in result
+
+
+# ── Race condition prevention tests (sec-17) ──────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_concurrent_chat_with_balance_one_allows_exactly_one(
+    concurrent_async_client: AsyncClient,
+) -> None:
+    """Concurrent chat requests with balance=1 must yield exactly 1 success (sec-17)."""
+    headers = await _signup(concurrent_async_client)
+    await _add_balance(concurrent_async_client, headers, amount=1)
+
+    # Fire 5 concurrent requests — only 1 should succeed
+    responses = await asyncio.gather(
+        *[
+            concurrent_async_client.post(
+                "/journal/chat", json={"message": f"msg-{i}"}, headers=headers
+            )
+            for i in range(5)
+        ]
+    )
+
+    status_codes = [r.status_code for r in responses]
+    successes = status_codes.count(HTTPStatus.CREATED)
+    failures = status_codes.count(HTTPStatus.PAYMENT_REQUIRED)
+
+    assert successes == 1, f"Expected exactly 1 success, got {successes}"
+    assert failures == 4, f"Expected 4 failures, got {failures}"  # noqa: PLR2004
+
+    # Balance must be exactly 0, never negative
+    balance_resp = await concurrent_async_client.get("/user/balance", headers=headers)
+    assert balance_resp.json()["balance"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_balance_never_negative_after_concurrent_chat(
+    concurrent_async_client: AsyncClient,
+) -> None:
+    """Balance must never go negative, even under concurrent load (sec-17)."""
+    headers = await _signup(concurrent_async_client)
+    await _add_balance(concurrent_async_client, headers, amount=3)
+
+    # Fire 10 concurrent requests with only 3 credits
+    responses = await asyncio.gather(
+        *[
+            concurrent_async_client.post(
+                "/journal/chat", json={"message": f"msg-{i}"}, headers=headers
+            )
+            for i in range(10)
+        ]
+    )
+
+    status_codes = [r.status_code for r in responses]
+    successes = status_codes.count(HTTPStatus.CREATED)
+    failures = status_codes.count(HTTPStatus.PAYMENT_REQUIRED)
+
+    assert successes == 3, f"Expected 3 successes, got {successes}"  # noqa: PLR2004
+    assert failures == 7, f"Expected 7 failures, got {failures}"  # noqa: PLR2004
+
+    # Balance must be exactly 0, never negative
+    balance_resp = await concurrent_async_client.get("/user/balance", headers=headers)
+    assert balance_resp.json()["balance"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_concurrent_balance_additions_are_atomic(
+    concurrent_async_client: AsyncClient,
+) -> None:
+    """Concurrent balance additions must not lose updates (sec-17)."""
+    headers = await _signup(concurrent_async_client)
+
+    # Fire 5 concurrent add-balance requests, each adding 2
+    add_amount = 2
+    num_requests = 5
+    responses = await asyncio.gather(
+        *[
+            concurrent_async_client.post(
+                "/user/balance/add", json={"amount": add_amount}, headers=headers
+            )
+            for _ in range(num_requests)
+        ]
+    )
+
+    # All should succeed
+    for resp in responses:
+        assert resp.status_code == HTTPStatus.OK
+
+    # Final balance should be exactly 10 (5 * 2), no lost updates
+    expected_balance = add_amount * num_requests
+    balance_resp = await concurrent_async_client.get("/user/balance", headers=headers)
+    assert balance_resp.json()["balance"] == expected_balance
