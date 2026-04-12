@@ -1,0 +1,38 @@
+# Dockerfile-specific ignore file.  BuildKit reads `<dockerfile>.dockerignore`
+# from the same directory as the Dockerfile, scoped to that specific build,
+# so these exclusions apply only to the frontend image.
+#
+# Build context is the repo root (Railway's service root when
+# `dockerfilePath = "frontend/Dockerfile"` and no UI Root Directory is set),
+# so all patterns are relative to the repo root.
+
+# Backend tree — not needed for the frontend image
+backend/
+
+# Repo-level directories not needed in the frontend image
+.git/
+.github/
+prompts/
+scripts/
+.venv/
+venv/
+
+# Frontend build/test artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.expo/
+frontend/coverage/
+
+# Test files (anywhere under frontend/)
+frontend/**/__tests__/
+frontend/**/*.test.ts
+frontend/**/*.test.tsx
+
+# Local env files (but keep examples)
+**/.env
+**/.env.*
+!**/.env.example
+
+# Markdown documentation isn't needed at runtime
+*.md
+**/*.md
