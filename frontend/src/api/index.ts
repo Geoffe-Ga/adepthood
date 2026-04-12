@@ -487,6 +487,146 @@ export interface UsageResponse {
   offering_balance: number;
 }
 
+/** Callback bag for ``botmason.chatStream``. */
+export interface ChatStreamCallbacks {
+  /** Called once per ``event: chunk`` frame with the incremental text delta. */
+  onChunk: (_text: string) => void;
+  /** Called once, after the final ``event: complete`` frame, with the full payload. */
+  onComplete: (_response: ChatResponse) => void;
+  /**
+   * Called when the server emits an ``event: error`` frame mid-stream. HTTP-level
+   * failures (401/402/429/etc.) surface as a thrown ``ApiError`` instead so
+   * callers can distinguish "never started" from "failed in flight".
+   */
+  onStreamError: (_error: { status: number; detail: string }) => void;
+}
+
+/**
+ * Raised by ``chatStream`` when the runtime fetch implementation cannot expose
+ * a streaming body (older React Native versions, misbehaving proxies). Callers
+ * should catch this and fall back to the non-streaming ``chat`` endpoint.
+ */
+export class StreamingUnsupportedError extends Error {
+  constructor() {
+    super('streaming_unsupported');
+    this.name = 'StreamingUnsupportedError';
+  }
+}
+
+// Server-Sent Events frame separator (blank line). Extracted as a constant so
+// the parser and splitter stay in lock-step.
+const SSE_FRAME_SEPARATOR = '\n\n';
+const SSE_EVENT_PREFIX = 'event: ';
+const SSE_DATA_PREFIX = 'data: ';
+
+type MinimalReadable = {
+  getReader: () => {
+    read: () => Promise<{ done: boolean; value?: Uint8Array }>;
+    cancel?: () => Promise<void> | void;
+  };
+};
+
+function asReadableStream(body: unknown): MinimalReadable | null {
+  if (body !== null && typeof body === 'object' && 'getReader' in body) {
+    return body as MinimalReadable;
+  }
+  return null;
+}
+
+interface SsePayload {
+  event: string;
+  data: string;
+}
+
+function parseSseFrame(frame: string): SsePayload | null {
+  if (!frame.trim()) return null;
+  let event = '';
+  let data = '';
+  for (const line of frame.split('\n')) {
+    if (line.startsWith(SSE_EVENT_PREFIX)) event = line.slice(SSE_EVENT_PREFIX.length);
+    else if (line.startsWith(SSE_DATA_PREFIX)) data = line.slice(SSE_DATA_PREFIX.length);
+  }
+  if (!event || !data) return null;
+  return { event, data };
+}
+
+function safeJsonParse(raw: string, callbacks: ChatStreamCallbacks): unknown | undefined {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // A malformed frame is treated as a provider-level error rather than a
+    // thrown exception so callers get a consistent failure surface.
+    callbacks.onStreamError({ status: 502, detail: MALFORMED_FRAME_DETAIL });
+    return undefined;
+  }
+}
+
+function dispatchSseFrame(frame: string, callbacks: ChatStreamCallbacks): void {
+  const parsed = parseSseFrame(frame);
+  if (!parsed) return;
+  const payload = safeJsonParse(parsed.data, callbacks);
+  if (payload === undefined) return;
+  if (parsed.event === 'chunk' && typeof (payload as { text?: string }).text === 'string') {
+    callbacks.onChunk((payload as { text: string }).text);
+  } else if (parsed.event === 'complete') {
+    callbacks.onComplete(payload as ChatResponse);
+  } else if (parsed.event === 'error') {
+    callbacks.onStreamError(payload as { status: number; detail: string });
+  }
+}
+
+/** Server-reported detail string when a single SSE frame can't be parsed as JSON. */
+const MALFORMED_FRAME_DETAIL = 'malformed_stream_frame';
+
+async function openChatStream(
+  payload: ChatRequest,
+  options: { token?: string; signal?: AbortSignal },
+): Promise<Response> {
+  const resolvedToken = resolveToken(options.token);
+  const apiKey = llmApiKeyGetter?.() ?? null;
+  const extraHeaders: Record<string, string> = {
+    Accept: 'text/event-stream',
+    ...(apiKey ? { [LLM_API_KEY_HEADER]: apiKey } : {}),
+  };
+  const headers = buildHeaders(resolvedToken, payload, extraHeaders);
+  return fetch(`${API_BASE_URL}/journal/chat/stream`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    headers,
+    signal: options.signal,
+  });
+}
+
+async function readChatStream(
+  readable: MinimalReadable,
+  callbacks: ChatStreamCallbacks,
+): Promise<void> {
+  const reader = readable.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let done = false;
+  while (!done) {
+    const chunk = await reader.read();
+    done = chunk.done;
+    if (chunk.value) buffer += decoder.decode(chunk.value, { stream: true });
+    buffer = drainCompletedFrames(buffer, callbacks);
+  }
+  // Any trailing bytes that arrived without a terminating blank line still
+  // need to be dispatched — servers may elide the final separator.
+  if (buffer.trim()) dispatchSseFrame(buffer, callbacks);
+}
+
+function drainCompletedFrames(buffer: string, callbacks: ChatStreamCallbacks): string {
+  const separatorIndex = buffer.lastIndexOf(SSE_FRAME_SEPARATOR);
+  if (separatorIndex === -1) return buffer;
+  const complete = buffer.slice(0, separatorIndex);
+  const remainder = buffer.slice(separatorIndex + SSE_FRAME_SEPARATOR.length);
+  for (const frame of complete.split(SSE_FRAME_SEPARATOR)) {
+    dispatchSseFrame(frame, callbacks);
+  }
+  return remainder;
+}
+
 export const botmason = {
   chat(payload: ChatRequest, token?: string): Promise<ChatResponse> {
     // The user-owned key (if any) is fetched from the getter at call time
@@ -500,6 +640,32 @@ export const botmason = {
       token,
       headers,
     });
+  },
+  /**
+   * Open an SSE stream against ``/journal/chat/stream`` and dispatch each
+   * event to the supplied callbacks. Returns only once the stream has closed
+   * (either because ``complete`` arrived, an error frame arrived, or the
+   * connection was aborted).
+   *
+   * Error semantics mirror ``chat``: HTTP-level failures raise ``ApiError``
+   * so the caller can distinguish "auth expired" (retry won't help) from
+   * "provider blipped" (retry might). Runtime failures to read the body
+   * raise ``StreamingUnsupportedError`` so callers can seamlessly fall back
+   * to the non-streaming endpoint.
+   */
+  async chatStream(
+    payload: ChatRequest,
+    callbacks: ChatStreamCallbacks,
+    options: { token?: string; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    const res = await openChatStream(payload, options);
+    if (!res.ok) {
+      if (res.status === 401) onUnauthorizedCallback?.();
+      return handleErrorResponse(res);
+    }
+    const readable = asReadableStream(res.body);
+    if (!readable) throw new StreamingUnsupportedError();
+    await readChatStream(readable, callbacks);
   },
   getBalance(token?: string): Promise<BalanceResponse> {
     return request<BalanceResponse>('/user/balance', { token });

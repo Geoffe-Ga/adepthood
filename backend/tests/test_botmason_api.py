@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import pathlib
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from http import HTTPStatus
 from unittest.mock import AsyncMock, patch
@@ -14,6 +15,7 @@ from httpx import AsyncClient
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import routers.botmason as botmason_router_mod
 import services.botmason as botmason_mod
 from models.user import User
 from routers.botmason import LLM_API_KEY_HEADER
@@ -1117,3 +1119,280 @@ def test_compute_next_reset_normalises_naive_input() -> None:
     # mismatched comparisons later.
     result = compute_next_reset(datetime(2026, 6, 15, 12, 0, 0))
     assert result == datetime(2026, 7, 1, tzinfo=UTC)
+
+
+# ── SSE streaming chat (issue #188) ──────────────────────────────────────
+
+
+def _parse_sse_events(body: str) -> list[tuple[str, dict[str, object]]]:
+    """Parse a UTF-8 SSE stream into ``[(event_name, data_dict), ...]`` pairs.
+
+    The standard frames each event with a blank line so we split on the double
+    newline separator, then pick out the ``event:`` and ``data:`` fields.
+    Fields without an ``event:`` header default to the generic ``message`` name
+    but our endpoint always supplies one, so we assert on it.
+    """
+    events: list[tuple[str, dict[str, object]]] = []
+    for raw_frame in body.strip().split("\n\n"):
+        if not raw_frame:
+            continue
+        name = ""
+        payload: dict[str, object] = {}
+        for line in raw_frame.split("\n"):
+            if line.startswith("event: "):
+                name = line.removeprefix("event: ").strip()
+            elif line.startswith("data: "):
+                import json as _json  # noqa: PLC0415 - local import keeps helper self-contained
+
+                payload = _json.loads(line.removeprefix("data: "))
+        events.append((name, payload))
+    return events
+
+
+@pytest.mark.asyncio
+async def test_stream_unauthenticated_returns_401(async_client: AsyncClient) -> None:
+    resp = await async_client.post("/journal/chat/stream", json={"message": "Hi"})
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_stream_with_zero_balance_returns_402(async_client: AsyncClient) -> None:
+    """Pre-flight wallet check must 402 *before* any SSE bytes go out."""
+    headers = await _signup(async_client)
+    resp = await async_client.post("/journal/chat/stream", json={"message": "Hi"}, headers=headers)
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED
+    assert resp.json()["detail"] == "insufficient_offerings"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_stream_emits_chunks_then_complete(async_client: AsyncClient) -> None:
+    """Happy path: one or more ``chunk`` events followed by a single ``complete``."""
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=2)
+
+    resp = await async_client.post(
+        "/journal/chat/stream", json={"message": "Guide me"}, headers=headers
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.headers["content-type"].startswith("text/event-stream")
+
+    events = _parse_sse_events(resp.text)
+    event_names = [name for name, _ in events]
+    assert event_names[-1] == "complete"
+    assert "chunk" in event_names
+
+    # Reassembling the chunk texts must equal the final response.
+    chunk_text = "".join(str(data["text"]) for name, data in events if name == "chunk")
+    complete_payload = next(data for name, data in events if name == "complete")
+    assert chunk_text == complete_payload["response"]
+    assert complete_payload["remaining_balance"] == 1
+    assert complete_payload["bot_entry_id"] is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_stream_persists_user_and_bot_messages(async_client: AsyncClient) -> None:
+    """After a successful stream both the user and bot entries are in the journal."""
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=1)
+
+    await async_client.post(
+        "/journal/chat/stream", json={"message": "Tell me a secret"}, headers=headers
+    )
+
+    listing = await async_client.get("/journal/", headers=headers)
+    items = listing.json()["items"]
+    senders = {item["sender"] for item in items}
+    assert senders == {"user", "bot"}
+    user_msgs = [item for item in items if item["sender"] == "user"]
+    assert user_msgs[0]["message"] == "Tell me a secret"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_stream_deducts_balance_once(async_client: AsyncClient) -> None:
+    """One stream costs exactly one wallet unit — same as the non-streaming path."""
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=3)
+
+    await async_client.post("/journal/chat/stream", json={"message": "Hello"}, headers=headers)
+    balance = await async_client.get("/user/balance", headers=headers)
+    assert balance.json()["balance"] == 2  # noqa: PLR2004
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_stream_provider_error_emits_error_event_and_rolls_back(
+    async_client: AsyncClient,
+) -> None:
+    """A mid-stream provider failure must not charge the user or persist a bot entry."""
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=1)
+
+    async def _boom(
+        *_args: object, **_kwargs: object
+    ) -> AsyncIterator[tuple[str, LLMResponse | None]]:
+        """Raise on first iteration to mimic a provider network error."""
+        # A yield anywhere in the body makes this an async generator; the raise
+        # fires on the first ``__anext__`` call so the router sees the error
+        # before any chunks land.
+        if False:  # pragma: no cover - unreachable, marks this as an async generator
+            yield "", None
+        msg = "upstream_boom"
+        raise RuntimeError(msg)
+
+    with patch.object(botmason_router_mod, "generate_response_stream", _boom):
+        resp = await async_client.post(
+            "/journal/chat/stream", json={"message": "Hi"}, headers=headers
+        )
+
+    assert resp.status_code == HTTPStatus.OK
+    events = _parse_sse_events(resp.text)
+    assert len(events) == 1
+    name, payload = events[0]
+    assert name == "error"
+    assert payload["status"] == 502  # noqa: PLR2004
+    assert payload["detail"] == "llm_provider_error"
+
+    # Rollback: wallet untouched, no journal entries created.
+    balance = await async_client.get("/user/balance", headers=headers)
+    assert balance.json()["balance"] == 1
+
+    listing = await async_client.get("/journal/", headers=headers)
+    assert listing.json()["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_falls_back_to_env_key_when_header_absent(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Streaming endpoint honours the same BYOK precedence as the non-stream one."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", _VALID_OPENAI_KEY)
+
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=1)
+
+    async def _fake_stream(
+        _user_message: str,
+        _history: list[dict[str, str]],
+        *,
+        system_prompt: str | None = None,  # noqa: ARG001 - signature-compat with service
+        api_key: str | None = None,
+    ) -> AsyncIterator[tuple[str, LLMResponse | None]]:
+        yield "Hello ", None
+        final = _mock_openai_response("Hello world", prompt_tokens=3, completion_tokens=2)
+        # Assert the env key fallback by inspecting what was forwarded.
+        _fake_stream.captured_key = api_key  # type: ignore[attr-defined]
+        yield "world", final
+
+    with patch.object(botmason_router_mod, "generate_response_stream", _fake_stream):
+        resp = await async_client.post(
+            "/journal/chat/stream", json={"message": "Hi"}, headers=headers
+        )
+    assert resp.status_code == HTTPStatus.OK
+
+    # When the header is absent the router forwards ``None`` and the service
+    # layer resolves the env var on the provider side.
+    assert _fake_stream.captured_key is None  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_stream_rejects_malformed_header_key_with_400(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed BYOK keys 400 *before* the stream opens (no SSE body)."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", _VALID_OPENAI_KEY)
+
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=1)
+    headers[LLM_API_KEY_HEADER] = "not-a-real-key"  # pragma: allowlist secret
+
+    resp = await async_client.post("/journal/chat/stream", json={"message": "Hi"}, headers=headers)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    # Wallet must be untouched on pre-flight rejection.
+    balance = await async_client.get("/user/balance", headers=headers)
+    assert balance.json()["balance"] == 1
+
+
+# ── generate_response_stream service unit tests ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_stub_stream_yields_words_then_final() -> None:
+    """The stub chunker emits the canned response word-by-word and a final payload."""
+    chunks: list[tuple[str, LLMResponse | None]] = []
+    async for item in botmason_mod.generate_response_stream("ping", []):
+        chunks.append(item)
+
+    # At least two chunks (non-final plus final) so clients get progressive UI.
+    assert len(chunks) >= 2  # noqa: PLR2004
+    # Non-final chunks have ``final=None``; only the last one carries metadata.
+    assert all(final is None for _, final in chunks[:-1])
+    _, last_final = chunks[-1]
+    assert last_final is not None
+    assert last_final.provider == "stub"
+    # Concatenation must round-trip to the canned stub text.
+    reassembled = "".join(chunk for chunk, _ in chunks)
+    assert reassembled == last_final.text
+    assert "ping" in last_final.text
+
+
+@pytest.mark.asyncio
+async def test_stream_dispatch_routes_to_configured_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``generate_response_stream`` must fan out by ``BOTMASON_PROVIDER``.
+
+    We don't exercise the real provider SDKs in tests (they require network /
+    keys), so we patch the private streamers and assert the dispatcher picks
+    the right one and forwards the api_key override intact.
+    """
+
+    async def _fake(
+        _msg: str,
+        _history: list[dict[str, str]],
+        _prompt: str,
+        api_key: str | None,
+    ) -> AsyncIterator[tuple[str, LLMResponse | None]]:
+        # Echo the api_key back through the final LLMResponse so the caller
+        # can prove the override propagated without leaking it in logs.
+        final = LLMResponse(
+            text=api_key or "",
+            provider="fake",
+            model="fake",
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
+        yield "", final
+
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.setattr(botmason_mod, "_stream_openai", _fake)
+    openai_chunks = [
+        item
+        async for item in botmason_mod.generate_response_stream(
+            "hi",
+            [],
+            api_key="sk-override",  # pragma: allowlist secret
+        )
+    ]
+    assert openai_chunks[-1][1] is not None
+    assert openai_chunks[-1][1].text == "sk-override"
+
+    monkeypatch.setenv("BOTMASON_PROVIDER", "anthropic")
+    monkeypatch.setattr(botmason_mod, "_stream_anthropic", _fake)
+    anthropic_chunks = [
+        item
+        async for item in botmason_mod.generate_response_stream(
+            "hi",
+            [],
+            api_key="sk-ant-override",  # pragma: allowlist secret
+        )
+    ]
+    assert anthropic_chunks[-1][1] is not None
+    assert anthropic_chunks[-1][1].text == "sk-ant-override"

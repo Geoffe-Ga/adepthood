@@ -1,7 +1,7 @@
 import React from 'react';
-import { Text, View } from 'react-native';
+import { Text, TouchableOpacity, View } from 'react-native';
 
-import type { JournalMessage } from '../../api';
+import type { JournalMessage, JournalTag } from '../../api';
 
 import styles from './Journal.styles';
 
@@ -11,18 +11,93 @@ const TAG_LABELS: Record<string, string> = {
   habit_note: 'Habit',
 };
 
+/**
+ * UI-local extension of :class:`JournalMessage` carrying ephemeral state that
+ * never crosses the wire. ``_streaming`` is true while tokens are still
+ * arriving for the bot's reply; ``_errored`` flags a user message whose
+ * BotMason round-trip failed and needs a retry button.
+ */
+export interface ChatMessage extends JournalMessage {
+  _streaming?: boolean;
+  _errored?: boolean;
+  _errorDetail?: string;
+  _retryText?: string;
+  _retryTag?: JournalTag;
+}
+
+/**
+ * Text cursor shown at the end of a streaming bot message to make the
+ * "still typing" state unmistakable. Exported so tests can assert on the
+ * exact glyph rather than a class name.
+ */
+export const STREAMING_CURSOR = '\u258A';
+
 function formatTimestamp(iso: string): string {
   const date = new Date(iso);
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-interface MessageBubbleProps {
-  message: JournalMessage;
+interface BubbleTagsProps {
+  message: ChatMessage;
+  tagLabel: string | undefined;
 }
 
-const MessageBubble = ({ message }: MessageBubbleProps): React.JSX.Element => {
+const BubbleTags = ({ message, tagLabel }: BubbleTagsProps): React.JSX.Element | null => {
+  const showPracticeBadge = message.practice_session_id !== null;
+  const showTagLabel = tagLabel !== undefined;
+  if (!showPracticeBadge && !showTagLabel) return null;
+  return (
+    <View style={styles.tagRow}>
+      {showPracticeBadge && (
+        <View style={styles.tag} testID="practice-session-badge">
+          <Text style={styles.tagText}>Practice Session</Text>
+        </View>
+      )}
+      {showTagLabel && (
+        <View style={styles.tag}>
+          <Text style={styles.tagText}>{tagLabel}</Text>
+        </View>
+      )}
+    </View>
+  );
+};
+
+interface ErrorFooterProps {
+  errorLabel: string | undefined;
+  onRetry: (() => void) | undefined;
+}
+
+const ErrorFooter = ({ errorLabel, onRetry }: ErrorFooterProps): React.JSX.Element => (
+  <View testID="message-error" style={styles.tagRow}>
+    {errorLabel !== undefined && errorLabel !== '' && (
+      <Text style={styles.tagText}>{errorLabel}</Text>
+    )}
+    {onRetry !== undefined && (
+      <TouchableOpacity
+        testID="message-retry"
+        style={styles.tag}
+        onPress={onRetry}
+        accessibilityLabel="Retry sending message"
+      >
+        <Text style={styles.tagText}>Retry</Text>
+      </TouchableOpacity>
+    )}
+  </View>
+);
+
+interface MessageBubbleProps {
+  message: ChatMessage;
+  /** Human-readable error label surfaced beneath the bubble when retry is active. */
+  errorLabel?: string;
+  /** When set, a "Retry" button is rendered; pressing it re-sends the message. */
+  onRetry?: () => void;
+}
+
+const MessageBubble = ({ message, errorLabel, onRetry }: MessageBubbleProps): React.JSX.Element => {
   const isUser = message.sender === 'user';
   const tagLabel = TAG_LABELS[message.tag];
+  const showCursor = message._streaming === true;
+  const bodyText = showCursor ? `${message.message}${STREAMING_CURSOR}` : message.message;
 
   return (
     <View style={[styles.bubbleRow, isUser ? styles.bubbleRowUser : styles.bubbleRowBot]}>
@@ -32,26 +107,17 @@ const MessageBubble = ({ message }: MessageBubbleProps): React.JSX.Element => {
         </View>
       )}
       <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleBot]}>
-        <Text style={[styles.bubbleText, isUser ? styles.bubbleTextUser : styles.bubbleTextBot]}>
-          {message.message}
+        <Text
+          testID={showCursor ? 'streaming-bubble-text' : undefined}
+          style={[styles.bubbleText, isUser ? styles.bubbleTextUser : styles.bubbleTextBot]}
+        >
+          {bodyText}
         </Text>
-        {(tagLabel !== undefined || message.practice_session_id !== null) && (
-          <View style={styles.tagRow}>
-            {message.practice_session_id !== null && (
-              <View style={styles.tag} testID="practice-session-badge">
-                <Text style={styles.tagText}>Practice Session</Text>
-              </View>
-            )}
-            {tagLabel !== undefined && (
-              <View style={styles.tag}>
-                <Text style={styles.tagText}>{tagLabel}</Text>
-              </View>
-            )}
-          </View>
-        )}
+        <BubbleTags message={message} tagLabel={tagLabel} />
         <Text style={[styles.timestamp, isUser ? styles.timestampUser : styles.timestampBot]}>
           {formatTimestamp(message.timestamp)}
         </Text>
+        {message._errored === true && <ErrorFooter errorLabel={errorLabel} onRetry={onRetry} />}
       </View>
     </View>
   );

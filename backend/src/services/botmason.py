@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import os
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -351,3 +352,201 @@ async def _call_anthropic(
         prompt_tokens=extract_token_count(usage, "input_tokens", "prompt_tokens"),
         completion_tokens=extract_token_count(usage, "output_tokens", "completion_tokens"),
     )
+
+
+# ─── Streaming support ───────────────────────────────────────────────────
+#
+# ``generate_response_stream`` yields ``(chunk_text, final)`` tuples so a
+# single iteration surface can express both "partial token arrived" and
+# "stream complete with metadata". The last yield always has ``final`` set
+# to the :class:`LLMResponse` carrying the accumulated text plus token
+# counts for the usage log; earlier yields have ``final=None``. ``chunk_text``
+# is the new text since the last yield — empty on the terminal yield when
+# no trailing content was buffered.
+
+
+StreamChunk = tuple[str, "LLMResponse | None"]
+
+# Signature every provider-specific streamer (openai, anthropic) must satisfy.
+# Kept as a type alias so the dispatch table in ``_select_provider_streamer``
+# stays typed without ``Any`` leakage.
+_ProviderStreamer = Callable[
+    [str, list[dict[str, str]], str, "str | None"], AsyncIterator[StreamChunk]
+]
+
+
+def _select_provider_streamer(
+    provider: str,
+) -> _ProviderStreamer | None:
+    """Return the provider-specific streaming coroutine, or ``None`` for stub.
+
+    Table-driven dispatch keeps ``generate_response_stream`` at cyclomatic
+    rank A while still allowing tests to monkey-patch the stub / openai /
+    anthropic variants independently.
+    """
+    table: dict[str, _ProviderStreamer] = {
+        "openai": _stream_openai,
+        "anthropic": _stream_anthropic,
+    }
+    return table.get(provider)
+
+
+async def generate_response_stream(
+    user_message: str,
+    conversation_history: list[dict[str, str]],
+    system_prompt: str | None = None,
+    api_key: str | None = None,
+) -> AsyncIterator[StreamChunk]:
+    """Stream a BotMason response as it is produced by the configured provider.
+
+    Mirrors :func:`generate_response` but yields incremental chunks for SSE
+    consumers. The terminal yield carries an :class:`LLMResponse` so callers
+    can persist the full message and record usage without a second round-trip
+    to the provider.
+    """
+    resolved_prompt = system_prompt or get_system_prompt()
+    streamer = _select_provider_streamer(get_provider())
+    if streamer is None:
+        async for item in _stream_stub(user_message):
+            yield item
+        return
+    async for item in streamer(user_message, conversation_history, resolved_prompt, api_key):
+        yield item
+
+
+# Word boundary delimiter used to chunk the stub response so the client
+# sees a progressive typewriter effect identical in shape to real provider
+# streaming.
+_STUB_CHUNK_DELIMITER = " "
+
+
+async def _stream_stub(user_message: str) -> AsyncIterator[StreamChunk]:
+    """Chunk the deterministic stub response word-by-word.
+
+    The stub never calls a remote API, so we emit chunks synchronously. Each
+    yielded chunk preserves the trailing space between words so the client
+    can concatenate them directly without additional whitespace logic.
+    """
+    final = _stub_response(user_message)
+    words = final.text.split(_STUB_CHUNK_DELIMITER)
+    for index, word in enumerate(words):
+        is_last = index == len(words) - 1
+        chunk = word if is_last else f"{word}{_STUB_CHUNK_DELIMITER}"
+        if is_last:
+            yield chunk, final
+        else:
+            yield chunk, None
+
+
+def _first_choice_delta_content(event: object) -> object:  # pragma: no cover
+    """Return the ``event.choices[0].delta.content`` attribute or ``None``.
+
+    Split out so ``_extract_openai_delta_text`` (and transitively
+    ``_stream_openai``) stays at cyclomatic rank A; the ``getattr`` chain
+    itself contributes most of the branch count.
+    """
+    choices = getattr(event, "choices", None) or []
+    delta = getattr(choices[0], "delta", None) if choices else None
+    return getattr(delta, "content", None)
+
+
+def _extract_openai_delta_text(event: object) -> str | None:  # pragma: no cover
+    """Return the non-empty delta text from an OpenAI stream event, or ``None``."""
+    text = _first_choice_delta_content(event)
+    if isinstance(text, str) and text:
+        return text
+    return None
+
+
+async def _stream_openai(  # pragma: no cover - exercised via live integration
+    user_message: str,
+    conversation_history: list[dict[str, str]],
+    system_prompt: str,
+    api_key: str | None,
+) -> AsyncIterator[StreamChunk]:
+    """Stream tokens from the OpenAI chat completions API.
+
+    Uses ``stream=True`` with ``stream_options={"include_usage": True}`` so the
+    final chunk carries token counts for the usage log. Accumulated text is
+    attached to the terminal yield alongside the :class:`LLMResponse` payload.
+    """
+    key = _resolve_api_key(api_key)
+    openai_mod = _import_optional("openai", "OpenAI")
+
+    client = openai_mod.AsyncOpenAI(api_key=key)
+    messages = _build_messages(user_message, conversation_history, system_prompt)
+    model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+    stream = await client.chat.completions.create(
+        model=model,
+        messages=messages,
+        stream=True,
+        stream_options={"include_usage": True},
+    )
+
+    accumulated = ""
+    usage: object = None
+    async for event in stream:
+        usage = getattr(event, "usage", None) or usage
+        text = _extract_openai_delta_text(event)
+        if text is None:
+            continue
+        accumulated += text
+        yield text, None
+
+    yield (
+        "",
+        LLMResponse(
+            text=accumulated,
+            provider="openai",
+            model=model,
+            prompt_tokens=extract_token_count(usage, "prompt_tokens"),
+            completion_tokens=extract_token_count(usage, "completion_tokens"),
+        ),
+    )
+
+
+async def _stream_anthropic(  # pragma: no cover - exercised via live integration
+    user_message: str,
+    conversation_history: list[dict[str, str]],
+    system_prompt: str,
+    api_key: str | None,
+) -> AsyncIterator[StreamChunk]:
+    """Stream text deltas from the Anthropic messages API.
+
+    Uses the SDK's ``messages.stream`` context manager so partial text arrives
+    via ``text_stream`` while token counts are read from the aggregated final
+    message once the stream closes.
+    """
+    key = _resolve_api_key(api_key)
+    anthropic_mod = _import_optional("anthropic", "Anthropic")
+
+    client = anthropic_mod.AsyncAnthropic(api_key=key)
+    messages_for_api: list[dict[str, str]] = []
+    for entry in conversation_history:
+        role = "assistant" if entry.get("sender") == "bot" else "user"
+        messages_for_api.append({"role": role, "content": entry["message"]})
+    messages_for_api.append({"role": "user", "content": user_message})
+
+    model = os.getenv("LLM_MODEL", "claude-sonnet-4-20250514")
+    accumulated = ""
+    async with client.messages.stream(
+        model=model,
+        max_tokens=1024,
+        system=system_prompt,
+        messages=messages_for_api,
+    ) as stream:
+        async for text in stream.text_stream:
+            if text:
+                accumulated += text
+                yield text, None
+        final_message = await stream.get_final_message()
+
+    usage = getattr(final_message, "usage", None)
+    final = LLMResponse(
+        text=accumulated,
+        provider="anthropic",
+        model=model,
+        prompt_tokens=extract_token_count(usage, "input_tokens", "prompt_tokens"),
+        completion_tokens=extract_token_count(usage, "output_tokens", "completion_tokens"),
+    )
+    yield "", final
