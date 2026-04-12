@@ -8,11 +8,12 @@ import { ActivityIndicator, StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { ToastProvider } from './components/ToastProvider';
+import { ApiKeyProvider } from './context/ApiKeyContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginScreen from './features/Auth/LoginScreen';
 import SignupScreen from './features/Auth/SignupScreen';
 import type { RootTabParamList } from './navigation/BottomTabs';
-import BottomTabs from './navigation/BottomTabs';
+import RootStack from './navigation/RootStack';
 
 type AuthStackParamList = {
   Login: undefined;
@@ -55,21 +56,23 @@ function RootNavigator() {
     );
   }
 
-  return token ? <BottomTabs /> : <AuthNavigator />;
+  return token ? <RootStack /> : <AuthNavigator />;
 }
 
 export default function App(): React.JSX.Element {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <ToastProvider>
-          <NavigationContainer linking={linking}>
-            <SafeAreaView style={styles.safeArea}>
-              <StatusBar barStyle="dark-content" />
-              <RootNavigator />
-            </SafeAreaView>
-          </NavigationContainer>
-        </ToastProvider>
+        <ApiKeyProvider>
+          <ToastProvider>
+            <NavigationContainer linking={linking}>
+              <SafeAreaView style={styles.safeArea}>
+                <StatusBar barStyle="dark-content" />
+                <RootNavigator />
+              </SafeAreaView>
+            </NavigationContainer>
+          </ToastProvider>
+        </ApiKeyProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );

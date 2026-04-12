@@ -24,6 +24,10 @@ export class ApiError extends Error {
 let tokenGetter: (() => string | null) | null = null;
 let onUnauthorizedCallback: (() => void) | null = null;
 let onTokenRefreshedCallback: ((token: string) => void) | null = null;
+let llmApiKeyGetter: (() => string | null) | null = null;
+
+/** Header used to forward a user-provided LLM API key (BYOK, issue #185). */
+export const LLM_API_KEY_HEADER = 'X-LLM-API-Key'; // pragma: allowlist secret
 
 export function setTokenGetter(getter: (() => string | null) | null) {
   tokenGetter = getter;
@@ -35,6 +39,16 @@ export function setOnUnauthorized(callback: (() => void) | null) {
 
 export function setOnTokenRefreshed(callback: ((token: string) => void) | null) {
   onTokenRefreshedCallback = callback;
+}
+
+/**
+ * Register a getter for the user-owned LLM API key. When registered and
+ * non-null, the key is attached to BotMason chat requests via the
+ * ``X-LLM-API-Key`` header. The getter is polled per-request so rotations
+ * take effect without reconfiguring the HTTP client.
+ */
+export function setLlmApiKeyGetter(getter: (() => string | null) | null) {
+  llmApiKeyGetter = getter;
 }
 
 interface RequestOptions {
@@ -465,10 +479,16 @@ export interface BalanceResponse {
 
 export const botmason = {
   chat(payload: ChatRequest, token?: string): Promise<ChatResponse> {
+    // The user-owned key (if any) is fetched from the getter at call time
+    // so rotations made in Settings apply immediately. A missing or empty
+    // key means "fall back to the server-side env var" on the backend.
+    const apiKey = llmApiKeyGetter?.() ?? null;
+    const headers = apiKey ? { [LLM_API_KEY_HEADER]: apiKey } : undefined;
     return request<ChatResponse>('/journal/chat', {
       method: 'POST',
       body: payload,
       token,
+      headers,
     });
   },
   getBalance(token?: string): Promise<BalanceResponse> {
@@ -757,4 +777,6 @@ export default {
   setTokenGetter,
   setOnUnauthorized,
   setOnTokenRefreshed,
+  setLlmApiKeyGetter,
+  LLM_API_KEY_HEADER,
 };
