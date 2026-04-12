@@ -93,6 +93,18 @@ def disable_rate_limit() -> Generator[None, None, None]:
     limiter.enabled = True
 
 
+@pytest.fixture
+def zero_monthly_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable the free monthly BotMason allocation for the duration of a test.
+
+    Many legacy tests assert on ``offering_balance`` directly and predate the
+    monthly-cap wallet.  Setting ``BOTMASON_MONTHLY_CAP=0`` forces every chat
+    request to draw from ``offering_balance``, preserving their original
+    intent without duplicating the new cap tests elsewhere.
+    """
+    monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "0")
+
+
 @pytest_asyncio.fixture
 async def concurrent_async_client(tmp_path: Path) -> AsyncGenerator[AsyncClient, None]:
     """HTTP client with per-request sessions for concurrency testing.

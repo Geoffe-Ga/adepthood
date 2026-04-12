@@ -1,8 +1,17 @@
-"""BotMason AI chat router — metered AI conversations via offering_balance."""
+"""BotMason AI chat router — metered AI conversations via a two-bucket wallet.
+
+Every user gets ``BOTMASON_MONTHLY_CAP`` free messages per calendar month.
+Once the free allocation is spent, requests fall through to ``offering_balance``
+(purchased / gifted credits, no expiry).  When both are empty the router
+returns 402.  All wallet mutations are performed as atomic SQL statements —
+no TOCTOU read/check/write patterns — so concurrent requests can never
+overspend either bucket (see ``tests/test_botmason_api.py::test_concurrent_*``).
+"""
 
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, Request, status
 from sqlalchemy import update
@@ -21,6 +30,7 @@ from schemas.botmason import (
     BalanceResponse,
     ChatRequest,
     ChatResponse,
+    UsageResponse,
 )
 from services.botmason import (
     CONVERSATION_HISTORY_LIMIT,
@@ -30,6 +40,7 @@ from services.botmason import (
     provider_requires_api_key,
     validate_llm_api_key_format,
 )
+from services.usage import compute_next_reset, get_monthly_cap
 
 router = APIRouter(tags=["botmason"])
 
@@ -88,6 +99,65 @@ async def _get_user(user_id: int, session: AsyncSession) -> User:
     return user
 
 
+async def _reset_monthly_usage_if_due(
+    session: AsyncSession,
+    user_id: int,
+    now: datetime,
+) -> None:
+    """Atomically roll the monthly counter over when the reset date has passed.
+
+    The conditional WHERE clause makes this idempotent under concurrency: if
+    two requests race through the boundary, the second one's predicate no
+    longer matches (the first request has already advanced ``monthly_reset_date``
+    to next month) and the second UPDATE is a no-op.
+    """
+    next_reset = compute_next_reset(now)
+    await session.execute(
+        update(User)
+        .where(col(User.id) == user_id, col(User.monthly_reset_date) <= now)
+        .values(monthly_messages_used=0, monthly_reset_date=next_reset)
+    )
+
+
+async def _spend_one_message(
+    session: AsyncSession,
+    user_id: int,
+    monthly_cap: int,
+) -> tuple[int, int] | None:
+    """Consume exactly one BotMason message from whichever wallet has capacity.
+
+    Returns ``(monthly_messages_used, offering_balance)`` after the deduction,
+    or ``None`` when both wallets are empty (caller returns 402).  The free
+    monthly allocation is drained first; only once it is at the cap do we
+    touch the paid ``offering_balance``.  Each branch is a single atomic
+    UPDATE … WHERE … RETURNING so concurrent requests can never overspend.
+    """
+    monthly_result = await session.execute(
+        update(User)
+        .where(
+            col(User.id) == user_id,
+            col(User.monthly_messages_used) < monthly_cap,
+        )
+        .values(monthly_messages_used=col(User.monthly_messages_used) + 1)
+        .returning(col(User.monthly_messages_used), col(User.offering_balance))
+    )
+    monthly_row = monthly_result.first()
+    if monthly_row is not None:
+        return int(monthly_row[0]), int(monthly_row[1])
+
+    balance_result = await session.execute(
+        update(User)
+        .where(col(User.id) == user_id, col(User.offering_balance) > 0)
+        .values(offering_balance=col(User.offering_balance) - 1)
+        .returning(col(User.monthly_messages_used), col(User.offering_balance))
+    )
+    balance_row = balance_result.first()
+    if balance_row is not None:
+        return int(balance_row[0]), int(balance_row[1])
+
+    return None
+
+
 @router.post(
     "/journal/chat",
     response_model=ChatResponse,
@@ -104,35 +174,41 @@ async def chat_with_botmason(
     """Send a message to BotMason and receive an AI response.
 
     1. Resolve the LLM API key (user-supplied header > server env var)
-    2. Atomically deduct 1 from offering_balance (prevents TOCTOU race)
-    3. Store user's message as JournalEntry(sender='user')
-    4. Load recent conversation history
-    5. Call BotMason AI service
-    6. Store bot's response as JournalEntry(sender='bot')
-    7. Return bot's response + remaining balance
+    2. Lazily roll over the monthly counter if the reset date has passed
+    3. Atomically spend one message from the free monthly bucket or, once that
+       bucket is full, from ``offering_balance`` (prevents TOCTOU races)
+    4. Store user's message as JournalEntry(sender='user')
+    5. Load recent conversation history
+    6. Call BotMason AI service
+    7. Store bot's response as JournalEntry(sender='bot')
+    8. Return bot's response + remaining wallet state
 
     The ``X-LLM-API-Key`` header is validated for format and forwarded to the
     provider for this single request. It is never logged, never written to
     the database, and never echoed back in the response.
     """
     # Resolve the key BEFORE deducting balance so a malformed key (400) or a
-    # missing key on a provider that needs one (402) never costs the user an
-    # offering. Fails fast without touching the DB.
+    # missing key on a provider that needs one (402) never costs the user a
+    # message. Fails fast without touching the DB.
     api_key = _resolve_api_key_for_chat(x_llm_api_key)
 
-    # Atomic balance deduction — single SQL statement, no TOCTOU race window.
-    # The WHERE clause guarantees the decrement only happens if balance > 0.
-    deduct_result = await session.execute(
-        update(User)
-        .where(col(User.id) == current_user, col(User.offering_balance) > 0)
-        .values(offering_balance=col(User.offering_balance) - 1)
-        .returning(col(User.offering_balance))
-    )
-    new_balance = deduct_result.scalar()
-    if new_balance is None:
-        # No rows matched — either user missing or balance already 0
+    now = datetime.now(UTC)
+    monthly_cap = get_monthly_cap()
+
+    # Roll over the monthly counter before metering so a first-of-the-month
+    # request gets a freshly zeroed bucket.  The WHERE clause makes this a
+    # no-op when the reset date is still in the future.
+    await _reset_monthly_usage_if_due(session, current_user, now)
+
+    spent = await _spend_one_message(session, current_user, monthly_cap)
+    if spent is None:
+        # Neither bucket had capacity.  Distinguish "user vanished mid-request"
+        # (extremely unlikely, but would otherwise surface as a misleading 402)
+        # from the real payment-required case.
         await _get_user(current_user, session)  # raises bad_request if missing
         raise payment_required("insufficient_offerings")
+    monthly_used, new_balance = spent
+    remaining_messages = max(monthly_cap - monthly_used, 0)
 
     # Store user's message
     user_entry = JournalEntry(sender="user", user_id=current_user, message=payload.message)
@@ -168,9 +244,15 @@ async def chat_with_botmason(
     await session.commit()
     await session.refresh(bot_entry)
 
+    # Look up the freshly-advanced reset date so the client can surface an
+    # accurate "resets in N days" countdown without a second round-trip.
+    user_after = await _get_user(current_user, session)
+
     return ChatResponse(
         response=bot_text,
         remaining_balance=new_balance,
+        remaining_messages=remaining_messages,
+        monthly_reset_date=user_after.monthly_reset_date,
         bot_entry_id=bot_entry.id,
     )
 
@@ -183,6 +265,34 @@ async def get_balance(
     """Return the current offering balance for the authenticated user."""
     user = await _get_user(current_user, session)
     return BalanceResponse(balance=user.offering_balance)
+
+
+@router.get("/user/usage", response_model=UsageResponse)
+async def get_usage(
+    current_user: int = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> UsageResponse:
+    """Return the authenticated user's BotMason usage for the current month.
+
+    Rolls the monthly counter over in-place when the stored reset date has
+    passed so the caller never sees stale values — a user who opens the app
+    on the first of the month gets a freshly zeroed usage card without
+    waiting for their next chat request.
+    """
+    now = datetime.now(UTC)
+    await _reset_monthly_usage_if_due(session, current_user, now)
+    await session.commit()
+
+    user = await _get_user(current_user, session)
+    cap = get_monthly_cap()
+    remaining = max(cap - user.monthly_messages_used, 0)
+    return UsageResponse(
+        monthly_messages_used=user.monthly_messages_used,
+        monthly_messages_remaining=remaining,
+        monthly_cap=cap,
+        monthly_reset_date=user.monthly_reset_date,
+        offering_balance=user.offering_balance,
+    )
 
 
 @router.post("/user/balance/add", response_model=BalanceAddResponse)

@@ -26,24 +26,46 @@ const PAGE_SIZE = 50;
 
 // --- Balance banner ---
 
-const BalanceBanner = ({ balance }: { balance: number | null }): React.JSX.Element | null => {
-  if (balance !== null && balance <= 0) {
+interface BalanceBannerProps {
+  balance: number | null;
+  remainingMessages: number | null;
+}
+
+const BalanceBanner = ({
+  balance,
+  remainingMessages,
+}: BalanceBannerProps): React.JSX.Element | null => {
+  // Until the first fetch completes we render nothing — showing "resting"
+  // prematurely would confuse users whose wallet is actually healthy.
+  if (balance === null || remainingMessages === null) {
+    return null;
+  }
+  if (remainingMessages > 0) {
+    const offeringsNote = balance > 0 ? ` \u2022 ${balance} offerings` : '';
     return (
-      <View testID="balance-empty-banner" style={styles.balanceBanner}>
-        <Text style={styles.balanceBannerText}>
-          BotMason is resting. You can still write freeform reflections.
+      <View testID="balance-counter" style={styles.balanceCounter}>
+        <Text style={styles.balanceCounterText}>
+          {remainingMessages} free BotMason messages left this month{offeringsNote}
         </Text>
       </View>
     );
   }
-  if (balance !== null && balance > 0) {
+  if (balance > 0) {
     return (
       <View testID="balance-counter" style={styles.balanceCounter}>
-        <Text style={styles.balanceCounterText}>Offerings: {balance}</Text>
+        <Text style={styles.balanceCounterText}>
+          {`Monthly cap reached \u2014 ${balance} offerings available`}
+        </Text>
       </View>
     );
   }
-  return null;
+  return (
+    <View testID="balance-empty-banner" style={styles.balanceBanner}>
+      <Text style={styles.balanceBannerText}>
+        BotMason is resting until the cap resets. You can still write freeform reflections.
+      </Text>
+    </View>
+  );
 };
 
 // --- Context banners ---
@@ -83,6 +105,7 @@ interface BannersProps {
   isFiltering: boolean;
   onPromptRespond: () => void;
   offeringBalance: number | null;
+  remainingMessages: number | null;
   isCourseReflection: boolean;
   contentTitle: string | null;
   stageNumber: number | null;
@@ -96,7 +119,7 @@ const JournalBanners = (props: BannersProps): React.JSX.Element => (
     {props.prompt && !props.isFiltering && (
       <WeeklyPromptBanner prompt={props.prompt} onRespond={props.onPromptRespond} />
     )}
-    <BalanceBanner balance={props.offeringBalance} />
+    <BalanceBanner balance={props.offeringBalance} remainingMessages={props.remainingMessages} />
     <ContextBanners
       isCourseReflection={props.isCourseReflection}
       contentTitle={props.contentTitle}
@@ -200,6 +223,7 @@ function useMessageLoader(
 function useJournalSideData() {
   const [prompt, setPrompt] = useState<PromptDetail | null>(null);
   const [offeringBalance, setOfferingBalance] = useState<number | null>(null);
+  const [remainingMessages, setRemainingMessages] = useState<number | null>(null);
 
   const loadPrompt = useCallback(async () => {
     try {
@@ -210,16 +234,29 @@ function useJournalSideData() {
     }
   }, []);
 
-  const loadBalance = useCallback(async () => {
+  // One round-trip now returns both wallets.  We still fetch on mount only;
+  // subsequent chats update the counters via the ChatResponse fields so the
+  // UI stays in sync without polling.
+  const loadUsage = useCallback(async () => {
     try {
-      const result = await botmasonApi.getBalance();
-      setOfferingBalance(result.balance);
+      const result = await botmasonApi.getUsage();
+      setOfferingBalance(result.offering_balance);
+      setRemainingMessages(result.monthly_messages_remaining);
     } catch {
-      // non-critical
+      // non-critical — keep nulls so the banner stays hidden until a fetch succeeds
     }
   }, []);
 
-  return { prompt, setPrompt, offeringBalance, setOfferingBalance, loadPrompt, loadBalance };
+  return {
+    prompt,
+    setPrompt,
+    offeringBalance,
+    setOfferingBalance,
+    remainingMessages,
+    setRemainingMessages,
+    loadPrompt,
+    loadUsage,
+  };
 }
 
 // --- Hook: send freeform message ---
@@ -254,6 +291,7 @@ function useFreeformSend(
 function useBotSend(
   loadMessages: (_offset?: number) => Promise<void>,
   setOfferingBalance: (_b: number) => void,
+  setRemainingMessages: (_n: number) => void,
   removeOptimistic: (_id: number) => void,
   sendFreeform: (_text: string, _tag: JournalTag, _id: number) => Promise<void>,
 ) {
@@ -266,9 +304,13 @@ function useBotSend(
         const chatResult = await botmasonApi.chat({ message: text });
         await loadMessages(0);
         setOfferingBalance(chatResult.remaining_balance);
+        setRemainingMessages(chatResult.remaining_messages);
       } catch (err) {
         if (err instanceof ApiError && err.status === 402) {
+          // Both wallets are empty — clear counters so the "resting" banner
+          // appears immediately and fall through to a freeform write.
           setOfferingBalance(0);
+          setRemainingMessages(0);
           await sendFreeform(text, tag, optimisticId);
         } else {
           console.error('BotMason chat failed:', err);
@@ -278,7 +320,7 @@ function useBotSend(
         setAwaitingBot(false);
       }
     },
-    [loadMessages, setOfferingBalance, removeOptimistic, sendFreeform],
+    [loadMessages, setOfferingBalance, setRemainingMessages, removeOptimistic, sendFreeform],
   );
 
   return { awaitingBot, sendWithBot };
@@ -461,16 +503,16 @@ function useJournalInit(
   loadMessages: (_offset?: number) => Promise<void>,
   setLoading: (_v: boolean) => void,
   loadPrompt: () => Promise<void>,
-  loadBalance: () => Promise<void>,
+  loadUsage: () => Promise<void>,
 ) {
   useEffect(() => {
     const init = async () => {
       setLoading(true);
-      await Promise.all([loadMessages(0), loadPrompt(), loadBalance()]);
+      await Promise.all([loadMessages(0), loadPrompt(), loadUsage()]);
       setLoading(false);
     };
     void init();
-  }, [loadMessages, loadPrompt, loadBalance, setLoading]);
+  }, [loadMessages, loadPrompt, loadUsage, setLoading]);
 }
 
 // --- Hook: prompt responding ---
@@ -504,6 +546,7 @@ function usePromptResponder(
 function useJournalSend(
   rp: JournalRouteParams,
   offeringBalance: number | null,
+  remainingMessages: number | null,
   prependMessage: (_msg: JournalMessage) => void,
   sendWithBot: (_text: string, _tag: JournalTag, _id: number) => Promise<void>,
   sendFreeform: (_text: string, _tag: JournalTag, _id: number) => Promise<void>,
@@ -516,15 +559,20 @@ function useJournalSend(
       const tag = resolveTag(userTag, rp.contextTag);
       const optimistic = buildOptimisticMessage(text, tag, rp.practiceSessionId, rp.userPracticeId);
       prependMessage(optimistic);
-      const hasBalance = offeringBalance !== null && offeringBalance > 0;
-      if (hasBalance) {
+      // BotMason is reachable as long as either wallet has capacity — the
+      // backend drains the free monthly allocation first and then falls back
+      // to offering_balance, so the UI only needs to know that at least one
+      // bucket is non-empty before attempting the request.
+      const hasFreeMessages = remainingMessages !== null && remainingMessages > 0;
+      const hasOfferings = offeringBalance !== null && offeringBalance > 0;
+      if (hasFreeMessages || hasOfferings) {
         await sendWithBot(text, tag, optimistic.id);
       } else {
         await sendFreeform(text, tag, optimistic.id);
       }
       setSending(false);
     },
-    [offeringBalance, rp, prependMessage, sendWithBot, sendFreeform],
+    [offeringBalance, remainingMessages, rp, prependMessage, sendWithBot, sendFreeform],
   );
 
   return { sending, setSending, handleSend };
@@ -552,6 +600,7 @@ function useJournalComposer(
   const { awaitingBot, sendWithBot } = useBotSend(
     loader.loadMessages,
     side.setOfferingBalance,
+    side.setRemainingMessages,
     removeOptimistic,
     sendFreeform,
   );
@@ -559,12 +608,13 @@ function useJournalComposer(
   const { sending, setSending, handleSend } = useJournalSend(
     rp,
     side.offeringBalance,
+    side.remainingMessages,
     prependMessage,
     sendWithBot,
     sendFreeform,
   );
 
-  useJournalInit(loader.loadMessages, loader.setLoading, side.loadPrompt, side.loadBalance);
+  useJournalInit(loader.loadMessages, loader.setLoading, side.loadPrompt, side.loadUsage);
   const handlePromptRespond = usePromptResponder(
     side.prompt,
     side.setPrompt,
@@ -611,6 +661,7 @@ const JournalScreen = (): React.JSX.Element => {
         isFiltering={isFiltering}
         onPromptRespond={j.handlePromptRespond}
         offeringBalance={j.side.offeringBalance}
+        remainingMessages={j.side.remainingMessages}
         isCourseReflection={rp.isCourseReflection}
         contentTitle={rp.contentTitle}
         stageNumber={rp.stageNumber}

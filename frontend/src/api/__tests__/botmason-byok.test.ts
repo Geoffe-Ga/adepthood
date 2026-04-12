@@ -29,6 +29,8 @@ function chatPayload() {
   return {
     response: 'hi back',
     remaining_balance: 1,
+    remaining_messages: 49,
+    monthly_reset_date: '2026-05-01T00:00:00Z',
     bot_entry_id: 42,
   };
 }

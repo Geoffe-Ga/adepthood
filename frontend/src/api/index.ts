@@ -470,11 +470,21 @@ export interface ChatRequest {
 export interface ChatResponse {
   response: string;
   remaining_balance: number;
+  remaining_messages: number;
+  monthly_reset_date: string;
   bot_entry_id: number;
 }
 
 export interface BalanceResponse {
   balance: number;
+}
+
+export interface UsageResponse {
+  monthly_messages_used: number;
+  monthly_messages_remaining: number;
+  monthly_cap: number;
+  monthly_reset_date: string;
+  offering_balance: number;
 }
 
 export const botmason = {
@@ -493,6 +503,9 @@ export const botmason = {
   },
   getBalance(token?: string): Promise<BalanceResponse> {
     return request<BalanceResponse>('/user/balance', { token });
+  },
+  getUsage(token?: string): Promise<UsageResponse> {
+    return request<UsageResponse>('/user/usage', { token });
   },
   addBalance(amount: number, token?: string): Promise<{ balance: number; added: number }> {
     return request<{ balance: number; added: number }>('/user/balance/add', {

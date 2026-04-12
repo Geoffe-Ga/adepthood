@@ -64,11 +64,20 @@ const mockPromptsRespond = (jest.fn() as any).mockResolvedValue({
 
 const mockBotmasonChat = (jest.fn() as any).mockResolvedValue({
   response: 'BotMason responds wisely.',
-  remaining_balance: 4,
+  remaining_balance: 5,
+  remaining_messages: 49,
+  monthly_reset_date: '2026-05-01T00:00:00Z',
   bot_entry_id: 100,
 });
 
 const mockBotmasonGetBalance = (jest.fn() as any).mockResolvedValue({ balance: 5 });
+const mockBotmasonGetUsage = (jest.fn() as any).mockResolvedValue({
+  monthly_messages_used: 0,
+  monthly_messages_remaining: 50,
+  monthly_cap: 50,
+  monthly_reset_date: '2026-05-01T00:00:00Z',
+  offering_balance: 5,
+});
 
 jest.mock('../../../api', () => ({
   journal: {
@@ -85,6 +94,7 @@ jest.mock('../../../api', () => ({
   botmason: {
     chat: (...args: unknown[]) => mockBotmasonChat(...args),
     getBalance: (...args: unknown[]) => mockBotmasonGetBalance(...args),
+    getUsage: (...args: unknown[]) => mockBotmasonGetUsage(...args),
     addBalance: jest.fn() as any,
   },
   ApiError: class ApiError extends Error {
@@ -132,9 +142,18 @@ describe('JournalScreen', () => {
     });
     mockPromptsCurrent.mockResolvedValue(samplePrompt);
     mockBotmasonGetBalance.mockResolvedValue({ balance: 5 });
+    mockBotmasonGetUsage.mockResolvedValue({
+      monthly_messages_used: 0,
+      monthly_messages_remaining: 50,
+      monthly_cap: 50,
+      monthly_reset_date: '2026-05-01T00:00:00Z',
+      offering_balance: 5,
+    });
     mockBotmasonChat.mockResolvedValue({
       response: 'BotMason responds wisely.',
-      remaining_balance: 4,
+      remaining_balance: 5,
+      remaining_messages: 49,
+      monthly_reset_date: '2026-05-01T00:00:00Z',
       bot_entry_id: 100,
     });
   });
@@ -143,7 +162,7 @@ describe('JournalScreen', () => {
     // Don't resolve the API calls immediately
     mockJournalList.mockReturnValue(new Promise(() => {}));
     mockPromptsCurrent.mockReturnValue(new Promise(() => {}));
-    mockBotmasonGetBalance.mockReturnValue(new Promise(() => {}));
+    mockBotmasonGetUsage.mockReturnValue(new Promise(() => {}));
 
     const { getByTestId } = renderJournal();
     expect(getByTestId('journal-loading')).toBeTruthy();
@@ -199,8 +218,14 @@ describe('JournalScreen', () => {
     expect(mockBotmasonChat).toHaveBeenCalledWith({ message: 'New message' });
   });
 
-  it('sends freeform journal when balance is 0', async () => {
-    mockBotmasonGetBalance.mockResolvedValue({ balance: 0 });
+  it('sends freeform journal when both wallets are empty', async () => {
+    mockBotmasonGetUsage.mockResolvedValue({
+      monthly_messages_used: 50,
+      monthly_messages_remaining: 0,
+      monthly_cap: 50,
+      monthly_reset_date: '2026-05-01T00:00:00Z',
+      offering_balance: 0,
+    });
 
     const { getByTestId, getByText } = renderJournal();
 
@@ -230,7 +255,13 @@ describe('JournalScreen', () => {
   });
 
   it('sends a message with tag when a tag is selected', async () => {
-    mockBotmasonGetBalance.mockResolvedValue({ balance: 0 });
+    mockBotmasonGetUsage.mockResolvedValue({
+      monthly_messages_used: 50,
+      monthly_messages_remaining: 0,
+      monthly_cap: 50,
+      monthly_reset_date: '2026-05-01T00:00:00Z',
+      offering_balance: 0,
+    });
     const { getByTestId, getByText } = renderJournal();
 
     await waitFor(() => {
@@ -281,31 +312,66 @@ describe('JournalScreen', () => {
     });
   });
 
-  it('shows balance counter when balance > 0', async () => {
-    mockBotmasonGetBalance.mockResolvedValue({ balance: 10 });
+  it('shows counter when free monthly messages remain', async () => {
+    mockBotmasonGetUsage.mockResolvedValue({
+      monthly_messages_used: 0,
+      monthly_messages_remaining: 42,
+      monthly_cap: 50,
+      monthly_reset_date: '2026-05-01T00:00:00Z',
+      offering_balance: 10,
+    });
 
-    const { getByTestId } = renderJournal();
+    const { getByTestId, getByText } = renderJournal();
 
     await waitFor(() => {
       expect(getByTestId('balance-counter')).toBeTruthy();
+      expect(getByText(/42 free BotMason messages left this month/)).toBeTruthy();
     });
   });
 
-  it('shows "BotMason is resting" banner when balance is 0', async () => {
-    mockBotmasonGetBalance.mockResolvedValue({ balance: 0 });
+  it('shows "cap reached" counter when free tier is spent but offerings remain', async () => {
+    mockBotmasonGetUsage.mockResolvedValue({
+      monthly_messages_used: 50,
+      monthly_messages_remaining: 0,
+      monthly_cap: 50,
+      monthly_reset_date: '2026-05-01T00:00:00Z',
+      offering_balance: 4,
+    });
+
+    const { getByTestId, getByText } = renderJournal();
+
+    await waitFor(() => {
+      expect(getByTestId('balance-counter')).toBeTruthy();
+      expect(getByText(/Monthly cap reached/)).toBeTruthy();
+      expect(getByText(/4 offerings available/)).toBeTruthy();
+    });
+  });
+
+  it('shows "BotMason is resting" banner when both wallets are empty', async () => {
+    mockBotmasonGetUsage.mockResolvedValue({
+      monthly_messages_used: 50,
+      monthly_messages_remaining: 0,
+      monthly_cap: 50,
+      monthly_reset_date: '2026-05-01T00:00:00Z',
+      offering_balance: 0,
+    });
 
     const { getByTestId, getByText } = renderJournal();
 
     await waitFor(() => {
       expect(getByTestId('balance-empty-banner')).toBeTruthy();
-      expect(
-        getByText('BotMason is resting. You can still write freeform reflections.'),
-      ).toBeTruthy();
+      expect(getByText(/BotMason is resting until the cap resets/)).toBeTruthy();
     });
   });
 
-  it('does not show balance banner when balance is positive', async () => {
-    mockBotmasonGetBalance.mockResolvedValue({ balance: 5 });
+  it('does not show empty banner while free messages remain', async () => {
+    mockBotmasonGetUsage.mockResolvedValue({
+      monthly_messages_used: 0,
+      monthly_messages_remaining: 50,
+      monthly_cap: 50,
+      monthly_reset_date: '2026-05-01T00:00:00Z',
+      offering_balance: 5,
+    });
 
     const { queryByTestId } = renderJournal();
 
@@ -314,11 +380,11 @@ describe('JournalScreen', () => {
     });
   });
 
-  it('fetches balance on mount', async () => {
+  it('fetches usage on mount', async () => {
     renderJournal();
 
     await waitFor(() => {
-      expect(mockBotmasonGetBalance).toHaveBeenCalled();
+      expect(mockBotmasonGetUsage).toHaveBeenCalled();
     });
   });
 
@@ -440,7 +506,13 @@ describe('JournalScreen', () => {
   });
 
   it('sends journal entry with stage_reflection tag when in course reflection mode', async () => {
-    mockBotmasonGetBalance.mockResolvedValue({ balance: 0 });
+    mockBotmasonGetUsage.mockResolvedValue({
+      monthly_messages_used: 50,
+      monthly_messages_remaining: 0,
+      monthly_cap: 50,
+      monthly_reset_date: '2026-05-01T00:00:00Z',
+      offering_balance: 0,
+    });
 
     const { getByTestId, getByText } = renderJournal({
       tag: 'stage_reflection',
@@ -470,7 +542,13 @@ describe('JournalScreen', () => {
   });
 
   it('sends journal entry with practice session data when in reflection mode', async () => {
-    mockBotmasonGetBalance.mockResolvedValue({ balance: 0 });
+    mockBotmasonGetUsage.mockResolvedValue({
+      monthly_messages_used: 50,
+      monthly_messages_remaining: 0,
+      monthly_cap: 50,
+      monthly_reset_date: '2026-05-01T00:00:00Z',
+      offering_balance: 0,
+    });
 
     const { getByTestId, getByText } = renderJournal({
       tag: 'practice_note',
