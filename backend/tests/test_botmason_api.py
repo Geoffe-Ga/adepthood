@@ -5,19 +5,28 @@ from __future__ import annotations
 import asyncio
 import logging
 import pathlib
+from datetime import UTC, datetime
 from http import HTTPStatus
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import services.botmason as botmason_mod
+from models.user import User
 from routers.botmason import LLM_API_KEY_HEADER
 from services.botmason import (
     LLM_API_KEY_MAX_LENGTH,
     generate_response,
     get_system_prompt,
     validate_llm_api_key_format,
+)
+from services.usage import (
+    DEFAULT_MONTHLY_CAP,
+    compute_next_reset,
+    get_monthly_cap,
 )
 
 
@@ -111,6 +120,7 @@ async def test_add_balance_rejects_negative_amount(async_client: AsyncClient) ->
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
 async def test_chat_with_zero_balance_returns_402(async_client: AsyncClient) -> None:
     headers = await _signup(async_client)
     resp = await async_client.post(
@@ -121,6 +131,7 @@ async def test_chat_with_zero_balance_returns_402(async_client: AsyncClient) -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
 async def test_chat_success(async_client: AsyncClient) -> None:
     headers = await _signup(async_client)
     await _add_balance(async_client, headers, amount=5)
@@ -137,6 +148,7 @@ async def test_chat_success(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
 async def test_chat_deducts_balance(async_client: AsyncClient) -> None:
     headers = await _signup(async_client)
     await _add_balance(async_client, headers, amount=3)
@@ -149,6 +161,7 @@ async def test_chat_deducts_balance(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
 async def test_chat_stores_user_and_bot_messages(async_client: AsyncClient) -> None:
     headers = await _signup(async_client)
     await _add_balance(async_client, headers, amount=1)
@@ -170,6 +183,7 @@ async def test_chat_stores_user_and_bot_messages(async_client: AsyncClient) -> N
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
 async def test_chat_bot_response_in_journal_history(async_client: AsyncClient) -> None:
     headers = await _signup(async_client)
     await _add_balance(async_client, headers, amount=1)
@@ -186,6 +200,7 @@ async def test_chat_bot_response_in_journal_history(async_client: AsyncClient) -
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
 async def test_chat_exhausts_balance_then_402(async_client: AsyncClient) -> None:
     headers = await _signup(async_client)
     await _add_balance(async_client, headers, amount=1)
@@ -405,7 +420,7 @@ async def test_stub_provider_works_without_api_key(
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("disable_rate_limit")
+@pytest.mark.usefixtures("disable_rate_limit", "zero_monthly_cap")
 async def test_concurrent_chat_with_balance_one_allows_exactly_one(
     concurrent_async_client: AsyncClient,
 ) -> None:
@@ -436,7 +451,7 @@ async def test_concurrent_chat_with_balance_one_allows_exactly_one(
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("disable_rate_limit")
+@pytest.mark.usefixtures("disable_rate_limit", "zero_monthly_cap")
 async def test_balance_never_negative_after_concurrent_chat(
     concurrent_async_client: AsyncClient,
 ) -> None:
@@ -811,3 +826,276 @@ async def test_generate_response_uses_override_key(
 
     assert result == "overridden"
     assert _forwarded_key(mock_call) == _VALID_OPENAI_KEY
+
+
+# ── Monthly message cap / token wallet (issue #186) ───────────────────
+# Every user receives ``BOTMASON_MONTHLY_CAP`` free messages per calendar
+# month.  Once spent, requests fall through to ``offering_balance``; when
+# both buckets are empty the router returns 402.  The counter resets
+# automatically on the first of every month (UTC).
+
+
+@pytest.mark.asyncio
+async def test_usage_endpoint_reports_defaults_for_new_user(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh account reports zero usage and the full cap remaining."""
+    monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "50")
+    headers = await _signup(async_client)
+
+    resp = await async_client.get("/user/usage", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert data["monthly_messages_used"] == 0
+    assert data["monthly_messages_remaining"] == 50  # noqa: PLR2004
+    assert data["monthly_cap"] == 50  # noqa: PLR2004
+    assert data["offering_balance"] == 0
+    # Reset date is first-of-next-month UTC — sanity check format only so
+    # the test does not drift with the wall clock.
+    assert data["monthly_reset_date"].endswith(("Z", "+00:00")) or "T" in data["monthly_reset_date"]
+
+
+@pytest.mark.asyncio
+async def test_usage_endpoint_unauthenticated_returns_401(async_client: AsyncClient) -> None:
+    resp = await async_client.get("/user/usage")
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_chat_consumes_free_monthly_tier_first(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a positive cap, offering_balance is untouched until free tier is spent."""
+    monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "3")
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=10)
+
+    resp = await async_client.post("/journal/chat", json={"message": "first"}, headers=headers)
+    assert resp.status_code == HTTPStatus.CREATED
+    data = resp.json()
+    # Purchased credits are preserved; the free allocation absorbed the cost.
+    assert data["remaining_balance"] == 10  # noqa: PLR2004
+    assert data["remaining_messages"] == 2  # noqa: PLR2004
+
+
+@pytest.mark.asyncio
+async def test_chat_falls_back_to_offering_balance_after_cap(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once the free tier is exhausted, subsequent chats draw from offering_balance."""
+    monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "1")
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=2)
+
+    # Spend the single free message.
+    resp1 = await async_client.post("/journal/chat", json={"message": "a"}, headers=headers)
+    assert resp1.status_code == HTTPStatus.CREATED
+    assert resp1.json()["remaining_balance"] == 2  # noqa: PLR2004
+    assert resp1.json()["remaining_messages"] == 0
+
+    # Next chat must come out of offering_balance.
+    resp2 = await async_client.post("/journal/chat", json={"message": "b"}, headers=headers)
+    assert resp2.status_code == HTTPStatus.CREATED
+    assert resp2.json()["remaining_balance"] == 1
+    assert resp2.json()["remaining_messages"] == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_402_when_cap_reached_and_no_offering_balance(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the cap spent and zero offering_balance, chat returns 402."""
+    monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "1")
+    headers = await _signup(async_client)
+
+    # Spend the free message.
+    ok_resp = await async_client.post("/journal/chat", json={"message": "a"}, headers=headers)
+    assert ok_resp.status_code == HTTPStatus.CREATED
+
+    # Second attempt: cap reached and no purchased credits.
+    failed = await async_client.post("/journal/chat", json={"message": "b"}, headers=headers)
+    assert failed.status_code == HTTPStatus.PAYMENT_REQUIRED
+    assert failed.json()["detail"] == "insufficient_offerings"
+
+
+@pytest.mark.asyncio
+async def test_usage_tracks_monthly_messages(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each chat advances ``monthly_messages_used`` and decreases the remaining."""
+    monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "5")
+    headers = await _signup(async_client)
+
+    await async_client.post("/journal/chat", json={"message": "1"}, headers=headers)
+    await async_client.post("/journal/chat", json={"message": "2"}, headers=headers)
+
+    usage = await async_client.get("/user/usage", headers=headers)
+    data = usage.json()
+    assert data["monthly_messages_used"] == 2  # noqa: PLR2004
+    assert data["monthly_messages_remaining"] == 3  # noqa: PLR2004
+    assert data["monthly_cap"] == 5  # noqa: PLR2004
+
+
+@pytest.mark.asyncio
+async def test_cap_reset_on_new_month(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Crossing ``monthly_reset_date`` resets the counter on the next chat request."""
+    monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "2")
+    headers = await _signup(async_client)
+
+    # Spend the full allocation.
+    for msg in ("a", "b"):
+        resp = await async_client.post("/journal/chat", json={"message": msg}, headers=headers)
+        assert resp.status_code == HTTPStatus.CREATED
+
+    # Third message is over cap.
+    blocked = await async_client.post("/journal/chat", json={"message": "c"}, headers=headers)
+    assert blocked.status_code == HTTPStatus.PAYMENT_REQUIRED
+
+    # Fast-forward the stored reset date into the past — simulates a new month.
+    await db_session.execute(
+        update(User).values(monthly_reset_date=datetime(2000, 1, 1, tzinfo=UTC))
+    )
+    await db_session.commit()
+
+    # Next chat rolls the counter over and succeeds.
+    resp_after = await async_client.post("/journal/chat", json={"message": "d"}, headers=headers)
+    assert resp_after.status_code == HTTPStatus.CREATED
+    assert resp_after.json()["remaining_messages"] == 1
+
+    usage = await async_client.get("/user/usage", headers=headers)
+    assert usage.json()["monthly_messages_used"] == 1
+
+
+@pytest.mark.asyncio
+async def test_usage_endpoint_rolls_counter_on_new_month(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``/user/usage`` itself resets stale counters so the UI never shows stale data."""
+    monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "3")
+    headers = await _signup(async_client)
+
+    # Spend one message, then shift the reset date into the past.
+    await async_client.post("/journal/chat", json={"message": "x"}, headers=headers)
+    await db_session.execute(
+        update(User).values(monthly_reset_date=datetime(2000, 1, 1, tzinfo=UTC))
+    )
+    await db_session.commit()
+
+    resp = await async_client.get("/user/usage", headers=headers)
+    data = resp.json()
+    assert data["monthly_messages_used"] == 0
+    assert data["monthly_messages_remaining"] == 3  # noqa: PLR2004
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_cap_honoured_under_concurrent_load(
+    concurrent_async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent requests must not allow overspending the free allocation."""
+    monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "3")
+    headers = await _signup(concurrent_async_client)
+
+    responses = await asyncio.gather(
+        *[
+            concurrent_async_client.post(
+                "/journal/chat", json={"message": f"msg-{i}"}, headers=headers
+            )
+            for i in range(10)
+        ]
+    )
+    successes = sum(1 for r in responses if r.status_code == HTTPStatus.CREATED)
+    failures = sum(1 for r in responses if r.status_code == HTTPStatus.PAYMENT_REQUIRED)
+    assert successes == 3, f"cap was 3 but {successes} requests succeeded"  # noqa: PLR2004
+    assert failures == 7, f"expected 7 rejections, got {failures}"  # noqa: PLR2004
+
+    usage = await concurrent_async_client.get("/user/usage", headers=headers)
+    data = usage.json()
+    assert data["monthly_messages_used"] == 3  # noqa: PLR2004
+    assert data["monthly_messages_remaining"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_free_and_paid_wallets_combine_under_concurrent_load(
+    concurrent_async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Free allocation + offering_balance determines total capacity, no more, no less."""
+    monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "2")
+    headers = await _signup(concurrent_async_client)
+    await _add_balance(concurrent_async_client, headers, amount=3)
+
+    responses = await asyncio.gather(
+        *[
+            concurrent_async_client.post(
+                "/journal/chat", json={"message": f"msg-{i}"}, headers=headers
+            )
+            for i in range(10)
+        ]
+    )
+    successes = sum(1 for r in responses if r.status_code == HTTPStatus.CREATED)
+    # 2 free + 3 paid = 5 total capacity.
+    assert successes == 5, f"expected 5 successes, got {successes}"  # noqa: PLR2004
+
+    usage = await concurrent_async_client.get("/user/usage", headers=headers)
+    data = usage.json()
+    assert data["monthly_messages_used"] == 2  # noqa: PLR2004
+    assert data["offering_balance"] == 0
+
+
+# ── Usage service unit tests ─────────────────────────────────────────
+
+
+def test_get_monthly_cap_default_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("BOTMASON_MONTHLY_CAP", raising=False)
+    assert get_monthly_cap() == DEFAULT_MONTHLY_CAP
+
+
+def test_get_monthly_cap_parses_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "17")
+    assert get_monthly_cap() == 17  # noqa: PLR2004
+
+
+def test_get_monthly_cap_rejects_malformed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "not-a-number")
+    assert get_monthly_cap() == DEFAULT_MONTHLY_CAP
+
+
+def test_get_monthly_cap_rejects_negative(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "-5")
+    assert get_monthly_cap() == DEFAULT_MONTHLY_CAP
+
+
+def test_get_monthly_cap_allows_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "0")
+    assert get_monthly_cap() == 0
+
+
+def test_compute_next_reset_mid_month() -> None:
+    result = compute_next_reset(datetime(2026, 4, 15, 12, 34, 56, tzinfo=UTC))
+    assert result == datetime(2026, 5, 1, tzinfo=UTC)
+
+
+def test_compute_next_reset_december_rollover() -> None:
+    result = compute_next_reset(datetime(2026, 12, 31, 23, 59, 59, tzinfo=UTC))
+    assert result == datetime(2027, 1, 1, tzinfo=UTC)
+
+
+def test_compute_next_reset_normalises_naive_input() -> None:
+    # A naive datetime is interpreted as UTC rather than silently crashing on
+    # mismatched comparisons later.
+    result = compute_next_reset(datetime(2026, 6, 15, 12, 0, 0))
+    assert result == datetime(2026, 7, 1, tzinfo=UTC)
