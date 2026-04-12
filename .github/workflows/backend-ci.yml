@@ -36,10 +36,11 @@ jobs:
         run: |
           pre-commit run --hook-stage pre-commit --files $(git ls-files 'backend')
 
-      - name: Run tests
+      - name: Run pre-push hooks (complexity + maintainability + tests)
+        # xenon/radon/backend-tests-coverage moved to pre-push locally to keep
+        # `git commit` fast. CI still runs them so nothing escapes review.
         run: |
-          uv pip install --system pytest pytest-cov
-          pytest -q
+          pre-commit run --hook-stage pre-push --files $(git ls-files 'backend')
 
       - name: Security (pip-audit)
         run: |
