@@ -12,4 +12,23 @@ export function validateApiBaseUrl(url: string, isDev: boolean): string {
 
 const rawUrl = process.env.EXPO_PUBLIC_API_BASE_URL || (__DEV__ ? DEV_DEFAULT_URL : '');
 
-export const API_BASE_URL = validateApiBaseUrl(rawUrl, __DEV__);
+/**
+ * Configuration error captured at module load, if any.
+ *
+ * We deliberately do NOT throw at top-level import: a top-level throw happens
+ * before React can mount, producing a silent blank screen in browsers where
+ * dev tools aren't readily available (e.g. iOS Safari). Instead, App.tsx reads
+ * this value and renders a visible error screen when set.
+ */
+export let CONFIG_ERROR: string | null = null;
+
+function resolveApiBaseUrl(): string {
+  try {
+    return validateApiBaseUrl(rawUrl, __DEV__);
+  } catch (err) {
+    CONFIG_ERROR = err instanceof Error ? err.message : String(err);
+    return rawUrl;
+  }
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
