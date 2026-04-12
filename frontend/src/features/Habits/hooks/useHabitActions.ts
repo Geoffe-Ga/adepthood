@@ -1,16 +1,9 @@
 import { useCallback, useMemo } from 'react';
 
 import type { HabitsActions, OnboardingHabit } from '../Habits.types';
-import { habitManager } from '../services/habitManager';
+import { habitManager, type ShowToast } from '../services/habitManager';
 
 import type { useHabitUI } from './useHabitUI';
-
-type ShowToast = (_config: {
-  message: string;
-  icon?: string;
-  color?: string;
-  duration?: number;
-}) => void;
 
 /**
  * Binds stateful callbacks — ones that read UI state such as `selectedHabit`
