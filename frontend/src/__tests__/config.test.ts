@@ -20,11 +20,23 @@ describe('config', () => {
     it('allows empty URLs without throwing', () => {
       expect(validateApiBaseUrl('', true)).toBe('');
     });
+
+    it('strips a single trailing slash', () => {
+      expect(validateApiBaseUrl(`${HTTPS_URL}/`, true)).toBe(HTTPS_URL);
+    });
+
+    it('strips multiple trailing slashes', () => {
+      expect(validateApiBaseUrl(`${HTTPS_URL}///`, true)).toBe(HTTPS_URL);
+    });
   });
 
   describe('validateApiBaseUrl in production mode', () => {
     it('accepts HTTPS URLs', () => {
       expect(validateApiBaseUrl(HTTPS_URL, false)).toBe(HTTPS_URL);
+    });
+
+    it('strips a trailing slash on HTTPS URLs', () => {
+      expect(validateApiBaseUrl(`${HTTPS_URL}/`, false)).toBe(HTTPS_URL);
     });
 
     it('throws for HTTP URLs', () => {
