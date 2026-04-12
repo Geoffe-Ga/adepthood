@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import pathlib
 from http import HTTPStatus
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
 
 import services.botmason as botmason_mod
-from services.botmason import generate_response, get_system_prompt
+from routers.botmason import LLM_API_KEY_HEADER
+from services.botmason import (
+    LLM_API_KEY_MAX_LENGTH,
+    generate_response,
+    get_system_prompt,
+    validate_llm_api_key_format,
+)
 
 
 async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str]:
@@ -486,3 +494,320 @@ async def test_concurrent_balance_additions_are_atomic(
     expected_balance = add_amount * num_requests
     balance_resp = await concurrent_async_client.get("/user/balance", headers=headers)
     assert balance_resp.json()["balance"] == expected_balance
+
+
+# ── BYOK (user-supplied LLM API key) ───────────────────────────────────
+# Covers issue #185 — users bring their own API key via ``X-LLM-API-Key``.
+# The key must be validated, forwarded to the provider for a single request,
+# and never logged, stored, or echoed back.
+
+
+_VALID_OPENAI_KEY = "sk-abcdef1234567890abcdef1234567890"  # pragma: allowlist secret
+_VALID_ANTHROPIC_KEY = "sk-ant-api03-" + "x" * 64  # pragma: allowlist secret
+
+
+def _forwarded_key(mock_call: AsyncMock) -> object:
+    """Return the ``api_key`` argument forwarded to a provider call mock.
+
+    ``_call_openai`` / ``_call_anthropic`` accept the key as the 4th positional
+    argument or as the ``api_key`` keyword — this helper hides that detail and
+    narrows the mypy types around ``await_args`` being optional.
+    """
+    call = mock_call.await_args
+    assert call is not None, "expected provider mock to have been awaited"
+    args, kwargs = call
+    if "api_key" in kwargs:
+        return kwargs["api_key"]
+    if len(args) >= 4:  # noqa: PLR2004 - positional index for api_key
+        return args[3]
+    return None
+
+
+def test_validate_format_accepts_openai_key() -> None:
+    assert validate_llm_api_key_format(_VALID_OPENAI_KEY, "openai") is True
+
+
+def test_validate_format_accepts_anthropic_key() -> None:
+    assert validate_llm_api_key_format(_VALID_ANTHROPIC_KEY, "anthropic") is True
+
+
+def test_validate_format_rejects_cross_provider_keys() -> None:
+    # An Anthropic key sent to the OpenAI provider is a misconfiguration, not
+    # a valid OpenAI key — the ``sk-ant-`` prefix must be rejected there.
+    assert validate_llm_api_key_format(_VALID_ANTHROPIC_KEY, "openai") is False
+    # An OpenAI key lacks the ``sk-ant-`` prefix the Anthropic SDK expects.
+    assert validate_llm_api_key_format(_VALID_OPENAI_KEY, "anthropic") is False
+
+
+def test_validate_format_rejects_missing_prefix() -> None:
+    assert validate_llm_api_key_format("not-a-real-key", "openai") is False
+    assert validate_llm_api_key_format("not-a-real-key", "anthropic") is False
+
+
+def test_validate_format_rejects_empty_or_oversized_key() -> None:
+    assert validate_llm_api_key_format("", "openai") is False
+    oversized = "sk-" + "x" * LLM_API_KEY_MAX_LENGTH
+    assert validate_llm_api_key_format(oversized, "openai") is False
+
+
+def test_validate_format_skips_check_for_stub_provider() -> None:
+    # Stub provider accepts anything — it never makes a real call.
+    assert validate_llm_api_key_format("anything", "stub") is True
+
+
+@pytest.mark.asyncio
+async def test_chat_returns_402_when_provider_needs_key_and_none_available(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With provider=openai and no env/header key, chat responds 402."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=1)
+
+    resp = await async_client.post(
+        "/journal/chat",
+        json={"message": "Hello"},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED
+    assert resp.json()["detail"] == "llm_key_required"
+
+    # Balance must not have been decremented — the key check happens first.
+    balance_resp = await async_client.get("/user/balance", headers=headers)
+    assert balance_resp.json()["balance"] == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_falls_back_to_env_key_when_header_absent(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no header but LLM_API_KEY set, the env key is used for the call."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", _VALID_OPENAI_KEY)
+
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=1)
+
+    mock_call = AsyncMock(return_value="env-fallback-response")
+    with patch.object(botmason_mod, "_call_openai", mock_call):
+        resp = await async_client.post(
+            "/journal/chat",
+            json={"message": "Hello"},
+            headers=headers,
+        )
+
+    assert resp.status_code == HTTPStatus.CREATED
+    assert resp.json()["response"] == "env-fallback-response"
+    # The key forwarded to the provider should be ``None`` — the service layer
+    # resolves env-var fallback internally so the router never touches the env.
+    assert _forwarded_key(mock_call) is None
+
+
+@pytest.mark.asyncio
+async def test_chat_uses_user_supplied_key_from_header(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid ``X-LLM-API-Key`` header is forwarded to the provider."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=1)
+    headers[LLM_API_KEY_HEADER] = _VALID_OPENAI_KEY
+
+    mock_call = AsyncMock(return_value="byok-response")
+    with patch.object(botmason_mod, "_call_openai", mock_call):
+        resp = await async_client.post(
+            "/journal/chat",
+            json={"message": "Hello"},
+            headers=headers,
+        )
+
+    assert resp.status_code == HTTPStatus.CREATED
+    assert resp.json()["response"] == "byok-response"
+    assert _forwarded_key(mock_call) == _VALID_OPENAI_KEY
+
+
+@pytest.mark.asyncio
+async def test_chat_header_key_overrides_env_key(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When both header and env are set, the header key wins (BYOK priority)."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", "sk-server-fallback-key")
+
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=1)
+    headers[LLM_API_KEY_HEADER] = _VALID_OPENAI_KEY
+
+    mock_call = AsyncMock(return_value="byok-response")
+    with patch.object(botmason_mod, "_call_openai", mock_call):
+        await async_client.post(
+            "/journal/chat",
+            json={"message": "Hello"},
+            headers=headers,
+        )
+
+    assert _forwarded_key(mock_call) == _VALID_OPENAI_KEY
+
+
+@pytest.mark.asyncio
+async def test_chat_rejects_malformed_header_key_with_400(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed ``X-LLM-API-Key`` yields 400 without spending balance."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", _VALID_OPENAI_KEY)
+
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=1)
+    headers[LLM_API_KEY_HEADER] = "not-a-real-key"  # pragma: allowlist secret
+
+    resp = await async_client.post(
+        "/journal/chat",
+        json={"message": "Hello"},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.json()["detail"] == "invalid_llm_api_key_format"
+
+    # Balance must not have been decremented.
+    balance_resp = await async_client.get("/user/balance", headers=headers)
+    assert balance_resp.json()["balance"] == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_rejects_oversized_header_key_with_400(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", _VALID_OPENAI_KEY)
+
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=1)
+    headers[LLM_API_KEY_HEADER] = "sk-" + "x" * LLM_API_KEY_MAX_LENGTH  # pragma: allowlist secret
+
+    resp = await async_client.post(
+        "/journal/chat",
+        json={"message": "Hello"},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+
+
+@pytest.mark.asyncio
+async def test_chat_ignores_empty_header_and_uses_env(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty header value behaves like a missing header (env fallback)."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", _VALID_OPENAI_KEY)
+
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=1)
+    headers[LLM_API_KEY_HEADER] = "   "
+
+    mock_call = AsyncMock(return_value="env-response")
+    with patch.object(botmason_mod, "_call_openai", mock_call):
+        resp = await async_client.post(
+            "/journal/chat",
+            json={"message": "Hello"},
+            headers=headers,
+        )
+
+    assert resp.status_code == HTTPStatus.CREATED
+    assert _forwarded_key(mock_call) is None
+
+
+@pytest.mark.asyncio
+async def test_chat_does_not_log_header_key_value(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The raw key value must never appear in log output."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=1)
+    headers[LLM_API_KEY_HEADER] = _VALID_OPENAI_KEY
+
+    mock_call = AsyncMock(return_value="ok")
+    with caplog.at_level(logging.DEBUG), patch.object(botmason_mod, "_call_openai", mock_call):
+        await async_client.post(
+            "/journal/chat",
+            json={"message": "Hello"},
+            headers=headers,
+        )
+
+    for record in caplog.records:
+        assert _VALID_OPENAI_KEY not in record.getMessage()
+
+
+@pytest.mark.asyncio
+async def test_chat_response_body_does_not_echo_key(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=1)
+    headers[LLM_API_KEY_HEADER] = _VALID_OPENAI_KEY
+
+    mock_call = AsyncMock(return_value="a response")
+    with patch.object(botmason_mod, "_call_openai", mock_call):
+        resp = await async_client.post(
+            "/journal/chat",
+            json={"message": "Hello"},
+            headers=headers,
+        )
+
+    assert _VALID_OPENAI_KEY not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_stub_provider_ignores_header_key(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stub provider never needs a key and must not 402 when one is absent."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    headers = await _signup(async_client)
+    await _add_balance(async_client, headers, amount=1)
+
+    resp = await async_client.post(
+        "/journal/chat",
+        json={"message": "Hello"},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+
+
+@pytest.mark.asyncio
+async def test_generate_response_uses_override_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``generate_response(api_key=...)`` forwards the override to the provider."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    mock_call = AsyncMock(return_value="overridden")
+    with patch.object(botmason_mod, "_call_openai", mock_call):
+        result = await generate_response("hi", [], api_key=_VALID_OPENAI_KEY)
+
+    assert result == "overridden"
+    assert _forwarded_key(mock_call) == _VALID_OPENAI_KEY

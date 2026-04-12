@@ -30,6 +30,69 @@ _ALLOWED_PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
 # Maximum prompt file size in bytes (50 KB).
 _MAX_PROMPT_FILE_SIZE = 50 * 1024
 
+# Maximum allowed length for a user-supplied LLM API key. Real keys from
+# OpenAI/Anthropic are ~200 chars; this cap prevents header-size DoS.
+LLM_API_KEY_MAX_LENGTH = 256
+
+# Provider-specific key prefixes. Anthropic keys share the ``sk-`` prefix with
+# OpenAI, so their check is the more specific ``sk-ant-``.
+_OPENAI_KEY_PREFIX = "sk-"
+_ANTHROPIC_KEY_PREFIX = "sk-ant-"
+
+
+def get_provider() -> str:
+    """Return the currently configured LLM provider identifier."""
+    return os.getenv("BOTMASON_PROVIDER", "stub")
+
+
+def provider_requires_api_key(provider: str | None = None) -> bool:
+    """Return True when the selected provider needs an API key to function."""
+    return (provider or get_provider()) in {"openai", "anthropic"}
+
+
+# Prefix rules per provider — a dict keeps ``validate_llm_api_key_format``
+# branch-free so xenon's complexity budget stays at rank A.
+_PROVIDER_KEY_RULES: dict[str, tuple[str, tuple[str, ...]]] = {
+    # provider -> (required_prefix, disallowed_more_specific_prefixes)
+    # OpenAI keys start with ``sk-``; Anthropic keys also do, so disallow the
+    # more specific ``sk-ant-`` prefix to prevent provider cross-wiring.
+    "openai": (_OPENAI_KEY_PREFIX, (_ANTHROPIC_KEY_PREFIX,)),
+    "anthropic": (_ANTHROPIC_KEY_PREFIX, ()),
+}
+
+
+def _has_valid_length(api_key: str) -> bool:
+    """Return True when the key is non-empty and within the header-size cap."""
+    return bool(api_key) and len(api_key) <= LLM_API_KEY_MAX_LENGTH
+
+
+def _matches_provider_rule(api_key: str, rule: tuple[str, tuple[str, ...]] | None) -> bool:
+    """Return True when the key satisfies a (prefix, disallowed-prefixes) rule.
+
+    ``rule`` is ``None`` for unknown or stub providers, which are considered
+    passing — the real provider call happens later.
+    """
+    if rule is None:
+        return True
+    required_prefix, disallowed_prefixes = rule
+    if not api_key.startswith(required_prefix):
+        return False
+    return not any(api_key.startswith(bad) for bad in disallowed_prefixes)
+
+
+def validate_llm_api_key_format(api_key: str, provider: str) -> bool:
+    """Return True when ``api_key`` matches the expected format for ``provider``.
+
+    The check is intentionally prefix-based — real key validation happens when
+    the provider rejects the request. The purpose here is to stop obviously
+    malformed values from leaving our server (and to keep Anthropic keys from
+    being routed through the OpenAI client by mistake). Unknown providers
+    (including ``"stub"``) skip the check entirely.
+    """
+    if not _has_valid_length(api_key):
+        return False
+    return _matches_provider_rule(api_key, _PROVIDER_KEY_RULES.get(provider))
+
 
 def get_system_prompt() -> str:
     """Load the BotMason system prompt from config.
@@ -92,6 +155,7 @@ async def generate_response(
     user_message: str,
     conversation_history: list[dict[str, str]],
     system_prompt: str | None = None,
+    api_key: str | None = None,
 ) -> str:
     """Generate a BotMason response using the configured LLM provider.
 
@@ -101,16 +165,18 @@ async def generate_response(
     - ``"openai"`` — calls the OpenAI chat completions API
     - ``"anthropic"`` — calls the Anthropic messages API
 
-    External providers require the ``LLM_API_KEY`` env var to be set and
-    the corresponding SDK to be installed.
+    External providers require an API key. Callers may pass ``api_key``
+    directly (e.g. sourced from a user-supplied header) to override the
+    server-side ``LLM_API_KEY`` env var. When ``api_key`` is ``None`` the
+    env var is used; the key is never persisted or logged by this layer.
     """
     resolved_prompt = system_prompt or get_system_prompt()
-    provider = os.getenv("BOTMASON_PROVIDER", "stub")
+    provider = get_provider()
 
     if provider == "openai":
-        return await _call_openai(user_message, conversation_history, resolved_prompt)
+        return await _call_openai(user_message, conversation_history, resolved_prompt, api_key)
     if provider == "anthropic":
-        return await _call_anthropic(user_message, conversation_history, resolved_prompt)
+        return await _call_anthropic(user_message, conversation_history, resolved_prompt, api_key)
     # Default: stub provider for development and testing
     return _stub_response(user_message)
 
@@ -136,7 +202,7 @@ def _import_optional(module_name: str, provider_label: str) -> ModuleType:
 
 
 def _get_llm_api_key() -> str:
-    """Return the LLM API key, raising if unset or empty.
+    """Return the server-side LLM API key, raising if unset or empty.
 
     Follows the same fail-fast pattern as ``_get_secret_key`` in auth.py.
     """
@@ -147,16 +213,29 @@ def _get_llm_api_key() -> str:
     return api_key
 
 
+def _resolve_api_key(override: str | None) -> str:
+    """Return the API key to use for a provider call.
+
+    Prefers the caller-supplied ``override`` (e.g. user-owned BYOK key from a
+    request header) and falls back to the server-side ``LLM_API_KEY`` env var.
+    The key is returned by value — callers must not log or persist it.
+    """
+    if override:
+        return override
+    return _get_llm_api_key()
+
+
 async def _call_openai(
     user_message: str,
     conversation_history: list[dict[str, str]],
     system_prompt: str,
+    api_key: str | None = None,
 ) -> str:
     """Call the OpenAI chat completions API."""
-    api_key = _get_llm_api_key()
+    key = _resolve_api_key(api_key)
     openai_mod = _import_optional("openai", "OpenAI")
 
-    client = openai_mod.AsyncOpenAI(api_key=api_key)
+    client = openai_mod.AsyncOpenAI(api_key=key)
     messages = _build_messages(user_message, conversation_history, system_prompt)
     completion = await client.chat.completions.create(
         model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
@@ -169,12 +248,13 @@ async def _call_anthropic(
     user_message: str,
     conversation_history: list[dict[str, str]],
     system_prompt: str,
+    api_key: str | None = None,
 ) -> str:
     """Call the Anthropic messages API."""
-    api_key = _get_llm_api_key()
+    key = _resolve_api_key(api_key)
     anthropic_mod = _import_optional("anthropic", "Anthropic")
 
-    client = anthropic_mod.AsyncAnthropic(api_key=api_key)
+    client = anthropic_mod.AsyncAnthropic(api_key=key)
     # Anthropic uses a separate system parameter, not a system message in the list.
     messages_for_api: list[dict[str, str]] = []
     for entry in conversation_history:

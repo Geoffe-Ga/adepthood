@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, status
+import os
+
+from fastapi import APIRouter, Depends, Header, Request, status
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -20,9 +22,58 @@ from schemas.botmason import (
     ChatRequest,
     ChatResponse,
 )
-from services.botmason import CONVERSATION_HISTORY_LIMIT, generate_response
+from services.botmason import (
+    CONVERSATION_HISTORY_LIMIT,
+    LLM_API_KEY_MAX_LENGTH,
+    generate_response,
+    get_provider,
+    provider_requires_api_key,
+    validate_llm_api_key_format,
+)
 
 router = APIRouter(tags=["botmason"])
+
+
+# Custom header used by clients to carry a user-provided LLM API key (BYOK).
+# The value is consumed for a single LLM call and must never be stored or
+# logged. Kept as a module constant so tests and the CORS policy can reference
+# the same string without drift.
+LLM_API_KEY_HEADER = "X-LLM-API-Key"  # pragma: allowlist secret
+
+
+def _resolve_user_api_key(header_value: str | None) -> str | None:
+    """Return the sanitised user-supplied key, or raise 400 if malformed.
+
+    A missing header resolves to ``None`` so the caller can decide whether to
+    fall back to the server-side env var.
+    """
+    if header_value is None:
+        return None
+    key = header_value.strip()
+    if not key:
+        return None
+    if len(key) > LLM_API_KEY_MAX_LENGTH:
+        raise bad_request("invalid_llm_api_key_format")
+    provider = get_provider()
+    if not validate_llm_api_key_format(key, provider):
+        raise bad_request("invalid_llm_api_key_format")
+    return key
+
+
+def _resolve_api_key_for_chat(header_value: str | None) -> str | None:
+    """Choose the API key to forward for a ``/journal/chat`` request.
+
+    Precedence: validated user-supplied header → server ``LLM_API_KEY`` env →
+    none. Raises 402 ``llm_key_required`` when the active provider needs a key
+    but neither source has one. The returned key is used for a single call and
+    is never persisted.
+    """
+    user_key = _resolve_user_api_key(header_value)
+    if user_key is not None:
+        return user_key
+    if provider_requires_api_key() and not os.getenv("LLM_API_KEY"):
+        raise payment_required("llm_key_required")
+    return None
 
 
 async def _get_user(user_id: int, session: AsyncSession) -> User:
@@ -48,16 +99,27 @@ async def chat_with_botmason(
     payload: ChatRequest,
     current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
+    x_llm_api_key: str | None = Header(default=None, alias=LLM_API_KEY_HEADER),
 ) -> ChatResponse:
     """Send a message to BotMason and receive an AI response.
 
-    1. Atomically deduct 1 from offering_balance (prevents TOCTOU race)
-    2. Store user's message as JournalEntry(sender='user')
-    3. Load recent conversation history
-    4. Call BotMason AI service
-    5. Store bot's response as JournalEntry(sender='bot')
-    6. Return bot's response + remaining balance
+    1. Resolve the LLM API key (user-supplied header > server env var)
+    2. Atomically deduct 1 from offering_balance (prevents TOCTOU race)
+    3. Store user's message as JournalEntry(sender='user')
+    4. Load recent conversation history
+    5. Call BotMason AI service
+    6. Store bot's response as JournalEntry(sender='bot')
+    7. Return bot's response + remaining balance
+
+    The ``X-LLM-API-Key`` header is validated for format and forwarded to the
+    provider for this single request. It is never logged, never written to
+    the database, and never echoed back in the response.
     """
+    # Resolve the key BEFORE deducting balance so a malformed key (400) or a
+    # missing key on a provider that needs one (402) never costs the user an
+    # offering. Fails fast without touching the DB.
+    api_key = _resolve_api_key_for_chat(x_llm_api_key)
+
     # Atomic balance deduction — single SQL statement, no TOCTOU race window.
     # The WHERE clause guarantees the decrement only happens if balance > 0.
     deduct_result = await session.execute(
@@ -91,8 +153,13 @@ async def chat_with_botmason(
         {"sender": entry.sender, "message": entry.message} for entry in history_entries
     ]
 
-    # Generate AI response
-    bot_text = await generate_response(payload.message, conversation_history)
+    # Generate AI response. ``api_key`` is passed by value for a single call
+    # and is discarded when this function returns.
+    bot_text = await generate_response(
+        payload.message,
+        conversation_history,
+        api_key=api_key,
+    )
 
     # Store bot's response
     bot_entry = JournalEntry(sender="bot", user_id=current_user, message=bot_text)
