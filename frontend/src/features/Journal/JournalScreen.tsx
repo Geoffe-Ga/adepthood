@@ -6,21 +6,46 @@ import {
   botmason as botmasonApi,
   journal as journalApi,
   prompts as promptsApi,
-  type JournalMessage,
+  type ChatResponse,
   type JournalTag,
   type PromptDetail,
   ApiError,
+  StreamingUnsupportedError,
 } from '../../api';
 import { useAppRoute } from '../../navigation/hooks';
 
 import ChatInput from './ChatInput';
 import styles from './Journal.styles';
-import MessageBubble from './MessageBubble';
+import MessageBubble, { type ChatMessage } from './MessageBubble';
 import SearchBar from './SearchBar';
 import TagFilter from './TagFilter';
 import WeeklyPromptBanner from './WeeklyPromptBanner';
 
 const PAGE_SIZE = 50;
+
+// Generic fallback used when the server returns an unexpected detail string.
+// Kept as a module constant so multiple error keys can share the same copy
+// without duplicating the literal (sonarjs/no-duplicate-string).
+const GENERIC_PROVIDER_ERROR = 'BotMason is having trouble connecting. Try again in a moment.';
+
+// Maps the server's ``detail`` field to a human-readable, actionable message.
+// Centralising the mapping keeps the retry UI consistent regardless of which
+// layer (HTTP status, SSE error frame, network failure) surfaced the problem.
+const ERROR_MESSAGES: Record<string, string> = {
+  llm_key_required: 'Add your API key in Settings to chat with BotMason',
+  invalid_llm_api_key_format: 'Your API key is malformed — update it in Settings', // pragma: allowlist secret
+  insufficient_offerings:
+    "You've used your monthly messages. Add an API key or wait until next month.",
+  rate_limit_exceeded: 'Slow down — you can send 10 messages per minute',
+  llm_provider_error: GENERIC_PROVIDER_ERROR,
+  malformed_stream_frame: GENERIC_PROVIDER_ERROR,
+  incomplete_stream: 'The connection dropped before BotMason finished. Tap retry to try again.',
+  network_error: "You're offline. Tap retry once you reconnect.",
+};
+
+function mapErrorMessage(detail: string): string {
+  return ERROR_MESSAGES[detail] ?? GENERIC_PROVIDER_ERROR;
+}
 
 // --- Sub-components ---
 
@@ -134,24 +159,57 @@ const JournalBanners = (props: BannersProps): React.JSX.Element => (
 // --- Message updater helpers ---
 
 function replaceMessageById(
-  prev: JournalMessage[],
+  prev: ChatMessage[],
   optimisticId: number,
-  created: JournalMessage,
-): JournalMessage[] {
+  created: ChatMessage,
+): ChatMessage[] {
   return prev.map((m) => (m.id === optimisticId ? created : m));
 }
 
-function removeMessageById(prev: JournalMessage[], optimisticId: number): JournalMessage[] {
+function removeMessageById(prev: ChatMessage[], optimisticId: number): ChatMessage[] {
   return prev.filter((m) => m.id !== optimisticId);
+}
+
+function appendStreamingChunk(prev: ChatMessage[], botId: number, chunk: string): ChatMessage[] {
+  return prev.map((m) => (m.id === botId ? { ...m, message: m.message + chunk } : m));
+}
+
+function markMessageErrored(
+  prev: ChatMessage[],
+  userId: number,
+  retryText: string,
+  retryTag: JournalTag,
+  detail: string,
+): ChatMessage[] {
+  return prev.map((m) =>
+    m.id === userId
+      ? { ...m, _errored: true, _errorDetail: detail, _retryText: retryText, _retryTag: retryTag }
+      : m,
+  );
+}
+
+function clearMessageError(prev: ChatMessage[], userId: number): ChatMessage[] {
+  return prev.map((m) => {
+    if (m.id !== userId) return m;
+    // Strip the ephemeral error metadata but keep every wire field intact —
+    // destructuring would force us to name the discarded keys, which eslint
+    // then flags as unused.
+    const next: ChatMessage = { ...m };
+    delete next._errored;
+    delete next._errorDetail;
+    delete next._retryText;
+    delete next._retryTag;
+    return next;
+  });
 }
 
 // --- Hook: message list state ---
 
 function useMessageList() {
-  const [messages, setMessages] = useState<JournalMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasMore, setHasMore] = useState(false);
 
-  const replaceOptimistic = useCallback((optimisticId: number, created: JournalMessage) => {
+  const replaceOptimistic = useCallback((optimisticId: number, created: ChatMessage) => {
     setMessages((prev) => replaceMessageById(prev, optimisticId, created));
   }, []);
 
@@ -159,8 +217,23 @@ function useMessageList() {
     setMessages((prev) => removeMessageById(prev, optimisticId));
   }, []);
 
-  const prependMessage = useCallback((msg: JournalMessage) => {
+  const prependMessage = useCallback((msg: ChatMessage) => {
     setMessages((prev) => [msg, ...prev]);
+  }, []);
+
+  const appendChunk = useCallback((botId: number, chunk: string) => {
+    setMessages((prev) => appendStreamingChunk(prev, botId, chunk));
+  }, []);
+
+  const markErrored = useCallback(
+    (userId: number, retryText: string, retryTag: JournalTag, detail: string) => {
+      setMessages((prev) => markMessageErrored(prev, userId, retryText, retryTag, detail));
+    },
+    [],
+  );
+
+  const clearError = useCallback((userId: number) => {
+    setMessages((prev) => clearMessageError(prev, userId));
   }, []);
 
   return {
@@ -171,6 +244,9 @@ function useMessageList() {
     replaceOptimistic,
     removeOptimistic,
     prependMessage,
+    appendChunk,
+    markErrored,
+    clearError,
   };
 }
 
@@ -264,7 +340,7 @@ function useJournalSideData() {
 function useFreeformSend(
   practiceSessionId: number | null,
   userPracticeId: number | null,
-  replaceOptimistic: (_id: number, _msg: JournalMessage) => void,
+  replaceOptimistic: (_id: number, _msg: ChatMessage) => void,
   removeOptimistic: (_id: number) => void,
 ) {
   return useCallback(
@@ -288,39 +364,205 @@ function useFreeformSend(
 
 // --- Hook: send with bot ---
 
-function useBotSend(
-  loadMessages: (_offset?: number) => Promise<void>,
-  setOfferingBalance: (_b: number) => void,
-  setRemainingMessages: (_n: number) => void,
-  removeOptimistic: (_id: number) => void,
-  sendFreeform: (_text: string, _tag: JournalTag, _id: number) => Promise<void>,
-) {
+function createBotPlaceholder(userId: number): ChatMessage {
+  // Offset by 1ms so the bot and user placeholders never collide on fast
+  // hardware where ``Date.now()`` could return the same value back-to-back.
+  return {
+    id: -(Date.now() + 1),
+    message: '',
+    sender: 'bot',
+    user_id: userId,
+    timestamp: new Date().toISOString(),
+    tag: 'freeform',
+    practice_session_id: null,
+    user_practice_id: null,
+    _streaming: true,
+  };
+}
+
+function buildFinalBotMessage(placeholder: ChatMessage, result: ChatResponse): ChatMessage {
+  return {
+    ...placeholder,
+    id: result.bot_entry_id,
+    message: result.response,
+    timestamp: new Date().toISOString(),
+    _streaming: false,
+  };
+}
+
+type ChatMessageListActions = {
+  prependMessage: (_msg: ChatMessage) => void;
+  replaceOptimistic: (_id: number, _msg: ChatMessage) => void;
+  removeOptimistic: (_id: number) => void;
+  appendChunk: (_botId: number, _chunk: string) => void;
+  markErrored: (_userId: number, _text: string, _tag: JournalTag, _detail: string) => void;
+};
+
+type BotSendDeps = {
+  actions: ChatMessageListActions;
+  setOfferingBalance: (_b: number) => void;
+  setRemainingMessages: (_n: number) => void;
+  sendFreeform: (_text: string, _tag: JournalTag, _id: number) => Promise<void>;
+};
+
+// Derive a stable error detail string from any thrown value so the retry UI
+// has exactly one code path regardless of whether the problem was HTTP,
+// mid-stream, or a dropped network socket.
+function classifyError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 429) return 'rate_limit_exceeded';
+    return err.detail;
+  }
+  return 'network_error';
+}
+
+async function sendWithNonStreamingFallback(
+  text: string,
+  tag: JournalTag,
+  optimisticUserId: number,
+  botPlaceholderId: number,
+  deps: BotSendDeps,
+): Promise<void> {
+  // Used when the runtime fetch cannot expose a streaming body. We still
+  // want the final response to land in the list, so we do a single round
+  // trip and rewrite the placeholder once with the server's answer.
+  try {
+    const result = await botmasonApi.chat({ message: text });
+    deps.actions.replaceOptimistic(
+      botPlaceholderId,
+      buildFinalBotMessage(
+        { ...createBotPlaceholder(0), id: botPlaceholderId, user_id: 0 },
+        result,
+      ),
+    );
+    deps.setOfferingBalance(result.remaining_balance);
+    deps.setRemainingMessages(result.remaining_messages);
+  } catch (err) {
+    deps.actions.removeOptimistic(botPlaceholderId);
+    if (isInsufficientOfferingsError(err)) {
+      deps.setOfferingBalance(0);
+      deps.setRemainingMessages(0);
+      await deps.sendFreeform(text, tag, optimisticUserId);
+      return;
+    }
+    deps.actions.markErrored(optimisticUserId, text, tag, classifyError(err));
+  }
+}
+
+type StreamOutcome = { completed: boolean; streamError: string | null };
+
+async function runChatStream(
+  text: string,
+  botPlaceholderId: number,
+  onFirstChunk: () => void,
+  deps: BotSendDeps,
+): Promise<StreamOutcome> {
+  const outcome: StreamOutcome = { completed: false, streamError: null };
+  let sawFirstChunk = false;
+  await botmasonApi.chatStream(
+    { message: text },
+    {
+      onChunk: (chunk) => {
+        if (!sawFirstChunk) {
+          sawFirstChunk = true;
+          onFirstChunk();
+        }
+        deps.actions.appendChunk(botPlaceholderId, chunk);
+      },
+      onComplete: (result) => {
+        outcome.completed = true;
+        deps.actions.replaceOptimistic(
+          botPlaceholderId,
+          buildFinalBotMessage(
+            { ...createBotPlaceholder(0), id: botPlaceholderId, user_id: 0 },
+            result,
+          ),
+        );
+        deps.setOfferingBalance(result.remaining_balance);
+        deps.setRemainingMessages(result.remaining_messages);
+      },
+      onStreamError: (err) => {
+        outcome.streamError = err.detail;
+      },
+    },
+  );
+  return outcome;
+}
+
+// 402 responses come in two flavours: both wallets drained
+// (``insufficient_offerings`` — the legitimate "out of credit" path) and BYOK
+// provider-side misconfiguration (``llm_key_required``). Only the former
+// should downgrade to a freeform save; the latter is user-actionable and
+// belongs in the retry UI.
+function isInsufficientOfferingsError(err: unknown): err is ApiError {
+  return err instanceof ApiError && err.status === 402 && err.detail === 'insufficient_offerings';
+}
+
+async function handleStreamError(
+  err: unknown,
+  text: string,
+  tag: JournalTag,
+  optimisticUserId: number,
+  botPlaceholderId: number,
+  deps: BotSendDeps,
+): Promise<void> {
+  deps.actions.removeOptimistic(botPlaceholderId);
+  if (err instanceof StreamingUnsupportedError) {
+    // Runtime cannot read the body progressively — retry via the legacy
+    // request/response endpoint so the user still receives the reply, just
+    // without the typewriter effect.
+    const fallbackPlaceholder = createBotPlaceholder(0);
+    deps.actions.prependMessage(fallbackPlaceholder);
+    await sendWithNonStreamingFallback(text, tag, optimisticUserId, fallbackPlaceholder.id, deps);
+    return;
+  }
+  if (isInsufficientOfferingsError(err)) {
+    deps.setOfferingBalance(0);
+    deps.setRemainingMessages(0);
+    await deps.sendFreeform(text, tag, optimisticUserId);
+    return;
+  }
+  deps.actions.markErrored(optimisticUserId, text, tag, classifyError(err));
+}
+
+function useBotSend(deps: BotSendDeps) {
+  // ``awaitingBot`` surfaces the "BotMason is thinking..." indicator only
+  // while we are waiting for the first token. Once chunks start arriving the
+  // bot placeholder itself communicates progress, so the standalone indicator
+  // hides to avoid double-signalling.
   const [awaitingBot, setAwaitingBot] = useState(false);
 
   const sendWithBot = useCallback(
-    async (text: string, tag: JournalTag, optimisticId: number) => {
+    async (text: string, tag: JournalTag, optimisticUserId: number) => {
+      const botPlaceholder = createBotPlaceholder(0);
+      deps.actions.prependMessage(botPlaceholder);
+      setAwaitingBot(true);
       try {
-        setAwaitingBot(true);
-        const chatResult = await botmasonApi.chat({ message: text });
-        await loadMessages(0);
-        setOfferingBalance(chatResult.remaining_balance);
-        setRemainingMessages(chatResult.remaining_messages);
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 402) {
-          // Both wallets are empty — clear counters so the "resting" banner
-          // appears immediately and fall through to a freeform write.
-          setOfferingBalance(0);
-          setRemainingMessages(0);
-          await sendFreeform(text, tag, optimisticId);
-        } else {
-          console.error('BotMason chat failed:', err);
-          removeOptimistic(optimisticId);
+        const outcome = await runChatStream(
+          text,
+          botPlaceholder.id,
+          () => setAwaitingBot(false),
+          deps,
+        );
+        if (!outcome.completed) {
+          // Stream closed early — either a provider error event arrived or
+          // the socket dropped without a ``complete``. Either way we treat
+          // it as a retryable failure.
+          deps.actions.removeOptimistic(botPlaceholder.id);
+          deps.actions.markErrored(
+            optimisticUserId,
+            text,
+            tag,
+            outcome.streamError ?? 'incomplete_stream',
+          );
         }
+      } catch (err) {
+        await handleStreamError(err, text, tag, optimisticUserId, botPlaceholder.id, deps);
       } finally {
         setAwaitingBot(false);
       }
     },
-    [loadMessages, setOfferingBalance, setRemainingMessages, removeOptimistic, sendFreeform],
+    [deps],
   );
 
   return { awaitingBot, sendWithBot };
@@ -340,7 +582,7 @@ function buildOptimisticMessage(
   tag: JournalTag,
   practiceSessionId: number | null,
   userPracticeId: number | null,
-): JournalMessage {
+): ChatMessage {
   return {
     id: -Date.now(),
     message: text,
@@ -355,11 +597,12 @@ function buildOptimisticMessage(
 
 // --- List helpers ---
 
-const renderMessage = ({ item }: { item: JournalMessage }): React.JSX.Element => (
-  <MessageBubble message={item} />
-);
+const keyExtractor = (item: ChatMessage): string => String(item.id);
 
-const keyExtractor = (item: JournalMessage): string => String(item.id);
+function getErrorLabel(detail: string | undefined): string {
+  if (!detail) return '';
+  return mapErrorMessage(detail);
+}
 
 // --- Empty state ---
 
@@ -398,11 +641,12 @@ const JournalLoading = (): React.JSX.Element => (
 // --- Message list sub-component ---
 
 interface JournalMessageListProps {
-  messages: JournalMessage[];
+  messages: ChatMessage[];
   loadingMore: boolean;
   loading: boolean;
   isFiltering: boolean;
   onLoadMore: () => void;
+  onRetry: (_message: ChatMessage) => void;
 }
 
 const JournalMessageList = ({
@@ -411,6 +655,7 @@ const JournalMessageList = ({
   loading,
   isFiltering,
   onLoadMore,
+  onRetry,
 }: JournalMessageListProps): React.JSX.Element => {
   const renderFooter = useCallback(() => {
     if (!loadingMore) return null;
@@ -426,11 +671,22 @@ const JournalMessageList = ({
     return <EmptyState isFiltering={isFiltering} />;
   }, [loading, isFiltering]);
 
+  const renderItem = useCallback(
+    ({ item }: { item: ChatMessage }) => (
+      <MessageBubble
+        message={item}
+        errorLabel={getErrorLabel(item._errorDetail)}
+        onRetry={item._errored ? () => onRetry(item) : undefined}
+      />
+    ),
+    [onRetry],
+  );
+
   return (
     <FlatList
       testID="message-list"
       data={messages}
-      renderItem={renderMessage}
+      renderItem={renderItem}
       keyExtractor={keyExtractor}
       inverted
       contentContainerStyle={[styles.messageList, messages.length === 0 && { flexGrow: 1 }]}
@@ -547,7 +803,7 @@ function useJournalSend(
   rp: JournalRouteParams,
   offeringBalance: number | null,
   remainingMessages: number | null,
-  prependMessage: (_msg: JournalMessage) => void,
+  prependMessage: (_msg: ChatMessage) => void,
   sendWithBot: (_text: string, _tag: JournalTag, _id: number) => Promise<void>,
   sendFreeform: (_text: string, _tag: JournalTag, _id: number) => Promise<void>,
 ) {
@@ -580,6 +836,44 @@ function useJournalSend(
 
 // --- Hook: compose all journal hooks ---
 
+function useRetryHandler(
+  clearError: (_id: number) => void,
+  sendWithBot: (_t: string, _tag: JournalTag, _id: number) => Promise<void>,
+) {
+  // Retry resends the original text/tag without creating a new user message —
+  // the existing errored message stays in place, its error flag is cleared,
+  // and a fresh bot placeholder is prepended. No duplicate user entry even
+  // if the user double-taps the retry button.
+  return useCallback(
+    async (message: ChatMessage) => {
+      if (!message._retryText || !message._retryTag) return;
+      const { _retryText, _retryTag } = message;
+      clearError(message.id);
+      await sendWithBot(_retryText, _retryTag, message.id);
+    },
+    [clearError, sendWithBot],
+  );
+}
+
+function useBotSendWithActions(
+  msgList: ReturnType<typeof useMessageList>,
+  side: ReturnType<typeof useJournalSideData>,
+  sendFreeform: (_t: string, _tag: JournalTag, _id: number) => Promise<void>,
+) {
+  return useBotSend({
+    actions: {
+      prependMessage: msgList.prependMessage,
+      replaceOptimistic: msgList.replaceOptimistic,
+      removeOptimistic: msgList.removeOptimistic,
+      appendChunk: msgList.appendChunk,
+      markErrored: msgList.markErrored,
+    },
+    setOfferingBalance: side.setOfferingBalance,
+    setRemainingMessages: side.setRemainingMessages,
+    sendFreeform,
+  });
+}
+
 function useJournalComposer(
   searchQuery: string,
   activeTag: JournalTag | null,
@@ -589,27 +883,19 @@ function useJournalComposer(
   const msgList = useMessageList();
   const loader = useMessageLoader(searchQuery, activeTag, isFiltering, msgList);
   const side = useJournalSideData();
-  const { prependMessage, replaceOptimistic, removeOptimistic } = msgList;
-
   const sendFreeform = useFreeformSend(
     rp.practiceSessionId,
     rp.userPracticeId,
-    replaceOptimistic,
-    removeOptimistic,
+    msgList.replaceOptimistic,
+    msgList.removeOptimistic,
   );
-  const { awaitingBot, sendWithBot } = useBotSend(
-    loader.loadMessages,
-    side.setOfferingBalance,
-    side.setRemainingMessages,
-    removeOptimistic,
-    sendFreeform,
-  );
+  const { awaitingBot, sendWithBot } = useBotSendWithActions(msgList, side, sendFreeform);
 
   const { sending, setSending, handleSend } = useJournalSend(
     rp,
     side.offeringBalance,
     side.remainingMessages,
-    prependMessage,
+    msgList.prependMessage,
     sendWithBot,
     sendFreeform,
   );
@@ -621,8 +907,18 @@ function useJournalComposer(
     loader.loadMessages,
     setSending,
   );
+  const handleRetry = useRetryHandler(msgList.clearError, sendWithBot);
 
-  return { msgList, loader, side, awaitingBot, sending, handleSend, handlePromptRespond };
+  return {
+    msgList,
+    loader,
+    side,
+    awaitingBot,
+    sending,
+    handleSend,
+    handlePromptRespond,
+    handleRetry,
+  };
 }
 
 // --- Typing indicator ---
@@ -675,6 +971,7 @@ const JournalScreen = (): React.JSX.Element => {
         loading={j.loader.loading}
         isFiltering={isFiltering}
         onLoadMore={j.loader.handleLoadMore}
+        onRetry={j.handleRetry}
       />
       <TypingIndicator visible={j.awaitingBot} />
       <ChatInput onSend={j.handleSend} disabled={j.sending} initialTag={rp.contextTag} />

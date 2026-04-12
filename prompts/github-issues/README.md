@@ -157,10 +157,42 @@ All assume Phases 1–4 are complete.
       └── optional enhancement if phase-5-01 is done first (per-habit unlock on locked tiles)
 ```
 
+## Phase 7 — Architecture Cleanup & Code Quality
+Refactoring epic from the 2026-04-12 full-stack architecture review. Pure cleanup — no new features. See [executive summary](../claude-comms/architecture-review-2026-04-12.md).
+
+| # | Issue | Scope | Est. LoC | Priority |
+|---|-------|-------|----------|----------|
+| 01 | [Extract backend service layer](phase-7-01-extract-service-layer.md) | Backend | ~400 | Critical |
+| 02 | [Decompose useHabits god hook](phase-7-02-decompose-use-habits.md) | Frontend | ~350 | Critical |
+| 03 | [Unify frontend state management](phase-7-03-unify-state-management.md) | Frontend | ~300 | High |
+| 04 | [Optimize N+1 queries](phase-7-04-optimize-n-plus-1-queries.md) | Backend | ~200 | High |
+| 05 | [Complete stub implementations](phase-7-05-complete-stubs.md) | Backend | ~250 | High |
+| 06 | [Centralize error handling](phase-7-06-centralize-error-handling.md) | Full-stack | ~200 | Medium |
+| 07 | [Enforce design token usage](phase-7-07-enforce-design-tokens.md) | Frontend | ~250 | Medium |
+| 08 | [Add frontend integration tests](phase-7-08-frontend-integration-tests.md) | Frontend | ~350 | Medium |
+| 09 | [Shared data-loading pattern](phase-7-09-shared-data-loader.md) | Frontend | ~200 | Medium |
+| 10 | [Streamline pre-commit and CI](phase-7-10-streamline-ci.md) | Infra | ~100 | Low |
+
+## Dependency Graph (Phase 7)
+
+```
+All issues are independent — no internal dependencies.
+Recommended execution order by priority:
+
+  phase-7-01 (Service layer) — unblocks cleaner backend work
+  phase-7-02 (useHabits) — biggest frontend risk
+  phase-7-03 (State mgmt) — builds on 7-02
+  phase-7-04 (N+1 queries) — performance, parallel with 7-02/7-03
+  phase-7-05 (Stubs) — user-facing improvements
+  phase-7-06 (Error handling) — cross-stack consistency
+  phase-7-07 (Design tokens) — visual consistency
+  phase-7-08 (Integration tests) — confidence for future refactors
+  phase-7-09 (Data loader) — reduces duplication
+  phase-7-10 (CI) — developer experience
+```
+
 ## Total Estimated Scope
 
-- **49 issues** across 5 phases (11 + 7 + 14 + 10 + 7)
-- **~9,050 LoC** of changes (net, including deletions)
-- Phase 1 is the critical path — everything else depends on it
-- Phase 3 is the largest phase, reflecting 4 features + cross-feature deep links
-- Phase 5 is fully parallelizable — all 7 issues can be worked simultaneously
+- **~65 issues** across 7 phases
+- Phases 1–5 complete, Phase 6 (Gumroad monetization) and Phase 7 (cleanup) are active
+- Phase 7 is all pure refactoring — no behavior changes, can run in parallel with Phase 6

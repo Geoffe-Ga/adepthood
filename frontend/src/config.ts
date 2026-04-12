@@ -7,7 +7,9 @@ export function validateApiBaseUrl(url: string, isDev: boolean): string {
         `Received: "${url || '(empty)'}"`,
     );
   }
-  return url;
+  // Strip trailing slashes so `${API_BASE_URL}${path}` — where paths always
+  // start with "/" — can't produce "//auth/signup" (which FastAPI 404s).
+  return url.replace(/\/+$/, '');
 }
 
 const rawUrl = process.env.EXPO_PUBLIC_API_BASE_URL || (__DEV__ ? DEV_DEFAULT_URL : '');

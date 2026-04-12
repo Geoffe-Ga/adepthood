@@ -46,7 +46,7 @@ describe('API client request composition', () => {
   });
 
   it('logs in via POST /auth/login', async () => {
-    const creds = { username: 'u', password: 'p' }; // pragma: allowlist secret
+    const creds = { email: 'u@example.com', password: 'p' }; // pragma: allowlist secret
     await api.auth.login(creds);
     expect(fetch).toHaveBeenCalledWith(`${mockBaseUrl}/auth/login`, {
       method: 'POST',
@@ -56,7 +56,7 @@ describe('API client request composition', () => {
   });
 
   it('signs up via POST /auth/signup', async () => {
-    const creds = { username: 'u', password: 'p' }; // pragma: allowlist secret
+    const creds = { email: 'u@example.com', password: 'p' }; // pragma: allowlist secret
     await api.auth.signup(creds);
     expect(fetch).toHaveBeenCalledWith(`${mockBaseUrl}/auth/signup`, {
       method: 'POST',

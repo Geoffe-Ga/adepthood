@@ -1,16 +1,15 @@
 /* eslint-env jest */
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
 import renderer from 'react-test-renderer';
 
-import type { JournalMessage } from '../../../api';
-import MessageBubble from '../MessageBubble';
+import MessageBubble, { type ChatMessage } from '../MessageBubble';
 
 interface TextInstance {
   props: { children: unknown };
 }
 
-const makeMessage = (overrides: Partial<JournalMessage> = {}): JournalMessage => ({
+const makeMessage = (overrides: Partial<ChatMessage> = {}): ChatMessage => ({
   id: 1,
   message: 'Hello world',
   sender: 'user',
@@ -104,5 +103,45 @@ describe('MessageBubble', () => {
       return typeof content === 'string' && /\d{1,2}:\d{2}/.test(content);
     });
     expect(timestampTexts.length).toBeGreaterThan(0);
+  });
+
+  it('appends a streaming cursor when _streaming is true', () => {
+    const msg = makeMessage({ sender: 'bot', message: 'Partial', _streaming: true });
+    const tree = renderer.create(<MessageBubble message={msg} />);
+    const root = tree.root;
+    const texts = root.findAllByType('Text') as TextInstance[];
+    const bubble = texts.find((t) => {
+      const c = t.props.children;
+      return typeof c === 'string' && c.startsWith('Partial');
+    });
+    expect(bubble).toBeTruthy();
+    expect(typeof bubble!.props.children).toBe('string');
+    expect(bubble!.props.children).toMatch(/^Partial[\u258A]$/);
+  });
+
+  it('renders retry button and error label when _errored is true', () => {
+    const onRetry = jest.fn();
+    const msg = makeMessage({
+      _errored: true,
+      _retryText: 'hi',
+      _retryTag: 'freeform',
+      _errorDetail: 'llm_provider_error',
+    });
+    const tree = renderer.create(
+      <MessageBubble message={msg} errorLabel="Try again in a moment." onRetry={onRetry} />,
+    );
+    const root = tree.root;
+    const retryButton = root.findByProps({ testID: 'message-retry' });
+    expect(retryButton).toBeTruthy();
+    retryButton.props.onPress();
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    const texts = root.findAllByType('Text') as TextInstance[];
+    expect(texts.some((t) => t.props.children === 'Try again in a moment.')).toBe(true);
+  });
+
+  it('does not render retry button when _errored is not set', () => {
+    const tree = renderer.create(<MessageBubble message={makeMessage()} />);
+    const root = tree.root;
+    expect(root.findAllByProps({ testID: 'message-retry' })).toHaveLength(0);
   });
 });

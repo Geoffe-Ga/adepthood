@@ -105,7 +105,7 @@ describe('retry-after-refresh on 401', () => {
   test('does not retry for auth endpoints (avoids infinite loops)', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'invalid_credentials' }, 401));
 
-    const credentials = { username: 'test@test.com', password: 'wrong' }; // pragma: allowlist secret
+    const credentials = { email: 'test@test.com', password: 'wrong' }; // pragma: allowlist secret
     await expect(auth.login(credentials)).rejects.toThrow(ApiError);
 
     // Only the original call — no refresh attempt
