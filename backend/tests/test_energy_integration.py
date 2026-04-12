@@ -15,7 +15,7 @@ import pytest
 from cachetools import TTLCache
 from httpx import AsyncClient
 
-from routers import energy
+from services import energy as energy_service
 
 
 def _habits_payload(count: int = 3) -> list[dict[str, Any]]:
@@ -96,7 +96,7 @@ async def test_different_idempotency_keys_produce_independent_results(
     async_client: AsyncClient,
 ) -> None:
     """Different idempotency keys are cached independently."""
-    with patch.object(energy, "_idempotency_cache", TTLCache(maxsize=1000, ttl=3600)):
+    with patch.object(energy_service, "idempotency_cache", TTLCache(maxsize=1000, ttl=3600)):
         payload_a = _plan_request([{"id": 1, "name": "A", "energy_cost": 1, "energy_return": 2}])
         payload_b = _plan_request([{"id": 2, "name": "B", "energy_cost": 5, "energy_return": 1}])
 
