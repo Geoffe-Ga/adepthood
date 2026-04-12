@@ -1,8 +1,10 @@
 // frontend/navigation/BottomTabs.tsx
 
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { JournalTag } from '../api';
 import CourseScreen from '../features/Course/CourseScreen';
@@ -10,6 +12,8 @@ import HabitsScreen from '../features/Habits/HabitsScreen';
 import JournalScreen from '../features/Journal/JournalScreen';
 import MapScreen from '../features/Map/MapScreen';
 import PracticeScreen from '../features/Practice/PracticeScreen';
+
+import type { RootStackParamList } from './RootStack';
 
 import { useAuth } from '@/context/AuthContext';
 
@@ -39,15 +43,30 @@ const Tab = createBottomTabNavigator<RootTabParamList>();
  */
 const BottomTabs = (): React.JSX.Element => {
   const { logout } = useAuth();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+
+  const openSettings = React.useCallback(() => {
+    navigation.navigate('ApiKeySettings');
+  }, [navigation]);
 
   return (
     <Tab.Navigator
       initialRouteName="Habits"
       screenOptions={{
         headerRight: () => (
-          <TouchableOpacity onPress={logout} style={styles.logoutButton}>
-            <Text style={styles.logoutText}>Logout</Text>
-          </TouchableOpacity>
+          <View style={styles.headerRight}>
+            <TouchableOpacity
+              onPress={openSettings}
+              style={styles.headerButton}
+              accessibilityLabel="Open settings"
+              testID="open-settings-button"
+            >
+              <Text style={styles.headerButtonText}>⚙︎</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={logout} style={styles.headerButton}>
+              <Text style={styles.headerButtonText}>Logout</Text>
+            </TouchableOpacity>
+          </View>
         ),
       }}
     >
@@ -61,8 +80,9 @@ const BottomTabs = (): React.JSX.Element => {
 };
 
 const styles = StyleSheet.create({
-  logoutButton: { marginRight: 12 },
-  logoutText: { color: '#4a90d9', fontSize: 14, fontWeight: '600' },
+  headerRight: { flexDirection: 'row', alignItems: 'center', marginRight: 8 },
+  headerButton: { paddingHorizontal: 8, paddingVertical: 4 },
+  headerButtonText: { color: '#4a90d9', fontSize: 14, fontWeight: '600' },
 });
 
 export default BottomTabs;
