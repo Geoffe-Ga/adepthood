@@ -6,6 +6,7 @@ pydantic
 email-validator
 sqlalchemy
 sqlmodel
+alembic
 asyncpg
 aiosqlite
 bcrypt

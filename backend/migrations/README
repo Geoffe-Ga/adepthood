@@ -1,13 +1,1 @@
-Alembic migrations live here.
-
-This directory is a placeholder until Alembic is initialized with
-`alembic init migrations`. While it is empty, the Dockerfile does
-NOT copy it into the image — Railway's BuildKit intermittently
-fails to resolve near-empty directories in the build context,
-which caused repeated deploy failures.
-
-Once Alembic is configured and real revision scripts land here,
-re-add `COPY migrations/ migrations/` to backend/Dockerfile
-alongside the existing `COPY alembic.ini* ./` line.
-
-See DEPLOYMENT.md ("Database Migrations") for setup instructions.
+Generic single-database configuration with an async dbapi.
