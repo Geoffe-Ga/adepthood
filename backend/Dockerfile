@@ -29,6 +29,13 @@ RUN apt-get update && \
 COPY --from=builder /install /usr/local
 COPY backend/src/ src/
 
+# Source files use top-level absolute imports (`from database import ...`,
+# `from routers.auth import ...`) — consistent with the test harness, which
+# prepends `backend/src` to sys.path in conftest.py.  Mirror that for the
+# container by exposing /app/src on PYTHONPATH so `python -m uvicorn main:app`
+# can resolve those imports at runtime.
+ENV PYTHONPATH=/app/src
+
 # Copy Alembic config (optional — glob is a no-op when the file is absent).
 # Once `alembic init migrations` is run and alembic.ini is committed,
 # add `COPY backend/migrations/ migrations/` below so `alembic upgrade head`
@@ -42,5 +49,7 @@ USER appuser
 
 EXPOSE 8000
 
-# Run migrations (when alembic.ini is present) then start the server
-CMD ["sh", "-c", "if [ -f alembic.ini ]; then python -m alembic upgrade head; fi && python -m uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2}"]
+# Run migrations (when alembic.ini is present) then start the server.
+# We import `main:app` (not `src.main:app`) because PYTHONPATH is set to
+# /app/src; this matches the module layout used in tests.
+CMD ["sh", "-c", "if [ -f alembic.ini ]; then python -m alembic upgrade head; fi && python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2}"]
