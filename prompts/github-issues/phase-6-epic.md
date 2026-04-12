@@ -80,12 +80,18 @@ Adepthood backend
 
 ## Sub-issues
 
-1. `phase-6-01` — Gumroad API client, webhook scaffolding, HMAC verification
-2. `phase-6-02` — Course entitlement model and signup gating via license redemption
-3. `phase-6-03` — Frontend onboarding flow: redirect to Gumroad and redeem license
-4. `phase-6-04` — BotMason token wallet (model, debit on chat, BYOK bypass)
-5. `phase-6-05` — Token-pack SKU crediting and refund/cancellation revocation
-6. `phase-6-06` — Admin endpoints for manual grants, revocations, and balance adjustments
+1. [`phase-6-01`](phase-6-01-gumroad-api-and-webhooks.md) —
+   Gumroad API client, webhook scaffolding, HMAC verification
+2. [`phase-6-02`](phase-6-02-course-entitlement-and-signup-gating.md) —
+   Course entitlement model and signup gating via license redemption
+3. [`phase-6-03`](phase-6-03-frontend-onboarding-flow.md) —
+   Frontend onboarding flow: redirect to Gumroad and redeem license
+4. [`phase-6-04`](phase-6-04-botmason-token-wallet.md) —
+   BotMason token wallet (model, debit on chat, BYOK bypass)
+5. [`phase-6-05`](phase-6-05-token-credits-and-revocation.md) —
+   Token-pack SKU crediting and refund/cancellation revocation
+6. [`phase-6-06`](phase-6-06-admin-override-endpoints.md) —
+   Admin endpoints for manual grants, revocations, and balance adjustments
 
 ## Dependencies
 
