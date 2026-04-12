@@ -15,7 +15,6 @@ from httpx import AsyncClient
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import routers.botmason as botmason_router_mod
 import services.botmason as botmason_mod
 from models.user import User
 from routers.botmason import LLM_API_KEY_HEADER
@@ -1243,7 +1242,7 @@ async def test_stream_provider_error_emits_error_event_and_rolls_back(
         msg = "upstream_boom"
         raise RuntimeError(msg)
 
-    with patch.object(botmason_router_mod, "generate_response_stream", _boom):
+    with patch.object(botmason_mod, "generate_response_stream", _boom):
         resp = await async_client.post(
             "/journal/chat/stream", json={"message": "Hi"}, headers=headers
         )
@@ -1289,7 +1288,7 @@ async def test_stream_falls_back_to_env_key_when_header_absent(
         _fake_stream.captured_key = api_key  # type: ignore[attr-defined]
         yield "world", final
 
-    with patch.object(botmason_router_mod, "generate_response_stream", _fake_stream):
+    with patch.object(botmason_mod, "generate_response_stream", _fake_stream):
         resp = await async_client.post(
             "/journal/chat/stream", json={"message": "Hi"}, headers=headers
         )

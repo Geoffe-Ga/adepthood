@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
+from errors import bad_request, payment_required
+
 # Default system prompt used when no external prompt file is configured.
 _DEFAULT_SYSTEM_PROMPT = (
     "You are BotMason, a Liminal Trickster Mystic guide for the APTITUDE "
@@ -106,6 +108,39 @@ def _matches_provider_rule(api_key: str, rule: tuple[str, tuple[str, ...]] | Non
     if not api_key.startswith(required_prefix):
         return False
     return not any(api_key.startswith(bad) for bad in disallowed_prefixes)
+
+
+def _validated_header_key(header_value: str | None) -> str | None:
+    """Strip, validate, and return the user-supplied BYOK key or ``None``.
+
+    Returns ``None`` when the header is absent or empty (so the caller can
+    fall back to the env var).  Raises 400 when the value is present but
+    fails length or format checks for the active provider.
+    """
+    if header_value is None:
+        return None
+    key = header_value.strip()
+    if not key:
+        return None
+    if len(key) > LLM_API_KEY_MAX_LENGTH or not validate_llm_api_key_format(key, get_provider()):
+        raise bad_request("invalid_llm_api_key_format")
+    return key
+
+
+def resolve_chat_api_key(header_value: str | None) -> str | None:
+    """Return the validated LLM API key to forward, or raise the right HTTP error.
+
+    Precedence: user-supplied header (BYOK) → server ``LLM_API_KEY`` env →
+    none.  Raises 400 for a malformed header, 402 ``llm_key_required`` when
+    the active provider needs a key but neither source has one.  The key is
+    used for a single call and is never persisted, logged, or echoed back.
+    """
+    user_key = _validated_header_key(header_value)
+    if user_key is not None:
+        return user_key
+    if provider_requires_api_key() and not os.getenv("LLM_API_KEY"):
+        raise payment_required("llm_key_required")
+    return None
 
 
 def validate_llm_api_key_format(api_key: str, provider: str) -> bool:
