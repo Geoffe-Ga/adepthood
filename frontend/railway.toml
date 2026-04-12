@@ -1,6 +1,8 @@
 [build]
 builder = "dockerfile"
-dockerfilePath = "Dockerfile"
+# dockerfilePath is resolved from the repo root, not this file's directory,
+# so it must include the frontend/ prefix even though this config lives there.
+dockerfilePath = "frontend/Dockerfile"
 watchPatterns = ["frontend/**"]
 
 [deploy]
