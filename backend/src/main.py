@@ -15,6 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 
 from database import get_session
 from rate_limit import limiter
+from routers.admin import router as admin_router
 from routers.auth import router as auth_router
 from routers.botmason import router as botmason_router
 from routers.course import router as course_router
@@ -143,10 +144,11 @@ app.add_middleware(
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Authorization", "Content-Type", "X-LLM-API-Key"],
+    allow_headers=["Authorization", "Content-Type", "X-LLM-API-Key", "X-Admin-API-Key"],
 )
 
 # Register feature routers
+app.include_router(admin_router)
 app.include_router(auth_router)
 app.include_router(botmason_router)
 app.include_router(course_router)

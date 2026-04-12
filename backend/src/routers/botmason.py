@@ -21,6 +21,7 @@ from sqlmodel import col, select
 from database import get_session
 from errors import bad_request, payment_required
 from models.journal_entry import JournalEntry
+from models.llm_usage_log import LLMUsageLog
 from models.user import User
 from rate_limit import limiter
 from routers.auth import get_current_user
@@ -35,11 +36,13 @@ from schemas.botmason import (
 from services.botmason import (
     CONVERSATION_HISTORY_LIMIT,
     LLM_API_KEY_MAX_LENGTH,
+    LLMResponse,
     generate_response,
     get_provider,
     provider_requires_api_key,
     validate_llm_api_key_format,
 )
+from services.llm_pricing import estimate_cost_usd
 from services.usage import compute_next_reset, get_monthly_cap
 
 router = APIRouter(tags=["botmason"])
@@ -231,15 +234,21 @@ async def chat_with_botmason(
 
     # Generate AI response. ``api_key`` is passed by value for a single call
     # and is discarded when this function returns.
-    bot_text = await generate_response(
+    llm_response = await generate_response(
         payload.message,
         conversation_history,
         api_key=api_key,
     )
 
     # Store bot's response
-    bot_entry = JournalEntry(sender="bot", user_id=current_user, message=bot_text)
+    bot_entry = JournalEntry(sender="bot", user_id=current_user, message=llm_response.text)
     session.add(bot_entry)
+    # Flush so ``bot_entry.id`` is available as the FK for the usage log row.
+    # Both rows commit together below, so a rollback at commit-time still
+    # leaves the log consistent with the journal.
+    await session.flush()
+
+    _record_llm_usage(session, current_user, bot_entry.id, llm_response)
 
     await session.commit()
     await session.refresh(bot_entry)
@@ -249,11 +258,48 @@ async def chat_with_botmason(
     user_after = await _get_user(current_user, session)
 
     return ChatResponse(
-        response=bot_text,
+        response=llm_response.text,
         remaining_balance=new_balance,
         remaining_messages=remaining_messages,
         monthly_reset_date=user_after.monthly_reset_date,
         bot_entry_id=bot_entry.id,
+    )
+
+
+def _record_llm_usage(
+    session: AsyncSession,
+    user_id: int,
+    journal_entry_id: int | None,
+    llm_response: LLMResponse,
+) -> None:
+    """Append an :class:`LLMUsageLog` row for a single chat call.
+
+    The log row is staged on the caller's session so it commits in the same
+    transaction as the bot's :class:`JournalEntry`.  ``journal_entry_id`` is
+    typed ``int | None`` because SQLModel exposes the primary key that way
+    until flush; the caller is responsible for flushing before invoking this
+    helper and we assert the invariant here to fail loudly rather than write
+    a row with a NULL FK.
+    """
+    if journal_entry_id is None:  # pragma: no cover - defensive; caller flushes first
+        msg = "journal_entry_id must be set before logging LLM usage"
+        raise RuntimeError(msg)
+
+    session.add(
+        LLMUsageLog(
+            user_id=user_id,
+            provider=llm_response.provider,
+            model=llm_response.model,
+            prompt_tokens=llm_response.prompt_tokens,
+            completion_tokens=llm_response.completion_tokens,
+            total_tokens=llm_response.total_tokens,
+            estimated_cost_usd=estimate_cost_usd(
+                llm_response.model,
+                llm_response.prompt_tokens,
+                llm_response.completion_tokens,
+            ),
+            journal_entry_id=journal_entry_id,
+        )
     )
 
 

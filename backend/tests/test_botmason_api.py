@@ -19,6 +19,7 @@ from models.user import User
 from routers.botmason import LLM_API_KEY_HEADER
 from services.botmason import (
     LLM_API_KEY_MAX_LENGTH,
+    LLMResponse,
     generate_response,
     get_system_prompt,
     validate_llm_api_key_format,
@@ -28,6 +29,19 @@ from services.usage import (
     compute_next_reset,
     get_monthly_cap,
 )
+
+
+def _mock_openai_response(
+    text: str, *, prompt_tokens: int = 0, completion_tokens: int = 0
+) -> LLMResponse:
+    """Build an :class:`LLMResponse` shaped like an OpenAI call for provider mocks."""
+    return LLMResponse(
+        text=text,
+        provider="openai",
+        model="gpt-4o-mini",
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+    )
 
 
 async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str]:
@@ -235,7 +249,11 @@ async def test_freeform_journal_works_at_zero_balance(async_client: AsyncClient)
 @pytest.mark.asyncio
 async def test_stub_response_contains_user_message() -> None:
     result = await generate_response("What is the Archetypal Wavelength?", [])
-    assert "What is the Archetypal Wavelength?" in result
+    assert "What is the Archetypal Wavelength?" in result.text
+    # Stub responses are token-free so the usage log never distorts real cost totals.
+    assert result.provider == "stub"
+    assert result.prompt_tokens == 0
+    assert result.completion_tokens == 0
 
 
 @pytest.mark.asyncio
@@ -413,7 +431,7 @@ async def test_stub_provider_works_without_api_key(
     monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     result = await generate_response("Hello", [])
-    assert "Hello" in result
+    assert "Hello" in result.text
 
 
 # ── Race condition prevention tests (sec-17) ──────────────────────────
@@ -607,7 +625,7 @@ async def test_chat_falls_back_to_env_key_when_header_absent(
     headers = await _signup(async_client)
     await _add_balance(async_client, headers, amount=1)
 
-    mock_call = AsyncMock(return_value="env-fallback-response")
+    mock_call = AsyncMock(return_value=_mock_openai_response("env-fallback-response"))
     with patch.object(botmason_mod, "_call_openai", mock_call):
         resp = await async_client.post(
             "/journal/chat",
@@ -635,7 +653,7 @@ async def test_chat_uses_user_supplied_key_from_header(
     await _add_balance(async_client, headers, amount=1)
     headers[LLM_API_KEY_HEADER] = _VALID_OPENAI_KEY
 
-    mock_call = AsyncMock(return_value="byok-response")
+    mock_call = AsyncMock(return_value=_mock_openai_response("byok-response"))
     with patch.object(botmason_mod, "_call_openai", mock_call):
         resp = await async_client.post(
             "/journal/chat",
@@ -661,7 +679,7 @@ async def test_chat_header_key_overrides_env_key(
     await _add_balance(async_client, headers, amount=1)
     headers[LLM_API_KEY_HEADER] = _VALID_OPENAI_KEY
 
-    mock_call = AsyncMock(return_value="byok-response")
+    mock_call = AsyncMock(return_value=_mock_openai_response("byok-response"))
     with patch.object(botmason_mod, "_call_openai", mock_call):
         await async_client.post(
             "/journal/chat",
@@ -731,7 +749,7 @@ async def test_chat_ignores_empty_header_and_uses_env(
     await _add_balance(async_client, headers, amount=1)
     headers[LLM_API_KEY_HEADER] = "   "
 
-    mock_call = AsyncMock(return_value="env-response")
+    mock_call = AsyncMock(return_value=_mock_openai_response("env-response"))
     with patch.object(botmason_mod, "_call_openai", mock_call):
         resp = await async_client.post(
             "/journal/chat",
@@ -757,7 +775,7 @@ async def test_chat_does_not_log_header_key_value(
     await _add_balance(async_client, headers, amount=1)
     headers[LLM_API_KEY_HEADER] = _VALID_OPENAI_KEY
 
-    mock_call = AsyncMock(return_value="ok")
+    mock_call = AsyncMock(return_value=_mock_openai_response("ok"))
     with caplog.at_level(logging.DEBUG), patch.object(botmason_mod, "_call_openai", mock_call):
         await async_client.post(
             "/journal/chat",
@@ -781,7 +799,7 @@ async def test_chat_response_body_does_not_echo_key(
     await _add_balance(async_client, headers, amount=1)
     headers[LLM_API_KEY_HEADER] = _VALID_OPENAI_KEY
 
-    mock_call = AsyncMock(return_value="a response")
+    mock_call = AsyncMock(return_value=_mock_openai_response("a response"))
     with patch.object(botmason_mod, "_call_openai", mock_call):
         resp = await async_client.post(
             "/journal/chat",
@@ -820,11 +838,11 @@ async def test_generate_response_uses_override_key(
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
     monkeypatch.delenv("LLM_API_KEY", raising=False)
 
-    mock_call = AsyncMock(return_value="overridden")
+    mock_call = AsyncMock(return_value=_mock_openai_response("overridden"))
     with patch.object(botmason_mod, "_call_openai", mock_call):
         result = await generate_response("hi", [], api_key=_VALID_OPENAI_KEY)
 
-    assert result == "overridden"
+    assert result.text == "overridden"
     assert _forwarded_key(mock_call) == _VALID_OPENAI_KEY
 
 
