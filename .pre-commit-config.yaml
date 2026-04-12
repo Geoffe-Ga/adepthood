@@ -16,13 +16,9 @@ repos:
           ^frontend/package-lock\.json$
 
   # Python format / lint / type-check
-  - repo: https://github.com/psf/black
-    rev: 25.1.0
-    hooks:
-      - id: black
-        files: ^backend/
-        args: ["--config=backend/pyproject.toml"]
-
+  # ruff-format is the single source of truth for Python formatting;
+  # ruff --fix handles lint auto-fixes. Black was removed to eliminate
+  # redundant/conflicting formatters.
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.12.9
     hooks:
@@ -68,27 +64,29 @@ repos:
       - id: detect-secrets
         args: ["--baseline", ".secrets.baseline"]
 
-  # Frontend (React Native) checks using local hooks (requires Node in the environment)
+  # Frontend (React Native) checks using local hooks (requires Node in the environment).
+  # `bash -c` is used (not `bash -lc`) so hooks do not depend on interactive shell
+  # profiles (.bashrc/.bash_profile), which keeps CI environments reproducible.
   - repo: local
     hooks:
       - id: frontend-eslint
         name: frontend eslint
         language: system
-        entry: bash -lc 'cd frontend && npm run lint'
+        entry: bash -c 'cd frontend && npm run lint'
         pass_filenames: false
         files: ^frontend/
         exclude: ^frontend/(?:node_modules|dist|build|coverage)/
 
       - id: frontend-prettier
         name: frontend prettier (write)
-        entry: bash -lc 'cd frontend && npx prettier --write .'
+        entry: bash -c 'cd frontend && npx prettier --write .'
         language: system
         files: ^frontend/.*\.(js|jsx|ts|tsx|json|css|md|ya?ml)$
         exclude: ^frontend/(?:node_modules|dist|build|coverage)/|^frontend/(?:tsconfig\.json|package-lock\.json)$
 
       - id: frontend-typecheck
         name: frontend typecheck
-        entry: bash -lc 'cd frontend && npx tsc -p tsconfig.json --noEmit'
+        entry: bash -c 'cd frontend && npx tsc -p tsconfig.json --noEmit'
         language: system
         pass_filenames: false
         files: ^frontend/.*\.(ts|tsx)$
@@ -96,19 +94,21 @@ repos:
 
       - id: frontend-tests
         name: frontend tests
-        entry: bash -lc 'cd frontend && npx jest --passWithNoTests'
+        entry: bash -c 'cd frontend && npx jest --passWithNoTests'
         language: system
         pass_filenames: false
         files: ^frontend/
         exclude: ^frontend/(?:node_modules|dist|build|coverage)/
 
+      # Expensive hooks run on pre-push only. This keeps `git commit` under
+      # ~10s while still gating pushes on the full quality suite.
       - id: xenon-complexity
         name: xenon complexity check
         entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; cd backend && xenon src/ --max-absolute A --max-modules A --max-average A'
         language: system
         pass_filenames: false
         files: ^backend/.*\.py$
-        stages: [pre-commit]
+        stages: [pre-push]
 
       - id: radon-maintainability
         name: radon maintainability index
@@ -116,7 +116,7 @@ repos:
         language: system
         pass_filenames: false
         files: ^backend/.*\.py$
-        stages: [pre-commit]
+        stages: [pre-push]
 
       - id: backend-tests-coverage
         name: backend tests (coverage required)
@@ -124,12 +124,12 @@ repos:
         entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; cd backend && pytest --cov=. --cov-report=term-missing --cov-fail-under=90'
         pass_filenames: false
         files: ^backend/
-        stages: [pre-commit, pre-push]
+        stages: [pre-push]
 
       - id: commitlint
         name: commitlint (conventional commits)
         language: system
-        entry: bash -lc 'npx commitlint --cwd frontend --extends @commitlint/config-conventional --edit "$1"'
+        entry: bash -c 'cd frontend && npx commitlint --extends @commitlint/config-conventional --edit "$1"'
         stages: [commit-msg]
         # IMPORTANT: commit-msg hooks receive the commit message path as $1
         # so do NOT set pass_filenames: false here.

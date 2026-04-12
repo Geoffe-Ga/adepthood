@@ -1,6 +1,5 @@
 uvicorn
 bandit
-black
 isort
 mypy
 pre-commit
