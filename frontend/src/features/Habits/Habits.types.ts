@@ -152,3 +152,41 @@ export interface ReorderHabitsModalProps {
   onClose: () => void;
   onSaveOrder: (_habits: Habit[]) => void;
 }
+
+export interface HabitsActions {
+  loadHabits: () => Promise<void>;
+  updateGoal: (_habitId: number, _updatedGoal: Goal) => void;
+  logUnit: (_habitId: number, _amount: number) => void;
+  updateHabit: (_updatedHabit: Habit) => void;
+  deleteHabit: (_habitId: number) => void;
+  saveHabitOrder: (_orderedHabits: Habit[]) => void;
+  backfillMissedDays: (_habitId: number, _days: Date[]) => void;
+  setNewStartDate: (_habitId: number, _newDate: Date) => void;
+  onboardingSave: (_newHabits: OnboardingHabit[]) => Promise<void>;
+  iconPress: (_index: number) => void;
+  emojiSelect: (_emoji: string) => void;
+  revealAllHabits: () => void;
+  lockUnstartedHabits: () => void;
+  unlockHabit: (_habitId: number) => void;
+}
+
+export interface HabitsUIFlags {
+  showEnergyCTA: boolean;
+  showArchiveMessage: boolean;
+  archiveEnergyCTA: () => void;
+  emojiHabitIndex: number | null;
+}
+
+export interface UseHabitsReturn {
+  habits: Habit[];
+  loading: boolean;
+  error: string | null;
+  selectedHabit: Habit | null;
+  setSelectedHabit: (_habit: Habit | null) => void;
+  mode: HabitScreenMode;
+  setMode: (_mode: HabitScreenMode) => void;
+  actions: HabitsActions;
+  ui: HabitsUIFlags;
+  /** Exposed only for testing — do not use in production code. */
+  setHabitsForTesting: (_habits: Habit[]) => void;
+}
