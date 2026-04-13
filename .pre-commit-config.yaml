@@ -6,14 +6,28 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: check-json
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: check-docstring-first
+      - id: debug-statements
       - id: detect-private-key
       - id: end-of-file-fixer
+      - id: fix-byte-order-marker
       - id: mixed-line-ending
       - id: trailing-whitespace
       - id: check-added-large-files
         args: ["--maxkb=250"]
         exclude: |
           ^frontend/package-lock\.json$
+      - id: no-commit-to-branch
+        args: ["--branch", "main"]
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        args: ["--severity=warning"]
 
   # Python format / lint / type-check
   # ruff-format is the single source of truth for Python formatting;

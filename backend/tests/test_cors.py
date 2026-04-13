@@ -73,7 +73,7 @@ def test_production_with_http_domain_raises() -> None:
 @patch.dict("os.environ", {"PROD_DOMAIN": "https://good.com, http://bad.com"})
 def test_production_rejects_mixed_schemes() -> None:
     """If any domain in the list is not HTTPS, it raises."""
-    with pytest.raises(RuntimeError, match="must use HTTPS.*http://bad.com"):
+    with pytest.raises(RuntimeError, match=r"must use HTTPS.*http://bad\.com"):
         get_cors_origins("production")
 
 

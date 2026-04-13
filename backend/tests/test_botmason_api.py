@@ -1325,9 +1325,9 @@ async def test_stream_rejects_malformed_header_key_with_400(
 @pytest.mark.asyncio
 async def test_stub_stream_yields_words_then_final() -> None:
     """The stub chunker emits the canned response word-by-word and a final payload."""
-    chunks: list[tuple[str, LLMResponse | None]] = []
-    async for item in botmason_mod.generate_response_stream("ping", []):
-        chunks.append(item)
+    chunks: list[tuple[str, LLMResponse | None]] = [
+        item async for item in botmason_mod.generate_response_stream("ping", [])
+    ]
 
     # At least two chunks (non-final plus final) so clients get progressive UI.
     assert len(chunks) >= 2  # noqa: PLR2004

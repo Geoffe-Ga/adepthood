@@ -17,19 +17,19 @@ pip install pre-commit
 
 echo "📦 Installing Node dependencies..."
 if [ -d frontend ]; then
-  pushd frontend >/dev/null
+  pushd frontend >/dev/null || exit 1
   if [ -f package-lock.json ]; then
     npm ci
   else
     npm install
   fi
-  popd >/dev/null
+  popd >/dev/null || exit 1
 fi
 
 echo "📦 Ensuring Expo dependencies are aligned..."
-pushd frontend >/dev/null
+pushd frontend >/dev/null || exit 1
 npx expo install
-popd >/dev/null
+popd >/dev/null || exit 1
 
 echo "✅ Installing pre-commit hooks..."
 pre-commit install --install-hooks

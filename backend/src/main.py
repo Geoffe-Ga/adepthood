@@ -182,6 +182,6 @@ async def health_check(
     """
     try:
         await session.execute(text("SELECT 1"))
-        return {"status": "healthy", "database": "connected"}
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return {"status": "healthy", "database": "connected"}

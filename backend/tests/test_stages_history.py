@@ -254,7 +254,7 @@ async def test_history_only_returns_requesting_users_data(
 ) -> None:
     """User A's history should not include user B's practices or habits."""
     alice_headers, alice_id = await _signup(async_client, "alice_hist")
-    bob_headers, bob_id = await _signup(async_client, "bob_hist")
+    bob_headers, _bob_id = await _signup(async_client, "bob_hist")
     await _seed_stage(db_session, stage_number=1)
 
     # Create practice data for Alice only
