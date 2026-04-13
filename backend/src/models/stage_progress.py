@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Column, Integer
+from sqlalchemy import Column, DateTime, Integer
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -21,6 +21,9 @@ class StageProgress(SQLModel, table=True):
         default_factory=list,
         sa_column=Column(ARRAY(Integer), nullable=False),
     )
-    stage_started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    stage_started_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
     user_id: int = Field(foreign_key="user.id", unique=True)
     user: "User" = Relationship(back_populates="stage_progress")

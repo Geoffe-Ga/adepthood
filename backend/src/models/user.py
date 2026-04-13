@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Optional
 
+from sqlalchemy import Column, DateTime
 from sqlmodel import Field, Relationship, SQLModel
 
 from services.usage import compute_next_reset
@@ -34,10 +35,16 @@ class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     offering_balance: int = Field(default=0)
     monthly_messages_used: int = Field(default=0)
-    monthly_reset_date: datetime = Field(default_factory=_default_reset_date)
+    monthly_reset_date: datetime = Field(
+        default_factory=_default_reset_date,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
     email: str = Field(unique=True, index=True, max_length=254)
     password_hash: str = Field(default="")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
     habits: list["Habit"] = Relationship(back_populates="user")
     journals: list["JournalEntry"] = Relationship(back_populates="user")
     responses: list["PromptResponse"] = Relationship(back_populates="user")

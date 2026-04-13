@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from sqlalchemy import Column, DateTime
 from sqlmodel import Field, SQLModel
 
 
@@ -14,5 +15,8 @@ class PracticeSession(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id")
     user_practice_id: int = Field(foreign_key="userpractice.id")
     duration_minutes: float
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    timestamp: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
     reflection: str | None = Field(default=None, max_length=5_000)
