@@ -350,8 +350,8 @@ async def test_stages_progress_isolated_per_user(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    alice_headers, alice_id = await _signup(async_client, "alice")
-    bob_headers, bob_id = await _signup(async_client, "bob")
+    alice_headers, _alice_id = await _signup(async_client, "alice")
+    bob_headers, _bob_id = await _signup(async_client, "bob")
     await _seed_stages(db_session, count=3)
 
     # Alice advances to stage 2

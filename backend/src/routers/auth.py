@@ -246,8 +246,7 @@ def get_current_user(authorization: str | None = Header(default=None)) -> int:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized"
         ) from exc
-    user_id = int(payload["sub"])
-    return user_id
+    return int(payload["sub"])
 
 
 @router.post("/refresh", response_model=AuthResponse)

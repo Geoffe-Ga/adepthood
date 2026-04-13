@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from .user import User
 
 
-class JournalTag(str, enum.Enum):
+class JournalTag(enum.StrEnum):
     """Extensible tag for journal entries.
 
     Stored as a plain string column so new values can be added without

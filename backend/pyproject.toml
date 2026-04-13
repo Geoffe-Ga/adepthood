@@ -18,10 +18,20 @@ extend-exclude = ["migrations", ".venv", "venv", "build", "dist"]
 [tool.ruff.lint]
 select = [
   "E", "F", "I", "UP", "B", "C4", "TID", "SIM", "A", "ARG", "N", "PIE",
-  "PTH", "SLF", "ANN", "Q", "PL", "RUF"
+  "PTH", "SLF", "ANN", "Q", "PL", "RUF",
+  # Stricter additions ported from adepthood-linters:
+  "TRY",   # tryceratops — exception handling anti-patterns
+  "FURB",  # refurb — modernize idioms
+  "ERA",   # eradicate — commented-out code
+  "PT",    # flake8-pytest-style — test hygiene
+  "RET",   # flake8-return — return-statement simplification
+  "PERF",  # perflint — common perf anti-patterns
 ]
 ignore = [
   "D100", "D101", "D102", "D103", "D104",  # pydocstyle (optional)
+  "TRY003",  # tryceratops — forcing custom exception classes for every
+             # message produces more noise than value in server code.
+             # Standard Python pattern (`raise ValueError("msg")`) is fine.
 ]
 fixable = ["ALL"]
 
@@ -82,3 +92,35 @@ exclude_lines = [
   "pragma: no cover",
   "if __name__ == .__main__.:",
 ]
+
+# Docstring coverage — run via `interrogate` or through scripts/backend/.
+# Threshold starts permissive and will tighten as existing modules gain
+# docstrings (tracked in Tranche 9 of the adepthood-linters integration).
+[tool.interrogate]
+fail-under = 50
+exclude = ["tests", "migrations", "alembic", ".venv", "venv"]
+ignore-init-module = true
+ignore-init-method = true
+ignore-magic = true
+ignore-private = true
+ignore-semiprivate = true
+ignore-nested-functions = true
+verbose = 1
+
+# Dead-code detection. Starts at 80% confidence to minimize false positives
+# from dynamic dispatch / FastAPI-registered functions; whitelist entries
+# should live in .vulture_whitelist.py when added.
+[tool.vulture]
+paths = ["src"]
+min_confidence = 80
+exclude = ["tests", "migrations", "alembic", ".venv", "venv"]
+sort_by_size = true
+
+# Mutation testing configuration. Runs via `scripts/backend/mutation.sh`
+# or `mutmut run` from the backend directory. Target threshold 80 % per
+# adepthood-linters standards; enforced only in the dedicated CI job, not
+# in pre-commit.
+[tool.mutmut]
+paths_to_mutate = ["src/"]
+tests_dir = ["tests/"]
+runner = "pytest -x -q"
