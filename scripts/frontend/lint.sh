@@ -8,7 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../frontend" && pwd)"
 
 FIX=false
-CHECK=false
 VERBOSE=false
 
 while [[ $# -gt 0 ]]; do
@@ -18,7 +17,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --check)
-            CHECK=true
+            # Check is the default mode; flag accepted for explicitness.
             shift
             ;;
         --verbose)
