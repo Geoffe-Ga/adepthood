@@ -739,7 +739,9 @@ const useHabitInput = (
   const handleAddHabit = () => {
     if (newHabitName.trim() === '') return;
     if (habits.length >= MAX_HABITS) {
-      setError('You can only add up to 10 habits.');
+      setError(
+        `You've hit the ${MAX_HABITS}-habit limit for onboarding. Remove one you don't need to add a different habit.`,
+      );
       return;
     }
     setHabits((prev) => [...prev, createNewHabit(newHabitName)]);

@@ -139,7 +139,10 @@ describe('habitManager', () => {
 
       await habitManager.loadHabits();
 
-      expect(useHabitStore.getState().error).toBe('Failed to load habits. Please try again.');
+      // Uses the shared error-message mapper in ``api/errorMessages`` —
+      // unknown errors fall back to an actionable, connection-focused hint
+      // rather than a generic "please try again" string.
+      expect(useHabitStore.getState().error).toMatch(/couldn't load your habits/i);
     });
   });
 

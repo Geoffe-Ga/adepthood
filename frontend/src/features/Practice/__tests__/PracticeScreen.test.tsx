@@ -141,7 +141,7 @@ describe('PracticeScreen', () => {
 
     await waitFor(() => {
       expect(getByTestId('practice-error')).toBeTruthy();
-      expect(getByText('Failed to load practices. Please try again.')).toBeTruthy();
+      expect(getByText(/couldn't load your practices/i)).toBeTruthy();
     });
   });
 

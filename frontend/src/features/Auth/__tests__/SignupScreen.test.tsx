@@ -41,7 +41,7 @@ describe('SignupScreen', () => {
     fireEvent.changeText(getByPlaceholderText('Confirm Password'), 'different');
     fireEvent.press(getByText('Sign Up'));
 
-    expect(await findByText('Passwords do not match')).toBeTruthy();
+    expect(await findByText(/passwords don't match/i)).toBeTruthy();
     expect(mockSignup).not.toHaveBeenCalled();
   });
 
@@ -55,7 +55,7 @@ describe('SignupScreen', () => {
     fireEvent.changeText(getByPlaceholderText('Confirm Password'), 'short');
     fireEvent.press(getByText('Sign Up'));
 
-    expect(await findByText('Password must be at least 8 characters')).toBeTruthy();
+    expect(await findByText(/at least 8 characters/i)).toBeTruthy();
     expect(mockSignup).not.toHaveBeenCalled();
   });
 
@@ -75,9 +75,12 @@ describe('SignupScreen', () => {
     });
   });
 
-  it('shows error message on signup failure', async () => {
-    mockSignup.mockRejectedValue({ detail: 'Email already exists' });
-    const { getByPlaceholderText, getByText, findByText } = render(
+  it('translates backend password_too_short code to user-facing copy', async () => {
+    // If the user somehow bypasses the client-side length check (e.g. stale
+    // bundle), the backend still enforces it and returns the stable code
+    // ``password_too_short``. The screen must not leak snake_case to the UI.
+    mockSignup.mockRejectedValue({ detail: 'password_too_short', status: 400 });
+    const { getByPlaceholderText, getByText, findByText, queryByText } = render(
       <SignupScreen navigation={mockNavigation} />,
     );
 
@@ -86,7 +89,22 @@ describe('SignupScreen', () => {
     fireEvent.changeText(getByPlaceholderText('Confirm Password'), 'password123');
     fireEvent.press(getByText('Sign Up'));
 
-    expect(await findByText('Email already exists')).toBeTruthy();
+    expect(await findByText(/at least 8 characters/i)).toBeTruthy();
+    expect(queryByText('password_too_short')).toBeNull();
+  });
+
+  it('falls back to a connection-hint message when the error is unrecognised', async () => {
+    mockSignup.mockRejectedValue(new TypeError('Network request failed'));
+    const { getByPlaceholderText, getByText, findByText } = render(
+      <SignupScreen navigation={mockNavigation} />,
+    );
+
+    fireEvent.changeText(getByPlaceholderText('Email'), 'user@test.com');
+    fireEvent.changeText(getByPlaceholderText('Password'), 'password123');
+    fireEvent.changeText(getByPlaceholderText('Confirm Password'), 'password123');
+    fireEvent.press(getByText('Sign Up'));
+
+    expect(await findByText(/Check your connection/i)).toBeTruthy();
   });
 
   it('has a link to navigate to login', () => {

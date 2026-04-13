@@ -12,6 +12,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { habits as habitsApi, goalCompletions as goalCompletionsApi } from '../../../api';
 import type { HabitCreatePayload } from '../../../api';
+import { formatApiError } from '../../../api/errorMessages';
 import type { ToastConfig } from '../../../components/Toast';
 import { colors } from '../../../design/tokens';
 import {
@@ -289,7 +290,12 @@ const handleApiSuccess = (
 const handleApiError = (err: unknown, hasCachedData: boolean): void => {
   console.error('Failed to load habits:', err);
   if (!hasCachedData) {
-    setError('Failed to load habits. Please try again.');
+    setError(
+      formatApiError(err, {
+        fallback:
+          "We couldn't load your habits. Check your connection, then pull down to try again.",
+      }),
+    );
     setHabits(FALLBACK_HABITS);
   }
 };
@@ -304,10 +310,17 @@ const fetchFromApi = async (hasCachedData: boolean): Promise<void> => {
   }
 };
 
-const revertOnFailure = (prev: Habit[], message: string): (() => void) => {
-  return () => {
+/**
+ * On write failure, roll the optimistic state back and explain to the user
+ * what happened + what to do next. The fallback copy is intentionally
+ * specific to the operation (e.g. "couldn't save that check-in") rather
+ * than a generic "something went wrong" — users need to know whether to
+ * retry or just refresh.
+ */
+const revertOnFailure = (prev: Habit[], fallback: string): ((err: unknown) => void) => {
+  return (err: unknown) => {
     setHabits(prev);
-    Alert.alert('Error', message);
+    Alert.alert("Couldn't sync", formatApiError(err, { fallback }));
   };
 };
 
@@ -343,7 +356,12 @@ export const habitManager = {
     if (!updatedHabit.id) return;
     habitsApi
       .update(updatedHabit.id, toApiPayload(updatedHabit))
-      .catch(revertOnFailure(prev, 'Failed to update habit. Please try again.'));
+      .catch(
+        revertOnFailure(
+          prev,
+          "We couldn't save the changes to that habit. Your local copy was restored — check your connection and try again.",
+        ),
+      );
   },
 
   deleteHabit: (habitId: number): void => {
@@ -354,7 +372,12 @@ export const habitManager = {
     void cancelForHabit(habitId);
     habitsApi
       .delete(habitId)
-      .catch(revertOnFailure(prev, 'Failed to delete habit. Please try again.'));
+      .catch(
+        revertOnFailure(
+          prev,
+          "We couldn't delete that habit on the server. It's back in your list — check your connection and try again.",
+        ),
+      );
   },
 
   saveHabitOrder: (ordered: Habit[]): void => {
@@ -385,7 +408,12 @@ export const habitManager = {
       if (currentGoal.id) {
         goalCompletionsApi
           .create({ goal_id: currentGoal.id, did_complete: true })
-          .catch(revertOnFailure(prev, 'Failed to save progress. Please try again.'));
+          .catch(
+            revertOnFailure(
+              prev,
+              "We couldn't save that check-in to the server. Your progress was rolled back locally — check your connection and tap the habit again.",
+            ),
+          );
       }
     }
     return updated;

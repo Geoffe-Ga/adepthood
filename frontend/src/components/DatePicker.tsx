@@ -97,10 +97,10 @@ const validateDate = (
   const min = minDate ? parseISODate(minDate) : undefined;
   const max = maxDate ? parseISODate(maxDate) : undefined;
   if (!isDateWithinRange(date, min, max)) {
-    return `between ${minDate ?? ''} and ${maxDate ?? ''}`;
+    return `Pick a date between ${minDate ?? ''} and ${maxDate ?? ''}.`;
   }
   if (disabledDate?.(date)) {
-    return 'that day is blocked';
+    return "That day isn't available — choose another.";
   }
   return null;
 };
@@ -254,7 +254,7 @@ const makeHandleChangeText = (
     setTextValue(t);
     const parsed = parseDateInput(t);
     if (!parsed) {
-      setError('use YYYY-MM-DD');
+      setError('Use the format YYYY-MM-DD (for example, 2026-04-13).');
       return;
     }
     commitDate(parsed);

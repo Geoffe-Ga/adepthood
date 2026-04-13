@@ -68,7 +68,7 @@ const EnergySettings = ({ habit, netEnergy, onChange }: EnergySettingsProps) => 
       <Text style={styles.netEnergyValue}>{netEnergy}</Text>
     </View>
     <View style={styles.validationNote}>
-      <Text style={styles.validationText}>Values must be between -10 and 10</Text>
+      <Text style={styles.validationText}>Enter a whole number from -10 to 10.</Text>
     </View>
   </View>
 );

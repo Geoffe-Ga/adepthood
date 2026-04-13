@@ -1,7 +1,12 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+import { formatApiError } from '@/api/errorMessages';
 import { useAuth } from '@/context/AuthContext';
+
+const SIGNUP_FALLBACK =
+  "We couldn't create your account. Check your connection, then try again in a moment.";
+const MIN_PASSWORD_LENGTH = 8;
 
 interface Props {
   navigation: { navigate: (_screen: string) => void };
@@ -84,12 +89,12 @@ export default function SignupScreen({ navigation }: Props) {
   const handleSignup = async () => {
     setError(null);
 
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters');
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Pick a password that is at least ${MIN_PASSWORD_LENGTH} characters long.`);
       return;
     }
     if (password !== confirmPassword) {
-      setError('Passwords do not match');
+      setError("Those passwords don't match. Re-type both fields to confirm.");
       return;
     }
 
@@ -97,9 +102,9 @@ export default function SignupScreen({ navigation }: Props) {
     try {
       await signup(email, password);
     } catch (err: unknown) {
-      const detail =
-        (err as { detail?: string }).detail ?? (err as Error).message ?? 'Signup failed';
-      setError(detail);
+      // Route backend ``detail`` codes (e.g. ``password_too_short``) through
+      // the shared mapper rather than leaking snake_case to the user.
+      setError(formatApiError(err, { fallback: SIGNUP_FALLBACK }));
     } finally {
       setSubmitting(false);
     }

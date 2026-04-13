@@ -49,9 +49,12 @@ describe('LoginScreen', () => {
     });
   });
 
-  it('shows error message on login failure', async () => {
-    mockLogin.mockRejectedValue({ detail: 'Invalid credentials' });
-    const { getByPlaceholderText, getByText, findByText } = render(
+  it('translates the backend invalid_credentials code to user-facing copy', async () => {
+    // The backend returns the stable code ``invalid_credentials`` (see
+    // backend/src/routers/auth.py). The screen must not leak snake_case to
+    // the user — it should display the mapped friendly message instead.
+    mockLogin.mockRejectedValue({ detail: 'invalid_credentials', status: 401 });
+    const { getByPlaceholderText, getByText, findByText, queryByText } = render(
       <LoginScreen navigation={mockNavigation} />,
     );
 
@@ -59,7 +62,21 @@ describe('LoginScreen', () => {
     fireEvent.changeText(getByPlaceholderText('Password'), 'wrong');
     fireEvent.press(getByText('Log In'));
 
-    expect(await findByText('Invalid credentials')).toBeTruthy();
+    expect(await findByText(/email and password/i)).toBeTruthy();
+    expect(queryByText('invalid_credentials')).toBeNull();
+  });
+
+  it('falls back to a connection-hint message when the error is unrecognised', async () => {
+    mockLogin.mockRejectedValue(new TypeError('Network request failed'));
+    const { getByPlaceholderText, getByText, findByText } = render(
+      <LoginScreen navigation={mockNavigation} />,
+    );
+
+    fireEvent.changeText(getByPlaceholderText('Email'), 'user@test.com');
+    fireEvent.changeText(getByPlaceholderText('Password'), 'whatever');
+    fireEvent.press(getByText('Log In'));
+
+    expect(await findByText(/Check your connection/i)).toBeTruthy();
   });
 
   it('has a link to navigate to signup', () => {

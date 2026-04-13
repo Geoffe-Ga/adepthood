@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+import { formatApiError } from '@/api/errorMessages';
 import { useAuth } from '@/context/AuthContext';
+
+const LOGIN_FALLBACK =
+  "We couldn't sign you in. Check your connection, then try again in a moment.";
 
 interface Props {
   navigation: { navigate: (_screen: string) => void };
@@ -20,9 +24,10 @@ export default function LoginScreen({ navigation }: Props) {
     try {
       await login(email, password);
     } catch (err: unknown) {
-      const detail =
-        (err as { detail?: string }).detail ?? (err as Error).message ?? 'Login failed';
-      setError(detail);
+      // Backend ``detail`` strings (e.g. ``invalid_credentials``) are API
+      // contract tokens, not user copy — route them through the shared
+      // mapper so users see a plain-language explanation and a next step.
+      setError(formatApiError(err, { fallback: LOGIN_FALLBACK }));
     } finally {
       setSubmitting(false);
     }
