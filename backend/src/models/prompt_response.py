@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from sqlalchemy import Column, DateTime
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -17,6 +18,9 @@ class PromptResponse(SQLModel, table=True):
     week_number: int
     question: str = Field(max_length=1_000)
     response: str = Field(max_length=10_000)
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    timestamp: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
     user_id: int = Field(foreign_key="user.id")
     user: "User" = Relationship(back_populates="responses")

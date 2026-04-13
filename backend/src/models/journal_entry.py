@@ -2,6 +2,7 @@ import enum
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from sqlalchemy import Column, DateTime
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -28,7 +29,10 @@ class JournalEntry(SQLModel, table=True):
     """
 
     id: int | None = Field(default=None, primary_key=True)
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    timestamp: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
     message: str = Field(max_length=10_000)
     sender: str = Field(max_length=10)  # 'user' or 'bot'
     user_id: int = Field(foreign_key="user.id")

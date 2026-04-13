@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from sqlalchemy import Column, DateTime
 from sqlmodel import Field, SQLModel
 
 
@@ -29,7 +30,7 @@ class LLMUsageLog(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id", index=True)
     timestamp: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
-        index=True,
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True),
     )
     provider: str = Field(max_length=32, index=True)
     model: str = Field(max_length=128, index=True)
