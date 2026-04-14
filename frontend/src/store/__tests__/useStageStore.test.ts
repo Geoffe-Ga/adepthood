@@ -1,75 +1,61 @@
-import { describe, expect, it, beforeEach, jest } from '@jest/globals';
+import { describe, expect, it, beforeEach } from '@jest/globals';
 import { act } from '@testing-library/react-native';
 
-import type { Stage } from '../../api';
 import type { StageData } from '../../features/Map/stageData';
 
-// Mock the API module
-const mockList = jest.fn() as jest.MockedFunction<() => Promise<Stage[]>>;
-jest.mock('../../api', () => ({
-  stages: { list: () => mockList() },
-}));
-
-/** Build a fake API Stage response. */
-function makeApiStage(stageNumber: number, overrides: Partial<Stage> = {}): Stage {
-  return {
-    id: stageNumber,
-    title: `Stage ${stageNumber}`,
-    subtitle: `Subtitle ${stageNumber}`,
-    stage_number: stageNumber,
-    overview_url: '',
-    category: 'Test',
-    aspect: 'Aspect',
-    spiral_dynamics_color: 'Beige',
-    growing_up_stage: 'Growing',
-    divine_gender_polarity: 'Polarity',
-    relationship_to_free_will: 'Free Will',
-    free_will_description: 'Desc',
-    is_unlocked: stageNumber <= 2,
-    progress: stageNumber === 1 ? 0.5 : 0,
-    ...overrides,
-  };
-}
+const makeStage = (stageNumber: number, overrides: Partial<StageData> = {}): StageData => ({
+  id: stageNumber,
+  title: `Stage ${stageNumber}`,
+  subtitle: `Subtitle ${stageNumber}`,
+  stageNumber,
+  progress: 0,
+  color: '#aaa',
+  isUnlocked: true,
+  category: '',
+  aspect: '',
+  spiralDynamicsColor: '',
+  growingUpStage: '',
+  divineGenderPolarity: '',
+  relationshipToFreeWill: '',
+  freeWillDescription: '',
+  overviewUrl: '',
+  hotspots: [],
+  ...overrides,
+});
 
 describe('useStageStore', () => {
   beforeEach(() => {
-    jest.resetModules();
-    mockList.mockReset();
+    const { useStageStore } = require('../useStageStore');
+    act(() => {
+      useStageStore.getState().setStages([]);
+      useStageStore.getState().setCurrentStage(1);
+      useStageStore.getState().setLoading(false);
+      useStageStore.getState().setError(null);
+    });
   });
 
-  it('starts with empty stages and loading false', () => {
+  it('starts with empty stages, no loading, no error', () => {
     const { useStageStore } = require('../useStageStore');
     const state = useStageStore.getState();
     expect(state.stages).toHaveLength(0);
+    expect(state.stagesByNumber).toEqual({});
+    expect(state.stageOrder).toEqual([]);
     expect(state.loading).toBe(false);
     expect(state.error).toBeNull();
   });
 
-  it('setStages replaces the stages array', () => {
+  it('setStages normalizes into stagesByNumber and stageOrder', () => {
     const { useStageStore } = require('../useStageStore');
-    const newStages: StageData[] = [
-      {
-        id: 1,
-        title: 'Custom Stage',
-        subtitle: 'Test',
-        stageNumber: 1,
-        progress: 0.75,
-        color: '#fff',
-        isUnlocked: true,
-        category: '',
-        aspect: '',
-        spiralDynamicsColor: '',
-        growingUpStage: '',
-        divineGenderPolarity: '',
-        relationshipToFreeWill: '',
-        freeWillDescription: '',
-        overviewUrl: '',
-        hotspots: [],
-      },
-    ];
+    const s1 = makeStage(1);
+    const s2 = makeStage(2);
 
-    act(() => useStageStore.getState().setStages(newStages));
-    expect(useStageStore.getState().stages).toEqual(newStages);
+    act(() => useStageStore.getState().setStages([s2, s1]));
+
+    const state = useStageStore.getState();
+    expect(state.stageOrder).toEqual([2, 1]);
+    expect(state.stagesByNumber[1]).toEqual(s1);
+    expect(state.stagesByNumber[2]).toEqual(s2);
+    expect(state.stages).toEqual([s2, s1]);
   });
 
   it('setCurrentStage updates the current stage number', () => {
@@ -78,140 +64,49 @@ describe('useStageStore', () => {
     expect(useStageStore.getState().currentStage).toBe(5);
   });
 
-  it('updateStageProgress updates a specific stage progress', () => {
+  it('setLoading / setError update flags without touching stages', () => {
     const { useStageStore } = require('../useStageStore');
-    // Seed with one stage
-    act(() =>
-      useStageStore.getState().setStages([
-        {
-          id: 1,
-          title: 'S1',
-          subtitle: '',
-          stageNumber: 1,
-          progress: 0,
-          color: '#fff',
-          isUnlocked: true,
-          category: '',
-          aspect: '',
-          spiralDynamicsColor: '',
-          growingUpStage: '',
-          divineGenderPolarity: '',
-          relationshipToFreeWill: '',
-          freeWillDescription: '',
-          overviewUrl: '',
-          hotspots: [],
-        },
-      ]),
-    );
-
-    act(() => useStageStore.getState().updateStageProgress(1, 0.8));
-    const stage1 = useStageStore.getState().stages.find((s: StageData) => s.stageNumber === 1);
-    expect(stage1!.progress).toBe(0.8);
+    act(() => useStageStore.getState().setStages([makeStage(1)]));
+    act(() => {
+      useStageStore.getState().setLoading(true);
+      useStageStore.getState().setError('boom');
+    });
+    const state = useStageStore.getState();
+    expect(state.loading).toBe(true);
+    expect(state.error).toBe('boom');
+    expect(state.stages).toHaveLength(1);
   });
 
-  it('updateStageProgress does nothing for unknown stage', () => {
+  it('updateStageProgress updates a specific stage progress', () => {
     const { useStageStore } = require('../useStageStore');
-    act(() =>
-      useStageStore.getState().setStages([
-        {
-          id: 1,
-          title: 'S1',
-          subtitle: '',
-          stageNumber: 1,
-          progress: 0.5,
-          color: '#fff',
-          isUnlocked: true,
-          category: '',
-          aspect: '',
-          spiralDynamicsColor: '',
-          growingUpStage: '',
-          divineGenderPolarity: '',
-          relationshipToFreeWill: '',
-          freeWillDescription: '',
-          overviewUrl: '',
-          hotspots: [],
-        },
-      ]),
-    );
+    act(() => useStageStore.getState().setStages([makeStage(1, { progress: 0 })]));
+
+    act(() => useStageStore.getState().updateStageProgress(1, 0.8));
+
+    const state = useStageStore.getState();
+    expect(state.stagesByNumber[1]!.progress).toBe(0.8);
+    expect(state.stages[0]!.progress).toBe(0.8);
+  });
+
+  it('updateStageProgress is a no-op for an unknown stage', () => {
+    const { useStageStore } = require('../useStageStore');
+    act(() => useStageStore.getState().setStages([makeStage(1, { progress: 0.5 })]));
+
     const before = useStageStore.getState().stages.map((s: StageData) => s.progress);
     act(() => useStageStore.getState().updateStageProgress(99, 1.0));
     const after = useStageStore.getState().stages.map((s: StageData) => s.progress);
+
     expect(after).toEqual(before);
   });
 
-  it('fetchStages loads from API, sorts descending, and maps to StageData', async () => {
-    const apiStages = [makeApiStage(1), makeApiStage(2), makeApiStage(3)];
-    mockList.mockResolvedValueOnce(apiStages);
-
-    const { useStageStore } = require('../useStageStore');
-    await act(async () => {
-      await useStageStore.getState().fetchStages();
-    });
-
+  it('selectStageByNumber returns a stage or undefined', () => {
+    const { useStageStore, selectStageByNumber } = require('../useStageStore');
+    act(() => useStageStore.getState().setStages([makeStage(3)]));
     const state = useStageStore.getState();
-    expect(state.stages).toHaveLength(3);
-    // Should be sorted descending by stageNumber
-    expect(state.stages[0].stageNumber).toBe(3);
-    expect(state.stages[1].stageNumber).toBe(2);
-    expect(state.stages[2].stageNumber).toBe(1);
-    expect(state.loading).toBe(false);
-    expect(state.error).toBeNull();
-  });
 
-  it('fetchStages sets currentStage to first unlocked incomplete stage', async () => {
-    const apiStages = [
-      makeApiStage(1, { is_unlocked: true, progress: 1 }), // completed
-      makeApiStage(2, { is_unlocked: true, progress: 0.3 }), // in progress
-      makeApiStage(3, { is_unlocked: false, progress: 0 }),
-    ];
-    mockList.mockResolvedValueOnce(apiStages);
-
-    const { useStageStore } = require('../useStageStore');
-    await act(async () => {
-      await useStageStore.getState().fetchStages();
-    });
-
-    expect(useStageStore.getState().currentStage).toBe(2);
-  });
-
-  it('fetchStages sets error on API failure', async () => {
-    mockList.mockRejectedValueOnce(new Error('Network error'));
-
-    const { useStageStore } = require('../useStageStore');
-    await act(async () => {
-      await useStageStore.getState().fetchStages();
-    });
-
-    const state = useStageStore.getState();
-    expect(state.error).toBe('Network error');
-    expect(state.loading).toBe(false);
-    expect(state.stages).toHaveLength(0);
-  });
-
-  it('fetchStages maps metadata fields correctly', async () => {
-    const apiStages = [
-      makeApiStage(1, {
-        category: 'Survival',
-        aspect: 'Active Yes-And-Ness',
-        growing_up_stage: 'Archaic',
-        divine_gender_polarity: 'Masculine',
-        relationship_to_free_will: 'Deterministic',
-        free_will_description: 'Pure instinct',
-      }),
-    ];
-    mockList.mockResolvedValueOnce(apiStages);
-
-    const { useStageStore } = require('../useStageStore');
-    await act(async () => {
-      await useStageStore.getState().fetchStages();
-    });
-
-    const stage = useStageStore.getState().stages[0];
-    expect(stage.category).toBe('Survival');
-    expect(stage.aspect).toBe('Active Yes-And-Ness');
-    expect(stage.growingUpStage).toBe('Archaic');
-    expect(stage.divineGenderPolarity).toBe('Masculine');
-    expect(stage.relationshipToFreeWill).toBe('Deterministic');
-    expect(stage.freeWillDescription).toBe('Pure instinct');
+    expect(selectStageByNumber(3)(state)!.stageNumber).toBe(3);
+    expect(selectStageByNumber(99)(state)).toBeUndefined();
+    expect(selectStageByNumber(null)(state)).toBeUndefined();
+    expect(selectStageByNumber(undefined)(state)).toBeUndefined();
   });
 });
