@@ -2,7 +2,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 
 const KEY_PREFIX = '@adepthood/notifications';
-const PUSH_TOKEN_KEY = '@adepthood/push_token';
+// expo-secure-store only allows alphanumerics plus `.`, `-`, `_` in keys,
+// so this one cannot share the `@adepthood/...` prefix with AsyncStorage keys.
+const PUSH_TOKEN_KEY = 'adepthood_push_token';
 const ALL_HABIT_IDS_KEY = '@adepthood/notification_habit_ids';
 
 function keyFor(habitId: number): string {

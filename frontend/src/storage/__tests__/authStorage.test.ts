@@ -22,7 +22,7 @@ describe('authStorage', () => {
       await saveToken('my-jwt-token');
 
       expect(mockSecureStore.setItemAsync).toHaveBeenCalledWith(
-        '@adepthood/auth_token',
+        'adepthood_auth_token',
         'my-jwt-token',
       );
     });
@@ -47,7 +47,7 @@ describe('authStorage', () => {
   describe('clearToken', () => {
     test('removes token from SecureStore', async () => {
       await clearToken();
-      expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith('@adepthood/auth_token');
+      expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith('adepthood_auth_token');
     });
   });
 });

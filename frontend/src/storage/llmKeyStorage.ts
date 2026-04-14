@@ -8,7 +8,8 @@ import * as SecureStore from 'expo-secure-store';
  * liability for user-owned keys and is the storage contract guaranteed by
  * issue #185.
  */
-const LLM_API_KEY_STORAGE_KEY = '@adepthood/llm_api_key';
+// expo-secure-store only allows alphanumerics plus `.`, `-`, `_` in keys.
+const LLM_API_KEY_STORAGE_KEY = 'adepthood_llm_api_key'; // pragma: allowlist secret
 
 export async function saveLlmApiKey(apiKey: string): Promise<void> {
   await SecureStore.setItemAsync(LLM_API_KEY_STORAGE_KEY, apiKey);

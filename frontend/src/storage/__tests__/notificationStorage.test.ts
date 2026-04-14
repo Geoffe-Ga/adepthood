@@ -149,7 +149,7 @@ describe('notificationStorage', () => {
     test('stores the push token in SecureStore', async () => {
       await savePushToken('ExponentPushToken[abc]');
       expect(mockSecureStore.setItemAsync).toHaveBeenCalledWith(
-        '@adepthood/push_token',
+        'adepthood_push_token',
         'ExponentPushToken[abc]',
       );
     });
