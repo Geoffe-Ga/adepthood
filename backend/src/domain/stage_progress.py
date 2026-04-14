@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -118,41 +120,33 @@ async def get_stage_practice_history(
     ]
 
 
-async def get_stage_habit_history(
-    session: AsyncSession,
-    user_id: int,
-    stage_number: int,
-) -> list[HabitHistoryItem]:
-    """Aggregate habit and goal history for a user in a specific stage.
-
-    Habits are matched by their ``stage`` field against the stage_number
-    (converted to string). The previous implementation issued one query per
-    habit *and* one per goal, scaling as ``1 + 2*habits + goals`` queries
-    (26+ queries for a typical stage). This implementation collapses the work
-    into two queries regardless of habit/goal count:
-
-    1. fetch the habits themselves, ordered for stable output
-    2. one JOIN-aggregate that returns the per-goal completion count for every
-       goal of every habit; per-habit totals are summed in Python from the same
-       result set
-    """
+async def _fetch_stage_habits(
+    session: AsyncSession, user_id: int, stage_number: int
+) -> list[Habit]:
+    """Return the user's habits for a stage, ordered by id for deterministic output."""
     stage_str = str(stage_number)
-
-    habits_result = await session.execute(
+    result = await session.execute(
         select(Habit)
         .where(Habit.user_id == user_id, Habit.stage == stage_str)
         .order_by(col(Habit.id).asc())
     )
-    habits = list(habits_result.scalars().all())
-    if not habits:
-        return []
+    return list(result.scalars().all())
 
-    habit_ids = [habit.id for habit in habits if habit.id is not None]
 
-    # One JOIN-aggregate query: per-goal completion counts within these habits,
-    # restricted to the requesting user. LEFT OUTER JOIN so goals without any
-    # completions still appear (so we can mark their tier as not achieved).
-    goal_stats_result = await session.execute(
+async def _fetch_goal_completion_stats(
+    session: AsyncSession, user_id: int, habit_ids: list[int]
+) -> dict[int, dict[str, int]]:
+    """Return ``{habit_id: {tier: completion_count}}`` in a single JOIN query.
+
+    A LEFT OUTER JOIN keeps goals without any completions in the result set,
+    so callers can still mark their tier as ``False``. The user filter is on
+    the join condition (not the WHERE clause) so a goal with only *other*
+    users' completions still surfaces with ``count == 0``.
+    """
+    if not habit_ids:
+        return {}
+
+    result = await session.execute(
         select(
             Goal.habit_id,
             Goal.tier,
@@ -168,20 +162,40 @@ async def get_stage_habit_history(
         .group_by(col(Goal.habit_id), col(Goal.tier))
     )
 
-    goals_achieved_by_habit: dict[int, dict[str, bool]] = {hid: {} for hid in habit_ids}
-    completions_by_habit: dict[int, int] = dict.fromkeys(habit_ids, 0)
-    for row in goal_stats_result.all():
-        count = int(row.completion_count or 0)
-        goals_achieved_by_habit[row.habit_id][row.tier] = count > 0
-        completions_by_habit[row.habit_id] += count
+    stats: dict[int, dict[str, int]] = {hid: {} for hid in habit_ids}
+    for row in result.all():
+        stats[row.habit_id][row.tier] = int(row.completion_count or 0)
+    return stats
 
-    return [
-        HabitHistoryItem(
-            name=habit.name,
-            icon=habit.icon,
-            goals_achieved=goals_achieved_by_habit.get(habit.id, {}) if habit.id else {},
-            best_streak=habit.streak,
-            total_completions=completions_by_habit.get(habit.id, 0) if habit.id else 0,
-        )
-        for habit in habits
-    ]
+
+def _build_history_item(habit: Habit, tier_counts: dict[str, int]) -> HabitHistoryItem:
+    """Roll a habit's per-tier completion counts up into a history item."""
+    return HabitHistoryItem(
+        name=habit.name,
+        icon=habit.icon,
+        goals_achieved={tier: count > 0 for tier, count in tier_counts.items()},
+        best_streak=habit.streak,
+        total_completions=sum(tier_counts.values()),
+    )
+
+
+async def get_stage_habit_history(
+    session: AsyncSession,
+    user_id: int,
+    stage_number: int,
+) -> list[HabitHistoryItem]:
+    """Aggregate habit and goal history for a user in a specific stage.
+
+    Habits are matched by their ``stage`` field against the stage_number
+    (converted to string). The previous implementation issued one query per
+    habit *and* one per goal, scaling as ``1 + 2*habits + goals`` queries
+    (26+ queries for a typical stage). This implementation collapses the work
+    into two queries regardless of habit/goal count: one to fetch the habits,
+    and one JOIN-aggregate to count completions per (habit, tier).
+    """
+    habits = await _fetch_stage_habits(session, user_id, stage_number)
+    # Habits returned by SELECT always have a primary key assigned; the cast is
+    # a static-typing hint, not a runtime guard, so it costs nothing here.
+    habit_ids = [cast("int", h.id) for h in habits]
+    stats_by_habit = await _fetch_goal_completion_stats(session, user_id, habit_ids)
+    return [_build_history_item(h, stats_by_habit.get(cast("int", h.id), {})) for h in habits]
