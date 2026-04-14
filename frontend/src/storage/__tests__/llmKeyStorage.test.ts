@@ -22,7 +22,7 @@ describe('llmKeyStorage', () => {
       await saveLlmApiKey('sk-user-owned-key');
 
       expect(mockSecureStore.setItemAsync).toHaveBeenCalledWith(
-        '@adepthood/llm_api_key',
+        'adepthood_llm_api_key',
         'sk-user-owned-key',
       );
     });
@@ -46,7 +46,7 @@ describe('llmKeyStorage', () => {
     test('removes key from SecureStore', async () => {
       await clearLlmApiKey();
 
-      expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith('@adepthood/llm_api_key');
+      expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith('adepthood_llm_api_key');
     });
   });
 });
