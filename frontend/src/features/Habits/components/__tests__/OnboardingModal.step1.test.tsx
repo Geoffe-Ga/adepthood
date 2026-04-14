@@ -60,7 +60,7 @@ describe('OnboardingModal Step 1 interactions', () => {
     expect(getByTestId('habit-count')).toHaveTextContent('10 / 10');
     fireEvent.changeText(input, 'H10');
     fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
-    getByText('You can only add up to 10 habits.');
+    getByText(/hit the 10-habit limit/i);
     expect(getByTestId('habit-count')).toHaveTextContent('10 / 10');
   });
 

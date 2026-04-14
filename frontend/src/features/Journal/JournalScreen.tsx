@@ -12,6 +12,7 @@ import {
   ApiError,
   StreamingUnsupportedError,
 } from '../../api';
+import { mapDetailToMessage } from '../../api/errorMessages';
 import { useAppRoute } from '../../navigation/hooks';
 
 import ChatInput from './ChatInput';
@@ -23,29 +24,10 @@ import WeeklyPromptBanner from './WeeklyPromptBanner';
 
 const PAGE_SIZE = 50;
 
-// Generic fallback used when the server returns an unexpected detail string.
-// Kept as a module constant so multiple error keys can share the same copy
-// without duplicating the literal (sonarjs/no-duplicate-string).
-const GENERIC_PROVIDER_ERROR = 'BotMason is having trouble connecting. Try again in a moment.';
-
-// Maps the server's ``detail`` field to a human-readable, actionable message.
-// Centralising the mapping keeps the retry UI consistent regardless of which
-// layer (HTTP status, SSE error frame, network failure) surfaced the problem.
-const ERROR_MESSAGES: Record<string, string> = {
-  llm_key_required: 'Add your API key in Settings to chat with BotMason',
-  invalid_llm_api_key_format: 'Your API key is malformed — update it in Settings', // pragma: allowlist secret
-  insufficient_offerings:
-    "You've used your monthly messages. Add an API key or wait until next month.",
-  rate_limit_exceeded: 'Slow down — you can send 10 messages per minute',
-  llm_provider_error: GENERIC_PROVIDER_ERROR,
-  malformed_stream_frame: GENERIC_PROVIDER_ERROR,
-  incomplete_stream: 'The connection dropped before BotMason finished. Tap retry to try again.',
-  network_error: "You're offline. Tap retry once you reconnect.",
-};
-
-function mapErrorMessage(detail: string): string {
-  return ERROR_MESSAGES[detail] ?? GENERIC_PROVIDER_ERROR;
-}
+// Translating the server's ``detail`` field to user copy is the job of the
+// shared mapper in ``api/errorMessages``. We keep a thin alias here to
+// avoid churn in call sites that historically used ``mapErrorMessage``.
+const mapErrorMessage = mapDetailToMessage;
 
 // --- Sub-components ---
 

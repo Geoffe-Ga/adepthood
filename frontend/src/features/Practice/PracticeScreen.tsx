@@ -19,6 +19,7 @@ import type {
   UserPractice,
 } from '@/api';
 import { practices, userPractices, practiceSessions } from '@/api';
+import { formatApiError } from '@/api/errorMessages';
 import { colors, SPACING, BORDER_RADIUS, shadows } from '@/design/tokens';
 import { useAppNavigation, useAppRoute } from '@/navigation/hooks';
 
@@ -74,8 +75,13 @@ function usePracticeSelect(
         setActiveUserPractice(newUp);
         const matching = availablePractices.find((p) => p.id === practiceId);
         if (matching) setSelectedPractice(matching);
-      } catch {
-        setError('Failed to select practice. Please try again.');
+      } catch (err) {
+        setError(
+          formatApiError(err, {
+            fallback:
+              "We couldn't save your practice selection. Check your connection and try again.",
+          }),
+        );
       }
     },
     [stageNumber, availablePractices, setActiveUserPractice, setSelectedPractice, setError],
@@ -109,8 +115,13 @@ function useLoadPracticeData(stageNumber: number, state: ReturnType<typeof usePr
         const match = practiceList.find((p: PracticeItem) => p.id === active.practice_id);
         if (match) setSelectedPractice(match);
       }
-    } catch {
-      setError('Failed to load practices. Please try again.');
+    } catch (err) {
+      setError(
+        formatApiError(err, {
+          fallback:
+            "We couldn't load your practices. Check your connection, then tap Retry to try again.",
+        }),
+      );
     } finally {
       setIsLoading(false);
     }
@@ -163,8 +174,13 @@ function useSessionFlow(activeUserPractice: UserPractice | null, incrementWeekCo
       const session = await practiceSessions.create(payload);
       incrementWeekCount();
       setSavedSession(session);
-    } catch {
-      setError('Failed to save session. Please try again.');
+    } catch (err) {
+      setError(
+        formatApiError(err, {
+          fallback:
+            "We couldn't save your practice session. Check your connection and try again — your timer minutes are still safe here.",
+        }),
+      );
     } finally {
       setIsSaving(false);
     }

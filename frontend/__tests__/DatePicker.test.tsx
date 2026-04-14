@@ -80,7 +80,7 @@ describe('DatePicker component', () => {
       input.props.onChangeText('2024-12-31');
     });
     const error = tree!.root.findByProps({ accessibilityRole: 'alert' });
-    expect(error.props.children).toBe('between 2025-01-01 and 2025-12-31');
+    expect(error.props.children).toBe('Pick a date between 2025-01-01 and 2025-12-31.');
     act(() => {
       input.props.onChangeText('2025-10-10');
     });

@@ -33,6 +33,10 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
       <View style={styles.container} testID="error-boundary">
         <ScrollView contentContainerStyle={styles.content}>
           <Text style={styles.heading}>Something went wrong</Text>
+          <Text style={styles.guidance}>
+            Try closing and reopening the app. If this keeps happening, copy the details below and
+            send them to support so we can fix it.
+          </Text>
           <Text style={styles.message}>{this.state.error.message}</Text>
           {this.state.error.stack ? (
             <Text style={styles.stack}>{this.state.error.stack}</Text>
@@ -56,6 +60,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#b00020',
     marginBottom: 12,
+  },
+  guidance: {
+    fontSize: 15,
+    color: '#333',
+    marginBottom: 16,
+    lineHeight: 22,
   },
   message: {
     fontSize: 16,
