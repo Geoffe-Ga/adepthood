@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 from sqlmodel import select
 
 from database import get_session
 from errors import not_found
+from load_options import GOAL_GROUP_WITH_GOALS
 from models.goal_group import GoalGroup
 from routers.auth import get_current_user
 from schemas.goal_group import GoalGroupCreate, GoalGroupResponse
@@ -65,7 +65,7 @@ async def list_goal_groups(
         .where(
             (GoalGroup.user_id == current_user) | (GoalGroup.shared_template == True)  # noqa: E712
         )
-        .options(selectinload(GoalGroup.goals))  # type: ignore[arg-type]
+        .options(GOAL_GROUP_WITH_GOALS)
     )
     result = await session.execute(statement)
     return list(result.scalars().all())
@@ -78,9 +78,7 @@ async def get_goal_group(
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> GoalGroup:
     """Return a single goal group with its goals."""
-    statement = (
-        select(GoalGroup).where(GoalGroup.id == group_id).options(selectinload(GoalGroup.goals))  # type: ignore[arg-type]
-    )
+    statement = select(GoalGroup).where(GoalGroup.id == group_id).options(GOAL_GROUP_WITH_GOALS)
     result = await session.execute(statement)
     group = result.scalars().first()
     if group is None:
@@ -104,9 +102,7 @@ async def create_goal_group(
     session.add(group)
     await session.commit()
     # Re-fetch with eager-loaded goals to avoid lazy-load greenlet errors
-    statement = (
-        select(GoalGroup).where(GoalGroup.id == group.id).options(selectinload(GoalGroup.goals))  # type: ignore[arg-type]
-    )
+    statement = select(GoalGroup).where(GoalGroup.id == group.id).options(GOAL_GROUP_WITH_GOALS)
     result = await session.execute(statement)
     return result.scalars().one()
 
@@ -127,9 +123,7 @@ async def update_goal_group(
     session.add(group)
     await session.commit()
     # Re-fetch with eager-loaded goals to avoid lazy-load greenlet errors
-    statement = (
-        select(GoalGroup).where(GoalGroup.id == group_id).options(selectinload(GoalGroup.goals))  # type: ignore[arg-type]
-    )
+    statement = select(GoalGroup).where(GoalGroup.id == group_id).options(GOAL_GROUP_WITH_GOALS)
     result = await session.execute(statement)
     return result.scalars().one()
 
@@ -141,9 +135,7 @@ async def delete_goal_group(
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> Response:
     """Delete a goal group. Unlinks goals but does not delete them."""
-    statement = (
-        select(GoalGroup).where(GoalGroup.id == group_id).options(selectinload(GoalGroup.goals))  # type: ignore[arg-type]
-    )
+    statement = select(GoalGroup).where(GoalGroup.id == group_id).options(GOAL_GROUP_WITH_GOALS)
     result = await session.execute(statement)
     group = result.scalars().first()
     if group is None or (group.user_id is not None and group.user_id != current_user):

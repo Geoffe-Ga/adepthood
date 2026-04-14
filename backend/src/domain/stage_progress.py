@@ -126,47 +126,62 @@ async def get_stage_habit_history(
     """Aggregate habit and goal history for a user in a specific stage.
 
     Habits are matched by their ``stage`` field against the stage_number
-    (converted to string).
+    (converted to string). The previous implementation issued one query per
+    habit *and* one per goal, scaling as ``1 + 2*habits + goals`` queries
+    (26+ queries for a typical stage). This implementation collapses the work
+    into two queries regardless of habit/goal count:
+
+    1. fetch the habits themselves, ordered for stable output
+    2. one JOIN-aggregate that returns the per-goal completion count for every
+       goal of every habit; per-habit totals are summed in Python from the same
+       result set
     """
     stage_str = str(stage_number)
-    result = await session.execute(
-        select(Habit).where(Habit.user_id == user_id, Habit.stage == stage_str)
+
+    habits_result = await session.execute(
+        select(Habit)
+        .where(Habit.user_id == user_id, Habit.stage == stage_str)
+        .order_by(col(Habit.id).asc())
     )
-    habits = result.scalars().all()
+    habits = list(habits_result.scalars().all())
+    if not habits:
+        return []
 
-    items: list[HabitHistoryItem] = []
-    for habit in habits:
-        # Count total goal completions for this habit's goals
-        completion_count_result = await session.execute(
-            select(func.count())
-            .select_from(GoalCompletion)
-            .join(Goal, col(GoalCompletion.goal_id) == col(Goal.id))
-            .where(GoalCompletion.user_id == user_id, Goal.habit_id == habit.id)
+    habit_ids = [habit.id for habit in habits if habit.id is not None]
+
+    # One JOIN-aggregate query: per-goal completion counts within these habits,
+    # restricted to the requesting user. LEFT OUTER JOIN so goals without any
+    # completions still appear (so we can mark their tier as not achieved).
+    goal_stats_result = await session.execute(
+        select(
+            Goal.habit_id,
+            Goal.tier,
+            func.count(col(GoalCompletion.id)).label("completion_count"),
         )
-        total_completions = completion_count_result.scalar() or 0
-
-        # Determine which goal tiers are achieved (have at least one completion)
-        goals_result = await session.execute(select(Goal).where(Goal.habit_id == habit.id))
-        goals = goals_result.scalars().all()
-
-        goals_achieved: dict[str, bool] = {}
-        for goal in goals:
-            gc_result = await session.execute(
-                select(func.count())
-                .select_from(GoalCompletion)
-                .where(GoalCompletion.goal_id == goal.id, GoalCompletion.user_id == user_id)
-            )
-            count = gc_result.scalar() or 0
-            goals_achieved[goal.tier] = count > 0
-
-        items.append(
-            HabitHistoryItem(
-                name=habit.name,
-                icon=habit.icon,
-                goals_achieved=goals_achieved,
-                best_streak=habit.streak,
-                total_completions=total_completions,
-            )
+        .select_from(Goal)
+        .outerjoin(
+            GoalCompletion,
+            (col(GoalCompletion.goal_id) == col(Goal.id))
+            & (col(GoalCompletion.user_id) == user_id),
         )
+        .where(col(Goal.habit_id).in_(habit_ids))
+        .group_by(col(Goal.habit_id), col(Goal.tier))
+    )
 
-    return items
+    goals_achieved_by_habit: dict[int, dict[str, bool]] = {hid: {} for hid in habit_ids}
+    completions_by_habit: dict[int, int] = dict.fromkeys(habit_ids, 0)
+    for row in goal_stats_result.all():
+        count = int(row.completion_count or 0)
+        goals_achieved_by_habit[row.habit_id][row.tier] = count > 0
+        completions_by_habit[row.habit_id] += count
+
+    return [
+        HabitHistoryItem(
+            name=habit.name,
+            icon=habit.icon,
+            goals_achieved=goals_achieved_by_habit.get(habit.id, {}) if habit.id else {},
+            best_streak=habit.streak,
+            total_completions=completions_by_habit.get(habit.id, 0) if habit.id else 0,
+        )
+        for habit in habits
+    ]
