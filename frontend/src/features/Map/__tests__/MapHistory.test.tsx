@@ -69,18 +69,37 @@ function mockMakeStage(stageNumber: number, overrides: Partial<{ isUnlocked: boo
 
 const mockStages = Array.from({ length: 10 }, (_, i) => mockMakeStage(10 - i));
 
-const mockFetchStages = jest.fn();
+const mockLoadStages = jest.fn();
+jest.mock('../services/stageService', () => ({
+  stageService: { loadStages: (...args: unknown[]) => mockLoadStages(...args) },
+}));
+
+const buildMockStageState = () => ({
+  stages: mockStages,
+  stagesByNumber: Object.fromEntries(mockStages.map((s) => [s.stageNumber, s])),
+  stageOrder: mockStages.map((s) => s.stageNumber),
+  currentStage: 1,
+  loading: false,
+  error: null,
+  setStages: jest.fn(),
+  setCurrentStage: jest.fn(),
+  setLoading: jest.fn(),
+  setError: jest.fn(),
+  updateStageProgress: jest.fn(),
+});
+
 jest.mock('../../../store/useStageStore', () => ({
   useStageStore: jest.fn((selector) => {
-    const mockState = {
-      stages: mockStages,
-      currentStage: 1,
-      loading: false,
-      error: null,
-      fetchStages: mockFetchStages,
-    };
+    const mockState = buildMockStageState();
     return selector ? selector(mockState) : mockState;
   }),
+  selectStages: (s: { stages: unknown }) => s.stages,
+  selectCurrentStage: (s: { currentStage: unknown }) => s.currentStage,
+  selectStagesLoading: (s: { loading: unknown }) => s.loading,
+  selectStagesError: (s: { error: unknown }) => s.error,
+  selectStageByNumber:
+    (n: number | null | undefined) => (s: { stagesByNumber: Record<number, unknown> }) =>
+      n == null ? undefined : s.stagesByNumber[n],
 }));
 
 import MapScreen from '../MapScreen';
@@ -115,7 +134,7 @@ const EMPTY_HISTORY: StageHistoryData = {
 describe('MapScreen — Stage History', () => {
   beforeEach(() => {
     mockNavigate.mockClear();
-    mockFetchStages.mockClear();
+    mockLoadStages.mockClear();
     mockHistoryFn.mockReset();
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });

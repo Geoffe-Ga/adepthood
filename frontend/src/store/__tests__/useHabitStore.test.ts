@@ -38,9 +38,14 @@ const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
 
 describe('useHabitStore', () => {
   beforeEach(() => {
-    // Reset store state between tests
+    // Reset store state between tests via the normalizing `setHabits` action
+    // so `habitsById` and `habitOrder` stay consistent with `habits`.
     const { useHabitStore } = require('../useHabitStore');
-    useHabitStore.setState({ habits: [], loading: false, error: null });
+    act(() => {
+      useHabitStore.getState().setHabits([]);
+      useHabitStore.getState().setLoading(false);
+      useHabitStore.getState().setError(null);
+    });
     jest.clearAllMocks();
   });
 
@@ -49,8 +54,36 @@ describe('useHabitStore', () => {
     const state = useHabitStore.getState();
 
     expect(state.habits).toEqual([]);
+    expect(state.habitsById).toEqual({});
+    expect(state.habitOrder).toEqual([]);
     expect(state.loading).toBe(false);
     expect(state.error).toBeNull();
+  });
+
+  it('setHabits normalizes into habitsById and habitOrder', () => {
+    const { useHabitStore } = require('../useHabitStore');
+    const h1 = makeHabit({ id: 1, name: 'First' });
+    const h2 = makeHabit({ id: 2, name: 'Second' });
+
+    act(() => useHabitStore.getState().setHabits([h1, h2]));
+
+    const state = useHabitStore.getState();
+    expect(state.habitsById[1]).toEqual(h1);
+    expect(state.habitsById[2]).toEqual(h2);
+    expect(state.habitOrder).toEqual([1, 2]);
+    expect(state.habits).toEqual([h1, h2]);
+  });
+
+  it('selectHabitById returns a habit by id or undefined', () => {
+    const { useHabitStore, selectHabitById } = require('../useHabitStore');
+    const habit = makeHabit({ id: 42 });
+    act(() => useHabitStore.getState().setHabits([habit]));
+
+    const state = useHabitStore.getState();
+    expect(selectHabitById(42)(state)).toEqual(habit);
+    expect(selectHabitById(99)(state)).toBeUndefined();
+    expect(selectHabitById(null)(state)).toBeUndefined();
+    expect(selectHabitById(undefined)(state)).toBeUndefined();
   });
 
   it('setHabits updates habits array', () => {

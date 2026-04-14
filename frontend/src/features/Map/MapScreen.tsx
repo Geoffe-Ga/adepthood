@@ -18,9 +18,16 @@ import type { HabitHistoryItem, PracticeHistoryItem, StageHistoryResponse } from
 import { stages as stagesApi } from '../../api';
 import { MAP_BACKGROUND_URI } from '../../constants/images';
 import { useAppNavigation } from '../../navigation/hooks';
-import { useStageStore } from '../../store/useStageStore';
+import {
+  selectCurrentStage,
+  selectStages,
+  selectStagesError,
+  selectStagesLoading,
+  useStageStore,
+} from '../../store/useStageStore';
 
 import styles from './Map.styles';
+import { stageService } from './services/stageService';
 import type { StageData } from './stageData';
 
 const FULL_PROGRESS = 1;
@@ -428,14 +435,17 @@ const MapBackground = ({
 
 const MapScreen = (): React.JSX.Element => {
   const navigation = useAppNavigation();
-  const { stages, loading, error, fetchStages, currentStage } = useStageStore();
+  const stages = useStageStore(selectStages);
+  const loading = useStageStore(selectStagesLoading);
+  const error = useStageStore(selectStagesError);
+  const currentStage = useStageStore(selectCurrentStage);
   const [activeStage, setActiveStage] = useState<StageData | null>(null);
 
   useEffect(() => {
     if (stages.length === 0 && !loading) {
-      void fetchStages();
+      void stageService.loadStages();
     }
-  }, [stages.length, loading, fetchStages]);
+  }, [stages.length, loading]);
 
   const handleNavigate = useCallback(
     (screen: 'Practice' | 'Course' | 'Journal', stage: StageData) => {

@@ -1,36 +1,23 @@
 import { create } from 'zustand';
 
-import { stages as stagesApi } from '../api';
-import type { Stage } from '../api';
-import { STAGE_COLORS, STAGE_ORDER } from '../design/tokens';
-import { HOTSPOTS, STAGE_COUNT } from '../features/Map/stageData';
 import type { StageData } from '../features/Map/stageData';
 
-/** Convert a backend Stage response into a frontend StageData with hotspot layout. */
-function toStageData(apiStage: Stage): StageData {
-  const index = STAGE_COUNT - apiStage.stage_number; // stage 10 = index 0
-  const colorName = STAGE_ORDER[apiStage.stage_number - 1] ?? 'Beige';
-  return {
-    id: apiStage.id,
-    title: apiStage.title,
-    subtitle: apiStage.subtitle,
-    stageNumber: apiStage.stage_number,
-    progress: apiStage.progress,
-    color: STAGE_COLORS[colorName] ?? '#888',
-    isUnlocked: apiStage.is_unlocked,
-    category: apiStage.category,
-    aspect: apiStage.aspect,
-    spiralDynamicsColor: apiStage.spiral_dynamics_color,
-    growingUpStage: apiStage.growing_up_stage,
-    divineGenderPolarity: apiStage.divine_gender_polarity,
-    relationshipToFreeWill: apiStage.relationship_to_free_will,
-    freeWillDescription: apiStage.free_will_description,
-    overviewUrl: apiStage.overview_url,
-    hotspots: [...(HOTSPOTS[index] ?? [])],
-  };
-}
-
+/**
+ * Stage store — a dumb state container. API calls live in
+ * `features/Map/services/stageService.ts`; this module only holds and mutates
+ * state.
+ *
+ * Canonical shape is `stagesByNumber` (keyed by `stageNumber`) plus
+ * `stageOrder` for O(1) lookups while preserving the artwork-aligned ordering
+ * (stage 10 → stage 1 = descending). The `stages` array is a derived cache
+ * kept in sync by the mutation actions.
+ */
 export interface StageStoreState {
+  /** `stageNumber` → StageData map. O(1) lookup for selectors. */
+  stagesByNumber: Record<number, StageData>;
+  /** Stage numbers in display order (descending: 10 first, 1 last). */
+  stageOrder: number[];
+  /** Derived array view. Kept in sync by actions. */
   stages: StageData[];
   currentStage: number;
   loading: boolean;
@@ -38,37 +25,69 @@ export interface StageStoreState {
 
   setStages: (_stages: StageData[]) => void;
   setCurrentStage: (_stageNumber: number) => void;
+  setLoading: (_loading: boolean) => void;
+  setError: (_error: string | null) => void;
   updateStageProgress: (_stageNumber: number, _progress: number) => void;
-  fetchStages: (_token?: string) => Promise<void>;
 }
 
+interface NormalizedStages {
+  stagesByNumber: Record<number, StageData>;
+  stageOrder: number[];
+  stages: StageData[];
+}
+
+const normalizeStages = (stages: StageData[]): NormalizedStages => {
+  const stagesByNumber: Record<number, StageData> = {};
+  const stageOrder: number[] = [];
+  for (const stage of stages) {
+    stagesByNumber[stage.stageNumber] = stage;
+    stageOrder.push(stage.stageNumber);
+  }
+  return { stagesByNumber, stageOrder, stages: [...stages] };
+};
+
+const rebuildStageList = (
+  stagesByNumber: Record<number, StageData>,
+  stageOrder: number[],
+): StageData[] =>
+  stageOrder.map((num) => stagesByNumber[num]!).filter((s): s is StageData => s !== undefined);
+
 export const useStageStore = create<StageStoreState>((set) => ({
+  stagesByNumber: {},
+  stageOrder: [],
   stages: [],
   currentStage: 1,
   loading: false,
   error: null,
 
-  setStages: (stages) => set({ stages }),
+  setStages: (stages) => set(normalizeStages(stages)),
   setCurrentStage: (currentStage) => set({ currentStage }),
+  setLoading: (loading) => set({ loading }),
+  setError: (error) => set({ error }),
   updateStageProgress: (stageNumber, progress) =>
-    set((state) => ({
-      stages: state.stages.map((s) => (s.stageNumber === stageNumber ? { ...s, progress } : s)),
-    })),
-  fetchStages: async (token?: string) => {
-    set({ loading: true, error: null });
-    try {
-      const apiStages = await stagesApi.list(token);
-      // Sort descending by stage_number (10 at top, 1 at bottom) to match artwork
-      const sorted = [...apiStages].sort((a, b) => b.stage_number - a.stage_number);
-      const mapped = sorted.map(toStageData);
-      const current =
-        sorted.find((s) => s.is_unlocked && s.progress < 1)?.stage_number ??
-        sorted.at(-1)?.stage_number ??
-        1;
-      set({ stages: mapped, currentStage: current, loading: false });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load stages';
-      set({ loading: false, error: message });
-    }
-  },
+    set((state) => {
+      const existing = state.stagesByNumber[stageNumber];
+      if (!existing) return state;
+      const stagesByNumber = {
+        ...state.stagesByNumber,
+        [stageNumber]: { ...existing, progress },
+      };
+      return { stagesByNumber, stages: rebuildStageList(stagesByNumber, state.stageOrder) };
+    }),
 }));
+
+// ---------------------------------------------------------------------------
+// Selectors — narrow state subscriptions. Zustand compares the *value*
+// returned with `Object.is`, so components re-render only when their slice
+// changes. Prefer these over destructuring the whole store.
+// ---------------------------------------------------------------------------
+
+export const selectStages = (state: StageStoreState): StageData[] => state.stages;
+export const selectCurrentStage = (state: StageStoreState): number => state.currentStage;
+export const selectStagesLoading = (state: StageStoreState): boolean => state.loading;
+export const selectStagesError = (state: StageStoreState): string | null => state.error;
+
+export const selectStageByNumber =
+  (stageNumber: number | null | undefined) =>
+  (state: StageStoreState): StageData | undefined =>
+    stageNumber == null ? undefined : state.stagesByNumber[stageNumber];

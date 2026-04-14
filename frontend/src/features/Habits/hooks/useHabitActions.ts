@@ -16,10 +16,12 @@ export const useHabitActions = (
 ): HabitsActions => {
   const logUnit = useCallback(
     (habitId: number, amount: number) => {
-      const updated = habitManager.logUnit(habitId, amount, showToast);
-      if (updated && ui.selectedHabit?.id === habitId) ui.setSelectedHabit(updated);
+      // `selectedHabit` is derived from the store via `useHabitUI`, so the
+      // updated habit propagates automatically after `habitManager.logUnit`
+      // writes to the store — no manual re-selection needed.
+      habitManager.logUnit(habitId, amount, showToast);
     },
-    [showToast, ui],
+    [showToast],
   );
 
   const iconPress = useCallback((index: number) => ui.setEmojiHabitIndex(index), [ui]);
