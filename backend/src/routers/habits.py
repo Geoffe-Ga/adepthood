@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 from sqlmodel import select
 
 from database import get_session
 from domain.habit_stats import compute_habit_stats
 from errors import not_found
-from models.goal import Goal
+from load_options import HABIT_WITH_GOALS, HABIT_WITH_GOALS_AND_COMPLETIONS
 from models.habit import Habit
 from routers.auth import get_current_user
 from schemas.habit import Habit as HabitSchema
@@ -43,7 +42,7 @@ async def list_habits(
     statement = (
         select(Habit)
         .where(Habit.user_id == current_user)
-        .options(selectinload(Habit.goals))  # type: ignore[arg-type]
+        .options(HABIT_WITH_GOALS)
         .order_by(Habit.sort_order.asc())  # type: ignore[union-attr]
     )
     result = await session.execute(statement)
@@ -57,9 +56,7 @@ async def get_habit(
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> Habit:
     """Return a single habit by id, scoped to the authenticated user."""
-    statement = (
-        select(Habit).where(Habit.id == habit_id).options(selectinload(Habit.goals))  # type: ignore[arg-type]
-    )
+    statement = select(Habit).where(Habit.id == habit_id).options(HABIT_WITH_GOALS)
     result = await session.execute(statement)
     habit = result.scalars().first()
     if habit is None or habit.user_id != current_user:
@@ -105,11 +102,7 @@ async def _get_habit_with_completions(
     habit_id: int, current_user: int, session: AsyncSession
 ) -> Habit:
     """Load a habit with goals+completions, raising 404 if not owned."""
-    statement = (
-        select(Habit)
-        .where(Habit.id == habit_id)
-        .options(selectinload(Habit.goals).selectinload(Goal.completions))  # type: ignore[arg-type]
-    )
+    statement = select(Habit).where(Habit.id == habit_id).options(HABIT_WITH_GOALS_AND_COMPLETIONS)
     result = await session.execute(statement)
     habit = result.scalars().first()
     if habit is None or habit.user_id != current_user:

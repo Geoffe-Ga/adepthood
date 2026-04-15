@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -118,6 +120,65 @@ async def get_stage_practice_history(
     ]
 
 
+async def _fetch_stage_habits(
+    session: AsyncSession, user_id: int, stage_number: int
+) -> list[Habit]:
+    """Return the user's habits for a stage, ordered by id for deterministic output."""
+    stage_str = str(stage_number)
+    result = await session.execute(
+        select(Habit)
+        .where(Habit.user_id == user_id, Habit.stage == stage_str)
+        .order_by(col(Habit.id).asc())
+    )
+    return list(result.scalars().all())
+
+
+async def _fetch_goal_completion_stats(
+    session: AsyncSession, user_id: int, habit_ids: list[int]
+) -> dict[int, dict[str, int]]:
+    """Return ``{habit_id: {tier: completion_count}}`` in a single JOIN query.
+
+    A LEFT OUTER JOIN keeps goals without any completions in the result set,
+    so callers can still mark their tier as ``False``. The user filter is on
+    the join condition (not the WHERE clause) so a goal with only *other*
+    users' completions still surfaces with ``count == 0``.
+    """
+    if not habit_ids:
+        return {}
+
+    result = await session.execute(
+        select(
+            Goal.habit_id,
+            Goal.tier,
+            func.count(col(GoalCompletion.id)).label("completion_count"),
+        )
+        .select_from(Goal)
+        .outerjoin(
+            GoalCompletion,
+            (col(GoalCompletion.goal_id) == col(Goal.id))
+            & (col(GoalCompletion.user_id) == user_id),
+        )
+        .where(col(Goal.habit_id).in_(habit_ids))
+        .group_by(col(Goal.habit_id), col(Goal.tier))
+    )
+
+    stats: dict[int, dict[str, int]] = {hid: {} for hid in habit_ids}
+    for row in result.all():
+        stats[row.habit_id][row.tier] = int(row.completion_count or 0)
+    return stats
+
+
+def _build_history_item(habit: Habit, tier_counts: dict[str, int]) -> HabitHistoryItem:
+    """Roll a habit's per-tier completion counts up into a history item."""
+    return HabitHistoryItem(
+        name=habit.name,
+        icon=habit.icon,
+        goals_achieved={tier: count > 0 for tier, count in tier_counts.items()},
+        best_streak=habit.streak,
+        total_completions=sum(tier_counts.values()),
+    )
+
+
 async def get_stage_habit_history(
     session: AsyncSession,
     user_id: int,
@@ -126,47 +187,15 @@ async def get_stage_habit_history(
     """Aggregate habit and goal history for a user in a specific stage.
 
     Habits are matched by their ``stage`` field against the stage_number
-    (converted to string).
+    (converted to string). The previous implementation issued one query per
+    habit *and* one per goal, scaling as ``1 + 2*habits + goals`` queries
+    (26+ queries for a typical stage). This implementation collapses the work
+    into two queries regardless of habit/goal count: one to fetch the habits,
+    and one JOIN-aggregate to count completions per (habit, tier).
     """
-    stage_str = str(stage_number)
-    result = await session.execute(
-        select(Habit).where(Habit.user_id == user_id, Habit.stage == stage_str)
-    )
-    habits = result.scalars().all()
-
-    items: list[HabitHistoryItem] = []
-    for habit in habits:
-        # Count total goal completions for this habit's goals
-        completion_count_result = await session.execute(
-            select(func.count())
-            .select_from(GoalCompletion)
-            .join(Goal, col(GoalCompletion.goal_id) == col(Goal.id))
-            .where(GoalCompletion.user_id == user_id, Goal.habit_id == habit.id)
-        )
-        total_completions = completion_count_result.scalar() or 0
-
-        # Determine which goal tiers are achieved (have at least one completion)
-        goals_result = await session.execute(select(Goal).where(Goal.habit_id == habit.id))
-        goals = goals_result.scalars().all()
-
-        goals_achieved: dict[str, bool] = {}
-        for goal in goals:
-            gc_result = await session.execute(
-                select(func.count())
-                .select_from(GoalCompletion)
-                .where(GoalCompletion.goal_id == goal.id, GoalCompletion.user_id == user_id)
-            )
-            count = gc_result.scalar() or 0
-            goals_achieved[goal.tier] = count > 0
-
-        items.append(
-            HabitHistoryItem(
-                name=habit.name,
-                icon=habit.icon,
-                goals_achieved=goals_achieved,
-                best_streak=habit.streak,
-                total_completions=total_completions,
-            )
-        )
-
-    return items
+    habits = await _fetch_stage_habits(session, user_id, stage_number)
+    # Habits returned by SELECT always have a primary key assigned; the cast is
+    # a static-typing hint, not a runtime guard, so it costs nothing here.
+    habit_ids = [cast("int", h.id) for h in habits]
+    stats_by_habit = await _fetch_goal_completion_stats(session, user_id, habit_ids)
+    return [_build_history_item(h, stats_by_habit.get(cast("int", h.id), {})) for h in habits]
