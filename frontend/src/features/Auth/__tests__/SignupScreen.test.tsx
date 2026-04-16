@@ -107,6 +107,22 @@ describe('SignupScreen', () => {
     expect(await findByText(/Check your connection/i)).toBeTruthy();
   });
 
+  it('trims whitespace from the email before submitting (BUG-AUTH-010)', async () => {
+    mockSignup.mockResolvedValue(undefined);
+    const { getByPlaceholderText, getByText } = render(
+      <SignupScreen navigation={mockNavigation} />,
+    );
+
+    fireEvent.changeText(getByPlaceholderText('Email'), '  new@test.com  ');
+    fireEvent.changeText(getByPlaceholderText('Password'), 'password123');
+    fireEvent.changeText(getByPlaceholderText('Confirm Password'), 'password123');
+    fireEvent.press(getByText('Sign Up'));
+
+    await waitFor(() => {
+      expect(mockSignup).toHaveBeenCalledWith('new@test.com', 'password123');
+    });
+  });
+
   it('has a link to navigate to login', () => {
     const { getByText } = render(<SignupScreen navigation={mockNavigation} />);
 

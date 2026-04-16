@@ -905,7 +905,7 @@ export interface AuthRequest {
 }
 export interface AuthResponse {
   token: string;
-  user_id?: number;
+  user_id: number;
 }
 export const auth = {
   login(credentials: AuthRequest): Promise<AuthResponse> {

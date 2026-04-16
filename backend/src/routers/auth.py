@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 import bcrypt
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -51,6 +51,19 @@ def _get_secret_key() -> str:
 class AuthRequest(BaseModel):
     email: EmailStr
     password: str
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _normalize_email(cls, value: object) -> object:
+        """Strip whitespace and lowercase emails at the boundary.
+
+        Addresses BUG-AUTH-003 (case-sensitive lookups) and BUG-AUTH-010
+        (whitespace from paste/autofill). Applied before ``EmailStr``
+        validation so the normalized form is what gets stored and compared.
+        """
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
 
 
 class AuthResponse(BaseModel):

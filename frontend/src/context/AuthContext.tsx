@@ -60,6 +60,40 @@ function useProactiveRefresh(
   }, [token, tokenRef, applyNewToken]);
 }
 
+/**
+ * BUG-AUTH-005: the storage write must complete before we drop the token
+ * from state; otherwise a crash between the two leaves a stale token in
+ * secure storage that hydrates on next launch.
+ */
+async function clearTokenThenReset(
+  setToken: React.Dispatch<React.SetStateAction<string | null>>,
+): Promise<void> {
+  try {
+    await clearToken();
+  } catch (err: unknown) {
+    console.warn('clearToken failed in onUnauthorized', err);
+  }
+  setToken(null);
+}
+
+/**
+ * BUG-AUTH-001: a fire-and-forget saveToken loses the refreshed token if
+ * the app is killed between the refresh response and the secure-storage
+ * write. Await the persistence before surfacing the token to React state.
+ */
+async function saveTokenThenApply(
+  newToken: string,
+  setToken: React.Dispatch<React.SetStateAction<string | null>>,
+): Promise<void> {
+  try {
+    await saveToken(newToken);
+  } catch (err: unknown) {
+    console.warn('saveToken failed in onTokenRefreshed', err);
+    return;
+  }
+  setToken(newToken);
+}
+
 /** Register API-layer callbacks that bridge token state to the HTTP client. */
 function useApiCallbacks(
   tokenRef: React.MutableRefObject<string | null>,
@@ -68,12 +102,10 @@ function useApiCallbacks(
   useEffect(() => {
     setTokenGetter(() => tokenRef.current);
     setOnUnauthorized(() => {
-      clearToken();
-      setToken(null);
+      void clearTokenThenReset(setToken);
     });
     setOnTokenRefreshed((t: string) => {
-      saveToken(t);
-      setToken(t);
+      void saveTokenThenApply(t, setToken);
     });
     return () => {
       setOnUnauthorized(null);
@@ -133,9 +165,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(null);
   }, []);
 
+  // BUG-AUTH-005: mirror the persistence-first ordering used by the API-layer
+  // onUnauthorized hook so callers of the context-exposed helper get the same
+  // crash-safety guarantee.
   const onUnauthorized = useCallback(() => {
-    clearToken();
-    setToken(null);
+    void clearTokenThenReset(setToken);
   }, []);
 
   const value = useMemo(

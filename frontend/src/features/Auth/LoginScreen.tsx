@@ -22,7 +22,9 @@ export default function LoginScreen({ navigation }: Props) {
     setError(null);
     setSubmitting(true);
     try {
-      await login(email, password);
+      // BUG-AUTH-010: trim at submit so paste/autofill whitespace doesn't
+      // produce a confusing 422 from the backend.
+      await login(email.trim(), password);
     } catch (err: unknown) {
       // Backend ``detail`` strings (e.g. ``invalid_credentials``) are API
       // contract tokens, not user copy — route them through the shared
