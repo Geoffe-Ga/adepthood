@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
@@ -17,6 +18,8 @@ from models.habit import Habit
 from routers.auth import get_current_user
 from schemas import CheckInResult
 from services.streaks import check_milestones, compute_consecutive_streak, update_streak
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/goal_completions", tags=["goals"])
 
@@ -95,6 +98,16 @@ async def create_goal_completion(
     await session.commit()
 
     new_streak, reason = update_streak(old_streak, payload.did_complete)
+
+    logger.info(
+        "goal_completion_recorded",
+        extra={
+            "user_id": current_user,
+            "goal_id": payload.goal_id,
+            "did_complete": payload.did_complete,
+            "streak": new_streak,
+        },
+    )
 
     return CheckInResult(
         streak=new_streak,

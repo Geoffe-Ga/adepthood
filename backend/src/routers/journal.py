@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
@@ -20,6 +21,8 @@ from schemas.journal import (
     JournalMessageCreate,
     JournalMessageResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/journal", tags=["journal"])
 
@@ -46,6 +49,7 @@ async def create_journal_entry(
     session.add(entry)
     await session.commit()
     await session.refresh(entry)
+    logger.info("journal_entry_created", extra={"user_id": current_user, "entry_id": entry.id})
     return entry
 
 
@@ -124,6 +128,7 @@ async def delete_journal_entry(
         raise not_found("journal_entry")
     await session.delete(entry)
     await session.commit()
+    logger.info("journal_entry_deleted", extra={"user_id": current_user, "entry_id": entry_id})
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -146,4 +151,7 @@ async def create_bot_response(
     session.add(entry)
     await session.commit()
     await session.refresh(entry)
+    logger.info(
+        "journal_bot_response_created", extra={"user_id": current_user, "entry_id": entry.id}
+    )
     return entry

@@ -48,22 +48,33 @@ def _replace_array_columns() -> None:
 
 @pytest_asyncio.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
-    """Provide a clean async session with all tables created."""
+    """Provide a clean async session with all tables created.
+
+    BUG-INFRA-027: schema teardown lives in ``finally`` so tables are dropped
+    even when a test raises mid-flight.  Without this, a failing test can
+    leave residual rows that pollute the next test in the same engine.
+    """
     _replace_array_columns()
 
     async with test_engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
 
-    async with test_session_factory() as session:
-        yield session
-
-    async with test_engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.drop_all)
+    try:
+        async with test_session_factory() as session:
+            yield session
+    finally:
+        async with test_engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.drop_all)
 
 
 @pytest_asyncio.fixture
 async def async_client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
-    """HTTP client with database dependency overridden to use test DB."""
+    """HTTP client with database dependency overridden to use test DB.
+
+    BUG-INFRA-026: ``app.dependency_overrides`` is cleared in ``finally`` and
+    asserted empty at teardown so a failing test cannot leak its session
+    override into subsequent tests in the same process.
+    """
 
     async def _override_get_session() -> AsyncGenerator[AsyncSession, None]:
         yield db_session
@@ -71,10 +82,12 @@ async def async_client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, 
     app.dependency_overrides[get_session] = _override_get_session
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client
-
-    app.dependency_overrides.clear()
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
+    finally:
+        app.dependency_overrides.clear()
+        assert not app.dependency_overrides, "dependency_overrides leaked between tests"
 
 
 @pytest.fixture(autouse=True)

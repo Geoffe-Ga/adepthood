@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, Query, status
@@ -17,6 +18,8 @@ from models.journal_entry import JournalEntry, JournalTag
 from models.prompt_response import PromptResponse
 from routers.auth import get_current_user
 from schemas.prompt import PromptDetail, PromptListResponse, PromptSubmit
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/prompts", tags=["prompts"])
 
@@ -189,6 +192,11 @@ async def submit_prompt_response(
         raise conflict("already_responded") from None
 
     await session.refresh(prompt_response)
+
+    logger.info(
+        "prompt_response_submitted",
+        extra={"user_id": current_user, "week_number": week_number},
+    )
 
     return PromptDetail(
         week_number=prompt_response.week_number,

@@ -1,8 +1,12 @@
+import asyncio
+import time
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from cachetools import TTLCache
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from main import app
 from services import energy
@@ -72,3 +76,43 @@ def test_idempotency_miss_after_cache_clear() -> None:
         # Both should succeed (recomputed, not from cache)
         assert res1.status_code == 200  # noqa: PLR2004
         assert res2.status_code == 200  # noqa: PLR2004
+
+
+@pytest.mark.asyncio
+async def test_create_plan_does_not_block_event_loop() -> None:
+    """BUG-INFRA-009: slow plan generation must not starve concurrent requests.
+
+    We replace ``get_or_generate_plan`` with a sync sleep that would block
+    the event loop for 300ms if executed inline.  With ``asyncio.to_thread``
+    the main loop is free during the sleep, so two concurrent requests
+    complete in ~300ms total — not ~600ms serialised.
+    """
+    sleep_seconds = 0.3
+
+    def _slow_plan(payload: Any, _key: Any) -> Any:  # noqa: ANN401
+        # ``time.sleep`` (not ``asyncio.sleep``) — this is the sync CPU-ish
+        # stand-in.  If the endpoint runs inline on the loop, this stalls
+        # every other coroutine for ``sleep_seconds``.
+        time.sleep(sleep_seconds)
+        return energy.build_energy_response(payload)
+
+    with patch.object(energy, "get_or_generate_plan", _slow_plan):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            start = time.perf_counter()
+            results = await asyncio.gather(
+                ac.post("/v1/energy/plan", json=sample_payload()),
+                ac.post("/v1/energy/plan", json=sample_payload()),
+            )
+            elapsed = time.perf_counter() - start
+
+    for res in results:
+        assert res.status_code == 200  # noqa: PLR2004
+
+    # If the endpoint were synchronous on the loop, elapsed would be
+    # >= 2 * sleep_seconds.  Offloading via ``asyncio.to_thread`` brings it
+    # close to a single sleep duration — allow generous headroom so CI
+    # noise doesn't flake the assertion.
+    assert elapsed < sleep_seconds * 1.8, (
+        f"expected concurrent energy requests to overlap; took {elapsed:.3f}s"
+    )

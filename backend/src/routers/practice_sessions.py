@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
@@ -13,7 +14,11 @@ from errors import forbidden, not_found
 from models.practice_session import PracticeSession
 from models.user_practice import UserPractice
 from routers.auth import get_current_user
+from schemas import Page, PaginationParams, build_page
+from schemas.pagination import paginate_query
 from schemas.practice import PracticeSessionCreate, PracticeSessionResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/practice-sessions", tags=["practice-sessions"])
 
@@ -43,17 +48,31 @@ async def create_session(
     session.add(practice_session)
     await session.commit()
     await session.refresh(practice_session)
+    logger.info(
+        "practice_session_logged",
+        extra={
+            "user_id": current_user,
+            "user_practice_id": payload.user_practice_id,
+            "duration_minutes": payload.duration_minutes,
+        },
+    )
     return practice_session
 
 
-@router.get("/", response_model=list[PracticeSessionResponse])
+@router.get("/", response_model=None)
 async def list_sessions(
     user_practice_id: int,
     current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
-) -> list[PracticeSession]:
-    """List sessions for a specific user-practice, newest first."""
-    result = await session.execute(
+    pagination: PaginationParams = Depends(),  # noqa: B008
+) -> Page[PracticeSessionResponse] | list[PracticeSessionResponse]:
+    """List sessions for a specific user-practice, newest first.
+
+    BUG-INFRA-014: returns ``Page[PracticeSessionResponse]`` when
+    ``?paginate=true`` is set; otherwise the legacy bare list is returned
+    for one release while the frontend migrates to the envelope.
+    """
+    query = (
         select(PracticeSession)
         .where(
             PracticeSession.user_practice_id == user_practice_id,
@@ -61,7 +80,11 @@ async def list_sessions(
         )
         .order_by(col(PracticeSession.timestamp).desc())
     )
-    return list(result.scalars().all())
+    items, total = await paginate_query(session, query, pagination)
+    serialized = [PracticeSessionResponse.model_validate(s, from_attributes=True) for s in items]
+    if pagination.paginate:
+        return build_page(serialized, total, pagination)
+    return serialized
 
 
 @router.get("/week-count")
