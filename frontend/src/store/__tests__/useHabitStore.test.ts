@@ -19,6 +19,9 @@ jest.mock('../../api', () => ({
 jest.mock('../../storage/habitStorage', () => ({
   saveHabits: jest.fn(() => Promise.resolve(undefined)),
   loadHabits: jest.fn(() => Promise.resolve(null)),
+  savePendingCheckIn: jest.fn(() => Promise.resolve(undefined)),
+  loadPendingCheckIns: jest.fn(() => Promise.resolve([])),
+  clearPendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
 }));
 
 const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({

@@ -866,12 +866,28 @@ export interface WeekCountResponse {
   count: number;
 }
 
+function validatePracticeItem(item: unknown): item is PracticeItem {
+  if (typeof item !== 'object' || item === null) return false;
+  const p = item as Record<string, unknown>;
+  return (
+    typeof p.id === 'number' &&
+    typeof p.name === 'string' &&
+    typeof p.stage_number === 'number' &&
+    typeof p.default_duration_minutes === 'number'
+  );
+}
+
 export const practices = {
-  list(stageNumber: number, token?: string): Promise<PracticeItem[]> {
-    return request<PracticeItem[]>(`/practices/?stage_number=${stageNumber}`, { token });
+  async list(stageNumber: number, token?: string): Promise<PracticeItem[]> {
+    const data = await request<PracticeItem[]>(`/practices/?stage_number=${stageNumber}`, {
+      token,
+    });
+    return data.filter(validatePracticeItem);
   },
-  get(practiceId: number, token?: string): Promise<PracticeItem> {
-    return request<PracticeItem>(`/practices/${practiceId}`, { token });
+  async get(practiceId: number, token?: string): Promise<PracticeItem> {
+    const data = await request<PracticeItem>(`/practices/${practiceId}`, { token });
+    if (!validatePracticeItem(data)) throw new Error('Invalid practice response');
+    return data;
   },
 };
 

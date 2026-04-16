@@ -24,8 +24,9 @@ async function playSound(source: number): Promise<void> {
     setTimeout(() => {
       sound.unloadAsync();
     }, 3000);
-  } catch {
-    // best-effort
+  } catch (err) {
+    console.warn('Audio playback failed, falling back to vibration:', err);
+    Vibration.vibrate(200);
   }
 }
 
@@ -116,7 +117,7 @@ function useTimerEffects(
   ts: ReturnType<typeof useTimerState>,
   tick: () => void,
   onComplete: (_m: number) => void,
-  durationMinutes: number,
+  _durationMinutes: number,
   totalSeconds: number,
 ) {
   const { state, remaining, clearTimer, setState, intervalRef, halfwayPlayedRef } = ts;
@@ -144,8 +145,9 @@ function useTimerEffects(
     setState('completed');
     playSound(SOUND_END);
     Vibration.vibrate([0, 200, 100, 200, 100, 200]);
-    onComplete(durationMinutes);
-  }, [remaining, state, clearTimer, setState, durationMinutes, onComplete]);
+    const elapsedMinutes = (totalSeconds - remaining) / SECONDS_PER_MINUTE;
+    onComplete(elapsedMinutes);
+  }, [remaining, state, clearTimer, setState, totalSeconds, onComplete]);
 
   useEffect(() => {
     return () => {
@@ -190,7 +192,13 @@ const TimerDisplay = ({
 );
 
 const IdleControls = ({ onStart }: { onStart: () => void }): React.JSX.Element => (
-  <TouchableOpacity style={timerStyles.startButton} onPress={onStart} testID="start-button">
+  <TouchableOpacity
+    style={timerStyles.startButton}
+    onPress={onStart}
+    testID="start-button"
+    accessibilityLabel="Start timer"
+    accessibilityRole="button"
+  >
     <Text style={timerStyles.startButtonText}>Start</Text>
   </TouchableOpacity>
 );
@@ -203,10 +211,22 @@ const RunningControls = ({
   onCancel: () => void;
 }): React.JSX.Element => (
   <View style={timerStyles.buttonRow}>
-    <TouchableOpacity style={timerStyles.pauseButton} onPress={onPause} testID="pause-button">
+    <TouchableOpacity
+      style={timerStyles.pauseButton}
+      onPress={onPause}
+      testID="pause-button"
+      accessibilityLabel="Pause timer"
+      accessibilityRole="button"
+    >
       <Text style={timerStyles.pauseButtonText}>Pause</Text>
     </TouchableOpacity>
-    <TouchableOpacity style={timerStyles.cancelButton} onPress={onCancel} testID="cancel-button">
+    <TouchableOpacity
+      style={timerStyles.cancelButton}
+      onPress={onCancel}
+      testID="cancel-button"
+      accessibilityLabel="Cancel timer"
+      accessibilityRole="button"
+    >
       <Text style={timerStyles.cancelButtonText}>Cancel</Text>
     </TouchableOpacity>
   </View>
@@ -220,10 +240,22 @@ const PausedControls = ({
   onCancel: () => void;
 }): React.JSX.Element => (
   <View style={timerStyles.buttonRow}>
-    <TouchableOpacity style={timerStyles.startButton} onPress={onResume} testID="resume-button">
+    <TouchableOpacity
+      style={timerStyles.startButton}
+      onPress={onResume}
+      testID="resume-button"
+      accessibilityLabel="Resume timer"
+      accessibilityRole="button"
+    >
       <Text style={timerStyles.startButtonText}>Resume</Text>
     </TouchableOpacity>
-    <TouchableOpacity style={timerStyles.cancelButton} onPress={onCancel} testID="cancel-button">
+    <TouchableOpacity
+      style={timerStyles.cancelButton}
+      onPress={onCancel}
+      testID="cancel-button"
+      accessibilityLabel="Cancel timer"
+      accessibilityRole="button"
+    >
       <Text style={timerStyles.cancelButtonText}>Cancel</Text>
     </TouchableOpacity>
   </View>

@@ -35,6 +35,9 @@ ignore = [
 ]
 fixable = ["ALL"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 

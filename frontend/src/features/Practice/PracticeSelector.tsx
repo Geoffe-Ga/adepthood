@@ -9,6 +9,7 @@ interface PracticeSelectorProps {
   selectedPracticeId: number | null;
   onSelect: (_id: number) => void;
   isLoading: boolean;
+  isLocked?: boolean;
 }
 
 interface PracticeCardProps {
@@ -50,11 +51,22 @@ const PracticeSelector: React.FC<PracticeSelectorProps> = ({
   selectedPracticeId,
   onSelect,
   isLoading,
+  isLocked = false,
 }) => {
   if (isLoading) {
     return (
       <View style={styles.loadingContainer} testID="selector-loading">
         <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+
+  if (isLocked) {
+    return (
+      <View style={styles.emptyContainer} testID="selector-locked">
+        <Text style={styles.emptyText}>
+          This stage is locked. Complete earlier stages to unlock practices here.
+        </Text>
       </View>
     );
   }

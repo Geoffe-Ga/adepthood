@@ -55,8 +55,8 @@ class HabitCreate(BaseModel):
     name: str = Field(min_length=1, max_length=HABIT_NAME_MAX_LENGTH)
     icon: str = Field(max_length=HABIT_ICON_MAX_LENGTH)
     start_date: date
-    energy_cost: int
-    energy_return: int
+    energy_cost: int = Field(ge=0, le=1000)
+    energy_return: int = Field(ge=0, le=1000)
     notification_times: list[str] | None = None
     notification_frequency: NOTIFICATION_FREQUENCY | None = None
     notification_days: list[str] | None = None

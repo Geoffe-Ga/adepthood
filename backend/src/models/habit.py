@@ -33,4 +33,7 @@ class Habit(SQLModel, table=True):
     stage: str = Field(default="", max_length=100)
     streak: int = 0
     user: "User" = Relationship(back_populates="habits")
-    goals: list["Goal"] = Relationship(back_populates="habit")
+    goals: list["Goal"] = Relationship(
+        back_populates="habit",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
