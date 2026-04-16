@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,11 +16,15 @@ from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.user_practice import UserPractice
 from routers.auth import get_current_user
+from schemas import Page, PaginationParams, build_page
+from schemas.pagination import paginate_query
 from schemas.practice import (
     UserPracticeCreate,
     UserPracticeDetail,
     UserPracticeResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/user-practices", tags=["user-practices"])
 
@@ -48,17 +53,35 @@ async def create_user_practice(
     session.add(user_practice)
     await session.commit()
     await session.refresh(user_practice)
+    logger.info(
+        "user_practice_created",
+        extra={
+            "user_id": current_user,
+            "practice_id": payload.practice_id,
+            "stage_number": payload.stage_number,
+        },
+    )
     return user_practice
 
 
-@router.get("/", response_model=list[UserPracticeResponse])
+@router.get("/", response_model=None)
 async def list_user_practices(
     current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
-) -> list[UserPractice]:
-    """List the authenticated user's practice selections."""
-    result = await session.execute(select(UserPractice).where(UserPractice.user_id == current_user))
-    return list(result.scalars().all())
+    pagination: PaginationParams = Depends(),  # noqa: B008
+) -> Page[UserPracticeResponse] | list[UserPracticeResponse]:
+    """List the authenticated user's practice selections.
+
+    BUG-INFRA-017: returns ``Page[UserPracticeResponse]`` when
+    ``?paginate=true`` is set; otherwise the legacy bare list is returned
+    for one release while the frontend migrates to the envelope.
+    """
+    query = select(UserPractice).where(UserPractice.user_id == current_user)
+    items, total = await paginate_query(session, query, pagination)
+    serialized = [UserPracticeResponse.model_validate(u, from_attributes=True) for u in items]
+    if pagination.paginate:
+        return build_page(serialized, total, pagination)
+    return serialized
 
 
 @router.get("/{user_practice_id}", response_model=UserPracticeDetail)

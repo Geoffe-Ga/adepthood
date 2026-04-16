@@ -1,5 +1,6 @@
 """Main FastAPI application instance."""
 
+import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -14,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from database import get_session
+from observability import CorrelationIdMiddleware, install_trace_id_logging
 from rate_limit import limiter
 from routers.admin import router as admin_router
 from routers.auth import router as auth_router
@@ -30,6 +32,8 @@ from routers.prompts import router as prompts_router
 from routers.stages import router as stages_router
 from routers.user_practices import router as user_practices_router
 
+logger = logging.getLogger(__name__)
+
 VALID_ENVIRONMENTS = {"development", "staging", "production"}
 
 DEV_ORIGINS = [
@@ -37,6 +41,12 @@ DEV_ORIGINS = [
     "http://localhost:8080",
     "http://127.0.0.1:3000",
 ]
+
+# CORS — only the methods the API actually serves are allowed.  Listing them
+# explicitly (BUG-INFRA-008) keeps the preflight surface tight; if a new
+# method is added (PATCH, etc.) the test suite will surface the omission.
+ALLOWED_METHODS = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+ALLOWED_HEADERS = ["Authorization", "Content-Type", "X-LLM-API-Key", "X-Admin-API-Key"]
 
 
 def _validate_https_origins(origins: list[str]) -> None:
@@ -61,7 +71,9 @@ def _parse_prod_origins() -> list[str]:
         raise RuntimeError("PROD_DOMAIN must not be empty")
 
     _validate_https_origins(origins)
-    return origins
+    # BUG-INFRA-007: order-preserving dedup so duplicate entries in
+    # PROD_DOMAIN don't produce duplicate Access-Control-Allow-Origin lines.
+    return list(dict.fromkeys(origins))
 
 
 def get_cors_origins(env: str | None = None) -> list[str]:
@@ -79,9 +91,32 @@ def get_cors_origins(env: str | None = None) -> list[str]:
         )
 
     if env == "development":
+        # BUG-INFRA-006: warn loudly when PROD_DOMAIN is set in dev so
+        # developers notice misconfiguration before staging rollout.
+        if os.getenv("PROD_DOMAIN"):
+            logger.warning(
+                "PROD_DOMAIN is set but ENV=development — production origins ignored. "
+                "Set ENV=staging or ENV=production to honour PROD_DOMAIN."
+            )
         return list(DEV_ORIGINS)
 
     return _parse_prod_origins()
+
+
+def _assert_credentials_safe(origins: list[str]) -> None:
+    """Reject ``*`` in the CORS allow-list when credentials are enabled.
+
+    BUG-INFRA-005: ``Access-Control-Allow-Origin: *`` plus
+    ``Access-Control-Allow-Credentials: true`` is forbidden by the CORS
+    spec and silently ignored by browsers.  Failing closed at startup
+    surfaces the misconfiguration immediately instead of letting a
+    misbehaving prod env appear to be working.
+    """
+    if "*" in origins:
+        raise RuntimeError(
+            "CORS allow-list contains '*' but allow_credentials=True. "
+            "Browsers will reject the response — pick explicit origins instead."
+        )
 
 
 def _rate_limit_exceeded_handler(_request: Request, exc: RateLimitExceeded) -> JSONResponse:
@@ -94,18 +129,42 @@ def _rate_limit_exceeded_handler(_request: Request, exc: RateLimitExceeded) -> J
     )
 
 
+# Content-Security-Policy is conservative: only same-origin scripts/styles,
+# block plugins, and disallow framing.  The frontend is a React Native app
+# that talks JSON; if a future web build needs richer CSP it should be
+# expanded here rather than loosened ad-hoc per route.
+_CSP_DIRECTIVES = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self'; "
+    "img-src 'self' data:; "
+    "connect-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "frame-ancestors 'none'"
+)
+
+_PERMISSIONS_POLICY = "geolocation=(), microphone=(), camera=()"
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security headers to every response.
 
     - X-Content-Type-Options: nosniff — prevents MIME-type sniffing
     - X-Frame-Options: DENY — prevents clickjacking via iframes
     - Strict-Transport-Security — enforces HTTPS in production/staging
+    - Content-Security-Policy — restricts loadable assets (BUG-INFRA-001)
+    - Referrer-Policy: strict-origin-when-cross-origin (BUG-INFRA-002)
+    - Permissions-Policy: deny camera/mic/geo by default (BUG-INFRA-003)
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = _CSP_DIRECTIVES
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = _PERMISSIONS_POLICY
 
         env = os.getenv("ENV", "development")
         if env in ("production", "staging"):
@@ -120,6 +179,10 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown lifecycle for the application."""
     import models  # noqa: F401, PLC0415
 
+    # Install the trace-id log filter once per process so every log line
+    # carries the request's correlation ID (BUG-INFRA-025).
+    install_trace_id_logging()
+
     yield
 
 
@@ -128,6 +191,11 @@ app = FastAPI(lifespan=lifespan)
 # Attach the rate limiter to the app so slowapi can find it
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+# Correlation-ID middleware sits at the outermost edge so every other
+# middleware (security headers, CORS, slowapi) and every route handler sees
+# the trace ID through ``contextvars`` (BUG-INFRA-025).
+app.add_middleware(CorrelationIdMiddleware)
 
 # Security headers on all responses
 app.add_middleware(SecurityHeadersMiddleware)
@@ -138,13 +206,14 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 
 origins = get_cors_origins()
+_assert_credentials_safe(origins)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Authorization", "Content-Type", "X-LLM-API-Key", "X-Admin-API-Key"],
+    allow_methods=ALLOWED_METHODS,
+    allow_headers=ALLOWED_HEADERS,
 )
 
 # Register feature routers
@@ -164,12 +233,6 @@ app.include_router(goal_groups_router)
 app.include_router(stages_router)
 
 
-@app.get("/")
-def read_root() -> dict[str, str]:
-    """Basic root endpoint."""
-    return {"status": "ok"}
-
-
 @app.get("/health")
 async def health_check(
     session: AsyncSession = Depends(get_session),  # noqa: B008
@@ -179,9 +242,15 @@ async def health_check(
     Returns a 200 with ``{"status": "healthy", "database": "connected"}`` when
     the database is reachable.  Railway pings this endpoint to determine
     service health; a 503 signals an unhealthy container.
+
+    BUG-INFRA-021: session lifecycle is owned by ``Depends(get_session)`` —
+    we don't open or close the session here, so a failed ``SELECT 1`` cannot
+    leak a connection.  The dependency's ``async with`` (in ``database.py``)
+    guarantees ``close()`` runs even when the handler raises.
     """
     try:
         await session.execute(text("SELECT 1"))
     except Exception as exc:
+        logger.exception("health_check_failed")
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
     return {"status": "healthy", "database": "connected"}

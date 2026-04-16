@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -14,11 +16,14 @@ from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
 from routers.auth import get_current_user
+from schemas import Page, PaginationParams, build_page
 from schemas.course import (
     ContentCompletionResponse,
     ContentItemResponse,
     CourseProgressResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/course", tags=["course"])
 
@@ -94,13 +99,24 @@ async def _check_stage_unlocked(session: AsyncSession, user_id: int, stage_numbe
         raise forbidden("stage_locked")
 
 
-@router.get("/stages/{stage_number}/content", response_model=list[ContentItemResponse])
+@router.get("/stages/{stage_number}/content", response_model=None)
 async def list_stage_content(
     stage_number: int,
     current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
-) -> list[ContentItemResponse]:
-    """List content for a stage with drip-feed gating applied."""
+    pagination: PaginationParams = Depends(),  # noqa: B008
+) -> Page[ContentItemResponse] | list[ContentItemResponse]:
+    """List content for a stage with drip-feed gating applied.
+
+    BUG-INFRA-018: returns ``Page[ContentItemResponse]`` when
+    ``?paginate=true`` is set; otherwise the legacy bare list is returned
+    for one release while the frontend migrates to the envelope.
+
+    Pagination is applied **after** drip-feed filtering so the envelope's
+    ``total`` reflects the items the user can actually see — not the raw
+    count in the database.  Stage content lists are small (tens of items
+    per stage) so paginating in Python after fetching is fine.
+    """
     stage = await _get_stage_by_number(session, stage_number)
 
     result = await session.execute(
@@ -116,7 +132,12 @@ async def list_stage_content(
 
     raw = _items_to_raw_dicts(items)
     filtered = filter_content_for_user(raw, days_elapsed=max(days, -1), read_content_ids=read_ids)
-    return [ContentItemResponse(**f) for f in filtered]
+    responses = [ContentItemResponse(**f) for f in filtered]
+
+    if pagination.paginate:
+        sliced = responses[pagination.offset : pagination.offset + pagination.limit]
+        return build_page(sliced, len(responses), pagination)
+    return responses
 
 
 @router.get("/content/{content_id}", response_model=ContentItemResponse)
@@ -203,6 +224,7 @@ async def mark_content_read(
     session.add(completion)
     await session.commit()
     await session.refresh(completion)
+    logger.info("content_marked_read", extra={"user_id": current_user, "content_id": content_id})
     return ContentCompletionResponse(
         id=completion.id,
         user_id=completion.user_id,

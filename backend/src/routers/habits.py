@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -12,9 +14,13 @@ from errors import not_found
 from load_options import HABIT_WITH_GOALS, HABIT_WITH_GOALS_AND_COMPLETIONS
 from models.habit import Habit
 from routers.auth import get_current_user
+from schemas import Page, PaginationParams, build_page
 from schemas.habit import Habit as HabitSchema
 from schemas.habit import HabitCreate, HabitWithGoals
 from schemas.habit_stats import HabitStats
+from schemas.pagination import paginate_query
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/habits", tags=["habits"])
 
@@ -30,23 +36,33 @@ async def create_habit(
     session.add(habit)
     await session.commit()
     await session.refresh(habit)
+    logger.info("habit_created", extra={"user_id": current_user, "habit_id": habit.id})
     return habit
 
 
-@router.get("/", response_model=list[HabitWithGoals])
+@router.get("/", response_model=None)
 async def list_habits(
     current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
-) -> list[Habit]:
-    """Return all habits for the authenticated user, sorted by sort_order."""
-    statement = (
+    pagination: PaginationParams = Depends(),  # noqa: B008
+) -> Page[HabitWithGoals] | list[HabitWithGoals]:
+    """Return all habits for the authenticated user, sorted by sort_order.
+
+    BUG-INFRA-013: returns ``Page[HabitWithGoals]`` when ``?paginate=true``
+    is set; otherwise the legacy bare list is returned for one release while
+    the frontend migrates to the envelope.
+    """
+    query = (
         select(Habit)
         .where(Habit.user_id == current_user)
         .options(HABIT_WITH_GOALS)
         .order_by(Habit.sort_order.asc())  # type: ignore[union-attr]
     )
-    result = await session.execute(statement)
-    return list(result.scalars().all())
+    items, total = await paginate_query(session, query, pagination)
+    serialized = [HabitWithGoals.model_validate(h, from_attributes=True) for h in items]
+    if pagination.paginate:
+        return build_page(serialized, total, pagination)
+    return serialized
 
 
 @router.get("/{habit_id}", response_model=HabitWithGoals)
@@ -80,6 +96,7 @@ async def update_habit(
     session.add(habit)
     await session.commit()
     await session.refresh(habit)
+    logger.info("habit_updated", extra={"user_id": current_user, "habit_id": habit.id})
     return habit
 
 
@@ -95,6 +112,7 @@ async def delete_habit(
         raise not_found("habit")
     await session.delete(habit)
     await session.commit()
+    logger.info("habit_deleted", extra={"user_id": current_user, "habit_id": habit_id})
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

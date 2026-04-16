@@ -35,6 +35,17 @@ async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_o
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency that yields an async database session."""
+    """FastAPI dependency that yields an async database session.
+
+    BUG-INFRA-021: wrap the body in ``try/finally`` so a failed handler
+    rolls back its transaction *and* releases the connection.  The outer
+    ``async with`` already guarantees ``close()``, but adding the explicit
+    rollback prevents an in-flight ``BEGIN`` from being silently committed
+    by the connection pool when reused.
+    """
     async with async_session_factory() as session:
-        yield session
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise

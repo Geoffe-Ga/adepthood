@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +16,8 @@ from models.habit import Habit
 from routers.auth import get_current_user
 from schemas import CheckInResult
 from services.streaks import check_milestones, compute_consecutive_streak, update_streak
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/goal_completions", tags=["goals"])
 
@@ -64,6 +68,16 @@ async def create_goal_completion(
         )
     )
     await session.commit()
+
+    logger.info(
+        "goal_completion_recorded",
+        extra={
+            "user_id": current_user,
+            "goal_id": payload.goal_id,
+            "did_complete": payload.did_complete,
+            "streak": new_streak,
+        },
+    )
 
     return CheckInResult(
         streak=new_streak,

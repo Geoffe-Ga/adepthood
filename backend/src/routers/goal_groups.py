@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -11,7 +13,11 @@ from errors import not_found
 from load_options import GOAL_GROUP_WITH_GOALS
 from models.goal_group import GoalGroup
 from routers.auth import get_current_user
+from schemas import Page, PaginationParams, build_page
 from schemas.goal_group import GoalGroupCreate, GoalGroupResponse
+from schemas.pagination import paginate_query
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/goal-groups", tags=["goal-groups"])
 
@@ -53,22 +59,31 @@ async def ensure_seed_templates(session: AsyncSession) -> None:
     await session.commit()
 
 
-@router.get("/", response_model=list[GoalGroupResponse])
+@router.get("/", response_model=None)
 async def list_goal_groups(
     current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
-) -> list[GoalGroup]:
-    """Return user's goal groups and all shared templates."""
+    pagination: PaginationParams = Depends(),  # noqa: B008
+) -> Page[GoalGroupResponse] | list[GoalGroupResponse]:
+    """Return user's goal groups and all shared templates.
+
+    BUG-INFRA-015: returns ``Page[GoalGroupResponse]`` when ``?paginate=true``
+    is set; otherwise the legacy bare list is returned for one release while
+    the frontend migrates to the envelope.
+    """
     await ensure_seed_templates(session)
-    statement = (
+    query = (
         select(GoalGroup)
         .where(
             (GoalGroup.user_id == current_user) | (GoalGroup.shared_template == True)  # noqa: E712
         )
         .options(GOAL_GROUP_WITH_GOALS)
     )
-    result = await session.execute(statement)
-    return list(result.scalars().all())
+    items, total = await paginate_query(session, query, pagination)
+    serialized = [GoalGroupResponse.model_validate(g, from_attributes=True) for g in items]
+    if pagination.paginate:
+        return build_page(serialized, total, pagination)
+    return serialized
 
 
 @router.get("/{group_id}", response_model=GoalGroupResponse)
@@ -104,7 +119,11 @@ async def create_goal_group(
     # Re-fetch with eager-loaded goals to avoid lazy-load greenlet errors
     statement = select(GoalGroup).where(GoalGroup.id == group.id).options(GOAL_GROUP_WITH_GOALS)
     result = await session.execute(statement)
-    return result.scalars().one()
+    refreshed = result.scalars().one()
+    logger.info(
+        "goal_group_created", extra={"user_id": current_user, "goal_group_id": refreshed.id}
+    )
+    return refreshed
 
 
 @router.put("/{group_id}", response_model=GoalGroupResponse)
@@ -122,10 +141,16 @@ async def update_goal_group(
         setattr(group, key, value)
     session.add(group)
     await session.commit()
-    # Re-fetch with eager-loaded goals to avoid lazy-load greenlet errors
+    # Re-fetch with eager-loaded goals to avoid lazy-load greenlet errors.
+    # BUG-INFRA-020: use ``.first()`` + None check rather than ``.one()`` so a
+    # concurrent delete doesn't surface as ``NoResultFound`` instead of a 404.
     statement = select(GoalGroup).where(GoalGroup.id == group_id).options(GOAL_GROUP_WITH_GOALS)
     result = await session.execute(statement)
-    return result.scalars().one()
+    refreshed = result.scalars().first()
+    if refreshed is None:
+        raise not_found("goal_group")
+    logger.info("goal_group_updated", extra={"user_id": current_user, "goal_group_id": group_id})
+    return refreshed
 
 
 @router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -146,4 +171,5 @@ async def delete_goal_group(
         session.add(goal)
     await session.delete(group)
     await session.commit()
+    logger.info("goal_group_deleted", extra={"user_id": current_user, "goal_group_id": group_id})
     return Response(status_code=status.HTTP_204_NO_CONTENT)

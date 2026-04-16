@@ -174,20 +174,31 @@ async def stream_bot_response(
     # Load history before staging anything so the user's new text is only
     # sent via the ``user_message`` parameter, not duplicated from DB.
     history = await load_recent_conversation(session, user_id)
+
+    # BUG-INFRA-011: split the rollback path from the commit path with
+    # ``try/except/else/finally`` so ``finalise_stream_commit`` only runs on
+    # the success branch.  Rollback is wrapped in its own ``try`` because
+    # rolling back an already-rolled-back session must not raise — the
+    # caller is already mid-error and shouldn't see a secondary failure.
+    aborted = False
     try:
         collected = await collect_provider_stream(context.message, history, context.api_key)
     except Exception:
+        aborted = True
         # BUG-JOURNAL-009: log exception context so ops can debug production outages.
         logger.exception("Stream provider error for user_id=%s", user_id)
-        # Roll back the wallet deduction so the user isn't charged for a
-        # failed request.  No user message was staged so there's nothing
-        # to orphan (BUG-JOURNAL-015).
-        await session.rollback()
+        try:
+            await session.rollback()
+        except Exception:  # pragma: no cover - defensive; rollback is idempotent
+            logger.exception("Stream rollback failed for user_id=%s", user_id)
         yield sse_event("error", {"status": 502, "detail": "llm_provider_error"})
         return
 
-    # Persist both messages together only after the stream completed
-    # successfully (BUG-JOURNAL-015).
+    if aborted:  # pragma: no cover - unreachable; ``return`` above guards this
+        return
+
+    # Happy path: persist both messages together only after the stream
+    # completed successfully (BUG-JOURNAL-015).
     await persist_user_message(session, user_id, context.message)
 
     for chunk in collected.chunks:

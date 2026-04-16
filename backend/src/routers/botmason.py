@@ -10,6 +10,7 @@ shapes to those services.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -36,6 +37,8 @@ from services.botmason import resolve_chat_api_key
 from services.chat_stream import PreflightedRequest, handle_chat_request, stream_bot_response
 from services.usage import get_monthly_cap
 from services.wallet import preflight_deduction, require_user_fresh, reset_monthly_usage_if_due
+
+logger = logging.getLogger(__name__)
 
 
 def _per_user_key(request: StarletteRequest) -> str:
@@ -160,4 +163,8 @@ async def add_balance(
         raise bad_request("user_not_found")
 
     await session.commit()
+    logger.info(
+        "balance_added",
+        extra={"user_id": current_user, "added": payload.amount, "new_balance": new_balance},
+    )
     return BalanceAddResponse(balance=new_balance, added=payload.amount)

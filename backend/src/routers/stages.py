@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
@@ -22,6 +23,8 @@ from errors import bad_request, forbidden, not_found
 from models.course_stage import CourseStage
 from models.stage_progress import StageProgress
 from routers.auth import get_current_user
+from schemas import Page, PaginationParams, build_page
+from schemas.pagination import paginate_query
 from schemas.stage import (
     StageHistoryResponse,
     StageProgressRecord,
@@ -30,14 +33,47 @@ from schemas.stage import (
     StageResponse,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/stages", tags=["stages"])
 
 
-@router.get("", response_model=list[StageResponse])
+async def _build_stage_response(
+    stage: CourseStage,
+    session: AsyncSession,
+    user_id: int,
+    progress: StageProgress | None,
+) -> StageResponse:
+    """Assemble a :class:`StageResponse` with the current user's progress overlay."""
+    unlocked = is_stage_unlocked(stage.stage_number, progress)
+    stage_progress = 0.0
+    if unlocked:
+        data = await compute_stage_progress(session, user_id, stage.stage_number)
+        stage_progress = data["overall_progress"]
+    return StageResponse(
+        id=stage.id,
+        title=stage.title,
+        subtitle=stage.subtitle,
+        stage_number=stage.stage_number,
+        overview_url=stage.overview_url,
+        category=stage.category,
+        aspect=stage.aspect,
+        spiral_dynamics_color=stage.spiral_dynamics_color,
+        growing_up_stage=stage.growing_up_stage,
+        divine_gender_polarity=stage.divine_gender_polarity,
+        relationship_to_free_will=stage.relationship_to_free_will,
+        free_will_description=stage.free_will_description,
+        is_unlocked=unlocked,
+        progress=float(stage_progress),
+    )
+
+
+@router.get("", response_model=None)
 async def list_stages(
     current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
-) -> list[StageResponse]:
+    pagination: PaginationParams = Depends(),  # noqa: B008
+) -> Page[StageResponse] | list[StageResponse]:
     """List all stages with per-user progress overlay.
 
     Each stage's ``progress`` field is populated from
@@ -45,38 +81,19 @@ async def list_stages(
     without a follow-up call. This accepts an N+M round-trip (one query
     per metric per stage) since N=10 stages is small and caching would
     add complexity disproportionate to the benefit.
+
+    BUG-INFRA-016: returns ``Page[StageResponse]`` when ``?paginate=true``
+    is set; otherwise the legacy bare list is returned for one release while
+    the frontend migrates to the envelope.
     """
-    result = await session.execute(
-        select(CourseStage).order_by(col(CourseStage.stage_number).asc())
-    )
-    stages = result.scalars().all()
+    query = select(CourseStage).order_by(col(CourseStage.stage_number).asc())
+    stages, total = await paginate_query(session, query, pagination)
     progress = await get_user_progress(session, current_user)
 
-    responses: list[StageResponse] = []
-    for s in stages:
-        unlocked = is_stage_unlocked(s.stage_number, progress)
-        stage_progress = 0.0
-        if unlocked:
-            data = await compute_stage_progress(session, current_user, s.stage_number)
-            stage_progress = data["overall_progress"]
-        responses.append(
-            StageResponse(
-                id=s.id,
-                title=s.title,
-                subtitle=s.subtitle,
-                stage_number=s.stage_number,
-                overview_url=s.overview_url,
-                category=s.category,
-                aspect=s.aspect,
-                spiral_dynamics_color=s.spiral_dynamics_color,
-                growing_up_stage=s.growing_up_stage,
-                divine_gender_polarity=s.divine_gender_polarity,
-                relationship_to_free_will=s.relationship_to_free_will,
-                free_will_description=s.free_will_description,
-                is_unlocked=unlocked,
-                progress=float(stage_progress),
-            )
-        )
+    responses = [await _build_stage_response(s, session, current_user, progress) for s in stages]
+
+    if pagination.paginate:
+        return build_page(responses, total, pagination)
     return responses
 
 
@@ -183,6 +200,10 @@ async def update_progress(
         session.add(existing)
         await session.commit()
         await session.refresh(existing)
+        logger.info(
+            "stage_advanced",
+            extra={"user_id": current_user, "current_stage": existing.current_stage},
+        )
         return StageProgressRecord(
             id=existing.id,
             user_id=existing.user_id,
@@ -201,6 +222,7 @@ async def update_progress(
     session.add(progress)
     await session.commit()
     await session.refresh(progress)
+    logger.info("stage_progress_started", extra={"user_id": current_user})
     return StageProgressRecord(
         id=progress.id,
         user_id=progress.user_id,

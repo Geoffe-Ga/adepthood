@@ -52,7 +52,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Downgrade schema."""
+    """Downgrade schema.
+
+    BUG-INFRA-022: align the downgrade expression with the upgrade so
+    ``alembic downgrade -1`` succeeds.  ``column AT TIME ZONE 'UTC'`` on a
+    ``TIMESTAMP WITH TIME ZONE`` value yields a ``TIMESTAMP WITHOUT TIME ZONE``
+    in UTC, which is exactly the inverse of the upgrade conversion.
+    """
     for table, column in _DATETIME_COLUMNS:
         op.alter_column(
             table,
@@ -60,5 +66,5 @@ def downgrade() -> None:
             type_=sa.DateTime(timezone=False),
             existing_type=sa.DateTime(timezone=True),
             existing_nullable=False,
-            postgresql_using=f'("{column}" AT TIME ZONE \'UTC\')',
+            postgresql_using=f'"{column}" AT TIME ZONE \'UTC\'',
         )
