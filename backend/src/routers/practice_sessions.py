@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import func, select
+from sqlmodel import col, func, select
 
 from database import get_session
 from errors import forbidden, not_found
@@ -52,12 +52,14 @@ async def list_sessions(
     current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> list[PracticeSession]:
-    """List sessions for a specific user-practice."""
+    """List sessions for a specific user-practice, newest first."""
     result = await session.execute(
-        select(PracticeSession).where(
+        select(PracticeSession)
+        .where(
             PracticeSession.user_practice_id == user_practice_id,
             PracticeSession.user_id == current_user,
         )
+        .order_by(col(PracticeSession.timestamp).desc())
     )
     return list(result.scalars().all())
 

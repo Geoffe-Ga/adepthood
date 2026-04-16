@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Column, DateTime
+from sqlalchemy import Column, DateTime, ForeignKey
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -20,7 +20,9 @@ class GoalCompletion(SQLModel, table=True):
     """
 
     id: int | None = Field(default=None, primary_key=True)
-    goal_id: int = Field(foreign_key="goal.id")
+    goal_id: int = Field(
+        sa_column=Column(ForeignKey("goal.id", ondelete="CASCADE"), nullable=False),
+    )
     user_id: int = Field(foreign_key="user.id")
     timestamp: datetime = Field(
         default_factory=lambda: datetime.now(UTC),

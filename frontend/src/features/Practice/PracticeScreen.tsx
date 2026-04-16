@@ -1,12 +1,15 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import type { AppStateStatus } from 'react-native';
 
 import PracticeSelector from './PracticeSelector';
 import PracticeTimer from './PracticeTimer';
@@ -65,8 +68,11 @@ function usePracticeSelect(
   setSelectedPractice: (_p: PracticeItem | null) => void,
   setError: (_e: string | null) => void,
 ) {
-  return useCallback(
+  const isSubmittingRef = useRef(false);
+  const selectPractice = useCallback(
     async (practiceId: number) => {
+      if (isSubmittingRef.current) return;
+      isSubmittingRef.current = true;
       try {
         const newUp = await userPractices.create({
           practice_id: practiceId,
@@ -82,10 +88,13 @@ function usePracticeSelect(
               "We couldn't save your practice selection. Check your connection and try again.",
           }),
         );
+      } finally {
+        isSubmittingRef.current = false;
       }
     },
     [stageNumber, availablePractices, setActiveUserPractice, setSelectedPractice, setError],
   );
+  return selectPractice;
 }
 
 function useLoadPracticeData(stageNumber: number, state: ReturnType<typeof usePracticeListState>) {
@@ -347,6 +356,41 @@ const SelectionView = ({
   </ScrollView>
 );
 
+const TIMER_STATE_KEY = '@adepthood/timer_state';
+
+function useTimerPersistence(view: string) {
+  const startedAtRef = useRef<number | null>(null);
+  const pausedAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (view === 'timer') {
+      startedAtRef.current = Date.now();
+    } else {
+      startedAtRef.current = null;
+      pausedAtRef.current = null;
+      void AsyncStorage.removeItem(TIMER_STATE_KEY);
+    }
+  }, [view]);
+
+  useEffect(() => {
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      if (view !== 'timer') return;
+      if (nextState === 'background' || nextState === 'inactive') {
+        void AsyncStorage.setItem(
+          TIMER_STATE_KEY,
+          JSON.stringify({
+            started_at: startedAtRef.current,
+            paused_at: pausedAtRef.current,
+            backgrounded_at: Date.now(),
+          }),
+        );
+      }
+    };
+    const sub = AppState.addEventListener('change', handleAppStateChange);
+    return () => sub.remove();
+  }, [view]);
+}
+
 // --- Hook: view routing ---
 
 function usePracticeView(
@@ -457,6 +501,7 @@ const PracticeScreen = (): React.JSX.Element => {
   const loader = usePracticeLoader(stageNumber);
   const session = useSessionFlow(loader.activeUserPractice, loader.incrementWeekCount);
   const pv = usePracticeView(loader, session);
+  useTimerPersistence(pv.view);
 
   const combinedError = loader.error ?? session.saveError;
 

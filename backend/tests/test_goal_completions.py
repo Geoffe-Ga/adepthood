@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
@@ -99,19 +99,54 @@ async def test_completion_increments_streak_and_returns_milestone(
 
 
 @pytest.mark.asyncio
-async def test_consecutive_completions_build_streak(
+async def test_same_day_completion_is_idempotent(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
+    """Second completion on the same day returns already_logged_today (BUG-HABITS-015)."""
     headers, user_id = await _signup(async_client)
     goal = await _seed_goal(db_session, user_id)
 
     # First completion
-    await async_client.post(
+    resp1 = await async_client.post(
         "/goal_completions/",
         json={"goal_id": goal.id, "did_complete": True},
         headers=headers,
     )
-    # Second completion
+    assert resp1.json()["streak"] == 1
+
+    # Same-day retry
+    resp2 = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "did_complete": True},
+        headers=headers,
+    )
+    assert resp2.status_code == HTTPStatus.OK
+    data = resp2.json()
+    assert data["streak"] == 1
+    assert data["reason_code"] == "already_logged_today"
+    assert data["milestones"] == []
+
+
+@pytest.mark.asyncio
+async def test_consecutive_day_completions_build_streak(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Completions on consecutive days build the streak."""
+    headers, user_id = await _signup(async_client)
+    goal = await _seed_goal(db_session, user_id)
+
+    # Seed a completion for yesterday directly in the DB
+    db_session.add(
+        GoalCompletion(
+            goal_id=goal.id,
+            user_id=user_id,
+            completed_units=goal.target,
+            timestamp=datetime.now(UTC) - timedelta(days=1),
+        )
+    )
+    await db_session.commit()
+
+    # Today's completion via API
     resp = await async_client.post(
         "/goal_completions/",
         json={"goal_id": goal.id, "did_complete": True},
@@ -131,19 +166,18 @@ async def test_miss_resets_streak(async_client: AsyncClient, db_session: AsyncSe
     headers, user_id = await _signup(async_client)
     goal = await _seed_goal(db_session, user_id)
 
-    # Build streak to 2
-    await async_client.post(
-        "/goal_completions/",
-        json={"goal_id": goal.id, "did_complete": True},
-        headers=headers,
+    # Seed a completion yesterday
+    db_session.add(
+        GoalCompletion(
+            goal_id=goal.id,
+            user_id=user_id,
+            completed_units=goal.target,
+            timestamp=datetime.now(UTC) - timedelta(days=1),
+        )
     )
-    await async_client.post(
-        "/goal_completions/",
-        json={"goal_id": goal.id, "did_complete": True},
-        headers=headers,
-    )
+    await db_session.commit()
 
-    # Miss
+    # Log a miss today
     resp = await async_client.post(
         "/goal_completions/",
         json={"goal_id": goal.id, "did_complete": False},

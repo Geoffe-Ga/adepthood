@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Column, String
+from sqlalchemy import Column, ForeignKey, String
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -27,7 +27,9 @@ class Goal(SQLModel, table=True):
     """
 
     id: int | None = Field(default=None, primary_key=True)
-    habit_id: int = Field(foreign_key="habit.id")
+    habit_id: int = Field(
+        sa_column=Column(ForeignKey("habit.id", ondelete="CASCADE"), nullable=False),
+    )
     title: str = Field(max_length=255)
     description: str | None = Field(default=None, max_length=2_000)
     tier: str = Field(max_length=50)  # "low", "clear", "stretch"

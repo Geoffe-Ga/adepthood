@@ -7,6 +7,7 @@ practice sessions, and token expiry across all protected endpoints.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
 import jwt
@@ -15,6 +16,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.goal import Goal
+from models.goal_completion import GoalCompletion
 from models.practice import Practice
 
 SIGNUP_URL = "/auth/signup"
@@ -86,29 +88,20 @@ async def test_signup_create_habit_log_completion_check_streak(
     await db_session.commit()
     await db_session.refresh(goal)
 
-    # First completion — streak should go to 1
-    resp = await async_client.post(
-        "/goal_completions/",
-        json={"goal_id": goal.id, "did_complete": True},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.OK
-    data = resp.json()
-    assert data["streak"] == 1
-    assert data["reason_code"] == "streak_incremented"
-    # First completion triggers the threshold-1 milestone
-    assert any(m["threshold"] == 1 for m in data["milestones"])
+    # Seed completions on 2 prior days to build a streak history
+    now = datetime.now(UTC)
+    for days_ago in [2, 1]:
+        db_session.add(
+            GoalCompletion(
+                goal_id=goal.id,
+                user_id=int(str(habit["user_id"])),
+                completed_units=goal.target,
+                timestamp=now - timedelta(days=days_ago),
+            )
+        )
+    await db_session.commit()
 
-    # Second completion — streak should go to 2
-    resp = await async_client.post(
-        "/goal_completions/",
-        json={"goal_id": goal.id, "did_complete": True},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.OK
-    assert resp.json()["streak"] == 2  # noqa: PLR2004
-
-    # Third completion — streak 3, triggers threshold-3 milestone
+    # Today's completion via API — streak should be 3 (2 seeded + 1 today)
     resp = await async_client.post(
         "/goal_completions/",
         json={"goal_id": goal.id, "did_complete": True},
@@ -117,7 +110,18 @@ async def test_signup_create_habit_log_completion_check_streak(
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
     assert data["streak"] == 3  # noqa: PLR2004
+    assert data["reason_code"] == "streak_incremented"
+    # Crosses thresholds 1, 3 (old_streak=2 -> new_streak=3)
     assert any(m["threshold"] == 3 for m in data["milestones"])  # noqa: PLR2004
+
+    # Same-day retry is idempotent
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "did_complete": True},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["reason_code"] == "already_logged_today"
 
 
 # ── Flow 2: Create multiple habits → Verify sort order ───────────────────

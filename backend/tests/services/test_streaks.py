@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,8 +55,15 @@ async def _make_user(session: AsyncSession) -> User:
     return user
 
 
-def test_check_milestones_returns_milestone_objects_for_reached_thresholds() -> None:
-    """Only thresholds at or below the streak value come back as Milestones."""
+def test_check_milestones_returns_only_newly_crossed() -> None:
+    """Only thresholds where old < t <= new are returned (BUG-HABITS-008)."""
+    assert check_milestones(7, [1, 3, 7, 14], old_streak=6) == [
+        Milestone(threshold=7),
+    ]
+
+
+def test_check_milestones_all_new_when_old_is_zero() -> None:
+    """With old_streak=0, all reached thresholds are returned."""
     assert check_milestones(7, [1, 3, 7, 14]) == [
         Milestone(threshold=1),
         Milestone(threshold=3),
@@ -75,10 +82,35 @@ def test_update_streak_is_re_exported_from_service() -> None:
 
 
 @pytest.mark.asyncio
-async def test_compute_consecutive_streak_counts_trailing_completions(
+async def test_compute_consecutive_streak_counts_unique_days(
     db_session: AsyncSession,
 ) -> None:
-    """Completed check-ins in a row — newest first — contribute to the streak."""
+    """Completions on consecutive days contribute to the streak (BUG-HABITS-011)."""
+    user = await _make_user(db_session)
+    assert user.id is not None
+    goal = await _make_goal(db_session, user.id)
+    assert goal.id is not None
+
+    now = datetime.now(UTC)
+    for days_ago in range(3):
+        db_session.add(
+            GoalCompletion(
+                goal_id=goal.id,
+                user_id=user.id,
+                completed_units=goal.target,
+                timestamp=now - timedelta(days=days_ago),
+            )
+        )
+    await db_session.commit()
+
+    assert await compute_consecutive_streak(db_session, goal.id, user.id) == 3  # noqa: PLR2004
+
+
+@pytest.mark.asyncio
+async def test_compute_consecutive_streak_collapses_same_day_rows(
+    db_session: AsyncSession,
+) -> None:
+    """Multiple completions on the same day count as one streak day."""
     user = await _make_user(db_session)
     assert user.id is not None
     goal = await _make_goal(db_session, user.id)
@@ -90,22 +122,32 @@ async def test_compute_consecutive_streak_counts_trailing_completions(
         )
     await db_session.commit()
 
-    assert await compute_consecutive_streak(db_session, goal.id, user.id) == 3  # noqa: PLR2004
+    assert await compute_consecutive_streak(db_session, goal.id, user.id) == 1
 
 
 @pytest.mark.asyncio
 async def test_compute_consecutive_streak_resets_on_most_recent_miss(
     db_session: AsyncSession,
 ) -> None:
-    """A single miss after any completions zeros the reported streak."""
+    """A miss day after completions zeros the reported streak."""
     user = await _make_user(db_session)
     assert user.id is not None
     goal = await _make_goal(db_session, user.id)
     assert goal.id is not None
 
-    db_session.add(GoalCompletion(goal_id=goal.id, user_id=user.id, completed_units=goal.target))
+    now = datetime.now(UTC)
+    db_session.add(
+        GoalCompletion(
+            goal_id=goal.id,
+            user_id=user.id,
+            completed_units=goal.target,
+            timestamp=now - timedelta(days=1),
+        )
+    )
     await db_session.commit()
-    db_session.add(GoalCompletion(goal_id=goal.id, user_id=user.id, completed_units=0))
+    db_session.add(
+        GoalCompletion(goal_id=goal.id, user_id=user.id, completed_units=0, timestamp=now)
+    )
     await db_session.commit()
 
     assert await compute_consecutive_streak(db_session, goal.id, user.id) == 0
