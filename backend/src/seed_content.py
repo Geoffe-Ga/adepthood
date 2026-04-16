@@ -8,7 +8,7 @@ from sqlmodel import select
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
 
-CONTENT_DEFINITIONS: list[dict[str, str | int]] = [
+_CONTENT_DEFINITIONS: list[dict[str, str | int]] = [
     # Stage 1 — Survival
     {
         "stage_number": 1,
@@ -76,6 +76,17 @@ CONTENT_DEFINITIONS: list[dict[str, str | int]] = [
         "url": "https://cms.adepthood.com/stage-3/reflection",
     },
 ]
+
+# BUG-SEED-001: Assert uniqueness of (stage_number, release_day) at import
+# time.  The drip-feed system assumes one item per day per stage; duplicate
+# release_days would cause unpredictable unlock ordering.
+_stage_day_pairs = [(d["stage_number"], d["release_day"]) for d in _CONTENT_DEFINITIONS]
+assert len(set(_stage_day_pairs)) == len(_stage_day_pairs), (
+    f"Duplicate (stage_number, release_day) in CONTENT_DEFINITIONS: "
+    f"{sorted(p for p in _stage_day_pairs if _stage_day_pairs.count(p) > 1)}"
+)
+
+CONTENT_DEFINITIONS = _CONTENT_DEFINITIONS
 
 
 def _build_content_item(

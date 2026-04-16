@@ -13,7 +13,6 @@ const makeMessage = (overrides: Partial<ChatMessage> = {}): ChatMessage => ({
   id: 1,
   message: 'Hello world',
   sender: 'user',
-  user_id: 1,
   timestamp: '2026-01-15T10:30:00Z',
   tag: 'freeform',
   practice_session_id: null,

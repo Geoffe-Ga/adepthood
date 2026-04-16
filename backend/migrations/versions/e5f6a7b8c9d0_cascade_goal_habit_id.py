@@ -1,8 +1,8 @@
 """cascade goal.habit_id and goalcompletion.goal_id
 
-Revision ID: b2c3d4e5f6a7
-Revises: a1b2c3d4e5f6
-Create Date: 2026-04-16 00:01:00.000000
+Revision ID: e5f6a7b8c9d0
+Revises: d4e5f6a7b8c9
+Create Date: 2026-04-16 00:04:00.000000
 
 BUG-HABITS-004: Deleting a habit should cascade to its goals and their
 completions so orphan rows cannot linger in the database.
@@ -13,8 +13,8 @@ from typing import Sequence, Union
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "b2c3d4e5f6a7"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "a1b2c3d4e5f6"
+revision: str = "e5f6a7b8c9d0"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "d4e5f6a7b8c9"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

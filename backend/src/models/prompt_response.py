@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Column, DateTime
+from sqlalchemy import Column, DateTime, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -9,10 +9,16 @@ if TYPE_CHECKING:
 
 
 class PromptResponse(SQLModel, table=True):
+    """Captures responses to weekly prompts within the APTITUDE program.
+
+    The ``(user_id, week_number)`` unique constraint prevents duplicate
+    responses at the database level, closing the TOCTOU race between the
+    application-level SELECT and INSERT (BUG-JOURNAL-003).
     """
-    Captures responses to weekly prompts within the APTITUDE program.
-    Used for tracking journaling engagement.
-    """
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "week_number", name="uq_promptresponse_user_week"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     week_number: int

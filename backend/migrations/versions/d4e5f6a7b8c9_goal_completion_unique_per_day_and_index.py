@@ -1,8 +1,8 @@
 """goal_completion unique per day and compound index
 
-Revision ID: a1b2c3d4e5f6
-Revises: e8376b41c6a1
-Create Date: 2026-04-16 00:00:00.000000
+Revision ID: d4e5f6a7b8c9
+Revises: c3d4e5f6a7b8
+Create Date: 2026-04-16 00:03:00.000000
 
 BUG-HABITS-015 / BUG-GOAL-005: Adds a unique index on (goal_id, user_id, date)
 to prevent duplicate completions for the same goal on the same day.
@@ -16,8 +16,8 @@ from typing import Sequence, Union
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "a1b2c3d4e5f6"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "e8376b41c6a1"
+revision: str = "d4e5f6a7b8c9"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "c3d4e5f6a7b8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

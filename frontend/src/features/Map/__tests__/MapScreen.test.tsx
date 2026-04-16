@@ -4,6 +4,14 @@ import React from 'react';
 import { Image } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
+// Mock InteractionManager to run callbacks synchronously in tests.
+jest.mock('react-native/Libraries/Interaction/InteractionManager', () => ({
+  runAfterInteractions: (cb: () => void) => {
+    cb();
+    return { then: () => {}, done: () => {}, cancel: () => {} };
+  },
+}));
+
 // Mock navigation so we can observe tab linking behaviour.
 const mockNavigate = jest.fn();
 jest.mock('../../../navigation/hooks', () => ({

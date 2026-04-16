@@ -6,7 +6,11 @@ import { STAGE_COLORS, STAGE_ORDER } from '../../design/tokens';
 
 import styles from './Course.styles';
 
-const TOTAL_STAGES = 10;
+/** Derive the total number of stage pills from the API response. */
+function totalStageCount(stages: Stage[]): number {
+  if (stages.length === 0) return 0;
+  return Math.max(...stages.map((s) => s.stage_number));
+}
 
 interface StageSelectorProps {
   stages: Stage[];
@@ -48,7 +52,7 @@ const StageSelector = ({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.stageSelectorContent}
       >
-        {Array.from({ length: TOTAL_STAGES }, (_, i) => {
+        {Array.from({ length: totalStageCount(stagesList) }, (_, i) => {
           const stageNumber = i + 1;
           const unlocked = isUnlocked(stageNumber, stagesList);
           const completed = isCompleted(stageNumber, stagesList);

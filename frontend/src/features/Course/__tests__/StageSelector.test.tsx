@@ -51,14 +51,17 @@ describe('StageSelector', () => {
     onSelectStage = jest.fn() as any;
   });
 
-  it('renders all 10 stage pills', () => {
-    const { getByTestId } = render(
+  it('renders one pill per stage from API data', () => {
+    const { getByTestId, queryByTestId } = render(
       <StageSelector stages={sampleStages} selectedStage={1} onSelectStage={onSelectStage} />,
     );
 
-    for (let i = 1; i <= 10; i++) {
+    // sampleStages has 3 stages (max stage_number = 3)
+    for (let i = 1; i <= 3; i++) {
       expect(getByTestId(`stage-pill-${i}`)).toBeTruthy();
     }
+    // No pill 4 should exist
+    expect(queryByTestId('stage-pill-4')).toBeNull();
   });
 
   it('shows checkmark for completed stages', () => {

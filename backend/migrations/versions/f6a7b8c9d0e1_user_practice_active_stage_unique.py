@@ -1,8 +1,8 @@
 """user_practice active stage unique index
 
-Revision ID: c3d4e5f6a7b8
-Revises: b2c3d4e5f6a7
-Create Date: 2026-04-16 00:02:00.000000
+Revision ID: f6a7b8c9d0e1
+Revises: e5f6a7b8c9d0
+Create Date: 2026-04-16 00:05:00.000000
 
 BUG-PRACTICE-011: Prevents multiple active (end_date IS NULL) user-practice
 rows for the same user + stage combination.
@@ -13,8 +13,8 @@ from typing import Sequence, Union
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "c3d4e5f6a7b8"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "b2c3d4e5f6a7"
+revision: str = "f6a7b8c9d0e1"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "e5f6a7b8c9d0"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
