@@ -99,6 +99,85 @@ async def test_login_rejects_malformed_email(
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
+# ── Email normalization (BUG-AUTH-003, BUG-AUTH-010) ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_signup_normalizes_email_case_and_whitespace(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Email submitted with mixed case / surrounding whitespace is stored as
+    the trimmed, lowercased form so later lookups don't miss it."""
+    resp = await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "  Alice@Example.COM ",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+    result = await db_session.execute(select(User).where(User.email == "alice@example.com"))
+    user = result.scalars().first()
+    assert user is not None
+
+
+@pytest.mark.asyncio
+async def test_login_is_case_insensitive_after_signup(async_client: AsyncClient) -> None:
+    """Signing up as ``Alice@Example.com`` lets the user log in as
+    ``alice@example.com`` (BUG-AUTH-003)."""
+    await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "Alice@Example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    resp = await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "alice@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+async def test_login_ignores_surrounding_whitespace(async_client: AsyncClient) -> None:
+    """Pasted / autofilled whitespace in the email field is stripped
+    server-side (BUG-AUTH-010)."""
+    await _signup(async_client, email="whitespace@example.com")
+    resp = await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "  whitespace@example.com\n",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+async def test_duplicate_signup_detected_with_different_case(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A second signup with a case-variant email must not create a second
+    user row (BUG-AUTH-003)."""
+    await _signup(async_client, email="caseonly@example.com")
+    await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "CaseOnly@Example.com",
+            "password": "anotherpassword456",  # pragma: allowlist secret
+        },
+    )
+    result = await db_session.execute(select(User).where(User.email == "caseonly@example.com"))
+    users = result.scalars().all()
+    assert len(users) == 1
+
+
 # ── Signup ──────────────────────────────────────────────────────────────
 
 

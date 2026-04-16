@@ -100,7 +100,9 @@ export default function SignupScreen({ navigation }: Props) {
 
     setSubmitting(true);
     try {
-      await signup(email, password);
+      // BUG-AUTH-010: trim at submit so paste/autofill whitespace doesn't
+      // produce a confusing 422 from the backend.
+      await signup(email.trim(), password);
     } catch (err: unknown) {
       // Route backend ``detail`` codes (e.g. ``password_too_short``) through
       // the shared mapper rather than leaking snake_case to the user.

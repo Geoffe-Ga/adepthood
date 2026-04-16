@@ -32,7 +32,7 @@ jest.mock('@/utils/token', () => ({
   REFRESH_BUFFER_SECONDS: 300,
 }));
 
-import { auth, setTokenGetter } from '@/api';
+import { auth, setOnTokenRefreshed, setOnUnauthorized, setTokenGetter } from '@/api';
 import { saveToken, loadToken, clearToken } from '@/storage/authStorage';
 import { isTokenExpired, shouldRefreshToken } from '@/utils/token';
 
@@ -41,6 +41,10 @@ const mockLoadToken = loadToken as jest.MockedFunction<typeof loadToken>;
 const mockSaveToken = saveToken as jest.MockedFunction<typeof saveToken>;
 const mockClearToken = clearToken as jest.MockedFunction<typeof clearToken>;
 const mockSetTokenGetter = setTokenGetter as jest.MockedFunction<typeof setTokenGetter>;
+const mockSetOnTokenRefreshed = setOnTokenRefreshed as jest.MockedFunction<
+  typeof setOnTokenRefreshed
+>;
+const mockSetOnUnauthorized = setOnUnauthorized as jest.MockedFunction<typeof setOnUnauthorized>;
 const mockIsTokenExpired = isTokenExpired as jest.MockedFunction<typeof isTokenExpired>;
 const mockShouldRefreshToken = shouldRefreshToken as jest.MockedFunction<typeof shouldRefreshToken>;
 
@@ -213,6 +217,73 @@ describe('AuthContext', () => {
 
       expect(result.current.token).toBe('valid-jwt');
       expect(mockClearToken).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('api-layer token callbacks (BUG-AUTH-001 / BUG-AUTH-005)', () => {
+    it('awaits saveToken before updating state when API refresh fires', async () => {
+      mockLoadToken.mockResolvedValue('old-jwt');
+      let resolveSave: (() => void) | null = null;
+      mockSaveToken.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSave = resolve;
+          }),
+      );
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.token).toBe('old-jwt'));
+
+      // Grab the callback that the AuthProvider registered with the API layer.
+      const refreshed = mockSetOnTokenRefreshed.mock.calls.at(-1)?.[0];
+      expect(typeof refreshed).toBe('function');
+
+      await act(async () => {
+        refreshed?.('fresh-jwt');
+      });
+
+      // Save is in-flight — state must not have flipped yet.
+      expect(mockSaveToken).toHaveBeenCalledWith('fresh-jwt');
+      expect(result.current.token).toBe('old-jwt');
+
+      await act(async () => {
+        resolveSave?.();
+      });
+
+      await waitFor(() => expect(result.current.token).toBe('fresh-jwt'));
+    });
+
+    it('awaits clearToken before nulling state when API reports 401', async () => {
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      let resolveClear: (() => void) | null = null;
+      mockClearToken.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveClear = resolve;
+          }),
+      );
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.token).toBe('stored-jwt'));
+
+      const unauthorized = mockSetOnUnauthorized.mock.calls.at(-1)?.[0];
+      expect(typeof unauthorized).toBe('function');
+
+      await act(async () => {
+        unauthorized?.();
+      });
+
+      // Clear is in-flight — state must not have flipped yet.
+      expect(mockClearToken).toHaveBeenCalled();
+      expect(result.current.token).toBe('stored-jwt');
+
+      await act(async () => {
+        resolveClear?.();
+      });
+
+      await waitFor(() => expect(result.current.token).toBeNull());
     });
   });
 
