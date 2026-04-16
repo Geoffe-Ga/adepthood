@@ -126,6 +126,20 @@ async def create_goal_group(
     return refreshed
 
 
+async def _refetch_goal_group_with_goals(session: AsyncSession, group_id: int) -> GoalGroup:
+    """Re-fetch a goal group with eager-loaded goals or raise 404.
+
+    BUG-INFRA-020: uses ``.first()`` + None check rather than ``.one()`` so a
+    concurrent delete surfaces as a 404 rather than ``NoResultFound``.
+    """
+    statement = select(GoalGroup).where(GoalGroup.id == group_id).options(GOAL_GROUP_WITH_GOALS)
+    result = await session.execute(statement)
+    refreshed = result.scalars().first()
+    if refreshed is None:
+        raise not_found("goal_group")
+    return refreshed
+
+
 @router.put("/{group_id}", response_model=GoalGroupResponse)
 async def update_goal_group(
     group_id: int,
@@ -141,14 +155,7 @@ async def update_goal_group(
         setattr(group, key, value)
     session.add(group)
     await session.commit()
-    # Re-fetch with eager-loaded goals to avoid lazy-load greenlet errors.
-    # BUG-INFRA-020: use ``.first()`` + None check rather than ``.one()`` so a
-    # concurrent delete doesn't surface as ``NoResultFound`` instead of a 404.
-    statement = select(GoalGroup).where(GoalGroup.id == group_id).options(GOAL_GROUP_WITH_GOALS)
-    result = await session.execute(statement)
-    refreshed = result.scalars().first()
-    if refreshed is None:
-        raise not_found("goal_group")
+    refreshed = await _refetch_goal_group_with_goals(session, group_id)
     logger.info("goal_group_updated", extra={"user_id": current_user, "goal_group_id": group_id})
     return refreshed
 
