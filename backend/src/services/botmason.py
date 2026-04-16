@@ -275,6 +275,21 @@ def _get_model(provider: str) -> str:
     return os.getenv("LLM_MODEL", DEFAULT_OPENAI_MODEL)
 
 
+def _build_anthropic_messages(
+    user_message: str,
+    conversation_history: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Build the Anthropic messages list with injection-guarded user input."""
+    _check_prompt_injection(user_message)
+    messages: list[dict[str, str]] = []
+    for entry in conversation_history:
+        role = "assistant" if entry.get("sender") == "bot" else "user"
+        content = _wrap_user_input(entry["message"]) if role == "user" else entry["message"]
+        messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": _wrap_user_input(user_message)})
+    return messages
+
+
 def _dynamic_max_tokens(
     conversation_history: list[dict[str, str]],
     model_max: int = 8192,
@@ -293,6 +308,14 @@ def _dynamic_max_tokens(
     return max(1024, min(budget, 4096))
 
 
+def _is_retryable(exc: Exception) -> bool:
+    """Return True when the exception looks like a transient provider failure."""
+    if isinstance(exc, OSError | ConnectionError | TimeoutError):
+        return True
+    status_code = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    return status_code is not None and int(status_code) in _RETRYABLE_STATUS_CODES
+
+
 async def _retry_on_transient(
     coro_factory: Callable[[], object],
 ) -> object:
@@ -308,11 +331,7 @@ async def _retry_on_transient(
             return await coro_factory()  # type: ignore[misc]
         except Exception as exc:
             last_exc = exc
-            status_code = getattr(exc, "status_code", None) or getattr(exc, "status", None)
-            is_retryable = isinstance(exc, OSError | ConnectionError | TimeoutError) or (
-                status_code is not None and int(status_code) in _RETRYABLE_STATUS_CODES
-            )
-            if not is_retryable or attempt == _MAX_RETRIES:
+            if not _is_retryable(exc) or attempt == _MAX_RETRIES:
                 raise
             delay = _RETRY_BASE_DELAY * (2**attempt)
             logger.warning(
@@ -479,15 +498,7 @@ async def _call_anthropic(
     anthropic_mod = _import_optional("anthropic", "Anthropic")
 
     client = anthropic_mod.AsyncAnthropic(api_key=key, timeout=_LLM_TIMEOUT_SECONDS)
-    # Anthropic uses a separate system parameter, not a system message in the list.
-    _check_prompt_injection(user_message)
-    messages_for_api: list[dict[str, str]] = []
-    for entry in conversation_history:
-        role = "assistant" if entry.get("sender") == "bot" else "user"
-        content = _wrap_user_input(entry["message"]) if role == "user" else entry["message"]
-        messages_for_api.append({"role": role, "content": content})
-    messages_for_api.append({"role": "user", "content": _wrap_user_input(user_message)})
-
+    messages_for_api = _build_anthropic_messages(user_message, conversation_history)
     model = _get_model("anthropic")
     max_tokens = _dynamic_max_tokens(conversation_history)
 
@@ -681,14 +692,7 @@ async def _stream_anthropic(  # pragma: no cover - exercised via live integratio
     anthropic_mod = _import_optional("anthropic", "Anthropic")
 
     client = anthropic_mod.AsyncAnthropic(api_key=key, timeout=_LLM_TIMEOUT_SECONDS)
-    _check_prompt_injection(user_message)
-    messages_for_api: list[dict[str, str]] = []
-    for entry in conversation_history:
-        role = "assistant" if entry.get("sender") == "bot" else "user"
-        content = _wrap_user_input(entry["message"]) if role == "user" else entry["message"]
-        messages_for_api.append({"role": role, "content": content})
-    messages_for_api.append({"role": "user", "content": _wrap_user_input(user_message)})
-
+    messages_for_api = _build_anthropic_messages(user_message, conversation_history)
     model = _get_model("anthropic")
     max_tokens = _dynamic_max_tokens(conversation_history)
     accumulated = ""
