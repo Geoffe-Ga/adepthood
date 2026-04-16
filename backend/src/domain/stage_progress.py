@@ -47,28 +47,15 @@ def is_stage_unlocked(stage_number: int, progress: StageProgress | None) -> bool
     """Determine if a stage is unlocked for the user.
 
     Stage 1 is always unlocked.  For stage N > 1, the stage is unlocked
-    when **all** of the following hold:
-
-    * ``stage_number <= progress.current_stage``, AND
-    * ``stage_number - 1`` appears in ``progress.completed_stages``
-      (stage 1 is exempt from the completed-stages check since it is
-      implicitly accessible).
-
-    A stage *beyond* the current stage is unlocked only if the
-    immediately preceding stage has been completed.
+    when ``stage_number - 1`` appears in ``progress.completed_stages``.
+    This single rule covers both stages at-or-below the current stage
+    and stages beyond it.
     """
     if stage_number == _STAGE_1:
         return True
     if progress is None:
         return False
-    completed = progress.completed_stages or []
-    if stage_number <= progress.current_stage:
-        # For stages at or below current, require the prior stage to be
-        # completed (or be stage 1 which is always accessible).
-        return stage_number == _STAGE_1 or (stage_number - 1) in completed
-    # Stage is beyond the current stage — unlocked only if its predecessor
-    # has been completed.
-    return (stage_number - 1) in completed
+    return (stage_number - 1) in (progress.completed_stages or [])
 
 
 async def _compute_habits_progress(session: AsyncSession, user_id: int, stage_number: int) -> float:
