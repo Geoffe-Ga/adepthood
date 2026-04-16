@@ -25,22 +25,29 @@ class JournalMessageCreate(BaseModel):
 
 
 class JournalBotMessageCreate(BaseModel):
-    """Payload for storing a BotMason response (internal use)."""
+    """Payload for storing a BotMason response (internal use).
+
+    ``user_id`` is intentionally absent — it is sourced from
+    ``Depends(get_current_user)`` server-side to prevent cross-user injection
+    (BUG-JOURNAL-002).
+    """
 
     message: str = Field(max_length=JOURNAL_MESSAGE_MAX_LENGTH)
-    user_id: int
     tag: JournalTag = JournalTag.FREEFORM
     practice_session_id: int | None = None
     user_practice_id: int | None = None
 
 
 class JournalMessageResponse(BaseModel):
-    """Full journal entry returned to clients."""
+    """Full journal entry returned to clients.
+
+    ``user_id`` is intentionally excluded — the client already knows its own
+    identity and exposing surrogate keys aids enumeration (BUG-JOURNAL-004).
+    """
 
     id: int
     message: str
     sender: str
-    user_id: int
     timestamp: datetime
     tag: str
     practice_session_id: int | None

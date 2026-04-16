@@ -15,6 +15,7 @@ and this module will see the patched reference at call time.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -31,6 +32,8 @@ from services.journal import (
 )
 from services.usage import get_monthly_cap
 from services.wallet import SpendResult, get_user_fresh, preflight_deduction, require_user_fresh
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -101,15 +104,24 @@ async def handle_chat_request(
     so the router layer stays a thin dispatch.  Any exception raised here
     (e.g. ``402 insufficient_offerings`` from :func:`preflight_deduction`)
     surfaces to FastAPI's normal error path.
+
+    Both the user message and bot reply are persisted only after the LLM call
+    succeeds, preventing orphaned user messages (BUG-JOURNAL-015).  History
+    is loaded *before* the user message is staged so the user's new text
+    appears in the LLM prompt via ``generate_response``'s ``user_message``
+    parameter, not duplicated from DB.
     """
     spent = await preflight_deduction(session, user_id)
     remaining_messages = max(get_monthly_cap() - spent.monthly_used, 0)
 
-    await persist_user_message(session, user_id, message)
+    # Load history BEFORE staging the user message so the DB query doesn't
+    # include the unsaved message (it is passed directly to the LLM).
     history = await load_recent_conversation(session, user_id)
 
     llm_response = await generate_response(message, history, api_key=api_key)
 
+    # Persist both messages together after LLM success (BUG-JOURNAL-015).
+    await persist_user_message(session, user_id, message)
     bot_entry = await persist_bot_reply(session, user_id, llm_response)
     await session.commit()
     await session.refresh(bot_entry)
@@ -151,18 +163,32 @@ async def stream_bot_response(
 
     Pre-flight (auth, wallet deduction, key resolution) is the caller's
     responsibility so HTTP errors fire *before* the stream opens.  Once
-    invoked, this generator persists the user's message (so conversation
-    history includes it), drains the provider, commits on success, or rolls
-    back and emits a single ``error`` event on provider failure.
+    invoked, this generator loads conversation history, calls the LLM, and
+    only persists both messages after the stream succeeds.
+
+    On provider failure the savepoint is rolled back so no orphan user
+    message is committed (BUG-JOURNAL-015).  A descriptive error event
+    is emitted so the client can show a "failed" bot placeholder with a
+    retry affordance (BUG-JOURNAL-016).
     """
-    await persist_user_message(session, user_id, context.message)
+    # Load history before staging anything so the user's new text is only
+    # sent via the ``user_message`` parameter, not duplicated from DB.
     history = await load_recent_conversation(session, user_id)
     try:
         collected = await collect_provider_stream(context.message, history, context.api_key)
     except Exception:
+        # BUG-JOURNAL-009: log exception context so ops can debug production outages.
+        logger.exception("Stream provider error for user_id=%s", user_id)
+        # Roll back the wallet deduction so the user isn't charged for a
+        # failed request.  No user message was staged so there's nothing
+        # to orphan (BUG-JOURNAL-015).
         await session.rollback()
         yield sse_event("error", {"status": 502, "detail": "llm_provider_error"})
         return
+
+    # Persist both messages together only after the stream completed
+    # successfully (BUG-JOURNAL-015).
+    await persist_user_message(session, user_id, context.message)
 
     for chunk in collected.chunks:
         yield chunk

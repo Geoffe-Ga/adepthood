@@ -7,14 +7,19 @@ conversation history context for coherent multi-turn chat.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
+import logging
 import os
+import re
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
 from errors import bad_request, payment_required
+
+logger = logging.getLogger(__name__)
 
 # Default system prompt used when no external prompt file is configured.
 _DEFAULT_SYSTEM_PROMPT = (
@@ -26,7 +31,8 @@ _DEFAULT_SYSTEM_PROMPT = (
 )
 
 # Maximum number of recent messages to include as conversation context.
-CONVERSATION_HISTORY_LIMIT = 20
+# Bumped from 20 to 50 so deeper reflections stay in context (BUG-JOURNAL-007).
+CONVERSATION_HISTORY_LIMIT = 50
 
 # Only allow prompt files from this directory to prevent path traversal.
 _ALLOWED_PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
@@ -46,6 +52,29 @@ _ANTHROPIC_KEY_PREFIX = "sk-ant-"
 # Identifier the stub provider reports as its "model" in usage logs.  Kept as a
 # module constant so callers can branch on it without magic strings.
 STUB_MODEL_NAME = "stub"
+
+# Centralised default models so the choice lives in one place (BUG-JOURNAL-011).
+# ``LLM_MODEL`` env var overrides at runtime.
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
+
+# Timeout in seconds for LLM provider HTTP calls (BUG-JOURNAL-005).
+_LLM_TIMEOUT_SECONDS = 30.0
+
+# Retry constants for transient provider failures (BUG-JOURNAL-006).
+_MAX_RETRIES = 2
+_RETRY_BASE_DELAY = 1.0  # seconds; doubles on each attempt
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+# Heuristic patterns that indicate prompt-injection attempts (BUG-JOURNAL-017).
+# We only log, never block — the provider's instruction hierarchy is the real
+# defence.  Patterns are intentionally broad to catch common variants.
+_INJECTION_PATTERNS = re.compile(
+    r"(?i)(?:ignore (?:all )?(?:previous|above|prior) (?:instructions|prompts))"
+    r"|(?:you are now)"
+    r"|(?:system:\s)"
+    r"|(?:###\s*(?:system|instruction))"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +225,27 @@ def get_system_prompt() -> str:
     return prompt_config
 
 
+def _check_prompt_injection(user_message: str) -> None:
+    """Log a warning when user input matches common injection heuristics.
+
+    This is intentionally advisory — we never block. The real defence is
+    structured delimiters in the message list plus the provider's instruction
+    hierarchy (BUG-JOURNAL-017).
+    """
+    if _INJECTION_PATTERNS.search(user_message):
+        logger.warning("Possible prompt-injection attempt detected (logged only)")
+
+
+def _wrap_user_input(text: str) -> str:
+    """Wrap user-supplied text in structured XML delimiters (BUG-JOURNAL-017).
+
+    The system prompt instructs the assistant to treat only text inside
+    ``<user_input>`` as user intent, making it harder for injected
+    instructions to escape the user turn.
+    """
+    return f"<user_input>{text}</user_input>"
+
+
 def _build_messages(
     user_message: str,
     conversation_history: list[dict[str, str]],
@@ -204,14 +254,76 @@ def _build_messages(
     """Build the message list for the LLM API call.
 
     Returns a list of dicts with ``role`` and ``content`` keys suitable for
-    OpenAI-compatible chat completion APIs.
+    OpenAI-compatible chat completion APIs.  User text is wrapped in
+    ``<user_input>`` XML delimiters to mitigate prompt injection
+    (BUG-JOURNAL-017).
     """
+    _check_prompt_injection(user_message)
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
     for entry in conversation_history:
         role = "assistant" if entry.get("sender") == "bot" else "user"
-        messages.append({"role": role, "content": entry["message"]})
-    messages.append({"role": "user", "content": user_message})
+        content = _wrap_user_input(entry["message"]) if role == "user" else entry["message"]
+        messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": _wrap_user_input(user_message)})
     return messages
+
+
+def _get_model(provider: str) -> str:
+    """Return the model ID from ``LLM_MODEL`` env or the provider's default."""
+    if provider == "anthropic":
+        return os.getenv("LLM_MODEL", DEFAULT_ANTHROPIC_MODEL)
+    return os.getenv("LLM_MODEL", DEFAULT_OPENAI_MODEL)
+
+
+def _dynamic_max_tokens(
+    conversation_history: list[dict[str, str]],
+    model_max: int = 8192,
+    safety_margin: int = 512,
+) -> int:
+    """Estimate a generous ``max_tokens`` budget based on conversation depth.
+
+    Uses a rough 4-chars-per-token heuristic — not precise, but enough to
+    avoid the hard-coded 1024 truncation bug (BUG-JOURNAL-001).  The result
+    is clamped to ``[1024, 4096]`` so we always leave headroom for the
+    provider to respond without blowing the context window.
+    """
+    chars = sum(len(e.get("message", "")) for e in conversation_history)
+    estimated_prompt_tokens = chars // 4
+    budget = model_max - estimated_prompt_tokens - safety_margin
+    return max(1024, min(budget, 4096))
+
+
+async def _retry_on_transient(
+    coro_factory: Callable[[], object],
+) -> object:
+    """Retry a provider call on transient failures (BUG-JOURNAL-006).
+
+    Only retries 429 / 5xx / network errors.  Uses exponential backoff
+    (1s, 2s) with at most ``_MAX_RETRIES`` attempts.  Non-retryable errors
+    are re-raised immediately.
+    """
+    last_exc: BaseException | None = None
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            return await coro_factory()  # type: ignore[misc]
+        except Exception as exc:
+            last_exc = exc
+            status_code = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+            is_retryable = isinstance(exc, OSError | ConnectionError | TimeoutError) or (
+                status_code is not None and int(status_code) in _RETRYABLE_STATUS_CODES
+            )
+            if not is_retryable or attempt == _MAX_RETRIES:
+                raise
+            delay = _RETRY_BASE_DELAY * (2**attempt)
+            logger.warning(
+                "LLM provider transient error (attempt %d/%d), retrying in %.1fs",
+                attempt + 1,
+                _MAX_RETRIES + 1,
+                delay,
+                exc_info=True,
+            )
+            await asyncio.sleep(delay)
+    raise last_exc  # type: ignore[misc]  # pragma: no cover
 
 
 async def generate_response(
@@ -329,20 +441,26 @@ async def _call_openai(
     system_prompt: str,
     api_key: str | None = None,
 ) -> LLMResponse:
-    """Call the OpenAI chat completions API."""
+    """Call the OpenAI chat completions API with timeout and retry."""
     key = _resolve_api_key(api_key)
     openai_mod = _import_optional("openai", "OpenAI")
 
-    client = openai_mod.AsyncOpenAI(api_key=key)
+    client = openai_mod.AsyncOpenAI(api_key=key, timeout=_LLM_TIMEOUT_SECONDS)
     messages = _build_messages(user_message, conversation_history, system_prompt)
-    model = os.getenv("LLM_MODEL", "gpt-4o-mini")
-    completion = await client.chat.completions.create(
-        model=model,
-        messages=messages,
-    )
+    model = _get_model("openai")
+    max_tokens = _dynamic_max_tokens(conversation_history)
+
+    async def _do_call() -> object:
+        return await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+        )
+
+    completion = await _retry_on_transient(_do_call)
     usage = getattr(completion, "usage", None)
     return LLMResponse(
-        text=str(completion.choices[0].message.content or ""),
+        text=str(completion.choices[0].message.content or ""),  # type: ignore[attr-defined]
         provider="openai",
         model=model,
         prompt_tokens=extract_token_count(usage, "prompt_tokens"),
@@ -356,34 +474,39 @@ async def _call_anthropic(
     system_prompt: str,
     api_key: str | None = None,
 ) -> LLMResponse:
-    """Call the Anthropic messages API."""
+    """Call the Anthropic messages API with timeout and retry."""
     key = _resolve_api_key(api_key)
     anthropic_mod = _import_optional("anthropic", "Anthropic")
 
-    client = anthropic_mod.AsyncAnthropic(api_key=key)
+    client = anthropic_mod.AsyncAnthropic(api_key=key, timeout=_LLM_TIMEOUT_SECONDS)
     # Anthropic uses a separate system parameter, not a system message in the list.
+    _check_prompt_injection(user_message)
     messages_for_api: list[dict[str, str]] = []
     for entry in conversation_history:
         role = "assistant" if entry.get("sender") == "bot" else "user"
-        messages_for_api.append({"role": role, "content": entry["message"]})
-    messages_for_api.append({"role": "user", "content": user_message})
+        content = _wrap_user_input(entry["message"]) if role == "user" else entry["message"]
+        messages_for_api.append({"role": role, "content": content})
+    messages_for_api.append({"role": "user", "content": _wrap_user_input(user_message)})
 
-    model = os.getenv("LLM_MODEL", "claude-sonnet-4-20250514")
-    response = await client.messages.create(
-        model=model,
-        max_tokens=1024,
-        system=system_prompt,
-        messages=messages_for_api,
-    )
-    block = response.content[0]
+    model = _get_model("anthropic")
+    max_tokens = _dynamic_max_tokens(conversation_history)
+
+    async def _do_call() -> object:
+        return await client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=system_prompt,
+            messages=messages_for_api,
+        )
+
+    response = await _retry_on_transient(_do_call)
+    block = response.content[0]  # type: ignore[attr-defined]
     text = str(block.text) if hasattr(block, "text") else str(block)
     usage = getattr(response, "usage", None)
     return LLMResponse(
         text=text,
         provider="anthropic",
         model=model,
-        # Anthropic exposes ``input_tokens`` / ``output_tokens`` where OpenAI
-        # uses ``prompt_tokens`` / ``completion_tokens``.
         prompt_tokens=extract_token_count(usage, "input_tokens", "prompt_tokens"),
         completion_tokens=extract_token_count(usage, "output_tokens", "completion_tokens"),
     )
@@ -508,12 +631,14 @@ async def _stream_openai(  # pragma: no cover - exercised via live integration
     key = _resolve_api_key(api_key)
     openai_mod = _import_optional("openai", "OpenAI")
 
-    client = openai_mod.AsyncOpenAI(api_key=key)
+    client = openai_mod.AsyncOpenAI(api_key=key, timeout=_LLM_TIMEOUT_SECONDS)
     messages = _build_messages(user_message, conversation_history, system_prompt)
-    model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+    model = _get_model("openai")
+    max_tokens = _dynamic_max_tokens(conversation_history)
     stream = await client.chat.completions.create(
         model=model,
         messages=messages,
+        max_tokens=max_tokens,
         stream=True,
         stream_options={"include_usage": True},
     )
@@ -555,18 +680,21 @@ async def _stream_anthropic(  # pragma: no cover - exercised via live integratio
     key = _resolve_api_key(api_key)
     anthropic_mod = _import_optional("anthropic", "Anthropic")
 
-    client = anthropic_mod.AsyncAnthropic(api_key=key)
+    client = anthropic_mod.AsyncAnthropic(api_key=key, timeout=_LLM_TIMEOUT_SECONDS)
+    _check_prompt_injection(user_message)
     messages_for_api: list[dict[str, str]] = []
     for entry in conversation_history:
         role = "assistant" if entry.get("sender") == "bot" else "user"
-        messages_for_api.append({"role": role, "content": entry["message"]})
-    messages_for_api.append({"role": "user", "content": user_message})
+        content = _wrap_user_input(entry["message"]) if role == "user" else entry["message"]
+        messages_for_api.append({"role": role, "content": content})
+    messages_for_api.append({"role": "user", "content": _wrap_user_input(user_message)})
 
-    model = os.getenv("LLM_MODEL", "claude-sonnet-4-20250514")
+    model = _get_model("anthropic")
+    max_tokens = _dynamic_max_tokens(conversation_history)
     accumulated = ""
     async with client.messages.stream(
         model=model,
-        max_tokens=1024,
+        max_tokens=max_tokens,
         system=system_prompt,
         messages=messages_for_api,
     ) as stream:

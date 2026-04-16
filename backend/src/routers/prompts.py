@@ -3,50 +3,38 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
 from domain.weekly_prompts import TOTAL_WEEKS, get_prompt_for_week
-from errors import bad_request, not_found
+from errors import bad_request, conflict, not_found
 from models.journal_entry import JournalEntry, JournalTag
 from models.prompt_response import PromptResponse
-from models.stage_progress import StageProgress
-from models.user import User
 from routers.auth import get_current_user
 from schemas.prompt import PromptDetail, PromptListResponse, PromptSubmit
 
 router = APIRouter(prefix="/prompts", tags=["prompts"])
 
-_DAYS_PER_WEEK = 7
-
 
 async def _get_user_week(session: AsyncSession, user_id: int) -> int:
-    """Derive the user's current week number from their program start date.
+    """Derive the user's current week from their last completed prompt.
 
-    Uses StageProgress.stage_started_at if available, otherwise falls back
-    to User.created_at. The result is clamped to [1, TOTAL_WEEKS].
+    Returns ``max(PromptResponse.week_number) + 1`` so users advance only
+    by completing prompts, not by waiting.  Falls back to week 1 when no
+    responses exist yet.  The result is clamped to [1, TOTAL_WEEKS]
+    (BUG-JOURNAL-014).
     """
-    result = await session.execute(select(StageProgress).where(StageProgress.user_id == user_id))
-    progress = result.scalars().first()
-
-    if progress is not None:
-        start_date = progress.stage_started_at
-    else:
-        user = await session.get(User, user_id)
-        start_date = user.created_at if user else datetime.now(UTC)
-
-    now = datetime.now(UTC)
-    # SQLite returns naive datetimes; ensure both sides match for subtraction
-    if start_date.tzinfo is None:
-        start_date = start_date.replace(tzinfo=UTC)
-    elapsed = now - start_date
-    week = int(elapsed / timedelta(days=_DAYS_PER_WEEK)) + 1
-    return max(1, min(week, TOTAL_WEEKS))
+    result = await session.execute(
+        select(func.max(PromptResponse.week_number)).where(PromptResponse.user_id == user_id)
+    )
+    max_week = result.scalar()
+    week = int(max_week) + 1 if max_week is not None else 1
+    return int(max(1, min(week, TOTAL_WEEKS)))
 
 
 @router.get("/current", response_model=PromptDetail)
@@ -194,7 +182,12 @@ async def submit_prompt_response(
     )
     session.add(journal_entry)
 
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise conflict("already_responded") from None
+
     await session.refresh(prompt_response)
 
     return PromptDetail(

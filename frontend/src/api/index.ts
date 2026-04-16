@@ -414,7 +414,6 @@ export interface JournalMessage {
   id: number;
   message: string;
   sender: 'user' | 'bot';
-  user_id: number;
   timestamp: string;
   tag: JournalTag;
   practice_session_id: number | null;

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from http import HTTPStatus
 
 import pytest
@@ -62,9 +63,10 @@ async def test_get_current_prompt_returns_week_1_for_new_user(
 
 
 @pytest.mark.asyncio
-async def test_get_current_prompt_shows_responded_after_submit(
+async def test_get_current_prompt_advances_after_submit(
     async_client: AsyncClient,
 ) -> None:
+    """After responding to week 1, current prompt advances to week 2 (BUG-JOURNAL-014)."""
     headers = await _signup(async_client)
     # Submit a response for week 1
     await async_client.post(
@@ -75,8 +77,9 @@ async def test_get_current_prompt_shows_responded_after_submit(
     resp = await async_client.get("/prompts/current", headers=headers)
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
-    assert data["has_responded"] is True
-    assert data["response"] == "I feel grounded today."
+    # Week advances to 2 after completing week 1
+    assert data["week_number"] == 2  # noqa: PLR2004
+    assert data["has_responded"] is False
 
 
 # ── GET /prompts/{week_number} ──────────────────────────────────────────
@@ -127,7 +130,7 @@ async def test_submit_prompt_response(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_submit_duplicate_response_returns_400(async_client: AsyncClient) -> None:
+async def test_submit_duplicate_response_returns_error(async_client: AsyncClient) -> None:
     headers = await _signup(async_client)
     await async_client.post(
         "/prompts/1/respond",
@@ -139,7 +142,9 @@ async def test_submit_duplicate_response_returns_400(async_client: AsyncClient) 
         json={"response": "Second response."},
         headers=headers,
     )
-    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    # Application-level check returns 400; DB constraint returns 409 — both
+    # report ``already_responded`` so the client can handle both uniformly.
+    assert resp.status_code in {HTTPStatus.BAD_REQUEST, HTTPStatus.CONFLICT}
     assert resp.json()["detail"] == "already_responded"
 
 
@@ -269,3 +274,34 @@ async def test_both_users_can_respond_to_same_week(async_client: AsyncClient) ->
     )
     assert resp_a.status_code == HTTPStatus.CREATED
     assert resp_b.status_code == HTTPStatus.CREATED
+
+
+# ── Concurrency (BUG-JOURNAL-003) ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_concurrent_prompt_responses_allow_exactly_one(
+    concurrent_async_client: AsyncClient,
+) -> None:
+    """Only one of N concurrent prompt submissions for the same (user, week) wins."""
+    headers = await _signup(concurrent_async_client)
+
+    responses = await asyncio.gather(
+        *[
+            concurrent_async_client.post(
+                "/prompts/1/respond",
+                json={"response": f"Attempt {i}"},
+                headers=headers,
+            )
+            for i in range(5)
+        ]
+    )
+
+    status_codes = [r.status_code for r in responses]
+    successes = status_codes.count(HTTPStatus.CREATED)
+    # The loser hits either the app-level 400 or the DB-level 409.
+    rejections = sum(1 for s in status_codes if s in {HTTPStatus.BAD_REQUEST, HTTPStatus.CONFLICT})
+
+    assert successes == 1, f"Expected exactly 1 success, got {successes}"
+    assert rejections == 4, f"Expected 4 rejections, got {rejections}"  # noqa: PLR2004

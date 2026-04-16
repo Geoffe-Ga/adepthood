@@ -15,7 +15,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Request, status
 from fastapi.responses import StreamingResponse
+from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request as StarletteRequest
 
 from database import get_session
 from errors import bad_request
@@ -35,6 +37,20 @@ from services.chat_stream import PreflightedRequest, handle_chat_request, stream
 from services.usage import get_monthly_cap
 from services.wallet import preflight_deduction, require_user_fresh, reset_monthly_usage_if_due
 
+
+def _per_user_key(request: StarletteRequest) -> str:
+    """Rate-limit key that prefers the authenticated user ID over IP.
+
+    Falls back to the remote address for anonymous / pre-auth requests so
+    the limiter never receives an empty key (BUG-JOURNAL-008).
+    """
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        # Use a hash-like prefix so the key space doesn't collide with IPs.
+        return f"user:{auth_header}"
+    return get_remote_address(request)
+
+
 router = APIRouter(tags=["botmason"])
 
 
@@ -50,7 +66,7 @@ LLM_API_KEY_HEADER = "X-LLM-API-Key"  # pragma: allowlist secret
     response_model=ChatResponse,
     status_code=status.HTTP_201_CREATED,
 )
-@limiter.limit("10/minute")
+@limiter.limit("10/minute", key_func=_per_user_key)
 async def chat_with_botmason(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     payload: ChatRequest,
@@ -64,7 +80,7 @@ async def chat_with_botmason(
 
 
 @router.post("/journal/chat/stream")
-@limiter.limit("10/minute")
+@limiter.limit("10/minute", key_func=_per_user_key)
 async def chat_with_botmason_stream(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     payload: ChatRequest,

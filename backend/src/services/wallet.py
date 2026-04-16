@@ -14,6 +14,7 @@ returns into HTTP errors; the service only reports capacity outcomes.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -24,6 +25,8 @@ from sqlmodel import col, select
 from errors import bad_request, payment_required
 from models.user import User
 from services.usage import compute_next_reset, get_monthly_cap
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -67,13 +70,21 @@ async def reset_monthly_usage_if_due(
     two requests race through the boundary, the second one's predicate no
     longer matches (the first request has already advanced
     ``monthly_reset_date`` to next month) and the second UPDATE is a no-op.
+
+    The reset event is logged for audit purposes (BUG-JOURNAL-018).
     """
     next_reset = compute_next_reset(now)
-    await session.execute(
+    result = await session.execute(
         update(User)
         .where(col(User.id) == user_id, col(User.monthly_reset_date) <= now)
         .values(monthly_messages_used=0, monthly_reset_date=next_reset)
     )
+    if result.rowcount:  # type: ignore[attr-defined]
+        logger.info(
+            "Monthly usage reset for user_id=%s, next_reset=%s",
+            user_id,
+            next_reset.isoformat(),
+        )
 
 
 async def spend_one_message(
