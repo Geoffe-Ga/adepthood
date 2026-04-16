@@ -10,12 +10,12 @@ to prevent duplicate completions for the same goal on the same day.
 BUG-HABITS-002: Adds a compound index on (goal_id, user_id, timestamp) to
 speed up streak computation queries.
 
-The unique-per-day expression uses ``(timestamp AT TIME ZONE 'UTC')::date``
-because ``timestamp::date`` on a ``TIMESTAMP WITH TIME ZONE`` column is
-STABLE (depends on session timezone) and Postgres refuses to index it.
-Forcing UTC makes the expression IMMUTABLE and matches the application's
-"all timestamps are stored in UTC" invariant established by
-``78b1620cafde_convert_datetime_columns_to_timestamptz``.
+``timestamp`` is stored as ``TIMESTAMPTZ``; the naive ``timestamp::date`` cast
+is only STABLE because it depends on the session timezone, and Postgres
+refuses to index non-IMMUTABLE expressions. Pinning the conversion to UTC
+with ``AT TIME ZONE 'UTC'`` yields a ``TIMESTAMP WITHOUT TIME ZONE`` whose
+``::date`` cast is IMMUTABLE. The app always writes ``datetime.now(UTC)``,
+so "one completion per UTC calendar day" matches the intended semantics.
 """
 
 from typing import Sequence, Union
@@ -36,7 +36,8 @@ def upgrade() -> None:
     """Add unique-per-day constraint and compound performance index."""
     op.execute(
         f'CREATE UNIQUE INDEX "{_UNIQUE_PER_DAY_INDEX}" '
-        "ON goalcompletion (goal_id, user_id, ((timestamp AT TIME ZONE 'UTC')::date))"
+        "ON goalcompletion "
+        "(goal_id, user_id, ((timestamp AT TIME ZONE 'UTC')::date))"
     )
     op.execute(
         f'CREATE INDEX "{_COMPOUND_INDEX}" '
