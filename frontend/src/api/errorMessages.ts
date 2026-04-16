@@ -15,7 +15,7 @@
  * place that turns those contract strings into copy that a real person can
  * act on. If you add a new backend error code, add its translation here too.
  */
-import { ApiError } from './index';
+import { ApiError, ApiTimeoutError, ApiValidationError } from './index';
 
 // Shared copy fragments — duplicated strings trip sonarjs/no-duplicate-string
 // and, more importantly, drift when we eventually tweak the tone.
@@ -182,23 +182,58 @@ function readableMessage(errish: ErrorLike): string | undefined {
 }
 
 /**
+ * BUG-FRONTEND-INFRA-016 — timeouts deserve their own, more actionable copy
+ * than the generic ``fallback``. These are used both by
+ * ``formatApiError`` and by screens that want to branch on the distinction.
+ */
+export const TIMEOUT_MESSAGE =
+  'The request took too long. Check your connection and try again in a moment.';
+export const VALIDATION_MESSAGE =
+  "Something changed on the server and we couldn't read the response. Update the app if an update is available, or try again shortly.";
+
+function isTimeout(err: unknown): boolean {
+  // Guard against the class reference being undefined in test contexts that
+  // mock the api module — ``instanceof undefined`` throws a TypeError.
+  if (ApiTimeoutError && err instanceof ApiTimeoutError) return true;
+  return err instanceof Error && err.name === 'ApiTimeoutError';
+}
+
+function isValidation(err: unknown): boolean {
+  if (ApiValidationError && err instanceof ApiValidationError) return true;
+  return err instanceof Error && err.name === 'ApiValidationError';
+}
+
+/**
  * Universal ``unknown`` → user-facing-string converter. Handles:
  *
+ *  - ``ApiTimeoutError`` — timeout-specific copy before status/detail mapping
+ *  - ``ApiValidationError`` — "server response didn't match expectations"
  *  - ``ApiError`` / any object with ``.detail`` and ``.status`` fields
  *  - Plain ``Error`` instances (falls back to ``options.fallback``)
  *  - Objects with only a ``.message`` property
  *  - ``null`` / ``undefined`` / anything else
  *
  * Resolution order (most specific → least specific):
- *   1. Known backend code       — consistent copy cross-screen
- *   2. Caller status override   — explicit per-screen override for one status
- *   3. Caller fallback          — screen-specific copy ("Couldn't save session…")
- *   4. Generic status fallback  — per-HTTP-status default
- *   5. Raw ``.message``         — if it reads like human prose
- *   6. GENERIC_FALLBACK
+ *   1. Timeout / validation branches — the user-visible messaging changes
+ *      materially for these network-level classes of failure
+ *   2. Known backend code       — consistent copy cross-screen
+ *   3. Caller status override   — explicit per-screen override for one status
+ *   4. Caller fallback          — screen-specific copy ("Couldn't save session…")
+ *   5. Generic status fallback  — per-HTTP-status default
+ *   6. Raw ``.message``         — if it reads like human prose
+ *   7. GENERIC_FALLBACK
  */
+function classifyNetworkError(err: unknown): string | undefined {
+  if (isTimeout(err)) return TIMEOUT_MESSAGE;
+  if (isValidation(err)) return VALIDATION_MESSAGE;
+  return undefined;
+}
+
 export function formatApiError(err: unknown, options: FormatErrorOptions = {}): string {
   if (err == null) return options.fallback ?? GENERIC_FALLBACK;
+
+  const network = classifyNetworkError(err);
+  if (network !== undefined) return network;
 
   const errish = err as ErrorLike;
   const status = extractStatus(errish);

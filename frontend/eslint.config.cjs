@@ -118,6 +118,62 @@ module.exports = tseslint.config(
     },
   },
 
+  // BUG-FRONTEND-INFRA-006 — ban hex color literals in the slice of the
+  // codebase that has been migrated to ``design/tokens.ts``. Legacy files
+  // (Habits, Map, shared styles with dozens of hex values) are intentionally
+  // excluded; they'll be folded in as the design-system migration progresses.
+  //
+  // BUG-FRONTEND-INFRA-009 — same scope: flag ``TouchableOpacity`` /
+  // ``Pressable`` usages that lack an ``accessibilityLabel`` prop.
+  {
+    files: [
+      'src/App.tsx',
+      'src/components/**/*.{ts,tsx}',
+      'src/context/**/*.{ts,tsx}',
+      'src/navigation/**/*.{ts,tsx}',
+      'src/features/Auth/**/*.{ts,tsx}',
+      'src/features/Settings/**/*.{ts,tsx}',
+      'src/features/Journal/ChatInput.tsx',
+      'src/features/Journal/SearchBar.tsx',
+      'src/features/Journal/TagFilter.tsx',
+      'src/features/Journal/WeeklyPromptBanner.tsx',
+      'src/features/Journal/MessageBubble.tsx',
+      'src/features/Course/ContentViewer.tsx',
+      'src/features/Course/StageSelector.tsx',
+      'src/features/Course/ContentCard.tsx',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'Literal[value=/^#[0-9a-fA-F]{3,8}$/]',
+          message:
+            'Hex color literals are banned in this file. Import from design/tokens.ts instead (BUG-FRONTEND-INFRA-006).',
+        },
+        {
+          selector: 'TemplateLiteral > TemplateElement[value.raw=/^#[0-9a-fA-F]{3,8}$/]',
+          message:
+            'Hex color literals are banned in this file. Import from design/tokens.ts instead (BUG-FRONTEND-INFRA-006).',
+        },
+        {
+          selector:
+            "JSXOpeningElement[name.name=/^(TouchableOpacity|TouchableHighlight|TouchableWithoutFeedback|Pressable)$/]:not(:has(JSXAttribute[name.name='accessibilityLabel'])):not(:has(JSXSpreadAttribute))",
+          message:
+            'Touchable components must declare accessibilityLabel (BUG-FRONTEND-INFRA-009). Prop-spread components are exempt — use the rule escape hatch only for dynamic wrappers.',
+        },
+      ],
+    },
+  },
+
+  // The design-tokens file is the one place hex literals legitimately live.
+  // Tests also need to pass hex values into component props to exercise styling.
+  {
+    files: ['src/design/**/*.{ts,tsx}', '**/__tests__/**', '**/*.test.{ts,tsx,js,jsx}'],
+    rules: {
+      'no-restricted-syntax': 'off',
+    },
+  },
+
   // Prettier last: disables conflicting stylistic rules
   prettier,
 );

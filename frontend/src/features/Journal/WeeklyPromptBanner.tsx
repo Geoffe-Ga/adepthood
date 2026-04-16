@@ -19,6 +19,8 @@ const WeeklyPromptBanner = ({ prompt, onRespond }: WeeklyPromptBannerProps): Rea
         testID="prompt-respond-button"
         style={styles.promptRespondButton}
         onPress={onRespond}
+        accessibilityLabel="Respond to weekly prompt"
+        accessibilityRole="button"
       >
         <Text style={styles.promptRespondText}>Respond</Text>
       </TouchableOpacity>

@@ -7,6 +7,8 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { JournalTag } from '../api';
+import { FeatureErrorBoundary } from '../components/FeatureErrorBoundary';
+import { colors, SPACING } from '../design/tokens';
 import CourseScreen from '../features/Course/CourseScreen';
 import HabitsScreen from '../features/Habits/HabitsScreen';
 import JournalScreen from '../features/Journal/JournalScreen';
@@ -38,6 +40,29 @@ export type RootTabParamList = {
 const Tab = createBottomTabNavigator<RootTabParamList>();
 
 /**
+ * Wrap a screen component in a ``FeatureErrorBoundary`` so a render crash in
+ * one tab leaves the others usable (BUG-FRONTEND-INFRA-019).
+ */
+function withBoundary<P extends object>(
+  name: string,
+  Component: React.ComponentType<P>,
+): React.ComponentType<P> {
+  const Wrapped: React.ComponentType<P> = (props) => (
+    <FeatureErrorBoundary name={name}>
+      <Component {...props} />
+    </FeatureErrorBoundary>
+  );
+  Wrapped.displayName = `Boundary(${name})`;
+  return Wrapped;
+}
+
+const HabitsTab = withBoundary('Habits', HabitsScreen);
+const PracticeTab = withBoundary('Practice', PracticeScreen);
+const CourseTab = withBoundary('Course', CourseScreen);
+const JournalTab = withBoundary('Journal', JournalScreen);
+const MapTab = withBoundary('Map', MapScreen);
+
+/**
  * Application-wide bottom tab navigation.
  * Each tab corresponds to a major feature area.
  */
@@ -59,30 +84,37 @@ const BottomTabs = (): React.JSX.Element => {
               onPress={openSettings}
               style={styles.headerButton}
               accessibilityLabel="Open settings"
+              accessibilityRole="button"
               testID="open-settings-button"
             >
               <Text style={styles.headerButtonText}>⚙︎</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={logout} style={styles.headerButton}>
+            <TouchableOpacity
+              onPress={logout}
+              style={styles.headerButton}
+              accessibilityLabel="Log out"
+              accessibilityRole="button"
+              testID="logout-button"
+            >
               <Text style={styles.headerButtonText}>Logout</Text>
             </TouchableOpacity>
           </View>
         ),
       }}
     >
-      <Tab.Screen name="Habits" component={HabitsScreen} />
-      <Tab.Screen name="Practice" component={PracticeScreen} />
-      <Tab.Screen name="Course" component={CourseScreen} />
-      <Tab.Screen name="Journal" component={JournalScreen} />
-      <Tab.Screen name="Map" component={MapScreen} />
+      <Tab.Screen name="Habits" component={HabitsTab} />
+      <Tab.Screen name="Practice" component={PracticeTab} />
+      <Tab.Screen name="Course" component={CourseTab} />
+      <Tab.Screen name="Journal" component={JournalTab} />
+      <Tab.Screen name="Map" component={MapTab} />
     </Tab.Navigator>
   );
 };
 
 const styles = StyleSheet.create({
-  headerRight: { flexDirection: 'row', alignItems: 'center', marginRight: 8 },
-  headerButton: { paddingHorizontal: 8, paddingVertical: 4 },
-  headerButtonText: { color: '#4a90d9', fontSize: 14, fontWeight: '600' },
+  headerRight: { flexDirection: 'row', alignItems: 'center', marginRight: SPACING.sm },
+  headerButton: { paddingHorizontal: SPACING.sm, paddingVertical: SPACING.xs },
+  headerButtonText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
 });
 
 export default BottomTabs;

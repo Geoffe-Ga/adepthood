@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { ActivityIndicator, Linking, Text, TouchableOpacity, View } from 'react-native';
 
 import { course as courseApi, type ContentItem } from '../../api';
+import { colors } from '../../design/tokens';
 import { isValidUrl } from '../../utils/url';
 
 import styles from './Course.styles';
@@ -51,7 +52,7 @@ const ViewerFooter = ({
       accessibilityLabel={isRead ? 'Already read' : 'Mark as Read'}
     >
       {marking ? (
-        <ActivityIndicator testID="mark-read-loading" size="small" color="#fff" />
+        <ActivityIndicator testID="mark-read-loading" size="small" color={colors.text.light} />
       ) : (
         <Text style={[styles.markReadText, isRead && styles.markReadTextDone]}>
           {isRead ? '✓ Read' : 'Mark as Read'}
@@ -79,12 +80,10 @@ interface ContentViewerProps {
   onReflect?: () => void;
 }
 
-const ContentViewer = ({
-  item,
-  onBack,
-  onMarkRead,
-  onReflect,
-}: ContentViewerProps): React.JSX.Element => {
+function useMarkReadHandler(
+  item: ContentItem,
+  onMarkRead: () => void,
+): { marking: boolean; isRead: boolean; handleMarkRead: () => Promise<void> } {
   const [marking, setMarking] = useState(false);
   const [isRead, setIsRead] = useState(item.is_read);
 
@@ -102,6 +101,17 @@ const ContentViewer = ({
     }
   }, [isRead, marking, item.id, onMarkRead]);
 
+  return { marking, isRead, handleMarkRead };
+}
+
+const ContentViewer = ({
+  item,
+  onBack,
+  onMarkRead,
+  onReflect,
+}: ContentViewerProps): React.JSX.Element => {
+  const { marking, isRead, handleMarkRead } = useMarkReadHandler(item, onMarkRead);
+
   const handleOpenUrl = useCallback(async () => {
     if (!item.url || !isValidUrl(item.url)) return;
     try {
@@ -115,7 +125,12 @@ const ContentViewer = ({
     <View style={styles.viewerContainer} testID="content-viewer">
       <ViewerHeader title={item.title} onBack={onBack} />
       <View style={styles.loadingContainer}>
-        <TouchableOpacity onPress={handleOpenUrl} testID="open-url-button">
+        <TouchableOpacity
+          onPress={handleOpenUrl}
+          testID="open-url-button"
+          accessibilityLabel="Open in browser"
+          accessibilityRole="link"
+        >
           <Text style={styles.viewerBackText}>{'Open in Browser'}</Text>
         </TouchableOpacity>
       </View>

@@ -45,6 +45,9 @@ const TagFilter = ({ activeTag, onSelectTag }: TagFilterProps): React.JSX.Elemen
               testID={testId}
               style={[styles.filterChip, isActive && styles.filterChipActive]}
               onPress={handlePress}
+              accessibilityLabel={`Filter by ${chip.label}`}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isActive }}
             >
               <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
                 {chip.label}

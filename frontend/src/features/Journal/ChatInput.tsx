@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import type { JournalTag } from '../../api';
+import { colors } from '../../design/tokens';
 
 import styles from './Journal.styles';
 
@@ -32,6 +33,9 @@ const TagPicker = ({ activeTag, onSelectTag }: TagPickerProps): React.JSX.Elemen
           testID={`tag-option-${value}`}
           style={[styles.tagPickerOption, isActive && styles.tagPickerOptionActive]}
           onPress={() => onSelectTag(isActive ? undefined : value)}
+          accessibilityLabel={`Tag as ${label}`}
+          accessibilityRole="button"
+          accessibilityState={{ selected: isActive }}
         >
           <Text style={[styles.tagPickerText, isActive && styles.tagPickerTextActive]}>
             {label}
@@ -64,11 +68,12 @@ const InputRow = ({
   <View style={styles.inputContainer}>
     <TextInput
       testID="chat-input"
+      accessibilityLabel="Journal reflection input"
       style={styles.textInput}
       value={text}
       onChangeText={onChangeText}
       placeholder="Write a reflection..."
-      placeholderTextColor="#999"
+      placeholderTextColor={colors.text.tertiary}
       multiline
       editable={!disabled}
     />
@@ -77,6 +82,8 @@ const InputRow = ({
       style={[styles.tagToggleButton, hasActiveTag && styles.tagToggleButtonActive]}
       onPress={onToggleTagPicker}
       accessibilityLabel="Toggle tag picker"
+      accessibilityRole="button"
+      accessibilityState={{ expanded: hasActiveTag }}
     >
       <Text style={styles.tagToggleText}>#</Text>
     </TouchableOpacity>
@@ -86,6 +93,8 @@ const InputRow = ({
       onPress={onSend}
       disabled={!canSend}
       accessibilityLabel="Send message"
+      accessibilityRole="button"
+      accessibilityState={{ disabled: !canSend }}
     >
       <Text style={styles.sendButtonText}>{'>'}</Text>
     </TouchableOpacity>

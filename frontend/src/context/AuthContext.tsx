@@ -80,17 +80,27 @@ async function clearTokenThenReset(
  * BUG-AUTH-001: a fire-and-forget saveToken loses the refreshed token if
  * the app is killed between the refresh response and the secure-storage
  * write. Await the persistence before surfacing the token to React state.
+ *
+ * BUG-FRONTEND-INFRA-012: if the user logged out while a refresh was in
+ * flight, ``tokenRef.current`` is ``null`` and we must NOT resurrect the
+ * session. Apply the new token only when the ref still holds the old value.
  */
 async function saveTokenThenApply(
   newToken: string,
   setToken: React.Dispatch<React.SetStateAction<string | null>>,
+  tokenRef: React.MutableRefObject<string | null>,
 ): Promise<void> {
+  if (tokenRef.current === null) {
+    // Logout won the race — drop the late refresh response on the floor.
+    return;
+  }
   try {
     await saveToken(newToken);
   } catch (err: unknown) {
     console.warn('saveToken failed in onTokenRefreshed', err);
     return;
   }
+  if (tokenRef.current === null) return;
   setToken(newToken);
 }
 
@@ -99,19 +109,26 @@ function useApiCallbacks(
   tokenRef: React.MutableRefObject<string | null>,
   setToken: React.Dispatch<React.SetStateAction<string | null>>,
 ): void {
+  // BUG-FRONTEND-INFRA-013: hold the getter in a ref that outlives the effect
+  // so a mid-request logout (which clears ``tokenRef.current``) can't lose
+  // the reference before the HTTP client reads it. On unmount we explicitly
+  // clear the getter so the stale closure is not left pinned in the module.
+  const stableGetter = useCallback(() => tokenRef.current, [tokenRef]);
+
   useEffect(() => {
-    setTokenGetter(() => tokenRef.current);
+    setTokenGetter(stableGetter);
     setOnUnauthorized(() => {
       void clearTokenThenReset(setToken);
     });
     setOnTokenRefreshed((t: string) => {
-      void saveTokenThenApply(t, setToken);
+      void saveTokenThenApply(t, setToken, tokenRef);
     });
     return () => {
+      setTokenGetter(null);
       setOnUnauthorized(null);
       setOnTokenRefreshed(null);
     };
-  }, [tokenRef, setToken]);
+  }, [stableGetter, setToken, tokenRef]);
 }
 
 /** Load token from storage on mount, discarding expired tokens. */

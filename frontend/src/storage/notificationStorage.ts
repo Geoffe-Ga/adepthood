@@ -11,17 +11,36 @@ function keyFor(habitId: number): string {
   return `${KEY_PREFIX}/${habitId}`;
 }
 
+/**
+ * BUG-FRONTEND-INFRA-011 — self-heal when AsyncStorage returns malformed JSON.
+ */
+async function resetCorruptKey(key: string, err: unknown): Promise<void> {
+  console.warn(`[storage] corrupt JSON in ${key}, clearing to self-heal`, err);
+  try {
+    await AsyncStorage.removeItem(key);
+  } catch (removeErr) {
+    console.warn(`[storage] failed to clear corrupt key ${key}`, removeErr);
+  }
+}
+
 export async function saveNotificationIds(habitId: number, ids: string[]): Promise<void> {
   await AsyncStorage.setItem(keyFor(habitId), JSON.stringify(ids));
   await trackHabitId(habitId);
 }
 
 export async function loadNotificationIds(habitId: number): Promise<string[]> {
+  const key = keyFor(habitId);
   try {
-    const raw = await AsyncStorage.getItem(keyFor(habitId));
+    const raw = await AsyncStorage.getItem(key);
     if (raw === null) return [];
-    return JSON.parse(raw);
-  } catch {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      await resetCorruptKey(key, new Error('expected array'));
+      return [];
+    }
+    return parsed as string[];
+  } catch (err: unknown) {
+    await resetCorruptKey(key, err);
     return [];
   }
 }
@@ -50,7 +69,8 @@ export async function savePushToken(token: string): Promise<void> {
 export async function loadPushToken(): Promise<string | null> {
   try {
     return await SecureStore.getItemAsync(PUSH_TOKEN_KEY);
-  } catch {
+  } catch (err: unknown) {
+    console.warn('[storage] SecureStore push-token load failed', err);
     return null;
   }
 }
@@ -59,8 +79,14 @@ async function loadTrackedHabitIds(): Promise<number[]> {
   try {
     const raw = await AsyncStorage.getItem(ALL_HABIT_IDS_KEY);
     if (raw === null) return [];
-    return JSON.parse(raw);
-  } catch {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      await resetCorruptKey(ALL_HABIT_IDS_KEY, new Error('expected array'));
+      return [];
+    }
+    return parsed as number[];
+  } catch (err: unknown) {
+    await resetCorruptKey(ALL_HABIT_IDS_KEY, err);
     return [];
   }
 }

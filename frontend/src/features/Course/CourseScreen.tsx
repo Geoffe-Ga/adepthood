@@ -9,7 +9,7 @@ import {
   type CourseProgress,
   type Stage,
 } from '../../api';
-import { STAGE_COLORS } from '../../design/tokens';
+import { STAGE_COLORS, colors } from '../../design/tokens';
 import { useAppNavigation, useAppRoute } from '../../navigation/hooks';
 
 import ContentCard from './ContentCard';
@@ -116,7 +116,7 @@ interface ProgressBarProps {
 
 const CourseProgressBar = ({ progress, spiralColor }: ProgressBarProps): React.JSX.Element => {
   const progressPercent = progress ? progress.progress_percent : 0;
-  const barColor = spiralColor ? STAGE_COLORS[spiralColor] ?? '#888' : '#888';
+  const barColor = spiralColor ? STAGE_COLORS[spiralColor] ?? colors.neutral : colors.neutral;
 
   return (
     <View style={styles.progressBarContainer} testID="progress-bar">

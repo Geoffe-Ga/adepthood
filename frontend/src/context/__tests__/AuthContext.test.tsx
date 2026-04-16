@@ -315,5 +315,98 @@ describe('AuthContext', () => {
       // Token should remain as-is when refresh fails
       expect(result.current.token).toBe('near-expiry-jwt');
     });
+
+    // BUG-FRONTEND-INFRA-020: assert we set a timer tied to
+    // ``exp - REFRESH_BUFFER_SECONDS`` and only fire ``silentRefresh`` once
+    // when that deadline passes — not on every re-render or auth-state tick.
+    it('fires silentRefresh exactly once when the REFRESH_BUFFER_SECONDS deadline elapses', async () => {
+      mockLoadToken.mockResolvedValue('fresh-jwt');
+      mockIsTokenExpired.mockReturnValue(false);
+      mockShouldRefreshToken.mockReturnValue(false);
+      const nowSec = Math.floor(Date.now() / 1000);
+      // Expires 10 minutes from now — REFRESH_BUFFER_SECONDS (5m) before
+      // that is 5 minutes from now; advancing fake timers past that mark
+      // should trigger exactly one refresh call.
+      (
+        require('@/utils/token') as { decodeJwtPayload: jest.Mock }
+      ).decodeJwtPayload.mockReturnValue({
+        exp: nowSec + 600,
+      });
+      mockAuth.refresh.mockResolvedValue({ token: 'refreshed-jwt', user_id: 1 });
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('fresh-jwt'));
+
+      // Not yet past the buffer → no refresh.
+      expect(mockAuth.refresh).not.toHaveBeenCalled();
+
+      await act(async () => {
+        // Advance past the scheduled refresh point (5 minutes + 1s).
+        jest.advanceTimersByTime(5 * 60 * 1000 + 1000);
+      });
+
+      await waitFor(() => expect(mockAuth.refresh).toHaveBeenCalledTimes(1));
+    });
+  });
+
+  // BUG-FRONTEND-INFRA-012: logout edge cases. The single integration test
+  // documented here exercises the full logout lifecycle rather than spot-
+  // checking internals — matching how users actually hit these paths.
+  describe('logout lifecycle (BUG-012)', () => {
+    it('handles back-to-back logout calls without double-clearing', async () => {
+      mockLoadToken.mockResolvedValue('existing-jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('existing-jwt'));
+
+      await act(async () => {
+        await Promise.all([result.current.logout(), result.current.logout()]);
+      });
+
+      expect(result.current.token).toBeNull();
+      expect(mockClearToken).toHaveBeenCalled();
+    });
+
+    it('survives a logout that fires while a token refresh is in flight', async () => {
+      mockLoadToken.mockResolvedValue('existing-jwt');
+      let resolveRefresh: ((value: { token: string; user_id: number }) => void) | null = null;
+      mockAuth.refresh.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      );
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('existing-jwt'));
+
+      const refreshed = mockSetOnTokenRefreshed.mock.calls.at(-1)?.[0];
+      await act(async () => {
+        await result.current.logout();
+      });
+      expect(result.current.token).toBeNull();
+
+      // Mid-flight refresh completes AFTER logout — do not resurrect the session.
+      await act(async () => {
+        resolveRefresh?.({ token: 'late-jwt', user_id: 1 });
+        refreshed?.('late-jwt');
+      });
+      await waitFor(() => expect(result.current.token).toBeNull());
+    });
+
+    it('cleanly round-trips logout → login in a single session', async () => {
+      mockLoadToken.mockResolvedValue('first-jwt');
+      mockAuth.login.mockResolvedValue({ token: 'second-jwt', user_id: 2 });
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.token).toBe('first-jwt'));
+      await act(async () => {
+        await result.current.logout();
+      });
+      expect(result.current.token).toBeNull();
+
+      await act(async () => {
+        await result.current.login('new@test.com', 'p'); // pragma: allowlist secret
+      });
+      expect(result.current.token).toBe('second-jwt');
+    });
   });
 });

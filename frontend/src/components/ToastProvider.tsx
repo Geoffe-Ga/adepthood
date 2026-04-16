@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import Toast, { type ToastConfig } from './Toast';
@@ -42,8 +42,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     [showNext],
   );
 
+  // BUG-FRONTEND-INFRA-004: a fresh ``{ showToast }`` on every render would
+  // force every consumer of ``useToast`` to re-render too. ``showToast`` is
+  // already stable via useCallback, so the memoized object wrapper is the
+  // complete fix.
+  const contextValue = useMemo<ToastContextValue>(() => ({ showToast }), [showToast]);
+
   return (
-    <ToastContext.Provider value={{ showToast }}>
+    <ToastContext.Provider value={contextValue}>
       {children}
       <View style={styles.overlay} pointerEvents="none" testID="toast-overlay">
         {currentToast ? <Toast {...currentToast} onDismiss={handleDismiss} /> : null}

@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+import { colors } from '../../design/tokens';
+
 import styles from './Journal.styles';
 
 const DEBOUNCE_DELAY_MS = 300;
@@ -13,7 +15,13 @@ interface SearchBarProps {
 
 const CollapsedSearchBar = ({ onToggle }: { onToggle: () => void }): React.JSX.Element => (
   <View style={styles.searchBarCollapsed}>
-    <TouchableOpacity testID="search-toggle" onPress={onToggle} style={styles.searchToggle}>
+    <TouchableOpacity
+      testID="search-toggle"
+      onPress={onToggle}
+      style={styles.searchToggle}
+      accessibilityLabel="Open journal search"
+      accessibilityRole="button"
+    >
       <Text style={styles.searchIcon}>?</Text>
     </TouchableOpacity>
   </View>
@@ -38,19 +46,32 @@ const ExpandedSearchBarContent = ({
 }: ExpandedSearchBarProps): React.JSX.Element => (
   <View style={styles.searchBarExpanded}>
     <View style={styles.searchInputRow}>
-      <TouchableOpacity testID="search-toggle" onPress={onToggle} style={styles.searchToggle}>
+      <TouchableOpacity
+        testID="search-toggle"
+        onPress={onToggle}
+        style={styles.searchToggle}
+        accessibilityLabel="Focus journal search"
+        accessibilityRole="button"
+      >
         <Text style={styles.searchIcon}>?</Text>
       </TouchableOpacity>
       <TextInput
         testID="search-input"
+        accessibilityLabel="Search journal"
         style={styles.searchTextInput}
         value={text}
         onChangeText={onChangeText}
         placeholder="Search journal..."
-        placeholderTextColor="#999"
+        placeholderTextColor={colors.text.tertiary}
         autoFocus
       />
-      <TouchableOpacity testID="search-clear" onPress={onClear} style={styles.searchClear}>
+      <TouchableOpacity
+        testID="search-clear"
+        onPress={onClear}
+        style={styles.searchClear}
+        accessibilityLabel="Clear search"
+        accessibilityRole="button"
+      >
         <Text style={styles.searchClearText}>X</Text>
       </TouchableOpacity>
     </View>

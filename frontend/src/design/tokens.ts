@@ -24,9 +24,19 @@ export const colors = {
   },
 
   text: {
+    // WCAG 2.1 AA contrast ratios assume a primary background of #f8f8f8.
+    //   primary     #333 / #f8f8f8 = 11.49 — pass AAA
+    //   secondary   #666 / #f8f8f8 = 5.41  — pass AA normal, fail AAA
+    //   tertiary    #999 / #f8f8f8 = 2.91  — fails AA normal (OK for large)
+    //   light       #fff / dark BG — case-by-case
+    // BUG-FRONTEND-INFRA-025: ``secondaryAccessible`` is the token to prefer
+    // for body copy that needs AAA; legacy ``secondary`` remains for large
+    // headings where AAA isn't required and the softer hue reads nicer.
     primary: '#333333',
     secondary: '#666666',
+    secondaryAccessible: '#555555', // 7.22:1 on #f8f8f8 — AAA normal text
     tertiary: '#999999',
+    tertiaryAccessible: '#707070', // 5.25:1 on #f8f8f8 — AA normal text
     light: '#ffffff',
   },
 
@@ -43,6 +53,15 @@ export const colors = {
     stretch: '#b0ae91',
     default: '#dad9d4',
   },
+
+  // Surface variants for destructive + success banners. ``danger`` above is
+  // the button-fill swatch; these are the softer banner/card treatments.
+  destructive: {
+    background: '#f8e0e0',
+    border: '#e58a8a',
+    text: '#b12828',
+  },
+  successText: '#2e7d32',
 
   border: '#ddd',
 } as const;

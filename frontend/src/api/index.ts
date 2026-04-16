@@ -1,3 +1,13 @@
+import { z } from 'zod';
+
+import {
+  authResponseSchema,
+  habitWithGoalsSchema,
+  isTier,
+  pageSchema,
+  type Page,
+  type Tier,
+} from './schemas';
 import type { components, paths } from './types';
 
 import { API_BASE_URL } from '@/config';
@@ -9,6 +19,36 @@ export type EnergyPlanRequest =
 export type EnergyPlanResponse =
   paths['/v1/energy/plan']['post']['responses']['200']['content']['application/json'];
 
+export type { Page } from './schemas';
+
+// ---------------------------------------------------------------------------
+// Timeouts, retries, and transient-error classification
+// (BUG-FRONTEND-INFRA-001 + BUG-FRONTEND-INFRA-007)
+// ---------------------------------------------------------------------------
+
+/** Default per-request timeout. Tuned long enough to cover slow 3G + warm-up. */
+export const FETCH_TIMEOUT_MS = 30_000;
+
+/**
+ * Longer timeout applied to BotMason SSE streams. The server keeps the
+ * connection open until the model finishes; a 30-second cap would kill the
+ * tail of every reply.
+ */
+export const STREAM_TIMEOUT_MS = 5 * 60_000;
+
+/** Maximum retry attempts **after** the initial request. */
+const MAX_RETRIES = 2;
+const BASE_BACKOFF_MS = 500;
+const MAX_BACKOFF_MS = 2_000;
+
+/** HTTP statuses worth retrying — every transient class except 401. */
+const TRANSIENT_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+
+/** Methods safe to retry without a caller-supplied idempotency key. */
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'DELETE']);
+
+const IDEMPOTENCY_HEADERS = new Set(['idempotency-key', 'x-idempotency-key']);
+
 export class ApiError extends Error {
   status: number;
   detail: string;
@@ -19,6 +59,45 @@ export class ApiError extends Error {
     this.status = status;
     this.detail = detail;
   }
+}
+
+/**
+ * Raised when the HTTP response JSON does not conform to its Zod schema
+ * (BUG-FRONTEND-INFRA-024). The caller sees a typed error they can surface
+ * as "Something changed on the server — please update the app"; the console
+ * logs the full Zod issue list so we can triage the mismatch.
+ */
+export class ApiValidationError extends Error {
+  status: number;
+  issues: z.ZodIssue[];
+  path: string;
+
+  constructor(path: string, status: number, issues: z.ZodIssue[]) {
+    super(`Response validation failed for ${path}: ${issues.length} issue(s)`);
+    this.name = 'ApiValidationError';
+    this.status = status;
+    this.issues = issues;
+    this.path = path;
+  }
+}
+
+/** Raised when a fetch times out before any response is received. */
+export class ApiTimeoutError extends Error {
+  constructor(path: string, timeoutMs: number) {
+    super(`Request timed out after ${timeoutMs}ms: ${path}`);
+    this.name = 'ApiTimeoutError';
+  }
+}
+
+/** Observer called with whether the client believes the network is reachable. */
+let networkOnlineGetter: (() => boolean) | null = null;
+
+export function setNetworkOnlineGetter(getter: (() => boolean) | null) {
+  networkOnlineGetter = getter;
+}
+
+function isKnownOffline(): boolean {
+  return networkOnlineGetter !== null && networkOnlineGetter() === false;
 }
 
 let tokenGetter: (() => string | null) | null = null;
@@ -51,11 +130,17 @@ export function setLlmApiKeyGetter(getter: (() => string | null) | null) {
   llmApiKeyGetter = getter;
 }
 
-interface RequestOptions {
+interface RequestOptions<TResponse = unknown> {
   method?: string;
   body?: unknown;
   token?: string;
   headers?: Record<string, string>;
+  /** Zod schema for BUG-024 runtime validation. Optional for incremental rollout. */
+  schema?: z.ZodType<TResponse>;
+  /** Per-request timeout override (used by BotMason streaming). */
+  timeoutMs?: number;
+  /** External abort signal; respected alongside the timeout. */
+  signal?: AbortSignal;
 }
 
 function resolveToken(token?: string): string | null {
@@ -95,6 +180,71 @@ function buildFetchInit(
   return Object.keys(init).length > 0 ? init : undefined;
 }
 
+function hasIdempotencyHeader(headers: Record<string, string> | undefined): boolean {
+  if (!headers) return false;
+  return Object.keys(headers).some((h) => IDEMPOTENCY_HEADERS.has(h.toLowerCase()));
+}
+
+function isRetryableMethod(method: string, headers?: Record<string, string>): boolean {
+  if (SAFE_METHODS.has(method.toUpperCase())) return true;
+  return hasIdempotencyHeader(headers);
+}
+
+/** True for network-level or explicitly transient HTTP failures. */
+function isTransientStatus(status: number): boolean {
+  return TRANSIENT_STATUSES.has(status);
+}
+
+function isAbortError(err: unknown): boolean {
+  if (err === null || typeof err !== 'object') return false;
+  const maybe = err as { name?: unknown };
+  return maybe.name === 'AbortError';
+}
+
+function computeBackoffMs(attempt: number): number {
+  // Exponential with 100% jitter so lots of clients reconnecting after an
+  // outage don't align on the same millisecond.
+  const exponential = Math.min(BASE_BACKOFF_MS * 2 ** (attempt - 1), MAX_BACKOFF_MS);
+  return Math.floor(exponential * (0.5 + Math.random()));
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Wrap a ``fetch`` with an ``AbortController`` + timeout, honouring any
+ * caller-supplied signal. Surfaces ``ApiTimeoutError`` when the clock wins
+ * so callers can branch on it separately from "server replied with an error".
+ */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit | undefined,
+  timeoutMs: number,
+  externalSignal: AbortSignal | undefined,
+  path: string,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const forwardAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener('abort', forwardAbort);
+  }
+  try {
+    const merged: RequestInit = { ...(init ?? {}), signal: controller.signal };
+    return await fetch(url, merged);
+  } catch (err: unknown) {
+    if (isAbortError(err) && !externalSignal?.aborted) {
+      throw new ApiTimeoutError(path, timeoutMs);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', forwardAbort);
+  }
+}
+
 async function extractErrorDetail(res: Response): Promise<string> {
   try {
     const errBody = await res.json();
@@ -112,9 +262,37 @@ async function handleErrorResponse(res: Response): Promise<never> {
   throw new ApiError(res.status, detail);
 }
 
-async function parseResponse<T>(res: Response): Promise<T> {
+/**
+ * Validate a response body with a Zod schema and raise
+ * {@link ApiValidationError} if it does not conform. We intentionally log the
+ * raw data at ``console.warn`` level so operators can diff the wire against
+ * the frontend expectation when a deploy goes sideways.
+ */
+function validateWithSchema<T>(
+  path: string,
+  status: number,
+  schema: z.ZodType<T>,
+  data: unknown,
+): T {
+  const parsed = schema.safeParse(data);
+  if (parsed.success) return parsed.data;
+  console.warn('[api] response validation failed', {
+    path,
+    status,
+    issues: parsed.error.issues,
+    // Don't leak full bodies in prod logs; the issue list already points at
+    // the offending path + reason. ``DEV`` flag lets engineers see the full
+    // body locally to triage quickly.
+    data: __DEV__ ? data : undefined,
+  });
+  throw new ApiValidationError(path, status, parsed.error.issues);
+}
+
+async function parseResponse<T>(res: Response, path = '', schema?: z.ZodType<T>): Promise<T> {
   if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  const data: unknown = await res.json();
+  if (schema) return validateWithSchema(path, res.status, schema, data);
+  return data as T;
 }
 
 /**
@@ -139,48 +317,64 @@ async function attemptTokenRefresh(): Promise<string | null> {
   }
 }
 
-function doFetch(url: string, init: RequestInit | undefined): Promise<Response> {
-  return init ? fetch(url, init) : fetch(url);
+function doFetch(
+  url: string,
+  init: RequestInit | undefined,
+  opts: { path: string; timeoutMs?: number; signal?: AbortSignal } = { path: '' },
+): Promise<Response> {
+  return fetchWithTimeout(
+    url,
+    init,
+    opts.timeoutMs ?? FETCH_TIMEOUT_MS,
+    opts.signal,
+    opts.path || url,
+  );
+}
+
+interface RefreshRetryContext<T> {
+  path: string;
+  url: string;
+  method: string;
+  body: unknown;
+  extraHeaders: Record<string, string> | undefined;
+  schema: z.ZodType<T> | undefined;
+  timeoutMs: number | undefined;
+  signal: AbortSignal | undefined;
 }
 
 /**
  * Attempt a token refresh and retry the original request once. Returns the
  * parsed response on success, or null if refresh/retry is not applicable.
  */
-async function retryWithRefresh<T>(
-  url: string,
-  method: string,
-  body: unknown,
-  extraHeaders: Record<string, string> | undefined,
-): Promise<T | null> {
+async function retryWithRefresh<T>(ctx: RefreshRetryContext<T>): Promise<T | null> {
   const newToken = await attemptTokenRefresh();
   if (!newToken) {
     onUnauthorizedCallback?.();
     return null;
   }
-  const retryHeaders = buildHeaders(newToken, body, extraHeaders);
-  const retryInit = buildFetchInit(method, body, retryHeaders);
-  const retryRes = await doFetch(url, retryInit);
+  const retryHeaders = buildHeaders(newToken, ctx.body, ctx.extraHeaders);
+  const retryInit = buildFetchInit(ctx.method, ctx.body, retryHeaders);
+  const retryRes = await doFetch(ctx.url, retryInit, {
+    path: ctx.path,
+    timeoutMs: ctx.timeoutMs,
+    signal: ctx.signal,
+  });
   if (!retryRes.ok) {
     if (retryRes.status === 401) onUnauthorizedCallback?.();
     return handleErrorResponse(retryRes);
   }
-  return parseResponse<T>(retryRes);
+  return parseResponse<T>(retryRes, ctx.path, ctx.schema);
 }
 
 async function handleUnauthorizedRetry<T>(
-  path: string,
   token: string | undefined,
-  url: string,
-  method: string,
-  body: unknown,
-  extraHeaders: Record<string, string> | undefined,
+  ctx: RefreshRetryContext<T>,
 ): Promise<T | null> {
-  const isAuthPath = path.startsWith('/auth/');
+  const isAuthPath = ctx.path.startsWith('/auth/');
   if (isAuthPath) return null;
 
   if (!token) {
-    const retried = await retryWithRefresh<T>(url, method, body, extraHeaders);
+    const retried = await retryWithRefresh<T>(ctx);
     if (retried !== null) return retried;
   } else {
     onUnauthorizedCallback?.();
@@ -188,31 +382,105 @@ async function handleUnauthorizedRetry<T>(
   return null;
 }
 
+/**
+ * Execute a single HTTP attempt: dispatch fetch, route 401 through refresh,
+ * parse the body. Returns a transient marker with the full ``ApiError`` so
+ * callers can both retry and (if retries are exhausted) surface the real
+ * server detail; throws a typed error otherwise.
+ */
+async function attemptRequest<T>(
+  ctx: RefreshRetryContext<T>,
+  token: string | undefined,
+): Promise<{ kind: 'ok'; value: T } | { kind: 'transient'; error: ApiError }> {
+  const resolved = resolveToken(token);
+  const headers = buildHeaders(resolved, ctx.body, ctx.extraHeaders);
+  const init = buildFetchInit(ctx.method, ctx.body, headers);
+  const res = await doFetch(ctx.url, init, {
+    path: ctx.path,
+    timeoutMs: ctx.timeoutMs,
+    signal: ctx.signal,
+  });
+
+  if (res.ok) {
+    const value = await parseResponse<T>(res, ctx.path, ctx.schema);
+    return { kind: 'ok', value };
+  }
+  if (res.status === 401) {
+    const retried = await handleUnauthorizedRetry<T>(token, ctx);
+    if (retried !== null) return { kind: 'ok', value: retried };
+  }
+  if (isTransientStatus(res.status) && isRetryableMethod(ctx.method, ctx.extraHeaders)) {
+    const detail = await extractErrorDetail(res);
+    return { kind: 'transient', error: new ApiError(res.status, detail) };
+  }
+  return handleErrorResponse(res);
+}
+
+function isRetryableException(err: unknown, canRetry: boolean): boolean {
+  if (!canRetry) return false;
+  if (err instanceof ApiTimeoutError) return true;
+  if (err instanceof TypeError && err.message.toLowerCase().includes('network')) return true;
+  if (!(err instanceof Error)) return false;
+  return err.name !== 'ApiError' && err.name !== 'ApiValidationError' && err.name !== 'AbortError';
+}
+
+async function runAttempt<T>(
+  ctx: RefreshRetryContext<T>,
+  token: string | undefined,
+  canRetry: boolean,
+): Promise<{ kind: 'ok'; value: T } | { kind: 'retry'; error: Error }> {
+  try {
+    const outcome = await attemptRequest<T>(ctx, token);
+    if (outcome.kind === 'ok') return outcome;
+    // Transient response — retain the real server detail so the eventual
+    // throw preserves the specific status instead of a generic placeholder.
+    return { kind: 'retry', error: outcome.error };
+  } catch (err: unknown) {
+    if (!isRetryableException(err, canRetry)) throw err;
+    return { kind: 'retry', error: err as Error };
+  }
+}
+
 async function request<T>(
   path: string,
-  { method = 'GET', body, token, headers: extraHeaders }: RequestOptions = {},
+  {
+    method = 'GET',
+    body,
+    token,
+    headers: extraHeaders,
+    schema,
+    timeoutMs,
+    signal,
+  }: RequestOptions<T> = {},
 ): Promise<T> {
-  const resolved = resolveToken(token);
-  const headers = buildHeaders(resolved, body, extraHeaders);
-  const init = buildFetchInit(method, body, headers);
-  const url = `${API_BASE_URL}${path}`;
-  const res = await doFetch(url, init);
+  const ctx: RefreshRetryContext<T> = {
+    path,
+    url: `${API_BASE_URL}${path}`,
+    method,
+    body,
+    extraHeaders,
+    schema,
+    timeoutMs,
+    signal,
+  };
 
-  if (!res.ok) {
-    if (res.status === 401) {
-      const retried = await handleUnauthorizedRetry<T>(
-        path,
-        token,
-        url,
-        method,
-        body,
-        extraHeaders,
-      );
-      if (retried !== null) return retried;
-    }
-    return handleErrorResponse(res);
+  // Fast-fail when the network layer already knows we're offline: retrying
+  // would just stall each attempt until the timeout. The caller can catch
+  // the ApiError and queue the request to replay on reconnect.
+  if (isKnownOffline() && method.toUpperCase() === 'GET') {
+    throw new ApiError(0, 'network_error');
   }
-  return parseResponse<T>(res);
+
+  const canRetry = isRetryableMethod(method, extraHeaders);
+  const totalAttempts = canRetry ? MAX_RETRIES + 1 : 1;
+  let lastError: Error = new ApiError(0, 'network_error');
+  for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
+    const outcome = await runAttempt<T>(ctx, token, canRetry);
+    if (outcome.kind === 'ok') return outcome.value;
+    lastError = outcome.error;
+    if (attempt < totalAttempts) await delay(computeBackoffMs(attempt));
+  }
+  throw lastError;
 }
 
 // Habit types and client
@@ -308,6 +576,29 @@ export interface HabitCreatePayload {
  * objects and notification fields are mapped from snake_case API names to
  * the camelCase local convention.
  */
+const NOTIFICATION_FREQUENCIES: readonly NotificationFrequency[] = [
+  'daily',
+  'weekly',
+  'custom',
+  'off',
+];
+
+function isNotificationFrequency(value: unknown): value is NotificationFrequency {
+  return (
+    typeof value === 'string' && (NOTIFICATION_FREQUENCIES as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * Narrow a free-form string from the API to the ``Tier`` enum
+ * (BUG-FRONTEND-INFRA-010). Unknown values default to ``"clear"`` rather than
+ * crashing — a backend that rolls out a new tier silently won't crater the
+ * UI while the schema waits for a follow-up deploy.
+ */
+function narrowTier(value: unknown): Tier {
+  return isTier(value) ? value : 'clear';
+}
+
 export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
   return {
     id: apiHabit.id,
@@ -321,7 +612,7 @@ export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
     goals: apiHabit.goals.map((g) => ({
       id: g.id,
       title: g.title,
-      tier: g.tier as 'low' | 'clear' | 'stretch',
+      tier: narrowTier(g.tier),
       target: g.target,
       target_unit: g.target_unit,
       frequency: g.frequency,
@@ -331,19 +622,47 @@ export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
     })),
     completions: [],
     notificationTimes: apiHabit.notification_times ?? undefined,
-    notificationFrequency:
-      (apiHabit.notification_frequency as LocalHabit['notificationFrequency']) ?? undefined,
+    notificationFrequency: isNotificationFrequency(apiHabit.notification_frequency)
+      ? apiHabit.notification_frequency
+      : undefined,
     notificationDays: apiHabit.notification_days ?? undefined,
     milestoneNotifications: apiHabit.milestone_notifications,
   };
 }
 
+const habitWithGoalsArraySchema = z.array(habitWithGoalsSchema);
+const habitPageSchema = pageSchema(habitWithGoalsSchema);
+
 export const habits = {
   list(token?: string): Promise<ApiHabitWithGoals[]> {
-    return request<ApiHabitWithGoals[]>('/habits', { token });
+    return request<ApiHabitWithGoals[]>('/habits', {
+      token,
+      schema: habitWithGoalsArraySchema as unknown as z.ZodType<ApiHabitWithGoals[]>,
+    });
+  },
+  /**
+   * Paginated habits list (BUG-INFRA-013). Opts into the server-side
+   * ``Page`` envelope introduced alongside the backend pagination change;
+   * callers that need ``total`` / ``has_more`` should prefer this over the
+   * bare-list variant above.
+   */
+  listPaginated(
+    params: { limit?: number; offset?: number } = {},
+    token?: string,
+  ): Promise<Page<ApiHabitWithGoals>> {
+    const query = new URLSearchParams({ paginate: 'true' });
+    if (params.limit != null) query.set('limit', String(params.limit));
+    if (params.offset != null) query.set('offset', String(params.offset));
+    return request<Page<ApiHabitWithGoals>>(`/habits?${query.toString()}`, {
+      token,
+      schema: habitPageSchema as unknown as z.ZodType<Page<ApiHabitWithGoals>>,
+    });
   },
   get(habitId: number, token?: string): Promise<ApiHabitWithGoals> {
-    return request<ApiHabitWithGoals>(`/habits/${habitId}`, { token });
+    return request<ApiHabitWithGoals>(`/habits/${habitId}`, {
+      token,
+      schema: habitWithGoalsSchema as unknown as z.ZodType<ApiHabitWithGoals>,
+    });
   },
   create(payload: HabitCreatePayload, token?: string): Promise<ApiHabit> {
     return request<ApiHabit>('/habits', { method: 'POST', body: payload, token });
@@ -588,12 +907,21 @@ async function openChatStream(
     ...(apiKey ? { [LLM_API_KEY_HEADER]: apiKey } : {}),
   };
   const headers = buildHeaders(resolvedToken, payload, extraHeaders);
-  return fetch(`${API_BASE_URL}/journal/chat/stream`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-    headers,
-    signal: options.signal,
-  });
+  const path = '/journal/chat/stream';
+  // BUG-001: even the streaming endpoint needs a (generous) wall clock.
+  // 5 minutes is long enough to cover a large BotMason reply but still
+  // short enough to eventually surface a wedged connection.
+  return fetchWithTimeout(
+    `${API_BASE_URL}${path}`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      headers,
+    },
+    STREAM_TIMEOUT_MS,
+    options.signal,
+    path,
+  );
 }
 
 async function readChatStream(
@@ -927,18 +1255,21 @@ export const auth = {
     return request<AuthResponse>('/auth/login', {
       method: 'POST',
       body: credentials,
+      schema: authResponseSchema,
     });
   },
   signup(credentials: AuthRequest): Promise<AuthResponse> {
     return request<AuthResponse>('/auth/signup', {
       method: 'POST',
       body: credentials,
+      schema: authResponseSchema,
     });
   },
   refresh(token: string): Promise<AuthResponse> {
     return request<AuthResponse>('/auth/refresh', {
       method: 'POST',
       token,
+      schema: authResponseSchema,
     });
   },
 };
@@ -972,5 +1303,6 @@ export default {
   setOnUnauthorized,
   setOnTokenRefreshed,
   setLlmApiKeyGetter,
+  setNetworkOnlineGetter,
   LLM_API_KEY_HEADER,
 };

@@ -52,12 +52,27 @@ describe('auth.refresh', () => {
 
 describe('retry-after-refresh on 401', () => {
   test('retries a failed request after refreshing the token', async () => {
+    // Full-fidelity habit so the BUG-024 Zod validator accepts the response.
+    const sampleHabit = {
+      id: 1,
+      user_id: 1,
+      name: 'Habit',
+      icon: '✨',
+      start_date: '2024-01-01T00:00:00Z',
+      energy_cost: 1,
+      energy_return: 2,
+      milestone_notifications: false,
+      stage: 'Beige',
+      streak: 0,
+      goals: [],
+    };
+
     // First call: 401 from /habits
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'unauthorized' }, 401));
     // Second call: refresh succeeds
     mockFetch.mockReturnValueOnce(jsonResponse({ token: 'refreshed-token', user_id: 1 }));
     // Third call: retry /habits with new token succeeds
-    mockFetch.mockReturnValueOnce(jsonResponse([{ id: 1, name: 'Habit' }]));
+    mockFetch.mockReturnValueOnce(jsonResponse([sampleHabit]));
 
     const result = await habits.list();
 
@@ -75,7 +90,7 @@ describe('retry-after-refresh on 401', () => {
     // Verify the onTokenRefreshed callback was called
     expect(mockOnTokenRefreshed).toHaveBeenCalledWith('refreshed-token');
 
-    expect(result).toEqual([{ id: 1, name: 'Habit' }]);
+    expect(result).toEqual([sampleHabit]);
   });
 
   test('calls onUnauthorized when refresh fails', async () => {

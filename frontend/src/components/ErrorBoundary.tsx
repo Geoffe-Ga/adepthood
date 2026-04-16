@@ -1,6 +1,8 @@
 import React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { colors, SPACING } from '../design/tokens';
+
 interface ErrorBoundaryProps {
   children: React.ReactNode;
 }
@@ -49,32 +51,32 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: colors.background.card,
   },
   content: {
-    padding: 24,
-    paddingTop: 48,
+    padding: SPACING.xl,
+    paddingTop: SPACING.xxl + SPACING.lg,
   },
   heading: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#b00020',
-    marginBottom: 12,
+    color: colors.danger,
+    marginBottom: SPACING.md,
   },
   guidance: {
     fontSize: 15,
-    color: '#333',
-    marginBottom: 16,
+    color: colors.text.primary,
+    marginBottom: SPACING.lg,
     lineHeight: 22,
   },
   message: {
     fontSize: 16,
-    color: '#222',
-    marginBottom: 16,
+    color: colors.text.primary,
+    marginBottom: SPACING.lg,
   },
   stack: {
     fontSize: 12,
-    color: '#555',
+    color: colors.text.secondaryAccessible,
     fontFamily: 'monospace',
   },
 });
