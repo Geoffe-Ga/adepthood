@@ -502,3 +502,94 @@ async def test_read_tracking_isolated_per_user(
     resp = await async_client.get("/course/stages/1/content", headers=bob_headers)
     data = resp.json()
     assert all(not item["is_read"] for item in data)
+
+
+# ── BUG-COURSE-007: get_content_item checks stage unlock ──────────────
+
+
+@pytest.mark.asyncio
+async def test_get_content_item_rejects_locked_stage(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-COURSE-007: Content from a locked stage must be forbidden."""
+    headers, user_id = await _signup(async_client)
+    # Create stage 2 content but user has NO progress record (only stage 1 unlocked)
+    _, items = await _seed_stage_with_content(db_session, stage_number=2)
+
+    resp = await async_client.get(f"/course/content/{items[0].id}", headers=headers)
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+# ── BUG-COURSE-005: mark_content_read checks stage unlock ─────────────
+
+
+@pytest.mark.asyncio
+async def test_mark_read_rejects_locked_stage(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-COURSE-005: Cannot mark content from a locked stage as read."""
+    headers, user_id = await _signup(async_client)
+    _, items = await _seed_stage_with_content(db_session, stage_number=2)
+
+    resp = await async_client.post(f"/course/content/{items[0].id}/mark-read", headers=headers)
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+# ── BUG-COURSE-002/003: past-stage content is fully unlocked ───────────
+
+
+@pytest.mark.asyncio
+async def test_past_stage_content_fully_unlocked(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-COURSE-002/003: User on stage 3 can see all stage-1 content
+    regardless of drip-feed timing."""
+    headers, user_id = await _signup(async_client)
+    await _seed_stage_with_content(db_session, stage_number=1)
+    # Also seed stage 3 so user can be on it
+    stage3 = CourseStage(
+        title="S3",
+        subtitle="S3",
+        stage_number=3,
+        overview_url="",
+        category="t",
+        aspect="t",
+        spiral_dynamics_color="red",
+        growing_up_stage="power",
+        divine_gender_polarity="m",
+        relationship_to_free_will="a",
+        free_will_description="t",
+    )
+    db_session.add(stage3)
+    await db_session.commit()
+    # User is on stage 3 with stages 1,2 completed
+    await _set_user_stage(db_session, user_id, stage_number=3)
+
+    resp = await async_client.get("/course/stages/1/content", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    # Even day-7 content should be unlocked for a past stage
+    assert all(not item["is_locked"] for item in data)
+    assert all(item["url"] is not None for item in data)
+
+
+# ── BUG-COURSE-004: next_unlock_day with negative days ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_course_progress_no_next_unlock_when_not_on_stage(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-COURSE-004: next_unlock_day should be None when user hasn't
+    started the stage (not pass -1 to next_unlock_day)."""
+    headers, _user_id = await _signup(async_client)
+    await _seed_stage_with_content(db_session, stage_number=1)
+    # User has no progress record
+    resp = await async_client.get("/course/stages/1/progress", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert data["next_unlock_day"] is None

@@ -55,7 +55,10 @@ const ContentCard = ({ item, onPress }: ContentCardProps): React.JSX.Element => 
       accessibilityRole="button"
       accessibilityLabel={`${item.title}${item.is_locked ? ', locked' : ''}${item.is_read ? ', read' : ''}`}
       disabled={item.is_locked}
-      onPress={() => onPress(item)}
+      onPress={() => {
+        if (item.is_locked) return;
+        onPress(item);
+      }}
       style={[
         styles.contentCard,
         item.is_locked && styles.contentCardLocked,
