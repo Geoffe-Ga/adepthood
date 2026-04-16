@@ -49,11 +49,21 @@ async def create_journal_entry(
     return entry
 
 
+def _escape_like(value: str) -> str:
+    """Escape SQL LIKE wildcards so literal ``%``, ``_``, ``\\`` are matched.
+
+    Uses ``\\`` as the escape character, which must be declared via
+    ``escape="\\\\"`` on the ``.ilike()`` call (BUG-JOURNAL-013).
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _build_filter_conditions(filters: _ListFilters) -> list[ColumnElement[bool]]:
     """Build SQLAlchemy where-clauses from the filter parameters."""
     conditions: list[ColumnElement[bool]] = []
     if filters.search is not None:
-        conditions.append(col(JournalEntry.message).ilike(f"%{filters.search}%"))
+        escaped = _escape_like(filters.search)
+        conditions.append(col(JournalEntry.message).ilike(f"%{escaped}%", escape="\\"))
     if filters.tag is not None:
         conditions.append(col(JournalEntry.tag) == filters.tag.value)
     if filters.practice_session_id is not None:
@@ -124,11 +134,15 @@ async def delete_journal_entry(
 )
 async def create_bot_response(
     payload: JournalBotMessageCreate,
-    _current_user: int = Depends(get_current_user),
+    current_user: int = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> JournalEntry:
-    """Store a BotMason AI response (internal endpoint for AI integration layer)."""
-    entry = JournalEntry(sender="bot", **payload.model_dump())
+    """Store a BotMason AI response (internal endpoint for AI integration layer).
+
+    ``user_id`` is sourced from the authenticated user — never from the request
+    body — to prevent cross-user injection (BUG-JOURNAL-002).
+    """
+    entry = JournalEntry(sender="bot", user_id=current_user, **payload.model_dump())
     session.add(entry)
     await session.commit()
     await session.refresh(entry)

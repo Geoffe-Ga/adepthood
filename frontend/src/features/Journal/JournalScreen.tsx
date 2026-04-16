@@ -346,14 +346,13 @@ function useFreeformSend(
 
 // --- Hook: send with bot ---
 
-function createBotPlaceholder(userId: number): ChatMessage {
+function createBotPlaceholder(): ChatMessage {
   // Offset by 1ms so the bot and user placeholders never collide on fast
   // hardware where ``Date.now()`` could return the same value back-to-back.
   return {
     id: -(Date.now() + 1),
     message: '',
     sender: 'bot',
-    user_id: userId,
     timestamp: new Date().toISOString(),
     tag: 'freeform',
     practice_session_id: null,
@@ -412,10 +411,7 @@ async function sendWithNonStreamingFallback(
     const result = await botmasonApi.chat({ message: text });
     deps.actions.replaceOptimistic(
       botPlaceholderId,
-      buildFinalBotMessage(
-        { ...createBotPlaceholder(0), id: botPlaceholderId, user_id: 0 },
-        result,
-      ),
+      buildFinalBotMessage({ ...createBotPlaceholder(), id: botPlaceholderId }, result),
     );
     deps.setOfferingBalance(result.remaining_balance);
     deps.setRemainingMessages(result.remaining_messages);
@@ -455,10 +451,7 @@ async function runChatStream(
         outcome.completed = true;
         deps.actions.replaceOptimistic(
           botPlaceholderId,
-          buildFinalBotMessage(
-            { ...createBotPlaceholder(0), id: botPlaceholderId, user_id: 0 },
-            result,
-          ),
+          buildFinalBotMessage({ ...createBotPlaceholder(), id: botPlaceholderId }, result),
         );
         deps.setOfferingBalance(result.remaining_balance);
         deps.setRemainingMessages(result.remaining_messages);
@@ -493,7 +486,7 @@ async function handleStreamError(
     // Runtime cannot read the body progressively — retry via the legacy
     // request/response endpoint so the user still receives the reply, just
     // without the typewriter effect.
-    const fallbackPlaceholder = createBotPlaceholder(0);
+    const fallbackPlaceholder = createBotPlaceholder();
     deps.actions.prependMessage(fallbackPlaceholder);
     await sendWithNonStreamingFallback(text, tag, optimisticUserId, fallbackPlaceholder.id, deps);
     return;
@@ -516,7 +509,7 @@ function useBotSend(deps: BotSendDeps) {
 
   const sendWithBot = useCallback(
     async (text: string, tag: JournalTag, optimisticUserId: number) => {
-      const botPlaceholder = createBotPlaceholder(0);
+      const botPlaceholder = createBotPlaceholder();
       deps.actions.prependMessage(botPlaceholder);
       setAwaitingBot(true);
       try {
@@ -569,7 +562,6 @@ function buildOptimisticMessage(
     id: -Date.now(),
     message: text,
     sender: 'user',
-    user_id: 0,
     timestamp: new Date().toISOString(),
     tag,
     practice_session_id: practiceSessionId,

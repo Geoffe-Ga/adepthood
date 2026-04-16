@@ -205,13 +205,33 @@ async def test_create_bot_response(async_client: AsyncClient) -> None:
     headers = await _signup(async_client)
     resp = await async_client.post(
         "/journal/bot-response",
-        json={"message": "Great job with your meditation!", "user_id": 1},
+        json={"message": "Great job with your meditation!"},
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.json()
     assert data["sender"] == "bot"
     assert data["message"] == "Great job with your meditation!"
+
+
+@pytest.mark.asyncio
+async def test_bot_response_ignores_user_id_in_payload(async_client: AsyncClient) -> None:
+    """BUG-JOURNAL-002: user_id in the payload must not override the authenticated user."""
+    alice_headers = await _signup(async_client, "alice")
+    bob_headers = await _signup(async_client, "bob")
+
+    # Alice tries to inject a bot message into Bob's journal by passing user_id
+    resp = await async_client.post(
+        "/journal/bot-response",
+        json={"message": "Injected message", "user_id": 999},
+        headers=alice_headers,
+    )
+    # user_id in payload is simply ignored (not in schema), entry uses auth user
+    assert resp.status_code == HTTPStatus.CREATED
+
+    # Bob should not see Alice's bot message
+    bob_journal = await async_client.get("/journal/", headers=bob_headers)
+    assert bob_journal.json()["total"] == 0
 
 
 # ── Search ───────────────────────────────────────────────────────────────

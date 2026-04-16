@@ -1,4 +1,5 @@
 import enum
+import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -7,6 +8,14 @@ from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
     from .user import User
+
+# Feature flag for column-level encryption at rest (BUG-JOURNAL-012).
+# When enabled, ``message`` is encrypted before DB write and decrypted on read
+# using Fernet symmetric encryption.  The key must be provided via the
+# ``JOURNAL_ENCRYPTION_KEY`` env var.
+#
+# TODO(#219): Implement Fernet encrypt/decrypt hooks and key rotation via KMS.
+ENCRYPTION_AT_REST_ENABLED = os.getenv("JOURNAL_ENCRYPT_AT_REST", "").lower() == "true"
 
 
 class JournalTag(enum.StrEnum):
