@@ -1,6 +1,7 @@
+from enum import StrEnum
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Column, String
+from sqlalchemy import Column, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -8,6 +9,14 @@ if TYPE_CHECKING:
     from .goal_completion import GoalCompletion
     from .goal_group import GoalGroup
     from .habit import Habit
+
+
+class GoalTier(StrEnum):
+    """Allowed tier values for a Goal."""
+
+    LOW = "low"
+    CLEAR = "clear"
+    STRETCH = "stretch"
 
 
 class Goal(SQLModel, table=True):
@@ -30,7 +39,7 @@ class Goal(SQLModel, table=True):
     habit_id: int = Field(foreign_key="habit.id")
     title: str = Field(max_length=255)
     description: str | None = Field(default=None, max_length=2_000)
-    tier: str = Field(max_length=50)  # "low", "clear", "stretch"
+    tier: str = Field(max_length=50)  # validated as GoalTier at the schema layer
     target: float
     target_unit: str = Field(max_length=50)  # "minutes", "reps", etc.
     frequency: float  # e.g. 2.0 = 2x per frequency_unit
@@ -42,7 +51,14 @@ class Goal(SQLModel, table=True):
     track_with_timer: bool = False
     timer_duration_minutes: int | None = None
     origin: str | None = Field(default=None, max_length=255)
-    goal_group_id: int | None = Field(default=None, foreign_key="goalgroup.id")
+    goal_group_id: int | None = Field(
+        default=None,
+        sa_column=Column(
+            Integer,
+            ForeignKey("goalgroup.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
     goal_group: Optional["GoalGroup"] = Relationship(back_populates="goals")
     is_additive: bool = True
     habit: "Habit" = Relationship(back_populates="goals")

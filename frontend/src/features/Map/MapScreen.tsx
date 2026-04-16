@@ -1,10 +1,11 @@
 // frontend/features/Map/MapScreen.tsx
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
   ImageBackground,
+  InteractionManager,
   Modal,
   Pressable,
   ScrollView,
@@ -352,7 +353,9 @@ const ModalBody = ({ stage, onClose, onNavigate }: ModalBodyProps): React.JSX.El
     <Text style={styles.modalSubtitle}>{stage.subtitle}</Text>
     <StageProgressSection stage={stage} />
     <StageMetadataSection stage={stage} />
-    <StageHistorySection stageNumber={stage.stageNumber} isUnlocked={stage.isUnlocked} />
+    {stage.isUnlocked && (
+      <StageHistorySection stageNumber={stage.stageNumber} isUnlocked={stage.isUnlocked} />
+    )}
     <View style={styles.separator} />
     <ActionLinks stage={stage} onNavigate={onNavigate} />
   </ScrollView>
@@ -440,6 +443,7 @@ const MapScreen = (): React.JSX.Element => {
   const error = useStageStore(selectStagesError);
   const currentStage = useStageStore(selectCurrentStage);
   const [activeStage, setActiveStage] = useState<StageData | null>(null);
+  const navigatingRef = useRef(false);
 
   useEffect(() => {
     if (stages.length === 0 && !loading) {
@@ -449,12 +453,20 @@ const MapScreen = (): React.JSX.Element => {
 
   const handleNavigate = useCallback(
     (screen: 'Practice' | 'Course' | 'Journal', stage: StageData) => {
+      if (navigatingRef.current) return;
+      navigatingRef.current = true;
       setActiveStage(null);
-      if (screen === 'Journal') {
-        navigation.navigate('Journal', { tag: 'stage_reflection', stageNumber: stage.stageNumber });
-      } else {
-        navigation.navigate(screen, { stageNumber: stage.stageNumber });
-      }
+      InteractionManager.runAfterInteractions(() => {
+        if (screen === 'Journal') {
+          navigation.navigate('Journal', {
+            tag: 'stage_reflection',
+            stageNumber: stage.stageNumber,
+          });
+        } else {
+          navigation.navigate(screen, { stageNumber: stage.stageNumber });
+        }
+        navigatingRef.current = false;
+      });
     },
     [navigation],
   );

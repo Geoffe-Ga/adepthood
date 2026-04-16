@@ -8,8 +8,8 @@ from sqlmodel import col, select
 
 from database import get_session
 from domain.course import compute_days_elapsed, filter_content_for_user, next_unlock_day
-from domain.stage_progress import get_user_progress, stage_exists
-from errors import not_found
+from domain.stage_progress import get_user_progress, is_stage_unlocked, stage_exists
+from errors import forbidden, not_found
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
@@ -21,6 +21,10 @@ from schemas.course import (
 )
 
 router = APIRouter(prefix="/course", tags=["course"])
+
+# When a user is past a stage, all drip-feed content should be accessible.
+# We use a large sentinel so ``release_day > days_elapsed`` is always False.
+_PAST_STAGE_DAYS_SENTINEL = 999_999
 
 
 async def _get_stage_by_number(session: AsyncSession, stage_number: int) -> CourseStage:
@@ -35,11 +39,22 @@ async def _get_stage_by_number(session: AsyncSession, stage_number: int) -> Cour
 
 
 async def _days_for_user_stage(session: AsyncSession, user_id: int, stage_number: int) -> int:
-    """Compute how many days the user has been on the given stage."""
+    """Compute how many days the user has been on the given stage.
+
+    Returns:
+    - ``_PAST_STAGE_DAYS_SENTINEL`` when the user has already moved past
+      this stage (all content should be unlocked).
+    - The actual days elapsed when the user is currently on this stage.
+    - ``-1`` when the user has no progress or hasn't reached this stage.
+    """
     progress = await get_user_progress(session, user_id)
-    if progress is None or progress.current_stage != stage_number:
-        return -1  # User is not on this stage
-    return compute_days_elapsed(progress.stage_started_at)
+    if progress is None:
+        return -1
+    if progress.current_stage > stage_number:
+        return _PAST_STAGE_DAYS_SENTINEL
+    if progress.current_stage == stage_number:
+        return compute_days_elapsed(progress.stage_started_at)
+    return -1
 
 
 async def _read_ids_for_user(
@@ -72,6 +87,13 @@ def _items_to_raw_dicts(items: list[StageContent]) -> list[dict[str, object]]:
     ]
 
 
+async def _check_stage_unlocked(session: AsyncSession, user_id: int, stage_number: int) -> None:
+    """Raise 403 if the given stage is locked for the user."""
+    progress = await get_user_progress(session, user_id)
+    if not is_stage_unlocked(stage_number, progress):
+        raise forbidden("stage_locked")
+
+
 @router.get("/stages/{stage_number}/content", response_model=list[ContentItemResponse])
 async def list_stage_content(
     stage_number: int,
@@ -88,12 +110,12 @@ async def list_stage_content(
     )
     items = list(result.scalars().all())
 
-    days = max(await _days_for_user_stage(session, current_user, stage_number), -1)
+    days = await _days_for_user_stage(session, current_user, stage_number)
     content_ids = [item.id for item in items if item.id is not None]
     read_ids = await _read_ids_for_user(session, current_user, content_ids)
 
     raw = _items_to_raw_dicts(items)
-    filtered = filter_content_for_user(raw, days_elapsed=days, read_content_ids=read_ids)
+    filtered = filter_content_for_user(raw, days_elapsed=max(days, -1), read_content_ids=read_ids)
     return [ContentItemResponse(**f) for f in filtered]
 
 
@@ -117,9 +139,10 @@ async def get_content_item(
     if stage is None:
         raise not_found("stage")
 
+    # BUG-COURSE-007: Verify the user has access to this stage
+    await _check_stage_unlocked(session, current_user, stage.stage_number)
+
     days = await _days_for_user_stage(session, current_user, stage.stage_number)
-    if days < 0:
-        days = -1
 
     item_id = item.id
     assert item_id is not None  # guaranteed after DB fetch
@@ -134,7 +157,7 @@ async def get_content_item(
             "url": item.url,
         }
     ]
-    filtered = filter_content_for_user(raw, days_elapsed=days, read_content_ids=read_ids)
+    filtered = filter_content_for_user(raw, days_elapsed=max(days, -1), read_content_ids=read_ids)
     return ContentItemResponse(**filtered[0])
 
 
@@ -147,8 +170,18 @@ async def mark_content_read(
     """Mark a content item as read. Idempotent — repeated calls return existing record."""
     # Verify content exists
     result = await session.execute(select(StageContent).where(StageContent.id == content_id))
-    if result.scalars().first() is None:
+    content_item = result.scalars().first()
+    if content_item is None:
         raise not_found("content")
+
+    # BUG-COURSE-005: Look up the parent stage and verify unlock
+    stage_result = await session.execute(
+        select(CourseStage).where(CourseStage.id == content_item.course_stage_id)
+    )
+    stage = stage_result.scalars().first()
+    if stage is None:
+        raise not_found("stage")
+    await _check_stage_unlocked(session, current_user, stage.stage_number)
 
     # Check for existing completion (idempotent)
     existing_result = await session.execute(
@@ -211,13 +244,17 @@ async def get_course_progress(
 
     read_ids = await _read_ids_for_user(session, current_user, _content_ids_from_items(items))
     progress_pct = round((len(read_ids) / len(items)) * 100, 2)
-    days = max(await _days_for_user_stage(session, current_user, stage_number), -1)
+    days = await _days_for_user_stage(session, current_user, stage_number)
+
+    # BUG-COURSE-004: Don't compute next_unlock_day when days_elapsed is
+    # negative (user hasn't started this stage) or for past stages.
+    nud: int | None = None
+    if 0 <= days < _PAST_STAGE_DAYS_SENTINEL:
+        nud = next_unlock_day(release_days=[item.release_day for item in items], days_elapsed=days)
 
     return CourseProgressResponse(
         total_items=len(items),
         read_items=len(read_ids),
         progress_percent=progress_pct,
-        next_unlock_day=next_unlock_day(
-            release_days=[item.release_day for item in items], days_elapsed=days
-        ),
+        next_unlock_day=nud,
     )

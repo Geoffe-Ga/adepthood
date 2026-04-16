@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from models.goal import GoalTier
+
 
 class Goal(BaseModel):
     """Public representation of a :class:`models.goal.Goal`.
@@ -16,7 +18,7 @@ class Goal(BaseModel):
     habit_id: int
     title: str
     description: str | None = None
-    tier: str
+    tier: GoalTier
     target: float
     target_unit: str
     frequency: float

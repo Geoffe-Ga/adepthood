@@ -7,7 +7,7 @@ from sqlmodel import select
 
 from models.course_stage import CourseStage
 
-STAGE_DEFINITIONS: list[dict[str, str | int]] = [
+_STAGE_DEFINITIONS: list[dict[str, str | int]] = [
     {
         "stage_number": 1,
         "title": "Survival",
@@ -139,6 +139,16 @@ STAGE_DEFINITIONS: list[dict[str, str | int]] = [
         "free_will_description": "Free will and determinism as one",
     },
 ]
+
+# BUG-SEED-002: Assert uniqueness of stage_numbers at import time so a
+# duplicate definition is caught immediately, not silently ignored at runtime.
+_stage_numbers = [d["stage_number"] for d in _STAGE_DEFINITIONS]
+assert len(set(_stage_numbers)) == len(_stage_numbers), (
+    f"Duplicate stage_number in STAGE_DEFINITIONS: "
+    f"{sorted(n for n in _stage_numbers if _stage_numbers.count(n) > 1)}"
+)
+
+STAGE_DEFINITIONS = _STAGE_DEFINITIONS
 
 
 async def seed_stages(session: AsyncSession) -> int:
