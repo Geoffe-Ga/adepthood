@@ -28,6 +28,23 @@ __all__ = [
 ]
 
 
+def _to_date(ts: object) -> date_type:
+    """Extract a calendar date from a timestamp (datetime or string)."""
+    return ts.date() if hasattr(ts, "date") else date_type.fromisoformat(str(ts)[:10])
+
+
+def _count_consecutive_days(sorted_days: list[date_type], day_ok: dict[date_type, bool]) -> int:
+    """Count consecutive days from most recent where ``day_ok`` is True."""
+    streak = 0
+    for i, day in enumerate(sorted_days):
+        if not day_ok[day]:
+            break
+        if i > 0 and (sorted_days[i - 1] - day).days != 1:
+            break
+        streak += 1
+    return streak
+
+
 async def compute_consecutive_streak(
     session: AsyncSession,
     goal_id: int,
@@ -47,46 +64,30 @@ async def compute_consecutive_streak(
 
     day_totals: dict[date_type, float] = {}
     for ts, units in rows:
-        day = ts.date() if hasattr(ts, "date") else date_type.fromisoformat(str(ts)[:10])
+        day = _to_date(ts)
         day_totals[day] = day_totals.get(day, 0.0) + units
 
     sorted_days = sorted(day_totals, reverse=True)
-    streak = 0
-    for i, day in enumerate(sorted_days):
-        if day_totals[day] <= 0:
-            break
-        if i > 0 and (sorted_days[i - 1] - day).days != 1:
-            break
-        streak += 1
-    return streak
+    day_ok = {d: day_totals[d] > 0 for d in sorted_days}
+    return _count_consecutive_days(sorted_days, day_ok)
 
 
 def compute_habit_streak(completions: Sequence[GoalCompletion]) -> int:
     """Compute current consecutive-day streak from in-memory completions.
 
     Used by ``GET /habits`` to populate streak without a per-goal DB query.
-    Considers all goals' completions for one habit.
     """
     if not completions:
         return 0
 
-    dates: set[date_type] = set()
-    for c in completions:
-        if c.completed_units > 0:
-            ts = c.timestamp
-            dates.add(ts.date() if hasattr(ts, "date") else date_type.fromisoformat(str(ts)[:10]))
+    dates: set[date_type] = {_to_date(c.timestamp) for c in completions if c.completed_units > 0}
 
     if not dates:
         return 0
 
     sorted_dates = sorted(dates, reverse=True)
-    streak = 1
-    for i in range(1, len(sorted_dates)):
-        if (sorted_dates[i - 1] - sorted_dates[i]).days == 1:
-            streak += 1
-        else:
-            break
-    return streak
+    day_ok = dict.fromkeys(sorted_dates, True)
+    return _count_consecutive_days(sorted_dates, day_ok)
 
 
 def check_milestones(
