@@ -29,17 +29,19 @@ depends_on: Union[str, Sequence[str], None] = None
 
 _UNIQUE_LOWER_EMAIL_INDEX = "ix_user_lower_email_unique"
 
-# CTE that pairs each duplicate user row with the keeper (lowest id per email).
+# CTE that pairs each duplicate user row with the keeper (lowest id per
+# lower(email) group). Duplicates can only differ by case because ``user.email``
+# already has a case-sensitive unique constraint.
 _DUPES_CTE = """
     WITH dupes AS (
         SELECT u.id AS dupe_id, keeper.keeper_id
         FROM "user" u
         JOIN (
-            SELECT email, min(id) AS keeper_id
+            SELECT lower(email) AS lower_email, min(id) AS keeper_id
             FROM "user"
-            GROUP BY email
+            GROUP BY lower(email)
             HAVING count(*) > 1
-        ) keeper ON keeper.email = u.email AND u.id != keeper.keeper_id
+        ) keeper ON keeper.lower_email = lower(u.email) AND u.id != keeper.keeper_id
     )
 """
 
@@ -59,11 +61,14 @@ _CHILD_TABLES: list[tuple[str, str]] = [
 
 
 def upgrade() -> None:
-    """Deduplicate case-variant emails, then add a unique index on lower(email)."""
-    # 1. Normalize every email to lowercase.
-    op.execute('UPDATE "user" SET email = lower(email)')
+    """Deduplicate case-variant emails, then add a unique index on lower(email).
 
-    # 2. Reassign child records from duplicate users to the keeper.
+    Order matters: the existing ``ix_user_email`` unique constraint would reject
+    ``UPDATE ... SET email = lower(email)`` whenever two case-variant rows
+    would collide (e.g. ``Geoff@…`` → ``geoff@…``). Merge the duplicates first,
+    *then* lowercase, *then* create the new index.
+    """
+    # 1. Reassign child records from duplicate users to the keeper.
     for table, col in _CHILD_TABLES:
         op.execute(
             f"{_DUPES_CTE}"
@@ -71,7 +76,7 @@ def upgrade() -> None:
             f'FROM dupes WHERE "{table}".{col} = dupes.dupe_id'
         )
 
-    # 3. stageprogress has a UNIQUE(user_id) constraint — special handling.
+    # 2. stageprogress has a UNIQUE(user_id) constraint — special handling.
     #    Delete the duplicate's row when the keeper already has one.
     op.execute(
         f"{_DUPES_CTE}"
@@ -88,11 +93,16 @@ def upgrade() -> None:
         "FROM dupes WHERE stageprogress.user_id = dupes.dupe_id"
     )
 
-    # 4. Delete duplicate user rows (all children have been moved).
+    # 3. Delete duplicate user rows (all children have been moved).
     op.execute(
         'DELETE FROM "user" '
-        "WHERE id NOT IN (SELECT min(id) FROM \"user\" GROUP BY email)"
+        'WHERE id NOT IN (SELECT min(id) FROM "user" GROUP BY lower(email))'
     )
+
+    # 4. Normalize every remaining email to lowercase. Safe now: deduplication
+    #    guarantees no two rows share a lower(email) value, so the existing
+    #    case-sensitive unique constraint cannot be violated.
+    op.execute('UPDATE "user" SET email = lower(email) WHERE email != lower(email)')
 
     # 5. Create the case-insensitive unique index.
     op.execute(
