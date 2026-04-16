@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import secrets
@@ -46,6 +47,23 @@ def _get_secret_key() -> str:
         msg = "SECRET_KEY environment variable must be set to a secure value"
         raise RuntimeError(msg)
     return SECRET_KEY
+
+
+# Length of the email log fingerprint. Twelve hex chars (48 bits) is ample to
+# distinguish accounts in a single tenant's log stream while remaining short
+# enough to read at a glance, and it is not reversible to the original email.
+_EMAIL_LOG_FINGERPRINT_LEN = 12
+
+
+def _email_log_fingerprint(email: str) -> str:
+    """Stable, non-reversible identifier safe for logs — never log raw emails.
+
+    Returned value is deterministic for a given normalized email, so operators
+    can still correlate events across log lines (e.g. repeated failed logins)
+    without exposing PII to log aggregation.
+    """
+    digest = hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()
+    return digest[:_EMAIL_LOG_FINGERPRINT_LEN]
 
 
 class AuthRequest(BaseModel):
@@ -138,7 +156,7 @@ async def _record_attempt(
     logger.info(
         "auth_attempt",
         extra={
-            "email": email,
+            "email_fingerprint": _email_log_fingerprint(email),
             "ip_address": ip_address,
             "success": success,
             "timestamp": datetime.now(UTC).isoformat(),
@@ -216,7 +234,7 @@ async def login(
         logger.info(
             "auth_attempt_blocked",
             extra={
-                "email": payload.email,
+                "email_fingerprint": _email_log_fingerprint(payload.email),
                 "ip_address": ip_address,
                 "reason": "account_locked",
                 "timestamp": datetime.now(UTC).isoformat(),
