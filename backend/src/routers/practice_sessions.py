@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import func, select
+from sqlmodel import col, func, select
 
 from database import get_session
 from errors import forbidden, not_found
@@ -66,15 +66,19 @@ async def list_sessions(
     session: AsyncSession = Depends(get_session),  # noqa: B008
     pagination: PaginationParams = Depends(),  # noqa: B008
 ) -> Page[PracticeSessionResponse] | list[PracticeSessionResponse]:
-    """List sessions for a specific user-practice.
+    """List sessions for a specific user-practice, newest first.
 
     BUG-INFRA-014: returns ``Page[PracticeSessionResponse]`` when
     ``?paginate=true`` is set; otherwise the legacy bare list is returned
     for one release while the frontend migrates to the envelope.
     """
-    query = select(PracticeSession).where(
-        PracticeSession.user_practice_id == user_practice_id,
-        PracticeSession.user_id == current_user,
+    query = (
+        select(PracticeSession)
+        .where(
+            PracticeSession.user_practice_id == user_practice_id,
+            PracticeSession.user_id == current_user,
+        )
+        .order_by(col(PracticeSession.timestamp).desc())
     )
     items, total = await paginate_query(session, query, pagination)
     serialized = [PracticeSessionResponse.model_validate(s, from_attributes=True) for s in items]

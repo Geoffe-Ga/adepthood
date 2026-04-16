@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from database import get_session
 from errors import not_found
@@ -37,7 +37,7 @@ async def list_practices(
     """
     query = select(Practice).where(
         Practice.stage_number == stage_number,
-        Practice.approved == True,  # noqa: E712
+        col(Practice.approved).is_(True),
     )
     items, total = await paginate_query(session, query, pagination)
     serialized = [PracticeResponse.model_validate(p, from_attributes=True) for p in items]
@@ -55,7 +55,7 @@ async def get_practice(
     """Get a single practice with full instructions."""
     result = await session.execute(select(Practice).where(Practice.id == practice_id))
     practice = result.scalars().first()
-    if practice is None:
+    if practice is None or not practice.approved:
         raise not_found("practice")
     return practice
 

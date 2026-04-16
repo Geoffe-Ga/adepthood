@@ -13,6 +13,7 @@ class Habit:
     name: str
     energy_cost: int
     energy_return: int
+    start_date: date | None = None
 
     @property
     def net_energy(self) -> int:
@@ -56,7 +57,10 @@ def generate_plan(habits: Sequence[Habit], start_date: date) -> tuple[EnergyPlan
     net_energy = 0
     for offset in range(PLAN_DURATION_DAYS):
         habit = habits[offset % len(habits)]
-        items.append(EnergyPlanItem(habit_id=habit.id, date=start_date + timedelta(days=offset)))
+        plan_date = start_date + timedelta(days=offset)
+        if habit.start_date is not None and habit.start_date > plan_date:
+            continue
+        items.append(EnergyPlanItem(habit_id=habit.id, date=plan_date))
         net_energy += habit.net_energy
     plan = EnergyPlan(items=items, net_energy=net_energy)
     return plan, "generated_21_day_plan"

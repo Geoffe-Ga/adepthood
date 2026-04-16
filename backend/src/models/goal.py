@@ -36,7 +36,9 @@ class Goal(SQLModel, table=True):
     """
 
     id: int | None = Field(default=None, primary_key=True)
-    habit_id: int = Field(foreign_key="habit.id")
+    habit_id: int = Field(
+        sa_column=Column(ForeignKey("habit.id", ondelete="CASCADE"), nullable=False),
+    )
     title: str = Field(max_length=255)
     description: str | None = Field(default=None, max_length=2_000)
     tier: str = Field(max_length=50)  # validated as GoalTier at the schema layer

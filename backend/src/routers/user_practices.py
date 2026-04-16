@@ -36,13 +36,24 @@ async def create_user_practice(
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> UserPractice:
     """Select a practice for a stage, creating a UserPractice record."""
-    # Verify practice exists
+    # Verify practice exists and is approved
     result = await session.execute(select(Practice).where(Practice.id == payload.practice_id))
     practice = result.scalars().first()
     if practice is None:
         raise not_found("practice")
     if not practice.approved:
         raise bad_request("practice_not_approved")
+
+    # BUG-PRACTICE-011: prevent multiple active practices for the same stage
+    existing = await session.execute(
+        select(UserPractice.id).where(
+            UserPractice.user_id == current_user,
+            UserPractice.stage_number == payload.stage_number,
+            UserPractice.end_date.is_(None),  # type: ignore[union-attr]
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise bad_request("active_practice_exists_for_stage")
 
     user_practice = UserPractice(
         user_id=current_user,

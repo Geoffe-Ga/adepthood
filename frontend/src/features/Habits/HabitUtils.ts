@@ -114,8 +114,8 @@ export const calculateProgressIncrements = (goal: Goal): number[] => {
 };
 
 const DAYS_PER_WEEK = 7;
-/** Approximate days per month used for daily-equivalent normalization. */
-const APPROX_DAYS_PER_MONTH = 30;
+/** Average days per month (365.25 / 12) for daily-equivalent normalization. */
+const APPROX_DAYS_PER_MONTH = 30.437;
 
 export const getGoalTarget = (goal: Goal): number => {
   if (!goal) return 0;
@@ -168,17 +168,21 @@ const resolveSubtractiveTier = (
   clearGoal: Goal,
   stretchGoal: Goal,
 ): GoalTierResult => {
-  const lowTarget = getGoalTarget(lowGoal);
-  const clearTarget = getGoalTarget(clearGoal);
-  const stretchTarget = getGoalTarget(stretchGoal);
+  const lowLimit = getGoalTarget(lowGoal);
+  const clearLimit = getGoalTarget(clearGoal);
+  const stretchLimit = getGoalTarget(stretchGoal);
 
-  if (totalProgress <= stretchTarget) {
+  const isUnderStretch = totalProgress <= stretchLimit;
+  const isUnderClear = totalProgress <= clearLimit;
+  const isUnderLow = totalProgress <= lowLimit;
+
+  if (isUnderStretch) {
     return { currentGoal: stretchGoal, nextGoal: null, completedAllGoals: true };
   }
-  if (totalProgress <= clearTarget) {
+  if (isUnderClear) {
     return { currentGoal: clearGoal, nextGoal: stretchGoal, completedAllGoals: false };
   }
-  if (totalProgress <= lowTarget) {
+  if (isUnderLow) {
     return { currentGoal: lowGoal, nextGoal: clearGoal, completedAllGoals: false };
   }
   return { currentGoal: lowGoal, nextGoal: null, completedAllGoals: false };
@@ -306,6 +310,9 @@ const emptyStats = (): HabitStatsData => ({
   completionDates: [],
 });
 
+/** UTC-based day key to avoid timezone drift around midnight (BUG-HABITS-005). */
+const utcDayKey = (d: Date): string => d.toISOString().slice(0, 10);
+
 const aggregateByDayOfWeek = (completions: Completion[]) => {
   const unitsByDay = new Array(DAYS_IN_WEEK).fill(0) as number[];
   const presenceByDay = new Array(DAYS_IN_WEEK).fill(0) as number[];
@@ -313,10 +320,10 @@ const aggregateByDayOfWeek = (completions: Completion[]) => {
 
   for (const c of completions) {
     const d = new Date(c.timestamp);
-    const dayIdx = d.getDay();
+    const dayIdx = d.getUTCDay() % DAYS_IN_WEEK;
     unitsByDay[dayIdx] = unitsByDay[dayIdx]! + c.completed_units;
     presenceByDay[dayIdx] = 1;
-    daysWithCompletions.add(d.toDateString());
+    daysWithCompletions.add(utcDayKey(d));
   }
 
   return { unitsByDay, presenceByDay, daysWithCompletions };
@@ -343,7 +350,7 @@ const computeCompletionRate = (sortedDays: Date[], totalUniqueDays: number): num
   if (sortedDays.length === 0) return 0;
   const firstDay = sortedDays[0]!;
   const lastDay = sortedDays[sortedDays.length - 1]!;
-  const spanDays = Math.round((lastDay.getTime() - firstDay.getTime()) / MS_PER_DAY) + 1;
+  const spanDays = Math.floor((lastDay.getTime() - firstDay.getTime()) / MS_PER_DAY) + 1;
   return spanDays > 0 ? totalUniqueDays / spanDays : 0;
 };
 
@@ -362,7 +369,7 @@ const computeCurrentStreak = (sortedDays: Date[]): number => {
 };
 
 const collectCompletionDates = (sortedDays: Date[]): string[] =>
-  sortedDays.map((d) => d.toISOString().split('T')[0] ?? '');
+  sortedDays.filter((d) => !isNaN(d.getTime())).map((d) => d.toISOString().slice(0, 10));
 
 /**
  * Compute real stats from a habit's completions array.
@@ -376,7 +383,7 @@ export const generateStatsForHabit = (habit: Habit): HabitStatsData => {
   const { unitsByDay, presenceByDay, daysWithCompletions } = aggregateByDayOfWeek(completions);
 
   const sortedDays = Array.from(daysWithCompletions)
-    .map((s) => new Date(s))
+    .map((s) => new Date(s + 'T00:00:00Z'))
     .sort((a, b) => a.getTime() - b.getTime());
 
   return {
@@ -416,11 +423,11 @@ export const calculateMissedDays = (habit: Habit): Date[] => {
 
   const completedDates = new Set<string>();
   for (const c of completions) {
-    completedDates.add(new Date(c.timestamp).toDateString());
+    completedDates.add(utcDayKey(new Date(c.timestamp)));
   }
 
   const sorted = Array.from(completedDates)
-    .map((s) => new Date(s))
+    .map((s) => new Date(s + 'T00:00:00Z'))
     .sort((a, b) => a.getTime() - b.getTime());
 
   if (sorted.length < 2) return [];
@@ -432,10 +439,10 @@ export const calculateMissedDays = (habit: Habit): Date[] => {
   cursor.setDate(cursor.getDate() + 1);
 
   while (cursor < last) {
-    if (!completedDates.has(cursor.toDateString())) {
+    if (!completedDates.has(utcDayKey(cursor))) {
       missed.push(new Date(cursor));
     }
-    cursor.setDate(cursor.getDate() + 1);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
 
   return missed;
@@ -447,7 +454,7 @@ export const calculateMissedDays = (habit: Habit): Date[] => {
 export const logHabitUnits = (habit: Habit, amount: number, date: Date = new Date()): Habit => {
   const alreadyLoggedToday =
     habit.last_completion_date &&
-    new Date(habit.last_completion_date).toDateString() === date.toDateString();
+    utcDayKey(new Date(habit.last_completion_date)) === utcDayKey(date);
 
   const completion: Completion = {
     id: uuidv4(),

@@ -9,6 +9,6 @@ class Practice(SQLModel, table=True):
     name: str = Field(max_length=255)
     description: str = Field(max_length=2_000)
     instructions: str = Field(max_length=10_000)
-    default_duration_minutes: int
+    default_duration_minutes: float
     submitted_by_user_id: int | None = Field(default=None, foreign_key="user.id")
     approved: bool = True

@@ -18,6 +18,9 @@ import { colors } from '../../../design/tokens';
 import {
   saveHabits as persistHabits,
   loadHabits as loadCachedHabits,
+  savePendingCheckIn,
+  loadPendingCheckIns,
+  clearPendingCheckIns,
 } from '../../../storage/habitStorage';
 import { useHabitStore } from '../../../store/useHabitStore';
 import { HABIT_DEFAULTS } from '../HabitDefaults';
@@ -75,14 +78,24 @@ const toApiPayload = (h: Habit): HabitCreatePayload => ({
 const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.list>>): Habit[] =>
   apiHabits.map((h) => ({
     id: h.id,
-    stage: '',
+    stage: h.stage ?? '',
     name: h.name,
     icon: h.icon,
-    streak: 0,
+    streak: h.streak ?? 0,
     energy_cost: h.energy_cost,
     energy_return: h.energy_return,
     start_date: new Date(h.start_date),
-    goals: [],
+    goals: (h.goals ?? []).map((g) => ({
+      id: g.id,
+      title: g.title,
+      tier: g.tier as 'low' | 'clear' | 'stretch',
+      target: g.target,
+      target_unit: g.target_unit,
+      frequency: g.frequency,
+      frequency_unit: g.frequency_unit,
+      is_additive: g.is_additive,
+      goal_group_id: g.goal_group_id ?? null,
+    })),
     completions: [],
     revealed: true,
     notificationTimes: h.notification_times ?? undefined,
@@ -272,10 +285,10 @@ const getHabits = (): Habit[] => useHabitStore.getState().habits;
 // rolls back on network failure.
 // ---------------------------------------------------------------------------
 
-const handleApiSuccess = (
+const handleApiSuccess = async (
   apiHabits: Awaited<ReturnType<typeof habitsApi.list>>,
   hasCachedData: boolean,
-): void => {
+): Promise<void> => {
   if (apiHabits.length === 0 && !hasCachedData) {
     setHabits(FALLBACK_HABITS);
     return;
@@ -283,7 +296,7 @@ const handleApiSuccess = (
   if (apiHabits.length > 0) {
     const mapped = mapApiHabits(apiHabits);
     setHabits(mapped);
-    void persistHabits(mapped);
+    await persistHabits(mapped);
   }
 };
 
@@ -303,7 +316,7 @@ const handleApiError = (err: unknown, hasCachedData: boolean): void => {
 const fetchFromApi = async (hasCachedData: boolean): Promise<void> => {
   try {
     const apiHabits = await habitsApi.list();
-    handleApiSuccess(apiHabits, hasCachedData);
+    await handleApiSuccess(apiHabits, hasCachedData);
     setError(null);
   } catch (err) {
     handleApiError(err, hasCachedData);
@@ -341,6 +354,23 @@ export const habitManager = {
     }
     await fetchFromApi(hasCachedData);
     setLoading(false);
+
+    // BUG-HABITS-007: replay pending check-ins queued during offline
+    const pending = await loadPendingCheckIns();
+    if (pending.length > 0) {
+      for (const checkIn of pending) {
+        try {
+          await goalCompletionsApi.create({
+            goal_id: checkIn.goal_id,
+            did_complete: checkIn.did_complete,
+          });
+        } catch {
+          // still offline — leave in queue for next load
+          return;
+        }
+      }
+      await clearPendingCheckIns();
+    }
   },
 
   updateGoal: (habitId: number, updatedGoal: Goal): void => {
@@ -406,14 +436,17 @@ export const habitManager = {
     if (target && target.goals.length > 0) {
       const { currentGoal } = getGoalTier(target);
       if (currentGoal.id) {
-        goalCompletionsApi
-          .create({ goal_id: currentGoal.id, did_complete: true })
-          .catch(
-            revertOnFailure(
-              prev,
-              "We couldn't save that check-in to the server. Your progress was rolled back locally — check your connection and tap the habit again.",
-            ),
-          );
+        const pendingPayload = { goal_id: currentGoal.id, did_complete: true };
+        goalCompletionsApi.create(pendingPayload).catch((err: unknown) => {
+          void savePendingCheckIn({
+            ...pendingPayload,
+            timestamp: new Date().toISOString(),
+          });
+          revertOnFailure(
+            prev,
+            "We couldn't save that check-in to the server. It's queued and will retry when you're back online.",
+          )(err);
+        });
       }
     }
     return updated;
