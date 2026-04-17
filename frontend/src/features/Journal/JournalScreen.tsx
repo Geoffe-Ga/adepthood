@@ -571,7 +571,27 @@ function buildOptimisticMessage(
 
 // --- List helpers ---
 
-const keyExtractor = (item: ChatMessage): string => String(item.id);
+// BUG-FRONTEND-INFRA-014: explicit typing keeps the extractor in sync with
+// the FlatList generic so a later rename/add on ChatMessage fails the type
+// check instead of silently coercing to ``any`` through the default signature.
+const keyExtractor: (_item: ChatMessage, _index: number) => string = (item) => String(item.id);
+
+/**
+ * BUG-FRONTEND-INFRA-015: FlatList gets dramatically faster when we can give
+ * it a fixed item height — it skips synchronous measurement and can jump to
+ * ``messages[i]`` in O(1). Messages have variable wrap but a sensible
+ * average keeps scrollToEnd/scrollToIndex accurate enough for the inverted
+ * layout we use here.
+ */
+const ESTIMATED_MESSAGE_HEIGHT = 84;
+const journalGetItemLayout = (
+  _data: ArrayLike<ChatMessage> | null | undefined,
+  index: number,
+): { length: number; offset: number; index: number } => ({
+  length: ESTIMATED_MESSAGE_HEIGHT,
+  offset: ESTIMATED_MESSAGE_HEIGHT * index,
+  index,
+});
 
 function getErrorLabel(detail: string | undefined): string {
   if (!detail) return '';
@@ -662,12 +682,17 @@ const JournalMessageList = ({
       data={messages}
       renderItem={renderItem}
       keyExtractor={keyExtractor}
+      getItemLayout={journalGetItemLayout}
       inverted
       contentContainerStyle={[styles.messageList, messages.length === 0 && { flexGrow: 1 }]}
       ListFooterComponent={renderFooter}
       ListEmptyComponent={renderEmpty}
       onEndReached={onLoadMore}
       onEndReachedThreshold={0.3}
+      removeClippedSubviews
+      initialNumToRender={20}
+      maxToRenderPerBatch={20}
+      windowSize={11}
     />
   );
 };

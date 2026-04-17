@@ -2,7 +2,7 @@ import React from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
 import type { Stage } from '../../api';
-import { STAGE_COLORS, STAGE_ORDER } from '../../design/tokens';
+import { STAGE_COLORS, STAGE_ORDER, colors } from '../../design/tokens';
 
 import styles from './Course.styles';
 
@@ -22,10 +22,10 @@ interface StageSelectorProps {
 function getStageColor(stageNumber: number, stages: Stage[]): string {
   const stage = stages.find((s) => s.stage_number === stageNumber);
   if (stage) {
-    return STAGE_COLORS[stage.spiral_dynamics_color] ?? '#888';
+    return STAGE_COLORS[stage.spiral_dynamics_color] ?? colors.neutral;
   }
   const name = STAGE_ORDER[stageNumber - 1];
-  return name ? STAGE_COLORS[name] ?? '#888' : '#888';
+  return name ? STAGE_COLORS[name] ?? colors.neutral : colors.neutral;
 }
 
 /** Determine if a stage is unlocked based on API data. */

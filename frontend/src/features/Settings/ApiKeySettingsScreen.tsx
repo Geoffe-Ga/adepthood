@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 
 import { useApiKey } from '@/context/ApiKeyContext';
+import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
 
 /**
  * BYOK ("Bring Your Own Key") settings for BotMason chat.
@@ -82,6 +83,8 @@ const StoredKeyCard = ({
       style={[styles.button, styles.destructiveButton]}
       disabled={disabled}
       testID="remove-key-button"
+      accessibilityLabel="Remove stored API key"
+      accessibilityRole="button"
     >
       <Text style={styles.destructiveButtonText}>Remove key</Text>
     </TouchableOpacity>
@@ -173,6 +176,55 @@ interface ScreenBodyProps {
   onBack?: () => void;
 }
 
+const ScreenIntro = ({ apiKey }: { apiKey: string | null }): React.JSX.Element => (
+  <>
+    <Text style={styles.title}>BotMason API Key</Text>
+    <Text style={styles.body}>
+      Bring your own OpenAI or Anthropic API key. It is stored only on this device and sent with
+      every BotMason request via the X-LLM-API-Key header. We never upload it to our servers.
+    </Text>
+    {!apiKey && (
+      <Text style={styles.hint} testID="no-key-hint">
+        No key saved yet. BotMason will use the shared server key if one is configured.
+      </Text>
+    )}
+  </>
+);
+
+const ScreenFooter = ({
+  submitting,
+  onSave,
+  onBack,
+}: {
+  submitting: boolean;
+  onSave: () => void;
+  onBack?: () => void;
+}): React.JSX.Element => (
+  <>
+    <TouchableOpacity
+      onPress={onSave}
+      style={[styles.button, styles.primaryButton]}
+      disabled={submitting}
+      testID="save-key-button"
+      accessibilityLabel="Save API key"
+      accessibilityRole="button"
+      accessibilityState={{ disabled: submitting, busy: submitting }}
+    >
+      <Text style={styles.primaryButtonText}>{submitting ? 'Saving…' : 'Save key'}</Text>
+    </TouchableOpacity>
+    {onBack && (
+      <TouchableOpacity
+        onPress={onBack}
+        style={styles.linkRow}
+        accessibilityLabel="Go back"
+        accessibilityRole="link"
+      >
+        <Text style={styles.link}>Back</Text>
+      </TouchableOpacity>
+    )}
+  </>
+);
+
 const ScreenBody = ({
   apiKey,
   draft,
@@ -187,20 +239,10 @@ const ScreenBody = ({
   onBack,
 }: ScreenBodyProps): React.JSX.Element => (
   <>
-    <Text style={styles.title}>BotMason API Key</Text>
-    <Text style={styles.body}>
-      Bring your own OpenAI or Anthropic API key. It is stored only on this device and sent with
-      every BotMason request via the X-LLM-API-Key header. We never upload it to our servers.
-    </Text>
-
-    {apiKey ? (
+    <ScreenIntro apiKey={apiKey} />
+    {apiKey && (
       <StoredKeyCard apiKey={apiKey} disabled={submitting} onRequestRemove={onRequestRemove} />
-    ) : (
-      <Text style={styles.hint} testID="no-key-hint">
-        No key saved yet. BotMason will use the shared server key if one is configured.
-      </Text>
     )}
-
     <Text style={styles.inputLabel}>{apiKey ? 'Replace key' : 'Add your key'}</Text>
     <KeyInputRow
       draft={draft}
@@ -208,23 +250,8 @@ const ScreenBody = ({
       onChangeText={onChangeDraft}
       onToggleReveal={onToggleReveal}
     />
-
     <FeedbackBanner error={error} status={status} />
-
-    <TouchableOpacity
-      onPress={onSave}
-      style={[styles.button, styles.primaryButton]}
-      disabled={submitting}
-      testID="save-key-button"
-    >
-      <Text style={styles.primaryButtonText}>{submitting ? 'Saving…' : 'Save key'}</Text>
-    </TouchableOpacity>
-
-    {onBack && (
-      <TouchableOpacity onPress={onBack} style={styles.linkRow}>
-        <Text style={styles.link}>Back</Text>
-      </TouchableOpacity>
-    )}
+    <ScreenFooter submitting={submitting} onSave={onSave} onBack={onBack} />
   </>
 );
 
@@ -355,55 +382,79 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 24, backgroundColor: '#fff', flexGrow: 1 },
+  container: { padding: SPACING.xl, backgroundColor: colors.background.card, flexGrow: 1 },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  title: { fontSize: 22, fontWeight: '700', marginBottom: 12 },
-  body: { fontSize: 14, color: '#444', marginBottom: 20, lineHeight: 20 },
+  title: { fontSize: 22, fontWeight: '700', marginBottom: SPACING.md },
+  body: {
+    fontSize: 14,
+    color: colors.text.secondaryAccessible,
+    marginBottom: SPACING.xl,
+    lineHeight: 20,
+  },
   storedCard: {
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
-    backgroundColor: '#fafafa',
+    borderColor: colors.border,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.lg,
+    marginBottom: SPACING.xl,
+    backgroundColor: colors.background.accent,
   },
-  storedLabel: { fontSize: 12, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5 },
+  storedLabel: {
+    fontSize: 12,
+    color: colors.text.secondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
   storedValue: {
     fontSize: 18,
     fontFamily: 'Menlo',
-    marginTop: 8,
-    marginBottom: 16,
-    color: '#222',
+    marginTop: SPACING.sm,
+    marginBottom: SPACING.lg,
+    color: colors.text.primary,
   },
-  hint: { fontSize: 14, color: '#666', marginBottom: 24, fontStyle: 'italic' },
-  inputLabel: { fontSize: 14, fontWeight: '600', marginBottom: 8, color: '#222' },
-  inputRow: { flexDirection: 'row', alignItems: 'stretch', marginBottom: 12 },
+  hint: {
+    fontSize: 14,
+    color: colors.text.secondary,
+    marginBottom: SPACING.xl,
+    fontStyle: 'italic',
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: SPACING.sm,
+    color: colors.text.primary,
+  },
+  inputRow: { flexDirection: 'row', alignItems: 'stretch', marginBottom: SPACING.md },
   input: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    padding: 12,
+    borderColor: colors.border,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.md,
     fontSize: 16,
   },
   revealButton: {
     borderWidth: 1,
-    borderColor: '#ccc',
+    borderColor: colors.border,
     borderLeftWidth: 0,
-    borderTopRightRadius: 8,
-    borderBottomRightRadius: 8,
-    paddingHorizontal: 12,
+    borderTopRightRadius: BORDER_RADIUS.md,
+    borderBottomRightRadius: BORDER_RADIUS.md,
+    paddingHorizontal: SPACING.md,
     justifyContent: 'center',
-    backgroundColor: '#f3f3f3',
+    backgroundColor: colors.background.accent,
   },
-  revealButtonText: { fontSize: 14, color: '#333', fontWeight: '600' },
-  error: { color: '#d32f2f', marginBottom: 12 },
-  success: { color: '#2e7d32', marginBottom: 12 },
-  button: { borderRadius: 8, padding: 14, alignItems: 'center' },
-  primaryButton: { backgroundColor: '#4a90d9', marginTop: 4 },
-  primaryButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  destructiveButton: { backgroundColor: '#f8e0e0', borderWidth: 1, borderColor: '#e58a8a' },
-  destructiveButtonText: { color: '#b12828', fontWeight: '600' },
-  linkRow: { marginTop: 24, alignItems: 'center' },
-  link: { color: '#4a90d9', fontWeight: '600' },
+  revealButtonText: { fontSize: 14, color: colors.text.primary, fontWeight: '600' },
+  error: { color: colors.danger, marginBottom: SPACING.md },
+  success: { color: colors.successText, marginBottom: SPACING.md },
+  button: { borderRadius: BORDER_RADIUS.md, padding: SPACING.md + 2, alignItems: 'center' },
+  primaryButton: { backgroundColor: colors.primary, marginTop: SPACING.xs },
+  primaryButtonText: { color: colors.text.light, fontSize: 16, fontWeight: '600' },
+  destructiveButton: {
+    backgroundColor: colors.destructive.background,
+    borderWidth: 1,
+    borderColor: colors.destructive.border,
+  },
+  destructiveButtonText: { color: colors.destructive.text, fontWeight: '600' },
+  linkRow: { marginTop: SPACING.xl, alignItems: 'center' },
+  link: { color: colors.primary, fontWeight: '600' },
 });

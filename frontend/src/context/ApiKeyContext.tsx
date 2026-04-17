@@ -28,6 +28,13 @@ interface ApiKeyContextValue {
   apiKey: string | null;
   /** True until the initial load from SecureStore completes. */
   isLoading: boolean;
+  /**
+   * BUG-FRONTEND-INFRA-017: populated when the initial SecureStore read,
+   * save, or clear throws. Callers can surface this to the user (e.g.,
+   * "Secure storage is unavailable — your key won't persist across
+   * launches") instead of silently running with a blank key.
+   */
+  loadError: Error | null;
   /** Persist a new key to SecureStore and update context state. */
   saveApiKey: (_key: string) => Promise<void>;
   /** Remove the stored key (SecureStore + context state). */
@@ -39,6 +46,7 @@ const ApiKeyContext = createContext<ApiKeyContextValue | null>(null);
 export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<Error | null>(null);
 
   // Mirror the state into a ref so the getter we register with the API layer
   // always reads the latest value without needing to re-register on every
@@ -53,23 +61,47 @@ export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     loadLlmApiKey()
-      .then((stored) => setApiKey(stored))
+      .then((stored) => {
+        setApiKey(stored);
+        setLoadError(null);
+      })
+      .catch((err: unknown) => {
+        console.warn('[ApiKeyContext] SecureStore load failed', err);
+        // Fall back to in-memory operation (key still usable for this session
+        // via saveApiKey; won't persist across launches until the store
+        // recovers).
+        setApiKey(null);
+        setLoadError(err instanceof Error ? err : new Error(String(err)));
+      })
       .finally(() => setIsLoading(false));
   }, []);
 
   const saveApiKey = useCallback(async (key: string) => {
-    await saveLlmApiKey(key);
+    try {
+      await saveLlmApiKey(key);
+      setLoadError(null);
+    } catch (err: unknown) {
+      console.warn('[ApiKeyContext] SecureStore save failed', err);
+      setLoadError(err instanceof Error ? err : new Error(String(err)));
+      // Set state anyway so the key is at least usable this session.
+    }
     setApiKey(key);
   }, []);
 
   const clearApiKey = useCallback(async () => {
-    await clearLlmApiKey();
+    try {
+      await clearLlmApiKey();
+      setLoadError(null);
+    } catch (err: unknown) {
+      console.warn('[ApiKeyContext] SecureStore clear failed', err);
+      setLoadError(err instanceof Error ? err : new Error(String(err)));
+    }
     setApiKey(null);
   }, []);
 
   const value = useMemo(
-    () => ({ apiKey, isLoading, saveApiKey, clearApiKey }),
-    [apiKey, isLoading, saveApiKey, clearApiKey],
+    () => ({ apiKey, isLoading, loadError, saveApiKey, clearApiKey }),
+    [apiKey, isLoading, loadError, saveApiKey, clearApiKey],
   );
 
   return <ApiKeyContext.Provider value={value}>{children}</ApiKeyContext.Provider>;

@@ -26,6 +26,22 @@ function rehydrateHabit(raw: Habit): Habit {
   };
 }
 
+/**
+ * BUG-FRONTEND-INFRA-011 — when AsyncStorage hands us malformed JSON we used
+ * to silently return ``null`` / ``[]``, masking both a parse failure and the
+ * fact that future writes would keep appending to corrupt data. Now we log,
+ * clear the poisoned key so subsequent launches self-heal, and let the
+ * caller show a toast if the loss is user-visible.
+ */
+async function resetCorruptKey(key: string, err: unknown): Promise<void> {
+  console.warn(`[storage] corrupt JSON in ${key}, clearing to self-heal`, err);
+  try {
+    await AsyncStorage.removeItem(key);
+  } catch (removeErr) {
+    console.warn(`[storage] failed to clear corrupt key ${key}`, removeErr);
+  }
+}
+
 export async function saveHabits(habits: Habit[]): Promise<void> {
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(habits));
 }
@@ -34,9 +50,14 @@ export async function loadHabits(): Promise<Habit[] | null> {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
     if (raw === null) return null;
-    const parsed: Habit[] = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as Habit[];
+    if (!Array.isArray(parsed)) {
+      await resetCorruptKey(STORAGE_KEY, new Error('expected array'));
+      return null;
+    }
     return parsed.map(rehydrateHabit);
-  } catch {
+  } catch (err: unknown) {
+    await resetCorruptKey(STORAGE_KEY, err);
     return null;
   }
 }
@@ -55,8 +76,14 @@ export async function loadPendingCheckIns(): Promise<PendingCheckIn[]> {
   try {
     const raw = await AsyncStorage.getItem(PENDING_CHECKINS_KEY);
     if (raw === null) return [];
-    return JSON.parse(raw) as PendingCheckIn[];
-  } catch {
+    const parsed = JSON.parse(raw) as PendingCheckIn[];
+    if (!Array.isArray(parsed)) {
+      await resetCorruptKey(PENDING_CHECKINS_KEY, new Error('expected array'));
+      return [];
+    }
+    return parsed;
+  } catch (err: unknown) {
+    await resetCorruptKey(PENDING_CHECKINS_KEY, err);
     return [];
   }
 }

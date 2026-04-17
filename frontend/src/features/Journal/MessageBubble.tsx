@@ -78,6 +78,7 @@ const ErrorFooter = ({ errorLabel, onRetry }: ErrorFooterProps): React.JSX.Eleme
         style={styles.tag}
         onPress={onRetry}
         accessibilityLabel="Retry sending message"
+        accessibilityRole="button"
       >
         <Text style={styles.tagText}>Retry</Text>
       </TouchableOpacity>

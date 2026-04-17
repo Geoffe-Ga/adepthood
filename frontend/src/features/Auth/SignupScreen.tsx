@@ -3,6 +3,7 @@ import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-nativ
 
 import { formatApiError } from '@/api/errorMessages';
 import { useAuth } from '@/context/AuthContext';
+import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
 
 const SIGNUP_FALLBACK =
   "We couldn't create your account. Check your connection, then try again in a moment.";
@@ -32,6 +33,7 @@ function SignupFields({
   return (
     <>
       <TextInput
+        accessibilityLabel="Email"
         style={styles.input}
         placeholder="Email"
         value={email}
@@ -40,6 +42,7 @@ function SignupFields({
         keyboardType="email-address"
       />
       <TextInput
+        accessibilityLabel="Password"
         style={styles.input}
         placeholder="Password"
         value={password}
@@ -47,6 +50,7 @@ function SignupFields({
         secureTextEntry
       />
       <TextInput
+        accessibilityLabel="Confirm password"
         style={styles.input}
         placeholder="Confirm Password"
         value={confirmPassword}
@@ -66,10 +70,22 @@ interface SignupActionsProps {
 function SignupActions({ onSignup, onNavigateLogin, submitting }: SignupActionsProps) {
   return (
     <>
-      <TouchableOpacity style={styles.button} onPress={onSignup} disabled={submitting}>
+      <TouchableOpacity
+        accessibilityLabel="Create account"
+        accessibilityRole="button"
+        accessibilityState={{ disabled: submitting, busy: submitting }}
+        style={styles.button}
+        onPress={onSignup}
+        disabled={submitting}
+        testID="signup-submit"
+      >
         <Text style={styles.buttonText}>{submitting ? 'Creating account...' : 'Sign Up'}</Text>
       </TouchableOpacity>
-      <TouchableOpacity onPress={onNavigateLogin}>
+      <TouchableOpacity
+        accessibilityLabel="Go to log-in screen"
+        accessibilityRole="link"
+        onPress={onNavigateLogin}
+      >
         <Text style={styles.link}>
           Already have an account? <Text style={styles.linkBold}>Log In</Text>
         </Text>
@@ -104,8 +120,9 @@ export default function SignupScreen({ navigation }: Props) {
       // produce a confusing 422 from the backend.
       await signup(email.trim(), password);
     } catch (err: unknown) {
-      // Route backend ``detail`` codes (e.g. ``password_too_short``) through
-      // the shared mapper rather than leaking snake_case to the user.
+      // BUG-FRONTEND-INFRA-016 — timeout-specific message handled via
+      // formatApiError; backend detail codes mapped through the shared
+      // mapper instead of leaking snake_case to the user.
       setError(formatApiError(err, { fallback: SIGNUP_FALLBACK }));
     } finally {
       setSubmitting(false);
@@ -134,25 +151,30 @@ export default function SignupScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', padding: 24, backgroundColor: '#fff' },
-  title: { fontSize: 28, fontWeight: 'bold', textAlign: 'center', marginBottom: 32 },
+  container: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: SPACING.xl,
+    backgroundColor: colors.background.card,
+  },
+  title: { fontSize: 28, fontWeight: 'bold', textAlign: 'center', marginBottom: SPACING.xxl },
   input: {
     borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
+    borderColor: colors.border,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.md,
+    marginBottom: SPACING.md,
     fontSize: 16,
   },
-  error: { color: '#d32f2f', marginBottom: 12, textAlign: 'center' },
+  error: { color: colors.danger, marginBottom: SPACING.md, textAlign: 'center' },
   button: {
-    backgroundColor: '#4a90d9',
-    borderRadius: 8,
-    padding: 14,
+    backgroundColor: colors.primary,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.md + 2,
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: SPACING.lg,
   },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  link: { textAlign: 'center', color: '#666' },
-  linkBold: { color: '#4a90d9', fontWeight: '600' },
+  buttonText: { color: colors.text.light, fontSize: 16, fontWeight: '600' },
+  link: { textAlign: 'center', color: colors.text.secondary },
+  linkBold: { color: colors.primary, fontWeight: '600' },
 });

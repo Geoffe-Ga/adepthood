@@ -37,6 +37,13 @@ describe('design tokens', () => {
       expect(colors.text.light).toBe('#ffffff');
     });
 
+    it('exports WCAG-safe text variants (BUG-025)', () => {
+      // secondaryAccessible must clear AAA (7.0:1) on the primary surface.
+      expect(colors.text.secondaryAccessible).toBe('#555555');
+      // tertiaryAccessible must clear AA (4.5:1) for body-size text.
+      expect(colors.text.tertiaryAccessible).toBe('#707070');
+    });
+
     it('exports mystical effect colors', () => {
       expect(colors.mystical.glowLight).toBe('rgba(255, 255, 255, 0.2)');
       expect(colors.mystical.glowPurple).toBe('rgba(103, 58, 183, 0.15)');
