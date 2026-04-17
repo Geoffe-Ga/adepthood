@@ -79,6 +79,31 @@ describe('BUG-024: Zod validation at the API boundary', () => {
     ).rejects.toBeInstanceOf(ApiValidationError);
   });
 
+  test('auth.signup accepts user_id=0 (duplicate-email sentinel, BUG-AUTH-002)', async () => {
+    // The backend returns ``user_id: 0`` together with a dummy JWT when the
+    // email is already registered, so the response is indistinguishable in
+    // shape from a fresh signup and account enumeration is blocked. The
+    // frontend must accept this sentinel, not reject it as a validation
+    // failure.
+    mockFetch.mockReturnValueOnce(jsonResponse({ token: 'dummy', user_id: 0 }));
+    const result = await auth.signup({
+      email: 'u@test.com',
+      password: 'securepass123', // pragma: allowlist secret
+    });
+    expect(result.user_id).toBe(0);
+    expect(result.token).toBe('dummy');
+  });
+
+  test('auth.signup still rejects negative user_id', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ token: 'x', user_id: -1 }));
+    await expect(
+      auth.signup({
+        email: 'u@test.com',
+        password: 'securepass123', // pragma: allowlist secret
+      }),
+    ).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
   test('habits.list accepts a schema-valid list and returns it unchanged', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse([validHabit()]));
     const result = await habits.list();
