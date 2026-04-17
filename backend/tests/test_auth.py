@@ -222,6 +222,11 @@ async def test_signup_duplicate_email_returns_same_shape(async_client: AsyncClie
     assert "token" in second_data
     assert "user_id" in second_data
     assert isinstance(second_data["user_id"], int)
+    # The duplicate response uses ``user_id=0`` as a sentinel. The frontend
+    # ``authResponseSchema`` accepts non-negative integers so this sentinel
+    # does not trip Zod validation and surface the generic "server changed"
+    # error instead of completing the signup flow. Keep these in lock-step.
+    assert second_data["user_id"] == 0
 
 
 @pytest.mark.asyncio

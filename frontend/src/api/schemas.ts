@@ -54,7 +54,11 @@ export type Page<T> = {
 
 export const authResponseSchema = z.object({
   token: z.string().min(1),
-  user_id: z.number().int().positive(),
+  // ``user_id`` is ``0`` in the anti-enumeration signup response (BUG-AUTH-002):
+  // when a caller signs up with an already-registered email the backend returns
+  // a dummy token and ``user_id=0`` so the wire shape is indistinguishable from
+  // a fresh signup. Real signups return a positive autoincrement id.
+  user_id: z.number().int().nonnegative(),
 });
 
 export type AuthResponseT = z.infer<typeof authResponseSchema>;
