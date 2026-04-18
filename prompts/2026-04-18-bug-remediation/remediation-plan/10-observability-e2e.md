@@ -50,11 +50,17 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 ```
 
-Decimal serialization:
+Decimal serialization (Pydantic v2):
 ```python
+# Pydantic v2 removed json_encoders. Use @field_serializer (or @model_serializer).
+from pydantic import BaseModel, Decimal, field_serializer
+
 class WalletBalance(BaseModel):
     amount: Decimal
-    model_config = ConfigDict(json_encoders={Decimal: lambda v: format(v, "f")})
+
+    @field_serializer("amount")
+    def serialize_amount(self, value: Decimal) -> str:
+        return format(value, "f")  # fixed-point string, no scientific notation
 ```
 
 ErrorBoundary:

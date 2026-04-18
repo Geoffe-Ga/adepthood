@@ -76,8 +76,7 @@ const endSession = () => {
 ## Requirements
 - `max-quality-no-shortcuts`: every incoming number gets a Pydantic bound. No defensive `if value > 0` checks — use `Field(gt=0)`.
 - Backend must use `datetime.now(timezone.utc)` for comparisons, not `datetime.utcnow()`.
-- Preserve backward compat for one release if the client cannot update atomically: accept both `duration_seconds` and `started_at/ended_at`, log a warning when the former is used, plan deletion in the next version.
-  - If no such compat window is needed, delete outright.
+- Hard cut the legacy `duration_seconds` field — this prompt ships both sides in one coordinated commit series, so there is no client version that needs it. The backend must reject any payload that still sends `duration_seconds` with `422` (don't silently ignore — silent ignore makes the bug resurface invisibly on a stale client build). Remove the field from schemas, remove the client's send site, and delete the `ProsTypes` alias in the same PR.
 - Frontend: pause/resume should not corrupt the reported duration — either clamp to "wall-clock total" or disallow pause submission.
 - `pre-commit run --all-files` before each commit; coverage >=90%.
 - Parallelizable with 04-08, 10. Coordinate with Prompt 12 on practice router — Prompt 09 owns the timestamp-related diff; Prompt 12 owns the rest.

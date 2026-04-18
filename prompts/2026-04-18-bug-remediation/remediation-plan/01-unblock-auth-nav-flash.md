@@ -73,4 +73,4 @@ function RootNavigator() {
 - Run `pre-commit run --all-files` before every commit; iterate until clean.
 - Preserve navigation state: verify manually that tapping a tab after a forced 401 returns to the same screen (add an E2E-style integration test under `frontend/src/__tests__/navigation/` if one does not exist).
 - If you discover a bug outside this scope that blocks the fix, stop and append a note to the report's "Remediation notes" section rather than fixing it here.
-- Branch is already `claude/optimize-bug-fix-prompts-AShzq` — push only when all three commits land.
+- Work on a fresh branch off `main` named `claude/bug-fix-01-unblock-auth-nav-flash` (or whatever the opening session message specifies). Push only when all three commits land.

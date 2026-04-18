@@ -51,9 +51,11 @@ def _validate_prod_origin(origin: str) -> None:
         raise ValueError("prod origin cannot be localhost or loopback")
     try:
         ipaddress.ip_address(p.hostname)
-        raise ValueError("prod origin cannot be a bare IP")
     except ValueError:
-        pass
+        pass  # hostname is not an IP literal — good.
+    else:
+        # ip_address() succeeded, so hostname IS a bare IP — reject.
+        raise ValueError("prod origin cannot be a bare IP")
     if "*" in origin or "@" in origin:
         raise ValueError("prod origin cannot contain wildcard or userinfo")
 ```

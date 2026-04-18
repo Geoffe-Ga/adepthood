@@ -9,6 +9,29 @@
 2. Hand the **whole file** to a fresh Claude Code session — it already contains role, goal, context refs, output format, examples, and requirements.
 3. The prompt will tell Claude how many commits to produce and which BUG-IDs each commit closes.
 4. Do NOT paste the audit reports inline — the prompts reference them by path and BUG-ID so the implementation session only reads the blocks it needs.
+5. When the session finishes, it flips its row in the **Status** table below from `[ ]` to `[x]` and links the PR. That keeps this doc the single source of truth.
+
+## Status
+
+Tick each row as its PR merges. Every prompt tells the implementation session to update this table as its last step.
+
+| # | Prompt | Wave | Branch / PR | Status |
+|--:|--------|:----:|-------------|:------:|
+| 01 | unblock-auth-nav-flash            | 1 | | [ ] |
+| 02 | close-credit-minting-chain        | 2 | | [ ] |
+| 03 | close-stage-skip-chain            | 2 | | [ ] |
+| 04 | centralize-sanitize-user-text     | 3 | | [ ] |
+| 05 | centralize-date-utils-tz          | 3 | | [ ] |
+| 06 | db-unique-constraints-toctou      | 3 | | [ ] |
+| 07 | normalize-idor-ordering           | 3 | | [ ] |
+| 08 | optimistic-mutation-hook          | 3 | | [ ] |
+| 09 | server-derived-timestamps         | 3 | | [ ] |
+| 10 | observability-e2e                 | 3 | | [ ] |
+| 11 | backend-auth-models-schemas-cors  | 4 | | [ ] |
+| 12 | backend-feature-routers           | 4 | | [ ] |
+| 13 | frontend-api-client               | 4 | | [ ] |
+| 14 | frontend-feature-screens          | 4 | | [ ] |
+| 15 | frontend-design-state-tests       | 4 | | [ ] |
 
 ## Wave ordering and parallelism
 
