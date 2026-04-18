@@ -10,13 +10,13 @@ from domain.goals import compute_progress
 def test_additive_progress() -> None:
     progress, code = compute_progress(5, 10, is_additive=True)
     assert code == "additive_progress"
-    assert progress == 0.5  # noqa: PLR2004
+    assert progress == 0.5
 
 
 def test_subtractive_progress() -> None:
     progress, code = compute_progress(3, 10, is_additive=False)
     assert code == "subtractive_progress"
-    assert progress == 0.7  # noqa: PLR2004
+    assert progress == 0.7
 
 
 def test_target_must_be_positive() -> None:
@@ -40,8 +40,10 @@ _SUBTRACTIVE_CASES = [
     ids=["zero_consumed", "half_consumed", "at_limit", "over_limit"],
 )
 def test_subtractive_progress_parameterized(current: float, target: float, expected: float) -> None:
-    """BUG-GOAL-002: Subtractive goals must report 1.0 when current=0,
-    0.0 when current>=target, proportional between."""
+    """BUG-GOAL-002: Subtractive goals must report 1.0 when current=0,.
+
+    0.0 when current>=target, proportional between.
+    """
     progress, code = compute_progress(current, target, is_additive=False)
     assert code == "subtractive_progress"
     assert progress == pytest.approx(expected, abs=1e-9)

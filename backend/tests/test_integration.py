@@ -64,8 +64,10 @@ async def test_signup_create_habit_log_completion_check_streak(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """Full user flow: sign up, create a habit, add a goal, log completions,
-    and verify streak increments with milestone detection."""
+    """Full user flow: sign up, create a habit, add a goal, log completions,.
+
+    and verify streak increments with milestone detection.
+    """
     headers = await _auth_headers(async_client)
 
     # Create a habit
@@ -109,10 +111,10 @@ async def test_signup_create_habit_log_completion_check_streak(
     )
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
-    assert data["streak"] == 3  # noqa: PLR2004
+    assert data["streak"] == 3
     assert data["reason_code"] == "streak_incremented"
     # Crosses thresholds 1, 3 (old_streak=2 -> new_streak=3)
-    assert any(m["threshold"] == 3 for m in data["milestones"])  # noqa: PLR2004
+    assert any(m["threshold"] == 3 for m in data["milestones"])
 
     # Same-day retry is idempotent
     resp = await async_client.post(
@@ -192,7 +194,7 @@ async def test_practice_session_week_count(
     # Check week count
     resp = await async_client.get("/practice-sessions/week-count", headers=headers)
     assert resp.status_code == HTTPStatus.OK
-    assert resp.json()["count"] == 2  # noqa: PLR2004
+    assert resp.json()["count"] == 2
 
 
 # ── Flow 4: Expired token → All endpoints return 401 ─────────────────────

@@ -107,8 +107,10 @@ async def test_signup_normalizes_email_case_and_whitespace(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """Email submitted with mixed case / surrounding whitespace is stored as
-    the trimmed, lowercased form so later lookups don't miss it."""
+    """Email submitted with mixed case / surrounding whitespace is stored as.
+
+    the trimmed, lowercased form so later lookups don't miss it.
+    """
     resp = await async_client.post(
         SIGNUP_URL,
         json={
@@ -124,8 +126,10 @@ async def test_signup_normalizes_email_case_and_whitespace(
 
 @pytest.mark.asyncio
 async def test_login_is_case_insensitive_after_signup(async_client: AsyncClient) -> None:
-    """Signing up as ``Alice@Example.com`` lets the user log in as
-    ``alice@example.com`` (BUG-AUTH-003)."""
+    """Signing up as ``Alice@Example.com`` lets the user log in as.
+
+    ``alice@example.com`` (BUG-AUTH-003).
+    """
     await async_client.post(
         SIGNUP_URL,
         json={
@@ -145,8 +149,10 @@ async def test_login_is_case_insensitive_after_signup(async_client: AsyncClient)
 
 @pytest.mark.asyncio
 async def test_login_ignores_surrounding_whitespace(async_client: AsyncClient) -> None:
-    """Pasted / autofilled whitespace in the email field is stripped
-    server-side (BUG-AUTH-010)."""
+    """Pasted / autofilled whitespace in the email field is stripped.
+
+    server-side (BUG-AUTH-010).
+    """
     await _signup(async_client, email="whitespace@example.com")
     resp = await async_client.post(
         LOGIN_URL,
@@ -163,8 +169,10 @@ async def test_duplicate_signup_detected_with_different_case(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """A second signup with a case-variant email must not create a second
-    user row (BUG-AUTH-003)."""
+    """A second signup with a case-variant email must not create a second.
+
+    user row (BUG-AUTH-003).
+    """
     await _signup(async_client, email="caseonly@example.com")
     await async_client.post(
         SIGNUP_URL,
@@ -199,8 +207,10 @@ async def test_signup_returns_token_and_user_id(async_client: AsyncClient) -> No
 
 @pytest.mark.asyncio
 async def test_signup_duplicate_email_returns_same_shape(async_client: AsyncClient) -> None:
-    """Signup with an existing email returns the same status and response shape
-    as a fresh signup — no information leakage about registered emails."""
+    """Signup with an existing email returns the same status and response shape.
+
+    as a fresh signup — no information leakage about registered emails.
+    """
     first_resp = await async_client.post(
         SIGNUP_URL,
         json={
@@ -364,8 +374,10 @@ async def test_expired_token_returns_401_unauthorized(async_client: AsyncClient)
 
 @pytest.mark.asyncio
 async def test_all_token_errors_return_identical_response(async_client: AsyncClient) -> None:
-    """All token rejection scenarios must return the same detail to prevent
-    information leakage about token state (sec-04)."""
+    """All token rejection scenarios must return the same detail to prevent.
+
+    information leakage about token state (sec-04).
+    """
     data = await _signup(async_client)
     user_id = data["user_id"]
 

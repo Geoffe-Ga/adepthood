@@ -103,8 +103,8 @@ async def test_add_balance(async_client: AsyncClient) -> None:
     resp = await async_client.post("/user/balance/add", json={"amount": 5}, headers=headers)
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
-    assert data["balance"] == 5  # noqa: PLR2004
-    assert data["added"] == 5  # noqa: PLR2004
+    assert data["balance"] == 5
+    assert data["added"] == 5
 
 
 @pytest.mark.asyncio
@@ -114,7 +114,7 @@ async def test_add_balance_accumulates(async_client: AsyncClient) -> None:
     await _add_balance(async_client, headers, amount=7)
 
     resp = await async_client.get("/user/balance", headers=headers)
-    assert resp.json()["balance"] == 10  # noqa: PLR2004
+    assert resp.json()["balance"] == 10
 
 
 @pytest.mark.asyncio
@@ -158,7 +158,7 @@ async def test_chat_success(async_client: AsyncClient) -> None:
     data = resp.json()
     assert "response" in data
     assert len(data["response"]) > 0
-    assert data["remaining_balance"] == 4  # noqa: PLR2004
+    assert data["remaining_balance"] == 4
     assert data["bot_entry_id"] is not None
 
 
@@ -188,7 +188,7 @@ async def test_chat_stores_user_and_bot_messages(async_client: AsyncClient) -> N
     # Verify both messages appear in journal
     resp = await async_client.get("/journal/", headers=headers)
     data = resp.json()
-    assert data["total"] == 2  # noqa: PLR2004
+    assert data["total"] == 2
     senders = {item["sender"] for item in data["items"]}
     assert senders == {"user", "bot"}
 
@@ -462,7 +462,7 @@ async def test_concurrent_chat_with_balance_one_allows_exactly_one(
     failures = status_codes.count(HTTPStatus.PAYMENT_REQUIRED)
 
     assert successes == 1, f"Expected exactly 1 success, got {successes}"
-    assert failures == 4, f"Expected 4 failures, got {failures}"  # noqa: PLR2004
+    assert failures == 4, f"Expected 4 failures, got {failures}"
 
     # Balance must be exactly 0, never negative
     balance_resp = await concurrent_async_client.get("/user/balance", headers=headers)
@@ -492,8 +492,8 @@ async def test_balance_never_negative_after_concurrent_chat(
     successes = status_codes.count(HTTPStatus.CREATED)
     failures = status_codes.count(HTTPStatus.PAYMENT_REQUIRED)
 
-    assert successes == 3, f"Expected 3 successes, got {successes}"  # noqa: PLR2004
-    assert failures == 7, f"Expected 7 failures, got {failures}"  # noqa: PLR2004
+    assert successes == 3, f"Expected 3 successes, got {successes}"
+    assert failures == 7, f"Expected 7 failures, got {failures}"
 
     # Balance must be exactly 0, never negative
     balance_resp = await concurrent_async_client.get("/user/balance", headers=headers)
@@ -552,7 +552,7 @@ def _forwarded_key(mock_call: AsyncMock) -> object:
     args, kwargs = call
     if "api_key" in kwargs:
         return kwargs["api_key"]
-    if len(args) >= 4:  # noqa: PLR2004 - positional index for api_key
+    if len(args) >= 4:
         return args[3]
     return None
 
@@ -867,8 +867,8 @@ async def test_usage_endpoint_reports_defaults_for_new_user(
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
     assert data["monthly_messages_used"] == 0
-    assert data["monthly_messages_remaining"] == 50  # noqa: PLR2004
-    assert data["monthly_cap"] == 50  # noqa: PLR2004
+    assert data["monthly_messages_remaining"] == 50
+    assert data["monthly_cap"] == 50
     assert data["offering_balance"] == 0
     # Reset date is first-of-next-month UTC — sanity check format only so
     # the test does not drift with the wall clock.
@@ -895,8 +895,8 @@ async def test_chat_consumes_free_monthly_tier_first(
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.json()
     # Purchased credits are preserved; the free allocation absorbed the cost.
-    assert data["remaining_balance"] == 10  # noqa: PLR2004
-    assert data["remaining_messages"] == 2  # noqa: PLR2004
+    assert data["remaining_balance"] == 10
+    assert data["remaining_messages"] == 2
 
 
 @pytest.mark.asyncio
@@ -912,7 +912,7 @@ async def test_chat_falls_back_to_offering_balance_after_cap(
     # Spend the single free message.
     resp1 = await async_client.post("/journal/chat", json={"message": "a"}, headers=headers)
     assert resp1.status_code == HTTPStatus.CREATED
-    assert resp1.json()["remaining_balance"] == 2  # noqa: PLR2004
+    assert resp1.json()["remaining_balance"] == 2
     assert resp1.json()["remaining_messages"] == 0
 
     # Next chat must come out of offering_balance.
@@ -955,9 +955,9 @@ async def test_usage_tracks_monthly_messages(
 
     usage = await async_client.get("/user/usage", headers=headers)
     data = usage.json()
-    assert data["monthly_messages_used"] == 2  # noqa: PLR2004
-    assert data["monthly_messages_remaining"] == 3  # noqa: PLR2004
-    assert data["monthly_cap"] == 5  # noqa: PLR2004
+    assert data["monthly_messages_used"] == 2
+    assert data["monthly_messages_remaining"] == 3
+    assert data["monthly_cap"] == 5
 
 
 @pytest.mark.asyncio
@@ -1014,7 +1014,7 @@ async def test_usage_endpoint_rolls_counter_on_new_month(
     resp = await async_client.get("/user/usage", headers=headers)
     data = resp.json()
     assert data["monthly_messages_used"] == 0
-    assert data["monthly_messages_remaining"] == 3  # noqa: PLR2004
+    assert data["monthly_messages_remaining"] == 3
 
 
 @pytest.mark.asyncio
@@ -1037,12 +1037,12 @@ async def test_cap_honoured_under_concurrent_load(
     )
     successes = sum(1 for r in responses if r.status_code == HTTPStatus.CREATED)
     failures = sum(1 for r in responses if r.status_code == HTTPStatus.PAYMENT_REQUIRED)
-    assert successes == 3, f"cap was 3 but {successes} requests succeeded"  # noqa: PLR2004
-    assert failures == 7, f"expected 7 rejections, got {failures}"  # noqa: PLR2004
+    assert successes == 3, f"cap was 3 but {successes} requests succeeded"
+    assert failures == 7, f"expected 7 rejections, got {failures}"
 
     usage = await concurrent_async_client.get("/user/usage", headers=headers)
     data = usage.json()
-    assert data["monthly_messages_used"] == 3  # noqa: PLR2004
+    assert data["monthly_messages_used"] == 3
     assert data["monthly_messages_remaining"] == 0
 
 
@@ -1067,11 +1067,11 @@ async def test_free_and_paid_wallets_combine_under_concurrent_load(
     )
     successes = sum(1 for r in responses if r.status_code == HTTPStatus.CREATED)
     # 2 free + 3 paid = 5 total capacity.
-    assert successes == 5, f"expected 5 successes, got {successes}"  # noqa: PLR2004
+    assert successes == 5, f"expected 5 successes, got {successes}"
 
     usage = await concurrent_async_client.get("/user/usage", headers=headers)
     data = usage.json()
-    assert data["monthly_messages_used"] == 2  # noqa: PLR2004
+    assert data["monthly_messages_used"] == 2
     assert data["offering_balance"] == 0
 
 
@@ -1085,7 +1085,7 @@ def test_get_monthly_cap_default_when_unset(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_get_monthly_cap_parses_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "17")
-    assert get_monthly_cap() == 17  # noqa: PLR2004
+    assert get_monthly_cap() == 17
 
 
 def test_get_monthly_cap_rejects_malformed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1116,7 +1116,7 @@ def test_compute_next_reset_december_rollover() -> None:
 def test_compute_next_reset_normalises_naive_input() -> None:
     # A naive datetime is interpreted as UTC rather than silently crashing on
     # mismatched comparisons later.
-    result = compute_next_reset(datetime(2026, 6, 15, 12, 0, 0))
+    result = compute_next_reset(datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC))
     assert result == datetime(2026, 7, 1, tzinfo=UTC)
 
 
@@ -1218,7 +1218,7 @@ async def test_stream_deducts_balance_once(async_client: AsyncClient) -> None:
 
     await async_client.post("/journal/chat/stream", json={"message": "Hello"}, headers=headers)
     balance = await async_client.get("/user/balance", headers=headers)
-    assert balance.json()["balance"] == 2  # noqa: PLR2004
+    assert balance.json()["balance"] == 2
 
 
 @pytest.mark.asyncio
@@ -1252,7 +1252,7 @@ async def test_stream_provider_error_emits_error_event_and_rolls_back(
     assert len(events) == 1
     name, payload = events[0]
     assert name == "error"
-    assert payload["status"] == 502  # noqa: PLR2004
+    assert payload["status"] == 502
     assert payload["detail"] == "llm_provider_error"
 
     # Rollback: wallet untouched, no journal entries created.
@@ -1330,7 +1330,7 @@ async def test_stub_stream_yields_words_then_final() -> None:
     ]
 
     # At least two chunks (non-final plus final) so clients get progressive UI.
-    assert len(chunks) >= 2  # noqa: PLR2004
+    assert len(chunks) >= 2
     # Non-final chunks have ``final=None``; only the last one carries metadata.
     assert all(final is None for _, final in chunks[:-1])
     _, last_final = chunks[-1]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -68,8 +69,8 @@ async def _already_logged_today(session: AsyncSession, goal_id: int, user_id: in
 @router.post("/", response_model=CheckInResult)
 async def create_goal_completion(
     payload: GoalCompletionRequest,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> CheckInResult:
     """Record a check-in and return updated streak and milestones.
 
@@ -79,7 +80,9 @@ async def create_goal_completion(
     """
     goal = await _get_owned_goal(session, payload.goal_id, current_user)
 
-    assert goal.id is not None
+    if goal.id is None:
+        msg = "Goal ID unexpectedly None after database fetch"
+        raise RuntimeError(msg)
     old_streak = await compute_consecutive_streak(session, goal.id, current_user)
 
     if await _already_logged_today(session, payload.goal_id, current_user):
@@ -97,7 +100,7 @@ async def create_goal_completion(
     )
     await session.commit()
 
-    new_streak, reason = update_streak(old_streak, payload.did_complete)
+    new_streak, reason = update_streak(old_streak, did_check_in=payload.did_complete)
 
     logger.info(
         "goal_completion_recorded",

@@ -118,8 +118,8 @@ async def test_create_journal_entry_with_practice_session(async_client: AsyncCli
     )
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.json()
-    assert data["practice_session_id"] == 42  # noqa: PLR2004
-    assert data["user_practice_id"] == 7  # noqa: PLR2004
+    assert data["practice_session_id"] == 42
+    assert data["user_practice_id"] == 7
 
 
 # ── List & Pagination ───────────────────────────────────────────────────
@@ -135,7 +135,7 @@ async def test_list_journal_entries_newest_first(async_client: AsyncClient) -> N
     resp = await async_client.get("/journal/", headers=headers)
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
-    assert data["total"] == 3  # noqa: PLR2004
+    assert data["total"] == 3
     messages = [item["message"] for item in data["items"]]
     assert messages == ["Third", "Second", "First"]
 
@@ -150,8 +150,8 @@ async def test_list_journal_pagination(async_client: AsyncClient) -> None:
 
     resp = await async_client.get("/journal/?limit=2&offset=0", headers=headers)
     data = resp.json()
-    assert len(data["items"]) == 2  # noqa: PLR2004
-    assert data["total"] == 5  # noqa: PLR2004
+    assert len(data["items"]) == 2
+    assert data["total"] == 5
     assert data["has_more"] is True
 
     resp2 = await async_client.get("/journal/?limit=2&offset=4", headers=headers)
@@ -252,7 +252,7 @@ async def test_search_by_keyword(async_client: AsyncClient) -> None:
 
     resp = await async_client.get("/journal/?search=guitar", headers=headers)
     data = resp.json()
-    assert data["total"] == 2  # noqa: PLR2004
+    assert data["total"] == 2
     for item in data["items"]:
         assert "guitar" in item["message"].lower()
 
@@ -364,7 +364,7 @@ async def test_filter_by_practice_session_id(async_client: AsyncClient) -> None:
     resp = await async_client.get("/journal/?practice_session_id=10", headers=headers)
     data = resp.json()
     assert data["total"] == 1
-    assert data["items"][0]["practice_session_id"] == 10  # noqa: PLR2004
+    assert data["items"][0]["practice_session_id"] == 10
 
 
 # ── User isolation ───────────────────────────────────────────────────────

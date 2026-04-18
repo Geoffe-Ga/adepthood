@@ -9,8 +9,8 @@ if TYPE_CHECKING:
 
 
 class GoalCompletion(SQLModel, table=True):
-    """
-    A log of one instance of a user's engagement with a goal. Each log records
+    """A log of one instance of a user's engagement with a goal. Each log records.
+
     the number of completed units and whether it was tracked via timer.
 
     For additive goals, all logs in a day are summed, and the day is

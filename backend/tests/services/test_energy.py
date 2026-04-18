@@ -38,7 +38,7 @@ def test_idempotency_cache_is_ttl_bounded() -> None:
 def test_build_energy_response_returns_21_day_plan() -> None:
     response = build_energy_response(_payload())
     assert response.reason_code == "generated_21_day_plan"
-    assert len(response.plan.items) == 21  # noqa: PLR2004
+    assert len(response.plan.items) == 21
 
 
 def test_build_energy_response_raises_400_on_empty_habits() -> None:

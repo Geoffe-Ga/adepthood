@@ -2,8 +2,8 @@ from sqlmodel import Field, SQLModel
 
 
 class CourseStage(SQLModel, table=True):
-    """
-    Represents a single educational stage in the APTITUDE course.
+    """Represents a single educational stage in the APTITUDE course.
+
     Includes metadata used for organizing curriculum content, contextually
     relevant theory (e.g., Spiral Dynamics color, developmental stage, etc.),
     and aesthetic display.

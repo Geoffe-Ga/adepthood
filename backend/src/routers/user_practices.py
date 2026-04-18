@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,8 +32,8 @@ router = APIRouter(prefix="/user-practices", tags=["user-practices"])
 @router.post("/", response_model=UserPracticeResponse, status_code=status.HTTP_201_CREATED)
 async def create_user_practice(
     payload: UserPracticeCreate,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> UserPractice:
     """Select a practice for a stage, creating a UserPractice record."""
     # Verify practice exists and is approved
@@ -77,9 +77,9 @@ async def create_user_practice(
 
 @router.get("/", response_model=None)
 async def list_user_practices(
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
-    pagination: PaginationParams = Depends(),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    pagination: Annotated[PaginationParams, Depends()],
 ) -> Page[UserPracticeResponse] | list[UserPracticeResponse]:
     """List the authenticated user's practice selections.
 
@@ -98,8 +98,8 @@ async def list_user_practices(
 @router.get("/{user_practice_id}", response_model=UserPracticeDetail)
 async def get_user_practice(
     user_practice_id: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict[str, Any]:
     """Get a single user-practice with its session history."""
     result = await session.execute(select(UserPractice).where(UserPractice.id == user_practice_id))

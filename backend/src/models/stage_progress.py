@@ -10,8 +10,8 @@ if TYPE_CHECKING:
 
 
 class StageProgress(SQLModel, table=True):
-    """
-    Tracks which stage a user is currently working on, and which stages
+    """Tracks which stage a user is currently working on, and which stages.
+
     have been completed.
     """
 

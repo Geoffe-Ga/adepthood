@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,9 +62,9 @@ async def ensure_seed_templates(session: AsyncSession) -> None:
 
 @router.get("/", response_model=None)
 async def list_goal_groups(
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
-    pagination: PaginationParams = Depends(),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    pagination: Annotated[PaginationParams, Depends()],
 ) -> Page[GoalGroupResponse] | list[GoalGroupResponse]:
     """Return user's goal groups and all shared templates.
 
@@ -89,8 +90,8 @@ async def list_goal_groups(
 @router.get("/{group_id}", response_model=GoalGroupResponse)
 async def get_goal_group(
     group_id: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> GoalGroup:
     """Return a single goal group with its goals."""
     statement = select(GoalGroup).where(GoalGroup.id == group_id).options(GOAL_GROUP_WITH_GOALS)
@@ -106,8 +107,8 @@ async def get_goal_group(
 @router.post("/", response_model=GoalGroupResponse, status_code=status.HTTP_201_CREATED)
 async def create_goal_group(
     payload: GoalGroupCreate,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> GoalGroup:
     """Create a new goal group for the authenticated user."""
     group = GoalGroup(
@@ -144,8 +145,8 @@ async def _refetch_goal_group_with_goals(session: AsyncSession, group_id: int) -
 async def update_goal_group(
     group_id: int,
     payload: GoalGroupCreate,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> GoalGroup:
     """Update an existing goal group."""
     group = await session.get(GoalGroup, group_id)
@@ -163,8 +164,8 @@ async def update_goal_group(
 @router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_goal_group(
     group_id: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
     """Delete a goal group. Unlinks goals but does not delete them."""
     statement = select(GoalGroup).where(GoalGroup.id == group_id).options(GOAL_GROUP_WITH_GOALS)

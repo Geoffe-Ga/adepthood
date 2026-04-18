@@ -20,8 +20,8 @@ class GoalTier(StrEnum):
 
 
 class Goal(SQLModel, table=True):
-    """
-    Represents a single target for a habit, defined by a measurable unit
+    """Represents a single target for a habit, defined by a measurable unit.
+
     (target_unit) and frequency (frequency_unit). Goals can be additive
     (e.g. drink 8 cups of water) or subtractive (e.g. limit caffeine to 200mg).
 

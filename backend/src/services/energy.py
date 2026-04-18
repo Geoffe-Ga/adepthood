@@ -19,6 +19,8 @@ from domain.energy import Habit as DomainHabit
 from domain.energy import generate_plan
 from schemas import EnergyPlan, EnergyPlanRequest, EnergyPlanResponse
 
+logger = logging.getLogger(__name__)
+
 # Idempotency cache prevents duplicate plan generation within the same session.
 # - ``CACHE_MAX_ENTRIES = 1000`` supports ~1000 concurrent users before LRU
 #   eviction starts.
@@ -49,7 +51,7 @@ def build_energy_response(payload: EnergyPlanRequest) -> EnergyPlanResponse:
         ) from exc
     plan_model = EnergyPlan.model_validate(asdict(plan))
     response = EnergyPlanResponse(plan=plan_model, reason_code=reason)
-    logging.info("energy_plan", extra={"reason_code": reason})
+    logger.info("energy_plan", extra={"reason_code": reason})
     return response
 
 

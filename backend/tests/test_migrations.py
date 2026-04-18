@@ -25,7 +25,8 @@ def test_timestamptz_migration_exists() -> None:
 
 
 def test_upgrade_and_downgrade_use_same_using_expression() -> None:
-    """BUG-INFRA-022: the upgrade and downgrade ``USING`` expressions must
+    """BUG-INFRA-022: the upgrade and downgrade ``USING`` expressions must.
+
     be structurally identical so ``alembic downgrade -1`` round-trips.
 
     Specifically, both should produce ``"col" AT TIME ZONE 'UTC'`` — the

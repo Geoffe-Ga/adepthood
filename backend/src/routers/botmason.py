@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, Request, status
 from fastapi.responses import StreamingResponse
@@ -73,9 +73,9 @@ LLM_API_KEY_HEADER = "X-LLM-API-Key"  # pragma: allowlist secret
 async def chat_with_botmason(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     payload: ChatRequest,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
-    x_llm_api_key: str | None = Header(default=None, alias=LLM_API_KEY_HEADER),
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    x_llm_api_key: Annotated[str | None, Header(alias=LLM_API_KEY_HEADER)] = None,
 ) -> ChatResponse:
     """Send a message to BotMason and receive an AI response."""
     api_key = resolve_chat_api_key(x_llm_api_key)
@@ -87,9 +87,9 @@ async def chat_with_botmason(
 async def chat_with_botmason_stream(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     payload: ChatRequest,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
-    x_llm_api_key: str | None = Header(default=None, alias=LLM_API_KEY_HEADER),
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    x_llm_api_key: Annotated[str | None, Header(alias=LLM_API_KEY_HEADER)] = None,
 ) -> StreamingResponse:
     """Stream a BotMason response as Server-Sent Events.
 
@@ -117,8 +117,8 @@ async def chat_with_botmason_stream(
 
 @router.get("/user/balance", response_model=BalanceResponse)
 async def get_balance(
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> BalanceResponse:
     """Return the current offering balance for the authenticated user."""
     user = await require_user_fresh(session, current_user)
@@ -127,8 +127,8 @@ async def get_balance(
 
 @router.get("/user/usage", response_model=UsageResponse)
 async def get_usage(
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> UsageResponse:
     """Return the authenticated user's BotMason usage for the current month."""
     # Roll the monthly counter over in-place so callers never see stale values.
@@ -151,8 +151,8 @@ async def get_usage(
 async def add_balance(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     payload: BalanceAddRequest,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> BalanceAddResponse:
     """Add credits to the authenticated user's offering balance."""
     if payload.amount <= 0:

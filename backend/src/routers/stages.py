@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,9 +71,9 @@ async def _build_stage_response(
 
 @router.get("", response_model=None)
 async def list_stages(
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
-    pagination: PaginationParams = Depends(),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    pagination: Annotated[PaginationParams, Depends()],
 ) -> Page[StageResponse] | list[StageResponse]:
     """List all stages with per-user progress overlay.
 
@@ -100,8 +101,8 @@ async def list_stages(
 @router.get("/{stage_number}", response_model=StageResponse)
 async def get_stage(
     stage_number: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> StageResponse:
     """Get a single stage with full metadata and progress."""
     result = await session.execute(
@@ -132,8 +133,8 @@ async def get_stage(
 @router.get("/{stage_number}/progress", response_model=StageProgressResponse)
 async def get_stage_progress(
     stage_number: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> StageProgressResponse:
     """Detailed progress breakdown for a stage."""
     if not await stage_exists(session, stage_number):
@@ -146,8 +147,8 @@ async def get_stage_progress(
 @router.get("/{stage_number}/history", response_model=StageHistoryResponse)
 async def get_stage_history(
     stage_number: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> StageHistoryResponse:
     """Aggregated practice and habit history for a stage."""
     if not await stage_exists(session, stage_number):
@@ -170,8 +171,8 @@ async def get_stage_history(
 @router.put("/progress", response_model=StageProgressRecord)
 async def update_progress(
     payload: StageProgressUpdate,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> StageProgressRecord:
     """Advance the user to the next stage.
 

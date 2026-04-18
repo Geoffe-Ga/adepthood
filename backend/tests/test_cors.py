@@ -125,8 +125,10 @@ def test_credentials_safe_with_explicit_origins() -> None:
 
 
 def test_security_headers_present_on_every_response() -> None:
-    """BUG-INFRA-001/002/003: CSP, Referrer-Policy, and Permissions-Policy
-    must be on every response (not just authenticated ones)."""
+    """BUG-INFRA-001/002/003: CSP, Referrer-Policy, and Permissions-Policy.
+
+    must be on every response (not just authenticated ones).
+    """
     response = client.get("/auth/login")  # public path; CORS-friendly
     assert "Content-Security-Policy" in response.headers
     assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"

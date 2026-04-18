@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hmac
 import os
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header
 from sqlalchemy import func, select
@@ -52,8 +53,8 @@ def _require_admin(
 
 @router.get("/usage-stats", response_model=UsageStatsResponse)
 async def get_usage_stats(
-    session: AsyncSession = Depends(get_session),  # noqa: B008
-    _: None = Depends(_require_admin),
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _: Annotated[None, Depends(_require_admin)],
 ) -> UsageStatsResponse:
     """Return aggregate LLM usage stats across all users.
 

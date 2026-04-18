@@ -545,8 +545,10 @@ async def test_past_stage_content_fully_unlocked(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """BUG-COURSE-002/003: User on stage 3 can see all stage-1 content
-    regardless of drip-feed timing."""
+    """BUG-COURSE-002/003: User on stage 3 can see all stage-1 content.
+
+    regardless of drip-feed timing.
+    """
     headers, user_id = await _signup(async_client)
     await _seed_stage_with_content(db_session, stage_number=1)
     # Also seed stage 3 so user can be on it
@@ -584,8 +586,10 @@ async def test_course_progress_no_next_unlock_when_not_on_stage(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """BUG-COURSE-004: next_unlock_day should be None when user hasn't
-    started the stage (not pass -1 to next_unlock_day)."""
+    """BUG-COURSE-004: next_unlock_day should be None when user hasn't.
+
+    started the stage (not pass -1 to next_unlock_day).
+    """
     headers, _user_id = await _signup(async_client)
     await _seed_stage_with_content(db_session, stage_number=1)
     # User has no progress record

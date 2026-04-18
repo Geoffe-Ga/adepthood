@@ -49,7 +49,6 @@ def generate_plan(habits: Sequence[Habit], start_date: date) -> tuple[EnergyPlan
     The plan covers :data:`PLAN_DURATION_DAYS` (21 days, one standard stage
     cycle). Returns the plan and a ``reason_code`` for auditability.
     """
-
     if not habits:
         raise ValueError("habits must not be empty")
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,8 +27,8 @@ router = APIRouter(prefix="/practice-sessions", tags=["practice-sessions"])
 @router.post("/", response_model=PracticeSessionResponse)
 async def create_session(
     payload: PracticeSessionCreate,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PracticeSession:
     """Log a practice session against a user-practice selection."""
     result = await session.execute(
@@ -62,9 +63,9 @@ async def create_session(
 @router.get("/", response_model=None)
 async def list_sessions(
     user_practice_id: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
-    pagination: PaginationParams = Depends(),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    pagination: Annotated[PaginationParams, Depends()],
 ) -> Page[PracticeSessionResponse] | list[PracticeSessionResponse]:
     """List sessions for a specific user-practice, newest first.
 
@@ -89,8 +90,8 @@ async def list_sessions(
 
 @router.get("/week-count")
 async def week_count(
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict[str, int]:
     """Return the number of sessions the authenticated user completed this week."""
     now = datetime.now(UTC)

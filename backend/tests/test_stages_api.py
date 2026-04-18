@@ -427,7 +427,8 @@ _EXPECTED_STAGE_AFTER_ADVANCE = 2
 async def test_concurrent_advance_produces_consistent_state(
     concurrent_async_client: AsyncClient,
 ) -> None:
-    """BUG-STAGE-005: Two concurrent advances must produce a consistent
+    """BUG-STAGE-005: Two concurrent advances must produce a consistent.
+
     final state.  With PostgreSQL's ``FOR UPDATE`` lock, exactly one
     request wins and the other is rejected.  SQLite serialises at the
     database level so both may succeed — but the final state must still

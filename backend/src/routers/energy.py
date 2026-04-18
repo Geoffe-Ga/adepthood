@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Header
 
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/v1/energy", tags=["energy"])
 
 @router.post("/plan", response_model=EnergyPlanResponse)
 async def create_plan(
-    payload: EnergyPlanRequest, x_idempotency_key: str | None = Header(default=None)
+    payload: EnergyPlanRequest, x_idempotency_key: Annotated[str | None, Header()] = None
 ) -> EnergyPlanResponse:
     """Create an energy plan from submitted habits.
 

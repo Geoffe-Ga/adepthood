@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func
@@ -42,8 +43,8 @@ async def _get_user_week(session: AsyncSession, user_id: int) -> int:
 
 @router.get("/current", response_model=PromptDetail)
 async def get_current_prompt(
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PromptDetail:
     """Return the prompt for the user's current week in the program."""
     week = await _get_user_week(session, current_user)
@@ -79,9 +80,9 @@ class _HistoryFilters:
 
 @router.get("/history", response_model=PromptListResponse)
 async def list_prompt_history(
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
-    filters: _HistoryFilters = Depends(),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    filters: Annotated[_HistoryFilters, Depends()],
 ) -> PromptListResponse:
     """List all past prompts and responses for the user, paginated."""
     query = (
@@ -116,8 +117,8 @@ async def list_prompt_history(
 @router.get("/{week_number}", response_model=PromptDetail)
 async def get_prompt_by_week(
     week_number: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PromptDetail:
     """Get a specific week's prompt and the user's response (if any)."""
     question = get_prompt_for_week(week_number)
@@ -149,8 +150,8 @@ async def get_prompt_by_week(
 async def submit_prompt_response(
     week_number: int,
     payload: PromptSubmit,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PromptDetail:
     """Submit a response to a weekly prompt. Prevents duplicate responses."""
     question = get_prompt_for_week(week_number)

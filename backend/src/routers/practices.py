@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,9 +26,9 @@ router = APIRouter(prefix="/practices", tags=["practices"])
 @router.get("/", response_model=None)
 async def list_practices(
     stage_number: int,
-    _current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
-    pagination: PaginationParams = Depends(),  # noqa: B008
+    _current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    pagination: Annotated[PaginationParams, Depends()],
 ) -> Page[PracticeResponse] | list[PracticeResponse]:
     """List approved practices for a given stage.
 
@@ -49,8 +50,8 @@ async def list_practices(
 @router.get("/{practice_id}", response_model=PracticeResponse)
 async def get_practice(
     practice_id: int,
-    _current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    _current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Practice:
     """Get a single practice with full instructions."""
     result = await session.execute(select(Practice).where(Practice.id == practice_id))
@@ -65,8 +66,8 @@ async def get_practice(
 async def submit_practice(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     payload: PracticeCreate,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Practice:
     """Submit a new user-created practice (defaults to unapproved)."""
     practice = Practice(
