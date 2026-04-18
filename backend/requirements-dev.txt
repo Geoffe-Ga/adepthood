@@ -10,7 +10,7 @@ radon>=6.0
 ruff
 vulture>=2.13
 xenon>=0.9
-pydantic[mypy]
+pydantic
 sqlmodel
 types-requests
 types-ujson

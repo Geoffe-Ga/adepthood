@@ -8,8 +8,7 @@ module.exports = {
   moduleDirectories: ['node_modules', 'src'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
-    '^@react-native-async-storage/async-storage$':
-      '<rootDir>/node_modules/@react-native-async-storage/async-storage/jest/async-storage-mock.js',
+    '^@react-native-async-storage/async-storage$': '<rootDir>/src/__mocks__/async-storage.js',
     '^expo-secure-store$': '<rootDir>/src/__mocks__/expo-secure-store.js',
     '^expo-av$': '<rootDir>/src/__mocks__/expo-av.js',
     '^expo-keep-awake$': '<rootDir>/src/__mocks__/expo-keep-awake.js',
