@@ -48,10 +48,59 @@ jobs:
         run: |
           pre-commit run --hook-stage pre-push --files $(git ls-files 'backend')
 
+      - name: Docstring coverage (interrogate)
+        working-directory: backend
+        run: |
+          interrogate -c pyproject.toml src/
+
+      - name: Branch coverage ≥85%
+        working-directory: backend
+        run: |
+          # The pre-push hook generates coverage data; verify branch coverage
+          # meets the threshold by parsing the XML report.
+          pytest --cov=src --cov-report=xml --cov-branch -q --no-header 2>/dev/null || true
+          python3 -c "
+          import sys, xml.etree.ElementTree as ET
+          tree = ET.parse('coverage.xml')
+          rate = float(tree.getroot().attrib['branch-rate']) * 100
+          threshold = 85
+          print(f'Branch coverage: {rate:.1f}% (threshold: {threshold}%)')
+          if rate < threshold:
+              print(f'::error::Branch coverage {rate:.1f}% is below {threshold}%')
+              sys.exit(1)
+          "
+
       - name: Security (pip-audit)
         run: |
           uv pip install --system pip-audit
           pip-audit -r backend/requirements.txt
+
+  # Cross-version compatibility: verify tests pass on 3.11 and 3.13
+  # (3.12 is already covered by the backend-quality job).
+  backend-compat:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57  # v8.0.0
+
+      - name: Install backend deps
+        run: |
+          uv pip install --system -r backend/requirements.txt
+          uv pip install --system -r backend/requirements-dev.txt
+
+      - name: Run tests
+        working-directory: backend
+        run: pytest -q --no-cov
 
   migration-drift:
     # BUG-INFRA-023: guard against models diverging from migrations.

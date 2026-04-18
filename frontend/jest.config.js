@@ -32,4 +32,16 @@ module.exports = {
   ],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   testMatch: ['**/?(*.)+(spec|test).[tj]s?(x)'],
+  // Enforce minimum 90% coverage on all metrics — ported from
+  // adepthood-typescript-linters. Run `npm test -- --coverage` to see
+  // the full report; CI will fail if any metric drops below threshold.
+  coverageThreshold: {
+    global: {
+      branches: 90,
+      functions: 90,
+      lines: 90,
+      statements: 90,
+    },
+  },
+  collectCoverageFrom: ['src/**/*.{ts,tsx}', '!src/**/*.d.ts'],
 };

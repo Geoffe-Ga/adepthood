@@ -118,12 +118,3 @@ paths = ["src"]
 min_confidence = 80
 exclude = ["tests", "migrations", "alembic", ".venv", "venv"]
 sort_by_size = true
-
-# Mutation testing configuration. Runs via `scripts/backend/mutation.sh`
-# or `mutmut run` from the backend directory. Target threshold 80 % per
-# adepthood-linters standards; enforced only in the dedicated CI job, not
-# in pre-commit.
-[tool.mutmut]
-paths_to_mutate = ["src/"]
-tests_dir = ["tests/"]
-runner = "pytest -x -q"

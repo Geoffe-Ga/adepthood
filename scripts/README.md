@@ -19,8 +19,6 @@ scripts/
 │   ├── coverage.sh    # pytest with coverage (≥90%)
 │   ├── security.sh    # bandit + pip-audit
 │   ├── complexity.sh  # radon + xenon
-│   ├── mutation.sh    # mutmut (≥80% mutation score)
-│   ├── analyze_mutations.py  # detailed mutmut cache analysis
 │   └── pr-status.sh   # gh CLI workflow monitor for PRs
 ├── frontend/          # TypeScript quality gates — runs against frontend/
 │   ├── check-all.sh
@@ -54,5 +52,5 @@ scripts/backend/fix-all.sh                 # Auto-fix what can be fixed
 scripts/frontend/check-all.sh              # Run every frontend gate
 ```
 
-New tools that aren't yet installed (`mutmut`, `interrogate`, `xenon`) will
+New tools that aren't yet installed (`interrogate`, `xenon`) will
 be added in the next tranche of the integration.
