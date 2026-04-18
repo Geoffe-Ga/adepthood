@@ -4,11 +4,12 @@ Adepthood is a React Native + FastAPI app that guides users through the 36-week 
 
 ## ✨ Features
 
-- 📓 **Journal** — Reflect daily and chat with Robot Mason, your Liminal Trickster Mystic guide
 - 📚 **Course** — Explore educational content stage by stage through the APTITUDE program
 - 📊 **Habits** — Track cumulative habits with energy scaffolding, streaks, and goals
-- 🗺️ **Map** — Visualize your growth across the 10 stages of APTITUDE in a skill-tree style
 - 🧘 **Practices** — Complete timed meditations unique to each stage, with sound cues and progress tracking
+- 📓 **Journal** — Reflect daily and chat with Robot Mason, your Liminal Trickster Mystic guide
+- 🗺️ **Map** — Visualize your growth across the 10 stages of APTITUDE in a skill-tree style
+
 
 ## 🛠️ Tech Stack
 
