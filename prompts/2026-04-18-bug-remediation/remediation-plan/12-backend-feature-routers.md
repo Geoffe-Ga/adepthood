@@ -8,6 +8,15 @@ Fix High-severity bugs in reports 09-15 that are NOT covered by earlier prompts.
 
 Success criteria: every High-severity bug listed in the two sub-scopes below is closed; Medium items triaged (fix or defer with a noted reason); coverage stays >=90%.
 
+## How to run the 12A / 12B split
+
+This file contains two self-contained sub-prompts. Run them in two separate Claude Code sessions:
+
+- **Session 12A**: in your opening message, say "Execute ONLY the `Prompt 12A` section of `prompts/2026-04-18-bug-remediation/remediation-plan/12-backend-feature-routers.md` — ignore the 12B section entirely. Branch `claude/bug-fix-12a-backend-feature-routers-hgcp`." Cite the 12A bug list verbatim so there is no ambiguity.
+- **Session 12B**: same pattern, but point to the `Prompt 12B` section and branch `claude/bug-fix-12b-backend-feature-routers-pjbm`.
+
+The two file lists (see `Files` lines below) are disjoint — 12A touches habits/goals/course/stages/prompts routers; 12B touches practices/journal/botmason routers. They can run in parallel without merge conflicts.
+
 ## Context — split the work
 
 ### Prompt 12A — Habits, Goals, Course, Prompts routers
@@ -65,13 +74,30 @@ if existing:
     return existing.result
 ```
 
-True stream (no buffering):
+True stream (no buffering) **and** upstream cancel on client disconnect (BUG-BM-006 + BUG-BM-007 together — neither alone is sufficient):
 ```python
-async def stream_response() -> AsyncIterator[bytes]:
+async def stream_response(request: Request) -> AsyncIterator[bytes]:
+    # BUG-BM-007: do not collect; yield chunks as they arrive.
+    # BUG-BM-006: if the client goes away, cancel the upstream call so we
+    #             stop paying for tokens the user will never see.
     async with provider.chat_stream(...) as upstream:
-        async for chunk in upstream:
-            yield chunk  # no .collect() / no .join()
+        upstream_task = asyncio.current_task()
+        async def watch_disconnect() -> None:
+            while True:
+                if await request.is_disconnected():
+                    upstream_task.cancel()  # stops the async for below
+                    return
+                await asyncio.sleep(0.25)
+        watcher = asyncio.create_task(watch_disconnect())
+        try:
+            async for chunk in upstream:  # pass-through; no .collect() / .join()
+                yield chunk
+        finally:
+            watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watcher
 ```
+The `watch_disconnect` task is the disconnect-check loop — without it, `is_disconnected()` is never polled and BUG-BM-006 stays open even with true streaming.
 
 ## Requirements
 - `concurrency` skill for the LLM upstream-cancel + idempotency bits.

@@ -27,13 +27,14 @@ Bug IDs and reports:
 Files you will touch (expect ≤15): `backend/src/routers/{stages,course,practices,prompts}.py`, `backend/src/domain/{stages,progression}.py`, `backend/src/schemas/{stage,prompt}.py`, `frontend/src/features/{Map,Course,Practice}/*.ts(x)`, frontend API types.
 
 ## Output Format
-Five atomic commits in this order:
+Six atomic commits in this order:
 
-1. `fix(backend): chain-validate stage unlock (BUG-STAGE-001)` + test that asserts "stage 5 requires {1,2,3,4} all completed, not just {4}".
-2. `fix(backend): server-derive stage progress, ignore client current_stage (BUG-SCHEMA-006)`.
-3. `fix(backend): validate practice.stage_number against user progression (BUG-PRACTICE-004)` + gate `list_stage_content` (BUG-COURSE-001).
-4. `fix(backend): gate weekly prompt endpoints on user_week (BUG-PROMPT-001/-002)`.
-5. `fix(frontend): fetch current_stage from backend, gate Map/Course/Practice on it (BUG-FE-MAP/COURSE/PRACTICE-001/-002)`.
+1. `chore(backend): audit legacy completed_stages gaps` — one-shot Alembic data migration that logs (does not auto-repair) any row where `completed_stages` is non-contiguous from 1. Add a read-only admin helper to inspect/repair; do not silently mutate user data. This unblocks Commit 2's invariant.
+2. `fix(backend): chain-validate stage unlock (BUG-STAGE-001)` + test that asserts "stage 5 requires {1,2,3,4} all completed, not just {4}" + the `next_stage_for(user)` helper uses `min(missing)` (see example).
+3. `fix(backend): server-derive stage progress, ignore client current_stage (BUG-SCHEMA-006)`.
+4. `fix(backend): validate practice.stage_number against user progression (BUG-PRACTICE-004)` + gate `list_stage_content` (BUG-COURSE-001).
+5. `fix(backend): gate weekly prompt endpoints on user_week (BUG-PROMPT-001/-002)`.
+6. `fix(frontend): fetch current_stage from backend, gate Map/Course/Practice on it (BUG-FE-MAP/COURSE/PRACTICE-001/-002)`.
 
 ## Examples
 
@@ -46,20 +47,35 @@ def is_stage_unlocked(user: User, stage_number: int) -> bool:
     return required.issubset(set(user.completed_stages))
 ```
 
-Server-derived stage update:
+Server-derived stage update (must handle legacy gap data):
 ```python
+TOTAL_STAGES = 36
+
+def next_stage_for(user: User) -> int:
+    """First unfinished stage. Robust to legacy rows with gaps (e.g. [1, 3])."""
+    completed = set(user.completed_stages)
+    missing = set(range(1, TOTAL_STAGES + 1)) - completed
+    if not missing:
+        raise HTTPException(409, "All stages already completed")
+    return min(missing)
+
 @router.post("/stage/progress")
 async def mark_stage_complete(
     payload: StageProgressUpdate,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    # Ignore payload.current_stage entirely.
-    next_stage = max(user.completed_stages, default=0) + 1
-    if payload.completed_stage != next_stage:
-        raise HTTPException(409, "Out-of-order stage completion")
+    # Ignore payload.current_stage entirely — recompute from server truth.
+    expected = next_stage_for(user)
+    if payload.completed_stage != expected:
+        raise HTTPException(409, f"Out-of-order stage completion (expected {expected})")
     # ... append, commit, return derived current_stage.
 ```
+
+Why `min(missing)` and not `max(completed) + 1`: a user whose `completed_stages`
+is `[1, 3]` (from a pre-fix bug, data import, or manual admin edit) would advance
+to stage 4 under `max()+1` — silently skipping stage 2. `min(missing)` always
+returns the first hole, so the chain-validation invariant holds even on dirty data.
 
 ## Requirements
 - `bug-squashing-methodology`: write the failing test first for each BUG-ID.

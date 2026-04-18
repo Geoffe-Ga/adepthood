@@ -43,24 +43,35 @@ type Config<TInput, TResult> = {
 };
 
 export function useOptimisticMutation<TInput, TResult>(cfg: Config<TInput, TResult>) {
+  // Stash cfg in a ref so we don't re-create `mutate` every render.
+  // If we depended on [cfg] and callers passed an object literal, `mutate`
+  // would change identity every render and any downstream effect/memo
+  // keyed on it would thrash (infinite re-render chains are easy to hit).
+  const cfgRef = useRef(cfg);
+  cfgRef.current = cfg;
+
   const [pending, setPending] = useState(false);
   const mutate = useCallback(async (input: TInput) => {
-    cfg.apply(input);
+    const c = cfgRef.current;
+    c.apply(input);
     setPending(true);
     try {
-      const result = await cfg.commit(input);
-      cfg.onSuccess?.(input, result);
+      const result = await c.commit(input);
+      c.onSuccess?.(input, result);
       return result;
     } catch (err) {
-      cfg.rollback(input, err as Error);
+      c.rollback(input, err as Error);
       throw err;
     } finally {
       setPending(false);
     }
-  }, [cfg]);
+  }, []);  // stable identity for the lifetime of the hook
   return { mutate, pending };
 }
 ```
+**Do NOT** write `useCallback(..., [cfg])` — call sites like
+`useOptimisticMutation({ apply, commit, rollback })` create a fresh `cfg`
+every render. The ref+stable-callback pattern above is deliberate.
 
 Serialized write lane:
 ```ts
@@ -68,6 +79,11 @@ Serialized write lane:
 const chains = new Map<string, Promise<unknown>>();
 export function serialize<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = chains.get(key) ?? Promise.resolve();
+  // `then(fn, fn)` is intentional: `fn` runs whether `prev` resolved OR rejected.
+  // A prior write's failure must NOT block the next write in the lane — but
+  // `fn`'s own rejection (the thing THIS caller wants to know about) still
+  // propagates to `next`, so the returned promise rejects for the caller
+  // that owns the failing write.
   const next = prev.then(fn, fn);
   chains.set(key, next);
   next.finally(() => {

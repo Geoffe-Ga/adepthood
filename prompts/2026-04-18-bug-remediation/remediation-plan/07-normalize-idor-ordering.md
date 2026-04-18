@@ -32,31 +32,62 @@ Three atomic commits:
 
 ## Examples
 
-Shared ownership dependency:
+Shared ownership dependency — **the `**kwargs` sketch below is SEMANTIC, not a drop-in.** FastAPI's DI resolves dependency parameters by name using function introspection; a bare `**kwargs` won't surface the path parameter. You have three working options — pick one:
+
 ```python
 # backend/src/dependencies/ownership.py
+
+# Option 1 (recommended): factory returns a dep whose signature is built dynamically.
+from functools import partial
+
 def require_owned(model: type[T], id_param: str = "resource_id"):
     async def dep(
-        **kwargs,
+        resource_id: int,  # name must match what the factory is asked to bind
         session: AsyncSession = Depends(get_session),
         user: User = Depends(get_current_user),
     ) -> T:
-        resource_id = kwargs[id_param]
         row = await session.get(model, resource_id)
         if row is None:
             raise HTTPException(404, "Not found")
         if row.user_id != user.id:
             raise HTTPException(403, "Forbidden")
         return row
+    # Rename the parameter so FastAPI binds the matching path param.
+    dep.__annotations__ = {**dep.__annotations__, id_param: dep.__annotations__.pop("resource_id")}
+    dep.__signature__ = inspect.Signature(
+        parameters=[
+            inspect.Parameter(id_param, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=int),
+            *list(inspect.signature(dep).parameters.values())[1:],
+        ]
+    )
     return dep
+
+# Option 2: don't generalize — write one dep per resource type. Most straightforward.
+async def require_owned_habit(
+    habit_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> Habit:
+    habit = await session.get(Habit, habit_id)
+    if habit is None:
+        raise HTTPException(404, "Not found")
+    if habit.user_id != user.id:
+        raise HTTPException(403, "Forbidden")
+    return habit
+# ...one per resource. Verbose but zero magic.
+
+# Option 3: use Annotated + a generic authorize() helper invoked inside each route.
+# This keeps dep magic minimal while still centralizing the 404/403 policy.
 ```
 
-Router use:
+Pick Option 2 if the dynamic signature work in Option 1 feels fragile. The **important** invariant is the 404-then-403 ordering, not the meta-programming.
+
+Router use (assumes Option 1 or 2):
 ```python
 @router.patch("/habits/{habit_id}")
 async def update_habit(
     payload: HabitUpdate,
-    habit: Habit = Depends(require_owned(Habit, "habit_id")),
+    habit: Habit = Depends(require_owned_habit),
     session: AsyncSession = Depends(get_session),
 ) -> HabitPublic:
     # habit is guaranteed to be owned by current_user.
@@ -76,6 +107,6 @@ class HabitPublic(BaseModel):
 - `security`: assert 403 in tests, not `!= 200`. Ordering matters — the test must specifically fail if a future commit regresses to 404-before-403.
 - For shared resources (goal group templates): owner can edit, non-owners get 403, everyone can GET if `is_shared=True`.
 - `BUG-GOAL-005`: drop client `user_id` entirely from `create_goal_group` — take it from `current_user`.
-- `max-quality-no-shortcuts`: do not add a `# type: ignore` to suppress the FastAPI-Depends-dynamic-kwarg type warning; structure the dep properly.
+- `max-quality-no-shortcuts`: do not add a `# type: ignore` to suppress type warnings on the dep factory. Pick Option 2 (per-resource dep) if Option 1's `inspect.Signature` rewrite trips mypy — Option 2 is explicit and passes cleanly.
 - `pre-commit run --all-files` before each commit; coverage >=90%.
 - Parallelizable with Prompts 04-06, 08-10. If Prompt 06's goal_completion migration touches a related router, rebase order: 06 first, 07 second.

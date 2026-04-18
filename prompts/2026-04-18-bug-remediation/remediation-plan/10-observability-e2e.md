@@ -53,7 +53,8 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 Decimal serialization (Pydantic v2):
 ```python
 # Pydantic v2 removed json_encoders. Use @field_serializer (or @model_serializer).
-from pydantic import BaseModel, Decimal, field_serializer
+from decimal import Decimal  # idiomatic stdlib import — Pydantic v2 accepts this directly
+from pydantic import BaseModel, field_serializer
 
 class WalletBalance(BaseModel):
     amount: Decimal

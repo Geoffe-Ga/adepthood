@@ -13,7 +13,14 @@
 
 ## Status
 
-Tick each row as its PR merges. Every prompt tells the implementation session to update this table as its last step.
+**How this gets updated:** each implementation session ships a final commit on its own feature branch that edits this table — flipping its row from `[ ]` to `[x]` and filling the Branch / PR column. When the PR merges to `main`, the Status row lands with it, so `main`'s copy of this file is always the source of truth.
+
+Because sessions run on separate branches, two sessions editing the table concurrently WILL produce a merge conflict on this section. That conflict is trivially resolvable (keep both rows checked) — but if you prefer to avoid it entirely, pick ONE of these alternatives:
+
+- **Option A (default):** let the conflict happen; resolve it during rebase/merge. Works fine for <10 parallel sessions.
+- **Option B:** have the human orchestrator tick rows manually as PRs land, and strip the "update the Status table" step from the per-session prompt template.
+
+Either way, treat the `main` copy of this table as truth. A branch-local tick is not "done" until its PR merges.
 
 | # | Prompt | Wave | Branch / PR | Status |
 |--:|--------|:----:|-------------|:------:|
@@ -70,19 +77,28 @@ Wave 4 (parallel; separate branches)
  │
  ├─▶ 04 ─┐
  ├─▶ 05 ─┤
- ├─▶ 06 ─┼─▶ 12 (Wave 4)
+ ├─▶ 06 ─┼─▶ 11, 12 (Wave 4)
  ├─▶ 07 ─┤
  ├─▶ 08 ─┼─▶ 14 (Wave 4)
  ├─▶ 09 ─┤
  └─▶ 10 ─┘
  │
- └─▶ 11, 13, 15 (independent of Wave 3 hooks — can start after Wave 2)
+ └─▶ 13, 15 (independent of Wave 3 hooks — can start after Wave 2)
 ```
 
 - **Hard serial**: 01 → 02 → 03 (they share the auth + progression surface).
-- **Soft serial within Wave 3**: 06 should land before 12 (unique constraints affect router commits); 08 should land before 14 (feature screens import `useOptimisticMutation`).
-- **Parallel-safe**: 04, 05, 07, 09, 10 touch disjoint files across backend/frontend and can run simultaneously.
-- **Wave 4 fan-out**: 11, 13, 15 depend on Wave 2 only. 12 depends on 06. 14 depends on 05 + 08.
+- **Soft serial within Wave 3**:
+  - 06 should land before 11 (Prompt 11 adds more Alembic migrations; overlapping migration chains conflict).
+  - 06 should land before 12 (unique constraints affect router commits).
+  - 08 should land before 14 (feature screens import `useOptimisticMutation`).
+  - 05 should land before 14 (feature screens import `dateUtils`).
+- **Parallel-safe in Wave 3**: 04, 05, 07, 09, 10 touch disjoint files across backend/frontend and can run simultaneously. 08 is also parallel-safe structurally (new hook file, no overlap with 04-07/09/10), but leaving it for Day 2 keeps the Day-1 branch count manageable and gives 14 a clean base.
+- **Wave 4 fan-out**: 13, 15 depend on Wave 2 only. 11, 12 depend on 06. 14 depends on 05 + 08.
+- **Rebase discipline**: if your prompt's file list overlaps a prompt that has already merged (see Status table below), `git fetch origin main && git rebase origin/main` before you start. The INDEX's "Files you will touch" cap in each prompt makes overlap visible in 30 seconds.
+
+### Legend — `[done-by-N]` in Context sections
+
+Inside each prompt's Context list you will see BUG-IDs annotated like `BUG-AUTH-001 [done-by-02]`. The `[done-by-N]` tag means "this BUG-ID is owned by Prompt N — skip it here so we don't overwrite a sibling branch's work." Treat `done-by-*` IDs as out-of-scope even if you think you could close them in passing.
 
 ## Concurrency recipe (recommended)
 
