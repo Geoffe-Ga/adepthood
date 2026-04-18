@@ -2,7 +2,6 @@ uvicorn
 bandit
 interrogate>=1.7
 isort
-mutmut>=2.5
 mypy
 pre-commit
 pytest

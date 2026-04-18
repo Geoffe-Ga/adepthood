@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/test.sh - Run tests with Pytest
 # Usage: ./scripts/test.sh [--unit|--integration|--e2e|--all] [--coverage]
-#                          [--mutation] [--verbose] [--help]
+#                          [--verbose] [--help]
 
 set -euo pipefail
 
@@ -10,7 +10,6 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../backend" && pwd)"
 
 TEST_TYPE="unit"
 COVERAGE=false
-MUTATION=false
 VERBOSE=false
 
 # Parse command line arguments
@@ -36,10 +35,6 @@ while [[ $# -gt 0 ]]; do
             COVERAGE=true
             shift
             ;;
-        --mutation)
-            MUTATION=true
-            shift
-            ;;
         --verbose)
             VERBOSE=true
             shift
@@ -56,7 +51,6 @@ OPTIONS:
     --e2e           Run end-to-end tests only
     --all           Run all test types
     --coverage      Generate coverage report
-    --mutation      Run mutation tests
     --verbose       Show detailed output
     --help          Display this help message
 
@@ -69,7 +63,6 @@ EXAMPLES:
     $(basename "$0")                     # Run unit tests
     $(basename "$0") --all               # Run all tests
     $(basename "$0") --unit --coverage   # Unit tests with coverage
-    $(basename "$0") --mutation          # Run mutation tests
 EOF
             exit 0
             ;;
@@ -129,16 +122,5 @@ fi
 pytest "${PYTEST_ARGS[@]}" tests/ || { echo "✗ Tests failed" >&2; exit 1; }
 
 echo "✓ Tests passed"
-
-# Run mutation tests if requested
-if $MUTATION; then
-    echo "=== Running Mutation Tests ==="
-    if command -v mutmut &> /dev/null; then
-        mutmut run || { echo "✗ Mutation tests failed" >&2; exit 1; }
-        echo "✓ Mutation tests passed"
-    else
-        echo "Warning: mutmut not installed, skipping mutation tests" >&2
-    fi
-fi
 
 exit 0
