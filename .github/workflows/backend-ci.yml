@@ -33,12 +33,18 @@ jobs:
           uv pip install --system pre-commit
 
       - name: Run pre-commit (Python hooks only)
+        # ``no-commit-to-branch`` exists to block *local* commits to main;
+        # in CI the push is already on main, so the hook is a false positive.
+        env:
+          SKIP: no-commit-to-branch
         run: |
           pre-commit run --hook-stage pre-commit --files $(git ls-files 'backend')
 
       - name: Run pre-push hooks (complexity + maintainability + tests)
         # xenon/radon/backend-tests-coverage moved to pre-push locally to keep
         # `git commit` fast. CI still runs them so nothing escapes review.
+        env:
+          SKIP: no-commit-to-branch
         run: |
           pre-commit run --hook-stage pre-push --files $(git ls-files 'backend')
 
