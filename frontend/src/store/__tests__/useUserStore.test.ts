@@ -38,4 +38,27 @@ describe('useUserStore', () => {
 
     expect(useUserStore.getState().preferences.notificationsEnabled).toBe(false);
   });
+
+  // BUG-FE-STATE-001
+  it('reset() restores the initial preferences', () => {
+    const { useUserStore } = require('../useUserStore');
+    act(() =>
+      useUserStore.getState().updatePreferences({ theme: 'dark', notificationsEnabled: false }),
+    );
+
+    act(() => useUserStore.getState().reset());
+
+    expect(useUserStore.getState().preferences).toEqual({
+      theme: 'light',
+      notificationsEnabled: true,
+    });
+  });
+
+  it('reset runs when resetAllStores is called', () => {
+    const { useUserStore } = require('../useUserStore');
+    const { resetAllStores } = require('../registry');
+    act(() => useUserStore.getState().updatePreferences({ theme: 'dark' }));
+    act(() => resetAllStores());
+    expect(useUserStore.getState().preferences.theme).toBe('light');
+  });
 });

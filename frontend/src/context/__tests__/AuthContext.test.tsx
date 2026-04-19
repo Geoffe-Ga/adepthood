@@ -518,4 +518,59 @@ describe('AuthContext', () => {
       expect(result.current.token).toBe('second-jwt');
     });
   });
+
+  // BUG-FE-STATE-001: every logout path — explicit logout and the re-auth
+  // sheet's "sign out instead" button — must wipe the in-memory stores AND
+  // the AsyncStorage keys that act as persistent caches so the next user on
+  // the device doesn't inherit the previous user's data.
+  describe('logout clears all user state (BUG-FE-STATE-001)', () => {
+    it('calls resetAllStores from the registry on explicit logout', async () => {
+      const { resetAllStores } = require('@/store/registry');
+      const resetSpy = jest.spyOn(require('@/store/registry'), 'resetAllStores');
+      mockLoadToken.mockResolvedValue('jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('jwt'));
+
+      await act(async () => {
+        await result.current.logout();
+      });
+
+      expect(resetSpy).toHaveBeenCalledTimes(1);
+      expect(typeof resetAllStores).toBe('function');
+      resetSpy.mockRestore();
+    });
+
+    it('calls resetAllStores when the user dismisses the re-auth sheet', async () => {
+      const resetSpy = jest.spyOn(require('@/store/registry'), 'resetAllStores');
+      mockLoadToken.mockResolvedValue('jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('jwt'));
+
+      await act(async () => {
+        await result.current.dismissReauth();
+      });
+
+      expect(resetSpy).toHaveBeenCalledTimes(1);
+      expect(result.current.authStatus).toBe('anonymous');
+      resetSpy.mockRestore();
+    });
+
+    it('does NOT reset stores on a 401-triggered reauth-required transition', async () => {
+      // A 401 is a hint that the session went stale, not that the user is
+      // done with the app. Keep their in-memory habits/stages around so the
+      // ReauthSheet feels like a single-modal interruption, not a logout.
+      const resetSpy = jest.spyOn(require('@/store/registry'), 'resetAllStores');
+      mockLoadToken.mockResolvedValue('jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('jwt'));
+
+      await act(async () => {
+        result.current.onUnauthorized();
+      });
+
+      await waitFor(() => expect(result.current.authStatus).toBe('reauth-required'));
+      expect(resetSpy).not.toHaveBeenCalled();
+      resetSpy.mockRestore();
+    });
+  });
 });

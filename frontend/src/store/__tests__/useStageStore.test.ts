@@ -109,4 +109,33 @@ describe('useStageStore', () => {
     expect(selectStageByNumber(null)(state)).toBeUndefined();
     expect(selectStageByNumber(undefined)(state)).toBeUndefined();
   });
+
+  // BUG-FE-STATE-001
+  it('reset() restores the initial empty state', () => {
+    const { useStageStore } = require('../useStageStore');
+    act(() => {
+      useStageStore.getState().setStages([makeStage(1), makeStage(2)]);
+      useStageStore.getState().setCurrentStage(5);
+      useStageStore.getState().setLoading(true);
+      useStageStore.getState().setError('boom');
+    });
+
+    act(() => useStageStore.getState().reset());
+
+    const state = useStageStore.getState();
+    expect(state.stages).toEqual([]);
+    expect(state.stagesByNumber).toEqual({});
+    expect(state.stageOrder).toEqual([]);
+    expect(state.currentStage).toBe(1);
+    expect(state.loading).toBe(false);
+    expect(state.error).toBeNull();
+  });
+
+  it('reset runs when resetAllStores is called', () => {
+    const { useStageStore } = require('../useStageStore');
+    const { resetAllStores } = require('../registry');
+    act(() => useStageStore.getState().setStages([makeStage(7)]));
+    act(() => resetAllStores());
+    expect(useStageStore.getState().stages).toEqual([]);
+  });
 });

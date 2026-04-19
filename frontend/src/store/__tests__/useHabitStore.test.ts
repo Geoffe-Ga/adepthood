@@ -170,4 +170,37 @@ describe('useHabitStore', () => {
     const stateFromSecondCall = useHabitStore.getState();
     expect(stateFromSecondCall.habits).toEqual([habit]);
   });
+
+  // BUG-FE-STATE-001: the global store must fully wipe on logout so the next
+  // user on the device doesn't inherit the previous user's habits.
+  it('reset() restores the initial empty state', () => {
+    const { useHabitStore } = require('../useHabitStore');
+    act(() => {
+      useHabitStore.getState().setHabits([makeHabit({ id: 1 }), makeHabit({ id: 2 })]);
+      useHabitStore.getState().setLoading(true);
+      useHabitStore.getState().setError('boom');
+    });
+
+    act(() => useHabitStore.getState().reset());
+
+    const state = useHabitStore.getState();
+    expect(state.habits).toEqual([]);
+    expect(state.habitsById).toEqual({});
+    expect(state.habitOrder).toEqual([]);
+    expect(state.loading).toBe(false);
+    expect(state.error).toBeNull();
+  });
+
+  it('registers its reset with the shared store registry', () => {
+    // The registry lets AuthContext.logout fire a single call that clears
+    // every store without needing to know this module exists.
+    const { useHabitStore } = require('../useHabitStore');
+    const { resetAllStores } = require('../registry');
+
+    act(() => useHabitStore.getState().setHabits([makeHabit({ id: 7 })]));
+    expect(useHabitStore.getState().habits).toHaveLength(1);
+
+    act(() => resetAllStores());
+    expect(useHabitStore.getState().habits).toEqual([]);
+  });
 });

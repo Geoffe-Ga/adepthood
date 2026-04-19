@@ -2,6 +2,9 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 
 import { auth as authApi, setOnTokenRefreshed, setOnUnauthorized, setTokenGetter } from '@/api';
 import { clearToken, loadToken, saveToken } from '@/storage/authStorage';
+import { clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
+import { clearLlmApiKey } from '@/storage/llmKeyStorage';
+import { resetAllStores } from '@/store/registry';
 import {
   decodeJwtPayload,
   isTokenExpired,
@@ -90,6 +93,30 @@ function useProactiveRefresh(
 interface AuthMutators {
   setToken: React.Dispatch<React.SetStateAction<string | null>>;
   setAuthStatus: React.Dispatch<React.SetStateAction<AuthStatus>>;
+}
+
+/**
+ * BUG-FE-STATE-001: every logout path (explicit ``logout`` and the re-auth
+ * sheet's "sign out instead" button) must wipe the in-memory Zustand stores
+ * AND the AsyncStorage persistence keys so the next user on the device
+ * doesn't inherit the previous user's habits, stage progress, or BYOK key.
+ * The storage clears are wrapped in try/catch so one failing key doesn't
+ * leave the rest of the wipe half-done.
+ */
+async function wipeUserState(): Promise<void> {
+  resetAllStores();
+  const clears: Array<[string, Promise<void>]> = [
+    ['habits', clearHabits()],
+    ['pending check-ins', clearPendingCheckIns()],
+    ['LLM API key', clearLlmApiKey()],
+  ];
+  for (const [label, promise] of clears) {
+    try {
+      await promise;
+    } catch (err: unknown) {
+      console.warn(`[auth] failed to clear ${label} on logout`, err);
+    }
+  }
 }
 
 /**
@@ -228,6 +255,7 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
 
   const logout = useCallback(async () => {
     await clearToken();
+    await wipeUserState();
     setToken(null);
     setAuthStatus('anonymous');
   }, [setToken, setAuthStatus]);
@@ -246,6 +274,7 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
     } catch (err: unknown) {
       console.warn('clearToken failed in dismissReauth', err);
     }
+    await wipeUserState();
     setToken(null);
     setAuthStatus('anonymous');
   }, [setToken, setAuthStatus]);
