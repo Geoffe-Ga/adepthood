@@ -194,6 +194,115 @@ describe('AuthContext', () => {
     });
   });
 
+  // BUG-NAV-001 / BUG-NAV-002: the navigator must discriminate between
+  // "transient 401, ask to re-auth" and "user is anonymous" — otherwise
+  // any 401 during a tab switch unmounts BottomTabs and boots the user
+  // to Signup. The machine also guards against re-entering ``'loading'``
+  // mid-session: once bootstrap settles we never rewind.
+  describe('authStatus state machine (BUG-NAV-001 / BUG-NAV-002)', () => {
+    it("starts in 'loading' before the stored-token read resolves", () => {
+      mockLoadToken.mockReturnValue(new Promise(() => {}));
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      expect(result.current.authStatus).toBe('loading');
+    });
+
+    it("resolves to 'anonymous' when no token is stored", async () => {
+      mockLoadToken.mockResolvedValue(null);
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+    });
+
+    it("resolves to 'authenticated' when a valid token is stored", async () => {
+      mockLoadToken.mockResolvedValue('valid-jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+    });
+
+    it("resolves to 'anonymous' when the stored token is expired", async () => {
+      mockLoadToken.mockResolvedValue('expired-jwt');
+      mockIsTokenExpired.mockReturnValue(true);
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+    });
+
+    it("transitions to 'authenticated' after successful login", async () => {
+      mockAuth.login.mockResolvedValue({ token: 'new-jwt', user_id: 1 });
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+
+      await act(async () => {
+        await result.current.login('user@test.com', 'password123');
+      });
+      expect(result.current.authStatus).toBe('authenticated');
+    });
+
+    it("transitions to 'reauth-required' on onUnauthorized (NOT 'anonymous')", async () => {
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+
+      await act(async () => {
+        result.current.onUnauthorized();
+      });
+      await waitFor(() => expect(result.current.authStatus).toBe('reauth-required'));
+      // Explicitly not 'anonymous' — that would unmount RootStack.
+      expect(result.current.authStatus).not.toBe('anonymous');
+    });
+
+    it("transitions to 'anonymous' on explicit logout", async () => {
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+
+      await act(async () => {
+        await result.current.logout();
+      });
+      expect(result.current.authStatus).toBe('anonymous');
+    });
+
+    it("does not re-enter 'loading' after bootstrap completes", async () => {
+      mockLoadToken.mockResolvedValue(null);
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+
+      mockAuth.login.mockResolvedValue({ token: 'new-jwt', user_id: 1 });
+      await act(async () => {
+        await result.current.login('user@test.com', 'p'); // pragma: allowlist secret
+      });
+      expect(result.current.authStatus).toBe('authenticated');
+
+      await act(async () => {
+        result.current.onUnauthorized();
+      });
+      // Still not 'loading' — we never rewind the one-shot bootstrap flag.
+      await waitFor(() => expect(result.current.authStatus).toBe('reauth-required'));
+      expect(result.current.authStatus).not.toBe('loading');
+    });
+
+    it("dismissReauth transitions from 'reauth-required' to 'anonymous'", async () => {
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+
+      await act(async () => {
+        result.current.onUnauthorized();
+      });
+      await waitFor(() => expect(result.current.authStatus).toBe('reauth-required'));
+
+      await act(async () => {
+        await result.current.dismissReauth();
+      });
+      expect(result.current.authStatus).toBe('anonymous');
+    });
+
+    it("isLoading mirrors authStatus === 'loading' for backwards compatibility", () => {
+      mockLoadToken.mockReturnValue(new Promise(() => {}));
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      expect(result.current.isLoading).toBe(true);
+      expect(result.current.authStatus).toBe('loading');
+    });
+  });
+
   describe('token expiration on startup', () => {
     it('discards an expired stored token', async () => {
       mockLoadToken.mockResolvedValue('expired-jwt');

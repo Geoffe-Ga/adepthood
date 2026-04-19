@@ -11,13 +11,40 @@ import {
 
 type LoginOrSignup = (_emailOrUsername: string, _pw: string) => Promise<void>;
 
+/**
+ * BUG-NAV-001 / BUG-NAV-002: the navigator used to gate on the raw ``token``
+ * field, so any transient 401 that nulled the token also unmounted the
+ * authenticated tree and booted the user to Signup. The explicit state
+ * machine below lets the navigator distinguish "logged out" from "prompt
+ * the user to re-authenticate without tearing down their navigation state".
+ *
+ * Transitions:
+ *
+ *   loading ───▶ authenticated (valid stored token)
+ *   loading ───▶ anonymous     (no / expired / corrupt stored token)
+ *   anonymous ─▶ authenticated (login / signup success)
+ *   authenticated ─▶ reauth-required (401 → onUnauthorized)
+ *   authenticated ─▶ anonymous (explicit logout)
+ *   reauth-required ─▶ authenticated (re-auth sheet succeeded → login/signup)
+ *   reauth-required ─▶ anonymous (user dismissed the sheet)
+ *
+ * ``loading`` is a one-shot cold-start state. Once bootstrap settles we
+ * never rewind to ``loading`` — a mid-session storage read must not
+ * collapse the navigator to a spinner (BUG-NAV-002).
+ */
+export type AuthStatus = 'loading' | 'authenticated' | 'reauth-required' | 'anonymous';
+
 interface AuthContextValue {
   token: string | null;
+  authStatus: AuthStatus;
+  /** Mirrors ``authStatus === 'loading'``. Kept for backwards compatibility. */
   isLoading: boolean;
   login: LoginOrSignup;
   signup: LoginOrSignup;
   logout: () => Promise<void>;
   onUnauthorized: () => void;
+  /** User dismissed the re-auth sheet: treat as an explicit logout. */
+  dismissReauth: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -60,20 +87,26 @@ function useProactiveRefresh(
   }, [token, tokenRef, applyNewToken]);
 }
 
+interface AuthMutators {
+  setToken: React.Dispatch<React.SetStateAction<string | null>>;
+  setAuthStatus: React.Dispatch<React.SetStateAction<AuthStatus>>;
+}
+
 /**
- * BUG-AUTH-005: the storage write must complete before we drop the token
- * from state; otherwise a crash between the two leaves a stale token in
- * secure storage that hydrates on next launch.
+ * BUG-AUTH-005 / BUG-NAV-001: the storage write must complete before we drop
+ * the token from state; otherwise a crash between the two leaves a stale
+ * token in secure storage that hydrates on next launch. When the API layer
+ * reports 401 we transition to ``'reauth-required'`` (so the navigator keeps
+ * Tabs mounted), not ``'anonymous'``.
  */
-async function clearTokenThenReset(
-  setToken: React.Dispatch<React.SetStateAction<string | null>>,
-): Promise<void> {
+async function clearTokenForReauth(mutators: AuthMutators): Promise<void> {
   try {
     await clearToken();
   } catch (err: unknown) {
     console.warn('clearToken failed in onUnauthorized', err);
   }
-  setToken(null);
+  mutators.setToken(null);
+  mutators.setAuthStatus((prev) => (prev === 'loading' ? 'anonymous' : 'reauth-required'));
 }
 
 /**
@@ -87,7 +120,7 @@ async function clearTokenThenReset(
  */
 async function saveTokenThenApply(
   newToken: string,
-  setToken: React.Dispatch<React.SetStateAction<string | null>>,
+  mutators: AuthMutators,
   tokenRef: React.MutableRefObject<string | null>,
 ): Promise<void> {
   if (tokenRef.current === null) {
@@ -101,13 +134,14 @@ async function saveTokenThenApply(
     return;
   }
   if (tokenRef.current === null) return;
-  setToken(newToken);
+  mutators.setToken(newToken);
+  mutators.setAuthStatus('authenticated');
 }
 
 /** Register API-layer callbacks that bridge token state to the HTTP client. */
 function useApiCallbacks(
   tokenRef: React.MutableRefObject<string | null>,
-  setToken: React.Dispatch<React.SetStateAction<string | null>>,
+  mutators: AuthMutators,
 ): void {
   // BUG-FRONTEND-INFRA-013: hold the getter in a ref that outlives the effect
   // so a mid-request logout (which clears ``tokenRef.current``) can't lose
@@ -118,80 +152,133 @@ function useApiCallbacks(
   useEffect(() => {
     setTokenGetter(stableGetter);
     setOnUnauthorized(() => {
-      void clearTokenThenReset(setToken);
+      void clearTokenForReauth(mutators);
     });
     setOnTokenRefreshed((t: string) => {
-      void saveTokenThenApply(t, setToken, tokenRef);
+      void saveTokenThenApply(t, mutators, tokenRef);
     });
     return () => {
       setTokenGetter(null);
       setOnUnauthorized(null);
       setOnTokenRefreshed(null);
     };
-  }, [stableGetter, setToken, tokenRef]);
+  }, [stableGetter, mutators, tokenRef]);
 }
 
-/** Load token from storage on mount, discarding expired tokens. */
-function useLoadStoredToken(
-  setToken: React.Dispatch<React.SetStateAction<string | null>>,
-  setIsLoading: React.Dispatch<React.SetStateAction<boolean>>,
-): void {
+/**
+ * Load token from storage on mount, discarding expired tokens. Terminates
+ * in either ``'authenticated'`` or ``'anonymous'`` — ``'loading'`` is a
+ * one-shot state, so later effects must not rewind it (BUG-NAV-002).
+ */
+function useLoadStoredToken(mutators: AuthMutators): void {
   useEffect(() => {
     loadToken()
-      .then((stored) => {
+      .then(async (stored) => {
         if (stored && !isTokenExpired(stored)) {
-          setToken(stored);
-        } else if (stored) {
-          clearToken();
+          mutators.setToken(stored);
+          mutators.setAuthStatus('authenticated');
+          return;
         }
+        if (stored) {
+          try {
+            await clearToken();
+          } catch (err: unknown) {
+            console.warn('clearToken failed discarding expired stored token', err);
+          }
+        }
+        mutators.setAuthStatus('anonymous');
       })
-      .finally(() => setIsLoading(false));
-  }, [setToken, setIsLoading]);
+      .catch((err: unknown) => {
+        console.warn('loadToken failed on bootstrap', err);
+        mutators.setAuthStatus('anonymous');
+      });
+  }, [mutators]);
 }
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [token, setToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+interface AuthActions {
+  login: LoginOrSignup;
+  signup: LoginOrSignup;
+  logout: () => Promise<void>;
+  onUnauthorized: () => void;
+  dismissReauth: () => Promise<void>;
+}
 
-  const tokenRef = React.useRef<string | null>(null);
-  tokenRef.current = token;
+function useAuthActions(mutators: AuthMutators): AuthActions {
+  const { setToken, setAuthStatus } = mutators;
 
-  const applyNewToken = useCallback(async (newToken: string) => {
-    await saveToken(newToken);
-    setToken(newToken);
-  }, []);
+  const login = useCallback<LoginOrSignup>(
+    async (email, password) => {
+      const response = await authApi.login({ email, password });
+      await saveToken(response.token);
+      setToken(response.token);
+      setAuthStatus('authenticated');
+    },
+    [setToken, setAuthStatus],
+  );
 
-  useApiCallbacks(tokenRef, setToken);
-  useProactiveRefresh(token, tokenRef, applyNewToken);
-  useLoadStoredToken(setToken, setIsLoading);
-
-  const login = useCallback(async (email: string, password: string) => {
-    const response = await authApi.login({ email, password });
-    await saveToken(response.token);
-    setToken(response.token);
-  }, []);
-
-  const signup = useCallback(async (email: string, password: string) => {
-    const response = await authApi.signup({ email, password });
-    await saveToken(response.token);
-    setToken(response.token);
-  }, []);
+  const signup = useCallback<LoginOrSignup>(
+    async (email, password) => {
+      const response = await authApi.signup({ email, password });
+      await saveToken(response.token);
+      setToken(response.token);
+      setAuthStatus('authenticated');
+    },
+    [setToken, setAuthStatus],
+  );
 
   const logout = useCallback(async () => {
     await clearToken();
     setToken(null);
-  }, []);
+    setAuthStatus('anonymous');
+  }, [setToken, setAuthStatus]);
 
   // BUG-AUTH-005: mirror the persistence-first ordering used by the API-layer
   // onUnauthorized hook so callers of the context-exposed helper get the same
-  // crash-safety guarantee.
+  // crash-safety guarantee. Routes to ``'reauth-required'`` so RootStack
+  // stays mounted (BUG-NAV-001).
   const onUnauthorized = useCallback(() => {
-    void clearTokenThenReset(setToken);
+    void clearTokenForReauth(mutators);
+  }, [mutators]);
+
+  const dismissReauth = useCallback(async () => {
+    try {
+      await clearToken();
+    } catch (err: unknown) {
+      console.warn('clearToken failed in dismissReauth', err);
+    }
+    setToken(null);
+    setAuthStatus('anonymous');
+  }, [setToken, setAuthStatus]);
+
+  return { login, signup, logout, onUnauthorized, dismissReauth };
+}
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [token, setToken] = useState<string | null>(null);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>('loading');
+
+  const tokenRef = React.useRef<string | null>(null);
+  tokenRef.current = token;
+
+  // Stable handle so effects depending on the mutators don't thrash.
+  const mutators = useMemo<AuthMutators>(() => ({ setToken, setAuthStatus }), []);
+
+  const applyNewToken = useCallback(async (newToken: string) => {
+    await saveToken(newToken);
+    setToken(newToken);
+    setAuthStatus('authenticated');
   }, []);
 
+  useApiCallbacks(tokenRef, mutators);
+  useProactiveRefresh(token, tokenRef, applyNewToken);
+  useLoadStoredToken(mutators);
+
+  const actions = useAuthActions(mutators);
+  const isLoading = authStatus === 'loading';
+
   const value = useMemo(
-    () => ({ token, isLoading, login, signup, logout, onUnauthorized }),
-    [token, isLoading, login, signup, logout, onUnauthorized],
+    () => ({ token, authStatus, isLoading, ...actions }),
+    [token, authStatus, isLoading, actions],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
