@@ -39,10 +39,7 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   unauthorized: SESSION_EXPIRED,
 
   // --- Admin -----------------------------------------------------------
-  admin_api_disabled:
-    'Admin access is turned off on this server. Ask your administrator to enable it.',
-  admin_auth_required:
-    'Admin access requires a valid X-Admin-API-Key header. Check with your administrator.',
+  admin_required: 'Admin privileges are required for this action.',
 
   // --- Resource not found ----------------------------------------------
   stage_not_found: `We couldn't find that stage. ${PULL_TO_REFRESH}`,

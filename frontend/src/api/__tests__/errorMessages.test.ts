@@ -22,8 +22,8 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'password_too_short',
       'unauthorized',
       // admin
-      'admin_api_disabled',
-      'admin_auth_required',
+      'admin_required',
+      'user_not_found',
       // resource not found
       'stage_not_found',
       'content_not_found',
@@ -34,7 +34,6 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'goal_group_not_found',
       'prompt_not_found',
       'user_practice_not_found',
-      'user_not_found',
       // forbidden / ownership
       'forbidden',
       'not_owner',

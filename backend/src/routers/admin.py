@@ -1,25 +1,25 @@
-"""Admin-only endpoints — gated by ``ADMIN_API_KEY`` shared-secret header.
+"""Admin-only endpoints — gated by the per-user ``User.is_admin`` flag.
 
-The admin surface is intentionally minimal: enough to observe LLM cost and
-token consumption without introducing a whole role-based-access-control layer
-up front.  Once the app grows an admin user role, swap the header gate for a
-user-role check and the endpoints here can stay unchanged.
+BUG-ADMIN-001: The previous implementation trusted a shared ``ADMIN_API_KEY``
+header, so any leak revoked the entire admin surface and nothing tied an
+action back to a specific operator.  Admin identity is now a first-class
+per-user flag (:attr:`User.is_admin`), so gate every admin route on
+:func:`dependencies.auth.require_admin` — never on an env-var header.
 """
 
 from __future__ import annotations
 
-import hmac
-import os
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
 from database import get_session
-from errors import forbidden
+from dependencies.auth import require_admin
 from models.llm_usage_log import LLMUsageLog
+from models.user import User
 from schemas.admin import (
     ModelUsageBreakdown,
     UsageStatsResponse,
@@ -29,32 +29,10 @@ from schemas.admin import (
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-# Header used by the admin to authenticate.  The value is compared to the
-# ``ADMIN_API_KEY`` env var using a constant-time comparison so attackers
-# cannot recover the key via timing side-channels.
-ADMIN_API_KEY_HEADER = "X-Admin-API-Key"  # pragma: allowlist secret
-
-
-def _require_admin(
-    x_admin_api_key: str | None = Header(default=None, alias=ADMIN_API_KEY_HEADER),
-) -> None:
-    """FastAPI dependency: reject requests without a valid admin key.
-
-    ``ADMIN_API_KEY`` must be set to a non-empty value for the endpoint to be
-    reachable at all.  An unset env var fails closed — we never treat "no
-    password configured" as "anyone may enter".
-    """
-    expected = os.getenv("ADMIN_API_KEY", "")
-    if not expected:
-        raise forbidden("admin_api_disabled")
-    if not x_admin_api_key or not hmac.compare_digest(x_admin_api_key, expected):
-        raise forbidden("admin_auth_required")
-
-
 @router.get("/usage-stats", response_model=UsageStatsResponse)
 async def get_usage_stats(
     session: Annotated[AsyncSession, Depends(get_session)],
-    _: Annotated[None, Depends(_require_admin)],
+    _admin: Annotated[User, Depends(require_admin)],
 ) -> UsageStatsResponse:
     """Return aggregate LLM usage stats across all users.
 

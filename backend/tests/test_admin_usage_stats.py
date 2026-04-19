@@ -1,7 +1,7 @@
 """Tests for the admin usage stats endpoint.
 
-Covers the three layers the endpoint puts together: auth gate, SQL aggregates,
-and JSON response shape.
+Covers the three layers the endpoint puts together: the per-user admin gate
+(anonymous / non-admin / admin), SQL aggregates, and JSON response shape.
 """
 
 from __future__ import annotations
@@ -12,14 +12,13 @@ from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col
 
 from models.journal_entry import JournalEntry
 from models.llm_usage_log import LLMUsageLog
 from models.user import User
-from routers.admin import ADMIN_API_KEY_HEADER
-
-_ADMIN_KEY = "super-secret-admin-key"  # pragma: allowlist secret
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +35,28 @@ class _UsageLogSpec:
     prompt_tokens: int = 100
     completion_tokens: int = 50
     estimated_cost_usd: float = 0.01
+
+
+async def _signup(client: AsyncClient, email: str, password: str = "secret12345") -> dict[str, str]:
+    """Sign up a user and return Authorization headers bearing their JWT."""
+    resp = await client.post("/auth/signup", json={"email": email, "password": password})
+    assert resp.status_code == HTTPStatus.OK
+    return {"Authorization": f"Bearer {resp.json()['token']}"}
+
+
+async def _promote_to_admin(db_session: AsyncSession, email: str) -> None:
+    """Flip ``is_admin`` for the user with the given email."""
+    await db_session.execute(update(User).where(col(User.email) == email).values(is_admin=True))
+    await db_session.commit()
+
+
+async def _signup_admin(
+    client: AsyncClient, db_session: AsyncSession, email: str = "admin@example.com"
+) -> dict[str, str]:
+    """Sign up a user, promote them to admin, and return their Authorization headers."""
+    headers = await _signup(client, email)
+    await _promote_to_admin(db_session, email)
+    return headers
 
 
 async def _seed_user_and_journal_entry(
@@ -84,51 +105,27 @@ async def _seed_usage_log(
 
 
 @pytest.mark.asyncio
-async def test_admin_endpoint_rejects_without_key_configured(
-    async_client: AsyncClient,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """When ``ADMIN_API_KEY`` is unset the endpoint is closed to everyone."""
-    monkeypatch.delenv("ADMIN_API_KEY", raising=False)
+async def test_admin_endpoint_rejects_anonymous(async_client: AsyncClient) -> None:
+    """No Authorization header → 401, not 403 (distinguish auth from authz)."""
     resp = await async_client.get("/admin/usage-stats")
-    assert resp.status_code == HTTPStatus.FORBIDDEN
-    assert resp.json()["detail"] == "admin_api_disabled"
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
 
 
 @pytest.mark.asyncio
-async def test_admin_endpoint_rejects_without_header(
-    async_client: AsyncClient,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("ADMIN_API_KEY", _ADMIN_KEY)
-    resp = await async_client.get("/admin/usage-stats")
+async def test_admin_endpoint_rejects_non_admin(async_client: AsyncClient) -> None:
+    """Authenticated but ``is_admin=False`` → 403 ``admin_required``."""
+    headers = await _signup(async_client, "normal@example.com")
+    resp = await async_client.get("/admin/usage-stats", headers=headers)
     assert resp.status_code == HTTPStatus.FORBIDDEN
-    assert resp.json()["detail"] == "admin_auth_required"
+    assert resp.json()["detail"] == "admin_required"
 
 
 @pytest.mark.asyncio
-async def test_admin_endpoint_rejects_wrong_key(
-    async_client: AsyncClient,
-    monkeypatch: pytest.MonkeyPatch,
+async def test_admin_endpoint_accepts_admin(
+    async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    monkeypatch.setenv("ADMIN_API_KEY", _ADMIN_KEY)
-    resp = await async_client.get(
-        "/admin/usage-stats",
-        headers={ADMIN_API_KEY_HEADER: "wrong-key"},  # pragma: allowlist secret
-    )
-    assert resp.status_code == HTTPStatus.FORBIDDEN
-
-
-@pytest.mark.asyncio
-async def test_admin_endpoint_accepts_correct_key(
-    async_client: AsyncClient,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("ADMIN_API_KEY", _ADMIN_KEY)
-    resp = await async_client.get(
-        "/admin/usage-stats",
-        headers={ADMIN_API_KEY_HEADER: _ADMIN_KEY},
-    )
+    headers = await _signup_admin(async_client, db_session)
+    resp = await async_client.get("/admin/usage-stats", headers=headers)
     assert resp.status_code == HTTPStatus.OK
 
 
@@ -137,11 +134,10 @@ async def test_admin_endpoint_accepts_correct_key(
 
 @pytest.mark.asyncio
 async def test_admin_endpoint_empty_totals(
-    async_client: AsyncClient,
-    monkeypatch: pytest.MonkeyPatch,
+    async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    monkeypatch.setenv("ADMIN_API_KEY", _ADMIN_KEY)
-    resp = await async_client.get("/admin/usage-stats", headers={ADMIN_API_KEY_HEADER: _ADMIN_KEY})
+    headers = await _signup_admin(async_client, db_session)
+    resp = await async_client.get("/admin/usage-stats", headers=headers)
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
     assert data["total_calls"] == 0
@@ -160,9 +156,8 @@ async def test_admin_endpoint_empty_totals(
 async def test_admin_endpoint_sums_totals(
     async_client: AsyncClient,
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("ADMIN_API_KEY", _ADMIN_KEY)
+    headers = await _signup_admin(async_client, db_session)
     user_id, journal_id = await _seed_user_and_journal_entry(db_session)
     await _seed_usage_log(
         db_session,
@@ -178,7 +173,7 @@ async def test_admin_endpoint_sums_totals(
     )
     await db_session.commit()
 
-    resp = await async_client.get("/admin/usage-stats", headers={ADMIN_API_KEY_HEADER: _ADMIN_KEY})
+    resp = await async_client.get("/admin/usage-stats", headers=headers)
     data = resp.json()
     assert data["total_calls"] == 2
     assert data["total_prompt_tokens"] == 300
@@ -191,10 +186,9 @@ async def test_admin_endpoint_sums_totals(
 async def test_admin_endpoint_per_user_breakdown_ordered_by_cost(
     async_client: AsyncClient,
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Users are returned highest-spend first so the dashboard top row is hottest."""
-    monkeypatch.setenv("ADMIN_API_KEY", _ADMIN_KEY)
+    headers = await _signup_admin(async_client, db_session)
     low_user_id, j1 = await _seed_user_and_journal_entry(db_session, "low@example.com")
     high_user_id, j2 = await _seed_user_and_journal_entry(db_session, "high@example.com")
     await _seed_usage_log(
@@ -211,7 +205,7 @@ async def test_admin_endpoint_per_user_breakdown_ordered_by_cost(
     )
     await db_session.commit()
 
-    resp = await async_client.get("/admin/usage-stats", headers={ADMIN_API_KEY_HEADER: _ADMIN_KEY})
+    resp = await async_client.get("/admin/usage-stats", headers=headers)
     data = resp.json()
     assert len(data["per_user"]) == 2
     assert data["per_user"][0]["user_id"] == high_user_id
@@ -223,9 +217,8 @@ async def test_admin_endpoint_per_user_breakdown_ordered_by_cost(
 async def test_admin_endpoint_per_model_breakdown(
     async_client: AsyncClient,
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("ADMIN_API_KEY", _ADMIN_KEY)
+    headers = await _signup_admin(async_client, db_session)
     user_id, journal_id = await _seed_user_and_journal_entry(db_session)
     await _seed_usage_log(
         db_session,
@@ -253,7 +246,7 @@ async def test_admin_endpoint_per_model_breakdown(
     )
     await db_session.commit()
 
-    resp = await async_client.get("/admin/usage-stats", headers={ADMIN_API_KEY_HEADER: _ADMIN_KEY})
+    resp = await async_client.get("/admin/usage-stats", headers=headers)
     data = resp.json()
     assert len(data["per_model"]) == 2
     # Ordered by descending cost: claude (2.00) before gpt-4o-mini (0.01).
@@ -265,12 +258,20 @@ async def test_admin_endpoint_per_model_breakdown(
 
 
 @pytest.mark.asyncio
-async def test_admin_endpoint_empty_key_is_rejected(
+async def test_admin_endpoint_rejects_deleted_admin(
     async_client: AsyncClient,
-    monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
 ) -> None:
-    """An ``ADMIN_API_KEY=""`` env var must not open the endpoint to empty headers."""
-    monkeypatch.setenv("ADMIN_API_KEY", "")
-    resp = await async_client.get("/admin/usage-stats", headers={ADMIN_API_KEY_HEADER: ""})
+    """A valid JWT whose user has since been deleted is treated as unauthorized.
+
+    Regression for the privilege-boundary edge case: an admin whose row was
+    removed (or a stale token minted before an account purge) must not be
+    able to reach the admin surface.
+    """
+    headers = await _signup_admin(async_client, db_session)
+    await db_session.execute(delete(User).where(col(User.email) == "admin@example.com"))
+    await db_session.commit()
+
+    resp = await async_client.get("/admin/usage-stats", headers=headers)
     assert resp.status_code == HTTPStatus.FORBIDDEN
-    assert resp.json()["detail"] == "admin_api_disabled"
+    assert resp.json()["detail"] == "user_not_found"

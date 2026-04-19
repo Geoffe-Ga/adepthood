@@ -34,6 +34,7 @@ class User(SQLModel, table=True):
     """
 
     id: int | None = Field(default=None, primary_key=True)
+    is_admin: bool = Field(default=False, nullable=False)
     offering_balance: int = Field(default=0)
     monthly_messages_used: int = Field(default=0)
     monthly_reset_date: datetime = Field(
