@@ -1,0 +1,1 @@
+- [Web-first deployment](project_deployment_strategy.md) — deploying as web app on Railway first, mobile later
