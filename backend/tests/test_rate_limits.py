@@ -13,7 +13,11 @@ from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col
 
+from models.user import User
 from rate_limit import DEFAULT_RATE_LIMIT
 
 
@@ -31,10 +35,27 @@ async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str
     return {"Authorization": f"Bearer {token}"}
 
 
-async def _add_balance(client: AsyncClient, headers: dict[str, str], amount: int = 50) -> None:
-    """Add offering credits to the authenticated user."""
-    resp = await client.post("/user/balance/add", json={"amount": amount}, headers=headers)
-    assert resp.status_code == HTTPStatus.OK
+async def _promote_admin(db_session: AsyncSession, username: str = "alice") -> None:
+    """Flip ``is_admin`` for the signed-up user so they can hit admin routes."""
+    email = f"{username}@example.com"
+    await db_session.execute(update(User).where(col(User.email) == email).values(is_admin=True))
+    await db_session.commit()
+
+
+async def _add_balance(db_session: AsyncSession, amount: int = 50, username: str = "alice") -> None:
+    """Seed offering credits via direct DB mutation.
+
+    BUG-BM-010 gated :http:post:`/user/balance/add` behind ``require_admin``,
+    so rate-limit tests that just need a funded wallet sidestep the endpoint
+    and write the balance column straight into the test DB.
+    """
+    email = f"{username}@example.com"
+    await db_session.execute(
+        update(User)
+        .where(col(User.email) == email)
+        .values(offering_balance=col(User.offering_balance) + amount)
+    )
+    await db_session.commit()
 
 
 # ── Configuration ────────────────────────────────────────────────────────
@@ -78,10 +99,12 @@ async def test_rate_limit_response_includes_retry_after(async_client: AsyncClien
 
 
 @pytest.mark.asyncio
-async def test_chat_rate_limit_returns_429(async_client: AsyncClient) -> None:
+async def test_chat_rate_limit_returns_429(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
     """POST /journal/chat returns 429 after exceeding 10 requests/minute."""
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=20)
+    await _add_balance(db_session, amount=20)
 
     # Make 10 requests (the limit)
     for _ in range(10):
@@ -106,9 +129,14 @@ async def test_chat_rate_limit_returns_429(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_add_balance_rate_limit_returns_429(async_client: AsyncClient) -> None:
+async def test_add_balance_rate_limit_returns_429(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
     """POST /user/balance/add returns 429 after exceeding 5 requests/minute."""
     headers = await _signup(async_client)
+    # BUG-BM-010: endpoint is now admin-only, so promote the signed-up user
+    # before hammering it to verify the rate-limit gate fires *after* authz.
+    await _promote_admin(db_session)
 
     # Make 5 requests (the limit)
     for _ in range(5):

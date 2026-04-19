@@ -123,7 +123,10 @@ async def concurrent_async_client(tmp_path: Path) -> AsyncGenerator[AsyncClient,
     """HTTP client with per-request sessions for concurrency testing.
 
     Uses a file-based SQLite database so each request gets its own connection,
-    enabling meaningful concurrency tests with ``asyncio.gather``.
+    enabling meaningful concurrency tests with ``asyncio.gather``.  Tests that
+    also need to seed state (e.g. flip ``User.is_admin``) should depend on
+    :func:`concurrent_session_factory` to open a session against the same
+    engine.
     """
     db_url = f"sqlite+aiosqlite:///{tmp_path / 'concurrent.db'}"
     concurrent_engine = create_async_engine(db_url, echo=False)
@@ -140,9 +143,28 @@ async def concurrent_async_client(tmp_path: Path) -> AsyncGenerator[AsyncClient,
             yield session
 
     app.dependency_overrides[get_session] = _per_request_session
+    app.state.concurrent_session_factory = concurrent_factory
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
     app.dependency_overrides.clear()
+    app.state.concurrent_session_factory = None
     await concurrent_engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def concurrent_session_factory(
+    concurrent_async_client: AsyncClient,  # noqa: ARG001 — side-effect: sets up the factory
+) -> async_sessionmaker[AsyncSession]:
+    """Session maker bound to the :func:`concurrent_async_client` engine.
+
+    Tests that need to seed rows in the concurrency fixture's DB (e.g. promote
+    a freshly-signed-up user to admin) should depend on this fixture and open
+    a short-lived session via ``async with factory() as session:``.
+    """
+    factory: async_sessionmaker[AsyncSession] | None = app.state.concurrent_session_factory
+    if factory is None:
+        msg = "concurrent_async_client must be requested before concurrent_session_factory"
+        raise RuntimeError(msg)
+    return factory

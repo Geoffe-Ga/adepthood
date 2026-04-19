@@ -13,7 +13,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlmodel import col
 
 import services.botmason as botmason_mod
 from models.user import User
@@ -59,10 +60,79 @@ async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str
     return {"Authorization": f"Bearer {token}"}
 
 
-async def _add_balance(client: AsyncClient, headers: dict[str, str], amount: int = 10) -> None:
-    """Add offering credits to the authenticated user."""
-    resp = await client.post("/user/balance/add", json={"amount": amount}, headers=headers)
-    assert resp.status_code == HTTPStatus.OK
+async def _promote_admin(db_session: AsyncSession, username: str = "alice") -> None:
+    """Flip ``is_admin`` for the user created by :func:`_signup`."""
+    email = f"{username}@example.com"
+    await db_session.execute(update(User).where(col(User.email) == email).values(is_admin=True))
+    await db_session.commit()
+
+
+async def _signup_admin(
+    client: AsyncClient, db_session: AsyncSession, username: str = "alice"
+) -> dict[str, str]:
+    """Sign up a user and promote them to admin — returns their auth headers.
+
+    Chat / balance tests use this because :http:post:`/user/balance/add` now
+    requires admin (BUG-BM-010 + BUG-ADMIN-001).  Tests that only exercise the
+    non-admin surface should keep using :func:`_signup`.
+    """
+    headers = await _signup(client, username)
+    await _promote_admin(db_session, username)
+    return headers
+
+
+async def _add_balance(db_session: AsyncSession, amount: int = 10, username: str = "alice") -> None:
+    """Seed offering credits for the signed-up user without going through HTTP.
+
+    BUG-BM-010 gated :http:post:`/user/balance/add` behind ``require_admin``,
+    so most tests only need the *effect* of a credit (enough balance to chat),
+    not the full admin flow.  Direct DB mutation keeps the fixture cheap while
+    the dedicated auth-boundary tests exercise the endpoint itself.
+    """
+    email = f"{username}@example.com"
+    await db_session.execute(
+        update(User)
+        .where(col(User.email) == email)
+        .values(offering_balance=col(User.offering_balance) + amount)
+    )
+    await db_session.commit()
+
+
+async def _concurrent_promote_admin(
+    factory: async_sessionmaker[AsyncSession], username: str = "alice"
+) -> None:
+    """Promote a signed-up user via the concurrent-fixture engine."""
+    email = f"{username}@example.com"
+    async with factory() as session:
+        await session.execute(update(User).where(col(User.email) == email).values(is_admin=True))
+        await session.commit()
+
+
+async def _concurrent_signup_admin(
+    client: AsyncClient,
+    factory: async_sessionmaker[AsyncSession],
+    username: str = "alice",
+) -> dict[str, str]:
+    """Concurrent-fixture counterpart of :func:`_signup_admin`."""
+    headers = await _signup(client, username)
+    await _concurrent_promote_admin(factory, username)
+    return headers
+
+
+async def _concurrent_add_balance(
+    factory: async_sessionmaker[AsyncSession],
+    amount: int = 10,
+    username: str = "alice",
+) -> None:
+    """Concurrent-fixture counterpart of :func:`_add_balance`."""
+    email = f"{username}@example.com"
+    async with factory() as session:
+        await session.execute(
+            update(User)
+            .where(col(User.email) == email)
+            .values(offering_balance=col(User.offering_balance) + amount)
+        )
+        await session.commit()
 
 
 # ── Authentication ─────────────────────────────────────────────────────
@@ -86,6 +156,15 @@ async def test_add_balance_unauthenticated_returns_401(async_client: AsyncClient
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
 
 
+@pytest.mark.asyncio
+async def test_add_balance_non_admin_returns_403(async_client: AsyncClient) -> None:
+    """BUG-BM-010: a signed-in non-admin must not be able to mint credits."""
+    headers = await _signup(async_client)
+    resp = await async_client.post("/user/balance/add", json={"amount": 5}, headers=headers)
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.json()["detail"] == "admin_required"
+
+
 # ── Offering balance ───────────────────────────────────────────────────
 
 
@@ -98,8 +177,8 @@ async def test_get_balance_default_zero(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_add_balance(async_client: AsyncClient) -> None:
-    headers = await _signup(async_client)
+async def test_add_balance(async_client: AsyncClient, db_session: AsyncSession) -> None:
+    headers = await _signup_admin(async_client, db_session)
     resp = await async_client.post("/user/balance/add", json={"amount": 5}, headers=headers)
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
@@ -108,25 +187,31 @@ async def test_add_balance(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_add_balance_accumulates(async_client: AsyncClient) -> None:
-    headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=3)
-    await _add_balance(async_client, headers, amount=7)
+async def test_add_balance_accumulates(async_client: AsyncClient, db_session: AsyncSession) -> None:
+    headers = await _signup_admin(async_client, db_session)
+    resp1 = await async_client.post("/user/balance/add", json={"amount": 3}, headers=headers)
+    assert resp1.status_code == HTTPStatus.OK
+    resp2 = await async_client.post("/user/balance/add", json={"amount": 7}, headers=headers)
+    assert resp2.status_code == HTTPStatus.OK
 
     resp = await async_client.get("/user/balance", headers=headers)
     assert resp.json()["balance"] == 10
 
 
 @pytest.mark.asyncio
-async def test_add_balance_rejects_zero_amount(async_client: AsyncClient) -> None:
-    headers = await _signup(async_client)
+async def test_add_balance_rejects_zero_amount(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await _signup_admin(async_client, db_session)
     resp = await async_client.post("/user/balance/add", json={"amount": 0}, headers=headers)
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 @pytest.mark.asyncio
-async def test_add_balance_rejects_negative_amount(async_client: AsyncClient) -> None:
-    headers = await _signup(async_client)
+async def test_add_balance_rejects_negative_amount(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await _signup_admin(async_client, db_session)
     resp = await async_client.post("/user/balance/add", json={"amount": -5}, headers=headers)
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
@@ -147,9 +232,12 @@ async def test_chat_with_zero_balance_returns_402(async_client: AsyncClient) -> 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("zero_monthly_cap")
-async def test_chat_success(async_client: AsyncClient) -> None:
+async def test_chat_success(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=5)
+    await _add_balance(db_session, amount=5)
 
     resp = await async_client.post(
         "/journal/chat", json={"message": "Hello BotMason"}, headers=headers
@@ -164,9 +252,12 @@ async def test_chat_success(async_client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("zero_monthly_cap")
-async def test_chat_deducts_balance(async_client: AsyncClient) -> None:
+async def test_chat_deducts_balance(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=3)
+    await _add_balance(db_session, amount=3)
 
     await async_client.post("/journal/chat", json={"message": "First message"}, headers=headers)
     await async_client.post("/journal/chat", json={"message": "Second message"}, headers=headers)
@@ -177,9 +268,12 @@ async def test_chat_deducts_balance(async_client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("zero_monthly_cap")
-async def test_chat_stores_user_and_bot_messages(async_client: AsyncClient) -> None:
+async def test_chat_stores_user_and_bot_messages(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
 
     await async_client.post(
         "/journal/chat", json={"message": "Tell me about meditation"}, headers=headers
@@ -199,9 +293,12 @@ async def test_chat_stores_user_and_bot_messages(async_client: AsyncClient) -> N
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("zero_monthly_cap")
-async def test_chat_bot_response_in_journal_history(async_client: AsyncClient) -> None:
+async def test_chat_bot_response_in_journal_history(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
 
     chat_resp = await async_client.post(
         "/journal/chat", json={"message": "Guide me"}, headers=headers
@@ -216,9 +313,12 @@ async def test_chat_bot_response_in_journal_history(async_client: AsyncClient) -
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("zero_monthly_cap")
-async def test_chat_exhausts_balance_then_402(async_client: AsyncClient) -> None:
+async def test_chat_exhausts_balance_then_402(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
 
     # First chat succeeds
     resp1 = await async_client.post("/journal/chat", json={"message": "First"}, headers=headers)
@@ -442,10 +542,11 @@ async def test_stub_provider_works_without_api_key(
 @pytest.mark.usefixtures("disable_rate_limit", "zero_monthly_cap")
 async def test_concurrent_chat_with_balance_one_allows_exactly_one(
     concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """Concurrent chat requests with balance=1 must yield exactly 1 success (sec-17)."""
     headers = await _signup(concurrent_async_client)
-    await _add_balance(concurrent_async_client, headers, amount=1)
+    await _concurrent_add_balance(concurrent_session_factory, amount=1)
 
     # Fire 5 concurrent requests — only 1 should succeed
     responses = await asyncio.gather(
@@ -473,10 +574,11 @@ async def test_concurrent_chat_with_balance_one_allows_exactly_one(
 @pytest.mark.usefixtures("disable_rate_limit", "zero_monthly_cap")
 async def test_balance_never_negative_after_concurrent_chat(
     concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """Balance must never go negative, even under concurrent load (sec-17)."""
     headers = await _signup(concurrent_async_client)
-    await _add_balance(concurrent_async_client, headers, amount=3)
+    await _concurrent_add_balance(concurrent_session_factory, amount=3)
 
     # Fire 10 concurrent requests with only 3 credits
     responses = await asyncio.gather(
@@ -504,9 +606,10 @@ async def test_balance_never_negative_after_concurrent_chat(
 @pytest.mark.usefixtures("disable_rate_limit")
 async def test_concurrent_balance_additions_are_atomic(
     concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """Concurrent balance additions must not lose updates (sec-17)."""
-    headers = await _signup(concurrent_async_client)
+    headers = await _concurrent_signup_admin(concurrent_async_client, concurrent_session_factory)
 
     # Fire 5 concurrent add-balance requests, each adding 2
     add_amount = 2
@@ -593,13 +696,14 @@ def test_validate_format_skips_check_for_stub_provider() -> None:
 async def test_chat_returns_402_when_provider_needs_key_and_none_available(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
 ) -> None:
     """With provider=openai and no env/header key, chat responds 402."""
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
     monkeypatch.delenv("LLM_API_KEY", raising=False)
 
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
 
     resp = await async_client.post(
         "/journal/chat",
@@ -618,13 +722,14 @@ async def test_chat_returns_402_when_provider_needs_key_and_none_available(
 async def test_chat_falls_back_to_env_key_when_header_absent(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
 ) -> None:
     """With no header but LLM_API_KEY set, the env key is used for the call."""
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
     monkeypatch.setenv("LLM_API_KEY", _VALID_OPENAI_KEY)
 
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
 
     mock_call = AsyncMock(return_value=_mock_openai_response("env-fallback-response"))
     with patch.object(botmason_mod, "_call_openai", mock_call):
@@ -645,13 +750,14 @@ async def test_chat_falls_back_to_env_key_when_header_absent(
 async def test_chat_uses_user_supplied_key_from_header(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
 ) -> None:
     """A valid ``X-LLM-API-Key`` header is forwarded to the provider."""
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
     monkeypatch.delenv("LLM_API_KEY", raising=False)
 
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
     headers[LLM_API_KEY_HEADER] = _VALID_OPENAI_KEY
 
     mock_call = AsyncMock(return_value=_mock_openai_response("byok-response"))
@@ -671,13 +777,14 @@ async def test_chat_uses_user_supplied_key_from_header(
 async def test_chat_header_key_overrides_env_key(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
 ) -> None:
     """When both header and env are set, the header key wins (BYOK priority)."""
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
     monkeypatch.setenv("LLM_API_KEY", "sk-server-fallback-key")
 
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
     headers[LLM_API_KEY_HEADER] = _VALID_OPENAI_KEY
 
     mock_call = AsyncMock(return_value=_mock_openai_response("byok-response"))
@@ -695,13 +802,14 @@ async def test_chat_header_key_overrides_env_key(
 async def test_chat_rejects_malformed_header_key_with_400(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
 ) -> None:
     """A malformed ``X-LLM-API-Key`` yields 400 without spending balance."""
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
     monkeypatch.setenv("LLM_API_KEY", _VALID_OPENAI_KEY)
 
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
     headers[LLM_API_KEY_HEADER] = "not-a-real-key"  # pragma: allowlist secret
 
     resp = await async_client.post(
@@ -721,12 +829,13 @@ async def test_chat_rejects_malformed_header_key_with_400(
 async def test_chat_rejects_oversized_header_key_with_400(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
 ) -> None:
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
     monkeypatch.setenv("LLM_API_KEY", _VALID_OPENAI_KEY)
 
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
     headers[LLM_API_KEY_HEADER] = "sk-" + "x" * LLM_API_KEY_MAX_LENGTH  # pragma: allowlist secret
 
     resp = await async_client.post(
@@ -741,13 +850,14 @@ async def test_chat_rejects_oversized_header_key_with_400(
 async def test_chat_ignores_empty_header_and_uses_env(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
 ) -> None:
     """An empty header value behaves like a missing header (env fallback)."""
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
     monkeypatch.setenv("LLM_API_KEY", _VALID_OPENAI_KEY)
 
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
     headers[LLM_API_KEY_HEADER] = "   "
 
     mock_call = AsyncMock(return_value=_mock_openai_response("env-response"))
@@ -767,13 +877,14 @@ async def test_chat_does_not_log_header_key_value(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    db_session: AsyncSession,
 ) -> None:
     """The raw key value must never appear in log output."""
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
     monkeypatch.delenv("LLM_API_KEY", raising=False)
 
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
     headers[LLM_API_KEY_HEADER] = _VALID_OPENAI_KEY
 
     mock_call = AsyncMock(return_value=_mock_openai_response("ok"))
@@ -792,12 +903,13 @@ async def test_chat_does_not_log_header_key_value(
 async def test_chat_response_body_does_not_echo_key(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
 ) -> None:
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
     monkeypatch.delenv("LLM_API_KEY", raising=False)
 
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
     headers[LLM_API_KEY_HEADER] = _VALID_OPENAI_KEY
 
     mock_call = AsyncMock(return_value=_mock_openai_response("a response"))
@@ -815,13 +927,14 @@ async def test_chat_response_body_does_not_echo_key(
 async def test_stub_provider_ignores_header_key(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
 ) -> None:
     """Stub provider never needs a key and must not 402 when one is absent."""
     monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
     monkeypatch.delenv("LLM_API_KEY", raising=False)
 
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
 
     resp = await async_client.post(
         "/journal/chat",
@@ -885,11 +998,12 @@ async def test_usage_endpoint_unauthenticated_returns_401(async_client: AsyncCli
 async def test_chat_consumes_free_monthly_tier_first(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
 ) -> None:
     """With a positive cap, offering_balance is untouched until free tier is spent."""
     monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "3")
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=10)
+    await _add_balance(db_session, amount=10)
 
     resp = await async_client.post("/journal/chat", json={"message": "first"}, headers=headers)
     assert resp.status_code == HTTPStatus.CREATED
@@ -903,11 +1017,12 @@ async def test_chat_consumes_free_monthly_tier_first(
 async def test_chat_falls_back_to_offering_balance_after_cap(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
 ) -> None:
     """Once the free tier is exhausted, subsequent chats draw from offering_balance."""
     monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "1")
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=2)
+    await _add_balance(db_session, amount=2)
 
     # Spend the single free message.
     resp1 = await async_client.post("/journal/chat", json={"message": "a"}, headers=headers)
@@ -1051,11 +1166,12 @@ async def test_cap_honoured_under_concurrent_load(
 async def test_free_and_paid_wallets_combine_under_concurrent_load(
     concurrent_async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """Free allocation + offering_balance determines total capacity, no more, no less."""
     monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "2")
     headers = await _signup(concurrent_async_client)
-    await _add_balance(concurrent_async_client, headers, amount=3)
+    await _concurrent_add_balance(concurrent_session_factory, amount=3)
 
     responses = await asyncio.gather(
         *[
@@ -1166,10 +1282,13 @@ async def test_stream_with_zero_balance_returns_402(async_client: AsyncClient) -
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("zero_monthly_cap")
-async def test_stream_emits_chunks_then_complete(async_client: AsyncClient) -> None:
+async def test_stream_emits_chunks_then_complete(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
     """Happy path: one or more ``chunk`` events followed by a single ``complete``."""
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=2)
+    await _add_balance(db_session, amount=2)
 
     resp = await async_client.post(
         "/journal/chat/stream", json={"message": "Guide me"}, headers=headers
@@ -1192,10 +1311,13 @@ async def test_stream_emits_chunks_then_complete(async_client: AsyncClient) -> N
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("zero_monthly_cap")
-async def test_stream_persists_user_and_bot_messages(async_client: AsyncClient) -> None:
+async def test_stream_persists_user_and_bot_messages(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
     """After a successful stream both the user and bot entries are in the journal."""
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
 
     await async_client.post(
         "/journal/chat/stream", json={"message": "Tell me a secret"}, headers=headers
@@ -1211,10 +1333,13 @@ async def test_stream_persists_user_and_bot_messages(async_client: AsyncClient) 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("zero_monthly_cap")
-async def test_stream_deducts_balance_once(async_client: AsyncClient) -> None:
+async def test_stream_deducts_balance_once(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
     """One stream costs exactly one wallet unit — same as the non-streaming path."""
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=3)
+    await _add_balance(db_session, amount=3)
 
     await async_client.post("/journal/chat/stream", json={"message": "Hello"}, headers=headers)
     balance = await async_client.get("/user/balance", headers=headers)
@@ -1225,10 +1350,11 @@ async def test_stream_deducts_balance_once(async_client: AsyncClient) -> None:
 @pytest.mark.usefixtures("zero_monthly_cap")
 async def test_stream_provider_error_emits_error_event_and_rolls_back(
     async_client: AsyncClient,
+    db_session: AsyncSession,
 ) -> None:
     """A mid-stream provider failure must not charge the user or persist a bot entry."""
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
 
     async def _boom(
         *_args: object, **_kwargs: object
@@ -1267,13 +1393,14 @@ async def test_stream_provider_error_emits_error_event_and_rolls_back(
 async def test_stream_falls_back_to_env_key_when_header_absent(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
 ) -> None:
     """Streaming endpoint honours the same BYOK precedence as the non-stream one."""
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
     monkeypatch.setenv("LLM_API_KEY", _VALID_OPENAI_KEY)
 
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
 
     async def _fake_stream(
         _user_message: str,
@@ -1303,13 +1430,14 @@ async def test_stream_falls_back_to_env_key_when_header_absent(
 async def test_stream_rejects_malformed_header_key_with_400(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
 ) -> None:
     """Malformed BYOK keys 400 *before* the stream opens (no SSE body)."""
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
     monkeypatch.setenv("LLM_API_KEY", _VALID_OPENAI_KEY)
 
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
     headers[LLM_API_KEY_HEADER] = "not-a-real-key"  # pragma: allowlist secret
 
     resp = await async_client.post("/journal/chat/stream", json={"message": "Hi"}, headers=headers)
