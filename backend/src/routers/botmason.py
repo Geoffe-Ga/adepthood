@@ -166,8 +166,6 @@ async def add_balance(
     if admin.id is None:
         msg = "admin user missing id after authentication"
         raise RuntimeError(msg)
-    if payload.amount <= 0:
-        raise bad_request("amount_must_be_positive")
 
     new_balance = await wallet_service.add_balance(session, admin.id, payload.amount)
     if new_balance is None:

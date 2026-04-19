@@ -41,7 +41,6 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'cannot_go_backwards',
       'already_responded',
       'practice_not_approved',
-      'amount_must_be_positive',
       'habits_must_not_be_empty',
       // wallet
       'payment_required',

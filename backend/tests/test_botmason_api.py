@@ -202,18 +202,51 @@ async def test_add_balance_accumulates(async_client: AsyncClient, db_session: As
 async def test_add_balance_rejects_zero_amount(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
+    """BUG-SCHEMA-009: ``amount=0`` fails Pydantic ``ge=1`` → 422, not 400."""
     headers = await _signup_admin(async_client, db_session)
     resp = await async_client.post("/user/balance/add", json={"amount": 0}, headers=headers)
-    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 @pytest.mark.asyncio
 async def test_add_balance_rejects_negative_amount(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
+    """BUG-SCHEMA-009: negative amounts short-circuit at the schema."""
     headers = await _signup_admin(async_client, db_session)
     resp = await async_client.post("/user/balance/add", json={"amount": -5}, headers=headers)
-    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_add_balance_rejects_amount_over_one_million(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """BUG-SCHEMA-009: ``amount > 1_000_000`` is rejected before wallet code runs."""
+    headers = await _signup_admin(async_client, db_session)
+    resp = await async_client.post("/user/balance/add", json={"amount": 1_000_001}, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_add_balance_accepts_upper_bound(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The upper bound (1_000_000) itself is valid — only *over* it is rejected."""
+    headers = await _signup_admin(async_client, db_session)
+    resp = await async_client.post("/user/balance/add", json={"amount": 1_000_000}, headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["balance"] == 1_000_000
+
+
+@pytest.mark.asyncio
+async def test_add_balance_rejects_non_integer_amount(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A floating-point amount (e.g. 1.5) is not a valid credit grant."""
+    headers = await _signup_admin(async_client, db_session)
+    resp = await async_client.post("/user/balance/add", json={"amount": 1.5}, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 # ── Chat with BotMason ─────────────────────────────────────────────────

@@ -66,7 +66,6 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   already_responded: "You've already answered this week's prompt. A new one unlocks each week.",
   practice_not_approved:
     "That practice isn't available for selection yet. Pick one of the approved options for this stage.",
-  amount_must_be_positive: 'Enter a number greater than zero.',
   habits_must_not_be_empty:
     'Add at least one habit before generating an energy plan. You can add habits from the Habits tab.',
 

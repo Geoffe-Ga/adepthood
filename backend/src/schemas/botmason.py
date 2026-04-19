@@ -8,6 +8,14 @@ from pydantic import BaseModel, Field
 
 CHAT_MESSAGE_MAX_LENGTH = 5_000
 
+# BUG-SCHEMA-009 — bound credit grants so an admin (or a slip in validation)
+# cannot mint billion-credit wallets or zero-valued ledger noise.  A per-call
+# cap of one million credits is already far above any legitimate gift, and the
+# lower bound rejects both zero and negative amounts without the endpoint
+# needing a secondary `amount <= 0` guard.
+BALANCE_ADD_MIN = 1
+BALANCE_ADD_MAX = 1_000_000
+
 
 class ChatRequest(BaseModel):
     """Payload for sending a message to BotMason."""
@@ -38,9 +46,14 @@ class BalanceResponse(BaseModel):
 
 
 class BalanceAddRequest(BaseModel):
-    """Request to add credits to a user's offering balance."""
+    """Request to add credits to a user's offering balance.
 
-    amount: int
+    ``amount`` is clamped to ``[BALANCE_ADD_MIN, BALANCE_ADD_MAX]`` so that
+    Pydantic rejects zero / negative / absurd grants with a 422 before any
+    wallet code runs — the router no longer needs to re-check the sign.
+    """
+
+    amount: int = Field(ge=BALANCE_ADD_MIN, le=BALANCE_ADD_MAX)
 
 
 class BalanceAddResponse(BaseModel):
