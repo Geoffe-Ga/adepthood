@@ -2,6 +2,8 @@ import { create } from 'zustand';
 
 import type { Habit } from '../features/Habits/Habits.types';
 
+import { registerStoreReset } from './registry';
+
 /**
  * Habit store — a dumb state container. No API calls live here; those belong
  * in `features/Habits/services/habitManager.ts`.
@@ -27,7 +29,17 @@ export interface HabitStoreState {
   setError: (_error: string | null) => void;
   updateHabit: (_habit: Habit) => void;
   removeHabit: (_habitId: number) => void;
+  /** BUG-FE-STATE-001: wipe every field back to its initial value on logout. */
+  reset: () => void;
 }
+
+const INITIAL_STATE = {
+  habitsById: {} as Record<number, Habit>,
+  habitOrder: [] as number[],
+  habits: [] as Habit[],
+  loading: false,
+  error: null as string | null,
+};
 
 interface NormalizedHabits {
   habitsById: Record<number, Habit>;
@@ -49,11 +61,7 @@ const rebuildHabitsList = (habitsById: Record<number, Habit>, habitOrder: number
   habitOrder.map((id) => habitsById[id]!).filter((h): h is Habit => h !== undefined);
 
 export const useHabitStore = create<HabitStoreState>((set) => ({
-  habitsById: {},
-  habitOrder: [],
-  habits: [],
-  loading: false,
-  error: null,
+  ...INITIAL_STATE,
 
   setHabits: (habits) => set(normalizeHabits(habits)),
   setLoading: (loading) => set({ loading }),
@@ -72,7 +80,14 @@ export const useHabitStore = create<HabitStoreState>((set) => ({
       const habitOrder = state.habitOrder.filter((id) => id !== habitId);
       return { habitsById, habitOrder, habits: rebuildHabitsList(habitsById, habitOrder) };
     }),
+  reset: () => set({ ...INITIAL_STATE }),
 }));
+
+// BUG-FE-STATE-001: publish our reset to the shared registry so a single
+// ``resetAllStores()`` call in AuthContext.logout clears every store.
+registerStoreReset(() => {
+  useHabitStore.getState().reset();
+});
 
 // ---------------------------------------------------------------------------
 // Selectors — narrow state subscriptions. Zustand compares the *value*

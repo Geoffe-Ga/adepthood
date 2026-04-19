@@ -176,6 +176,28 @@ describe('AuthContext', () => {
       expect(mockClearToken).toHaveBeenCalled();
       expect(result.current.token).toBeNull();
     });
+
+    // BUG-FE-STATE-001 review follow-up: if ``clearToken`` rejects (SecureStore
+    // unavailable, device locked, etc.) logout must still null the in-memory
+    // token and transition to ``anonymous`` — otherwise a flaky SecureStore
+    // leaves the app indefinitely authenticated with a user who asked to
+    // sign out.
+    it('still transitions to anonymous when clearToken rejects', async () => {
+      mockLoadToken.mockResolvedValue('existing-jwt');
+      mockClearToken.mockRejectedValueOnce(new Error('SecureStore unavailable'));
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.token).toBe('existing-jwt'));
+
+      await act(async () => {
+        await result.current.logout();
+      });
+
+      expect(result.current.token).toBeNull();
+      expect(result.current.authStatus).toBe('anonymous');
+      warnSpy.mockRestore();
+    });
   });
 
   describe('onUnauthorized', () => {
@@ -191,6 +213,115 @@ describe('AuthContext', () => {
 
       expect(mockClearToken).toHaveBeenCalled();
       expect(result.current.token).toBeNull();
+    });
+  });
+
+  // BUG-NAV-001 / BUG-NAV-002: the navigator must discriminate between
+  // "transient 401, ask to re-auth" and "user is anonymous" — otherwise
+  // any 401 during a tab switch unmounts BottomTabs and boots the user
+  // to Signup. The machine also guards against re-entering ``'loading'``
+  // mid-session: once bootstrap settles we never rewind.
+  describe('authStatus state machine (BUG-NAV-001 / BUG-NAV-002)', () => {
+    it("starts in 'loading' before the stored-token read resolves", () => {
+      mockLoadToken.mockReturnValue(new Promise(() => {}));
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      expect(result.current.authStatus).toBe('loading');
+    });
+
+    it("resolves to 'anonymous' when no token is stored", async () => {
+      mockLoadToken.mockResolvedValue(null);
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+    });
+
+    it("resolves to 'authenticated' when a valid token is stored", async () => {
+      mockLoadToken.mockResolvedValue('valid-jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+    });
+
+    it("resolves to 'anonymous' when the stored token is expired", async () => {
+      mockLoadToken.mockResolvedValue('expired-jwt');
+      mockIsTokenExpired.mockReturnValue(true);
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+    });
+
+    it("transitions to 'authenticated' after successful login", async () => {
+      mockAuth.login.mockResolvedValue({ token: 'new-jwt', user_id: 1 });
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+
+      await act(async () => {
+        await result.current.login('user@test.com', 'password123');
+      });
+      expect(result.current.authStatus).toBe('authenticated');
+    });
+
+    it("transitions to 'reauth-required' on onUnauthorized (NOT 'anonymous')", async () => {
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+
+      await act(async () => {
+        result.current.onUnauthorized();
+      });
+      await waitFor(() => expect(result.current.authStatus).toBe('reauth-required'));
+      // Explicitly not 'anonymous' — that would unmount RootStack.
+      expect(result.current.authStatus).not.toBe('anonymous');
+    });
+
+    it("transitions to 'anonymous' on explicit logout", async () => {
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+
+      await act(async () => {
+        await result.current.logout();
+      });
+      expect(result.current.authStatus).toBe('anonymous');
+    });
+
+    it("does not re-enter 'loading' after bootstrap completes", async () => {
+      mockLoadToken.mockResolvedValue(null);
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+
+      mockAuth.login.mockResolvedValue({ token: 'new-jwt', user_id: 1 });
+      await act(async () => {
+        await result.current.login('user@test.com', 'p'); // pragma: allowlist secret
+      });
+      expect(result.current.authStatus).toBe('authenticated');
+
+      await act(async () => {
+        result.current.onUnauthorized();
+      });
+      // Still not 'loading' — we never rewind the one-shot bootstrap flag.
+      await waitFor(() => expect(result.current.authStatus).toBe('reauth-required'));
+      expect(result.current.authStatus).not.toBe('loading');
+    });
+
+    it("dismissReauth transitions from 'reauth-required' to 'anonymous'", async () => {
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+
+      await act(async () => {
+        result.current.onUnauthorized();
+      });
+      await waitFor(() => expect(result.current.authStatus).toBe('reauth-required'));
+
+      await act(async () => {
+        await result.current.dismissReauth();
+      });
+      expect(result.current.authStatus).toBe('anonymous');
+    });
+
+    it("isLoading mirrors authStatus === 'loading' for backwards compatibility", () => {
+      mockLoadToken.mockReturnValue(new Promise(() => {}));
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      expect(result.current.isLoading).toBe(true);
+      expect(result.current.authStatus).toBe('loading');
     });
   });
 
@@ -407,6 +538,61 @@ describe('AuthContext', () => {
         await result.current.login('new@test.com', 'p'); // pragma: allowlist secret
       });
       expect(result.current.token).toBe('second-jwt');
+    });
+  });
+
+  // BUG-FE-STATE-001: every logout path — explicit logout and the re-auth
+  // sheet's "sign out instead" button — must wipe the in-memory stores AND
+  // the AsyncStorage keys that act as persistent caches so the next user on
+  // the device doesn't inherit the previous user's data.
+  describe('logout clears all user state (BUG-FE-STATE-001)', () => {
+    it('calls resetAllStores from the registry on explicit logout', async () => {
+      const { resetAllStores } = require('@/store/registry');
+      const resetSpy = jest.spyOn(require('@/store/registry'), 'resetAllStores');
+      mockLoadToken.mockResolvedValue('jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('jwt'));
+
+      await act(async () => {
+        await result.current.logout();
+      });
+
+      expect(resetSpy).toHaveBeenCalledTimes(1);
+      expect(typeof resetAllStores).toBe('function');
+      resetSpy.mockRestore();
+    });
+
+    it('calls resetAllStores when the user dismisses the re-auth sheet', async () => {
+      const resetSpy = jest.spyOn(require('@/store/registry'), 'resetAllStores');
+      mockLoadToken.mockResolvedValue('jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('jwt'));
+
+      await act(async () => {
+        await result.current.dismissReauth();
+      });
+
+      expect(resetSpy).toHaveBeenCalledTimes(1);
+      expect(result.current.authStatus).toBe('anonymous');
+      resetSpy.mockRestore();
+    });
+
+    it('does NOT reset stores on a 401-triggered reauth-required transition', async () => {
+      // A 401 is a hint that the session went stale, not that the user is
+      // done with the app. Keep their in-memory habits/stages around so the
+      // ReauthSheet feels like a single-modal interruption, not a logout.
+      const resetSpy = jest.spyOn(require('@/store/registry'), 'resetAllStores');
+      mockLoadToken.mockResolvedValue('jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('jwt'));
+
+      await act(async () => {
+        result.current.onUnauthorized();
+      });
+
+      await waitFor(() => expect(result.current.authStatus).toBe('reauth-required'));
+      expect(resetSpy).not.toHaveBeenCalled();
+      resetSpy.mockRestore();
     });
   });
 });

@@ -26,6 +26,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { NetworkStatusProvider } from './context/NetworkStatusContext';
 import { colors, SPACING } from './design/tokens';
 import LoginScreen from './features/Auth/LoginScreen';
+import { ReauthSheet } from './features/Auth/ReauthSheet';
 import SignupScreen from './features/Auth/SignupScreen';
 import type { RootTabParamList } from './navigation/BottomTabs';
 import type { RootStackParamList } from './navigation/RootStack';
@@ -76,21 +77,24 @@ function AuthNavigator() {
 }
 
 /**
- * BUG-FRONTEND-INFRA-002 / 003 / 022 — keying the subtree on the auth state
- * forces a full remount on login/logout, which clears:
+ * BUG-NAV-001 / BUG-NAV-002: gate on the explicit ``authStatus`` state
+ * machine — never on raw ``token``. A transient 401 now transitions to
+ * ``'reauth-required'`` instead of nulling the token, so RootStack stays
+ * mounted and the ``ReauthSheet`` overlay asks the user to re-authenticate
+ * in place. The ``'loading'`` branch is a one-shot cold-start splash; the
+ * state machine guarantees we never rewind into it mid-session, so the
+ * navigator cannot collapse to a spinner on StrictMode double-invoke or
+ * hot reload.
  *
- *   - Tab navigator state (selected tab, scroll offsets, pending navigation)
- *   - Route params carried over from a prior session (e.g. the Course screen
- *     still holding a stageNumber from the previous user)
- *   - Stale route state that ``CommonActions.reset`` would otherwise miss
- *
- * Two keys instead of one so the pre-login and post-login trees don't share
- * navigator identity.
+ * BUG-FRONTEND-INFRA-002 / 003 / 022 — keying the authed vs. anon subtrees
+ * on distinct keys forces a full remount on login/logout, which clears
+ * tab state, stale route params, and route state that ``CommonActions.reset``
+ * would otherwise miss.
  */
-function RootNavigator() {
-  const { token, isLoading } = useAuth();
+export function RootNavigator(): React.JSX.Element {
+  const { authStatus } = useAuth();
 
-  if (isLoading) {
+  if (authStatus === 'loading') {
     return (
       <View style={styles.loading} testID="auth-loading">
         <ActivityIndicator size="large" />
@@ -98,13 +102,21 @@ function RootNavigator() {
     );
   }
 
-  return token ? (
+  if (authStatus === 'anonymous') {
+    return (
+      <FeatureErrorBoundary name="Auth">
+        <AuthNavigator key="anon" />
+      </FeatureErrorBoundary>
+    );
+  }
+
+  // ``'authenticated'`` or ``'reauth-required'`` — RootStack stays mounted
+  // in both cases; the overlay only appears when we need the user to sign
+  // back in.
+  return (
     <FeatureErrorBoundary name="App">
       <RootStack key="auth" />
-    </FeatureErrorBoundary>
-  ) : (
-    <FeatureErrorBoundary name="Auth">
-      <AuthNavigator key="anon" />
+      {authStatus === 'reauth-required' ? <ReauthSheet /> : null}
     </FeatureErrorBoundary>
   );
 }

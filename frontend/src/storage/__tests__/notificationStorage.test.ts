@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 
 import {
+  clearAllNotificationData,
   saveNotificationIds,
   loadNotificationIds,
   clearNotificationIds,
@@ -152,6 +153,36 @@ describe('notificationStorage', () => {
         'adepthood_push_token',
         'ExponentPushToken[abc]',
       );
+    });
+  });
+
+  // BUG-FE-STATE-001: logout must wipe every per-user persistence key so the
+  // next user on the device does not inherit the previous user's scheduled
+  // notifications or tracked habit IDs.
+  describe('clearAllNotificationData', () => {
+    test('removes every per-habit notification key and the tracking list', async () => {
+      mockAsyncStorage.getItem.mockImplementation(async (key: string) => {
+        if (key === '@adepthood/notification_habit_ids') return JSON.stringify([1, 2]);
+        return null;
+      });
+
+      await clearAllNotificationData();
+
+      expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith('@adepthood/notifications/1');
+      expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith('@adepthood/notifications/2');
+      expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith('@adepthood/notification_habit_ids');
+    });
+
+    test('is a no-op when no habits are tracked', async () => {
+      mockAsyncStorage.getItem.mockReset();
+      mockAsyncStorage.getItem.mockResolvedValue(null);
+      mockAsyncStorage.removeItem.mockClear();
+
+      await clearAllNotificationData();
+
+      // Only the tracking-list key itself is removed (defensively).
+      expect(mockAsyncStorage.removeItem).toHaveBeenCalledTimes(1);
+      expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith('@adepthood/notification_habit_ids');
     });
   });
 

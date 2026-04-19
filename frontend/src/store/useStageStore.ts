@@ -2,6 +2,8 @@ import { create } from 'zustand';
 
 import type { StageData } from '../features/Map/stageData';
 
+import { registerStoreReset } from './registry';
+
 /**
  * Stage store — a dumb state container. API calls live in
  * `features/Map/services/stageService.ts`; this module only holds and mutates
@@ -28,7 +30,18 @@ export interface StageStoreState {
   setLoading: (_loading: boolean) => void;
   setError: (_error: string | null) => void;
   updateStageProgress: (_stageNumber: number, _progress: number) => void;
+  /** BUG-FE-STATE-001: wipe every field back to its initial value on logout. */
+  reset: () => void;
 }
+
+const INITIAL_STATE = {
+  stagesByNumber: {} as Record<number, StageData>,
+  stageOrder: [] as number[],
+  stages: [] as StageData[],
+  currentStage: 1,
+  loading: false,
+  error: null as string | null,
+};
 
 interface NormalizedStages {
   stagesByNumber: Record<number, StageData>;
@@ -53,12 +66,7 @@ const rebuildStageList = (
   stageOrder.map((num) => stagesByNumber[num]!).filter((s): s is StageData => s !== undefined);
 
 export const useStageStore = create<StageStoreState>((set) => ({
-  stagesByNumber: {},
-  stageOrder: [],
-  stages: [],
-  currentStage: 1,
-  loading: false,
-  error: null,
+  ...INITIAL_STATE,
 
   setStages: (stages) => set(normalizeStages(stages)),
   setCurrentStage: (currentStage) => set({ currentStage }),
@@ -74,7 +82,13 @@ export const useStageStore = create<StageStoreState>((set) => ({
       };
       return { stagesByNumber, stages: rebuildStageList(stagesByNumber, state.stageOrder) };
     }),
+  reset: () => set({ ...INITIAL_STATE }),
 }));
+
+// BUG-FE-STATE-001
+registerStoreReset(() => {
+  useStageStore.getState().reset();
+});
 
 // ---------------------------------------------------------------------------
 // Selectors — narrow state subscriptions. Zustand compares the *value*

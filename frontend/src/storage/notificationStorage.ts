@@ -50,6 +50,20 @@ export async function clearNotificationIds(habitId: number): Promise<void> {
   await untrackHabitId(habitId);
 }
 
+/**
+ * BUG-FE-STATE-001 — remove every per-user notification key on logout so
+ * the next user on the device does not inherit scheduled notifications or
+ * the tracking list that points at them. The push-token key is intentionally
+ * NOT cleared: it is a device credential, not a user credential.
+ */
+export async function clearAllNotificationData(): Promise<void> {
+  const habitIds = await loadTrackedHabitIds();
+  for (const habitId of habitIds) {
+    await AsyncStorage.removeItem(keyFor(habitId));
+  }
+  await AsyncStorage.removeItem(ALL_HABIT_IDS_KEY);
+}
+
 export async function loadAllNotificationMappings(): Promise<Record<number, string[]>> {
   const habitIds = await loadTrackedHabitIds();
   const mappings: Record<number, string[]> = {};
