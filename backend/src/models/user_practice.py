@@ -4,9 +4,9 @@ from sqlmodel import Field, SQLModel
 
 
 class UserPractice(SQLModel, table=True):
-    """
-    Connects a user to a selected Practice for a given stage. Tracks the time window
-    of engagement with the practice.
+    """Connects a user to a selected Practice for a given stage.
+
+    Tracks the time window of engagement with the practice.
     """
 
     id: int | None = Field(default=None, primary_key=True)

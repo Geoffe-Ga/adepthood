@@ -19,9 +19,10 @@ def _default_reset_date() -> datetime:
 
 
 class User(SQLModel, table=True):
-    """
-    Represents a user account. Tracks relationships to habits, journal entries,
-    weekly responses, and APTITUDE stage progress.
+    """Represents a user account.
+
+    Tracks relationships to habits, journal entries, weekly responses,
+    and APTITUDE stage progress.
 
     BotMason access uses a two-bucket wallet:
 

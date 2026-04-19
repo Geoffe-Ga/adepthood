@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy import ColumnElement, func
@@ -41,8 +42,8 @@ class _ListFilters:
 @router.post("/", response_model=JournalMessageResponse, status_code=status.HTTP_201_CREATED)
 async def create_journal_entry(
     payload: JournalMessageCreate,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> JournalEntry:
     """Create a journal message for the authenticated user."""
     entry = JournalEntry(sender="user", user_id=current_user, **payload.model_dump())
@@ -54,7 +55,7 @@ async def create_journal_entry(
 
 
 def _escape_like(value: str) -> str:
-    """Escape SQL LIKE wildcards so literal ``%``, ``_``, ``\\`` are matched.
+    r"""Escape SQL LIKE wildcards so literal ``%``, ``_``, ``\\`` are matched.
 
     Uses ``\\`` as the escape character, which must be declared via
     ``escape="\\\\"`` on the ``.ilike()`` call (BUG-JOURNAL-013).
@@ -79,9 +80,9 @@ def _build_filter_conditions(filters: _ListFilters) -> list[ColumnElement[bool]]
 @limiter.limit("30/minute")
 async def list_journal_entries(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
-    filters: _ListFilters = Depends(),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    filters: Annotated[_ListFilters, Depends()],
 ) -> JournalListResponse:
     """List journal entries for the current user with optional filtering."""
     conditions = _build_filter_conditions(filters)
@@ -106,8 +107,8 @@ async def list_journal_entries(
 @router.get("/{entry_id}", response_model=JournalMessageResponse)
 async def get_journal_entry(
     entry_id: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> JournalEntry:
     """Return a single journal entry by ID, scoped to the authenticated user."""
     entry = await session.get(JournalEntry, entry_id)
@@ -119,8 +120,8 @@ async def get_journal_entry(
 @router.delete("/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_journal_entry(
     entry_id: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
     """Delete a journal entry. Returns 204 No Content on success."""
     entry = await session.get(JournalEntry, entry_id)
@@ -139,8 +140,8 @@ async def delete_journal_entry(
 )
 async def create_bot_response(
     payload: JournalBotMessageCreate,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> JournalEntry:
     """Store a BotMason AI response (internal endpoint for AI integration layer).
 

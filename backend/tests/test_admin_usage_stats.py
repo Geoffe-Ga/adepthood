@@ -180,10 +180,10 @@ async def test_admin_endpoint_sums_totals(
 
     resp = await async_client.get("/admin/usage-stats", headers={ADMIN_API_KEY_HEADER: _ADMIN_KEY})
     data = resp.json()
-    assert data["total_calls"] == 2  # noqa: PLR2004
-    assert data["total_prompt_tokens"] == 300  # noqa: PLR2004
-    assert data["total_completion_tokens"] == 75  # noqa: PLR2004
-    assert data["total_tokens"] == 375  # noqa: PLR2004
+    assert data["total_calls"] == 2
+    assert data["total_prompt_tokens"] == 300
+    assert data["total_completion_tokens"] == 75
+    assert data["total_tokens"] == 375
     assert data["total_estimated_cost_usd"] == pytest.approx(0.03)
 
 
@@ -213,7 +213,7 @@ async def test_admin_endpoint_per_user_breakdown_ordered_by_cost(
 
     resp = await async_client.get("/admin/usage-stats", headers={ADMIN_API_KEY_HEADER: _ADMIN_KEY})
     data = resp.json()
-    assert len(data["per_user"]) == 2  # noqa: PLR2004
+    assert len(data["per_user"]) == 2
     assert data["per_user"][0]["user_id"] == high_user_id
     assert data["per_user"][0]["estimated_cost_usd"] == pytest.approx(1.50)
     assert data["per_user"][1]["user_id"] == low_user_id
@@ -255,11 +255,11 @@ async def test_admin_endpoint_per_model_breakdown(
 
     resp = await async_client.get("/admin/usage-stats", headers={ADMIN_API_KEY_HEADER: _ADMIN_KEY})
     data = resp.json()
-    assert len(data["per_model"]) == 2  # noqa: PLR2004
+    assert len(data["per_model"]) == 2
     # Ordered by descending cost: claude (2.00) before gpt-4o-mini (0.01).
     assert data["per_model"][0]["provider"] == "anthropic"
     assert data["per_model"][0]["model"] == "claude-sonnet-4-20250514"
-    assert data["per_model"][0]["total_tokens"] == 300  # noqa: PLR2004
+    assert data["per_model"][0]["total_tokens"] == 300
     assert data["per_model"][1]["provider"] == "openai"
     assert data["per_model"][1]["model"] == "gpt-4o-mini"
 

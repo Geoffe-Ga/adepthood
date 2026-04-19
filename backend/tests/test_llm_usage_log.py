@@ -81,7 +81,7 @@ async def test_every_chat_appends_one_log(
         assert r.status_code == HTTPStatus.CREATED
 
     logs = await _fetch_all_logs(db_session)
-    assert len(logs) == 3  # noqa: PLR2004
+    assert len(logs) == 3
 
 
 @pytest.mark.asyncio

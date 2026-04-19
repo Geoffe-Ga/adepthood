@@ -50,7 +50,7 @@ async def test_energy_plan_generates_21_day_plan(async_client: AsyncClient) -> N
 
     plan = data["plan"]
     items = plan["items"]
-    assert len(items) == 21  # noqa: PLR2004
+    assert len(items) == 21
 
     # Verify items cycle through habits correctly
     habit_ids = [item["habit_id"] for item in items]
@@ -133,8 +133,8 @@ async def test_single_habit_fills_all_21_days(async_client: AsyncClient) -> None
     assert resp.status_code == HTTPStatus.OK
 
     items = resp.json()["plan"]["items"]
-    assert len(items) == 21  # noqa: PLR2004
-    assert all(item["habit_id"] == 42 for item in items)  # noqa: PLR2004
+    assert len(items) == 21
+    assert all(item["habit_id"] == 42 for item in items)
 
     # Net energy: 21 * (3 - 2) = 21
-    assert resp.json()["plan"]["net_energy"] == 21  # noqa: PLR2004
+    assert resp.json()["plan"]["net_energy"] == 21

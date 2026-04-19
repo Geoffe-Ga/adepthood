@@ -4,7 +4,7 @@ from domain.energy import PLAN_DURATION_DAYS, EnergyPlanItem, Habit, generate_pl
 
 
 def test_plan_duration_days_matches_one_stage_cycle() -> None:
-    assert PLAN_DURATION_DAYS == 21  # noqa: PLR2004
+    assert PLAN_DURATION_DAYS == 21
 
 
 def test_generate_plan_creates_21_day_schedule() -> None:

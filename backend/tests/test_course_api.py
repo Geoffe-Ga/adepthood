@@ -1,4 +1,4 @@
-"""Tests for the course content API — drip-feed gating, read-tracking, progress."""
+"""Tests for the course content API covering drip-feed gating, read-tracking, and progress."""
 
 from __future__ import annotations
 
@@ -513,7 +513,7 @@ async def test_get_content_item_rejects_locked_stage(
     db_session: AsyncSession,
 ) -> None:
     """BUG-COURSE-007: Content from a locked stage must be forbidden."""
-    headers, user_id = await _signup(async_client)
+    headers, _user_id = await _signup(async_client)
     # Create stage 2 content but user has NO progress record (only stage 1 unlocked)
     _, items = await _seed_stage_with_content(db_session, stage_number=2)
 
@@ -530,7 +530,7 @@ async def test_mark_read_rejects_locked_stage(
     db_session: AsyncSession,
 ) -> None:
     """BUG-COURSE-005: Cannot mark content from a locked stage as read."""
-    headers, user_id = await _signup(async_client)
+    headers, _user_id = await _signup(async_client)
     _, items = await _seed_stage_with_content(db_session, stage_number=2)
 
     resp = await async_client.post(f"/course/content/{items[0].id}/mark-read", headers=headers)
@@ -545,8 +545,10 @@ async def test_past_stage_content_fully_unlocked(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """BUG-COURSE-002/003: User on stage 3 can see all stage-1 content
-    regardless of drip-feed timing."""
+    """BUG-COURSE-002/003: User on stage 3 can see all stage-1 content.
+
+    Content from completed stages is visible regardless of drip-feed timing.
+    """
     headers, user_id = await _signup(async_client)
     await _seed_stage_with_content(db_session, stage_number=1)
     # Also seed stage 3 so user can be on it
@@ -584,8 +586,10 @@ async def test_course_progress_no_next_unlock_when_not_on_stage(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """BUG-COURSE-004: next_unlock_day should be None when user hasn't
-    started the stage (not pass -1 to next_unlock_day)."""
+    """BUG-COURSE-004: next_unlock_day should be None when the user has not started the stage.
+
+    The endpoint must not pass -1 to next_unlock_day.
+    """
     headers, _user_id = await _signup(async_client)
     await _seed_stage_with_content(db_session, stage_number=1)
     # User has no progress record

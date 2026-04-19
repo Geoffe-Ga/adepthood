@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 # using Fernet symmetric encryption.  The key must be provided via the
 # ``JOURNAL_ENCRYPTION_KEY`` env var.
 #
-# TODO(#219): Implement Fernet encrypt/decrypt hooks and key rotation via KMS.
+# Tracked in GitHub issue #219: Fernet encrypt/decrypt hooks and key rotation via KMS.
 ENCRYPTION_AT_REST_ENABLED = os.getenv("JOURNAL_ENCRYPT_AT_REST", "").lower() == "true"
 
 
@@ -32,9 +32,10 @@ class JournalTag(enum.StrEnum):
 
 
 class JournalEntry(SQLModel, table=True):
-    """
-    Stores a chat message between the user and BotMason. Supports context tagging
-    for stage reflections, practice notes, and habit-related thoughts.
+    """Stores a chat message between the user and BotMason.
+
+    Supports context tagging for stage reflections, practice notes, and
+    habit-related thoughts.
     """
 
     id: int | None = Field(default=None, primary_key=True)

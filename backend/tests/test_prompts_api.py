@@ -78,7 +78,7 @@ async def test_get_current_prompt_advances_after_submit(
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
     # Week advances to 2 after completing week 1
-    assert data["week_number"] == 2  # noqa: PLR2004
+    assert data["week_number"] == 2
     assert data["has_responded"] is False
 
 
@@ -91,7 +91,7 @@ async def test_get_prompt_by_week(async_client: AsyncClient) -> None:
     resp = await async_client.get("/prompts/5", headers=headers)
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
-    assert data["week_number"] == 5  # noqa: PLR2004
+    assert data["week_number"] == 5
     assert data["has_responded"] is False
     assert data["question"] is not None
 
@@ -207,9 +207,9 @@ async def test_prompt_history_returns_responses(async_client: AsyncClient) -> No
 
     resp = await async_client.get("/prompts/history", headers=headers)
     data = resp.json()
-    assert data["total"] == 2  # noqa: PLR2004
+    assert data["total"] == 2
     # Newest week first
-    assert data["items"][0]["week_number"] == 2  # noqa: PLR2004
+    assert data["items"][0]["week_number"] == 2
     assert data["items"][1]["week_number"] == 1
 
 
@@ -225,8 +225,8 @@ async def test_prompt_history_pagination(async_client: AsyncClient) -> None:
 
     resp = await async_client.get("/prompts/history?limit=2&offset=0", headers=headers)
     data = resp.json()
-    assert len(data["items"]) == 2  # noqa: PLR2004
-    assert data["total"] == 5  # noqa: PLR2004
+    assert len(data["items"]) == 2
+    assert data["total"] == 5
     assert data["has_more"] is True
 
     resp2 = await async_client.get("/prompts/history?limit=2&offset=4", headers=headers)
@@ -304,4 +304,4 @@ async def test_concurrent_prompt_responses_allow_exactly_one(
     rejections = sum(1 for s in status_codes if s in {HTTPStatus.BAD_REQUEST, HTTPStatus.CONFLICT})
 
     assert successes == 1, f"Expected exactly 1 success, got {successes}"
-    assert rejections == 4, f"Expected 4 rejections, got {rejections}"  # noqa: PLR2004
+    assert rejections == 4, f"Expected 4 rejections, got {rejections}"

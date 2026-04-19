@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,8 +36,8 @@ def _populate_streak(habit: Habit, current_user: int) -> None:
 @router.post("/", response_model=HabitSchema)
 async def create_habit(
     payload: HabitCreate,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Habit:
     """Create a habit for the authenticated user."""
     habit = Habit(user_id=current_user, **payload.model_dump())
@@ -49,9 +50,9 @@ async def create_habit(
 
 @router.get("/", response_model=None)
 async def list_habits(
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
-    pagination: PaginationParams = Depends(),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    pagination: Annotated[PaginationParams, Depends()],
 ) -> Page[HabitWithGoals] | list[HabitWithGoals]:
     """Return all habits for the authenticated user, sorted by sort_order.
 
@@ -77,8 +78,8 @@ async def list_habits(
 @router.get("/{habit_id}", response_model=HabitWithGoals)
 async def get_habit(
     habit_id: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Habit:
     """Return a single habit by id, scoped to the authenticated user."""
     statement = select(Habit).where(Habit.id == habit_id).options(HABIT_WITH_GOALS_AND_COMPLETIONS)
@@ -94,8 +95,8 @@ async def get_habit(
 async def update_habit(
     habit_id: int,
     payload: HabitCreate,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Habit:
     """Replace an existing habit's fields."""
     habit = await session.get(Habit, habit_id)
@@ -113,8 +114,8 @@ async def update_habit(
 @router.delete("/{habit_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_habit(
     habit_id: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
     """Delete a habit. Returns 204 No Content on success."""
     habit = await session.get(Habit, habit_id)
@@ -141,8 +142,8 @@ async def _get_habit_with_completions(
 @router.get("/{habit_id}/stats", response_model=HabitStats)
 async def get_habit_stats(
     habit_id: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> HabitStats:
     """Return aggregated statistics for a habit's goal completions."""
     habit = await _get_habit_with_completions(habit_id, current_user, session)

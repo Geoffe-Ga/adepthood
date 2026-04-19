@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +20,7 @@ async def _make_goal(session: AsyncSession, user_id: int) -> Goal:
     habit = Habit(
         name="Meditate",
         icon="meditate",
-        start_date=date.today(),
+        start_date=datetime.now(tz=UTC).date(),
         stage="1",
         streak=0,
         energy_cost=1,
@@ -103,7 +103,7 @@ async def test_compute_consecutive_streak_counts_unique_days(
         )
     await db_session.commit()
 
-    assert await compute_consecutive_streak(db_session, goal.id, user.id) == 3  # noqa: PLR2004
+    assert await compute_consecutive_streak(db_session, goal.id, user.id) == 3
 
 
 @pytest.mark.asyncio

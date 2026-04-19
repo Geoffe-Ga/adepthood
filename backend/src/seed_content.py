@@ -81,10 +81,10 @@ _CONTENT_DEFINITIONS: list[dict[str, str | int]] = [
 # time.  The drip-feed system assumes one item per day per stage; duplicate
 # release_days would cause unpredictable unlock ordering.
 _stage_day_pairs = [(d["stage_number"], d["release_day"]) for d in _CONTENT_DEFINITIONS]
-assert len(set(_stage_day_pairs)) == len(_stage_day_pairs), (
-    f"Duplicate (stage_number, release_day) in CONTENT_DEFINITIONS: "
-    f"{sorted(p for p in _stage_day_pairs if _stage_day_pairs.count(p) > 1)}"
-)
+if len(set(_stage_day_pairs)) != len(_stage_day_pairs):
+    _dupes = sorted(p for p in _stage_day_pairs if _stage_day_pairs.count(p) > 1)
+    msg = f"Duplicate (stage_number, release_day) in CONTENT_DEFINITIONS: {_dupes}"
+    raise ValueError(msg)
 
 CONTENT_DEFINITIONS = _CONTENT_DEFINITIONS
 

@@ -20,7 +20,6 @@ def compute_progress(
 
     Returns ``(progress, reason_code)`` where progress is in [0, 1].
     """
-
     if target <= 0:
         raise ValueError("target must be positive")
 

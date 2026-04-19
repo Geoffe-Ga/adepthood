@@ -25,11 +25,11 @@ def test_timestamptz_migration_exists() -> None:
 
 
 def test_upgrade_and_downgrade_use_same_using_expression() -> None:
-    """BUG-INFRA-022: the upgrade and downgrade ``USING`` expressions must
-    be structurally identical so ``alembic downgrade -1`` round-trips.
+    """BUG-INFRA-022: upgrade and downgrade ``USING`` expressions must be structurally identical.
 
-    Specifically, both should produce ``"col" AT TIME ZONE 'UTC'`` — the
-    conversion is symmetric (timestamp ↔ timestamptz in UTC), so the
+    This ensures ``alembic downgrade -1`` round-trips correctly.
+    Specifically, both should produce ``"col" AT TIME ZONE 'UTC'`` -- the
+    conversion is symmetric (timestamp to timestamptz in UTC), so the
     expression should be the same for both directions.
     """
     text = TIMESTAMPTZ_MIGRATION.read_text()
@@ -46,9 +46,9 @@ def test_upgrade_and_downgrade_use_same_using_expression() -> None:
 
 @pytest.mark.parametrize("direction", ["upgrade", "downgrade"])
 def test_both_directions_exist(direction: str) -> None:
-    """Every migration must define both ``upgrade`` and ``downgrade``.
+    """Every migration must define both ``upgrade`` and ``downgrade`` functions.
 
-    Without this any new migration could ship without a rollback path,
+    Without this, any new migration could ship without a rollback path,
     re-introducing the same class of bug BUG-INFRA-022 caught.
     """
     for path in MIGRATIONS_DIR.glob("*.py"):

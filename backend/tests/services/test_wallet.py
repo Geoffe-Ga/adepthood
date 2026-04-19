@@ -197,9 +197,9 @@ async def test_add_balance_increments_and_returns_total(db_session: AsyncSession
     new_total = await add_balance(db_session, user.id, 7)
     await db_session.commit()
 
-    assert new_total == 12  # noqa: PLR2004
+    assert new_total == 12
     rows = (await db_session.execute(select(User).where(User.id == user.id))).scalars().all()
-    assert rows[0].offering_balance == 12  # noqa: PLR2004
+    assert rows[0].offering_balance == 12
 
 
 @pytest.mark.asyncio

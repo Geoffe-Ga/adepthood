@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -102,9 +103,9 @@ async def _check_stage_unlocked(session: AsyncSession, user_id: int, stage_numbe
 @router.get("/stages/{stage_number}/content", response_model=None)
 async def list_stage_content(
     stage_number: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
-    pagination: PaginationParams = Depends(),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    pagination: Annotated[PaginationParams, Depends()],
 ) -> Page[ContentItemResponse] | list[ContentItemResponse]:
     """List content for a stage with drip-feed gating applied.
 
@@ -143,8 +144,8 @@ async def list_stage_content(
 @router.get("/content/{content_id}", response_model=ContentItemResponse)
 async def get_content_item(
     content_id: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ContentItemResponse:
     """Get a single content item with lock/read status."""
     result = await session.execute(select(StageContent).where(StageContent.id == content_id))
@@ -166,7 +167,9 @@ async def get_content_item(
     days = await _days_for_user_stage(session, current_user, stage.stage_number)
 
     item_id = item.id
-    assert item_id is not None  # guaranteed after DB fetch
+    if item_id is None:
+        msg = "StageContent ID unexpectedly None after database fetch"
+        raise RuntimeError(msg)
     read_ids = await _read_ids_for_user(session, current_user, [item_id])
 
     raw = [
@@ -185,8 +188,8 @@ async def get_content_item(
 @router.post("/content/{content_id}/mark-read", response_model=ContentCompletionResponse)
 async def mark_content_read(
     content_id: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ContentCompletionResponse:
     """Mark a content item as read. Idempotent — repeated calls return existing record."""
     # Verify content exists
@@ -248,8 +251,8 @@ def _content_ids_from_items(items: list[StageContent]) -> list[int]:
 @router.get("/stages/{stage_number}/progress", response_model=CourseProgressResponse)
 async def get_course_progress(
     stage_number: int,
-    current_user: int = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> CourseProgressResponse:
     """Get read-progress for a stage's content."""
     if not await stage_exists(session, stage_number):

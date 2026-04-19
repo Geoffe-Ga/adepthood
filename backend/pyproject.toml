@@ -16,24 +16,51 @@ target-version = "py312"
 extend-exclude = ["migrations", ".venv", "venv", "build", "dist"]
 
 [tool.ruff.lint]
-select = [
-  "E", "F", "I", "UP", "B", "C4", "TID", "SIM", "A", "ARG", "N", "PIE",
-  "PTH", "SLF", "ANN", "Q", "PL", "RUF",
-  # Stricter additions ported from adepthood-linters:
-  "TRY",   # tryceratops — exception handling anti-patterns
-  "FURB",  # refurb — modernize idioms
-  "ERA",   # eradicate — commented-out code
-  "PT",    # flake8-pytest-style — test hygiene
-  "RET",   # flake8-return — return-statement simplification
-  "PERF",  # perflint — common perf anti-patterns
-]
+select = ["ALL"]
 ignore = [
-  "D100", "D101", "D102", "D103", "D104",  # pydocstyle (optional)
-  "TRY003",  # tryceratops — forcing custom exception classes for every
-             # message produces more noise than value in server code.
-             # Standard Python pattern (`raise ValueError("msg")`) is fine.
+  # --- Inapplicable frameworks ---
+  "AIR",    # Airflow
+  "DJ",     # Django
+  "NPY",    # NumPy
+  "PD",     # pandas
+  "PYI",    # type-stubs-only
+  "EXE",    # shebang/executable (not a CLI package)
+  "INP",    # no-pep420 implicit namespace packages (FastAPI uses packages)
+  "INT",    # gettext (no i18n)
+  "CPY",    # copyright headers (not required)
+  # --- Justified exceptions ---
+  "D100", "D101", "D102", "D103", "D104",
+  # Missing docstrings enforced by interrogate (threshold 85%) which
+  # gives a project-wide score rather than per-module failures. Enabling
+  # these would duplicate that gate with worse UX.
+  "TRY003", "EM101", "EM102",
+  # Forcing one-off exception classes and extracting string literals from
+  # raise statements produces more noise than value in server code. The
+  # standard Python pattern (`raise ValueError("descriptive msg")`) is
+  # justified. TRY003, EM101, and EM102 all target this same pattern.
+  "COM812",
+  # Trailing-comma enforcement conflicts with ruff-format, which is the
+  # sole formatting authority.
+  "ISC001",
+  # Implicit string concatenation conflicts with ruff-format.
+  "TC001", "TC002", "TC003",
+  # Type-checking import guards are incompatible with FastAPI/Pydantic/SQLModel
+  # which introspect types at runtime for dependency injection, validation, and
+  # ORM mapping. Moving imports into TYPE_CHECKING blocks causes 422 errors.
 ]
 fixable = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use assert (S101), hardcoded test credentials (S105/S106/S107),
+# magic numbers in assertions (PLR2004), boolean positional args in
+# parametrize fixtures (FBT001/FBT003), and explicit type-checking imports
+# that would be wasteful to guard (TC).
+# Patterns include both `tests/` (when run from backend/) and `backend/tests/`
+# (when run from repo root by pre-commit).
+"tests/**/*.py" = ["S101", "S105", "S106", "S107", "PLR2004", "FBT001", "FBT003"]
+"backend/tests/**/*.py" = ["S101", "S105", "S106", "S107", "PLR2004", "FBT001", "FBT003"]
+"conftest.py" = ["S101"]
+"backend/conftest.py" = ["S101"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["src"]
@@ -100,7 +127,7 @@ exclude_lines = [
 # Threshold starts permissive and will tighten as existing modules gain
 # docstrings (tracked in Tranche 9 of the adepthood-linters integration).
 [tool.interrogate]
-fail-under = 50
+fail-under = 85
 exclude = ["tests", "migrations", "alembic", ".venv", "venv"]
 ignore-init-module = true
 ignore-init-method = true

@@ -10,6 +10,5 @@ def achieved_milestones(value: int, thresholds: Iterable[int]) -> tuple[list[int
 
     The result includes a ``reason_code`` for auditability.
     """
-
     reached: list[int] = [t for t in thresholds if value >= t]
     return reached, "milestones_achieved"

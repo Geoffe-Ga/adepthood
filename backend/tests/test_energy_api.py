@@ -27,10 +27,10 @@ def sample_payload() -> dict[str, Any]:
 
 def test_energy_plan_endpoint_returns_plan() -> None:
     res = client.post("/v1/energy/plan", json=sample_payload())
-    assert res.status_code == 200  # noqa: PLR2004
+    assert res.status_code == 200
     data = res.json()
     assert data["reason_code"] == "generated_21_day_plan"
-    assert len(data["plan"]["items"]) == 21  # noqa: PLR2004
+    assert len(data["plan"]["items"]) == 21
     expected_net = (5 - 2) * 11 + (0 - 1) * 10
     assert data["plan"]["net_energy"] == expected_net
 
@@ -45,8 +45,8 @@ def test_energy_plan_endpoint_idempotency() -> None:
 def test_idempotency_cache_is_ttl_bounded() -> None:
     """The idempotency cache should be a TTLCache with bounded size."""
     assert isinstance(idempotency_cache, TTLCache)
-    assert idempotency_cache.maxsize == 1000  # noqa: PLR2004
-    assert idempotency_cache.ttl == 3600  # noqa: PLR2004
+    assert idempotency_cache.maxsize == 1000
+    assert idempotency_cache.ttl == 3600
 
 
 def test_idempotency_cache_evicts_when_full() -> None:
@@ -62,7 +62,7 @@ def test_idempotency_cache_evicts_when_full() -> None:
 def test_empty_habits_returns_400() -> None:
     """POST with empty habits list should return 400, not 500."""
     res = client.post("/v1/energy/plan", json={"habits": [], "start_date": "2024-01-01"})
-    assert res.status_code == 400  # noqa: PLR2004
+    assert res.status_code == 400
     assert res.json()["detail"] == "habits_must_not_be_empty"
 
 
@@ -74,8 +74,8 @@ def test_idempotency_miss_after_cache_clear() -> None:
         energy.idempotency_cache.clear()
         res2 = client.post("/v1/energy/plan", json=sample_payload(), headers=headers)
         # Both should succeed (recomputed, not from cache)
-        assert res1.status_code == 200  # noqa: PLR2004
-        assert res2.status_code == 200  # noqa: PLR2004
+        assert res1.status_code == 200
+        assert res2.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -107,7 +107,7 @@ async def test_create_plan_does_not_block_event_loop() -> None:
             elapsed = time.perf_counter() - start
 
     for res in results:
-        assert res.status_code == 200  # noqa: PLR2004
+        assert res.status_code == 200
 
     # If the endpoint were synchronous on the loop, elapsed would be
     # >= 2 * sleep_seconds.  Offloading via ``asyncio.to_thread`` brings it

@@ -7,6 +7,7 @@ import logging
 import os
 import secrets
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 
 import bcrypt
 import jwt
@@ -42,8 +43,11 @@ MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_DURATION = timedelta(minutes=15)
 
 
+_SECRET_PLACEHOLDER = "replace-me"  # noqa: S105  # nosec B105  # pragma: allowlist secret
+
+
 def _get_secret_key() -> str:
-    if not SECRET_KEY or SECRET_KEY == "replace-me":  # nosec B105  # pragma: allowlist secret
+    if not SECRET_KEY or SECRET_KEY == _SECRET_PLACEHOLDER:
         msg = "SECRET_KEY environment variable must be set to a secure value"
         raise RuntimeError(msg)
     return SECRET_KEY
@@ -192,7 +196,7 @@ async def _is_account_locked(session: AsyncSession, email: str) -> bool:
 async def signup(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     payload: AuthRequest,
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AuthResponse:
     if len(payload.password) < _MIN_PASSWORD_LENGTH:
         raise bad_request("password_too_short")
@@ -215,7 +219,9 @@ async def signup(
     await session.commit()
     await session.refresh(user)
 
-    assert user.id is not None
+    if user.id is None:
+        msg = "User ID unexpectedly None after database commit"
+        raise RuntimeError(msg)
     token = _create_token(user.id)
     return AuthResponse(token=token, user_id=user.id)
 
@@ -225,7 +231,7 @@ async def signup(
 async def login(
     request: Request,
     payload: AuthRequest,
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AuthResponse:
     ip_address = _get_client_ip(request)
 
@@ -253,7 +259,9 @@ async def login(
     # Successful login — record and reset the failure window
     await _record_attempt(session, payload.email, ip_address, success=True)
 
-    assert user.id is not None
+    if user.id is None:
+        msg = "User ID unexpectedly None after database commit"
+        raise RuntimeError(msg)
     token = _create_token(user.id)
     return AuthResponse(token=token, user_id=user.id)
 
@@ -284,7 +292,7 @@ def get_current_user(authorization: str | None = Header(default=None)) -> int:
 @limiter.limit("1/minute")
 async def refresh_token(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
-    user_id: int = Depends(get_current_user),
+    user_id: Annotated[int, Depends(get_current_user)],
 ) -> AuthResponse:
     """Exchange a valid JWT for a fresh one.
 

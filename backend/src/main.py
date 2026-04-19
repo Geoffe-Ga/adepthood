@@ -4,6 +4,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -235,7 +236,7 @@ app.include_router(stages_router)
 
 @app.get("/health")
 async def health_check(
-    session: AsyncSession = Depends(get_session),  # noqa: B008
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict[str, str]:
     """Health check that validates database connectivity.
 

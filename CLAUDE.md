@@ -91,11 +91,24 @@ cd frontend && npx tsc --noEmit     # Type check
 - Leave TODOs for problems solvable now
 
 ### Quality Thresholds
-- **Test coverage:** 90% minimum (backend, enforced by pytest-cov)
-- **Lint:** zero warnings (both ESLint and ruff)
+- **Test coverage:** 90% minimum line coverage (backend pytest-cov; frontend jest)
+- **Branch coverage:** 80% minimum (backend CI gate, target 90%)
+- **Docstring coverage:** 85% minimum (backend, interrogate)
+- **Lint:** zero warnings — ruff `select = ["ALL"]`, ESLint with sonarjs/unicorn
 - **Types:** strict mode in both mypy and TypeScript
 - **Security:** bandit + pip-audit + detect-secrets must all pass
-- **Formatting:** black + isort (Python), prettier (frontend) — auto-fixed
+- **Formatting:** ruff-format (Python), prettier (frontend) — auto-fixed
+- **Complexity:** xenon A-grade absolute/modules/average, radon MI ≥ B
+
+### Stay Green Workflow
+Quality is enforced through a 3-gate process:
+1. **Gate 1 — Pre-commit** (~10s): format + lint + hygiene (28 hooks)
+2. **Gate 2 — Pre-push**: full test suite + coverage + complexity
+3. **Gate 3 — CI**: all of the above + cross-version compat (3.11/3.12/3.13)
+   + docstring coverage + branch coverage + security audit
+
+Never commit with `--no-verify`. Never push with failing gates. If a gate
+fails, fix the root cause — don't suppress the check.
 
 ## Roadmap
 
