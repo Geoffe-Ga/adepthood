@@ -10,10 +10,7 @@ if TYPE_CHECKING:
 
 
 class StageProgress(SQLModel, table=True):
-    """Tracks which stage a user is currently working on, and which stages.
-
-    have been completed.
-    """
+    """Tracks which stage a user is currently working on and which stages have been completed."""
 
     id: int | None = Field(default=None, primary_key=True)
     current_stage: int

@@ -102,7 +102,7 @@ cd frontend && npx tsc --noEmit     # Type check
 
 ### Stay Green Workflow
 Quality is enforced through a 3-gate process:
-1. **Gate 1 — Pre-commit** (~10s): format + lint + hygiene (30 hooks)
+1. **Gate 1 — Pre-commit** (~10s): format + lint + hygiene (28 hooks)
 2. **Gate 2 — Pre-push**: full test suite + coverage + complexity
 3. **Gate 3 — CI**: all of the above + cross-version compat (3.11/3.12/3.13)
    + docstring coverage + branch coverage + security audit

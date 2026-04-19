@@ -125,9 +125,10 @@ def test_credentials_safe_with_explicit_origins() -> None:
 
 
 def test_security_headers_present_on_every_response() -> None:
-    """BUG-INFRA-001/002/003: CSP, Referrer-Policy, and Permissions-Policy.
+    """BUG-INFRA-001/002/003: Security headers must be on every response.
 
-    must be on every response (not just authenticated ones).
+    CSP, Referrer-Policy, and Permissions-Policy are required on all
+    responses, not just authenticated ones.
     """
     response = client.get("/auth/login")  # public path; CORS-friendly
     assert "Content-Security-Policy" in response.headers
@@ -176,7 +177,7 @@ def test_correlation_id_minted_when_missing_or_empty() -> None:
 
 
 def test_options_request_allowed() -> None:
-    """Preflight OPTIONS request should succeed for allowed origin/method.
+    """Preflight OPTIONS request should succeed for an allowed origin and method.
 
     We hit ``/auth/login`` (a real public endpoint) because ``/`` is now
     intentionally unmapped (BUG-INFRA-004); CORS preflight is handled by
@@ -192,10 +193,10 @@ def test_options_request_allowed() -> None:
 
 
 def test_cross_origin_get_allowed() -> None:
-    """GET requests from an allowed origin include CORS headers.
+    """GET requests from an allowed origin include the expected CORS headers.
 
     Uses ``/auth/login`` rather than ``/`` (BUG-INFRA-004 removed root).
-    The 405 status is fine — CORS headers are emitted regardless.
+    The 405 status is fine -- CORS headers are emitted regardless.
     """
     headers = {"Origin": ALLOWED_ORIGIN}
     response = client.get("/auth/login", headers=headers)

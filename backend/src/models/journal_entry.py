@@ -32,9 +32,10 @@ class JournalTag(enum.StrEnum):
 
 
 class JournalEntry(SQLModel, table=True):
-    """Stores a chat message between the user and BotMason. Supports context tagging.
+    """Stores a chat message between the user and BotMason.
 
-    for stage reflections, practice notes, and habit-related thoughts.
+    Supports context tagging for stage reflections, practice notes, and
+    habit-related thoughts.
     """
 
     id: int | None = Field(default=None, primary_key=True)

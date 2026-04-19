@@ -64,9 +64,10 @@ async def test_signup_create_habit_log_completion_check_streak(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """Full user flow: sign up, create a habit, add a goal, log completions,.
+    """Full user flow from signup through streak verification.
 
-    and verify streak increments with milestone detection.
+    Signs up, creates a habit, adds a goal, logs completions, and
+    verifies streak increments with milestone detection.
     """
     headers = await _auth_headers(async_client)
 

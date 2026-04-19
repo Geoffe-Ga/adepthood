@@ -40,9 +40,10 @@ _SUBTRACTIVE_CASES = [
     ids=["zero_consumed", "half_consumed", "at_limit", "over_limit"],
 )
 def test_subtractive_progress_parameterized(current: float, target: float, expected: float) -> None:
-    """BUG-GOAL-002: Subtractive goals must report 1.0 when current=0,.
+    """BUG-GOAL-002: Subtractive goals must report correct progress ratios.
 
-    0.0 when current>=target, proportional between.
+    Expected: 1.0 when current=0, 0.0 when current>=target, and
+    proportional values between.
     """
     progress, code = compute_progress(current, target, is_additive=False)
     assert code == "subtractive_progress"
