@@ -176,6 +176,28 @@ describe('AuthContext', () => {
       expect(mockClearToken).toHaveBeenCalled();
       expect(result.current.token).toBeNull();
     });
+
+    // BUG-FE-STATE-001 review follow-up: if ``clearToken`` rejects (SecureStore
+    // unavailable, device locked, etc.) logout must still null the in-memory
+    // token and transition to ``anonymous`` — otherwise a flaky SecureStore
+    // leaves the app indefinitely authenticated with a user who asked to
+    // sign out.
+    it('still transitions to anonymous when clearToken rejects', async () => {
+      mockLoadToken.mockResolvedValue('existing-jwt');
+      mockClearToken.mockRejectedValueOnce(new Error('SecureStore unavailable'));
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.token).toBe('existing-jwt'));
+
+      await act(async () => {
+        await result.current.logout();
+      });
+
+      expect(result.current.token).toBeNull();
+      expect(result.current.authStatus).toBe('anonymous');
+      warnSpy.mockRestore();
+    });
   });
 
   describe('onUnauthorized', () => {

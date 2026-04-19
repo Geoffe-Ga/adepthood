@@ -68,4 +68,17 @@ describe('store reset registry (BUG-FE-STATE-001)', () => {
 
     expect(reset).toHaveBeenCalledTimes(1);
   });
+
+  // Review follow-up: the test-only escape hatch is dangerous if it ever fires
+  // in production — it would erase every store's reset callback. Guard it so
+  // a stray import can't nuke the registry at runtime.
+  it('__resetRegistryForTests throws when called outside NODE_ENV=test', () => {
+    const originalEnv = process.env.NODE_ENV;
+    (process.env as { NODE_ENV?: string }).NODE_ENV = 'production';
+    try {
+      expect(() => __resetRegistryForTests()).toThrow(/NODE_ENV=test/);
+    } finally {
+      (process.env as { NODE_ENV?: string }).NODE_ENV = originalEnv;
+    }
+  });
 });

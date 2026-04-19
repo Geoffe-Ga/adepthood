@@ -37,8 +37,13 @@ export function resetAllStores(): void {
 
 /**
  * Test-only escape hatch: clears the registry so each test starts from a
- * clean slate. Production code must never call this.
+ * clean slate. Production code must never call this — calling it outside
+ * ``NODE_ENV === 'test'`` throws so a stray import can't silently erase the
+ * reset callbacks at runtime.
  */
 export function __resetRegistryForTests(): void {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('__resetRegistryForTests is only callable in NODE_ENV=test');
+  }
   registered.clear();
 }

@@ -56,7 +56,9 @@ function ReauthActions({
       <TouchableOpacity
         accessibilityLabel="Sign out"
         accessibilityRole="button"
+        accessibilityState={{ disabled: submitting }}
         onPress={onDismiss}
+        disabled={submitting}
         testID="reauth-dismiss"
       >
         <Text style={styles.secondaryLink}>Sign out instead</Text>

@@ -4,6 +4,7 @@ import { auth as authApi, setOnTokenRefreshed, setOnUnauthorized, setTokenGetter
 import { clearToken, loadToken, saveToken } from '@/storage/authStorage';
 import { clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import { clearLlmApiKey } from '@/storage/llmKeyStorage';
+import { clearAllNotificationData } from '@/storage/notificationStorage';
 import { resetAllStores } from '@/store/registry';
 import {
   decodeJwtPayload,
@@ -109,14 +110,18 @@ async function wipeUserState(): Promise<void> {
     ['habits', clearHabits()],
     ['pending check-ins', clearPendingCheckIns()],
     ['LLM API key', clearLlmApiKey()],
+    ['notification data', clearAllNotificationData()],
   ];
-  for (const [label, promise] of clears) {
-    try {
-      await promise;
-    } catch (err: unknown) {
-      console.warn(`[auth] failed to clear ${label} on logout`, err);
+  // Run the clears concurrently — they target independent AsyncStorage keys —
+  // but surface every failure via ``allSettled`` so one dead key doesn't
+  // silently strand the others.
+  const results = await Promise.allSettled(clears.map(([, promise]) => promise));
+  results.forEach((result, index) => {
+    if (result.status === 'rejected') {
+      const label = clears[index]?.[0] ?? 'unknown';
+      console.warn(`[auth] failed to clear ${label} on logout`, result.reason);
     }
-  }
+  });
 }
 
 /**
@@ -254,7 +259,14 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
   );
 
   const logout = useCallback(async () => {
-    await clearToken();
+    // BUG-FE-STATE-001 review follow-up: if SecureStore rejects we must still
+    // null the in-memory token and wipe the stores — otherwise a flaky
+    // device keychain leaves the app indefinitely authenticated.
+    try {
+      await clearToken();
+    } catch (err: unknown) {
+      console.warn('clearToken failed in logout', err);
+    }
     await wipeUserState();
     setToken(null);
     setAuthStatus('anonymous');
@@ -279,7 +291,12 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
     setAuthStatus('anonymous');
   }, [setToken, setAuthStatus]);
 
-  return { login, signup, logout, onUnauthorized, dismissReauth };
+  // Memoize the bundle so the context value's ``useMemo`` actually short-
+  // circuits on renders where none of the identity-stable callbacks changed.
+  return useMemo(
+    () => ({ login, signup, logout, onUnauthorized, dismissReauth }),
+    [login, signup, logout, onUnauthorized, dismissReauth],
+  );
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
