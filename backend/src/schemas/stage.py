@@ -6,11 +6,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Declared length of the APTITUDE curriculum.  Duplicated by
-# ``domain.stage_progress.TOTAL_STAGES`` and ``schemas.practice.MAX_STAGE_NUMBER``
-# — keep all three in sync.  Pydantic needs a schema-local constant so the
-# field constraint below is independent of the domain import graph.
-MAX_STAGE_NUMBER = 36
+from domain.constants import TOTAL_STAGES as MAX_STAGE_NUMBER
 
 
 class StageResponse(BaseModel):
@@ -44,8 +40,8 @@ class StageProgressResponse(BaseModel):
 class StageProgressUpdate(BaseModel):
     """Payload asserting the client's expected ``current_stage`` after advance.
 
-    BUG-SCHEMA-006: the router ignores this value as a write; it is only used
-    as a server-vs-client sanity assertion.  ``extra='forbid'`` blocks the
+    The router ignores this value as a write; it is only used as a
+    server-vs-client sanity assertion.  ``extra='forbid'`` blocks the
     adjacent injection vector where a client attempts to set
     ``completed_stages`` directly in the same PUT body, which the server
     derives from its own state.

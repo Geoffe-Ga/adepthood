@@ -494,6 +494,32 @@ async def test_update_progress_ignores_client_on_dirty_data(
     assert resp.json()["detail"] == "stage_advance_mismatch"
 
 
+@pytest.mark.asyncio
+async def test_advance_returns_409_when_all_stages_completed(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Advancing past the final stage must 409 instead of re-issuing 36.
+
+    When the user already has ``completed_stages`` covering the full
+    curriculum, ``next_stage_for`` has no hole to fill and
+    ``raise conflict('all_stages_completed')`` stops the request before it
+    writes nonsense state.
+    """
+    headers, user_id = await _signup(async_client, "finished")
+    all_done = list(range(1, 37))
+    progress = StageProgress(user_id=user_id, current_stage=36, completed_stages=all_done)
+    db_session.add(progress)
+    await db_session.commit()
+
+    resp = await async_client.put(
+        "/stages/progress",
+        json={"current_stage": 36},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.json()["detail"] == "all_stages_completed"
+
+
 # ── BUG-STAGE-005: TOCTOU race on PUT /stages/progress ─────────────────
 
 

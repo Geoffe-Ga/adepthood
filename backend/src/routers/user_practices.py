@@ -47,7 +47,7 @@ async def _check_stage_eligibility(
     practice: Practice,
     payload_stage_number: int,
 ) -> None:
-    """BUG-PRACTICE-004: gate on catalog-stage agreement + chain-unlock.
+    """Gate on catalog-stage agreement + chain-unlock.
 
     Kept separate from :func:`_resolve_practice` so the 400/403 split stays
     explicit: mismatched stage is a client-side input error, locked stage is
@@ -63,7 +63,7 @@ async def _check_stage_eligibility(
 async def _check_no_active_practice(
     session: AsyncSession, current_user: int, stage_number: int
 ) -> None:
-    """BUG-PRACTICE-011: at most one open UserPractice row per (user, stage)."""
+    """Enforce at most one open UserPractice row per (user, stage)."""
     existing = await session.execute(
         select(UserPractice.id).where(
             UserPractice.user_id == current_user,

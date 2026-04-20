@@ -47,18 +47,14 @@ const FULLY_COMPLETE = 1;
  * invariant: `current = completed + 1`.  A fresh user with nothing completed
  * gets stage 1; each completed stage advances `current` by one, clamped to
  * the catalog range.  This replaces the old "first unlocked, still-in-
- * progress" heuristic (BUG-FE-MAP-001 / BUG-FE-COURSE-001 / BUG-FE-PRACTICE-
- * 001) which silently drifted to `max(stage_number)` over unlocked rows when
- * the backend's `is_unlocked` flag was ahead of completion.
+ * progress" heuristic which silently drifted to `max(stage_number)` over
+ * unlocked rows when the backend's `is_unlocked` flag was ahead of
+ * completion.
  */
 export const deriveCurrentStage = (apiStages: Stage[]): number => {
   if (apiStages.length === 0) return 1;
   const completed = apiStages.filter((s) => s.progress >= FULLY_COMPLETE).length;
-  const maxStage = apiStages.reduce(
-    (max, s) => (s.stage_number > max ? s.stage_number : max),
-    STAGE_COUNT,
-  );
-  return Math.min(Math.max(1, completed + 1), maxStage);
+  return Math.min(Math.max(1, completed + 1), STAGE_COUNT);
 };
 
 export const stageService = {

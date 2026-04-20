@@ -39,14 +39,14 @@ def _coerce_completed(raw: object) -> list[int]:
     """Normalize the driver representation of ``completed_stages`` to ``list[int]``."""
     if raw is None:
         return []
-    if isinstance(raw, list):
-        return [int(x) for x in raw]
-    # Postgres ARRAY(Integer) round-trips as a list already; this branch is a
-    # defensive fallback for drivers that expose a tuple or similar sequence.
-    try:
-        return [int(x) for x in raw]  # type: ignore[call-overload]
-    except TypeError:
-        return []
+    # Postgres ARRAY(Integer) round-trips as a list already; the tuple branch
+    # is a defensive fallback for drivers that return a non-list sequence.
+    if isinstance(raw, (list, tuple)):
+        try:
+            return [int(x) for x in raw]
+        except (TypeError, ValueError):
+            return []
+    return []
 
 
 def upgrade() -> None:

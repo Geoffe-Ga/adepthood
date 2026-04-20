@@ -177,9 +177,9 @@ async def update_progress(
 ) -> StageProgressRecord:
     """Advance the user to the next stage.
 
-    BUG-SCHEMA-006: the request body is treated as an **assertion** of what
-    the client expects the new ``current_stage`` to be, not an authoritative
-    write.  The new state is derived server-side:
+    The request body is treated as an **assertion** of what the client
+    expects the new ``current_stage`` to be, not an authoritative write.
+    The new state is derived server-side:
 
     - **Create** (no prior row): ``current_stage`` is forced to 1; the
       payload must assert 1 or it's rejected as ``must_start_at_stage_one``.

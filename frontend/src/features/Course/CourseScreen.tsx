@@ -36,10 +36,10 @@ function useStagesLoader() {
       try {
         const stagesList = await stagesApi.list();
         setAllStages(stagesList);
-        // BUG-FE-COURSE-001/-002: derive current stage from server-owned
-        // progression (completed_count + 1), not from "max unlocked" — the
-        // latter lifts the selector to stage N when only `is_unlocked` is
-        // ahead, visually rewarding any skip-ahead attempt.
+        // Derive current stage from server-owned progression
+        // (completed_count + 1), not from "max unlocked" — the latter lifts
+        // the selector to stage N when only `is_unlocked` is ahead,
+        // visually rewarding any skip-ahead attempt.
         if (routeStageNumber === null) {
           setSelectedStage(deriveCurrentStage(stagesList));
         }

@@ -118,11 +118,11 @@ async def list_stage_content(
     count in the database.  Stage content lists are small (tens of items
     per stage) so paginating in Python after fetching is fine.
 
-    BUG-COURSE-001: the sibling endpoints (``get_content_item``,
-    ``mark_content_read``) gate on :func:`_check_stage_unlocked`; this
-    listing used to skip it and leak titles + release_days for future
-    stages while only nulling ``url``.  Aligning the unlock gate here
-    closes the last read path for locked-stage metadata.
+    The sibling endpoints (``get_content_item``, ``mark_content_read``)
+    gate on :func:`_check_stage_unlocked`; this listing used to skip it
+    and leak titles + release_days for future stages while only nulling
+    ``url``.  Aligning the unlock gate here closes the last read path
+    for locked-stage metadata.
     """
     # 404-then-403: missing stages return not_found regardless of caller so a
     # nonexistent stage_number can't be distinguished from a locked one by

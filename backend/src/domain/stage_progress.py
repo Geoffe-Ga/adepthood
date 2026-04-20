@@ -8,6 +8,8 @@ from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from domain.constants import TOTAL_STAGES
+from errors import conflict
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
 from models.goal import Goal
@@ -23,11 +25,17 @@ from schemas.stage import HabitHistoryItem, PracticeHistoryItem
 # Stage 1 is always unlocked regardless of progress state.
 _STAGE_1 = 1
 
-# Declared length of the APTITUDE curriculum.  Router-level stage mutations
-# clamp their inputs to this range and callers use it to detect the
-# "everything is done" boundary.  Duplicated by ``schemas.practice.
-# MAX_STAGE_NUMBER`` for Pydantic validation — keep the two in sync.
-TOTAL_STAGES = 36
+__all__ = [
+    "TOTAL_STAGES",
+    "compute_stage_progress",
+    "get_stage_habit_history",
+    "get_stage_practice_history",
+    "get_user_progress",
+    "get_user_progress_for_update",
+    "is_stage_unlocked",
+    "next_stage_for",
+    "stage_exists",
+]
 
 
 async def get_user_progress(session: AsyncSession, user_id: int) -> StageProgress | None:
@@ -59,7 +67,7 @@ def is_stage_unlocked(stage_number: int, progress: StageProgress | None) -> bool
     ``[35]``) expose every intermediate stage it never actually completed.
     The chain check closes that gap without depending on the separate
     ``current_stage`` signal, which can drift out of sync with
-    ``completed_stages`` independently (BUG-STAGE-002).
+    ``completed_stages`` independently.
     """
     if stage_number == _STAGE_1:
         return True
@@ -86,8 +94,6 @@ def next_stage_for(progress: StageProgress | None) -> int:
     completed = set(progress.completed_stages or [])
     missing = set(range(1, TOTAL_STAGES + 1)) - completed
     if not missing:
-        from errors import conflict  # noqa: PLC0415 — local import avoids layer cycle
-
         raise conflict("all_stages_completed")
     return min(missing)
 

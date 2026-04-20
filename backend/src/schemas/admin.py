@@ -61,3 +61,21 @@ class StageProgressGapsResponse(BaseModel):
 
     rows: list[StageProgressGap]
     total: int
+
+
+class StageProgressRepairResult(BaseModel):
+    """Outcome of a single repair of a ``stageprogress`` row.
+
+    ``completed_stages`` holds the canonical post-repair set.  The delta
+    fields describe what the repair *did* — ``stages_added`` are values
+    the invariant required but were missing, ``stages_removed`` are
+    over-credited values the invariant forbade.  Separating this shape
+    from :class:`StageProgressGap` keeps the pre-repair and post-repair
+    semantics distinct for clients that render both.
+    """
+
+    user_id: int
+    current_stage: int
+    completed_stages: list[int]
+    stages_added: list[int]
+    stages_removed: list[int]

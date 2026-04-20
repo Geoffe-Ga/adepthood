@@ -20,7 +20,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col
+from sqlmodel import col, select
 
 from models.stage_progress import StageProgress
 from models.user import User
@@ -176,12 +176,11 @@ async def test_repair_rewrites_completed_stages_to_canonical_set(
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
     assert body["completed_stages"] == [1, 2, 3]
-    assert body["missing_stages"] == [2]  # now present after repair
-    assert body["extra_stages"] == []
+    assert body["stages_added"] == [2]
+    assert body["stages_removed"] == []
 
     # Verify the row was actually written.
     await db_session.commit()  # release any snapshot
-    await db_session.refresh(await _refetch(db_session, user_id))
     row = await _refetch(db_session, user_id)
     assert sorted(row.completed_stages) == [1, 2, 3]
 
@@ -198,8 +197,6 @@ async def test_repair_returns_404_for_unknown_user(
 
 async def _refetch(session: AsyncSession, user_id: int) -> StageProgress:
     """Load the user's :class:`StageProgress` row fresh from the DB."""
-    from sqlmodel import select  # noqa: PLC0415 — narrow local import keeps helpers tight.
-
     result = await session.execute(select(StageProgress).where(StageProgress.user_id == user_id))
     row = result.scalars().first()
     assert row is not None

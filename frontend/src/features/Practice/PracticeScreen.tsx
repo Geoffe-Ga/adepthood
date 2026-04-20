@@ -497,9 +497,9 @@ function PracticeViewRouter({
 
 const PracticeScreen = (): React.JSX.Element => {
   const route = useAppRoute<'Practice'>();
-  // BUG-FE-PRACTICE-001/-002: fall back to the backend-derived current stage
-  // rather than a hard-coded 1, so a deep-link with no route param doesn't
-  // enrol a stage-4 user in a stage-1 practice.
+  // Fall back to the backend-derived current stage rather than a hard-coded
+  // 1 so a deep-link with no route param doesn't enrol a stage-4 user in
+  // a stage-1 practice.
   const storeCurrentStage = useStageStore(selectCurrentStage);
   const storeStages = useStageStore((s) => s.stages);
 

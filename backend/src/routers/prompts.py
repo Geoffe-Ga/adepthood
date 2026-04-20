@@ -28,14 +28,14 @@ router = APIRouter(prefix="/prompts", tags=["prompts"])
 async def _get_user_week(session: AsyncSession, user_id: int) -> int:
     """Derive the user's current week from the count of completed prompts.
 
-    BUG-PROMPT-001: switching from ``max(week_number) + 1`` to
-    ``count(responses) + 1`` closes the skip-ahead vector where a single
-    POST to ``/prompts/36/respond`` would set ``max = 36`` and advance the
-    user past every intermediate week.  Because the submit endpoint now
-    rejects any ``week_number > user_week`` (see :func:`_check_week_unlocked`),
+    Switching from ``max(week_number) + 1`` to ``count(responses) + 1``
+    closes the skip-ahead vector where a single POST to
+    ``/prompts/36/respond`` would set ``max = 36`` and advance the user
+    past every intermediate week.  Because the submit endpoint now rejects
+    any ``week_number > user_week`` (see :func:`_check_week_unlocked`),
     the count only ever equals the number of contiguously completed weeks,
     so ``count + 1`` is the first unfinished week.  The result is clamped
-    to ``[1, TOTAL_WEEKS]`` (BUG-JOURNAL-014).
+    to ``[1, TOTAL_WEEKS]``.
     """
     result = await session.execute(
         select(func.count()).select_from(PromptResponse).where(PromptResponse.user_id == user_id)
@@ -47,11 +47,11 @@ async def _get_user_week(session: AsyncSession, user_id: int) -> int:
 async def _check_week_unlocked(session: AsyncSession, user_id: int, week_number: int) -> None:
     """Raise 403 when ``week_number`` is past the user's current week.
 
-    BUG-PROMPT-001/-002: both :func:`get_prompt_by_week` and
-    :func:`submit_prompt_response` must gate on this to prevent enumeration
-    of the full 36-week curriculum and one-request skip-ahead of the
-    weekly pacing.  Factored into a shared helper so the two endpoints
-    cannot drift out of sync.
+    Both :func:`get_prompt_by_week` and :func:`submit_prompt_response`
+    must gate on this to prevent enumeration of the full 36-week
+    curriculum and one-request skip-ahead of the weekly pacing.
+    Factored into a shared helper so the two endpoints cannot drift out
+    of sync.
     """
     user_week = await _get_user_week(session, user_id)
     if week_number > user_week:
@@ -139,9 +139,9 @@ async def get_prompt_by_week(
 ) -> PromptDetail:
     """Get a specific week's prompt and the user's response (if any).
 
-    BUG-PROMPT-002: gated on the user's current week.  Without this check
-    a fresh (week-1) user could enumerate ``/prompts/1`` … ``/prompts/36``
-    and lift every future question.  404 precedes 403 so unknown weeks
+    Gated on the user's current week.  Without this check a fresh
+    (week-1) user could enumerate ``/prompts/1`` … ``/prompts/36`` and
+    lift every future question.  404 precedes 403 so unknown weeks
     (outside 1..``TOTAL_WEEKS``) don't get re-interpreted as "locked".
     """
     question = get_prompt_for_week(week_number)
@@ -179,10 +179,10 @@ async def submit_prompt_response(
 ) -> PromptDetail:
     """Submit a response to a weekly prompt. Prevents duplicate responses.
 
-    BUG-PROMPT-001: refuses ``week_number > user_week`` so a single POST
-    cannot leapfrog the weekly pacing by driving ``max(week_number)`` up
-    in one request.  Paired with the ``count + 1``-based ``_get_user_week``
-    this makes the server-derived week a monotone function of *contiguous*
+    Refuses ``week_number > user_week`` so a single POST cannot leapfrog
+    the weekly pacing by driving ``max(week_number)`` up in one request.
+    Paired with the ``count + 1``-based ``_get_user_week`` this makes
+    the server-derived week a monotone function of *contiguous*
     completion, not the highest value the client has ever submitted.
     """
     question = get_prompt_for_week(week_number)

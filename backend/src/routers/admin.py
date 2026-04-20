@@ -23,6 +23,7 @@ from schemas.admin import (
     ModelUsageBreakdown,
     StageProgressGap,
     StageProgressGapsResponse,
+    StageProgressRepairResult,
     UsageStatsResponse,
     UserUsageBreakdown,
 )
@@ -153,18 +154,18 @@ async def list_stage_progress_gaps(
     return StageProgressGapsResponse(rows=gaps, total=len(gaps))
 
 
-@router.post("/stage-progress/{user_id}/repair", response_model=StageProgressGap)
+@router.post("/stage-progress/{user_id}/repair", response_model=StageProgressRepairResult)
 async def repair_stage_progress(
     user_id: int,
     session: Annotated[AsyncSession, Depends(get_session)],
     _admin: Annotated[User, Depends(require_admin)],
-) -> StageProgressGap:
+) -> StageProgressRepairResult:
     """Rewrite one user's ``completed_stages`` to ``{1..current_stage-1}``.
 
     Explicit admin action: running this is a decision to forfeit whatever
     intermediate-stage credit the gap encoded in favour of the canonical
-    chain-validation invariant.  Returns the old/new delta so the caller has
-    a record of what changed.
+    chain-validation invariant.  Returns the delta so the caller has a
+    record of what changed.
     """
     result = await session.execute(
         select(StageProgress).where(col(StageProgress.user_id) == user_id)
@@ -176,14 +177,13 @@ async def repair_stage_progress(
     before = set(progress.completed_stages or [])
     expected = set(range(1, progress.current_stage))
     progress.completed_stages = sorted(expected)
-    session.add(progress)
     await session.commit()
     await session.refresh(progress)
 
-    return StageProgressGap(
+    return StageProgressRepairResult(
         user_id=user_id,
         current_stage=progress.current_stage,
         completed_stages=sorted(expected),
-        missing_stages=sorted(expected - before),
-        extra_stages=sorted(before - expected),
+        stages_added=sorted(expected - before),
+        stages_removed=sorted(before - expected),
     )
