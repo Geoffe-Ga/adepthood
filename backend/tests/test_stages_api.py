@@ -506,8 +506,10 @@ async def test_advance_returns_409_when_all_stages_completed(
     writes nonsense state.
     """
     headers, user_id = await _signup(async_client, "finished")
-    all_done = list(range(1, 37))
-    progress = StageProgress(user_id=user_id, current_stage=36, completed_stages=all_done)
+    # Canonical "current_stage == N implies completed_stages == {1..N-1}" shape.
+    # The router simulates marking current_stage=36 complete on a candidate,
+    # so candidate_completed becomes {1..36}; next_stage_for has no hole and 409s.
+    progress = StageProgress(user_id=user_id, current_stage=36, completed_stages=list(range(1, 36)))
     db_session.add(progress)
     await db_session.commit()
 
