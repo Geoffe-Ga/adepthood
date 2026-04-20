@@ -87,7 +87,16 @@ async def test_get_current_prompt_advances_after_submit(
 
 @pytest.mark.asyncio
 async def test_get_prompt_by_week(async_client: AsyncClient) -> None:
+    """A user who has reached week 5 can fetch it (BUG-PROMPT-002 allow case)."""
     headers = await _signup(async_client)
+    # Advance to week 5 by responding to weeks 1..4.
+    for week in range(1, 5):
+        resp_w = await async_client.post(
+            f"/prompts/{week}/respond",
+            json={"response": f"Week {week} answer"},
+            headers=headers,
+        )
+        assert resp_w.status_code == HTTPStatus.CREATED
     resp = await async_client.get("/prompts/5", headers=headers)
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
@@ -157,6 +166,75 @@ async def test_submit_response_invalid_week_returns_404(async_client: AsyncClien
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+# ── BUG-PROMPT-001 / BUG-PROMPT-002: weekly unlock gate ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_future_week_is_forbidden(async_client: AsyncClient) -> None:
+    """BUG-PROMPT-002: GET /prompts/{week} must 403 for weeks past user_week.
+
+    Without the gate a week-1 user could enumerate /prompts/1..36 and lift
+    every future question.  The curriculum is supposed to unlock one week
+    at a time as responses are submitted.
+    """
+    headers = await _signup(async_client)
+    resp = await async_client.get("/prompts/36", headers=headers)
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.json()["detail"] == "week_locked"
+
+
+@pytest.mark.asyncio
+async def test_submit_future_week_is_forbidden(async_client: AsyncClient) -> None:
+    """BUG-PROMPT-001: POST to a future week must 403 before writing.
+
+    Under the old max(week)+1 derivation, one POST to /prompts/36/respond
+    would set the user's current_week to 36 on the next read, voiding the
+    entire 36-week pacing in a single request.
+    """
+    headers = await _signup(async_client)
+    resp = await async_client.post(
+        "/prompts/36/respond",
+        json={"response": "skip-ahead attempt"},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.json()["detail"] == "week_locked"
+
+
+@pytest.mark.asyncio
+async def test_current_week_derives_from_response_count_not_max(
+    async_client: AsyncClient,
+) -> None:
+    """BUG-PROMPT-001: user_week is ``count + 1``, never ``max + 1``.
+
+    The skip-ahead POST from ``test_submit_future_week_is_forbidden`` would,
+    under the old derivation, have left this user at week 37→clamped-to-36.
+    With count-based derivation a blocked future submit doesn't count, so
+    the user remains at week 1 — the intended behaviour.
+    """
+    headers = await _signup(async_client)
+    # Submit a response for week 1 successfully.
+    resp1 = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "Ground."},
+        headers=headers,
+    )
+    assert resp1.status_code == HTTPStatus.CREATED
+
+    # Attempt a future week — must fail and NOT be persisted.
+    resp_skip = await async_client.post(
+        "/prompts/10/respond",
+        json={"response": "sneaky"},
+        headers=headers,
+    )
+    assert resp_skip.status_code == HTTPStatus.FORBIDDEN
+
+    # Current should be week 2 (count=1, next=2), not week 11.
+    resp_current = await async_client.get("/prompts/current", headers=headers)
+    assert resp_current.status_code == HTTPStatus.OK
+    assert resp_current.json()["week_number"] == 2
 
 
 @pytest.mark.asyncio

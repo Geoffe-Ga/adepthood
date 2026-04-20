@@ -14,7 +14,7 @@ from sqlmodel import col, select
 
 from database import get_session
 from domain.weekly_prompts import TOTAL_WEEKS, get_prompt_for_week
-from errors import bad_request, conflict, not_found
+from errors import bad_request, conflict, forbidden, not_found
 from models.journal_entry import JournalEntry, JournalTag
 from models.prompt_response import PromptResponse
 from routers.auth import get_current_user
@@ -26,19 +26,36 @@ router = APIRouter(prefix="/prompts", tags=["prompts"])
 
 
 async def _get_user_week(session: AsyncSession, user_id: int) -> int:
-    """Derive the user's current week from their last completed prompt.
+    """Derive the user's current week from the count of completed prompts.
 
-    Returns ``max(PromptResponse.week_number) + 1`` so users advance only
-    by completing prompts, not by waiting.  Falls back to week 1 when no
-    responses exist yet.  The result is clamped to [1, TOTAL_WEEKS]
-    (BUG-JOURNAL-014).
+    BUG-PROMPT-001: switching from ``max(week_number) + 1`` to
+    ``count(responses) + 1`` closes the skip-ahead vector where a single
+    POST to ``/prompts/36/respond`` would set ``max = 36`` and advance the
+    user past every intermediate week.  Because the submit endpoint now
+    rejects any ``week_number > user_week`` (see :func:`_check_week_unlocked`),
+    the count only ever equals the number of contiguously completed weeks,
+    so ``count + 1`` is the first unfinished week.  The result is clamped
+    to ``[1, TOTAL_WEEKS]`` (BUG-JOURNAL-014).
     """
     result = await session.execute(
-        select(func.max(PromptResponse.week_number)).where(PromptResponse.user_id == user_id)
+        select(func.count()).select_from(PromptResponse).where(PromptResponse.user_id == user_id)
     )
-    max_week = result.scalar()
-    week = int(max_week) + 1 if max_week is not None else 1
-    return int(max(1, min(week, TOTAL_WEEKS)))
+    completed = int(result.scalar() or 0)
+    return int(max(1, min(completed + 1, TOTAL_WEEKS)))
+
+
+async def _check_week_unlocked(session: AsyncSession, user_id: int, week_number: int) -> None:
+    """Raise 403 when ``week_number`` is past the user's current week.
+
+    BUG-PROMPT-001/-002: both :func:`get_prompt_by_week` and
+    :func:`submit_prompt_response` must gate on this to prevent enumeration
+    of the full 36-week curriculum and one-request skip-ahead of the
+    weekly pacing.  Factored into a shared helper so the two endpoints
+    cannot drift out of sync.
+    """
+    user_week = await _get_user_week(session, user_id)
+    if week_number > user_week:
+        raise forbidden("week_locked")
 
 
 @router.get("/current", response_model=PromptDetail)
@@ -120,10 +137,17 @@ async def get_prompt_by_week(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PromptDetail:
-    """Get a specific week's prompt and the user's response (if any)."""
+    """Get a specific week's prompt and the user's response (if any).
+
+    BUG-PROMPT-002: gated on the user's current week.  Without this check
+    a fresh (week-1) user could enumerate ``/prompts/1`` … ``/prompts/36``
+    and lift every future question.  404 precedes 403 so unknown weeks
+    (outside 1..``TOTAL_WEEKS``) don't get re-interpreted as "locked".
+    """
     question = get_prompt_for_week(week_number)
     if question is None:
         raise not_found("prompt")
+    await _check_week_unlocked(session, current_user, week_number)
 
     result = await session.execute(
         select(PromptResponse).where(
@@ -153,10 +177,18 @@ async def submit_prompt_response(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PromptDetail:
-    """Submit a response to a weekly prompt. Prevents duplicate responses."""
+    """Submit a response to a weekly prompt. Prevents duplicate responses.
+
+    BUG-PROMPT-001: refuses ``week_number > user_week`` so a single POST
+    cannot leapfrog the weekly pacing by driving ``max(week_number)`` up
+    in one request.  Paired with the ``count + 1``-based ``_get_user_week``
+    this makes the server-derived week a monotone function of *contiguous*
+    completion, not the highest value the client has ever submitted.
+    """
     question = get_prompt_for_week(week_number)
     if question is None:
         raise not_found("prompt")
+    await _check_week_unlocked(session, current_user, week_number)
 
     # Prevent duplicate responses
     result = await session.execute(
