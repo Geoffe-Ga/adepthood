@@ -21,10 +21,10 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'invalid_credentials',
       'password_too_short',
       'unauthorized',
-      // admin
+      // admin gate
       'admin_required',
-      'user_not_found',
       // resource not found
+      'user_not_found',
       'stage_not_found',
       'content_not_found',
       'practice_not_found',

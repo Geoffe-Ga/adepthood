@@ -22,7 +22,7 @@ from starlette.requests import Request as StarletteRequest
 
 from database import get_session
 from dependencies.auth import require_admin
-from errors import bad_request
+from errors import forbidden
 from models.user import User
 from rate_limit import limiter
 from routers.auth import get_current_user
@@ -156,20 +156,14 @@ async def add_balance(
     admin: Annotated[User, Depends(require_admin)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> BalanceAddResponse:
-    """Add credits to the calling admin's offering balance.
-
-    BUG-BM-010: Previously any authenticated user could mint credits into their
-    own wallet.  Gated on :func:`dependencies.auth.require_admin` so only
-    operator-accounts can grant credit; downstream work (Prompt 12) will thread
-    a target user-id and an append-only ledger through this endpoint.
-    """
-    if admin.id is None:
-        msg = "admin user missing id after authentication"
-        raise RuntimeError(msg)
-
+    """Add credits to the calling admin's offering balance."""
+    assert admin.id is not None  # noqa: S101 — persisted row always has an id
     new_balance = await wallet_service.add_balance(session, admin.id, payload.amount)
     if new_balance is None:
-        raise bad_request("user_not_found")
+        # TOCTOU: admin row existed when ``require_admin`` fetched it but was
+        # deleted before the wallet UPDATE landed.  Same failure mode as the
+        # admin-gate, so the same status keeps the client's retry logic simple.
+        raise forbidden("user_not_found")
 
     await session.commit()
     logger.info(

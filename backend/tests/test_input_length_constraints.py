@@ -57,9 +57,8 @@ async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str
 async def _add_balance(db_session: AsyncSession, amount: int = 10, username: str = "alice") -> None:
     """Seed offering credits via direct DB mutation.
 
-    BUG-BM-010 gated :http:post:`/user/balance/add` behind ``require_admin``,
-    so length-constraint tests bypass the endpoint and write the balance
-    column directly into the test database.
+    The balance-add endpoint is admin-gated, so length-constraint tests
+    bypass it and write the balance column directly into the test database.
     """
     email = f"{username}@example.com"
     await db_session.execute(

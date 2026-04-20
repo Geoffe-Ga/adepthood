@@ -1,10 +1,7 @@
 """Admin-only endpoints — gated by the per-user ``User.is_admin`` flag.
 
-BUG-ADMIN-001: The previous implementation trusted a shared ``ADMIN_API_KEY``
-header, so any leak revoked the entire admin surface and nothing tied an
-action back to a specific operator.  Admin identity is now a first-class
-per-user flag (:attr:`User.is_admin`), so gate every admin route on
-:func:`dependencies.auth.require_admin` — never on an env-var header.
+Gate every admin route on :func:`dependencies.auth.require_admin` so admin
+identity is a first-class per-user flag rather than a shared header secret.
 """
 
 from __future__ import annotations

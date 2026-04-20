@@ -45,9 +45,9 @@ async def _promote_admin(db_session: AsyncSession, username: str = "alice") -> N
 async def _add_balance(db_session: AsyncSession, amount: int = 50, username: str = "alice") -> None:
     """Seed offering credits via direct DB mutation.
 
-    BUG-BM-010 gated :http:post:`/user/balance/add` behind ``require_admin``,
-    so rate-limit tests that just need a funded wallet sidestep the endpoint
-    and write the balance column straight into the test DB.
+    The balance-add endpoint is admin-gated, so rate-limit tests that just
+    need a funded wallet sidestep the endpoint and write the balance column
+    straight into the test DB.
     """
     email = f"{username}@example.com"
     await db_session.execute(
@@ -134,8 +134,8 @@ async def test_add_balance_rate_limit_returns_429(
 ) -> None:
     """POST /user/balance/add returns 429 after exceeding 5 requests/minute."""
     headers = await _signup(async_client)
-    # BUG-BM-010: endpoint is now admin-only, so promote the signed-up user
-    # before hammering it to verify the rate-limit gate fires *after* authz.
+    # Endpoint is admin-only, so promote before hammering to verify the
+    # rate-limit gate fires *after* authz.
     await _promote_admin(db_session)
 
     # Make 5 requests (the limit)

@@ -4,9 +4,9 @@ Revision ID: b9c0d1e2f3a4
 Revises: a8b9c0d1e2f3
 Create Date: 2026-04-19 00:00:00.000000
 
-BUG-ADMIN-001 / BUG-MODEL-001: Promote admin identity from a shared env-var
-secret to a first-class per-user flag.  Every new user starts with
-``is_admin=False``; promote the initial operator with a one-line UPDATE.
+Promotes admin identity to a first-class per-user flag.  Every existing and
+new user starts with ``is_admin=False``; promote the initial operator with a
+one-line UPDATE.
 """
 
 from typing import Sequence, Union

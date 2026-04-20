@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import update
+from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col
 
@@ -72,9 +72,9 @@ async def _signup_admin(
 ) -> dict[str, str]:
     """Sign up a user and promote them to admin — returns their auth headers.
 
-    Chat / balance tests use this because :http:post:`/user/balance/add` now
-    requires admin (BUG-BM-010 + BUG-ADMIN-001).  Tests that only exercise the
-    non-admin surface should keep using :func:`_signup`.
+    Chat / balance tests use this because :http:post:`/user/balance/add` is
+    admin-gated; tests that only exercise the non-admin surface should keep
+    using :func:`_signup`.
     """
     headers = await _signup(client, username)
     await _promote_admin(db_session, username)
@@ -84,10 +84,10 @@ async def _signup_admin(
 async def _add_balance(db_session: AsyncSession, amount: int = 10, username: str = "alice") -> None:
     """Seed offering credits for the signed-up user without going through HTTP.
 
-    BUG-BM-010 gated :http:post:`/user/balance/add` behind ``require_admin``,
-    so most tests only need the *effect* of a credit (enough balance to chat),
-    not the full admin flow.  Direct DB mutation keeps the fixture cheap while
-    the dedicated auth-boundary tests exercise the endpoint itself.
+    The balance-add endpoint is admin-gated, but most tests only need the
+    *effect* of a credit (enough balance to chat), not the full admin flow.
+    Direct DB mutation keeps the fixture cheap while the dedicated auth
+    boundary tests exercise the endpoint itself.
     """
     email = f"{username}@example.com"
     await db_session.execute(
@@ -158,11 +158,25 @@ async def test_add_balance_unauthenticated_returns_401(async_client: AsyncClient
 
 @pytest.mark.asyncio
 async def test_add_balance_non_admin_returns_403(async_client: AsyncClient) -> None:
-    """BUG-BM-010: a signed-in non-admin must not be able to mint credits."""
+    """A signed-in non-admin must not be able to mint credits."""
     headers = await _signup(async_client)
     resp = await async_client.post("/user/balance/add", json={"amount": 5}, headers=headers)
     assert resp.status_code == HTTPStatus.FORBIDDEN
     assert resp.json()["detail"] == "admin_required"
+
+
+@pytest.mark.asyncio
+async def test_add_balance_deleted_admin_returns_403(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A valid JWT whose admin row was deleted must not pass the auth gate."""
+    headers = await _signup_admin(async_client, db_session)
+    await db_session.execute(delete(User).where(col(User.email) == "alice@example.com"))
+    await db_session.commit()
+
+    resp = await async_client.post("/user/balance/add", json={"amount": 5}, headers=headers)
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.json()["detail"] == "user_not_found"
 
 
 # ── Offering balance ───────────────────────────────────────────────────
@@ -202,7 +216,7 @@ async def test_add_balance_accumulates(async_client: AsyncClient, db_session: As
 async def test_add_balance_rejects_zero_amount(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """BUG-SCHEMA-009: ``amount=0`` fails Pydantic ``ge=1`` → 422, not 400."""
+    """``amount=0`` fails Pydantic ``ge=1`` → 422, not 400."""
     headers = await _signup_admin(async_client, db_session)
     resp = await async_client.post("/user/balance/add", json={"amount": 0}, headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
@@ -212,7 +226,7 @@ async def test_add_balance_rejects_zero_amount(
 async def test_add_balance_rejects_negative_amount(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """BUG-SCHEMA-009: negative amounts short-circuit at the schema."""
+    """Negative amounts short-circuit at the schema, never reaching the wallet."""
     headers = await _signup_admin(async_client, db_session)
     resp = await async_client.post("/user/balance/add", json={"amount": -5}, headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
@@ -222,7 +236,7 @@ async def test_add_balance_rejects_negative_amount(
 async def test_add_balance_rejects_amount_over_one_million(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """BUG-SCHEMA-009: ``amount > 1_000_000`` is rejected before wallet code runs."""
+    """``amount > 1_000_000`` is rejected before wallet code runs."""
     headers = await _signup_admin(async_client, db_session)
     resp = await async_client.post("/user/balance/add", json={"amount": 1_000_001}, headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY

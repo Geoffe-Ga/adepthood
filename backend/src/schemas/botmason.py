@@ -8,11 +8,8 @@ from pydantic import BaseModel, Field
 
 CHAT_MESSAGE_MAX_LENGTH = 5_000
 
-# BUG-SCHEMA-009 — bound credit grants so an admin (or a slip in validation)
-# cannot mint billion-credit wallets or zero-valued ledger noise.  A per-call
-# cap of one million credits is already far above any legitimate gift, and the
-# lower bound rejects both zero and negative amounts without the endpoint
-# needing a secondary `amount <= 0` guard.
+# Bound credit grants so a single call can neither zero-out the ledger nor
+# mint billion-credit wallets.  One million is far above any legitimate gift.
 BALANCE_ADD_MIN = 1
 BALANCE_ADD_MAX = 1_000_000
 
