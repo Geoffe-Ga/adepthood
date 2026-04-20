@@ -154,6 +154,27 @@ async def test_list_content_stage_not_found(
 
 
 @pytest.mark.asyncio
+async def test_list_content_rejects_locked_stage(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-COURSE-001: listing content for a locked stage must 403.
+
+    The sibling single-item endpoints gate on ``_check_stage_unlocked``;
+    until this fix ``list_stage_content`` leaked every item's title and
+    release_day (only the URL was nulled) so a never-enrolled user could
+    enumerate the full 36-stage drip schedule.
+    """
+    headers, _ = await _signup(async_client, "locked")
+    # Seed content for stage 2 without giving the user any progress.
+    await _seed_stage_with_content(db_session, stage_number=2)
+
+    resp = await async_client.get("/course/stages/2/content", headers=headers)
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.json()["detail"] == "stage_locked"
+
+
+@pytest.mark.asyncio
 async def test_list_content_no_progress_record(
     async_client: AsyncClient,
     db_session: AsyncSession,

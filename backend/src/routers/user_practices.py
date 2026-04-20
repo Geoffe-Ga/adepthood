@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
+from domain.stage_progress import get_user_progress, is_stage_unlocked
 from errors import bad_request, forbidden, not_found
 from models.practice import Practice
 from models.practice_session import PracticeSession
@@ -43,6 +44,20 @@ async def create_user_practice(
         raise not_found("practice")
     if not practice.approved:
         raise bad_request("practice_not_approved")
+
+    # BUG-PRACTICE-004: the practice's catalog stage and the payload's stage
+    # must agree — otherwise the client can claim any practice against any
+    # stage (e.g. a stage-36 practice enrolled under stage-1).
+    if practice.stage_number != payload.stage_number:
+        raise bad_request("stage_number_mismatch")
+
+    # BUG-PRACTICE-004 (progression gate): a client cannot enrol in a
+    # practice for a stage they have not unlocked.  Uses the same chain-
+    # validated predicate as the course/history endpoints so the three
+    # surfaces share a single unlock truth.
+    progress = await get_user_progress(session, current_user)
+    if not is_stage_unlocked(payload.stage_number, progress):
+        raise forbidden("stage_locked")
 
     # BUG-PRACTICE-011: prevent multiple active practices for the same stage
     existing = await session.execute(
