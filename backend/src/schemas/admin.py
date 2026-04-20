@@ -38,3 +38,26 @@ class UsageStatsResponse(BaseModel):
     total_estimated_cost_usd: float
     per_user: list[UserUsageBreakdown]
     per_model: list[ModelUsageBreakdown]
+
+
+class StageProgressGap(BaseModel):
+    """A ``stageprogress`` row whose completed set is non-contiguous from 1.
+
+    ``missing_stages`` and ``extra_stages`` are the symmetric-difference halves
+    so an operator can tell at a glance whether a row is under-credited (gaps
+    in the middle) or over-credited (a completed_stages value past the current
+    stage).
+    """
+
+    user_id: int
+    current_stage: int
+    completed_stages: list[int]
+    missing_stages: list[int]
+    extra_stages: list[int]
+
+
+class StageProgressGapsResponse(BaseModel):
+    """Report of every ``stageprogress`` row with a non-contiguous set."""
+
+    rows: list[StageProgressGap]
+    total: int

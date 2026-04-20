@@ -15,10 +15,14 @@ from sqlmodel import col
 
 from database import get_session
 from dependencies.auth import require_admin
+from errors import not_found
 from models.llm_usage_log import LLMUsageLog
+from models.stage_progress import StageProgress
 from models.user import User
 from schemas.admin import (
     ModelUsageBreakdown,
+    StageProgressGap,
+    StageProgressGapsResponse,
     UsageStatsResponse,
     UserUsageBreakdown,
 )
@@ -106,4 +110,80 @@ async def get_usage_stats(
             )
             for provider, model, calls, tokens, cost in per_model_rows
         ],
+    )
+
+
+def _detect_gap(progress: StageProgress) -> StageProgressGap | None:
+    """Return a :class:`StageProgressGap` when ``completed_stages`` is non-contiguous.
+
+    The invariant every stage mutation must preserve is
+    ``set(completed_stages) == {1..current_stage-1}``.  Anything else — a
+    missing entry in the middle, an over-credited future stage, a duplicate
+    value that rounds the same way when set-reduced — is a gap the chain
+    validation in :func:`domain.stage_progress.is_stage_unlocked` must be
+    blind to.  Returning ``None`` for contiguous rows keeps the listing
+    endpoint's loop trivial.
+    """
+    completed = set(progress.completed_stages or [])
+    expected = set(range(1, progress.current_stage))
+    if completed == expected:
+        return None
+    return StageProgressGap(
+        user_id=progress.user_id,
+        current_stage=progress.current_stage,
+        completed_stages=sorted(completed),
+        missing_stages=sorted(expected - completed),
+        extra_stages=sorted(completed - expected),
+    )
+
+
+@router.get("/stage-progress/gaps", response_model=StageProgressGapsResponse)
+async def list_stage_progress_gaps(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(require_admin)],
+) -> StageProgressGapsResponse:
+    """Return every ``stageprogress`` row whose completed set is non-contiguous.
+
+    Read-only: mirrors the audit migration's logging so operators can inspect
+    flagged rows on a live database without trawling alembic logs.  Pair with
+    :func:`repair_stage_progress` to rewrite a single row explicitly.
+    """
+    result = await session.execute(select(StageProgress))
+    gaps = [gap for row in result.scalars().all() if (gap := _detect_gap(row)) is not None]
+    return StageProgressGapsResponse(rows=gaps, total=len(gaps))
+
+
+@router.post("/stage-progress/{user_id}/repair", response_model=StageProgressGap)
+async def repair_stage_progress(
+    user_id: int,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(require_admin)],
+) -> StageProgressGap:
+    """Rewrite one user's ``completed_stages`` to ``{1..current_stage-1}``.
+
+    Explicit admin action: running this is a decision to forfeit whatever
+    intermediate-stage credit the gap encoded in favour of the canonical
+    chain-validation invariant.  Returns the old/new delta so the caller has
+    a record of what changed.
+    """
+    result = await session.execute(
+        select(StageProgress).where(col(StageProgress.user_id) == user_id)
+    )
+    progress = result.scalars().first()
+    if progress is None:
+        raise not_found("stage_progress")
+
+    before = set(progress.completed_stages or [])
+    expected = set(range(1, progress.current_stage))
+    progress.completed_stages = sorted(expected)
+    session.add(progress)
+    await session.commit()
+    await session.refresh(progress)
+
+    return StageProgressGap(
+        user_id=user_id,
+        current_stage=progress.current_stage,
+        completed_stages=sorted(expected),
+        missing_stages=sorted(expected - before),
+        extra_stages=sorted(before - expected),
     )
