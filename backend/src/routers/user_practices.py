@@ -30,6 +30,51 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/user-practices", tags=["user-practices"])
 
 
+async def _resolve_practice(session: AsyncSession, practice_id: int) -> Practice:
+    """Fetch and validate the catalog practice (exists + approved)."""
+    result = await session.execute(select(Practice).where(Practice.id == practice_id))
+    practice = result.scalars().first()
+    if practice is None:
+        raise not_found("practice")
+    if not practice.approved:
+        raise bad_request("practice_not_approved")
+    return practice
+
+
+async def _check_stage_eligibility(
+    session: AsyncSession,
+    current_user: int,
+    practice: Practice,
+    payload_stage_number: int,
+) -> None:
+    """BUG-PRACTICE-004: gate on catalog-stage agreement + chain-unlock.
+
+    Kept separate from :func:`_resolve_practice` so the 400/403 split stays
+    explicit: mismatched stage is a client-side input error, locked stage is
+    an authorization failure against server-owned progression.
+    """
+    if practice.stage_number != payload_stage_number:
+        raise bad_request("stage_number_mismatch")
+    progress = await get_user_progress(session, current_user)
+    if not is_stage_unlocked(payload_stage_number, progress):
+        raise forbidden("stage_locked")
+
+
+async def _check_no_active_practice(
+    session: AsyncSession, current_user: int, stage_number: int
+) -> None:
+    """BUG-PRACTICE-011: at most one open UserPractice row per (user, stage)."""
+    existing = await session.execute(
+        select(UserPractice.id).where(
+            UserPractice.user_id == current_user,
+            UserPractice.stage_number == stage_number,
+            UserPractice.end_date.is_(None),  # type: ignore[union-attr]
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise bad_request("active_practice_exists_for_stage")
+
+
 @router.post("/", response_model=UserPracticeResponse, status_code=status.HTTP_201_CREATED)
 async def create_user_practice(
     payload: UserPracticeCreate,
@@ -37,38 +82,9 @@ async def create_user_practice(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> UserPractice:
     """Select a practice for a stage, creating a UserPractice record."""
-    # Verify practice exists and is approved
-    result = await session.execute(select(Practice).where(Practice.id == payload.practice_id))
-    practice = result.scalars().first()
-    if practice is None:
-        raise not_found("practice")
-    if not practice.approved:
-        raise bad_request("practice_not_approved")
-
-    # BUG-PRACTICE-004: the practice's catalog stage and the payload's stage
-    # must agree — otherwise the client can claim any practice against any
-    # stage (e.g. a stage-36 practice enrolled under stage-1).
-    if practice.stage_number != payload.stage_number:
-        raise bad_request("stage_number_mismatch")
-
-    # BUG-PRACTICE-004 (progression gate): a client cannot enrol in a
-    # practice for a stage they have not unlocked.  Uses the same chain-
-    # validated predicate as the course/history endpoints so the three
-    # surfaces share a single unlock truth.
-    progress = await get_user_progress(session, current_user)
-    if not is_stage_unlocked(payload.stage_number, progress):
-        raise forbidden("stage_locked")
-
-    # BUG-PRACTICE-011: prevent multiple active practices for the same stage
-    existing = await session.execute(
-        select(UserPractice.id).where(
-            UserPractice.user_id == current_user,
-            UserPractice.stage_number == payload.stage_number,
-            UserPractice.end_date.is_(None),  # type: ignore[union-attr]
-        )
-    )
-    if existing.scalar_one_or_none() is not None:
-        raise bad_request("active_practice_exists_for_stage")
+    practice = await _resolve_practice(session, payload.practice_id)
+    await _check_stage_eligibility(session, current_user, practice, payload.stage_number)
+    await _check_no_active_practice(session, current_user, payload.stage_number)
 
     user_practice = UserPractice(
         user_id=current_user,
