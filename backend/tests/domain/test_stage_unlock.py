@@ -32,6 +32,18 @@ _CASES: list[tuple[str, int, StageProgress | None, bool]] = [
     # Edge: current_stage jumped ahead (DB mutation) without completing predecessors
     ("stage 5 locked despite current=5 if 4 not completed", 5, _progress(5, [1, 2, 3]), False),
     ("stage 5 unlocked when current=5 and 4 completed", 5, _progress(5, [1, 2, 3, 4]), True),
+    # BUG-STAGE-001: chain-validation — the immediate predecessor alone is not
+    # enough.  ``completed_stages=[4]`` used to unlock stage 5 under the old
+    # single-step check; the chain check requires every stage in {1..4}.
+    ("BUG-STAGE-001 stage 5 locked when only 4 completed", 5, _progress(5, [4]), False),
+    ("BUG-STAGE-001 stage 5 locked with mid-chain gap", 5, _progress(5, [1, 2, 4]), False),
+    ("BUG-STAGE-001 stage 36 locked when only 35 completed", 36, _progress(36, [35]), False),
+    (
+        "BUG-STAGE-001 stage 5 unlocked only when {1,2,3,4} all completed",
+        5,
+        _progress(5, [1, 2, 3, 4]),
+        True,
+    ),
 ]
 
 

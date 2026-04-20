@@ -23,6 +23,12 @@ from schemas.stage import HabitHistoryItem, PracticeHistoryItem
 # Stage 1 is always unlocked regardless of progress state.
 _STAGE_1 = 1
 
+# Declared length of the APTITUDE curriculum.  Router-level stage mutations
+# clamp their inputs to this range and callers use it to detect the
+# "everything is done" boundary.  Duplicated by ``schemas.practice.
+# MAX_STAGE_NUMBER`` for Pydantic validation — keep the two in sync.
+TOTAL_STAGES = 36
+
 
 async def get_user_progress(session: AsyncSession, user_id: int) -> StageProgress | None:
     """Fetch the StageProgress record for a user, or None."""
@@ -46,16 +52,44 @@ async def get_user_progress_for_update(session: AsyncSession, user_id: int) -> S
 def is_stage_unlocked(stage_number: int, progress: StageProgress | None) -> bool:
     """Determine if a stage is unlocked for the user.
 
-    Stage 1 is always unlocked.  For stage N > 1, the stage is unlocked
-    when ``stage_number - 1`` appears in ``progress.completed_stages``.
-    This single rule covers both stages at-or-below the current stage
-    and stages beyond it.
+    Stage 1 is always unlocked.  For stage N > 1, **every** prior stage must
+    be in ``completed_stages`` — not just the immediate predecessor.  The
+    single-predecessor shortcut (``(N-1) in completed_stages``) lets any
+    admin tool, data import, or legacy row with a hole in the chain (e.g.
+    ``[35]``) expose every intermediate stage it never actually completed.
+    The chain check closes that gap without depending on the separate
+    ``current_stage`` signal, which can drift out of sync with
+    ``completed_stages`` independently (BUG-STAGE-002).
     """
     if stage_number == _STAGE_1:
         return True
     if progress is None:
         return False
-    return (stage_number - 1) in (progress.completed_stages or [])
+    required = set(range(1, stage_number))
+    return required.issubset(set(progress.completed_stages or []))
+
+
+def next_stage_for(progress: StageProgress | None) -> int:
+    """Return the first unfinished stage for ``progress``.
+
+    Fresh users (``progress is None``) start at stage 1.  Otherwise we take
+    ``min({1..TOTAL_STAGES} - completed_stages)`` — the first *hole* in the
+    completion set, not ``max(completed) + 1``.  The distinction matters for
+    legacy rows like ``completed_stages=[1, 3]``: ``max+1`` would advance
+    past stage 2 silently; ``min(missing)`` returns 2 and keeps the chain-
+    validation invariant aligned with unlock-checking on dirty data.  Raises
+    a 409 conflict when every stage is already completed so the caller
+    cannot blindly advance past the curriculum.
+    """
+    if progress is None:
+        return _STAGE_1
+    completed = set(progress.completed_stages or [])
+    missing = set(range(1, TOTAL_STAGES + 1)) - completed
+    if not missing:
+        from errors import conflict  # noqa: PLC0415 — local import avoids layer cycle
+
+        raise conflict("all_stages_completed")
+    return min(missing)
 
 
 async def _compute_habits_progress(session: AsyncSession, user_id: int, stage_number: int) -> float:

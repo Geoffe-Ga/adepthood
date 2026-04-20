@@ -511,7 +511,13 @@ async def test_stage_unlocked_requires_predecessor_completed(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """BUG-STAGE-002: stage N <= current but N-1 NOT in completed_stages → locked."""
+    """BUG-STAGE-001/002: every prior stage must be in ``completed_stages``.
+
+    Seeding ``completed_stages=[2]`` with ``current_stage=3`` leaves stage 1
+    uncredited.  Under the chain-validation rule, stage 2 requires ``{1}`` and
+    stage 3 requires ``{1, 2}``; both fail when stage 1 is missing, so only
+    stage 1 (the always-unlocked root) stays open.
+    """
     headers, user_id = await _signup(async_client)
     await _seed_stages(db_session, count=3)
     # current_stage=3 but completed_stages is missing stage 1.
@@ -524,10 +530,10 @@ async def test_stage_unlocked_requires_predecessor_completed(
     data = resp.json()
     # Stage 1: always unlocked
     assert data[0]["is_unlocked"] is True
-    # Stage 2: current_stage=3 > 2, but predecessor (1) NOT in completed → locked
+    # Stage 2: chain requires {1} ⊆ completed; {2} fails → locked
     assert data[1]["is_unlocked"] is False
-    # Stage 3: current_stage=3, predecessor (2) IS in completed → unlocked
-    assert data[2]["is_unlocked"] is True
+    # Stage 3: chain requires {1, 2} ⊆ completed; {2} fails → locked (BUG-STAGE-001)
+    assert data[2]["is_unlocked"] is False
 
 
 # ── User isolation ──────────────────────────────────────────────────────
