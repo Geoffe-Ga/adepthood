@@ -416,6 +416,84 @@ async def test_update_progress_cannot_stay_same(
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
+# ── BUG-SCHEMA-006: server derives stage, rejects client-supplied shortcuts ──
+
+
+@pytest.mark.asyncio
+async def test_update_progress_rejects_out_of_range_low(async_client: AsyncClient) -> None:
+    """BUG-SCHEMA-006: ``current_stage`` below 1 fails Pydantic validation (422)."""
+    headers, _ = await _signup(async_client, "schemalow")
+    resp = await async_client.put(
+        "/stages/progress",
+        json={"current_stage": 0},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_update_progress_rejects_out_of_range_high(async_client: AsyncClient) -> None:
+    """BUG-SCHEMA-006: ``current_stage`` above the curriculum length fails at 422."""
+    headers, _ = await _signup(async_client, "schemahigh")
+    resp = await async_client.put(
+        "/stages/progress",
+        json={"current_stage": 37},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_update_progress_rejects_completed_stages_injection(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-SCHEMA-006: payload may not smuggle ``completed_stages``.
+
+    Without ``extra='forbid'`` a client could PUT ``{"current_stage": 2,
+    "completed_stages": [1,2,3,4,5]}`` and silently pre-credit themselves.
+    The schema now rejects any unknown field at 422 before the handler runs.
+    """
+    headers, user_id = await _signup(async_client, "inject")
+    progress = StageProgress(user_id=user_id, current_stage=1, completed_stages=[])
+    db_session.add(progress)
+    await db_session.commit()
+
+    resp = await async_client.put(
+        "/stages/progress",
+        json={"current_stage": 2, "completed_stages": [1, 2, 3, 4, 5]},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_update_progress_ignores_client_on_dirty_data(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-SCHEMA-006: client cannot skip past a legacy gap.
+
+    A pre-existing row with ``completed_stages=[1, 2, 4]`` and
+    ``current_stage=5`` encodes a missing stage-3 credit.  The server's
+    derived expectation after "completing" stage 5 is the first hole = 3,
+    not 6.  The client asserting 6 gets ``stage_advance_mismatch`` so the
+    gap must be repaired via the admin helper before advancement resumes.
+    """
+    headers, user_id = await _signup(async_client, "dirty")
+    progress = StageProgress(user_id=user_id, current_stage=5, completed_stages=[1, 2, 4])
+    db_session.add(progress)
+    await db_session.commit()
+
+    resp = await async_client.put(
+        "/stages/progress",
+        json={"current_stage": 6},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.json()["detail"] == "stage_advance_mismatch"
+
+
 # ── BUG-STAGE-005: TOCTOU race on PUT /stages/progress ─────────────────
 
 

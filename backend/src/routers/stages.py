@@ -18,6 +18,7 @@ from domain.stage_progress import (
     get_user_progress,
     get_user_progress_for_update,
     is_stage_unlocked,
+    next_stage_for,
     stage_exists,
 )
 from errors import bad_request, forbidden, not_found
@@ -176,57 +177,74 @@ async def update_progress(
 ) -> StageProgressRecord:
     """Advance the user to the next stage.
 
-    Semantics:
-    - **Create** (first ever progress): ``current_stage`` must be 1.
-    - **Update**: ``current_stage`` must equal ``existing.current_stage + 1``
-      (single-step forward only — no stage-skipping).
-    - ``completed_stages`` is always ``range(1, current_stage)`` — i.e. every
-      stage before the current one is marked complete.
+    BUG-SCHEMA-006: the request body is treated as an **assertion** of what
+    the client expects the new ``current_stage`` to be, not an authoritative
+    write.  The new state is derived server-side:
+
+    - **Create** (no prior row): ``current_stage`` is forced to 1; the
+      payload must assert 1 or it's rejected as ``must_start_at_stage_one``.
+    - **Update**: the server marks ``existing.current_stage`` complete, then
+      recomputes the new ``current_stage`` via :func:`next_stage_for` over
+      the updated completion set.  The payload's ``current_stage`` must
+      equal that derived value — otherwise the request is a skip/rewind/
+      stale-client scenario and returns ``stage_advance_mismatch``.
+
+    The ``completed_stages`` list is never read from the payload (the schema's
+    ``extra='forbid'`` would 422 such a field anyway), so the client cannot
+    mint credit for stages it hasn't actually completed.
 
     A ``SELECT … FOR UPDATE`` row-lock prevents two concurrent advance
     requests from both reading the same ``current_stage`` and passing the
-    forward-only check (TOCTOU race).
+    derivation check (TOCTOU race).
     """
     # Row lock prevents concurrent advances from both reading the same state
     existing = await get_user_progress_for_update(session, current_user)
 
-    if existing is not None:
-        expected_next = existing.current_stage + 1
-        if payload.current_stage != expected_next:
-            raise bad_request("must_advance_one_stage")
-        completed = list(range(1, payload.current_stage))
-        existing.current_stage = payload.current_stage
-        existing.completed_stages = completed
-        existing.stage_started_at = datetime.now(UTC)
-        session.add(existing)
+    if existing is None:
+        if payload.current_stage != 1:
+            raise bad_request("must_start_at_stage_one")
+        progress = StageProgress(
+            user_id=current_user,
+            current_stage=1,
+            completed_stages=[],
+        )
+        session.add(progress)
         await session.commit()
-        await session.refresh(existing)
-        logger.info(
-            "stage_advanced",
-            extra={"user_id": current_user, "current_stage": existing.current_stage},
-        )
+        await session.refresh(progress)
+        logger.info("stage_progress_started", extra={"user_id": current_user})
         return StageProgressRecord(
-            id=existing.id,
-            user_id=existing.user_id,
-            current_stage=existing.current_stage,
-            completed_stages=existing.completed_stages,
+            id=progress.id,
+            user_id=progress.user_id,
+            current_stage=progress.current_stage,
+            completed_stages=progress.completed_stages,
         )
 
-    if payload.current_stage != 1:
-        raise bad_request("must_start_at_stage_one")
-
-    progress = StageProgress(
-        user_id=current_user,
-        current_stage=1,
-        completed_stages=[],
+    # Simulate marking existing.current_stage complete on a detached copy so
+    # we can derive the expected next stage without mutating the tracked ORM
+    # row until the assertion passes.
+    candidate_completed = sorted(set(existing.completed_stages or []) | {existing.current_stage})
+    candidate = StageProgress(
+        user_id=existing.user_id,
+        current_stage=existing.current_stage,
+        completed_stages=candidate_completed,
     )
-    session.add(progress)
+    derived_next = next_stage_for(candidate)
+    if payload.current_stage != derived_next:
+        raise bad_request("stage_advance_mismatch")
+
+    existing.completed_stages = candidate_completed
+    existing.current_stage = derived_next
+    existing.stage_started_at = datetime.now(UTC)
+    session.add(existing)
     await session.commit()
-    await session.refresh(progress)
-    logger.info("stage_progress_started", extra={"user_id": current_user})
+    await session.refresh(existing)
+    logger.info(
+        "stage_advanced",
+        extra={"user_id": current_user, "current_stage": existing.current_stage},
+    )
     return StageProgressRecord(
-        id=progress.id,
-        user_id=progress.user_id,
-        current_stage=progress.current_stage,
-        completed_stages=progress.completed_stages,
+        id=existing.id,
+        user_id=existing.user_id,
+        current_stage=existing.current_stage,
+        completed_stages=existing.completed_stages,
     )
