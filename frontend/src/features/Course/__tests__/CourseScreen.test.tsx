@@ -22,8 +22,11 @@ const makeStage = (overrides: Partial<Stage> = {}): Stage => ({
   ...overrides,
 });
 
+// Stage 1 is completed → backend-truth mirror derives currentStage = 2.
+// Keeping stage 2 unlocked+in-progress makes the "default selection" test
+// match what a user who just finished stage 1 would see.
 const sampleStages: Stage[] = [
-  makeStage({ id: 1, stage_number: 1, is_unlocked: true, progress: 0.5 }),
+  makeStage({ id: 1, stage_number: 1, is_unlocked: true, progress: 1 }),
   makeStage({
     id: 2,
     stage_number: 2,
@@ -135,11 +138,15 @@ describe('CourseScreen', () => {
     });
   });
 
-  it('selects the highest unlocked stage by default', async () => {
+  it('selects completed_count + 1 as the default stage (backend-truth mirror)', async () => {
+    // BUG-FE-COURSE-001: stage 1 is complete, stage 2 is in progress →
+    // default selection is the first unfinished stage, not the highest
+    // unlocked one.  This mirrors backend `next_stage_for` so a client
+    // cannot skip ahead by exploiting drift between `is_unlocked` and
+    // `progress`.
     const { getByTestId } = render(<CourseScreen />);
 
     await waitFor(() => {
-      // Stage 2 is the highest unlocked stage
       expect(mockStageContent).toHaveBeenCalledWith(2);
       expect(mockStageProgress).toHaveBeenCalledWith(2);
       expect(getByTestId('stage-selector')).toBeTruthy();

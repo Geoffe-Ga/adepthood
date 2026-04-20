@@ -38,11 +38,28 @@ export const toStageData = (apiStage: Stage): StageData => {
   };
 };
 
-/** First unlocked, still-in-progress stage; falls back to the last stage or 1. */
-const pickCurrentStage = (apiStages: Stage[]): number =>
-  apiStages.find((s) => s.is_unlocked && s.progress < 1)?.stage_number ??
-  apiStages.at(-1)?.stage_number ??
-  1;
+const FULLY_COMPLETE = 1;
+
+/**
+ * Count-based current-stage derivation.
+ *
+ * Mirrors the backend's `next_stage_for(user)` under the chain-validation
+ * invariant: `current = completed + 1`.  A fresh user with nothing completed
+ * gets stage 1; each completed stage advances `current` by one, clamped to
+ * the catalog range.  This replaces the old "first unlocked, still-in-
+ * progress" heuristic (BUG-FE-MAP-001 / BUG-FE-COURSE-001 / BUG-FE-PRACTICE-
+ * 001) which silently drifted to `max(stage_number)` over unlocked rows when
+ * the backend's `is_unlocked` flag was ahead of completion.
+ */
+export const deriveCurrentStage = (apiStages: Stage[]): number => {
+  if (apiStages.length === 0) return 1;
+  const completed = apiStages.filter((s) => s.progress >= FULLY_COMPLETE).length;
+  const maxStage = apiStages.reduce(
+    (max, s) => (s.stage_number > max ? s.stage_number : max),
+    STAGE_COUNT,
+  );
+  return Math.min(Math.max(1, completed + 1), maxStage);
+};
 
 export const stageService = {
   /**
@@ -59,7 +76,7 @@ export const stageService = {
       // the background artwork.
       const sorted = [...apiStages].sort((a, b) => b.stage_number - a.stage_number);
       useStageStore.getState().setStages(sorted.map(toStageData));
-      useStageStore.getState().setCurrentStage(pickCurrentStage(sorted));
+      useStageStore.getState().setCurrentStage(deriveCurrentStage(apiStages));
       useStageStore.getState().setLoading(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load stages';

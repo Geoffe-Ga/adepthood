@@ -24,11 +24,11 @@ import type {
 import { practices, userPractices, practiceSessions } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { colors, SPACING, BORDER_RADIUS, shadows } from '@/design/tokens';
+import { stageService } from '@/features/Map/services/stageService';
 import { useAppNavigation, useAppRoute } from '@/navigation/hooks';
+import { selectCurrentStage, useStageStore } from '@/store/useStageStore';
 
 type ScreenView = 'selection' | 'timer' | 'summary' | 'reflection';
-
-const DEFAULT_STAGE_NUMBER = 1;
 
 // --- Hook: practice list state ---
 
@@ -497,7 +497,19 @@ function PracticeViewRouter({
 
 const PracticeScreen = (): React.JSX.Element => {
   const route = useAppRoute<'Practice'>();
-  const stageNumber = route.params?.stageNumber ?? DEFAULT_STAGE_NUMBER;
+  // BUG-FE-PRACTICE-001/-002: fall back to the backend-derived current stage
+  // rather than a hard-coded 1, so a deep-link with no route param doesn't
+  // enrol a stage-4 user in a stage-1 practice.
+  const storeCurrentStage = useStageStore(selectCurrentStage);
+  const storeStages = useStageStore((s) => s.stages);
+
+  useEffect(() => {
+    if (storeStages.length === 0) {
+      void stageService.loadStages();
+    }
+  }, [storeStages.length]);
+
+  const stageNumber = route.params?.stageNumber ?? storeCurrentStage;
   const loader = usePracticeLoader(stageNumber);
   const session = useSessionFlow(loader.activeUserPractice, loader.incrementWeekCount);
   const pv = usePracticeView(loader, session);
