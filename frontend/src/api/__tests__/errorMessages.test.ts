@@ -21,10 +21,10 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'invalid_credentials',
       'password_too_short',
       'unauthorized',
-      // admin
-      'admin_api_disabled',
-      'admin_auth_required',
+      // admin gate
+      'admin_required',
       // resource not found
+      'user_not_found',
       'stage_not_found',
       'content_not_found',
       'practice_not_found',
@@ -34,7 +34,6 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'goal_group_not_found',
       'prompt_not_found',
       'user_practice_not_found',
-      'user_not_found',
       // forbidden / ownership
       'forbidden',
       'not_owner',
@@ -42,7 +41,6 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'cannot_go_backwards',
       'already_responded',
       'practice_not_approved',
-      'amount_must_be_positive',
       'habits_must_not_be_empty',
       // wallet
       'payment_required',

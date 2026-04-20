@@ -12,9 +12,12 @@ from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col
 
 from models.practice import Practice
+from models.user import User
 from schemas.botmason import CHAT_MESSAGE_MAX_LENGTH
 from schemas.goal_group import (
     GOAL_GROUP_DESCRIPTION_MAX_LENGTH,
@@ -51,10 +54,19 @@ async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str
     return {"Authorization": f"Bearer {token}"}
 
 
-async def _add_balance(client: AsyncClient, headers: dict[str, str], amount: int = 10) -> None:
-    """Add offering credits to the authenticated user."""
-    resp = await client.post("/user/balance/add", json={"amount": amount}, headers=headers)
-    assert resp.status_code == HTTPStatus.OK
+async def _add_balance(db_session: AsyncSession, amount: int = 10, username: str = "alice") -> None:
+    """Seed offering credits via direct DB mutation.
+
+    The balance-add endpoint is admin-gated, so length-constraint tests
+    bypass it and write the balance column directly into the test database.
+    """
+    email = f"{username}@example.com"
+    await db_session.execute(
+        update(User)
+        .where(col(User.email) == email)
+        .values(offering_balance=col(User.offering_balance) + amount)
+    )
+    await db_session.commit()
 
 
 async def _seed_practice_and_select(
@@ -109,27 +121,33 @@ async def test_journal_message_over_max_length_returns_422(async_client: AsyncCl
 
 
 @pytest.mark.asyncio
-async def test_chat_message_at_max_length(async_client: AsyncClient) -> None:
+async def test_chat_message_at_max_length(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
     message = "a" * CHAT_MESSAGE_MAX_LENGTH
     resp = await async_client.post("/journal/chat", json={"message": message}, headers=headers)
     assert resp.status_code == HTTPStatus.CREATED
 
 
 @pytest.mark.asyncio
-async def test_chat_message_over_max_length_returns_422(async_client: AsyncClient) -> None:
+async def test_chat_message_over_max_length_returns_422(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
     message = "a" * (CHAT_MESSAGE_MAX_LENGTH + 1)
     resp = await async_client.post("/journal/chat", json={"message": message}, headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 @pytest.mark.asyncio
-async def test_chat_empty_message_returns_422(async_client: AsyncClient) -> None:
+async def test_chat_empty_message_returns_422(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
     headers = await _signup(async_client)
-    await _add_balance(async_client, headers, amount=1)
+    await _add_balance(db_session, amount=1)
     resp = await async_client.post("/journal/chat", json={"message": ""}, headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 

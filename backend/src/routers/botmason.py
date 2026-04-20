@@ -21,7 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request as StarletteRequest
 
 from database import get_session
-from errors import bad_request
+from dependencies.auth import require_admin
+from errors import forbidden
+from models.user import User
 from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.botmason import (
@@ -151,20 +153,21 @@ async def get_usage(
 async def add_balance(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     payload: BalanceAddRequest,
-    current_user: Annotated[int, Depends(get_current_user)],
+    admin: Annotated[User, Depends(require_admin)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> BalanceAddResponse:
-    """Add credits to the authenticated user's offering balance."""
-    if payload.amount <= 0:
-        raise bad_request("amount_must_be_positive")
-
-    new_balance = await wallet_service.add_balance(session, current_user, payload.amount)
+    """Add credits to the calling admin's offering balance."""
+    assert admin.id is not None  # noqa: S101 — persisted row always has an id
+    new_balance = await wallet_service.add_balance(session, admin.id, payload.amount)
     if new_balance is None:
-        raise bad_request("user_not_found")
+        # TOCTOU: admin row existed when ``require_admin`` fetched it but was
+        # deleted before the wallet UPDATE landed.  Same failure mode as the
+        # admin-gate, so the same status keeps the client's retry logic simple.
+        raise forbidden("user_not_found")
 
     await session.commit()
     logger.info(
         "balance_added",
-        extra={"user_id": current_user, "added": payload.amount, "new_balance": new_balance},
+        extra={"admin_id": admin.id, "added": payload.amount, "new_balance": new_balance},
     )
     return BalanceAddResponse(balance=new_balance, added=payload.amount)
