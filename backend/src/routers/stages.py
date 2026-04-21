@@ -12,6 +12,7 @@ from sqlmodel import col, select
 
 from database import get_session
 from domain.stage_progress import (
+    AllStagesCompletedError,
     compute_stage_progress,
     get_stage_habit_history,
     get_stage_practice_history,
@@ -21,7 +22,7 @@ from domain.stage_progress import (
     next_stage_for,
     stage_exists,
 )
-from errors import bad_request, forbidden, not_found
+from errors import bad_request, conflict, forbidden, not_found
 from models.course_stage import CourseStage
 from models.stage_progress import StageProgress
 from routers.auth import get_current_user
@@ -228,7 +229,10 @@ async def update_progress(
         current_stage=existing.current_stage,
         completed_stages=candidate_completed,
     )
-    derived_next = next_stage_for(candidate)
+    try:
+        derived_next = next_stage_for(candidate)
+    except AllStagesCompletedError as exc:
+        raise conflict("all_stages_completed") from exc
     if payload.current_stage != derived_next:
         raise bad_request("stage_advance_mismatch")
 

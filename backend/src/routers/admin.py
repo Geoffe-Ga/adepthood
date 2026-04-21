@@ -6,6 +6,7 @@ identity is a first-class per-user flag rather than a shared header secret.
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -27,6 +28,8 @@ from schemas.admin import (
     UsageStatsResponse,
     UserUsageBreakdown,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -158,7 +161,7 @@ async def list_stage_progress_gaps(
 async def repair_stage_progress(
     user_id: int,
     session: Annotated[AsyncSession, Depends(get_session)],
-    _admin: Annotated[User, Depends(require_admin)],
+    admin: Annotated[User, Depends(require_admin)],
 ) -> StageProgressRepairResult:
     """Rewrite one user's ``completed_stages`` to ``{1..current_stage-1}``.
 
@@ -166,6 +169,11 @@ async def repair_stage_progress(
     intermediate-stage credit the gap encoded in favour of the canonical
     chain-validation invariant.  Returns the delta so the caller has a
     record of what changed.
+
+    Emits a structured ``stage_progress_repaired`` log entry with the
+    admin, target, and delta so the action is traceable — repair mutates
+    user progression irreversibly, so leaving no audit trail would let a
+    mistaken or malicious write vanish silently.
     """
     result = await session.execute(
         select(StageProgress).where(col(StageProgress.user_id) == user_id)
@@ -176,14 +184,27 @@ async def repair_stage_progress(
 
     before = set(progress.completed_stages or [])
     expected = set(range(1, progress.current_stage))
+    stages_added = sorted(expected - before)
+    stages_removed = sorted(before - expected)
     progress.completed_stages = sorted(expected)
     await session.commit()
     await session.refresh(progress)
+
+    logger.warning(
+        "stage_progress_repaired",
+        extra={
+            "admin_id": admin.id,
+            "user_id": user_id,
+            "current_stage": progress.current_stage,
+            "stages_added": stages_added,
+            "stages_removed": stages_removed,
+        },
+    )
 
     return StageProgressRepairResult(
         user_id=user_id,
         current_stage=progress.current_stage,
         completed_stages=sorted(expected),
-        stages_added=sorted(expected - before),
-        stages_removed=sorted(before - expected),
+        stages_added=stages_added,
+        stages_removed=stages_removed,
     )

@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.constants import TOTAL_STAGES
-from errors import conflict
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
 from models.goal import Goal
@@ -27,6 +26,7 @@ _STAGE_1 = 1
 
 __all__ = [
     "TOTAL_STAGES",
+    "AllStagesCompletedError",
     "compute_stage_progress",
     "get_stage_habit_history",
     "get_stage_practice_history",
@@ -36,6 +36,16 @@ __all__ = [
     "next_stage_for",
     "stage_exists",
 ]
+
+
+class AllStagesCompletedError(Exception):
+    """Raised by :func:`next_stage_for` when every stage is already completed.
+
+    Keeping this as a plain domain exception — not ``HTTPException`` — lets
+    non-HTTP callers (admin tooling, async tasks, tests) use the helper
+    without pulling in FastAPI's transport layer.  Router code is responsible
+    for catching this and mapping it to the appropriate HTTP response.
+    """
 
 
 async def get_user_progress(session: AsyncSession, user_id: int) -> StageProgress | None:
@@ -86,15 +96,15 @@ def next_stage_for(progress: StageProgress | None) -> int:
     legacy rows like ``completed_stages=[1, 3]``: ``max+1`` would advance
     past stage 2 silently; ``min(missing)`` returns 2 and keeps the chain-
     validation invariant aligned with unlock-checking on dirty data.  Raises
-    a 409 conflict when every stage is already completed so the caller
-    cannot blindly advance past the curriculum.
+    :class:`AllStagesCompletedError` when every stage is already completed
+    so the caller cannot blindly advance past the curriculum.
     """
     if progress is None:
         return _STAGE_1
     completed = set(progress.completed_stages or [])
     missing = set(range(1, TOTAL_STAGES + 1)) - completed
     if not missing:
-        raise conflict("all_stages_completed")
+        raise AllStagesCompletedError
     return min(missing)
 
 

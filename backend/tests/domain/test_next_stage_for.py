@@ -1,4 +1,4 @@
-"""Tests for ``next_stage_for`` (BUG-STAGE-001 helper).
+"""Tests for ``next_stage_for``.
 
 ``next_stage_for`` returns the first *hole* in ``completed_stages`` — i.e.
 ``min({1..TOTAL_STAGES} - completed_stages)`` — not ``max(completed) + 1``.
@@ -9,9 +9,12 @@ The distinction matters for legacy rows with gaps (e.g. ``[1, 3]`` where
 from __future__ import annotations
 
 import pytest
-from fastapi import HTTPException, status
 
-from domain.stage_progress import TOTAL_STAGES, next_stage_for
+from domain.stage_progress import (
+    TOTAL_STAGES,
+    AllStagesCompletedError,
+    next_stage_for,
+)
 from models.stage_progress import StageProgress
 
 
@@ -50,13 +53,16 @@ def test_mid_chain_gap_returns_earliest_hole() -> None:
     assert next_stage_for(_progress([1, 2, 4, 5])) == 3
 
 
-def test_all_stages_completed_raises_409() -> None:
-    """Every stage completed → HTTP 409 ``all_stages_completed``."""
+def test_all_stages_completed_raises_domain_error() -> None:
+    """Every stage completed → :class:`AllStagesCompletedError` (not HTTP).
+
+    Router code is responsible for translating this to a 409; keeping the
+    domain exception plain lets non-HTTP callers use ``next_stage_for``
+    without importing FastAPI.
+    """
     everything = list(range(1, TOTAL_STAGES + 1))
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(AllStagesCompletedError):
         next_stage_for(_progress(everything))
-    assert exc_info.value.status_code == status.HTTP_409_CONFLICT
-    assert exc_info.value.detail == "all_stages_completed"
 
 
 def test_last_stage_missing_returns_total_stages() -> None:
