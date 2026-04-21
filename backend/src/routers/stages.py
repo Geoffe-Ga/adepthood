@@ -170,6 +170,74 @@ async def get_stage_history(
     )
 
 
+async def _create_initial_progress(
+    session: AsyncSession,
+    user_id: int,
+    payload: StageProgressUpdate,
+) -> StageProgressRecord:
+    """Handle the no-prior-row case: must assert stage 1, then create."""
+    if payload.current_stage != 1:
+        raise bad_request("must_start_at_stage_one")
+    progress = StageProgress(user_id=user_id, current_stage=1, completed_stages=[])
+    session.add(progress)
+    await session.commit()
+    await session.refresh(progress)
+    logger.info("stage_progress_started", extra={"user_id": user_id})
+    return StageProgressRecord(
+        id=progress.id,
+        user_id=progress.user_id,
+        current_stage=progress.current_stage,
+        completed_stages=progress.completed_stages,
+    )
+
+
+def _derive_next_stage(existing: StageProgress) -> tuple[int, list[int]]:
+    """Derive the server-expected next stage from ``existing``'s completion set.
+
+    Simulates marking ``existing.current_stage`` complete on a detached copy so
+    we can run :func:`next_stage_for` without mutating the tracked ORM row.
+    """
+    candidate_completed = sorted(set(existing.completed_stages or []) | {existing.current_stage})
+    candidate = StageProgress(
+        user_id=existing.user_id,
+        current_stage=existing.current_stage,
+        completed_stages=candidate_completed,
+    )
+    try:
+        derived_next = next_stage_for(candidate)
+    except AllStagesCompletedError as exc:
+        raise conflict("all_stages_completed") from exc
+    return derived_next, candidate_completed
+
+
+async def _advance_existing_progress(
+    session: AsyncSession,
+    existing: StageProgress,
+    payload: StageProgressUpdate,
+) -> StageProgressRecord:
+    """Validate the payload against the server-derived next stage, then commit."""
+    derived_next, candidate_completed = _derive_next_stage(existing)
+    if payload.current_stage != derived_next:
+        raise bad_request("stage_advance_mismatch")
+
+    existing.completed_stages = candidate_completed
+    existing.current_stage = derived_next
+    existing.stage_started_at = datetime.now(UTC)
+    session.add(existing)
+    await session.commit()
+    await session.refresh(existing)
+    logger.info(
+        "stage_advanced",
+        extra={"user_id": existing.user_id, "current_stage": existing.current_stage},
+    )
+    return StageProgressRecord(
+        id=existing.id,
+        user_id=existing.user_id,
+        current_stage=existing.current_stage,
+        completed_stages=existing.completed_stages,
+    )
+
+
 @router.put("/progress", response_model=StageProgressRecord)
 async def update_progress(
     payload: StageProgressUpdate,
@@ -198,57 +266,7 @@ async def update_progress(
     requests from both reading the same ``current_stage`` and passing the
     derivation check (TOCTOU race).
     """
-    # Row lock prevents concurrent advances from both reading the same state
     existing = await get_user_progress_for_update(session, current_user)
-
     if existing is None:
-        if payload.current_stage != 1:
-            raise bad_request("must_start_at_stage_one")
-        progress = StageProgress(
-            user_id=current_user,
-            current_stage=1,
-            completed_stages=[],
-        )
-        session.add(progress)
-        await session.commit()
-        await session.refresh(progress)
-        logger.info("stage_progress_started", extra={"user_id": current_user})
-        return StageProgressRecord(
-            id=progress.id,
-            user_id=progress.user_id,
-            current_stage=progress.current_stage,
-            completed_stages=progress.completed_stages,
-        )
-
-    # Simulate marking existing.current_stage complete on a detached copy so
-    # we can derive the expected next stage without mutating the tracked ORM
-    # row until the assertion passes.
-    candidate_completed = sorted(set(existing.completed_stages or []) | {existing.current_stage})
-    candidate = StageProgress(
-        user_id=existing.user_id,
-        current_stage=existing.current_stage,
-        completed_stages=candidate_completed,
-    )
-    try:
-        derived_next = next_stage_for(candidate)
-    except AllStagesCompletedError as exc:
-        raise conflict("all_stages_completed") from exc
-    if payload.current_stage != derived_next:
-        raise bad_request("stage_advance_mismatch")
-
-    existing.completed_stages = candidate_completed
-    existing.current_stage = derived_next
-    existing.stage_started_at = datetime.now(UTC)
-    session.add(existing)
-    await session.commit()
-    await session.refresh(existing)
-    logger.info(
-        "stage_advanced",
-        extra={"user_id": current_user, "current_stage": existing.current_stage},
-    )
-    return StageProgressRecord(
-        id=existing.id,
-        user_id=existing.user_id,
-        current_stage=existing.current_stage,
-        completed_stages=existing.completed_stages,
-    )
+        return await _create_initial_progress(session, current_user, payload)
+    return await _advance_existing_progress(session, existing, payload)
