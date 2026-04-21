@@ -9,6 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.practice import Practice
+from models.stage_progress import StageProgress
 
 _EXPECTED_SELECTION_COUNT = 2
 _SESSION_DURATION = 10.0
@@ -114,14 +115,65 @@ async def test_select_nonexistent_practice_rejected(
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
+# -- BUG-PRACTICE-004: stage_number / practice stage consistency ------------
+
+
+@pytest.mark.asyncio
+async def test_select_practice_rejects_stage_mismatch(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """BUG-PRACTICE-004: payload.stage_number must equal practice.stage_number.
+
+    Practice is catalogued for stage 2; client tries to enrol under stage 1.
+    The server rejects the mismatch with 400 rather than silently letting a
+    stage-2 practice count as stage-1 progress.
+    """
+    headers, _ = await _signup(async_client, "mismatch")
+    practice = await _seed_practice(db_session, name="Stage2Practice", stage_number=2)
+
+    resp = await async_client.post(
+        "/user-practices/",
+        json={"practice_id": practice.id, "stage_number": 1},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.json()["detail"] == "stage_number_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_select_practice_rejects_locked_stage(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """BUG-PRACTICE-004: user cannot enrol in a practice for a locked stage.
+
+    Fresh user has no progress → stage 2 is locked.  Submitting a stage-2
+    practice (catalog-consistent) must still 403 because the user has not
+    completed stage 1.  Without this gate the chain-unlock invariant could
+    be bypassed via the practice-enrolment surface.
+    """
+    headers, _ = await _signup(async_client, "lockedstage")
+    practice = await _seed_practice(db_session, name="Stage2Practice", stage_number=2)
+
+    resp = await async_client.post(
+        "/user-practices/",
+        json={"practice_id": practice.id, "stage_number": 2},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.json()["detail"] == "stage_locked"
+
+
 # -- List user-practices ----------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_list_user_practices(async_client: AsyncClient, db_session: AsyncSession) -> None:
-    headers, _ = await _signup(async_client)
+    headers, user_id = await _signup(async_client)
     p1 = await _seed_practice(db_session, name="P1", stage_number=1)
     p2 = await _seed_practice(db_session, name="P2", stage_number=2)
+    # Unlock stage 2 so the second enrolment clears the BUG-PRACTICE-004 gate.
+    db_session.add(StageProgress(user_id=user_id, current_stage=2, completed_stages=[1]))
+    await db_session.commit()
 
     await async_client.post(
         "/user-practices/",

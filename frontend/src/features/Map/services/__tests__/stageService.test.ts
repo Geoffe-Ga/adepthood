@@ -59,7 +59,11 @@ describe('stageService', () => {
     expect(state.error).toBeNull();
   });
 
-  it('loadStages sets currentStage to first unlocked, in-progress stage', async () => {
+  it('loadStages sets currentStage to completed_count + 1 (backend-truth mirror)', async () => {
+    // BUG-FE-MAP-001: one completed (progress==1) stage → current is 2.
+    // Matches the backend's `next_stage_for` under the chain-validation
+    // invariant; no longer leaks the "highest unlocked" value when
+    // `is_unlocked` runs ahead of actual completion.
     mockList.mockResolvedValueOnce([
       makeApiStage(1, { is_unlocked: true, progress: 1 }), // completed
       makeApiStage(2, { is_unlocked: true, progress: 0.3 }), // in progress
@@ -74,6 +78,27 @@ describe('stageService', () => {
     });
 
     expect(useStageStore.getState().currentStage).toBe(2);
+  });
+
+  it('loadStages ignores is_unlocked drift and derives from completion count', async () => {
+    // BUG-FE-MAP-001 regression: if the backend ever returned `is_unlocked`
+    // for stages beyond the user's completion (e.g. from cached data or a
+    // partially-applied migration) the old heuristic would jump currentStage
+    // to the highest unlocked row.  Now it stays at completed_count + 1.
+    mockList.mockResolvedValueOnce([
+      makeApiStage(1, { is_unlocked: true, progress: 0.4 }),
+      makeApiStage(2, { is_unlocked: true, progress: 0 }),
+      makeApiStage(3, { is_unlocked: true, progress: 0 }),
+    ]);
+
+    const { stageService } = require('../stageService');
+    const { useStageStore } = require('../../../../store/useStageStore');
+
+    await act(async () => {
+      await stageService.loadStages();
+    });
+
+    expect(useStageStore.getState().currentStage).toBe(1);
   });
 
   it('loadStages records an error message on API failure', async () => {

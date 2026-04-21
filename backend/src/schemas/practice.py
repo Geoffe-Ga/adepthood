@@ -6,12 +6,13 @@ from datetime import UTC, date, datetime
 
 from pydantic import BaseModel, Field, field_validator
 
+from domain.constants import TOTAL_STAGES as MAX_STAGE_NUMBER
+
 PRACTICE_NAME_MAX_LENGTH = 255
 PRACTICE_DESCRIPTION_MAX_LENGTH = 2_000
 PRACTICE_INSTRUCTIONS_MAX_LENGTH = 10_000
 PRACTICE_REFLECTION_MAX_LENGTH = 5_000
 
-MAX_STAGE_NUMBER = 36
 MAX_DURATION_MINUTES = 24 * 60
 
 # -- Practice ---------------------------------------------------------------

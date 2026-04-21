@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
+
+from domain.constants import TOTAL_STAGES as MAX_STAGE_NUMBER
 
 
 class StageResponse(BaseModel):
@@ -36,9 +38,18 @@ class StageProgressResponse(BaseModel):
 
 
 class StageProgressUpdate(BaseModel):
-    """Payload for updating current stage."""
+    """Payload asserting the client's expected ``current_stage`` after advance.
 
-    current_stage: int
+    The router ignores this value as a write; it is only used as a
+    server-vs-client sanity assertion.  ``extra='forbid'`` blocks the
+    adjacent injection vector where a client attempts to set
+    ``completed_stages`` directly in the same PUT body, which the server
+    derives from its own state.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    current_stage: int = Field(ge=1, le=MAX_STAGE_NUMBER)
 
 
 class StageProgressRecord(BaseModel):

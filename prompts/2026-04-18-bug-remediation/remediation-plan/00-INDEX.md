@@ -26,7 +26,7 @@ Either way, treat the `main` copy of this table as truth. A branch-local tick is
 |--:|--------|:----:|-------------|:------:|
 | 01 | unblock-auth-nav-flash            | 1 | `claude/bug-fix-01-unblock-auth-nav-flash` / [#245](https://github.com/Geoffe-Ga/adepthood/pull/245) | [x] |
 | 02 | close-credit-minting-chain        | 2 | `claude/bug-fix-02-credit-minting-chain` / [#246](https://github.com/Geoffe-Ga/adepthood/pull/246) | [x] |
-| 03 | close-stage-skip-chain            | 2 | | [ ] |
+| 03 | close-stage-skip-chain            | 2 | `claude/bug-fix-03-stage-skip-chain` / [#247](https://github.com/Geoffe-Ga/adepthood/pull/247) | [x] |
 | 04 | centralize-sanitize-user-text     | 3 | | [ ] |
 | 05 | centralize-date-utils-tz          | 3 | | [ ] |
 | 06 | db-unique-constraints-toctou      | 3 | | [ ] |

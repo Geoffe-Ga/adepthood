@@ -11,6 +11,7 @@ import {
 } from '../../api';
 import { STAGE_COLORS, colors } from '../../design/tokens';
 import { useAppNavigation, useAppRoute } from '../../navigation/hooks';
+import { deriveCurrentStage } from '../Map/services/stageService';
 
 import ContentCard from './ContentCard';
 import ContentViewer from './ContentViewer';
@@ -35,13 +36,12 @@ function useStagesLoader() {
       try {
         const stagesList = await stagesApi.list();
         setAllStages(stagesList);
+        // Derive current stage from server-owned progression
+        // (completed_count + 1), not from "max unlocked" — the latter lifts
+        // the selector to stage N when only `is_unlocked` is ahead,
+        // visually rewarding any skip-ahead attempt.
         if (routeStageNumber === null) {
-          const currentUnlocked = stagesList
-            .filter((s) => s.is_unlocked)
-            .sort((a, b) => b.stage_number - a.stage_number);
-          if (currentUnlocked.length > 0) {
-            setSelectedStage(currentUnlocked[0]!.stage_number);
-          }
+          setSelectedStage(deriveCurrentStage(stagesList));
         }
       } catch (err) {
         console.error('Failed to load stages:', err);

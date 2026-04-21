@@ -416,6 +416,112 @@ async def test_update_progress_cannot_stay_same(
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
+# ── BUG-SCHEMA-006: server derives stage, rejects client-supplied shortcuts ──
+
+
+@pytest.mark.asyncio
+async def test_update_progress_rejects_out_of_range_low(async_client: AsyncClient) -> None:
+    """BUG-SCHEMA-006: ``current_stage`` below 1 fails Pydantic validation (422)."""
+    headers, _ = await _signup(async_client, "schemalow")
+    resp = await async_client.put(
+        "/stages/progress",
+        json={"current_stage": 0},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_update_progress_rejects_out_of_range_high(async_client: AsyncClient) -> None:
+    """BUG-SCHEMA-006: ``current_stage`` above the curriculum length fails at 422."""
+    headers, _ = await _signup(async_client, "schemahigh")
+    resp = await async_client.put(
+        "/stages/progress",
+        json={"current_stage": 37},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_update_progress_rejects_completed_stages_injection(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-SCHEMA-006: payload may not smuggle ``completed_stages``.
+
+    Without ``extra='forbid'`` a client could PUT ``{"current_stage": 2,
+    "completed_stages": [1,2,3,4,5]}`` and silently pre-credit themselves.
+    The schema now rejects any unknown field at 422 before the handler runs.
+    """
+    headers, user_id = await _signup(async_client, "inject")
+    progress = StageProgress(user_id=user_id, current_stage=1, completed_stages=[])
+    db_session.add(progress)
+    await db_session.commit()
+
+    resp = await async_client.put(
+        "/stages/progress",
+        json={"current_stage": 2, "completed_stages": [1, 2, 3, 4, 5]},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_update_progress_ignores_client_on_dirty_data(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-SCHEMA-006: client cannot skip past a legacy gap.
+
+    A pre-existing row with ``completed_stages=[1, 2, 4]`` and
+    ``current_stage=5`` encodes a missing stage-3 credit.  The server's
+    derived expectation after "completing" stage 5 is the first hole = 3,
+    not 6.  The client asserting 6 gets ``stage_advance_mismatch`` so the
+    gap must be repaired via the admin helper before advancement resumes.
+    """
+    headers, user_id = await _signup(async_client, "dirty")
+    progress = StageProgress(user_id=user_id, current_stage=5, completed_stages=[1, 2, 4])
+    db_session.add(progress)
+    await db_session.commit()
+
+    resp = await async_client.put(
+        "/stages/progress",
+        json={"current_stage": 6},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.json()["detail"] == "stage_advance_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_advance_returns_409_when_all_stages_completed(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Advancing past the final stage must 409 instead of re-issuing 36.
+
+    When the user already has ``completed_stages`` covering the full
+    curriculum, ``next_stage_for`` has no hole to fill and
+    ``raise conflict('all_stages_completed')`` stops the request before it
+    writes nonsense state.
+    """
+    headers, user_id = await _signup(async_client, "finished")
+    # Canonical "current_stage == N implies completed_stages == {1..N-1}" shape.
+    # The router simulates marking current_stage=36 complete on a candidate,
+    # so candidate_completed becomes {1..36}; next_stage_for has no hole and 409s.
+    progress = StageProgress(user_id=user_id, current_stage=36, completed_stages=list(range(1, 36)))
+    db_session.add(progress)
+    await db_session.commit()
+
+    resp = await async_client.put(
+        "/stages/progress",
+        json={"current_stage": 36},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.json()["detail"] == "all_stages_completed"
+
+
 # ── BUG-STAGE-005: TOCTOU race on PUT /stages/progress ─────────────────
 
 
@@ -511,7 +617,13 @@ async def test_stage_unlocked_requires_predecessor_completed(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """BUG-STAGE-002: stage N <= current but N-1 NOT in completed_stages → locked."""
+    """BUG-STAGE-001/002: every prior stage must be in ``completed_stages``.
+
+    Seeding ``completed_stages=[2]`` with ``current_stage=3`` leaves stage 1
+    uncredited.  Under the chain-validation rule, stage 2 requires ``{1}`` and
+    stage 3 requires ``{1, 2}``; both fail when stage 1 is missing, so only
+    stage 1 (the always-unlocked root) stays open.
+    """
     headers, user_id = await _signup(async_client)
     await _seed_stages(db_session, count=3)
     # current_stage=3 but completed_stages is missing stage 1.
@@ -524,10 +636,10 @@ async def test_stage_unlocked_requires_predecessor_completed(
     data = resp.json()
     # Stage 1: always unlocked
     assert data[0]["is_unlocked"] is True
-    # Stage 2: current_stage=3 > 2, but predecessor (1) NOT in completed → locked
+    # Stage 2: chain requires {1} ⊆ completed; {2} fails → locked
     assert data[1]["is_unlocked"] is False
-    # Stage 3: current_stage=3, predecessor (2) IS in completed → unlocked
-    assert data[2]["is_unlocked"] is True
+    # Stage 3: chain requires {1, 2} ⊆ completed; {2} fails → locked (BUG-STAGE-001)
+    assert data[2]["is_unlocked"] is False
 
 
 # ── User isolation ──────────────────────────────────────────────────────
