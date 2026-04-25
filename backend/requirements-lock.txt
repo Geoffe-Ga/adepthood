@@ -106,7 +106,7 @@ typing-inspection==0.4.2
     # via
     #   fastapi
     #   pydantic
-uvicorn==0.44.0
+uvicorn==0.46.0
     # via -r backend/requirements.txt
 wrapt==2.1.2
     # via deprecated
