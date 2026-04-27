@@ -12,6 +12,7 @@ aiosqlite
 bcrypt
 PyJWT
 slowapi
+tzdata
 pytest
 pytest-asyncio
 httpx
