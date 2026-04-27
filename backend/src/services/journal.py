@@ -14,6 +14,8 @@ from sqlmodel import col, select
 
 from models.journal_entry import JournalEntry
 from models.llm_usage_log import LLMUsageLog
+from schemas.journal import JOURNAL_MESSAGE_MAX_LENGTH
+from security import sanitize_user_text
 from services.botmason import CONVERSATION_HISTORY_LIMIT, LLMResponse
 from services.llm_pricing import estimate_cost_usd
 
@@ -51,8 +53,15 @@ async def persist_user_message(
     forming the bot's FK) can reference it without guessing.  The commit is
     still the caller's responsibility so a provider failure can roll back the
     whole interaction.
+
+    The message is sanitized via :func:`security.sanitize_user_text` so the
+    persisted row contains no control characters or zero-width / bidi
+    smuggling codepoints (BUG-JOURNAL-003 / BUG-BM-004).  The sanitizer is
+    idempotent, so this is safe even if the caller has already wrapped the
+    value at the router boundary.
     """
-    entry = JournalEntry(sender="user", user_id=user_id, message=message)
+    cleaned = sanitize_user_text(message, max_len=JOURNAL_MESSAGE_MAX_LENGTH)
+    entry = JournalEntry(sender="user", user_id=user_id, message=cleaned)
     session.add(entry)
     await session.flush()
     return entry

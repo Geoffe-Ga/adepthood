@@ -18,7 +18,13 @@ from errors import bad_request, conflict, forbidden, not_found
 from models.journal_entry import JournalEntry, JournalTag
 from models.prompt_response import PromptResponse
 from routers.auth import get_current_user
-from schemas.prompt import PromptDetail, PromptListResponse, PromptSubmit
+from schemas.prompt import (
+    PROMPT_RESPONSE_MAX_LENGTH,
+    PromptDetail,
+    PromptListResponse,
+    PromptSubmit,
+)
+from security import sanitize_user_text
 
 logger = logging.getLogger(__name__)
 
@@ -200,18 +206,22 @@ async def submit_prompt_response(
     if result.scalars().first() is not None:
         raise bad_request("already_responded")
 
-    # Create the prompt response
+    # Sanitize once at the boundary (BUG-PROMPT-003); both PromptResponse and
+    # JournalEntry receive the cleaned text so the two rows agree byte-for-byte
+    # and neither carries control / zero-width / bidi-override smuggling.
+    cleaned_response = sanitize_user_text(payload.response, max_len=PROMPT_RESPONSE_MAX_LENGTH)
+
     prompt_response = PromptResponse(
         week_number=week_number,
         question=question,
-        response=payload.response,
+        response=cleaned_response,
         user_id=current_user,
     )
     session.add(prompt_response)
 
     # Also create a journal entry so the response appears in journal history
     journal_entry = JournalEntry(
-        message=payload.response,
+        message=cleaned_response,
         sender="user",
         user_id=current_user,
         tag=JournalTag.STAGE_REFLECTION,
