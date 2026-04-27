@@ -89,21 +89,40 @@ export const dayKeyInTZ = (moment: Date | string, tz: string): string => {
 };
 
 /**
- * Render the human-friendly day-of-week label for a `YYYY-MM-DD` key in TZ.
+ * Render the human-friendly day-of-week label for a `YYYY-MM-DD` key.
  *
  * Used by stats charts so a Sunday-night Pacific completion is labeled
  * "Sun" (the user's perception) rather than "Mon" (UTC after midnight).
  * Returns three-letter English labels matching the backend's
  * `_DAY_LABELS` constant.
+ *
+ * Implementation note: the calendar weekday for a `YYYY-MM-DD` key is
+ * canonical (2026-06-15 is a Monday everywhere — the weekday derives
+ * from the date itself, not the user's clock).  The `tz` parameter is
+ * accepted for API symmetry with the other helpers but is intentionally
+ * unused: an earlier version that re-formatted in the user's zone gave
+ * incorrect results in *both* directions — `T12:00:00Z` printed as the
+ * next day in UTC+13/+14, while `T00:00:00Z` printed as the prior day
+ * in negative-offset zones.  Treating the day-key's weekday as zone-
+ * independent is the only formulation that's correct everywhere.
  */
-export const dayLabel = (dayKey: string, tz: string): string => {
-  const zone = resolveZone(tz);
-  // Anchor at noon to avoid DST shoulder-day rendering artefacts.
-  const midday = new Date(`${dayKey}T12:00:00Z`);
+export const dayLabel = (dayKey: string, _tz: string): string => {
+  const [year, month, day] = dayKey.split('-').map((part) => Number.parseInt(part, 10));
+  if (
+    year === undefined ||
+    month === undefined ||
+    day === undefined ||
+    Number.isNaN(year) ||
+    Number.isNaN(month) ||
+    Number.isNaN(day)
+  ) {
+    return '';
+  }
+  const utcMidnight = new Date(Date.UTC(year, month - 1, day));
   return new Intl.DateTimeFormat('en-US', {
     weekday: 'short',
-    timeZone: zone,
-  }).format(midday);
+    timeZone: 'UTC',
+  }).format(utcMidnight);
 };
 
 /**

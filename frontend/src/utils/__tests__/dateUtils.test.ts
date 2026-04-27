@@ -60,15 +60,36 @@ describe('dayKeyInTZ', () => {
 });
 
 describe('dayLabel', () => {
-  it('returns three-letter English weekday', () => {
-    // 2026-06-15 is a Monday in any common timezone.
+  // The weekday for a YYYY-MM-DD calendar day is independent of TZ -- 2026-
+  // 06-15 is a Monday everywhere on Earth.  These tests pin that the helper
+  // returns the canonical weekday for every zone (incl. UTC+14 where the
+  // older noon-anchor implementation returned the *next* day).
+  it('returns three-letter English weekday for UTC', () => {
     expect(dayLabel('2026-06-15', 'UTC')).toBe('Mon');
   });
 
-  it('matches the user-local label, not UTC', () => {
-    // 2026-06-14T23:00Z was Sunday in UTC, still Sunday in LA.
-    // We pin a known mapping and assert the helper agrees.
+  it('is canonical across negative-offset zones (UTC-8 LA)', () => {
     expect(dayLabel('2026-06-14', 'America/Los_Angeles')).toBe('Sun');
+    expect(dayLabel('2026-06-15', 'America/Los_Angeles')).toBe('Mon');
+  });
+
+  it('is canonical across positive-offset zones (UTC+14 Kiritimati)', () => {
+    // BUG-FE-HABIT-002 follow-on: an earlier noon-UTC anchor printed as
+    // the *next* day in UTC+13/+14 zones.  Calendar-day weekday is
+    // zone-independent so this test pins it.
+    expect(dayLabel('2026-06-15', 'Pacific/Kiritimati')).toBe('Mon');
+  });
+
+  it('is canonical for Pacific/Apia (UTC+13)', () => {
+    expect(dayLabel('2026-06-15', 'Pacific/Apia')).toBe('Mon');
+  });
+
+  it('is canonical for Pacific/Auckland (UTC+12 NZST)', () => {
+    expect(dayLabel('2026-06-15', 'Pacific/Auckland')).toBe('Mon');
+  });
+
+  it('returns empty string for malformed key (defensive)', () => {
+    expect(dayLabel('not-a-date', 'UTC')).toBe('');
   });
 });
 

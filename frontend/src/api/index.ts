@@ -102,7 +102,15 @@ function isKnownOffline(): boolean {
 
 let tokenGetter: (() => string | null) | null = null;
 let onUnauthorizedCallback: (() => void) | null = null;
-let onTokenRefreshedCallback: ((token: string) => void) | null = null;
+/**
+ * Callback invoked when the API layer refreshes the JWT.
+ *
+ * Receives the new token plus the server's record of `User.timezone` so
+ * the auth context can keep `userTimezone` in sync without a follow-up
+ * `GET /users/me`.  The timezone is `string | undefined` because legacy
+ * API builds may omit it; consumers should fall back to `'UTC'`.
+ */
+let onTokenRefreshedCallback: ((token: string, timezone: string | undefined) => void) | null = null;
 let llmApiKeyGetter: (() => string | null) | null = null;
 
 /** Header used to forward a user-provided LLM API key (BYOK, issue #185). */
@@ -116,7 +124,9 @@ export function setOnUnauthorized(callback: (() => void) | null) {
   onUnauthorizedCallback = callback;
 }
 
-export function setOnTokenRefreshed(callback: ((token: string) => void) | null) {
+export function setOnTokenRefreshed(
+  callback: ((token: string, timezone: string | undefined) => void) | null,
+) {
   onTokenRefreshedCallback = callback;
 }
 
@@ -310,7 +320,11 @@ async function attemptTokenRefresh(): Promise<string | null> {
     });
     if (!refreshRes.ok) return null;
     const data = (await refreshRes.json()) as AuthResponse;
-    onTokenRefreshedCallback?.(data.token);
+    // PR #260 review round 3: forward the server's stored timezone so the
+    // AuthContext can keep ``userTimezone`` in sync after a cold-start
+    // refresh.  Without this, ``userTimezone`` would stay at its
+    // ``"UTC"`` default until the user manually re-authenticated.
+    onTokenRefreshedCallback?.(data.token, data.timezone);
     return data.token;
   } catch {
     return null;

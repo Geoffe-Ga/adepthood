@@ -377,7 +377,7 @@ describe('AuthContext', () => {
       expect(typeof refreshed).toBe('function');
 
       await act(async () => {
-        refreshed?.('fresh-jwt');
+        refreshed?.('fresh-jwt', undefined);
       });
 
       // Save is in-flight — state must not have flipped yet.
@@ -389,6 +389,46 @@ describe('AuthContext', () => {
       });
 
       await waitFor(() => expect(result.current.token).toBe('fresh-jwt'));
+    });
+
+    it('propagates server timezone from refresh response to userTimezone', async () => {
+      // PR #260 review round 3: cold-start -> proactive-refresh used to
+      // discard ``response.timezone`` so ``userTimezone`` stayed at the
+      // ``"UTC"`` default until the user manually re-authenticated.  The
+      // refresh callback now receives both fields and forwards the zone.
+      mockLoadToken.mockResolvedValue('old-jwt');
+      mockSaveToken.mockResolvedValue(undefined);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('old-jwt'));
+      expect(result.current.userTimezone).toBe('UTC');
+
+      const refreshed = mockSetOnTokenRefreshed.mock.calls.at(-1)?.[0];
+      expect(typeof refreshed).toBe('function');
+
+      await act(async () => {
+        refreshed?.('fresh-jwt', 'America/Los_Angeles');
+      });
+
+      await waitFor(() => expect(result.current.token).toBe('fresh-jwt'));
+      expect(result.current.userTimezone).toBe('America/Los_Angeles');
+    });
+
+    it('falls back to UTC when refresh response omits timezone', async () => {
+      // Legacy / mocked API responses may not include the field.
+      mockLoadToken.mockResolvedValue('old-jwt');
+      mockSaveToken.mockResolvedValue(undefined);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('old-jwt'));
+
+      const refreshed = mockSetOnTokenRefreshed.mock.calls.at(-1)?.[0];
+      await act(async () => {
+        refreshed?.('fresh-jwt', undefined);
+      });
+
+      await waitFor(() => expect(result.current.token).toBe('fresh-jwt'));
+      expect(result.current.userTimezone).toBe('UTC');
     });
 
     it('awaits clearToken before nulling state when API reports 401', async () => {
@@ -524,7 +564,7 @@ describe('AuthContext', () => {
       // Mid-flight refresh completes AFTER logout — do not resurrect the session.
       await act(async () => {
         resolveRefresh?.({ token: 'late-jwt', user_id: 1 });
-        refreshed?.('late-jwt');
+        refreshed?.('late-jwt', undefined);
       });
       await waitFor(() => expect(result.current.token).toBeNull());
     });

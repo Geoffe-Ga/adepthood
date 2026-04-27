@@ -64,9 +64,12 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function silentRefresh(currentToken: string, onSuccess: (t: string) => void): void {
+function silentRefresh(
+  currentToken: string,
+  onSuccess: (t: string, timezone: string | undefined) => void,
+): void {
   authApi.refresh(currentToken).then(
-    (res) => onSuccess(res.token),
+    (res) => onSuccess(res.token, res.timezone),
     () => {
       /* silent fail — 401 retry is the fallback */
     },
@@ -77,7 +80,7 @@ function silentRefresh(currentToken: string, onSuccess: (t: string) => void): vo
 function useProactiveRefresh(
   token: string | null,
   tokenRef: React.MutableRefObject<string | null>,
-  applyNewToken: (t: string) => void,
+  applyNewToken: (t: string, timezone: string | undefined) => void,
 ): void {
   useEffect(() => {
     if (!token || isTokenExpired(token)) return undefined;
@@ -164,6 +167,7 @@ async function clearTokenForReauth(mutators: AuthMutators): Promise<void> {
  */
 async function saveTokenThenApply(
   newToken: string,
+  newTimezone: string | undefined,
   mutators: AuthMutators,
   tokenRef: React.MutableRefObject<string | null>,
 ): Promise<void> {
@@ -179,6 +183,10 @@ async function saveTokenThenApply(
   }
   if (tokenRef.current === null) return;
   mutators.setToken(newToken);
+  // PR #260 review round 3: propagate the server's stored timezone to the
+  // auth context so a cold-start refresh restores the user's IANA zone
+  // instead of leaving ``userTimezone`` at the ``"UTC"`` default.
+  mutators.setUserTimezone(newTimezone ?? 'UTC');
   mutators.setAuthStatus('authenticated');
 }
 
@@ -198,8 +206,8 @@ function useApiCallbacks(
     setOnUnauthorized(() => {
       void clearTokenForReauth(mutators);
     });
-    setOnTokenRefreshed((t: string) => {
-      void saveTokenThenApply(t, mutators, tokenRef);
+    setOnTokenRefreshed((t: string, tz: string | undefined) => {
+      void saveTokenThenApply(t, tz, mutators, tokenRef);
     });
     return () => {
       setTokenGetter(null);
@@ -351,9 +359,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Stable handle so effects depending on the mutators don't thrash.
   const mutators = useMemo<AuthMutators>(() => ({ setToken, setAuthStatus, setUserTimezone }), []);
 
-  const applyNewToken = useCallback(async (newToken: string) => {
+  // PR #260 review round 3: ``applyNewToken`` now also accepts the
+  // server's stored timezone from the refresh response so the cold-start
+  // → proactive-refresh path keeps ``userTimezone`` aligned with the
+  // authenticated user's IANA zone.  ``undefined`` falls back to UTC so
+  // an old API build that omits the field still works.
+  const applyNewToken = useCallback(async (newToken: string, newTimezone: string | undefined) => {
     await saveToken(newToken);
     setToken(newToken);
+    setUserTimezone(newTimezone ?? 'UTC');
     setAuthStatus('authenticated');
   }, []);
 
