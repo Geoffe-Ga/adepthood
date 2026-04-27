@@ -12,16 +12,36 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
-from errors import not_found
+from errors import not_found, unprocessable
 from models.journal_entry import JournalEntry, JournalTag
 from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.journal import (
+    JOURNAL_MESSAGE_MAX_LENGTH,
     JournalBotMessageCreate,
     JournalListResponse,
     JournalMessageCreate,
     JournalMessageResponse,
 )
+from security import TextTooLongError, sanitize_user_text
+
+
+def _sanitize_message(message: str) -> str:
+    """Apply :func:`sanitize_user_text` and translate overflow to HTTP 422.
+
+    Pydantic's ``max_length`` already caps raw input at
+    :data:`JOURNAL_MESSAGE_MAX_LENGTH`, but NFC normalization can in rare
+    cases (Hangul jamo, Tibetan stacks) leave the post-normalization length
+    *above* the cap.  Re-checking after sanitization closes that gap; we
+    raise 422 (rather than the 500 we would otherwise return on an
+    unhandled domain error) so the client sees a uniform length-violation
+    shape regardless of which layer rejected the value.
+    """
+    try:
+        return sanitize_user_text(message, max_len=JOURNAL_MESSAGE_MAX_LENGTH)
+    except TextTooLongError as exc:
+        raise unprocessable("message_too_long") from exc
+
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +65,17 @@ async def create_journal_entry(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> JournalEntry:
-    """Create a journal message for the authenticated user."""
-    entry = JournalEntry(sender="user", user_id=current_user, **payload.model_dump())
+    """Create a journal message for the authenticated user.
+
+    The message body is sanitized at the router boundary
+    (BUG-JOURNAL-003) so the row that lands in the DB has no control
+    characters, zero-width, or bidi-override codepoints — defense
+    against stored-XSS payloads in journal renderers and Trojan-Source
+    smuggling in log viewers.
+    """
+    data = payload.model_dump()
+    data["message"] = _sanitize_message(data["message"])
+    entry = JournalEntry(sender="user", user_id=current_user, **data)
     session.add(entry)
     await session.commit()
     await session.refresh(entry)
@@ -147,8 +176,15 @@ async def create_bot_response(
 
     ``user_id`` is sourced from the authenticated user — never from the request
     body — to prevent cross-user injection (BUG-JOURNAL-002).
+
+    The bot message is also passed through :func:`sanitize_user_text`
+    (BUG-JOURNAL-003 / BUG-BM-004): a model-generated reflection of an
+    attacker's prompt-injection attempt could otherwise reintroduce control
+    characters or bidi overrides into the journal stream.
     """
-    entry = JournalEntry(sender="bot", user_id=current_user, **payload.model_dump())
+    data = payload.model_dump()
+    data["message"] = _sanitize_message(data["message"])
+    entry = JournalEntry(sender="bot", user_id=current_user, **data)
     session.add(entry)
     await session.commit()
     await session.refresh(entry)
