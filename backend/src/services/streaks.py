@@ -83,7 +83,7 @@ async def compute_consecutive_streak(
     fixing BUG-HABITS-011 where the old code counted rows instead of
     unique days.  ``user_timezone`` selects which calendar's "day"
     boundary applies (BUG-STREAK-002); routers should pass
-    :func:`domain.dates.get_user_timezone` so streaks tick over at the
+    :func:`services.users.get_user_timezone` so streaks tick over at the
     user's midnight rather than UTC's.
     """
     rows = await session.execute(

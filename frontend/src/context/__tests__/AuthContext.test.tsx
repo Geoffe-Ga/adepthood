@@ -153,9 +153,15 @@ describe('AuthContext', () => {
         await result.current.signup('new@test.com', 'password123');
       });
 
+      // Signup attaches the device's IANA zone (PR #260 review write-
+      // path gap).  In the jest environment ``Intl.DateTimeFormat().
+      // resolvedOptions().timeZone`` resolves to ``"UTC"`` so the helper
+      // deterministically returns ``"UTC"``; anything else here would
+      // indicate a regression in ``detectDeviceTimezone``.
       expect(mockAuth.signup).toHaveBeenCalledWith({
         email: 'new@test.com',
         password: 'password123', // pragma: allowlist secret
+        timezone: 'UTC',
       });
       expect(mockSaveToken).toHaveBeenCalledWith('signup-jwt');
       expect(result.current.token).toBe('signup-jwt');

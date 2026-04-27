@@ -6,6 +6,7 @@ import { clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import { clearLlmApiKey } from '@/storage/llmKeyStorage';
 import { clearAllNotificationData } from '@/storage/notificationStorage';
 import { resetAllStores } from '@/store/registry';
+import { detectDeviceTimezone } from '@/utils/dateUtils';
 import {
   decodeJwtPayload,
   isTokenExpired,
@@ -235,6 +236,24 @@ interface AuthActions {
   dismissReauth: () => Promise<void>;
 }
 
+/**
+ * POST /auth/signup with the device's IANA timezone attached.
+ *
+ * Captures the timezone here (not at the AuthContext call site) so the
+ * `useAuthActions` hook stays under the max-lines lint threshold and so
+ * the timezone capture lives next to its only call.  Closes the PR #260
+ * review write-path gap: without this the `User.timezone` column would
+ * remain at its `"UTC"` default for every signup.
+ */
+async function signupWithDeviceTimezone(email: string, password: string): Promise<string> {
+  const response = await authApi.signup({
+    email,
+    password,
+    timezone: detectDeviceTimezone(),
+  });
+  return response.token;
+}
+
 function useAuthActions(mutators: AuthMutators): AuthActions {
   const { setToken, setAuthStatus } = mutators;
 
@@ -250,9 +269,9 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
 
   const signup = useCallback<LoginOrSignup>(
     async (email, password) => {
-      const response = await authApi.signup({ email, password });
-      await saveToken(response.token);
-      setToken(response.token);
+      const token = await signupWithDeviceTimezone(email, password);
+      await saveToken(token);
+      setToken(token);
       setAuthStatus('authenticated');
     },
     [setToken, setAuthStatus],

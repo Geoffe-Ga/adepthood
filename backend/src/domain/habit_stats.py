@@ -98,7 +98,7 @@ def compute_habit_stats(
     streak runs, and completion-rate spans (BUG-HABIT-006).  The default
     is ``"UTC"`` so legacy callers that omit the argument keep their
     pre-fix behaviour rather than silently switching zones; routers pass
-    :func:`domain.dates.get_user_timezone` to opt into the user-local
+    :func:`services.users.get_user_timezone` to opt into the user-local
     view.
     """
     if not completions:

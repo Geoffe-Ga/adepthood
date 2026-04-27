@@ -1246,6 +1246,21 @@ export interface AuthRequest {
   email: string;
   password: string;
 }
+
+/**
+ * Signup payload — `AuthRequest` plus the user's IANA timezone.
+ *
+ * The frontend sends `Intl.DateTimeFormat().resolvedOptions().timeZone`
+ * on first signup so streak / daily-completion math computes "today" in
+ * the user's local calendar from day one (closes the BUG-STREAK-002
+ * write-path gap surfaced by the PR #260 review).  Optional on the wire
+ * — omitting it keeps the column at its `"UTC"` default for clients
+ * still on the old payload shape.
+ */
+export interface SignupRequest extends AuthRequest {
+  timezone?: string;
+}
+
 export interface AuthResponse {
   token: string;
   user_id: number;
@@ -1258,7 +1273,7 @@ export const auth = {
       schema: authResponseSchema,
     });
   },
-  signup(credentials: AuthRequest): Promise<AuthResponse> {
+  signup(credentials: SignupRequest): Promise<AuthResponse> {
     return request<AuthResponse>('/auth/signup', {
       method: 'POST',
       body: credentials,

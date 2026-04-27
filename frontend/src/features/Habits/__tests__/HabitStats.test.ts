@@ -1,5 +1,5 @@
 /* eslint-env jest */
-/* global describe, test, expect */
+/* global describe, test, expect, jest */
 import type { Habit, Goal } from '../Habits.types';
 import { generateStatsForHabit, toLocalHabitStats, calculateMissedDays } from '../HabitUtils';
 
@@ -127,27 +127,29 @@ describe('generateStatsForHabit', () => {
   });
 
   test('includes currentStreak counting from today backwards (BUG-FE-HABIT-207)', () => {
-    // Anchor relative to "today" so the helper -- which now compares to
-    // today/yesterday before counting -- returns a meaningful chain.
-    const today = new Date();
-    const dayAgo = new Date(today);
-    dayAgo.setUTCDate(dayAgo.getUTCDate() - 1);
-    const twoAgo = new Date(today);
-    twoAgo.setUTCDate(twoAgo.getUTCDate() - 2);
-    const fourAgo = new Date(today);
-    fourAgo.setUTCDate(fourAgo.getUTCDate() - 4);
-
-    const habit: Habit = {
-      ...baseHabit,
-      completions: [
-        { id: 'c-1', timestamp: fourAgo, completed_units: 1 }, // gap follows
-        { id: 'c-2', timestamp: twoAgo, completed_units: 1 },
-        { id: 'c-3', timestamp: dayAgo, completed_units: 1 },
-      ],
-    };
-    const stats = generateStatsForHabit(habit);
-    // Yesterday + day-before = 2 (today not yet completed; yesterday-only is OK).
-    expect(stats.currentStreak).toBe(2);
+    // Pin "today" via fake timers so the test cannot drift across the
+    // millisecond between constructing the fixture and the helper's
+    // internal `new Date()` call.  Without this anchor a CI run that
+    // straddled UTC midnight could see the helper compute a different
+    // "today" than the fixture, breaking the assertion non-deterministically.
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-15T18:00:00Z'));
+    try {
+      const habit: Habit = {
+        ...baseHabit,
+        completions: [
+          // Four days ago -- gap follows so the chain is bounded.
+          { id: 'c-1', timestamp: new Date('2026-06-11T18:00:00Z'), completed_units: 1 },
+          // Two days ago + yesterday in UTC -- two-day chain ending yesterday.
+          { id: 'c-2', timestamp: new Date('2026-06-13T18:00:00Z'), completed_units: 1 },
+          { id: 'c-3', timestamp: new Date('2026-06-14T18:00:00Z'), completed_units: 1 },
+        ],
+      };
+      const stats = generateStatsForHabit(habit);
+      // Yesterday + day-before = 2 (today not yet completed; yesterday-only is OK).
+      expect(stats.currentStreak).toBe(2);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test('currentStreak is 0 when last completion is more than yesterday', () => {

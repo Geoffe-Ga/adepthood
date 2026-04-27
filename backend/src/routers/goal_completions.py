@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from database import get_session
-from domain.dates import day_bounds_in_tz, get_user_timezone, today_in_tz
+from domain.dates import day_bounds_in_tz, today_in_tz
 from errors import forbidden, not_found
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
@@ -19,6 +19,7 @@ from models.habit import Habit
 from routers.auth import get_current_user
 from schemas import CheckInResult
 from services.streaks import check_milestones, compute_consecutive_streak, update_streak
+from services.users import get_user_timezone
 
 logger = logging.getLogger(__name__)
 

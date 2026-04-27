@@ -8,6 +8,7 @@ import os
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import bcrypt
 import jwt
@@ -19,7 +20,7 @@ from sqlmodel import select
 from database import get_session
 from errors import bad_request
 from models.login_attempt import LoginAttempt
-from models.user import User
+from models.user import DEFAULT_USER_TIMEZONE, User
 from rate_limit import limiter
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,56 @@ class AuthRequest(BaseModel):
         if isinstance(value, str):
             return value.strip().lower()
         return value
+
+
+# Cap matches ``User.timezone`` column width.  IANA names are at most 33
+# chars today (``America/Argentina/ComodRivadavia``); 64 leaves headroom.
+_MAX_TIMEZONE_LENGTH = 64
+
+
+class SignupRequest(AuthRequest):
+    """Signup payload — email + password + optional IANA ``timezone``.
+
+    The timezone is sent by the frontend on first signup (read from
+    ``Intl.DateTimeFormat().resolvedOptions().timeZone``) so streak and
+    daily-completion math computes "today" in the user's local calendar
+    from day one.  Validated at the trust boundary (here) rather than
+    silently coerced at runtime so a malformed value surfaces as 422
+    instead of permanently storing bad data — the runtime fallback to
+    UTC inside :mod:`domain.dates` is a safety net, not a license to
+    accept garbage.
+
+    Omitting ``timezone`` keeps the column at its ``"UTC"`` default, so
+    existing clients that have not been migrated to send the field do
+    not break.
+    """
+
+    timezone: str = DEFAULT_USER_TIMEZONE
+
+    @field_validator("timezone", mode="before")
+    @classmethod
+    def _validate_timezone(cls, value: object) -> str:
+        """Reject malformed IANA strings before they reach the DB.
+
+        Empty / whitespace-only / non-string input collapses to the
+        default so old clients that send ``""`` are not broken; anything
+        else must round-trip through :class:`zoneinfo.ZoneInfo` cleanly
+        or 422.
+        """
+        if value is None or not isinstance(value, str):
+            return DEFAULT_USER_TIMEZONE
+        candidate = value.strip()
+        if not candidate:
+            return DEFAULT_USER_TIMEZONE
+        if len(candidate) > _MAX_TIMEZONE_LENGTH:
+            msg = f"timezone must be {_MAX_TIMEZONE_LENGTH} chars or fewer"
+            raise ValueError(msg)
+        try:
+            ZoneInfo(candidate)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            msg = f"unknown IANA timezone: {candidate!r}"
+            raise ValueError(msg) from exc
+        return candidate
 
 
 class AuthResponse(BaseModel):
@@ -195,7 +246,7 @@ async def _is_account_locked(session: AsyncSession, email: str) -> bool:
 @limiter.limit("3/minute")
 async def signup(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
-    payload: AuthRequest,
+    payload: SignupRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AuthResponse:
     if len(payload.password) < _MIN_PASSWORD_LENGTH:
@@ -214,6 +265,7 @@ async def signup(
     user = User(
         email=payload.email,
         password_hash=_hash_password(payload.password),
+        timezone=payload.timezone,
     )
     session.add(user)
     await session.commit()

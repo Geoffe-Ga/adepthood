@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from database import get_session
-from domain.dates import get_user_timezone
 from domain.habit_stats import compute_habit_stats
 from errors import not_found
 from load_options import HABIT_WITH_GOALS_AND_COMPLETIONS
@@ -22,6 +21,7 @@ from schemas.habit import HabitCreate, HabitWithGoals
 from schemas.habit_stats import HabitStats
 from schemas.pagination import paginate_query
 from services.streaks import compute_habit_streak
+from services.users import get_user_timezone
 
 logger = logging.getLogger(__name__)
 

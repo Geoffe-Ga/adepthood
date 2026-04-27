@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
-from domain.dates import get_user_timezone, today_in_tz
+from domain.dates import today_in_tz
 from domain.stage_progress import get_user_progress, is_stage_unlocked
 from errors import bad_request, forbidden, not_found
 from models.practice import Practice
@@ -24,6 +24,7 @@ from schemas.practice import (
     UserPracticeDetail,
     UserPracticeResponse,
 )
+from services.users import get_user_timezone
 
 logger = logging.getLogger(__name__)
 
