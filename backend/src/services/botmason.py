@@ -566,6 +566,9 @@ async def _call_anthropic(
     anthropic_mod = _import_optional("anthropic", "Anthropic")
 
     client = anthropic_mod.AsyncAnthropic(api_key=key, timeout=_LLM_TIMEOUT_SECONDS)
+    # Anthropic's API takes ``system`` as a separate kwarg from ``messages``,
+    # so the builder returns a tuple — (wrapped messages, augmented system
+    # prompt) — both threaded through the same per-request nonce.
     messages_for_api, augmented_system = _build_anthropic_messages(
         user_message,
         conversation_history,
@@ -764,6 +767,9 @@ async def _stream_anthropic(  # pragma: no cover - exercised via live integratio
     anthropic_mod = _import_optional("anthropic", "Anthropic")
 
     client = anthropic_mod.AsyncAnthropic(api_key=key, timeout=_LLM_TIMEOUT_SECONDS)
+    # Anthropic's API takes ``system`` as a separate kwarg from ``messages``,
+    # so the builder returns a tuple — (wrapped messages, augmented system
+    # prompt) — both threaded through the same per-request nonce.
     messages_for_api, augmented_system = _build_anthropic_messages(
         user_message,
         conversation_history,

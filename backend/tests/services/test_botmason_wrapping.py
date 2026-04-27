@@ -118,9 +118,14 @@ class TestBuildMessages:
         assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
         # bot/assistant content is NOT wrapped; user history IS wrapped.
         assert messages[2]["content"] == "first bot turn"
-        assert messages[1]["content"].endswith(messages[1]["content"].split(">")[-1])
-        assert "<user_input_" in messages[1]["content"]
-        assert "<user_input_" in messages[3]["content"]
+        # The history user-turn must be wrapped with the same nonce as the
+        # current user turn (and the augmented system prompt).  Reconstruct
+        # the expected wrapping shape from the nonce we extract from the new
+        # turn — a regression that drops history wrapping (or uses a
+        # different nonce for history vs. new turn) fails this assertion.
+        nonce = _NONCE_RE.search(messages[3]["content"]).group(0)  # type: ignore[union-attr]
+        assert messages[1]["content"] == f"<user_input_{nonce}>first user turn</user_input_{nonce}>"
+        assert messages[3]["content"] == f"<user_input_{nonce}>now</user_input_{nonce}>"
 
     def test_history_user_messages_sanitized(self) -> None:
         """Replayed history is also re-sanitized — defense in depth."""

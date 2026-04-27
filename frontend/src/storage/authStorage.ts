@@ -27,9 +27,11 @@
  *
  *   1. ``isWeb`` branches keep the localStorage path strictly OFF on
  *      native (where Keychain works).
- *   2. The web branch is annotated below with an
- *      ``eslint-disable-next-line`` so any new ``localStorage``-style use
- *      site shows up in PR review with the same warning attached.
+ *   2. Each web call site carries an inline ``BUG-FE-AUTH-007`` marker
+ *      comment so ``git grep BUG-FE-AUTH-007`` enumerates every
+ *      accepted-risk site for audit.  Any new web persistence path that
+ *      bypasses this file is grounds for review rejection (see
+ *      ``frontend/SECURITY.md``).
  *   3. ``frontend/SECURITY.md`` documents the threat model and the
  *      migration plan; reviewers should reject changes that move web
  *      tokens *out* of ``AsyncStorage`` into something even more
@@ -74,12 +76,14 @@ export async function saveToken(token: string): Promise<void> {
 }
 
 export async function loadToken(): Promise<string | null> {
+  // BUG-FE-AUTH-007: web reads from localStorage — see the file-header note.
   if (isWeb) return AsyncStorage.getItem(TOKEN_KEY);
   return SecureStore.getItemAsync(TOKEN_KEY);
 }
 
 export async function clearToken(): Promise<void> {
   if (isWeb) {
+    // BUG-FE-AUTH-007: web clears localStorage — see the file-header note.
     await AsyncStorage.removeItem(TOKEN_KEY);
     return;
   }

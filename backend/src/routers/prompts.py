@@ -14,7 +14,7 @@ from sqlmodel import col, select
 
 from database import get_session
 from domain.weekly_prompts import TOTAL_WEEKS, get_prompt_for_week
-from errors import bad_request, conflict, forbidden, not_found
+from errors import bad_request, conflict, forbidden, not_found, unprocessable
 from models.journal_entry import JournalEntry, JournalTag
 from models.prompt_response import PromptResponse
 from routers.auth import get_current_user
@@ -24,7 +24,7 @@ from schemas.prompt import (
     PromptListResponse,
     PromptSubmit,
 )
-from security import sanitize_user_text
+from security import TextTooLongError, sanitize_user_text
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +209,16 @@ async def submit_prompt_response(
     # Sanitize once at the boundary (BUG-PROMPT-003); both PromptResponse and
     # JournalEntry receive the cleaned text so the two rows agree byte-for-byte
     # and neither carries control / zero-width / bidi-override smuggling.
-    cleaned_response = sanitize_user_text(payload.response, max_len=PROMPT_RESPONSE_MAX_LENGTH)
+    # NFC normalization can in rare Unicode cases expand a string past the cap;
+    # translate that into a 422 so the client sees a uniform length-violation
+    # response shape rather than a 500.
+    try:
+        cleaned_response = sanitize_user_text(
+            payload.response,
+            max_len=PROMPT_RESPONSE_MAX_LENGTH,
+        )
+    except TextTooLongError as exc:
+        raise unprocessable("response_too_long") from exc
 
     prompt_response = PromptResponse(
         week_number=week_number,

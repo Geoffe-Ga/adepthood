@@ -10,6 +10,7 @@ BUG-INFRA-025: every request must have a trace ID that:
 from __future__ import annotations
 
 import logging
+import re
 
 from fastapi.testclient import TestClient
 
@@ -111,10 +112,13 @@ def test_pathologically_long_id_is_rejected_and_replaced() -> None:
 
 
 def _assert_replaced(response_id: str, original: str) -> None:
-    """Assert that ``original`` was rejected and ``response_id`` is a fresh hex UUID."""
+    """Assert that ``original`` was rejected and ``response_id`` is a fresh hex UUID.
+
+    Uses a strict regex (rather than character-set membership) so a future
+    regression that minted uppercase hex would also fail this check.
+    """
     assert response_id != original
-    assert len(response_id) == _MINTED_LEN
-    assert all(c in "0123456789abcdef" for c in response_id)
+    assert re.fullmatch(r"[0-9a-f]{32}", response_id), response_id
 
 
 def test_crlf_in_trace_id_rejected() -> None:

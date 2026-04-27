@@ -78,6 +78,23 @@ reviewed default.
 - **Loosening Content-Security-Policy** in a way that adds new XSS
   surface without compensating for the elevated-impact fact above.
 
+## Bot-message ZWJ decomposition
+
+The backend sanitizer strips U+200D (zero-width joiner) so it can also
+defeat zero-width smuggling attacks; the side effect is that legitimate
+ZWJ-composed emoji written by either the user OR the BotMason model
+(`👨‍👩‍👧‍👦` family, `🏳️‍🌈` rainbow flag, professional emoji like
+`🧑‍💻` "technologist") decompose into their separate component glyphs in
+journal display. Skin-tone modifier and flag-pair sequences are
+_unaffected_ because they do not use ZWJ.
+
+This is a deliberate tradeoff documented in
+`backend/src/security/text_sanitize.py` — defense-in-depth wins over
+rendering fidelity at the trust boundary. If the product later wants
+ZWJ-emoji to render correctly, the right path is to allow ZWJ only when
+it appears in an emoji ZWJ sequence (per Unicode UTS #51), not to drop
+the strip entirely.
+
 ## Stored XSS at render time
 
 The backend sanitizes user free-text at insertion (see

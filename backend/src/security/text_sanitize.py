@@ -64,16 +64,21 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
 #     and four reserved deprecated formatting codes.
 #   * U+FEFF — BOM / zero-width no-break space when not at file start.
 #
-# The pattern is built from ``\u``-escaped range strings so the source file
-# itself contains no invisible codepoints (Trojan-Source defense).
+# The pattern is built from codepoint constants so the source file itself
+# contains no invisible characters (Trojan-Source defense).  Ranges expand to
+# ``[lo-hi]``; the lone BOM gets a single ``chr`` so we don't emit a
+# redundant ``[﻿-﻿]`` range.
 _ZERO_WIDTH_RANGES = (
     (0x200B, 0x200F),
     (0x202A, 0x202E),
     (0x2060, 0x206F),
-    (0xFEFF, 0xFEFF),
 )
+_ZERO_WIDTH_SINGLES = (0xFEFF,)
 _ZERO_WIDTH = re.compile(
-    "[" + "".join(f"{chr(lo)}-{chr(hi)}" for lo, hi in _ZERO_WIDTH_RANGES) + "]"
+    "["
+    + "".join(f"{chr(lo)}-{chr(hi)}" for lo, hi in _ZERO_WIDTH_RANGES)
+    + "".join(chr(cp) for cp in _ZERO_WIDTH_SINGLES)
+    + "]"
 )
 
 

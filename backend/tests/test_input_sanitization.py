@@ -10,9 +10,12 @@ downstream sink — DB row, log line, LLM prompt — sees the cleaned value.
 from __future__ import annotations
 
 from http import HTTPStatus
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
+
+from security import TextTooLongError
 
 
 async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str]:
@@ -122,6 +125,57 @@ async def test_prompt_response_journal_entry_matches_sanitized(
 
     journal = await async_client.get("/journal/", headers=headers)
     assert journal.status_code == HTTPStatus.OK
-    items = journal.json()["items"]
-    assert items, "stage-reflection journal entry should exist"
-    assert items[0]["message"] == "helloworld"
+    # Filter by the stage_reflection tag rather than indexing items[0] so the
+    # assertion does not depend on list-ordering (a future change to the
+    # default journal sort would otherwise break this test silently).
+    reflections = [e for e in journal.json()["items"] if e["tag"] == "stage_reflection"]
+    assert reflections, "stage-reflection journal entry should exist"
+    assert reflections[0]["message"] == "helloworld"
+
+
+# ── Length-cap overflow path ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_journal_post_too_long_returns_422(
+    async_client: AsyncClient,
+) -> None:
+    """``TextTooLongError`` from sanitize is translated to HTTP 422.
+
+    Pydantic's ``max_length`` already rejects raw input over the schema cap,
+    so we craft a payload that satisfies the schema and then has its
+    sanitized length exceed a deliberately-low override on the helper. The
+    integration test pins the *response shape* (422 + JSON detail), not the
+    obscure NFC-expansion path that triggers it in production.
+    """
+    headers = await _signup(async_client, "toolong")
+    with patch(
+        "routers.journal.sanitize_user_text",
+        side_effect=TextTooLongError("text exceeds 10000 chars after sanitization"),
+    ):
+        resp = await async_client.post(
+            "/journal/",
+            json={"message": "hello"},
+            headers=headers,
+        )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"] == "message_too_long"
+
+
+@pytest.mark.asyncio
+async def test_prompt_response_too_long_returns_422(
+    async_client: AsyncClient,
+) -> None:
+    """Same defense for prompt responses: overflow surfaces as 422."""
+    headers = await _signup(async_client, "ptoolong")
+    with patch(
+        "routers.prompts.sanitize_user_text",
+        side_effect=TextTooLongError("text exceeds 10000 chars after sanitization"),
+    ):
+        resp = await async_client.post(
+            "/prompts/1/respond",
+            json={"response": "hello"},
+            headers=headers,
+        )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"] == "response_too_long"

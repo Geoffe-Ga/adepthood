@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
-from errors import not_found
+from errors import not_found, unprocessable
 from models.journal_entry import JournalEntry, JournalTag
 from rate_limit import limiter
 from routers.auth import get_current_user
@@ -23,7 +23,25 @@ from schemas.journal import (
     JournalMessageCreate,
     JournalMessageResponse,
 )
-from security import sanitize_user_text
+from security import TextTooLongError, sanitize_user_text
+
+
+def _sanitize_message(message: str) -> str:
+    """Apply :func:`sanitize_user_text` and translate overflow to HTTP 422.
+
+    Pydantic's ``max_length`` already caps raw input at
+    :data:`JOURNAL_MESSAGE_MAX_LENGTH`, but NFC normalization can in rare
+    cases (Hangul jamo, Tibetan stacks) leave the post-normalization length
+    *above* the cap.  Re-checking after sanitization closes that gap; we
+    raise 422 (rather than the 500 we would otherwise return on an
+    unhandled domain error) so the client sees a uniform length-violation
+    shape regardless of which layer rejected the value.
+    """
+    try:
+        return sanitize_user_text(message, max_len=JOURNAL_MESSAGE_MAX_LENGTH)
+    except TextTooLongError as exc:
+        raise unprocessable("message_too_long") from exc
+
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +74,7 @@ async def create_journal_entry(
     smuggling in log viewers.
     """
     data = payload.model_dump()
-    data["message"] = sanitize_user_text(data["message"], max_len=JOURNAL_MESSAGE_MAX_LENGTH)
+    data["message"] = _sanitize_message(data["message"])
     entry = JournalEntry(sender="user", user_id=current_user, **data)
     session.add(entry)
     await session.commit()
@@ -165,7 +183,7 @@ async def create_bot_response(
     characters or bidi overrides into the journal stream.
     """
     data = payload.model_dump()
-    data["message"] = sanitize_user_text(data["message"], max_len=JOURNAL_MESSAGE_MAX_LENGTH)
+    data["message"] = _sanitize_message(data["message"])
     entry = JournalEntry(sender="bot", user_id=current_user, **data)
     session.add(entry)
     await session.commit()
