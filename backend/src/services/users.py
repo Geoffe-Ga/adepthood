@@ -1,10 +1,10 @@
 """User-row helpers — DB-aware lookups against the ``user`` table.
 
 Lives in ``services/`` so ``domain/`` modules can stay model-agnostic
-(no import of :class:`models.user.User`).  The PR #260 review pointed
-out that putting ``get_user_timezone`` in ``domain.dates`` forced a
-local ``noqa: PLC0415`` workaround for the otherwise-circular import;
-relocating the helper here removes the workaround entirely.
+(no import of :class:`models.user.User`).  Putting these helpers in
+``domain.dates`` would force an in-function ``from models.user import
+User`` to break the otherwise-circular import — keeping the DB lookups
+here instead lets every import sit at module top-level.
 """
 
 from __future__ import annotations

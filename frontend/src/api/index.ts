@@ -1264,6 +1264,15 @@ export interface SignupRequest extends AuthRequest {
 export interface AuthResponse {
   token: string;
   user_id: number;
+  /**
+   * IANA timezone the server has on record for this user.  Returned on
+   * signup / login / refresh so the frontend can wire it into the auth
+   * context immediately and pass it to user-local helpers (Habit stats,
+   * streak displays) without a follow-up `GET /users/me`.  Defaults to
+   * `"UTC"` server-side -- see `BUG-FE-HABIT-002` / `-207` for the
+   * call-site reasons that need this value.
+   */
+  timezone?: string;
 }
 export const auth = {
   login(credentials: AuthRequest): Promise<AuthResponse> {

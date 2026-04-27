@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from domain.dates import to_user_date
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
@@ -224,23 +225,31 @@ async def test_streak_uses_user_timezone_across_utc_midnight(
 
 
 @pytest.mark.asyncio
-async def test_streak_count_differs_for_pago_pago_vs_kiritimati(
+async def test_streak_buckets_to_different_dates_pago_pago_vs_kiritimati(
     db_session: AsyncSession,
 ) -> None:
-    """A single completion at UTC midnight straddles two zones differently.
+    """The same UTC instant credits different calendar dates per zone.
 
-    A goal completion at 2026-06-15 00:30 UTC is on 2026-06-14 in
-    Pacific/Pago_Pago (UTC-11) and on 2026-06-15 in Pacific/Kiritimati
-    (UTC+14).  The streak count is 1 for both -- but the date the streak
-    credits is different, which matters for "did I log today?"
-    decisions downstream.
+    Asserts on :func:`domain.dates.to_user_date` directly so the
+    behaviour the BUG-STREAK-002 fix relies on (different bucketing per
+    user TZ) is pinned by the test, not just the trivial
+    ``streak == 1`` count which would pass for any single completion.
     """
+    moment = datetime(2026, 6, 15, 0, 30, tzinfo=UTC)
+    pago_date = to_user_date("Pacific/Pago_Pago", moment)
+    kiritimati_date = to_user_date("Pacific/Kiritimati", moment)
+    # Pacific/Pago_Pago is UTC-11; 00:30 UTC = 13:30 prior day local.
+    assert pago_date == date(2026, 6, 14)
+    # Pacific/Kiritimati is UTC+14; 00:30 UTC = 14:30 same UTC day local.
+    assert kiritimati_date == date(2026, 6, 15)
+    assert pago_date != kiritimati_date
+
+    # Sanity-check that a single completion still streaks to 1 in both
+    # zones (the bucketing diverges, the count does not).
     user = await _make_user(db_session)
     assert user.id is not None
     goal = await _make_goal(db_session, user.id)
     assert goal.id is not None
-
-    moment = datetime(2026, 6, 15, 0, 30, tzinfo=UTC)
     db_session.add(
         GoalCompletion(
             goal_id=goal.id,
@@ -251,18 +260,5 @@ async def test_streak_count_differs_for_pago_pago_vs_kiritimati(
     )
     await db_session.commit()
 
-    pago_streak = await compute_consecutive_streak(
-        db_session,
-        goal.id,
-        user.id,
-        "Pacific/Pago_Pago",
-    )
-    kiritimati_streak = await compute_consecutive_streak(
-        db_session,
-        goal.id,
-        user.id,
-        "Pacific/Kiritimati",
-    )
-    # Both see exactly one completion, just on different calendar dates.
-    assert pago_streak == 1
-    assert kiritimati_streak == 1
+    assert await compute_consecutive_streak(db_session, goal.id, user.id, "Pacific/Pago_Pago") == 1
+    assert await compute_consecutive_streak(db_session, goal.id, user.id, "Pacific/Kiritimati") == 1

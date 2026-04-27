@@ -370,18 +370,23 @@ const useHabitTileRenderer = (
 };
 
 const useHabitStats = (visible: boolean, habit: Habit | null): HabitStatsData | null => {
-  const { token } = useAuth();
+  const { token, userTimezone } = useAuth();
   const [stats, setStats] = useState<HabitStatsData | null>(null);
 
   const fetchStats = useCallback(
     (h: Habit) => {
       if (h.id == null) return;
+      // ``userTimezone`` flows from the auth-context value populated by
+      // /auth/login | signup | refresh -- closes BUG-FE-HABIT-002 / -207.
+      // The API path is preferred (server already buckets in user TZ);
+      // the local fallback path now also receives the user's zone so
+      // weekday charts and current-streak agree across both branches.
       habitsApi
         .getStats(h.id, token ?? undefined)
         .then((apiStats) => setStats(toLocalHabitStats(apiStats)))
-        .catch(() => setStats(generateStatsForHabit(h)));
+        .catch(() => setStats(generateStatsForHabit(h, userTimezone)));
     },
-    [token],
+    [token, userTimezone],
   );
 
   useEffect(() => {

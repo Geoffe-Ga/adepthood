@@ -22,6 +22,7 @@ from errors import bad_request
 from models.login_attempt import LoginAttempt
 from models.user import DEFAULT_USER_TIMEZONE, User
 from rate_limit import limiter
+from services.users import get_user_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -151,8 +152,19 @@ class SignupRequest(AuthRequest):
 
 
 class AuthResponse(BaseModel):
+    """Response shape for ``/auth/signup``, ``/auth/login``, ``/auth/refresh``.
+
+    ``timezone`` is the IANA string the server has on record so the
+    frontend can wire it into the auth context immediately and pass it
+    to user-local helpers (Habit stats, streak displays) without a
+    follow-up ``GET /users/me``.  Always populated -- defaults to
+    ``"UTC"`` for the anti-enumeration dummy response and for legacy
+    rows that pre-date the column.
+    """
+
     token: str
     user_id: int
+    timezone: str = DEFAULT_USER_TIMEZONE
 
 
 def _hash_password(password: str) -> str:
@@ -286,7 +298,7 @@ async def signup(
         msg = "User ID unexpectedly None after database commit"
         raise RuntimeError(msg)
     token = _create_token(user.id)
-    return AuthResponse(token=token, user_id=user.id)
+    return AuthResponse(token=token, user_id=user.id, timezone=user.timezone)
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -326,7 +338,7 @@ async def login(
         msg = "User ID unexpectedly None after database commit"
         raise RuntimeError(msg)
     token = _create_token(user.id)
-    return AuthResponse(token=token, user_id=user.id)
+    return AuthResponse(token=token, user_id=user.id, timezone=user.timezone)
 
 
 def get_current_user(authorization: str | None = Header(default=None)) -> int:
@@ -356,12 +368,18 @@ def get_current_user(authorization: str | None = Header(default=None)) -> int:
 async def refresh_token(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AuthResponse:
     """Exchange a valid JWT for a fresh one.
 
     Rate-limited to 1 request per minute to prevent abuse. The caller must
     present a valid, non-expired token in the Authorization header; the
     response contains a new token with a reset TTL for the same user.
+
+    The response also re-asserts the stored ``timezone`` so a frontend
+    that hot-reloads or evicts its auth context receives the correct
+    user-local zone after a refresh, not a stale ``"UTC"`` default.
     """
     new_token = _create_token(user_id)
-    return AuthResponse(token=new_token, user_id=user_id)
+    user_timezone = await get_user_timezone(session, user_id)
+    return AuthResponse(token=new_token, user_id=user_id, timezone=user_timezone)

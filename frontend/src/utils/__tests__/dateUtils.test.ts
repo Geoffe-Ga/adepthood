@@ -94,6 +94,30 @@ describe('addDaysInTZ', () => {
     expect(addDaysInTZ('2024-02-28', 1, 'UTC')).toBe('2024-02-29');
     expect(addDaysInTZ('2024-02-29', 1, 'UTC')).toBe('2024-03-01');
   });
+
+  // BUG-FE-HABIT-207 follow-on: an earlier implementation anchored at
+  // noon UTC, which already prints as the next calendar day in
+  // Pacific/Kiritimati (UTC+14) -- so subtracting one day produced the
+  // same key, breaking yesterday-vs-today streak comparisons for every
+  // NZ/Samoa/Kiritimati user.  Pure calendar math is correct everywhere.
+  it('is correct for Pacific/Kiritimati (UTC+14)', () => {
+    expect(addDaysInTZ('2026-06-16', -1, 'Pacific/Kiritimati')).toBe('2026-06-15');
+    expect(addDaysInTZ('2026-06-15', 1, 'Pacific/Kiritimati')).toBe('2026-06-16');
+  });
+
+  it('is correct for Pacific/Apia (UTC+13)', () => {
+    expect(addDaysInTZ('2026-06-16', -1, 'Pacific/Apia')).toBe('2026-06-15');
+  });
+
+  it('is correct for Pacific/Auckland (UTC+12 / NZST)', () => {
+    expect(addDaysInTZ('2026-06-16', -1, 'Pacific/Auckland')).toBe('2026-06-15');
+  });
+
+  it('is correct for Pacific/Pago_Pago (UTC-11)', () => {
+    // The negative-offset side already worked under the old anchor; pin
+    // it explicitly so any future refactor that breaks it is visible.
+    expect(addDaysInTZ('2026-06-16', -1, 'Pacific/Pago_Pago')).toBe('2026-06-15');
+  });
 });
 
 describe('streakFromCompletions', () => {

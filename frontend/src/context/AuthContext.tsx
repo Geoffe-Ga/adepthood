@@ -44,6 +44,16 @@ interface AuthContextValue {
   authStatus: AuthStatus;
   /** Mirrors ``authStatus === 'loading'``. Kept for backwards compatibility. */
   isLoading: boolean;
+  /**
+   * IANA timezone the server has on record for the authenticated user.
+   * Populated from the `/auth/signup` / `/auth/login` / `/auth/refresh`
+   * response so user-local helpers (Habit stats, streak, weekday charts)
+   * can compute "today" in the user's calendar without an extra
+   * `GET /users/me`.  Defaults to `"UTC"` while anonymous or before the
+   * first auth response resolves -- which matches the helpers' own
+   * default fallback so consumers never see a `null`-typed value.
+   */
+  userTimezone: string;
   login: LoginOrSignup;
   signup: LoginOrSignup;
   logout: () => Promise<void>;
@@ -95,6 +105,7 @@ function useProactiveRefresh(
 interface AuthMutators {
   setToken: React.Dispatch<React.SetStateAction<string | null>>;
   setAuthStatus: React.Dispatch<React.SetStateAction<AuthStatus>>;
+  setUserTimezone: React.Dispatch<React.SetStateAction<string>>;
 }
 
 /**
@@ -241,55 +252,71 @@ interface AuthActions {
  *
  * Captures the timezone here (not at the AuthContext call site) so the
  * `useAuthActions` hook stays under the max-lines lint threshold and so
- * the timezone capture lives next to its only call.  Closes the PR #260
- * review write-path gap: without this the `User.timezone` column would
- * remain at its `"UTC"` default for every signup.
+ * the timezone capture lives next to its only call.  Closes the
+ * write-path gap: without this the `User.timezone` column would remain
+ * at its `"UTC"` default for every signup.  Returns the signed token
+ * plus the server's record of the stored zone (which the backend may
+ * have normalised) so the AuthContext can populate `userTimezone`
+ * synchronously with the same value the rest of the API will return.
  */
-async function signupWithDeviceTimezone(email: string, password: string): Promise<string> {
+async function signupWithDeviceTimezone(
+  email: string,
+  password: string,
+): Promise<{ token: string; timezone: string }> {
   const response = await authApi.signup({
     email,
     password,
     timezone: detectDeviceTimezone(),
   });
-  return response.token;
+  return { token: response.token, timezone: response.timezone ?? 'UTC' };
+}
+
+/**
+ * Shared "user logged out / session ended" tear-down used by both
+ * ``logout`` and ``dismissReauth``.  Extracted so the ``useAuthActions``
+ * hook stays under the 50-line max-lines lint cap; the BUG-FE-STATE-001
+ * crash-safety contract (clearToken inside try/catch, then store wipe,
+ * then clear in-memory state) lives here in one place rather than
+ * duplicated across two callbacks.
+ */
+async function tearDownSession(mutators: AuthMutators, where: string): Promise<void> {
+  try {
+    await clearToken();
+  } catch (err: unknown) {
+    console.warn(`clearToken failed in ${where}`, err);
+  }
+  await wipeUserState();
+  mutators.setToken(null);
+  mutators.setUserTimezone('UTC');
+  mutators.setAuthStatus('anonymous');
 }
 
 function useAuthActions(mutators: AuthMutators): AuthActions {
-  const { setToken, setAuthStatus } = mutators;
+  const { setToken, setAuthStatus, setUserTimezone } = mutators;
 
   const login = useCallback<LoginOrSignup>(
     async (email, password) => {
       const response = await authApi.login({ email, password });
       await saveToken(response.token);
       setToken(response.token);
+      setUserTimezone(response.timezone ?? 'UTC');
       setAuthStatus('authenticated');
     },
-    [setToken, setAuthStatus],
+    [setToken, setAuthStatus, setUserTimezone],
   );
 
   const signup = useCallback<LoginOrSignup>(
     async (email, password) => {
-      const token = await signupWithDeviceTimezone(email, password);
+      const { token, timezone } = await signupWithDeviceTimezone(email, password);
       await saveToken(token);
       setToken(token);
+      setUserTimezone(timezone);
       setAuthStatus('authenticated');
     },
-    [setToken, setAuthStatus],
+    [setToken, setAuthStatus, setUserTimezone],
   );
 
-  const logout = useCallback(async () => {
-    // BUG-FE-STATE-001 review follow-up: if SecureStore rejects we must still
-    // null the in-memory token and wipe the stores — otherwise a flaky
-    // device keychain leaves the app indefinitely authenticated.
-    try {
-      await clearToken();
-    } catch (err: unknown) {
-      console.warn('clearToken failed in logout', err);
-    }
-    await wipeUserState();
-    setToken(null);
-    setAuthStatus('anonymous');
-  }, [setToken, setAuthStatus]);
+  const logout = useCallback(() => tearDownSession(mutators, 'logout'), [mutators]);
 
   // BUG-AUTH-005: mirror the persistence-first ordering used by the API-layer
   // onUnauthorized hook so callers of the context-exposed helper get the same
@@ -299,16 +326,7 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
     void clearTokenForReauth(mutators);
   }, [mutators]);
 
-  const dismissReauth = useCallback(async () => {
-    try {
-      await clearToken();
-    } catch (err: unknown) {
-      console.warn('clearToken failed in dismissReauth', err);
-    }
-    await wipeUserState();
-    setToken(null);
-    setAuthStatus('anonymous');
-  }, [setToken, setAuthStatus]);
+  const dismissReauth = useCallback(() => tearDownSession(mutators, 'dismissReauth'), [mutators]);
 
   // Memoize the bundle so the context value's ``useMemo`` actually short-
   // circuits on renders where none of the identity-stable callbacks changed.
@@ -321,12 +339,17 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [authStatus, setAuthStatus] = useState<AuthStatus>('loading');
+  // ``userTimezone`` defaults to ``"UTC"`` so consumers never see a null
+  // value -- the same default the user-local helpers fall back to when
+  // the column is unset, so behavior is identical across the brief
+  // pre-auth window.
+  const [userTimezone, setUserTimezone] = useState<string>('UTC');
 
   const tokenRef = React.useRef<string | null>(null);
   tokenRef.current = token;
 
   // Stable handle so effects depending on the mutators don't thrash.
-  const mutators = useMemo<AuthMutators>(() => ({ setToken, setAuthStatus }), []);
+  const mutators = useMemo<AuthMutators>(() => ({ setToken, setAuthStatus, setUserTimezone }), []);
 
   const applyNewToken = useCallback(async (newToken: string) => {
     await saveToken(newToken);
@@ -342,8 +365,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isLoading = authStatus === 'loading';
 
   const value = useMemo(
-    () => ({ token, authStatus, isLoading, ...actions }),
-    [token, authStatus, isLoading, actions],
+    () => ({ token, authStatus, isLoading, userTimezone, ...actions }),
+    [token, authStatus, isLoading, userTimezone, actions],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

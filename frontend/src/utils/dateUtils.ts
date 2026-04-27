@@ -20,8 +20,6 @@
  * backend's serialised `date` columns.
  */
 
-const MS_PER_DAY = 86_400_000;
-
 /**
  * Default IANA timezone used when the caller does not yet have a value
  * (e.g. an unauthenticated screen, or a freshly-installed app before the
@@ -111,16 +109,28 @@ export const dayLabel = (dayKey: string, tz: string): string => {
 /**
  * Add `days` calendar days to `dayKey` and return the new `YYYY-MM-DD` key.
  *
- * Calendar-safe replacement for the old `setUTCDate(d.getUTCDate() + n)`
- * pattern that drifted across DST boundaries.  Operates on day strings
- * rather than `Date` objects so consumers cannot accidentally re-introduce
- * UTC drift by mixing `getTime()` arithmetic with local-zone reads.
+ * Pure calendar math via `Date.UTC` rather than wall-clock arithmetic
+ * because day-key offsets do not interact with DST or zone choice — a
+ * "calendar day" is a calendar day everywhere.  An earlier implementation
+ * anchored at noon UTC and added `days * MS_PER_DAY`, which broke for
+ * users east of UTC+11: noon UTC maps to 02:00 the *next* day in
+ * Pacific/Kiritimati (UTC+14), so the result printed one day off and
+ * `streakFromCompletions` reported every NZ/Samoa/Kiritimati streak
+ * as 1 regardless of history.
+ *
+ * The `tz` parameter is preserved for API stability so callers can
+ * keep passing the user's zone without thinking about whether the
+ * helper internally needs it.
  */
-export const addDaysInTZ = (dayKey: string, days: number, tz: string): string => {
-  const zone = resolveZone(tz);
-  const anchor = new Date(`${dayKey}T12:00:00Z`);
-  anchor.setTime(anchor.getTime() + days * MS_PER_DAY);
-  return new Intl.DateTimeFormat('en-CA', { timeZone: zone }).format(anchor);
+export const addDaysInTZ = (dayKey: string, days: number, _tz: string): string => {
+  const [year, month, day] = dayKey.split('-').map((part) => Number.parseInt(part, 10));
+  if (year === undefined || month === undefined || day === undefined) {
+    return dayKey;
+  }
+  // ``Date.UTC`` handles month / year rollover correctly for any positive
+  // or negative day delta; UTC has no DST, so the offset is exact.
+  const shifted = new Date(Date.UTC(year, month - 1, day + days));
+  return shifted.toISOString().slice(0, 10);
 };
 
 /**
