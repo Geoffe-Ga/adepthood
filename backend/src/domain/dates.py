@@ -48,25 +48,31 @@ class _HasTimezone(Protocol):
     timezone: str | None
 
 
+def _extract_tz_string(user_or_tz: _HasTimezone | str | None) -> str:
+    """Pull an IANA timezone string out of any of the accepted input shapes.
+
+    Splits the type-discrimination out of :func:`_resolve_zone` so the
+    latter stays at xenon rank A.  Returns the fallback string for any
+    case where the input cannot supply a usable timezone (``None``, a
+    user row missing the column, an empty string).
+    """
+    if user_or_tz is None:
+        return _FALLBACK_TZ
+    if isinstance(user_or_tz, str):
+        return user_or_tz or _FALLBACK_TZ
+    # ``User`` instance — read ``.timezone`` defensively.
+    return getattr(user_or_tz, "timezone", None) or _FALLBACK_TZ
+
+
 def _resolve_zone(user_or_tz: _HasTimezone | str | None) -> ZoneInfo:
     """Coerce a User / IANA string / ``None`` into a :class:`ZoneInfo`.
 
-    Accepts a User row (read its ``timezone`` column), a bare IANA string
-    (so callers without a User in scope — e.g. background jobs — can pass
-    ``"America/Los_Angeles"`` directly), or ``None`` (falls back to UTC).
     Unknown zones (typo, out-of-date ``tzdata``) silently fall back to
-    UTC rather than raising; the caller's day math is still correct, just
-    less personalized.  The fallback is intentional: a single bad zone
-    string should never lock a user out of completing a habit.
+    UTC rather than raising; the caller's day math is still correct,
+    just less personalized.  The fallback is intentional: a single bad
+    zone string should never lock a user out of completing a habit.
     """
-    if user_or_tz is None:
-        return ZoneInfo(_FALLBACK_TZ)
-    if isinstance(user_or_tz, str):
-        candidate = user_or_tz or _FALLBACK_TZ
-    else:
-        # ``User`` instance — read ``.timezone`` defensively in case the
-        # column is missing on a stub or the value is empty.
-        candidate = getattr(user_or_tz, "timezone", None) or _FALLBACK_TZ
+    candidate = _extract_tz_string(user_or_tz)
     try:
         return ZoneInfo(candidate)
     except (ZoneInfoNotFoundError, ValueError):
