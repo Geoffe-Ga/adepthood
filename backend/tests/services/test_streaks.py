@@ -163,3 +163,106 @@ async def test_compute_consecutive_streak_returns_zero_for_new_goal(
     assert goal.id is not None
 
     assert await compute_consecutive_streak(db_session, goal.id, user.id) == 0
+
+
+# ── BUG-STREAK-002: streak counted in user TZ, not server UTC ──────────────
+
+
+@pytest.mark.asyncio
+async def test_streak_uses_user_timezone_across_utc_midnight(
+    db_session: AsyncSession,
+) -> None:
+    """Same UTC day = two different Pacific days -> different streak counts.
+
+    Recreates the BUG-STREAK-002 scenario.  Two completions both fall on
+    UTC date 2026-06-15 (06:00 UTC and 18:00 UTC), so a UTC-bucketed
+    streak collapses them onto one day and reports 1.  The 06:00 UTC
+    moment is 23:00 PDT on the *previous* day, so a Pacific-bucketed
+    streak sees two consecutive days and reports 2.  This is exactly
+    the divergence West Coast users experienced in production.
+    """
+    user = await _make_user(db_session)
+    assert user.id is not None
+    goal = await _make_goal(db_session, user.id)
+    assert goal.id is not None
+
+    # 23:00 PDT on 2026-06-14 = 06:00 UTC on 2026-06-15
+    late_pacific_yesterday = datetime(2026, 6, 15, 6, 0, tzinfo=UTC)
+    # 11:00 PDT on 2026-06-15 = 18:00 UTC on 2026-06-15
+    morning_pacific_today = datetime(2026, 6, 15, 18, 0, tzinfo=UTC)
+
+    db_session.add_all(
+        [
+            GoalCompletion(
+                goal_id=goal.id,
+                user_id=user.id,
+                completed_units=goal.target,
+                timestamp=late_pacific_yesterday,
+            ),
+            GoalCompletion(
+                goal_id=goal.id,
+                user_id=user.id,
+                completed_units=goal.target,
+                timestamp=morning_pacific_today,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    # In UTC both timestamps share calendar day 2026-06-15 -> streak = 1.
+    assert await compute_consecutive_streak(db_session, goal.id, user.id, "UTC") == 1
+    # In Pacific they fall on consecutive days (06-14 and 06-15) -> streak = 2.
+    assert (
+        await compute_consecutive_streak(
+            db_session,
+            goal.id,
+            user.id,
+            "America/Los_Angeles",
+        )
+        == 2
+    )
+
+
+@pytest.mark.asyncio
+async def test_streak_count_differs_for_pago_pago_vs_kiritimati(
+    db_session: AsyncSession,
+) -> None:
+    """A single completion at UTC midnight straddles two zones differently.
+
+    A goal completion at 2026-06-15 00:30 UTC is on 2026-06-14 in
+    Pacific/Pago_Pago (UTC-11) and on 2026-06-15 in Pacific/Kiritimati
+    (UTC+14).  The streak count is 1 for both -- but the date the streak
+    credits is different, which matters for "did I log today?"
+    decisions downstream.
+    """
+    user = await _make_user(db_session)
+    assert user.id is not None
+    goal = await _make_goal(db_session, user.id)
+    assert goal.id is not None
+
+    moment = datetime(2026, 6, 15, 0, 30, tzinfo=UTC)
+    db_session.add(
+        GoalCompletion(
+            goal_id=goal.id,
+            user_id=user.id,
+            completed_units=goal.target,
+            timestamp=moment,
+        ),
+    )
+    await db_session.commit()
+
+    pago_streak = await compute_consecutive_streak(
+        db_session,
+        goal.id,
+        user.id,
+        "Pacific/Pago_Pago",
+    )
+    kiritimati_streak = await compute_consecutive_streak(
+        db_session,
+        goal.id,
+        user.id,
+        "Pacific/Kiritimati",
+    )
+    # Both see exactly one completion, just on different calendar dates.
+    assert pago_streak == 1
+    assert kiritimati_streak == 1

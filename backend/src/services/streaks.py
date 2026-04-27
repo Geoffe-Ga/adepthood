@@ -6,16 +6,24 @@ needing HTTP fixtures.  Pure functions stay in :mod:`domain.streaks` and
 :mod:`domain.milestones` so they remain trivially unit-testable; this module
 only adds the DB-query layer that composes them into a request-ready
 result.
+
+Streak dates are reduced to *user-local* calendar days (BUG-STREAK-002).
+Storing timestamps in UTC and then bucketing with ``.date()`` would tick
+streaks over at the server's midnight rather than the user's, breaking
+West-Coast users by 7-8 hours every day.  All conversion goes through
+:func:`domain.dates.to_user_date`, which preserves DST jumps and never
+silently coerces naive datetimes.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import date as date_type
+from datetime import UTC, date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from domain.dates import to_user_date
 from domain.streaks import update_streak
 from models.goal_completion import GoalCompletion
 from schemas.milestone import Milestone
@@ -28,12 +36,30 @@ __all__ = [
 ]
 
 
-def _to_date(ts: object) -> date_type:
-    """Extract a calendar date from a timestamp (datetime or string)."""
-    return ts.date() if hasattr(ts, "date") else date_type.fromisoformat(str(ts)[:10])
+def _to_user_date(ts: object, user_timezone: str) -> date:
+    """Bucket a stored timestamp into the user's local calendar day.
+
+    Accepts either a :class:`datetime` (the production path through
+    Postgres ``timestamptz`` columns) or an ISO-8601 string (SQLite test
+    DB returns these for ``DateTime(timezone=True)`` columns since
+    SQLite has no native tz type).  Naive datetimes are treated as UTC
+    so SQLite-stored values still convert correctly; this is the one
+    place where naive coercion is acceptable because the source column
+    is declared timezone-aware and SQLite is just lying about its
+    storage.
+    """
+    if isinstance(ts, datetime):
+        moment = ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
+    else:
+        # ISO-8601 string from SQLite; the column is timezone-aware so
+        # the format is always "YYYY-MM-DD HH:MM:SS[.fff][+HH:MM]".
+        # ``fromisoformat`` accepts that since Python 3.11.
+        parsed = datetime.fromisoformat(str(ts))
+        moment = parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return to_user_date(user_timezone, moment)
 
 
-def _count_consecutive_days(sorted_days: list[date_type], day_ok: dict[date_type, bool]) -> int:
+def _count_consecutive_days(sorted_days: list[date], day_ok: dict[date, bool]) -> int:
     """Count consecutive days from most recent where ``day_ok`` is True."""
     streak = 0
     for i, day in enumerate(sorted_days):
@@ -49,12 +75,16 @@ async def compute_consecutive_streak(
     session: AsyncSession,
     goal_id: int,
     user_id: int,
+    user_timezone: str = "UTC",
 ) -> int:
     """Count consecutive *days* with completed check-ins for a goal.
 
     Collapses multiple rows on the same calendar day into a single day,
     fixing BUG-HABITS-011 where the old code counted rows instead of
-    unique days.
+    unique days.  ``user_timezone`` selects which calendar's "day"
+    boundary applies (BUG-STREAK-002); routers should pass
+    :func:`domain.dates.get_user_timezone` so streaks tick over at the
+    user's midnight rather than UTC's.
     """
     rows = await session.execute(
         select(GoalCompletion.timestamp, GoalCompletion.completed_units)
@@ -62,9 +92,9 @@ async def compute_consecutive_streak(
         .order_by(col(GoalCompletion.timestamp).desc())
     )
 
-    day_totals: dict[date_type, float] = {}
+    day_totals: dict[date, float] = {}
     for ts, units in rows:
-        day = _to_date(ts)
+        day = _to_user_date(ts, user_timezone)
         day_totals[day] = day_totals.get(day, 0.0) + units
 
     sorted_days = sorted(day_totals, reverse=True)
@@ -72,15 +102,24 @@ async def compute_consecutive_streak(
     return _count_consecutive_days(sorted_days, day_ok)
 
 
-def compute_habit_streak(completions: Sequence[GoalCompletion]) -> int:
+def compute_habit_streak(
+    completions: Sequence[GoalCompletion],
+    user_timezone: str = "UTC",
+) -> int:
     """Compute current consecutive-day streak from in-memory completions.
 
     Used by ``GET /habits`` to populate streak without a per-goal DB query.
+    ``user_timezone`` mirrors the database path's parameter
+    (BUG-STREAK-002) — both call sites must agree or the same goal would
+    show two different streak counts depending on whether it was loaded
+    via the in-memory or per-goal path.
     """
     if not completions:
         return 0
 
-    dates: set[date_type] = {_to_date(c.timestamp) for c in completions if c.completed_units > 0}
+    dates: set[date] = {
+        _to_user_date(c.timestamp, user_timezone) for c in completions if c.completed_units > 0
+    }
 
     if not dates:
         return 0

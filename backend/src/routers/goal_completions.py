@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -12,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from database import get_session
+from domain.dates import day_bounds_in_tz, get_user_timezone, today_in_tz
 from errors import forbidden, not_found
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
@@ -51,15 +51,33 @@ async def _get_owned_goal(session: AsyncSession, goal_id: int, user_id: int) -> 
     return goal
 
 
-async def _already_logged_today(session: AsyncSession, goal_id: int, user_id: int) -> bool:
-    """Return True if a completion already exists for this goal/user today."""
-    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+async def _already_logged_today(
+    session: AsyncSession,
+    goal_id: int,
+    user_id: int,
+    user_timezone: str,
+) -> bool:
+    """Return True if a completion already exists for this goal today (BUG-GOAL-004).
+
+    "Today" is the user's local calendar day, not the server's UTC day.
+    The previous implementation used UTC midnight, which let a user on
+    the West Coast log a habit at 11:30 PM Pacific (07:30 UTC the *next*
+    day), then log it again at 8:00 AM the same morning Pacific (15:00
+    UTC) — both rows passed the ``timestamp >= UTC_today_start`` check
+    against different UTC dates and the idempotency guarantee broke.
+
+    The half-open ``[start, end)`` form preserves correctness across the
+    DST jumps (a local day may be 23 or 25 hours).
+    """
+    today = today_in_tz(user_timezone)
+    start, end = day_bounds_in_tz(user_timezone, today)
     result = await session.execute(
         select(GoalCompletion.id)
         .where(
             GoalCompletion.goal_id == goal_id,
             GoalCompletion.user_id == user_id,
-            GoalCompletion.timestamp >= today_start,
+            GoalCompletion.timestamp >= start,
+            GoalCompletion.timestamp < end,
         )
         .limit(1)
     )
@@ -83,9 +101,15 @@ async def create_goal_completion(
     if goal.id is None:
         msg = "Goal ID unexpectedly None after database fetch"
         raise RuntimeError(msg)
-    old_streak = await compute_consecutive_streak(session, goal.id, current_user)
 
-    if await _already_logged_today(session, payload.goal_id, current_user):
+    # Resolve the user's timezone once per request -- streak math, the
+    # idempotency check, and any future audit logging all need to see
+    # the same calendar day boundary.
+    user_tz = await get_user_timezone(session, current_user)
+
+    old_streak = await compute_consecutive_streak(session, goal.id, current_user, user_tz)
+
+    if await _already_logged_today(session, payload.goal_id, current_user, user_tz):
         return CheckInResult(
             streak=old_streak,
             milestones=[],

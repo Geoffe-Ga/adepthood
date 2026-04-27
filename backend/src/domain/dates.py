@@ -18,8 +18,13 @@ never produce a naive datetime.
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from sqlmodel import select
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 # IANA fallback when a user row predates the ``User.timezone`` column or
 # carries an unknown / corrupt value.  ``"UTC"`` is always present in
@@ -131,3 +136,28 @@ def to_user_date(
         msg = "to_user_date refuses naive datetimes; pass tzinfo-aware values"
         raise ValueError(msg)
     return moment.astimezone(_resolve_zone(user_or_tz)).date()
+
+
+async def get_user_timezone(session: AsyncSession, user_id: int) -> str:
+    """Return the user's IANA timezone string, or ``"UTC"`` as fallback.
+
+    Routers call this once per request to resolve the timezone the rest
+    of the helpers consume.  Reading only the single ``timezone`` column
+    rather than the full :class:`User` row keeps the extra query cheap;
+    daily-completion / streak endpoints fire 1-2 times per user per day
+    so caching beyond request scope is not yet justified.
+
+    Returns ``"UTC"`` when:
+
+    * the user row is missing (deleted-mid-request — the caller will
+      surface the underlying 401/404 separately),
+    * the column is null (legacy row, schema migration not yet run on
+      this DB),
+    * the column is empty (default-not-applied edge case).
+    """
+    # Local import avoids the model -> domain import cycle.
+    from models.user import User  # noqa: PLC0415
+
+    result = await session.execute(select(User.timezone).where(User.id == user_id))
+    tz = result.scalar_one_or_none()
+    return tz or _FALLBACK_TZ
