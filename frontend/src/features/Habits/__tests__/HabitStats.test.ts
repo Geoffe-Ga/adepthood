@@ -126,18 +126,42 @@ describe('generateStatsForHabit', () => {
     expect(stats.completionsByDay[3]).toBe(1); // Wednesday
   });
 
-  test('includes currentStreak counting from the most recent date backwards', () => {
+  test('includes currentStreak counting from today backwards (BUG-FE-HABIT-207)', () => {
+    // Anchor relative to "today" so the helper -- which now compares to
+    // today/yesterday before counting -- returns a meaningful chain.
+    const today = new Date();
+    const dayAgo = new Date(today);
+    dayAgo.setUTCDate(dayAgo.getUTCDate() - 1);
+    const twoAgo = new Date(today);
+    twoAgo.setUTCDate(twoAgo.getUTCDate() - 2);
+    const fourAgo = new Date(today);
+    fourAgo.setUTCDate(fourAgo.getUTCDate() - 4);
+
+    const habit: Habit = {
+      ...baseHabit,
+      completions: [
+        { id: 'c-1', timestamp: fourAgo, completed_units: 1 }, // gap follows
+        { id: 'c-2', timestamp: twoAgo, completed_units: 1 },
+        { id: 'c-3', timestamp: dayAgo, completed_units: 1 },
+      ],
+    };
+    const stats = generateStatsForHabit(habit);
+    // Yesterday + day-before = 2 (today not yet completed; yesterday-only is OK).
+    expect(stats.currentStreak).toBe(2);
+  });
+
+  test('currentStreak is 0 when last completion is more than yesterday', () => {
+    // Pin BUG-FE-HABIT-207 directly: a stale chain that ended a week
+    // ago must not still report a non-zero streak.
     const habit: Habit = {
       ...baseHabit,
       completions: [
         { id: 'c-1', timestamp: new Date('2024-01-01T08:00:00'), completed_units: 1 },
-        // gap on Jan 2
-        { id: 'c-2', timestamp: new Date('2024-01-03T08:00:00'), completed_units: 1 },
-        { id: 'c-3', timestamp: new Date('2024-01-04T08:00:00'), completed_units: 1 },
+        { id: 'c-2', timestamp: new Date('2024-01-02T08:00:00'), completed_units: 1 },
       ],
     };
     const stats = generateStatsForHabit(habit);
-    expect(stats.currentStreak).toBe(2); // Jan 3-4
+    expect(stats.currentStreak).toBe(0);
   });
 
   test('includes completionDates as ISO date strings', () => {
