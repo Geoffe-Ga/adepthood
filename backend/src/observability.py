@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import re
 import uuid
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -27,14 +28,24 @@ from starlette.responses import Response
 
 # Header used by upstream load balancers / browser clients to propagate a
 # trace identifier.  We honour whatever value the caller supplied as long as
-# it looks reasonable; otherwise we mint a new UUID4 so every log line in
-# every request has a non-empty trace_id.
+# it matches a strict allow-list; otherwise we mint a new UUID4 so every log
+# line in every request has a non-empty, log-injection-safe trace_id.
 TRACE_ID_HEADER = "X-Request-ID"
 
-# Maximum length we'll accept for a caller-supplied trace ID.  256 chars is
-# well above the 36-char UUID and any reasonable correlation token while
-# capping memory usage if a client sends pathological input.
-_MAX_TRACE_ID_LENGTH = 256
+# Strict shape for an accepted caller-supplied trace ID.
+#
+# BUG-APP-008 / BUG-OBS-001: log records use ``%(trace_id)s`` so a value
+# containing ``\n`` / ``\r`` would split a log line into two and let an
+# attacker forge follow-up records ("CRLF log injection").  Restricting the
+# accepted alphabet to ASCII alphanumerics, ``-`` and ``_`` makes that
+# impossible without re-implementing escaping at every log handler.  64 chars
+# fits both the standard 32-char UUID-hex and the 36-char dashed UUID with
+# headroom for short ULID / nanoid prefixes; longer values almost always
+# indicate junk data (or a smuggling attempt) and are replaced with a fresh
+# server-minted UUID4.  Non-ASCII codepoints would also break terminal log
+# viewers and grep-pipeline correlation, so they are rejected as well.
+_VALID_TRACE_ID = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
+
 
 # Sentinel returned by ``get_trace_id`` when no request is in flight.  Using
 # a distinct constant (rather than ``""``) means dashboards can filter out
@@ -50,19 +61,22 @@ def get_trace_id() -> str:
 
 
 def _normalise_trace_id(raw: str | None) -> str:
-    """Sanitise an inbound ``X-Request-ID`` value and fall back to a UUID4.
+    r"""Validate an inbound ``X-Request-ID`` against the allow-list, else mint a UUID4.
 
-    Strips surrounding whitespace and rejects values that are empty or
-    longer than :data:`_MAX_TRACE_ID_LENGTH`.  We don't try to enforce a
-    specific format (UUID, ULID, etc.) because callers in different
-    environments use different conventions.
+    BUG-APP-008 / BUG-OBS-001: the value is interpolated into log records as
+    plain text, so an attacker who can put ``\r\n`` (or any control
+    character) in this header could split log lines and forge follow-up
+    records.  We therefore require the value to match
+    ``^[A-Za-z0-9_-]{1,64}$`` exactly — not strip-then-accept, because a
+    leading or trailing whitespace character should itself be evidence of
+    tampering.  Anything that fails the check is silently replaced with a
+    fresh UUID4 hex; we don't 400 the request because correlation IDs are
+    advisory and an upstream proxy that fat-fingers the header should not
+    cause a user-visible failure.
     """
-    if raw is None:
+    if raw is None or not _VALID_TRACE_ID.fullmatch(raw):
         return uuid.uuid4().hex
-    candidate = raw.strip()
-    if not candidate or len(candidate) > _MAX_TRACE_ID_LENGTH:
-        return uuid.uuid4().hex
-    return candidate
+    return raw
 
 
 class TraceIdLogFilter(logging.Filter):
