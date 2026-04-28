@@ -22,14 +22,19 @@ so historical context survives the deletion of its creator:
   * ``practice.submitted_by_user_id`` -- catalog practices stay in
     the library; the attribution becomes anonymous.
 
-Existing user FKs were defined without ``ondelete``, so this migration
-drops and re-creates each one.  ``op.batch_alter_table`` keeps the DDL
-portable across Postgres (production) and SQLite (test).
+Drops and re-creates each user FK with the Postgres default name
+(``<table>_<column>_fkey``) so the constraint name on disk matches
+what Alembic's autogenerate produces from the model metadata --
+otherwise ``alembic check`` would diff every FK as a "remove + add"
+pair and the migration-drift CI would fail.
+
+Tests run against SQLite via ``metadata.create_all`` and do not
+execute this migration; production / CI use Postgres so the
+drop-then-create pattern is portable for the targets that matter.
 """
 
 from typing import Sequence, Union
 
-import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -57,35 +62,29 @@ _USER_FK_TABLES: tuple[tuple[str, str, str], ...] = (
 )
 
 
-def _fk_constraint_name(table: str, column: str) -> str:
-    """Naming pattern Alembic + SQLAlchemy default to for legacy FKs."""
-    return f"fk_{table}_{column}_user"
+def _fk_name(table: str, column: str) -> str:
+    """Postgres' default name for an auto-named FK on ``<table>.<column>``."""
+    return f"{table}_{column}_fkey"
 
 
 def upgrade() -> None:
-    """Drop and re-create each user FK with the appropriate ondelete clause."""
+    """Replace each user FK with one that carries the appropriate ondelete."""
     for table, column, on_delete in _USER_FK_TABLES:
-        with op.batch_alter_table(table) as batch:
-            # The original FK had no explicit name, so we drop by inspecting
-            # the table; ``batch_alter_table`` rebuilds the table on SQLite
-            # which clears any anonymous constraints, and on Postgres uses
-            # naming conventions to find the existing FK.
-            batch.create_foreign_key(
-                _fk_constraint_name(table, column),
-                "user",
-                [column],
-                ["id"],
-                ondelete=on_delete,
-            )
+        name = _fk_name(table, column)
+        op.drop_constraint(name, table, type_="foreignkey")
+        op.create_foreign_key(
+            name,
+            table,
+            "user",
+            [column],
+            ["id"],
+            ondelete=on_delete,
+        )
 
 
 def downgrade() -> None:
-    """Drop the named ondelete FKs (does not restore the unnamed legacy FK)."""
+    """Restore each user FK without an ondelete clause."""
     for table, column, _ in reversed(_USER_FK_TABLES):
-        with op.batch_alter_table(table) as batch:
-            batch.drop_constraint(_fk_constraint_name(table, column), type_="foreignkey")
-
-
-# Imported only so SQLAlchemy types are available for any future reflection
-# tests that need to assert the constraint shape; otherwise unused.
-_ = sa
+        name = _fk_name(table, column)
+        op.drop_constraint(name, table, type_="foreignkey")
+        op.create_foreign_key(name, table, "user", [column], ["id"])
