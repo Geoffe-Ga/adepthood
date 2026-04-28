@@ -166,7 +166,15 @@ async def add_balance(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> BalanceAddResponse:
     """Add credits to the calling admin's offering balance."""
-    assert admin.id is not None  # noqa: S101 — persisted row always has an id
+    # ``require_admin`` only returns persisted rows, so ``admin.id`` is
+    # guaranteed to be set in practice.  An ``assert`` would be enough,
+    # but CLAUDE.md forbids ``# noqa: S101`` in production code -- this
+    # narrows the type for mypy AND surfaces a clear runtime error if
+    # the invariant ever breaks (e.g. a future test fixture passing a
+    # detached User instance).
+    if admin.id is None:
+        msg = "require_admin returned an unpersisted user row"
+        raise RuntimeError(msg)
     new_balance = await wallet_service.add_balance(
         session, admin.id, payload.amount, actor_user_id=admin.id
     )
