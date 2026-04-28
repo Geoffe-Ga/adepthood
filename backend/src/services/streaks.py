@@ -36,7 +36,7 @@ __all__ = [
 ]
 
 
-def _to_user_date(ts: object, user_timezone: str) -> date:
+def _to_user_date(ts: datetime | str, user_timezone: str) -> date:
     """Bucket a stored timestamp into the user's local calendar day.
 
     Accepts either a :class:`datetime` (the production path through
@@ -47,6 +47,12 @@ def _to_user_date(ts: object, user_timezone: str) -> date:
     place where naive coercion is acceptable because the source column
     is declared timezone-aware and SQLite is just lying about its
     storage.
+
+    Narrowing the type to ``datetime | str`` (rather than ``object``)
+    lets mypy reject bad call sites at the boundary; an unexpected
+    ``None`` from an ORM-column edge case used to fall through to
+    ``str()`` and raise an obscure ``ValueError`` from
+    ``fromisoformat``.
     """
     if isinstance(ts, datetime):
         moment = ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
@@ -54,13 +60,20 @@ def _to_user_date(ts: object, user_timezone: str) -> date:
         # ISO-8601 string from SQLite; the column is timezone-aware so
         # the format is always "YYYY-MM-DD HH:MM:SS[.fff][+HH:MM]".
         # ``fromisoformat`` accepts that since Python 3.11.
-        parsed = datetime.fromisoformat(str(ts))
+        parsed = datetime.fromisoformat(ts)
         moment = parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
     return to_user_date(user_timezone, moment)
 
 
 def _count_consecutive_days(sorted_days: list[date], day_ok: dict[date, bool]) -> int:
-    """Count consecutive days from most recent where ``day_ok`` is True."""
+    """Count consecutive days from most recent where ``day_ok`` is True.
+
+    ``sorted_days`` MUST be sorted descending (most recent first); the
+    consecutive-day check ``(sorted_days[i - 1] - day).days == 1`` only
+    holds for that ordering, and a future caller passing ascending
+    dates would silently return the wrong streak length without this
+    invariant being documented.
+    """
     streak = 0
     for i, day in enumerate(sorted_days):
         if not day_ok[day]:

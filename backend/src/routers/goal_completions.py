@@ -108,14 +108,25 @@ async def create_goal_completion(
     # the same calendar day boundary.
     user_tz = await get_user_timezone(session, current_user)
 
-    old_streak = await compute_consecutive_streak(session, goal.id, current_user, user_tz)
-
+    # Run the cheap idempotency check (one ``SELECT id ... LIMIT 1``)
+    # before the expensive streak query (full scan + bucketing) so a
+    # duplicate request fails fast on the hot retry / optimistic-UI
+    # path; the streak query then only runs in the branch that actually
+    # needs it for the response payload.
     if await _already_logged_today(session, payload.goal_id, current_user, user_tz):
+        old_streak = await compute_consecutive_streak(
+            session,
+            goal.id,
+            current_user,
+            user_tz,
+        )
         return CheckInResult(
             streak=old_streak,
             milestones=[],
             reason_code="already_logged_today",
         )
+
+    old_streak = await compute_consecutive_streak(session, goal.id, current_user, user_tz)
 
     completed_units = goal.target if payload.did_complete else 0
     session.add(
