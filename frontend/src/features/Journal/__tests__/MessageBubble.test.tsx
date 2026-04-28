@@ -143,4 +143,14 @@ describe('MessageBubble', () => {
     const root = tree.root;
     expect(root.findAllByProps({ testID: 'message-retry' })).toHaveLength(0);
   });
+
+  it('accepts a string id (BUG-FE-JOURNAL-003: UUID-keyed optimistic messages)', () => {
+    // Type-level guard: ChatMessage.id widens JournalMessage.id to allow
+    // the UUID-prefixed local ids that prevent retry collisions.
+    const msg = makeMessage({ id: 'user-9b6f4a07-3b77-4f0a-8c8b-1e9a8d8e0f12' });
+    const tree = renderer.create(<MessageBubble message={msg} />);
+    const root = tree.root;
+    const texts = root.findAllByType('Text') as TextInstance[];
+    expect(texts.some((t) => t.props.children === 'Hello world')).toBe(true);
+  });
 });

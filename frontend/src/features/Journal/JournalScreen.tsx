@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { v4 as uuidv4 } from 'uuid';
 
 import {
   botmason as botmasonApi,
@@ -13,6 +14,7 @@ import {
   StreamingUnsupportedError,
 } from '../../api';
 import { mapDetailToMessage } from '../../api/errorMessages';
+import { useOptimisticMutation } from '../../hooks/useOptimisticMutation';
 import { useAppRoute } from '../../navigation/hooks';
 
 import ChatInput from './ChatInput';
@@ -142,23 +144,27 @@ const JournalBanners = (props: BannersProps): React.JSX.Element => (
 
 function replaceMessageById(
   prev: ChatMessage[],
-  optimisticId: number,
+  optimisticId: number | string,
   created: ChatMessage,
 ): ChatMessage[] {
   return prev.map((m) => (m.id === optimisticId ? created : m));
 }
 
-function removeMessageById(prev: ChatMessage[], optimisticId: number): ChatMessage[] {
+function removeMessageById(prev: ChatMessage[], optimisticId: number | string): ChatMessage[] {
   return prev.filter((m) => m.id !== optimisticId);
 }
 
-function appendStreamingChunk(prev: ChatMessage[], botId: number, chunk: string): ChatMessage[] {
+function appendStreamingChunk(
+  prev: ChatMessage[],
+  botId: number | string,
+  chunk: string,
+): ChatMessage[] {
   return prev.map((m) => (m.id === botId ? { ...m, message: m.message + chunk } : m));
 }
 
 function markMessageErrored(
   prev: ChatMessage[],
-  userId: number,
+  userId: number | string,
   retryText: string,
   retryTag: JournalTag,
   detail: string,
@@ -170,7 +176,7 @@ function markMessageErrored(
   );
 }
 
-function clearMessageError(prev: ChatMessage[], userId: number): ChatMessage[] {
+function clearMessageError(prev: ChatMessage[], userId: number | string): ChatMessage[] {
   return prev.map((m) => {
     if (m.id !== userId) return m;
     // Strip the ephemeral error metadata but keep every wire field intact —
@@ -191,11 +197,11 @@ function useMessageList() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasMore, setHasMore] = useState(false);
 
-  const replaceOptimistic = useCallback((optimisticId: number, created: ChatMessage) => {
+  const replaceOptimistic = useCallback((optimisticId: number | string, created: ChatMessage) => {
     setMessages((prev) => replaceMessageById(prev, optimisticId, created));
   }, []);
 
-  const removeOptimistic = useCallback((optimisticId: number) => {
+  const removeOptimistic = useCallback((optimisticId: number | string) => {
     setMessages((prev) => removeMessageById(prev, optimisticId));
   }, []);
 
@@ -203,18 +209,18 @@ function useMessageList() {
     setMessages((prev) => [msg, ...prev]);
   }, []);
 
-  const appendChunk = useCallback((botId: number, chunk: string) => {
+  const appendChunk = useCallback((botId: number | string, chunk: string) => {
     setMessages((prev) => appendStreamingChunk(prev, botId, chunk));
   }, []);
 
   const markErrored = useCallback(
-    (userId: number, retryText: string, retryTag: JournalTag, detail: string) => {
+    (userId: number | string, retryText: string, retryTag: JournalTag, detail: string) => {
       setMessages((prev) => markMessageErrored(prev, userId, retryText, retryTag, detail));
     },
     [],
   );
 
-  const clearError = useCallback((userId: number) => {
+  const clearError = useCallback((userId: number | string) => {
     setMessages((prev) => clearMessageError(prev, userId));
   }, []);
 
@@ -317,40 +323,80 @@ function useJournalSideData() {
   };
 }
 
-// --- Hook: send freeform message ---
+// --- Hook: send freeform message (migrated to useOptimisticMutation) ---
+
+interface FreeformSendInput {
+  text: string;
+  tag: JournalTag;
+  optimisticId: number | string;
+}
 
 function useFreeformSend(
   practiceSessionId: number | null,
   userPracticeId: number | null,
-  replaceOptimistic: (_id: number, _msg: ChatMessage) => void,
-  removeOptimistic: (_id: number) => void,
+  replaceOptimistic: (_id: number | string, _msg: ChatMessage) => void,
+  removeOptimistic: (_id: number | string) => void,
 ) {
+  // CONTRACT NOTE: `useOptimisticMutation`'s docblock says `apply` is
+  // the only path that mutates the store before the network call. We
+  // intentionally violate that here: the optimistic bubble is
+  // prepended at the call site (`useJournalSend.handleSend` →
+  // `prependMessage(buildOptimisticMessage(...))`) so the bot-send
+  // path can hand the SAME bubble to either `sendWithBot` or this
+  // freeform fallback without double-prepending. `apply` is therefore
+  // a no-op; `rollback`'s `removeOptimistic` operates on state that
+  // was mutated outside this hook's lifecycle. If `useFreeformSend` is
+  // ever called from a context other than `handleSend`, that caller
+  // must also pre-prepend the bubble.
+  const mutation = useOptimisticMutation<FreeformSendInput, void>({
+    apply: () => {
+      /* no-op: bubble is prepended by handleSend; see CONTRACT NOTE above */
+    },
+    commit: async ({ text, tag, optimisticId }) => {
+      const created = await journalApi.create({
+        message: text,
+        tag,
+        practice_session_id: practiceSessionId,
+        user_practice_id: userPracticeId,
+      });
+      // Reconcile the optimistic bubble with the server-issued id on
+      // success. We do this here (inside `commit`) because the result
+      // is the message itself — calling replaceOptimistic from the
+      // commit's resolved value keeps the success path one place.
+      replaceOptimistic(optimisticId, created);
+    },
+    rollback: ({ optimisticId }, err) => {
+      // Drop the un-persistable bubble from the list. Logging is left
+      // to the caller; the hook re-throws the original error so the
+      // bot-error path can decide whether to show a retry toast.
+      console.error('Failed to send message:', err);
+      removeOptimistic(optimisticId);
+    },
+  });
+
   return useCallback(
-    async (text: string, tag: JournalTag, optimisticId: number) => {
+    async (text: string, tag: JournalTag, optimisticId: number | string): Promise<void> => {
       try {
-        const created = await journalApi.create({
-          message: text,
-          tag,
-          practice_session_id: practiceSessionId,
-          user_practice_id: userPracticeId,
-        });
-        replaceOptimistic(optimisticId, created);
-      } catch (err) {
-        console.error('Failed to send message:', err);
-        removeOptimistic(optimisticId);
+        await mutation.mutate({ text, tag, optimisticId });
+      } catch {
+        // Already rolled back; swallow so bot-send fallback callers
+        // don't see a spurious second rejection.
       }
     },
-    [practiceSessionId, userPracticeId, replaceOptimistic, removeOptimistic],
+    [mutation],
   );
 }
 
 // --- Hook: send with bot ---
 
 function createBotPlaceholder(): ChatMessage {
-  // Offset by 1ms so the bot and user placeholders never collide on fast
-  // hardware where ``Date.now()`` could return the same value back-to-back.
+  // BUG-FE-JOURNAL-003: ``Date.now()`` returns a `number` that collides
+  // when two placeholders allocate within the same millisecond — a real
+  // case when a user double-taps Retry. UUIDs are collision-free across
+  // the lifetime of the screen and prevent FlatList "two children with
+  // the same key" warnings even under rapid retry traffic.
   return {
-    id: -(Date.now() + 1),
+    id: `bot-${uuidv4()}`,
     message: '',
     sender: 'bot',
     timestamp: new Date().toISOString(),
@@ -373,17 +419,17 @@ function buildFinalBotMessage(placeholder: ChatMessage, result: ChatResponse): C
 
 type ChatMessageListActions = {
   prependMessage: (_msg: ChatMessage) => void;
-  replaceOptimistic: (_id: number, _msg: ChatMessage) => void;
-  removeOptimistic: (_id: number) => void;
-  appendChunk: (_botId: number, _chunk: string) => void;
-  markErrored: (_userId: number, _text: string, _tag: JournalTag, _detail: string) => void;
+  replaceOptimistic: (_id: number | string, _msg: ChatMessage) => void;
+  removeOptimistic: (_id: number | string) => void;
+  appendChunk: (_botId: number | string, _chunk: string) => void;
+  markErrored: (_userId: number | string, _text: string, _tag: JournalTag, _detail: string) => void;
 };
 
 type BotSendDeps = {
   actions: ChatMessageListActions;
   setOfferingBalance: (_b: number) => void;
   setRemainingMessages: (_n: number) => void;
-  sendFreeform: (_text: string, _tag: JournalTag, _id: number) => Promise<void>;
+  sendFreeform: (_text: string, _tag: JournalTag, _id: number | string) => Promise<void>;
 };
 
 // Derive a stable error detail string from any thrown value so the retry UI
@@ -400,8 +446,8 @@ function classifyError(err: unknown): string {
 async function sendWithNonStreamingFallback(
   text: string,
   tag: JournalTag,
-  optimisticUserId: number,
-  botPlaceholderId: number,
+  optimisticUserId: number | string,
+  botPlaceholderId: number | string,
   deps: BotSendDeps,
 ): Promise<void> {
   // Used when the runtime fetch cannot expose a streaming body. We still
@@ -431,7 +477,7 @@ type StreamOutcome = { completed: boolean; streamError: string | null };
 
 async function runChatStream(
   text: string,
-  botPlaceholderId: number,
+  botPlaceholderId: number | string,
   onFirstChunk: () => void,
   deps: BotSendDeps,
 ): Promise<StreamOutcome> {
@@ -477,8 +523,8 @@ async function handleStreamError(
   err: unknown,
   text: string,
   tag: JournalTag,
-  optimisticUserId: number,
-  botPlaceholderId: number,
+  optimisticUserId: number | string,
+  botPlaceholderId: number | string,
   deps: BotSendDeps,
 ): Promise<void> {
   deps.actions.removeOptimistic(botPlaceholderId);
@@ -497,7 +543,37 @@ async function handleStreamError(
     await deps.sendFreeform(text, tag, optimisticUserId);
     return;
   }
+  // BUG-FE-JOURNAL-002: when the bot stream throws synchronously (auth,
+  // DNS, 500) before any chunk arrives the chat service never persists
+  // the user message server-side — so on next reload the user's words
+  // simply vanish. We mark the bubble errored for the in-session retry
+  // UX AND persist the message via the journal endpoint so a reload
+  // recovers it. The persistence is fire-and-forget against a separate
+  // journal row; if the user retries inline (via `_retryText`) and the
+  // bot stream succeeds, the chat service writes its own user_entry —
+  // a single duplicate is the lesser evil compared to silently losing
+  // the user's text. (Server-side dedupe via idempotency key is tracked
+  // in BUG-BM-012's follow-up.)
   deps.actions.markErrored(optimisticUserId, text, tag, classifyError(err));
+  void persistUserMessageBackground(text, tag);
+}
+
+/**
+ * Fire-and-forget write to the freeform journal endpoint so a stream
+ * failure doesn't lose the user's words. We deliberately do not
+ * reconcile the local errored bubble — the bubble stays in retry state
+ * until either the user taps retry (which re-runs the bot stream) or
+ * navigates away. On next mount, the server-persisted row appears and
+ * the optimistic bubble is dropped by state reset.
+ */
+function persistUserMessageBackground(text: string, tag: JournalTag): Promise<void> {
+  return journalApi
+    .create({ message: text, tag, practice_session_id: null, user_practice_id: null })
+    .then(() => undefined)
+    .catch((err: unknown) => {
+      // We tried; the user sees a retry button in-session anyway.
+      console.error('Failed to persist user message after stream error:', err);
+    });
 }
 
 function useBotSend(deps: BotSendDeps) {
@@ -508,7 +584,7 @@ function useBotSend(deps: BotSendDeps) {
   const [awaitingBot, setAwaitingBot] = useState(false);
 
   const sendWithBot = useCallback(
-    async (text: string, tag: JournalTag, optimisticUserId: number) => {
+    async (text: string, tag: JournalTag, optimisticUserId: number | string) => {
       const botPlaceholder = createBotPlaceholder();
       deps.actions.prependMessage(botPlaceholder);
       setAwaitingBot(true);
@@ -558,8 +634,11 @@ function buildOptimisticMessage(
   practiceSessionId: number | null,
   userPracticeId: number | null,
 ): ChatMessage {
+  // BUG-FE-JOURNAL-003: UUID prevents id collisions between the user's
+  // optimistic bubble and any concurrent bot placeholder, and between
+  // sibling retries that fire within the same millisecond.
   return {
-    id: -Date.now(),
+    id: `user-${uuidv4()}`,
     message: text,
     sender: 'user',
     timestamp: new Date().toISOString(),
@@ -803,8 +882,8 @@ function useJournalSend(
   offeringBalance: number | null,
   remainingMessages: number | null,
   prependMessage: (_msg: ChatMessage) => void,
-  sendWithBot: (_text: string, _tag: JournalTag, _id: number) => Promise<void>,
-  sendFreeform: (_text: string, _tag: JournalTag, _id: number) => Promise<void>,
+  sendWithBot: (_text: string, _tag: JournalTag, _id: number | string) => Promise<void>,
+  sendFreeform: (_text: string, _tag: JournalTag, _id: number | string) => Promise<void>,
 ) {
   const [sending, setSending] = useState(false);
 
@@ -836,8 +915,8 @@ function useJournalSend(
 // --- Hook: compose all journal hooks ---
 
 function useRetryHandler(
-  clearError: (_id: number) => void,
-  sendWithBot: (_t: string, _tag: JournalTag, _id: number) => Promise<void>,
+  clearError: (_id: number | string) => void,
+  sendWithBot: (_t: string, _tag: JournalTag, _id: number | string) => Promise<void>,
 ) {
   // Retry resends the original text/tag without creating a new user message —
   // the existing errored message stays in place, its error flag is cleared,
@@ -857,20 +936,39 @@ function useRetryHandler(
 function useBotSendWithActions(
   msgList: ReturnType<typeof useMessageList>,
   side: ReturnType<typeof useJournalSideData>,
-  sendFreeform: (_t: string, _tag: JournalTag, _id: number) => Promise<void>,
+  sendFreeform: (_t: string, _tag: JournalTag, _id: number | string) => Promise<void>,
 ) {
-  return useBotSend({
-    actions: {
-      prependMessage: msgList.prependMessage,
-      replaceOptimistic: msgList.replaceOptimistic,
-      removeOptimistic: msgList.removeOptimistic,
-      appendChunk: msgList.appendChunk,
-      markErrored: msgList.markErrored,
-    },
-    setOfferingBalance: side.setOfferingBalance,
-    setRemainingMessages: side.setRemainingMessages,
-    sendFreeform,
-  });
+  // The individual callbacks coming out of `useMessageList` and
+  // `useJournalSideData` are already stable `useCallback`s, but the
+  // wrapper object literal here would be a new reference every render
+  // — and `useBotSend`'s `sendWithBot` depends on it, so its identity
+  // would change every render too. Memo'ing the deps bag keeps
+  // downstream identities stable.
+  const deps = useMemo(
+    () => ({
+      actions: {
+        prependMessage: msgList.prependMessage,
+        replaceOptimistic: msgList.replaceOptimistic,
+        removeOptimistic: msgList.removeOptimistic,
+        appendChunk: msgList.appendChunk,
+        markErrored: msgList.markErrored,
+      },
+      setOfferingBalance: side.setOfferingBalance,
+      setRemainingMessages: side.setRemainingMessages,
+      sendFreeform,
+    }),
+    [
+      msgList.prependMessage,
+      msgList.replaceOptimistic,
+      msgList.removeOptimistic,
+      msgList.appendChunk,
+      msgList.markErrored,
+      side.setOfferingBalance,
+      side.setRemainingMessages,
+      sendFreeform,
+    ],
+  );
+  return useBotSend(deps);
 }
 
 function useJournalComposer(

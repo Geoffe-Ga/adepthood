@@ -3,7 +3,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { Habit } from '../../features/Habits/Habits.types';
-import { saveHabits, loadHabits, clearHabits } from '../habitStorage';
+import {
+  saveHabits,
+  loadHabits,
+  clearHabits,
+  savePendingCheckIn,
+  loadPendingCheckIns,
+  replacePendingCheckIns,
+  clearPendingCheckIns,
+} from '../habitStorage';
+import { _resetSerializedWriteForTests } from '../serializedWrite';
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
   setItem: jest.fn(() => Promise.resolve()),
@@ -47,6 +56,7 @@ const sampleHabit: Habit = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  _resetSerializedWriteForTests();
 });
 
 describe('habitStorage', () => {
@@ -134,6 +144,90 @@ describe('habitStorage', () => {
     test('removes habits from AsyncStorage', async () => {
       await clearHabits();
       expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith('@adepthood/habits');
+    });
+  });
+
+  describe('savePendingCheckIn (serialized lane — BUG-FE-STORAGE-002)', () => {
+    test('preserves every concurrent appender even when reads interleave with writes', async () => {
+      // Simulate the AsyncStorage read/write semantics over a single
+      // backing string. Without the serialized write lane, two
+      // simultaneous appenders both call `getItem` first (each seeing
+      // the same stale value) and the slower `setItem` clobbers the
+      // faster one — silently losing one check-in.
+      let storedRaw: string | null = null;
+      const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+      mockAsyncStorage.getItem.mockImplementation(async (_key: string) => {
+        await sleep(5);
+        return storedRaw;
+      });
+      mockAsyncStorage.setItem.mockImplementation(async (_key: string, value: string) => {
+        await sleep(5);
+        storedRaw = value;
+      });
+
+      const checkIns = [
+        { goal_id: 1, did_complete: true, timestamp: '2025-01-01T00:00:00Z' },
+        { goal_id: 2, did_complete: true, timestamp: '2025-01-02T00:00:00Z' },
+        { goal_id: 3, did_complete: true, timestamp: '2025-01-03T00:00:00Z' },
+      ];
+      await Promise.all(checkIns.map((c) => savePendingCheckIn(c)));
+
+      const queue = await loadPendingCheckIns();
+      expect(queue).toHaveLength(3);
+      expect(queue.map((c) => c.goal_id).sort()).toEqual([1, 2, 3]);
+    });
+
+    test('replacePendingCheckIns also flows through the lane and overwrites the queue', async () => {
+      let storedRaw: string | null = null;
+      mockAsyncStorage.getItem.mockImplementation(async (_key: string) => storedRaw);
+      mockAsyncStorage.setItem.mockImplementation(async (_key: string, value: string) => {
+        storedRaw = value;
+      });
+
+      await savePendingCheckIn({ goal_id: 1, did_complete: true, timestamp: 't1' });
+      await savePendingCheckIn({ goal_id: 2, did_complete: true, timestamp: 't2' });
+      await replacePendingCheckIns([{ goal_id: 99, did_complete: false, timestamp: 't9' }]);
+
+      const queue = await loadPendingCheckIns();
+      expect(queue).toEqual([{ goal_id: 99, did_complete: false, timestamp: 't9' }]);
+    });
+
+    test('clearPendingCheckIns is linearised against an inflight save (review feedback)', async () => {
+      // Models the resurrection race the reviewer flagged: a save
+      // lambda already queued in the lane reads its existing items,
+      // and only later finishes its setItem. If clearPendingCheckIns
+      // ran outside the lane it could squeeze in BEFORE that setItem
+      // and the save's writeback would re-create the data the clear
+      // was supposed to drop.
+      let storedRaw: string | null = null;
+      const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+      mockAsyncStorage.getItem.mockImplementation(async (_key: string) => {
+        await sleep(5);
+        return storedRaw;
+      });
+      mockAsyncStorage.setItem.mockImplementation(async (_key: string, value: string) => {
+        await sleep(5);
+        storedRaw = value;
+      });
+      mockAsyncStorage.removeItem.mockImplementation(async (_key: string) => {
+        await sleep(5);
+        storedRaw = null;
+      });
+
+      // Issue a save and a clear back-to-back. With the lane, the save
+      // commits, then the clear wipes the result, so the queue is empty.
+      // Without the lane, the clear could land between the save's read
+      // and write, and the save's writeback would resurrect the item.
+      const savePromise = savePendingCheckIn({
+        goal_id: 1,
+        did_complete: true,
+        timestamp: 't1',
+      });
+      const clearPromise = clearPendingCheckIns();
+      await Promise.all([savePromise, clearPromise]);
+
+      const queue = await loadPendingCheckIns();
+      expect(queue).toEqual([]);
     });
   });
 });

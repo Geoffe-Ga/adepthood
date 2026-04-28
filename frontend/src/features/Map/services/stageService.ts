@@ -57,6 +57,18 @@ export const deriveCurrentStage = (apiStages: Stage[]): number => {
   return Math.min(Math.max(1, completed + 1), STAGE_COUNT);
 };
 
+/**
+ * Snapshot captured by `prepareAdvanceStage` and consumed by
+ * `applyAdvanceStage` / `rollbackAdvanceStage`. Holding the previous
+ * `currentStage` here (rather than re-reading the store inside
+ * `rollback`) is what keeps BUG-FE-MAP-005 closed under racing
+ * advances: each mutate has its own snapshot.
+ */
+export interface AdvanceStageContext {
+  prev: number;
+  next: number;
+}
+
 export const stageService = {
   /**
    * Fetch the stage list, map to StageData, and write it into the store. On
@@ -79,6 +91,73 @@ export const stageService = {
       useStageStore.getState().setError(message);
       useStageStore.getState().setLoading(false);
     }
+  },
+
+  /**
+   * Build the context for an optimistic stage advance. Captures the
+   * current stage from the store before any mutation so the rollback
+   * closure has a snapshot it can trust regardless of concurrent
+   * loads. Returns `null` when the proposed `next` equals the current
+   * stage — there is nothing to advance.
+   */
+  prepareAdvanceStage: (next: number): AdvanceStageContext | null => {
+    const prev = useStageStore.getState().currentStage;
+    if (prev === next) return null;
+    return { prev, next };
+  },
+
+  /** Synchronous step: bump `currentStage` to the optimistic value. */
+  applyAdvanceStage: (ctx: AdvanceStageContext): void => {
+    useStageStore.getState().setCurrentStage(ctx.next);
+  },
+
+  /**
+   * Network step: refresh the stage list from the server so
+   * `currentStage` and `stages` end up consistent. We re-derive
+   * `currentStage` from the server's response rather than trusting our
+   * optimistic value — the chain-validation invariant lives on the
+   * backend, and the local hint may have advanced past what the server
+   * permits (e.g., a missing completion).
+   *
+   * Implemented as a direct API call rather than `loadStages` so the
+   * error propagates: `loadStages` deliberately swallows failures into
+   * `useStageStore.error` (so background refreshes don't crash the
+   * UI), but the optimistic-mutation rollback needs to know the
+   * commit failed. We mirror loadStages's success-path side effects
+   * here and let the caller's rollback restore the snapshot.
+   *
+   * The optional `token` mirrors `loadStages`'s signature for symmetry;
+   * the API client injects auth via interceptors so neither
+   * `useStageAdvance` nor `loadStages`'s call sites currently pass one.
+   * Keeping the parameter on this internal-only entry point lets a
+   * future caller thread an explicit token without changing the shape.
+   */
+  commitAdvanceStage: async (_ctx: AdvanceStageContext, token?: string): Promise<void> => {
+    const store = useStageStore.getState();
+    store.setLoading(true);
+    store.setError(null);
+    try {
+      const apiStages = await stagesApi.list(token);
+      const sorted = [...apiStages].sort((a, b) => b.stage_number - a.stage_number);
+      useStageStore.getState().setStages(sorted.map(toStageData));
+      useStageStore.getState().setCurrentStage(deriveCurrentStage(apiStages));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load stages';
+      useStageStore.getState().setError(message);
+      throw err;
+    } finally {
+      useStageStore.getState().setLoading(false);
+    }
+  },
+
+  /**
+   * Failure step: restore the previous `currentStage`. Errors are
+   * surfaced through `useStageStore.error` by `loadStages` itself; here
+   * we just reverse the optimistic write so the map UI doesn't show a
+   * stage the user hasn't actually unlocked.
+   */
+  rollbackAdvanceStage: (ctx: AdvanceStageContext): void => {
+    useStageStore.getState().setCurrentStage(ctx.prev);
   },
 };
 
