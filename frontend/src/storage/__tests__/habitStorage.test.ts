@@ -10,6 +10,7 @@ import {
   savePendingCheckIn,
   loadPendingCheckIns,
   replacePendingCheckIns,
+  clearPendingCheckIns,
 } from '../habitStorage';
 import { _resetSerializedWriteForTests } from '../serializedWrite';
 
@@ -189,6 +190,44 @@ describe('habitStorage', () => {
 
       const queue = await loadPendingCheckIns();
       expect(queue).toEqual([{ goal_id: 99, did_complete: false, timestamp: 't9' }]);
+    });
+
+    test('clearPendingCheckIns is linearised against an inflight save (review feedback)', async () => {
+      // Models the resurrection race the reviewer flagged: a save
+      // lambda already queued in the lane reads its existing items,
+      // and only later finishes its setItem. If clearPendingCheckIns
+      // ran outside the lane it could squeeze in BEFORE that setItem
+      // and the save's writeback would re-create the data the clear
+      // was supposed to drop.
+      let storedRaw: string | null = null;
+      const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+      mockAsyncStorage.getItem.mockImplementation(async (_key: string) => {
+        await sleep(5);
+        return storedRaw;
+      });
+      mockAsyncStorage.setItem.mockImplementation(async (_key: string, value: string) => {
+        await sleep(5);
+        storedRaw = value;
+      });
+      mockAsyncStorage.removeItem.mockImplementation(async (_key: string) => {
+        await sleep(5);
+        storedRaw = null;
+      });
+
+      // Issue a save and a clear back-to-back. With the lane, the save
+      // commits, then the clear wipes the result, so the queue is empty.
+      // Without the lane, the clear could land between the save's read
+      // and write, and the save's writeback would resurrect the item.
+      const savePromise = savePendingCheckIn({
+        goal_id: 1,
+        did_complete: true,
+        timestamp: 't1',
+      });
+      const clearPromise = clearPendingCheckIns();
+      await Promise.all([savePromise, clearPromise]);
+
+      const queue = await loadPendingCheckIns();
+      expect(queue).toEqual([]);
     });
   });
 });

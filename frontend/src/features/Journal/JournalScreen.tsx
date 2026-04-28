@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { v4 as uuidv4 } from 'uuid';
@@ -337,14 +337,20 @@ function useFreeformSend(
   replaceOptimistic: (_id: number | string, _msg: ChatMessage) => void,
   removeOptimistic: (_id: number | string) => void,
 ) {
-  // The optimistic apply (prepending the bubble) happens at the call
-  // site in `useJournalSend.handleSend`, so this hook's `apply` is a
-  // no-op — it's the commit + rollback that we want centralized. Note
-  // we intentionally re-throw on rollback so the bot-send path can
-  // detect freeform-failure and surface a single retryable toast.
+  // CONTRACT NOTE: `useOptimisticMutation`'s docblock says `apply` is
+  // the only path that mutates the store before the network call. We
+  // intentionally violate that here: the optimistic bubble is
+  // prepended at the call site (`useJournalSend.handleSend` →
+  // `prependMessage(buildOptimisticMessage(...))`) so the bot-send
+  // path can hand the SAME bubble to either `sendWithBot` or this
+  // freeform fallback without double-prepending. `apply` is therefore
+  // a no-op; `rollback`'s `removeOptimistic` operates on state that
+  // was mutated outside this hook's lifecycle. If `useFreeformSend` is
+  // ever called from a context other than `handleSend`, that caller
+  // must also pre-prepend the bubble.
   const mutation = useOptimisticMutation<FreeformSendInput, void>({
     apply: () => {
-      /* no-op: bubble is prepended by the caller */
+      /* no-op: bubble is prepended by handleSend; see CONTRACT NOTE above */
     },
     commit: async ({ text, tag, optimisticId }) => {
       const created = await journalApi.create({
@@ -932,18 +938,37 @@ function useBotSendWithActions(
   side: ReturnType<typeof useJournalSideData>,
   sendFreeform: (_t: string, _tag: JournalTag, _id: number | string) => Promise<void>,
 ) {
-  return useBotSend({
-    actions: {
-      prependMessage: msgList.prependMessage,
-      replaceOptimistic: msgList.replaceOptimistic,
-      removeOptimistic: msgList.removeOptimistic,
-      appendChunk: msgList.appendChunk,
-      markErrored: msgList.markErrored,
-    },
-    setOfferingBalance: side.setOfferingBalance,
-    setRemainingMessages: side.setRemainingMessages,
-    sendFreeform,
-  });
+  // The individual callbacks coming out of `useMessageList` and
+  // `useJournalSideData` are already stable `useCallback`s, but the
+  // wrapper object literal here would be a new reference every render
+  // — and `useBotSend`'s `sendWithBot` depends on it, so its identity
+  // would change every render too. Memo'ing the deps bag keeps
+  // downstream identities stable.
+  const deps = useMemo(
+    () => ({
+      actions: {
+        prependMessage: msgList.prependMessage,
+        replaceOptimistic: msgList.replaceOptimistic,
+        removeOptimistic: msgList.removeOptimistic,
+        appendChunk: msgList.appendChunk,
+        markErrored: msgList.markErrored,
+      },
+      setOfferingBalance: side.setOfferingBalance,
+      setRemainingMessages: side.setRemainingMessages,
+      sendFreeform,
+    }),
+    [
+      msgList.prependMessage,
+      msgList.replaceOptimistic,
+      msgList.removeOptimistic,
+      msgList.appendChunk,
+      msgList.markErrored,
+      side.setOfferingBalance,
+      side.setRemainingMessages,
+      sendFreeform,
+    ],
+  );
+  return useBotSend(deps);
 }
 
 function useJournalComposer(

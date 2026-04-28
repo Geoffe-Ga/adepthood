@@ -125,6 +125,12 @@ export const stageService = {
    * UI), but the optimistic-mutation rollback needs to know the
    * commit failed. We mirror loadStages's success-path side effects
    * here and let the caller's rollback restore the snapshot.
+   *
+   * The optional `token` mirrors `loadStages`'s signature for symmetry;
+   * the API client injects auth via interceptors so neither
+   * `useStageAdvance` nor `loadStages`'s call sites currently pass one.
+   * Keeping the parameter on this internal-only entry point lets a
+   * future caller thread an explicit token without changing the shape.
    */
   commitAdvanceStage: async (_ctx: AdvanceStageContext, token?: string): Promise<void> => {
     const store = useStageStore.getState();

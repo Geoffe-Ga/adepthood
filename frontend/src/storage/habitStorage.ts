@@ -114,6 +114,14 @@ export async function loadPendingCheckIns(): Promise<PendingCheckIn[]> {
   }
 }
 
+/**
+ * Drop the pending-check-in queue. Routed through the same serialized
+ * lane as `savePendingCheckIn` and `replacePendingCheckIns` so a clear
+ * cannot interleave with an inflight save: a queued save lambda would
+ * otherwise read its existing items, race past a clear that ran
+ * outside the lane, and re-write the items the clear was supposed to
+ * drop — silently resurrecting check-ins.
+ */
 export async function clearPendingCheckIns(): Promise<void> {
-  await AsyncStorage.removeItem(PENDING_CHECKINS_KEY);
+  await serialize(PENDING_CHECKINS_KEY, () => AsyncStorage.removeItem(PENDING_CHECKINS_KEY));
 }
