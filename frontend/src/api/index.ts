@@ -1140,8 +1140,14 @@ export const botmason = {
         // classifier as the non-streaming path so the AuthContext sees
         // a structured reason rather than a vague "session expired"
         // for an anonymous caller hitting /journal/chat/stream.
+        // ``resolveToken(options.token)`` mirrors the non-streaming
+        // path so an implicit (getter-supplied) session token is
+        // counted as ``hadToken`` even when the caller did not pass
+        // ``options.token`` explicitly.
         const detail = await extractErrorDetail(res);
-        onUnauthorizedCallback?.(reasonForUnauthorized(detail, options.token != null));
+        onUnauthorizedCallback?.(
+          reasonForUnauthorized(detail, resolveToken(options.token) !== null),
+        );
         throw new ApiError(res.status, detail);
       }
       return handleErrorResponse(res);

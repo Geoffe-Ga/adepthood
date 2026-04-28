@@ -132,3 +132,25 @@ def install_trace_id_logging() -> None:
     root = logging.getLogger()
     if not any(isinstance(f, TraceIdLogFilter) for f in root.filters):
         root.addFilter(TraceIdLogFilter())
+
+
+# Width that keeps log records small enough to flow through SQLite/
+# Postgres-friendly logging stable.  Paths longer than this are
+# truncated with an ellipsis so a malicious caller cannot inflate log
+# volume by hammering ``/foo/AAAAA…`` URLs.  Shared by the
+# ``RequestLoggingMiddleware`` access-log emit and the unhandled-
+# exception handler in :mod:`errors` so the cap stays in lock-step.
+LOG_PATH_TRUNCATE_CHARS = 256
+
+
+def truncate_log_path(path: str) -> str:
+    """Trim ``path`` to :data:`LOG_PATH_TRUNCATE_CHARS` characters.
+
+    Adds a single-character ellipsis suffix when truncation actually
+    happens, keeping the original length signal visible.  ``path`` is
+    returned unchanged when it already fits within the cap so the
+    common case is a no-op.
+    """
+    if len(path) <= LOG_PATH_TRUNCATE_CHARS:
+        return path
+    return path[: LOG_PATH_TRUNCATE_CHARS - 1] + "…"

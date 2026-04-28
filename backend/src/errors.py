@@ -7,7 +7,7 @@ import logging
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
-from observability import NO_TRACE, TRACE_ID_HEADER, get_trace_id
+from observability import NO_TRACE, TRACE_ID_HEADER, get_trace_id, truncate_log_path
 from sentry import capture_exception
 
 logger = logging.getLogger(__name__)
@@ -24,20 +24,6 @@ REQUEST_ID_KEY = "request_id"
 # HTTP body (BUG-OBS-003 / security).  The full traceback goes to logs and
 # Sentry; the client only sees a stable token they can show the user.
 INTERNAL_ERROR = "internal_error"
-
-# Width that mirrors the truncate cap used by
-# :class:`middleware.logging.RequestLoggingMiddleware`.  Pathologically
-# long URLs cannot inflate the unhandled-exception log either; without
-# this a hostile caller could amplify their footprint in the log
-# aggregator by hammering ``/foo/AAAAA…``.
-_LOG_PATH_TRUNCATE = 256
-
-
-def _truncate_path(path: str) -> str:
-    """Trim ``path`` to :data:`_LOG_PATH_TRUNCATE` chars with an ellipsis suffix."""
-    if len(path) <= _LOG_PATH_TRUNCATE:
-        return path
-    return path[: _LOG_PATH_TRUNCATE - 1] + "…"
 
 
 def not_found(resource: str) -> HTTPException:
@@ -104,7 +90,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     that do not install the middleware.
     """
     request_id = getattr(request.state, "request_id", None) or get_trace_id() or NO_TRACE
-    truncated_path = _truncate_path(request.url.path)
+    truncated_path = truncate_log_path(request.url.path)
     logger.exception(
         "unhandled_exception",
         extra={

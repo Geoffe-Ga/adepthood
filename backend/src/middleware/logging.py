@@ -17,6 +17,8 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
+from observability import truncate_log_path
+
 logger = logging.getLogger("adepthood.access")
 
 # Status threshold above which we log at ``warning``.  Server errors (>=500)
@@ -24,11 +26,6 @@ logger = logging.getLogger("adepthood.access")
 # from inner middleware layers.
 _WARNING_STATUS = 400
 _ERROR_STATUS = 500
-
-# Width that keeps SQLite/Postgres-friendly logging stable — paths longer
-# than this are truncated with an ellipsis so a malicious caller cannot
-# inflate log volume by hammering ``/foo/AAAAA…`` URLs.
-_PATH_TRUNCATE = 256
 
 
 def _level_for_status(status: int) -> int:
@@ -38,13 +35,6 @@ def _level_for_status(status: int) -> int:
     if status >= _WARNING_STATUS:
         return logging.WARNING
     return logging.INFO
-
-
-def _truncate(value: str) -> str:
-    """Trim ``value`` to :data:`_PATH_TRUNCATE` characters with an ellipsis suffix."""
-    if len(value) <= _PATH_TRUNCATE:
-        return value
-    return value[: _PATH_TRUNCATE - 1] + "…"
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -59,7 +49,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         start = time.perf_counter()
         method = request.method
-        path = _truncate(request.url.path)
+        path = truncate_log_path(request.url.path)
         try:
             response = await call_next(request)
         except Exception:

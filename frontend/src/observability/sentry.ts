@@ -33,11 +33,14 @@ export type ReportContexts = Record<string, Record<string, unknown>>;
 /**
  * Forward an unhandled exception to the observability backend.
  *
- * Today logs to ``console.error`` with the supplied contexts; once the
- * Sentry DSN lands the body is a single ``Sentry.captureException`` call.
+ * Today logs to ``console.error`` with the supplied contexts so a
+ * developer running the app via Expo + remote debugger can still see
+ * caught render errors.  Once the ``@sentry/react-native`` SDK is
+ * installed and the DSN env var is provisioned, replace the body with
+ * ``Sentry.captureException(error, { contexts })`` — the function
+ * signature already matches the SDK's public surface, so call sites
+ * do not need to change.
  */
 export function reportException(error: unknown, contexts?: ReportContexts): void {
-  // TODO(ops): replace with ``Sentry.captureException(error, { contexts })``
-  // — see prompts/2026-04-18-bug-remediation/remediation-plan/10-observability-e2e.md
   console.error('[reportException]', error, contexts ?? {});
 }
