@@ -8,6 +8,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from domain.constants import TOTAL_STAGES as MAX_STAGE_NUMBER
+from schemas._base import OwnedResourcePublic
 
 PRACTICE_NAME_MAX_LENGTH = 255
 PRACTICE_DESCRIPTION_MAX_LENGTH = 2_000
@@ -52,8 +53,14 @@ def _session_window_violations(
 # -- Practice ---------------------------------------------------------------
 
 
-class PracticeResponse(BaseModel):
-    """Public representation of a practice."""
+class PracticeResponse(OwnedResourcePublic):
+    """Public representation of a practice.
+
+    ``submitted_by_user_id`` is intentionally excluded (BUG-PRACTICE-001 /
+    BUG-SCHEMA-010): exposing the submitter's user id on a catalog GET
+    leaks who proposed which draft and turns the practices endpoint into
+    a user-id enumeration oracle.
+    """
 
     id: int
     stage_number: int
@@ -61,7 +68,6 @@ class PracticeResponse(BaseModel):
     description: str
     instructions: str
     default_duration_minutes: float
-    submitted_by_user_id: int | None = None
     approved: bool
 
 
@@ -85,11 +91,16 @@ class UserPracticeCreate(BaseModel):
     stage_number: int = Field(ge=1, le=MAX_STAGE_NUMBER)
 
 
-class UserPracticeResponse(BaseModel):
-    """Public representation of a user-practice selection."""
+class UserPracticeResponse(OwnedResourcePublic):
+    """Public representation of a user-practice selection.
+
+    ``user_id`` is intentionally excluded (BUG-T7): the row is only ever
+    returned to its owner -- cross-user fetches raise 403 in the router
+    -- so echoing the surrogate key adds no information and aids
+    enumeration.
+    """
 
     id: int
-    user_id: int
     practice_id: int
     stage_number: int
     start_date: date
@@ -105,11 +116,14 @@ class PracticeSessionSummary(BaseModel):
     reflection: str | None = None
 
 
-class UserPracticeDetail(BaseModel):
-    """User-practice with session history."""
+class UserPracticeDetail(OwnedResourcePublic):
+    """User-practice with session history.
+
+    ``user_id`` is intentionally excluded (BUG-T7); see
+    :class:`UserPracticeResponse`.
+    """
 
     id: int
-    user_id: int
     practice_id: int
     stage_number: int
     start_date: date
@@ -152,11 +166,14 @@ class PracticeSessionCreate(BaseModel):
         return (self.ended_at - self.started_at).total_seconds() / 60
 
 
-class PracticeSessionResponse(BaseModel):
-    """Public representation of a practice session."""
+class PracticeSessionResponse(OwnedResourcePublic):
+    """Public representation of a practice session.
+
+    ``user_id`` is intentionally excluded (BUG-T7); the session is only
+    ever returned to its owner.
+    """
 
     id: int
-    user_id: int
     user_practice_id: int
     duration_minutes: float
     timestamp: datetime

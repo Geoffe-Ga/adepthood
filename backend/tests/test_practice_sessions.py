@@ -117,7 +117,7 @@ async def test_week_count_requires_auth(async_client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_create_session(async_client: AsyncClient, db_session: AsyncSession) -> None:
-    headers, user_id = await _signup(async_client)
+    headers, _user_id = await _signup(async_client)
     up_id = await _create_user_practice(async_client, db_session, headers)
 
     payload = _session_payload(up_id, reflection="felt calm")
@@ -128,7 +128,8 @@ async def test_create_session(async_client: AsyncClient, db_session: AsyncSessio
     assert data["user_practice_id"] == up_id
     assert data["duration_minutes"] == _DEFAULT_DURATION
     assert data["id"] is not None
-    assert data["user_id"] == user_id
+    # BUG-T7: response no longer echoes user_id (caller already knows from JWT).
+    assert "user_id" not in data
 
 
 @pytest.mark.asyncio

@@ -76,7 +76,7 @@ async def test_list_user_practices_requires_auth(async_client: AsyncClient) -> N
 
 @pytest.mark.asyncio
 async def test_select_practice(async_client: AsyncClient, db_session: AsyncSession) -> None:
-    headers, user_id = await _signup(async_client)
+    headers, _user_id = await _signup(async_client)
     practice = await _seed_practice(db_session)
 
     resp = await async_client.post(
@@ -86,7 +86,8 @@ async def test_select_practice(async_client: AsyncClient, db_session: AsyncSessi
     )
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.json()
-    assert data["user_id"] == user_id
+    # BUG-T7: user-practice responses no longer echo user_id.
+    assert "user_id" not in data
     assert data["practice_id"] == practice.id
     assert data["stage_number"] == 1
     assert data["start_date"] is not None

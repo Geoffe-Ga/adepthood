@@ -94,10 +94,27 @@ def _items_to_raw_dicts(items: list[StageContent]) -> list[dict[str, object]]:
 
 
 async def _check_stage_unlocked(session: AsyncSession, user_id: int, stage_number: int) -> None:
-    """Raise 403 if the given stage is locked for the user."""
+    """Raise 403 if the given stage is locked for the user.
+
+    Used by endpoints that take ``stage_number`` directly (1..36 are
+    public knowledge), so the 403 carries no enumeration risk.
+    """
     progress = await get_user_progress(session, user_id)
     if not is_stage_unlocked(stage_number, progress):
         raise forbidden("stage_locked")
+
+
+async def _is_stage_unlocked_for_user(
+    session: AsyncSession, user_id: int, stage_number: int
+) -> bool:
+    """Predicate form of :func:`_check_stage_unlocked`.
+
+    Used on ``content_id``-keyed endpoints (BUG-COURSE-004): callers mask
+    the locked branch as 404 to remove the existence oracle, rather than
+    raising a 403 the attacker could observe directly.
+    """
+    progress = await get_user_progress(session, user_id)
+    return is_stage_unlocked(stage_number, progress)
 
 
 @router.get("/stages/{stage_number}/content", response_model=None)
@@ -158,7 +175,15 @@ async def get_content_item(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ContentItemResponse:
-    """Get a single content item with lock/read status."""
+    """Get a single content item with lock/read status.
+
+    BUG-COURSE-004: collapses the "stage locked" 403 into a 404 so an
+    attacker enumerating ``content_id`` cannot distinguish "row exists
+    but locked for me" from "row does not exist".  Course content is a
+    shared catalog, not a user-owned resource, so the canonical 403
+    leak surface is content-row count + stage boundaries; masking the
+    locked branch as ``content_not_found`` removes the oracle.
+    """
     result = await session.execute(select(StageContent).where(StageContent.id == content_id))
     item = result.scalars().first()
     if item is None:
@@ -172,8 +197,10 @@ async def get_content_item(
     if stage is None:
         raise not_found("stage")
 
-    # BUG-COURSE-007: Verify the user has access to this stage
-    await _check_stage_unlocked(session, current_user, stage.stage_number)
+    # BUG-COURSE-004: mask locked-stage access as 404 so locked content
+    # is indistinguishable from nonexistent content over the wire.
+    if not await _is_stage_unlocked_for_user(session, current_user, stage.stage_number):
+        raise not_found("content")
 
     days = await _days_for_user_stage(session, current_user, stage.stage_number)
 
@@ -202,7 +229,14 @@ async def mark_content_read(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ContentCompletionResponse:
-    """Mark a content item as read. Idempotent — repeated calls return existing record."""
+    """Mark a content item as read. Idempotent — repeated calls return existing record.
+
+    BUG-COURSE-004: locked-stage access is reported as 404 (not 403) so
+    the same enumeration mask applied to ``GET /content/{id}`` also
+    holds here.  ``ContentCompletionResponse`` no longer echoes
+    ``user_id``: the row is created for ``current_user`` and the
+    surrogate key adds nothing for the client.
+    """
     # Verify content exists
     result = await session.execute(select(StageContent).where(StageContent.id == content_id))
     content_item = result.scalars().first()
@@ -216,7 +250,8 @@ async def mark_content_read(
     stage = stage_result.scalars().first()
     if stage is None:
         raise not_found("stage")
-    await _check_stage_unlocked(session, current_user, stage.stage_number)
+    if not await _is_stage_unlocked_for_user(session, current_user, stage.stage_number):
+        raise not_found("content")
 
     # Check for existing completion (idempotent)
     existing_result = await session.execute(
@@ -229,7 +264,6 @@ async def mark_content_read(
     if existing is not None:
         return ContentCompletionResponse(
             id=existing.id,
-            user_id=existing.user_id,
             content_id=existing.content_id,
             completed_at=existing.completed_at,
         )
@@ -241,7 +275,6 @@ async def mark_content_read(
     logger.info("content_marked_read", extra={"user_id": current_user, "content_id": content_id})
     return ContentCompletionResponse(
         id=completion.id,
-        user_id=completion.user_id,
         content_id=completion.content_id,
         completed_at=completion.completed_at,
     )
