@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from unittest.mock import patch
@@ -9,7 +10,7 @@ from unittest.mock import patch
 import jwt
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
 from models.login_attempt import LoginAttempt
@@ -946,3 +947,105 @@ async def test_refresh_response_carries_stored_timezone(
     )
     assert refresh_resp.status_code == HTTPStatus.OK
     assert refresh_resp.json()["timezone"] == "Europe/Berlin"
+
+
+# ── Concurrency: signup race + lockout TOCTOU (BUG-AUTH-003 / -007) ────
+
+
+_CONCURRENT_SIGNUP_FANOUT = 5
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_concurrent_signups_for_same_email_create_one_user(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Five simultaneous signups for the same email yield exactly one user row.
+
+    Closes BUG-AUTH-003: under the old SELECT-then-INSERT pattern two
+    concurrent signups could both pass the existence check and both
+    insert.  The case-insensitive unique index on ``lower(email)`` plus
+    the ``IntegrityError`` rollback keeps the row count at one and the
+    losing requests still receive the anti-enumeration dummy response.
+    """
+    payloads = [
+        {"email": "race@example.com", "password": "securepassword123"}  # pragma: allowlist secret
+        for _ in range(_CONCURRENT_SIGNUP_FANOUT)
+    ]
+    responses = await asyncio.gather(
+        *[concurrent_async_client.post(SIGNUP_URL, json=p) for p in payloads]
+    )
+
+    # Every attempt returns the same status + shape (anti-enumeration).
+    assert all(r.status_code == HTTPStatus.OK for r in responses)
+    assert all(set(r.json().keys()) >= {"token", "user_id"} for r in responses)
+
+    # Exactly one of them owns a real ``user_id``; the rest get the
+    # dummy ``user_id == 0`` so a timing/shape oracle cannot distinguish
+    # the winner from the duplicates.
+    real_ids = [r.json()["user_id"] for r in responses if r.json()["user_id"] != 0]
+    assert len(real_ids) == 1, real_ids
+
+    # The DB has exactly one row for the contested email.
+    async with concurrent_session_factory() as session:
+        result = await session.execute(select(User).where(User.email == "race@example.com"))
+        users = result.scalars().all()
+    assert len(users) == 1
+
+
+_CONCURRENT_FAILED_LOGIN_FANOUT = 10
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_concurrent_failed_logins_cannot_outpace_lockout(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """BUG-AUTH-007: concurrent failed attempts must not all pass the lockout check.
+
+    Without per-email serialization, ten simultaneous wrong-password
+    attempts could each read "no failures yet" and each pay the bcrypt
+    cost before any of them recorded a row, defeating the
+    ``MAX_FAILED_ATTEMPTS`` cap.  The asyncio + ``pg_advisory_xact_lock``
+    serialization makes the lockout check + insert atomic per email, so
+    no more than ``MAX_FAILED_ATTEMPTS`` attempts complete with a 401
+    before subsequent ones are blocked.
+    """
+    await concurrent_async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "lockoutrace@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+
+    results = await asyncio.gather(
+        *[
+            concurrent_async_client.post(
+                LOGIN_URL,
+                json={
+                    "email": "lockoutrace@example.com",
+                    "password": "wrongpassword999",  # pragma: allowlist secret
+                },
+            )
+            for _ in range(_CONCURRENT_FAILED_LOGIN_FANOUT)
+        ]
+    )
+
+    # Every concurrent failed attempt returns 401, indistinguishable from a
+    # locked or wrong-password response.  The invariant that matters is on
+    # the persisted row count: serialized inserts can't write more than
+    # ``MAX_FAILED_ATTEMPTS`` rows before the lockout check starts winning.
+    assert all(r.status_code == HTTPStatus.UNAUTHORIZED for r in results)
+    async with concurrent_session_factory() as session:
+        result = await session.execute(
+            select(LoginAttempt).where(LoginAttempt.email == "lockoutrace@example.com")
+        )
+        attempts = list(result.scalars().all())
+    failed_attempts = [a for a in attempts if not a.success]
+    assert len(failed_attempts) <= MAX_FAILED_ATTEMPTS, (
+        f"expected ≤{MAX_FAILED_ATTEMPTS} failed inserts under serialization, "
+        f"got {len(failed_attempts)}"
+    )

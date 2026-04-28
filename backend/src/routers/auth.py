@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
 import secrets
+from collections import defaultdict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -14,6 +18,8 @@ import bcrypt
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, field_validator
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -265,6 +271,72 @@ async def _is_account_locked(session: AsyncSession, email: str) -> bool:
     return all(not attempt.success for attempt in recent_attempts)
 
 
+# Per-process per-email asyncio lock used to serialize the lockout check +
+# attempt-record sequence so two concurrent failed attempts inside the same
+# worker cannot both pass the check at the threshold-1 boundary
+# (BUG-AUTH-007). For multi-worker deployments the matching PostgreSQL
+# advisory lock below closes the cross-process race.  The dict is unbounded
+# in principle but each entry is a bare ``asyncio.Lock`` (a few hundred
+# bytes) and the email keys are already gated by per-route rate limits, so
+# memory growth is naturally capped at the legitimate-user fan-out.
+_login_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+# 8-byte advisory-lock key derived from a SHA-256 of the normalized email.
+# Pinned to int8 because pg_advisory_xact_lock(bigint) is the single-arg
+# form; truncating the digest is fine because collisions only cause spurious
+# serialization, not a security failure.
+_ADVISORY_LOCK_KEY_BYTES = 8
+
+
+async def _acquire_email_lock_pg(session: AsyncSession, email: str) -> None:
+    """Take a transaction-scoped advisory lock on ``email`` (PostgreSQL only).
+
+    Closes the cross-worker half of BUG-AUTH-007: in production the
+    ``_login_locks`` asyncio dictionary only serializes coroutines inside
+    one Uvicorn worker, so a fleet of workers can still race the lockout
+    check against the attempt insert.  ``pg_advisory_xact_lock`` lives in
+    the database, so every worker observes the same lock and the
+    check + record sequence is atomic per email.
+
+    SQLite (used in tests) does not implement advisory locks, so the
+    function is a no-op there; the in-process ``_login_locks`` is enough
+    because every test runs in a single Python process.
+    """
+    bind = session.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    digest = hashlib.sha256(email.encode("utf-8")).digest()[:_ADVISORY_LOCK_KEY_BYTES]
+    key = int.from_bytes(digest, "big", signed=True)
+    await session.execute(text("SELECT pg_advisory_xact_lock(:k)").bindparams(k=key))
+
+
+@asynccontextmanager
+async def _serialize_login(session: AsyncSession, email: str) -> AsyncIterator[None]:
+    """Acquire both the in-process and PG advisory locks for ``email``.
+
+    Held for the duration of the login flow so the lockout check, the
+    password verify, and the attempt-record commit run as one atomic
+    decision per email (BUG-AUTH-007).  The advisory lock is
+    transaction-scoped, so it releases when the session commits or rolls
+    back at the end of the request — no manual ``pg_advisory_unlock``
+    needed.
+    """
+    async with _login_locks[email]:
+        await _acquire_email_lock_pg(session, email)
+        yield
+
+
+def _duplicate_signup_response() -> AuthResponse:
+    """Identical-shape response for an email already in use.
+
+    Returned both when the pre-empted insert would conflict and when a
+    concurrent request wins the race and our insert raises
+    ``IntegrityError``.  The dummy token is signed with a random key so
+    it cannot be exchanged for access to the existing account.
+    """
+    return AuthResponse(token=_create_dummy_token(), user_id=0)
+
+
 @router.post("/signup", response_model=AuthResponse)
 @limiter.limit("3/minute")
 async def signup(
@@ -274,24 +346,28 @@ async def signup(
 ) -> AuthResponse:
     if len(payload.password) < _MIN_PASSWORD_LENGTH:
         raise bad_request("password_too_short")
-    result = await session.execute(select(User).where(User.email == payload.email))
-    if result.scalars().first() is not None:
-        # Perform a dummy hash so the response time is indistinguishable from
-        # a real signup (bcrypt takes ~250 ms). Without this, an attacker could
-        # use timing to detect whether the email already exists.
-        _hash_password(payload.password)
-        # Return an identical response shape to prevent account enumeration.
-        # The dummy token is signed with a random key and will fail validation,
-        # so it cannot be used to access the existing account.
-        return AuthResponse(token=_create_dummy_token(), user_id=0)
-
+    # Always pay the bcrypt cost so the response time is indistinguishable
+    # from the duplicate-email branch (bcrypt takes ~250 ms).  Without
+    # this, a timing oracle could distinguish "email exists" from "email
+    # is new" even though the response bodies match.
+    password_hash = _hash_password(payload.password)
     user = User(
         email=payload.email,
-        password_hash=_hash_password(payload.password),
+        password_hash=password_hash,
         timezone=payload.timezone,
     )
     session.add(user)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        # The ``ix_user_lower_email_unique`` functional unique index (or
+        # the case-sensitive ``ix_user_email`` for legacy schemas) raised
+        # because either an earlier signup or a concurrent request won
+        # the race.  Either way the response is the anti-enumeration
+        # dummy — same shape, same timing — so the client cannot tell
+        # whether the email was new or already registered.
+        await session.rollback()
+        return _duplicate_signup_response()
     await session.refresh(user)
 
     if user.id is None:
@@ -310,29 +386,39 @@ async def login(
 ) -> AuthResponse:
     ip_address = _get_client_ip(request)
 
-    # Check lockout before even verifying credentials — prevents timing attacks
-    if await _is_account_locked(session, payload.email):
-        logger.info(
-            "auth_attempt_blocked",
-            extra={
-                "email_fingerprint": _email_log_fingerprint(payload.email),
-                "ip_address": ip_address,
-                "reason": "account_locked",
-                "timestamp": datetime.now(UTC).isoformat(),
-            },
-        )
-        # Return the same generic message to prevent account enumeration
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials")
+    # Wrap the lockout-check + verify + record sequence in a per-email
+    # serialization so concurrent failed attempts cannot all pass the
+    # threshold-1 check before any of them inserts (BUG-AUTH-007).
+    async with _serialize_login(session, payload.email):
+        # Check lockout before even verifying credentials — prevents timing attacks
+        if await _is_account_locked(session, payload.email):
+            logger.info(
+                "auth_attempt_blocked",
+                extra={
+                    "email_fingerprint": _email_log_fingerprint(payload.email),
+                    "ip_address": ip_address,
+                    "reason": "account_locked",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                },
+            )
+            # Return the same generic message to prevent account enumeration
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="invalid_credentials",
+            )
 
-    result = await session.execute(select(User).where(User.email == payload.email))
-    user = result.scalars().first()
+        result = await session.execute(select(User).where(User.email == payload.email))
+        user = result.scalars().first()
 
-    if user is None or not _verify_password(payload.password, user.password_hash):
-        await _record_attempt(session, payload.email, ip_address, success=False)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials")
+        if user is None or not _verify_password(payload.password, user.password_hash):
+            await _record_attempt(session, payload.email, ip_address, success=False)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="invalid_credentials",
+            )
 
-    # Successful login — record and reset the failure window
-    await _record_attempt(session, payload.email, ip_address, success=True)
+        # Successful login — record and reset the failure window
+        await _record_attempt(session, payload.email, ip_address, success=True)
 
     if user.id is None:
         msg = "User ID unexpectedly None after database commit"
