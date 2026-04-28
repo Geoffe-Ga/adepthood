@@ -15,9 +15,10 @@ sys.path.insert(0, str(REPO_ROOT / "backend/src"))
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
-from sqlalchemy import JSON  # noqa: E402
+from sqlalchemy import JSON, text  # noqa: E402
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY  # noqa: E402
 from sqlalchemy.ext.asyncio import (  # noqa: E402
+    AsyncConnection,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
@@ -46,6 +47,45 @@ def _replace_array_columns() -> None:
                 column.type = JSON()
 
 
+# Production-only Postgres functional / partial unique indexes that SQLite
+# cannot express in the same syntax.  Tests that exercise the
+# ``IntegrityError → idempotent / 409`` path must see equivalent
+# constraints on the test DB; we install SQLite-compatible variants below
+# after ``metadata.create_all``.  Each entry is a ``CREATE UNIQUE INDEX
+# IF NOT EXISTS …`` statement; the ``IF NOT EXISTS`` clause keeps the
+# helper idempotent across the per-test fixture lifecycle.
+_SQLITE_PORTABLE_UNIQUE_INDEXES: tuple[str, ...] = (
+    # goal_completion: one row per (goal, user, calendar day).  Production
+    # uses ``((timestamp AT TIME ZONE 'UTC')::date)`` for IMMUTABLE-ness
+    # under a non-UTC server zone; SQLite stores ``timestamp`` as ISO
+    # text and ``date(timestamp)`` is sufficient at test scale.
+    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_goal_completion_unique_per_day_test" '
+    "ON goalcompletion (goal_id, user_id, date(timestamp))",
+    # content_completion: one row per (user, content).  Plain composite
+    # constraint; identical semantics on both engines.
+    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_content_completion_unique_user_content_test" '
+    "ON contentcompletion (user_id, content_id)",
+    # user_practice: at most one open row per (user, stage).  SQLite
+    # supports the same partial-index syntax as Postgres for this.
+    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_user_practice_active_stage_test" '
+    "ON userpractice (user_id, stage_number) WHERE end_date IS NULL",
+)
+
+
+async def _install_test_only_unique_indexes(conn: AsyncConnection) -> None:
+    """Add SQLite-compatible variants of production functional indexes.
+
+    Skipped on every non-SQLite dialect; production runs the canonical
+    Alembic migrations and adding the test-only variants would be
+    redundant (or, for the user-practice partial index, conflict with
+    the migration's exact name).
+    """
+    if conn.dialect.name != "sqlite":
+        return
+    for stmt in _SQLITE_PORTABLE_UNIQUE_INDEXES:
+        await conn.execute(text(stmt))
+
+
 @pytest_asyncio.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     """Provide a clean async session with all tables created.
@@ -53,6 +93,13 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     BUG-INFRA-027: schema teardown lives in ``finally`` so tables are dropped
     even when a test raises mid-flight.  Without this, a failing test can
     leave residual rows that pollute the next test in the same engine.
+
+    The test-only unique indexes are intentionally **not** installed here:
+    streak / aggregation tests insert multiple ``GoalCompletion`` rows
+    per (goal, user, day) to exercise the bucketing logic, which the
+    production unique-per-day index would (correctly) reject.  The
+    concurrency fixture below opts in because its tests cover the
+    DB-level ``IntegrityError`` paths the indexes guard.
     """
     _replace_array_columns()
 
@@ -137,6 +184,7 @@ async def concurrent_async_client(tmp_path: Path) -> AsyncGenerator[AsyncClient,
     _replace_array_columns()
     async with concurrent_engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        await _install_test_only_unique_indexes(conn)
 
     async def _per_request_session() -> AsyncGenerator[AsyncSession, None]:
         async with concurrent_factory() as session:

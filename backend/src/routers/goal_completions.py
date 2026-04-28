@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -85,6 +86,27 @@ async def _already_logged_today(
     return result.scalar_one_or_none() is not None
 
 
+async def _idempotent_already_logged_response(
+    session: AsyncSession,
+    goal_id: int,
+    user_id: int,
+    user_timezone: str,
+) -> CheckInResult:
+    """Build the ``already_logged_today`` response shape.
+
+    Reused by both the cheap pre-check fast path and the
+    ``IntegrityError`` slow path (BUG-GOAL-001 race) so the client sees
+    the same payload either way and the contract documented on
+    :func:`create_goal_completion` does not split.
+    """
+    streak = await compute_consecutive_streak(session, goal_id, user_id, user_timezone)
+    return CheckInResult(
+        streak=streak,
+        milestones=[],
+        reason_code="already_logged_today",
+    )
+
+
 @router.post("/", response_model=CheckInResult)
 async def create_goal_completion(
     payload: GoalCompletionRequest,
@@ -96,6 +118,12 @@ async def create_goal_completion(
     Idempotent: if a completion for the same goal/user/day already exists,
     returns the current streak with ``reason_code="already_logged_today"``
     instead of inserting a duplicate (BUG-HABITS-015 / BUG-GOAL-005).
+
+    The pre-check is the fast path for the common retry / optimistic-UI
+    case.  Two concurrent requests can both pass it; the unique-per-day
+    index on ``goalcompletion`` then catches the loser via
+    ``IntegrityError`` and the same idempotent response is returned —
+    closes the BUG-GOAL-001 TOCTOU.
     """
     goal = await _get_owned_goal(session, payload.goal_id, current_user)
 
@@ -114,27 +142,34 @@ async def create_goal_completion(
     # path; the streak query then only runs in the branch that actually
     # needs it for the response payload.
     if await _already_logged_today(session, payload.goal_id, current_user, user_tz):
-        old_streak = await compute_consecutive_streak(
-            session,
-            goal.id,
-            current_user,
-            user_tz,
-        )
-        return CheckInResult(
-            streak=old_streak,
-            milestones=[],
-            reason_code="already_logged_today",
-        )
+        return await _idempotent_already_logged_response(session, goal.id, current_user, user_tz)
 
     old_streak = await compute_consecutive_streak(session, goal.id, current_user, user_tz)
 
     completed_units = goal.target if payload.did_complete else 0
-    session.add(
-        GoalCompletion(
-            goal_id=payload.goal_id, user_id=current_user, completed_units=completed_units
-        )
+    completion = GoalCompletion(
+        goal_id=payload.goal_id,
+        user_id=current_user,
+        completed_units=completed_units,
     )
-    await session.commit()
+    try:
+        # ``begin_nested`` opens a SAVEPOINT so an ``IntegrityError`` from
+        # the unique-per-day index rolls back only the failed insert.
+        # The outer transaction stays active and the follow-up query in
+        # ``_idempotent_already_logged_response`` runs on a healthy
+        # session — without the SAVEPOINT, aiosqlite leaves the
+        # connection in a partially-aborted state that breaks the next
+        # ``await``.
+        async with session.begin_nested():
+            session.add(completion)
+        await session.commit()
+    except IntegrityError:
+        # A concurrent request for the same (goal, user, day) won the
+        # race and committed first.  The DB-level unique index keeps
+        # the duplicate out; we surface the same idempotent response
+        # the pre-check would have so the client cannot tell the two
+        # paths apart (BUG-GOAL-001).
+        return await _idempotent_already_logged_response(session, goal.id, current_user, user_tz)
 
     new_streak, reason = update_streak(old_streak, did_check_in=payload.did_complete)
 
