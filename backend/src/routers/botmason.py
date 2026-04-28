@@ -10,6 +10,7 @@ shapes to those services.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -44,15 +45,23 @@ logger = logging.getLogger(__name__)
 
 
 def _per_user_key(request: StarletteRequest) -> str:
-    """Rate-limit key that prefers the authenticated user ID over IP.
+    """Rate-limit key that prefers a hash of the auth token over IP.
 
     Falls back to the remote address for anonymous / pre-auth requests so
     the limiter never receives an empty key (BUG-JOURNAL-008).
+
+    Storing the raw ``Authorization`` header would put live JWTs into
+    the slowapi backing store (in-memory today, potentially Redis
+    tomorrow); a ``redis-cli MONITOR`` or ``KEYS *`` would then leak
+    every active session token to any internal observer.  Hashing the
+    header with SHA-256 keeps the key shape stable for the limiter
+    while making the key one-way — same pattern used by
+    ``auth._email_log_fingerprint``.
     """
     auth_header = request.headers.get("authorization", "")
     if auth_header.startswith("Bearer "):
-        # Use a hash-like prefix so the key space doesn't collide with IPs.
-        return f"user:{auth_header}"
+        digest = hashlib.sha256(auth_header.encode("utf-8")).hexdigest()
+        return f"user:{digest}"
     return get_remote_address(request)
 
 

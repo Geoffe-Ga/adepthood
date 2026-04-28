@@ -141,8 +141,18 @@ def _assert_credentials_safe(origins: list[str]) -> None:
         )
 
 
-def _rate_limit_exceeded_handler(_request: Request, exc: RateLimitExceeded) -> JSONResponse:
-    """Return a JSON 429 response with Retry-After header when rate limit is exceeded."""
+def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONResponse:
+    """Return a JSON 429 response with Retry-After header when rate limit is exceeded.
+
+    The signature widens ``exc`` to :class:`Exception` so it conforms
+    to FastAPI's ``add_exception_handler`` callable shape (without
+    needing a ``# type: ignore``).  ``add_exception_handler`` only ever
+    routes ``RateLimitExceeded`` instances here — the wider type is a
+    contract concession, not a runtime hazard.  ``getattr`` reads
+    ``retry_after`` so a generic ``Exception`` (impossible at runtime
+    given the dispatch table) still produces a sensible 60-second
+    fallback rather than crashing.
+    """
     retry_after = getattr(exc, "retry_after", 60)
     return JSONResponse(
         status_code=429,
@@ -172,7 +182,7 @@ app = FastAPI(lifespan=lifespan)
 
 # Attach the rate limiter to the app so slowapi can find it
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # BUG-OBS-002 / -003: install the global exception handlers BEFORE the
 # routers are mounted so any unhandled exception during route execution

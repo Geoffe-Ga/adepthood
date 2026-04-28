@@ -145,3 +145,52 @@ def test_request_logging_middleware_emits_one_record_per_request(
     assert getattr(record, "http_method", None) == "GET"
     assert getattr(record, "http_path", None) == "/auth/login"
     assert isinstance(getattr(record, "elapsed_ms", None), float)
+
+
+def test_request_logging_middleware_logs_inner_middleware_panic(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Cover the ``except Exception`` branch where an inner middleware raises.
+
+    Route-handler exceptions are normally caught by Starlette's
+    ``ExceptionMiddleware`` and converted to a 500 envelope before
+    bubbling out — so the success path logs them.  The defensive
+    branch only fires when a *middleware layer below us* itself raises
+    (e.g., ``SecurityHeadersMiddleware`` blowing up before
+    ``ExceptionMiddleware`` can wrap it).  This test simulates that
+    by stacking a deliberately-panicking middleware *inside* the
+    outermost ``RequestLoggingMiddleware`` and asserting the access
+    log still emits a ``request_failed`` record.
+    """
+    from fastapi import FastAPI as InnerApp  # noqa: PLC0415 — local helper
+    from starlette.middleware.base import (  # noqa: PLC0415
+        BaseHTTPMiddleware,
+        RequestResponseEndpoint,
+    )
+    from starlette.requests import Request as StarletteRequest  # noqa: PLC0415
+    from starlette.responses import Response as StarletteResponse  # noqa: PLC0415
+    from starlette.testclient import TestClient as InnerTestClient  # noqa: PLC0415
+
+    from middleware.logging import RequestLoggingMiddleware  # noqa: PLC0415
+
+    class _PanickingMiddleware(BaseHTTPMiddleware):
+        async def dispatch(
+            self,
+            request: StarletteRequest,  # noqa: ARG002 — required by BaseHTTPMiddleware
+            call_next: RequestResponseEndpoint,  # noqa: ARG002 — same; never invoked
+        ) -> StarletteResponse:
+            msg = "inner-middleware-panic"
+            raise RuntimeError(msg)
+
+    inner_app = InnerApp()
+    inner_app.add_middleware(_PanickingMiddleware)
+    inner_app.add_middleware(RequestLoggingMiddleware)
+
+    inner_client = InnerTestClient(inner_app, raise_server_exceptions=False)
+    with caplog.at_level(logging.ERROR, logger="adepthood.access"):
+        inner_client.get("/probe")
+
+    failed = [r for r in caplog.records if r.message == "request_failed"]
+    assert failed, "expected one request_failed record from the panic branch"
+    assert getattr(failed[-1], "http_method", None) == "GET"
+    assert getattr(failed[-1], "http_path", None) == "/probe"
