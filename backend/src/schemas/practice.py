@@ -25,6 +25,30 @@ MAX_FUTURE_SKEW = timedelta(seconds=60)
 MAX_BACKDATE_WINDOW = timedelta(hours=24)
 MAX_SESSION_DURATION = timedelta(hours=8)
 
+
+def _session_window_violations(
+    started_at: datetime, ended_at: datetime, now: datetime
+) -> list[str]:
+    """Return the list of rule violations for a (started_at, ended_at) window.
+
+    Returning a list of failure messages instead of raising inline keeps the
+    branching shallow enough for xenon — the caller in
+    :class:`PracticeSessionCreate` just raises on the first one.
+    """
+    if started_at.tzinfo is None or ended_at.tzinfo is None:
+        return ["started_at and ended_at must be timezone-aware ISO timestamps"]
+    rules = (
+        (ended_at >= started_at, "ended_at must be greater than or equal to started_at"),
+        (ended_at <= now + MAX_FUTURE_SKEW, "ended_at cannot be in the future"),
+        (now - started_at <= MAX_BACKDATE_WINDOW, "started_at is too far in the past"),
+        (
+            ended_at - started_at <= MAX_SESSION_DURATION,
+            "session duration exceeds the maximum allowed window",
+        ),
+    )
+    return [message for ok, message in rules if not ok]
+
+
 # -- Practice ---------------------------------------------------------------
 
 
@@ -117,22 +141,9 @@ class PracticeSessionCreate(BaseModel):
 
     @model_validator(mode="after")
     def _check_times(self) -> Self:
-        if self.started_at.tzinfo is None or self.ended_at.tzinfo is None:
-            msg = "started_at and ended_at must be timezone-aware ISO timestamps"
-            raise ValueError(msg)
-        if self.ended_at < self.started_at:
-            msg = "ended_at must be greater than or equal to started_at"
-            raise ValueError(msg)
-        now = datetime.now(UTC)
-        if self.ended_at > now + MAX_FUTURE_SKEW:
-            msg = "ended_at cannot be in the future"
-            raise ValueError(msg)
-        if now - self.started_at > MAX_BACKDATE_WINDOW:
-            msg = "started_at is too far in the past"
-            raise ValueError(msg)
-        if self.ended_at - self.started_at > MAX_SESSION_DURATION:
-            msg = "session duration exceeds the maximum allowed window"
-            raise ValueError(msg)
+        violations = _session_window_violations(self.started_at, self.ended_at, datetime.now(UTC))
+        if violations:
+            raise ValueError(violations[0])
         return self
 
     @property
