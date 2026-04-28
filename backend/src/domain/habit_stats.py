@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date
+from datetime import UTC, date, timedelta
 from typing import TYPE_CHECKING
 
-from domain.dates import to_user_date
+from domain.dates import to_user_date, today_in_tz
 from schemas.habit_stats import HabitStats
 
 if TYPE_CHECKING:
@@ -65,8 +65,27 @@ def _longest_streak(sorted_dates: list[str]) -> int:
     return longest
 
 
-def _current_streak(sorted_dates: list[str]) -> int:
+def _current_streak(sorted_dates: list[str], user_timezone: str) -> int:
+    """Return the current consecutive-day streak ending at the latest entry.
+
+    Mirrors the recency gate in :mod:`services.streaks` so
+    ``GET /habits/{id}/stats`` agrees with ``GET /habits`` after a missed
+    day.  Without the gate this helper would happily report a multi-day
+    streak that ended a week ago, while the Habits list endpoint
+    (running ``compute_habit_streak``) correctly returned 0 -- exactly
+    the API-contract divergence the recency gate was introduced to
+    eliminate.
+
+    The "yesterday" grace window matches the rest of the streak code:
+    one stale day is forgiven so the UI does not flash "streak lost"
+    between local midnight and the user's first completion of the day.
+    """
     if not sorted_dates:
+        return 0
+    most_recent = date.fromisoformat(sorted_dates[-1])
+    today = today_in_tz(user_timezone)
+    yesterday = today - timedelta(days=1)
+    if most_recent < yesterday:
         return 0
     streak = 1
     for i in range(len(sorted_dates) - 2, -1, -1):
@@ -112,7 +131,7 @@ def compute_habit_stats(
         values=units,
         completions_by_day=presence,
         longest_streak=_longest_streak(sorted_dates),
-        current_streak=_current_streak(sorted_dates),
+        current_streak=_current_streak(sorted_dates, user_timezone),
         total_completions=len(completions),
         completion_rate=_completion_rate(sorted_dates, len(dates)),
         completion_dates=sorted_dates,

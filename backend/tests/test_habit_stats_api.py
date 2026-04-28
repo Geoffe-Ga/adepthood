@@ -215,20 +215,28 @@ async def test_stats_longest_streak(async_client: AsyncClient, db_session: Async
 
 @pytest.mark.asyncio
 async def test_stats_current_streak(async_client: AsyncClient, db_session: AsyncSession) -> None:
-    """Current streak counts consecutive days ending at the most recent completion."""
+    """Current streak counts consecutive days ending at the most recent completion.
+
+    Anchored at today/yesterday so the recency gate in
+    ``_current_streak`` (which mirrors the frontend
+    ``streakFromCompletions`` rule) does not zero the chain because the
+    fixture used dates from 2024.
+    """
     headers = await _signup(async_client)
     habit_id, goal_id = await _create_habit_with_goal(async_client, db_session, headers)
     resp = await async_client.get(f"/habits/{habit_id}", headers=headers)
     user_id = resp.json()["user_id"]
 
-    # Gap, then 2 consecutive days at the end
-    base = datetime(2024, 1, 1, 8, 0, tzinfo=UTC)
-    for day_offset in [0, 3, 4]:
+    # Older completion (gap), then yesterday + day-before-yesterday so the
+    # recency gate sees a fresh chain ending within the one-day grace
+    # window.  Counting backwards: yesterday + 2-days-ago = streak of 2.
+    now = datetime.now(UTC).replace(hour=8, minute=0, second=0, microsecond=0)
+    for days_ago in (5, 2, 1):
         db_session.add(
             GoalCompletion(
                 goal_id=goal_id,
                 user_id=user_id,
-                timestamp=base + timedelta(days=day_offset),
+                timestamp=now - timedelta(days=days_ago),
                 completed_units=1.0,
             )
         )
@@ -353,3 +361,42 @@ async def test_stats_only_counts_current_users_completions(
     data = resp.json()
     assert data["total_completions"] == 1
     assert sum(data["values"]) == EXPECTED_ALICE_UNITS
+
+
+@pytest.mark.asyncio
+async def test_stats_current_streak_returns_zero_for_stale_chain(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """``_current_streak`` mirrors the services.streaks recency gate.
+
+    Without this, ``GET /habits/{id}/stats`` would advertise a multi-day
+    streak whose chain ended a week ago while ``GET /habits``
+    (``compute_habit_streak``) correctly returned 0 -- exactly the API
+    contract divergence the recency gate was introduced to eliminate.
+    """
+    headers = await _signup(async_client)
+    habit_id, goal_id = await _create_habit_with_goal(async_client, db_session, headers)
+    resp = await async_client.get(f"/habits/{habit_id}", headers=headers)
+    user_id = resp.json()["user_id"]
+
+    # Three consecutive days that ended five days ago -- chain is well
+    # outside the one-day grace window, so the gate must fire.
+    now = datetime.now(UTC).replace(hour=8, minute=0, second=0, microsecond=0)
+    for days_ago in (5, 6, 7):
+        db_session.add(
+            GoalCompletion(
+                goal_id=goal_id,
+                user_id=user_id,
+                timestamp=now - timedelta(days=days_ago),
+                completed_units=1.0,
+            ),
+        )
+    await db_session.commit()
+
+    resp = await async_client.get(f"/habits/{habit_id}/stats", headers=headers)
+    data = resp.json()
+    assert data["current_streak"] == 0
+    # Longest streak is unaffected by the recency gate -- it still
+    # reflects the historical 3-day run.
+    assert data["longest_streak"] == 3

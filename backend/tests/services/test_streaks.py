@@ -13,7 +13,12 @@ from models.goal_completion import GoalCompletion
 from models.habit import Habit
 from models.user import User
 from schemas.milestone import Milestone
-from services.streaks import check_milestones, compute_consecutive_streak, update_streak
+from services.streaks import (
+    check_milestones,
+    compute_consecutive_streak,
+    compute_habit_streak,
+    update_streak,
+)
 
 
 async def _make_goal(session: AsyncSession, user_id: int) -> Goal:
@@ -296,7 +301,6 @@ def test_compute_habit_streak_returns_zero_when_chain_is_stale() -> None:
         )
         for days_ago in (5, 6, 7, 8, 9)
     ]
-    from services.streaks import compute_habit_streak  # noqa: PLC0415 -- co-located with usage
 
     assert compute_habit_streak(completions, "UTC") == 0
 
@@ -314,7 +318,6 @@ def test_compute_habit_streak_counts_chain_ending_yesterday() -> None:
         )
         for days_ago in (1, 2, 3)
     ]
-    from services.streaks import compute_habit_streak  # noqa: PLC0415 -- co-located with usage
 
     assert compute_habit_streak(completions, "UTC") == 3
 
@@ -332,7 +335,6 @@ def test_compute_habit_streak_counts_chain_including_today() -> None:
         )
         for days_ago in (0, 1, 2)
     ]
-    from services.streaks import compute_habit_streak  # noqa: PLC0415 -- co-located with usage
 
     assert compute_habit_streak(completions, "UTC") == 3
 
