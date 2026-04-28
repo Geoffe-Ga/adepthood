@@ -14,7 +14,7 @@ from sqlmodel import col, select
 
 from database import get_session
 from domain.weekly_prompts import TOTAL_WEEKS, get_prompt_for_week
-from errors import bad_request, conflict, forbidden, not_found, unprocessable
+from errors import conflict, forbidden, not_found, unprocessable
 from models.journal_entry import JournalEntry, JournalTag
 from models.prompt_response import PromptResponse
 from routers.auth import get_current_user
@@ -190,21 +190,19 @@ async def submit_prompt_response(
     Paired with the ``count + 1``-based ``_get_user_week`` this makes
     the server-derived week a monotone function of *contiguous*
     completion, not the highest value the client has ever submitted.
+
+    Duplicate submissions are caught exclusively by the
+    ``uq_promptresponse_user_week`` constraint and surfaced as 409
+    Conflict (BUG-PROMPT-004).  The earlier 400-on-pre-check / 409-on-race
+    split exposed clients to two distinct status codes for what is
+    semantically one condition; the constraint is the only observer that
+    sees both rows in a TOCTOU race anyway, so we let it own the
+    decision and the response code stays uniform.
     """
     question = get_prompt_for_week(week_number)
     if question is None:
         raise not_found("prompt")
     await _check_week_unlocked(session, current_user, week_number)
-
-    # Prevent duplicate responses
-    result = await session.execute(
-        select(PromptResponse).where(
-            PromptResponse.user_id == current_user,
-            PromptResponse.week_number == week_number,
-        )
-    )
-    if result.scalars().first() is not None:
-        raise bad_request("already_responded")
 
     # Sanitize once at the boundary (BUG-PROMPT-003); both PromptResponse and
     # JournalEntry receive the cleaned text so the two rows agree byte-for-byte
@@ -239,9 +237,9 @@ async def submit_prompt_response(
 
     try:
         await session.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await session.rollback()
-        raise conflict("already_responded") from None
+        raise conflict("already_responded") from exc
 
     await session.refresh(prompt_response)
 
