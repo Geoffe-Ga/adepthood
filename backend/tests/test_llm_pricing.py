@@ -63,7 +63,9 @@ class TestEstimateCostUsd:
         assert result is None
         records = [r for r in caplog.records if r.message == "llm_pricing_unknown_model"]
         assert records, "expected one llm_pricing_unknown_model warning"
-        assert records[-1].model == "mystery-model-v99"  # type: ignore[attr-defined]
+        # ``LogRecord`` does not statically know about ``extra`` keys; use
+        # ``getattr`` so this test runs clean under ``mypy --strict``.
+        assert getattr(records[-1], "model", None) == "mystery-model-v99"
 
     def test_stub_model_returns_none(self) -> None:
         """The stub provider reports ``stub`` as its model and is unknown to pricing."""
@@ -80,9 +82,14 @@ class TestEstimateCostUsd:
         """Cost is quantised to six decimal places to match the column scale."""
         cost = estimate_cost_usd("gpt-4o-mini", 1, 1)
         assert cost is not None
-        # six fractional digits -- the column stores NUMERIC(12, 6) so any
-        # additional precision would be silently truncated on round-trip.
-        assert -cost.as_tuple().exponent == 6  # type: ignore[operator]
+        # ``DecimalTuple.exponent`` is typed ``int | str`` because the
+        # special values ``"n"``/``"N"``/``"F"`` represent NaN / sNaN /
+        # infinity.  None of those apply to a quantised cost, so we
+        # narrow with ``int(...)`` rather than suppressing mypy with a
+        # ``# type: ignore[operator]`` (CLAUDE.md forbids the
+        # suppression).  The column stores NUMERIC(12, 6) so additional
+        # precision would be silently truncated on round-trip.
+        assert int(cost.as_tuple().exponent) == -6
 
 
 class TestGetModelPricing:

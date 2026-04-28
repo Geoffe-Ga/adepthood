@@ -101,6 +101,9 @@ def test_request_logging_middleware_emits_one_record_per_request(
     completed = [r for r in caplog.records if r.message == "request_completed"]
     assert completed, "expected at least one request_completed record"
     record = completed[-1]
-    assert record.http_method == "GET"  # type: ignore[attr-defined]
-    assert record.http_path == "/auth/login"  # type: ignore[attr-defined]
-    assert isinstance(record.elapsed_ms, float)  # type: ignore[attr-defined]
+    # ``LogRecord`` does not statically know about ``extra`` keys, so we
+    # read them through ``getattr`` rather than suppressing mypy with
+    # a ``# type: ignore`` (CLAUDE.md forbids the suppression).
+    assert getattr(record, "http_method", None) == "GET"
+    assert getattr(record, "http_path", None) == "/auth/login"
+    assert isinstance(getattr(record, "elapsed_ms", None), float)

@@ -7,7 +7,6 @@ import { FeatureErrorBoundary } from '../FeatureErrorBoundary';
 
 jest.mock('@/observability/sentry', () => ({
   reportException: jest.fn(),
-  reportMessage: jest.fn(),
 }));
 
 // React Navigation's ``useNavigation`` is mocked so the test does not need

@@ -7,7 +7,6 @@ import { ErrorBoundary } from '../ErrorBoundary';
 
 jest.mock('@/observability/sentry', () => ({
   reportException: jest.fn(),
-  reportMessage: jest.fn(),
 }));
 
 const { reportException } = jest.requireMock('@/observability/sentry') as {

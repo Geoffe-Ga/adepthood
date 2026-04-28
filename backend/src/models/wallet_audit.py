@@ -26,11 +26,13 @@ from sqlmodel import Field, SQLModel
 # Wallet-mutation reason tokens.  Kept as module constants so the service
 # layer references symbolic names rather than free-form strings — this
 # keeps the audit query interface small and lets future analytics group
-# rows by reason without touching prose.
+# rows by reason without touching prose.  Only the tokens used by code
+# in this PR are defined here; new flows (refunds, monthly resets, etc.)
+# should add their own constant *with their first call site*, not as
+# speculative scaffolding.
 REASON_SPEND_MONTHLY = "spend_monthly"
 REASON_SPEND_OFFERING = "spend_offering"
 REASON_ADMIN_GRANT = "admin_grant"
-REASON_REFUND = "refund"
 
 # Bucket tokens — which side of the wallet was changed.  ``monthly`` is
 # the free per-calendar-month allocation; ``offering`` is the durable

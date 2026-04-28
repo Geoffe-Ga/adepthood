@@ -89,9 +89,12 @@ def test_unhandled_exception_logs_with_request_id(
     matching = [r for r in caplog.records if r.message == "unhandled_exception"]
     assert matching, "expected one unhandled_exception log record"
     record = matching[-1]
-    assert record.request_id == inbound  # type: ignore[attr-defined]
-    assert record.request_path == "/__boom__"  # type: ignore[attr-defined]
-    assert record.request_method == "GET"  # type: ignore[attr-defined]
+    # ``LogRecord`` does not statically know about ``extra`` keys, so we
+    # read them through ``getattr`` rather than suppressing mypy with
+    # a ``# type: ignore`` (CLAUDE.md forbids the suppression).
+    assert getattr(record, "request_id", None) == inbound
+    assert getattr(record, "request_path", None) == "/__boom__"
+    assert getattr(record, "request_method", None) == "GET"
 
 
 def test_unhandled_exception_calls_sentry_capture(app_with_failing_route: FastAPI) -> None:

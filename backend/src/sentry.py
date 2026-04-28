@@ -4,10 +4,8 @@ The real ``sentry-sdk`` package is intentionally NOT imported here so the
 backend builds cleanly without an extra dependency.  Once the DSN lands
 (tracked in ``prompts/2026-04-18-bug-remediation/remediation-plan/10-observability-e2e.md``),
 swap the body of :func:`capture_exception` for
-``sentry_sdk.capture_exception(exc, contexts=context)`` and the body of
-:func:`capture_message` for ``sentry_sdk.capture_message(message,
-contexts=context)``; the call sites elsewhere in the codebase do not
-need to change.
+``sentry_sdk.capture_exception(exc, contexts=context)``; the call sites
+elsewhere in the codebase do not need to change.
 
 The shim is a **silent no-op** today, on purpose:
 
@@ -47,13 +45,9 @@ def capture_exception(exc: BaseException, **context: object) -> None:
     emitted the structured record an operator needs to find this
     exception in production logs.  Once the DSN is wired in, replace
     the body with ``sentry_sdk.capture_exception(exc, contexts=context)``.
-    """
 
-
-def capture_message(message: str, **context: object) -> None:
-    """Record a soft warning that did not produce an exception (no-op).
-
-    See :func:`capture_exception` — the call site is responsible for
-    its own logger record; this function is a placeholder for the
-    Sentry SDK swap.
+    A ``capture_message`` companion is intentionally NOT defined here —
+    no current code path needs it, and CLAUDE.md forbids speculative
+    scaffolding.  Add it alongside the first call site that warrants
+    a soft warning being shipped to Sentry.
     """

@@ -3,15 +3,20 @@
  *
  * The real ``@sentry/react-native`` package is intentionally NOT installed
  * yet — once ops provisions a DSN, swap the body of {@link reportException}
- * for ``Sentry.captureException(error, { contexts })`` and {@link
- * reportMessage} for ``Sentry.captureMessage(message, { extra })``.  The
- * call sites elsewhere in the app do not need to change because the
- * function signatures match the SDK's public surface 1:1.
+ * for ``Sentry.captureException(error, { contexts })``.  The call sites
+ * elsewhere in the app do not need to change because the function
+ * signature matches the SDK's public surface 1:1.
  *
- * Until then we log to ``console.error`` / ``console.warn`` with the same
- * structured ``contexts`` payload so a developer running the app via
- * Expo + a remote-debugger can still see the traceback alongside the
- * scoping metadata (component name, current screen, etc.).
+ * Unlike the backend stub (which is a silent no-op because every call
+ * site logs through Python's ``logging`` first), the frontend stub
+ * logs via ``console.error`` because ``ErrorBoundary.componentDidCatch``
+ * has no other logging path — without this a caught render error would
+ * vanish from the dev console entirely.
+ *
+ * A ``reportMessage`` companion is intentionally NOT defined here —
+ * no current code path needs it, and CLAUDE.md forbids speculative
+ * scaffolding.  Add it alongside the first call site that warrants
+ * a soft warning being shipped to Sentry.
  */
 
 /**
@@ -35,17 +40,4 @@ export function reportException(error: unknown, contexts?: ReportContexts): void
   // TODO(ops): replace with ``Sentry.captureException(error, { contexts })``
   // — see prompts/2026-04-18-bug-remediation/remediation-plan/10-observability-e2e.md
   console.error('[reportException]', error, contexts ?? {});
-}
-
-/**
- * Forward a soft warning that did not produce an exception.
- *
- * Used by callers that detected an unexpected state (e.g. an API
- * response that parsed but had unexpected nullable fields) and want
- * a Sentry breadcrumb without raising.
- */
-export function reportMessage(message: string, contexts?: ReportContexts): void {
-  // TODO(ops): replace with ``Sentry.captureMessage(message, { contexts })``
-  // — see prompts/2026-04-18-bug-remediation/remediation-plan/10-observability-e2e.md
-  console.warn('[reportMessage]', message, contexts ?? {});
 }
