@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Column, DateTime, String
+from sqlalchemy import Boolean, Column, DateTime, String
 from sqlmodel import Field, Relationship, SQLModel
 
 from services.usage import compute_next_reset
@@ -75,6 +75,38 @@ class User(SQLModel, table=True):
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    # BUG-MODEL-001: account-state flags so the auth + admin layers
+    # have a soft-disable / verification surface without hard-deleting
+    # rows.  All three default to "active fresh user" so existing
+    # signups keep working without a backfill.
+    #
+    # ``is_active`` -- false means the account is soft-disabled (banned,
+    # paused, awaiting moderation).  Auth helpers consult this to
+    # reject login on a row that exists but is gated.
+    #
+    # ``email_verified`` -- false until the user clicks the
+    # verification link.  Routers that gate sensitive actions (wallet
+    # top-up, BotMason, etc.) can require ``email_verified=True`` once
+    # the verification flow ships.
+    #
+    # ``deleted_at`` -- soft-delete timestamp.  When set, the account
+    # is treated as gone for query purposes (login fails, lookups
+    # filter it out) but the row sticks around for audit trail and
+    # GDPR retention windows.  Hard-delete via right-to-be-forgotten
+    # remains available; soft-delete is for the common case where a
+    # user pauses their account and may return.
+    is_active: bool = Field(
+        default=True,
+        sa_column=Column(Boolean(), nullable=False, server_default="1"),
+    )
+    email_verified: bool = Field(
+        default=False,
+        sa_column=Column(Boolean(), nullable=False, server_default="0"),
+    )
+    deleted_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
     )
     habits: list["Habit"] = Relationship(back_populates="user")
     journals: list["JournalEntry"] = Relationship(back_populates="user")
