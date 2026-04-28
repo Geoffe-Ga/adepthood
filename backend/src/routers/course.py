@@ -219,6 +219,61 @@ def _completion_response(completion: ContentCompletion) -> ContentCompletionResp
     )
 
 
+async def _resolve_unlocked_content(
+    session: AsyncSession,
+    user_id: int,
+    content_id: int,
+) -> StageContent:
+    """Fetch ``content_id`` and gate on the parent stage being unlocked.
+
+    Raises 404 if the content row is missing, 404 if its parent stage is
+    missing, and 403 if the stage is locked for ``user_id``.  Split out
+    of :func:`mark_content_read` so the route stays at xenon rank A and
+    the resolution / authorisation steps are independently testable.
+    """
+    result = await session.execute(select(StageContent).where(StageContent.id == content_id))
+    content_item = result.scalars().first()
+    if content_item is None:
+        raise not_found("content")
+    stage_result = await session.execute(
+        select(CourseStage).where(CourseStage.id == content_item.course_stage_id)
+    )
+    stage = stage_result.scalars().first()
+    if stage is None:
+        raise not_found("stage")
+    await _check_stage_unlocked(session, user_id, stage.stage_number)
+    return content_item
+
+
+async def _insert_or_resolve_completion(
+    session: AsyncSession,
+    user_id: int,
+    content_id: int,
+) -> ContentCompletion:
+    """Insert a new completion or return the winner's row on race.
+
+    ``begin_nested`` opens a SAVEPOINT so the unique-constraint
+    ``IntegrityError`` rolls back only the failed insert; the outer
+    transaction stays healthy enough for the follow-up SELECT.
+    Defensively raises if the constraint fired but the winner's row is
+    missing — that would mean the database invariant is broken and a
+    silent re-insert would compound the corruption.
+    """
+    completion = ContentCompletion(user_id=user_id, content_id=content_id)
+    try:
+        async with session.begin_nested():
+            session.add(completion)
+        await session.commit()
+        await session.refresh(completion)
+    except IntegrityError:
+        existing = await _existing_content_completion(session, user_id, content_id)
+        if existing is None:
+            msg = "ContentCompletion lost the race but the winner's row is missing"
+            raise RuntimeError(msg) from None
+        return existing
+    return completion
+
+
 @router.post("/content/{content_id}/mark-read", response_model=ContentCompletionResponse)
 async def mark_content_read(
     content_id: int,
@@ -233,50 +288,13 @@ async def mark_content_read(
     loser via ``IntegrityError`` and the existing row is returned —
     closes the BUG-COURSE-002 TOCTOU.
     """
-    # Verify content exists
-    result = await session.execute(select(StageContent).where(StageContent.id == content_id))
-    content_item = result.scalars().first()
-    if content_item is None:
-        raise not_found("content")
+    await _resolve_unlocked_content(session, current_user, content_id)
 
-    # BUG-COURSE-005: Look up the parent stage and verify unlock
-    stage_result = await session.execute(
-        select(CourseStage).where(CourseStage.id == content_item.course_stage_id)
-    )
-    stage = stage_result.scalars().first()
-    if stage is None:
-        raise not_found("stage")
-    await _check_stage_unlocked(session, current_user, stage.stage_number)
-
-    # Cheap fast path for the common retry / optimistic-UI case.
     existing = await _existing_content_completion(session, current_user, content_id)
     if existing is not None:
         return _completion_response(existing)
 
-    completion = ContentCompletion(user_id=current_user, content_id=content_id)
-    try:
-        # ``begin_nested`` opens a SAVEPOINT so the unique-constraint
-        # ``IntegrityError`` rolls back only the failed insert; the
-        # outer transaction stays healthy enough for the follow-up
-        # SELECT that fetches the winner's row.
-        async with session.begin_nested():
-            session.add(completion)
-        await session.commit()
-        await session.refresh(completion)
-    except IntegrityError:
-        # A concurrent call won the race and already inserted.  Return
-        # the existing row so the response is identical to the fast-path
-        # idempotent branch.  ``one()`` is safe because the unique
-        # constraint guarantees the row exists post-commit.
-        existing = await _existing_content_completion(session, current_user, content_id)
-        if existing is None:
-            # Defensive: the unique-constraint loser must see the
-            # winner's row.  If it isn't there the database state is
-            # corrupt; fail loudly rather than silently re-inserting.
-            msg = "ContentCompletion lost the race but the winner's row is missing"
-            raise RuntimeError(msg) from None
-        return _completion_response(existing)
-
+    completion = await _insert_or_resolve_completion(session, current_user, content_id)
     logger.info("content_marked_read", extra={"user_id": current_user, "content_id": content_id})
     return _completion_response(completion)
 
