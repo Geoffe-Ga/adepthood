@@ -9,14 +9,23 @@ background jobs or admin tooling that does not touch FastAPI.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from http import HTTPStatus
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from models.user import User
+from models.wallet_audit import (
+    BUCKET_MONTHLY,
+    BUCKET_OFFERING,
+    REASON_ADMIN_GRANT,
+    REASON_SPEND_MONTHLY,
+    REASON_SPEND_OFFERING,
+    WalletAudit,
+)
 from services.wallet import (
     SpendResult,
     add_balance,
@@ -26,6 +35,15 @@ from services.wallet import (
     reset_monthly_usage_if_due,
     spend_one_message,
 )
+
+
+async def _audit_rows(session: AsyncSession, user_id: int) -> list[WalletAudit]:
+    """Return every audit row for ``user_id`` in insertion order."""
+    result = await session.execute(
+        select(WalletAudit).where(col(WalletAudit.user_id) == user_id).order_by(col(WalletAudit.id))
+    )
+    return list(result.scalars().all())
+
 
 _MONTHLY_CAP = 5
 # Initial monthly usage used by the no-op rollover scenario.  Any non-zero
@@ -205,3 +223,108 @@ async def test_add_balance_increments_and_returns_total(db_session: AsyncSession
 @pytest.mark.asyncio
 async def test_add_balance_returns_none_when_user_missing(db_session: AsyncSession) -> None:
     assert await add_balance(db_session, user_id=999, amount=5) is None
+
+
+# ── Wallet audit trail (BUG-BM-011) ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_spend_monthly_creates_audit_row(db_session: AsyncSession) -> None:
+    """A monthly spend records ``actor=user``, ``bucket=monthly``, delta=+1."""
+    user = await _make_user(db_session, monthly_used=2, offering_balance=0)
+    assert user.id is not None
+
+    await spend_one_message(db_session, user.id, monthly_cap=5)
+    await db_session.commit()
+
+    rows = await _audit_rows(db_session, user.id)
+    assert len(rows) == 1
+    audit = rows[0]
+    assert audit.user_id == user.id
+    assert audit.actor_user_id == user.id
+    assert audit.bucket == BUCKET_MONTHLY
+    assert audit.reason == REASON_SPEND_MONTHLY
+    # Monthly bucket counts UP, so the delta is +1; before/after walk
+    # the seeded ``monthly_used=2`` to ``3``.
+    assert audit.delta == Decimal("1.000000")
+    assert audit.balance_before == Decimal("2.000000")
+    assert audit.balance_after == Decimal("3.000000")
+
+
+@pytest.mark.asyncio
+async def test_spend_offering_creates_audit_row(db_session: AsyncSession) -> None:
+    """An offering spend records ``bucket=offering`` and a NEGATIVE delta."""
+    user = await _make_user(db_session, monthly_used=5, offering_balance=4)
+    assert user.id is not None
+
+    await spend_one_message(db_session, user.id, monthly_cap=5)
+    await db_session.commit()
+
+    rows = await _audit_rows(db_session, user.id)
+    assert len(rows) == 1
+    audit = rows[0]
+    assert audit.bucket == BUCKET_OFFERING
+    assert audit.reason == REASON_SPEND_OFFERING
+    # Offering balance counts DOWN: 4 -> 3, so delta = -1.
+    assert audit.delta == Decimal("-1.000000")
+    assert audit.balance_before == Decimal("4.000000")
+    assert audit.balance_after == Decimal("3.000000")
+
+
+@pytest.mark.asyncio
+async def test_spend_failure_writes_no_audit_row(db_session: AsyncSession) -> None:
+    """Both buckets empty: ``spend_one_message`` returns ``None`` and no audit row lands."""
+    user = await _make_user(db_session, monthly_used=5, offering_balance=0)
+    assert user.id is not None
+
+    assert await spend_one_message(db_session, user.id, monthly_cap=5) is None
+    await db_session.commit()
+
+    assert await _audit_rows(db_session, user.id) == []
+
+
+@pytest.mark.asyncio
+async def test_add_balance_records_admin_actor(db_session: AsyncSession) -> None:
+    """When an admin grants credits the audit row carries the admin's id as actor."""
+    admin = await _make_user(db_session, email="admin@example.com")
+    recipient = await _make_user(db_session, email="user@example.com", offering_balance=10)
+    assert admin.id is not None
+    assert recipient.id is not None
+
+    new_balance = await add_balance(db_session, recipient.id, 25, actor_user_id=admin.id)
+    await db_session.commit()
+    assert new_balance == 35
+
+    rows = await _audit_rows(db_session, recipient.id)
+    assert len(rows) == 1
+    audit = rows[0]
+    assert audit.user_id == recipient.id
+    assert audit.actor_user_id == admin.id  # actor is distinct from recipient
+    assert audit.bucket == BUCKET_OFFERING
+    assert audit.reason == REASON_ADMIN_GRANT
+    assert audit.delta == Decimal("25.000000")
+    assert audit.balance_before == Decimal("10.000000")
+    assert audit.balance_after == Decimal("35.000000")
+
+
+@pytest.mark.asyncio
+async def test_add_balance_self_grant_records_user_as_actor(db_session: AsyncSession) -> None:
+    """Without an explicit actor the audit row defaults to the recipient (legacy callers)."""
+    user = await _make_user(db_session, offering_balance=0)
+    assert user.id is not None
+
+    await add_balance(db_session, user.id, 7)
+    await db_session.commit()
+
+    rows = await _audit_rows(db_session, user.id)
+    assert len(rows) == 1
+    assert rows[0].actor_user_id == user.id
+
+
+@pytest.mark.asyncio
+async def test_add_balance_failure_writes_no_audit_row(db_session: AsyncSession) -> None:
+    """A grant against a missing user must not insert an orphan audit row."""
+    assert await add_balance(db_session, user_id=999, amount=5) is None
+    await db_session.commit()
+    rows = await _audit_rows(db_session, user_id=999)
+    assert rows == []

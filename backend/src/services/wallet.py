@@ -10,6 +10,12 @@ Every mutation in this module is expressed as a single atomic SQL statement
 (``UPDATE … WHERE … RETURNING``) so concurrent requests can never overspend
 either bucket.  The router layer is responsible for translating ``None``
 returns into HTTP errors; the service only reports capacity outcomes.
+
+Every mutation also stages a :class:`models.WalletAudit` row recording
+``(actor_user_id, user_id, bucket, reason, delta, balance_before,
+balance_after)`` (BUG-BM-011) so an operator can trace any change with
+a single ``SELECT``.  The audit row is staged on the same session as
+the mutation, so commit / rollback is atomic across both writes.
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,9 +31,58 @@ from sqlmodel import col, select
 
 from errors import bad_request, payment_required
 from models.user import User
+from models.wallet_audit import (
+    BUCKET_MONTHLY,
+    BUCKET_OFFERING,
+    REASON_ADMIN_GRANT,
+    REASON_SPEND_MONTHLY,
+    REASON_SPEND_OFFERING,
+    WalletAudit,
+)
 from services.usage import compute_next_reset, get_monthly_cap
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _AuditEntry:
+    """Bundled inputs for a single wallet-audit row.
+
+    Grouping the seven scalar fields into one frozen dataclass keeps
+    :func:`_stage_audit` under ruff's ``PLR0913`` argument-count cap
+    while making each call site read like a structured record rather
+    than a positional tuple.
+    """
+
+    user_id: int
+    actor_user_id: int
+    bucket: str
+    reason: str
+    delta: int
+    balance_before: int
+    balance_after: int
+
+
+def _stage_audit(session: AsyncSession, entry: _AuditEntry) -> None:
+    """Stage one ``WalletAudit`` row on the caller's session.
+
+    Decimal coercion happens here (via ``str``) so audit values are
+    bit-exact even once the buckets become fractional in the future.
+    The session.commit happens in the caller — the audit row lands in
+    the same transaction as the bucket UPDATE so a rollback wipes
+    both atomically.
+    """
+    session.add(
+        WalletAudit(
+            user_id=entry.user_id,
+            actor_user_id=entry.actor_user_id,
+            bucket=entry.bucket,
+            reason=entry.reason,
+            delta=Decimal(str(entry.delta)),
+            balance_before=Decimal(str(entry.balance_before)),
+            balance_after=Decimal(str(entry.balance_after)),
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -99,6 +155,11 @@ async def spend_one_message(
     is drained first; only once it is at the cap do we touch the paid
     ``offering_balance``.  Each branch is a single atomic
     ``UPDATE … WHERE … RETURNING`` so concurrent requests can never overspend.
+
+    BUG-BM-011: every successful deduction stages a ``WalletAudit`` row on
+    the same session so the spend is recoverable after the fact.  The
+    actor is the same as ``user_id`` because spend always originates
+    from the authenticated owner of the wallet.
     """
     monthly_result = await session.execute(
         update(User)
@@ -111,7 +172,25 @@ async def spend_one_message(
     )
     monthly_row = monthly_result.first()
     if monthly_row is not None:
-        return SpendResult(monthly_used=int(monthly_row[0]), offering_balance=int(monthly_row[1]))
+        new_used, balance = int(monthly_row[0]), int(monthly_row[1])
+        # ``new_used`` is the post-increment value, so the pre-mutation
+        # count was ``new_used - 1``.  Recording the actual ``before`` /
+        # ``after`` (rather than the delta only) means an operator
+        # reconciling can spot a parallel write that interleaved
+        # without re-deriving from arithmetic.
+        _stage_audit(
+            session,
+            _AuditEntry(
+                user_id=user_id,
+                actor_user_id=user_id,
+                bucket=BUCKET_MONTHLY,
+                reason=REASON_SPEND_MONTHLY,
+                delta=1,
+                balance_before=new_used - 1,
+                balance_after=new_used,
+            ),
+        )
+        return SpendResult(monthly_used=new_used, offering_balance=balance)
 
     balance_result = await session.execute(
         update(User)
@@ -121,7 +200,20 @@ async def spend_one_message(
     )
     balance_row = balance_result.first()
     if balance_row is not None:
-        return SpendResult(monthly_used=int(balance_row[0]), offering_balance=int(balance_row[1]))
+        used, new_balance = int(balance_row[0]), int(balance_row[1])
+        _stage_audit(
+            session,
+            _AuditEntry(
+                user_id=user_id,
+                actor_user_id=user_id,
+                bucket=BUCKET_OFFERING,
+                reason=REASON_SPEND_OFFERING,
+                delta=-1,
+                balance_before=new_balance + 1,
+                balance_after=new_balance,
+            ),
+        )
+        return SpendResult(monthly_used=used, offering_balance=new_balance)
 
     return None
 
@@ -160,13 +252,25 @@ async def preflight_deduction(session: AsyncSession, user_id: int) -> SpendResul
     raise payment_required("insufficient_offerings")
 
 
-async def add_balance(session: AsyncSession, user_id: int, amount: int) -> int | None:
+async def add_balance(
+    session: AsyncSession,
+    user_id: int,
+    amount: int,
+    *,
+    actor_user_id: int | None = None,
+) -> int | None:
     """Add ``amount`` credits to ``offering_balance`` and return the new total.
 
     The caller is expected to validate ``amount > 0`` so the service can stay
     focused on the DB mutation.  Returns ``None`` when the user does not exist
     so the caller can surface a 400.  Performs the addition in a single atomic
     SQL statement — no lost-update window between read and write.
+
+    BUG-BM-011: a ``WalletAudit`` row is staged for every successful
+    grant.  ``actor_user_id`` defaults to ``user_id`` for the legacy
+    "user tops up their own wallet" path, but the admin endpoint
+    overrides it with the granting admin's id so the audit row records
+    the actor distinct from the recipient.
     """
     result = await session.execute(
         update(User)
@@ -177,4 +281,17 @@ async def add_balance(session: AsyncSession, user_id: int, amount: int) -> int |
     new_balance = result.scalar()
     if new_balance is None:
         return None
-    return int(new_balance)
+    new_balance_int = int(new_balance)
+    _stage_audit(
+        session,
+        _AuditEntry(
+            user_id=user_id,
+            actor_user_id=actor_user_id if actor_user_id is not None else user_id,
+            bucket=BUCKET_OFFERING,
+            reason=REASON_ADMIN_GRANT,
+            delta=amount,
+            balance_before=new_balance_int - amount,
+            balance_after=new_balance_int,
+        ),
+    )
+    return new_balance_int

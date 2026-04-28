@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from http import HTTPStatus
 
 import pytest
@@ -34,7 +35,10 @@ class _UsageLogSpec:
     model: str = "gpt-4o-mini"
     prompt_tokens: int = 100
     completion_tokens: int = 50
-    estimated_cost_usd: float = 0.01
+    # BUG-ADMIN-004 / BUG-BM-008: cost is a ``Decimal`` end to end.
+    # Constructing from a string keeps the value bit-exact through the
+    # NUMERIC(12, 6) column round-trip.
+    estimated_cost_usd: Decimal = Decimal("0.01")
 
 
 async def _signup(client: AsyncClient, email: str, password: str = "secret12345") -> dict[str, str]:
@@ -144,7 +148,10 @@ async def test_admin_endpoint_empty_totals(
     assert data["total_prompt_tokens"] == 0
     assert data["total_completion_tokens"] == 0
     assert data["total_tokens"] == 0
-    assert data["total_estimated_cost_usd"] == 0.0
+    # Costs are serialized as fixed-point strings so a JS client doing
+    # ``parseFloat`` and a Python client doing ``Decimal`` both see the
+    # same value (BUG-ADMIN-004).
+    assert data["total_estimated_cost_usd"] == "0.000000"
     assert data["per_user"] == []
     assert data["per_model"] == []
 
@@ -163,13 +170,17 @@ async def test_admin_endpoint_sums_totals(
         db_session,
         user_id=user_id,
         journal_entry_id=journal_id,
-        spec=_UsageLogSpec(prompt_tokens=100, completion_tokens=50, estimated_cost_usd=0.01),
+        spec=_UsageLogSpec(
+            prompt_tokens=100, completion_tokens=50, estimated_cost_usd=Decimal("0.01")
+        ),
     )
     await _seed_usage_log(
         db_session,
         user_id=user_id,
         journal_entry_id=journal_id,
-        spec=_UsageLogSpec(prompt_tokens=200, completion_tokens=25, estimated_cost_usd=0.02),
+        spec=_UsageLogSpec(
+            prompt_tokens=200, completion_tokens=25, estimated_cost_usd=Decimal("0.02")
+        ),
     )
     await db_session.commit()
 
@@ -179,7 +190,7 @@ async def test_admin_endpoint_sums_totals(
     assert data["total_prompt_tokens"] == 300
     assert data["total_completion_tokens"] == 75
     assert data["total_tokens"] == 375
-    assert data["total_estimated_cost_usd"] == pytest.approx(0.03)
+    assert Decimal(data["total_estimated_cost_usd"]) == Decimal("0.03")
 
 
 @pytest.mark.asyncio
@@ -195,13 +206,13 @@ async def test_admin_endpoint_per_user_breakdown_ordered_by_cost(
         db_session,
         user_id=low_user_id,
         journal_entry_id=j1,
-        spec=_UsageLogSpec(estimated_cost_usd=0.05),
+        spec=_UsageLogSpec(estimated_cost_usd=Decimal("0.05")),
     )
     await _seed_usage_log(
         db_session,
         user_id=high_user_id,
         journal_entry_id=j2,
-        spec=_UsageLogSpec(estimated_cost_usd=1.50),
+        spec=_UsageLogSpec(estimated_cost_usd=Decimal("1.50")),
     )
     await db_session.commit()
 
@@ -209,7 +220,7 @@ async def test_admin_endpoint_per_user_breakdown_ordered_by_cost(
     data = resp.json()
     assert len(data["per_user"]) == 2
     assert data["per_user"][0]["user_id"] == high_user_id
-    assert data["per_user"][0]["estimated_cost_usd"] == pytest.approx(1.50)
+    assert Decimal(data["per_user"][0]["estimated_cost_usd"]) == Decimal("1.50")
     assert data["per_user"][1]["user_id"] == low_user_id
 
 
@@ -229,7 +240,7 @@ async def test_admin_endpoint_per_model_breakdown(
             model="gpt-4o-mini",
             prompt_tokens=100,
             completion_tokens=50,
-            estimated_cost_usd=0.01,
+            estimated_cost_usd=Decimal("0.01"),
         ),
     )
     await _seed_usage_log(
@@ -241,7 +252,7 @@ async def test_admin_endpoint_per_model_breakdown(
             model="claude-sonnet-4-20250514",
             prompt_tokens=200,
             completion_tokens=100,
-            estimated_cost_usd=2.00,
+            estimated_cost_usd=Decimal("2.00"),
         ),
     )
     await db_session.commit()

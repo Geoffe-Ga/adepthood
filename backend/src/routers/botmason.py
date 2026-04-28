@@ -158,7 +158,9 @@ async def add_balance(
 ) -> BalanceAddResponse:
     """Add credits to the calling admin's offering balance."""
     assert admin.id is not None  # noqa: S101 — persisted row always has an id
-    new_balance = await wallet_service.add_balance(session, admin.id, payload.amount)
+    new_balance = await wallet_service.add_balance(
+        session, admin.id, payload.amount, actor_user_id=admin.id
+    )
     if new_balance is None:
         # TOCTOU: admin row existed when ``require_admin`` fetched it but was
         # deleted before the wallet UPDATE landed.  Same failure mode as the
