@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
@@ -13,6 +14,12 @@ from models.stage_progress import StageProgress
 
 _EXPECTED_SELECTION_COUNT = 2
 _SESSION_DURATION = 10.0
+
+
+def _session_window(duration_minutes: float = _SESSION_DURATION) -> tuple[str, str]:
+    ended = datetime.now(UTC)
+    started = ended - timedelta(minutes=duration_minutes)
+    return started.isoformat(), ended.isoformat()
 
 
 async def _signup(
@@ -230,9 +237,14 @@ async def test_get_user_practice_with_sessions(
     up_id = create_resp.json()["id"]
 
     # Log a session against this user-practice
+    started_at, ended_at = _session_window()
     await async_client.post(
         "/practice-sessions/",
-        json={"user_practice_id": up_id, "duration_minutes": _SESSION_DURATION},
+        json={
+            "user_practice_id": up_id,
+            "started_at": started_at,
+            "ended_at": ended_at,
+        },
         headers=headers,
     )
 

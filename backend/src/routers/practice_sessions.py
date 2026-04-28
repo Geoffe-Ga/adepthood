@@ -40,11 +40,13 @@ async def create_session(
     if user_practice.user_id != current_user:
         raise forbidden()
 
+    duration_minutes = payload.duration_minutes
     practice_session = PracticeSession(
         user_id=current_user,
         user_practice_id=payload.user_practice_id,
-        duration_minutes=payload.duration_minutes,
+        duration_minutes=duration_minutes,
         reflection=payload.reflection,
+        timestamp=payload.ended_at,
     )
     session.add(practice_session)
     await session.commit()
@@ -54,7 +56,7 @@ async def create_session(
         extra={
             "user_id": current_user,
             "user_practice_id": payload.user_practice_id,
-            "duration_minutes": payload.duration_minutes,
+            "duration_minutes": duration_minutes,
         },
     )
     return practice_session
