@@ -74,6 +74,32 @@ ALLOWED_HEADERS = [
 EXPOSED_HEADERS = ["X-Request-ID"]
 
 
+_LOOPBACK_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _check_origin_hostname(origin: str, hostname: str | None) -> None:
+    """Hostname-related slice of the CORS allow-list checks (BUG-APP-003).
+
+    Split out so the parent ``_validate_prod_origin`` stays at xenon
+    rank A; the IP-literal try/except plus the loopback set membership
+    plus the empty-hostname guard add up to four branches that read
+    cleaner here.
+    """
+    if not hostname:
+        msg = f"PROD_DOMAIN entry has no hostname: '{origin}'"
+        raise RuntimeError(msg)
+    if hostname in _LOOPBACK_HOSTNAMES:
+        msg = f"PROD_DOMAIN cannot point at loopback: '{origin}'"
+        raise RuntimeError(msg)
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        # Hostname is not a bare IP literal -- this is the good case.
+        return
+    msg = f"PROD_DOMAIN cannot be a bare IP: '{origin}'"
+    raise RuntimeError(msg)
+
+
 def _validate_prod_origin(origin: str) -> None:
     """Reject obviously-wrong production origins (BUG-APP-003).
 
@@ -97,21 +123,7 @@ def _validate_prod_origin(origin: str) -> None:
     if parsed.scheme != "https":
         msg = f"PROD_DOMAIN entries must use HTTPS, got '{origin}'"
         raise RuntimeError(msg)
-    hostname = parsed.hostname
-    if not hostname:
-        msg = f"PROD_DOMAIN entry has no hostname: '{origin}'"
-        raise RuntimeError(msg)
-    if hostname in {"localhost", "127.0.0.1", "::1"}:
-        msg = f"PROD_DOMAIN cannot point at loopback: '{origin}'"
-        raise RuntimeError(msg)
-    try:
-        ipaddress.ip_address(hostname)
-    except ValueError:
-        # Hostname is not a bare IP literal -- this is the good case.
-        pass
-    else:
-        msg = f"PROD_DOMAIN cannot be a bare IP: '{origin}'"
-        raise RuntimeError(msg)
+    _check_origin_hostname(origin, parsed.hostname)
     if "*" in origin or "@" in origin:
         msg = f"PROD_DOMAIN cannot contain wildcard or userinfo: '{origin}'"
         raise RuntimeError(msg)
