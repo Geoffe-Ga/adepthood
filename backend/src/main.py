@@ -6,17 +6,21 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from database import get_session
-from observability import CorrelationIdMiddleware, install_trace_id_logging
+from middleware import (
+    CorrelationIdMiddleware,
+    RequestLoggingMiddleware,
+    SecurityHeadersMiddleware,
+)
+from observability import install_trace_id_logging
 from rate_limit import limiter
 from routers.admin import router as admin_router
 from routers.auth import router as auth_router
@@ -130,59 +134,19 @@ def _rate_limit_exceeded_handler(_request: Request, exc: RateLimitExceeded) -> J
     )
 
 
-# Content-Security-Policy is conservative: only same-origin scripts/styles,
-# block plugins, and disallow framing.  The frontend is a React Native app
-# that talks JSON; if a future web build needs richer CSP it should be
-# expanded here rather than loosened ad-hoc per route.
-_CSP_DIRECTIVES = (
-    "default-src 'self'; "
-    "script-src 'self'; "
-    "style-src 'self'; "
-    "img-src 'self' data:; "
-    "connect-src 'self'; "
-    "object-src 'none'; "
-    "base-uri 'self'; "
-    "frame-ancestors 'none'"
-)
-
-_PERMISSIONS_POLICY = "geolocation=(), microphone=(), camera=()"
-
-
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Add security headers to every response.
-
-    - X-Content-Type-Options: nosniff — prevents MIME-type sniffing
-    - X-Frame-Options: DENY — prevents clickjacking via iframes
-    - Strict-Transport-Security — enforces HTTPS in production/staging
-    - Content-Security-Policy — restricts loadable assets (BUG-INFRA-001)
-    - Referrer-Policy: strict-origin-when-cross-origin (BUG-INFRA-002)
-    - Permissions-Policy: deny camera/mic/geo by default (BUG-INFRA-003)
-    """
-
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Content-Security-Policy"] = _CSP_DIRECTIVES
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = _PERMISSIONS_POLICY
-
-        env = os.getenv("ENV", "development")
-        if env in ("production", "staging"):
-            # max-age of 1 year (31536000 seconds) per OWASP recommendation
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-
-        return response
+# BUG-APP-007: install the trace-id log filter at *import* time, not in the
+# lifespan startup hook.  Module imports (router registration, seed data
+# loading) run before lifespan fires, and a missing filter at that point
+# would leave their log records without a ``trace_id`` field — breaking
+# the formatter and causing a flood of ``KeyError`` messages on the very
+# first request a worker process serves.  The function is idempotent.
+install_trace_id_logging()
 
 
 @asynccontextmanager
 async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown lifecycle for the application."""
     import models  # noqa: F401, PLC0415
-
-    # Install the trace-id log filter once per process so every log line
-    # carries the request's correlation ID (BUG-INFRA-025).
-    install_trace_id_logging()
 
     yield
 
@@ -193,22 +157,24 @@ app = FastAPI(lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
-# Correlation-ID middleware sits at the outermost edge so every other
-# middleware (security headers, CORS, slowapi) and every route handler sees
-# the trace ID through ``contextvars`` (BUG-INFRA-025).
-app.add_middleware(CorrelationIdMiddleware)
-
-# Security headers on all responses
-app.add_middleware(SecurityHeadersMiddleware)
-
-# Apply default rate limits to all endpoints (including undecorated ones).
-# Must be added after SecurityHeaders and before CORS so that:
-#   CORS (outermost) → SlowAPI → SecurityHeaders → route handler
-app.add_middleware(SlowAPIMiddleware)
-
+# BUG-APP-001: Starlette's ``add_middleware`` is LIFO — the LAST class added
+# becomes the OUTERMOST layer.  We register innermost-first so the actual
+# request flow becomes:
+#
+#   RequestLoggingMiddleware  (outermost; always emits an access record)
+#   -> CorrelationIdMiddleware  (mints / honours X-Request-ID)
+#      -> SecurityHeadersMiddleware  (CSP / HSTS / Referrer-Policy / etc.)
+#         -> CORSMiddleware  (preflight handling + ACAO / ACAC)
+#            -> SlowAPIMiddleware  (rate-limit; innermost so 429s carry headers)
+#               -> route handler
+#
+# Putting CORS *inside* SecurityHeaders means preflight (BUG-APP-002) and
+# rate-limited responses inherit the security-header set; putting trace-id
+# outside CORS means even preflight responses echo ``X-Request-ID``.
 origins = get_cors_origins()
 _assert_credentials_safe(origins)
 
+app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -216,6 +182,9 @@ app.add_middleware(
     allow_methods=ALLOWED_METHODS,
     allow_headers=ALLOWED_HEADERS,
 )
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(CorrelationIdMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
 
 # Register feature routers
 app.include_router(admin_router)
