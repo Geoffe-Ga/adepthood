@@ -5,16 +5,14 @@ operator can answer "who debited this user's wallet, when, and why" with
 a single ``SELECT``.  The table is intentionally not exposed via the API:
 it's a forensic surface read by ops via direct SQL, not a feature.
 
-Append-only is enforced two ways:
-
-1. The Python service layer never updates or deletes a row — it only
-   ``session.add`` s a fresh record alongside the underlying ``UPDATE``.
-2. The Alembic migration that creates the table grants only ``INSERT``
-   on it to the application role; ``UPDATE`` / ``DELETE`` privileges
-   stay with the migration role so a rogue route handler cannot rewrite
-   history.  In tests on SQLite the role split is a no-op (single
-   user); the privilege grant lives in the migration so deployment
-   inherits it automatically.
+Append-only is enforced at the application layer: :mod:`services.wallet`
+only ever calls ``session.add`` to insert a fresh row alongside the
+underlying ``UPDATE``; nothing in the codebase issues ``UPDATE`` /
+``DELETE`` against ``walletaudit``.  Operators that want defence-in-depth
+at the database layer should ``REVOKE UPDATE, DELETE`` from the
+application role in their deployment script — the role name is
+environment-specific (CI uses ``aptitude``, production uses
+``adepthood``), so we do not embed it in the migration.
 """
 
 from __future__ import annotations

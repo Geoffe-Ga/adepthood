@@ -14,9 +14,14 @@ Closes:
   "unrecorded").
 * BUG-BM-011: introduce ``walletaudit``, an append-only forensic log
   recording every wallet mutation (spend / grant) with actor, reason,
-  delta, and before/after balances.  ``INSERT`` is the only privilege
-  granted to the application role; ``UPDATE``/``DELETE`` stays with
-  the migration role so a rogue route handler cannot rewrite history.
+  delta, and before/after balances.  The append-only invariant is
+  enforced at the application layer (``services.wallet`` only ever
+  inserts new rows via ``session.add`` -- never UPDATE / DELETE) which
+  keeps the migration role-agnostic.  Operators that want a
+  defence-in-depth ``REVOKE UPDATE, DELETE`` at the database layer
+  should issue the GRANT in their deployment scripts where the
+  application role name is known; embedding a hard-coded role here
+  breaks CI environments that use a different one.
 """
 
 from collections.abc import Sequence
@@ -32,20 +37,13 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-# Application role — matches the ``DATABASE_USER`` env var deployments use.
-# Falls back to ``adepthood`` so local dev continues to work without
-# extra config.  In CI / test (SQLite) the GRANT statements are no-ops
-# because the engine has no role concept.
-_APP_ROLE = "adepthood"
-
-
 def _is_postgres() -> bool:
     """Return True when the active connection speaks PostgreSQL.
 
-    SQLite (used in tests) has no concept of column-type alteration via
-    ``USING`` and no ``GRANT`` / role machinery, so the migration emits
-    a more permissive form for it: drop+recreate the column for the
-    cost type change, skip the GRANT entirely.
+    SQLite (used in tests) cannot alter a column's type in place, so
+    the cost-column branch routes through ``op.batch_alter_table``
+    while Postgres uses a single ``ALTER COLUMN ... USING`` statement
+    that preserves existing rows.
     """
     bind = op.get_bind()
     return bind.dialect.name == "postgresql"
@@ -71,12 +69,11 @@ def _convert_cost_column_postgres() -> None:
 
 
 def _convert_cost_column_sqlite() -> None:
-    """SQLite branch — drop and re-add the column with the new type.
+    """SQLite branch — re-emit the column with the new type via batch mode.
 
-    SQLite cannot alter a column's type in place; ``op.alter_column``
-    on SQLite would fall back to batch mode and rewrite the table.
-    Tests run against an empty in-memory schema so a drop+add is
-    semantically equivalent and much simpler.
+    SQLite cannot alter a column's type in place; ``op.batch_alter_table``
+    rebuilds the table.  Tests run against an empty in-memory schema so
+    the rebuild is essentially free.
     """
     with op.batch_alter_table("llmusagelog") as batch_op:
         batch_op.alter_column(
@@ -89,7 +86,13 @@ def _convert_cost_column_sqlite() -> None:
 
 
 def _create_wallet_audit() -> None:
-    """Create the append-only ``walletaudit`` table with the privilege grant."""
+    """Create the append-only ``walletaudit`` table.
+
+    Append-only is enforced at the application layer; no role-specific
+    GRANT lands here so the migration is portable across deployments
+    that use different application-role names (CI uses ``aptitude``,
+    production uses ``adepthood``).
+    """
     op.create_table(
         "walletaudit",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -97,7 +100,11 @@ def _create_wallet_audit() -> None:
             "user_id", sa.Integer(), sa.ForeignKey("user.id"), nullable=False, index=True
         ),
         sa.Column(
-            "actor_user_id", sa.Integer(), sa.ForeignKey("user.id"), nullable=False, index=True
+            "actor_user_id",
+            sa.Integer(),
+            sa.ForeignKey("user.id"),
+            nullable=False,
+            index=True,
         ),
         sa.Column("bucket", sa.String(length=64), nullable=False, index=True),
         sa.Column("reason", sa.String(length=64), nullable=False, index=True),
@@ -108,15 +115,6 @@ def _create_wallet_audit() -> None:
             "created_at", sa.DateTime(timezone=True), nullable=False, index=True
         ),
     )
-    if _is_postgres():
-        # Append-only at the database layer: the application role gets
-        # only ``INSERT``.  ``REVOKE`` first so an existing role with
-        # broader privileges (a rerun on staging, say) is brought into
-        # line.  Wrapped in IF EXISTS so a fresh DB without the role
-        # still applies cleanly.
-        op.execute(f'REVOKE ALL ON TABLE walletaudit FROM "{_APP_ROLE}"')
-        op.execute(f'GRANT SELECT, INSERT ON TABLE walletaudit TO "{_APP_ROLE}"')
-        op.execute(f'GRANT USAGE, SELECT ON SEQUENCE walletaudit_id_seq TO "{_APP_ROLE}"')
 
 
 def upgrade() -> None:
