@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlmodel import select
 
 from models.practice import Practice
 from models.stage_progress import StageProgress
+from models.user_practice import UserPractice
 
 _EXPECTED_SELECTION_COUNT = 2
 _SESSION_DURATION = 10.0
@@ -268,3 +271,106 @@ async def test_get_other_users_practice_forbidden(
 
     resp = await async_client.get(f"/user-practices/{up_id}", headers=bob_headers)
     assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+# -- BUG-PRACTICE-005: single-active-practice TOCTOU --------------------------
+
+
+@pytest.mark.asyncio
+async def test_second_active_selection_for_same_stage_returns_409(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Selecting a second active practice for the same stage must 409.
+
+    The partial unique index on ``userpractice (user_id, stage_number)
+    WHERE end_date IS NULL`` enforces the rule at the DB level; the
+    router's ``IntegrityError → 409 active_practice_exists_for_stage``
+    handler maps it to a deterministic response so the client cannot
+    win the race silently and end up with two open rows for the same
+    stage (BUG-PRACTICE-005).
+    """
+    headers, _ = await _signup(async_client, "doublepick")
+    p1 = await _seed_practice(db_session, name="First")
+    p2 = await _seed_practice(db_session, name="Second")
+
+    first = await async_client.post(
+        "/user-practices/",
+        json={"practice_id": p1.id, "stage_number": 1},
+        headers=headers,
+    )
+    assert first.status_code == HTTPStatus.CREATED
+
+    second = await async_client.post(
+        "/user-practices/",
+        json={"practice_id": p2.id, "stage_number": 1},
+        headers=headers,
+    )
+    assert second.status_code == HTTPStatus.CONFLICT
+    assert second.json()["detail"] == "active_practice_exists_for_stage"
+
+
+_CONCURRENT_PICK_FANOUT = 5
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_concurrent_picks_for_same_stage_yield_one_open_row(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Five simultaneous selections for the same stage land exactly one open row.
+
+    The partial unique index closes the BUG-PRACTICE-005 race; without
+    it, both halves of the SELECT-then-INSERT pre-check could see "no
+    open row" and both insert.  The constraint catches all but one and
+    those losers surface as 409 ``active_practice_exists_for_stage``.
+    """
+    signup_resp = await concurrent_async_client.post(
+        "/auth/signup",
+        json={
+            "email": "racepick@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    headers = {"Authorization": f"Bearer {signup_resp.json()['token']}"}
+
+    async with concurrent_session_factory() as session:
+        practice = Practice(
+            stage_number=1,
+            name="RacePractice",
+            description="x",
+            instructions="y",
+            default_duration_minutes=5,
+            approved=True,
+        )
+        session.add(practice)
+        await session.commit()
+        await session.refresh(practice)
+        practice_id = practice.id
+
+    responses = await asyncio.gather(
+        *[
+            concurrent_async_client.post(
+                "/user-practices/",
+                json={"practice_id": practice_id, "stage_number": 1},
+                headers=headers,
+            )
+            for _ in range(_CONCURRENT_PICK_FANOUT)
+        ]
+    )
+
+    status_codes = [r.status_code for r in responses]
+    successes = status_codes.count(HTTPStatus.CREATED)
+    conflicts = status_codes.count(HTTPStatus.CONFLICT)
+    assert successes == 1, f"expected exactly one CREATED, got {successes}: {status_codes}"
+    assert successes + conflicts == _CONCURRENT_PICK_FANOUT, status_codes
+
+    async with concurrent_session_factory() as session:
+        result = await session.execute(
+            select(UserPractice).where(
+                UserPractice.practice_id == practice_id,
+                UserPractice.end_date.is_(None),  # type: ignore[union-attr]
+            )
+        )
+        open_rows = list(result.scalars().all())
+    assert len(open_rows) == 1

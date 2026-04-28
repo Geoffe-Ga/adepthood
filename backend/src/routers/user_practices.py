@@ -6,13 +6,14 @@ import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
 from domain.dates import today_in_tz
 from domain.stage_progress import get_user_progress, is_stage_unlocked
-from errors import bad_request, forbidden, not_found
+from errors import bad_request, conflict, forbidden, not_found
 from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.user_practice import UserPractice
@@ -61,31 +62,24 @@ async def _check_stage_eligibility(
         raise forbidden("stage_locked")
 
 
-async def _check_no_active_practice(
-    session: AsyncSession, current_user: int, stage_number: int
-) -> None:
-    """Enforce at most one open UserPractice row per (user, stage)."""
-    existing = await session.execute(
-        select(UserPractice.id).where(
-            UserPractice.user_id == current_user,
-            UserPractice.stage_number == stage_number,
-            UserPractice.end_date.is_(None),  # type: ignore[union-attr]
-        )
-    )
-    if existing.scalar_one_or_none() is not None:
-        raise bad_request("active_practice_exists_for_stage")
-
-
 @router.post("/", response_model=UserPracticeResponse, status_code=status.HTTP_201_CREATED)
 async def create_user_practice(
     payload: UserPracticeCreate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> UserPractice:
-    """Select a practice for a stage, creating a UserPractice record."""
+    """Select a practice for a stage, creating a UserPractice record.
+
+    The ``ix_user_practice_active_stage`` partial unique index enforces
+    "at most one open ``UserPractice`` per ``(user, stage)``" at the
+    database level (BUG-PRACTICE-005).  The earlier application-level
+    pre-check raced: two concurrent calls could both pass the existence
+    check and both insert.  We now rely on the constraint and surface
+    the loser as 409 ``active_practice_exists_for_stage`` so the client
+    gets a single deterministic response code regardless of timing.
+    """
     practice = await _resolve_practice(session, payload.practice_id)
     await _check_stage_eligibility(session, current_user, practice, payload.stage_number)
-    await _check_no_active_practice(session, current_user, payload.stage_number)
 
     # ``start_date`` is the user-facing "I started this practice today"
     # label (BUG-HABIT-006), not an internal audit timestamp -- so it
@@ -100,7 +94,15 @@ async def create_user_practice(
         start_date=today_in_tz(user_tz),
     )
     session.add(user_practice)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        # The partial unique index fired because an open row already
+        # exists for ``(current_user, stage_number)``.  Return 409 so
+        # the client treats this as a state conflict, not a transient
+        # bad request.
+        raise conflict("active_practice_exists_for_stage") from exc
     await session.refresh(user_practice)
     logger.info(
         "user_practice_created",
