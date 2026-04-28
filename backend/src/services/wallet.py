@@ -35,6 +35,7 @@ from models.wallet_audit import (
     BUCKET_MONTHLY,
     BUCKET_OFFERING,
     REASON_ADMIN_GRANT,
+    REASON_SELF_GRANT,
     REASON_SPEND_MONTHLY,
     REASON_SPEND_OFFERING,
     WalletAudit,
@@ -293,13 +294,20 @@ async def add_balance(
     if new_balance is None:
         return None
     new_balance_int = int(new_balance)
+    # ``actor`` defaults to ``user_id`` so a self-grant (legacy or future
+    # non-admin caller) does not look like an admin-initiated mutation
+    # in the audit log.  Picking ``admin_grant`` only when the actor is
+    # *different* from the recipient keeps the reason semantically
+    # honest if a Stripe webhook or referral-credit path ever calls in.
+    actor = actor_user_id if actor_user_id is not None else user_id
+    reason = REASON_ADMIN_GRANT if actor != user_id else REASON_SELF_GRANT
     _stage_audit(
         session,
         _AuditEntry(
             user_id=user_id,
-            actor_user_id=actor_user_id if actor_user_id is not None else user_id,
+            actor_user_id=actor,
             bucket=BUCKET_OFFERING,
-            reason=REASON_ADMIN_GRANT,
+            reason=reason,
             # ``balance_before`` is derived from the post-update value
             # (``new_balance_int - amount``).  This relies on the
             # ``UPDATE`` having applied the full ``amount`` -- which it

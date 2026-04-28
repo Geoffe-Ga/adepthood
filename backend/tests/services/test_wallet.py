@@ -22,6 +22,7 @@ from models.wallet_audit import (
     BUCKET_MONTHLY,
     BUCKET_OFFERING,
     REASON_ADMIN_GRANT,
+    REASON_SELF_GRANT,
     REASON_SPEND_MONTHLY,
     REASON_SPEND_OFFERING,
     WalletAudit,
@@ -309,7 +310,12 @@ async def test_add_balance_records_admin_actor(db_session: AsyncSession) -> None
 
 @pytest.mark.asyncio
 async def test_add_balance_self_grant_records_user_as_actor(db_session: AsyncSession) -> None:
-    """Without an explicit actor the audit row defaults to the recipient (legacy callers)."""
+    """Without an explicit actor the audit row defaults to the recipient (legacy callers).
+
+    The reason is ``REASON_SELF_GRANT`` (not ``REASON_ADMIN_GRANT``) so a
+    future non-admin call site (Stripe webhook, referral credit) cannot
+    silently log itself as an admin grant.
+    """
     user = await _make_user(db_session, offering_balance=0)
     assert user.id is not None
 
@@ -319,6 +325,7 @@ async def test_add_balance_self_grant_records_user_as_actor(db_session: AsyncSes
     rows = await _audit_rows(db_session, user.id)
     assert len(rows) == 1
     assert rows[0].actor_user_id == user.id
+    assert rows[0].reason == REASON_SELF_GRANT
 
 
 @pytest.mark.asyncio

@@ -32,7 +32,13 @@ from sqlmodel import Field, SQLModel
 # speculative scaffolding.
 REASON_SPEND_MONTHLY = "spend_monthly"
 REASON_SPEND_OFFERING = "spend_offering"
+# ``admin_grant`` — an admin granted credits to ANOTHER user
+# (``actor_user_id != user_id``).  Distinct from ``self_grant`` so a
+# future non-admin call site (Stripe webhook, referral credit) cannot
+# silently mis-label its audit rows as admin-initiated; an analyst
+# filtering by reason gets a clean signal of who did the granting.
 REASON_ADMIN_GRANT = "admin_grant"
+REASON_SELF_GRANT = "self_grant"
 
 # Bucket tokens — which side of the wallet was changed.  ``monthly`` is
 # the free per-calendar-month allocation; ``offering`` is the durable

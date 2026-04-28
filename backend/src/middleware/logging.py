@@ -54,10 +54,17 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
         except Exception:
             elapsed_ms = (time.perf_counter() - start) * 1000
-            # The global exception handler will translate this to a 500
-            # JSON envelope, but we still need a log line for the access
-            # trail because the handler emits its own structured event,
-            # not an access record.
+            # Defensive catch.  Route-handler exceptions are caught by
+            # Starlette's ``ExceptionMiddleware`` (which sits *inside*
+            # this ``BaseHTTPMiddleware``) and converted to a 500 JSON
+            # envelope before they ever bubble out to ``call_next``.
+            # In that normal case we never hit this branch — the inner
+            # 500 response flows through the success path below and is
+            # logged at ERROR level by ``_level_for_status``.  This
+            # branch only fires if a *middleware layer below us* itself
+            # raises (e.g., SecurityHeadersMiddleware blowing up before
+            # ExceptionMiddleware can wrap it), which is a far rarer
+            # failure mode that still deserves a single access record.
             logger.exception(
                 "request_failed",
                 extra={
