@@ -22,7 +22,7 @@ Also asserts that no owned-resource response DTO echoes ``user_id``.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
@@ -107,6 +107,22 @@ async def _create_user_practice(
     return int(resp.json()["id"])
 
 
+def _session_window_payload(user_practice_id: int) -> dict[str, object]:
+    """Build a fresh ``started_at``/``ended_at`` payload for a 5-minute session.
+
+    Mirrors :mod:`schemas.practice.PracticeSessionCreate` after the
+    BUG-PRACTICE-006 server-derived-duration migration -- the API rejects
+    legacy ``duration_minutes`` payloads with 422.
+    """
+    ended = datetime.now(UTC)
+    started = ended - timedelta(minutes=5)
+    return {
+        "user_practice_id": user_practice_id,
+        "started_at": started.isoformat(),
+        "ended_at": ended.isoformat(),
+    }
+
+
 async def _create_practice_session(
     client: AsyncClient,
     headers: dict[str, str],
@@ -115,7 +131,7 @@ async def _create_practice_session(
     """Log a practice session against the given user-practice."""
     resp = await client.post(
         "/practice-sessions/",
-        json={"user_practice_id": user_practice_id, "duration_minutes": 5.0},
+        json=_session_window_payload(user_practice_id),
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.OK
@@ -332,7 +348,7 @@ async def test_idor_practice_session_create_returns_403(
 
     resp = await async_client.post(
         "/practice-sessions/",
-        json={"user_practice_id": user_practice_id, "duration_minutes": 5.0},
+        json=_session_window_payload(user_practice_id),
         headers=bob_headers,
     )
     assert resp.status_code == HTTPStatus.FORBIDDEN
@@ -523,7 +539,7 @@ async def test_no_user_id_in_owned_resource_responses(
     )
     create_session = await async_client.post(
         "/practice-sessions/",
-        json={"user_practice_id": user_practice_id, "duration_minutes": 5.0},
+        json=_session_window_payload(user_practice_id),
         headers=alice_headers,
     )
     assert create_session.status_code == HTTPStatus.OK
