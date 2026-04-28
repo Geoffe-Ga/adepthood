@@ -20,7 +20,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import Column, DateTime, Numeric, String
+from sqlalchemy import Column, DateTime, Numeric, String, func
 from sqlmodel import Field, SQLModel
 
 # Wallet-mutation reason tokens.  Kept as module constants so the service
@@ -83,7 +83,17 @@ class WalletAudit(SQLModel, table=True):
     balance_after: Decimal = Field(
         sa_column=Column(Numeric(precision=_AMOUNT_PRECISION, scale=_AMOUNT_SCALE), nullable=False),
     )
+    # ``server_default=now()`` mirrors the migration's defence-in-depth
+    # default so a direct SQL ``INSERT`` from ops tooling that omits
+    # ``created_at`` lands cleanly.  Application writes still supply
+    # ``datetime.now(UTC)`` via ``default_factory`` so behaviour is
+    # identical between ORM and raw paths.
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
-        sa_column=Column(DateTime(timezone=True), nullable=False, index=True),
+        sa_column=Column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            nullable=False,
+            index=True,
+        ),
     )

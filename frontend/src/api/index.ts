@@ -320,10 +320,11 @@ export function classifyUnauthorizedDetail(detail: string | null): UnauthorizedR
       // owns this 401; the global unauthorized handler should NOT fire.
       return null;
     default:
-      // Unknown detail (or no detail).  Default to ``session_expired``
-      // when a session token was used, and ``not_authenticated`` when
-      // it was not -- the caller decides which based on whether a
-      // token was actually attached to the request.
+      // Unknown detail (or no detail).  Returning ``null`` here means
+      // "no opinion": ``reasonForUnauthorized`` makes the final call
+      // based on whether a session token was actually attached to the
+      // request, falling back to ``session_expired`` (had token) or
+      // ``not_authenticated`` (anonymous).
       return null;
   }
 }

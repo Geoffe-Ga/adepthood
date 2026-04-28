@@ -52,25 +52,36 @@ class _AuditEntry:
     :func:`_stage_audit` under ruff's ``PLR0913`` argument-count cap
     while making each call site read like a structured record rather
     than a positional tuple.
+
+    ``delta`` / ``balance_before`` / ``balance_after`` are typed
+    :class:`Decimal` to match :class:`models.WalletAudit`'s ``NUMERIC``
+    columns.  Today every wallet bucket is a whole-message count, so
+    callers pass plain ``int`` literals — Python widens them to
+    ``Decimal`` at construction without precision loss.  Typing the
+    fields ``Decimal`` (rather than ``int``) means a future fractional-
+    credit world cannot silently truncate at the dataclass boundary.
     """
 
     user_id: int
     actor_user_id: int
     bucket: str
     reason: str
-    delta: int
-    balance_before: int
-    balance_after: int
+    delta: Decimal
+    balance_before: Decimal
+    balance_after: Decimal
 
 
 def _stage_audit(session: AsyncSession, entry: _AuditEntry) -> None:
     """Stage one ``WalletAudit`` row on the caller's session.
 
-    Decimal coercion happens here (via ``str``) so audit values are
-    bit-exact even once the buckets become fractional in the future.
     The session.commit happens in the caller — the audit row lands in
     the same transaction as the bucket UPDATE so a rollback wipes
-    both atomically.
+    both atomically.  ``Decimal`` values are stored verbatim because
+    ``_AuditEntry`` already enforces the ``Decimal`` type at the
+    dataclass boundary; the caller is responsible for constructing
+    each value via ``Decimal(int)`` (no precision loss for whole
+    numbers) or ``Decimal(str(...))`` (the only safe path for
+    fractional inputs).
     """
     session.add(
         WalletAudit(
@@ -78,9 +89,9 @@ def _stage_audit(session: AsyncSession, entry: _AuditEntry) -> None:
             actor_user_id=entry.actor_user_id,
             bucket=entry.bucket,
             reason=entry.reason,
-            delta=Decimal(str(entry.delta)),
-            balance_before=Decimal(str(entry.balance_before)),
-            balance_after=Decimal(str(entry.balance_after)),
+            delta=entry.delta,
+            balance_before=entry.balance_before,
+            balance_after=entry.balance_after,
         )
     )
 
@@ -185,9 +196,9 @@ async def spend_one_message(
                 actor_user_id=user_id,
                 bucket=BUCKET_MONTHLY,
                 reason=REASON_SPEND_MONTHLY,
-                delta=1,
-                balance_before=new_used - 1,
-                balance_after=new_used,
+                delta=Decimal(1),
+                balance_before=Decimal(new_used - 1),
+                balance_after=Decimal(new_used),
             ),
         )
         return SpendResult(monthly_used=new_used, offering_balance=balance)
@@ -208,9 +219,9 @@ async def spend_one_message(
                 actor_user_id=user_id,
                 bucket=BUCKET_OFFERING,
                 reason=REASON_SPEND_OFFERING,
-                delta=-1,
-                balance_before=new_balance + 1,
-                balance_after=new_balance,
+                delta=Decimal(-1),
+                balance_before=Decimal(new_balance + 1),
+                balance_after=Decimal(new_balance),
             ),
         )
         return SpendResult(monthly_used=used, offering_balance=new_balance)
@@ -289,9 +300,13 @@ async def add_balance(
             actor_user_id=actor_user_id if actor_user_id is not None else user_id,
             bucket=BUCKET_OFFERING,
             reason=REASON_ADMIN_GRANT,
-            delta=amount,
-            balance_before=new_balance_int - amount,
-            balance_after=new_balance_int,
+            # ``balance_before`` is derived from the post-update value
+            # (``new_balance_int - amount``).  This relies on the
+            # ``UPDATE`` having applied the full ``amount`` -- which it
+            # does, because there is no clamping in the SQL.
+            delta=Decimal(amount),
+            balance_before=Decimal(new_balance_int - amount),
+            balance_after=Decimal(new_balance_int),
         ),
     )
     return new_balance_int

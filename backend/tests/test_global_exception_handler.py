@@ -19,6 +19,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from errors import ERROR_KEY, INTERNAL_ERROR, REQUEST_ID_KEY, install_exception_handlers
+from main import app as main_app
 from middleware import CorrelationIdMiddleware
 from observability import TRACE_ID_HEADER
 
@@ -122,11 +123,17 @@ def test_existing_http_exception_keeps_detail_shape() -> None:
     exceptions, leaving the legacy 4xx envelope shape untouched so
     existing clients (and the ~50 tests that assert on ``detail``)
     continue to work.
-    """
-    from main import app  # noqa: PLC0415 — import inside the test so the fixture above runs first
 
-    client = TestClient(app, raise_server_exceptions=False)
-    response = client.post("/auth/login", json={"email": "no@one.test", "password": "wrong-pw"})
+    Uses the production ``main.app`` (imported at module level as
+    ``main_app``) rather than the bare-fixture app so the assertion
+    runs against the real router stack — that is, against the actual
+    handler wired into the deployed binary, not a mock.
+    """
+    client = TestClient(main_app, raise_server_exceptions=False)
+    response = client.post(
+        "/auth/login",
+        json={"email": "no@one.test", "password": "wrong-pw"},  # pragma: allowlist secret
+    )
     body = response.json()
     assert "detail" in body
     assert ERROR_KEY not in body

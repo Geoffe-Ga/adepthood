@@ -60,6 +60,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = _PERMISSIONS_POLICY
 
+        # ENV is read on every request rather than cached at import so
+        # tests can ``monkeypatch.setenv("ENV", "production")`` and see
+        # the HSTS header without a worker restart.  The cost is one
+        # ``os.environ`` lookup per response — well below the noise of
+        # the surrounding work, and worth it for the test ergonomics.
         if os.getenv("ENV", "development") in _HSTS_ENVIRONMENTS:
             response.headers["Strict-Transport-Security"] = (
                 f"max-age={_HSTS_MAX_AGE_SECONDS}; includeSubDomains"

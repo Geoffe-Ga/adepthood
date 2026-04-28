@@ -111,8 +111,17 @@ def _create_wallet_audit() -> None:
         sa.Column("delta", sa.Numeric(precision=18, scale=6), nullable=False),
         sa.Column("balance_before", sa.Numeric(precision=18, scale=6), nullable=False),
         sa.Column("balance_after", sa.Numeric(precision=18, scale=6), nullable=False),
+        # ``server_default=now()`` so a direct SQL INSERT from an ops
+        # script or a future raw-SQL migration cannot fail with a
+        # NOT NULL constraint violation — application writes still
+        # supply ``datetime.now(UTC)`` via the ORM ``default_factory``,
+        # but the database is now belt-and-braces.
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), nullable=False, index=True
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+            index=True,
         ),
     )
 
