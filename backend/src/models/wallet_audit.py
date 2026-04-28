@@ -74,8 +74,24 @@ class WalletAudit(SQLModel, table=True):
     ``actor_user_id`` is the identity that initiated the change — usually
     the same as ``user_id`` (a user spending their own wallet) but
     different when an admin grants credits to someone else
-    (BUG-BM-011 / BUG-ADMIN-004).  ``before`` and ``after`` are stored
-    as ``Decimal`` so even fractional-credit balances reconcile exactly.
+    (BUG-BM-011 / BUG-ADMIN-004).  ``balance_before`` and
+    ``balance_after`` are stored as ``Decimal`` so even fractional-credit
+    balances reconcile exactly.
+
+    Sign convention for ``delta``:
+
+    * ``BUCKET_MONTHLY`` rows use a *count-up* convention.  A
+      ``REASON_SPEND_MONTHLY`` row records ``delta = +1`` (the
+      counter rose by one).  A ``REASON_MONTHLY_RESET`` row records
+      ``delta = -before`` (the counter dropped from ``before`` to 0).
+      ``SUM(delta WHERE bucket='monthly')`` over a calendar month
+      therefore yields zero -- spends and the rollover net out -- which
+      makes "did this month reconcile cleanly?" a single SQL query.
+    * ``BUCKET_OFFERING`` rows use a *credit-balance* convention.  A
+      grant records ``delta = +amount``; a spend records ``delta = -1``.
+      ``SUM(delta WHERE bucket='offering')`` is the user's current
+      offering balance from the audit log alone -- no live read of
+      ``User.offering_balance`` required.
     """
 
     __tablename__ = "walletaudit"
