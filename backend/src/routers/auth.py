@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import bcrypt
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +26,7 @@ from sqlmodel import select
 from database import get_session
 from errors import bad_request
 from models.login_attempt import LoginAttempt
+from models.revoked_token import RevokedToken
 from models.user import DEFAULT_USER_TIMEZONE, User
 from rate_limit import limiter
 from services.users import get_user_timezone
@@ -43,6 +44,20 @@ _JWT_ALGORITHM = "HS256"
 _TOKEN_TTL = timedelta(hours=1)
 
 _MIN_PASSWORD_LENGTH = 8
+
+# bcrypt silently truncates input at 72 bytes (BUG-AUTH-004): a user who
+# signs up with a 100-char passphrase has the last 28 bytes ignored, and
+# any subsequent login that types those same bytes succeeds even on a
+# typo'd suffix.  Reject before hashing so the failure is loud at
+# signup/login rather than a silent security regression.
+_BCRYPT_MAX_PASSWORD_BYTES = 72
+
+# Cap on the application-level password length.  Lower than the bcrypt
+# limit so the "password too long" error surfaces cleanly via Pydantic's
+# 422 validation envelope rather than a 500 from the bcrypt helper, and
+# high enough to comfortably support passphrases (NIST SP 800-63B
+# encourages long passphrases).
+_MAX_PASSWORD_LENGTH = 64
 
 # Account lockout: lock after this many consecutive failed attempts.
 MAX_FAILED_ATTEMPTS = 5
@@ -79,8 +94,19 @@ def _email_log_fingerprint(email: str) -> str:
 
 
 class AuthRequest(BaseModel):
+    """Login payload — email + password.
+
+    ``password`` carries explicit length bounds (BUG-AUTH-017): an
+    unbounded ``str`` field accepts arbitrarily large inputs, which both
+    wastes the bcrypt cost on a guaranteed-rejected request and gives an
+    attacker a free DoS lever (each attempt costs ~250 ms server-side).
+    The bounds also keep the field aligned with the
+    ``_BCRYPT_MAX_PASSWORD_BYTES`` ceiling so a request that would
+    silently be truncated by bcrypt is rejected with 422 instead.
+    """
+
     email: EmailStr
-    password: str
+    password: str = Field(min_length=_MIN_PASSWORD_LENGTH, max_length=_MAX_PASSWORD_LENGTH)
 
     @field_validator("email", mode="before")
     @classmethod
@@ -174,10 +200,26 @@ class AuthResponse(BaseModel):
 
 
 def _hash_password(password: str) -> str:
-    # 12 rounds of bcrypt hashing (~250 ms on modern hardware). This is the
-    # OWASP-recommended minimum; it makes brute-force attacks prohibitively
-    # expensive while keeping login latency acceptable for users.
-    hashed: bytes = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12))
+    """Hash ``password`` with bcrypt-12 after enforcing the 72-byte input cap.
+
+    bcrypt silently truncates input at 72 bytes (BUG-AUTH-004), so a
+    user who typed a 100-char passphrase would later be authenticated by
+    any string that shares the same first 72 bytes.  Reject explicitly
+    here -- callers reach this helper after Pydantic's
+    ``_MAX_PASSWORD_LENGTH`` cap so this branch only fires for
+    multi-byte UTF-8 input that fits character-wise but overflows
+    byte-wise (a 64-char password of 4-byte characters is 256 bytes).
+
+    12 rounds of bcrypt hashing (~250 ms on modern hardware).  This is
+    the OWASP-recommended minimum; it makes brute-force attacks
+    prohibitively expensive while keeping login latency acceptable for
+    users.
+    """
+    encoded = password.encode("utf-8")
+    if len(encoded) > _BCRYPT_MAX_PASSWORD_BYTES:
+        msg = f"password exceeds bcrypt's {_BCRYPT_MAX_PASSWORD_BYTES}-byte limit"
+        raise ValueError(msg)
+    hashed: bytes = bcrypt.hashpw(encoded, bcrypt.gensalt(rounds=12))
     return hashed.decode("utf-8")
 
 
@@ -185,13 +227,38 @@ def _verify_password(password: str, password_hash: str) -> bool:
     return bool(bcrypt.checkpw(password.encode(), password_hash.encode("utf-8")))
 
 
-def _create_token(user_id: int) -> str:
+def _new_jti() -> str:
+    """Return a fresh per-token unique identifier.
+
+    Used as the ``jti`` claim on every issued JWT so ``/auth/refresh``
+    can revoke the old token by storing this value in
+    :class:`models.revoked_token.RevokedToken` (BUG-AUTH-013).
+    16 bytes of entropy (32 hex chars) is plenty -- the value is
+    namespaced by user, so collision is irrelevant for security and
+    only needs to be unique enough that two tokens issued within the
+    same millisecond don't share a row.
+    """
+    return secrets.token_hex(16)
+
+
+def _create_token(user_id: int) -> tuple[str, str]:
+    """Mint a fresh JWT with a per-token ``jti`` claim.
+
+    Returns ``(token, jti)`` so callers that need to revoke the
+    previous token (e.g. ``/auth/refresh``) can persist the old jti
+    before swapping in the new one.  Tokens minted before the jti
+    column existed have no claim and are treated as legacy-but-valid
+    by ``get_current_user`` -- the 1-hour TTL is the grace window.
+    """
+    jti = _new_jti()
     payload = {
         "sub": str(user_id),
         "exp": datetime.now(UTC) + _TOKEN_TTL,
         "iat": datetime.now(UTC),
+        "jti": jti,
     }
-    return str(jwt.encode(payload, _get_secret_key(), algorithm=_JWT_ALGORITHM))
+    token = str(jwt.encode(payload, _get_secret_key(), algorithm=_JWT_ALGORITHM))
+    return token, jti
 
 
 def _create_dummy_token() -> str:
@@ -344,13 +411,17 @@ async def signup(
     payload: SignupRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AuthResponse:
-    if len(payload.password) < _MIN_PASSWORD_LENGTH:
-        raise bad_request("password_too_short")
-    # Always pay the bcrypt cost so the response time is indistinguishable
-    # from the duplicate-email branch (bcrypt takes ~250 ms).  Without
-    # this, a timing oracle could distinguish "email exists" from "email
-    # is new" even though the response bodies match.
-    password_hash = _hash_password(payload.password)
+    # Pydantic enforces ``_MIN_PASSWORD_LENGTH`` / ``_MAX_PASSWORD_LENGTH``
+    # before we get here (BUG-AUTH-017), so the only failure mode left is a
+    # multi-byte UTF-8 password whose char-count fits the cap but whose
+    # byte-length blows the bcrypt 72-byte limit.  Translate that into a
+    # 422 instead of a 500 so the client gets a uniform validation
+    # response and we never store a row that bcrypt has silently
+    # truncated (BUG-AUTH-004).
+    try:
+        password_hash = _hash_password(payload.password)
+    except ValueError as exc:
+        raise bad_request("password_too_long") from exc
     user = User(
         email=payload.email,
         password_hash=password_hash,
@@ -373,7 +444,7 @@ async def signup(
     if user.id is None:
         msg = "User ID unexpectedly None after database commit"
         raise RuntimeError(msg)
-    token = _create_token(user.id)
+    token, _ = _create_token(user.id)
     return AuthResponse(token=token, user_id=user.id, timezone=user.timezone)
 
 
@@ -392,6 +463,13 @@ async def login(
     async with _serialize_login(session, payload.email):
         # Check lockout before even verifying credentials — prevents timing attacks
         if await _is_account_locked(session, payload.email):
+            # Record the blocked attempt so a continuous attacker cannot
+            # silently wait out the rolling window (BUG-AUTH-006): without
+            # this row the oldest-of-last-N timestamp keeps aging out and
+            # the lock can expire even while attempts are still arriving.
+            # Recording each blocked try keeps the window fresh for as long
+            # as the attacker keeps trying.
+            await _record_attempt(session, payload.email, ip_address, success=False)
             logger.info(
                 "auth_attempt_blocked",
                 extra={
@@ -423,16 +501,18 @@ async def login(
     if user.id is None:
         msg = "User ID unexpectedly None after database commit"
         raise RuntimeError(msg)
-    token = _create_token(user.id)
+    token, _ = _create_token(user.id)
     return AuthResponse(token=token, user_id=user.id, timezone=user.timezone)
 
 
-def get_current_user(authorization: str | None = Header(default=None)) -> int:
-    """Extract and validate the JWT from the Authorization header.
+def _decode_token_payload(authorization: str | None) -> dict[str, object]:
+    """Decode the bearer JWT and return its payload, or raise 401.
 
-    All rejection scenarios return an identical 401 with detail="unauthorized"
-    to prevent attackers from distinguishing token states (OWASP A07:2021,
-    sec-04). The specific reason is logged server-side for debugging.
+    Split out from ``get_current_user`` so the JWT-decode + ``sub``
+    coercion logic stays at xenon rank A while the async revocation
+    check lives in the wrapper.  All rejection paths return an
+    identical 401 ``unauthorized`` (OWASP A07:2021) so attackers
+    cannot distinguish "token expired" from "token forged".
     """
     if not authorization or not authorization.startswith("Bearer "):
         logger.info("token_rejected", extra={"reason": "missing_or_malformed_header"})
@@ -446,26 +526,129 @@ def get_current_user(authorization: str | None = Header(default=None)) -> int:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized"
         ) from exc
-    return int(payload["sub"])
+    return payload
+
+
+def _coerce_sub(payload: dict[str, object]) -> int:
+    """Convert the ``sub`` claim to ``int`` or raise 401 (BUG-AUTH-012).
+
+    Without this guard the bare ``int(payload["sub"])`` call raised
+    ``KeyError`` / ``ValueError`` uncaught and Starlette surfaced 500
+    -- leaking "your token confused us" diagnostics to the attacker.
+    """
+    sub = payload.get("sub")
+    if not isinstance(sub, str | int):
+        logger.info("token_rejected", extra={"reason": "malformed_sub"})
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
+    try:
+        return int(sub)
+    except (TypeError, ValueError) as exc:
+        logger.info("token_rejected", extra={"reason": "malformed_sub"})
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized"
+        ) from exc
+
+
+async def _check_token_not_revoked(session: AsyncSession, payload: dict[str, object]) -> None:
+    """Reject the request if the token's ``jti`` is in the revocation table.
+
+    Tokens minted before the ``jti`` claim existed are treated as
+    legacy-but-valid -- the missing claim short-circuits without a DB
+    hit, and the 1-hour TTL is the grace window the prompt requires
+    so existing sessions do not all 401 at once on deploy
+    (BUG-AUTH-013).
+    """
+    jti = payload.get("jti")
+    if not isinstance(jti, str) or not jti:
+        return  # Legacy token -- no revocation possible.
+    result = await session.execute(select(RevokedToken.jti).where(RevokedToken.jti == jti))
+    if result.scalar_one_or_none() is not None:
+        logger.info("token_rejected", extra={"reason": "revoked"})
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
+
+
+async def get_current_user(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    authorization: str | None = Header(default=None),
+) -> int:
+    """Extract, validate, and revocation-check the JWT.
+
+    Async because ``BUG-AUTH-013`` requires a DB lookup against the
+    ``revokedtoken`` table on every authenticated request.  The check
+    is keyed on the primary-key ``jti`` so the cost is one indexed
+    SELECT per request, not a full scan.
+
+    All rejection scenarios return an identical 401 with
+    ``detail="unauthorized"`` to prevent attackers from distinguishing
+    token states (OWASP A07:2021, sec-04). The specific reason is
+    logged server-side for debugging.
+    """
+    payload = _decode_token_payload(authorization)
+    await _check_token_not_revoked(session, payload)
+    return _coerce_sub(payload)
+
+
+async def _revoke_token_payload(
+    session: AsyncSession,
+    payload: dict[str, object],
+) -> None:
+    """Persist the token's ``jti`` to ``revokedtoken`` so it cannot be reused.
+
+    Tokens minted before the ``jti`` claim existed are silently passed
+    through (no row to insert) -- the 1-hour TTL is the grace window.
+    The ``exp`` claim is mirrored into ``expires_at`` so a periodic
+    cleanup job can prune past-due rows without re-decoding the JWT.
+    Conflicting writes (same jti revoked twice) are caught and ignored
+    so an idempotent retry of ``/auth/refresh`` does not 500.
+    """
+    jti = payload.get("jti")
+    exp = payload.get("exp")
+    if not isinstance(jti, str) or not jti:
+        return  # legacy token, no jti
+    expires_at = (
+        datetime.fromtimestamp(exp, tz=UTC)
+        if isinstance(exp, int | float)
+        else datetime.now(UTC) + _TOKEN_TTL
+    )
+    session.add(RevokedToken(jti=jti, expires_at=expires_at))
+    try:
+        await session.commit()
+    except IntegrityError:
+        # Already revoked (e.g. double-clicked refresh); same outcome.
+        await session.rollback()
 
 
 @router.post("/refresh", response_model=AuthResponse)
 @limiter.limit("1/minute")
 async def refresh_token(
-    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    request: Request,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AuthResponse:
     """Exchange a valid JWT for a fresh one.
 
-    Rate-limited to 1 request per minute to prevent abuse. The caller must
-    present a valid, non-expired token in the Authorization header; the
-    response contains a new token with a reset TTL for the same user.
+    Rate-limited to 1 request per minute to prevent abuse. The caller
+    must present a valid, non-expired token in the Authorization
+    header; the response contains a new token with a reset TTL for the
+    same user.
+
+    The old token's ``jti`` is revoked (BUG-AUTH-013) before the new
+    one is minted so a stolen-and-refreshed token cannot be replayed
+    until its original ``exp``.  Tokens minted before the jti claim
+    existed are passed through transparently for the duration of their
+    TTL -- the 1-hour grace window the prompt requires for the
+    JWT-shape change.
 
     The response also re-asserts the stored ``timezone`` so a frontend
     that hot-reloads or evicts its auth context receives the correct
     user-local zone after a refresh, not a stale ``"UTC"`` default.
     """
-    new_token = _create_token(user_id)
+    # Re-decode the header (``get_current_user`` only surfaces the int
+    # ``sub``) so we can persist the old ``jti`` against
+    # ``revokedtoken`` before minting the new one.
+    old_payload = _decode_token_payload(request.headers.get("Authorization"))
+    await _revoke_token_payload(session, old_payload)
+
+    new_token, _ = _create_token(user_id)
     user_timezone = await get_user_timezone(session, user_id)
     return AuthResponse(token=new_token, user_id=user_id, timezone=user_timezone)

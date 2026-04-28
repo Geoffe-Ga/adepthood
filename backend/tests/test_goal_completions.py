@@ -96,7 +96,13 @@ async def test_completion_increments_streak_and_returns_milestone(
     data = resp.json()
     assert data["streak"] == 1
     assert data["reason_code"] == "streak_incremented"
-    assert data["milestones"] == [{"threshold": 1}]
+    # ``Milestone`` schema expanded (BUG-SCHEMA-002): assert on the
+    # threshold + the default ``kind`` rather than dict-equality so a
+    # future field addition (e.g. ``label``) does not break this test.
+    assert len(data["milestones"]) == 1
+    milestone = data["milestones"][0]
+    assert milestone["threshold"] == 1
+    assert milestone["kind"] == "streak_milestone"
 
 
 @pytest.mark.asyncio

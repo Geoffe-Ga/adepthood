@@ -12,6 +12,7 @@ from .login_attempt import LoginAttempt
 from .practice import Practice
 from .practice_session import PracticeSession
 from .prompt_response import PromptResponse
+from .revoked_token import RevokedToken
 from .stage_content import StageContent
 from .stage_progress import StageProgress
 from .user import User
@@ -31,6 +32,7 @@ __all__ = [
     "Practice",
     "PracticeSession",
     "PromptResponse",
+    "RevokedToken",
     "StageContent",
     "StageProgress",
     "User",

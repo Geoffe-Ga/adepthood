@@ -45,7 +45,7 @@ class JournalEntry(SQLModel, table=True):
     )
     message: str = Field(max_length=10_000)
     sender: str = Field(max_length=10)  # 'user' or 'bot'
-    user_id: int = Field(foreign_key="user.id")
+    user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
     tag: str = Field(default=JournalTag.FREEFORM, max_length=50)
     practice_session_id: int | None = Field(default=None, foreign_key="practicesession.id")
     user_practice_id: int | None = Field(default=None, foreign_key="userpractice.id")

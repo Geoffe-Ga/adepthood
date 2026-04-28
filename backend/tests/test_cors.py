@@ -243,3 +243,46 @@ def test_preflight_disallowed_method() -> None:
     }
     response = client.options("/auth/login", headers=headers)
     assert response.status_code == HTTPStatus.BAD_REQUEST
+
+
+# ── BUG-APP-003: PROD_DOMAIN URL-validation hardening ─────────────────────
+
+
+import pytest  # noqa: E402
+
+from main import _validate_prod_origin  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://example.com",  # not https
+        "https://localhost",  # loopback
+        "https://127.0.0.1",  # bare IPv4
+        "https://[::1]",  # bare IPv6 loopback
+        "https://10.0.0.5",  # bare IP
+        "https://*.example.com",  # wildcard
+        "https://user:pass@example.com",  # userinfo  # pragma: allowlist secret
+        "https://",  # no hostname
+    ],
+    ids=[
+        "http-scheme",
+        "loopback-localhost",
+        "loopback-ipv4",
+        "loopback-ipv6",
+        "bare-ip",
+        "wildcard",
+        "userinfo",
+        "no-hostname",
+    ],
+)
+def test_validate_prod_origin_rejects_unsafe_inputs(origin: str) -> None:
+    """Each form should fail fast at startup so misconfig never serves traffic."""
+    with pytest.raises(RuntimeError):
+        _validate_prod_origin(origin)
+
+
+def test_validate_prod_origin_accepts_well_formed_https() -> None:
+    """A vanilla https://host.tld passes the gauntlet."""
+    _validate_prod_origin("https://app.example.com")
+    _validate_prod_origin("https://api.example.org:8443")

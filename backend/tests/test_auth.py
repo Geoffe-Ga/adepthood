@@ -15,7 +15,12 @@ from sqlmodel import select
 
 from models.login_attempt import LoginAttempt
 from models.user import User
-from routers.auth import LOCKOUT_DURATION, MAX_FAILED_ATTEMPTS
+from routers.auth import (
+    _SECRET_PLACEHOLDER,
+    LOCKOUT_DURATION,
+    MAX_FAILED_ATTEMPTS,
+    _get_secret_key,
+)
 
 SIGNUP_URL = "/auth/signup"
 LOGIN_URL = "/auth/login"
@@ -278,13 +283,38 @@ async def test_signup_duplicate_email_token_is_not_valid(async_client: AsyncClie
 
 
 @pytest.mark.asyncio
-async def test_signup_short_password_returns_400(async_client: AsyncClient) -> None:
+async def test_signup_short_password_returns_422(async_client: AsyncClient) -> None:
+    """BUG-AUTH-017: ``AuthRequest.password`` enforces length bounds via Pydantic.
+
+    The pre-bound implementation raised a 400 from a manual check inside
+    the handler.  Moving the bound to the schema field surfaces the
+    rejection at the trust boundary (matching the timezone field's
+    422 contract) and prevents the bcrypt cost from running on input
+    that would always be rejected.
+    """
     resp = await async_client.post(
         SIGNUP_URL,
         json={"email": "short@example.com", "password": "short"},  # pragma: allowlist secret
     )
-    assert resp.status_code == HTTPStatus.BAD_REQUEST
-    assert resp.json()["detail"] == "password_too_short"
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_signup_long_password_returns_422(async_client: AsyncClient) -> None:
+    """BUG-AUTH-017: passwords beyond the upper bound are rejected too.
+
+    Without the upper cap the bcrypt cost (~250 ms) ran on every
+    request and gave an attacker a free CPU-burn lever.  64 chars is
+    the cleanly-rejected boundary; longer values 422.
+    """
+    resp = await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "longpw@example.com",
+            "password": "a" * 200,  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 # ── Login ───────────────────────────────────────────────────────────────
@@ -761,16 +791,31 @@ async def test_refresh_with_invalid_token_returns_401(async_client: AsyncClient)
 
 @pytest.mark.asyncio
 async def test_refresh_rate_limit_returns_429(async_client: AsyncClient) -> None:
-    """Refresh endpoint returns 429 after exceeding 1 request/minute."""
-    data = await _signup(async_client)
-    headers = {"Authorization": f"Bearer {data['token']}"}
+    """Refresh endpoint returns 429 after exceeding 1 request/minute.
 
-    # First request should succeed
-    resp = await async_client.post(REFRESH_URL, headers=headers)
+    Each refresh revokes the old token's ``jti`` (BUG-AUTH-013), so a
+    second refresh with the *same* token would 401 before the rate
+    limiter saw it.  We sign up a second account to get a fresh,
+    non-revoked token for the rate-limit-triggering request -- the
+    1/minute slowapi limit is per-IP so the second request from the
+    same TestClient still trips it.
+    """
+    first = await _signup(async_client, email="rl1@example.com")
+    second = await _signup(async_client, email="rl2@example.com")
+
+    # First request consumes the per-IP slot.
+    resp = await async_client.post(
+        REFRESH_URL,
+        headers={"Authorization": f"Bearer {first['token']}"},
+    )
     assert resp.status_code == HTTPStatus.OK
 
-    # Second request within the same minute should be rate-limited
-    resp = await async_client.post(REFRESH_URL, headers=headers)
+    # Second request from the same IP is rate-limited regardless of
+    # which (non-revoked) token it carries.
+    resp = await async_client.post(
+        REFRESH_URL,
+        headers={"Authorization": f"Bearer {second['token']}"},
+    )
     assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
 
 
@@ -1035,9 +1080,12 @@ async def test_concurrent_failed_logins_cannot_outpace_lockout(
     )
 
     # Every concurrent failed attempt returns 401, indistinguishable from a
-    # locked or wrong-password response.  The invariant that matters is on
-    # the persisted row count: serialized inserts can't write more than
-    # ``MAX_FAILED_ATTEMPTS`` rows before the lockout check starts winning.
+    # locked or wrong-password response.  Serialization (BUG-AUTH-007)
+    # prevents the bcrypt cost from being paid more than
+    # ``MAX_FAILED_ATTEMPTS`` times -- each task must wait its turn at the
+    # per-email lock before reading the lockout state, so no more than
+    # ``MAX_FAILED_ATTEMPTS`` can pass the check before subsequent
+    # attempts hit the locked branch.
     assert all(r.status_code == HTTPStatus.UNAUTHORIZED for r in results)
     async with concurrent_session_factory() as session:
         result = await session.execute(
@@ -1045,16 +1093,225 @@ async def test_concurrent_failed_logins_cannot_outpace_lockout(
         )
         attempts = list(result.scalars().all())
     failed_attempts = [a for a in attempts if not a.success]
-    # Strict ``<`` against the fan-out (not ``<=`` against the threshold)
-    # so the assertion stays meaningful regardless of how
-    # ``MAX_FAILED_ATTEMPTS`` is configured: an unserialized loop would
-    # write ``_CONCURRENT_FAILED_LOGIN_FANOUT`` rows because every task
-    # would pass the lockout check before any of them inserted.
-    assert len(failed_attempts) < _CONCURRENT_FAILED_LOGIN_FANOUT, (
-        f"expected <{_CONCURRENT_FAILED_LOGIN_FANOUT} failed inserts under serialization, "
+    # BUG-AUTH-006: blocked attempts are now also recorded so the
+    # rolling lockout window stays fresh against an attacker who keeps
+    # hammering the endpoint.  Pre-006 only the first
+    # ``MAX_FAILED_ATTEMPTS`` rows landed; post-006 every fanout request
+    # records a row, but only the first ``MAX_FAILED_ATTEMPTS`` of them
+    # paid the bcrypt cost.  The invariant we keep is "no row count
+    # exceeds the fanout" -- bug-006 + bug-007 together mean exactly
+    # one row per request.
+    assert len(failed_attempts) == _CONCURRENT_FAILED_LOGIN_FANOUT, (
+        f"expected exactly {_CONCURRENT_FAILED_LOGIN_FANOUT} rows "
+        f"(one per request, BUG-AUTH-006 records blocked attempts), "
         f"got {len(failed_attempts)}"
     )
-    assert len(failed_attempts) <= MAX_FAILED_ATTEMPTS, (
-        f"once the threshold is reached the lockout branch must short-circuit "
-        f"before recording another attempt; got {len(failed_attempts)}"
+
+
+# ── Auth hardening (Prompt 11) ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_signup_multibyte_password_over_72_bytes_returns_400(
+    async_client: AsyncClient,
+) -> None:
+    """BUG-AUTH-004: bcrypt silently truncates beyond 72 bytes.
+
+    A 64-character password of 4-byte UTF-8 emoji is 256 bytes -- well
+    past the bcrypt limit.  The Pydantic ``max_length`` cap would let it
+    through (it counts characters, not bytes), so the helper itself must
+    reject before hashing.  Translated to 400 ``password_too_long`` so a
+    truncation never makes it into the database.
+    """
+    resp = await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "multibyte@example.com",
+            "password": "🔥" * 30,  # 30 chars, 120 bytes (each emoji is 4 bytes)
+        },
     )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.json()["detail"] == "password_too_long"
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_malformed_sub_returns_401(
+    async_client: AsyncClient,
+) -> None:
+    """BUG-AUTH-012: a token whose ``sub`` is missing or non-numeric used to 500.
+
+    Forge a JWT signed with the test secret but carrying ``sub: "not-an-int"``
+    so it decodes cleanly but ``int(sub)`` raises.  The handler now wraps
+    that in the same 401 every other rejection uses.
+    """
+    forged = jwt.encode(
+        {
+            "sub": "not-an-int",
+            "exp": datetime.now(UTC) + timedelta(hours=1),
+            "iat": datetime.now(UTC),
+        },
+        SECRET_KEY,
+        algorithm="HS256",
+    )
+    resp = await async_client.get(
+        "/auth/refresh",
+        headers={"Authorization": f"Bearer {forged}"},
+    )
+    # Either 401 (auth rejected) or 405 (method-not-allowed on refresh GET).
+    # The protected endpoint test below exercises the 401 path explicitly.
+    # We use a method that exists: POST /auth/refresh.
+    resp = await async_client.post(
+        "/auth/refresh",
+        headers={"Authorization": f"Bearer {forged}"},
+    )
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_missing_sub_returns_401(
+    async_client: AsyncClient,
+) -> None:
+    """A token whose payload omits ``sub`` entirely also returns 401."""
+    forged = jwt.encode(
+        {
+            "exp": datetime.now(UTC) + timedelta(hours=1),
+            "iat": datetime.now(UTC),
+        },
+        SECRET_KEY,
+        algorithm="HS256",
+    )
+    resp = await async_client.post(
+        "/auth/refresh",
+        headers={"Authorization": f"Bearer {forged}"},
+    )
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+def test_get_secret_key_raises_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BUG-AUTH-011: misconfigured SECRET_KEY raises eagerly.
+
+    The helper is called once from the FastAPI lifespan (see
+    ``main.lifespan``) so a deployment that forgot to set the env var
+    fails the readiness probe at startup rather than serving traffic
+    until the first auth request and then crashing 500.
+    """
+    monkeypatch.setattr("routers.auth.SECRET_KEY", "")
+    with pytest.raises(RuntimeError, match="SECRET_KEY"):
+        _get_secret_key()
+
+
+def test_get_secret_key_raises_when_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The placeholder string also fails the startup check."""
+    monkeypatch.setattr("routers.auth.SECRET_KEY", _SECRET_PLACEHOLDER)
+    with pytest.raises(RuntimeError, match="SECRET_KEY"):
+        _get_secret_key()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_blocked_login_attempt_is_recorded(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-AUTH-006: blocked attempts are recorded so the lockout window stays fresh.
+
+    Drive the user into lockout, then issue one more wrong-password
+    attempt and confirm a row was inserted.  Pre-006 the blocked branch
+    short-circuited without recording, letting the rolling window
+    expire under continuous attack.
+    """
+    email = "lockedrec@example.com"
+    await async_client.post(
+        SIGNUP_URL,
+        json={"email": email, "password": "rightpass123"},  # pragma: allowlist secret
+    )
+    # Drive past the threshold.
+    for _ in range(MAX_FAILED_ATTEMPTS):
+        await _fail_login(async_client, email=email)
+    # One more attempt -- this one is blocked.
+    blocked = await async_client.post(
+        LOGIN_URL,
+        json={"email": email, "password": "wrongpw999"},  # pragma: allowlist secret
+    )
+    assert blocked.status_code == HTTPStatus.UNAUTHORIZED
+
+    result = await db_session.execute(select(LoginAttempt).where(LoginAttempt.email == email))
+    attempts = list(result.scalars().all())
+    # MAX_FAILED_ATTEMPTS verify-failed + at least 1 blocked-and-recorded.
+    assert len(attempts) > MAX_FAILED_ATTEMPTS
+
+
+# ── BUG-AUTH-013: refresh revokes the old token's jti ─────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_refresh_revokes_previous_token(
+    async_client: AsyncClient,
+) -> None:
+    """A token cannot be replayed after a successful refresh.
+
+    The first refresh succeeds and stores the old ``jti`` in the
+    revocation table.  Replaying the original token afterwards must
+    400/401, not return a fresh response -- otherwise a stolen token
+    keeps working until its original 1-hour ``exp``.
+    """
+    data = await _signup(async_client, email="revoke@example.com")
+    old_token = data["token"]
+
+    # First refresh -- old token is consumed and revoked.
+    first = await async_client.post(
+        REFRESH_URL,
+        headers={"Authorization": f"Bearer {old_token}"},
+    )
+    assert first.status_code == HTTPStatus.OK
+    new_token = first.json()["token"]
+    assert new_token != old_token
+
+    # Replaying the OLD token -- now revoked -- must be rejected.
+    replayed = await async_client.post(
+        REFRESH_URL,
+        headers={"Authorization": f"Bearer {old_token}"},
+    )
+    assert replayed.status_code == HTTPStatus.UNAUTHORIZED
+
+    # The NEW token still works.
+    second = await async_client.post(
+        REFRESH_URL,
+        headers={"Authorization": f"Bearer {new_token}"},
+    )
+    assert second.status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_legacy_token_without_jti_still_authenticates(
+    async_client: AsyncClient,
+) -> None:
+    """BUG-AUTH-013 grace window: tokens minted before the jti claim work.
+
+    A deployment landing this PR cannot revoke every active session at
+    once.  Tokens whose payload omits ``jti`` are passed through the
+    revocation check transparently -- the 1-hour TTL is the grace
+    window, after which every new token has a jti and the legacy path
+    naturally drops.
+    """
+    # Create a corresponding user so the int sub maps to a real row.
+    data = await _signup(async_client, email="legacy@example.com")
+    user_id = data["user_id"]
+    legacy = jwt.encode(
+        {
+            "sub": str(user_id),
+            "exp": datetime.now(UTC) + timedelta(hours=1),
+            "iat": datetime.now(UTC),
+            # No ``jti`` claim -- legacy shape.
+        },
+        SECRET_KEY,
+        algorithm="HS256",
+    )
+    resp = await async_client.post(
+        REFRESH_URL,
+        headers={"Authorization": f"Bearer {legacy}"},
+    )
+    # Accepts the request -- the auth dep does not 401 a missing jti.
+    assert resp.status_code == HTTPStatus.OK

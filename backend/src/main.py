@@ -1,10 +1,13 @@
 """Main FastAPI application instance."""
 
+import asyncio
+import ipaddress
 import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -71,11 +74,70 @@ ALLOWED_HEADERS = [
 EXPOSED_HEADERS = ["X-Request-ID"]
 
 
+_LOOPBACK_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _check_origin_hostname(origin: str, hostname: str | None) -> None:
+    """Hostname-related slice of the CORS allow-list checks (BUG-APP-003).
+
+    Split out so the parent ``_validate_prod_origin`` stays at xenon
+    rank A; the IP-literal try/except plus the loopback set membership
+    plus the empty-hostname guard add up to four branches that read
+    cleaner here.
+    """
+    if not hostname:
+        msg = f"PROD_DOMAIN entry has no hostname: '{origin}'"
+        raise RuntimeError(msg)
+    if hostname in _LOOPBACK_HOSTNAMES:
+        msg = f"PROD_DOMAIN cannot point at loopback: '{origin}'"
+        raise RuntimeError(msg)
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        # Hostname is not a bare IP literal -- this is the good case.
+        return
+    msg = f"PROD_DOMAIN cannot be a bare IP: '{origin}'"
+    raise RuntimeError(msg)
+
+
+def _validate_prod_origin(origin: str) -> None:
+    """Reject obviously-wrong production origins (BUG-APP-003).
+
+    The previous ``startswith("https://")`` check let through bare IPs,
+    ``https://localhost``, embedded userinfo  # pragma: allowlist secret
+    (``https://user@host`` style URLs with credentials in the netloc),
+    wildcards (``https://*.example.com``), and trailing-slash typos --
+    each of which silently broke or weakened the CORS allow-list.
+
+    The strict ruleset:
+
+    * Scheme must be ``https`` (already covered, kept).
+    * Hostname must be set, must not be a literal IP address, must
+      not be ``localhost`` / ``127.0.0.1``.
+    * No wildcards (``*``) or userinfo (``@``) in the URL.
+
+    A misconfigured deployment fails the readiness probe at startup
+    rather than serving traffic with a hole in the allow-list.
+    """
+    parsed = urlparse(origin)
+    if parsed.scheme != "https":
+        msg = f"PROD_DOMAIN entries must use HTTPS, got '{origin}'"
+        raise RuntimeError(msg)
+    _check_origin_hostname(origin, parsed.hostname)
+    if "*" in origin or "@" in origin:
+        msg = f"PROD_DOMAIN cannot contain wildcard or userinfo: '{origin}'"
+        raise RuntimeError(msg)
+
+
 def _validate_https_origins(origins: list[str]) -> None:
-    """Ensure every origin uses HTTPS; raise RuntimeError otherwise."""
+    """Validate every origin against ``_validate_prod_origin``.
+
+    Wraps the per-origin check so callers iterate once over the parsed
+    list and the per-origin failure message is rich enough to identify
+    which entry is bad.
+    """
     for origin in origins:
-        if not origin.startswith("https://"):
-            raise RuntimeError(f"PROD_DOMAIN entries must use HTTPS, got '{origin}'")
+        _validate_prod_origin(origin)
 
 
 def _parse_prod_origins() -> list[str]:
@@ -174,6 +236,14 @@ install_trace_id_logging()
 async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown lifecycle for the application."""
     import models  # noqa: F401, PLC0415
+    from routers.auth import _get_secret_key  # noqa: PLC0415
+
+    # BUG-AUTH-011: validate ``SECRET_KEY`` once at startup so a misconfigured
+    # deployment fails the orchestrator's health probe immediately rather than
+    # silently serving traffic and crashing on the first auth request.  The
+    # underlying check is the same lazy guard ``_get_secret_key`` already does;
+    # invoking it here turns "first user pays" into "deploy never goes live".
+    _get_secret_key()
 
     yield
 
@@ -238,24 +308,73 @@ app.include_router(goal_groups_router)
 app.include_router(stages_router)
 
 
+# BUG-APP-004: separate liveness from readiness so the orchestrator can
+# distinguish "process is up" from "process can serve traffic".  A
+# liveness probe that fails the way a readiness probe should (DB hiccup,
+# slow query, etc.) restarts the container; a readiness probe that
+# fails takes the pod out of rotation without restarting it, which is
+# what we actually want during a transient DB blip.  Combined ``/health``
+# kept for backwards compatibility (Railway / existing dashboards) --
+# behaves like the readiness probe so a healthy old-style monitor is
+# still meaningful.
+_DB_PROBE_TIMEOUT_SECONDS = 2.0
+
+
+@app.get("/health/live")
+async def liveness() -> dict[str, str]:
+    """Liveness probe: process is responsive (no DB dependency).
+
+    Always returns ``{"status": "alive"}`` 200 as long as the event
+    loop can dispatch a request.  An orchestrator restart on this
+    failing means the *process* is wedged -- restart is the right
+    response.  A DB outage should NOT trip this probe.
+    """
+    return {"status": "alive"}
+
+
+@app.get("/health/ready")
+async def readiness(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict[str, str]:
+    """Readiness probe: app + DB are both serving traffic.
+
+    Bounded by ``_DB_PROBE_TIMEOUT_SECONDS`` so a slow database does
+    not hang the probe forever and silently keep an unhealthy pod in
+    rotation.  Failures (timeout or query error) return 503 so the
+    orchestrator drops the pod from the load-balancer pool until the
+    next successful probe.
+
+    Session lifecycle is owned by ``Depends(get_session)`` -- we don't
+    open or close the session here, so a failed ``SELECT 1`` cannot
+    leak a connection.  The dependency's ``async with`` (in
+    ``database.py``) guarantees ``close()`` runs even when the handler
+    raises.
+    """
+    try:
+        async with asyncio.timeout(_DB_PROBE_TIMEOUT_SECONDS):
+            await session.execute(text("SELECT 1"))
+    except (TimeoutError, Exception) as exc:
+        logger.exception("readiness_check_failed")
+        raise HTTPException(status_code=503, detail="not_ready") from exc
+    return {"status": "ready", "database": "connected"}
+
+
 @app.get("/health")
 async def health_check(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict[str, str]:
-    """Health check that validates database connectivity.
+    """Combined probe (legacy): mirrors ``/health/ready`` for back-compat.
 
-    Returns a 200 with ``{"status": "healthy", "database": "connected"}`` when
-    the database is reachable.  Railway pings this endpoint to determine
-    service health; a 503 signals an unhealthy container.
-
-    BUG-INFRA-021: session lifecycle is owned by ``Depends(get_session)`` —
-    we don't open or close the session here, so a failed ``SELECT 1`` cannot
-    leak a connection.  The dependency's ``async with`` (in ``database.py``)
-    guarantees ``close()`` runs even when the handler raises.
+    Existing Railway / dashboard probes hit this path; rather than
+    breaking them, the response shape is preserved (``status: healthy``
+    + ``database: connected``).  New deployments should hit
+    ``/health/live`` and ``/health/ready`` directly so liveness and
+    readiness can be configured independently (BUG-APP-004).
     """
     try:
-        await session.execute(text("SELECT 1"))
-    except Exception as exc:
+        async with asyncio.timeout(_DB_PROBE_TIMEOUT_SECONDS):
+            await session.execute(text("SELECT 1"))
+    except (TimeoutError, Exception) as exc:
         logger.exception("health_check_failed")
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
     return {"status": "healthy", "database": "connected"}

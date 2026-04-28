@@ -12,7 +12,7 @@ class PracticeSession(SQLModel, table=True):
     """
 
     id: int | None = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id")
+    user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
     user_practice_id: int = Field(foreign_key="userpractice.id")
     duration_minutes: float
     timestamp: datetime = Field(
