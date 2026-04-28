@@ -29,7 +29,7 @@ Either way, treat the `main` copy of this table as truth. A branch-local tick is
 | 03 | close-stage-skip-chain            | 2 | `claude/bug-fix-03-stage-skip-chain` / [#247](https://github.com/Geoffe-Ga/adepthood/pull/247) | [x] |
 | 04 | centralize-sanitize-user-text     | 3 | `claude/bug-fix-04-sanitize-user-text` | [x] |
 | 05 | centralize-date-utils-tz          | 3 | `claude/bug-fix-05-centralize-date-utils-tz` | [x] |
-| 06 | db-unique-constraints-toctou      | 3 | | [ ] |
+| 06 | db-unique-constraints-toctou      | 3 | `claude/bug-fix-06-db-unique-constraints-toctou` / [#266](https://github.com/Geoffe-Ga/adepthood/pull/266) | [x] |
 | 07 | normalize-idor-ordering           | 3 | | [ ] |
 | 08 | optimistic-mutation-hook          | 3 | | [ ] |
 | 09 | server-derived-timestamps         | 3 | `claude/09-server-derived-timestamps-cfvVc` / [#264](https://github.com/Geoffe-Ga/adepthood/pull/264) | [x] |
