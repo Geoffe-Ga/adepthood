@@ -31,9 +31,18 @@ jest.mock('react-native-safe-area-context', () => ({
   SafeAreaView: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-// Mock navigators to simple pass-through components
+// Mock navigators to simple pass-through components.  ``useNavigation``
+// is required because ``FeatureErrorBoundary`` calls it for the
+// route-focus auto-reset (BUG-FE-UI-102); returning a stub navigation
+// object that no-ops on ``addListener`` keeps the unrelated auth-flow
+// assertions free of routing side effects.
 jest.mock('@react-navigation/native', () => ({
   NavigationContainer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useNavigation: () => ({
+    addListener: () => () => {
+      /* unused in this test */
+    },
+  }),
 }));
 
 jest.mock('@react-navigation/native-stack', () => ({
