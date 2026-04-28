@@ -126,6 +126,44 @@ async def test_empty_habits_returns_400(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["energy_cost", "energy_return"])
+async def test_negative_energy_value_rejected(async_client: AsyncClient, field: str) -> None:
+    """BUG-SCHEMA-007: clients can't smuggle negative energy values past Pydantic."""
+    habit = {"id": 1, "name": "X", "energy_cost": 1, "energy_return": 1}
+    habit[field] = -1
+    resp = await async_client.post("/v1/energy/plan", json=_plan_request([habit]))
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["energy_cost", "energy_return"])
+async def test_oversized_energy_value_rejected(async_client: AsyncClient, field: str) -> None:
+    """BUG-SCHEMA-007: values above the documented cap are rejected, not clamped."""
+    habit = {"id": 1, "name": "X", "energy_cost": 1, "energy_return": 1}
+    habit[field] = 10_001
+    resp = await async_client.post("/v1/energy/plan", json=_plan_request([habit]))
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_zero_id_habit_rejected(async_client: AsyncClient) -> None:
+    """``id`` must be positive — a zero id would never round-trip to a real habit."""
+    habit = {"id": 0, "name": "X", "energy_cost": 1, "energy_return": 1}
+    resp = await async_client.post("/v1/energy/plan", json=_plan_request([habit]))
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_too_many_habits_rejected(async_client: AsyncClient) -> None:
+    """A pathological 101-habit payload is rejected before it hits the planner."""
+    too_many = [
+        {"id": i + 1, "name": f"H{i}", "energy_cost": 1, "energy_return": 2} for i in range(101)
+    ]
+    resp = await async_client.post("/v1/energy/plan", json=_plan_request(too_many))
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
 async def test_single_habit_fills_all_21_days(async_client: AsyncClient) -> None:
     """A single habit is scheduled for all 21 days of the plan."""
     single = [{"id": 42, "name": "Solo", "energy_cost": 2, "energy_return": 3}]

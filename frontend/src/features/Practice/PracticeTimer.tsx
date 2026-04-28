@@ -9,13 +9,17 @@ type TimerState = 'idle' | 'running' | 'paused' | 'completed';
 
 interface PracticeTimerProps {
   durationMinutes: number;
-  onComplete: (_minutes: number) => void;
+  // BUG-FE-PRACTICE-101 / -105: emit wall-clock ISO timestamps the
+  // backend can validate (BUG-PRACTICE-006), not a setInterval-derived
+  // count that drifts when the JS timer is throttled in the background.
+  onComplete: (_startedAt: Date, _endedAt: Date) => void;
   onCancel: () => void;
 }
 
 const KEEP_AWAKE_TAG = 'practice-timer';
 const TIMER_INTERVAL_MS = 1000;
 const SECONDS_PER_MINUTE = 60;
+const MS_PER_SECOND = 1000;
 
 async function playSound(source: number): Promise<void> {
   try {
@@ -47,6 +51,13 @@ function useTimerState(totalSeconds: number) {
   const [state, setState] = useState<TimerState>('idle');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const halfwayPlayedRef = useRef(false);
+  // Wall-clock anchor: every render derives ``remaining`` from
+  // ``Date.now()`` against this ref, so a backgrounded JS timer cannot
+  // under-report (BUG-FE-PRACTICE-101).  ``effectiveStartMsRef`` is
+  // shifted forward across pause/resume so it always represents the
+  // moment the *current* run logically started.
+  const effectiveStartMsRef = useRef<number | null>(null);
+  const pauseStartMsRef = useRef<number | null>(null);
 
   const clearTimer = useCallback(() => {
     if (intervalRef.current !== null) {
@@ -65,6 +76,8 @@ function useTimerState(totalSeconds: number) {
     setState,
     intervalRef,
     halfwayPlayedRef,
+    effectiveStartMsRef,
+    pauseStartMsRef,
     clearTimer,
     progress,
   };
@@ -72,28 +85,68 @@ function useTimerState(totalSeconds: number) {
 
 // --- Hook: timer actions ---
 
-function useTimerActions(
-  totalSeconds: number,
-  ts: ReturnType<typeof useTimerState>,
-  onCancel: () => void,
-) {
-  const { setState, setRemaining, halfwayPlayedRef, clearTimer } = ts;
+function useStartPauseResume(totalSeconds: number, ts: ReturnType<typeof useTimerState>) {
+  const {
+    setState,
+    setRemaining,
+    halfwayPlayedRef,
+    effectiveStartMsRef,
+    pauseStartMsRef,
+    clearTimer,
+  } = ts;
 
   const handleStart = useCallback(() => {
     setState('running');
     halfwayPlayedRef.current = false;
     setRemaining(totalSeconds);
+    effectiveStartMsRef.current = Date.now();
+    pauseStartMsRef.current = null;
     playSound(SOUND_START);
     activateKeepAwakeAsync(KEEP_AWAKE_TAG);
-  }, [totalSeconds, setState, setRemaining, halfwayPlayedRef]);
+  }, [
+    totalSeconds,
+    setState,
+    setRemaining,
+    halfwayPlayedRef,
+    effectiveStartMsRef,
+    pauseStartMsRef,
+  ]);
 
   const handlePause = useCallback(() => {
+    pauseStartMsRef.current = Date.now();
     setState('paused');
     clearTimer();
-  }, [setState, clearTimer]);
+  }, [pauseStartMsRef, setState, clearTimer]);
+
   const handleResume = useCallback(() => {
+    // Slide the start anchor forward by the paused interval so the
+    // visible count-down resumes exactly where it left off and the
+    // wall-clock duration submitted on completion never includes the
+    // pause window.
+    if (pauseStartMsRef.current !== null && effectiveStartMsRef.current !== null) {
+      effectiveStartMsRef.current += Date.now() - pauseStartMsRef.current;
+    }
+    pauseStartMsRef.current = null;
     setState('running');
-  }, [setState]);
+  }, [effectiveStartMsRef, pauseStartMsRef, setState]);
+
+  return { handleStart, handlePause, handleResume };
+}
+
+function useTimerActions(
+  totalSeconds: number,
+  ts: ReturnType<typeof useTimerState>,
+  onCancel: () => void,
+) {
+  const {
+    setState,
+    setRemaining,
+    halfwayPlayedRef,
+    effectiveStartMsRef,
+    pauseStartMsRef,
+    clearTimer,
+  } = ts;
+  const { handleStart, handlePause, handleResume } = useStartPauseResume(totalSeconds, ts);
 
   const handleCancel = useCallback(() => {
     clearTimer();
@@ -101,12 +154,26 @@ function useTimerActions(
     setState('idle');
     setRemaining(totalSeconds);
     halfwayPlayedRef.current = false;
+    effectiveStartMsRef.current = null;
+    pauseStartMsRef.current = null;
     onCancel();
-  }, [clearTimer, setState, setRemaining, halfwayPlayedRef, onCancel, totalSeconds]);
+  }, [
+    clearTimer,
+    setState,
+    setRemaining,
+    halfwayPlayedRef,
+    effectiveStartMsRef,
+    pauseStartMsRef,
+    onCancel,
+    totalSeconds,
+  ]);
 
   const tick = useCallback(() => {
-    setRemaining((prev) => (prev - 1 <= 0 ? 0 : prev - 1));
-  }, [setRemaining]);
+    const startMs = effectiveStartMsRef.current;
+    if (startMs === null) return;
+    const elapsedSec = Math.max(0, Math.floor((Date.now() - startMs) / MS_PER_SECOND));
+    setRemaining(Math.max(0, totalSeconds - elapsedSec));
+  }, [effectiveStartMsRef, setRemaining, totalSeconds]);
 
   return { handleStart, handlePause, handleResume, handleCancel, tick };
 }
@@ -116,11 +183,18 @@ function useTimerActions(
 function useTimerEffects(
   ts: ReturnType<typeof useTimerState>,
   tick: () => void,
-  onComplete: (_m: number) => void,
-  _durationMinutes: number,
+  onComplete: (_startedAt: Date, _endedAt: Date) => void,
   totalSeconds: number,
 ) {
-  const { state, remaining, clearTimer, setState, intervalRef, halfwayPlayedRef } = ts;
+  const {
+    state,
+    remaining,
+    clearTimer,
+    setState,
+    intervalRef,
+    halfwayPlayedRef,
+    effectiveStartMsRef,
+  } = ts;
   const halfwaySeconds = Math.floor(totalSeconds / 2);
 
   useEffect(() => {
@@ -145,9 +219,13 @@ function useTimerEffects(
     setState('completed');
     playSound(SOUND_END);
     Vibration.vibrate([0, 200, 100, 200, 100, 200]);
-    const elapsedMinutes = (totalSeconds - remaining) / SECONDS_PER_MINUTE;
-    onComplete(elapsedMinutes);
-  }, [remaining, state, clearTimer, setState, totalSeconds, onComplete]);
+    const startMs = effectiveStartMsRef.current ?? Date.now() - totalSeconds * MS_PER_SECOND;
+    // Cap ended_at to ``startMs + totalSeconds`` so a slightly-late tick
+    // can't push the submitted duration above the configured length;
+    // the server-side 8h hard cap is the next line of defence.
+    const endedAtMs = Math.min(Date.now(), startMs + totalSeconds * MS_PER_SECOND);
+    onComplete(new Date(startMs), new Date(endedAtMs));
+  }, [remaining, state, clearTimer, setState, totalSeconds, onComplete, effectiveStartMsRef]);
 
   useEffect(() => {
     return () => {
@@ -289,7 +367,7 @@ const PracticeTimer: React.FC<PracticeTimerProps> = ({ durationMinutes, onComple
   const totalSeconds = durationMinutes * SECONDS_PER_MINUTE;
   const ts = useTimerState(totalSeconds);
   const controls = useTimerActions(totalSeconds, ts, onCancel);
-  useTimerEffects(ts, controls.tick, onComplete, durationMinutes, totalSeconds);
+  useTimerEffects(ts, controls.tick, onComplete, totalSeconds);
 
   return (
     <View style={timerStyles.container} testID="practice-timer">

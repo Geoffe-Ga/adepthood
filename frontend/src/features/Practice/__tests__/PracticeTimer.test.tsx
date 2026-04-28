@@ -117,7 +117,7 @@ describe('PracticeTimer', () => {
     expect(mockOnCancel).toHaveBeenCalled();
   });
 
-  it('calls onComplete when timer finishes', () => {
+  it('calls onComplete with wall-clock timestamps when timer finishes', () => {
     const { getByTestId } = render(
       <PracticeTimer durationMinutes={1} onComplete={mockOnComplete} onCancel={mockOnCancel} />,
     );
@@ -131,7 +131,50 @@ describe('PracticeTimer', () => {
       jest.advanceTimersByTime(61000);
     });
 
-    expect(mockOnComplete).toHaveBeenCalledWith(1);
+    // BUG-FE-PRACTICE-101 / -105: emit ISO-friendly Date instances so the
+    // backend can derive the duration server-side and reject drifted
+    // ``setInterval`` accumulations (BUG-PRACTICE-006).
+    expect(mockOnComplete).toHaveBeenCalledTimes(1);
+    const [startedAt, endedAt] = (mockOnComplete.mock.calls[0] ?? []) as [Date, Date];
+    expect(startedAt).toBeInstanceOf(Date);
+    expect(endedAt).toBeInstanceOf(Date);
+    const durationSec = (endedAt.getTime() - startedAt.getTime()) / 1000;
+    expect(durationSec).toBeGreaterThan(0);
+    expect(durationSec).toBeLessThanOrEqual(60);
+  });
+
+  it('does not include paused time in the submitted window', () => {
+    const { getByTestId } = render(
+      <PracticeTimer durationMinutes={1} onComplete={mockOnComplete} onCancel={mockOnCancel} />,
+    );
+
+    act(() => {
+      fireEvent.press(getByTestId('start-button'));
+    });
+    act(() => {
+      jest.advanceTimersByTime(20000);
+    });
+    act(() => {
+      fireEvent.press(getByTestId('pause-button'));
+    });
+    // Sit on pause for a long time — wall clock advances but practice time
+    // shouldn't.
+    act(() => {
+      jest.advanceTimersByTime(120000);
+    });
+    act(() => {
+      fireEvent.press(getByTestId('resume-button'));
+    });
+    act(() => {
+      jest.advanceTimersByTime(45000);
+    });
+
+    expect(mockOnComplete).toHaveBeenCalledTimes(1);
+    const [startedAt, endedAt] = (mockOnComplete.mock.calls[0] ?? []) as [Date, Date];
+    const durationSec = (endedAt.getTime() - startedAt.getTime()) / 1000;
+    // ~60s of practice + a tick rounding tolerance, never the 185s
+    // wall-clock total that includes the pause.
+    expect(durationSec).toBeLessThanOrEqual(62);
   });
 
   it('activates keep awake when started', () => {

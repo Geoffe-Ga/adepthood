@@ -98,7 +98,10 @@ export default function LoginScreen({ navigation }: Props) {
     try {
       // BUG-AUTH-010: trim at submit so paste/autofill whitespace doesn't
       // produce a confusing 422 from the backend.
-      await login(email.trim(), password);
+      // BUG-FE-AUTH-015: lowercase the email client-side so the backend
+      // receives the canonical form and a "Foo@bar.com" / "foo@bar.com"
+      // login pair can't end up looking like two distinct accounts.
+      await login(email.trim().toLowerCase(), password);
     } catch (err: unknown) {
       // BUG-FRONTEND-INFRA-016: ``formatApiError`` returns a dedicated
       // timeout message when the new AbortController fires.

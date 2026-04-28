@@ -181,11 +181,14 @@ async def test_practice_session_week_count(
 
     # Log two practice sessions
     for duration in (10.0, 15.0):
+        ended = datetime.now(UTC)
+        started = ended - timedelta(minutes=duration)
         resp = await async_client.post(
             "/practice-sessions/",
             json={
                 "user_practice_id": user_practice_id,
-                "duration_minutes": duration,
+                "started_at": started.isoformat(),
+                "ended_at": ended.isoformat(),
                 "reflection": "Felt calm",
             },
             headers=headers,
