@@ -19,6 +19,7 @@ jest.mock('../../../../storage/habitStorage', () => ({
   savePendingCheckIn: jest.fn(() => Promise.resolve(undefined)),
   loadPendingCheckIns: jest.fn(() => Promise.resolve([])),
   clearPendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
+  replacePendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
 }));
 
 jest.mock('../../hooks/useHabitNotifications', () => ({
@@ -37,7 +38,13 @@ jest.mock('react-native', () => ({
 }));
 
 import { habits as habitsApi, goalCompletions as goalCompletionsApi } from '../../../../api';
-import { saveHabits, loadHabits } from '../../../../storage/habitStorage';
+import {
+  saveHabits,
+  loadHabits,
+  loadPendingCheckIns,
+  clearPendingCheckIns,
+  replacePendingCheckIns,
+} from '../../../../storage/habitStorage';
 import { useHabitStore } from '../../../../store/useHabitStore';
 import type { Goal, Habit, OnboardingHabit } from '../../Habits.types';
 import { habitManager } from '../habitManager';
@@ -147,6 +154,45 @@ describe('habitManager', () => {
       // rather than a generic "please try again" string.
       expect(useHabitStore.getState().error).toMatch(/couldn't load your habits/i);
     });
+
+    it('replays the full queue and clears it when every check-in posts', async () => {
+      (loadHabits as jest.Mock).mockResolvedValueOnce([] as never);
+      (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never);
+      (loadPendingCheckIns as jest.Mock).mockResolvedValueOnce([
+        { goal_id: 1, did_complete: true, timestamp: '2025-04-01T00:00:00Z' },
+        { goal_id: 2, did_complete: true, timestamp: '2025-04-02T00:00:00Z' },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      expect(goalCompletionsApi.create).toHaveBeenCalledTimes(2);
+      expect(clearPendingCheckIns).toHaveBeenCalled();
+      expect(replacePendingCheckIns).not.toHaveBeenCalled();
+    });
+
+    it('keeps only the unprocessed suffix when replay fails mid-batch (BUG-FE-HABIT-205)', async () => {
+      (loadHabits as jest.Mock).mockResolvedValueOnce([] as never);
+      (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never);
+      (loadPendingCheckIns as jest.Mock).mockResolvedValueOnce([
+        { goal_id: 1, did_complete: true, timestamp: '2025-04-01T00:00:00Z' },
+        { goal_id: 2, did_complete: true, timestamp: '2025-04-02T00:00:00Z' },
+        { goal_id: 3, did_complete: true, timestamp: '2025-04-03T00:00:00Z' },
+      ] as never);
+      // First call succeeds, second rejects. Without the fix, the
+      // successful prefix stays queued and reposts on next replay,
+      // duplicating the user's streak.
+      (goalCompletionsApi.create as jest.Mock)
+        .mockResolvedValueOnce({} as never)
+        .mockRejectedValueOnce(new Error('still offline') as never);
+
+      await habitManager.loadHabits();
+
+      expect(clearPendingCheckIns).not.toHaveBeenCalled();
+      expect(replacePendingCheckIns).toHaveBeenCalledWith([
+        { goal_id: 2, did_complete: true, timestamp: '2025-04-02T00:00:00Z' },
+        { goal_id: 3, did_complete: true, timestamp: '2025-04-03T00:00:00Z' },
+      ]);
+    });
   });
 
   describe('updateGoal', () => {
@@ -224,33 +270,67 @@ describe('habitManager', () => {
     });
   });
 
-  describe('logUnit', () => {
-    it('appends a completion and returns the updated habit', () => {
+  describe('logUnit primitives (apply / commit / rollback)', () => {
+    it('prepareLogUnit + applyLogUnitContext appends a completion and returns the updated habit', () => {
       useHabitStore.setState({ habits: [makeHabit()] });
 
-      const updated = habitManager.logUnit(1, 1);
+      const ctx = habitManager.prepareLogUnit(1, 1);
+      expect(ctx).not.toBeNull();
+      habitManager.applyLogUnitContext(ctx!);
 
-      expect(updated).not.toBeNull();
-      expect(updated!.completions).toHaveLength(1);
+      expect(ctx!.updated.completions).toHaveLength(1);
       expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(1);
-      expect(goalCompletionsApi.create).toHaveBeenCalled();
     });
 
-    it('invokes the toast callback when a goal tier is reached', () => {
+    it('commitLogUnitContext POSTs the goal completion to the API', async () => {
       useHabitStore.setState({ habits: [makeHabit()] });
-      const showToast = jest.fn();
+      const ctx = habitManager.prepareLogUnit(1, 1)!;
+      habitManager.applyLogUnitContext(ctx);
 
-      habitManager.logUnit(1, 1, showToast);
+      await habitManager.commitLogUnitContext(ctx);
 
-      expect(showToast).toHaveBeenCalled();
+      expect(goalCompletionsApi.create).toHaveBeenCalledWith({
+        goal_id: ctx.currentGoal.id,
+        did_complete: true,
+      });
     });
 
-    it('returns null when no habit matches the id', () => {
+    it('buildLogUnitToast returns a milestone config when a tier is reached', () => {
+      useHabitStore.setState({ habits: [makeHabit()] });
+      const ctx = habitManager.prepareLogUnit(1, 1)!;
+
+      const toast = habitManager.buildLogUnitToast(ctx);
+
+      expect(toast).not.toBeNull();
+      expect(toast!.message).toMatch(/Low Goal achieved/i);
+    });
+
+    it('rollbackLogUnitContext restores both the store AND the persisted snapshot', () => {
+      const habit = makeHabit();
+      const prev = [habit];
+      useHabitStore.setState({ habits: prev });
+
+      const ctx = habitManager.prepareLogUnit(1, 1)!;
+      habitManager.applyLogUnitContext(ctx);
+      expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(1);
+
+      habitManager.rollbackLogUnitContext(ctx);
+
+      // Store reverted.
+      expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(0);
+      // Disk reverted — saveHabits called with the pre-apply snapshot, not
+      // the optimistic next list. This is the BUG-FE-HABIT-001 regression
+      // guard: before the fix, only the store reverted while AsyncStorage
+      // held the optimistic state and rehydrated stale on next launch.
+      expect(saveHabits).toHaveBeenLastCalledWith(prev);
+    });
+
+    it('prepareLogUnit returns null when no habit matches the id', () => {
       useHabitStore.setState({ habits: [makeHabit({ id: 1 })] });
 
-      const updated = habitManager.logUnit(999, 1);
+      const ctx = habitManager.prepareLogUnit(999, 1);
 
-      expect(updated).toBeNull();
+      expect(ctx).toBeNull();
     });
   });
 

@@ -11,16 +11,16 @@ import { Alert } from 'react-native';
 import { v4 as uuidv4 } from 'uuid';
 
 import { habits as habitsApi, goalCompletions as goalCompletionsApi } from '../../../api';
-import type { HabitCreatePayload } from '../../../api';
+import type { CheckInResult, HabitCreatePayload } from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
 import type { ToastConfig } from '../../../components/Toast';
 import { colors } from '../../../design/tokens';
 import {
   saveHabits as persistHabits,
   loadHabits as loadCachedHabits,
-  savePendingCheckIn,
   loadPendingCheckIns,
   clearPendingCheckIns,
+  replacePendingCheckIns,
 } from '../../../storage/habitStorage';
 import { useHabitStore } from '../../../store/useHabitStore';
 import { HABIT_DEFAULTS } from '../HabitDefaults';
@@ -239,26 +239,23 @@ const applyLogUnit = (
   return { updatedHabit, oldProgress, newProgress };
 };
 
-const logAndToast = (
-  habit: Habit,
-  habitId: number,
-  amount: number,
-  showToast?: ShowToast,
-): Habit | null => {
-  if (habit.id !== habitId) return null;
-  const result = applyLogUnit(habit, amount);
-  if (!showToast) return result.updatedHabit;
-  const { currentGoal, nextGoal } = getGoalTier(result.updatedHabit);
-  const toast = buildMilestoneToast(
-    habit.name,
-    result.oldProgress,
-    result.newProgress,
-    currentGoal,
-    nextGoal,
-  );
-  if (toast) showToast(toast);
-  return result.updatedHabit;
-};
+/**
+ * Closed-over snapshot for one logUnit operation. Capturing `prev` and
+ * `next` here (rather than re-reading the store inside `rollback`) is
+ * what lets BUG-FE-HABIT-001 stay closed under concurrent mutations: if
+ * a second log lands while the first is in flight, each mutate has its
+ * own context and rolls back to the right baseline.
+ */
+export interface LogUnitContext {
+  prev: Habit[];
+  next: Habit[];
+  updated: Habit;
+  habitName: string;
+  oldProgress: number;
+  newProgress: number;
+  currentGoal: Goal;
+  nextGoal: Goal | null;
+}
 
 // ---------------------------------------------------------------------------
 // Store bindings — tiny adapters so service methods read/write the store
@@ -337,6 +334,36 @@ const revertOnFailure = (prev: Habit[], fallback: string): ((err: unknown) => vo
   };
 };
 
+/**
+ * Replay pending check-ins captured by an earlier offline session. On
+ * partial failure, the suffix that didn't post is rewritten back to
+ * disk so we don't double-post on the next replay. NOTE: the API does
+ * not yet accept a client-supplied timestamp; queued check-ins replay
+ * with the server's wall-clock time. See the follow-up issue tracking
+ * BUG-FE-HABIT-205's timestamp-forwarding requirement.
+ */
+const replayPendingCheckIns = async (): Promise<void> => {
+  const pending = await loadPendingCheckIns();
+  if (pending.length === 0) return;
+  for (let i = 0; i < pending.length; i += 1) {
+    const checkIn = pending[i]!;
+    try {
+      await goalCompletionsApi.create({
+        goal_id: checkIn.goal_id,
+        did_complete: checkIn.did_complete,
+      });
+    } catch {
+      // Still offline (or the server rejected this one). Persist only
+      // the unprocessed suffix so the next replay doesn't repost the
+      // successful prefix — that was the BUG-FE-HABIT-205 partial-
+      // success regression.
+      await replacePendingCheckIns(pending.slice(i));
+      return;
+    }
+  }
+  await clearPendingCheckIns();
+};
+
 // ---------------------------------------------------------------------------
 // Public service: a plain object with async methods. Composable from hooks
 // but not itself a hook. Every method is independently unit-testable.
@@ -355,22 +382,14 @@ export const habitManager = {
     await fetchFromApi(hasCachedData);
     setLoading(false);
 
-    // BUG-HABITS-007: replay pending check-ins queued during offline
-    const pending = await loadPendingCheckIns();
-    if (pending.length > 0) {
-      for (const checkIn of pending) {
-        try {
-          await goalCompletionsApi.create({
-            goal_id: checkIn.goal_id,
-            did_complete: checkIn.did_complete,
-          });
-        } catch {
-          // still offline — leave in queue for next load
-          return;
-        }
-      }
-      await clearPendingCheckIns();
-    }
+    // BUG-HABITS-007 + BUG-FE-HABIT-205 partial-success fix: replay
+    // pending check-ins queued during offline, and when one fails mid-
+    // batch only re-queue the suffix that didn't post. The previous
+    // implementation `return`ed from the first failure with the
+    // successful prefix still in the queue, so on the next load every
+    // check-in that had already posted would post AGAIN — silent
+    // duplication of the user's streak.
+    await replayPendingCheckIns();
   },
 
   updateGoal: (habitId: number, updatedGoal: Goal): void => {
@@ -416,41 +435,91 @@ export const habitManager = {
   },
 
   /**
-   * Log `amount` units toward `habitId`, fire milestone toasts when a tier is
-   * crossed, and sync to the backend. Returns the updated habit so UI code
-   * can refresh a selected-habit copy if needed.
+   * Compute the next habit list for a logUnit operation without mutating
+   * the store. Returns null when no habit matches `habitId`. The
+   * resulting context is the input to `useOptimisticMutation` — `apply`
+   * writes `next`, `commit` POSTs `currentGoal.id`, and `rollback`
+   * restores `prev`. Splitting the computation out of the side-effecting
+   * apply step is what keeps the rollback closure correct: the snapshot
+   * is captured by value before the optimistic write, so a later
+   * concurrent mutate cannot clobber it.
    */
-  logUnit: (habitId: number, amount: number, showToast?: ShowToast): Habit | null => {
+  prepareLogUnit: (habitId: number, amount: number): LogUnitContext | null => {
     const prev = getHabits();
     let updated: Habit | null = null;
+    let oldProgress = 0;
+    let newProgress = 0;
+    let habitName = '';
     const next = prev.map((h) => {
-      const result = logAndToast(h, habitId, amount, showToast);
-      if (!result) return h;
-      updated = result;
-      return result;
+      if (h.id !== habitId) return h;
+      habitName = h.name;
+      const result = applyLogUnit(h, amount);
+      oldProgress = result.oldProgress;
+      newProgress = result.newProgress;
+      updated = result.updatedHabit;
+      return result.updatedHabit;
     });
-    setHabits(next);
-    void persistHabits(next);
-
-    const target = updated ?? prev.find((h) => h.id === habitId);
-    if (target && target.goals.length > 0) {
-      const { currentGoal } = getGoalTier(target);
-      if (currentGoal.id) {
-        const pendingPayload = { goal_id: currentGoal.id, did_complete: true };
-        goalCompletionsApi.create(pendingPayload).catch((err: unknown) => {
-          void savePendingCheckIn({
-            ...pendingPayload,
-            timestamp: new Date().toISOString(),
-          });
-          revertOnFailure(
-            prev,
-            "We couldn't save that check-in to the server. It's queued and will retry when you're back online.",
-          )(err);
-        });
-      }
-    }
-    return updated;
+    if (!updated) return null;
+    const { currentGoal, nextGoal } = getGoalTier(updated);
+    return {
+      prev,
+      next,
+      updated,
+      habitName,
+      oldProgress,
+      newProgress,
+      currentGoal,
+      nextGoal,
+    };
   },
+
+  /**
+   * Synchronous step of the logUnit optimistic mutation: write the
+   * computed `next` list to the store and persist it to disk.
+   */
+  applyLogUnitContext: (ctx: LogUnitContext): void => {
+    setHabits(ctx.next);
+    void persistHabits(ctx.next);
+  },
+
+  /**
+   * Network step. POSTs the goal completion. Returns null when the
+   * habit has no current goal (rare; the store-side `prepareLogUnit`
+   * has already validated `updated` exists, but we still guard here so
+   * the API isn't hit with `goal_id: undefined`).
+   */
+  commitLogUnitContext: async (ctx: LogUnitContext): Promise<CheckInResult | null> => {
+    if (!ctx.currentGoal.id) return null;
+    return goalCompletionsApi.create({
+      goal_id: ctx.currentGoal.id,
+      did_complete: true,
+    });
+  },
+
+  /**
+   * Failure step. Restores BOTH the store AND the on-disk snapshot —
+   * before this fix `revertOnFailure` only touched the store, so the
+   * next cold start would rehydrate the optimistic state and desync
+   * from the server (BUG-FE-HABIT-001).
+   */
+  rollbackLogUnitContext: (ctx: LogUnitContext): void => {
+    setHabits(ctx.prev);
+    void persistHabits(ctx.prev);
+  },
+
+  /**
+   * Build the milestone toast (if any). Called from `onSuccess`, never
+   * from `apply`, so a failed POST never flashes a "Stretch Goal
+   * achieved!" celebration for a check-in the server rejected.
+   */
+  buildLogUnitToast: (ctx: LogUnitContext): ToastConfig | null =>
+    buildMilestoneToast(
+      ctx.habitName,
+      ctx.oldProgress,
+      ctx.newProgress,
+      ctx.currentGoal,
+      ctx.nextGoal,
+    ),
 
   backfillMissedDays: (habitId: number, days: Date[]): void => {
     setHabits(getHabits().map((h) => (h.id === habitId ? backfillHabit(h, days) : h)));

@@ -24,6 +24,7 @@ jest.mock('../../../storage/habitStorage', () => ({
   savePendingCheckIn: jest.fn(() => Promise.resolve(undefined)),
   loadPendingCheckIns: jest.fn(() => Promise.resolve([])),
   clearPendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
+  replacePendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
 }));
 
 jest.mock('expo-notifications', () => ({

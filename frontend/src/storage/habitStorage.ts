@@ -72,6 +72,15 @@ export async function savePendingCheckIn(checkIn: PendingCheckIn): Promise<void>
   await AsyncStorage.setItem(PENDING_CHECKINS_KEY, JSON.stringify(existing));
 }
 
+/**
+ * Replace the pending-check-in queue with `checkIns`. Used by the
+ * partial-success replay path so a successful prefix is dropped without
+ * a separate clear+rewrite (which would race with savePendingCheckIn).
+ */
+export async function replacePendingCheckIns(checkIns: PendingCheckIn[]): Promise<void> {
+  await AsyncStorage.setItem(PENDING_CHECKINS_KEY, JSON.stringify(checkIns));
+}
+
 export async function loadPendingCheckIns(): Promise<PendingCheckIn[]> {
   try {
     const raw = await AsyncStorage.getItem(PENDING_CHECKINS_KEY);
