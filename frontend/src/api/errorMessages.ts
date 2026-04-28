@@ -37,6 +37,15 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
     "That email and password don't match an account we have. Double-check both fields, or tap Sign Up if you're new.",
   password_too_short: 'Pick a password that is at least 8 characters long.', // pragma: allowlist secret
   unauthorized: SESSION_EXPIRED,
+  // BUG-API-018: distinct copy when the request was anonymous in the
+  // first place -- "your session expired" implies a session that was
+  // never there.  Surfaced via the ``not_authenticated`` reason from
+  // the API client's 401 classifier.
+  not_authenticated: 'Sign in to use this part of the app.',
+  // ``invalid_token`` is what the API client surfaces when the server
+  // rejects a stored token outright (forged / revoked).  Treat as a
+  // hard sign-back-in rather than a transient session lapse.
+  invalid_token: 'You have been signed out for security. Sign in again to continue.',
 
   // --- Admin -----------------------------------------------------------
   admin_required: 'Admin privileges are required for this action.',

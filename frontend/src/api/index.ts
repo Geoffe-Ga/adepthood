@@ -101,7 +101,30 @@ function isKnownOffline(): boolean {
 }
 
 let tokenGetter: (() => string | null) | null = null;
-let onUnauthorizedCallback: (() => void) | null = null;
+
+/**
+ * Reason a 401 surfaced.  Threaded through the unauthorized callback so
+ * the AuthContext can distinguish:
+ *
+ *  - ``'session_expired'`` — the request carried a session token that the
+ *    server rejected (token expired or invalidated).  Re-auth required.
+ *  - ``'invalid_token'`` — the request carried a token that the server
+ *    deems malformed/forged (``Bearer`` prefix issue, signature failure).
+ *    Treat as a hard logout — the stored token is unusable.
+ *  - ``'not_authenticated'`` — the request carried no token but hit a
+ *    protected endpoint.  This is NOT a session expiration; it just means
+ *    an anonymous caller poked an authed surface.  The auth context
+ *    should NOT show a "session expired" banner — there was no session.
+ *
+ * BUG-API-018: previously every 401 collapsed into the single
+ * "session expired" path, so an anonymous request that hit a protected
+ * endpoint, or a login attempt with the wrong password, both displayed
+ * the misleading "Your session has expired" banner.  The reason is now
+ * forwarded so the UI can branch.
+ */
+export type UnauthorizedReason = 'session_expired' | 'invalid_token' | 'not_authenticated';
+
+let onUnauthorizedCallback: ((reason: UnauthorizedReason) => void) | null = null;
 /**
  * Callback invoked when the API layer refreshes the JWT.
  *
@@ -120,7 +143,7 @@ export function setTokenGetter(getter: (() => string | null) | null) {
   tokenGetter = getter;
 }
 
-export function setOnUnauthorized(callback: (() => void) | null) {
+export function setOnUnauthorized(callback: ((reason: UnauthorizedReason) => void) | null) {
   onUnauthorizedCallback = callback;
 }
 
@@ -267,6 +290,44 @@ async function extractErrorDetail(res: Response): Promise<string> {
   return 'Request failed';
 }
 
+/**
+ * Map a 401 detail string to a structured {@link UnauthorizedReason}.
+ *
+ * The backend already returns a small, stable vocabulary
+ * (``invalid_credentials`` for login failures, ``unauthorized`` for
+ * any token rejection, etc. — see ``backend/src/routers/auth.py``).
+ * This function is the single place that translates those tokens into
+ * the higher-level reason the AuthContext branches on, so a future
+ * backend addition (``token_revoked``, ``mfa_required``) needs only
+ * one map entry to wire end-to-end.
+ *
+ * BUG-API-018: returns ``null`` for ``invalid_credentials`` because the
+ * caller (the login form) handles that 401 with its own UI -- it must
+ * NOT surface as a session-expired logout.
+ */
+export function classifyUnauthorizedDetail(detail: string | null): UnauthorizedReason | null {
+  switch (detail) {
+    case 'unauthorized':
+      // Backend's deliberately-generic "your token is bad" detail.
+      // Cannot tell expired from forged from revoked from the wire (the
+      // server hides that distinction on purpose, OWASP A07), so we
+      // treat it as the most common case: a session that aged out.
+      return 'session_expired';
+    case 'invalid_token':
+      return 'invalid_token';
+    case 'invalid_credentials':
+      // Wrong password / unknown email on /auth/login.  The login UI
+      // owns this 401; the global unauthorized handler should NOT fire.
+      return null;
+    default:
+      // Unknown detail (or no detail).  Default to ``session_expired``
+      // when a session token was used, and ``not_authenticated`` when
+      // it was not -- the caller decides which based on whether a
+      // token was actually attached to the request.
+      return null;
+  }
+}
+
 async function handleErrorResponse(res: Response): Promise<never> {
   const detail = await extractErrorDetail(res);
   throw new ApiError(res.status, detail);
@@ -308,26 +369,32 @@ async function parseResponse<T>(res: Response, path = '', schema?: z.ZodType<T>)
 /**
  * Try to refresh the current token. Returns the new token on success, or
  * null if the refresh itself fails (e.g. the token is fully expired).
+ *
+ * Returns ``null`` immediately when the session has no token at all so
+ * an anonymous request that hit a protected endpoint (BUG-API-018) does
+ * NOT issue a doomed POST to /auth/refresh that would 401 again.  The
+ * caller distinguishes "no token" from "refresh failed" via the second
+ * tuple element.
  */
-async function attemptTokenRefresh(): Promise<string | null> {
+async function attemptTokenRefresh(): Promise<{ token: string | null; hadToken: boolean }> {
   const currentToken = tokenGetter?.();
-  if (!currentToken) return null;
+  if (!currentToken) return { token: null, hadToken: false };
 
   try {
     const refreshRes = await fetch(`${API_BASE_URL}/auth/refresh`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${currentToken}` },
     });
-    if (!refreshRes.ok) return null;
+    if (!refreshRes.ok) return { token: null, hadToken: true };
     const data = (await refreshRes.json()) as AuthResponse;
     // Forward the server's stored timezone so the AuthContext can keep
     // ``userTimezone`` in sync after a cold-start refresh.  Without
     // this, ``userTimezone`` would stay at its ``"UTC"`` default until
     // the user manually re-authenticated.
     onTokenRefreshedCallback?.(data.token, data.timezone);
-    return data.token;
+    return { token: data.token, hadToken: true };
   } catch {
-    return null;
+    return { token: null, hadToken: true };
   }
 }
 
@@ -354,6 +421,34 @@ interface RefreshRetryContext<T> {
   schema: z.ZodType<T> | undefined;
   timeoutMs: number | undefined;
   signal: AbortSignal | undefined;
+  /**
+   * Detail string of the original 401 response.  Threaded through so
+   * the unauthorized callback fires with the correct
+   * {@link UnauthorizedReason} (BUG-API-018) instead of a generic
+   * "session expired".
+   */
+  initialDetail: string | null;
+}
+
+/**
+ * Translate the 401 detail (and whether a token was present) to a
+ * structured {@link UnauthorizedReason} for the global callback.
+ *
+ * BUG-API-018: collapses the prior single "session expired" path into
+ * three distinct reasons so the AuthContext can show "Sign in to
+ * continue" for anonymous callers and "Session expired" for users
+ * whose token actually aged out.
+ *
+ * The ``hadToken`` flag wins over the detail string when the request
+ * was anonymous — there is no "session" to expire if we never sent
+ * one, so any 401 in that case means "this endpoint requires auth"
+ * regardless of how the server phrased it.  When a token was sent,
+ * the detail string takes priority (``invalid_token`` stays distinct
+ * from the default ``session_expired``).
+ */
+function reasonForUnauthorized(detail: string | null, hadToken: boolean): UnauthorizedReason {
+  if (!hadToken) return 'not_authenticated';
+  return classifyUnauthorizedDetail(detail) ?? 'session_expired';
 }
 
 /**
@@ -361,12 +456,16 @@ interface RefreshRetryContext<T> {
  * parsed response on success, or null if refresh/retry is not applicable.
  */
 async function retryWithRefresh<T>(ctx: RefreshRetryContext<T>): Promise<T | null> {
-  const newToken = await attemptTokenRefresh();
-  if (!newToken) {
-    onUnauthorizedCallback?.();
+  const refresh = await attemptTokenRefresh();
+  if (refresh.token === null) {
+    // Only fire the global "you are no longer authenticated" callback
+    // when there *was* a session to begin with; an anonymous caller
+    // hitting a protected endpoint is ``not_authenticated``, not
+    // session-expired (BUG-API-018).
+    onUnauthorizedCallback?.(reasonForUnauthorized(ctx.initialDetail, refresh.hadToken));
     return null;
   }
-  const retryHeaders = buildHeaders(newToken, ctx.body, ctx.extraHeaders);
+  const retryHeaders = buildHeaders(refresh.token, ctx.body, ctx.extraHeaders);
   const retryInit = buildFetchInit(ctx.method, ctx.body, retryHeaders);
   const retryRes = await doFetch(ctx.url, retryInit, {
     path: ctx.path,
@@ -374,7 +473,14 @@ async function retryWithRefresh<T>(ctx: RefreshRetryContext<T>): Promise<T | nul
     signal: ctx.signal,
   });
   if (!retryRes.ok) {
-    if (retryRes.status === 401) onUnauthorizedCallback?.();
+    if (retryRes.status === 401) {
+      const retryDetail = await extractErrorDetail(retryRes);
+      onUnauthorizedCallback?.(reasonForUnauthorized(retryDetail, true));
+      // Return the new ApiError below using the freshly-read detail so
+      // the caller surfaces the post-retry server message rather than a
+      // generic "Request failed".
+      throw new ApiError(retryRes.status, retryDetail);
+    }
     return handleErrorResponse(retryRes);
   }
   return parseResponse<T>(retryRes, ctx.path, ctx.schema);
@@ -385,13 +491,30 @@ async function handleUnauthorizedRetry<T>(
   ctx: RefreshRetryContext<T>,
 ): Promise<T | null> {
   const isAuthPath = ctx.path.startsWith('/auth/');
+  // Login / signup own their own 401 UI -- never trigger the global
+  // "session expired" callback from an auth endpoint.
   if (isAuthPath) return null;
+
+  // BUG-API-018: ``invalid_credentials`` is a login-form failure, not a
+  // session expiration.  Skip the unauthorized callback entirely so the
+  // user does not get bounced to re-auth on top of the already-handled
+  // form-level error.  Other unknown details fall through to the
+  // refresh path below — they may still be a token issue we want to
+  // surface as ``session_expired`` / ``not_authenticated``.
+  if (ctx.initialDetail === 'invalid_credentials') return null;
 
   if (!token) {
     const retried = await retryWithRefresh<T>(ctx);
     if (retried !== null) return retried;
   } else {
-    onUnauthorizedCallback?.();
+    // Caller passed an explicit token override (e.g. probing with a
+    // known-bad token from a settings screen).  Treat it as a session
+    // expiration only when the explicit token came from the live
+    // ``tokenGetter`` -- otherwise the global session is unaffected.
+    const sessionToken = tokenGetter?.() ?? null;
+    if (sessionToken !== null && sessionToken === token) {
+      onUnauthorizedCallback?.(reasonForUnauthorized(ctx.initialDetail, true));
+    }
   }
   return null;
 }
@@ -420,8 +543,17 @@ async function attemptRequest<T>(
     return { kind: 'ok', value };
   }
   if (res.status === 401) {
+    // Read the body once and stash the detail on ctx so both the
+    // unauthorized-retry path and the eventual ``ApiError`` throw use
+    // the same value (BUG-API-018).  Without this we would either
+    // re-read the body (it is consumed already) or throw a generic
+    // "Request failed" string, both of which lose the reason needed
+    // to distinguish ``not_authenticated`` from ``session_expired``.
+    const detail = await extractErrorDetail(res);
+    ctx.initialDetail = detail;
     const retried = await handleUnauthorizedRetry<T>(token, ctx);
     if (retried !== null) return { kind: 'ok', value: retried };
+    throw new ApiError(res.status, detail);
   }
   if (isTransientStatus(res.status) && isRetryableMethod(ctx.method, ctx.extraHeaders)) {
     const detail = await extractErrorDetail(res);
@@ -476,6 +608,7 @@ async function request<T>(
     schema,
     timeoutMs,
     signal,
+    initialDetail: null,
   };
 
   // Fast-fail when the network layer already knows we're offline: retrying
@@ -1001,7 +1134,15 @@ export const botmason = {
   ): Promise<void> {
     const res = await openChatStream(payload, options);
     if (!res.ok) {
-      if (res.status === 401) onUnauthorizedCallback?.();
+      if (res.status === 401) {
+        // BUG-API-018: route the streaming 401 through the same
+        // classifier as the non-streaming path so the AuthContext sees
+        // a structured reason rather than a vague "session expired"
+        // for an anonymous caller hitting /journal/chat/stream.
+        const detail = await extractErrorDetail(res);
+        onUnauthorizedCallback?.(reasonForUnauthorized(detail, options.token != null));
+        throw new ApiError(res.status, detail);
+      }
       return handleErrorResponse(res);
     }
     const readable = asReadableStream(res.body);
