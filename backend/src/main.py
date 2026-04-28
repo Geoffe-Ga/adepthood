@@ -174,6 +174,14 @@ install_trace_id_logging()
 async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown lifecycle for the application."""
     import models  # noqa: F401, PLC0415
+    from routers.auth import _get_secret_key  # noqa: PLC0415
+
+    # BUG-AUTH-011: validate ``SECRET_KEY`` once at startup so a misconfigured
+    # deployment fails the orchestrator's health probe immediately rather than
+    # silently serving traffic and crashing on the first auth request.  The
+    # underlying check is the same lazy guard ``_get_secret_key`` already does;
+    # invoking it here turns "first user pays" into "deploy never goes live".
+    _get_secret_key()
 
     yield
 

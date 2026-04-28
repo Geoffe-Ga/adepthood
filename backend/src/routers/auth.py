@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import bcrypt
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +43,20 @@ _JWT_ALGORITHM = "HS256"
 _TOKEN_TTL = timedelta(hours=1)
 
 _MIN_PASSWORD_LENGTH = 8
+
+# bcrypt silently truncates input at 72 bytes (BUG-AUTH-004): a user who
+# signs up with a 100-char passphrase has the last 28 bytes ignored, and
+# any subsequent login that types those same bytes succeeds even on a
+# typo'd suffix.  Reject before hashing so the failure is loud at
+# signup/login rather than a silent security regression.
+_BCRYPT_MAX_PASSWORD_BYTES = 72
+
+# Cap on the application-level password length.  Lower than the bcrypt
+# limit so the "password too long" error surfaces cleanly via Pydantic's
+# 422 validation envelope rather than a 500 from the bcrypt helper, and
+# high enough to comfortably support passphrases (NIST SP 800-63B
+# encourages long passphrases).
+_MAX_PASSWORD_LENGTH = 64
 
 # Account lockout: lock after this many consecutive failed attempts.
 MAX_FAILED_ATTEMPTS = 5
@@ -79,8 +93,19 @@ def _email_log_fingerprint(email: str) -> str:
 
 
 class AuthRequest(BaseModel):
+    """Login payload — email + password.
+
+    ``password`` carries explicit length bounds (BUG-AUTH-017): an
+    unbounded ``str`` field accepts arbitrarily large inputs, which both
+    wastes the bcrypt cost on a guaranteed-rejected request and gives an
+    attacker a free DoS lever (each attempt costs ~250 ms server-side).
+    The bounds also keep the field aligned with the
+    ``_BCRYPT_MAX_PASSWORD_BYTES`` ceiling so a request that would
+    silently be truncated by bcrypt is rejected with 422 instead.
+    """
+
     email: EmailStr
-    password: str
+    password: str = Field(min_length=_MIN_PASSWORD_LENGTH, max_length=_MAX_PASSWORD_LENGTH)
 
     @field_validator("email", mode="before")
     @classmethod
@@ -174,10 +199,26 @@ class AuthResponse(BaseModel):
 
 
 def _hash_password(password: str) -> str:
-    # 12 rounds of bcrypt hashing (~250 ms on modern hardware). This is the
-    # OWASP-recommended minimum; it makes brute-force attacks prohibitively
-    # expensive while keeping login latency acceptable for users.
-    hashed: bytes = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12))
+    """Hash ``password`` with bcrypt-12 after enforcing the 72-byte input cap.
+
+    bcrypt silently truncates input at 72 bytes (BUG-AUTH-004), so a
+    user who typed a 100-char passphrase would later be authenticated by
+    any string that shares the same first 72 bytes.  Reject explicitly
+    here -- callers reach this helper after Pydantic's
+    ``_MAX_PASSWORD_LENGTH`` cap so this branch only fires for
+    multi-byte UTF-8 input that fits character-wise but overflows
+    byte-wise (a 64-char password of 4-byte characters is 256 bytes).
+
+    12 rounds of bcrypt hashing (~250 ms on modern hardware).  This is
+    the OWASP-recommended minimum; it makes brute-force attacks
+    prohibitively expensive while keeping login latency acceptable for
+    users.
+    """
+    encoded = password.encode("utf-8")
+    if len(encoded) > _BCRYPT_MAX_PASSWORD_BYTES:
+        msg = f"password exceeds bcrypt's {_BCRYPT_MAX_PASSWORD_BYTES}-byte limit"
+        raise ValueError(msg)
+    hashed: bytes = bcrypt.hashpw(encoded, bcrypt.gensalt(rounds=12))
     return hashed.decode("utf-8")
 
 
@@ -344,13 +385,17 @@ async def signup(
     payload: SignupRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AuthResponse:
-    if len(payload.password) < _MIN_PASSWORD_LENGTH:
-        raise bad_request("password_too_short")
-    # Always pay the bcrypt cost so the response time is indistinguishable
-    # from the duplicate-email branch (bcrypt takes ~250 ms).  Without
-    # this, a timing oracle could distinguish "email exists" from "email
-    # is new" even though the response bodies match.
-    password_hash = _hash_password(payload.password)
+    # Pydantic enforces ``_MIN_PASSWORD_LENGTH`` / ``_MAX_PASSWORD_LENGTH``
+    # before we get here (BUG-AUTH-017), so the only failure mode left is a
+    # multi-byte UTF-8 password whose char-count fits the cap but whose
+    # byte-length blows the bcrypt 72-byte limit.  Translate that into a
+    # 422 instead of a 500 so the client gets a uniform validation
+    # response and we never store a row that bcrypt has silently
+    # truncated (BUG-AUTH-004).
+    try:
+        password_hash = _hash_password(payload.password)
+    except ValueError as exc:
+        raise bad_request("password_too_long") from exc
     user = User(
         email=payload.email,
         password_hash=password_hash,
@@ -392,6 +437,13 @@ async def login(
     async with _serialize_login(session, payload.email):
         # Check lockout before even verifying credentials — prevents timing attacks
         if await _is_account_locked(session, payload.email):
+            # Record the blocked attempt so a continuous attacker cannot
+            # silently wait out the rolling window (BUG-AUTH-006): without
+            # this row the oldest-of-last-N timestamp keeps aging out and
+            # the lock can expire even while attempts are still arriving.
+            # Recording each blocked try keeps the window fresh for as long
+            # as the attacker keeps trying.
+            await _record_attempt(session, payload.email, ip_address, success=False)
             logger.info(
                 "auth_attempt_blocked",
                 extra={
@@ -446,7 +498,23 @@ def get_current_user(authorization: str | None = Header(default=None)) -> int:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized"
         ) from exc
-    return int(payload["sub"])
+    # ``sub`` may be missing or non-numeric on a forged / corrupted token
+    # (BUG-AUTH-012).  Without this guard the bare ``int(payload["sub"])``
+    # call raised ``KeyError`` / ``ValueError`` uncaught and Starlette
+    # surfaced it as 500 -- leaking "your token confused us" diagnostics
+    # to the attacker.  Convert into the same 401 every other auth path
+    # uses so the rejection looks identical.
+    sub = payload.get("sub")
+    if not isinstance(sub, str | int):
+        logger.info("token_rejected", extra={"reason": "malformed_sub"})
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
+    try:
+        return int(sub)
+    except (TypeError, ValueError) as exc:
+        logger.info("token_rejected", extra={"reason": "malformed_sub"})
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized"
+        ) from exc
 
 
 @router.post("/refresh", response_model=AuthResponse)

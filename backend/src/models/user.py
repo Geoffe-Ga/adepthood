@@ -56,7 +56,14 @@ class User(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
     email: str = Field(unique=True, index=True, max_length=254)
-    password_hash: str = Field(default="")
+    # BUG-AUTH-018: ``password_hash`` previously defaulted to ``""`` so a
+    # row could (in test fixtures, badly-written admin scripts, or a future
+    # signup-flow regression) be persisted without a real hash.  An empty
+    # string is not a valid bcrypt digest -- ``_verify_password`` would
+    # raise on it -- but the column itself was happy to accept it.  Drop
+    # the default so SQLModel forces every caller to supply a hash and a
+    # blank-password account becomes impossible at the schema level.
+    password_hash: str = Field(min_length=1)
     timezone: str = Field(
         default=DEFAULT_USER_TIMEZONE,
         sa_column=Column(
