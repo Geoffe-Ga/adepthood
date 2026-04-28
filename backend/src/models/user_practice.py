@@ -37,7 +37,7 @@ class UserPractice(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id")
+    user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
     practice_id: int = Field(foreign_key="practice.id")
     stage_number: int
     start_date: date

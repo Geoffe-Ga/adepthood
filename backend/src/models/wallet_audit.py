@@ -97,8 +97,8 @@ class WalletAudit(SQLModel, table=True):
     __tablename__ = "walletaudit"
 
     id: int | None = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id", index=True)
-    actor_user_id: int = Field(foreign_key="user.id", index=True)
+    user_id: int = Field(foreign_key="user.id", index=True, ondelete="CASCADE")
+    actor_user_id: int = Field(foreign_key="user.id", index=True, ondelete="CASCADE")
     bucket: str = Field(
         sa_column=Column(String(_TOKEN_COLUMN_WIDTH), nullable=False, index=True),
     )

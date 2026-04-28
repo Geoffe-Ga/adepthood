@@ -10,5 +10,7 @@ class Practice(SQLModel, table=True):
     description: str = Field(max_length=2_000)
     instructions: str = Field(max_length=10_000)
     default_duration_minutes: float
-    submitted_by_user_id: int | None = Field(default=None, foreign_key="user.id")
+    submitted_by_user_id: int | None = Field(
+        default=None, foreign_key="user.id", ondelete="SET NULL"
+    )
     approved: bool = True

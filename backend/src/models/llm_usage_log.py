@@ -51,7 +51,7 @@ class LLMUsageLog(SQLModel, table=True):
     """
 
     id: int | None = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id", index=True)
+    user_id: int = Field(foreign_key="user.id", index=True, ondelete="CASCADE")
     timestamp: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False, index=True),
