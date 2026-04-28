@@ -1,6 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
-import { auth as authApi, setOnTokenRefreshed, setOnUnauthorized, setTokenGetter } from '@/api';
+import {
+  auth as authApi,
+  setOnTokenRefreshed,
+  setOnUnauthorized,
+  setTokenGetter,
+  type UnauthorizedReason,
+} from '@/api';
 import { clearToken, loadToken, saveToken } from '@/storage/authStorage';
 import { clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import { clearLlmApiKey } from '@/storage/llmKeyStorage';
@@ -145,15 +151,29 @@ async function wipeUserState(): Promise<void> {
  * token in secure storage that hydrates on next launch. When the API layer
  * reports 401 we transition to ``'reauth-required'`` (so the navigator keeps
  * Tabs mounted), not ``'anonymous'``.
+ *
+ * BUG-API-018: ``reason`` is the structured 401 cause forwarded by the API
+ * client.  ``'not_authenticated'`` means an anonymous request hit a
+ * protected endpoint -- the user never had a session, so we collapse to
+ * ``'anonymous'`` rather than showing the misleading "session expired"
+ * re-auth sheet.  ``'session_expired'`` and ``'invalid_token'`` keep the
+ * existing re-auth flow.
  */
-async function clearTokenForReauth(mutators: AuthMutators): Promise<void> {
+async function clearTokenForReauth(
+  mutators: AuthMutators,
+  reason: UnauthorizedReason,
+): Promise<void> {
   try {
     await clearToken();
   } catch (err: unknown) {
     console.warn('clearToken failed in onUnauthorized', err);
   }
   mutators.setToken(null);
-  mutators.setAuthStatus((prev) => (prev === 'loading' ? 'anonymous' : 'reauth-required'));
+  mutators.setAuthStatus((prev) => {
+    if (prev === 'loading') return 'anonymous';
+    if (reason === 'not_authenticated') return 'anonymous';
+    return 'reauth-required';
+  });
 }
 
 /**
@@ -204,8 +224,8 @@ function useApiCallbacks(
 
   useEffect(() => {
     setTokenGetter(stableGetter);
-    setOnUnauthorized(() => {
-      void clearTokenForReauth(mutators);
+    setOnUnauthorized((reason: UnauthorizedReason) => {
+      void clearTokenForReauth(mutators, reason);
     });
     setOnTokenRefreshed((t: string, tz: string | undefined) => {
       void saveTokenThenApply(t, tz, mutators, tokenRef);
@@ -330,9 +350,11 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
   // BUG-AUTH-005: mirror the persistence-first ordering used by the API-layer
   // onUnauthorized hook so callers of the context-exposed helper get the same
   // crash-safety guarantee. Routes to ``'reauth-required'`` so RootStack
-  // stays mounted (BUG-NAV-001).
+  // stays mounted (BUG-NAV-001).  Defaults to ``'session_expired'`` because
+  // a manual ``onUnauthorized()`` call from app code always implies that
+  // we *had* a token that the server then rejected.
   const onUnauthorized = useCallback(() => {
-    void clearTokenForReauth(mutators);
+    void clearTokenForReauth(mutators, 'session_expired');
   }, [mutators]);
 
   const dismissReauth = useCallback(() => tearDownSession(mutators, 'dismissReauth'), [mutators]);

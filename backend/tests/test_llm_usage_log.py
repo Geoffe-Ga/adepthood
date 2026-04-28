@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from http import HTTPStatus
 from unittest.mock import AsyncMock, patch
 
@@ -65,7 +66,12 @@ async def test_stub_chat_creates_log_with_zero_cost(
     assert log.prompt_tokens == 0
     assert log.completion_tokens == 0
     assert log.total_tokens == 0
-    assert log.estimated_cost_usd == 0.0
+    # BUG-BM-008: the stub model is unknown to the pricing table so the
+    # cost is ``None`` (was a silent ``0.0`` previously).  Tokens are
+    # still captured -- observability never breaks chat -- but the
+    # admin dashboard can now distinguish "free model" from "we forgot
+    # to price this model".
+    assert log.estimated_cost_usd is None
     # FK points at the bot's journal entry, not the user's input.
     assert log.journal_entry_id == resp.json()["bot_entry_id"]
 
@@ -137,17 +143,23 @@ async def test_openai_chat_logs_tokens_and_cost(
     assert log.completion_tokens == _OPENAI_COMPLETION_TOKENS
     assert log.total_tokens == _OPENAI_PROMPT_TOKENS + _OPENAI_COMPLETION_TOKENS
     # gpt-4o-mini: $0.15/1M input + $0.60/1M output.  1000 input + 500 output
-    # ⇒ 1000 * 0.15/1_000_000 + 500 * 0.60/1_000_000 = $0.00045.
-    assert log.estimated_cost_usd == pytest.approx(0.00045)
+    # => 1000 * 0.15/1_000_000 + 500 * 0.60/1_000_000 = $0.000450 (Decimal).
+    assert log.estimated_cost_usd == Decimal("0.000450")
 
 
 @pytest.mark.asyncio
-async def test_log_survives_unknown_model_as_zero_cost(
+async def test_log_survives_unknown_model_as_null_cost(
     async_client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Unknown models log tokens but $0 cost — observability never breaks chat."""
+    """Unknown models log tokens but a NULL cost — observability never breaks chat.
+
+    BUG-BM-008: previously the cost defaulted to ``0.0``, which made
+    unrated models look like freebies in the per-model dashboard.
+    Today the column is nullable and a missing rate stores ``NULL``
+    so an operator can spot the gap in a SQL ``WHERE estimated_cost_usd IS NULL``.
+    """
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
     monkeypatch.setenv("LLM_API_KEY", _VALID_OPENAI_KEY)
 
@@ -170,7 +182,7 @@ async def test_log_survives_unknown_model_as_zero_cost(
     assert logs[0].model == "gpt-future-unreleased-model"
     assert logs[0].prompt_tokens == _UNKNOWN_MODEL_PROMPT_TOKENS
     assert logs[0].completion_tokens == _UNKNOWN_MODEL_COMPLETION_TOKENS
-    assert logs[0].estimated_cost_usd == 0.0
+    assert logs[0].estimated_cost_usd is None
 
 
 # ── Unit tests for the extract_token_count helper ────────────────────────

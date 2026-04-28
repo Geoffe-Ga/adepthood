@@ -100,10 +100,18 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
     (minting a fresh UUID4 when absent), pushes it into the contextvar so
     downstream handlers and log records can see it, and writes the value
     onto the response so clients can correlate their own logs with ours.
+
+    The same value is mirrored onto ``request.state.request_id`` so a
+    FastAPI exception handler — which runs *outside* this middleware in
+    Starlette's stack and therefore cannot read the contextvar (the
+    ``finally`` block below has already reset it by then) — can still
+    recover the trace ID for the unhandled-exception envelope
+    (BUG-OBS-002 / -003).
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         trace_id = _normalise_trace_id(request.headers.get(TRACE_ID_HEADER))
+        request.state.request_id = trace_id
         token = trace_id_var.set(trace_id)
         try:
             response = await call_next(request)
@@ -124,3 +132,25 @@ def install_trace_id_logging() -> None:
     root = logging.getLogger()
     if not any(isinstance(f, TraceIdLogFilter) for f in root.filters):
         root.addFilter(TraceIdLogFilter())
+
+
+# Width that keeps log records small enough to flow through SQLite/
+# Postgres-friendly logging stable.  Paths longer than this are
+# truncated with an ellipsis so a malicious caller cannot inflate log
+# volume by hammering ``/foo/AAAAA…`` URLs.  Shared by the
+# ``RequestLoggingMiddleware`` access-log emit and the unhandled-
+# exception handler in :mod:`errors` so the cap stays in lock-step.
+LOG_PATH_TRUNCATE_CHARS = 256
+
+
+def truncate_log_path(path: str) -> str:
+    """Trim ``path`` to :data:`LOG_PATH_TRUNCATE_CHARS` characters.
+
+    Adds a single-character ellipsis suffix when truncation actually
+    happens, keeping the original length signal visible.  ``path`` is
+    returned unchanged when it already fits within the cap so the
+    common case is a no-op.
+    """
+    if len(path) <= LOG_PATH_TRUNCATE_CHARS:
+        return path
+    return path[: LOG_PATH_TRUNCATE_CHARS - 1] + "…"

@@ -7,6 +7,7 @@ identity is a first-class per-user flag rather than a shared header secret.
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -28,6 +29,29 @@ from schemas.admin import (
     UsageStatsResponse,
     UserUsageBreakdown,
 )
+
+# SQL ``SUM(NUMERIC)`` returns ``Decimal`` on Postgres but ``int`` (or
+# ``float``) on SQLite for an empty group.  Coerce defensively to keep
+# the response shape stable across both engines (BUG-ADMIN-004).
+_ZERO_COST = Decimal(0)
+
+
+def _to_decimal(value: object) -> Decimal:
+    """Coerce a SUM result to ``Decimal``, treating ``None`` as zero.
+
+    SUM returns ``None`` for an empty group on Postgres unless wrapped
+    in ``COALESCE``; SQLite returns ``0`` either way.  Routing both
+    through this helper means the response shape is identical on both
+    engines and on either branch of the COALESCE.
+    """
+    if value is None:
+        return _ZERO_COST
+    if isinstance(value, Decimal):
+        return value
+    # ``str(value)`` -- never ``Decimal(float)`` -- so float-precision
+    # noise does not slip into a value that will be displayed to USD.
+    return Decimal(str(value))
+
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +80,7 @@ async def get_usage_stats(
                 func.coalesce(func.sum(col(LLMUsageLog.prompt_tokens)), 0),
                 func.coalesce(func.sum(col(LLMUsageLog.completion_tokens)), 0),
                 func.coalesce(func.sum(col(LLMUsageLog.total_tokens)), 0),
-                func.coalesce(func.sum(col(LLMUsageLog.estimated_cost_usd)), 0.0),
+                func.coalesce(func.sum(col(LLMUsageLog.estimated_cost_usd)), _ZERO_COST),
             )
         )
     ).one()
@@ -68,10 +92,19 @@ async def get_usage_stats(
                 col(LLMUsageLog.user_id),
                 func.count(col(LLMUsageLog.id)),
                 func.coalesce(func.sum(col(LLMUsageLog.total_tokens)), 0),
-                func.coalesce(func.sum(col(LLMUsageLog.estimated_cost_usd)), 0.0),
+                func.coalesce(func.sum(col(LLMUsageLog.estimated_cost_usd)), _ZERO_COST),
             )
             .group_by(col(LLMUsageLog.user_id))
-            .order_by(func.sum(col(LLMUsageLog.estimated_cost_usd)).desc())
+            # PostgreSQL's default for ``DESC`` is ``NULLS FIRST``,
+            # so an unrated-model group (every row's cost is ``NULL``)
+            # would sort *above* every real-cost row and invert the
+            # admin dashboard's "highest spender first" semantics.
+            # Wrapping the SUM in ``COALESCE`` pushes those rows to a
+            # zero value before ordering — they appear at the bottom,
+            # which is the correct end of a by-cost-descending view.
+            .order_by(
+                func.coalesce(func.sum(col(LLMUsageLog.estimated_cost_usd)), _ZERO_COST).desc()
+            )
         )
     ).all()
 
@@ -82,10 +115,13 @@ async def get_usage_stats(
                 col(LLMUsageLog.model),
                 func.count(col(LLMUsageLog.id)),
                 func.coalesce(func.sum(col(LLMUsageLog.total_tokens)), 0),
-                func.coalesce(func.sum(col(LLMUsageLog.estimated_cost_usd)), 0.0),
+                func.coalesce(func.sum(col(LLMUsageLog.estimated_cost_usd)), _ZERO_COST),
             )
             .group_by(col(LLMUsageLog.provider), col(LLMUsageLog.model))
-            .order_by(func.sum(col(LLMUsageLog.estimated_cost_usd)).desc())
+            # See the per-user query above — same NULLS-FIRST guard.
+            .order_by(
+                func.coalesce(func.sum(col(LLMUsageLog.estimated_cost_usd)), _ZERO_COST).desc()
+            )
         )
     ).all()
 
@@ -94,13 +130,13 @@ async def get_usage_stats(
         total_prompt_tokens=int(total_prompt),
         total_completion_tokens=int(total_completion),
         total_tokens=int(total_tokens),
-        total_estimated_cost_usd=float(total_cost),
+        total_estimated_cost_usd=_to_decimal(total_cost),
         per_user=[
             UserUsageBreakdown(
                 user_id=int(user_id),
                 call_count=int(calls),
                 total_tokens=int(tokens),
-                estimated_cost_usd=float(cost),
+                estimated_cost_usd=_to_decimal(cost),
             )
             for user_id, calls, tokens, cost in per_user_rows
         ],
@@ -110,7 +146,7 @@ async def get_usage_stats(
                 model=str(model),
                 call_count=int(calls),
                 total_tokens=int(tokens),
-                estimated_cost_usd=float(cost),
+                estimated_cost_usd=_to_decimal(cost),
             )
             for provider, model, calls, tokens, cost in per_model_rows
         ],
