@@ -25,6 +25,7 @@ import { practices, userPractices, practiceSessions } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { colors, SPACING, BORDER_RADIUS, shadows } from '@/design/tokens';
 import { stageService } from '@/features/Map/services/stageService';
+import { useOptimisticMutation } from '@/hooks/useOptimisticMutation';
 import { useAppNavigation, useAppRoute } from '@/navigation/hooks';
 import { selectCurrentStage, useStageStore } from '@/store/useStageStore';
 
@@ -40,7 +41,14 @@ function usePracticeListState() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // BUG-FE-PRACTICE-005: incrementWeekCount and decrementWeekCount are
+  // the apply / rollback primitives consumed by `useOptimisticMutation`
+  // in `useSessionFlow`. Splitting the increment from the save flow
+  // means a save failure restores the bar instead of leaving it
+  // optimistically bumped, and an authoritative refetch on success
+  // replaces the optimistic value with the server's count.
   const incrementWeekCount = useCallback(() => setWeekCount((prev) => prev + 1), []);
+  const decrementWeekCount = useCallback(() => setWeekCount((prev) => Math.max(0, prev - 1)), []);
 
   return {
     availablePractices,
@@ -56,6 +64,7 @@ function usePracticeListState() {
     error,
     setError,
     incrementWeekCount,
+    decrementWeekCount,
   };
 }
 
@@ -174,12 +183,68 @@ interface CompletedWindow {
   endedAt: Date;
 }
 
-function useSessionFlow(activeUserPractice: UserPractice | null, incrementWeekCount: () => void) {
+interface SaveSessionInput {
+  payload: PracticeSessionCreate;
+}
+
+interface SaveSessionResult {
+  session: PracticeSessionResponse;
+  weekCount: number;
+}
+
+/**
+ * BUG-FE-PRACTICE-005: optimistic increment + authoritative refetch on
+ * success + decrement rollback on failure. Before this change the count
+ * was bumped only on success, but never reconciled against the server —
+ * duplicate saves (e.g. double-tap before `isSaving` gated the second
+ * press) drifted the local count above the server's truth. The hook
+ * serializes apply/commit/rollback so a concurrent failure can't strand
+ * an extra unit on the bar.
+ */
+function useSaveSessionMutation(
+  incrementWeekCount: () => void,
+  decrementWeekCount: () => void,
+  setWeekCount: (_count: number) => void,
+  setSavedSession: (_s: PracticeSessionResponse | null) => void,
+  setError: (_err: string | null) => void,
+) {
+  return useOptimisticMutation<SaveSessionInput, SaveSessionResult>({
+    apply: () => incrementWeekCount(),
+    commit: async ({ payload }) => {
+      const session = await practiceSessions.create(payload);
+      const weekResult = await practiceSessions.weekCount();
+      return { session, weekCount: weekResult.count };
+    },
+    rollback: (_input, err) => {
+      decrementWeekCount();
+      setError(
+        formatApiError(err, {
+          fallback:
+            "We couldn't save your practice session. Check your connection and try again — your timer minutes are still safe here.",
+        }),
+      );
+    },
+    onSuccess: (_input, result) => {
+      setWeekCount(result.weekCount);
+      setSavedSession(result.session);
+      setError(null);
+    },
+  });
+}
+
+function useSessionFlow(
+  activeUserPractice: UserPractice | null,
+  incrementWeekCount: () => void,
+  decrementWeekCount: () => void,
+  setWeekCount: (_count: number) => void,
+) {
   const [completedWindow, setCompletedWindow] = useState<CompletedWindow | null>(null);
   const [savedSession, setSavedSession] = useState<PracticeSessionResponse | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // BUG-FE-PRACTICE-101 / -105: derive completedMinutes from the wall-
+  // clock window so the displayed duration matches what the server will
+  // store; the client never claims a number it computed and submits.
   const completedMinutes = completedWindow
     ? (completedWindow.endedAt.getTime() - completedWindow.startedAt.getTime()) /
       MS_PER_SECOND /
@@ -190,32 +255,29 @@ function useSessionFlow(activeUserPractice: UserPractice | null, incrementWeekCo
     setCompletedWindow({ startedAt, endedAt });
   }, []);
 
+  const saveMutation = useSaveSessionMutation(
+    incrementWeekCount,
+    decrementWeekCount,
+    setWeekCount,
+    setSavedSession,
+    setError,
+  );
+
   const handleSaveSession = useCallback(async () => {
     if (!activeUserPractice || !completedWindow) return;
-    setIsSaving(true);
+    // BUG-FE-PRACTICE-101 / -105: submit wall-clock ISO timestamps so the
+    // server can derive the canonical duration.
+    const payload: PracticeSessionCreate = {
+      user_practice_id: activeUserPractice.id,
+      started_at: completedWindow.startedAt.toISOString(),
+      ended_at: completedWindow.endedAt.toISOString(),
+    };
     try {
-      // BUG-FE-PRACTICE-101 / -105: submit wall-clock ISO timestamps so the
-      // server can derive the canonical duration; the client never claims
-      // a number it computed itself.
-      const payload: PracticeSessionCreate = {
-        user_practice_id: activeUserPractice.id,
-        started_at: completedWindow.startedAt.toISOString(),
-        ended_at: completedWindow.endedAt.toISOString(),
-      };
-      const session = await practiceSessions.create(payload);
-      incrementWeekCount();
-      setSavedSession(session);
-    } catch (err) {
-      setError(
-        formatApiError(err, {
-          fallback:
-            "We couldn't save your practice session. Check your connection and try again — your timer minutes are still safe here.",
-        }),
-      );
-    } finally {
-      setIsSaving(false);
+      await saveMutation.mutate({ payload });
+    } catch {
+      // Already rolled back; rollback closure surfaced the error.
     }
-  }, [activeUserPractice, completedWindow, incrementWeekCount]);
+  }, [activeUserPractice, completedWindow, saveMutation]);
 
   const clearSession = useCallback(() => {
     setSavedSession(null);
@@ -226,7 +288,7 @@ function useSessionFlow(activeUserPractice: UserPractice | null, incrementWeekCo
     completedMinutes,
     setCompletedSession,
     savedSession,
-    isSaving,
+    isSaving: saveMutation.pending,
     saveError: error,
     handleSaveSession,
     clearSession,
@@ -534,7 +596,12 @@ const PracticeScreen = (): React.JSX.Element => {
 
   const stageNumber = route.params?.stageNumber ?? storeCurrentStage;
   const loader = usePracticeLoader(stageNumber);
-  const session = useSessionFlow(loader.activeUserPractice, loader.incrementWeekCount);
+  const session = useSessionFlow(
+    loader.activeUserPractice,
+    loader.incrementWeekCount,
+    loader.decrementWeekCount,
+    loader.setWeekCount,
+  );
   const pv = usePracticeView(loader, session);
   useTimerPersistence(pv.view);
 

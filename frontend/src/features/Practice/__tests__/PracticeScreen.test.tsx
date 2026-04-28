@@ -435,4 +435,99 @@ describe('PracticeScreen', () => {
 
     jest.useRealTimers();
   });
+
+  it('refetches the authoritative week count after a successful save (BUG-FE-PRACTICE-005)', async () => {
+    jest.useFakeTimers();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice]);
+    // Initial load returns count=2, post-save returns count=3 — the
+    // hook's onSuccess closure overrides the optimistic +1 with the
+    // authoritative value so the bar tracks server truth even when
+    // remote state diverged (e.g. another device added a session).
+    mockWeekCount.mockResolvedValueOnce({ count: 2 }).mockResolvedValueOnce({ count: 7 });
+
+    const { getByTestId, getByText } = render(<PracticeScreen />);
+
+    await waitFor(() => {
+      expect(getByTestId('start-practice-button')).toBeTruthy();
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('start-practice-button'));
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('start-button'));
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(601000);
+    });
+    await waitFor(() => {
+      expect(getByTestId('save-session-button')).toBeTruthy();
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('save-session-button'));
+    });
+
+    // weekCount() is called twice: once on mount (returns 2) and once
+    // post-save inside `commit` (returns 7). Without the refetch, the
+    // bar would only show the optimistic 2+1=3.
+    await waitFor(() => {
+      expect(mockWeekCount).toHaveBeenCalledTimes(2);
+    });
+    // Skip back to selection so the WeeklyProgress bar is visible.
+    await waitFor(() => {
+      expect(getByTestId('skip-reflection-button')).toBeTruthy();
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('skip-reflection-button'));
+    });
+    await waitFor(() => {
+      expect(getByText(/7\s*\/\s*\d+/)).toBeTruthy();
+    });
+
+    jest.useRealTimers();
+  });
+
+  it('rolls back the optimistic week-count increment when save fails (BUG-FE-PRACTICE-005)', async () => {
+    jest.useFakeTimers();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice]);
+    mockWeekCount.mockResolvedValueOnce({ count: 2 }); // initial mount
+    mockPracticeSessionsCreate.mockRejectedValueOnce(new Error('502 Bad Gateway'));
+
+    const { getByTestId, getByText } = render(<PracticeScreen />);
+
+    await waitFor(() => {
+      expect(getByTestId('start-practice-button')).toBeTruthy();
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('start-practice-button'));
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('start-button'));
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(601000);
+    });
+    await waitFor(() => {
+      expect(getByTestId('save-session-button')).toBeTruthy();
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('save-session-button'));
+    });
+
+    // The error route shows the retry screen with the formatted message
+    // — the rollback closure surfaced the failure. Before the fix, the
+    // increment had ALREADY fired so the bar was bumped to 3 even
+    // though the server never accepted the session; with the
+    // rollback closure the optimistic 3 is decremented back to 2 and
+    // the user only sees the error toast.
+    await waitFor(() => {
+      expect(getByText(/We couldn't save your practice session/)).toBeTruthy();
+    });
+
+    // The post-save weekCount() refetch should NOT have been called —
+    // it lives inside `commit`, which threw before reaching it. A bare
+    // mount-time call is the only invocation expected.
+    expect(mockWeekCount).toHaveBeenCalledTimes(1);
+
+    jest.useRealTimers();
+  });
 });

@@ -155,4 +155,75 @@ describe('stageService', () => {
 
     expect(mockList).toHaveBeenCalledWith('abc-token');
   });
+
+  describe('advance-stage primitives (BUG-FE-MAP-005)', () => {
+    it('prepareAdvanceStage returns null when next equals current', () => {
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+      act(() => useStageStore.getState().setCurrentStage(3));
+
+      expect(stageService.prepareAdvanceStage(3)).toBeNull();
+    });
+
+    it('apply / rollback restore the snapshot when commit fails', async () => {
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+      act(() => useStageStore.getState().setCurrentStage(2));
+
+      const ctx = stageService.prepareAdvanceStage(3);
+      expect(ctx).toEqual({ prev: 2, next: 3 });
+
+      stageService.applyAdvanceStage(ctx!);
+      expect(useStageStore.getState().currentStage).toBe(3);
+
+      // Simulate a commit failure: rollback restores prev.
+      stageService.rollbackAdvanceStage(ctx!);
+      expect(useStageStore.getState().currentStage).toBe(2);
+    });
+
+    it('commitAdvanceStage delegates to loadStages so the server reload reconciles', async () => {
+      mockList.mockResolvedValueOnce([
+        makeApiStage(1, { is_unlocked: true, progress: 1 }),
+        makeApiStage(2, { is_unlocked: true, progress: 1 }),
+        makeApiStage(3, { is_unlocked: true, progress: 0 }),
+      ]);
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+
+      const ctx = { prev: 2, next: 3 };
+      stageService.applyAdvanceStage(ctx);
+      await act(async () => {
+        await stageService.commitAdvanceStage(ctx);
+      });
+
+      // Server-derived currentStage = completed (2) + 1 = 3, matching the
+      // optimistic value. If the server had only returned 2 completions
+      // for stages 1 and 2 with stage-3 incomplete (progress 0), the
+      // server's truth (3) confirms the optimistic write.
+      expect(useStageStore.getState().currentStage).toBe(3);
+    });
+
+    it('rollbackAdvanceStage runs after a failed commit so the bumped stage reverts', async () => {
+      mockList.mockRejectedValueOnce(new Error('still offline'));
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+      act(() => useStageStore.getState().setCurrentStage(2));
+
+      const ctx = stageService.prepareAdvanceStage(3)!;
+      stageService.applyAdvanceStage(ctx);
+
+      // commitAdvanceStage rethrows so `useOptimisticMutation` knows to
+      // run rollback. `loadStages` swallows errors for background-
+      // refresh ergonomics; this advance-specific commit path does not.
+      await expect(
+        act(async () => {
+          await stageService.commitAdvanceStage(ctx);
+        }),
+      ).rejects.toThrow('still offline');
+      stageService.rollbackAdvanceStage(ctx);
+
+      expect(useStageStore.getState().currentStage).toBe(2);
+      expect(useStageStore.getState().error).toBe('still offline');
+    });
+  });
 });
