@@ -100,10 +100,18 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
     (minting a fresh UUID4 when absent), pushes it into the contextvar so
     downstream handlers and log records can see it, and writes the value
     onto the response so clients can correlate their own logs with ours.
+
+    The same value is mirrored onto ``request.state.request_id`` so a
+    FastAPI exception handler — which runs *outside* this middleware in
+    Starlette's stack and therefore cannot read the contextvar (the
+    ``finally`` block below has already reset it by then) — can still
+    recover the trace ID for the unhandled-exception envelope
+    (BUG-OBS-002 / -003).
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         trace_id = _normalise_trace_id(request.headers.get(TRACE_ID_HEADER))
+        request.state.request_id = trace_id
         token = trace_id_var.set(trace_id)
         try:
             response = await call_next(request)

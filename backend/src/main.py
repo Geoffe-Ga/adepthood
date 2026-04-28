@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
+from errors import install_exception_handlers
 from middleware import (
     CorrelationIdMiddleware,
     RequestLoggingMiddleware,
@@ -156,6 +157,13 @@ app = FastAPI(lifespan=lifespan)
 # Attach the rate limiter to the app so slowapi can find it
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+# BUG-OBS-002 / -003: install the global exception handlers BEFORE the
+# routers are mounted so any unhandled exception during route execution
+# (or in the middleware stack itself) is caught, logged with the
+# request ID, reported to Sentry, and returned as a stable JSON envelope
+# instead of leaking exception messages to the client.
+install_exception_handlers(app)
 
 # BUG-APP-001: Starlette's ``add_middleware`` is LIFO — the LAST class added
 # becomes the OUTERMOST layer.  We register innermost-first so the actual
