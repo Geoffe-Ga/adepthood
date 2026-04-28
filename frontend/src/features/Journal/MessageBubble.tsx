@@ -16,8 +16,14 @@ const TAG_LABELS: Record<string, string> = {
  * never crosses the wire. ``_streaming`` is true while tokens are still
  * arriving for the bot's reply; ``_errored`` flags a user message whose
  * BotMason round-trip failed and needs a retry button.
+ *
+ * `id` widens `JournalMessage.id` from `number` to `number | string` so the
+ * optimistic local id can be a UUID (BUG-FE-JOURNAL-003: `Date.now()`-based
+ * ids collide on retry). The server still returns numeric ids; reconciling
+ * is just a swap by `===` match on the optimistic id.
  */
-export interface ChatMessage extends JournalMessage {
+export interface ChatMessage extends Omit<JournalMessage, 'id'> {
+  id: number | string;
   _streaming?: boolean;
   _errored?: boolean;
   _errorDetail?: string;

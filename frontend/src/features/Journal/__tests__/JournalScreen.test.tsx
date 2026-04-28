@@ -916,4 +916,39 @@ describe('JournalScreen', () => {
       );
     });
   });
+
+  it('persists the user message via journal API when the bot stream throws (BUG-FE-JOURNAL-002)', async () => {
+    // Reset call count specifically for this assertion — sample data load
+    // would otherwise inflate the number.
+    mockJournalCreate.mockClear();
+    mockBotmasonChatStream.mockImplementationOnce(async () => {
+      throw new TypeError('Network request failed');
+    });
+
+    const { getByTestId, getByText } = renderJournal();
+    await waitFor(() => {
+      expect(getByText('My first reflection.')).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.changeText(getByTestId('chat-input'), 'Save my words');
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('send-button'));
+    });
+
+    // Inline retry UX still surfaces — user can re-send for a bot reply.
+    await waitFor(() => {
+      expect(getByTestId('message-retry')).toBeTruthy();
+    });
+
+    // The user's text was also POSTed to the journal so a reload won't
+    // lose it. Before this fix, journalApi.create was never called on
+    // the synchronous-throw path and the user's words vanished.
+    await waitFor(() => {
+      expect(mockJournalCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Save my words' }),
+      );
+    });
+  });
 });
