@@ -6,6 +6,8 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from schemas._base import OwnedResourcePublic
+
 
 class ContentItemResponse(BaseModel):
     """A single course content item with drip-feed and read status."""
@@ -28,10 +30,14 @@ class CourseProgressResponse(BaseModel):
     next_unlock_day: int | None
 
 
-class ContentCompletionResponse(BaseModel):
-    """Response after marking content as read."""
+class ContentCompletionResponse(OwnedResourcePublic):
+    """Response after marking content as read.
+
+    ``user_id`` is intentionally excluded (BUG-T7): the completion is
+    always created for ``current_user``, so echoing it back is redundant
+    and aids enumeration.
+    """
 
     id: int
-    user_id: int
     content_id: int
     completed_at: datetime

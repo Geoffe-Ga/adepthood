@@ -114,7 +114,9 @@ async def test_create_goal_group(async_client: AsyncClient) -> None:
     assert data["icon"] == "💪"
     assert data["description"] == "Progressive strength targets"
     assert data["shared_template"] is False
-    assert data["user_id"] is not None
+    # BUG-T7: response no longer echoes user_id; the absence of
+    # ``shared_template`` is the client's "this is mine" signal.
+    assert "user_id" not in data
     assert data["goals"] == []
 
 
@@ -136,7 +138,9 @@ async def test_create_shared_template(async_client: AsyncClient) -> None:
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.json()
     assert data["shared_template"] is True
-    assert data["user_id"] is None
+    # BUG-T7: shared templates are flagged via ``shared_template`` rather
+    # than a NULL ``user_id`` echo (which leaks ownership semantics).
+    assert "user_id" not in data
     assert data["source"] == "community"
 
 
@@ -172,10 +176,15 @@ async def test_get_goal_group_not_found(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_other_users_group_returns_404(
+async def test_get_other_users_group_returns_403(
     async_client: AsyncClient,
 ) -> None:
-    """A user cannot fetch another user's private group."""
+    """A user fetching another user's private group gets 403, not 404.
+
+    BUG-T7: the auth-failure path is now uniform across owned-resource
+    routes — 404 only for genuinely missing rows, 403 for cross-user
+    access.  This test must specifically fail if the ordering regresses.
+    """
     alice_headers = await _signup(async_client, "alice")
     bob_headers = await _signup(async_client, "bob")
 
@@ -187,7 +196,7 @@ async def test_get_other_users_group_returns_404(
     group_id = create_resp.json()["id"]
 
     resp = await async_client.get(f"/goal-groups/{group_id}", headers=bob_headers)
-    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 @pytest.mark.asyncio
@@ -240,10 +249,10 @@ async def test_update_goal_group(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_other_users_group_returns_404(
+async def test_update_other_users_group_returns_403(
     async_client: AsyncClient,
 ) -> None:
-    """A user cannot update another user's group."""
+    """A user updating another user's group gets 403, not 404 (BUG-T7)."""
     alice_headers = await _signup(async_client, "alice")
     bob_headers = await _signup(async_client, "bob")
 
@@ -259,7 +268,7 @@ async def test_update_other_users_group_returns_404(
         json={"name": "Hijacked"},
         headers=bob_headers,
     )
-    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 # ---------------------------------------------------------------------------
@@ -344,10 +353,10 @@ async def test_delete_unlinks_goals_but_keeps_them(
 
 
 @pytest.mark.asyncio
-async def test_delete_other_users_group_returns_404(
+async def test_delete_other_users_group_returns_403(
     async_client: AsyncClient,
 ) -> None:
-    """A user cannot delete another user's group."""
+    """A user deleting another user's group gets 403, not 404 (BUG-T7)."""
     alice_headers = await _signup(async_client, "alice")
     bob_headers = await _signup(async_client, "bob")
 
@@ -359,7 +368,7 @@ async def test_delete_other_users_group_returns_404(
     group_id = create_resp.json()["id"]
 
     resp = await async_client.delete(f"/goal-groups/{group_id}", headers=bob_headers)
-    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 # ---------------------------------------------------------------------------

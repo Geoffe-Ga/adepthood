@@ -10,8 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from database import get_session
+from dependencies.ownership import require_owned_habit
 from domain.habit_stats import compute_habit_stats
-from errors import not_found
+from errors import forbidden, not_found
 from load_options import HABIT_WITH_GOALS_AND_COMPLETIONS
 from models.habit import Habit
 from routers.auth import get_current_user
@@ -89,12 +90,13 @@ async def get_habit(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Habit:
-    """Return a single habit by id, scoped to the authenticated user."""
-    statement = select(Habit).where(Habit.id == habit_id).options(HABIT_WITH_GOALS_AND_COMPLETIONS)
-    result = await session.execute(statement)
-    habit = result.scalars().first()
-    if habit is None or habit.user_id != current_user:
-        raise not_found("habit")
+    """Return a single habit by id, scoped to the authenticated user.
+
+    Uses :func:`_get_habit_with_completions` for the eager-loaded fetch +
+    canonical 404→403 split rather than the bare ``require_owned_habit``
+    dep, since this endpoint needs goals + completions in the response.
+    """
+    habit = await _get_habit_with_completions(habit_id, current_user, session)
     user_tz = await get_user_timezone(session, current_user)
     _populate_streak(habit, current_user, user_tz)
     return habit
@@ -102,15 +104,16 @@ async def get_habit(
 
 @router.put("/{habit_id}", response_model=HabitSchema)
 async def update_habit(
-    habit_id: int,
     payload: HabitCreate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Habit:
-    """Replace an existing habit's fields."""
-    habit = await session.get(Habit, habit_id)
-    if habit is None or habit.user_id != current_user:
-        raise not_found("habit")
+    """Replace an existing habit's fields.
+
+    Ownership is verified by ``require_owned_habit`` (404 if missing,
+    403 if cross-user).
+    """
     for key, value in payload.model_dump().items():
         setattr(habit, key, value)
     session.add(habit)
@@ -122,14 +125,12 @@ async def update_habit(
 
 @router.delete("/{habit_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_habit(
-    habit_id: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Response:
     """Delete a habit. Returns 204 No Content on success."""
-    habit = await session.get(Habit, habit_id)
-    if habit is None or habit.user_id != current_user:
-        raise not_found("habit")
+    habit_id = habit.id
     await session.delete(habit)
     await session.commit()
     logger.info("habit_deleted", extra={"user_id": current_user, "habit_id": habit_id})
@@ -139,12 +140,14 @@ async def delete_habit(
 async def _get_habit_with_completions(
     habit_id: int, current_user: int, session: AsyncSession
 ) -> Habit:
-    """Load a habit with goals+completions, raising 404 if not owned."""
+    """Load a habit with goals+completions, with the canonical 404→403 split."""
     statement = select(Habit).where(Habit.id == habit_id).options(HABIT_WITH_GOALS_AND_COMPLETIONS)
     result = await session.execute(statement)
     habit = result.scalars().first()
-    if habit is None or habit.user_id != current_user:
+    if habit is None:
         raise not_found("habit")
+    if habit.user_id != current_user:
+        raise forbidden("forbidden")
     return habit
 
 

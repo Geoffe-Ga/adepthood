@@ -350,7 +350,8 @@ async def test_mark_content_read(
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
     assert data["content_id"] == items[0].id
-    assert data["user_id"] == user_id
+    # BUG-T7: ContentCompletionResponse no longer echoes user_id.
+    assert "user_id" not in data
     assert "completed_at" in data
 
 
@@ -533,13 +534,23 @@ async def test_get_content_item_rejects_locked_stage(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """BUG-COURSE-007: Content from a locked stage must be forbidden."""
+    """BUG-COURSE-007 / BUG-COURSE-004: locked-stage content reads as 404.
+
+    The locked branch is masked as ``content_not_found`` rather than
+    ``stage_locked`` (403) so an attacker enumerating ``content_id``
+    cannot distinguish "row exists but locked" from "row does not
+    exist".  Course content is shared catalog -- the prompt-07
+    canonical "403 for cross-user" rule does not apply here because
+    there is no per-user ownership; the leak surface is content-row
+    count, which the 404 mask removes.
+    """
     headers, _user_id = await _signup(async_client)
     # Create stage 2 content but user has NO progress record (only stage 1 unlocked)
     _, items = await _seed_stage_with_content(db_session, stage_number=2)
 
     resp = await async_client.get(f"/course/content/{items[0].id}", headers=headers)
-    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "content_not_found"
 
 
 # ── BUG-COURSE-005: mark_content_read checks stage unlock ─────────────
@@ -550,12 +561,17 @@ async def test_mark_read_rejects_locked_stage(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """BUG-COURSE-005: Cannot mark content from a locked stage as read."""
+    """BUG-COURSE-005 / BUG-COURSE-004: locked content marks read as 404.
+
+    See ``test_get_content_item_rejects_locked_stage`` for the rationale
+    behind the 404 mask.
+    """
     headers, _user_id = await _signup(async_client)
     _, items = await _seed_stage_with_content(db_session, stage_number=2)
 
     resp = await async_client.post(f"/course/content/{items[0].id}/mark-read", headers=headers)
-    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "content_not_found"
 
 
 # ── BUG-COURSE-002/003: past-stage content is fully unlocked ───────────

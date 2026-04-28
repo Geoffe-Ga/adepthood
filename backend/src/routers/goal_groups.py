@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from database import get_session
+from dependencies.ownership import require_owned_goal_group, require_visible_goal_group
 from errors import not_found
 from load_options import GOAL_GROUP_WITH_GOALS
 from models.goal_group import GoalGroup
@@ -90,16 +91,19 @@ async def list_goal_groups(
 @router.get("/{group_id}", response_model=GoalGroupResponse)
 async def get_goal_group(
     group_id: int,
-    current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    _visible: Annotated[GoalGroup, Depends(require_visible_goal_group)],
 ) -> GoalGroup:
-    """Return a single goal group with its goals."""
+    """Return a single goal group with its goals.
+
+    Read access: owner OR shared template. ``require_visible_goal_group``
+    runs the canonical 404→403 split (404 for missing, 403 for another
+    user's private group); we then re-fetch with eager-loaded goals.
+    """
     statement = select(GoalGroup).where(GoalGroup.id == group_id).options(GOAL_GROUP_WITH_GOALS)
     result = await session.execute(statement)
     group = result.scalars().first()
     if group is None:
-        raise not_found("goal_group")
-    if group.user_id is not None and group.user_id != current_user:
         raise not_found("goal_group")
     return group
 
@@ -110,7 +114,14 @@ async def create_goal_group(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> GoalGroup:
-    """Create a new goal group for the authenticated user."""
+    """Create a new goal group for the authenticated user.
+
+    Ownership is sourced from ``current_user`` (BUG-GOAL-005); the
+    payload schema does not expose a ``user_id`` field, so a forged
+    body cannot plant a row under another account.  ``shared_template``
+    flips the row to a public template (``user_id IS NULL``) per the
+    DB CHECK constraint.
+    """
     group = GoalGroup(
         user_id=current_user if not payload.shared_template else None,
         **payload.model_dump(),
@@ -143,15 +154,24 @@ async def _refetch_goal_group_with_goals(session: AsyncSession, group_id: int) -
 
 @router.put("/{group_id}", response_model=GoalGroupResponse)
 async def update_goal_group(
-    group_id: int,
     payload: GoalGroupCreate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    group: Annotated[GoalGroup, Depends(require_owned_goal_group)],
 ) -> GoalGroup:
-    """Update an existing goal group."""
-    group = await session.get(GoalGroup, group_id)
-    if group is None or (group.user_id is not None and group.user_id != current_user):
-        raise not_found("goal_group")
+    """Update an existing goal group.
+
+    Mutation requires the strict owner-only check from
+    ``require_owned_goal_group``: shared templates have ``user_id IS NULL``
+    so they can never match ``current_user`` and always 403.  Closes
+    BUG-GOAL-006 (shared templates were editable by any user because the
+    prior ``group.user_id is not None and ...`` short-circuit treated
+    NULL ownership as caller-equivalent).
+    """
+    # ``group.id`` is ``int | None`` on the SQLModel because of the
+    # primary-key default, but the ownership dep only ever returns a
+    # row freshly fetched from the DB, so the value is non-NULL here.
+    group_id = cast("int", group.id)
     for key, value in payload.model_dump().items():
         setattr(group, key, value)
     session.add(group)
@@ -166,13 +186,18 @@ async def delete_goal_group(
     group_id: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    _owned: Annotated[GoalGroup, Depends(require_owned_goal_group)],
 ) -> Response:
-    """Delete a goal group. Unlinks goals but does not delete them."""
+    """Delete a goal group. Unlinks goals but does not delete them.
+
+    Owner-only via ``require_owned_goal_group`` (BUG-GOAL-006).  We
+    re-fetch with eager-loaded goals so the unlink step doesn't trigger
+    a lazy load on an async session; existence has already been
+    verified by the dep, so ``.one()`` is correct here.
+    """
     statement = select(GoalGroup).where(GoalGroup.id == group_id).options(GOAL_GROUP_WITH_GOALS)
     result = await session.execute(statement)
-    group = result.scalars().first()
-    if group is None or (group.user_id is not None and group.user_id != current_user):
-        raise not_found("goal_group")
+    group = result.scalars().one()
     # Unlink goals from the group before deleting
     for goal in group.goals:
         goal.goal_group_id = None
