@@ -127,6 +127,18 @@ async def compute_consecutive_streak(
     return _count_consecutive_days(sorted_days, day_ok)
 
 
+def _completed_user_dates(
+    completions: Sequence[GoalCompletion],
+    user_timezone: str,
+) -> set[date]:
+    """Return the set of user-local calendar days where the goal was met.
+
+    Split out so :func:`compute_habit_streak` stays at xenon rank A; the
+    inner generator + filter pushed the parent block over the threshold.
+    """
+    return {_to_user_date(c.timestamp, user_timezone) for c in completions if c.completed_units > 0}
+
+
 def compute_habit_streak(
     completions: Sequence[GoalCompletion],
     user_timezone: str = "UTC",
@@ -148,16 +160,9 @@ def compute_habit_streak(
     after a missed day -- exactly the visible discrepancy this gate
     prevents.
     """
-    if not completions:
-        return 0
-
-    dates: set[date] = {
-        _to_user_date(c.timestamp, user_timezone) for c in completions if c.completed_units > 0
-    }
-
+    dates = _completed_user_dates(completions, user_timezone)
     if not dates:
         return 0
-
     sorted_dates = sorted(dates, reverse=True)
     if _is_chain_stale(sorted_dates, user_timezone):
         return 0
