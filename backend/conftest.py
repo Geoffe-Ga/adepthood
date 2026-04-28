@@ -58,13 +58,13 @@ _SQLITE_PORTABLE_UNIQUE_INDEXES: tuple[str, ...] = (
     # goal_completion: one row per (goal, user, calendar day).  Production
     # uses ``((timestamp AT TIME ZONE 'UTC')::date)`` for IMMUTABLE-ness
     # under a non-UTC server zone; SQLite stores ``timestamp`` as ISO
-    # text and ``date(timestamp)`` is sufficient at test scale.
+    # text and ``date(timestamp)`` is sufficient at test scale.  The
+    # ``contentcompletion`` table's unique constraint lives on the model
+    # itself (``__table_args__``) so it is created by
+    # ``metadata.create_all`` everywhere and does not need a test-only
+    # mirror here.
     'CREATE UNIQUE INDEX IF NOT EXISTS "ix_goal_completion_unique_per_day_test" '
     "ON goalcompletion (goal_id, user_id, date(timestamp))",
-    # content_completion: one row per (user, content).  Plain composite
-    # constraint; identical semantics on both engines.
-    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_content_completion_unique_user_content_test" '
-    "ON contentcompletion (user_id, content_id)",
     # user_practice: at most one open row per (user, stage).  SQLite
     # supports the same partial-index syntax as Postgres for this.
     'CREATE UNIQUE INDEX IF NOT EXISTS "ix_user_practice_active_stage_test" '

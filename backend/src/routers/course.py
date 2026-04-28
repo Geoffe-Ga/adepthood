@@ -6,6 +6,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -196,13 +197,42 @@ async def get_content_item(
     return ContentItemResponse(**filtered[0])
 
 
+async def _existing_content_completion(
+    session: AsyncSession, user_id: int, content_id: int
+) -> ContentCompletion | None:
+    """Return the user's existing completion row for ``content_id`` if any."""
+    result = await session.execute(
+        select(ContentCompletion).where(
+            ContentCompletion.user_id == user_id,
+            ContentCompletion.content_id == content_id,
+        )
+    )
+    return result.scalars().first()
+
+
+def _completion_response(completion: ContentCompletion) -> ContentCompletionResponse:
+    return ContentCompletionResponse(
+        id=completion.id,
+        user_id=completion.user_id,
+        content_id=completion.content_id,
+        completed_at=completion.completed_at,
+    )
+
+
 @router.post("/content/{content_id}/mark-read", response_model=ContentCompletionResponse)
 async def mark_content_read(
     content_id: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ContentCompletionResponse:
-    """Mark a content item as read. Idempotent — repeated calls return existing record."""
+    """Mark a content item as read. Idempotent — repeated calls return existing record.
+
+    The pre-check is the fast path for the common retry / refresh case.
+    Two concurrent calls can both pass it; the
+    ``uq_contentcompletion_user_content`` constraint then catches the
+    loser via ``IntegrityError`` and the existing row is returned —
+    closes the BUG-COURSE-002 TOCTOU.
+    """
     # Verify content exists
     result = await session.execute(select(StageContent).where(StageContent.id == content_id))
     content_item = result.scalars().first()
@@ -218,33 +248,37 @@ async def mark_content_read(
         raise not_found("stage")
     await _check_stage_unlocked(session, current_user, stage.stage_number)
 
-    # Check for existing completion (idempotent)
-    existing_result = await session.execute(
-        select(ContentCompletion).where(
-            ContentCompletion.user_id == current_user,
-            ContentCompletion.content_id == content_id,
-        )
-    )
-    existing = existing_result.scalars().first()
+    # Cheap fast path for the common retry / optimistic-UI case.
+    existing = await _existing_content_completion(session, current_user, content_id)
     if existing is not None:
-        return ContentCompletionResponse(
-            id=existing.id,
-            user_id=existing.user_id,
-            content_id=existing.content_id,
-            completed_at=existing.completed_at,
-        )
+        return _completion_response(existing)
 
     completion = ContentCompletion(user_id=current_user, content_id=content_id)
-    session.add(completion)
-    await session.commit()
-    await session.refresh(completion)
+    try:
+        # ``begin_nested`` opens a SAVEPOINT so the unique-constraint
+        # ``IntegrityError`` rolls back only the failed insert; the
+        # outer transaction stays healthy enough for the follow-up
+        # SELECT that fetches the winner's row.
+        async with session.begin_nested():
+            session.add(completion)
+        await session.commit()
+        await session.refresh(completion)
+    except IntegrityError:
+        # A concurrent call won the race and already inserted.  Return
+        # the existing row so the response is identical to the fast-path
+        # idempotent branch.  ``one()`` is safe because the unique
+        # constraint guarantees the row exists post-commit.
+        existing = await _existing_content_completion(session, current_user, content_id)
+        if existing is None:
+            # Defensive: the unique-constraint loser must see the
+            # winner's row.  If it isn't there the database state is
+            # corrupt; fail loudly rather than silently re-inserting.
+            msg = "ContentCompletion lost the race but the winner's row is missing"
+            raise RuntimeError(msg) from None
+        return _completion_response(existing)
+
     logger.info("content_marked_read", extra={"user_id": current_user, "content_id": content_id})
-    return ContentCompletionResponse(
-        id=completion.id,
-        user_id=completion.user_id,
-        content_id=completion.content_id,
-        completed_at=completion.completed_at,
-    )
+    return _completion_response(completion)
 
 
 def _empty_progress() -> CourseProgressResponse:

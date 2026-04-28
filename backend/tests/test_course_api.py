@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
 from models.content_completion import ContentCompletion
@@ -618,3 +619,72 @@ async def test_course_progress_no_next_unlock_when_not_on_stage(
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
     assert data["next_unlock_day"] is None
+
+
+# ── Concurrency: BUG-COURSE-002 mark-read TOCTOU ──────────────────────
+
+
+_CONCURRENT_MARK_READ_FANOUT = 5
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_concurrent_mark_read_collapses_to_one_row(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Five simultaneous ``mark-read`` calls persist exactly one ``ContentCompletion``.
+
+    Closes BUG-COURSE-002: the SELECT-then-INSERT pre-check let two
+    concurrent calls both pass the existence check before either
+    committed; the new ``uq_contentcompletion_user_content`` constraint
+    plus the ``IntegrityError`` rollback collapses the race.  Every
+    response must carry the same ``id`` (the winner's row) so callers
+    can rely on the response shape regardless of which request actually
+    inserted.
+    """
+    signup_resp = await concurrent_async_client.post(
+        "/auth/signup",
+        json={
+            "email": "raceread@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    headers = {"Authorization": f"Bearer {signup_resp.json()['token']}"}
+
+    async with concurrent_session_factory() as session:
+        stage = CourseStage(**_stage_data(stage_number=1))
+        session.add(stage)
+        await session.flush()
+        item = StageContent(
+            course_stage_id=stage.id,
+            title="Day 1",
+            content_type="essay",
+            release_day=0,
+            url="https://cms.example.com/s1-day1",
+        )
+        session.add(item)
+        await session.commit()
+        await session.refresh(item)
+        content_id = item.id
+
+    responses = await asyncio.gather(
+        *[
+            concurrent_async_client.post(
+                f"/course/content/{content_id}/mark-read",
+                headers=headers,
+            )
+            for _ in range(_CONCURRENT_MARK_READ_FANOUT)
+        ]
+    )
+
+    assert all(r.status_code == HTTPStatus.OK for r in responses)
+    completion_ids = {r.json()["id"] for r in responses}
+    assert len(completion_ids) == 1, f"every response must surface the same row: {completion_ids}"
+
+    async with concurrent_session_factory() as session:
+        result = await session.execute(
+            select(ContentCompletion).where(ContentCompletion.content_id == content_id)
+        )
+        rows = list(result.scalars().all())
+    assert len(rows) == 1
