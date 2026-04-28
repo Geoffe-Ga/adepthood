@@ -35,6 +35,7 @@ from models.wallet_audit import (
     BUCKET_MONTHLY,
     BUCKET_OFFERING,
     REASON_ADMIN_GRANT,
+    REASON_MONTHLY_RESET,
     REASON_SELF_GRANT,
     REASON_SPEND_MONTHLY,
     REASON_SPEND_OFFERING,
@@ -139,20 +140,64 @@ async def reset_monthly_usage_if_due(
     longer matches (the first request has already advanced
     ``monthly_reset_date`` to next month) and the second UPDATE is a no-op.
 
-    The reset event is logged for audit purposes (BUG-JOURNAL-018).
+    The reset event is logged for audit purposes (BUG-JOURNAL-018) and
+    -- when it actually fires -- staged as a ``WalletAudit`` row with
+    reason ``REASON_MONTHLY_RESET`` so the every-wallet-mutation-audited
+    contract holds across rollover boundaries.  We snapshot
+    ``monthly_messages_used`` *before* the ``UPDATE`` so the audit row
+    can record the pre-reset count without a second round-trip.  A
+    concurrent spender between the read and the update at most
+    under-reports ``balance_before`` by one — acceptable for a
+    forensic log; the ``UPDATE``'s WHERE predicate still ensures the
+    reset itself is exactly-once.
     """
+    pre_reset = await get_user_fresh(session, user_id)
+    if pre_reset is None:
+        return
+    # Snapshot the pre-reset count into a primitive *before* the
+    # ``UPDATE`` runs.  SQLAlchemy's identity-map auto-refresh would
+    # otherwise overwrite ``pre_reset.monthly_messages_used`` with the
+    # post-update value (0) before we get to use it for the audit row.
+    before = int(pre_reset.monthly_messages_used)
     next_reset = compute_next_reset(now)
+    # ``synchronize_session=False`` skips SQLAlchemy's Python-side
+    # WHERE evaluator.  Loading ``pre_reset`` puts the row in the
+    # session's identity map; without this flag the evaluator would
+    # run the ``monthly_reset_date <= now`` comparison against the
+    # in-memory object, which on SQLite raises
+    # ``can't compare offset-naive and offset-aware datetimes`` because
+    # the persisted column is timezone-naive there.  ``False`` tells
+    # SA to issue the UPDATE through SQL only — exactly what the
+    # idempotent ``WHERE`` predicate already provides.
     result = await session.execute(
         update(User)
         .where(col(User.id) == user_id, col(User.monthly_reset_date) <= now)
         .values(monthly_messages_used=0, monthly_reset_date=next_reset)
+        .execution_options(synchronize_session=False)
     )
-    if result.rowcount:  # type: ignore[attr-defined]
-        logger.info(
-            "Monthly usage reset for user_id=%s, next_reset=%s",
-            user_id,
-            next_reset.isoformat(),
-        )
+    if not result.rowcount:  # type: ignore[attr-defined]
+        return
+    logger.info(
+        "Monthly usage reset for user_id=%s, next_reset=%s",
+        user_id,
+        next_reset.isoformat(),
+    )
+    _stage_audit(
+        session,
+        _AuditEntry(
+            user_id=user_id,
+            actor_user_id=user_id,
+            bucket=BUCKET_MONTHLY,
+            reason=REASON_MONTHLY_RESET,
+            # ``delta`` is the negative drop in ``monthly_messages_used``
+            # (post = 0; pre = ``before``).  Recording it as a negative
+            # number keeps reconcilers' arithmetic uniform with the
+            # spend rows (which are positive deltas on the same bucket).
+            delta=Decimal(-before),
+            balance_before=Decimal(before),
+            balance_after=Decimal(0),
+        ),
+    )
 
 
 async def spend_one_message(

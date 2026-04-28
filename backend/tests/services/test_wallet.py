@@ -22,6 +22,7 @@ from models.wallet_audit import (
     BUCKET_MONTHLY,
     BUCKET_OFFERING,
     REASON_ADMIN_GRANT,
+    REASON_MONTHLY_RESET,
     REASON_SELF_GRANT,
     REASON_SPEND_MONTHLY,
     REASON_SPEND_OFFERING,
@@ -334,4 +335,46 @@ async def test_add_balance_failure_writes_no_audit_row(db_session: AsyncSession)
     assert await add_balance(db_session, user_id=999, amount=5) is None
     await db_session.commit()
     rows = await _audit_rows(db_session, user_id=999)
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_reset_monthly_usage_writes_audit_row(db_session: AsyncSession) -> None:
+    """First-of-the-month rollover stages a ``REASON_MONTHLY_RESET`` audit row.
+
+    Without this row an operator reconciling ``User.monthly_messages_used``
+    against the audit log would see an unexplained drop at every
+    rollover boundary and the module's "every wallet mutation is
+    audited" contract would be a lie.
+    """
+    used_before_reset = 7
+    user = await _make_user(db_session, monthly_used=used_before_reset, reset_in_days=-1)
+    assert user.id is not None
+
+    await reset_monthly_usage_if_due(db_session, user.id, datetime.now(UTC).replace(tzinfo=None))
+    await db_session.commit()
+
+    rows = await _audit_rows(db_session, user.id)
+    assert len(rows) == 1
+    audit = rows[0]
+    assert audit.bucket == BUCKET_MONTHLY
+    assert audit.reason == REASON_MONTHLY_RESET
+    assert audit.actor_user_id == user.id  # system-initiated mutation
+    assert audit.balance_before == Decimal(used_before_reset)
+    assert audit.balance_after == Decimal(0)
+    # Delta is the negative drop, mirroring the convention used by the
+    # spend rows on the same bucket.
+    assert audit.delta == Decimal(-used_before_reset)
+
+
+@pytest.mark.asyncio
+async def test_reset_monthly_usage_no_audit_when_not_due(db_session: AsyncSession) -> None:
+    """A no-op rollover (reset date in the future) must not insert an audit row."""
+    user = await _make_user(db_session, monthly_used=4, reset_in_days=30)
+    assert user.id is not None
+
+    await reset_monthly_usage_if_due(db_session, user.id, datetime.now(UTC).replace(tzinfo=None))
+    await db_session.commit()
+
+    rows = await _audit_rows(db_session, user.id)
     assert rows == []

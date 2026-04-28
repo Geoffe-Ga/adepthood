@@ -39,6 +39,15 @@ REASON_SPEND_OFFERING = "spend_offering"
 # filtering by reason gets a clean signal of who did the granting.
 REASON_ADMIN_GRANT = "admin_grant"
 REASON_SELF_GRANT = "self_grant"
+# ``monthly_reset`` — first-of-the-month rollover that zeroes
+# ``monthly_messages_used``.  Recording this is what makes
+# reconciliation possible: without it an operator diffing
+# ``User.monthly_messages_used`` across the boundary would see an
+# unexplained drop with no audit row, and the "every wallet mutation
+# is audited" contract above would be a lie.  ``actor_user_id`` is
+# the same as ``user_id`` for resets — they're scheduled
+# system-initiated mutations rather than admin actions.
+REASON_MONTHLY_RESET = "monthly_reset"
 
 # Bucket tokens — which side of the wallet was changed.  ``monthly`` is
 # the free per-calendar-month allocation; ``offering`` is the durable

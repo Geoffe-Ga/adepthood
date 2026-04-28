@@ -225,6 +225,53 @@ async def test_admin_endpoint_per_user_breakdown_ordered_by_cost(
 
 
 @pytest.mark.asyncio
+async def test_admin_endpoint_orders_null_cost_groups_last(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Unrated-model groups (NULL cost) must NOT sort above real-cost rows.
+
+    PostgreSQL's default for ``DESC`` is ``NULLS FIRST``.  Without
+    wrapping the SUM in ``COALESCE`` inside the ORDER BY, a user whose
+    every row is an unrated model would sort *above* every real-cost
+    row and invert the dashboard's "highest spender first" semantics.
+    """
+    headers = await _signup_admin(async_client, db_session)
+    paying_user_id, journal1 = await _seed_user_and_journal_entry(db_session, "paying@example.com")
+    free_user_id, journal2 = await _seed_user_and_journal_entry(db_session, "free@example.com")
+    # Paying user has a real (small) cost.
+    await _seed_usage_log(
+        db_session,
+        user_id=paying_user_id,
+        journal_entry_id=journal1,
+        spec=_UsageLogSpec(estimated_cost_usd=Decimal("0.01")),
+    )
+    # Free user only used unrated models — every row's cost is NULL.
+    db_session.add(
+        LLMUsageLog(
+            user_id=free_user_id,
+            provider="openai",
+            model="gpt-future-unreleased-model",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+            estimated_cost_usd=None,
+            journal_entry_id=journal2,
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.get("/admin/usage-stats", headers=headers)
+    data = resp.json()
+    assert len(data["per_user"]) == 2
+    # Paying user (real cost) must sort first; free user (NULL cost)
+    # last.  If the ORDER BY did not COALESCE, this assertion would
+    # invert on PostgreSQL.
+    assert data["per_user"][0]["user_id"] == paying_user_id
+    assert data["per_user"][1]["user_id"] == free_user_id
+
+
+@pytest.mark.asyncio
 async def test_admin_endpoint_per_model_breakdown(
     async_client: AsyncClient,
     db_session: AsyncSession,

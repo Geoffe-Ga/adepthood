@@ -95,7 +95,16 @@ async def get_usage_stats(
                 func.coalesce(func.sum(col(LLMUsageLog.estimated_cost_usd)), _ZERO_COST),
             )
             .group_by(col(LLMUsageLog.user_id))
-            .order_by(func.sum(col(LLMUsageLog.estimated_cost_usd)).desc())
+            # PostgreSQL's default for ``DESC`` is ``NULLS FIRST``,
+            # so an unrated-model group (every row's cost is ``NULL``)
+            # would sort *above* every real-cost row and invert the
+            # admin dashboard's "highest spender first" semantics.
+            # Wrapping the SUM in ``COALESCE`` pushes those rows to a
+            # zero value before ordering — they appear at the bottom,
+            # which is the correct end of a by-cost-descending view.
+            .order_by(
+                func.coalesce(func.sum(col(LLMUsageLog.estimated_cost_usd)), _ZERO_COST).desc()
+            )
         )
     ).all()
 
@@ -109,7 +118,10 @@ async def get_usage_stats(
                 func.coalesce(func.sum(col(LLMUsageLog.estimated_cost_usd)), _ZERO_COST),
             )
             .group_by(col(LLMUsageLog.provider), col(LLMUsageLog.model))
-            .order_by(func.sum(col(LLMUsageLog.estimated_cost_usd)).desc())
+            # See the per-user query above — same NULLS-FIRST guard.
+            .order_by(
+                func.coalesce(func.sum(col(LLMUsageLog.estimated_cost_usd)), _ZERO_COST).desc()
+            )
         )
     ).all()
 

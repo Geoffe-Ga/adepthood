@@ -52,7 +52,23 @@ DEV_ORIGINS = [
 # explicitly (BUG-INFRA-008) keeps the preflight surface tight; if a new
 # method is added (PATCH, etc.) the test suite will surface the omission.
 ALLOWED_METHODS = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-ALLOWED_HEADERS = ["Authorization", "Content-Type", "X-LLM-API-Key", "X-Admin-API-Key"]
+# ``X-Request-ID`` is included so browser clients on a different origin
+# can SET the header on outbound requests (otherwise the preflight
+# strips it).  It is also exposed via ``EXPOSED_HEADERS`` below so the
+# response copy survives the cross-origin filter and the AuthContext /
+# logging adapter can correlate client-side telemetry with server logs.
+ALLOWED_HEADERS = [
+    "Authorization",
+    "Content-Type",
+    "X-LLM-API-Key",
+    "X-Admin-API-Key",
+    "X-Request-ID",
+]
+# Headers the browser is allowed to read from the response.  Without
+# ``expose_headers`` the trace-id echoed by ``CorrelationIdMiddleware``
+# is silently dropped by every cross-origin browser client and the PR's
+# end-to-end correlation contract is broken (BUG-APP-001 follow-up).
+EXPOSED_HEADERS = ["X-Request-ID"]
 
 
 def _validate_https_origins(origins: list[str]) -> None:
@@ -189,6 +205,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=ALLOWED_METHODS,
     allow_headers=ALLOWED_HEADERS,
+    expose_headers=EXPOSED_HEADERS,
 )
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(CorrelationIdMiddleware)

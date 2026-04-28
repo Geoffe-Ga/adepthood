@@ -79,6 +79,44 @@ def test_preflight_response_carries_trace_id() -> None:
     assert response.headers[TRACE_ID_HEADER] == "preflight-trace-1234"
 
 
+def test_cors_allows_x_request_id_header() -> None:
+    """Browsers must be allowed to *send* ``X-Request-ID`` on cross-origin requests.
+
+    Without ``X-Request-ID`` in ``ALLOWED_HEADERS``, a preflight that
+    advertises the header in ``Access-Control-Request-Headers`` is
+    rejected by the CORSMiddleware and the browser strips the header
+    from the actual request.  The end-to-end correlation contract
+    needs both the inbound allow and the outbound expose.
+    """
+    response = client.options(
+        "/auth/login",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": TRACE_ID_HEADER,
+        },
+    )
+    assert response.status_code == 200
+    allowed = response.headers.get("access-control-allow-headers", "")
+    assert TRACE_ID_HEADER.lower() in allowed.lower()
+
+
+def test_cors_exposes_x_request_id_header() -> None:
+    """Browsers must be allowed to *read* ``X-Request-ID`` from the response.
+
+    Without ``expose_headers=["X-Request-ID"]`` on the CORSMiddleware,
+    the trace-id echoed by ``CorrelationIdMiddleware`` is silently
+    dropped by every cross-origin browser client and the AuthContext /
+    logging adapter cannot correlate client telemetry with server logs.
+    """
+    response = client.get(
+        "/auth/login",
+        headers={"Origin": "http://localhost:3000"},
+    )
+    exposed = response.headers.get("access-control-expose-headers", "")
+    assert TRACE_ID_HEADER.lower() in exposed.lower()
+
+
 def test_install_trace_id_logging_runs_at_import() -> None:
     """BUG-APP-007: importing ``main`` must already have installed the filter.
 
