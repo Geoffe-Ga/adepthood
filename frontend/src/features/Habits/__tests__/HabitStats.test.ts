@@ -1,5 +1,5 @@
 /* eslint-env jest */
-/* global describe, test, expect */
+/* global describe, test, expect, jest */
 import type { Habit, Goal } from '../Habits.types';
 import { generateStatsForHabit, toLocalHabitStats, calculateMissedDays } from '../HabitUtils';
 
@@ -126,18 +126,44 @@ describe('generateStatsForHabit', () => {
     expect(stats.completionsByDay[3]).toBe(1); // Wednesday
   });
 
-  test('includes currentStreak counting from the most recent date backwards', () => {
+  test('includes currentStreak counting from today backwards (BUG-FE-HABIT-207)', () => {
+    // Pin "today" via fake timers so the test cannot drift across the
+    // millisecond between constructing the fixture and the helper's
+    // internal `new Date()` call.  Without this anchor a CI run that
+    // straddled UTC midnight could see the helper compute a different
+    // "today" than the fixture, breaking the assertion non-deterministically.
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-15T18:00:00Z'));
+    try {
+      const habit: Habit = {
+        ...baseHabit,
+        completions: [
+          // Four days ago -- gap follows so the chain is bounded.
+          { id: 'c-1', timestamp: new Date('2026-06-11T18:00:00Z'), completed_units: 1 },
+          // Two days ago + yesterday in UTC -- two-day chain ending yesterday.
+          { id: 'c-2', timestamp: new Date('2026-06-13T18:00:00Z'), completed_units: 1 },
+          { id: 'c-3', timestamp: new Date('2026-06-14T18:00:00Z'), completed_units: 1 },
+        ],
+      };
+      const stats = generateStatsForHabit(habit);
+      // Yesterday + day-before = 2 (today not yet completed; yesterday-only is OK).
+      expect(stats.currentStreak).toBe(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('currentStreak is 0 when last completion is more than yesterday', () => {
+    // Pin BUG-FE-HABIT-207 directly: a stale chain that ended a week
+    // ago must not still report a non-zero streak.
     const habit: Habit = {
       ...baseHabit,
       completions: [
         { id: 'c-1', timestamp: new Date('2024-01-01T08:00:00'), completed_units: 1 },
-        // gap on Jan 2
-        { id: 'c-2', timestamp: new Date('2024-01-03T08:00:00'), completed_units: 1 },
-        { id: 'c-3', timestamp: new Date('2024-01-04T08:00:00'), completed_units: 1 },
+        { id: 'c-2', timestamp: new Date('2024-01-02T08:00:00'), completed_units: 1 },
       ],
     };
     const stats = generateStatsForHabit(habit);
-    expect(stats.currentStreak).toBe(2); // Jan 3-4
+    expect(stats.currentStreak).toBe(0);
   });
 
   test('includes completionDates as ISO date strings', () => {

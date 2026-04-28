@@ -153,9 +153,16 @@ describe('AuthContext', () => {
         await result.current.signup('new@test.com', 'password123');
       });
 
+      // Signup attaches the device's IANA zone so the new account is
+      // created with the user's local calendar from day one.  In the
+      // jest environment ``Intl.DateTimeFormat().resolvedOptions().
+      // timeZone`` resolves to ``"UTC"`` so the helper deterministically
+      // returns ``"UTC"``; anything else here would indicate a
+      // regression in ``detectDeviceTimezone``.
       expect(mockAuth.signup).toHaveBeenCalledWith({
         email: 'new@test.com',
         password: 'password123', // pragma: allowlist secret
+        timezone: 'UTC',
       });
       expect(mockSaveToken).toHaveBeenCalledWith('signup-jwt');
       expect(result.current.token).toBe('signup-jwt');
@@ -371,7 +378,7 @@ describe('AuthContext', () => {
       expect(typeof refreshed).toBe('function');
 
       await act(async () => {
-        refreshed?.('fresh-jwt');
+        refreshed?.('fresh-jwt', undefined);
       });
 
       // Save is in-flight — state must not have flipped yet.
@@ -383,6 +390,47 @@ describe('AuthContext', () => {
       });
 
       await waitFor(() => expect(result.current.token).toBe('fresh-jwt'));
+    });
+
+    it('propagates server timezone from refresh response to userTimezone', async () => {
+      // The refresh callback receives both the new token and the
+      // server's stored IANA zone, so a cold-start → proactive-refresh
+      // sequence keeps ``userTimezone`` aligned with the authenticated
+      // user instead of leaving it at the ``"UTC"`` default until the
+      // user manually re-authenticates.
+      mockLoadToken.mockResolvedValue('old-jwt');
+      mockSaveToken.mockResolvedValue(undefined);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('old-jwt'));
+      expect(result.current.userTimezone).toBe('UTC');
+
+      const refreshed = mockSetOnTokenRefreshed.mock.calls.at(-1)?.[0];
+      expect(typeof refreshed).toBe('function');
+
+      await act(async () => {
+        refreshed?.('fresh-jwt', 'America/Los_Angeles');
+      });
+
+      await waitFor(() => expect(result.current.token).toBe('fresh-jwt'));
+      expect(result.current.userTimezone).toBe('America/Los_Angeles');
+    });
+
+    it('falls back to UTC when refresh response omits timezone', async () => {
+      // Legacy / mocked API responses may not include the field.
+      mockLoadToken.mockResolvedValue('old-jwt');
+      mockSaveToken.mockResolvedValue(undefined);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('old-jwt'));
+
+      const refreshed = mockSetOnTokenRefreshed.mock.calls.at(-1)?.[0];
+      await act(async () => {
+        refreshed?.('fresh-jwt', undefined);
+      });
+
+      await waitFor(() => expect(result.current.token).toBe('fresh-jwt'));
+      expect(result.current.userTimezone).toBe('UTC');
     });
 
     it('awaits clearToken before nulling state when API reports 401', async () => {
@@ -518,7 +566,7 @@ describe('AuthContext', () => {
       // Mid-flight refresh completes AFTER logout — do not resurrect the session.
       await act(async () => {
         resolveRefresh?.({ token: 'late-jwt', user_id: 1 });
-        refreshed?.('late-jwt');
+        refreshed?.('late-jwt', undefined);
       });
       await waitFor(() => expect(result.current.token).toBeNull());
     });

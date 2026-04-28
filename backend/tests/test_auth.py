@@ -771,3 +771,178 @@ async def test_refresh_rate_limit_returns_429(async_client: AsyncClient) -> None
     # Second request within the same minute should be rate-limited
     resp = await async_client.post(REFRESH_URL, headers=headers)
     assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
+
+
+# ── User.timezone signup write path ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_signup_persists_timezone(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A valid IANA zone in the signup payload lands on the user row.
+
+    Also asserts the response JSON echoes the stored zone so the
+    frontend can wire ``userTimezone`` directly from the signup
+    response.  A serialization regression that dropped the field would
+    silently break user-local helpers everywhere; pinning the JSON
+    shape here prevents that.
+    """
+    resp = await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "tz@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+            "timezone": "America/Los_Angeles",
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["timezone"] == "America/Los_Angeles"
+
+    result = await db_session.execute(select(User).where(User.email == "tz@example.com"))
+    user = result.scalars().one()
+    assert user.timezone == "America/Los_Angeles"
+
+
+@pytest.mark.asyncio
+async def test_signup_omitted_timezone_defaults_to_utc(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Old clients that omit ``timezone`` keep the column at its default.
+
+    Same JSON-shape assertion as above: the response carries ``"UTC"``
+    so the frontend bootstrap path can rely on the field being present
+    even for legacy payloads.
+    """
+    resp = await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "default@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["timezone"] == "UTC"
+
+    result = await db_session.execute(select(User).where(User.email == "default@example.com"))
+    user = result.scalars().one()
+    assert user.timezone == "UTC"
+
+
+@pytest.mark.asyncio
+async def test_signup_invalid_timezone_returns_422(async_client: AsyncClient) -> None:
+    """An unknown IANA name fails at the trust boundary, not silently at runtime.
+
+    Closes the review feedback gap: silent UTC fallback for malformed
+    input would store wrong-zone behavior forever with no error
+    diagnosable from the API response.  422 surfaces the bad input
+    immediately so the client can re-request with a valid value.
+    """
+    resp = await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "bogus@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+            "timezone": "Etc/NotAZone",
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_signup_oversized_timezone_returns_422(async_client: AsyncClient) -> None:
+    """Strings beyond the 64-char column width are rejected at the boundary."""
+    resp = await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "long@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+            "timezone": "A" * 100,
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_signup_blank_timezone_falls_back_to_default(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Whitespace-only and empty strings are coerced to the UTC default."""
+    resp = await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "blank@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+            "timezone": "   ",
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+
+    result = await db_session.execute(select(User).where(User.email == "blank@example.com"))
+    user = result.scalars().one()
+    assert user.timezone == "UTC"
+
+
+@pytest.mark.asyncio
+async def test_login_response_carries_stored_timezone(
+    async_client: AsyncClient,
+) -> None:
+    """``/auth/login`` returns the user's stored IANA zone in the response JSON.
+
+    The frontend ``AuthContext`` reads this field on every login to set
+    ``userTimezone``; a serialization regression that dropped it would
+    silently revert the entire user-local-time system to UTC for every
+    returning user.  Pinning the JSON shape here catches that.
+    """
+    signup_resp = await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "login_tz@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+            "timezone": "America/Los_Angeles",
+        },
+    )
+    assert signup_resp.status_code == HTTPStatus.OK
+
+    login_resp = await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "login_tz@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert login_resp.status_code == HTTPStatus.OK
+    assert login_resp.json()["timezone"] == "America/Los_Angeles"
+
+
+@pytest.mark.asyncio
+async def test_refresh_response_carries_stored_timezone(
+    async_client: AsyncClient,
+) -> None:
+    """``/auth/refresh`` returns the user's stored IANA zone in the response JSON.
+
+    The cold-start → proactive-refresh path on the frontend uses this
+    value to restore ``userTimezone`` after token rehydration.  Without
+    this assertion a missing field would leave every refreshed session
+    on the UTC default until the user manually re-authenticated.
+    """
+    signup_resp = await async_client.post(
+        SIGNUP_URL,
+        json={
+            "email": "refresh_tz@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+            "timezone": "Europe/Berlin",
+        },
+    )
+    assert signup_resp.status_code == HTTPStatus.OK
+    token = signup_resp.json()["token"]
+
+    refresh_resp = await async_client.post(
+        REFRESH_URL,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert refresh_resp.status_code == HTTPStatus.OK
+    assert refresh_resp.json()["timezone"] == "Europe/Berlin"

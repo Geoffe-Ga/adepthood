@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import type { ApiHabitStats } from '../../api';
 import { colors, STAGE_COLORS, STAGE_ORDER, VICTORY_COLOR } from '../../design/tokens';
+import { DEFAULT_TIMEZONE, dayKeyInTZ, streakFromCompletions } from '../../utils/dateUtils';
 
 import type { Goal, Habit, Completion, HabitStatsData } from './Habits.types';
 
@@ -22,9 +23,18 @@ export const STAGE_DURATIONS_DAYS = [21, 21, 21, 21, 21, 21, 21, 21, 42, 42] as 
  * Calculate the start date for a habit based on its order in the onboarding
  * flow. Habits 1–8 begin 21 days apart while habits 9–10 begin 42 days apart.
  *
- * @param baseDate - The starting date selected by the user
+ * Returns a UTC-anchored `Date` so caller-side ms arithmetic stays
+ * stable across DST.  The user-perception fix for BUG-FE-HABIT-206
+ * (showing the right calendar day in the tile) lives at the display
+ * layer via `dayKeyInTZ(habit.start_date, user.timezone)` — that is
+ * tracked in Wave 4 (`14-frontend-feature-screens.md`) where every
+ * Habits-screen render path is migrated to read the user's TZ from
+ * the auth context.  Doing it here would break the time-of-day
+ * preserving contract many call sites depend on for ordering.
+ *
+ * @param baseDate - The starting date selected by the user (UTC anchor)
  * @param index - Zero-based habit index in the ordered list
- * @returns A new Date representing the habit's start date
+ * @returns A new Date offset by the cumulative stage durations
  */
 export const calculateHabitStartDate = (baseDate: Date, index: number): Date => {
   const date = new Date(baseDate);
@@ -310,20 +320,37 @@ const emptyStats = (): HabitStatsData => ({
   completionDates: [],
 });
 
-/** UTC-based day key to avoid timezone drift around midnight (BUG-HABITS-005). */
-const utcDayKey = (d: Date): string => d.toISOString().slice(0, 10);
+/**
+ * UTC day key kept for legacy call sites that have not yet threaded a TZ
+ * parameter (e.g. `logHabitUnits`, `calculateMissedDays`).  These are
+ * called from optimistic-update paths that operate on `Date` objects
+ * that have no notion of user TZ; UTC bucketing matches the historical
+ * behavior, and Wave 4 (frontend feature screens) will migrate them as
+ * part of its `useOptimisticMutation` work.
+ */
+const utcDayKey = (d: Date): string => dayKeyInTZ(d, DEFAULT_TIMEZONE);
 
-const aggregateByDayOfWeek = (completions: Completion[]) => {
+/**
+ * Bucket completions into the user's local day (BUG-FE-HABIT-002).
+ *
+ * Uses `dayKeyInTZ` so a Sunday-night Pacific completion lands in
+ * Sunday's bucket rather than Monday's (which is what UTC would say).
+ * The day-of-week index is derived from the resolved local date so the
+ * chart agrees with the user's perception, not the server's clock.
+ */
+const aggregateByDayOfWeek = (completions: Completion[], tz: string) => {
   const unitsByDay = new Array(DAYS_IN_WEEK).fill(0) as number[];
   const presenceByDay = new Array(DAYS_IN_WEEK).fill(0) as number[];
   const daysWithCompletions = new Set<string>();
 
   for (const c of completions) {
-    const d = new Date(c.timestamp);
-    const dayIdx = d.getUTCDay() % DAYS_IN_WEEK;
+    const localDayKey = dayKeyInTZ(c.timestamp, tz);
+    // Anchor at noon to avoid DST shoulder-day weekday skew.
+    const localDate = new Date(`${localDayKey}T12:00:00Z`);
+    const dayIdx = localDate.getUTCDay() % DAYS_IN_WEEK;
     unitsByDay[dayIdx] = unitsByDay[dayIdx]! + c.completed_units;
     presenceByDay[dayIdx] = 1;
-    daysWithCompletions.add(utcDayKey(d));
+    daysWithCompletions.add(localDayKey);
   }
 
   return { unitsByDay, presenceByDay, daysWithCompletions };
@@ -354,18 +381,17 @@ const computeCompletionRate = (sortedDays: Date[], totalUniqueDays: number): num
   return spanDays > 0 ? totalUniqueDays / spanDays : 0;
 };
 
-const computeCurrentStreak = (sortedDays: Date[]): number => {
-  if (sortedDays.length === 0) return 0;
-  let streak = 1;
-  for (let i = sortedDays.length - 2; i >= 0; i--) {
-    const diff = (sortedDays[i + 1]!.getTime() - sortedDays[i]!.getTime()) / MS_PER_DAY;
-    if (diff === 1) {
-      streak += 1;
-    } else {
-      break;
-    }
-  }
-  return streak;
+/**
+ * Wrap the centralized streak helper so this file's call sites keep their
+ * existing signature.  The shared helper compares against "today" in the
+ * user's TZ so a stale chain that ended a week ago no longer reports a
+ * non-zero streak (BUG-FE-HABIT-207).
+ */
+const computeCurrentStreak = (completions: ReadonlyArray<Completion>, tz: string): number => {
+  return streakFromCompletions(
+    completions.map((c) => c.timestamp),
+    tz,
+  );
 };
 
 const collectCompletionDates = (sortedDays: Date[]): string[] =>
@@ -375,12 +401,20 @@ const collectCompletionDates = (sortedDays: Date[]): string[] =>
  * Compute real stats from a habit's completions array.
  *
  * Day-of-week indices: 0=Sun, 1=Mon, … 6=Sat (matching JS `getDay()`).
+ *
+ * `tz` selects the calendar used for day-of-week buckets and streak
+ * computation (BUG-FE-HABIT-002 / -207).  Defaults to UTC for legacy
+ * callers; screens reading from the auth context should pass
+ * `user.timezone`.
  */
-export const generateStatsForHabit = (habit: Habit): HabitStatsData => {
+export const generateStatsForHabit = (
+  habit: Habit,
+  tz: string = DEFAULT_TIMEZONE,
+): HabitStatsData => {
   const completions = habit.completions;
   if (!completions || completions.length === 0) return emptyStats();
 
-  const { unitsByDay, presenceByDay, daysWithCompletions } = aggregateByDayOfWeek(completions);
+  const { unitsByDay, presenceByDay, daysWithCompletions } = aggregateByDayOfWeek(completions, tz);
 
   const sortedDays = Array.from(daysWithCompletions)
     .map((s) => new Date(s + 'T00:00:00Z'))
@@ -392,7 +426,7 @@ export const generateStatsForHabit = (habit: Habit): HabitStatsData => {
     completionsByDay: presenceByDay,
     dayLabels: DAY_LABELS,
     longestStreak: computeLongestStreak(sortedDays),
-    currentStreak: computeCurrentStreak(sortedDays),
+    currentStreak: computeCurrentStreak(completions, tz),
     totalCompletions: completions.length,
     completionRate: computeCompletionRate(sortedDays, daysWithCompletions.size),
     completionDates: collectCompletionDates(sortedDays),

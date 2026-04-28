@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import date as date_type
+from datetime import UTC, date, timedelta
 from typing import TYPE_CHECKING
 
+from domain.dates import to_user_date, today_in_tz
 from schemas.habit_stats import HabitStats
 
 if TYPE_CHECKING:
@@ -29,38 +30,67 @@ def _empty_stats() -> HabitStats:
 
 def _aggregate_by_day(
     completions: list[GoalCompletion],
+    user_timezone: str,
 ) -> tuple[list[float], list[int], set[str]]:
-    """Sum units per JS day-of-week and collect unique calendar dates."""
+    """Sum units per JS day-of-week in user-local time (BUG-HABIT-006).
+
+    Day-of-week buckets used to read straight from ``timestamp.weekday()``,
+    which on Postgres ``timestamptz`` returns UTC weekday — so a Sunday-
+    night Pacific completion (Monday in UTC) was charted under the wrong
+    weekday.  Converting via :func:`domain.dates.to_user_date` first
+    gives every user a chart aligned with their own week.
+    """
     units = [0.0] * _DAYS_IN_WEEK
     presence = [0] * _DAYS_IN_WEEK
     dates: set[str] = set()
     for c in completions:
-        js_idx = (c.timestamp.weekday() + 1) % _DAYS_IN_WEEK
+        moment = c.timestamp if c.timestamp.tzinfo is not None else c.timestamp.replace(tzinfo=UTC)
+        local_date = to_user_date(user_timezone, moment)
+        js_idx = (local_date.weekday() + 1) % _DAYS_IN_WEEK
         units[js_idx] += c.completed_units
         presence[js_idx] = 1
-        dates.add(c.timestamp.strftime("%Y-%m-%d"))
+        dates.add(local_date.isoformat())
     return units, presence, dates
 
 
 def _longest_streak(sorted_dates: list[str]) -> int:
     longest = 0
     run = 0
-    prev: date_type | None = None
+    prev: date | None = None
     for ds in sorted_dates:
-        d = date_type.fromisoformat(ds)
+        d = date.fromisoformat(ds)
         run = run + 1 if (prev is not None and (d - prev).days == 1) else 1
         longest = max(longest, run)
         prev = d
     return longest
 
 
-def _current_streak(sorted_dates: list[str]) -> int:
+def _current_streak(sorted_dates: list[str], user_timezone: str) -> int:
+    """Return the current consecutive-day streak ending at the latest entry.
+
+    Mirrors the recency gate in :mod:`services.streaks` so
+    ``GET /habits/{id}/stats`` agrees with ``GET /habits`` after a missed
+    day.  Without the gate this helper would happily report a multi-day
+    streak that ended a week ago, while the Habits list endpoint
+    (running ``compute_habit_streak``) correctly returned 0 -- exactly
+    the API-contract divergence the recency gate was introduced to
+    eliminate.
+
+    The "yesterday" grace window matches the rest of the streak code:
+    one stale day is forgiven so the UI does not flash "streak lost"
+    between local midnight and the user's first completion of the day.
+    """
     if not sorted_dates:
+        return 0
+    most_recent = date.fromisoformat(sorted_dates[-1])
+    today = today_in_tz(user_timezone)
+    yesterday = today - timedelta(days=1)
+    if most_recent < yesterday:
         return 0
     streak = 1
     for i in range(len(sorted_dates) - 2, -1, -1):
-        cur = date_type.fromisoformat(sorted_dates[i])
-        nxt = date_type.fromisoformat(sorted_dates[i + 1])
+        cur = date.fromisoformat(sorted_dates[i])
+        nxt = date.fromisoformat(sorted_dates[i + 1])
         if (nxt - cur).days == 1:
             streak += 1
         else:
@@ -71,18 +101,29 @@ def _current_streak(sorted_dates: list[str]) -> int:
 def _completion_rate(sorted_dates: list[str], unique_count: int) -> float:
     if not sorted_dates:
         return 0.0
-    first = date_type.fromisoformat(sorted_dates[0])
-    last = date_type.fromisoformat(sorted_dates[-1])
+    first = date.fromisoformat(sorted_dates[0])
+    last = date.fromisoformat(sorted_dates[-1])
     span = (last - first).days + 1
     return unique_count / span if span > 0 else 0.0
 
 
-def compute_habit_stats(completions: list[GoalCompletion]) -> HabitStats:
-    """Build aggregated stats from a flat list of goal completions."""
+def compute_habit_stats(
+    completions: list[GoalCompletion],
+    user_timezone: str = "UTC",
+) -> HabitStats:
+    """Build aggregated stats from a flat list of goal completions.
+
+    ``user_timezone`` selects the calendar used for day-of-week buckets,
+    streak runs, and completion-rate spans (BUG-HABIT-006).  The default
+    is ``"UTC"`` so legacy callers that omit the argument keep their
+    pre-fix behaviour rather than silently switching zones; routers pass
+    :func:`services.users.get_user_timezone` to opt into the user-local
+    view.
+    """
     if not completions:
         return _empty_stats()
 
-    units, presence, dates = _aggregate_by_day(completions)
+    units, presence, dates = _aggregate_by_day(completions, user_timezone)
     sorted_dates = sorted(dates)
 
     return HabitStats(
@@ -90,7 +131,7 @@ def compute_habit_stats(completions: list[GoalCompletion]) -> HabitStats:
         values=units,
         completions_by_day=presence,
         longest_streak=_longest_streak(sorted_dates),
-        current_streak=_current_streak(sorted_dates),
+        current_streak=_current_streak(sorted_dates, user_timezone),
         total_completions=len(completions),
         completion_rate=_completion_rate(sorted_dates, len(dates)),
         completion_dates=sorted_dates,

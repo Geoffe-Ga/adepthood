@@ -21,16 +21,23 @@ from schemas.habit import HabitCreate, HabitWithGoals
 from schemas.habit_stats import HabitStats
 from schemas.pagination import paginate_query
 from services.streaks import compute_habit_streak
+from services.users import get_user_timezone
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/habits", tags=["habits"])
 
 
-def _populate_streak(habit: Habit, current_user: int) -> None:
-    """Set ``habit.streak`` from the goal completions loaded in memory."""
+def _populate_streak(habit: Habit, current_user: int, user_timezone: str) -> None:
+    """Set ``habit.streak`` from the goal completions loaded in memory.
+
+    ``user_timezone`` keeps the in-memory streak in sync with
+    ``compute_consecutive_streak`` (BUG-STREAK-002): both compute days
+    using the same calendar so the value displayed in ``GET /habits``
+    matches what ``POST /goal_completions`` returns.
+    """
     completions = [c for g in habit.goals for c in g.completions if c.user_id == current_user]
-    habit.streak = compute_habit_streak(completions)
+    habit.streak = compute_habit_streak(completions, user_timezone)
 
 
 @router.post("/", response_model=HabitSchema)
@@ -67,8 +74,9 @@ async def list_habits(
         .order_by(Habit.sort_order.asc())  # type: ignore[union-attr]
     )
     items, total = await paginate_query(session, query, pagination)
+    user_tz = await get_user_timezone(session, current_user)
     for habit in items:
-        _populate_streak(habit, current_user)
+        _populate_streak(habit, current_user, user_tz)
     serialized = [HabitWithGoals.model_validate(h, from_attributes=True) for h in items]
     if pagination.paginate:
         return build_page(serialized, total, pagination)
@@ -87,7 +95,8 @@ async def get_habit(
     habit = result.scalars().first()
     if habit is None or habit.user_id != current_user:
         raise not_found("habit")
-    _populate_streak(habit, current_user)
+    user_tz = await get_user_timezone(session, current_user)
+    _populate_streak(habit, current_user, user_tz)
     return habit
 
 
@@ -148,4 +157,5 @@ async def get_habit_stats(
     """Return aggregated statistics for a habit's goal completions."""
     habit = await _get_habit_with_completions(habit_id, current_user, session)
     completions = [c for goal in habit.goals for c in goal.completions if c.user_id == current_user]
-    return compute_habit_stats(completions)
+    user_tz = await get_user_timezone(session, current_user)
+    return compute_habit_stats(completions, user_tz)

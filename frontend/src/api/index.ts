@@ -102,7 +102,15 @@ function isKnownOffline(): boolean {
 
 let tokenGetter: (() => string | null) | null = null;
 let onUnauthorizedCallback: (() => void) | null = null;
-let onTokenRefreshedCallback: ((token: string) => void) | null = null;
+/**
+ * Callback invoked when the API layer refreshes the JWT.
+ *
+ * Receives the new token plus the server's record of `User.timezone` so
+ * the auth context can keep `userTimezone` in sync without a follow-up
+ * `GET /users/me`.  The timezone is `string | undefined` because legacy
+ * API builds may omit it; consumers should fall back to `'UTC'`.
+ */
+let onTokenRefreshedCallback: ((token: string, timezone: string | undefined) => void) | null = null;
 let llmApiKeyGetter: (() => string | null) | null = null;
 
 /** Header used to forward a user-provided LLM API key (BYOK, issue #185). */
@@ -116,7 +124,9 @@ export function setOnUnauthorized(callback: (() => void) | null) {
   onUnauthorizedCallback = callback;
 }
 
-export function setOnTokenRefreshed(callback: ((token: string) => void) | null) {
+export function setOnTokenRefreshed(
+  callback: ((token: string, timezone: string | undefined) => void) | null,
+) {
   onTokenRefreshedCallback = callback;
 }
 
@@ -310,7 +320,11 @@ async function attemptTokenRefresh(): Promise<string | null> {
     });
     if (!refreshRes.ok) return null;
     const data = (await refreshRes.json()) as AuthResponse;
-    onTokenRefreshedCallback?.(data.token);
+    // Forward the server's stored timezone so the AuthContext can keep
+    // ``userTimezone`` in sync after a cold-start refresh.  Without
+    // this, ``userTimezone`` would stay at its ``"UTC"`` default until
+    // the user manually re-authenticated.
+    onTokenRefreshedCallback?.(data.token, data.timezone);
     return data.token;
   } catch {
     return null;
@@ -1246,9 +1260,33 @@ export interface AuthRequest {
   email: string;
   password: string;
 }
+
+/**
+ * Signup payload — `AuthRequest` plus the user's IANA timezone.
+ *
+ * The frontend sends `Intl.DateTimeFormat().resolvedOptions().timeZone`
+ * on first signup so streak / daily-completion math computes "today" in
+ * the user's local calendar from day one (closes the BUG-STREAK-002
+ * write-path gap).  Optional on the wire — omitting it keeps the
+ * column at its `"UTC"` default for clients still on the old payload
+ * shape.
+ */
+export interface SignupRequest extends AuthRequest {
+  timezone?: string;
+}
+
 export interface AuthResponse {
   token: string;
   user_id: number;
+  /**
+   * IANA timezone the server has on record for this user.  Returned on
+   * signup / login / refresh so the frontend can wire it into the auth
+   * context immediately and pass it to user-local helpers (Habit stats,
+   * streak displays) without a follow-up `GET /users/me`.  Defaults to
+   * `"UTC"` server-side -- see `BUG-FE-HABIT-002` / `-207` for the
+   * call-site reasons that need this value.
+   */
+  timezone?: string;
 }
 export const auth = {
   login(credentials: AuthRequest): Promise<AuthResponse> {
@@ -1258,7 +1296,7 @@ export const auth = {
       schema: authResponseSchema,
     });
   },
-  signup(credentials: AuthRequest): Promise<AuthResponse> {
+  signup(credentials: SignupRequest): Promise<AuthResponse> {
     return request<AuthResponse>('/auth/signup', {
       method: 'POST',
       body: credentials,

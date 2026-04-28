@@ -8,6 +8,7 @@ import os
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import bcrypt
 import jwt
@@ -19,8 +20,9 @@ from sqlmodel import select
 from database import get_session
 from errors import bad_request
 from models.login_attempt import LoginAttempt
-from models.user import User
+from models.user import DEFAULT_USER_TIMEZONE, User
 from rate_limit import limiter
+from services.users import get_user_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +90,81 @@ class AuthRequest(BaseModel):
         return value
 
 
+# Cap matches ``User.timezone`` column width.  IANA names are at most 33
+# chars today (``America/Argentina/ComodRivadavia``); 64 leaves headroom.
+_MAX_TIMEZONE_LENGTH = 64
+
+
+def _coerce_timezone_input(value: object) -> str | None:
+    """Normalise inbound ``timezone`` field values to ``str | None``.
+
+    Returns ``None`` for inputs that should fall back to the column
+    default (missing, non-string, empty / whitespace-only).  Anything
+    else is returned trimmed for downstream validation.  Split out so
+    the ``_validate_timezone`` validator stays at xenon rank A.
+    """
+    if value is None or not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    return candidate or None
+
+
+def _check_timezone_resolves(candidate: str) -> None:
+    """Raise ``ValueError`` if ``candidate`` is too long or unknown to ``zoneinfo``."""
+    if len(candidate) > _MAX_TIMEZONE_LENGTH:
+        msg = f"timezone must be {_MAX_TIMEZONE_LENGTH} chars or fewer"
+        raise ValueError(msg)
+    try:
+        ZoneInfo(candidate)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        msg = f"unknown IANA timezone: {candidate!r}"
+        raise ValueError(msg) from exc
+
+
+class SignupRequest(AuthRequest):
+    """Signup payload — email + password + optional IANA ``timezone``.
+
+    The timezone is sent by the frontend on first signup (read from
+    ``Intl.DateTimeFormat().resolvedOptions().timeZone``) so streak and
+    daily-completion math computes "today" in the user's local calendar
+    from day one.  Validated at the trust boundary (here) rather than
+    silently coerced at runtime so a malformed value surfaces as 422
+    instead of permanently storing bad data — the runtime fallback to
+    UTC inside :mod:`domain.dates` is a safety net, not a license to
+    accept garbage.
+
+    Omitting ``timezone`` keeps the column at its ``"UTC"`` default, so
+    existing clients that have not been migrated to send the field do
+    not break.
+    """
+
+    timezone: str = DEFAULT_USER_TIMEZONE
+
+    @field_validator("timezone", mode="before")
+    @classmethod
+    def _validate_timezone(cls, value: object) -> str:
+        """Reject malformed IANA strings before they reach the DB."""
+        candidate = _coerce_timezone_input(value)
+        if candidate is None:
+            return DEFAULT_USER_TIMEZONE
+        _check_timezone_resolves(candidate)
+        return candidate
+
+
 class AuthResponse(BaseModel):
+    """Response shape for ``/auth/signup``, ``/auth/login``, ``/auth/refresh``.
+
+    ``timezone`` is the IANA string the server has on record so the
+    frontend can wire it into the auth context immediately and pass it
+    to user-local helpers (Habit stats, streak displays) without a
+    follow-up ``GET /users/me``.  Always populated -- defaults to
+    ``"UTC"`` for the anti-enumeration dummy response and for legacy
+    rows that pre-date the column.
+    """
+
     token: str
     user_id: int
+    timezone: str = DEFAULT_USER_TIMEZONE
 
 
 def _hash_password(password: str) -> str:
@@ -195,7 +269,7 @@ async def _is_account_locked(session: AsyncSession, email: str) -> bool:
 @limiter.limit("3/minute")
 async def signup(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
-    payload: AuthRequest,
+    payload: SignupRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AuthResponse:
     if len(payload.password) < _MIN_PASSWORD_LENGTH:
@@ -214,6 +288,7 @@ async def signup(
     user = User(
         email=payload.email,
         password_hash=_hash_password(payload.password),
+        timezone=payload.timezone,
     )
     session.add(user)
     await session.commit()
@@ -223,7 +298,7 @@ async def signup(
         msg = "User ID unexpectedly None after database commit"
         raise RuntimeError(msg)
     token = _create_token(user.id)
-    return AuthResponse(token=token, user_id=user.id)
+    return AuthResponse(token=token, user_id=user.id, timezone=user.timezone)
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -263,7 +338,7 @@ async def login(
         msg = "User ID unexpectedly None after database commit"
         raise RuntimeError(msg)
     token = _create_token(user.id)
-    return AuthResponse(token=token, user_id=user.id)
+    return AuthResponse(token=token, user_id=user.id, timezone=user.timezone)
 
 
 def get_current_user(authorization: str | None = Header(default=None)) -> int:
@@ -293,12 +368,18 @@ def get_current_user(authorization: str | None = Header(default=None)) -> int:
 async def refresh_token(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AuthResponse:
     """Exchange a valid JWT for a fresh one.
 
     Rate-limited to 1 request per minute to prevent abuse. The caller must
     present a valid, non-expired token in the Authorization header; the
     response contains a new token with a reset TTL for the same user.
+
+    The response also re-asserts the stored ``timezone`` so a frontend
+    that hot-reloads or evicts its auth context receives the correct
+    user-local zone after a refresh, not a stale ``"UTC"`` default.
     """
     new_token = _create_token(user_id)
-    return AuthResponse(token=new_token, user_id=user_id)
+    user_timezone = await get_user_timezone(session, user_id)
+    return AuthResponse(token=new_token, user_id=user_id, timezone=user_timezone)

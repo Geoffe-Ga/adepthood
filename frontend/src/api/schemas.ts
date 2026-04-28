@@ -59,6 +59,11 @@ export const authResponseSchema = z.object({
   // a dummy token and ``user_id=0`` so the wire shape is indistinguishable from
   // a fresh signup. Real signups return a positive autoincrement id.
   user_id: z.number().int().nonnegative(),
+  // IANA timezone the server has on record so the frontend can compute
+  // "today" in the user's calendar without a follow-up ``GET /users/me``.
+  // Optional for back-compat with older API builds that still omit the
+  // field; consumers default to ``"UTC"``.
+  timezone: z.string().optional(),
 });
 
 export type AuthResponseT = z.infer<typeof authResponseSchema>;

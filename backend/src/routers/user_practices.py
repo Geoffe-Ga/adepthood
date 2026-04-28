@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
@@ -11,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
+from domain.dates import today_in_tz
 from domain.stage_progress import get_user_progress, is_stage_unlocked
 from errors import bad_request, forbidden, not_found
 from models.practice import Practice
@@ -24,6 +24,7 @@ from schemas.practice import (
     UserPracticeDetail,
     UserPracticeResponse,
 )
+from services.users import get_user_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -86,11 +87,17 @@ async def create_user_practice(
     await _check_stage_eligibility(session, current_user, practice, payload.stage_number)
     await _check_no_active_practice(session, current_user, payload.stage_number)
 
+    # ``start_date`` is the user-facing "I started this practice today"
+    # label (BUG-HABIT-006), not an internal audit timestamp -- so it
+    # uses the user's calendar, not server UTC.  A user in Pacific
+    # signing up at 11:00 PM Pacific used to see "started tomorrow"
+    # because UTC had already rolled over.
+    user_tz = await get_user_timezone(session, current_user)
     user_practice = UserPractice(
         user_id=current_user,
         practice_id=payload.practice_id,
         stage_number=payload.stage_number,
-        start_date=datetime.now(UTC).date(),
+        start_date=today_in_tz(user_tz),
     )
     session.add(user_practice)
     await session.commit()
