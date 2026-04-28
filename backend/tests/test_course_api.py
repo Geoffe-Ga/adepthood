@@ -658,6 +658,14 @@ async def test_concurrent_mark_read_collapses_to_one_row(
     response must carry the same ``id`` (the winner's row) so callers
     can rely on the response shape regardless of which request actually
     inserted.
+
+    Stage 1 is intentionally seeded without a ``StageProgress`` row for
+    the user: ``is_stage_unlocked`` treats stage 1 as universally
+    accessible (always-unlocked root, see ``domain.stage_progress``),
+    so ``_resolve_unlocked_content`` clears the BUG-COURSE-004 mask and
+    the race is actually exercised.  If that root invariant ever
+    changes this test will start returning 404s instead of 200s and the
+    assertion will surface the regression immediately.
     """
     signup_resp = await concurrent_async_client.post(
         "/auth/signup",

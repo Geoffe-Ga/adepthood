@@ -313,6 +313,16 @@ async def update_progress(
     bootstrap response — so the ``payload.current_stage == 1`` +
     bootstrap-state check returns the existing row instead of trying to
     advance past it.
+
+    Edge case: if the winner *also* finished a second advance (stage 1 →
+    2) between two concurrent first-advance attempts, a loser arriving
+    with ``payload.current_stage == 1`` against an ``existing`` already
+    at stage 2 falls through to :func:`_advance_existing_progress` and
+    is rejected with ``stage_advance_mismatch`` (400).  This is a
+    deliberate non-idempotent outcome: the client's stale assertion no
+    longer matches the server-derived next stage, and quietly returning
+    an out-of-date bootstrap record would mask a real client / server
+    drift.
     """
     existing = await get_user_progress_for_update(session, current_user)
     if existing is None:
