@@ -166,19 +166,41 @@ function usePracticeLoader(stageNumber: number) {
 
 // --- Hook: session save/reflection flow ---
 
+const SECONDS_PER_MINUTE = 60;
+const MS_PER_SECOND = 1000;
+
+interface CompletedWindow {
+  startedAt: Date;
+  endedAt: Date;
+}
+
 function useSessionFlow(activeUserPractice: UserPractice | null, incrementWeekCount: () => void) {
-  const [completedMinutes, setCompletedMinutes] = useState(0);
+  const [completedWindow, setCompletedWindow] = useState<CompletedWindow | null>(null);
   const [savedSession, setSavedSession] = useState<PracticeSessionResponse | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const completedMinutes = completedWindow
+    ? (completedWindow.endedAt.getTime() - completedWindow.startedAt.getTime()) /
+      MS_PER_SECOND /
+      SECONDS_PER_MINUTE
+    : 0;
+
+  const setCompletedSession = useCallback((startedAt: Date, endedAt: Date) => {
+    setCompletedWindow({ startedAt, endedAt });
+  }, []);
+
   const handleSaveSession = useCallback(async () => {
-    if (!activeUserPractice) return;
+    if (!activeUserPractice || !completedWindow) return;
     setIsSaving(true);
     try {
+      // BUG-FE-PRACTICE-101 / -105: submit wall-clock ISO timestamps so the
+      // server can derive the canonical duration; the client never claims
+      // a number it computed itself.
       const payload: PracticeSessionCreate = {
         user_practice_id: activeUserPractice.id,
-        duration_minutes: completedMinutes,
+        started_at: completedWindow.startedAt.toISOString(),
+        ended_at: completedWindow.endedAt.toISOString(),
       };
       const session = await practiceSessions.create(payload);
       incrementWeekCount();
@@ -193,15 +215,16 @@ function useSessionFlow(activeUserPractice: UserPractice | null, incrementWeekCo
     } finally {
       setIsSaving(false);
     }
-  }, [activeUserPractice, completedMinutes, incrementWeekCount]);
+  }, [activeUserPractice, completedWindow, incrementWeekCount]);
 
   const clearSession = useCallback(() => {
     setSavedSession(null);
+    setCompletedWindow(null);
   }, []);
 
   return {
     completedMinutes,
-    setCompletedMinutes,
+    setCompletedSession,
     savedSession,
     isSaving,
     saveError: error,
@@ -236,7 +259,7 @@ const ErrorView = ({
 interface TimerViewProps {
   practiceName: string;
   durationMinutes: number;
-  onComplete: (_minutes: number) => void;
+  onComplete: (_startedAt: Date, _endedAt: Date) => void;
   onCancel: () => void;
 }
 
@@ -268,7 +291,7 @@ const SummaryView = ({
   <View style={localStyles.centered} testID="summary-view">
     <Text style={localStyles.summaryTitle}>Practice Complete</Text>
     <Text style={localStyles.summaryDuration} testID="summary-duration">
-      {completedMinutes} minutes
+      {Math.round(completedMinutes)} minutes
     </Text>
     <TouchableOpacity
       style={localStyles.saveButton}
@@ -399,16 +422,16 @@ function usePracticeView(
 ) {
   const navigation = useAppNavigation();
   const [view, setView] = useState<ScreenView>('selection');
-  const { setCompletedMinutes, handleSaveSession, clearSession, savedSession, completedMinutes } =
+  const { setCompletedSession, handleSaveSession, clearSession, savedSession, completedMinutes } =
     session;
   const { selectedPractice } = loader;
 
   const handleTimerComplete = useCallback(
-    (actualMinutes: number) => {
-      setCompletedMinutes(actualMinutes);
+    (startedAt: Date, endedAt: Date) => {
+      setCompletedSession(startedAt, endedAt);
       setView('summary');
     },
-    [setCompletedMinutes],
+    [setCompletedSession],
   );
 
   const handleSaveAndAdvance = useCallback(async () => {
@@ -428,7 +451,7 @@ function usePracticeView(
       practiceSessionId: savedSession.id,
       userPracticeId: savedSession.user_practice_id,
       practiceName: selectedPractice.name,
-      practiceDuration: completedMinutes,
+      practiceDuration: Math.round(completedMinutes),
     });
     clearSession();
     setView('selection');

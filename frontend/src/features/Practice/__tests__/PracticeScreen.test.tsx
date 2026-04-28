@@ -264,10 +264,24 @@ describe('PracticeScreen', () => {
       fireEvent.press(getByTestId('save-session-button'));
     });
 
-    expect(mockPracticeSessionsCreate).toHaveBeenCalledWith({
-      user_practice_id: 10,
-      duration_minutes: 10,
-    });
+    // BUG-FE-PRACTICE-101: client must submit ISO timestamps, not a
+    // setInterval-derived ``duration_minutes`` (the backend rejects the
+    // legacy field with 422).
+    expect(mockPracticeSessionsCreate).toHaveBeenCalledTimes(1);
+    const submittedPayload = mockPracticeSessionsCreate.mock.calls[0][0];
+    expect(submittedPayload).toEqual(
+      expect.objectContaining({
+        user_practice_id: 10,
+        started_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        ended_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      }),
+    );
+    expect(submittedPayload).not.toHaveProperty('duration_minutes');
+    const submittedDurationMs =
+      new Date(submittedPayload.ended_at).getTime() -
+      new Date(submittedPayload.started_at).getTime();
+    expect(submittedDurationMs).toBeGreaterThan(0);
+    expect(submittedDurationMs).toBeLessThanOrEqual(10 * 60 * 1000);
 
     jest.useRealTimers();
   });

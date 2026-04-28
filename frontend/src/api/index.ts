@@ -1191,7 +1191,11 @@ export interface UserPracticeCreate {
 
 export interface PracticeSessionCreate {
   user_practice_id: number;
-  duration_minutes: number;
+  // BUG-PRACTICE-006 / BUG-FE-PRACTICE-101: clients send wall-clock ISO
+  // timestamps; the server derives ``duration_minutes`` so a backgrounded
+  // ``setInterval`` can't under-report and a tampered client can't inflate.
+  started_at: string;
+  ended_at: string;
   reflection?: string | null;
 }
 
