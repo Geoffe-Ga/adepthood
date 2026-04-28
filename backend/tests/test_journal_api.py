@@ -385,6 +385,7 @@ async def test_user_cannot_see_other_users_entries(async_client: AsyncClient) ->
 
 @pytest.mark.asyncio
 async def test_user_cannot_get_other_users_entry(async_client: AsyncClient) -> None:
+    """BUG-T7: cross-user GET returns 403 (was 404).  See ``tests/security/test_idor.py``."""
     alice_headers = await _signup(async_client, "alice")
     bob_headers = await _signup(async_client, "bob")
 
@@ -394,11 +395,12 @@ async def test_user_cannot_get_other_users_entry(async_client: AsyncClient) -> N
     entry_id = create_resp.json()["id"]
 
     resp = await async_client.get(f"/journal/{entry_id}", headers=bob_headers)
-    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 @pytest.mark.asyncio
 async def test_user_cannot_delete_other_users_entry(async_client: AsyncClient) -> None:
+    """BUG-T7: cross-user DELETE returns 403 (was 404)."""
     alice_headers = await _signup(async_client, "alice")
     bob_headers = await _signup(async_client, "bob")
 
@@ -408,4 +410,4 @@ async def test_user_cannot_delete_other_users_entry(async_client: AsyncClient) -
     entry_id = create_resp.json()["id"]
 
     resp = await async_client.delete(f"/journal/{entry_id}", headers=bob_headers)
-    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.status_code == HTTPStatus.FORBIDDEN

@@ -1,8 +1,8 @@
 """contentcompletion unique (user_id, content_id)
 
-Revision ID: e1f2a3b4c5d6
-Revises: d1e2f3a4b5c6
-Create Date: 2026-04-28 00:00:00.000000
+Revision ID: f1a2b3c4d5e6
+Revises: e1f2a3b4c5d6
+Create Date: 2026-04-28 04:00:00.000000
 
 BUG-COURSE-002: ``mark_content_read`` did a SELECT-then-INSERT to enforce
 "read once per content."  Two concurrent mark-read requests could both
@@ -25,8 +25,8 @@ from typing import Sequence, Union
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "e1f2a3b4c5d6"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "d1e2f3a4b5c6"  # pragma: allowlist secret
+revision: str = "f1a2b3c4d5e6"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "e1f2a3b4c5d6"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

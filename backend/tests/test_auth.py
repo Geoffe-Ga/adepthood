@@ -1045,7 +1045,16 @@ async def test_concurrent_failed_logins_cannot_outpace_lockout(
         )
         attempts = list(result.scalars().all())
     failed_attempts = [a for a in attempts if not a.success]
-    assert len(failed_attempts) <= MAX_FAILED_ATTEMPTS, (
-        f"expected ≤{MAX_FAILED_ATTEMPTS} failed inserts under serialization, "
+    # Strict ``<`` against the fan-out (not ``<=`` against the threshold)
+    # so the assertion stays meaningful regardless of how
+    # ``MAX_FAILED_ATTEMPTS`` is configured: an unserialized loop would
+    # write ``_CONCURRENT_FAILED_LOGIN_FANOUT`` rows because every task
+    # would pass the lockout check before any of them inserted.
+    assert len(failed_attempts) < _CONCURRENT_FAILED_LOGIN_FANOUT, (
+        f"expected <{_CONCURRENT_FAILED_LOGIN_FANOUT} failed inserts under serialization, "
         f"got {len(failed_attempts)}"
+    )
+    assert len(failed_attempts) <= MAX_FAILED_ATTEMPTS, (
+        f"once the threshold is reached the lockout branch must short-circuit "
+        f"before recording another attempt; got {len(failed_attempts)}"
     )

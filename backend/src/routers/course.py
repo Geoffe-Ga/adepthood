@@ -95,10 +95,27 @@ def _items_to_raw_dicts(items: list[StageContent]) -> list[dict[str, object]]:
 
 
 async def _check_stage_unlocked(session: AsyncSession, user_id: int, stage_number: int) -> None:
-    """Raise 403 if the given stage is locked for the user."""
+    """Raise 403 if the given stage is locked for the user.
+
+    Used by endpoints that take ``stage_number`` directly (1..36 are
+    public knowledge), so the 403 carries no enumeration risk.
+    """
     progress = await get_user_progress(session, user_id)
     if not is_stage_unlocked(stage_number, progress):
         raise forbidden("stage_locked")
+
+
+async def _is_stage_unlocked_for_user(
+    session: AsyncSession, user_id: int, stage_number: int
+) -> bool:
+    """Predicate form of :func:`_check_stage_unlocked`.
+
+    Used on ``content_id``-keyed endpoints (BUG-COURSE-004): callers mask
+    the locked branch as 404 to remove the existence oracle, rather than
+    raising a 403 the attacker could observe directly.
+    """
+    progress = await get_user_progress(session, user_id)
+    return is_stage_unlocked(stage_number, progress)
 
 
 @router.get("/stages/{stage_number}/content", response_model=None)
@@ -159,7 +176,15 @@ async def get_content_item(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ContentItemResponse:
-    """Get a single content item with lock/read status."""
+    """Get a single content item with lock/read status.
+
+    BUG-COURSE-004: collapses the "stage locked" 403 into a 404 so an
+    attacker enumerating ``content_id`` cannot distinguish "row exists
+    but locked for me" from "row does not exist".  Course content is a
+    shared catalog, not a user-owned resource, so the canonical 403
+    leak surface is content-row count + stage boundaries; masking the
+    locked branch as ``content_not_found`` removes the oracle.
+    """
     result = await session.execute(select(StageContent).where(StageContent.id == content_id))
     item = result.scalars().first()
     if item is None:
@@ -173,8 +198,10 @@ async def get_content_item(
     if stage is None:
         raise not_found("stage")
 
-    # BUG-COURSE-007: Verify the user has access to this stage
-    await _check_stage_unlocked(session, current_user, stage.stage_number)
+    # BUG-COURSE-004: mask locked-stage access as 404 so locked content
+    # is indistinguishable from nonexistent content over the wire.
+    if not await _is_stage_unlocked_for_user(session, current_user, stage.stage_number):
+        raise not_found("content")
 
     days = await _days_for_user_stage(session, current_user, stage.stage_number)
 
@@ -213,7 +240,6 @@ async def _existing_content_completion(
 def _completion_response(completion: ContentCompletion) -> ContentCompletionResponse:
     return ContentCompletionResponse(
         id=completion.id,
-        user_id=completion.user_id,
         content_id=completion.content_id,
         completed_at=completion.completed_at,
     )
@@ -226,10 +252,12 @@ async def _resolve_unlocked_content(
 ) -> StageContent:
     """Fetch ``content_id`` and gate on the parent stage being unlocked.
 
-    Raises 404 if the content row is missing, 404 if its parent stage is
-    missing, and 403 if the stage is locked for ``user_id``.  Split out
-    of :func:`mark_content_read` so the route stays at xenon rank A and
-    the resolution / authorisation steps are independently testable.
+    Locked stages mask as 404 (BUG-COURSE-004) — content_id is an
+    enumeration oracle, so a 403 would let an attacker tell "exists but
+    locked" apart from "does not exist".  Mirrors :func:`get_content_item`.
+    Split out of :func:`mark_content_read` so the route stays at xenon
+    rank A and the resolution / authorisation steps are independently
+    testable.
     """
     result = await session.execute(select(StageContent).where(StageContent.id == content_id))
     content_item = result.scalars().first()
@@ -241,7 +269,8 @@ async def _resolve_unlocked_content(
     stage = stage_result.scalars().first()
     if stage is None:
         raise not_found("stage")
-    await _check_stage_unlocked(session, user_id, stage.stage_number)
+    if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number):
+        raise not_found("content")
     return content_item
 
 
@@ -265,11 +294,14 @@ async def _insert_or_resolve_completion(
             session.add(completion)
         await session.commit()
         await session.refresh(completion)
-    except IntegrityError:
+    except IntegrityError as exc:
         existing = await _existing_content_completion(session, user_id, content_id)
         if existing is None:
+            # Preserve the chain: the constraint name + driver-level
+            # error reach Sentry / logs so we can debug a corrupt-DB
+            # scenario rather than silently re-inserting.
             msg = "ContentCompletion lost the race but the winner's row is missing"
-            raise RuntimeError(msg) from None
+            raise RuntimeError(msg) from exc
         return existing
     return completion
 

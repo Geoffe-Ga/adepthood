@@ -92,6 +92,22 @@ describe('LoginScreen', () => {
     });
   });
 
+  it('lowercases the email before submitting (BUG-FE-AUTH-015)', async () => {
+    // ``Foo@Bar.com`` and ``foo@bar.com`` must hit the backend as the same
+    // canonical address so a user can't end up locked out of the account
+    // they just created with mixed case.
+    mockLogin.mockResolvedValue(undefined);
+    const { getByPlaceholderText, getByText } = render(<LoginScreen navigation={mockNavigation} />);
+
+    fireEvent.changeText(getByPlaceholderText('Email'), '  Foo@Bar.COM ');
+    fireEvent.changeText(getByPlaceholderText('Password'), 'password123');
+    fireEvent.press(getByText('Log In'));
+
+    await waitFor(() => {
+      expect(mockLogin).toHaveBeenCalledWith('foo@bar.com', 'password123');
+    });
+  });
+
   it('has a link to navigate to signup', () => {
     const { getByText } = render(<LoginScreen navigation={mockNavigation} />);
 

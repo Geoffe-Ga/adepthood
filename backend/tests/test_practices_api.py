@@ -158,7 +158,7 @@ async def test_get_practice_not_found(async_client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_submit_practice(async_client: AsyncClient) -> None:
-    headers, user_id = await _signup(async_client)
+    headers, _user_id = await _signup(async_client)
     payload = {
         "stage_number": 1,
         "name": "My Custom Practice",
@@ -170,7 +170,9 @@ async def test_submit_practice(async_client: AsyncClient) -> None:
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.json()
     assert data["name"] == "My Custom Practice"
-    assert data["submitted_by_user_id"] == user_id
+    # BUG-PRACTICE-001 / BUG-SCHEMA-010: catalog responses must not leak the
+    # submitter's user id.  Server-side ownership lives on the row.
+    assert "submitted_by_user_id" not in data
     assert data["approved"] is False
 
 

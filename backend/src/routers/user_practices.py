@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
+from dependencies.ownership import require_owned_user_practice
 from domain.dates import today_in_tz
 from domain.stage_progress import get_user_progress, is_stage_unlocked
 from errors import bad_request, conflict, forbidden, not_found
@@ -137,28 +138,22 @@ async def list_user_practices(
 
 @router.get("/{user_practice_id}", response_model=UserPracticeDetail)
 async def get_user_practice(
-    user_practice_id: int,
-    current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_practice: Annotated[UserPractice, Depends(require_owned_user_practice)],
 ) -> dict[str, Any]:
-    """Get a single user-practice with its session history."""
-    result = await session.execute(select(UserPractice).where(UserPractice.id == user_practice_id))
-    user_practice = result.scalars().first()
-    if user_practice is None:
-        raise not_found("user_practice")
-    if user_practice.user_id != current_user:
-        raise forbidden()
+    """Get a single user-practice with its session history.
 
+    Ownership via ``require_owned_user_practice`` (404 → 403 split).
+    """
     sessions_result = await session.execute(
         select(PracticeSession)
-        .where(PracticeSession.user_practice_id == user_practice_id)
+        .where(PracticeSession.user_practice_id == user_practice.id)
         .order_by(col(PracticeSession.timestamp).desc())
     )
     sessions = list(sessions_result.scalars().all())
 
     return {
         "id": user_practice.id,
-        "user_id": user_practice.user_id,
         "practice_id": user_practice.practice_id,
         "stage_number": user_practice.stage_number,
         "start_date": user_practice.start_date,

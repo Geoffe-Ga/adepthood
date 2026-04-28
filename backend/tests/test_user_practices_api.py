@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
@@ -16,6 +17,12 @@ from models.user_practice import UserPractice
 
 _EXPECTED_SELECTION_COUNT = 2
 _SESSION_DURATION = 10.0
+
+
+def _session_window(duration_minutes: float = _SESSION_DURATION) -> tuple[str, str]:
+    ended = datetime.now(UTC)
+    started = ended - timedelta(minutes=duration_minutes)
+    return started.isoformat(), ended.isoformat()
 
 
 async def _signup(
@@ -72,7 +79,7 @@ async def test_list_user_practices_requires_auth(async_client: AsyncClient) -> N
 
 @pytest.mark.asyncio
 async def test_select_practice(async_client: AsyncClient, db_session: AsyncSession) -> None:
-    headers, user_id = await _signup(async_client)
+    headers, _user_id = await _signup(async_client)
     practice = await _seed_practice(db_session)
 
     resp = await async_client.post(
@@ -82,7 +89,8 @@ async def test_select_practice(async_client: AsyncClient, db_session: AsyncSessi
     )
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.json()
-    assert data["user_id"] == user_id
+    # BUG-T7: user-practice responses no longer echo user_id.
+    assert "user_id" not in data
     assert data["practice_id"] == practice.id
     assert data["stage_number"] == 1
     assert data["start_date"] is not None
@@ -233,9 +241,14 @@ async def test_get_user_practice_with_sessions(
     up_id = create_resp.json()["id"]
 
     # Log a session against this user-practice
+    started_at, ended_at = _session_window()
     await async_client.post(
         "/practice-sessions/",
-        json={"user_practice_id": up_id, "duration_minutes": _SESSION_DURATION},
+        json={
+            "user_practice_id": up_id,
+            "started_at": started_at,
+            "ended_at": ended_at,
+        },
         headers=headers,
     )
 

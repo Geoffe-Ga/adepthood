@@ -451,7 +451,10 @@ describe('AuthContext', () => {
       expect(typeof unauthorized).toBe('function');
 
       await act(async () => {
-        unauthorized?.();
+        // BUG-API-018: the API client now passes a structured reason.
+        // ``session_expired`` matches the legacy "the token was rejected"
+        // path this test pinned before the signature changed.
+        unauthorized?.('session_expired');
       });
 
       // Clear is in-flight — state must not have flipped yet.

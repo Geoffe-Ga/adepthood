@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from unittest.mock import patch
 
@@ -206,9 +207,12 @@ def test_cross_origin_get_allowed() -> None:
 def test_cross_origin_post_with_credentials() -> None:
     """POST requests with credentials include CORS headers even when auth fails."""
     headers = {"Origin": ALLOWED_ORIGIN}
+    ended = datetime.now(UTC)
+    started = ended - timedelta(minutes=10)
     payload = {
         "user_practice_id": 1,
-        "duration_minutes": 10,
+        "started_at": started.isoformat(),
+        "ended_at": ended.isoformat(),
     }
     cookies = {"session": "abc"}
     response = client.post(

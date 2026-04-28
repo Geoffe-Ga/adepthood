@@ -172,7 +172,11 @@ describe('BUG-007: retry policy', () => {
   test('does NOT retry a POST (non-idempotent) even on a transient 502', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'bad gateway' }, 502));
     await expect(
-      practiceSessions.create({ user_practice_id: 1, duration_minutes: 10 }),
+      practiceSessions.create({
+        user_practice_id: 1,
+        started_at: '2026-04-28T10:00:00.000Z',
+        ended_at: '2026-04-28T10:10:00.000Z',
+      }),
     ).rejects.toMatchObject({ name: 'ApiError', status: 502 });
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });

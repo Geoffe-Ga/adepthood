@@ -16,6 +16,7 @@ from .stage_content import StageContent
 from .stage_progress import StageProgress
 from .user import User
 from .user_practice import UserPractice
+from .wallet_audit import WalletAudit
 
 __all__ = [
     "ContentCompletion",
@@ -34,4 +35,5 @@ __all__ = [
     "StageProgress",
     "User",
     "UserPractice",
+    "WalletAudit",
 ]

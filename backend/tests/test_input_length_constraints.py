@@ -8,6 +8,7 @@ Covers sec-03 (journal, chat, practice, prompt) and sec-15 (habit, goal_group).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
@@ -213,6 +214,20 @@ async def test_practice_instructions_over_max_length_returns_422(
 # ── Practice session reflection length constraints ──────────────────────
 
 
+def _practice_session_payload(
+    user_practice_id: int, *, reflection: str, duration_minutes: float = 10.0
+) -> dict[str, object]:
+    """Build a server-derived-duration payload for a practice session."""
+    ended = datetime.now(UTC)
+    started = ended - timedelta(minutes=duration_minutes)
+    return {
+        "user_practice_id": user_practice_id,
+        "started_at": started.isoformat(),
+        "ended_at": ended.isoformat(),
+        "reflection": reflection,
+    }
+
+
 @pytest.mark.asyncio
 async def test_practice_session_reflection_at_max_length(
     async_client: AsyncClient,
@@ -223,11 +238,7 @@ async def test_practice_session_reflection_at_max_length(
     reflection = "a" * PRACTICE_REFLECTION_MAX_LENGTH
     resp = await async_client.post(
         "/practice-sessions/",
-        json={
-            "user_practice_id": user_practice_id,
-            "duration_minutes": 10.0,
-            "reflection": reflection,
-        },
+        json=_practice_session_payload(user_practice_id, reflection=reflection),
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.OK
@@ -244,11 +255,7 @@ async def test_practice_session_reflection_over_max_length_returns_422(
     reflection = "a" * (PRACTICE_REFLECTION_MAX_LENGTH + 1)
     resp = await async_client.post(
         "/practice-sessions/",
-        json={
-            "user_practice_id": user_practice_id,
-            "duration_minutes": 10.0,
-            "reflection": reflection,
-        },
+        json=_practice_session_payload(user_practice_id, reflection=reflection),
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY

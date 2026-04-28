@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from schemas._base import OwnedResourcePublic
 from schemas.goal import Goal
 
 NOTIFICATION_FREQUENCY = Literal["daily", "weekly", "custom", "off"]
@@ -16,15 +17,18 @@ HABIT_ICON_MAX_LENGTH = 100
 HABIT_STAGE_MAX_LENGTH = 100
 
 
-class Habit(BaseModel):
+class Habit(OwnedResourcePublic):
     """Public representation of a :class:`models.habit.Habit`.
 
     Mirrors the SQLModel definition so API consumers can rely on a stable
     contract. Includes notification fields and client-controlled sort order.
+
+    ``user_id`` is intentionally excluded (BUG-HABIT-001 / BUG-SCHEMA-001):
+    the client already knows its own identity from the JWT, so emitting
+    surrogate user keys only aids enumeration.
     """
 
     id: int
-    user_id: int
     name: str
     icon: str
     start_date: date
@@ -42,7 +46,7 @@ class Habit(BaseModel):
 class HabitWithGoals(Habit):
     """Habit response that includes nested goals."""
 
-    goals: list[Goal] = []
+    goals: list[Goal] = Field(default_factory=list)
 
 
 class HabitCreate(BaseModel):

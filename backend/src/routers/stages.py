@@ -208,14 +208,16 @@ async def _create_initial_progress(
     session.add(progress)
     try:
         await session.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await session.rollback()
         existing = await get_user_progress_for_update(session, user_id)
         if existing is None:
             # Defensive: the unique-constraint loser must see the
             # winner's row.  If it is gone the database state is
-            # corrupt; surface 409 rather than re-attempt the insert.
-            raise conflict("stage_progress_race_unrecoverable") from None
+            # corrupt; surface 409 and preserve the original
+            # ``IntegrityError`` chain so the constraint name + stack
+            # reach Sentry / structured logs.
+            raise conflict("stage_progress_race_unrecoverable") from exc
         if _is_bootstrap_state(existing):
             return _bootstrap_record(existing)
         # The winner already advanced past stage 1 — treat the loser's

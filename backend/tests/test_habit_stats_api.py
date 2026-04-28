@@ -57,6 +57,27 @@ async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str
     return {"Authorization": f"Bearer {token}"}
 
 
+async def _signup_with_id(
+    client: AsyncClient, username: str = "alice"
+) -> tuple[dict[str, str], int]:
+    """Create a user and return (auth headers, user_id).
+
+    BUG-T7: ``Habit`` responses no longer expose ``user_id``, so tests that
+    seed completions directly via the ORM source the id from ``/auth/signup``
+    (which legitimately returns it to the caller about themselves).
+    """
+    resp = await client.post(
+        "/auth/signup",
+        json={
+            "email": f"{username}@example.com",
+            "password": "secret12345",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    return {"Authorization": f"Bearer {body['token']}"}, body["user_id"]
+
+
 async def _create_habit_with_goal(
     client: AsyncClient,
     session: AsyncSession,
@@ -99,14 +120,15 @@ async def test_stats_nonexistent_habit_returns_404(async_client: AsyncClient) ->
 
 
 @pytest.mark.asyncio
-async def test_stats_other_users_habit_returns_404(
+async def test_stats_other_users_habit_returns_403(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
+    """BUG-T7: cross-user stats fetch returns 403, not 404."""
     alice_headers = await _signup(async_client, "alice")
     bob_headers = await _signup(async_client, "bob")
     habit_id, _ = await _create_habit_with_goal(async_client, db_session, alice_headers)
     resp = await async_client.get(f"/habits/{habit_id}/stats", headers=bob_headers)
-    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 # ── Empty stats ──────────────────────────────────────────────────────────
@@ -138,12 +160,8 @@ async def test_stats_aggregates_completions_by_day_of_week(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """Units should be summed per day-of-week across all goals."""
-    headers = await _signup(async_client)
+    headers, user_id = await _signup_with_id(async_client)
     habit_id, goal_id = await _create_habit_with_goal(async_client, db_session, headers)
-
-    # Get user_id from the habit
-    resp = await async_client.get(f"/habits/{habit_id}", headers=headers)
-    user_id = resp.json()["user_id"]
 
     # Monday 2024-01-01 — two completions
     db_session.add(
@@ -189,10 +207,8 @@ async def test_stats_aggregates_completions_by_day_of_week(
 @pytest.mark.asyncio
 async def test_stats_longest_streak(async_client: AsyncClient, db_session: AsyncSession) -> None:
     """Longest streak is the max consecutive calendar days with completions."""
-    headers = await _signup(async_client)
+    headers, user_id = await _signup_with_id(async_client)
     habit_id, goal_id = await _create_habit_with_goal(async_client, db_session, headers)
-    resp = await async_client.get(f"/habits/{habit_id}", headers=headers)
-    user_id = resp.json()["user_id"]
 
     # 3 consecutive days, then a gap, then 2 consecutive
     base = datetime(2024, 1, 1, 8, 0, tzinfo=UTC)
@@ -222,10 +238,8 @@ async def test_stats_current_streak(async_client: AsyncClient, db_session: Async
     ``streakFromCompletions`` rule) does not zero the chain because the
     fixture used dates from 2024.
     """
-    headers = await _signup(async_client)
+    headers, user_id = await _signup_with_id(async_client)
     habit_id, goal_id = await _create_habit_with_goal(async_client, db_session, headers)
-    resp = await async_client.get(f"/habits/{habit_id}", headers=headers)
-    user_id = resp.json()["user_id"]
 
     # Older completion (gap), then yesterday + day-before-yesterday so the
     # recency gate sees a fresh chain ending within the one-day grace
@@ -250,10 +264,8 @@ async def test_stats_current_streak(async_client: AsyncClient, db_session: Async
 @pytest.mark.asyncio
 async def test_stats_completion_rate(async_client: AsyncClient, db_session: AsyncSession) -> None:
     """Completion rate = days-with-completions / span-days."""
-    headers = await _signup(async_client)
+    headers, user_id = await _signup_with_id(async_client)
     habit_id, goal_id = await _create_habit_with_goal(async_client, db_session, headers)
-    resp = await async_client.get(f"/habits/{habit_id}", headers=headers)
-    user_id = resp.json()["user_id"]
 
     # Jan 1 and Jan 3 — span is 3 days, completed on 2
     db_session.add(
@@ -282,10 +294,8 @@ async def test_stats_completion_rate(async_client: AsyncClient, db_session: Asyn
 @pytest.mark.asyncio
 async def test_stats_completion_dates(async_client: AsyncClient, db_session: AsyncSession) -> None:
     """completion_dates lists unique ISO date strings for calendar marking."""
-    headers = await _signup(async_client)
+    headers, user_id = await _signup_with_id(async_client)
     habit_id, goal_id = await _create_habit_with_goal(async_client, db_session, headers)
-    resp = await async_client.get(f"/habits/{habit_id}", headers=headers)
-    user_id = resp.json()["user_id"]
 
     # Two completions on same day + one on another day
     db_session.add(
@@ -325,17 +335,11 @@ async def test_stats_only_counts_current_users_completions(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """Stats should not include completions from other users."""
-    alice_headers = await _signup(async_client, "alice")
-    bob_headers = await _signup(async_client, "bob")
+    alice_headers, alice_user_id = await _signup_with_id(async_client, "alice")
+    _, bob_user_id = await _signup_with_id(async_client, "bob")
 
     # Alice creates a habit+goal
     habit_id, goal_id = await _create_habit_with_goal(async_client, db_session, alice_headers)
-    resp = await async_client.get(f"/habits/{habit_id}", headers=alice_headers)
-    alice_user_id = resp.json()["user_id"]
-
-    # Bob's user_id (from a different habit)
-    bob_resp = await async_client.post("/habits/", json=sample_payload(), headers=bob_headers)
-    bob_user_id = bob_resp.json()["user_id"]
 
     # Alice's completion
     db_session.add(
@@ -375,10 +379,8 @@ async def test_stats_current_streak_returns_zero_for_stale_chain(
     (``compute_habit_streak``) correctly returned 0 -- exactly the API
     contract divergence the recency gate was introduced to eliminate.
     """
-    headers = await _signup(async_client)
+    headers, user_id = await _signup_with_id(async_client)
     habit_id, goal_id = await _create_habit_with_goal(async_client, db_session, headers)
-    resp = await async_client.get(f"/habits/{habit_id}", headers=headers)
-    user_id = resp.json()["user_id"]
 
     # Three consecutive days that ended five days ago -- chain is well
     # outside the one-day grace window, so the gate must fire.

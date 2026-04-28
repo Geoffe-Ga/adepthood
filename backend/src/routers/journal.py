@@ -12,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
-from errors import not_found, unprocessable
+from dependencies.ownership import require_owned_journal_entry
+from errors import unprocessable
 from models.journal_entry import JournalEntry, JournalTag
 from rate_limit import limiter
 from routers.auth import get_current_user
@@ -135,27 +136,24 @@ async def list_journal_entries(
 
 @router.get("/{entry_id}", response_model=JournalMessageResponse)
 async def get_journal_entry(
-    entry_id: int,
-    current_user: Annotated[int, Depends(get_current_user)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    entry: Annotated[JournalEntry, Depends(require_owned_journal_entry)],
 ) -> JournalEntry:
-    """Return a single journal entry by ID, scoped to the authenticated user."""
-    entry = await session.get(JournalEntry, entry_id)
-    if entry is None or entry.user_id != current_user:
-        raise not_found("journal_entry")
+    """Return a single journal entry by ID, scoped to the authenticated user.
+
+    Ownership is verified by ``require_owned_journal_entry``: 404 when the
+    row does not exist, 403 when it exists but belongs to another user.
+    """
     return entry
 
 
 @router.delete("/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_journal_entry(
-    entry_id: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    entry: Annotated[JournalEntry, Depends(require_owned_journal_entry)],
 ) -> Response:
     """Delete a journal entry. Returns 204 No Content on success."""
-    entry = await session.get(JournalEntry, entry_id)
-    if entry is None or entry.user_id != current_user:
-        raise not_found("journal_entry")
+    entry_id = entry.id
     await session.delete(entry)
     await session.commit()
     logger.info("journal_entry_deleted", extra={"user_id": current_user, "entry_id": entry_id})

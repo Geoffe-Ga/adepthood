@@ -32,8 +32,8 @@ Either way, treat the `main` copy of this table as truth. A branch-local tick is
 | 06 | db-unique-constraints-toctou      | 3 | | [ ] |
 | 07 | normalize-idor-ordering           | 3 | | [ ] |
 | 08 | optimistic-mutation-hook          | 3 | | [ ] |
-| 09 | server-derived-timestamps         | 3 | | [ ] |
-| 10 | observability-e2e                 | 3 | | [ ] |
+| 09 | server-derived-timestamps         | 3 | `claude/09-server-derived-timestamps-cfvVc` / [#264](https://github.com/Geoffe-Ga/adepthood/pull/264) | [x] |
+| 10 | observability-e2e                 | 3 | `claude/10-observability-e2e-OfIPz` / [#268](https://github.com/Geoffe-Ga/adepthood/pull/268) | [x] |
 | 11 | backend-auth-models-schemas-cors  | 4 | | [ ] |
 | 12 | backend-feature-routers           | 4 | | [ ] |
 | 13 | frontend-api-client               | 4 | | [ ] |

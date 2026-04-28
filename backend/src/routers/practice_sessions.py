@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, func, select
 
 from database import get_session
+from dependencies.ownership import require_owned_user_practice
 from errors import forbidden, not_found
 from models.practice_session import PracticeSession
 from models.user_practice import UserPractice
@@ -30,7 +31,14 @@ async def create_session(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PracticeSession:
-    """Log a practice session against a user-practice selection."""
+    """Log a practice session against a user-practice selection.
+
+    Inline 404→403 split (rather than ``require_owned_user_practice``)
+    because the ``user_practice_id`` arrives in the body, not as a path
+    or query parameter — FastAPI's DI cannot extract body fields into
+    sub-dependencies.  The ordering and exception types match the shared
+    dep so the IDOR matrix test sees the same 403 for cross-user calls.
+    """
     result = await session.execute(
         select(UserPractice).where(UserPractice.id == payload.user_practice_id)
     )
@@ -38,13 +46,15 @@ async def create_session(
     if user_practice is None:
         raise not_found("user_practice")
     if user_practice.user_id != current_user:
-        raise forbidden()
+        raise forbidden("forbidden")
 
+    duration_minutes = payload.duration_minutes
     practice_session = PracticeSession(
         user_id=current_user,
         user_practice_id=payload.user_practice_id,
-        duration_minutes=payload.duration_minutes,
+        duration_minutes=duration_minutes,
         reflection=payload.reflection,
+        timestamp=payload.ended_at,
     )
     session.add(practice_session)
     await session.commit()
@@ -54,7 +64,7 @@ async def create_session(
         extra={
             "user_id": current_user,
             "user_practice_id": payload.user_practice_id,
-            "duration_minutes": payload.duration_minutes,
+            "duration_minutes": duration_minutes,
         },
     )
     return practice_session
@@ -62,12 +72,17 @@ async def create_session(
 
 @router.get("/", response_model=None)
 async def list_sessions(
-    user_practice_id: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     pagination: Annotated[PaginationParams, Depends()],
+    user_practice: Annotated[UserPractice, Depends(require_owned_user_practice)],
 ) -> Page[PracticeSessionResponse] | list[PracticeSessionResponse]:
     """List sessions for a specific user-practice, newest first.
+
+    Cross-user calls used to return an empty list (the ``user_id`` filter
+    silently masked them); now ``require_owned_user_practice`` runs the
+    canonical 404→403 split before we hit the sessions table so the
+    auth-failure path is uniform with every other owned-resource route.
 
     BUG-INFRA-014: returns ``Page[PracticeSessionResponse]`` when
     ``?paginate=true`` is set; otherwise the legacy bare list is returned
@@ -76,7 +91,7 @@ async def list_sessions(
     query = (
         select(PracticeSession)
         .where(
-            PracticeSession.user_practice_id == user_practice_id,
+            PracticeSession.user_practice_id == user_practice.id,
             PracticeSession.user_id == current_user,
         )
         .order_by(col(PracticeSession.timestamp).desc())

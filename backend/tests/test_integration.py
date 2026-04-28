@@ -43,6 +43,23 @@ async def _auth_headers(client: AsyncClient, email: str = "user@example.com") ->
     return {"Authorization": f"Bearer {token}"}
 
 
+async def _auth_headers_with_id(
+    client: AsyncClient, email: str = "user@example.com"
+) -> tuple[dict[str, str], int]:
+    """Sign up a user and return (auth headers, user_id).
+
+    Habit responses no longer echo ``user_id`` (BUG-T7), so flows that need
+    to seed completions directly source the id from the auth response —
+    which legitimately tells the caller their own id.
+    """
+    resp = await client.post(
+        SIGNUP_URL,
+        json={"email": email, "password": "securepassword123"},  # pragma: allowlist secret
+    )
+    body = resp.json()
+    return {"Authorization": f"Bearer {body['token']}"}, body["user_id"]
+
+
 async def _create_habit(
     client: AsyncClient,
     headers: dict[str, str],
@@ -69,7 +86,7 @@ async def test_signup_create_habit_log_completion_check_streak(
     Signs up, creates a habit, adds a goal, logs completions, and
     verifies streak increments with milestone detection.
     """
-    headers = await _auth_headers(async_client)
+    headers, user_id = await _auth_headers_with_id(async_client)
 
     # Create a habit
     habit = await _create_habit(async_client, headers)
@@ -97,7 +114,7 @@ async def test_signup_create_habit_log_completion_check_streak(
         db_session.add(
             GoalCompletion(
                 goal_id=goal.id,
-                user_id=int(str(habit["user_id"])),
+                user_id=user_id,
                 completed_units=goal.target,
                 timestamp=now - timedelta(days=days_ago),
             )
@@ -181,11 +198,14 @@ async def test_practice_session_week_count(
 
     # Log two practice sessions
     for duration in (10.0, 15.0):
+        ended = datetime.now(UTC)
+        started = ended - timedelta(minutes=duration)
         resp = await async_client.post(
             "/practice-sessions/",
             json={
                 "user_practice_id": user_practice_id,
-                "duration_minutes": duration,
+                "started_at": started.isoformat(),
+                "ended_at": ended.isoformat(),
                 "reflection": "Felt calm",
             },
             headers=headers,
@@ -251,9 +271,11 @@ async def test_user_isolation_habits(async_client: AsyncClient) -> None:
     assert resp.status_code == HTTPStatus.OK
     assert resp.json() == []
 
-    # Bob tries to access Alice's habit by ID — should get 404
+    # Bob tries to access Alice's habit by ID — must get 403, not 404
+    # (BUG-T7: cross-user access returns 403; 404 is reserved for genuinely
+    # missing rows so the auth-failure path is uniform).
     alice_habits = await async_client.get("/habits/", headers=headers_a)
     alice_habit_id = alice_habits.json()[0]["id"]
 
     resp = await async_client.get(f"/habits/{alice_habit_id}", headers=headers_b)
-    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.status_code == HTTPStatus.FORBIDDEN

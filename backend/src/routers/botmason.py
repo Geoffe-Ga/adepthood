@@ -10,6 +10,7 @@ shapes to those services.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -44,15 +45,23 @@ logger = logging.getLogger(__name__)
 
 
 def _per_user_key(request: StarletteRequest) -> str:
-    """Rate-limit key that prefers the authenticated user ID over IP.
+    """Rate-limit key that prefers a hash of the auth token over IP.
 
     Falls back to the remote address for anonymous / pre-auth requests so
     the limiter never receives an empty key (BUG-JOURNAL-008).
+
+    Storing the raw ``Authorization`` header would put live JWTs into
+    the slowapi backing store (in-memory today, potentially Redis
+    tomorrow); a ``redis-cli MONITOR`` or ``KEYS *`` would then leak
+    every active session token to any internal observer.  Hashing the
+    header with SHA-256 keeps the key shape stable for the limiter
+    while making the key one-way — same pattern used by
+    ``auth._email_log_fingerprint``.
     """
     auth_header = request.headers.get("authorization", "")
     if auth_header.startswith("Bearer "):
-        # Use a hash-like prefix so the key space doesn't collide with IPs.
-        return f"user:{auth_header}"
+        digest = hashlib.sha256(auth_header.encode("utf-8")).hexdigest()
+        return f"user:{digest}"
     return get_remote_address(request)
 
 
@@ -157,8 +166,18 @@ async def add_balance(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> BalanceAddResponse:
     """Add credits to the calling admin's offering balance."""
-    assert admin.id is not None  # noqa: S101 — persisted row always has an id
-    new_balance = await wallet_service.add_balance(session, admin.id, payload.amount)
+    # ``require_admin`` only returns persisted rows, so ``admin.id`` is
+    # guaranteed to be set in practice.  An ``assert`` would be enough,
+    # but CLAUDE.md forbids ``# noqa: S101`` in production code -- this
+    # narrows the type for mypy AND surfaces a clear runtime error if
+    # the invariant ever breaks (e.g. a future test fixture passing a
+    # detached User instance).
+    if admin.id is None:
+        msg = "require_admin returned an unpersisted user row"
+        raise RuntimeError(msg)
+    new_balance = await wallet_service.add_balance(
+        session, admin.id, payload.amount, actor_user_id=admin.id
+    )
     if new_balance is None:
         # TOCTOU: admin row existed when ``require_admin`` fetched it but was
         # deleted before the wallet UPDATE landed.  Same failure mode as the
