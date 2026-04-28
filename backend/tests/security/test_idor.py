@@ -521,7 +521,12 @@ async def test_no_user_id_in_owned_resource_responses(
     user_practice_id = await _create_user_practice(
         async_client, db_session, alice_headers, alice_id
     )
-    session_id = await _create_practice_session(async_client, alice_headers, user_practice_id)
+    create_session = await async_client.post(
+        "/practice-sessions/",
+        json={"user_practice_id": user_practice_id, "duration_minutes": 5.0},
+        headers=alice_headers,
+    )
+    assert create_session.status_code == HTTPStatus.OK
 
     practice = await _seed_practice(db_session, name="Catalog Scrub")
 
@@ -529,6 +534,7 @@ async def test_no_user_id_in_owned_resource_responses(
         ("create_habit", create_habit.json()),
         ("create_journal", create_journal.json()),
         ("create_group", create_group.json()),
+        ("create_practice_session", create_session.json()),
         (
             "get_habit",
             (await async_client.get(f"/habits/{habit_id}", headers=alice_headers)).json(),
@@ -556,9 +562,3 @@ async def test_no_user_id_in_owned_resource_responses(
     for label, body in probes:
         assert "user_id" not in body, f"{label} response leaked user_id"
         assert "submitted_by_user_id" not in body, f"{label} response leaked submitted_by_user_id"
-
-    # ``session_id`` is consumed by referencing the session POST response;
-    # the create-session response was already exercised in the existing
-    # ``test_practice_sessions.py`` suite, so we just keep the variable
-    # bound to satisfy the seeding flow.
-    _ = session_id

@@ -31,7 +31,6 @@ from models.goal_group import GoalGroup
 from models.habit import Habit
 from models.journal_entry import JournalEntry
 from models.practice import Practice
-from models.practice_session import PracticeSession
 from models.user_practice import UserPractice
 from routers.auth import get_current_user
 
@@ -76,20 +75,6 @@ async def require_owned_user_practice(
     if user_practice.user_id != current_user:
         raise forbidden("forbidden")
     return user_practice
-
-
-async def require_owned_practice_session(
-    session_id: int,
-    current_user: Annotated[int, Depends(get_current_user)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-) -> PracticeSession:
-    """Resolve ``session_id`` and verify the caller owns it."""
-    practice_session = await session.get(PracticeSession, session_id)
-    if practice_session is None:
-        raise not_found("practice_session")
-    if practice_session.user_id != current_user:
-        raise forbidden("forbidden")
-    return practice_session
 
 
 async def require_visible_goal_group(

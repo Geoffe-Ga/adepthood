@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -168,13 +168,10 @@ async def update_goal_group(
     prior ``group.user_id is not None and ...`` short-circuit treated
     NULL ownership as caller-equivalent).
     """
-    # ``group.id`` is non-NULL on a row returned by the dep, but the
-    # SQLModel field type is ``int | None`` because of the primary-key
-    # default.  Pin it locally so the refetch helper sees a plain ``int``.
-    if group.id is None:
-        msg = "GoalGroup ID unexpectedly None after ownership dep returned row"
-        raise RuntimeError(msg)
-    group_id = group.id
+    # ``group.id`` is ``int | None`` on the SQLModel because of the
+    # primary-key default, but the ownership dep only ever returns a
+    # row freshly fetched from the DB, so the value is non-NULL here.
+    group_id = cast("int", group.id)
     for key, value in payload.model_dump().items():
         setattr(group, key, value)
     session.add(group)
@@ -195,13 +192,12 @@ async def delete_goal_group(
 
     Owner-only via ``require_owned_goal_group`` (BUG-GOAL-006).  We
     re-fetch with eager-loaded goals so the unlink step doesn't trigger
-    a lazy load on an async session.
+    a lazy load on an async session; existence has already been
+    verified by the dep, so ``.one()`` is correct here.
     """
     statement = select(GoalGroup).where(GoalGroup.id == group_id).options(GOAL_GROUP_WITH_GOALS)
     result = await session.execute(statement)
-    group = result.scalars().first()
-    if group is None:
-        raise not_found("goal_group")
+    group = result.scalars().one()
     # Unlink goals from the group before deleting
     for goal in group.goals:
         goal.goal_group_id = None

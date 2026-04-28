@@ -336,14 +336,10 @@ async def test_stats_only_counts_current_users_completions(
 ) -> None:
     """Stats should not include completions from other users."""
     alice_headers, alice_user_id = await _signup_with_id(async_client, "alice")
-    bob_headers, bob_user_id = await _signup_with_id(async_client, "bob")
+    _, bob_user_id = await _signup_with_id(async_client, "bob")
 
     # Alice creates a habit+goal
     habit_id, goal_id = await _create_habit_with_goal(async_client, db_session, alice_headers)
-    # ``bob_headers`` keeps Bob's auth context for any later request even
-    # though we no longer need to round-trip through ``POST /habits/`` to
-    # learn his user-id.
-    _ = bob_headers
 
     # Alice's completion
     db_session.add(
