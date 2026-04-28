@@ -6,6 +6,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -223,6 +224,88 @@ async def get_content_item(
     return ContentItemResponse(**filtered[0])
 
 
+async def _existing_content_completion(
+    session: AsyncSession, user_id: int, content_id: int
+) -> ContentCompletion | None:
+    """Return the user's existing completion row for ``content_id`` if any."""
+    result = await session.execute(
+        select(ContentCompletion).where(
+            ContentCompletion.user_id == user_id,
+            ContentCompletion.content_id == content_id,
+        )
+    )
+    return result.scalars().first()
+
+
+def _completion_response(completion: ContentCompletion) -> ContentCompletionResponse:
+    return ContentCompletionResponse(
+        id=completion.id,
+        content_id=completion.content_id,
+        completed_at=completion.completed_at,
+    )
+
+
+async def _resolve_unlocked_content(
+    session: AsyncSession,
+    user_id: int,
+    content_id: int,
+) -> StageContent:
+    """Fetch ``content_id`` and gate on the parent stage being unlocked.
+
+    Locked stages mask as 404 (BUG-COURSE-004) — content_id is an
+    enumeration oracle, so a 403 would let an attacker tell "exists but
+    locked" apart from "does not exist".  Mirrors :func:`get_content_item`.
+    Split out of :func:`mark_content_read` so the route stays at xenon
+    rank A and the resolution / authorisation steps are independently
+    testable.
+    """
+    result = await session.execute(select(StageContent).where(StageContent.id == content_id))
+    content_item = result.scalars().first()
+    if content_item is None:
+        raise not_found("content")
+    stage_result = await session.execute(
+        select(CourseStage).where(CourseStage.id == content_item.course_stage_id)
+    )
+    stage = stage_result.scalars().first()
+    if stage is None:
+        raise not_found("stage")
+    if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number):
+        raise not_found("content")
+    return content_item
+
+
+async def _insert_or_resolve_completion(
+    session: AsyncSession,
+    user_id: int,
+    content_id: int,
+) -> ContentCompletion:
+    """Insert a new completion or return the winner's row on race.
+
+    ``begin_nested`` opens a SAVEPOINT so the unique-constraint
+    ``IntegrityError`` rolls back only the failed insert; the outer
+    transaction stays healthy enough for the follow-up SELECT.
+    Defensively raises if the constraint fired but the winner's row is
+    missing — that would mean the database invariant is broken and a
+    silent re-insert would compound the corruption.
+    """
+    completion = ContentCompletion(user_id=user_id, content_id=content_id)
+    try:
+        async with session.begin_nested():
+            session.add(completion)
+        await session.commit()
+        await session.refresh(completion)
+    except IntegrityError as exc:
+        existing = await _existing_content_completion(session, user_id, content_id)
+        if existing is None:
+            # Preserve the chain: the constraint name + driver-level
+            # error reach Sentry / logs so we can debug a corrupt-DB
+            # scenario rather than silently re-inserting.
+            msg = "ContentCompletion lost the race but the winner's row is missing"
+            raise RuntimeError(msg) from exc
+        return existing
+    return completion
+
+
 @router.post("/content/{content_id}/mark-read", response_model=ContentCompletionResponse)
 async def mark_content_read(
     content_id: int,
@@ -231,53 +314,21 @@ async def mark_content_read(
 ) -> ContentCompletionResponse:
     """Mark a content item as read. Idempotent — repeated calls return existing record.
 
-    BUG-COURSE-004: locked-stage access is reported as 404 (not 403) so
-    the same enumeration mask applied to ``GET /content/{id}`` also
-    holds here.  ``ContentCompletionResponse`` no longer echoes
-    ``user_id``: the row is created for ``current_user`` and the
-    surrogate key adds nothing for the client.
+    The pre-check is the fast path for the common retry / refresh case.
+    Two concurrent calls can both pass it; the
+    ``uq_contentcompletion_user_content`` constraint then catches the
+    loser via ``IntegrityError`` and the existing row is returned —
+    closes the BUG-COURSE-002 TOCTOU.
     """
-    # Verify content exists
-    result = await session.execute(select(StageContent).where(StageContent.id == content_id))
-    content_item = result.scalars().first()
-    if content_item is None:
-        raise not_found("content")
+    await _resolve_unlocked_content(session, current_user, content_id)
 
-    # BUG-COURSE-005: Look up the parent stage and verify unlock
-    stage_result = await session.execute(
-        select(CourseStage).where(CourseStage.id == content_item.course_stage_id)
-    )
-    stage = stage_result.scalars().first()
-    if stage is None:
-        raise not_found("stage")
-    if not await _is_stage_unlocked_for_user(session, current_user, stage.stage_number):
-        raise not_found("content")
-
-    # Check for existing completion (idempotent)
-    existing_result = await session.execute(
-        select(ContentCompletion).where(
-            ContentCompletion.user_id == current_user,
-            ContentCompletion.content_id == content_id,
-        )
-    )
-    existing = existing_result.scalars().first()
+    existing = await _existing_content_completion(session, current_user, content_id)
     if existing is not None:
-        return ContentCompletionResponse(
-            id=existing.id,
-            content_id=existing.content_id,
-            completed_at=existing.completed_at,
-        )
+        return _completion_response(existing)
 
-    completion = ContentCompletion(user_id=current_user, content_id=content_id)
-    session.add(completion)
-    await session.commit()
-    await session.refresh(completion)
+    completion = await _insert_or_resolve_completion(session, current_user, content_id)
     logger.info("content_marked_read", extra={"user_id": current_user, "content_id": content_id})
-    return ContentCompletionResponse(
-        id=completion.id,
-        content_id=completion.content_id,
-        completed_at=completion.completed_at,
-    )
+    return _completion_response(completion)
 
 
 def _empty_progress() -> CourseProgressResponse:

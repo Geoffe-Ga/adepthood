@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -170,25 +171,63 @@ async def get_stage_history(
     )
 
 
+def _bootstrap_record(existing: StageProgress) -> StageProgressRecord:
+    """Build the ``StageProgressRecord`` for an idempotent bootstrap return."""
+    return StageProgressRecord(
+        id=existing.id,
+        user_id=existing.user_id,
+        current_stage=existing.current_stage,
+        completed_stages=existing.completed_stages,
+    )
+
+
+def _is_bootstrap_state(existing: StageProgress) -> bool:
+    """Return True when ``existing`` matches the freshly-created bootstrap row."""
+    return existing.current_stage == 1 and not existing.completed_stages
+
+
 async def _create_initial_progress(
     session: AsyncSession,
     user_id: int,
     payload: StageProgressUpdate,
 ) -> StageProgressRecord:
-    """Handle the no-prior-row case: must assert stage 1, then create."""
+    """Handle the no-prior-row case: must assert stage 1, then create.
+
+    Two concurrent first-advance requests for the same user could both
+    read ``progress is None`` and both attempt to insert a fresh
+    ``StageProgress`` row (BUG-STAGE-003).  The
+    ``UniqueConstraint(user_id)`` on ``stageprogress`` rejects the
+    second insert; we catch the ``IntegrityError``, re-fetch the
+    winner under ``FOR UPDATE``, and return the same bootstrap record
+    so the loser observes a consistent final state instead of
+    surfacing as a 500.
+    """
     if payload.current_stage != 1:
         raise bad_request("must_start_at_stage_one")
     progress = StageProgress(user_id=user_id, current_stage=1, completed_stages=[])
     session.add(progress)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        existing = await get_user_progress_for_update(session, user_id)
+        if existing is None:
+            # Defensive: the unique-constraint loser must see the
+            # winner's row.  If it is gone the database state is
+            # corrupt; surface 409 and preserve the original
+            # ``IntegrityError`` chain so the constraint name + stack
+            # reach Sentry / structured logs.
+            raise conflict("stage_progress_race_unrecoverable") from exc
+        if _is_bootstrap_state(existing):
+            return _bootstrap_record(existing)
+        # The winner already advanced past stage 1 — treat the loser's
+        # payload as an advance-from-1 request and let the normal
+        # derivation reject it with the appropriate 400 if the client
+        # raced past stage 1 with a stale assertion.
+        return await _advance_existing_progress(session, existing, payload)
     await session.refresh(progress)
     logger.info("stage_progress_started", extra={"user_id": user_id})
-    return StageProgressRecord(
-        id=progress.id,
-        user_id=progress.user_id,
-        current_stage=progress.current_stage,
-        completed_stages=progress.completed_stages,
-    )
+    return _bootstrap_record(progress)
 
 
 def _derive_next_stage(existing: StageProgress) -> tuple[int, list[int]]:
@@ -265,8 +304,29 @@ async def update_progress(
     A ``SELECT … FOR UPDATE`` row-lock prevents two concurrent advance
     requests from both reading the same ``current_stage`` and passing the
     derivation check (TOCTOU race).
+
+    BUG-STAGE-003: when several first-advance requests race, a winner
+    that committed between two losers' SELECT and INSERT means one
+    loser sees ``existing is None`` (handled inside
+    :func:`_create_initial_progress`) and another sees the winner's
+    bootstrap row.  Both losers must observe the same idempotent
+    bootstrap response — so the ``payload.current_stage == 1`` +
+    bootstrap-state check returns the existing row instead of trying to
+    advance past it.
+
+    Edge case: if the winner *also* finished a second advance (stage 1 →
+    2) between two concurrent first-advance attempts, a loser arriving
+    with ``payload.current_stage == 1`` against an ``existing`` already
+    at stage 2 falls through to :func:`_advance_existing_progress` and
+    is rejected with ``stage_advance_mismatch`` (400).  This is a
+    deliberate non-idempotent outcome: the client's stale assertion no
+    longer matches the server-derived next stage, and quietly returning
+    an out-of-date bootstrap record would mask a real client / server
+    drift.
     """
     existing = await get_user_progress_for_update(session, current_user)
     if existing is None:
         return await _create_initial_progress(session, current_user, payload)
+    if payload.current_stage == 1 and _is_bootstrap_state(existing):
+        return _bootstrap_record(existing)
     return await _advance_existing_progress(session, existing, payload)

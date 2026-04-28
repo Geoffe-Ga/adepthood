@@ -139,7 +139,15 @@ async def test_submit_prompt_response(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_submit_duplicate_response_returns_error(async_client: AsyncClient) -> None:
+async def test_submit_duplicate_response_returns_409(async_client: AsyncClient) -> None:
+    """BUG-PROMPT-004: every duplicate submission must surface the same 409.
+
+    The earlier handler split into a 400 fast path (pre-check matched)
+    and a 409 race path (constraint fired).  Clients had to handle both
+    codes for one semantic condition.  The pre-check is gone and the
+    ``uq_promptresponse_user_week`` constraint is the single source of
+    truth for "already responded."
+    """
     headers = await _signup(async_client)
     await async_client.post(
         "/prompts/1/respond",
@@ -151,9 +159,7 @@ async def test_submit_duplicate_response_returns_error(async_client: AsyncClient
         json={"response": "Second response."},
         headers=headers,
     )
-    # Application-level check returns 400; DB constraint returns 409 — both
-    # report ``already_responded`` so the client can handle both uniformly.
-    assert resp.status_code in {HTTPStatus.BAD_REQUEST, HTTPStatus.CONFLICT}
+    assert resp.status_code == HTTPStatus.CONFLICT
     assert resp.json()["detail"] == "already_responded"
 
 
@@ -378,8 +384,9 @@ async def test_concurrent_prompt_responses_allow_exactly_one(
 
     status_codes = [r.status_code for r in responses]
     successes = status_codes.count(HTTPStatus.CREATED)
-    # The loser hits either the app-level 400 or the DB-level 409.
-    rejections = sum(1 for s in status_codes if s in {HTTPStatus.BAD_REQUEST, HTTPStatus.CONFLICT})
+    # With the pre-check gone the constraint is the only rejector; every
+    # loser hits exactly 409 (BUG-PROMPT-004).
+    rejections = status_codes.count(HTTPStatus.CONFLICT)
 
     assert successes == 1, f"Expected exactly 1 success, got {successes}"
-    assert rejections == 4, f"Expected 4 rejections, got {rejections}"
+    assert rejections == 4, f"Expected 4 conflicts, got {rejections}"

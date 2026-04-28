@@ -62,6 +62,15 @@ _RAW_SQL_MANAGED_INDEXES: frozenset[str] = frozenset(
     }
 )
 
+# Migration-internal archive tables created by dedup steps (see e.g.
+# ``e1f2a3b4c5d6_contentcompletion_unique_user_content``).  These hold
+# rows that were dropped to satisfy a freshly-added unique constraint
+# and are intentionally not modeled in SQLModel — there is no router or
+# RLS policy that exposes them.  We tell autogenerate / ``alembic check``
+# to leave them alone so a successful ``upgrade head`` does not register
+# as drift the next time the gate runs.
+_MIGRATION_ARCHIVE_TABLE_PREFIX = "_duplicates_"
+
 
 def _include_object(
     obj: Any,
@@ -70,14 +79,21 @@ def _include_object(
     reflected: bool,  # noqa: ARG001
     compare_to: Any,  # noqa: ARG001
 ) -> bool:
-    """Skip raw-SQL-managed indexes during autogenerate / check.
+    """Skip raw-SQL-managed indexes and dedup archive tables.
 
     Without this, ``alembic check`` reports drift for every functional /
-    partial index because the model declarations can't represent them
-    portably (SQLite would reject the expressions at table creation time
-    in the test fixture).  See :data:`_RAW_SQL_MANAGED_INDEXES`.
+    partial index (see :data:`_RAW_SQL_MANAGED_INDEXES`) and for every
+    ``_duplicates_*`` archive table left behind by a dedup migration.
+    Both are migration-owned artifacts that the model layer
+    intentionally does not declare.
     """
     if type_ == "index" and name in _RAW_SQL_MANAGED_INDEXES:
+        return False
+    if (
+        type_ == "table"
+        and name is not None
+        and name.startswith(_MIGRATION_ARCHIVE_TABLE_PREFIX)
+    ):
         return False
     return True
 

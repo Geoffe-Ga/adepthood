@@ -8,7 +8,8 @@ from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlmodel import select
 
 from models.course_stage import CourseStage
 from models.practice import Practice
@@ -666,3 +667,67 @@ async def test_stages_progress_isolated_per_user(
     data = resp.json()
     # Stage 2 should be locked for Bob (no progress record)
     assert data[1]["is_unlocked"] is False
+
+
+# ── BUG-STAGE-003: first-advance create-path TOCTOU ────────────────────
+
+
+_CONCURRENT_FIRST_ADVANCE_FANOUT = 5
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_concurrent_first_advance_yields_one_progress_row(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Five simultaneous first-advances for a fresh user persist one progress row.
+
+    Closes BUG-STAGE-003: the create path used to ``SELECT … FROM
+    stageprogress`` and INSERT without locking, so two concurrent
+    requests could both see ``progress is None`` and both attempt the
+    insert.  ``UniqueConstraint(user_id)`` rejects the second insert;
+    the new ``IntegrityError`` handler rolls back, re-fetches the
+    winner under ``FOR UPDATE``, and returns the same shape so the
+    loser observes a consistent final state instead of a 500.
+    """
+    signup_resp = await concurrent_async_client.post(
+        "/auth/signup",
+        json={
+            "email": "racestage@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    headers = {"Authorization": f"Bearer {signup_resp.json()['token']}"}
+    user_id = signup_resp.json()["user_id"]
+
+    async with concurrent_session_factory() as session:
+        for stage_number in (1, 2):
+            session.add(CourseStage(**_stage_data(stage_number=stage_number)))
+        await session.commit()
+
+    results = await asyncio.gather(
+        *[
+            concurrent_async_client.put(
+                "/stages/progress",
+                json={"current_stage": 1},
+                headers=headers,
+            )
+            for _ in range(_CONCURRENT_FIRST_ADVANCE_FANOUT)
+        ]
+    )
+
+    # Every concurrent first-advance must terminate as a 2xx (the
+    # winner inserts; losers re-fetch and return).  The unique
+    # constraint guarantees exactly one row for ``user_id`` no matter
+    # how many tasks ran in parallel.
+    for r in results:
+        assert r.status_code in {HTTPStatus.OK, HTTPStatus.CREATED}, r.json()
+    async with concurrent_session_factory() as session:
+        result = await session.execute(
+            select(StageProgress).where(StageProgress.user_id == user_id)
+        )
+        rows = list(result.scalars().all())
+    assert len(rows) == 1
+    assert rows[0].current_stage == 1
+    assert rows[0].completed_stages == []
