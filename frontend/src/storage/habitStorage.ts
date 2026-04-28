@@ -2,6 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { Habit } from '../features/Habits/Habits.types';
 
+import { serialize } from './serializedWrite';
+
 const STORAGE_KEY = '@adepthood/habits';
 const PENDING_CHECKINS_KEY = '@adepthood/pending_checkins';
 
@@ -66,19 +68,34 @@ export async function clearHabits(): Promise<void> {
   await AsyncStorage.removeItem(STORAGE_KEY);
 }
 
+/**
+ * BUG-FE-STORAGE-002: append a check-in to the pending queue under a
+ * serialized write lane. AsyncStorage offers no transactional RMW, so
+ * two concurrent appenders that both hit `loadPendingCheckIns` before
+ * either calls `setItem` would each write a single-item array,
+ * silently losing one of the user's check-ins. Funnelling every write
+ * to `PENDING_CHECKINS_KEY` through `serialize(...)` makes the
+ * load-modify-write block atomic with respect to other appenders.
+ */
 export async function savePendingCheckIn(checkIn: PendingCheckIn): Promise<void> {
-  const existing = await loadPendingCheckIns();
-  existing.push(checkIn);
-  await AsyncStorage.setItem(PENDING_CHECKINS_KEY, JSON.stringify(existing));
+  await serialize(PENDING_CHECKINS_KEY, async () => {
+    const existing = await loadPendingCheckIns();
+    existing.push(checkIn);
+    await AsyncStorage.setItem(PENDING_CHECKINS_KEY, JSON.stringify(existing));
+  });
 }
 
 /**
  * Replace the pending-check-in queue with `checkIns`. Used by the
  * partial-success replay path so a successful prefix is dropped without
  * a separate clear+rewrite (which would race with savePendingCheckIn).
+ * Serialized through the same lane so a replay-driven `replace` can't
+ * race with an inflight `savePendingCheckIn` from the foreground.
  */
 export async function replacePendingCheckIns(checkIns: PendingCheckIn[]): Promise<void> {
-  await AsyncStorage.setItem(PENDING_CHECKINS_KEY, JSON.stringify(checkIns));
+  await serialize(PENDING_CHECKINS_KEY, async () => {
+    await AsyncStorage.setItem(PENDING_CHECKINS_KEY, JSON.stringify(checkIns));
+  });
 }
 
 export async function loadPendingCheckIns(): Promise<PendingCheckIn[]> {
