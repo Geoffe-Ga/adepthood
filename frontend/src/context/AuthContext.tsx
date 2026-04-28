@@ -183,9 +183,10 @@ async function saveTokenThenApply(
   }
   if (tokenRef.current === null) return;
   mutators.setToken(newToken);
-  // PR #260 review round 3: propagate the server's stored timezone to the
-  // auth context so a cold-start refresh restores the user's IANA zone
-  // instead of leaving ``userTimezone`` at the ``"UTC"`` default.
+  // Refresh responses carry the user's stored IANA zone so a cold-start
+  // → proactive-refresh sequence restores ``userTimezone`` without an
+  // extra ``GET /users/me`` round-trip.  ``undefined`` falls back to
+  // UTC so a legacy API build that omits the field still works.
   mutators.setUserTimezone(newTimezone ?? 'UTC');
   mutators.setAuthStatus('authenticated');
 }
@@ -359,13 +360,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Stable handle so effects depending on the mutators don't thrash.
   const mutators = useMemo<AuthMutators>(() => ({ setToken, setAuthStatus, setUserTimezone }), []);
 
-  // PR #260 review round 3: ``applyNewToken`` now also accepts the
-  // server's stored timezone from the refresh response so the cold-start
-  // → proactive-refresh path keeps ``userTimezone`` aligned with the
-  // authenticated user's IANA zone.  ``undefined`` falls back to UTC so
-  // an old API build that omits the field still works.
+  // ``applyNewToken`` accepts the server's stored timezone from the
+  // refresh response so the cold-start → proactive-refresh path keeps
+  // ``userTimezone`` aligned with the authenticated user's IANA zone.
+  // ``undefined`` falls back to UTC so a legacy API build that omits
+  // the field still works.
+  //
+  // The two ``tokenRef.current === null`` guards mirror
+  // ``saveTokenThenApply`` so a logout that wins the race against a
+  // proactive refresh does NOT silently resurrect the session by
+  // re-applying a stale token after the user explicitly signed out.
   const applyNewToken = useCallback(async (newToken: string, newTimezone: string | undefined) => {
-    await saveToken(newToken);
+    if (tokenRef.current === null) return;
+    try {
+      await saveToken(newToken);
+    } catch (err: unknown) {
+      console.warn('saveToken failed in applyNewToken', err);
+      return;
+    }
+    if (tokenRef.current === null) return;
     setToken(newToken);
     setUserTimezone(newTimezone ?? 'UTC');
     setAuthStatus('authenticated');

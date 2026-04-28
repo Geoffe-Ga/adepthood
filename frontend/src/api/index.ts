@@ -320,10 +320,10 @@ async function attemptTokenRefresh(): Promise<string | null> {
     });
     if (!refreshRes.ok) return null;
     const data = (await refreshRes.json()) as AuthResponse;
-    // PR #260 review round 3: forward the server's stored timezone so the
-    // AuthContext can keep ``userTimezone`` in sync after a cold-start
-    // refresh.  Without this, ``userTimezone`` would stay at its
-    // ``"UTC"`` default until the user manually re-authenticated.
+    // Forward the server's stored timezone so the AuthContext can keep
+    // ``userTimezone`` in sync after a cold-start refresh.  Without
+    // this, ``userTimezone`` would stay at its ``"UTC"`` default until
+    // the user manually re-authenticated.
     onTokenRefreshedCallback?.(data.token, data.timezone);
     return data.token;
   } catch {
@@ -1267,9 +1267,9 @@ export interface AuthRequest {
  * The frontend sends `Intl.DateTimeFormat().resolvedOptions().timeZone`
  * on first signup so streak / daily-completion math computes "today" in
  * the user's local calendar from day one (closes the BUG-STREAK-002
- * write-path gap surfaced by the PR #260 review).  Optional on the wire
- * — omitting it keeps the column at its `"UTC"` default for clients
- * still on the old payload shape.
+ * write-path gap).  Optional on the wire — omitting it keeps the
+ * column at its `"UTC"` default for clients still on the old payload
+ * shape.
  */
 export interface SignupRequest extends AuthRequest {
   timezone?: string;

@@ -153,11 +153,12 @@ describe('AuthContext', () => {
         await result.current.signup('new@test.com', 'password123');
       });
 
-      // Signup attaches the device's IANA zone (PR #260 review write-
-      // path gap).  In the jest environment ``Intl.DateTimeFormat().
-      // resolvedOptions().timeZone`` resolves to ``"UTC"`` so the helper
-      // deterministically returns ``"UTC"``; anything else here would
-      // indicate a regression in ``detectDeviceTimezone``.
+      // Signup attaches the device's IANA zone so the new account is
+      // created with the user's local calendar from day one.  In the
+      // jest environment ``Intl.DateTimeFormat().resolvedOptions().
+      // timeZone`` resolves to ``"UTC"`` so the helper deterministically
+      // returns ``"UTC"``; anything else here would indicate a
+      // regression in ``detectDeviceTimezone``.
       expect(mockAuth.signup).toHaveBeenCalledWith({
         email: 'new@test.com',
         password: 'password123', // pragma: allowlist secret
@@ -392,10 +393,11 @@ describe('AuthContext', () => {
     });
 
     it('propagates server timezone from refresh response to userTimezone', async () => {
-      // PR #260 review round 3: cold-start -> proactive-refresh used to
-      // discard ``response.timezone`` so ``userTimezone`` stayed at the
-      // ``"UTC"`` default until the user manually re-authenticated.  The
-      // refresh callback now receives both fields and forwards the zone.
+      // The refresh callback receives both the new token and the
+      // server's stored IANA zone, so a cold-start → proactive-refresh
+      // sequence keeps ``userTimezone`` aligned with the authenticated
+      // user instead of leaving it at the ``"UTC"`` default until the
+      // user manually re-authenticates.
       mockLoadToken.mockResolvedValue('old-jwt');
       mockSaveToken.mockResolvedValue(undefined);
 

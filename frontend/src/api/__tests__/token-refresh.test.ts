@@ -87,11 +87,10 @@ describe('retry-after-refresh on 401', () => {
     const [, retryInit] = mockFetch.mock.calls[2];
     expect(retryInit.headers).toMatchObject({ Authorization: 'Bearer refreshed-token' });
 
-    // Verify the onTokenRefreshed callback received the new token plus
-    // the server's stored timezone (PR #260 review round 3 -- the API
-    // layer now forwards ``response.timezone`` so the AuthContext can
-    // keep ``userTimezone`` in sync).  ``undefined`` is the value when
-    // the server omits the field (legacy / mocked responses).
+    // The onTokenRefreshed callback receives the new token plus the
+    // server's stored timezone so the AuthContext can keep
+    // ``userTimezone`` in sync.  ``undefined`` is the value when the
+    // server omits the field (legacy / mocked responses).
     expect(mockOnTokenRefreshed).toHaveBeenCalledWith('refreshed-token', undefined);
 
     expect(result).toEqual([sampleHabit]);

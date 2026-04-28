@@ -773,7 +773,7 @@ async def test_refresh_rate_limit_returns_429(async_client: AsyncClient) -> None
     assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
 
 
-# ── User.timezone signup write path (PR #260 review) ──────────────────────
+# ── User.timezone signup write path ────────────────────────────────────────
 
 
 @pytest.mark.asyncio

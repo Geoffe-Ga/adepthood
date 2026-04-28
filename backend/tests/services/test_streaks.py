@@ -262,3 +262,100 @@ async def test_streak_buckets_to_different_dates_pago_pago_vs_kiritimati(
 
     assert await compute_consecutive_streak(db_session, goal.id, user.id, "Pacific/Pago_Pago") == 1
     assert await compute_consecutive_streak(db_session, goal.id, user.id, "Pacific/Kiritimati") == 1
+
+
+# ── BUG-FE-HABIT-207 backend parity: recency gate on stale chains ──────────
+
+
+def _utc_dt_n_days_ago(days: int) -> datetime:
+    """Return a tz-aware UTC datetime ``days`` ago at noon for fixture clarity."""
+    return (datetime.now(UTC) - timedelta(days=days)).replace(
+        hour=12,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+
+
+def test_compute_habit_streak_returns_zero_when_chain_is_stale() -> None:
+    """A 5-day chain that ended 5 days ago must report 0, not 5.
+
+    Mirrors the frontend ``streakFromCompletions`` recency gate.  Without
+    this the Habits list would advertise "10-day streak 🔥" while the
+    stats overlay (which uses the frontend helper) shows 0 -- a visible
+    discrepancy that the gate prevents.
+    """
+    user_id = 999
+    goal_id = 1
+    completions = [
+        GoalCompletion(
+            goal_id=goal_id,
+            user_id=user_id,
+            completed_units=1.0,
+            timestamp=_utc_dt_n_days_ago(days_ago),
+        )
+        for days_ago in (5, 6, 7, 8, 9)
+    ]
+    from services.streaks import compute_habit_streak  # noqa: PLC0415 -- co-located with usage
+
+    assert compute_habit_streak(completions, "UTC") == 0
+
+
+def test_compute_habit_streak_counts_chain_ending_yesterday() -> None:
+    """A chain that ended yesterday is still active (one-day grace window)."""
+    user_id = 999
+    goal_id = 1
+    completions = [
+        GoalCompletion(
+            goal_id=goal_id,
+            user_id=user_id,
+            completed_units=1.0,
+            timestamp=_utc_dt_n_days_ago(days_ago),
+        )
+        for days_ago in (1, 2, 3)
+    ]
+    from services.streaks import compute_habit_streak  # noqa: PLC0415 -- co-located with usage
+
+    assert compute_habit_streak(completions, "UTC") == 3
+
+
+def test_compute_habit_streak_counts_chain_including_today() -> None:
+    """A chain that includes today reports the full length."""
+    user_id = 999
+    goal_id = 1
+    completions = [
+        GoalCompletion(
+            goal_id=goal_id,
+            user_id=user_id,
+            completed_units=1.0,
+            timestamp=_utc_dt_n_days_ago(days_ago),
+        )
+        for days_ago in (0, 1, 2)
+    ]
+    from services.streaks import compute_habit_streak  # noqa: PLC0415 -- co-located with usage
+
+    assert compute_habit_streak(completions, "UTC") == 3
+
+
+@pytest.mark.asyncio
+async def test_compute_consecutive_streak_returns_zero_when_chain_is_stale(
+    db_session: AsyncSession,
+) -> None:
+    """DB path matches the in-memory path: a stale chain reports 0."""
+    user = await _make_user(db_session)
+    assert user.id is not None
+    goal = await _make_goal(db_session, user.id)
+    assert goal.id is not None
+
+    for days_ago in (5, 6, 7):
+        db_session.add(
+            GoalCompletion(
+                goal_id=goal.id,
+                user_id=user.id,
+                completed_units=goal.target,
+                timestamp=_utc_dt_n_days_ago(days_ago),
+            ),
+        )
+    await db_session.commit()
+
+    assert await compute_consecutive_streak(db_session, goal.id, user.id, "UTC") == 0

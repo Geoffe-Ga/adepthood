@@ -18,12 +18,12 @@ silently coerces naive datetimes.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from domain.dates import to_user_date
+from domain.dates import to_user_date, today_in_tz
 from domain.streaks import update_streak
 from models.goal_completion import GoalCompletion
 from schemas.milestone import Milestone
@@ -71,6 +71,24 @@ def _count_consecutive_days(sorted_days: list[date], day_ok: dict[date, bool]) -
     return streak
 
 
+def _is_chain_stale(sorted_days_desc: list[date], user_timezone: str) -> bool:
+    """Return True when the most-recent completion day is older than yesterday.
+
+    Mirrors the frontend ``streakFromCompletions`` recency gate so both
+    sides of the wire agree: if the user has not completed today *or*
+    yesterday, the chain is considered broken and the streak is 0.
+
+    The "yesterday" grace window prevents the UI from briefly flashing
+    "streak lost" between local midnight and the user's first
+    completion of the day; one stale day is forgiven, two is not.
+    """
+    if not sorted_days_desc:
+        return True
+    today = today_in_tz(user_timezone)
+    yesterday = today - timedelta(days=1)
+    return sorted_days_desc[0] < yesterday
+
+
 async def compute_consecutive_streak(
     session: AsyncSession,
     goal_id: int,
@@ -98,6 +116,13 @@ async def compute_consecutive_streak(
         day_totals[day] = day_totals.get(day, 0.0) + units
 
     sorted_days = sorted(day_totals, reverse=True)
+    # Mirror the frontend's recency gate so a stale chain reports 0 here
+    # too.  ``compute_consecutive_streak`` is also called from the
+    # check-in path which inserts today's completion before reading,
+    # so the gate is a no-op there; the win is preventing surprise
+    # divergence from any future caller.
+    if _is_chain_stale(sorted_days, user_timezone):
+        return 0
     day_ok = {d: day_totals[d] > 0 for d in sorted_days}
     return _count_consecutive_days(sorted_days, day_ok)
 
@@ -113,6 +138,15 @@ def compute_habit_streak(
     (BUG-STREAK-002) — both call sites must agree or the same goal would
     show two different streak counts depending on whether it was loaded
     via the in-memory or per-goal path.
+
+    Also enforces the same recency gate the frontend
+    ``streakFromCompletions`` helper uses (BUG-FE-HABIT-207): if the most
+    recent completion is older than yesterday in the user's calendar,
+    the streak is broken and the helper returns 0.  Without the gate the
+    Habits list endpoint would advertise a non-zero "10-day streak 🔥"
+    while the stats overlay (which used the frontend helper) showed 0
+    after a missed day -- exactly the visible discrepancy this gate
+    prevents.
     """
     if not completions:
         return 0
@@ -125,6 +159,8 @@ def compute_habit_streak(
         return 0
 
     sorted_dates = sorted(dates, reverse=True)
+    if _is_chain_stale(sorted_dates, user_timezone):
+        return 0
     day_ok = dict.fromkeys(sorted_dates, True)
     return _count_consecutive_days(sorted_dates, day_ok)
 
