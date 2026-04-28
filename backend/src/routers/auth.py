@@ -26,6 +26,7 @@ from sqlmodel import select
 from database import get_session
 from errors import bad_request
 from models.login_attempt import LoginAttempt
+from models.revoked_token import RevokedToken
 from models.user import DEFAULT_USER_TIMEZONE, User
 from rate_limit import limiter
 from services.users import get_user_timezone
@@ -226,13 +227,38 @@ def _verify_password(password: str, password_hash: str) -> bool:
     return bool(bcrypt.checkpw(password.encode(), password_hash.encode("utf-8")))
 
 
-def _create_token(user_id: int) -> str:
+def _new_jti() -> str:
+    """Return a fresh per-token unique identifier.
+
+    Used as the ``jti`` claim on every issued JWT so ``/auth/refresh``
+    can revoke the old token by storing this value in
+    :class:`models.revoked_token.RevokedToken` (BUG-AUTH-013).
+    16 bytes of entropy (32 hex chars) is plenty -- the value is
+    namespaced by user, so collision is irrelevant for security and
+    only needs to be unique enough that two tokens issued within the
+    same millisecond don't share a row.
+    """
+    return secrets.token_hex(16)
+
+
+def _create_token(user_id: int) -> tuple[str, str]:
+    """Mint a fresh JWT with a per-token ``jti`` claim.
+
+    Returns ``(token, jti)`` so callers that need to revoke the
+    previous token (e.g. ``/auth/refresh``) can persist the old jti
+    before swapping in the new one.  Tokens minted before the jti
+    column existed have no claim and are treated as legacy-but-valid
+    by ``get_current_user`` -- the 1-hour TTL is the grace window.
+    """
+    jti = _new_jti()
     payload = {
         "sub": str(user_id),
         "exp": datetime.now(UTC) + _TOKEN_TTL,
         "iat": datetime.now(UTC),
+        "jti": jti,
     }
-    return str(jwt.encode(payload, _get_secret_key(), algorithm=_JWT_ALGORITHM))
+    token = str(jwt.encode(payload, _get_secret_key(), algorithm=_JWT_ALGORITHM))
+    return token, jti
 
 
 def _create_dummy_token() -> str:
@@ -418,7 +444,7 @@ async def signup(
     if user.id is None:
         msg = "User ID unexpectedly None after database commit"
         raise RuntimeError(msg)
-    token = _create_token(user.id)
+    token, _ = _create_token(user.id)
     return AuthResponse(token=token, user_id=user.id, timezone=user.timezone)
 
 
@@ -475,16 +501,18 @@ async def login(
     if user.id is None:
         msg = "User ID unexpectedly None after database commit"
         raise RuntimeError(msg)
-    token = _create_token(user.id)
+    token, _ = _create_token(user.id)
     return AuthResponse(token=token, user_id=user.id, timezone=user.timezone)
 
 
-def get_current_user(authorization: str | None = Header(default=None)) -> int:
-    """Extract and validate the JWT from the Authorization header.
+def _decode_token_payload(authorization: str | None) -> dict[str, object]:
+    """Decode the bearer JWT and return its payload, or raise 401.
 
-    All rejection scenarios return an identical 401 with detail="unauthorized"
-    to prevent attackers from distinguishing token states (OWASP A07:2021,
-    sec-04). The specific reason is logged server-side for debugging.
+    Split out from ``get_current_user`` so the JWT-decode + ``sub``
+    coercion logic stays at xenon rank A while the async revocation
+    check lives in the wrapper.  All rejection paths return an
+    identical 401 ``unauthorized`` (OWASP A07:2021) so attackers
+    cannot distinguish "token expired" from "token forged".
     """
     if not authorization or not authorization.startswith("Bearer "):
         logger.info("token_rejected", extra={"reason": "missing_or_malformed_header"})
@@ -498,12 +526,16 @@ def get_current_user(authorization: str | None = Header(default=None)) -> int:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized"
         ) from exc
-    # ``sub`` may be missing or non-numeric on a forged / corrupted token
-    # (BUG-AUTH-012).  Without this guard the bare ``int(payload["sub"])``
-    # call raised ``KeyError`` / ``ValueError`` uncaught and Starlette
-    # surfaced it as 500 -- leaking "your token confused us" diagnostics
-    # to the attacker.  Convert into the same 401 every other auth path
-    # uses so the rejection looks identical.
+    return payload
+
+
+def _coerce_sub(payload: dict[str, object]) -> int:
+    """Convert the ``sub`` claim to ``int`` or raise 401 (BUG-AUTH-012).
+
+    Without this guard the bare ``int(payload["sub"])`` call raised
+    ``KeyError`` / ``ValueError`` uncaught and Starlette surfaced 500
+    -- leaking "your token confused us" diagnostics to the attacker.
+    """
     sub = payload.get("sub")
     if not isinstance(sub, str | int):
         logger.info("token_rejected", extra={"reason": "malformed_sub"})
@@ -517,23 +549,106 @@ def get_current_user(authorization: str | None = Header(default=None)) -> int:
         ) from exc
 
 
+async def _check_token_not_revoked(session: AsyncSession, payload: dict[str, object]) -> None:
+    """Reject the request if the token's ``jti`` is in the revocation table.
+
+    Tokens minted before the ``jti`` claim existed are treated as
+    legacy-but-valid -- the missing claim short-circuits without a DB
+    hit, and the 1-hour TTL is the grace window the prompt requires
+    so existing sessions do not all 401 at once on deploy
+    (BUG-AUTH-013).
+    """
+    jti = payload.get("jti")
+    if not isinstance(jti, str) or not jti:
+        return  # Legacy token -- no revocation possible.
+    result = await session.execute(select(RevokedToken.jti).where(RevokedToken.jti == jti))
+    if result.scalar_one_or_none() is not None:
+        logger.info("token_rejected", extra={"reason": "revoked"})
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
+
+
+async def get_current_user(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    authorization: str | None = Header(default=None),
+) -> int:
+    """Extract, validate, and revocation-check the JWT.
+
+    Async because ``BUG-AUTH-013`` requires a DB lookup against the
+    ``revokedtoken`` table on every authenticated request.  The check
+    is keyed on the primary-key ``jti`` so the cost is one indexed
+    SELECT per request, not a full scan.
+
+    All rejection scenarios return an identical 401 with
+    ``detail="unauthorized"`` to prevent attackers from distinguishing
+    token states (OWASP A07:2021, sec-04). The specific reason is
+    logged server-side for debugging.
+    """
+    payload = _decode_token_payload(authorization)
+    await _check_token_not_revoked(session, payload)
+    return _coerce_sub(payload)
+
+
+async def _revoke_token_payload(
+    session: AsyncSession,
+    payload: dict[str, object],
+) -> None:
+    """Persist the token's ``jti`` to ``revokedtoken`` so it cannot be reused.
+
+    Tokens minted before the ``jti`` claim existed are silently passed
+    through (no row to insert) -- the 1-hour TTL is the grace window.
+    The ``exp`` claim is mirrored into ``expires_at`` so a periodic
+    cleanup job can prune past-due rows without re-decoding the JWT.
+    Conflicting writes (same jti revoked twice) are caught and ignored
+    so an idempotent retry of ``/auth/refresh`` does not 500.
+    """
+    jti = payload.get("jti")
+    exp = payload.get("exp")
+    if not isinstance(jti, str) or not jti:
+        return  # legacy token, no jti
+    expires_at = (
+        datetime.fromtimestamp(exp, tz=UTC)
+        if isinstance(exp, int | float)
+        else datetime.now(UTC) + _TOKEN_TTL
+    )
+    session.add(RevokedToken(jti=jti, expires_at=expires_at))
+    try:
+        await session.commit()
+    except IntegrityError:
+        # Already revoked (e.g. double-clicked refresh); same outcome.
+        await session.rollback()
+
+
 @router.post("/refresh", response_model=AuthResponse)
 @limiter.limit("1/minute")
 async def refresh_token(
-    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    request: Request,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AuthResponse:
     """Exchange a valid JWT for a fresh one.
 
-    Rate-limited to 1 request per minute to prevent abuse. The caller must
-    present a valid, non-expired token in the Authorization header; the
-    response contains a new token with a reset TTL for the same user.
+    Rate-limited to 1 request per minute to prevent abuse. The caller
+    must present a valid, non-expired token in the Authorization
+    header; the response contains a new token with a reset TTL for the
+    same user.
+
+    The old token's ``jti`` is revoked (BUG-AUTH-013) before the new
+    one is minted so a stolen-and-refreshed token cannot be replayed
+    until its original ``exp``.  Tokens minted before the jti claim
+    existed are passed through transparently for the duration of their
+    TTL -- the 1-hour grace window the prompt requires for the
+    JWT-shape change.
 
     The response also re-asserts the stored ``timezone`` so a frontend
     that hot-reloads or evicts its auth context receives the correct
     user-local zone after a refresh, not a stale ``"UTC"`` default.
     """
-    new_token = _create_token(user_id)
+    # Re-decode the header (``get_current_user`` only surfaces the int
+    # ``sub``) so we can persist the old ``jti`` against
+    # ``revokedtoken`` before minting the new one.
+    old_payload = _decode_token_payload(request.headers.get("Authorization"))
+    await _revoke_token_payload(session, old_payload)
+
+    new_token, _ = _create_token(user_id)
     user_timezone = await get_user_timezone(session, user_id)
     return AuthResponse(token=new_token, user_id=user_id, timezone=user_timezone)

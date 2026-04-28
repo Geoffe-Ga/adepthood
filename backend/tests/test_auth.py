@@ -791,16 +791,31 @@ async def test_refresh_with_invalid_token_returns_401(async_client: AsyncClient)
 
 @pytest.mark.asyncio
 async def test_refresh_rate_limit_returns_429(async_client: AsyncClient) -> None:
-    """Refresh endpoint returns 429 after exceeding 1 request/minute."""
-    data = await _signup(async_client)
-    headers = {"Authorization": f"Bearer {data['token']}"}
+    """Refresh endpoint returns 429 after exceeding 1 request/minute.
 
-    # First request should succeed
-    resp = await async_client.post(REFRESH_URL, headers=headers)
+    Each refresh revokes the old token's ``jti`` (BUG-AUTH-013), so a
+    second refresh with the *same* token would 401 before the rate
+    limiter saw it.  We sign up a second account to get a fresh,
+    non-revoked token for the rate-limit-triggering request -- the
+    1/minute slowapi limit is per-IP so the second request from the
+    same TestClient still trips it.
+    """
+    first = await _signup(async_client, email="rl1@example.com")
+    second = await _signup(async_client, email="rl2@example.com")
+
+    # First request consumes the per-IP slot.
+    resp = await async_client.post(
+        REFRESH_URL,
+        headers={"Authorization": f"Bearer {first['token']}"},
+    )
     assert resp.status_code == HTTPStatus.OK
 
-    # Second request within the same minute should be rate-limited
-    resp = await async_client.post(REFRESH_URL, headers=headers)
+    # Second request from the same IP is rate-limited regardless of
+    # which (non-revoked) token it carries.
+    resp = await async_client.post(
+        REFRESH_URL,
+        headers={"Authorization": f"Bearer {second['token']}"},
+    )
     assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
 
 
@@ -1224,3 +1239,79 @@ async def test_blocked_login_attempt_is_recorded(
     attempts = list(result.scalars().all())
     # MAX_FAILED_ATTEMPTS verify-failed + at least 1 blocked-and-recorded.
     assert len(attempts) > MAX_FAILED_ATTEMPTS
+
+
+# ── BUG-AUTH-013: refresh revokes the old token's jti ─────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_refresh_revokes_previous_token(
+    async_client: AsyncClient,
+) -> None:
+    """A token cannot be replayed after a successful refresh.
+
+    The first refresh succeeds and stores the old ``jti`` in the
+    revocation table.  Replaying the original token afterwards must
+    400/401, not return a fresh response -- otherwise a stolen token
+    keeps working until its original 1-hour ``exp``.
+    """
+    data = await _signup(async_client, email="revoke@example.com")
+    old_token = data["token"]
+
+    # First refresh -- old token is consumed and revoked.
+    first = await async_client.post(
+        REFRESH_URL,
+        headers={"Authorization": f"Bearer {old_token}"},
+    )
+    assert first.status_code == HTTPStatus.OK
+    new_token = first.json()["token"]
+    assert new_token != old_token
+
+    # Replaying the OLD token -- now revoked -- must be rejected.
+    replayed = await async_client.post(
+        REFRESH_URL,
+        headers={"Authorization": f"Bearer {old_token}"},
+    )
+    assert replayed.status_code == HTTPStatus.UNAUTHORIZED
+
+    # The NEW token still works.
+    second = await async_client.post(
+        REFRESH_URL,
+        headers={"Authorization": f"Bearer {new_token}"},
+    )
+    assert second.status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_legacy_token_without_jti_still_authenticates(
+    async_client: AsyncClient,
+) -> None:
+    """BUG-AUTH-013 grace window: tokens minted before the jti claim work.
+
+    A deployment landing this PR cannot revoke every active session at
+    once.  Tokens whose payload omits ``jti`` are passed through the
+    revocation check transparently -- the 1-hour TTL is the grace
+    window, after which every new token has a jti and the legacy path
+    naturally drops.
+    """
+    # Create a corresponding user so the int sub maps to a real row.
+    data = await _signup(async_client, email="legacy@example.com")
+    user_id = data["user_id"]
+    legacy = jwt.encode(
+        {
+            "sub": str(user_id),
+            "exp": datetime.now(UTC) + timedelta(hours=1),
+            "iat": datetime.now(UTC),
+            # No ``jti`` claim -- legacy shape.
+        },
+        SECRET_KEY,
+        algorithm="HS256",
+    )
+    resp = await async_client.post(
+        REFRESH_URL,
+        headers={"Authorization": f"Bearer {legacy}"},
+    )
+    # Accepts the request -- the auth dep does not 401 a missing jti.
+    assert resp.status_code == HTTPStatus.OK
