@@ -6,7 +6,13 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from main import DEV_ORIGINS, _assert_credentials_safe, app, get_cors_origins
+from main import (
+    DEV_ORIGINS,
+    _assert_credentials_safe,
+    _validate_prod_origin,
+    app,
+    get_cors_origins,
+)
 
 client = TestClient(app)
 
@@ -246,11 +252,6 @@ def test_preflight_disallowed_method() -> None:
 
 
 # ── BUG-APP-003: PROD_DOMAIN URL-validation hardening ─────────────────────
-
-
-import pytest  # noqa: E402
-
-from main import _validate_prod_origin  # noqa: E402
 
 
 @pytest.mark.parametrize(

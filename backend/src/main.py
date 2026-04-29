@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
@@ -353,7 +354,7 @@ async def readiness(
     try:
         async with asyncio.timeout(_DB_PROBE_TIMEOUT_SECONDS):
             await session.execute(text("SELECT 1"))
-    except (TimeoutError, Exception) as exc:
+    except (TimeoutError, OSError, SQLAlchemyError) as exc:
         logger.exception("readiness_check_failed")
         raise HTTPException(status_code=503, detail="not_ready") from exc
     return {"status": "ready", "database": "connected"}
@@ -374,7 +375,7 @@ async def health_check(
     try:
         async with asyncio.timeout(_DB_PROBE_TIMEOUT_SECONDS):
             await session.execute(text("SELECT 1"))
-    except (TimeoutError, Exception) as exc:
+    except (TimeoutError, OSError, SQLAlchemyError) as exc:
         logger.exception("health_check_failed")
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
     return {"status": "healthy", "database": "connected"}
