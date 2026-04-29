@@ -495,6 +495,30 @@ async def login(
                 detail="invalid_credentials",
             )
 
+        # Account-state gate (BUG-MODEL-001).  Done after credential
+        # verification so a probe with a wrong password against a
+        # disabled account still gets the same 401 path as any other
+        # bad guess -- otherwise the response timing would distinguish
+        # "exists but disabled" from "exists with wrong password" and
+        # leak existence information.  ``invalid_credentials`` is
+        # reused for the same reason; only the server log records the
+        # specific reason.
+        if not user.is_active or user.deleted_at is not None:
+            reason = "user_deleted" if user.deleted_at is not None else "user_disabled"
+            logger.info(
+                "auth_attempt_blocked",
+                extra={
+                    "email_fingerprint": _email_log_fingerprint(payload.email),
+                    "ip_address": ip_address,
+                    "reason": reason,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                },
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="invalid_credentials",
+            )
+
         # Successful login — record and reset the failure window
         await _record_attempt(session, payload.email, ip_address, success=True)
 
@@ -567,6 +591,37 @@ async def _check_token_not_revoked(session: AsyncSession, payload: dict[str, obj
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
 
 
+async def _check_user_active(session: AsyncSession, user_id: int) -> None:
+    """Reject the request if the user is soft-disabled or soft-deleted.
+
+    Mirrors the gate the column docstrings on ``User.is_active`` /
+    ``User.deleted_at`` promise: an operator who flips ``is_active`` or
+    sets ``deleted_at`` expects the affected user's existing tokens to
+    stop authenticating immediately (BUG-MODEL-001).  Looked up by
+    primary key so the cost is a single indexed SELECT per
+    authenticated request, paired with the revocation lookup in
+    :func:`_check_token_not_revoked` -- the alternative (joining the
+    user row into the revocation query) would couple two unrelated
+    tables for marginal savings.
+
+    Returns the same 401 ``unauthorized`` as every other rejection path
+    so attackers cannot distinguish disabled-account from
+    invalid-token (OWASP A07:2021).
+    """
+    result = await session.execute(
+        select(User.is_active, User.deleted_at).where(User.id == user_id)
+    )
+    row = result.first()
+    if row is None or not row.is_active or row.deleted_at is not None:
+        reason = (
+            "user_missing"
+            if row is None
+            else ("user_deleted" if row.deleted_at is not None else "user_disabled")
+        )
+        logger.info("token_rejected", extra={"reason": reason})
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
+
+
 async def get_current_user(
     session: Annotated[AsyncSession, Depends(get_session)],
     authorization: str | None = Header(default=None),
@@ -578,6 +633,11 @@ async def get_current_user(
     is keyed on the primary-key ``jti`` so the cost is one indexed
     SELECT per request, not a full scan.
 
+    Also gates on the account-state flags landed in BUG-MODEL-001: a
+    soft-disabled (``is_active=False``) or soft-deleted
+    (``deleted_at IS NOT NULL``) user cannot ride an existing token
+    past the deletion / disable boundary.
+
     All rejection scenarios return an identical 401 with
     ``detail="unauthorized"`` to prevent attackers from distinguishing
     token states (OWASP A07:2021, sec-04). The specific reason is
@@ -585,7 +645,9 @@ async def get_current_user(
     """
     payload = _decode_token_payload(authorization)
     await _check_token_not_revoked(session, payload)
-    return _coerce_sub(payload)
+    user_id = _coerce_sub(payload)
+    await _check_user_active(session, user_id)
+    return user_id
 
 
 async def _revoke_token_payload(

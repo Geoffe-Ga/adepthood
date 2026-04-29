@@ -14,13 +14,17 @@ their habits, completions, journal entries, etc.  The right-to-be-
 forgotten model is the cleanest default for a personal-development
 product where a user's data has no value separate from the user.
 
-The two nullable / catalog tables get ``ON DELETE SET NULL`` instead
-so historical context survives the deletion of its creator:
+The catalog / audit tables get ``ON DELETE SET NULL`` instead so
+historical context survives the deletion of its creator or actor:
 
   * ``goalgroup.user_id`` -- shared template groups outlive any
     individual creator.
   * ``practice.submitted_by_user_id`` -- catalog practices stay in
     the library; the attribution becomes anonymous.
+  * ``walletaudit.actor_user_id`` -- financial-audit history must
+    outlive the deletion of an admin who acted on someone else's
+    wallet; ``user_id`` (the wallet owner) still cascades because
+    the audit row is meaningless without that anchor.
 
 Drops and re-creates each user FK with the Postgres default name
 (``<table>_<column>_fkey``) so the constraint name on disk matches
@@ -35,6 +39,7 @@ drop-then-create pattern is portable for the targets that matter.
 
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -58,7 +63,7 @@ _USER_FK_TABLES: tuple[tuple[str, str, str], ...] = (
     ("stageprogress", "user_id", "CASCADE"),
     ("userpractice", "user_id", "CASCADE"),
     ("walletaudit", "user_id", "CASCADE"),
-    ("walletaudit", "actor_user_id", "CASCADE"),
+    ("walletaudit", "actor_user_id", "SET NULL"),
 )
 
 
@@ -69,6 +74,11 @@ def _fk_name(table: str, column: str) -> str:
 
 def upgrade() -> None:
     """Replace each user FK with one that carries the appropriate ondelete."""
+    # ``walletaudit.actor_user_id`` must be nullable for ``SET NULL`` to have
+    # a target.  The column landed as ``NOT NULL`` in the wallet-audit
+    # migration; relax it before swapping the FK so a future actor-user
+    # deletion can null the row without violating the column constraint.
+    op.alter_column("walletaudit", "actor_user_id", existing_type=sa.Integer(), nullable=True)
     for table, column, on_delete in _USER_FK_TABLES:
         name = _fk_name(table, column)
         op.drop_constraint(name, table, type_="foreignkey")
@@ -88,3 +98,4 @@ def downgrade() -> None:
         name = _fk_name(table, column)
         op.drop_constraint(name, table, type_="foreignkey")
         op.create_foreign_key(name, table, "user", [column], ["id"])
+    op.alter_column("walletaudit", "actor_user_id", existing_type=sa.Integer(), nullable=False)

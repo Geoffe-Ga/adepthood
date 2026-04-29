@@ -98,7 +98,19 @@ class WalletAudit(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", index=True, ondelete="CASCADE")
-    actor_user_id: int = Field(foreign_key="user.id", index=True, ondelete="CASCADE")
+    # ``actor_user_id`` uses ``ON DELETE SET NULL`` rather than ``CASCADE`` so
+    # an admin's deletion does not silently destroy audit rows for actions
+    # they took on *other* users' wallets.  Financial-audit history outlives
+    # the actor; the row's ``user_id`` link still anchors it to the wallet
+    # owner, and a NULL actor reads as "the original actor has been removed
+    # from the system" without losing the trail.
+    actor_user_id: int | None = Field(
+        default=None,
+        foreign_key="user.id",
+        index=True,
+        ondelete="SET NULL",
+        nullable=True,
+    )
     bucket: str = Field(
         sa_column=Column(String(_TOKEN_COLUMN_WIDTH), nullable=False, index=True),
     )

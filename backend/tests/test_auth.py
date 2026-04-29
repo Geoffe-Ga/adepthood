@@ -1153,13 +1153,6 @@ async def test_get_current_user_malformed_sub_returns_401(
         SECRET_KEY,
         algorithm="HS256",
     )
-    resp = await async_client.get(
-        "/auth/refresh",
-        headers={"Authorization": f"Bearer {forged}"},
-    )
-    # Either 401 (auth rejected) or 405 (method-not-allowed on refresh GET).
-    # The protected endpoint test below exercises the 401 path explicitly.
-    # We use a method that exists: POST /auth/refresh.
     resp = await async_client.post(
         "/auth/refresh",
         headers={"Authorization": f"Bearer {forged}"},
@@ -1315,3 +1308,123 @@ async def test_legacy_token_without_jti_still_authenticates(
     )
     # Accepts the request -- the auth dep does not 401 a missing jti.
     assert resp.status_code == HTTPStatus.OK
+
+
+# ── BUG-MODEL-001: is_active / deleted_at enforcement ───────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_login_rejects_disabled_user(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A user with ``is_active=False`` cannot log in even with the right password."""
+    await _signup(async_client, email="banned@example.com")
+    user = (
+        (await db_session.execute(select(User).where(User.email == "banned@example.com")))
+        .scalars()
+        .first()
+    )
+    assert user is not None
+    user.is_active = False
+    db_session.add(user)
+    await db_session.commit()
+
+    resp = await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "banned@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+    assert resp.json()["detail"] == "invalid_credentials"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_login_rejects_soft_deleted_user(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A user with ``deleted_at`` set cannot log in."""
+    await _signup(async_client, email="gone@example.com")
+    user = (
+        (await db_session.execute(select(User).where(User.email == "gone@example.com")))
+        .scalars()
+        .first()
+    )
+    assert user is not None
+    user.deleted_at = datetime.now(UTC)
+    db_session.add(user)
+    await db_session.commit()
+
+    resp = await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "gone@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+    assert resp.json()["detail"] == "invalid_credentials"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_existing_token_rejected_after_user_disabled(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A live token stops authenticating once the user is soft-disabled."""
+    data = await _signup(async_client, email="active@example.com")
+    token = data["token"]
+    # Token works initially.
+    pre = await async_client.post(
+        REFRESH_URL,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert pre.status_code == HTTPStatus.OK
+
+    user = (
+        (await db_session.execute(select(User).where(User.email == "active@example.com")))
+        .scalars()
+        .first()
+    )
+    assert user is not None
+    user.is_active = False
+    db_session.add(user)
+    await db_session.commit()
+
+    # The fresh token from the prior refresh is now invalidated by the
+    # account-state gate, even though it has not been explicitly revoked.
+    new_token = pre.json()["token"]
+    post = await async_client.post(
+        REFRESH_URL,
+        headers={"Authorization": f"Bearer {new_token}"},
+    )
+    assert post.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_existing_token_rejected_after_user_soft_deleted(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A live token stops authenticating once the user is soft-deleted."""
+    data = await _signup(async_client, email="leaving@example.com")
+    token = data["token"]
+
+    user = (
+        (await db_session.execute(select(User).where(User.email == "leaving@example.com")))
+        .scalars()
+        .first()
+    )
+    assert user is not None
+    user.deleted_at = datetime.now(UTC)
+    db_session.add(user)
+    await db_session.commit()
+
+    resp = await async_client.post(
+        REFRESH_URL,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED

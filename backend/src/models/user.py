@@ -86,9 +86,11 @@ class User(SQLModel, table=True):
     # reject login on a row that exists but is gated.
     #
     # ``email_verified`` -- false until the user clicks the
-    # verification link.  Routers that gate sensitive actions (wallet
-    # top-up, BotMason, etc.) can require ``email_verified=True`` once
-    # the verification flow ships.
+    # verification link.  Reserved for the verification-flow phase:
+    # routers that gate sensitive actions (wallet top-up, BotMason,
+    # etc.) will consult this once the verification UX ships.  No
+    # auth helper currently reads it, so existing signups continue
+    # to authenticate exactly as before.
     #
     # ``deleted_at`` -- soft-delete timestamp.  When set, the account
     # is treated as gone for query purposes (login fails, lookups

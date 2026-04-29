@@ -166,17 +166,23 @@ async def test_add_balance_non_admin_returns_403(async_client: AsyncClient) -> N
 
 
 @pytest.mark.asyncio
-async def test_add_balance_deleted_admin_returns_403(
+async def test_add_balance_deleted_admin_returns_401(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A valid JWT whose admin row was deleted must not pass the auth gate."""
+    """A valid JWT whose admin row was deleted now 401s at the auth gate.
+
+    BUG-MODEL-001: ``get_current_user`` queries ``is_active`` /
+    ``deleted_at`` so a missing-user lookup short-circuits with 401
+    ``unauthorized`` (the correct OWASP A07 response for a JWT that
+    cannot be resolved to a user) before reaching the admin check.
+    """
     headers = await _signup_admin(async_client, db_session)
     await db_session.execute(delete(User).where(col(User.email) == "alice@example.com"))
     await db_session.commit()
 
     resp = await async_client.post("/user/balance/add", json={"amount": 5}, headers=headers)
-    assert resp.status_code == HTTPStatus.FORBIDDEN
-    assert resp.json()["detail"] == "user_not_found"
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+    assert resp.json()["detail"] == "unauthorized"
 
 
 # ── Offering balance ───────────────────────────────────────────────────
