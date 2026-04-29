@@ -448,6 +448,71 @@ async def signup(
     return AuthResponse(token=token, user_id=user.id, timezone=user.timezone)
 
 
+def _log_blocked_attempt(email: str, ip_address: str, reason: str) -> None:
+    """Emit the ``auth_attempt_blocked`` audit log line.
+
+    Extracted from :func:`login` so the body stays at xenon rank A
+    after the BUG-MODEL-001 disabled-user gate added a third blocked
+    branch (lockout, missing/wrong-password, disabled / deleted).
+    """
+    logger.info(
+        "auth_attempt_blocked",
+        extra={
+            "email_fingerprint": _email_log_fingerprint(email),
+            "ip_address": ip_address,
+            "reason": reason,
+            "timestamp": datetime.now(UTC).isoformat(),
+        },
+    )
+
+
+def _user_state_reject_reason(user: User) -> str | None:
+    """Return the audit reason if the user is disabled / deleted, else ``None``.
+
+    Centralises the BUG-MODEL-001 gate so the same classification is
+    used in :func:`login` (after credential verification) and
+    :func:`_check_user_active` (on every authenticated request).
+    """
+    if user.deleted_at is not None:
+        return "user_deleted"
+    if not user.is_active:
+        return "user_disabled"
+    return None
+
+
+async def _verify_login_or_raise(
+    session: AsyncSession, payload: AuthRequest, ip_address: str
+) -> User:
+    """Run the lockout + credential + account-state gates for ``login``.
+
+    Each rejection raises ``invalid_credentials`` with the same shape
+    so the caller cannot distinguish "locked" from "wrong password"
+    from "disabled" -- only the server-side log records the specific
+    reason.  The state gate runs *after* the password check so the
+    response timing matches that of an ordinary wrong-password attempt
+    against a regular account.
+    """
+    if await _is_account_locked(session, payload.email):
+        await _record_attempt(session, payload.email, ip_address, success=False)
+        _log_blocked_attempt(payload.email, ip_address, "account_locked")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials")
+
+    result = await session.execute(select(User).where(User.email == payload.email))
+    user = result.scalars().first()
+
+    if user is None or not _verify_password(payload.password, user.password_hash):
+        await _record_attempt(session, payload.email, ip_address, success=False)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials")
+
+    reject_reason = _user_state_reject_reason(user)
+    if reject_reason is not None:
+        _log_blocked_attempt(payload.email, ip_address, reject_reason)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials")
+
+    await _record_attempt(session, payload.email, ip_address, success=True)
+    return user
+
+
 @router.post("/login", response_model=AuthResponse)
 @limiter.limit("5/minute")
 async def login(
@@ -461,66 +526,7 @@ async def login(
     # serialization so concurrent failed attempts cannot all pass the
     # threshold-1 check before any of them inserts (BUG-AUTH-007).
     async with _serialize_login(session, payload.email):
-        # Check lockout before even verifying credentials — prevents timing attacks
-        if await _is_account_locked(session, payload.email):
-            # Record the blocked attempt so a continuous attacker cannot
-            # silently wait out the rolling window (BUG-AUTH-006): without
-            # this row the oldest-of-last-N timestamp keeps aging out and
-            # the lock can expire even while attempts are still arriving.
-            # Recording each blocked try keeps the window fresh for as long
-            # as the attacker keeps trying.
-            await _record_attempt(session, payload.email, ip_address, success=False)
-            logger.info(
-                "auth_attempt_blocked",
-                extra={
-                    "email_fingerprint": _email_log_fingerprint(payload.email),
-                    "ip_address": ip_address,
-                    "reason": "account_locked",
-                    "timestamp": datetime.now(UTC).isoformat(),
-                },
-            )
-            # Return the same generic message to prevent account enumeration
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="invalid_credentials",
-            )
-
-        result = await session.execute(select(User).where(User.email == payload.email))
-        user = result.scalars().first()
-
-        if user is None or not _verify_password(payload.password, user.password_hash):
-            await _record_attempt(session, payload.email, ip_address, success=False)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="invalid_credentials",
-            )
-
-        # Account-state gate (BUG-MODEL-001).  Done after credential
-        # verification so a probe with a wrong password against a
-        # disabled account still gets the same 401 path as any other
-        # bad guess -- otherwise the response timing would distinguish
-        # "exists but disabled" from "exists with wrong password" and
-        # leak existence information.  ``invalid_credentials`` is
-        # reused for the same reason; only the server log records the
-        # specific reason.
-        if not user.is_active or user.deleted_at is not None:
-            reason = "user_deleted" if user.deleted_at is not None else "user_disabled"
-            logger.info(
-                "auth_attempt_blocked",
-                extra={
-                    "email_fingerprint": _email_log_fingerprint(payload.email),
-                    "ip_address": ip_address,
-                    "reason": reason,
-                    "timestamp": datetime.now(UTC).isoformat(),
-                },
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="invalid_credentials",
-            )
-
-        # Successful login — record and reset the failure window
-        await _record_attempt(session, payload.email, ip_address, success=True)
+        user = await _verify_login_or_raise(session, payload, ip_address)
 
     if user.id is None:
         msg = "User ID unexpectedly None after database commit"
@@ -591,6 +597,23 @@ async def _check_token_not_revoked(session: AsyncSession, payload: dict[str, obj
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
 
 
+def _user_row_reject_reason(row: object | None) -> str | None:
+    """Return the rejection reason for a user-state row (or ``None`` if OK).
+
+    Split out from :func:`_check_user_active` so that helper stays at
+    xenon rank A while keeping the three distinct outcomes
+    (``user_missing``, ``user_deleted``, ``user_disabled``) for
+    server-side logging.
+    """
+    if row is None:
+        return "user_missing"
+    if getattr(row, "deleted_at", None) is not None:
+        return "user_deleted"
+    if not getattr(row, "is_active", True):
+        return "user_disabled"
+    return None
+
+
 async def _check_user_active(session: AsyncSession, user_id: int) -> None:
     """Reject the request if the user is soft-disabled or soft-deleted.
 
@@ -611,13 +634,8 @@ async def _check_user_active(session: AsyncSession, user_id: int) -> None:
     result = await session.execute(
         select(User.is_active, User.deleted_at).where(User.id == user_id)
     )
-    row = result.first()
-    if row is None or not row.is_active or row.deleted_at is not None:
-        reason = (
-            "user_missing"
-            if row is None
-            else ("user_deleted" if row.deleted_at is not None else "user_disabled")
-        )
+    reason = _user_row_reject_reason(result.first())
+    if reason is not None:
         logger.info("token_rejected", extra={"reason": reason})
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
 
