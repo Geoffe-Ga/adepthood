@@ -413,3 +413,48 @@ async def test_concurrent_completions_yield_one_db_row(
         )
         rows = list(result.scalars().all())
     assert len(rows) == 1, [(r.id, r.timestamp) for r in rows]
+
+
+@pytest.mark.asyncio
+async def test_completion_request_rejects_unknown_fields(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """BUG-GOAL-007: ``extra="forbid"`` rejects unrecognised payload fields."""
+    headers, user_id = await _signup(async_client, "extra_forbid")
+    goal = await _seed_goal(db_session, user_id)
+
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={
+            "goal_id": goal.id,
+            "did_complete": True,
+            "completed_at": "2024-01-01T00:00:00Z",  # client-supplied, not in schema
+        },
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_response_streak_matches_db_after_commit(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """BUG-GOAL-002: response ``streak`` is the post-commit DB value, not arithmetic."""
+    headers, user_id = await _signup(async_client, "streak_truth")
+    goal = await _seed_goal(db_session, user_id)
+
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "did_complete": True},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    api_streak = resp.json()["streak"]
+
+    # Now query the streak directly via the same DB-level helper the API
+    # uses; the two MUST agree because they share a source of truth.
+    from services.streaks import compute_consecutive_streak  # noqa: PLC0415
+
+    assert goal.id is not None
+    db_streak = await compute_consecutive_streak(db_session, goal.id, user_id, "UTC")
+    assert api_streak == db_streak
