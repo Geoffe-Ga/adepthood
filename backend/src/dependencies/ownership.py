@@ -38,23 +38,21 @@ from routers.auth import get_current_user
 logger = logging.getLogger(__name__)
 
 
-def _log_ownership_denied(
-    resource: str, resource_id: int, current_user: int, owner_id: int
-) -> None:
-    """BUG-HABIT-003: emit a structured audit row when a cross-tenant probe is denied.
+def _log_ownership_denied(resource: str, resource_id: int, current_user: int) -> None:
+    """Emit a WARNING audit row when a cross-tenant probe is denied.
 
-    The 404→403 split already prevents enumeration of *which* IDs exist,
-    but without a server-side log line a probing user can keep iterating
-    IDs invisibly.  Logging the (resource, attempted_id, caller, owner)
-    tuple gives the security team something to alert on.
+    Logged at ``WARNING`` so default SIEM alert thresholds catch a
+    probing campaign without explicit forwarding.  The owning user's
+    id is intentionally omitted -- the caller and resource are
+    sufficient for forensics, and including the owner would let
+    log-readers enumerate ownership without API access.
     """
-    logger.info(
+    logger.warning(
         "resource_access_denied",
         extra={
             "resource": resource,
             "resource_id": resource_id,
             "user_id": current_user,
-            "owner_id": owner_id,
         },
     )
 
@@ -69,7 +67,7 @@ async def require_owned_habit(
     if habit is None:
         raise not_found("habit")
     if habit.user_id != current_user:
-        _log_ownership_denied("habit", habit_id, current_user, habit.user_id)
+        _log_ownership_denied("habit", habit_id, current_user)
         raise forbidden("forbidden")
     return habit
 
@@ -84,7 +82,7 @@ async def require_owned_journal_entry(
     if entry is None:
         raise not_found("journal_entry")
     if entry.user_id != current_user:
-        _log_ownership_denied("journal_entry", entry_id, current_user, entry.user_id)
+        _log_ownership_denied("journal_entry", entry_id, current_user)
         raise forbidden("forbidden")
     return entry
 
@@ -99,9 +97,7 @@ async def require_owned_user_practice(
     if user_practice is None:
         raise not_found("user_practice")
     if user_practice.user_id != current_user:
-        _log_ownership_denied(
-            "user_practice", user_practice_id, current_user, user_practice.user_id
-        )
+        _log_ownership_denied("user_practice", user_practice_id, current_user)
         raise forbidden("forbidden")
     return user_practice
 

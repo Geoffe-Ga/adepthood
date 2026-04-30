@@ -31,22 +31,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/habits", tags=["habits"])
 
-# BUG-HABIT-002: cap a single user's habit count so a malicious or
-# runaway client cannot fill the table by repeating ``POST /habits``.
-# A typical engaged user maintains under a dozen habits; 100 is a
-# generous ceiling that surfaces as 409 with a clear reason long
-# before the row count becomes a storage problem.
+# Per-user cap on habit rows; surfaces as 409 ``habit_quota_exceeded``.
 _MAX_HABITS_PER_USER = 100
 
 
 def _populate_streak(habit: Habit, current_user: int, user_timezone: str) -> None:
-    """Set ``habit.streak`` from the goal completions loaded in memory.
-
-    ``user_timezone`` keeps the in-memory streak in sync with
-    ``compute_consecutive_streak`` (BUG-STREAK-002): both compute days
-    using the same calendar so the value displayed in ``GET /habits``
-    matches what ``POST /goal_completions`` returns.
-    """
+    """Set ``habit.streak`` from the goal completions loaded in memory."""
     completions = [c for g in habit.goals for c in g.completions if c.user_id == current_user]
     habit.streak = compute_habit_streak(completions, user_timezone)
 
@@ -57,18 +47,7 @@ async def create_habit(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Habit:
-    """Create a habit for the authenticated user.
-
-    Enforces BUG-HABIT-002:
-      * A per-user count cap (``_MAX_HABITS_PER_USER``) so the table
-        cannot be flooded by a runaway / malicious client.  Returns 409
-        ``habit_quota_exceeded`` once the cap is reached.
-      * A case-insensitive duplicate-name guard.  Two habits with the
-        same trimmed/lowered name confuse the list UI and lookup
-        analytics; the same user creating ``"Run"`` then ``"run"`` is
-        almost always a mistake, so we reject with 409
-        ``duplicate_habit_name``.
-    """
+    """Create a habit; rejects over-quota or duplicate-name with 409."""
     count = await session.scalar(
         select(func.count()).select_from(Habit).where(Habit.user_id == current_user)
     )
@@ -101,9 +80,8 @@ async def list_habits(
 ) -> Page[HabitWithGoals] | list[HabitWithGoals]:
     """Return all habits for the authenticated user, sorted by sort_order.
 
-    BUG-INFRA-013: returns ``Page[HabitWithGoals]`` when ``?paginate=true``
-    is set; otherwise the legacy bare list is returned for one release while
-    the frontend migrates to the envelope.
+    Returns ``Page[HabitWithGoals]`` when ``?paginate=true``; otherwise
+    the legacy bare list while the frontend migrates to the envelope.
     """
     query = (
         select(Habit)
@@ -166,16 +144,10 @@ async def delete_habit(
     session: Annotated[AsyncSession, Depends(get_session)],
     habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Response:
-    """Delete a habit. Returns 204 No Content on success.
+    """Delete a habit and cascade-delete its goals + completions.
 
-    BUG-HABIT-004: a hard delete used to silently cascade an unbounded
-    amount of historical completion data through the ``ondelete=CASCADE``
-    chain (Habit → Goal → GoalCompletion).  We still cascade -- the
-    user's request is the source of truth -- but we now count and
-    structured-log the goal + completion rows about to be wiped so
-    operators have an audit trail and can answer "did the user just
-    nuke 800 check-ins by accident?" without reconstructing it from
-    backups.
+    Counts and structured-logs the cascaded rows before deletion so
+    operators have an audit trail.
     """
     habit_id = habit.id
     cascade_goal_count = await session.scalar(

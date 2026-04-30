@@ -14,6 +14,7 @@ from sqlmodel import select
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
+from services.streaks import compute_consecutive_streak
 
 
 async def _signup(client: AsyncClient, username: str = "goaluser") -> tuple[dict[str, str], int]:
@@ -451,10 +452,7 @@ async def test_response_streak_matches_db_after_commit(
     assert resp.status_code == HTTPStatus.OK
     api_streak = resp.json()["streak"]
 
-    # Now query the streak directly via the same DB-level helper the API
-    # uses; the two MUST agree because they share a source of truth.
-    from services.streaks import compute_consecutive_streak  # noqa: PLC0415
-
+    # The API and the DB-level helper share a source of truth.
     assert goal.id is not None
     db_streak = await compute_consecutive_streak(db_session, goal.id, user_id, "UTC")
     assert api_streak == db_streak

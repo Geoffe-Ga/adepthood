@@ -32,19 +32,7 @@ def _aggregate_by_day(
     completions: list[GoalCompletion],
     user_timezone: str,
 ) -> tuple[list[float], list[int], set[date]]:
-    """Sum units per JS day-of-week in user-local time (BUG-HABIT-006).
-
-    Day-of-week buckets used to read straight from ``timestamp.weekday()``,
-    which on Postgres ``timestamptz`` returns UTC weekday — so a Sunday-
-    night Pacific completion (Monday in UTC) was charted under the wrong
-    weekday.  Converting via :func:`domain.dates.to_user_date` first
-    gives every user a chart aligned with their own week.
-
-    Returns the unique completion dates as :class:`date` objects rather
-    than ISO strings (BUG-HABIT-008): the streak / rate helpers used to
-    re-parse those strings three separate times per call, which both
-    wasted work and risked format drift if the ISO format ever changed.
-    """
+    """Sum units per JS day-of-week in user-local time, returning unique completion dates."""
     units = [0.0] * _DAYS_IN_WEEK
     presence = [0] * _DAYS_IN_WEEK
     dates: set[date] = set()
@@ -72,12 +60,8 @@ def _longest_streak(sorted_dates: list[date]) -> int:
 def _current_streak(sorted_dates: list[date], user_timezone: str) -> int:
     """Return the current consecutive-day streak ending at the latest entry.
 
-    Mirrors the recency gate in :mod:`services.streaks` so
-    ``GET /habits/{id}/stats`` agrees with ``GET /habits`` after a missed
-    day.  The "yesterday" grace window matches the rest of the streak
-    code: one stale day is forgiven so the UI does not flash "streak
-    lost" between local midnight and the user's first completion of
-    the day.
+    A "yesterday" grace window prevents flashing "streak lost" between
+    local midnight and the user's first completion of the day.
     """
     if not sorted_dates:
         return 0
@@ -98,13 +82,8 @@ def _current_streak(sorted_dates: list[date], user_timezone: str) -> int:
 def _completion_rate(sorted_dates: list[date], unique_count: int, user_timezone: str) -> float:
     """Return ``unique_count / days_since_first`` in the user's calendar.
 
-    BUG-HABIT-007: the previous formula divided by ``last - first + 1``,
-    which meant a user who completed daily for a week then stopped for
-    a year still showed ``1.0``.  Anchoring the denominator to "today
-    in the user's local calendar" makes a paused habit's rate drift
-    downward as expected, while the legacy single-day case
-    (``first == today``) still resolves to ``1.0`` rather than dividing
-    by zero.
+    Anchoring the denominator to today (not the last completion) makes
+    a paused habit's rate drift downward as expected.
     """
     if not sorted_dates:
         return 0.0
@@ -121,11 +100,8 @@ def compute_habit_stats(
     """Build aggregated stats from a flat list of goal completions.
 
     ``user_timezone`` selects the calendar used for day-of-week buckets,
-    streak runs, and completion-rate spans (BUG-HABIT-006).  The default
-    is ``"UTC"`` so legacy callers that omit the argument keep their
-    pre-fix behaviour rather than silently switching zones; routers pass
-    :func:`services.users.get_user_timezone` to opt into the user-local
-    view.
+    streak runs, and completion-rate spans; defaults to ``"UTC"`` so
+    legacy callers keep their pre-fix behaviour.
     """
     if not completions:
         return _empty_stats()
