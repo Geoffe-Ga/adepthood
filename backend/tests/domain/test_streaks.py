@@ -1,3 +1,5 @@
+import pytest
+
 from domain.streaks import is_scheduled_on, update_streak
 
 
@@ -45,3 +47,10 @@ def test_is_scheduled_on_miss() -> None:
 
 def test_is_scheduled_on_case_insensitive() -> None:
     assert is_scheduled_on(["mon", "wed"], "Mon") is True
+
+
+@pytest.mark.parametrize("bad_name", ["monday", "MO", "", "tues", "Mond"])
+def test_is_scheduled_on_rejects_invalid_weekday(bad_name: str) -> None:
+    """A misspelled weekday raises rather than silently returning False."""
+    with pytest.raises(ValueError, match="weekday_name must be one of"):
+        is_scheduled_on(["Mon"], bad_name)

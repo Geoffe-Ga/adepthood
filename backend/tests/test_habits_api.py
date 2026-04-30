@@ -358,7 +358,7 @@ async def test_cross_tenant_delete_emits_audit_log(
     create = await async_client.post("/habits/", json=sample_payload(), headers=alice_headers)
     habit_id = create.json()["id"]
 
-    with caplog.at_level(logging.INFO, logger="dependencies.ownership"):
+    with caplog.at_level(logging.WARNING, logger="dependencies.ownership"):
         resp = await async_client.delete(f"/habits/{habit_id}", headers=bob_headers)
     assert resp.status_code == HTTPStatus.FORBIDDEN
     deny_logs = [r for r in caplog.records if r.message == "resource_access_denied"]

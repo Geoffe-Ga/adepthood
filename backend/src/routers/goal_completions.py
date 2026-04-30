@@ -196,10 +196,14 @@ async def create_goal_completion(
 
     today_weekday = today_in_tz(user_tz).strftime("%a")
     is_scheduled_today = is_scheduled_on(habit.notification_days, today_weekday)
+    # ``old_streak`` is also the response value for the unscheduled-miss
+    # held path below, so the query has to run before that branch even
+    # though no row is written; the cheap idempotency check above has
+    # already short-circuited the duplicate-retry case.
     old_streak = await compute_consecutive_streak(session, goal.id, current_user, user_tz)
 
     if not payload.did_complete and not is_scheduled_today:
-        return _held_response(current_user, payload.goal_id, old_streak)
+        return _held_response(current_user, goal.id, old_streak)
 
     job = _CheckInJob(
         goal_id=goal.id,

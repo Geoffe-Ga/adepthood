@@ -146,8 +146,9 @@ async def delete_habit(
 ) -> Response:
     """Delete a habit and cascade-delete its goals + completions.
 
-    Counts and structured-logs the cascaded rows before deletion so
-    operators have an audit trail.
+    Counts the cascaded rows before deletion, then logs the audit row
+    *after* commit so a failed delete cannot leave a misleading
+    "deleted" entry in the operator's audit trail.
     """
     habit_id = habit.id
     cascade_goal_count = await session.scalar(
@@ -159,6 +160,8 @@ async def delete_habit(
         .join(Goal, col(Goal.id) == col(GoalCompletion.goal_id))
         .where(Goal.habit_id == habit_id)
     )
+    await session.delete(habit)
+    await session.commit()
     logger.info(
         "habit_delete_cascade",
         extra={
@@ -168,8 +171,6 @@ async def delete_habit(
             "cascade_completions": cascade_completion_count or 0,
         },
     )
-    await session.delete(habit)
-    await session.commit()
     logger.info("habit_deleted", extra={"user_id": current_user, "habit_id": habit_id})
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

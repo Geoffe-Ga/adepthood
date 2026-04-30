@@ -263,13 +263,12 @@ async def test_stats_current_streak(async_client: AsyncClient, db_session: Async
 
 @pytest.mark.asyncio
 async def test_stats_completion_rate(async_client: AsyncClient, db_session: AsyncSession) -> None:
-    """Completion rate = unique-completion-days / days-since-first (BUG-HABIT-007).
+    """Completion rate = unique-completion-days / days-since-first.
 
     Anchoring the denominator to "today" rather than "last completion"
-    means a paused habit's rate drifts down as time passes.  Seed two
-    completions yesterday and the day before so the span (today - first)
-    is small and predictable; rate then equals 2 / 3 (today, yesterday,
-    day-before-yesterday).
+    means a paused habit's rate drifts down as time passes.  Seed
+    completions today and two days ago so span = (today - (today-2)) + 1
+    = 3 calendar days; rate is 2 / 3.
     """
     headers, user_id = await _signup_with_id(async_client)
     habit_id, goal_id = await _create_habit_with_goal(async_client, db_session, headers)
