@@ -20,7 +20,7 @@ class Habit(SQLModel, table=True):
     start_date: date
     energy_cost: int
     energy_return: int
-    user_id: int = Field(foreign_key="user.id")
+    user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
     notification_times: list[str] | None = Field(
         default=None, sa_column=Column(PG_ARRAY(String), nullable=True)
     )

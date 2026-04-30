@@ -22,5 +22,5 @@ class StageProgress(SQLModel, table=True):
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
-    user_id: int = Field(foreign_key="user.id", unique=True)
+    user_id: int = Field(foreign_key="user.id", unique=True, ondelete="CASCADE")
     user: "User" = Relationship(back_populates="stage_progress")

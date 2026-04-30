@@ -54,7 +54,9 @@ async def _make_goal(session: AsyncSession, user_id: int) -> Goal:
 
 
 async def _make_user(session: AsyncSession) -> User:
-    user = User(email="streaks@example.com")
+    # ``password_hash`` is required at the model level (BUG-AUTH-018);
+    # streak tests don't authenticate so any non-empty sentinel is fine.
+    user = User(email="streaks@example.com", password_hash="x")
     session.add(user)
     await session.commit()
     await session.refresh(user)

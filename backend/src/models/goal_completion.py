@@ -24,7 +24,7 @@ class GoalCompletion(SQLModel, table=True):
     goal_id: int = Field(
         sa_column=Column(ForeignKey("goal.id", ondelete="CASCADE"), nullable=False),
     )
-    user_id: int = Field(foreign_key="user.id")
+    user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
     timestamp: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

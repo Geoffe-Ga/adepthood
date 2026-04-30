@@ -70,8 +70,11 @@ async def _make_user(
     service-under-test to re-read the row through ``get_user_fresh``.
     """
     now_naive = datetime.now(UTC).replace(tzinfo=None)
+    # ``password_hash`` is required at the model level (BUG-AUTH-018);
+    # wallet tests don't authenticate so any non-empty sentinel works.
     user = User(
         email=email,
+        password_hash="x",
         monthly_messages_used=monthly_used,
         offering_balance=offering_balance,
         monthly_reset_date=now_naive + timedelta(days=reset_in_days),

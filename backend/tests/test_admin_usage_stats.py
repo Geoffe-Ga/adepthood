@@ -331,5 +331,8 @@ async def test_admin_endpoint_rejects_deleted_admin(
     await db_session.commit()
 
     resp = await async_client.get("/admin/usage-stats", headers=headers)
-    assert resp.status_code == HTTPStatus.FORBIDDEN
-    assert resp.json()["detail"] == "user_not_found"
+    # BUG-MODEL-001: ``get_current_user`` now gates on ``is_active`` /
+    # ``deleted_at`` so a missing-user JWT 401s at the auth dependency
+    # before the downstream admin lookup runs.
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+    assert resp.json()["detail"] == "unauthorized"
