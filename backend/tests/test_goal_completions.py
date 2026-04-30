@@ -169,6 +169,75 @@ async def test_consecutive_day_completions_build_streak(
 
 
 @pytest.mark.asyncio
+async def test_miss_on_unscheduled_day_holds_streak(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """BUG-STREAK-001: a miss on a day not in ``notification_days`` holds the streak.
+
+    Seeds a habit scheduled for the *opposite* weekday from "today" and
+    a yesterday completion (so the streak starts at 1) then logs a miss.
+    The pre-fix behaviour zeroed the streak; the fix returns
+    ``streak_held`` and leaves the count unchanged.
+    """
+    headers, user_id = await _signup(async_client, "cadence_user")
+
+    # Pick a weekday that is NOT today, so cadence math says
+    # "today is unscheduled".
+    today_name = datetime.now(UTC).strftime("%a")
+    other_days = [
+        day for day in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun") if day != today_name
+    ]
+
+    habit = Habit(
+        name="Cadence",
+        icon="📅",
+        start_date=date(2025, 1, 1),
+        energy_cost=1,
+        energy_return=1,
+        user_id=user_id,
+        notification_days=other_days,
+    )
+    db_session.add(habit)
+    await db_session.commit()
+    await db_session.refresh(habit)
+
+    goal = Goal(
+        habit_id=habit.id,
+        title="Daily sit",
+        tier="clear",
+        target=10.0,
+        target_unit="minutes",
+        frequency=1.0,
+        frequency_unit="per_day",
+        is_additive=True,
+    )
+    db_session.add(goal)
+    await db_session.commit()
+    await db_session.refresh(goal)
+
+    # Seed yesterday's completion so the streak is 1 going in.
+    db_session.add(
+        GoalCompletion(
+            goal_id=goal.id,
+            user_id=user_id,
+            completed_units=goal.target,
+            timestamp=datetime.now(UTC) - timedelta(days=1),
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "did_complete": False},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert data["reason_code"] == "streak_held"
+    assert data["streak"] == 1
+
+
+@pytest.mark.asyncio
 async def test_miss_resets_streak(async_client: AsyncClient, db_session: AsyncSession) -> None:
     headers, user_id = await _signup(async_client)
     goal = await _seed_goal(db_session, user_id)

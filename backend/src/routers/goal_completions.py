@@ -13,6 +13,7 @@ from sqlmodel import select
 
 from database import get_session
 from domain.dates import day_bounds_in_tz, today_in_tz
+from domain.streaks import is_scheduled_on
 from errors import forbidden, not_found
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
@@ -38,8 +39,15 @@ class GoalCompletionRequest(BaseModel):
     did_complete: bool = True
 
 
-async def _get_owned_goal(session: AsyncSession, goal_id: int, user_id: int) -> Goal:
-    """Fetch a goal and verify ownership through its parent habit."""
+async def _get_owned_goal_and_habit(
+    session: AsyncSession, goal_id: int, user_id: int
+) -> tuple[Goal, Habit]:
+    """Fetch a goal + its parent habit, verifying ownership.
+
+    Returns the habit alongside the goal so the caller can read
+    ``notification_days`` for cadence-aware streak math (BUG-STREAK-001)
+    without issuing a third query.
+    """
     goal = await session.get(Goal, goal_id)
     if goal is None:
         raise not_found("goal")
@@ -50,6 +58,12 @@ async def _get_owned_goal(session: AsyncSession, goal_id: int, user_id: int) -> 
     if habit.user_id != user_id:
         raise forbidden("not_owner")
 
+    return goal, habit
+
+
+async def _get_owned_goal(session: AsyncSession, goal_id: int, user_id: int) -> Goal:
+    """Backwards-compatible single-value alias for :func:`_get_owned_goal_and_habit`."""
+    goal, _ = await _get_owned_goal_and_habit(session, goal_id, user_id)
     return goal
 
 
@@ -125,7 +139,7 @@ async def create_goal_completion(
     ``IntegrityError`` and the same idempotent response is returned —
     closes the BUG-GOAL-001 TOCTOU.
     """
-    goal = await _get_owned_goal(session, payload.goal_id, current_user)
+    goal, habit = await _get_owned_goal_and_habit(session, payload.goal_id, current_user)
 
     if goal.id is None:
         msg = "Goal ID unexpectedly None after database fetch"
@@ -171,7 +185,17 @@ async def create_goal_completion(
         # paths apart (BUG-GOAL-001).
         return await _idempotent_already_logged_response(session, goal.id, current_user, user_tz)
 
-    new_streak, reason = update_streak(old_streak, did_check_in=payload.did_complete)
+    # BUG-STREAK-001: a miss on a non-scheduled day holds the streak
+    # rather than resetting it.  ``today_in_tz`` returns the user's
+    # local calendar day so the cadence check ticks over at midnight in
+    # the user's timezone, matching the rest of the streak math.
+    today_weekday = today_in_tz(user_tz).strftime("%a")
+    is_scheduled_today = is_scheduled_on(habit.notification_days, today_weekday)
+    new_streak, reason = update_streak(
+        old_streak,
+        did_check_in=payload.did_complete,
+        is_scheduled_today=is_scheduled_today,
+    )
 
     logger.info(
         "goal_completion_recorded",

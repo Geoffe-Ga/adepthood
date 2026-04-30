@@ -1,4 +1,4 @@
-from domain.streaks import update_streak
+from domain.streaks import is_scheduled_on, update_streak
 
 
 def test_streak_increment() -> None:
@@ -11,3 +11,37 @@ def test_streak_reset() -> None:
     new_streak, code = update_streak(5, did_check_in=False)
     assert new_streak == 0
     assert code == "streak_reset"
+
+
+def test_streak_held_when_not_scheduled() -> None:
+    """BUG-STREAK-001: a miss on a non-scheduled day holds the streak."""
+    new_streak, code = update_streak(5, did_check_in=False, is_scheduled_today=False)
+    assert new_streak == 5
+    assert code == "streak_held"
+
+
+def test_streak_increments_on_unscheduled_day_when_user_checks_in() -> None:
+    """An opportunistic check-in on a non-scheduled day still increments."""
+    new_streak, code = update_streak(2, did_check_in=True, is_scheduled_today=False)
+    assert new_streak == 3
+    assert code == "streak_incremented"
+
+
+def test_is_scheduled_on_none_means_every_day() -> None:
+    assert is_scheduled_on(None, "Tue") is True
+
+
+def test_is_scheduled_on_empty_means_every_day() -> None:
+    assert is_scheduled_on([], "Tue") is True
+
+
+def test_is_scheduled_on_match() -> None:
+    assert is_scheduled_on(["Mon", "Wed", "Fri"], "Wed") is True
+
+
+def test_is_scheduled_on_miss() -> None:
+    assert is_scheduled_on(["Mon", "Wed", "Fri"], "Tue") is False
+
+
+def test_is_scheduled_on_case_insensitive() -> None:
+    assert is_scheduled_on(["mon", "wed"], "Mon") is True

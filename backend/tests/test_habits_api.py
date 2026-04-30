@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from http import HTTPStatus
 
 import pytest
@@ -275,3 +276,92 @@ async def test_invalid_notification_frequency_rejected(async_client: AsyncClient
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_duplicate_habit_name_rejected(async_client: AsyncClient) -> None:
+    """BUG-HABIT-002: a second habit with the same name (case-insensitive) is rejected."""
+    headers = await _signup(async_client)
+    first = await async_client.post("/habits/", json=sample_payload(name="Run"), headers=headers)
+    assert first.status_code == HTTPStatus.OK
+
+    duplicate = await async_client.post(
+        "/habits/", json=sample_payload(name=" run  "), headers=headers
+    )
+    assert duplicate.status_code == HTTPStatus.CONFLICT
+    assert duplicate.json()["detail"] == "duplicate_habit_name"
+
+
+@pytest.mark.asyncio
+async def test_habit_quota_caps_per_user(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-HABIT-002: the per-user habit count cap returns 409 once exceeded."""
+    # Lower the cap so we don't have to seed 100 rows.
+    monkeypatch.setattr("routers.habits._MAX_HABITS_PER_USER", 2)
+    headers = await _signup(async_client, "quota_user")
+    for i in range(2):
+        resp = await async_client.post(
+            "/habits/", json=sample_payload(name=f"Habit {i}"), headers=headers
+        )
+        assert resp.status_code == HTTPStatus.OK
+    resp = await async_client.post(
+        "/habits/", json=sample_payload(name="Overflow"), headers=headers
+    )
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.json()["detail"] == "habit_quota_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_delete_habit_logs_cascade_counts(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """BUG-HABIT-004: delete_habit emits a structured cascade-count audit row."""
+    headers = await _signup(async_client, "cascade_user")
+    create = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    habit_id = create.json()["id"]
+
+    # Seed a goal so the cascade has something to count.
+    goal = Goal(
+        habit_id=habit_id,
+        title="g",
+        tier="clear",
+        target=1,
+        target_unit="glasses",
+        frequency=1,
+        frequency_unit="per_day",
+        is_additive=True,
+    )
+    db_session.add(goal)
+    await db_session.commit()
+
+    with caplog.at_level(logging.INFO, logger="routers.habits"):
+        resp = await async_client.delete(f"/habits/{habit_id}", headers=headers)
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    cascade_logs = [r for r in caplog.records if r.message == "habit_delete_cascade"]
+    assert cascade_logs, "expected a habit_delete_cascade audit log entry"
+    assert getattr(cascade_logs[0], "cascade_goals", None) == 1
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_delete_emits_audit_log(
+    async_client: AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """BUG-HABIT-003: a cross-tenant delete probe emits a resource_access_denied row."""
+    alice_headers = await _signup(async_client, "alice_owner")
+    bob_headers = await _signup(async_client, "bob_probe")
+
+    create = await async_client.post("/habits/", json=sample_payload(), headers=alice_headers)
+    habit_id = create.json()["id"]
+
+    with caplog.at_level(logging.INFO, logger="dependencies.ownership"):
+        resp = await async_client.delete(f"/habits/{habit_id}", headers=bob_headers)
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    deny_logs = [r for r in caplog.records if r.message == "resource_access_denied"]
+    assert deny_logs, "expected a resource_access_denied audit log entry"
+    assert getattr(deny_logs[0], "resource", None) == "habit"
+    assert getattr(deny_logs[0], "resource_id", None) == habit_id

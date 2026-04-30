@@ -5,15 +5,18 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from database import get_session
 from dependencies.ownership import require_owned_habit
 from domain.habit_stats import compute_habit_stats
 from errors import forbidden, not_found
 from load_options import HABIT_WITH_GOALS_AND_COMPLETIONS
+from models.goal import Goal
+from models.goal_completion import GoalCompletion
 from models.habit import Habit
 from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
@@ -27,6 +30,13 @@ from services.users import get_user_timezone
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/habits", tags=["habits"])
+
+# BUG-HABIT-002: cap a single user's habit count so a malicious or
+# runaway client cannot fill the table by repeating ``POST /habits``.
+# A typical engaged user maintains under a dozen habits; 100 is a
+# generous ceiling that surfaces as 409 with a clear reason long
+# before the row count becomes a storage problem.
+_MAX_HABITS_PER_USER = 100
 
 
 def _populate_streak(habit: Habit, current_user: int, user_timezone: str) -> None:
@@ -47,7 +57,34 @@ async def create_habit(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Habit:
-    """Create a habit for the authenticated user."""
+    """Create a habit for the authenticated user.
+
+    Enforces BUG-HABIT-002:
+      * A per-user count cap (``_MAX_HABITS_PER_USER``) so the table
+        cannot be flooded by a runaway / malicious client.  Returns 409
+        ``habit_quota_exceeded`` once the cap is reached.
+      * A case-insensitive duplicate-name guard.  Two habits with the
+        same trimmed/lowered name confuse the list UI and lookup
+        analytics; the same user creating ``"Run"`` then ``"run"`` is
+        almost always a mistake, so we reject with 409
+        ``duplicate_habit_name``.
+    """
+    count = await session.scalar(
+        select(func.count()).select_from(Habit).where(Habit.user_id == current_user)
+    )
+    if (count or 0) >= _MAX_HABITS_PER_USER:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="habit_quota_exceeded")
+
+    candidate_name = payload.name.strip().lower()
+    duplicate = await session.scalar(
+        select(Habit.id).where(
+            Habit.user_id == current_user,
+            func.lower(func.trim(Habit.name)) == candidate_name,
+        )
+    )
+    if duplicate is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="duplicate_habit_name")
+
     habit = Habit(user_id=current_user, **payload.model_dump())
     session.add(habit)
     await session.commit()
@@ -129,8 +166,36 @@ async def delete_habit(
     session: Annotated[AsyncSession, Depends(get_session)],
     habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Response:
-    """Delete a habit. Returns 204 No Content on success."""
+    """Delete a habit. Returns 204 No Content on success.
+
+    BUG-HABIT-004: a hard delete used to silently cascade an unbounded
+    amount of historical completion data through the ``ondelete=CASCADE``
+    chain (Habit → Goal → GoalCompletion).  We still cascade -- the
+    user's request is the source of truth -- but we now count and
+    structured-log the goal + completion rows about to be wiped so
+    operators have an audit trail and can answer "did the user just
+    nuke 800 check-ins by accident?" without reconstructing it from
+    backups.
+    """
     habit_id = habit.id
+    cascade_goal_count = await session.scalar(
+        select(func.count()).select_from(Goal).where(Goal.habit_id == habit_id)
+    )
+    cascade_completion_count = await session.scalar(
+        select(func.count())
+        .select_from(GoalCompletion)
+        .join(Goal, col(Goal.id) == col(GoalCompletion.goal_id))
+        .where(Goal.habit_id == habit_id)
+    )
+    logger.info(
+        "habit_delete_cascade",
+        extra={
+            "user_id": current_user,
+            "habit_id": habit_id,
+            "cascade_goals": cascade_goal_count or 0,
+            "cascade_completions": cascade_completion_count or 0,
+        },
+    )
     await session.delete(habit)
     await session.commit()
     logger.info("habit_deleted", extra={"user_id": current_user, "habit_id": habit_id})
