@@ -302,13 +302,7 @@ async def test_stats_completion_rate(async_client: AsyncClient, db_session: Asyn
 async def test_stats_completion_rate_decays_when_paused(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """BUG-HABIT-007: a paused habit's completion rate drops below 1.0.
-
-    Pre-fix the rate was ``unique_days / (last - first + 1)``, so a
-    week of daily completions a year ago still reported 1.0 forever.
-    Now the denominator is anchored to the current day, so the same
-    history appears as ``7 / (~365)`` -- comfortably below 0.05.
-    """
+    """A paused habit's completion rate drops below 1.0 as days elapse without check-ins."""
     headers, user_id = await _signup_with_id(async_client)
     habit_id, goal_id = await _create_habit_with_goal(async_client, db_session, headers)
 

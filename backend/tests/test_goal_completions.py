@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
 
@@ -11,6 +12,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
+from domain.dates import today_in_tz
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
@@ -173,18 +175,13 @@ async def test_consecutive_day_completions_build_streak(
 async def test_miss_on_unscheduled_day_holds_streak(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """BUG-STREAK-001: a miss on a day not in ``notification_days`` holds the streak.
-
-    Seeds a habit scheduled for the *opposite* weekday from "today" and
-    a yesterday completion (so the streak starts at 1) then logs a miss.
-    The pre-fix behaviour zeroed the streak; the fix returns
-    ``streak_held`` and leaves the count unchanged.
-    """
+    """A miss on a non-scheduled day holds the streak rather than zeroing it."""
     headers, user_id = await _signup(async_client, "cadence_user")
 
-    # Pick a weekday that is NOT today, so cadence math says
-    # "today is unscheduled".
-    today_name = datetime.now(UTC).strftime("%a")
+    # Pick a weekday that is NOT today (in the user's timezone -- defaults
+    # to UTC in tests so this matches the route handler's
+    # ``today_in_tz(user_tz)`` resolution exactly).
+    today_name = today_in_tz("UTC").strftime("%a")
     other_days = [
         day for day in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun") if day != today_name
     ]
@@ -300,6 +297,30 @@ async def test_other_users_goal_returns_403(
         headers=bob_headers,
     )
     assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_goal_completion_emits_audit_log(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A cross-tenant goal-completion probe emits a ``resource_access_denied`` row."""
+    _alice_headers, alice_id = await _signup(async_client, "alice_audit")
+    bob_headers, _bob_id = await _signup(async_client, "bob_audit")
+    goal = await _seed_goal(db_session, alice_id)
+
+    with caplog.at_level(logging.WARNING, logger="dependencies.ownership"):
+        resp = await async_client.post(
+            "/goal_completions/",
+            json={"goal_id": goal.id, "did_complete": True},
+            headers=bob_headers,
+        )
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    deny_logs = [r for r in caplog.records if r.message == "resource_access_denied"]
+    assert deny_logs, "expected a resource_access_denied audit log entry"
+    assert getattr(deny_logs[0], "resource", None) == "goal"
+    assert getattr(deny_logs[0], "resource_id", None) == goal.id
 
 
 # ── Completion is persisted ──────────────────────────────────────────────
@@ -420,7 +441,7 @@ async def test_concurrent_completions_yield_one_db_row(
 async def test_completion_request_rejects_unknown_fields(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """BUG-GOAL-007: ``extra="forbid"`` rejects unrecognised payload fields."""
+    """``extra="forbid"`` rejects unrecognised payload fields."""
     headers, user_id = await _signup(async_client, "extra_forbid")
     goal = await _seed_goal(db_session, user_id)
 
@@ -440,7 +461,7 @@ async def test_completion_request_rejects_unknown_fields(
 async def test_response_streak_matches_db_after_commit(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """BUG-GOAL-002: response ``streak`` is the post-commit DB value, not arithmetic."""
+    """The response ``streak`` is the post-commit DB value, not arithmetic."""
     headers, user_id = await _signup(async_client, "streak_truth")
     goal = await _seed_goal(db_session, user_id)
 

@@ -5,15 +5,15 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
-from dependencies.ownership import require_owned_habit
+from dependencies.ownership import log_ownership_denied, require_owned_habit
 from domain.habit_stats import compute_habit_stats
-from errors import forbidden, not_found
+from errors import conflict, forbidden, not_found
 from load_options import HABIT_WITH_GOALS_AND_COMPLETIONS
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
@@ -52,7 +52,7 @@ async def create_habit(
         select(func.count()).select_from(Habit).where(Habit.user_id == current_user)
     )
     if (count or 0) >= _MAX_HABITS_PER_USER:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="habit_quota_exceeded")
+        raise conflict("habit_quota_exceeded")
 
     candidate_name = payload.name.strip().lower()
     duplicate = await session.scalar(
@@ -62,7 +62,7 @@ async def create_habit(
         )
     )
     if duplicate is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="duplicate_habit_name")
+        raise conflict("duplicate_habit_name")
 
     habit = Habit(user_id=current_user, **payload.model_dump())
     session.add(habit)
@@ -78,11 +78,7 @@ async def list_habits(
     session: Annotated[AsyncSession, Depends(get_session)],
     pagination: Annotated[PaginationParams, Depends()],
 ) -> Page[HabitWithGoals] | list[HabitWithGoals]:
-    """Return all habits for the authenticated user, sorted by sort_order.
-
-    Returns ``Page[HabitWithGoals]`` when ``?paginate=true``; otherwise
-    the legacy bare list while the frontend migrates to the envelope.
-    """
+    """Return habits sorted by ``sort_order``; paginated when ``?paginate=true``."""
     query = (
         select(Habit)
         .where(Habit.user_id == current_user)
@@ -105,12 +101,7 @@ async def get_habit(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Habit:
-    """Return a single habit by id, scoped to the authenticated user.
-
-    Uses :func:`_get_habit_with_completions` for the eager-loaded fetch +
-    canonical 404→403 split rather than the bare ``require_owned_habit``
-    dep, since this endpoint needs goals + completions in the response.
-    """
+    """Return a single habit (with eager-loaded goals + completions) for the caller."""
     habit = await _get_habit_with_completions(habit_id, current_user, session)
     user_tz = await get_user_timezone(session, current_user)
     _populate_streak(habit, current_user, user_tz)
@@ -124,11 +115,7 @@ async def update_habit(
     session: Annotated[AsyncSession, Depends(get_session)],
     habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Habit:
-    """Replace an existing habit's fields.
-
-    Ownership is verified by ``require_owned_habit`` (404 if missing,
-    403 if cross-user).
-    """
+    """Replace an existing habit's fields; ownership enforced upstream."""
     for key, value in payload.model_dump().items():
         setattr(habit, key, value)
     session.add(habit)
@@ -144,12 +131,7 @@ async def delete_habit(
     session: Annotated[AsyncSession, Depends(get_session)],
     habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Response:
-    """Delete a habit and cascade-delete its goals + completions.
-
-    Counts the cascaded rows before deletion, then logs the audit row
-    *after* commit so a failed delete cannot leave a misleading
-    "deleted" entry in the operator's audit trail.
-    """
+    """Delete a habit and cascade goals + completions; logs the cascade post-commit."""
     habit_id = habit.id
     cascade_goal_count = await session.scalar(
         select(func.count()).select_from(Goal).where(Goal.habit_id == habit_id)
@@ -178,13 +160,14 @@ async def delete_habit(
 async def _get_habit_with_completions(
     habit_id: int, current_user: int, session: AsyncSession
 ) -> Habit:
-    """Load a habit with goals+completions, with the canonical 404→403 split."""
+    """Eager-load a habit with goals + completions enforcing the 404 / 403 split."""
     statement = select(Habit).where(Habit.id == habit_id).options(HABIT_WITH_GOALS_AND_COMPLETIONS)
     result = await session.execute(statement)
     habit = result.scalars().first()
     if habit is None:
         raise not_found("habit")
     if habit.user_id != current_user:
+        log_ownership_denied("habit", habit_id, current_user)
         raise forbidden("forbidden")
     return habit
 

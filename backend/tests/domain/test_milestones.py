@@ -9,7 +9,7 @@ def test_milestones_default_old_value_returns_all_below() -> None:
 
 
 def test_milestones_only_newly_crossed_returned() -> None:
-    """BUG-GOAL-010: thresholds already crossed on a prior call are dropped."""
+    """Thresholds already crossed on a prior call are dropped."""
     reached, _ = achieved_milestones(10, [3, 5, 10], old_value=5)
     assert reached == [10]
 

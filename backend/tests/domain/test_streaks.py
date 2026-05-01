@@ -16,7 +16,7 @@ def test_streak_reset() -> None:
 
 
 def test_streak_held_when_not_scheduled() -> None:
-    """BUG-STREAK-001: a miss on a non-scheduled day holds the streak."""
+    """A miss on a non-scheduled day holds the streak."""
     new_streak, code = update_streak(5, did_check_in=False, is_scheduled_today=False)
     assert new_streak == 5
     assert code == "streak_held"

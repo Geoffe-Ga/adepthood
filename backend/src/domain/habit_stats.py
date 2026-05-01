@@ -32,7 +32,7 @@ def _aggregate_by_day(
     completions: list[GoalCompletion],
     user_timezone: str,
 ) -> tuple[list[float], list[int], set[date]]:
-    """Sum units per JS day-of-week in user-local time, returning unique completion dates."""
+    """Sum units per JS weekday in user-local time; returns dates as ``date`` objects."""
     units = [0.0] * _DAYS_IN_WEEK
     presence = [0] * _DAYS_IN_WEEK
     dates: set[date] = set()
@@ -58,11 +58,7 @@ def _longest_streak(sorted_dates: list[date]) -> int:
 
 
 def _current_streak(sorted_dates: list[date], user_timezone: str) -> int:
-    """Return the current consecutive-day streak ending at the latest entry.
-
-    A "yesterday" grace window prevents flashing "streak lost" between
-    local midnight and the user's first completion of the day.
-    """
+    """Return the current consecutive-day streak with a one-day grace at midnight."""
     if not sorted_dates:
         return 0
     most_recent = sorted_dates[-1]
@@ -79,30 +75,21 @@ def _current_streak(sorted_dates: list[date], user_timezone: str) -> int:
     return streak
 
 
-def _completion_rate(sorted_dates: list[date], unique_count: int, user_timezone: str) -> float:
-    """Return ``unique_count / days_since_first`` in the user's calendar.
-
-    Anchoring the denominator to today (not the last completion) makes
-    a paused habit's rate drift downward as expected.
-    """
+def _completion_rate(sorted_dates: list[date], user_timezone: str) -> float:
+    """Return ``len(sorted_dates) / days_since_first`` in the user's calendar."""
     if not sorted_dates:
         return 0.0
     first = sorted_dates[0]
     today = today_in_tz(user_timezone)
     span = (today - first).days + 1
-    return unique_count / span if span > 0 else 0.0
+    return len(sorted_dates) / span if span > 0 else 0.0
 
 
 def compute_habit_stats(
     completions: list[GoalCompletion],
     user_timezone: str = "UTC",
 ) -> HabitStats:
-    """Build aggregated stats from a flat list of goal completions.
-
-    ``user_timezone`` selects the calendar used for day-of-week buckets,
-    streak runs, and completion-rate spans; defaults to ``"UTC"`` so
-    legacy callers keep their pre-fix behaviour.
-    """
+    """Aggregate completions into stats using the user's local calendar."""
     if not completions:
         return _empty_stats()
 
@@ -116,6 +103,6 @@ def compute_habit_stats(
         longest_streak=_longest_streak(sorted_dates),
         current_streak=_current_streak(sorted_dates, user_timezone),
         total_completions=len(completions),
-        completion_rate=_completion_rate(sorted_dates, len(dates), user_timezone),
+        completion_rate=_completion_rate(sorted_dates, user_timezone),
         completion_dates=[d.isoformat() for d in sorted_dates],
     )

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from database import get_session
+from dependencies.ownership import log_ownership_denied
 from domain.dates import day_bounds_in_tz, today_in_tz
 from domain.streaks import is_scheduled_on
 from errors import forbidden, not_found
@@ -56,19 +57,24 @@ class GoalCompletionRequest(BaseModel):
 
 async def _get_owned_goal_and_habit(
     session: AsyncSession, goal_id: int, user_id: int
-) -> tuple[Goal, Habit]:
-    """Fetch a goal + its parent habit, verifying ownership."""
+) -> tuple[Goal, Habit, int]:
+    """Fetch a goal + parent habit + the resolved goal id, verifying ownership."""
     goal = await session.get(Goal, goal_id)
     if goal is None:
         raise not_found("goal")
+    resolved_id = goal.id
+    if resolved_id is None:
+        msg = "Goal ID unexpectedly None after database fetch"
+        raise RuntimeError(msg)
 
     habit = await session.get(Habit, goal.habit_id)
     if habit is None:
         raise forbidden("not_owner")
     if habit.user_id != user_id:
+        log_ownership_denied("goal", goal_id, user_id)
         raise forbidden("not_owner")
 
-    return goal, habit
+    return goal, habit, resolved_id
 
 
 async def _already_logged_today(
@@ -77,12 +83,7 @@ async def _already_logged_today(
     user_id: int,
     user_timezone: str,
 ) -> bool:
-    """Return True if a completion already exists for this goal today.
-
-    "Today" is the user's local calendar day (not server UTC) so the
-    boundary ticks over at the user's midnight; the half-open
-    ``[start, end)`` form preserves correctness across DST jumps.
-    """
+    """Return True if a completion exists for this goal in the user's local calendar day."""
     today = today_in_tz(user_timezone)
     start, end = day_bounds_in_tz(user_timezone, today)
     result = await session.execute(
@@ -123,12 +124,7 @@ def _held_response(current_user: int, goal_id: int, old_streak: int) -> CheckInR
 
 
 async def _persist_and_build_response(session: AsyncSession, job: _CheckInJob) -> CheckInResult:
-    """Persist + compute streak/milestones inside one savepoint so failures roll back atomically.
-
-    Streak is re-read after the flush so the response matches what
-    subsequent GETs will see; ``update_streak`` is consulted only for
-    its reason code.
-    """
+    """Persist + read streak/milestones inside one savepoint; reads streak post-flush."""
     completion = GoalCompletion(
         goal_id=job.goal_id,
         user_id=job.user_id,
@@ -177,36 +173,28 @@ async def create_goal_completion(
 ) -> CheckInResult:
     """Record a check-in and return updated streak and milestones.
 
-    Idempotent on the same (user, goal, day): the pre-check fast path
-    or the unique-per-day index slow path both surface the same
-    ``already_logged_today`` envelope.
-
-    The cheap idempotency check (single ``SELECT id ... LIMIT 1``)
-    runs before the expensive streak query so a duplicate retry fails
-    fast on the hot optimistic-UI path.
+    Idempotent on the same (user, goal, day) -- the cheap day-pre-check
+    runs before the expensive streak query so duplicate retries fail fast.
     """
-    goal, habit = await _get_owned_goal_and_habit(session, payload.goal_id, current_user)
-    if goal.id is None:
-        msg = "Goal ID unexpectedly None after database fetch"
-        raise RuntimeError(msg)
+    goal, habit, goal_id = await _get_owned_goal_and_habit(session, payload.goal_id, current_user)
     user_tz = await get_user_timezone(session, current_user)
 
-    if await _already_logged_today(session, payload.goal_id, current_user, user_tz):
-        return await _idempotent_already_logged_response(session, goal.id, current_user, user_tz)
+    if await _already_logged_today(session, goal_id, current_user, user_tz):
+        return await _idempotent_already_logged_response(session, goal_id, current_user, user_tz)
 
     today_weekday = today_in_tz(user_tz).strftime("%a")
     is_scheduled_today = is_scheduled_on(habit.notification_days, today_weekday)
-    # ``old_streak`` is also the response value for the unscheduled-miss
-    # held path below, so the query has to run before that branch even
-    # though no row is written; the cheap idempotency check above has
-    # already short-circuited the duplicate-retry case.
-    old_streak = await compute_consecutive_streak(session, goal.id, current_user, user_tz)
+    # ``old_streak`` is also the held-path response value, so it has to
+    # be read before the unscheduled-miss early return; the cheap
+    # idempotency check above has already short-circuited duplicate
+    # retries so only legitimate fresh requests pay the cost.
+    old_streak = await compute_consecutive_streak(session, goal_id, current_user, user_tz)
 
     if not payload.did_complete and not is_scheduled_today:
-        return _held_response(current_user, goal.id, old_streak)
+        return _held_response(current_user, goal_id, old_streak)
 
     job = _CheckInJob(
-        goal_id=goal.id,
+        goal_id=goal_id,
         target=goal.target,
         user_id=current_user,
         user_timezone=user_tz,
