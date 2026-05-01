@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
 
@@ -11,9 +12,11 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
+from domain.dates import today_in_tz
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
+from services.streaks import compute_consecutive_streak
 
 
 async def _signup(client: AsyncClient, username: str = "goaluser") -> tuple[dict[str, str], int]:
@@ -169,6 +172,70 @@ async def test_consecutive_day_completions_build_streak(
 
 
 @pytest.mark.asyncio
+async def test_miss_on_unscheduled_day_holds_streak(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A miss on a non-scheduled day holds the streak rather than zeroing it."""
+    headers, user_id = await _signup(async_client, "cadence_user")
+
+    # Pick a weekday that is NOT today (in the user's timezone -- defaults
+    # to UTC in tests so this matches the route handler's
+    # ``today_in_tz(user_tz)`` resolution exactly).
+    today_name = today_in_tz("UTC").strftime("%a")
+    other_days = [
+        day for day in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun") if day != today_name
+    ]
+
+    habit = Habit(
+        name="Cadence",
+        icon="📅",
+        start_date=date(2025, 1, 1),
+        energy_cost=1,
+        energy_return=1,
+        user_id=user_id,
+        notification_days=other_days,
+    )
+    db_session.add(habit)
+    await db_session.commit()
+    await db_session.refresh(habit)
+
+    goal = Goal(
+        habit_id=habit.id,
+        title="Daily sit",
+        tier="clear",
+        target=10.0,
+        target_unit="minutes",
+        frequency=1.0,
+        frequency_unit="per_day",
+        is_additive=True,
+    )
+    db_session.add(goal)
+    await db_session.commit()
+    await db_session.refresh(goal)
+
+    # Seed yesterday's completion so the streak is 1 going in.
+    db_session.add(
+        GoalCompletion(
+            goal_id=goal.id,
+            user_id=user_id,
+            completed_units=goal.target,
+            timestamp=datetime.now(UTC) - timedelta(days=1),
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "did_complete": False},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert data["reason_code"] == "streak_held"
+    assert data["streak"] == 1
+
+
+@pytest.mark.asyncio
 async def test_miss_resets_streak(async_client: AsyncClient, db_session: AsyncSession) -> None:
     headers, user_id = await _signup(async_client)
     goal = await _seed_goal(db_session, user_id)
@@ -230,6 +297,30 @@ async def test_other_users_goal_returns_403(
         headers=bob_headers,
     )
     assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_goal_completion_emits_audit_log(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A cross-tenant goal-completion probe emits a ``resource_access_denied`` row."""
+    _alice_headers, alice_id = await _signup(async_client, "alice_audit")
+    bob_headers, _bob_id = await _signup(async_client, "bob_audit")
+    goal = await _seed_goal(db_session, alice_id)
+
+    with caplog.at_level(logging.WARNING, logger="dependencies.ownership"):
+        resp = await async_client.post(
+            "/goal_completions/",
+            json={"goal_id": goal.id, "did_complete": True},
+            headers=bob_headers,
+        )
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    deny_logs = [r for r in caplog.records if r.message == "resource_access_denied"]
+    assert deny_logs, "expected a resource_access_denied audit log entry"
+    assert getattr(deny_logs[0], "resource", None) == "goal"
+    assert getattr(deny_logs[0], "resource_id", None) == goal.id
 
 
 # ── Completion is persisted ──────────────────────────────────────────────
@@ -344,3 +435,45 @@ async def test_concurrent_completions_yield_one_db_row(
         )
         rows = list(result.scalars().all())
     assert len(rows) == 1, [(r.id, r.timestamp) for r in rows]
+
+
+@pytest.mark.asyncio
+async def test_completion_request_rejects_unknown_fields(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``extra="forbid"`` rejects unrecognised payload fields."""
+    headers, user_id = await _signup(async_client, "extra_forbid")
+    goal = await _seed_goal(db_session, user_id)
+
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={
+            "goal_id": goal.id,
+            "did_complete": True,
+            "completed_at": "2024-01-01T00:00:00Z",  # client-supplied, not in schema
+        },
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_response_streak_matches_db_after_commit(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The response ``streak`` is the post-commit DB value, not arithmetic."""
+    headers, user_id = await _signup(async_client, "streak_truth")
+    goal = await _seed_goal(db_session, user_id)
+
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "did_complete": True},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    api_streak = resp.json()["streak"]
+
+    # The API and the DB-level helper share a source of truth.
+    assert goal.id is not None
+    db_streak = await compute_consecutive_streak(db_session, goal.id, user_id, "UTC")
+    assert api_streak == db_streak

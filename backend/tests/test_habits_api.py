@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from http import HTTPStatus
 
 import pytest
@@ -275,3 +277,167 @@ async def test_invalid_notification_frequency_rejected(async_client: AsyncClient
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_duplicate_habit_name_rejected(async_client: AsyncClient) -> None:
+    """A second habit with the same name (case-insensitive) is rejected with 409."""
+    headers = await _signup(async_client)
+    first = await async_client.post("/habits/", json=sample_payload(name="Run"), headers=headers)
+    assert first.status_code == HTTPStatus.OK
+
+    duplicate = await async_client.post(
+        "/habits/", json=sample_payload(name=" run  "), headers=headers
+    )
+    assert duplicate.status_code == HTTPStatus.CONFLICT
+    assert duplicate.json()["detail"] == "duplicate_habit_name"
+
+
+@pytest.mark.asyncio
+async def test_habit_quota_caps_per_user(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The per-user habit count cap returns 409 once exceeded."""
+    # Lower the cap so we don't have to seed 100 rows.
+    monkeypatch.setattr("routers.habits._MAX_HABITS_PER_USER", 2)
+    headers = await _signup(async_client, "quota_user")
+    for i in range(2):
+        resp = await async_client.post(
+            "/habits/", json=sample_payload(name=f"Habit {i}"), headers=headers
+        )
+        assert resp.status_code == HTTPStatus.OK
+    resp = await async_client.post(
+        "/habits/", json=sample_payload(name="Overflow"), headers=headers
+    )
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.json()["detail"] == "habit_quota_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_delete_habit_logs_cascade_counts(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``delete_habit`` emits a structured cascade-count audit row."""
+    headers = await _signup(async_client, "cascade_user")
+    create = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    habit_id = create.json()["id"]
+
+    # Seed a goal so the cascade has something to count.
+    goal = Goal(
+        habit_id=habit_id,
+        title="g",
+        tier="clear",
+        target=1,
+        target_unit="glasses",
+        frequency=1,
+        frequency_unit="per_day",
+        is_additive=True,
+    )
+    db_session.add(goal)
+    await db_session.commit()
+
+    with caplog.at_level(logging.INFO, logger="routers.habits"):
+        resp = await async_client.delete(f"/habits/{habit_id}", headers=headers)
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    cascade_logs = [r for r in caplog.records if r.message == "habit_deleted"]
+    assert cascade_logs, "expected a habit_deleted audit log entry"
+    assert getattr(cascade_logs[0], "cascade_goals", None) == 1
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_delete_emits_audit_log(
+    async_client: AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A cross-tenant delete probe emits a ``resource_access_denied`` audit row."""
+    alice_headers = await _signup(async_client, "alice_owner")
+    bob_headers = await _signup(async_client, "bob_probe")
+
+    create = await async_client.post("/habits/", json=sample_payload(), headers=alice_headers)
+    habit_id = create.json()["id"]
+
+    with caplog.at_level(logging.WARNING, logger="dependencies.ownership"):
+        resp = await async_client.delete(f"/habits/{habit_id}", headers=bob_headers)
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    deny_logs = [r for r in caplog.records if r.message == "resource_access_denied"]
+    assert deny_logs, "expected a resource_access_denied audit log entry"
+    assert getattr(deny_logs[0], "resource", None) == "habit"
+    assert getattr(deny_logs[0], "resource_id", None) == habit_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_concurrent_create_with_same_name_yields_one_row(
+    concurrent_async_client: AsyncClient,
+) -> None:
+    """Concurrent ``POST /habits`` with the same name persist exactly one row.
+
+    Closes the duplicate-name TOCTOU: the application pre-check used to
+    be the only guard, so two requests could both pass it before either
+    inserted.  The unique index on ``(user_id, lower(trim(name)))`` plus
+    the ``IntegrityError → 409 duplicate_habit_name`` fallback keep the
+    row count at one and the loser gets the same envelope as a sequential
+    duplicate.
+    """
+    signup_resp = await concurrent_async_client.post(
+        "/auth/signup",
+        json={
+            "email": "racehabit@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    headers = {"Authorization": f"Bearer {signup_resp.json()['token']}"}
+    payload = sample_payload(name="Race Habit")
+
+    fanout = 5
+    responses = await asyncio.gather(
+        *[
+            concurrent_async_client.post("/habits/", json=payload, headers=headers)
+            for _ in range(fanout)
+        ]
+    )
+
+    statuses = [r.status_code for r in responses]
+    assert statuses.count(HTTPStatus.OK) == 1, statuses
+    assert statuses.count(HTTPStatus.CONFLICT) == fanout - 1, statuses
+    duplicate_details = {
+        r.json().get("detail") for r in responses if r.status_code == HTTPStatus.CONFLICT
+    }
+    assert duplicate_details == {"duplicate_habit_name"}
+
+    listing = await concurrent_async_client.get("/habits/", headers=headers)
+    items = listing.json()
+    assert len(items) == 1
+    assert items[0]["name"] == "Race Habit"
+
+
+@pytest.mark.asyncio
+async def test_update_habit_rename_collision_returns_409(async_client: AsyncClient) -> None:
+    """Renaming a habit to one already owned by the same user surfaces 409, not 500."""
+    headers = await _signup(async_client, "rename_user")
+
+    first = await async_client.post("/habits/", json=sample_payload(name="Run"), headers=headers)
+    second = await async_client.post("/habits/", json=sample_payload(name="Walk"), headers=headers)
+    second_id = second.json()["id"]
+
+    # Try to rename "Walk" -> "Run", which collides with the first habit.
+    rename = await async_client.put(
+        f"/habits/{second_id}",
+        json=sample_payload(name="run"),  # case-insensitive collision
+        headers=headers,
+    )
+    assert rename.status_code == HTTPStatus.CONFLICT
+    assert rename.json()["detail"] == "duplicate_habit_name"
+
+    # Renaming to a non-colliding name still works.
+    ok = await async_client.put(
+        f"/habits/{second_id}", json=sample_payload(name="Stroll"), headers=headers
+    )
+    assert ok.status_code == HTTPStatus.OK
+    assert ok.json()["name"] == "Stroll"
+
+    # Untouched first habit still exists.
+    assert first.status_code == HTTPStatus.OK

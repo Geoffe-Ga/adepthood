@@ -6,14 +6,18 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response, status
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from database import get_session
-from dependencies.ownership import require_owned_habit
+from dependencies.ownership import log_ownership_denied, require_owned_habit
 from domain.habit_stats import compute_habit_stats
-from errors import forbidden, not_found
+from errors import conflict, forbidden, not_found
 from load_options import HABIT_WITH_GOALS_AND_COMPLETIONS
+from models.goal import Goal
+from models.goal_completion import GoalCompletion
 from models.habit import Habit
 from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
@@ -28,15 +32,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/habits", tags=["habits"])
 
+# Per-user cap on habit rows; surfaces as 409 ``habit_quota_exceeded``.
+_MAX_HABITS_PER_USER = 100
+
 
 def _populate_streak(habit: Habit, current_user: int, user_timezone: str) -> None:
-    """Set ``habit.streak`` from the goal completions loaded in memory.
-
-    ``user_timezone`` keeps the in-memory streak in sync with
-    ``compute_consecutive_streak`` (BUG-STREAK-002): both compute days
-    using the same calendar so the value displayed in ``GET /habits``
-    matches what ``POST /goal_completions`` returns.
-    """
+    """Set ``habit.streak`` from the goal completions loaded in memory."""
     completions = [c for g in habit.goals for c in g.completions if c.user_id == current_user]
     habit.streak = compute_habit_streak(completions, user_timezone)
 
@@ -47,10 +48,34 @@ async def create_habit(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Habit:
-    """Create a habit for the authenticated user."""
+    """Create a habit; 409 over-quota (best-effort) or duplicate-name (DB-enforced)."""
+    count = await session.scalar(
+        select(func.count()).select_from(Habit).where(Habit.user_id == current_user)
+    )
+    if (count or 0) >= _MAX_HABITS_PER_USER:
+        raise conflict("habit_quota_exceeded")
+
+    candidate_name = payload.name.strip().lower()
+    duplicate = await session.scalar(
+        select(Habit.id).where(
+            Habit.user_id == current_user,
+            func.lower(func.trim(Habit.name)) == candidate_name,
+        )
+    )
+    if duplicate is not None:
+        raise conflict("duplicate_habit_name")
+
     habit = Habit(user_id=current_user, **payload.model_dump())
-    session.add(habit)
-    await session.commit()
+    try:
+        async with session.begin_nested():
+            session.add(habit)
+        await session.commit()
+    except IntegrityError as exc:
+        # A concurrent request for the same (user_id, normalized name)
+        # won the race.  The unique index keeps the duplicate out;
+        # surface the same 409 the pre-check would have so callers
+        # cannot tell the two paths apart.
+        raise conflict("duplicate_habit_name") from exc
     await session.refresh(habit)
     logger.info("habit_created", extra={"user_id": current_user, "habit_id": habit.id})
     return habit
@@ -62,12 +87,7 @@ async def list_habits(
     session: Annotated[AsyncSession, Depends(get_session)],
     pagination: Annotated[PaginationParams, Depends()],
 ) -> Page[HabitWithGoals] | list[HabitWithGoals]:
-    """Return all habits for the authenticated user, sorted by sort_order.
-
-    BUG-INFRA-013: returns ``Page[HabitWithGoals]`` when ``?paginate=true``
-    is set; otherwise the legacy bare list is returned for one release while
-    the frontend migrates to the envelope.
-    """
+    """Return habits sorted by ``sort_order``; paginated when ``?paginate=true``."""
     query = (
         select(Habit)
         .where(Habit.user_id == current_user)
@@ -90,12 +110,7 @@ async def get_habit(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Habit:
-    """Return a single habit by id, scoped to the authenticated user.
-
-    Uses :func:`_get_habit_with_completions` for the eager-loaded fetch +
-    canonical 404→403 split rather than the bare ``require_owned_habit``
-    dep, since this endpoint needs goals + completions in the response.
-    """
+    """Return a single habit (with eager-loaded goals + completions) for the caller."""
     habit = await _get_habit_with_completions(habit_id, current_user, session)
     user_tz = await get_user_timezone(session, current_user)
     _populate_streak(habit, current_user, user_tz)
@@ -109,15 +124,17 @@ async def update_habit(
     session: Annotated[AsyncSession, Depends(get_session)],
     habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Habit:
-    """Replace an existing habit's fields.
-
-    Ownership is verified by ``require_owned_habit`` (404 if missing,
-    403 if cross-user).
-    """
+    """Replace an existing habit's fields; 409 on rename collision."""
     for key, value in payload.model_dump().items():
         setattr(habit, key, value)
     session.add(habit)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        # The unique index on (user_id, lower(trim(name))) catches a
+        # rename that collides with another habit the user already owns.
+        await session.rollback()
+        raise conflict("duplicate_habit_name") from exc
     await session.refresh(habit)
     logger.info("habit_updated", extra={"user_id": current_user, "habit_id": habit.id})
     return habit
@@ -129,24 +146,42 @@ async def delete_habit(
     session: Annotated[AsyncSession, Depends(get_session)],
     habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Response:
-    """Delete a habit. Returns 204 No Content on success."""
+    """Delete a habit and cascade goals + completions; logs the cascade post-commit."""
     habit_id = habit.id
+    cascade_goal_count = await session.scalar(
+        select(func.count()).select_from(Goal).where(Goal.habit_id == habit_id)
+    )
+    cascade_completion_count = await session.scalar(
+        select(func.count())
+        .select_from(GoalCompletion)
+        .join(Goal, col(Goal.id) == col(GoalCompletion.goal_id))
+        .where(Goal.habit_id == habit_id)
+    )
     await session.delete(habit)
     await session.commit()
-    logger.info("habit_deleted", extra={"user_id": current_user, "habit_id": habit_id})
+    logger.info(
+        "habit_deleted",
+        extra={
+            "user_id": current_user,
+            "habit_id": habit_id,
+            "cascade_goals": cascade_goal_count or 0,
+            "cascade_completions": cascade_completion_count or 0,
+        },
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 async def _get_habit_with_completions(
     habit_id: int, current_user: int, session: AsyncSession
 ) -> Habit:
-    """Load a habit with goals+completions, with the canonical 404→403 split."""
+    """Eager-load a habit with goals + completions enforcing the 404 / 403 split."""
     statement = select(Habit).where(Habit.id == habit_id).options(HABIT_WITH_GOALS_AND_COMPLETIONS)
     result = await session.execute(statement)
     habit = result.scalars().first()
     if habit is None:
         raise not_found("habit")
     if habit.user_id != current_user:
+        log_ownership_denied("habit", habit_id, current_user)
         raise forbidden("forbidden")
     return habit
 

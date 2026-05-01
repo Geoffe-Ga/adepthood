@@ -263,16 +263,22 @@ async def test_stats_current_streak(async_client: AsyncClient, db_session: Async
 
 @pytest.mark.asyncio
 async def test_stats_completion_rate(async_client: AsyncClient, db_session: AsyncSession) -> None:
-    """Completion rate = days-with-completions / span-days."""
+    """Completion rate = unique-completion-days / days-since-first.
+
+    Anchoring the denominator to "today" rather than "last completion"
+    means a paused habit's rate drifts down as time passes.  Seed
+    completions today and two days ago so span = (today - (today-2)) + 1
+    = 3 calendar days; rate is 2 / 3.
+    """
     headers, user_id = await _signup_with_id(async_client)
     habit_id, goal_id = await _create_habit_with_goal(async_client, db_session, headers)
 
-    # Jan 1 and Jan 3 — span is 3 days, completed on 2
+    now = datetime.now(UTC)
     db_session.add(
         GoalCompletion(
             goal_id=goal_id,
             user_id=user_id,
-            timestamp=datetime(2024, 1, 1, 8, 0, tzinfo=UTC),
+            timestamp=now - timedelta(days=2),
             completed_units=1.0,
         )
     )
@@ -280,7 +286,7 @@ async def test_stats_completion_rate(async_client: AsyncClient, db_session: Asyn
         GoalCompletion(
             goal_id=goal_id,
             user_id=user_id,
-            timestamp=datetime(2024, 1, 3, 8, 0, tzinfo=UTC),
+            timestamp=now,
             completed_units=1.0,
         )
     )
@@ -288,7 +294,33 @@ async def test_stats_completion_rate(async_client: AsyncClient, db_session: Asyn
 
     resp = await async_client.get(f"/habits/{habit_id}/stats", headers=headers)
     data = resp.json()
+    # Span = today - (today-2) + 1 = 3 calendar days; 2 of them have completions.
     assert abs(data["completion_rate"] - 2 / 3) < COMPLETION_RATE_TOLERANCE
+
+
+@pytest.mark.asyncio
+async def test_stats_completion_rate_decays_when_paused(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A paused habit's completion rate drops below 1.0 as days elapse without check-ins."""
+    headers, user_id = await _signup_with_id(async_client)
+    habit_id, goal_id = await _create_habit_with_goal(async_client, db_session, headers)
+
+    long_ago = datetime.now(UTC) - timedelta(days=400)
+    for offset in range(7):
+        db_session.add(
+            GoalCompletion(
+                goal_id=goal_id,
+                user_id=user_id,
+                timestamp=long_ago + timedelta(days=offset),
+                completed_units=1.0,
+            )
+        )
+    await db_session.commit()
+
+    resp = await async_client.get(f"/habits/{habit_id}/stats", headers=headers)
+    data = resp.json()
+    assert data["completion_rate"] < 0.05
 
 
 @pytest.mark.asyncio

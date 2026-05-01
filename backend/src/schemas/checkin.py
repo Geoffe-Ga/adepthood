@@ -16,6 +16,7 @@ from .milestone import Milestone
 CheckInReasonCode = Literal[
     "streak_incremented",
     "streak_reset",
+    "streak_held",
     "already_logged_today",
 ]
 
