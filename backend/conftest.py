@@ -65,6 +65,12 @@ _SQLITE_PORTABLE_UNIQUE_INDEXES: tuple[str, ...] = (
     # mirror here.
     'CREATE UNIQUE INDEX IF NOT EXISTS "ix_goal_completion_unique_per_day_test" '
     "ON goalcompletion (goal_id, user_id, date(timestamp))",
+    # habit: one row per (user_id, normalized name) so the duplicate-name
+    # TOCTOU in ``create_habit`` is closed at the DB layer.  Mirrors the
+    # production migration ``b5c6d7e8f9a0``; SQLite supports
+    # ``lower()`` / ``trim()`` in functional indexes natively.
+    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_habit_user_lower_name_unique_test" '
+    "ON habit (user_id, lower(trim(name)))",
 )
 
 

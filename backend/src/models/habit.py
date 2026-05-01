@@ -12,7 +12,13 @@ if TYPE_CHECKING:
 
 
 class Habit(SQLModel, table=True):
-    """Tracks a user's habit and related goals."""
+    """Tracks a user's habit and related goals.
+
+    A functional unique index ``ix_habit_user_lower_name_unique`` over
+    ``(user_id, lower(trim(name)))`` lives in migration
+    ``b5c6d7e8f9a0`` -- the migration is the source of truth so it can
+    use raw SQL.  ``conftest`` mirrors it for SQLite test fixtures.
+    """
 
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(max_length=255)

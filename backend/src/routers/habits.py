@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -47,7 +48,21 @@ async def create_habit(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Habit:
-    """Create a habit; rejects over-quota or duplicate-name with 409."""
+    """Create a habit; rejects over-quota or duplicate-name with 409.
+
+    The duplicate-name guard is enforced at the DB layer by the
+    ``ix_habit_user_lower_name_unique`` index, so two concurrent
+    requests for the same name surface as ``IntegrityError`` on the
+    loser.  The application-level pre-check stays for the fast path
+    (so the common case avoids burning a savepoint) but is no longer
+    the source of truth.
+
+    The quota check remains best-effort: under concurrent load two
+    requests that read ``count == cap - 1`` can both insert and land
+    at ``cap + 1``.  A durable cap requires a per-user trigger or a
+    ``SELECT ... FOR UPDATE`` on a count proxy and is tracked as a
+    follow-up issue.
+    """
     count = await session.scalar(
         select(func.count()).select_from(Habit).where(Habit.user_id == current_user)
     )
@@ -65,8 +80,16 @@ async def create_habit(
         raise conflict("duplicate_habit_name")
 
     habit = Habit(user_id=current_user, **payload.model_dump())
-    session.add(habit)
-    await session.commit()
+    try:
+        async with session.begin_nested():
+            session.add(habit)
+        await session.commit()
+    except IntegrityError as exc:
+        # A concurrent request for the same (user_id, normalized name)
+        # won the race.  The unique index keeps the duplicate out;
+        # surface the same 409 the pre-check would have so callers
+        # cannot tell the two paths apart.
+        raise conflict("duplicate_habit_name") from exc
     await session.refresh(habit)
     logger.info("habit_created", extra={"user_id": current_user, "habit_id": habit.id})
     return habit

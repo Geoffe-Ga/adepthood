@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from http import HTTPStatus
 
@@ -365,3 +366,49 @@ async def test_cross_tenant_delete_emits_audit_log(
     assert deny_logs, "expected a resource_access_denied audit log entry"
     assert getattr(deny_logs[0], "resource", None) == "habit"
     assert getattr(deny_logs[0], "resource_id", None) == habit_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_concurrent_create_with_same_name_yields_one_row(
+    concurrent_async_client: AsyncClient,
+) -> None:
+    """Concurrent ``POST /habits`` with the same name persist exactly one row.
+
+    Closes the duplicate-name TOCTOU: the application pre-check used to
+    be the only guard, so two requests could both pass it before either
+    inserted.  The unique index on ``(user_id, lower(trim(name)))`` plus
+    the ``IntegrityError → 409 duplicate_habit_name`` fallback keep the
+    row count at one and the loser gets the same envelope as a sequential
+    duplicate.
+    """
+    signup_resp = await concurrent_async_client.post(
+        "/auth/signup",
+        json={
+            "email": "racehabit@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    headers = {"Authorization": f"Bearer {signup_resp.json()['token']}"}
+    payload = sample_payload(name="Race Habit")
+
+    fanout = 5
+    responses = await asyncio.gather(
+        *[
+            concurrent_async_client.post("/habits/", json=payload, headers=headers)
+            for _ in range(fanout)
+        ]
+    )
+
+    statuses = [r.status_code for r in responses]
+    assert statuses.count(HTTPStatus.OK) == 1, statuses
+    assert statuses.count(HTTPStatus.CONFLICT) == fanout - 1, statuses
+    duplicate_details = {
+        r.json().get("detail") for r in responses if r.status_code == HTTPStatus.CONFLICT
+    }
+    assert duplicate_details == {"duplicate_habit_name"}
+
+    listing = await concurrent_async_client.get("/habits/", headers=headers)
+    items = listing.json()
+    assert len(items) == 1
+    assert items[0]["name"] == "Race Habit"
