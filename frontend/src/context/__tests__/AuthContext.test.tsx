@@ -7,21 +7,9 @@ import { AuthProvider, useAuth } from '../AuthContext';
 
 // Mock the API client
 jest.mock('@/api', () => {
-  // Mirror the real ``ApiError`` shape (BUG-AUTH-019: AuthContext.signup
-  // synthesises one of these for the duplicate-email sentinel) so callers
-  // that do ``instanceof ApiError`` keep matching under the mock.
-  class MockApiError extends Error {
-    status: number;
-    detail: string;
-    constructor(status: number, detail: string) {
-      super(`Request failed with status ${status}: ${detail}`);
-      this.name = 'ApiError';
-      this.status = status;
-      this.detail = detail;
-    }
-  }
+  const { ApiError } = jest.requireActual('@/api');
   return {
-    ApiError: MockApiError,
+    ApiError,
     auth: {
       login: jest.fn(),
       signup: jest.fn(),
@@ -184,13 +172,7 @@ describe('AuthContext', () => {
       expect(result.current.token).toBe('signup-jwt');
     });
 
-    // BUG-AUTH-019: the backend returns an anti-enumeration dummy token with
-    // ``user_id=0`` when the email is already registered (see
-    // ``backend/tests/test_auth.py::test_signup_duplicate_email_returns_same_shape``).
-    // The frontend must NOT persist that token or transition to authenticated --
-    // doing so cascades into a 401 on the first authed request and an
-    // unrecoverable re-auth loop because the user does not actually own the
-    // pre-existing account's password.
+    // BUG-AUTH-002: must not persist the user_id=0 anti-enumeration token (see schemas.ts:57).
     it('rejects the anti-enumeration sentinel without persisting the token', async () => {
       mockAuth.signup.mockResolvedValue({ token: 'dummy-jwt', user_id: 0 });
       const { result } = renderHook(() => useAuth(), { wrapper });

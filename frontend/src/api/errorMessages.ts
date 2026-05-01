@@ -46,11 +46,7 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // rejects a stored token outright (forged / revoked).  Treat as a
   // hard sign-back-in rather than a transient session lapse.
   invalid_token: 'You have been signed out for security. Sign in again to continue.',
-  // BUG-AUTH-019: synthesised by the AuthContext when the backend's
-  // anti-enumeration signup response (``user_id=0`` sentinel) lands.
-  // Phrased as a maybe so the copy still reads sensibly when a user
-  // genuinely is new and the signup just collided with someone else's
-  // address (rare but possible).
+  // BUG-AUTH-002: synthesised by AuthContext when the backend returns the user_id=0 anti-enumeration sentinel.
   email_in_use:
     'That email may already be registered. Try logging in, or use a different email to sign up.',
 
