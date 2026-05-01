@@ -6,16 +6,32 @@ import React from 'react';
 import { AuthProvider, useAuth } from '../AuthContext';
 
 // Mock the API client
-jest.mock('@/api', () => ({
-  auth: {
-    login: jest.fn(),
-    signup: jest.fn(),
-    refresh: jest.fn(),
-  },
-  setTokenGetter: jest.fn(),
-  setOnUnauthorized: jest.fn(),
-  setOnTokenRefreshed: jest.fn(),
-}));
+jest.mock('@/api', () => {
+  // Mirror the real ``ApiError`` shape (BUG-AUTH-019: AuthContext.signup
+  // synthesises one of these for the duplicate-email sentinel) so callers
+  // that do ``instanceof ApiError`` keep matching under the mock.
+  class MockApiError extends Error {
+    status: number;
+    detail: string;
+    constructor(status: number, detail: string) {
+      super(`Request failed with status ${status}: ${detail}`);
+      this.name = 'ApiError';
+      this.status = status;
+      this.detail = detail;
+    }
+  }
+  return {
+    ApiError: MockApiError,
+    auth: {
+      login: jest.fn(),
+      signup: jest.fn(),
+      refresh: jest.fn(),
+    },
+    setTokenGetter: jest.fn(),
+    setOnUnauthorized: jest.fn(),
+    setOnTokenRefreshed: jest.fn(),
+  };
+});
 
 // Mock authStorage
 jest.mock('@/storage/authStorage', () => ({
@@ -166,6 +182,30 @@ describe('AuthContext', () => {
       });
       expect(mockSaveToken).toHaveBeenCalledWith('signup-jwt');
       expect(result.current.token).toBe('signup-jwt');
+    });
+
+    // BUG-AUTH-019: the backend returns an anti-enumeration dummy token with
+    // ``user_id=0`` when the email is already registered (see
+    // ``backend/tests/test_auth.py::test_signup_duplicate_email_returns_same_shape``).
+    // The frontend must NOT persist that token or transition to authenticated --
+    // doing so cascades into a 401 on the first authed request and an
+    // unrecoverable re-auth loop because the user does not actually own the
+    // pre-existing account's password.
+    it('rejects the anti-enumeration sentinel without persisting the token', async () => {
+      mockAuth.signup.mockResolvedValue({ token: 'dummy-jwt', user_id: 0 });
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      await expect(
+        act(async () => {
+          await result.current.signup('taken@test.com', 'password123');
+        }),
+      ).rejects.toMatchObject({ status: 409, detail: 'email_in_use' });
+
+      expect(mockSaveToken).not.toHaveBeenCalled();
+      expect(result.current.token).toBeNull();
+      expect(result.current.authStatus).toBe('anonymous');
     });
   });
 

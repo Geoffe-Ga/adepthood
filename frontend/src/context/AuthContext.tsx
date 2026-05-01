@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 import {
+  ApiError,
   auth as authApi,
   setOnTokenRefreshed,
   setOnUnauthorized,
@@ -277,6 +278,23 @@ interface AuthActions {
 }
 
 /**
+ * Sentinel ``user_id`` returned by the backend's anti-enumeration response
+ * when the email is already registered.  See ``backend/src/routers/auth.py``
+ * (``_duplicate_signup_response``) and the wire contract documented in
+ * ``frontend/src/api/schemas.ts`` (``authResponseSchema``).
+ *
+ * BUG-AUTH-019: the backend signs an invalid dummy JWT and pairs it with
+ * this sentinel so that the wire shape is indistinguishable from a fresh
+ * signup, but the token cannot grant access.  Persisting it would put the
+ * AuthContext into ``'authenticated'`` and the very next API call would
+ * 401 -- bouncing the user into a re-auth loop they cannot escape because
+ * the password they typed at signup is not the password on the
+ * pre-existing account.  Detecting the sentinel here keeps that contract
+ * intact.
+ */
+const DUPLICATE_SIGNUP_SENTINEL_USER_ID = 0;
+
+/**
  * POST /auth/signup with the device's IANA timezone attached.
  *
  * Captures the timezone here (not at the AuthContext call site) so the
@@ -287,6 +305,13 @@ interface AuthActions {
  * plus the server's record of the stored zone (which the backend may
  * have normalised) so the AuthContext can populate `userTimezone`
  * synchronously with the same value the rest of the API will return.
+ *
+ * BUG-AUTH-019: when the response carries the
+ * ``DUPLICATE_SIGNUP_SENTINEL_USER_ID`` we throw an ``ApiError`` shaped
+ * like a 409 ``email_in_use`` so the SignupScreen's existing
+ * ``formatApiError`` path renders the friendly "may already be
+ * registered -- try signing in" copy instead of silently storing the
+ * doomed dummy token.
  */
 async function signupWithDeviceTimezone(
   email: string,
@@ -297,6 +322,9 @@ async function signupWithDeviceTimezone(
     password,
     timezone: detectDeviceTimezone(),
   });
+  if (response.user_id === DUPLICATE_SIGNUP_SENTINEL_USER_ID) {
+    throw new ApiError(409, 'email_in_use');
+  }
   return { token: response.token, timezone: response.timezone ?? 'UTC' };
 }
 
