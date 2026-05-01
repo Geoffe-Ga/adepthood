@@ -671,7 +671,9 @@ export interface GoalGroupCreatePayload {
 
 export interface ApiHabit {
   id: number;
-  user_id: number;
+  // ``user_id`` deliberately omitted: the backend strips it from owned-resource
+  // responses (BUG-T7 / PR #265) so the wire shape is enumeration-safe. Keep
+  // this interface in sync with ``habitSchema`` in ``schemas.ts``.
   name: string;
   icon: string;
   start_date: string;

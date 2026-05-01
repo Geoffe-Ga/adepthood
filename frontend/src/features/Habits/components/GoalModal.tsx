@@ -341,6 +341,132 @@ const LogUnitSection = ({ logAmount, setLogAmount, onLog }: LogUnitSectionProps)
   </View>
 );
 
+const TIER_ORDER = ['low', 'clear', 'stretch'] as const;
+
+const goalEditorStyles = StyleSheet.create({
+  container: {
+    marginVertical: 12,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#eee',
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#666',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  label: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  input: {
+    width: 64,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    textAlign: 'center',
+    fontSize: 15,
+    marginHorizontal: 8,
+  },
+  unit: {
+    fontSize: 13,
+    color: '#666',
+    minWidth: 80,
+  },
+});
+
+interface GoalTargetRowProps {
+  goal: Goal;
+  onCommit: (_target: number) => void;
+}
+
+/**
+ * Single-row editor for one goal tier's numeric target. Drives a controlled
+ * TextInput that commits on blur (`onEndEditing`) so the user can type a
+ * multi-digit value without firing a network round-trip per keystroke. Empty
+ * or non-numeric input is dropped — the goal target reverts to its previous
+ * value rather than corrupting to `NaN` or `0`.
+ */
+const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
+  const [draft, setDraft] = useState(String(goal.target));
+  // When the underlying goal changes (e.g. marker drag, sibling edit) sync
+  // the draft so the visible value reflects the latest server state.
+  useEffect(() => {
+    setDraft(String(goal.target));
+  }, [goal.target]);
+  const tierLabel = TIER_LABELS[goal.tier] ?? goal.tier;
+  const handleEnd = () => {
+    const parsed = Number.parseFloat(draft);
+    if (!Number.isFinite(parsed) || parsed === goal.target) {
+      setDraft(String(goal.target));
+      return;
+    }
+    onCommit(parsed);
+  };
+  return (
+    <View style={goalEditorStyles.row}>
+      <Text style={[goalEditorStyles.label, { color: getTierColor(goal.tier) }]}>{tierLabel}</Text>
+      <TextInput
+        testID={`goal-target-input-${goal.tier}`}
+        style={goalEditorStyles.input}
+        value={draft}
+        onChangeText={setDraft}
+        onEndEditing={handleEnd}
+        onBlur={handleEnd}
+        keyboardType="numeric"
+        returnKeyType="done"
+      />
+      <Text style={goalEditorStyles.unit}>
+        {goal.target_unit} / {goal.frequency_unit.replace('_', ' ')}
+      </Text>
+    </View>
+  );
+};
+
+interface GoalTargetEditorProps {
+  habit: NonNullable<GoalModalProps['habit']>;
+  onUpdateGoal: GoalModalProps['onUpdateGoal'];
+}
+
+/**
+ * Inline goal-target editor surfaced in the GoalModal so mobile users have a
+ * discoverable way to change a goal's numeric target. The pre-existing marker
+ * drag is kept (desktop-friendly), but the marker hit area is 12px and never
+ * triggered reliably under thumb input — closing the "no way to edit habit
+ * goals on mobile" gap.
+ */
+const GoalTargetEditor = ({ habit, onUpdateGoal }: GoalTargetEditorProps) => {
+  if (!habit.id) return null;
+  const orderedGoals = TIER_ORDER.map((tier) => habit.goals.find((g) => g.tier === tier)).filter(
+    (g): g is Goal => g !== undefined,
+  );
+  if (orderedGoals.length === 0) return null;
+  return (
+    <View style={goalEditorStyles.container} testID="goal-target-editor">
+      <Text style={goalEditorStyles.sectionTitle}>Goals</Text>
+      {orderedGoals.map((goal) => (
+        <GoalTargetRow
+          key={goal.id ?? goal.tier}
+          goal={goal}
+          onCommit={(target) => onUpdateGoal(habit.id!, { ...goal, target })}
+        />
+      ))}
+    </View>
+  );
+};
+
 const useGoalGroup = (habit: GoalModalProps['habit']) => {
   const [goalGroup, setGoalGroup] = useState<ApiGoalGroup | null>(null);
   useEffect(() => {
@@ -617,6 +743,7 @@ const GoalModalBody = ({
         onUpdateHabit={onUpdateHabit}
       />
       <GoalProgressBar {...buildProgressBarProps(habit, m)} />
+      <GoalTargetEditor habit={habit} onUpdateGoal={onUpdateGoal} />
       <LogUnitSection logAmount={logAmount} setLogAmount={setLogAmount} onLog={handleLogUnit} />
     </View>
   );

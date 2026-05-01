@@ -45,6 +45,9 @@ const MILESTONE_ICONS: Record<string, string> = {
   stretch: '\u{1F31F}',
 };
 
+/** Generic check-mark used for the "logged, no milestone yet" confirmation. */
+const LOG_CONFIRMATION_ICON = '\u{2705}';
+
 const DEFAULT_GOAL_CONFIG = {
   target_unit: 'units',
   frequency: 1,
@@ -178,6 +181,18 @@ const buildMilestoneToast = (
   return null;
 };
 
+/**
+ * Generic "we recorded your log" toast. Surfaces when a unit log doesn't
+ * cross a tier threshold so the user always gets explicit confirmation,
+ * not just a few-pixel progress-bar redraw — closes the user-reported
+ * "logging units is doing nothing" feedback gap on mobile.
+ */
+const buildLogConfirmationToast = (habitName: string, amount: number): ToastConfig => ({
+  message: `Logged ${amount} for ${habitName}`,
+  icon: LOG_CONFIRMATION_ICON,
+  color: colors.success,
+});
+
 const backfillHabit = (habit: Habit, days: Date[]): Habit => {
   const newCompletions = days.map((day) => ({
     id: uuidv4(),
@@ -251,6 +266,8 @@ export interface LogUnitContext {
   next: Habit[];
   updated: Habit;
   habitName: string;
+  /** Amount of units the caller logged in this operation. */
+  amount: number;
   oldProgress: number;
   newProgress: number;
   currentGoal: Goal;
@@ -466,6 +483,7 @@ export const habitManager = {
       next,
       updated,
       habitName,
+      amount,
       oldProgress,
       newProgress,
       currentGoal,
@@ -508,18 +526,22 @@ export const habitManager = {
   },
 
   /**
-   * Build the milestone toast (if any). Called from `onSuccess`, never
-   * from `apply`, so a failed POST never flashes a "Stretch Goal
-   * achieved!" celebration for a check-in the server rejected.
+   * Build the toast for a successful log. Returns the milestone toast when
+   * the user crosses a tier threshold, else a generic confirmation toast so
+   * every successful log produces visible feedback. Called from `onSuccess`
+   * — never from `apply` — so a server-rejected check-in does not flash any
+   * celebration the user did not earn.
    */
-  buildLogUnitToast: (ctx: LogUnitContext): ToastConfig | null =>
-    buildMilestoneToast(
+  buildLogUnitToast: (ctx: LogUnitContext): ToastConfig | null => {
+    const milestone = buildMilestoneToast(
       ctx.habitName,
       ctx.oldProgress,
       ctx.newProgress,
       ctx.currentGoal,
       ctx.nextGoal,
-    ),
+    );
+    return milestone ?? buildLogConfirmationToast(ctx.habitName, ctx.amount);
+  },
 
   backfillMissedDays: (habitId: number, days: Date[]): void => {
     setHabits(getHabits().map((h) => (h.id === habitId ? backfillHabit(h, days) : h)));

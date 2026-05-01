@@ -101,9 +101,18 @@ export const goalSchema = z.object({
 
 export const notificationFrequencySchema = z.enum(['daily', 'weekly', 'custom', 'off']);
 
+/**
+ * Habit response schema. ``user_id`` is intentionally absent to mirror the
+ * backend ``OwnedResourcePublic`` base (BUG-T7 / PR #265): the server stripped
+ * surrogate user ids from owned-resource responses to harden against
+ * enumeration. The frontend Zod schema previously still required ``user_id``,
+ * so every ``GET /habits`` returned by the post-#265 backend failed validation
+ * with ``ApiValidationError`` — surfaced to users as the
+ * "We couldn't load your habits" banner. Keep this field absent unless the
+ * backend re-introduces it.
+ */
 export const habitSchema = z.object({
   id: z.number().int(),
-  user_id: z.number().int(),
   name: z.string(),
   icon: z.string(),
   start_date: isoDateTime,

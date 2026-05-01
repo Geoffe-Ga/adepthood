@@ -305,6 +305,27 @@ describe('habitManager', () => {
       expect(toast!.message).toMatch(/Low Goal achieved/i);
     });
 
+    it('buildLogUnitToast returns a confirmation toast when no milestone fires', () => {
+      // Without this, ``logUnit`` could complete with no visible feedback at
+      // all when the user added units that did not cross a tier threshold —
+      // matching the user-reported "logging units is doing nothing" symptom.
+      // The progress-bar redraw is too subtle to register as feedback on
+      // mobile, so every successful log now surfaces an explicit toast.
+      useHabitStore.setState({
+        habits: [
+          makeHabit({
+            completions: [{ id: 'pre', timestamp: new Date(), completed_units: 5 }],
+          }),
+        ],
+      });
+      const ctx = habitManager.prepareLogUnit(1, 1)!;
+
+      const toast = habitManager.buildLogUnitToast(ctx);
+
+      expect(toast).not.toBeNull();
+      expect(toast!.message).toMatch(/logged/i);
+    });
+
     it('rollbackLogUnitContext restores both the store AND the persisted snapshot', () => {
       const habit = makeHabit();
       const prev = [habit];
