@@ -48,21 +48,7 @@ async def create_habit(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Habit:
-    """Create a habit; rejects over-quota or duplicate-name with 409.
-
-    The duplicate-name guard is enforced at the DB layer by the
-    ``ix_habit_user_lower_name_unique`` index, so two concurrent
-    requests for the same name surface as ``IntegrityError`` on the
-    loser.  The application-level pre-check stays for the fast path
-    (so the common case avoids burning a savepoint) but is no longer
-    the source of truth.
-
-    The quota check remains best-effort: under concurrent load two
-    requests that read ``count == cap - 1`` can both insert and land
-    at ``cap + 1``.  A durable cap requires a per-user trigger or a
-    ``SELECT ... FOR UPDATE`` on a count proxy and is tracked as a
-    follow-up issue.
-    """
+    """Create a habit; 409 over-quota (best-effort) or duplicate-name (DB-enforced)."""
     count = await session.scalar(
         select(func.count()).select_from(Habit).where(Habit.user_id == current_user)
     )
