@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 import {
+  ApiError,
   auth as authApi,
   setOnTokenRefreshed,
   setOnUnauthorized,
@@ -276,6 +277,9 @@ interface AuthActions {
   dismissReauth: () => Promise<void>;
 }
 
+/** Sentinel user_id in the backend's anti-enumeration duplicate-signup response (see schemas.ts:57, BUG-AUTH-002). */
+const DUPLICATE_SIGNUP_SENTINEL_USER_ID = 0;
+
 /**
  * POST /auth/signup with the device's IANA timezone attached.
  *
@@ -297,6 +301,9 @@ async function signupWithDeviceTimezone(
     password,
     timezone: detectDeviceTimezone(),
   });
+  if (response.user_id === DUPLICATE_SIGNUP_SENTINEL_USER_ID) {
+    throw new ApiError(409, 'email_in_use');
+  }
   return { token: response.token, timezone: response.timezone ?? 'UTC' };
 }
 

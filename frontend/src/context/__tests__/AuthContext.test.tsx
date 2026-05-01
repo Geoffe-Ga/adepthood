@@ -6,16 +6,20 @@ import React from 'react';
 import { AuthProvider, useAuth } from '../AuthContext';
 
 // Mock the API client
-jest.mock('@/api', () => ({
-  auth: {
-    login: jest.fn(),
-    signup: jest.fn(),
-    refresh: jest.fn(),
-  },
-  setTokenGetter: jest.fn(),
-  setOnUnauthorized: jest.fn(),
-  setOnTokenRefreshed: jest.fn(),
-}));
+jest.mock('@/api', () => {
+  const { ApiError } = jest.requireActual('@/api');
+  return {
+    ApiError,
+    auth: {
+      login: jest.fn(),
+      signup: jest.fn(),
+      refresh: jest.fn(),
+    },
+    setTokenGetter: jest.fn(),
+    setOnUnauthorized: jest.fn(),
+    setOnTokenRefreshed: jest.fn(),
+  };
+});
 
 // Mock authStorage
 jest.mock('@/storage/authStorage', () => ({
@@ -166,6 +170,24 @@ describe('AuthContext', () => {
       });
       expect(mockSaveToken).toHaveBeenCalledWith('signup-jwt');
       expect(result.current.token).toBe('signup-jwt');
+    });
+
+    // BUG-AUTH-002: must not persist the user_id=0 anti-enumeration token (see schemas.ts:57).
+    it('rejects the anti-enumeration sentinel without persisting the token', async () => {
+      mockAuth.signup.mockResolvedValue({ token: 'dummy-jwt', user_id: 0 });
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      await expect(
+        act(async () => {
+          await result.current.signup('taken@test.com', 'password123');
+        }),
+      ).rejects.toMatchObject({ status: 409, detail: 'email_in_use' });
+
+      expect(mockSaveToken).not.toHaveBeenCalled();
+      expect(result.current.token).toBeNull();
+      expect(result.current.authStatus).toBe('anonymous');
     });
   });
 
