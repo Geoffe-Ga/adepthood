@@ -4,8 +4,9 @@ description: >-
   Structured 10-section PR review covering security, quality, testing,
   and documentation. Use when reviewing pull requests, evaluating code
   changes, or doing code review. Produces verdicts with specific references.
-  Do NOT use for backlog grooming or issue triage (use backlog-grooming)
-  or issue-first development workflow and PR creation (use git-workflow).
+  Do NOT use for backlog grooming or issue triage (use backlog-grooming),
+  issue-first development workflow and PR creation (use git-workflow), or
+  iterating on a review's feedback as the PR author (use address-feedback).
 metadata:
   author: Geoff
   version: 1.0.0
