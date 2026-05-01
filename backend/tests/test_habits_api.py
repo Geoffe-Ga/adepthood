@@ -342,8 +342,8 @@ async def test_delete_habit_logs_cascade_counts(
     with caplog.at_level(logging.INFO, logger="routers.habits"):
         resp = await async_client.delete(f"/habits/{habit_id}", headers=headers)
     assert resp.status_code == HTTPStatus.NO_CONTENT
-    cascade_logs = [r for r in caplog.records if r.message == "habit_delete_cascade"]
-    assert cascade_logs, "expected a habit_delete_cascade audit log entry"
+    cascade_logs = [r for r in caplog.records if r.message == "habit_deleted"]
+    assert cascade_logs, "expected a habit_deleted audit log entry"
     assert getattr(cascade_logs[0], "cascade_goals", None) == 1
 
 
@@ -412,3 +412,32 @@ async def test_concurrent_create_with_same_name_yields_one_row(
     items = listing.json()
     assert len(items) == 1
     assert items[0]["name"] == "Race Habit"
+
+
+@pytest.mark.asyncio
+async def test_update_habit_rename_collision_returns_409(async_client: AsyncClient) -> None:
+    """Renaming a habit to one already owned by the same user surfaces 409, not 500."""
+    headers = await _signup(async_client, "rename_user")
+
+    first = await async_client.post("/habits/", json=sample_payload(name="Run"), headers=headers)
+    second = await async_client.post("/habits/", json=sample_payload(name="Walk"), headers=headers)
+    second_id = second.json()["id"]
+
+    # Try to rename "Walk" -> "Run", which collides with the first habit.
+    rename = await async_client.put(
+        f"/habits/{second_id}",
+        json=sample_payload(name="run"),  # case-insensitive collision
+        headers=headers,
+    )
+    assert rename.status_code == HTTPStatus.CONFLICT
+    assert rename.json()["detail"] == "duplicate_habit_name"
+
+    # Renaming to a non-colliding name still works.
+    ok = await async_client.put(
+        f"/habits/{second_id}", json=sample_payload(name="Stroll"), headers=headers
+    )
+    assert ok.status_code == HTTPStatus.OK
+    assert ok.json()["name"] == "Stroll"
+
+    # Untouched first habit still exists.
+    assert first.status_code == HTTPStatus.OK

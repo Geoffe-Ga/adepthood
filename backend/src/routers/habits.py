@@ -124,11 +124,17 @@ async def update_habit(
     session: Annotated[AsyncSession, Depends(get_session)],
     habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Habit:
-    """Replace an existing habit's fields; ownership enforced upstream."""
+    """Replace an existing habit's fields; 409 on rename collision."""
     for key, value in payload.model_dump().items():
         setattr(habit, key, value)
     session.add(habit)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        # The unique index on (user_id, lower(trim(name))) catches a
+        # rename that collides with another habit the user already owns.
+        await session.rollback()
+        raise conflict("duplicate_habit_name") from exc
     await session.refresh(habit)
     logger.info("habit_updated", extra={"user_id": current_user, "habit_id": habit.id})
     return habit
@@ -154,7 +160,7 @@ async def delete_habit(
     await session.delete(habit)
     await session.commit()
     logger.info(
-        "habit_delete_cascade",
+        "habit_deleted",
         extra={
             "user_id": current_user,
             "habit_id": habit_id,
@@ -162,7 +168,6 @@ async def delete_habit(
             "cascade_completions": cascade_completion_count or 0,
         },
     )
-    logger.info("habit_deleted", extra={"user_id": current_user, "habit_id": habit_id})
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

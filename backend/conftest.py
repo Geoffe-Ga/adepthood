@@ -54,17 +54,10 @@ def _replace_array_columns() -> None:
 # after ``metadata.create_all``.  Each entry is a ``CREATE UNIQUE INDEX
 # IF NOT EXISTS …`` statement; the ``IF NOT EXISTS`` clause keeps the
 # helper idempotent across the per-test fixture lifecycle.
-_SQLITE_PORTABLE_UNIQUE_INDEXES: tuple[str, ...] = (
-    # goal_completion: one row per (goal, user, calendar day).  Production
-    # uses ``((timestamp AT TIME ZONE 'UTC')::date)`` for IMMUTABLE-ness
-    # under a non-UTC server zone; SQLite stores ``timestamp`` as ISO
-    # text and ``date(timestamp)`` is sufficient at test scale.  The
-    # ``contentcompletion`` and ``userpractice`` constraints live on
-    # their respective models' ``__table_args__`` so they are created
-    # by ``metadata.create_all`` everywhere and do not need a test-only
-    # mirror here.
-    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_goal_completion_unique_per_day_test" '
-    "ON goalcompletion (goal_id, user_id, date(timestamp))",
+# Always-installed functional unique indexes -- mirrored on every test DB
+# because the application contract depends on the constraint, not on the
+# integration / concurrent paths only.
+_SQLITE_ALWAYS_INDEXES: tuple[str, ...] = (
     # habit: one row per (user_id, normalized name) so the duplicate-name
     # TOCTOU in ``create_habit`` is closed at the DB layer.  Mirrors the
     # production migration ``b5c6d7e8f9a0``; SQLite supports
@@ -73,18 +66,35 @@ _SQLITE_PORTABLE_UNIQUE_INDEXES: tuple[str, ...] = (
     "ON habit (user_id, lower(trim(name)))",
 )
 
+# Concurrency-only indexes: the regular ``db_session`` fixture deliberately
+# omits these because some streak / aggregation tests insert multiple
+# ``GoalCompletion`` rows per (goal, user, day) to exercise the bucketing
+# logic, which the production unique-per-day index would (correctly)
+# reject.  Concurrency tests opt in to exercise the
+# ``IntegrityError -> idempotent`` path.
+_SQLITE_CONCURRENT_ONLY_INDEXES: tuple[str, ...] = (
+    # goal_completion: one row per (goal, user, calendar day).  Production
+    # uses ``((timestamp AT TIME ZONE 'UTC')::date)`` for IMMUTABLE-ness
+    # under a non-UTC server zone; SQLite stores ``timestamp`` as ISO
+    # text and ``date(timestamp)`` is sufficient at test scale.
+    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_goal_completion_unique_per_day_test" '
+    "ON goalcompletion (goal_id, user_id, date(timestamp))",
+)
 
-async def _install_test_only_unique_indexes(conn: AsyncConnection) -> None:
-    """Add SQLite-compatible variants of production functional indexes.
 
-    Skipped on every non-SQLite dialect; production runs the canonical
-    Alembic migrations and adding the test-only variants would be
-    redundant (or, for the user-practice partial index, conflict with
-    the migration's exact name).
-    """
+async def _install_always_unique_indexes(conn: AsyncConnection) -> None:
+    """Add SQLite mirrors for production indexes the application contract relies on."""
     if conn.dialect.name != "sqlite":
         return
-    for stmt in _SQLITE_PORTABLE_UNIQUE_INDEXES:
+    for stmt in _SQLITE_ALWAYS_INDEXES:
+        await conn.execute(text(stmt))
+
+
+async def _install_test_only_unique_indexes(conn: AsyncConnection) -> None:
+    """Add concurrency-only indexes for tests that exercise IntegrityError races."""
+    if conn.dialect.name != "sqlite":
+        return
+    for stmt in (*_SQLITE_ALWAYS_INDEXES, *_SQLITE_CONCURRENT_ONLY_INDEXES):
         await conn.execute(text(stmt))
 
 
@@ -107,6 +117,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
     async with test_engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        await _install_always_unique_indexes(conn)
 
     try:
         async with test_session_factory() as session:

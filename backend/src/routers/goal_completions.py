@@ -160,6 +160,12 @@ async def _try_persist_or_idempotent(session: AsyncSession, job: _CheckInJob) ->
     try:
         return await _persist_and_build_response(session, job)
     except IntegrityError:
+        # Rollback before the follow-up SELECT in case the integrity error
+        # surfaced from the outer commit() rather than the savepoint flush
+        # -- SQLAlchemy marks the session as ``PendingRollbackError`` until
+        # rollback() is called and any subsequent query would otherwise
+        # raise on a clean-looking happy path.
+        await session.rollback()
         return await _idempotent_already_logged_response(
             session, job.goal_id, job.user_id, job.user_timezone
         )
