@@ -785,8 +785,14 @@ export const GoalModal = ({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
-        {/* Sibling backdrop — body taps don't bubble to onClose (RN Web). */}
-        <Pressable testID="goal-modal-backdrop" onPress={onClose} style={StyleSheet.absoluteFill} />
+        {/* Sibling backdrop, rendered first so the body stacks above it on web. */}
+        <Pressable
+          testID="goal-modal-backdrop"
+          onPress={onClose}
+          style={StyleSheet.absoluteFill}
+          accessibilityLabel="Close"
+          accessibilityRole="button"
+        />
         <GoalModalBody
           habit={habit}
           onClose={onClose}

@@ -563,6 +563,7 @@ export const habitManager = {
     });
     await syncOnboardingHabits(fullHabits);
     // Round-trip server-assigned ids — synthetic goal ids would 404 on log.
+    // If this GET fails, synthetic ids survive until the next launch — see #282.
     await loadHabits();
   },
 
