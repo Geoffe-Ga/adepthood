@@ -694,10 +694,20 @@ def _token_predates_password_reset(
     Either side being ``None`` disables the gate -- legacy tokens
     without an ``iat`` cannot be compared, and an account that has
     never had a password reset has no floor to compare against.
+
+    JWT ``iat`` is encoded as integer Unix seconds, so a token minted
+    in the same wall-clock second as a password reset would otherwise
+    appear to have ``iat < password_changed_at`` (because the column
+    keeps sub-second precision while the JWT claim does not).
+    Truncating both sides to whole seconds before comparison gives the
+    issuance path a one-second cushion -- the gate still rejects every
+    token from a prior second, which is the security property.
     """
     if token_iat is None or password_changed_at is None:
         return False
-    return _as_utc_aware(token_iat) < _as_utc_aware(password_changed_at)
+    iat_floor = _as_utc_aware(token_iat).replace(microsecond=0)
+    reset_floor = _as_utc_aware(password_changed_at).replace(microsecond=0)
+    return iat_floor < reset_floor
 
 
 async def _check_user_active(

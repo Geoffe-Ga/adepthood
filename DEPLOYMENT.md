@@ -341,6 +341,12 @@ options:
 | `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-4-20250514` (Anthropic) |
 | `WEB_CONCURRENCY` | No | `2` | Number of Uvicorn worker processes |
 | `BOTMASON_SYSTEM_PROMPT` | No | Built-in | Path to prompt file or inline text |
+| `EMAIL_BACKEND` | No | `console` | `console` (logs the email locally) or `smtp` (delivers via SMTP). Required: `smtp` in production. |
+| `SMTP_HOST` | If `EMAIL_BACKEND=smtp` | — | SMTP relay hostname, e.g. `smtp.sendgrid.net` |
+| `SMTP_PORT` | If `EMAIL_BACKEND=smtp` | — | SMTP port (typically `587` for STARTTLS) |
+| `SMTP_USERNAME` | If `EMAIL_BACKEND=smtp` | — | SMTP relay username |
+| `SMTP_PASSWORD` | If `EMAIL_BACKEND=smtp` | — | SMTP relay password / API key |
+| `EMAIL_FROM` | If `EMAIL_BACKEND=smtp` | — | RFC-5322 "From" address (e.g. `noreply@adepthood.example`) |
 
 **Auto-injected by Railway (do not set manually):**
 
@@ -383,6 +389,37 @@ automatically. Deep links work as expected.
 `react-native-gesture-handler` and `react-native-reanimated` have web support.
 Drag-and-drop (`react-native-draggable-flatlist`) may behave differently on
 web — test these interactions.
+
+---
+
+## Password Recovery
+
+The forgotten-password flow needs an email path to ship reset links.
+The backend defaults to a console adapter that simply logs the rendered
+email -- safe in dev / test, useless in production. Set
+`EMAIL_BACKEND=smtp` plus the five `SMTP_*` / `EMAIL_FROM` variables
+above to switch on real delivery.
+
+Recommended setup with SendGrid:
+
+```bash
+EMAIL_BACKEND=smtp
+SMTP_HOST=smtp.sendgrid.net
+SMTP_PORT=587
+SMTP_USERNAME=apikey                # literal string "apikey"
+SMTP_PASSWORD=<sendgrid_api_key>    # the API key itself
+EMAIL_FROM=noreply@yourdomain.example
+```
+
+The `EMAIL_FROM` address must be verified with the provider (DKIM /
+SPF). Without verification, deliverability collapses for any address
+the recipient's spam filter has not seen before -- which for password
+recovery means the user never gets the link.
+
+Verify the wiring after deploy by hitting `/auth/password-reset/request`
+with a known-registered address and confirming the link lands in the
+inbox.  The corresponding runbook lives at `RECOVERY-RUNBOOK.md`
+(operator-facing: how to investigate a reset that did not arrive).
 
 ---
 
