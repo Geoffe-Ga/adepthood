@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import { habits, goalCompletions, ApiError } from '../index';
+import { habits, goalCompletions, goals, ApiError } from '../index';
 
 // Mock global fetch
 const mockFetch = jest.fn() as jest.Mock;
@@ -132,5 +132,70 @@ describe('goalCompletions API client', () => {
     );
 
     await expect(goalCompletions.create({ goal_id: 999 }, 'test-token')).rejects.toThrow(ApiError);
+  });
+});
+
+describe('goals API client', () => {
+  test('goals.update sends PUT to /goals/{id} with the editor payload', async () => {
+    const updated = {
+      id: 7,
+      habit_id: 1,
+      title: 'Drink 8 glasses',
+      tier: 'clear',
+      target: 16,
+      target_unit: 'glasses',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: true,
+    };
+    mockFetch.mockReturnValueOnce(jsonResponse(updated));
+
+    const result = await goals.update(
+      7,
+      {
+        title: 'Drink 8 glasses',
+        tier: 'clear',
+        target: 16,
+        target_unit: 'glasses',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: true,
+      },
+      'test-token',
+    );
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/goals/7');
+    expect(init.method).toBe('PUT');
+    expect(JSON.parse(init.body)).toMatchObject({ target: 16, target_unit: 'glasses' });
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer test-token' });
+    expect(result).toEqual(updated);
+  });
+
+  test('goals.update throws ApiError when the goal does not exist', async () => {
+    mockFetch.mockReturnValueOnce(
+      Promise.resolve({
+        ok: false,
+        status: 404,
+        json: () => Promise.resolve({ detail: 'goal_not_found' }),
+      }),
+    );
+
+    await expect(
+      goals.update(
+        999,
+        {
+          title: 'X',
+          tier: 'clear',
+          target: 1,
+          target_unit: 'units',
+          frequency: 1,
+          frequency_unit: 'per_day',
+          is_additive: true,
+        },
+        'test-token',
+      ),
+    ).rejects.toThrow(ApiError);
   });
 });

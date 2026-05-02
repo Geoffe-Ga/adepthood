@@ -35,6 +35,18 @@ router = APIRouter(prefix="/habits", tags=["habits"])
 # Per-user cap on habit rows; surfaces as 409 ``habit_quota_exceeded``.
 _MAX_HABITS_PER_USER = 100
 
+# Default goals seeded for every newly-created habit. Three tiers (low / clear
+# / stretch) so the habits feature is functional from the moment a habit
+# exists -- without these, ``POST /goal_completions`` always 404'd because no
+# goal endpoint ever wrote a row, and the editor's PUT /goals/{id} had nothing
+# to update. The frontend's onboarding code builds the same shape locally; we
+# now mirror it server-side so ids round-trip correctly.
+_DEFAULT_GOAL_TIERS: tuple[tuple[str, str, float], ...] = (
+    ("low", "Low", 1.0),
+    ("clear", "Clear", 2.0),
+    ("stretch", "Stretch", 3.0),
+)
+
 
 def _populate_streak(habit: Habit, current_user: int, user_timezone: str) -> None:
     """Set ``habit.streak`` from the goal completions loaded in memory."""
@@ -42,20 +54,35 @@ def _populate_streak(habit: Habit, current_user: int, user_timezone: str) -> Non
     habit.streak = compute_habit_streak(completions, user_timezone)
 
 
-@router.post("/", response_model=HabitSchema)
-async def create_habit(
-    payload: HabitCreate,
-    current_user: Annotated[int, Depends(get_current_user)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-) -> Habit:
-    """Create a habit; 409 over-quota (best-effort) or duplicate-name (DB-enforced)."""
+def _build_default_goals(habit_id: int, habit_name: str) -> list[Goal]:
+    """Three-tier default goals for a newly-created habit."""
+    return [
+        Goal(
+            habit_id=habit_id,
+            title=f"{label} goal for {habit_name}",
+            tier=tier,
+            target=target,
+            target_unit="units",
+            frequency=1.0,
+            frequency_unit="per_day",
+            is_additive=True,
+        )
+        for tier, label, target in _DEFAULT_GOAL_TIERS
+    ]
+
+
+async def _ensure_under_quota(session: AsyncSession, current_user: int) -> None:
+    """Raise 409 if the caller already owns the per-user habit cap."""
     count = await session.scalar(
         select(func.count()).select_from(Habit).where(Habit.user_id == current_user)
     )
     if (count or 0) >= _MAX_HABITS_PER_USER:
         raise conflict("habit_quota_exceeded")
 
-    candidate_name = payload.name.strip().lower()
+
+async def _ensure_unique_name(session: AsyncSession, current_user: int, name: str) -> None:
+    """Raise 409 if the caller already owns a habit with the same normalized name."""
+    candidate_name = name.strip().lower()
     duplicate = await session.scalar(
         select(Habit.id).where(
             Habit.user_id == current_user,
@@ -65,10 +92,16 @@ async def create_habit(
     if duplicate is not None:
         raise conflict("duplicate_habit_name")
 
-    habit = Habit(user_id=current_user, **payload.model_dump())
+
+async def _persist_habit_with_default_goals(session: AsyncSession, habit: Habit) -> None:
+    """Insert the habit + three default goals in a single savepoint."""
     try:
         async with session.begin_nested():
             session.add(habit)
+            await session.flush()  # populate habit.id for the goals' FK
+            assert habit.id is not None  # noqa: S101
+            for goal in _build_default_goals(habit.id, habit.name):
+                session.add(goal)
         await session.commit()
     except IntegrityError as exc:
         # A concurrent request for the same (user_id, normalized name)
@@ -76,9 +109,32 @@ async def create_habit(
         # surface the same 409 the pre-check would have so callers
         # cannot tell the two paths apart.
         raise conflict("duplicate_habit_name") from exc
-    await session.refresh(habit)
-    logger.info("habit_created", extra={"user_id": current_user, "habit_id": habit.id})
-    return habit
+
+
+async def _refetch_with_goals(session: AsyncSession, habit_id: int) -> Habit:
+    """Re-load a habit with eager goals to avoid greenlet lazy-load errors."""
+    statement = select(Habit).where(Habit.id == habit_id).options(HABIT_WITH_GOALS_AND_COMPLETIONS)
+    result = await session.execute(statement)
+    refreshed = result.scalars().first()
+    assert refreshed is not None  # noqa: S101
+    return refreshed
+
+
+@router.post("/", response_model=HabitWithGoals)
+async def create_habit(
+    payload: HabitCreate,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Habit:
+    """Create a habit + three default goals; 409 over-quota or duplicate name."""
+    await _ensure_under_quota(session, current_user)
+    await _ensure_unique_name(session, current_user, payload.name)
+    habit = Habit(user_id=current_user, **payload.model_dump())
+    await _persist_habit_with_default_goals(session, habit)
+    assert habit.id is not None  # noqa: S101
+    refreshed = await _refetch_with_goals(session, habit.id)
+    logger.info("habit_created", extra={"user_id": current_user, "habit_id": refreshed.id})
+    return refreshed
 
 
 @router.get("/", response_model=None)

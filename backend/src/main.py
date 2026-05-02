@@ -34,6 +34,7 @@ from routers.course import router as course_router
 from routers.energy import router as energy_router
 from routers.goal_completions import router as goal_completion_router
 from routers.goal_groups import router as goal_groups_router
+from routers.goals import router as goals_router
 from routers.habits import router as habits_router
 from routers.journal import router as journal_router
 from routers.practice_sessions import router as practice_sessions_router
@@ -306,6 +307,7 @@ app.include_router(prompts_router)
 app.include_router(energy_router)
 app.include_router(goal_completion_router)
 app.include_router(goal_groups_router)
+app.include_router(goals_router)
 app.include_router(stages_router)
 
 

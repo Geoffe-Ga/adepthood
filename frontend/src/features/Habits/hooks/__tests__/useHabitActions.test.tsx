@@ -19,6 +19,9 @@ jest.mock('../../../../api', () => ({
   goalCompletions: {
     create: jest.fn(() => Promise.resolve({ streak: 1, milestones: [], reason_code: 'ok' })),
   },
+  goals: {
+    update: jest.fn(() => Promise.resolve({})),
+  },
 }));
 
 jest.mock('../../../../storage/habitStorage', () => ({

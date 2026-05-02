@@ -11,6 +11,9 @@ jest.mock('../../../../api', () => ({
   goalCompletions: {
     create: jest.fn(() => Promise.resolve({})),
   },
+  goals: {
+    update: jest.fn(() => Promise.resolve({})),
+  },
 }));
 
 jest.mock('../../../../storage/habitStorage', () => ({
@@ -37,7 +40,11 @@ jest.mock('react-native', () => ({
   StyleSheet: { create: (s: Record<string, unknown>) => s },
 }));
 
-import { habits as habitsApi, goalCompletions as goalCompletionsApi } from '../../../../api';
+import {
+  habits as habitsApi,
+  goalCompletions as goalCompletionsApi,
+  goals as goalsApi,
+} from '../../../../api';
 import {
   saveHabits,
   loadHabits,
@@ -144,6 +151,66 @@ describe('habitManager', () => {
       expect(stored[0]!.name).toBe('My Habit');
     });
 
+    it('recovers stuck users by pushing cached habits when the server has none', async () => {
+      // Stuck-user state: the user's original onboarding sync silently
+      // failed long ago (e.g. against the broken pre-#280 schema), so the
+      // cache holds habits with synthetic ids while the server has zero
+      // habits. Without recovery, every log POST 404s forever — the
+      // server has nothing to match the synthetic ``goal_id`` against.
+      const cachedHabit = makeHabit({ id: 1, name: 'Pranayama' });
+      (loadHabits as jest.Mock).mockResolvedValueOnce([cachedHabit] as never);
+      // First GET: empty (stuck state). Second GET (after recovery push):
+      // the habit re-appears with its newly-assigned server id.
+      (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([
+        {
+          id: 99,
+          name: 'Pranayama',
+          icon: cachedHabit.icon,
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          goals: [],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      // The recovery push went out for the stuck habit.
+      expect(habitsApi.create).toHaveBeenCalledWith(expect.objectContaining({ name: 'Pranayama' }));
+      // And the store now reflects the server's real autoincrement id.
+      const stored = useHabitStore.getState().habits;
+      expect(stored).toHaveLength(1);
+      expect(stored[0]!.id).toBe(99);
+    });
+
+    it('does NOT push cached habits when the server already has habits', async () => {
+      // Sanity check: ordinary "API has my habits" path must not retrigger
+      // the recovery push — that would create duplicates server-side.
+      const cachedHabit = makeHabit({ id: 1, name: 'Pranayama' });
+      (loadHabits as jest.Mock).mockResolvedValueOnce([cachedHabit] as never);
+      (habitsApi.list as jest.Mock).mockResolvedValueOnce([
+        {
+          id: 99,
+          name: 'Pranayama',
+          icon: cachedHabit.icon,
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          goals: [],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      expect(habitsApi.create).not.toHaveBeenCalled();
+    });
+
     it('uses cached habits when available and then replaces with API data', async () => {
       const cached: Habit[] = [makeHabit({ id: 99, name: 'Cached' })];
       (loadHabits as jest.Mock).mockResolvedValueOnce(cached as never);
@@ -245,6 +312,71 @@ describe('habitManager', () => {
       const stretch = goals.find((g) => g.tier === 'stretch')!;
       expect(clear.target).toBeGreaterThanOrEqual(5);
       expect(stretch.target).toBeGreaterThanOrEqual(clear.target);
+    });
+
+    it('POSTs the goal change to /goals/{id} so edits survive the next load', async () => {
+      useHabitStore.setState({ habits: [makeHabit()] });
+
+      const updatedLow: Goal = {
+        id: 1,
+        title: 'Low',
+        tier: 'low',
+        target: 7,
+        target_unit: 'glasses',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: true,
+      };
+
+      habitManager.updateGoal(1, updatedLow);
+      await Promise.resolve();
+
+      expect(goalsApi.update).toHaveBeenCalledWith(1, expect.objectContaining({ target: 7 }));
+    });
+
+    it('rolls the store back when the API rejects the goal update', async () => {
+      const original = makeHabit();
+      const baseline = [original];
+      useHabitStore.setState({ habits: baseline });
+      (goalsApi.update as jest.Mock).mockRejectedValueOnce(new Error('server down') as never);
+
+      const edited: Goal = {
+        ...original.goals.find((g) => g.tier === 'low')!,
+        target: 99,
+      };
+
+      habitManager.updateGoal(1, edited);
+      // Optimistic write lands first.
+      expect(useHabitStore.getState().habits[0]!.goals.find((g) => g.tier === 'low')!.target).toBe(
+        99,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Rollback restores the baseline target.
+      expect(useHabitStore.getState().habits[0]!.goals.find((g) => g.tier === 'low')!.target).toBe(
+        1,
+      );
+    });
+
+    it('skips the network call for synthetic goals with no id', async () => {
+      useHabitStore.setState({ habits: [makeHabit()] });
+
+      const synthetic: Goal = {
+        // Intentionally omit ``id`` to mimic an unsynced cache entry.
+        title: 'Low',
+        tier: 'low',
+        target: 7,
+        target_unit: 'units',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: true,
+      } as unknown as Goal;
+
+      habitManager.updateGoal(1, synthetic);
+      await Promise.resolve();
+
+      expect(goalsApi.update).not.toHaveBeenCalled();
     });
   });
 
