@@ -117,15 +117,25 @@ describe('habitManager', () => {
     });
 
     it('does NOT seed FALLBACK_HABITS when the live store already has habits', async () => {
-      // Regression guard: post-onboarding ``loadHabits`` must not overwrite
-      // the user's just-built selection with the hardcoded FALLBACK list when
-      // the server briefly returns empty (transient network issue, sync-in-
-      // flight, or first-load race). Cache is empty, API returns [], but the
-      // live store already has the user's habits — leave them alone.
+      // Cache empty + API empty + live store has habits → leave them alone.
       const userBuilt: Habit[] = [makeHabit({ id: 1, name: 'My Habit' })];
       useHabitStore.setState({ habits: userBuilt });
       (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
       (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never);
+
+      await habitManager.loadHabits();
+
+      const stored = useHabitStore.getState().habits;
+      expect(stored).toHaveLength(1);
+      expect(stored[0]!.name).toBe('My Habit');
+    });
+
+    it('does NOT seed FALLBACK_HABITS when the live store has habits and the API throws', async () => {
+      // Symmetric guard for ``handleApiError`` — same invariant as above.
+      const userBuilt: Habit[] = [makeHabit({ id: 1, name: 'My Habit' })];
+      useHabitStore.setState({ habits: userBuilt });
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.list as jest.Mock).mockRejectedValueOnce(new Error('boom') as never);
 
       await habitManager.loadHabits();
 
@@ -427,11 +437,8 @@ describe('habitManager', () => {
     });
 
     it('refreshes habits from the server after sync so local IDs match the wire', async () => {
-      // Bug — every newly-onboarded user saw "We couldn't find that goal" on
-      // every log attempt because the local store kept its synthetic IDs
-      // (``index + 1``) while the server assigned real auto-increment IDs to
-      // the habits we just POSTed. The fix is to ``loadHabits`` after sync so
-      // the store mirrors the server's authoritative IDs.
+      // Synthetic onboarding IDs would otherwise stay in the store while the
+      // server has its real autoincrement IDs — every log POST then 404s.
       const newHabits: OnboardingHabit[] = [
         {
           id: 'a',

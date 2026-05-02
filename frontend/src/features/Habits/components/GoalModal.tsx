@@ -785,16 +785,7 @@ export const GoalModal = ({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
-        {/*
-          Backdrop is a sibling of the body, not an ancestor — so taps inside
-          the body never bubble to ``onClose``. The previous structure wrapped
-          the body in ``TouchableWithoutFeedback`` and relied on
-          ``e.stopPropagation()`` to cancel the outer close handler, which RN
-          Web's responder system doesn't honor reliably; a tap on any
-          ``TextInput`` inside the modal dismissed it instead of focusing
-          (the goal-target editor and the log-unit input were both
-          unusable on mobile web).
-        */}
+        {/* Sibling backdrop — body taps don't bubble to onClose (RN Web). */}
         <Pressable testID="goal-modal-backdrop" onPress={onClose} style={StyleSheet.absoluteFill} />
         <GoalModalBody
           habit={habit}

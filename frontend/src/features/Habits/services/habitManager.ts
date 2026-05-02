@@ -323,15 +323,20 @@ const handleApiSuccess = async (
 
 const handleApiError = (err: unknown, hasCachedData: boolean): void => {
   console.error('Failed to load habits:', err);
-  if (!hasCachedData) {
-    setError(
-      formatApiError(err, {
-        fallback:
-          "We couldn't load your habits. Check your connection, then pull down to try again.",
-      }),
-    );
-    setHabits(FALLBACK_HABITS);
-  }
+  // Mirrors the live-store guard in ``handleApiSuccess``: only show the
+  // connection-error banner + seed FALLBACK_HABITS when the user has no
+  // habits anywhere (cache + live store both empty). Without the live-store
+  // check, a transient GET failure on the post-onboarding ``loadHabits``
+  // call (slow 3G, 5xx, dropped connection) replaced the user's just-built
+  // selection with the hardcoded defaults — the cache hasn't been
+  // populated yet because ``syncOnboardingHabits`` doesn't ``persistHabits``.
+  if (hasCachedData || getHabits().length > 0) return;
+  setError(
+    formatApiError(err, {
+      fallback: "We couldn't load your habits. Check your connection, then pull down to try again.",
+    }),
+  );
+  setHabits(FALLBACK_HABITS);
 };
 
 const fetchFromApi = async (hasCachedData: boolean): Promise<void> => {

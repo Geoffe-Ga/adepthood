@@ -276,14 +276,6 @@ describe('GoalModal target editor', () => {
 });
 
 describe('GoalModal backdrop close', () => {
-  // Reported on mobile web: tapping any TextInput inside the modal (the goal
-  // target inputs and the log-unit input) dismisses the modal instead of
-  // focusing the input. Root cause was a nested ``TouchableWithoutFeedback``
-  // that wrapped the body and called ``e.stopPropagation()`` — RN Web's
-  // responder system doesn't honor ``stopPropagation`` the way native does,
-  // so the outer ``onPress={onClose}`` fired anyway. The structural fix is a
-  // dedicated backdrop ``Pressable`` (testID ``goal-modal-backdrop``) that
-  // does not wrap the body.
   it('exposes a dedicated backdrop element that closes when pressed', () => {
     const onClose = jest.fn();
     const testRenderer = renderer.create(
@@ -306,9 +298,6 @@ describe('GoalModal backdrop close', () => {
   });
 
   it('does not wrap the body in a tap-handler that fires onClose', () => {
-    // Pin the structural fix: the body must not have any ancestor (other
-    // than the backdrop itself) that calls ``onClose`` on press. Tapping a
-    // descendant — like a TextInput — must not bubble to a close handler.
     const onClose = jest.fn();
     const testRenderer = renderer.create(
       <GoalModal
@@ -321,9 +310,7 @@ describe('GoalModal backdrop close', () => {
       />,
     );
 
-    // The goal-target editor lives inside the body. Walking up the tree from
-    // any of its inputs must not encounter a TouchableWithoutFeedback whose
-    // onPress is ``onClose`` — that would re-introduce the regression.
+    // Walking up the tree from a body input must not hit ``onPress === onClose``.
     const input = testRenderer.root.findByProps({ testID: 'goal-target-input-low' });
     let node: typeof input | null = input.parent;
     while (node) {
