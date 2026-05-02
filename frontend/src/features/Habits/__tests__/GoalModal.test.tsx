@@ -146,3 +146,131 @@ describe('GoalModal tooltips', () => {
     expect(() => testRenderer.root.findByProps({ testID: 'modal-tooltip-low' })).toThrow();
   });
 });
+
+describe('GoalModal target editor', () => {
+  // Mobile users had no way to change goal targets — the only mechanism was
+  // dragging tiny 12px markers on the progress bar, which is undiscoverable
+  // on touch and doesn't fire reliably for thumb-sized hits. The editor
+  // surfaces a TextInput per tier so target adjustments work on phone.
+  it('renders an editable target input for every goal tier', () => {
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={() => {}}
+        onUpdateGoal={() => {}}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    expect(testRenderer.root.findByProps({ testID: 'goal-target-input-low' })).toBeTruthy();
+    expect(testRenderer.root.findByProps({ testID: 'goal-target-input-clear' })).toBeTruthy();
+    expect(testRenderer.root.findByProps({ testID: 'goal-target-input-stretch' })).toBeTruthy();
+  });
+
+  it('calls onUpdateGoal with the new target when the input is committed', () => {
+    const onUpdateGoal = jest.fn();
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={() => {}}
+        onUpdateGoal={onUpdateGoal}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    const input = testRenderer.root.findByProps({ testID: 'goal-target-input-clear' });
+    renderer.act(() => {
+      input.props.onChangeText('5');
+    });
+    renderer.act(() => {
+      input.props.onEndEditing();
+    });
+
+    expect(onUpdateGoal).toHaveBeenCalledWith(
+      sampleHabit.id,
+      expect.objectContaining({ id: 2, tier: 'clear', target: 5 }),
+    );
+    expect(onUpdateGoal).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not duplicate onUpdateGoal when both onEndEditing and onBlur could fire', () => {
+    // React Native fires ``onEndEditing`` + ``onBlur`` back-to-back for a
+    // single keyboard-dismissal action (the Done key, then the resulting
+    // blur). Wiring the same handler to both — as the first cut of this
+    // editor did — sent the optimistic write to the network twice per
+    // edit on device. The fix is to wire only ``onEndEditing``; this test
+    // pins the exposed prop surface so a regression that re-adds
+    // ``onBlur={handleEnd}`` (or any other commit-on-blur handler) fails
+    // the suite even when react-test-renderer's quirks around controlled
+    // ``useState`` updates would mask it via the behavioural path.
+    const onUpdateGoal = jest.fn();
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={() => {}}
+        onUpdateGoal={onUpdateGoal}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    const input = testRenderer.root.findByProps({ testID: 'goal-target-input-clear' });
+
+    // ``onEndEditing`` is the canonical commit path on RN: per the React
+    // Native docs it fires for both the return-key path *and* the blur
+    // path, so an additional ``onBlur`` that commits is strictly
+    // duplicative. Asserting absence keeps the contract crisp.
+    expect(typeof input.props.onEndEditing).toBe('function');
+    expect(input.props.onBlur).toBeUndefined();
+  });
+
+  it('does not call onUpdateGoal when the value did not change', () => {
+    const onUpdateGoal = jest.fn();
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={() => {}}
+        onUpdateGoal={onUpdateGoal}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    const input = testRenderer.root.findByProps({ testID: 'goal-target-input-low' });
+    renderer.act(() => {
+      input.props.onEndEditing();
+    });
+
+    expect(onUpdateGoal).not.toHaveBeenCalled();
+  });
+
+  it('ignores non-numeric input rather than corrupting the goal target', () => {
+    const onUpdateGoal = jest.fn();
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={() => {}}
+        onUpdateGoal={onUpdateGoal}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    const input = testRenderer.root.findByProps({ testID: 'goal-target-input-clear' });
+    renderer.act(() => {
+      input.props.onChangeText('abc');
+    });
+    renderer.act(() => {
+      input.props.onEndEditing();
+    });
+
+    expect(onUpdateGoal).not.toHaveBeenCalled();
+  });
+});

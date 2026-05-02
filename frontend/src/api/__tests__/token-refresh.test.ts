@@ -52,10 +52,9 @@ describe('auth.refresh', () => {
 
 describe('retry-after-refresh on 401', () => {
   test('retries a failed request after refreshing the token', async () => {
-    // Full-fidelity habit so the BUG-024 Zod validator accepts the response.
+    // ``user_id`` is intentionally absent — see ``habitSchema`` in ``schemas.ts``.
     const sampleHabit = {
       id: 1,
-      user_id: 1,
       name: 'Habit',
       icon: '✨',
       start_date: '2024-01-01T00:00:00Z',

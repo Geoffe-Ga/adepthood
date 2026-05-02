@@ -20,7 +20,7 @@ import type {
 import EmojiSelector from 'react-native-emoji-selector';
 
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
-import { STAGE_COLORS } from '../../../design/tokens';
+import { colors, SPACING, STAGE_COLORS } from '../../../design/tokens';
 import styles from '../Habits.styles';
 import type { GoalModalProps, Goal } from '../Habits.types';
 import {
@@ -341,6 +341,155 @@ const LogUnitSection = ({ logAmount, setLogAmount, onLog }: LogUnitSectionProps)
   </View>
 );
 
+const TIER_ORDER = ['low', 'clear', 'stretch'] as const;
+
+// Layout constants for the inline goal-target editor. Pulled out per
+// CLAUDE.md ("Introduce magic numbers without named constants" is in the
+// Must Never Do list); design-token equivalents (`SPACING`, `colors`,
+// `BORDER_RADIUS`) are reused for everything that has one.
+const GOAL_INPUT_WIDTH = 64;
+const GOAL_INPUT_VERTICAL_PADDING = 6;
+const GOAL_ROW_VERTICAL_PADDING = 6;
+const GOAL_INPUT_BORDER_RADIUS = 6;
+const GOAL_UNIT_MIN_WIDTH = 80;
+const GOAL_SECTION_TITLE_FONT_SIZE = 13;
+const GOAL_LABEL_FONT_SIZE = 14;
+const GOAL_INPUT_FONT_SIZE = 15;
+const GOAL_UNIT_FONT_SIZE = 13;
+const GOAL_SECTION_TITLE_LETTER_SPACING = 0.5;
+
+const goalEditorStyles = StyleSheet.create({
+  container: {
+    marginVertical: SPACING.md,
+    paddingVertical: SPACING.sm,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: colors.border,
+  },
+  sectionTitle: {
+    fontSize: GOAL_SECTION_TITLE_FONT_SIZE,
+    fontWeight: '600',
+    color: colors.text.secondary,
+    textTransform: 'uppercase',
+    letterSpacing: GOAL_SECTION_TITLE_LETTER_SPACING,
+    marginBottom: SPACING.sm,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: GOAL_ROW_VERTICAL_PADDING,
+  },
+  label: {
+    flex: 1,
+    fontSize: GOAL_LABEL_FONT_SIZE,
+    fontWeight: '500',
+  },
+  input: {
+    width: GOAL_INPUT_WIDTH,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: GOAL_INPUT_BORDER_RADIUS,
+    paddingVertical: GOAL_INPUT_VERTICAL_PADDING,
+    paddingHorizontal: SPACING.sm,
+    textAlign: 'center',
+    fontSize: GOAL_INPUT_FONT_SIZE,
+    marginHorizontal: SPACING.sm,
+  },
+  unit: {
+    fontSize: GOAL_UNIT_FONT_SIZE,
+    color: colors.text.secondary,
+    minWidth: GOAL_UNIT_MIN_WIDTH,
+  },
+});
+
+interface GoalTargetRowProps {
+  goal: Goal;
+  onCommit: (_target: number) => void;
+}
+
+/**
+ * Single-row editor for one goal tier's numeric target. Drives a controlled
+ * TextInput that commits on blur (`onEndEditing`) so the user can type a
+ * multi-digit value without firing a network round-trip per keystroke. Empty
+ * or non-numeric input is dropped — the goal target reverts to its previous
+ * value rather than corrupting to `NaN` or `0`.
+ */
+const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
+  const [draft, setDraft] = useState(String(goal.target));
+  // When the underlying goal changes (e.g. marker drag, sibling edit) sync
+  // the draft so the visible value reflects the latest server state.
+  useEffect(() => {
+    setDraft(String(goal.target));
+  }, [goal.target]);
+  const tierLabel = TIER_LABELS[goal.tier] ?? goal.tier;
+  const handleEnd = () => {
+    const parsed = Number.parseFloat(draft);
+    if (!Number.isFinite(parsed) || parsed === goal.target) {
+      setDraft(String(goal.target));
+      return;
+    }
+    onCommit(parsed);
+  };
+  return (
+    <View style={goalEditorStyles.row}>
+      <Text style={[goalEditorStyles.label, { color: getTierColor(goal.tier) }]}>{tierLabel}</Text>
+      <TextInput
+        testID={`goal-target-input-${goal.tier}`}
+        style={goalEditorStyles.input}
+        value={draft}
+        onChangeText={setDraft}
+        // ``onEndEditing`` already covers both the return-key path *and* blur
+        // per the React Native docs; an additional ``onBlur={handleEnd}``
+        // wired the same handler to two events that fire back-to-back for a
+        // single keyboard dismissal — sending two API writes per edit on
+        // device. Keep it single-source.
+        onEndEditing={handleEnd}
+        keyboardType="numeric"
+        returnKeyType="done"
+      />
+      <Text style={goalEditorStyles.unit}>
+        {goal.target_unit} / {goal.frequency_unit.replace('_', ' ')}
+      </Text>
+    </View>
+  );
+};
+
+interface GoalTargetEditorProps {
+  habit: NonNullable<GoalModalProps['habit']>;
+  onUpdateGoal: GoalModalProps['onUpdateGoal'];
+}
+
+/**
+ * Inline goal-target editor surfaced in the GoalModal so mobile users have a
+ * discoverable way to change a goal's numeric target. The pre-existing marker
+ * drag is kept (desktop-friendly), but the marker hit area is 12px and never
+ * triggered reliably under thumb input — closing the "no way to edit habit
+ * goals on mobile" gap.
+ */
+const GoalTargetEditor = ({ habit, onUpdateGoal }: GoalTargetEditorProps) => {
+  // ``== null`` (not ``!habit.id``) so a hypothetical future habit with id 0
+  // still surfaces the editor — falsy-zero is a real concern even if the
+  // current backend autoincrements from 1.
+  if (habit.id == null) return null;
+  const habitId = habit.id;
+  const orderedGoals = TIER_ORDER.map((tier) => habit.goals.find((g) => g.tier === tier)).filter(
+    (g): g is Goal => g !== undefined,
+  );
+  if (orderedGoals.length === 0) return null;
+  return (
+    <View style={goalEditorStyles.container} testID="goal-target-editor">
+      <Text style={goalEditorStyles.sectionTitle}>Goals</Text>
+      {orderedGoals.map((goal) => (
+        <GoalTargetRow
+          key={goal.id ?? goal.tier}
+          goal={goal}
+          onCommit={(target) => onUpdateGoal(habitId, { ...goal, target })}
+        />
+      ))}
+    </View>
+  );
+};
+
 const useGoalGroup = (habit: GoalModalProps['habit']) => {
   const [goalGroup, setGoalGroup] = useState<ApiGoalGroup | null>(null);
   useEffect(() => {
@@ -617,6 +766,7 @@ const GoalModalBody = ({
         onUpdateHabit={onUpdateHabit}
       />
       <GoalProgressBar {...buildProgressBarProps(habit, m)} />
+      <GoalTargetEditor habit={habit} onUpdateGoal={onUpdateGoal} />
       <LogUnitSection logAmount={logAmount} setLogAmount={setLogAmount} onLog={handleLogUnit} />
     </View>
   );

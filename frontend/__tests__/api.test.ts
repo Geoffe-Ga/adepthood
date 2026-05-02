@@ -23,7 +23,7 @@ describe('API client request composition', () => {
   it('requests habit list with GET /habits', async () => {
     await api.habits.list();
     expect(fetch).toHaveBeenCalledWith(
-      `${mockBaseUrl}/habits`,
+      `${mockBaseUrl}/habits/`,
       expect.objectContaining(expectSignal),
     );
   });
@@ -106,7 +106,7 @@ describe('API client request composition', () => {
   it('adds auth header when token provided', async () => {
     await api.habits.list('token');
     expect(fetch).toHaveBeenCalledWith(
-      `${mockBaseUrl}/habits`,
+      `${mockBaseUrl}/habits/`,
       expect.objectContaining({
         headers: { Authorization: 'Bearer token' },
         ...expectSignal,
@@ -118,7 +118,7 @@ describe('API client request composition', () => {
     api.setTokenGetter(() => 'auto-token');
     await api.habits.list();
     expect(fetch).toHaveBeenCalledWith(
-      `${mockBaseUrl}/habits`,
+      `${mockBaseUrl}/habits/`,
       expect.objectContaining({
         headers: { Authorization: 'Bearer auto-token' },
         ...expectSignal,
@@ -130,7 +130,7 @@ describe('API client request composition', () => {
     api.setTokenGetter(() => 'auto-token');
     await api.habits.list('explicit-token');
     expect(fetch).toHaveBeenCalledWith(
-      `${mockBaseUrl}/habits`,
+      `${mockBaseUrl}/habits/`,
       expect.objectContaining({
         headers: { Authorization: 'Bearer explicit-token' },
         ...expectSignal,
@@ -142,7 +142,7 @@ describe('API client request composition', () => {
     api.setTokenGetter(() => null);
     await api.habits.list();
     expect(fetch).toHaveBeenCalledWith(
-      `${mockBaseUrl}/habits`,
+      `${mockBaseUrl}/habits/`,
       expect.objectContaining(expectSignal),
     );
     const init = (fetch as jest.Mock).mock.calls[0]![1];

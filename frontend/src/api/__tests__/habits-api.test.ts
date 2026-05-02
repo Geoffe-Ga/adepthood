@@ -39,7 +39,8 @@ describe('habits API client', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url, init] = mockFetch.mock.calls[0];
-    expect(url).toBe('http://test/habits');
+    // Trailing slash matches the FastAPI route — see ``api/index.ts``.
+    expect(url).toBe('http://test/habits/');
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body)).toMatchObject({ name: 'Water', icon: '💧' });
     expect(init.headers).toMatchObject({ Authorization: 'Bearer test-token' });
@@ -114,7 +115,8 @@ describe('goalCompletions API client', () => {
     );
 
     const [url, init] = mockFetch.mock.calls[0];
-    expect(url).toBe('http://test/goal_completions');
+    // Trailing slash matches the FastAPI route — see ``api/index.ts``.
+    expect(url).toBe('http://test/goal_completions/');
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body)).toEqual({ goal_id: 42, did_complete: true });
     expect(response).toEqual(result);

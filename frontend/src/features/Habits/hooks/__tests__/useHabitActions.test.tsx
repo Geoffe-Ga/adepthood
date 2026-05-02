@@ -179,12 +179,15 @@ describe('useHabitActions.logUnit', () => {
     const finalSnapshot = calls.at(-1)?.[0] as Habit[];
     expect(finalSnapshot[0]!.completions).toHaveLength(0);
 
-    // No celebration toast for a rejected check-in — onSuccess never ran.
-    expect(showToast).not.toHaveBeenCalled();
-
-    // The user sees an actionable retry prompt.
-    expect(mockAlert).toHaveBeenCalledTimes(1);
-    expect(mockAlert.mock.calls[0]?.[0]).toBe("Couldn't sync");
+    // The user sees an actionable retry prompt — surfaced via the
+    // ToastProvider so it renders on React Native Web mobile browsers.
+    // ``Alert.alert`` was previously the only feedback path and reduced
+    // to a no-op on mobile web, leaving the user with a brief "flash and
+    // nothing" — exactly the symptom reported.
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast.mock.calls[0]?.[0]).toMatchObject({
+      message: expect.stringMatching(/couldn'?t (save|sync)/i) as unknown,
+    });
   });
 
   it('does nothing when the habit id is unknown', async () => {

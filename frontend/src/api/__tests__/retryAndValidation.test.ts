@@ -37,10 +37,10 @@ function jsonResponse(data: unknown, status = 200) {
   });
 }
 
+// ``user_id`` is absent on purpose — see ``habitSchema`` in ``schemas.ts``.
 function validHabit(overrides: Partial<ApiHabitWithGoals> = {}): ApiHabitWithGoals {
   return {
     id: 1,
-    user_id: 7,
     name: 'Meditate',
     icon: '🧘',
     start_date: '2024-01-01T00:00:00Z',
@@ -109,6 +109,17 @@ describe('BUG-024: Zod validation at the API boundary', () => {
     const result = await habits.list();
     expect(result).toHaveLength(1);
     expect(result[0]!.name).toBe('Meditate');
+  });
+
+  test('habits.list accepts the production wire shape that omits user_id', async () => {
+    // Regression guard for the schema change in ``schemas.ts``. Asserting the
+    // absence pins the contract: re-introducing ``user_id`` to ``habitSchema``
+    // would silently strip it from the parsed response and fail this expect.
+    mockFetch.mockReturnValueOnce(jsonResponse([validHabit()]));
+    const result = await habits.list();
+    expect(result).toHaveLength(1);
+    expect(result[0]!.name).toBe('Meditate');
+    expect(result[0]).not.toHaveProperty('user_id');
   });
 
   test('habits.list raises ApiValidationError when a field is the wrong type', async () => {

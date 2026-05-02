@@ -6,7 +6,6 @@ import type { ApiHabitWithGoals } from '../index';
 describe('toLocalHabit', () => {
   const apiHabit: ApiHabitWithGoals = {
     id: 1,
-    user_id: 10,
     name: 'Drink Water',
     icon: '💧',
     start_date: '2024-01-15',
