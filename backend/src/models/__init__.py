@@ -9,6 +9,7 @@ from .habit import Habit
 from .journal_entry import JournalEntry
 from .llm_usage_log import LLMUsageLog
 from .login_attempt import LoginAttempt
+from .password_reset_token import PasswordResetToken
 from .practice import Practice
 from .practice_session import PracticeSession
 from .prompt_response import PromptResponse
@@ -29,6 +30,7 @@ __all__ = [
     "JournalEntry",
     "LLMUsageLog",
     "LoginAttempt",
+    "PasswordResetToken",
     "Practice",
     "PracticeSession",
     "PromptResponse",
