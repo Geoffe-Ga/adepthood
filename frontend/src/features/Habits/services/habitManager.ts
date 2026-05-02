@@ -303,13 +303,7 @@ const handleApiSuccess = async (
   apiHabits: Awaited<ReturnType<typeof habitsApi.list>>,
   hasCachedData: boolean,
 ): Promise<void> => {
-  // Only seed the FALLBACK list when the user is truly fresh: no cache, no
-  // live store, and an empty server. Without the live-store check, calling
-  // ``loadHabits`` immediately after onboarding (which is the only way to
-  // round-trip the server's authoritative ids — see ``onboardingSave``)
-  // would overwrite the user's just-built selection with the hardcoded
-  // defaults, because ``persistHabits`` is best-effort and hasn't necessarily
-  // landed before this code runs.
+  // Only seed FALLBACK when the user is truly fresh: no cache, no live store, no API.
   if (apiHabits.length === 0 && !hasCachedData && getHabits().length === 0) {
     setHabits(FALLBACK_HABITS);
     return;
@@ -323,13 +317,7 @@ const handleApiSuccess = async (
 
 const handleApiError = (err: unknown, hasCachedData: boolean): void => {
   console.error('Failed to load habits:', err);
-  // Mirrors the live-store guard in ``handleApiSuccess``: only show the
-  // connection-error banner + seed FALLBACK_HABITS when the user has no
-  // habits anywhere (cache + live store both empty). Without the live-store
-  // check, a transient GET failure on the post-onboarding ``loadHabits``
-  // call (slow 3G, 5xx, dropped connection) replaced the user's just-built
-  // selection with the hardcoded defaults — the cache hasn't been
-  // populated yet because ``syncOnboardingHabits`` doesn't ``persistHabits``.
+  // Mirrors the live-store guard in ``handleApiSuccess`` for the error path.
   if (hasCachedData || getHabits().length > 0) return;
   setError(
     formatApiError(err, {
@@ -398,28 +386,30 @@ const replayPendingCheckIns = async (): Promise<void> => {
 // but not itself a hook. Every method is independently unit-testable.
 // ---------------------------------------------------------------------------
 
-export const habitManager = {
-  loadHabits: async (): Promise<void> => {
-    setLoading(true);
-    setError(null);
-    const cached = await loadCachedHabits();
-    const hasCachedData = cached !== null && cached.length > 0;
-    if (hasCachedData) {
-      setHabits(cached);
-      setLoading(false);
-    }
-    await fetchFromApi(hasCachedData);
+const loadHabits = async (): Promise<void> => {
+  setLoading(true);
+  setError(null);
+  const cached = await loadCachedHabits();
+  const hasCachedData = cached !== null && cached.length > 0;
+  if (hasCachedData) {
+    setHabits(cached);
     setLoading(false);
+  }
+  await fetchFromApi(hasCachedData);
+  setLoading(false);
 
-    // BUG-HABITS-007 + BUG-FE-HABIT-205 partial-success fix: replay
-    // pending check-ins queued during offline, and when one fails mid-
-    // batch only re-queue the suffix that didn't post. The previous
-    // implementation `return`ed from the first failure with the
-    // successful prefix still in the queue, so on the next load every
-    // check-in that had already posted would post AGAIN — silent
-    // duplication of the user's streak.
-    await replayPendingCheckIns();
-  },
+  // BUG-HABITS-007 + BUG-FE-HABIT-205 partial-success fix: replay
+  // pending check-ins queued during offline, and when one fails mid-
+  // batch only re-queue the suffix that didn't post. The previous
+  // implementation `return`ed from the first failure with the
+  // successful prefix still in the queue, so on the next load every
+  // check-in that had already posted would post AGAIN — silent
+  // duplication of the user's streak.
+  await replayPendingCheckIns();
+};
+
+export const habitManager = {
+  loadHabits,
 
   updateGoal: (habitId: number, updatedGoal: Goal): void => {
     setHabits(applyGoalUpdate(getHabits(), habitId, updatedGoal));
@@ -572,14 +562,8 @@ export const habitManager = {
       duration: INSTRUCTIONAL_TOAST_DURATION_MS,
     });
     await syncOnboardingHabits(fullHabits);
-    // Round-trip the server's authoritative IDs into the store. Without this,
-    // ``buildOnboardingHabits`` leaves the local habits with synthetic
-    // ``index + 1`` ids while the server assigns real autoincrement ids on
-    // ``POST /habits/`` — every later log POST then 404s with
-    // ``goal_not_found`` because the synthetic goal id doesn't exist on the
-    // server. Refreshing from the wire is the only place where the
-    // server-assigned ids enter the client.
-    await habitManager.loadHabits();
+    // Round-trip server-assigned ids — synthetic goal ids would 404 on log.
+    await loadHabits();
   },
 
   revealAllHabits: (): void => {
