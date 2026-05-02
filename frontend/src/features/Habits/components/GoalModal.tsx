@@ -20,7 +20,7 @@ import type {
 import EmojiSelector from 'react-native-emoji-selector';
 
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
-import { STAGE_COLORS } from '../../../design/tokens';
+import { colors, SPACING, STAGE_COLORS } from '../../../design/tokens';
 import styles from '../Habits.styles';
 import type { GoalModalProps, Goal } from '../Habits.types';
 import {
@@ -343,47 +343,62 @@ const LogUnitSection = ({ logAmount, setLogAmount, onLog }: LogUnitSectionProps)
 
 const TIER_ORDER = ['low', 'clear', 'stretch'] as const;
 
+// Layout constants for the inline goal-target editor. Pulled out per
+// CLAUDE.md ("Introduce magic numbers without named constants" is in the
+// Must Never Do list); design-token equivalents (`SPACING`, `colors`,
+// `BORDER_RADIUS`) are reused for everything that has one.
+const GOAL_INPUT_WIDTH = 64;
+const GOAL_INPUT_VERTICAL_PADDING = 6;
+const GOAL_ROW_VERTICAL_PADDING = 6;
+const GOAL_INPUT_BORDER_RADIUS = 6;
+const GOAL_UNIT_MIN_WIDTH = 80;
+const GOAL_SECTION_TITLE_FONT_SIZE = 13;
+const GOAL_LABEL_FONT_SIZE = 14;
+const GOAL_INPUT_FONT_SIZE = 15;
+const GOAL_UNIT_FONT_SIZE = 13;
+const GOAL_SECTION_TITLE_LETTER_SPACING = 0.5;
+
 const goalEditorStyles = StyleSheet.create({
   container: {
-    marginVertical: 12,
-    paddingVertical: 8,
+    marginVertical: SPACING.md,
+    paddingVertical: SPACING.sm,
     borderTopWidth: 1,
     borderBottomWidth: 1,
-    borderColor: '#eee',
+    borderColor: colors.border,
   },
   sectionTitle: {
-    fontSize: 13,
+    fontSize: GOAL_SECTION_TITLE_FONT_SIZE,
     fontWeight: '600',
-    color: '#666',
+    color: colors.text.secondary,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 8,
+    letterSpacing: GOAL_SECTION_TITLE_LETTER_SPACING,
+    marginBottom: SPACING.sm,
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 6,
+    paddingVertical: GOAL_ROW_VERTICAL_PADDING,
   },
   label: {
     flex: 1,
-    fontSize: 14,
+    fontSize: GOAL_LABEL_FONT_SIZE,
     fontWeight: '500',
   },
   input: {
-    width: 64,
+    width: GOAL_INPUT_WIDTH,
     borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
+    borderColor: colors.border,
+    borderRadius: GOAL_INPUT_BORDER_RADIUS,
+    paddingVertical: GOAL_INPUT_VERTICAL_PADDING,
+    paddingHorizontal: SPACING.sm,
     textAlign: 'center',
-    fontSize: 15,
-    marginHorizontal: 8,
+    fontSize: GOAL_INPUT_FONT_SIZE,
+    marginHorizontal: SPACING.sm,
   },
   unit: {
-    fontSize: 13,
-    color: '#666',
-    minWidth: 80,
+    fontSize: GOAL_UNIT_FONT_SIZE,
+    color: colors.text.secondary,
+    minWidth: GOAL_UNIT_MIN_WIDTH,
   },
 });
 
@@ -423,8 +438,12 @@ const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
         style={goalEditorStyles.input}
         value={draft}
         onChangeText={setDraft}
+        // ``onEndEditing`` already covers both the return-key path *and* blur
+        // per the React Native docs; an additional ``onBlur={handleEnd}``
+        // wired the same handler to two events that fire back-to-back for a
+        // single keyboard dismissal — sending two API writes per edit on
+        // device. Keep it single-source.
         onEndEditing={handleEnd}
-        onBlur={handleEnd}
         keyboardType="numeric"
         returnKeyType="done"
       />
@@ -448,7 +467,11 @@ interface GoalTargetEditorProps {
  * goals on mobile" gap.
  */
 const GoalTargetEditor = ({ habit, onUpdateGoal }: GoalTargetEditorProps) => {
-  if (!habit.id) return null;
+  // ``== null`` (not ``!habit.id``) so a hypothetical future habit with id 0
+  // still surfaces the editor — falsy-zero is a real concern even if the
+  // current backend autoincrements from 1.
+  if (habit.id == null) return null;
+  const habitId = habit.id;
   const orderedGoals = TIER_ORDER.map((tier) => habit.goals.find((g) => g.tier === tier)).filter(
     (g): g is Goal => g !== undefined,
   );
@@ -460,7 +483,7 @@ const GoalTargetEditor = ({ habit, onUpdateGoal }: GoalTargetEditorProps) => {
         <GoalTargetRow
           key={goal.id ?? goal.tier}
           goal={goal}
-          onCommit={(target) => onUpdateGoal(habit.id!, { ...goal, target })}
+          onCommit={(target) => onUpdateGoal(habitId, { ...goal, target })}
         />
       ))}
     </View>

@@ -194,6 +194,39 @@ describe('GoalModal target editor', () => {
       sampleHabit.id,
       expect.objectContaining({ id: 2, tier: 'clear', target: 5 }),
     );
+    expect(onUpdateGoal).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not duplicate onUpdateGoal when both onEndEditing and onBlur could fire', () => {
+    // React Native fires ``onEndEditing`` + ``onBlur`` back-to-back for a
+    // single keyboard-dismissal action (the Done key, then the resulting
+    // blur). Wiring the same handler to both — as the first cut of this
+    // editor did — sent the optimistic write to the network twice per
+    // edit on device. The fix is to wire only ``onEndEditing``; this test
+    // pins the exposed prop surface so a regression that re-adds
+    // ``onBlur={handleEnd}`` (or any other commit-on-blur handler) fails
+    // the suite even when react-test-renderer's quirks around controlled
+    // ``useState`` updates would mask it via the behavioural path.
+    const onUpdateGoal = jest.fn();
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={() => {}}
+        onUpdateGoal={onUpdateGoal}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    const input = testRenderer.root.findByProps({ testID: 'goal-target-input-clear' });
+
+    // ``onEndEditing`` is the canonical commit path on RN: per the React
+    // Native docs it fires for both the return-key path *and* the blur
+    // path, so an additional ``onBlur`` that commits is strictly
+    // duplicative. Asserting absence keeps the contract crisp.
+    expect(typeof input.props.onEndEditing).toBe('function');
+    expect(input.props.onBlur).toBeUndefined();
   });
 
   it('does not call onUpdateGoal when the value did not change', () => {

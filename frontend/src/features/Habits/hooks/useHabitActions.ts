@@ -46,8 +46,7 @@ const useLogUnitMutation = (
       });
     },
     onSuccess: (ctx) => {
-      const toast = habitManager.buildLogUnitToast(ctx);
-      if (toast) showToast(toast);
+      showToast(habitManager.buildLogUnitToast(ctx));
     },
   });
 

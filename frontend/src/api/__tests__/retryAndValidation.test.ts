@@ -37,11 +37,8 @@ function jsonResponse(data: unknown, status = 200) {
   });
 }
 
+// ``user_id`` is absent on purpose — see ``habitSchema`` in ``schemas.ts``.
 function validHabit(overrides: Partial<ApiHabitWithGoals> = {}): ApiHabitWithGoals {
-  // ``user_id`` deliberately omitted: the backend strips it from owned-resource
-  // responses (BUG-T7 / PR #265). Test fixtures must mirror the wire shape so a
-  // schema regression — like requiring ``user_id`` again — fails the suite
-  // instead of silently breaking ``GET /habits`` in production.
   return {
     id: 1,
     name: 'Meditate',
@@ -115,13 +112,9 @@ describe('BUG-024: Zod validation at the API boundary', () => {
   });
 
   test('habits.list accepts the production wire shape that omits user_id', async () => {
-    // PR #265 stripped ``user_id`` from the OwnedResourcePublic base. Before
-    // this fix the frontend Zod schema still required it, so every real GET
-    // /habits call rejected with ApiValidationError and surfaced as the
-    // "We couldn't load your habits" banner on mobile. Re-asserting the
-    // fixture explicitly here is the regression guard — re-introducing
-    // ``user_id`` to ``habitSchema`` would silently strip it from the parsed
-    // response and the deep-equality below would fail.
+    // Regression guard for the schema change in ``schemas.ts``. Asserting the
+    // absence pins the contract: re-introducing ``user_id`` to ``habitSchema``
+    // would silently strip it from the parsed response and fail this expect.
     mockFetch.mockReturnValueOnce(jsonResponse([validHabit()]));
     const result = await habits.list();
     expect(result).toHaveLength(1);

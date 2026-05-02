@@ -671,9 +671,7 @@ export interface GoalGroupCreatePayload {
 
 export interface ApiHabit {
   id: number;
-  // ``user_id`` deliberately omitted: the backend strips it from owned-resource
-  // responses (BUG-T7 / PR #265) so the wire shape is enumeration-safe. Keep
-  // this interface in sync with ``habitSchema`` in ``schemas.ts``.
+  // ``user_id`` is intentionally absent — see ``habitSchema`` in ``schemas.ts``.
   name: string;
   icon: string;
   start_date: string;
@@ -848,10 +846,7 @@ export interface CheckInResult {
 }
 
 export const goalCompletions = {
-  // Trailing slash matches the FastAPI route at `prefix="/goal_completions"`
-  // + `@router.post("/")`. The bare path produced a 307 redirect that
-  // visibly bit users on mobile web — see the trailing-slash note above the
-  // `habits` client.
+  // Trailing slash — see the rationale on the ``habits`` client above.
   create(payload: GoalCompletionPayload, token?: string): Promise<CheckInResult> {
     return request<CheckInResult>('/goal_completions/', { method: 'POST', body: payload, token });
   },

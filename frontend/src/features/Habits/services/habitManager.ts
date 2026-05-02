@@ -532,7 +532,7 @@ export const habitManager = {
    * — never from `apply` — so a server-rejected check-in does not flash any
    * celebration the user did not earn.
    */
-  buildLogUnitToast: (ctx: LogUnitContext): ToastConfig | null => {
+  buildLogUnitToast: (ctx: LogUnitContext): ToastConfig => {
     const milestone = buildMilestoneToast(
       ctx.habitName,
       ctx.oldProgress,
