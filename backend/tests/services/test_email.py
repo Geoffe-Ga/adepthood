@@ -1,0 +1,195 @@
+"""Tests for the EmailSender port and its adapters."""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+import pytest
+
+from services.email import (
+    ConsoleEmailSender,
+    EmailMessagePayload,
+    RecordingEmailSender,
+    SmtpEmailSender,
+    _build_default_sender,
+    _redact_body,
+    get_email_sender,
+    reset_email_sender_for_tests,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+
+@pytest.fixture(autouse=True)
+def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Drop the process-wide singleton + clear EMAIL_BACKEND for each test."""
+    reset_email_sender_for_tests()
+    monkeypatch.delenv("EMAIL_BACKEND", raising=False)
+    yield
+    reset_email_sender_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_recording_sender_captures_messages() -> None:
+    """The recording fake stores every payload verbatim for test assertion."""
+    sender = RecordingEmailSender()
+    payload = EmailMessagePayload(to="user@example.com", subject="hi", body="body")
+    await sender.send(payload)
+    assert sender.sent == [payload]
+
+
+@pytest.mark.asyncio
+async def test_console_sender_redacts_token_in_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Console sender logs a redacted body when the token is registered."""
+    sender = ConsoleEmailSender(last_plaintext_token="abcdefghijklmnop1234")
+    payload = EmailMessagePayload(
+        to="user@example.com",
+        subject="Reset",
+        body="Click https://x.test/reset?token=abcdefghijklmnop1234 to continue.",
+    )
+    with caplog.at_level(logging.INFO):
+        await sender.send(payload)
+    record = next(r for r in caplog.records if r.message == "email_console_send")
+    assert "abcdefghijklmnop1234" not in record.body  # type: ignore[attr-defined]
+    assert "abcdefgh..." in record.body  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_console_sender_no_token_passes_body_through(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Without a registered token the console sender logs the body verbatim."""
+    sender = ConsoleEmailSender()  # no last_plaintext_token
+    payload = EmailMessagePayload(
+        to="user@example.com",
+        subject="Notice",
+        body="Your password was changed.",
+    )
+    with caplog.at_level(logging.INFO):
+        await sender.send(payload)
+    record = next(r for r in caplog.records if r.message == "email_console_send")
+    assert record.body == "Your password was changed."  # type: ignore[attr-defined]
+
+
+def test_redact_body_returns_input_when_token_blank() -> None:
+    """``_redact_body`` is a no-op when the token is missing or empty."""
+    assert _redact_body("hello", None) == "hello"
+    assert _redact_body("hello", "") == "hello"
+
+
+def test_redact_body_truncates_token_inline() -> None:
+    """Tokens are replaced inline with the first 8 chars + ellipsis."""
+    assert _redact_body("link=ABCDEFGHIJKLMNOP", "ABCDEFGHIJKLMNOP") == "link=ABCDEFGH..."
+
+
+def test_build_default_sender_returns_console_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default backend is the console sender."""
+    monkeypatch.delenv("EMAIL_BACKEND", raising=False)
+    assert isinstance(_build_default_sender(), ConsoleEmailSender)
+
+
+def test_build_default_sender_returns_console_for_unknown_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unknown backends fall back to console rather than raising."""
+    monkeypatch.setenv("EMAIL_BACKEND", "owl")
+    assert isinstance(_build_default_sender(), ConsoleEmailSender)
+
+
+def test_build_default_sender_returns_smtp_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``EMAIL_BACKEND=smtp`` builds an SmtpEmailSender from env."""
+    monkeypatch.setenv("EMAIL_BACKEND", "smtp")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    monkeypatch.setenv("SMTP_USERNAME", "user")
+    monkeypatch.setenv("SMTP_PASSWORD", "pw")  # pragma: allowlist secret
+    monkeypatch.setenv("EMAIL_FROM", "from@example.com")
+    sender = _build_default_sender()
+    assert isinstance(sender, SmtpEmailSender)
+    assert sender.host == "smtp.example.com"
+    assert sender.port == 587
+    assert sender.from_address == "from@example.com"
+
+
+def test_smtp_sender_raises_when_required_env_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SmtpEmailSender.from_env raises when any required var is missing."""
+    monkeypatch.setenv("EMAIL_BACKEND", "smtp")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    # Deliberately omit SMTP_PORT.
+    monkeypatch.delenv("SMTP_PORT", raising=False)
+    monkeypatch.setenv("SMTP_USERNAME", "u")
+    monkeypatch.setenv("SMTP_PASSWORD", "p")  # pragma: allowlist secret
+    monkeypatch.setenv("EMAIL_FROM", "f@example.com")
+    with pytest.raises(RuntimeError, match="SMTP_PORT"):
+        SmtpEmailSender.from_env()
+
+
+def test_get_email_sender_caches_instance() -> None:
+    """The factory caches its result so dependency overrides have one target."""
+    first = get_email_sender()
+    second = get_email_sender()
+    assert first is second
+
+
+def test_reset_email_sender_for_tests_clears_cache() -> None:
+    """The test-only reset hook produces a fresh sender on next call."""
+    first = get_email_sender()
+    reset_email_sender_for_tests()
+    second = get_email_sender()
+    assert first is not second
+
+
+@pytest.mark.asyncio
+async def test_smtp_sender_invokes_send_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SmtpEmailSender wires STARTTLS + login + send_message in order."""
+    sent_messages: list[object] = []
+    calls: list[str] = []
+
+    class _StubSmtp:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            calls.append(f"init:{host}:{port}:{timeout}")
+
+        def starttls(self) -> None:
+            calls.append("starttls")
+
+        def login(self, username: str, password: str) -> None:
+            calls.append(f"login:{username}:{password}")
+
+        def send_message(self, msg: object) -> None:
+            sent_messages.append(msg)
+            calls.append("send")
+
+        def quit(self) -> None:
+            calls.append("quit")
+
+    monkeypatch.setattr("services.email.smtplib.SMTP", _StubSmtp)
+    sender = SmtpEmailSender(
+        host="smtp.example.com",
+        port=587,
+        username="user",
+        password="pw",  # pragma: allowlist secret
+        from_address="from@example.com",
+    )
+    await sender.send(
+        EmailMessagePayload(to="rcpt@example.com", subject="s", body="b"),
+    )
+    assert calls == [
+        "init:smtp.example.com:587:30",
+        "starttls",
+        "login:user:pw",
+        "send",
+        "quit",
+    ]
+    assert len(sent_messages) == 1
