@@ -68,6 +68,17 @@ export const authResponseSchema = z.object({
 
 export type AuthResponseT = z.infer<typeof authResponseSchema>;
 
+/**
+ * Response for ``POST /auth/password-reset/request``.  Always 202 with
+ * the same body shape regardless of whether the email is registered --
+ * the message is the SPEC R4 anti-enumeration constant.
+ */
+export const passwordResetAcceptedSchema = z.object({
+  message: z.string().min(1),
+});
+
+export type PasswordResetAcceptedT = z.infer<typeof passwordResetAcceptedSchema>;
+
 // ---------------------------------------------------------------------------
 // Goal / habit schemas (BUG-024 + BUG-010)
 // ---------------------------------------------------------------------------

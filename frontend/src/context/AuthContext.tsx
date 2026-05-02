@@ -6,6 +6,7 @@ import {
   setOnTokenRefreshed,
   setOnUnauthorized,
   setTokenGetter,
+  type AuthResponse,
   type UnauthorizedReason,
 } from '@/api';
 import { clearToken, loadToken, saveToken } from '@/storage/authStorage';
@@ -46,6 +47,8 @@ type LoginOrSignup = (_emailOrUsername: string, _pw: string) => Promise<void>;
  */
 export type AuthStatus = 'loading' | 'authenticated' | 'reauth-required' | 'anonymous';
 
+type ConfirmReset = (_token: string, _newPassword: string) => Promise<void>;
+
 interface AuthContextValue {
   token: string | null;
   authStatus: AuthStatus;
@@ -67,6 +70,13 @@ interface AuthContextValue {
   onUnauthorized: () => void;
   /** User dismissed the re-auth sheet: treat as an explicit logout. */
   dismissReauth: () => Promise<void>;
+  /**
+   * Complete a password reset by trading a single-use token for a
+   * fresh AuthResponse and landing the device in ``authenticated``
+   * state.  Re-uses the same persistence-then-state ordering as
+   * ``login`` (BUG-AUTH-005) via the ``applyAuthResponse`` helper.
+   */
+  confirmPasswordReset: ConfirmReset;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -275,6 +285,24 @@ interface AuthActions {
   logout: () => Promise<void>;
   onUnauthorized: () => void;
   dismissReauth: () => Promise<void>;
+  confirmPasswordReset: ConfirmReset;
+}
+
+/**
+ * Persist the token, then propagate it (and the server's stored
+ * timezone) into React state and flip ``authStatus`` to authenticated.
+ *
+ * Extracted so login / signup / password-reset all share the same
+ * BUG-AUTH-005 persistence-first ordering: a crash between the
+ * storage write and the state update leaves the next launch in a
+ * recoverable place rather than holding a token in memory that the
+ * device storage knows nothing about.
+ */
+async function applyAuthResponse(response: AuthResponse, mutators: AuthMutators): Promise<void> {
+  await saveToken(response.token);
+  mutators.setToken(response.token);
+  mutators.setUserTimezone(response.timezone ?? 'UTC');
+  mutators.setAuthStatus('authenticated');
 }
 
 /** Sentinel user_id in the backend's anti-enumeration duplicate-signup response (see schemas.ts:57, BUG-AUTH-002). */
@@ -292,10 +320,7 @@ const DUPLICATE_SIGNUP_SENTINEL_USER_ID = 0;
  * have normalised) so the AuthContext can populate `userTimezone`
  * synchronously with the same value the rest of the API will return.
  */
-async function signupWithDeviceTimezone(
-  email: string,
-  password: string,
-): Promise<{ token: string; timezone: string }> {
+async function signupWithDeviceTimezone(email: string, password: string): Promise<AuthResponse> {
   const response = await authApi.signup({
     email,
     password,
@@ -304,7 +329,7 @@ async function signupWithDeviceTimezone(
   if (response.user_id === DUPLICATE_SIGNUP_SENTINEL_USER_ID) {
     throw new ApiError(409, 'email_in_use');
   }
-  return { token: response.token, timezone: response.timezone ?? 'UTC' };
+  return response;
 }
 
 /**
@@ -328,28 +353,20 @@ async function tearDownSession(mutators: AuthMutators, where: string): Promise<v
 }
 
 function useAuthActions(mutators: AuthMutators): AuthActions {
-  const { setToken, setAuthStatus, setUserTimezone } = mutators;
-
   const login = useCallback<LoginOrSignup>(
     async (email, password) => {
       const response = await authApi.login({ email, password });
-      await saveToken(response.token);
-      setToken(response.token);
-      setUserTimezone(response.timezone ?? 'UTC');
-      setAuthStatus('authenticated');
+      await applyAuthResponse(response, mutators);
     },
-    [setToken, setAuthStatus, setUserTimezone],
+    [mutators],
   );
 
   const signup = useCallback<LoginOrSignup>(
     async (email, password) => {
-      const { token, timezone } = await signupWithDeviceTimezone(email, password);
-      await saveToken(token);
-      setToken(token);
-      setUserTimezone(timezone);
-      setAuthStatus('authenticated');
+      const response = await signupWithDeviceTimezone(email, password);
+      await applyAuthResponse(response, mutators);
     },
-    [setToken, setAuthStatus, setUserTimezone],
+    [mutators],
   );
 
   const logout = useCallback(() => tearDownSession(mutators, 'logout'), [mutators]);
@@ -366,11 +383,22 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
 
   const dismissReauth = useCallback(() => tearDownSession(mutators, 'dismissReauth'), [mutators]);
 
+  const confirmPasswordReset = useCallback<ConfirmReset>(
+    async (token, newPassword) => {
+      const response = await authApi.confirmPasswordReset({
+        token,
+        new_password: newPassword,
+      });
+      await applyAuthResponse(response, mutators);
+    },
+    [mutators],
+  );
+
   // Memoize the bundle so the context value's ``useMemo`` actually short-
   // circuits on renders where none of the identity-stable callbacks changed.
   return useMemo(
-    () => ({ login, signup, logout, onUnauthorized, dismissReauth }),
-    [login, signup, logout, onUnauthorized, dismissReauth],
+    () => ({ login, signup, logout, onUnauthorized, dismissReauth, confirmPasswordReset }),
+    [login, signup, logout, onUnauthorized, dismissReauth, confirmPasswordReset],
   );
 }
 

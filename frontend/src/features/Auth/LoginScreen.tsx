@@ -52,12 +52,14 @@ interface LoginActionsProps {
   submitting: boolean;
   onLogin: () => void;
   onNavigateSignup: () => void;
+  onNavigateForgot: () => void;
 }
 
 function LoginActions({
   submitting,
   onLogin,
   onNavigateSignup,
+  onNavigateForgot,
 }: LoginActionsProps): React.JSX.Element {
   return (
     <>
@@ -71,6 +73,14 @@ function LoginActions({
         testID="login-submit"
       >
         <Text style={styles.buttonText}>{submitting ? 'Logging in...' : 'Log In'}</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        accessibilityLabel="Forgot password"
+        accessibilityRole="link"
+        onPress={onNavigateForgot}
+        testID="login-forgot-password"
+      >
+        <Text style={styles.forgotLink}>Forgot password?</Text>
       </TouchableOpacity>
       <TouchableOpacity
         accessibilityLabel="Go to sign-up screen"
@@ -125,6 +135,7 @@ export default function LoginScreen({ navigation }: Props) {
         submitting={submitting}
         onLogin={handleLogin}
         onNavigateSignup={() => navigation.navigate('Signup')}
+        onNavigateForgot={() => navigation.navigate('ForgotPassword')}
       />
     </View>
   );
@@ -157,4 +168,10 @@ const styles = StyleSheet.create({
   buttonText: { color: colors.text.light, fontSize: 16, fontWeight: '600' },
   link: { textAlign: 'center', color: colors.text.secondary },
   linkBold: { color: colors.primary, fontWeight: '600' },
+  forgotLink: {
+    textAlign: 'center',
+    color: colors.primary,
+    fontWeight: '500',
+    marginBottom: SPACING.md,
+  },
 });
