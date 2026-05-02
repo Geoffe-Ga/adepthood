@@ -2,6 +2,9 @@ import 'react-native-reanimated';
 import { registerRootComponent } from 'expo';
 
 import App from './App';
+import { applyWebViewportLock } from './utils/webViewport';
+
+applyWebViewportLock();
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);
 // It also ensures that whether you load the app in Expo Go or in a native build,
