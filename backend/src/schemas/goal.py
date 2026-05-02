@@ -42,9 +42,13 @@ class GoalUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2_000)
     tier: GoalTier
-    target: float
+    # ``ge=0`` (not ``gt=0``): target=0 is legitimate for subtractive
+    # "abstinence" goals — e.g. the stretch tier of caffeine / alcohol /
+    # scrolling. ``frequency`` is strictly positive: "do X zero times
+    # per week" is meaningless on every tier.
+    target: float = Field(ge=0)
     target_unit: str = Field(min_length=1, max_length=50)
-    frequency: float
+    frequency: float = Field(gt=0)
     frequency_unit: str = Field(min_length=1, max_length=50)
     is_additive: bool = True
     goal_group_id: int | None = None

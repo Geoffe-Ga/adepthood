@@ -345,14 +345,7 @@ const fetchFromApi = async (hasCachedData: boolean): Promise<FetchResult> => {
   }
 };
 
-/**
- * Stuck-user recovery: when a user's original ``syncOnboardingHabits`` failed
- * silently long ago (e.g. against the broken pre-#280 schema), their cache
- * holds habits with synthetic ids while the server has none -- every log
- * POST 404s. Push the cached habits back to ``/habits/`` so the server now
- * has them with real autoincrement ids; the caller re-fetches to refresh
- * the local store.
- */
+/** Re-push cached habits when the server has none — the caller re-fetches. */
 const recoverStuckHabits = async (cached: Habit[]): Promise<void> => {
   for (const habit of cached) {
     try {

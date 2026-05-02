@@ -57,13 +57,21 @@ async def require_owned_goal(
 
     Goal ownership rides on the parent habit's ``user_id`` -- the goal table
     itself has no ``user_id`` column.  We collapse "missing goal" and "not
-    yours" into a single 404 to deny enumeration (BUG-T7 / PR #265).
+    yours" into a single 404 to deny enumeration (BUG-T7 / PR #265).  The
+    orphaned-FK branch (goal exists, parent habit gone) is a distinct
+    integrity-violation signal so it gets its own audit row.
     """
     goal = await session.get(Goal, goal_id)
     if goal is None:
         raise not_found("goal")
     habit = await session.get(Habit, goal.habit_id)
-    if habit is None or habit.user_id != current_user:
+    if habit is None:
+        logger.warning(
+            "orphaned_goal_fk",
+            extra={"goal_id": goal_id, "habit_id": goal.habit_id, "user_id": current_user},
+        )
+        raise not_found("goal")
+    if habit.user_id != current_user:
         log_ownership_denied("goal", goal_id, current_user)
         raise not_found("goal")
     return goal

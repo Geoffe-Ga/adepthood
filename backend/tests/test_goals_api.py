@@ -104,16 +104,19 @@ async def test_update_goal_404_when_goal_missing(async_client: AsyncClient) -> N
 async def test_update_goal_403_when_caller_not_owner(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Cross-tenant probe: alice's goal cannot be updated by bob."""
+    """Cross-tenant probe: alice's goal cannot be updated by bob.
+
+    Strict 404 — the IDOR remediation (BUG-T7 / PR #265) collapses
+    "doesn't exist" + "not yours" into a single status to deny
+    enumeration. A 403 here would mean ownership leaked back into the
+    response.
+    """
     _, alice_id = await _signup(async_client, "alice")
     bob_headers, _ = await _signup(async_client, "bob")
     goal = await _seed_goal(db_session, alice_id, habit_name="Alice habit")
 
     resp = await async_client.put(f"/goals/{goal.id}", json=_update_payload(), headers=bob_headers)
-    # Same 404 the not-found path returns — the IDOR remediation
-    # (BUG-T7 / PR #265) collapses "doesn't exist" + "not yours" into a
-    # single status to deny enumeration.
-    assert resp.status_code in {HTTPStatus.NOT_FOUND, HTTPStatus.FORBIDDEN}
+    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 # ── Successful update ───────────────────────────────────────────────────
@@ -164,23 +167,23 @@ async def test_update_goal_persists_target_unit_frequency_and_is_additive(
 
 
 @pytest.mark.asyncio
-async def test_update_goal_does_not_change_habit_id(
+async def test_update_goal_rejects_forged_habit_id(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Caller cannot reparent a goal to a different habit via the PUT."""
+    """Caller cannot reparent a goal to a different habit via the PUT.
+
+    Strict 422 — ``GoalUpdate`` has ``model_config = ConfigDict(extra="forbid")``
+    so any extra field (including a forged ``habit_id``) MUST trigger a
+    validation error. A 200 here would mean the schema silently accepted
+    the field, which would let a malicious caller reparent goals across
+    tenants if combined with another flaw.
+    """
     headers, user_id = await _signup(async_client)
     goal = await _seed_goal(db_session, user_id)
-    original_habit_id = goal.habit_id
 
-    # ``habit_id`` is intentionally absent from the GoalUpdate schema, so the
-    # server should ignore any attempt to forge it. ``model_dump`` on the
-    # request body strips unknown fields — assert the goal still belongs to
-    # its original habit afterwards.
     resp = await async_client.put(
         f"/goals/{goal.id}",
         json={**_update_payload(target=99.0), "habit_id": 9999},
         headers=headers,
     )
-    assert resp.status_code in {HTTPStatus.OK, HTTPStatus.UNPROCESSABLE_ENTITY}
-    if resp.status_code == HTTPStatus.OK:
-        assert resp.json()["habit_id"] == original_habit_id
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY

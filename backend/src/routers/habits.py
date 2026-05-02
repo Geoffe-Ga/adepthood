@@ -93,15 +93,18 @@ async def _ensure_unique_name(session: AsyncSession, current_user: int, name: st
         raise conflict("duplicate_habit_name")
 
 
-async def _persist_habit_with_default_goals(session: AsyncSession, habit: Habit) -> None:
+async def _persist_habit_with_default_goals(session: AsyncSession, habit: Habit) -> int:
     """Insert the habit + three default goals in a single savepoint."""
     try:
         async with session.begin_nested():
             session.add(habit)
             await session.flush()  # populate habit.id for the goals' FK
-            assert habit.id is not None  # noqa: S101
+            if habit.id is None:
+                msg = "session.flush() did not populate habit.id"
+                raise RuntimeError(msg)
             for goal in _build_default_goals(habit.id, habit.name):
                 session.add(goal)
+            new_id = habit.id
         await session.commit()
     except IntegrityError as exc:
         # A concurrent request for the same (user_id, normalized name)
@@ -109,6 +112,7 @@ async def _persist_habit_with_default_goals(session: AsyncSession, habit: Habit)
         # surface the same 409 the pre-check would have so callers
         # cannot tell the two paths apart.
         raise conflict("duplicate_habit_name") from exc
+    return new_id
 
 
 async def _refetch_with_goals(session: AsyncSession, habit_id: int) -> Habit:
@@ -116,7 +120,12 @@ async def _refetch_with_goals(session: AsyncSession, habit_id: int) -> Habit:
     statement = select(Habit).where(Habit.id == habit_id).options(HABIT_WITH_GOALS_AND_COMPLETIONS)
     result = await session.execute(statement)
     refreshed = result.scalars().first()
-    assert refreshed is not None  # noqa: S101
+    if refreshed is None:
+        # Should be unreachable: habit was committed in the same session
+        # one statement ago. Surface as a 500 with a stable detail rather
+        # than a confusing 200/empty.
+        msg = f"habit {habit_id} disappeared between commit and refetch"
+        raise RuntimeError(msg)
     return refreshed
 
 
@@ -130,9 +139,8 @@ async def create_habit(
     await _ensure_under_quota(session, current_user)
     await _ensure_unique_name(session, current_user, payload.name)
     habit = Habit(user_id=current_user, **payload.model_dump())
-    await _persist_habit_with_default_goals(session, habit)
-    assert habit.id is not None  # noqa: S101
-    refreshed = await _refetch_with_goals(session, habit.id)
+    new_id = await _persist_habit_with_default_goals(session, habit)
+    refreshed = await _refetch_with_goals(session, new_id)
     logger.info("habit_created", extra={"user_id": current_user, "habit_id": refreshed.id})
     return refreshed
 
