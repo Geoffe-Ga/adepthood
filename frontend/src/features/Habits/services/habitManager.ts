@@ -303,7 +303,8 @@ const handleApiSuccess = async (
   apiHabits: Awaited<ReturnType<typeof habitsApi.list>>,
   hasCachedData: boolean,
 ): Promise<void> => {
-  if (apiHabits.length === 0 && !hasCachedData) {
+  // Only seed FALLBACK when the user is truly fresh: no cache, no live store, no API.
+  if (apiHabits.length === 0 && !hasCachedData && getHabits().length === 0) {
     setHabits(FALLBACK_HABITS);
     return;
   }
@@ -316,15 +317,14 @@ const handleApiSuccess = async (
 
 const handleApiError = (err: unknown, hasCachedData: boolean): void => {
   console.error('Failed to load habits:', err);
-  if (!hasCachedData) {
-    setError(
-      formatApiError(err, {
-        fallback:
-          "We couldn't load your habits. Check your connection, then pull down to try again.",
-      }),
-    );
-    setHabits(FALLBACK_HABITS);
-  }
+  // Mirrors the live-store guard in ``handleApiSuccess`` for the error path.
+  if (hasCachedData || getHabits().length > 0) return;
+  setError(
+    formatApiError(err, {
+      fallback: "We couldn't load your habits. Check your connection, then pull down to try again.",
+    }),
+  );
+  setHabits(FALLBACK_HABITS);
 };
 
 const fetchFromApi = async (hasCachedData: boolean): Promise<void> => {
@@ -386,28 +386,30 @@ const replayPendingCheckIns = async (): Promise<void> => {
 // but not itself a hook. Every method is independently unit-testable.
 // ---------------------------------------------------------------------------
 
-export const habitManager = {
-  loadHabits: async (): Promise<void> => {
-    setLoading(true);
-    setError(null);
-    const cached = await loadCachedHabits();
-    const hasCachedData = cached !== null && cached.length > 0;
-    if (hasCachedData) {
-      setHabits(cached);
-      setLoading(false);
-    }
-    await fetchFromApi(hasCachedData);
+const loadHabits = async (): Promise<void> => {
+  setLoading(true);
+  setError(null);
+  const cached = await loadCachedHabits();
+  const hasCachedData = cached !== null && cached.length > 0;
+  if (hasCachedData) {
+    setHabits(cached);
     setLoading(false);
+  }
+  await fetchFromApi(hasCachedData);
+  setLoading(false);
 
-    // BUG-HABITS-007 + BUG-FE-HABIT-205 partial-success fix: replay
-    // pending check-ins queued during offline, and when one fails mid-
-    // batch only re-queue the suffix that didn't post. The previous
-    // implementation `return`ed from the first failure with the
-    // successful prefix still in the queue, so on the next load every
-    // check-in that had already posted would post AGAIN — silent
-    // duplication of the user's streak.
-    await replayPendingCheckIns();
-  },
+  // BUG-HABITS-007 + BUG-FE-HABIT-205 partial-success fix: replay
+  // pending check-ins queued during offline, and when one fails mid-
+  // batch only re-queue the suffix that didn't post. The previous
+  // implementation `return`ed from the first failure with the
+  // successful prefix still in the queue, so on the next load every
+  // check-in that had already posted would post AGAIN — silent
+  // duplication of the user's streak.
+  await replayPendingCheckIns();
+};
+
+export const habitManager = {
+  loadHabits,
 
   updateGoal: (habitId: number, updatedGoal: Goal): void => {
     setHabits(applyGoalUpdate(getHabits(), habitId, updatedGoal));
@@ -560,6 +562,9 @@ export const habitManager = {
       duration: INSTRUCTIONAL_TOAST_DURATION_MS,
     });
     await syncOnboardingHabits(fullHabits);
+    // Round-trip server-assigned ids — synthetic goal ids would 404 on log.
+    // If this GET fails, synthetic ids survive until the next launch — see #282.
+    await loadHabits();
   },
 
   revealAllHabits: (): void => {

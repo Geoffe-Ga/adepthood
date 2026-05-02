@@ -274,3 +274,53 @@ describe('GoalModal target editor', () => {
     expect(onUpdateGoal).not.toHaveBeenCalled();
   });
 });
+
+describe('GoalModal backdrop close', () => {
+  it('exposes a dedicated backdrop element that closes when pressed', () => {
+    const onClose = jest.fn();
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={onClose}
+        onUpdateGoal={() => {}}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    const backdrop = testRenderer.root.findByProps({ testID: 'goal-modal-backdrop' });
+    renderer.act(() => {
+      backdrop.props.onPress();
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not wrap the body in a tap-handler that fires onClose', () => {
+    const onClose = jest.fn();
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={onClose}
+        onUpdateGoal={() => {}}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    // Walking up the tree from a body input must not hit ``onPress === onClose``.
+    const input = testRenderer.root.findByProps({ testID: 'goal-target-input-low' });
+    let node: typeof input | null = input.parent;
+    while (node) {
+      const press = (node.props as { onPress?: unknown }).onPress;
+      if (typeof press === 'function' && press === onClose) {
+        throw new Error('body has an ancestor whose onPress is onClose');
+      }
+      node = node.parent;
+    }
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});

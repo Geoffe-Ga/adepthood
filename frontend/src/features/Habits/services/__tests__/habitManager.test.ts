@@ -116,6 +116,34 @@ describe('habitManager', () => {
       expect(useHabitStore.getState().habits.length).toBeGreaterThan(0);
     });
 
+    it('does NOT seed FALLBACK_HABITS when the live store already has habits', async () => {
+      // Cache empty + API empty + live store has habits → leave them alone.
+      const userBuilt: Habit[] = [makeHabit({ id: 1, name: 'My Habit' })];
+      useHabitStore.setState({ habits: userBuilt });
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never);
+
+      await habitManager.loadHabits();
+
+      const stored = useHabitStore.getState().habits;
+      expect(stored).toHaveLength(1);
+      expect(stored[0]!.name).toBe('My Habit');
+    });
+
+    it('does NOT seed FALLBACK_HABITS when the live store has habits and the API throws', async () => {
+      // Symmetric guard for ``handleApiError`` — same invariant as above.
+      const userBuilt: Habit[] = [makeHabit({ id: 1, name: 'My Habit' })];
+      useHabitStore.setState({ habits: userBuilt });
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.list as jest.Mock).mockRejectedValueOnce(new Error('boom') as never);
+
+      await habitManager.loadHabits();
+
+      const stored = useHabitStore.getState().habits;
+      expect(stored).toHaveLength(1);
+      expect(stored[0]!.name).toBe('My Habit');
+    });
+
     it('uses cached habits when available and then replaces with API data', async () => {
       const cached: Habit[] = [makeHabit({ id: 99, name: 'Cached' })];
       (loadHabits as jest.Mock).mockResolvedValueOnce(cached as never);
@@ -406,6 +434,80 @@ describe('habitManager', () => {
       expect(useHabitStore.getState().habits[0]!.goals).toHaveLength(3);
       expect(habitsApi.create).toHaveBeenCalled();
       expect(showToast).toHaveBeenCalled();
+    });
+
+    it('refreshes habits from the server after sync so local IDs match the wire', async () => {
+      // Synthetic onboarding IDs would otherwise stay in the store while the
+      // server has its real autoincrement IDs — every log POST then 404s.
+      const newHabits: OnboardingHabit[] = [
+        {
+          id: 'a',
+          name: 'Meditate',
+          icon: '\u{1F9D8}',
+          energy_cost: 1,
+          energy_return: 3,
+          stage: 'Beige',
+          start_date: new Date('2025-01-01'),
+        },
+      ];
+      // Server returns the habit with a real autoincrement id (47), real
+      // goal ids (101/102/103), and the same name we POSTed.
+      (habitsApi.list as jest.Mock).mockResolvedValueOnce([
+        {
+          id: 47,
+          name: 'Meditate',
+          icon: '\u{1F9D8}',
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 3,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          goals: [
+            {
+              id: 101,
+              habit_id: 47,
+              title: 'Low',
+              tier: 'low',
+              target: 1,
+              target_unit: 'units',
+              frequency: 1,
+              frequency_unit: 'per_day',
+              is_additive: true,
+            },
+            {
+              id: 102,
+              habit_id: 47,
+              title: 'Clear',
+              tier: 'clear',
+              target: 2,
+              target_unit: 'units',
+              frequency: 1,
+              frequency_unit: 'per_day',
+              is_additive: true,
+            },
+            {
+              id: 103,
+              habit_id: 47,
+              title: 'Stretch',
+              tier: 'stretch',
+              target: 3,
+              target_unit: 'units',
+              frequency: 1,
+              frequency_unit: 'per_day',
+              is_additive: true,
+            },
+          ],
+        },
+      ] as never);
+
+      await habitManager.onboardingSave(newHabits, jest.fn());
+
+      // Store now reflects the server's IDs, not the synthetic ones.
+      const stored = useHabitStore.getState().habits;
+      expect(stored).toHaveLength(1);
+      expect(stored[0]!.id).toBe(47);
+      expect(stored[0]!.goals.map((g) => g.id)).toEqual([101, 102, 103]);
     });
   });
 

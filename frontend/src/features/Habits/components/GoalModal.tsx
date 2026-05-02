@@ -2,10 +2,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   Alert,
   Modal,
+  Pressable,
   Text,
   TextInput,
   TouchableOpacity,
-  TouchableWithoutFeedback,
   View,
   PanResponder,
   StyleSheet,
@@ -784,19 +784,23 @@ export const GoalModal = ({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableWithoutFeedback onPress={onClose}>
-        <View style={styles.modalOverlay}>
-          <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
-            <GoalModalBody
-              habit={habit}
-              onClose={onClose}
-              onUpdateGoal={onUpdateGoal}
-              onLogUnit={onLogUnit}
-              onUpdateHabit={onUpdateHabit}
-            />
-          </TouchableWithoutFeedback>
-        </View>
-      </TouchableWithoutFeedback>
+      <View style={styles.modalOverlay}>
+        {/* Sibling backdrop, rendered first so the body stacks above it on web. */}
+        <Pressable
+          testID="goal-modal-backdrop"
+          onPress={onClose}
+          style={StyleSheet.absoluteFill}
+          accessibilityLabel="Close"
+          accessibilityRole="button"
+        />
+        <GoalModalBody
+          habit={habit}
+          onClose={onClose}
+          onUpdateGoal={onUpdateGoal}
+          onLogUnit={onLogUnit}
+          onUpdateHabit={onUpdateHabit}
+        />
+      </View>
     </Modal>
   );
 };
