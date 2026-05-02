@@ -2,10 +2,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   Alert,
   Modal,
+  Pressable,
   Text,
   TextInput,
   TouchableOpacity,
-  TouchableWithoutFeedback,
   View,
   PanResponder,
   StyleSheet,
@@ -784,19 +784,26 @@ export const GoalModal = ({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableWithoutFeedback onPress={onClose}>
-        <View style={styles.modalOverlay}>
-          <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
-            <GoalModalBody
-              habit={habit}
-              onClose={onClose}
-              onUpdateGoal={onUpdateGoal}
-              onLogUnit={onLogUnit}
-              onUpdateHabit={onUpdateHabit}
-            />
-          </TouchableWithoutFeedback>
-        </View>
-      </TouchableWithoutFeedback>
+      <View style={styles.modalOverlay}>
+        {/*
+          Backdrop is a sibling of the body, not an ancestor — so taps inside
+          the body never bubble to ``onClose``. The previous structure wrapped
+          the body in ``TouchableWithoutFeedback`` and relied on
+          ``e.stopPropagation()`` to cancel the outer close handler, which RN
+          Web's responder system doesn't honor reliably; a tap on any
+          ``TextInput`` inside the modal dismissed it instead of focusing
+          (the goal-target editor and the log-unit input were both
+          unusable on mobile web).
+        */}
+        <Pressable testID="goal-modal-backdrop" onPress={onClose} style={StyleSheet.absoluteFill} />
+        <GoalModalBody
+          habit={habit}
+          onClose={onClose}
+          onUpdateGoal={onUpdateGoal}
+          onLogUnit={onLogUnit}
+          onUpdateHabit={onUpdateHabit}
+        />
+      </View>
     </Modal>
   );
 };

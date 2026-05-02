@@ -116,6 +116,24 @@ describe('habitManager', () => {
       expect(useHabitStore.getState().habits.length).toBeGreaterThan(0);
     });
 
+    it('does NOT seed FALLBACK_HABITS when the live store already has habits', async () => {
+      // Regression guard: post-onboarding ``loadHabits`` must not overwrite
+      // the user's just-built selection with the hardcoded FALLBACK list when
+      // the server briefly returns empty (transient network issue, sync-in-
+      // flight, or first-load race). Cache is empty, API returns [], but the
+      // live store already has the user's habits — leave them alone.
+      const userBuilt: Habit[] = [makeHabit({ id: 1, name: 'My Habit' })];
+      useHabitStore.setState({ habits: userBuilt });
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never);
+
+      await habitManager.loadHabits();
+
+      const stored = useHabitStore.getState().habits;
+      expect(stored).toHaveLength(1);
+      expect(stored[0]!.name).toBe('My Habit');
+    });
+
     it('uses cached habits when available and then replaces with API data', async () => {
       const cached: Habit[] = [makeHabit({ id: 99, name: 'Cached' })];
       (loadHabits as jest.Mock).mockResolvedValueOnce(cached as never);
@@ -406,6 +424,83 @@ describe('habitManager', () => {
       expect(useHabitStore.getState().habits[0]!.goals).toHaveLength(3);
       expect(habitsApi.create).toHaveBeenCalled();
       expect(showToast).toHaveBeenCalled();
+    });
+
+    it('refreshes habits from the server after sync so local IDs match the wire', async () => {
+      // Bug — every newly-onboarded user saw "We couldn't find that goal" on
+      // every log attempt because the local store kept its synthetic IDs
+      // (``index + 1``) while the server assigned real auto-increment IDs to
+      // the habits we just POSTed. The fix is to ``loadHabits`` after sync so
+      // the store mirrors the server's authoritative IDs.
+      const newHabits: OnboardingHabit[] = [
+        {
+          id: 'a',
+          name: 'Meditate',
+          icon: '\u{1F9D8}',
+          energy_cost: 1,
+          energy_return: 3,
+          stage: 'Beige',
+          start_date: new Date('2025-01-01'),
+        },
+      ];
+      // Server returns the habit with a real autoincrement id (47), real
+      // goal ids (101/102/103), and the same name we POSTed.
+      (habitsApi.list as jest.Mock).mockResolvedValueOnce([
+        {
+          id: 47,
+          name: 'Meditate',
+          icon: '\u{1F9D8}',
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 3,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          goals: [
+            {
+              id: 101,
+              habit_id: 47,
+              title: 'Low',
+              tier: 'low',
+              target: 1,
+              target_unit: 'units',
+              frequency: 1,
+              frequency_unit: 'per_day',
+              is_additive: true,
+            },
+            {
+              id: 102,
+              habit_id: 47,
+              title: 'Clear',
+              tier: 'clear',
+              target: 2,
+              target_unit: 'units',
+              frequency: 1,
+              frequency_unit: 'per_day',
+              is_additive: true,
+            },
+            {
+              id: 103,
+              habit_id: 47,
+              title: 'Stretch',
+              tier: 'stretch',
+              target: 3,
+              target_unit: 'units',
+              frequency: 1,
+              frequency_unit: 'per_day',
+              is_additive: true,
+            },
+          ],
+        },
+      ] as never);
+
+      await habitManager.onboardingSave(newHabits, jest.fn());
+
+      // Store now reflects the server's IDs, not the synthetic ones.
+      const stored = useHabitStore.getState().habits;
+      expect(stored).toHaveLength(1);
+      expect(stored[0]!.id).toBe(47);
+      expect(stored[0]!.goals.map((g) => g.id)).toEqual([101, 102, 103]);
     });
   });
 

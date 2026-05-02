@@ -274,3 +274,66 @@ describe('GoalModal target editor', () => {
     expect(onUpdateGoal).not.toHaveBeenCalled();
   });
 });
+
+describe('GoalModal backdrop close', () => {
+  // Reported on mobile web: tapping any TextInput inside the modal (the goal
+  // target inputs and the log-unit input) dismisses the modal instead of
+  // focusing the input. Root cause was a nested ``TouchableWithoutFeedback``
+  // that wrapped the body and called ``e.stopPropagation()`` — RN Web's
+  // responder system doesn't honor ``stopPropagation`` the way native does,
+  // so the outer ``onPress={onClose}`` fired anyway. The structural fix is a
+  // dedicated backdrop ``Pressable`` (testID ``goal-modal-backdrop``) that
+  // does not wrap the body.
+  it('exposes a dedicated backdrop element that closes when pressed', () => {
+    const onClose = jest.fn();
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={onClose}
+        onUpdateGoal={() => {}}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    const backdrop = testRenderer.root.findByProps({ testID: 'goal-modal-backdrop' });
+    renderer.act(() => {
+      backdrop.props.onPress();
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not wrap the body in a tap-handler that fires onClose', () => {
+    // Pin the structural fix: the body must not have any ancestor (other
+    // than the backdrop itself) that calls ``onClose`` on press. Tapping a
+    // descendant — like a TextInput — must not bubble to a close handler.
+    const onClose = jest.fn();
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={onClose}
+        onUpdateGoal={() => {}}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    // The goal-target editor lives inside the body. Walking up the tree from
+    // any of its inputs must not encounter a TouchableWithoutFeedback whose
+    // onPress is ``onClose`` — that would re-introduce the regression.
+    const input = testRenderer.root.findByProps({ testID: 'goal-target-input-low' });
+    let node: typeof input | null = input.parent;
+    while (node) {
+      const press = (node.props as { onPress?: unknown }).onPress;
+      if (typeof press === 'function' && press === onClose) {
+        throw new Error('body has an ancestor whose onPress is onClose');
+      }
+      node = node.parent;
+    }
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});

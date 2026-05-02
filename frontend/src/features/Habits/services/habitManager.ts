@@ -303,7 +303,14 @@ const handleApiSuccess = async (
   apiHabits: Awaited<ReturnType<typeof habitsApi.list>>,
   hasCachedData: boolean,
 ): Promise<void> => {
-  if (apiHabits.length === 0 && !hasCachedData) {
+  // Only seed the FALLBACK list when the user is truly fresh: no cache, no
+  // live store, and an empty server. Without the live-store check, calling
+  // ``loadHabits`` immediately after onboarding (which is the only way to
+  // round-trip the server's authoritative ids — see ``onboardingSave``)
+  // would overwrite the user's just-built selection with the hardcoded
+  // defaults, because ``persistHabits`` is best-effort and hasn't necessarily
+  // landed before this code runs.
+  if (apiHabits.length === 0 && !hasCachedData && getHabits().length === 0) {
     setHabits(FALLBACK_HABITS);
     return;
   }
@@ -560,6 +567,14 @@ export const habitManager = {
       duration: INSTRUCTIONAL_TOAST_DURATION_MS,
     });
     await syncOnboardingHabits(fullHabits);
+    // Round-trip the server's authoritative IDs into the store. Without this,
+    // ``buildOnboardingHabits`` leaves the local habits with synthetic
+    // ``index + 1`` ids while the server assigns real autoincrement ids on
+    // ``POST /habits/`` — every later log POST then 404s with
+    // ``goal_not_found`` because the synthetic goal id doesn't exist on the
+    // server. Refreshing from the wire is the only place where the
+    // server-assigned ids enter the client.
+    await habitManager.loadHabits();
   },
 
   revealAllHabits: (): void => {
