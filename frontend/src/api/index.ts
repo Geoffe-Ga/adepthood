@@ -783,9 +783,16 @@ export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
 const habitWithGoalsArraySchema = z.array(habitWithGoalsSchema);
 const habitPageSchema = pageSchema(habitWithGoalsSchema);
 
+// Collection-level habit URLs use a trailing slash to match the FastAPI route
+// (`prefix="/habits"` + `@router.{get,post}("/")`). Without the slash, every
+// request hit a 307 redirect — a wasted round-trip in the happy path and an
+// outright failure mode on browsers that drop ``Authorization`` across the
+// redirect (the symptom that surfaced as "logging units does nothing" on
+// mobile web). Item-level URLs (`/habits/{id}`) are matched without the
+// trailing slash because their FastAPI routes are declared that way.
 export const habits = {
   list(token?: string): Promise<ApiHabitWithGoals[]> {
-    return request<ApiHabitWithGoals[]>('/habits', {
+    return request<ApiHabitWithGoals[]>('/habits/', {
       token,
       schema: habitWithGoalsArraySchema as unknown as z.ZodType<ApiHabitWithGoals[]>,
     });
@@ -803,7 +810,7 @@ export const habits = {
     const query = new URLSearchParams({ paginate: 'true' });
     if (params.limit != null) query.set('limit', String(params.limit));
     if (params.offset != null) query.set('offset', String(params.offset));
-    return request<Page<ApiHabitWithGoals>>(`/habits?${query.toString()}`, {
+    return request<Page<ApiHabitWithGoals>>(`/habits/?${query.toString()}`, {
       token,
       schema: habitPageSchema as unknown as z.ZodType<Page<ApiHabitWithGoals>>,
     });
@@ -815,7 +822,7 @@ export const habits = {
     });
   },
   create(payload: HabitCreatePayload, token?: string): Promise<ApiHabit> {
-    return request<ApiHabit>('/habits', { method: 'POST', body: payload, token });
+    return request<ApiHabit>('/habits/', { method: 'POST', body: payload, token });
   },
   update(habitId: number, payload: HabitCreatePayload, token?: string): Promise<ApiHabit> {
     return request<ApiHabit>(`/habits/${habitId}`, { method: 'PUT', body: payload, token });
@@ -841,8 +848,12 @@ export interface CheckInResult {
 }
 
 export const goalCompletions = {
+  // Trailing slash matches the FastAPI route at `prefix="/goal_completions"`
+  // + `@router.post("/")`. The bare path produced a 307 redirect that
+  // visibly bit users on mobile web — see the trailing-slash note above the
+  // `habits` client.
   create(payload: GoalCompletionPayload, token?: string): Promise<CheckInResult> {
-    return request<CheckInResult>('/goal_completions', { method: 'POST', body: payload, token });
+    return request<CheckInResult>('/goal_completions/', { method: 'POST', body: payload, token });
   },
 };
 
