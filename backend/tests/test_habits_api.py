@@ -116,6 +116,28 @@ async def test_get_habit(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_habit_seeds_three_default_goals(async_client: AsyncClient) -> None:
+    """``POST /habits/`` returns the new habit with low/clear/stretch defaults.
+
+    Without this, ``POST /goal_completions/`` always 404'd because the
+    server never had goals to look up -- there was no goal-creation
+    endpoint at all and the frontend's local goals never made the wire.
+    Pinning the contract here so a future refactor that drops the
+    auto-seed (or changes the tier set) fails the suite instead of
+    silently breaking habit logging end-to-end.
+    """
+    headers = await _signup(async_client)
+    resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    tiers = sorted(g["tier"] for g in body["goals"])
+    assert tiers == ["clear", "low", "stretch"]
+    # Each default goal carries a real autoincrement id so the frontend
+    # can immediately ``PUT /goals/{id}`` against any of them.
+    assert all(isinstance(g["id"], int) and g["id"] > 0 for g in body["goals"])
+
+
+@pytest.mark.asyncio
 async def test_update_habit(async_client: AsyncClient) -> None:
     headers = await _signup(async_client)
     create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
@@ -211,12 +233,12 @@ async def test_create_habit_defaults_streak_to_zero(async_client: AsyncClient) -
 async def test_get_habit_includes_goals(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """GET /habits/{id} returns nested goals list."""
+    """GET /habits/{id} returns nested goals list (defaults + any added)."""
     headers = await _signup(async_client)
     create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
     habit_id = create_resp.json()["id"]
 
-    # Insert a goal directly via DB
+    # Insert an extra goal beyond the three defaults seeded by ``POST /habits/``.
     goal = Goal(
         habit_id=habit_id,
         title="Drink 8 glasses",
@@ -234,15 +256,15 @@ async def test_get_habit_includes_goals(
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
     assert "goals" in data
-    assert len(data["goals"]) == 1
-    assert data["goals"][0]["title"] == "Drink 8 glasses"
+    titles = [g["title"] for g in data["goals"]]
+    assert "Drink 8 glasses" in titles
 
 
 @pytest.mark.asyncio
 async def test_list_habits_includes_goals(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """GET /habits/ returns nested goals in each habit."""
+    """GET /habits/ returns nested goals in each habit (defaults + any added)."""
     headers = await _signup(async_client)
     create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
     habit_id = create_resp.json()["id"]
@@ -264,7 +286,8 @@ async def test_list_habits_includes_goals(
     assert resp.status_code == HTTPStatus.OK
     habits_list = resp.json()
     assert len(habits_list) == 1
-    assert len(habits_list[0]["goals"]) == 1
+    titles = [g["title"] for g in habits_list[0]["goals"]]
+    assert "Drink 8 glasses" in titles
 
 
 @pytest.mark.asyncio
@@ -344,7 +367,8 @@ async def test_delete_habit_logs_cascade_counts(
     assert resp.status_code == HTTPStatus.NO_CONTENT
     cascade_logs = [r for r in caplog.records if r.message == "habit_deleted"]
     assert cascade_logs, "expected a habit_deleted audit log entry"
-    assert getattr(cascade_logs[0], "cascade_goals", None) == 1
+    # Three default goals (auto-seeded by POST /habits/) + one manually added.
+    assert getattr(cascade_logs[0], "cascade_goals", None) == 4
 
 
 @pytest.mark.asyncio

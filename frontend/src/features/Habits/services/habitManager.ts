@@ -10,8 +10,12 @@
 import { Alert } from 'react-native';
 import { v4 as uuidv4 } from 'uuid';
 
-import { habits as habitsApi, goalCompletions as goalCompletionsApi } from '../../../api';
-import type { CheckInResult, HabitCreatePayload } from '../../../api';
+import {
+  habits as habitsApi,
+  goalCompletions as goalCompletionsApi,
+  goals as goalsApi,
+} from '../../../api';
+import type { CheckInResult, GoalUpdatePayload, HabitCreatePayload } from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
 import type { ToastConfig } from '../../../components/Toast';
 import { colors } from '../../../design/tokens';
@@ -327,13 +331,34 @@ const handleApiError = (err: unknown, hasCachedData: boolean): void => {
   setHabits(FALLBACK_HABITS);
 };
 
-const fetchFromApi = async (hasCachedData: boolean): Promise<void> => {
+type FetchResult = { kind: 'ok'; count: number } | { kind: 'error' };
+
+const fetchFromApi = async (hasCachedData: boolean): Promise<FetchResult> => {
   try {
     const apiHabits = await habitsApi.list();
     await handleApiSuccess(apiHabits, hasCachedData);
     setError(null);
+    return { kind: 'ok', count: apiHabits.length };
   } catch (err) {
     handleApiError(err, hasCachedData);
+    return { kind: 'error' };
+  }
+};
+
+/** Re-push cached habits when the server has none — the caller re-fetches. */
+const recoverStuckHabits = async (cached: Habit[]): Promise<void> => {
+  for (const habit of cached) {
+    try {
+      // ``POST /habits/`` seeds default goal targets (1/2/3 units / per day)
+      // — any custom targets in the cache are lost on the re-fetch. Tracked
+      // in #286; for now the previous "every log 404s" state is strictly
+      // worse than reverted defaults.
+      await habitsApi.create(toApiPayload(habit));
+    } catch (err) {
+      // Best-effort; partial recovery is still better than the stuck state.
+      // Surface to console so Sentry / CI can flag chronic recovery failures.
+      console.warn('recoverStuckHabits: failed to re-push', habit.name, err);
+    }
   }
 };
 
@@ -392,19 +417,24 @@ const loadHabits = async (): Promise<void> => {
   const cached = await loadCachedHabits();
   const hasCachedData = cached !== null && cached.length > 0;
   if (hasCachedData) {
-    setHabits(cached);
+    setHabits(cached!);
     setLoading(false);
   }
-  await fetchFromApi(hasCachedData);
+  const result = await fetchFromApi(hasCachedData);
+  // Stuck-user recovery: cache has habits, server returned an empty list.
+  // Push the cache back, then re-fetch so the store gets the server's ids.
+  if (result.kind === 'ok' && result.count === 0 && hasCachedData) {
+    await recoverStuckHabits(cached!);
+    await fetchFromApi(true);
+  }
   setLoading(false);
 
-  // BUG-HABITS-007 + BUG-FE-HABIT-205 partial-success fix: replay
-  // pending check-ins queued during offline, and when one fails mid-
-  // batch only re-queue the suffix that didn't post. The previous
-  // implementation `return`ed from the first failure with the
-  // successful prefix still in the queue, so on the next load every
-  // check-in that had already posted would post AGAIN — silent
-  // duplication of the user's streak.
+  // BUG-HABITS-007 + BUG-FE-HABIT-205 partial-success fix: replay pending
+  // check-ins queued during offline, and when one fails mid-batch only re-
+  // queue the suffix that didn't post. The previous implementation
+  // ``return``-ed from the first failure with the successful prefix still
+  // in the queue, so on the next load every check-in that had already
+  // posted would post AGAIN — silent duplication of the user's streak.
   await replayPendingCheckIns();
 };
 
@@ -412,7 +442,33 @@ export const habitManager = {
   loadHabits,
 
   updateGoal: (habitId: number, updatedGoal: Goal): void => {
-    setHabits(applyGoalUpdate(getHabits(), habitId, updatedGoal));
+    const prev = getHabits();
+    const next = applyGoalUpdate(prev, habitId, updatedGoal);
+    setHabits(next);
+    void persistHabits(next);
+    // The optimistic write above + the local-only fallback for synthetic
+    // ids (no ``id`` from the server) keep the UI responsive. With a real
+    // id we POST to ``/goals/{id}`` and roll the store back if the wire
+    // rejects the change — same pattern as ``updateHabit``.
+    if (!updatedGoal.id) return;
+    const payload: GoalUpdatePayload = {
+      title: updatedGoal.title,
+      tier: updatedGoal.tier,
+      target: updatedGoal.target,
+      target_unit: updatedGoal.target_unit,
+      frequency: updatedGoal.frequency,
+      frequency_unit: updatedGoal.frequency_unit,
+      is_additive: updatedGoal.is_additive,
+      goal_group_id: updatedGoal.goal_group_id ?? null,
+    };
+    goalsApi
+      .update(updatedGoal.id, payload)
+      .catch(
+        revertOnFailure(
+          prev,
+          "We couldn't save that goal change. Your local copy was restored — check your connection and try again.",
+        ),
+      );
   },
 
   updateHabit: (updatedHabit: Habit): void => {

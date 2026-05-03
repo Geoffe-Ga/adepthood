@@ -25,6 +25,9 @@ jest.mock('../../../api', () => ({
   goalCompletions: {
     create: jest.fn(() => Promise.resolve({})),
   },
+  goals: {
+    update: jest.fn(() => Promise.resolve({})),
+  },
 }));
 
 jest.mock('../../../storage/habitStorage', () => ({

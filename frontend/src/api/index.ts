@@ -852,6 +852,27 @@ export const goalCompletions = {
   },
 };
 
+// Goal write payload — fields the editor exposes. ``habit_id`` is omitted
+// because a goal is bound to its parent habit for life and the server's
+// ``GoalUpdate`` schema rejects any attempt to forge it.
+export interface GoalUpdatePayload {
+  title: string;
+  description?: string | null;
+  tier: string;
+  target: number;
+  target_unit: string;
+  frequency: number;
+  frequency_unit: string;
+  is_additive: boolean;
+  goal_group_id?: number | null;
+}
+
+export const goals = {
+  update(goalId: number, payload: GoalUpdatePayload, token?: string): Promise<ApiGoal> {
+    return request<ApiGoal>(`/goals/${goalId}`, { method: 'PUT', body: payload, token });
+  },
+};
+
 // Goal group client
 export const goalGroups = {
   list(token?: string): Promise<ApiGoalGroup[]> {
@@ -1487,6 +1508,7 @@ export default {
   habits,
   goalCompletions,
   goalGroups,
+  goals,
   journal,
   botmason,
   prompts,
