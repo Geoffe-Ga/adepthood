@@ -14,7 +14,7 @@ suite runs fast and the bcrypt-bound check can be skipped under
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import bcrypt
 import jwt
@@ -432,6 +432,91 @@ async def test_cancel_returns_204_for_live_token(
         .all()
     )
     assert rows[0].cancelled_at is not None
+
+
+@pytest.mark.asyncio
+async def test_confirm_uses_lookup_key_pre_filter(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    email_sender: RecordingEmailSender,
+    disable_rate_limit: None,  # noqa: ARG001 -- need >3 reset requests for the seed
+) -> None:
+    """The confirm path filters by ``lookup_key`` so the bcrypt scan is bounded.
+
+    Regression for the PR #287 round-4 BLOCKER 1 (DoS amplifier).  We
+    seed a few unrelated active tokens for other users; if confirm
+    were still doing a full-table scan it would bcrypt-verify each
+    one.  With the lookup_key pre-filter the SQL hits at most one row
+    -- the one that matches the supplied plaintext's hash prefix.
+    """
+    from routers.auth import _make_lookup_key  # noqa: PLC0415
+
+    target = await _create_user(db_session, email="target@example.com")
+    target_id = target.id
+    # Seed a handful of unrelated but otherwise-valid reset tokens for
+    # other users; each gets its own distinct lookup_key so the
+    # filtered query never sees them.
+    for i in range(5):
+        other = await _create_user(db_session, email=f"noise-{i}@example.com")
+        await _request_reset(async_client, f"noise-{i}@example.com")
+        del other  # only the rows matter; the plaintext goes nowhere
+    await _request_reset(async_client, "target@example.com")
+    plaintext = _extract_token(email_sender.sent[-1].body)
+    # The target row carries the lookup_key derived from the plaintext.
+    db_session.expire_all()
+    rows = (
+        (
+            await db_session.execute(
+                select(PasswordResetToken).where(PasswordResetToken.user_id == target_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].lookup_key == _make_lookup_key(plaintext)
+    # Confirm still works end to end (the pre-filter doesn't break the
+    # happy path).
+    response = await async_client.post(
+        "/auth/password-reset/confirm",
+        json={"token": plaintext, "new_password": _NEW_PASSWORD},
+    )
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
+async def test_cancel_logs_email_fingerprint_on_hit(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    email_sender: RecordingEmailSender,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The cancel hit path emits the user's email fingerprint, not an empty string.
+
+    The runbook tells operators to grep ``password_reset_event`` lines
+    by ``email_fingerprint`` when investigating "this wasn't me"
+    reports -- an empty fingerprint would render that flow useless
+    (PR #287 round-4 review BLOCKER 3).
+    """
+    import logging  # noqa: PLC0415
+
+    from routers.auth import _email_log_fingerprint  # noqa: PLC0415
+
+    await _create_user(db_session, email="audit-cancel@example.com")
+    await _request_reset(async_client, "audit-cancel@example.com")
+    plaintext = _extract_token(email_sender.sent[-1].body)
+    expected_fingerprint = _email_log_fingerprint("audit-cancel@example.com")
+    with caplog.at_level(logging.INFO, logger="routers.auth"):
+        response = await async_client.post("/auth/password-reset/cancel", json={"token": plaintext})
+    assert response.status_code == 204
+    cancelled_records = [
+        r
+        for r in caplog.records
+        if r.message == "password_reset_event" and getattr(r, "action", None) == "cancelled"
+    ]
+    assert cancelled_records, "no password_reset_event with action=cancelled was logged"
+    fingerprint = cast("str", cancelled_records[0].__dict__["email_fingerprint"])
+    assert fingerprint == expected_fingerprint
 
 
 @pytest.mark.asyncio

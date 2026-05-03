@@ -21,7 +21,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from database import get_session
 from errors import bad_request
@@ -950,11 +950,11 @@ async def _auto_cancel_oldest_active_token(session: AsyncSession, user_id: int) 
         select(PasswordResetToken)
         .where(
             PasswordResetToken.user_id == user_id,
-            PasswordResetToken.used_at.is_(None),  # type: ignore[union-attr]
-            PasswordResetToken.cancelled_at.is_(None),  # type: ignore[union-attr]
+            col(PasswordResetToken.used_at).is_(None),
+            col(PasswordResetToken.cancelled_at).is_(None),
             PasswordResetToken.expires_at > now,
         )
-        .order_by(PasswordResetToken.created_at.asc())  # type: ignore[attr-defined]
+        .order_by(col(PasswordResetToken.created_at).asc())
     )
     active = list(result.scalars().all())
     if len(active) < _MAX_OUTSTANDING_TOKENS_PER_USER:
@@ -963,6 +963,27 @@ async def _auto_cancel_oldest_active_token(session: AsyncSession, user_id: int) 
     for row in active[:overflow]:
         row.cancelled_at = now
         session.add(row)
+
+
+# Width of the SHA-256 prefix used as ``PasswordResetToken.lookup_key``.
+# 16 hex chars = 64 bits = ~18 quintillion-to-one collision odds against
+# any other plaintext, which is fine because bcrypt is the actual
+# security gate -- the lookup key is a pre-filter to keep the SQL scan
+# cheap (PR #287 review BLOCKER 1).  Wider would gain nothing; narrower
+# starts to risk avoidable scans on collisions.
+_LOOKUP_KEY_HEX_LEN = 16
+
+
+def _make_lookup_key(plaintext: str) -> str:
+    """Return a deterministic non-secret SHA-256 prefix of ``plaintext``.
+
+    Used as a fast indexed pre-filter when looking up a reset token by
+    its plaintext value -- the alternative is a full-table bcrypt scan
+    on every confirm / cancel, which becomes a DoS amplifier above
+    modest user counts.  Bcrypt verify is still the security gate; the
+    prefix is just a cheap way to find "the maybe-row".
+    """
+    return hashlib.sha256(plaintext.encode("utf-8")).hexdigest()[:_LOOKUP_KEY_HEX_LEN]
 
 
 async def _mint_and_persist_reset_token(
@@ -979,6 +1000,7 @@ async def _mint_and_persist_reset_token(
     user_agent = request.headers.get("user-agent", "")[:256]
     row = PasswordResetToken(
         user_id=user.id,
+        lookup_key=_make_lookup_key(plaintext),
         token_hash=_hash_reset_token(plaintext),
         requested_ip=_get_client_ip(request),
         requested_user_agent=user_agent,
@@ -1088,17 +1110,37 @@ async def request_password_reset(
     return PasswordResetAccepted(message=_RESET_REQUEST_GENERIC_MESSAGE)
 
 
+async def _select_active_token_only(
+    session: AsyncSession, plaintext: str
+) -> PasswordResetToken | None:
+    """Find the still-live reset row matching ``plaintext``, or ``None``.
+
+    Pre-filters by the indexed ``lookup_key`` (a non-secret SHA-256
+    prefix of the plaintext) so the SQL hits at most a handful of rows
+    even at large user counts.  The bcrypt verify is still the security
+    gate -- the lookup_key is a deterministic hash, not a secret, and
+    even a 1-in-quintillion collision on the prefix is filtered out by
+    the constant-time bcrypt comparison.
+    """
+    now = datetime.now(UTC)
+    result = await session.execute(
+        select(PasswordResetToken).where(
+            PasswordResetToken.lookup_key == _make_lookup_key(plaintext),
+            col(PasswordResetToken.used_at).is_(None),
+            col(PasswordResetToken.cancelled_at).is_(None),
+            PasswordResetToken.expires_at > now,
+        )
+    )
+    for row in result.scalars().all():
+        if _verify_reset_token(plaintext, row.token_hash):
+            return row
+    return None
+
+
 async def _select_active_token_for_email(
     session: AsyncSession, plaintext: str
 ) -> tuple[PasswordResetToken, User] | None:
-    """Find the (token, user) pair matching the supplied plaintext, or ``None``.
-
-    Walks every still-live row -- there are at most three per user by
-    construction (SPEC R5 cap) and at most a handful per second
-    project-wide -- and bcrypt-compares each digest.  The walk is
-    intentional: indexing on a hash would defeat bcrypt's salt; the
-    O(N) cost is bounded by the active-token TTL and the per-user cap.
-    """
+    """Find the (token, user) pair matching the supplied plaintext, or ``None``."""
     token_row = await _select_active_token_only(session, plaintext)
     if token_row is None:
         return None
@@ -1174,16 +1216,20 @@ async def confirm_password_reset(
     notification (R8) is sent best-effort -- failure does not roll
     back the reset.
     """
-    try:
-        new_password_hash = _hash_password(payload.new_password)
-    except ValueError as exc:
-        raise bad_request("password_too_long") from exc
     found = await _select_active_token_for_email(session, payload.token)
     if found is None:
         _log_reset_event("confirm_rejected", "", request)
         raise bad_request("invalid_or_expired_token")
     token_row, user = found
     _reject_if_password_reuse(user, payload.new_password)
+    # Hash the new password only AFTER the token is validated -- bcrypt
+    # is the most expensive operation in this handler (~250 ms cost-12),
+    # so deferring saves the cost on the (expected-common) invalid-token
+    # path (PR #287 round-4 review code-quality note).
+    try:
+        new_password_hash = _hash_password(payload.new_password)
+    except ValueError as exc:
+        raise bad_request("password_too_long") from exc
     await _apply_reset_to_user(session, user, token_row, new_password_hash)
     if user.id is None:
         msg = "User missing ID after reset commit"
@@ -1192,24 +1238,6 @@ async def confirm_password_reset(
     _log_reset_event("confirmed", user.email, request)
     new_token, _ = _create_token(user.id)
     return AuthResponse(token=new_token, user_id=user.id, timezone=user.timezone)
-
-
-async def _select_active_token_only(
-    session: AsyncSession, plaintext: str
-) -> PasswordResetToken | None:
-    """Variant of ``_select_active_token_for_email`` that skips the user join."""
-    now = datetime.now(UTC)
-    result = await session.execute(
-        select(PasswordResetToken).where(
-            PasswordResetToken.used_at.is_(None),  # type: ignore[union-attr]
-            PasswordResetToken.cancelled_at.is_(None),  # type: ignore[union-attr]
-            PasswordResetToken.expires_at > now,
-        )
-    )
-    for row in result.scalars().all():
-        if _verify_reset_token(plaintext, row.token_hash):
-            return row
-    return None
 
 
 @router.post("/password-reset/cancel", status_code=status.HTTP_204_NO_CONTENT)
@@ -1225,6 +1253,14 @@ async def cancel_password_reset(
     as confirm.  Returns 204 on both hit and miss so the endpoint is
     safe to embed in an email link without leaking whether the link
     is live.
+
+    On the hit path we look up the owning user so the audit log line
+    carries the same email fingerprint as ``request`` and ``confirmed``
+    -- the runbook's symptom table tells operators to grep by
+    fingerprint when investigating "this wasn't me" reports, and an
+    empty string would render that flow useless.  The miss path
+    (``cancel_noop``) has no user to look up -- the token was never
+    valid -- so the empty fingerprint is correct there.
     """
     row = await _select_active_token_only(session, payload.token)
     if row is None:
@@ -1232,5 +1268,7 @@ async def cancel_password_reset(
         return
     row.cancelled_at = datetime.now(UTC)
     session.add(row)
+    user = await session.get(User, row.user_id)
+    cancelled_email = user.email if user is not None else ""
     await session.commit()
-    _log_reset_event("cancelled", "", request)
+    _log_reset_event("cancelled", cancelled_email, request)

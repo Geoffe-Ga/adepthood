@@ -43,6 +43,18 @@ class PasswordResetToken(SQLModel, table=True):
         nullable=False,
         ondelete="CASCADE",
     )
+    # Non-secret deterministic prefix of ``sha256(plaintext_token)``,
+    # populated when the row is minted.  Used as a fast SQL pre-filter
+    # so the confirm / cancel endpoints can locate "the maybe-row" with
+    # an indexed point query instead of bcrypt-scanning every active
+    # token in the table (PR #287 review BLOCKER 1).  bcrypt remains
+    # the only security gate -- the lookup key is a hash, not a
+    # secret, and a 64-bit prefix gives ~18 quintillion-to-one collision
+    # odds against any other plaintext, which is fine because bcrypt
+    # filters out collisions on the verify step.  Indexed for the
+    # point-lookup; the 32-char width covers the 16 hex chars + slack
+    # for any future widening.
+    lookup_key: str = Field(nullable=False, max_length=32, index=True)
     token_hash: str = Field(nullable=False, max_length=128)
     requested_ip: str = Field(default="", max_length=64)
     requested_user_agent: str = Field(default="", max_length=256)
