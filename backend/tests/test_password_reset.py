@@ -31,15 +31,13 @@ from routers.auth import (
     _hash_password,
     _hash_reset_token,
 )
-from services.email import (
-    RecordingEmailSender,
-    get_email_sender,
-    reset_email_sender_for_tests,
-)
+from services.email import RecordingEmailSender
+from tests.helpers.password_reset import extract_reset_token
+
+# ``email_sender`` + ``wire_email_sender`` fixtures live in
+# ``backend/tests/conftest.py`` and are auto-discovered by pytest.
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,24 +46,9 @@ _PASSWORD = "correct-horse-battery-staple"  # pragma: allowlist secret
 _NEW_PASSWORD = "new-horse-battery-staple"  # pragma: allowlist secret
 
 
-@pytest.fixture
-def email_sender() -> RecordingEmailSender:
-    """Recording fake substituted for ``get_email_sender`` in every test."""
-    sender = RecordingEmailSender()
-    reset_email_sender_for_tests()
-    return sender
-
-
-@pytest.fixture(autouse=True)
-def _wire_email_sender(email_sender: RecordingEmailSender) -> Iterator[None]:
-    """Override the FastAPI dependency so handlers see the recording fake."""
-    from main import app  # noqa: PLC0415  -- avoid import-time side-effects
-
-    app.dependency_overrides[get_email_sender] = lambda: email_sender
-    yield
-    # Pop only our override so the ``async_client`` fixture's session
-    # override stays intact.
-    app.dependency_overrides.pop(get_email_sender, None)
+# Apply the email-sender override to every test in this module without
+# requiring each test to depend on the fixture explicitly.
+pytestmark = pytest.mark.usefixtures("wire_email_sender")
 
 
 async def _create_user(
@@ -92,12 +75,8 @@ async def _request_reset(client: AsyncClient, email: str) -> tuple[int, dict[str
     return response.status_code, response.json()
 
 
-def _extract_token(body: str) -> str:
-    """Pull the plaintext token out of the rendered email body."""
-    marker = "reset-password?token="
-    start = body.index(marker) + len(marker)
-    end = body.index("\n", start)
-    return body[start:end]
+# Backwards-compatible alias for the test bodies below.
+_extract_token = extract_reset_token
 
 
 @pytest.mark.asyncio
@@ -536,6 +515,49 @@ async def test_cancel_logs_email_fingerprint_on_hit(
     await _request_reset(async_client, "audit-cancel@example.com")
     plaintext = _extract_token(email_sender.sent[-1].body)
     expected_fingerprint = _email_log_fingerprint("audit-cancel@example.com")
+    with caplog.at_level(logging.INFO, logger="routers.auth"):
+        response = await async_client.post("/auth/password-reset/cancel", json={"token": plaintext})
+    assert response.status_code == 204
+    cancelled_records = [
+        r
+        for r in caplog.records
+        if r.message == "password_reset_event" and getattr(r, "action", None) == "cancelled"
+    ]
+    assert cancelled_records, "no password_reset_event with action=cancelled was logged"
+    fingerprint = cast("str", cancelled_records[0].__dict__["email_fingerprint"])
+    assert fingerprint == expected_fingerprint
+
+
+@pytest.mark.asyncio
+async def test_cancel_still_logs_fingerprint_when_user_disabled_mid_flight(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    email_sender: RecordingEmailSender,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Cancel hit path still surfaces the user's fingerprint even when the user was just disabled.
+
+    Regression for the reviewer's "missing test for the
+    cancel-while-disabled case" callout.  Soft-disabling a user does
+    not remove the row, so ``session.get`` still finds them and the
+    audit log line carries the correct fingerprint (the runbook's
+    grep flow keeps working).  Hard-deleted users would CASCADE the
+    token row so there is nothing left to cancel; the only failure
+    mode is therefore covered by this happy-on-disable test.
+    """
+    import logging  # noqa: PLC0415
+
+    from routers.auth import _email_log_fingerprint  # noqa: PLC0415
+
+    user = await _create_user(db_session, email="cancel-disabled@example.com")
+    await _request_reset(async_client, "cancel-disabled@example.com")
+    plaintext = _extract_token(email_sender.sent[-1].body)
+    # Disable the user AFTER the token was minted -- cancel should
+    # still resolve the user record for the audit fingerprint.
+    user.is_active = False
+    db_session.add(user)
+    await db_session.commit()
+    expected_fingerprint = _email_log_fingerprint("cancel-disabled@example.com")
     with caplog.at_level(logging.INFO, logger="routers.auth"):
         response = await async_client.post("/auth/password-reset/cancel", json={"token": plaintext})
     assert response.status_code == 204

@@ -346,7 +346,8 @@ options:
 | `SMTP_PORT` | If `EMAIL_BACKEND=smtp` | — | SMTP port (typically `587` for STARTTLS) |
 | `SMTP_USERNAME` | If `EMAIL_BACKEND=smtp` | — | SMTP relay username |
 | `SMTP_PASSWORD` | If `EMAIL_BACKEND=smtp` | — | SMTP relay password / API key |
-| `EMAIL_FROM` | If `EMAIL_BACKEND=smtp` | — | RFC-5322 "From" address (e.g. `noreply@adepthood.example`) |
+| `EMAIL_FROM` | If `EMAIL_BACKEND=smtp` | — | RFC-5322 "From" address (e.g. `noreply@adepthood.example`). Must be a **monitored** mailbox -- the change-notification "this wasn't me" replies route here, and bounce-handling for invalid recipient addresses also lands here. |
+| `SECURITY_CONTACT_ADDRESS` | No (recommended in prod) | `security@adepthood.example` | Address printed inside the change-notification email body so users with a compromised account have somewhere to escalate. Set this to a real, monitored mailbox before launching publicly. |
 
 **Auto-injected by Railway (do not set manually):**
 
@@ -409,12 +410,25 @@ SMTP_PORT=587
 SMTP_USERNAME=apikey                # literal string "apikey"
 SMTP_PASSWORD=<sendgrid_api_key>    # the API key itself
 EMAIL_FROM=noreply@yourdomain.example
+SECURITY_CONTACT_ADDRESS=security@yourdomain.example
 ```
 
-The `EMAIL_FROM` address must be verified with the provider (DKIM /
-SPF). Without verification, deliverability collapses for any address
-the recipient's spam filter has not seen before -- which for password
-recovery means the user never gets the link.
+The `EMAIL_FROM` address must be:
+
+1. **DKIM/SPF-verified** with the provider. Without verification,
+   deliverability collapses for any address the recipient's spam
+   filter has not seen before -- which for password recovery means
+   the user never gets the link.
+2. **Monitored**. Bounce notifications for invalid recipient addresses
+   route back to this mailbox, and a user replying to the
+   change-notification email lands here too. An unmonitored "noreply"
+   address loses both signals.
+
+`SECURITY_CONTACT_ADDRESS` is the inbox printed inside the
+change-notification email body so a user whose account was reset
+without their consent has an escalation path. Set it to a real,
+monitored security inbox before launching to real users; the default
+(`security@adepthood.example`) is a placeholder for dev / first-deploy.
 
 Verify the wiring after deploy by hitting `/auth/password-reset/request`
 with a known-registered address and confirming the link lands in the

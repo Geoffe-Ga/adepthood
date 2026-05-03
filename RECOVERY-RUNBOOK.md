@@ -93,10 +93,40 @@ request:
 There is no operator UI to manually reset a password; it is
 intentional.  If a user truly cannot complete the email flow (lost
 inbox access, etc.), the recovery path is account verification via
-your support channel + a CLI script that updates `password_hash` and
-advances `password_changed_at` directly in the DB.  Document the
-specific procedure inside your team's secure runbook so it cannot be
-invoked accidentally.
+your support channel + a one-shot Python REPL session that updates
+`password_hash` and advances `password_changed_at` directly in the DB.
+
+A reference snippet (run inside `python -m asyncio` from the backend
+container, with `SECRET_KEY` and `DATABASE_URL` already set):
+
+```python
+from datetime import UTC, datetime
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from database import engine
+from models.user import User
+from routers.auth import _hash_password
+
+email = "user@example.com"  # the verified support contact
+new_hash = _hash_password("a-temporary-passphrase-rotate-immediately")
+async with async_sessionmaker(engine, expire_on_commit=False)() as s:
+    user = (await s.execute(select(User).where(User.email == email))).scalar_one()
+    user.password_hash = new_hash
+    user.password_changed_at = datetime.now(UTC)
+    await s.commit()
+```
+
+Distribute the verified-temporary password via a side channel (phone
++ SMS, or in-person), require the user to log in and rotate
+immediately, and revoke any outstanding sessions by relying on the
+`password_changed_at` JWT gate (already in place).  Anything more
+durable (a CLI subcommand, an admin UI) is deliberately deferred --
+moving manual overrides out of an interactive REPL would lower the
+friction below what a recovery flow this powerful warrants.
+
+A purpose-built CLI for this (e.g. `python -m scripts.manual_reset
+--email ...`) is tracked as a follow-up GitHub issue rather than
+shipped here; an interactive REPL is enough until support volume
+justifies the wrapper.
 
 ## Cron / Cleanup
 

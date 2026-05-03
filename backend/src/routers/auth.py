@@ -315,12 +315,18 @@ def _create_token(user_id: int) -> tuple[str, str]:
     the same wall-clock second.  Without sub-second precision the
     integer-second iat collides with a same-second password reset and
     the wrong token wins (CI repro: BUG-AUTH-024).
+
+    ``exp`` stays an integer.  Sub-second precision is only needed for
+    the ``iat`` gate; ``exp`` is consumed by external decoders (the
+    mobile client, future admin dashboards) where some JWT libraries
+    use strict integer coercion and a float would surprise them.
+    Keeping the float change minimum-blast-radius.
     """
     now = datetime.now(UTC)
     jti = _new_jti()
     payload = {
         "sub": str(user_id),
-        "exp": (now + _TOKEN_TTL).timestamp(),
+        "exp": int((now + _TOKEN_TTL).timestamp()),
         "iat": now.timestamp(),
         "jti": jti,
     }
@@ -338,7 +344,7 @@ def _create_dummy_token() -> str:
     nonce_key = secrets.token_hex(32)
     payload = {
         "sub": "0",
-        "exp": (now + _TOKEN_TTL).timestamp(),
+        "exp": int((now + _TOKEN_TTL).timestamp()),
         "iat": now.timestamp(),
     }
     return str(jwt.encode(payload, nonce_key, algorithm=_JWT_ALGORITHM))
@@ -941,6 +947,19 @@ def _build_reset_email(to_address: str, plaintext_token: str) -> EmailMessagePay
     )
 
 
+def _get_security_contact_address() -> str:
+    """Return the operator-monitored security contact address.
+
+    Read from ``SECURITY_CONTACT_ADDRESS`` so ops can change the
+    inbox without a code deploy.  Defaults to a placeholder
+    documented in DEPLOYMENT.md for dev / test / first-deploy
+    environments; production deployments MUST set the env var to
+    a real, monitored mailbox -- the change-notification email
+    routes "this wasn't me" responses there.
+    """
+    return os.getenv("SECURITY_CONTACT_ADDRESS", "security@adepthood.example")
+
+
 def _build_change_notification_email(to_address: str) -> EmailMessagePayload:
     """Render the post-confirm out-of-band notification (SPEC R8).
 
@@ -955,7 +974,7 @@ def _build_change_notification_email(to_address: str) -> EmailMessagePayload:
         "Your Adepthood password was just changed.\n\n"
         "If this was you, no action is needed.\n\n"
         "If this was NOT you, request another reset immediately so we can\n"
-        "freeze the account and email security@adepthood.example."
+        f"freeze the account and email {_get_security_contact_address()}."
     )
     return EmailMessagePayload(
         to=to_address,
@@ -1189,7 +1208,11 @@ async def _cancel_token_for_disabled_user(
     here closes the window and emits the correlated ``user_disabled``
     reason so the operator trail does not go cold.
     """
-    token_row.cancelled_at = datetime.now(UTC)
+    # Single ``now`` so the column stamp and the audit log line carry
+    # exactly the same timestamp -- avoids confusing microsecond drift
+    # in ops dashboards correlating row state with log lines.
+    now = datetime.now(UTC)
+    token_row.cancelled_at = now
     session.add(token_row)
     await session.commit()
     fingerprint_email = user_row.email if user_row is not None else ""
@@ -1198,7 +1221,7 @@ async def _cancel_token_for_disabled_user(
         extra={
             "action": "confirm_rejected_user_disabled",
             "email_fingerprint": _email_log_fingerprint(fingerprint_email),
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": now.isoformat(),
         },
     )
 

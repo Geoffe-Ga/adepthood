@@ -6,8 +6,8 @@ profile = "black"
 line_length = 100
 multi_line_output = 3
 include_trailing_comma = true
-known_first_party = ["src"]
-src_paths = ["src"]
+known_first_party = ["src", "tests"]
+src_paths = ["src", "tests"]
 
 [tool.ruff]
 src = ["backend/src"]
@@ -63,7 +63,7 @@ fixable = ["ALL"]
 "backend/conftest.py" = ["S101"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["src"]
+known-first-party = ["src", "tests"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -84,7 +84,7 @@ show_error_codes = true
 pretty = true
 explicit_package_bases = true
 plugins = ["pydantic.mypy"]
-mypy_path = ["backend/src"]
+mypy_path = ["backend/src", "backend"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

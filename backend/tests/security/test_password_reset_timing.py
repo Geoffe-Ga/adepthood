@@ -25,15 +25,13 @@ import pytest
 
 from models.user import User
 from routers.auth import _hash_password
-from services.email import (
-    RecordingEmailSender,
-    get_email_sender,
-    reset_email_sender_for_tests,
-)
+from services.email import RecordingEmailSender
+from tests.helpers.password_reset import extract_reset_token
+
+# ``email_sender`` + ``wire_email_sender`` fixtures live in
+# ``backend/tests/conftest.py`` and are auto-discovered by pytest.
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,20 +48,11 @@ _TOLERANCE_MS = 250
 _PASSWORD = "correct-horse-battery-staple"  # pragma: allowlist secret
 
 
-@pytest.fixture
-def email_sender() -> RecordingEmailSender:
-    sender = RecordingEmailSender()
-    reset_email_sender_for_tests()
-    return sender
+pytestmark = pytest.mark.usefixtures("wire_email_sender")
 
 
-@pytest.fixture(autouse=True)
-def _wire_email_sender(email_sender: RecordingEmailSender) -> Iterator[None]:
-    from main import app  # noqa: PLC0415
-
-    app.dependency_overrides[get_email_sender] = lambda: email_sender
-    yield
-    app.dependency_overrides.pop(get_email_sender, None)
+# Local alias to keep the existing test body unchanged.
+_extract_token_from_body = extract_reset_token
 
 
 async def _seed_user(db_session: AsyncSession, email: str) -> None:
@@ -146,13 +135,6 @@ async def test_request_ip_is_recorded_with_x_forwarded_for(
 
     rows = (await db_session.execute(select(PasswordResetToken))).scalars().all()
     assert rows[0].requested_ip == "203.0.113.5"
-
-
-def _extract_token_from_body(body: str) -> str:
-    marker = "reset-password?token="
-    start = body.index(marker) + len(marker)
-    end = body.index("\n", start)
-    return body[start:end]
 
 
 async def _measure_confirm(client: AsyncClient, token: str, new_password: str) -> float:
