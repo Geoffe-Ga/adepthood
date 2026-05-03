@@ -166,7 +166,7 @@ const styles = StyleSheet.create({
   button: {
     backgroundColor: colors.primary,
     borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.md + 2,
+    padding: SPACING.buttonV,
     alignItems: 'center',
     marginBottom: SPACING.lg,
   },

@@ -25,6 +25,7 @@ import { ApiKeyProvider } from './context/ApiKeyContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { NetworkStatusProvider } from './context/NetworkStatusContext';
 import { colors, SPACING } from './design/tokens';
+import CancelResetScreen from './features/Auth/CancelResetScreen';
 import ForgotPasswordScreen from './features/Auth/ForgotPasswordScreen';
 import LoginScreen from './features/Auth/LoginScreen';
 import { ReauthSheet } from './features/Auth/ReauthSheet';
@@ -39,6 +40,7 @@ type AuthStackParamList = {
   Signup: undefined;
   ForgotPassword: undefined;
   ResetPassword: { token?: string } | undefined;
+  CancelReset: { token?: string } | undefined;
 };
 
 /**
@@ -82,6 +84,9 @@ const linking: LinkingOptions<LinkedRootParamList> = {
         Signup: 'signup',
         ForgotPassword: 'forgot-password', // pragma: allowlist secret
         ResetPassword: 'reset-password', // pragma: allowlist secret
+        // ``cancel-reset?token=...`` is the "this wasn't me" landing
+        // for the reset email; matches the URL the email body emits.
+        CancelReset: 'cancel-reset', // pragma: allowlist secret
       } as unknown as Record<string, string>),
     },
   },
@@ -96,6 +101,7 @@ function AuthNavigator() {
       <AuthStack.Screen name="Signup" component={SignupScreen} />
       <AuthStack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
       <AuthStack.Screen name="ResetPassword" component={ResetPasswordScreen} />
+      <AuthStack.Screen name="CancelReset" component={CancelResetScreen} />
     </AuthStack.Navigator>
   );
 }

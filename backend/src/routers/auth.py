@@ -892,8 +892,8 @@ def _consume_dummy_bcrypt() -> None:
     bcrypt.checkpw(_DUMMY_BCRYPT_PASSWORD, _DUMMY_BCRYPT_HASH)
 
 
-def _build_reset_email(plaintext_token: str) -> EmailMessagePayload:
-    """Render the reset email body containing both action URLs.
+def _build_reset_email(to_address: str, plaintext_token: str) -> EmailMessagePayload:
+    """Render the reset email containing both action URLs, addressed to ``to_address``.
 
     The "this wasn't me" link hits ``/auth/password-reset/cancel`` and
     invalidates the token without requiring a login -- possession of
@@ -908,7 +908,7 @@ def _build_reset_email(plaintext_token: str) -> EmailMessagePayload:
         "ignore this email -- nothing happens until you click a link."
     )
     return EmailMessagePayload(
-        to="",
+        to=to_address,
         subject="Reset your Adepthood password",
         body=body,
     )
@@ -1002,14 +1002,15 @@ async def _send_reset_email_safely(
     logged with a fingerprint so the operator still has the audit
     trail.
     """
-    rendered = _build_reset_email(plaintext_token)
-    payload = EmailMessagePayload(
-        to=to_address,
-        subject=rendered.subject,
-        body=rendered.body,
-    )
+    payload = _build_reset_email(to_address, plaintext_token)
     try:
-        await sender.send(payload)
+        # The plaintext token rides ``redact_for_log`` so the sender
+        # implementation can mask it before writing the body to a log
+        # stream (the dev console adapter does exactly this).  The
+        # transmission path (SMTP) ignores the hint and sends the
+        # body verbatim because the user receiving the mail needs the
+        # unredacted link.
+        await sender.send(payload, redact_for_log=plaintext_token)
     except Exception:  # noqa: BLE001 -- equivalent shape across all backends
         logger.warning(
             "password_reset_email_failed",
@@ -1138,16 +1139,21 @@ async def _apply_reset_to_user(
     session: AsyncSession,
     user: User,
     token_row: PasswordResetToken,
-    new_password: str,
+    new_password_hash: str,
 ) -> None:
-    """Persist the new password, mark token used, advance ``password_changed_at``."""
-    user.password_hash = _hash_password(new_password)
+    """Persist the new password hash, mark token used, advance ``password_changed_at``.
+
+    Takes a pre-computed bcrypt digest so the caller can hash the
+    plaintext exactly once (the previous shape hashed twice -- one
+    upfront validation throwaway, one inside this helper -- doubling
+    the bcrypt budget on every confirm).
+    """
+    user.password_hash = new_password_hash
     user.password_changed_at = datetime.now(UTC)
     token_row.used_at = datetime.now(UTC)
     session.add(user)
     session.add(token_row)
-    if user.email is not None:
-        await _clear_recent_failed_attempts(session, user.email)
+    await _clear_recent_failed_attempts(session, user.email)
     await session.commit()
     await session.refresh(user)
 
@@ -1169,17 +1175,16 @@ async def confirm_password_reset(
     back the reset.
     """
     try:
-        new_hash = _hash_password(payload.new_password)
+        new_password_hash = _hash_password(payload.new_password)
     except ValueError as exc:
         raise bad_request("password_too_long") from exc
-    del new_hash  # Validate hashability up front; the real hash happens below.
     found = await _select_active_token_for_email(session, payload.token)
     if found is None:
         _log_reset_event("confirm_rejected", "", request)
         raise bad_request("invalid_or_expired_token")
     token_row, user = found
     _reject_if_password_reuse(user, payload.new_password)
-    await _apply_reset_to_user(session, user, token_row, payload.new_password)
+    await _apply_reset_to_user(session, user, token_row, new_password_hash)
     if user.id is None:
         msg = "User missing ID after reset commit"
         raise RuntimeError(msg)

@@ -130,6 +130,11 @@ export const SPACING = {
   lg: 16,
   xl: 20,
   xxl: 30,
+  // Vertical button padding -- 1px taller than ``md`` so a primary
+  // button visually anchors over the surrounding text without
+  // promoting to ``lg`` density everywhere.  Used by the auth
+  // screens (Login, Signup, Forgot, Reset, CancelReset) for parity.
+  buttonV: 14,
 } as const;
 
 // ---------------------------------------------------------------------------

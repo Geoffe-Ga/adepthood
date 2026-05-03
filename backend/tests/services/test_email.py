@@ -13,8 +13,8 @@ from services.email import (
     RecordingEmailSender,
     SmtpEmailSender,
     _build_default_sender,
-    _redact_body,
     get_email_sender,
+    redact_token_in_body,
     reset_email_sender_for_tests,
 )
 
@@ -44,26 +44,26 @@ async def test_recording_sender_captures_messages() -> None:
 async def test_console_sender_redacts_token_in_log(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Console sender logs a redacted body when the token is registered."""
-    sender = ConsoleEmailSender(last_plaintext_token="abcdefghijklmnop1234")
+    """Console sender logs a redacted body when ``redact_for_log`` is supplied."""
+    sender = ConsoleEmailSender()
     payload = EmailMessagePayload(
         to="user@example.com",
         subject="Reset",
         body="Click https://x.test/reset?token=abcdefghijklmnop1234 to continue.",
     )
     with caplog.at_level(logging.INFO):
-        await sender.send(payload)
+        await sender.send(payload, redact_for_log="abcdefghijklmnop1234")
     record = next(r for r in caplog.records if r.message == "email_console_send")
     assert "abcdefghijklmnop1234" not in record.body  # type: ignore[attr-defined]
     assert "abcdefgh..." in record.body  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
-async def test_console_sender_no_token_passes_body_through(
+async def test_console_sender_no_redact_hint_passes_body_through(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Without a registered token the console sender logs the body verbatim."""
-    sender = ConsoleEmailSender()  # no last_plaintext_token
+    """Without ``redact_for_log`` the console sender logs the body verbatim."""
+    sender = ConsoleEmailSender()
     payload = EmailMessagePayload(
         to="user@example.com",
         subject="Notice",
@@ -75,15 +75,35 @@ async def test_console_sender_no_token_passes_body_through(
     assert record.body == "Your password was changed."  # type: ignore[attr-defined]
 
 
-def test_redact_body_returns_input_when_token_blank() -> None:
-    """``_redact_body`` is a no-op when the token is missing or empty."""
-    assert _redact_body("hello", None) == "hello"
-    assert _redact_body("hello", "") == "hello"
+@pytest.mark.asyncio
+async def test_console_sender_redacts_when_keyword_passed_at_call_site() -> None:
+    """Regression: the call site that forgets to pass redact_for_log gets a typed default.
+
+    Before this refactor, redaction relied on the caller setting a
+    field on the sender instance before each call -- a foot-gun the PR
+    review flagged.  Now the keyword is part of ``send``'s signature
+    so a forgotten redaction is a missing keyword (still safe -- the
+    body is logged in full and you notice during review) rather than
+    a silently-disabled mask.
+    """
+    sender = ConsoleEmailSender()
+    payload = EmailMessagePayload(to="x@y.z", subject="s", body="b")
+    # Default: ``redact_for_log=None`` -- the body is logged verbatim,
+    # which is the documented behaviour for non-token emails.
+    await sender.send(payload)
+    # Explicit None is also accepted.
+    await sender.send(payload, redact_for_log=None)
 
 
-def test_redact_body_truncates_token_inline() -> None:
+def test_redact_token_in_body_returns_input_when_token_blank() -> None:
+    """``redact_token_in_body`` is a no-op when the token is missing or empty."""
+    assert redact_token_in_body("hello", None) == "hello"
+    assert redact_token_in_body("hello", "") == "hello"
+
+
+def test_redact_token_in_body_truncates_token_inline() -> None:
     """Tokens are replaced inline with the first 8 chars + ellipsis."""
-    assert _redact_body("link=ABCDEFGHIJKLMNOP", "ABCDEFGHIJKLMNOP") == "link=ABCDEFGH..."
+    assert redact_token_in_body("link=ABCDEFGHIJKLMNOP", "ABCDEFGHIJKLMNOP") == "link=ABCDEFGH..."
 
 
 def test_build_default_sender_returns_console_when_unset(

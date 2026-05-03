@@ -25,6 +25,7 @@ outbound message without snooping the logger.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import smtplib
@@ -59,23 +60,41 @@ class EmailMessagePayload:
 class EmailSender(Protocol):
     """Smallest viable email port -- a single async ``send`` method."""
 
-    async def send(self, message: EmailMessagePayload) -> None:
+    async def send(
+        self,
+        message: EmailMessagePayload,
+        *,
+        redact_for_log: str | None = None,
+    ) -> None:
         """Deliver ``message``.  Adapters MUST raise on a hard failure.
 
         Anti-enumeration callers (the ``/auth/password-reset/request``
         handler) wrap this in a try/except so a transient SMTP outage
         cannot reveal whether the address was registered.
+
+        ``redact_for_log`` is an optional plaintext substring that
+        adapters which write the body to a log stream (e.g.
+        :class:`ConsoleEmailSender`) MUST mask before logging.
+        Adapters that only transmit (e.g. :class:`SmtpEmailSender`)
+        ignore the hint -- the recipient needs the full link.  The
+        keyword is required to be passed explicitly so the call site
+        cannot silently forget when adding a new sender.
         """
         ...
 
 
-def _redact_body(body: str, plaintext_token: str | None) -> str:
-    """Mask the raw token inside ``body`` for safe-to-log rendering.
+def redact_token_in_body(body: str, plaintext_token: str | None) -> str:
+    """Mask ``plaintext_token`` inside ``body`` for safe-to-log rendering.
 
-    Returns ``body`` unchanged when ``plaintext_token`` is ``None``
-    (the change-notification email carries no token).
+    Returns ``body`` unchanged when ``plaintext_token`` is ``None`` /
+    empty (e.g. the change-notification email carries no token).  The
+    caller (``routers.auth._send_reset_email_safely``) redacts the
+    body BEFORE handing it to the sender so the sender contract is
+    "log/transmit whatever I'm given" -- no per-sender redaction
+    state, no way for a future call site to forget to wire the
+    redaction (the security concern flagged in PR #287 review).
     """
-    if plaintext_token is None or not plaintext_token:
+    if not plaintext_token:
         return body
     redacted = plaintext_token[:_TOKEN_LOG_PREFIX] + "..."
     return body.replace(plaintext_token, redacted)
@@ -83,20 +102,24 @@ def _redact_body(body: str, plaintext_token: str | None) -> str:
 
 @dataclass(slots=True)
 class ConsoleEmailSender:
-    """Dev / test adapter that logs the rendered email.
+    """Dev / test adapter that logs the rendered email at INFO level.
 
-    The optional ``plaintext_token`` argument lets the caller hand the
-    raw token over so the logger can redact it to ``<first 8>...`` --
-    avoids a literal credential disclosure pattern in shared terminal
-    output (e.g. recorded demos) while still letting the developer
-    copy the link from the unredacted body of the matching test fake.
+    Redacts the ``redact_for_log`` substring (typically the plaintext
+    reset token) inside the body BEFORE writing to the logger so a
+    casual screen-share or recorded demo cannot leak a working
+    credential.  When the caller passes ``redact_for_log=None`` the
+    body is logged verbatim (e.g. the change-notification email
+    carries no token).
     """
 
-    last_plaintext_token: str | None = None
-
-    async def send(self, message: EmailMessagePayload) -> None:
-        """Log ``message`` at INFO with the in-flight token redacted."""
-        body = _redact_body(message.body, self.last_plaintext_token)
+    async def send(
+        self,
+        message: EmailMessagePayload,
+        *,
+        redact_for_log: str | None = None,
+    ) -> None:
+        """Log ``message`` at INFO with ``redact_for_log`` masked in the body."""
+        body = redact_token_in_body(message.body, redact_for_log)
         logger.info(
             "email_console_send",
             extra={
@@ -113,8 +136,13 @@ class RecordingEmailSender:
 
     sent: list[EmailMessagePayload] = field(default_factory=list)
 
-    async def send(self, message: EmailMessagePayload) -> None:
-        """Append ``message`` to :attr:`sent` so tests can assert on it."""
+    async def send(
+        self,
+        message: EmailMessagePayload,
+        *,
+        redact_for_log: str | None = None,  # noqa: ARG002 -- tests assert on raw body
+    ) -> None:
+        """Append ``message`` to :attr:`sent` (verbatim) so tests can assert on it."""
         self.sent.append(message)
 
 
@@ -154,8 +182,26 @@ class SmtpEmailSender:
             from_address=_required_env("EMAIL_FROM"),
         )
 
-    async def send(self, message: EmailMessagePayload) -> None:
-        """Send ``message`` via SMTP STARTTLS + AUTH PLAIN."""
+    async def send(
+        self,
+        message: EmailMessagePayload,
+        *,
+        redact_for_log: str | None = None,  # noqa: ARG002 -- recipient sees full link
+    ) -> None:
+        """Send ``message`` via SMTP STARTTLS + AUTH PLAIN.
+
+        ``smtplib`` is synchronous (RFC-5321 chatter, blocking sockets).
+        FastAPI is async, so calling it directly inside ``async def``
+        would freeze the entire asyncio event loop for the duration of
+        the SMTP handshake -- typically 100 ms-2 s per message,
+        capped at 30 s by the connect timeout.  Offload to a worker
+        thread via :func:`asyncio.to_thread` so other in-flight
+        requests keep moving.
+        """
+        await asyncio.to_thread(self._send_blocking, message)
+
+    def _send_blocking(self, message: EmailMessagePayload) -> None:
+        """Synchronous body of :meth:`send` -- called via ``asyncio.to_thread``."""
         envelope = EmailMessage()
         envelope["From"] = self.from_address
         envelope["To"] = message.to

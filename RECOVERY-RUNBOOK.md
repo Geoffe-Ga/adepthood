@@ -106,3 +106,34 @@ weekly cleanup job that deletes rows where
 preserved but the table does not grow unbounded.  No prior commit
 exists for this -- it is an open follow-up tracked in the SPEC's
 "Out of scope" section.
+
+Concrete recipe (PostgreSQL with `pg_cron`):
+
+```sql
+-- One-time setup (run as the DB superuser):
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+-- Weekly purge of reset tokens older than the 7-day audit window.
+SELECT cron.schedule(
+    'purge_password_reset_tokens',
+    '0 4 * * 0',  -- Sundays 04:00 UTC
+    $$DELETE FROM passwordresettoken
+       WHERE expires_at < now() - interval '7 days'$$
+);
+```
+
+If `pg_cron` is unavailable (e.g. some managed Postgres tiers), wire
+the same `DELETE` into a Railway / GitHub Actions cron job that hits
+the DB once a week.
+
+## Accepted Risks
+
+* **Reset tokens travel in the URL query string.**  The deep-link
+  format is `adepthood://reset-password?token=...`.  Mobile OS
+  link-handling APIs and crash reporters can capture full URLs, so
+  the token may transiently land in OS / vendor logs.  Mitigation:
+  the 30-minute TTL and single-use lifecycle bound the exposure
+  window even if a token leaks via this channel.  A future migration
+  to URL fragments (`#token=...`) is not viable for mobile deep
+  links; promoting to a POST-only confirmation form behind a
+  one-time landing page is the long-term fix.
