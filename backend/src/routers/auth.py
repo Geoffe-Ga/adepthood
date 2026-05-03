@@ -82,11 +82,26 @@ _RESET_REQUEST_GENERIC_MESSAGE = (
 # string and gives 256 bits of entropy.
 _RESET_TOKEN_BYTES = 32
 
-# Anti-enumeration dummy bcrypt input.  The miss path needs to spend
-# roughly the same cost as the hit path so request-timing cannot leak
-# whether an email is registered (SPEC R4).
+# Anti-enumeration dummy bcrypt inputs.  Two pre-computed digests at
+# different costs so each timing-parity site spends the same bcrypt
+# budget as the operation it is masking:
+#
+# * cost-10 -- masks the reset-token verify (``_hash_reset_token`` /
+#   ``_verify_reset_token``).  Used by the request endpoint's miss
+#   branch so an attacker cannot tell registered from unknown emails
+#   from response timing (SPEC R4).
+# * cost-12 -- masks the user-password verify (``_verify_password``).
+#   Used by the confirm endpoint's invalid-token branch so an attacker
+#   cannot tell "real token + reused password" from "bogus token" by
+#   measuring whether ``_reject_if_password_reuse`` ran (PR #287
+#   round-5 BLOCKER 2).
+#
+# The work runs at module import once; each ``_consume_dummy_*`` call
+# only pays the verify cost.  The plaintext is a fixed throwaway so
+# the same digest can be reused across calls without collision risk.
 _DUMMY_BCRYPT_PASSWORD = b"adepthood-reset-anti-enumeration-dummy"
 _DUMMY_BCRYPT_HASH = bcrypt.hashpw(_DUMMY_BCRYPT_PASSWORD, bcrypt.gensalt(rounds=10))
+_DUMMY_PASSWORD_VERIFY_HASH = bcrypt.hashpw(_DUMMY_BCRYPT_PASSWORD, bcrypt.gensalt(rounds=12))
 
 _MIN_PASSWORD_LENGTH = 8
 
@@ -883,13 +898,26 @@ def _verify_reset_token(plaintext: str, token_hash: str) -> bool:
 
 
 def _consume_dummy_bcrypt() -> None:
-    """Constant-cost bcrypt verify on the miss path (SPEC R4 timing parity).
+    """Spend the cost-10 reset-token verify budget on the request miss path.
 
-    Spends roughly the same hash budget as the hit path so the request
+    Mirrors the hit path's ``_verify_reset_token`` cost so the request
     endpoint cannot be timing-distinguished by an attacker scraping
-    every email in a leak corpus.
+    every email in a leak corpus (SPEC R4).
     """
     bcrypt.checkpw(_DUMMY_BCRYPT_PASSWORD, _DUMMY_BCRYPT_HASH)
+
+
+def _consume_dummy_password_verify() -> None:
+    """Spend the cost-12 user-password verify budget on the confirm-miss path.
+
+    Mirrors ``_verify_password(new_password, user.password_hash)`` cost
+    so the invalid-token branch of confirm cannot be timing-
+    distinguished from the valid-token-with-reused-password branch
+    (PR #287 round-5 BLOCKER 2).  The user's stored hash is cost-12
+    (``_hash_password`` uses ``bcrypt.gensalt(rounds=12)``) so the
+    masking dummy must also be cost-12 -- the cost-10 one is too fast.
+    """
+    bcrypt.checkpw(_DUMMY_BCRYPT_PASSWORD, _DUMMY_PASSWORD_VERIFY_HASH)
 
 
 def _build_reset_email(to_address: str, plaintext_token: str) -> EmailMessagePayload:
@@ -1100,13 +1128,19 @@ async def request_password_reset(
     digest (``_consume_dummy_bcrypt``) so the response time matches the
     hit path within the SPEC R4 ~50 ms tolerance.
     """
-    _log_reset_event("requested", payload.email, request)
     user = await _lookup_active_user(session, payload.email)
     if user is None:
+        # Miss path: do NOT log ``action=requested`` -- the runbook
+        # promises that line means "the server accepted the request
+        # and called the email backend" (PR #287 round-5 BLOCKER 1).
+        # Emitting it here would send operators chasing a missing
+        # SMTP delivery for an email that was never sent.  The
+        # constant-time bcrypt below preserves SPEC R4 timing parity.
         _consume_dummy_bcrypt()
         return PasswordResetAccepted(message=_RESET_REQUEST_GENERIC_MESSAGE)
     plaintext = await _mint_and_persist_reset_token(session, user, request)
     await _send_reset_email_safely(sender, payload.email, plaintext)
+    _log_reset_event("requested", payload.email, request)
     return PasswordResetAccepted(message=_RESET_REQUEST_GENERIC_MESSAGE)
 
 
@@ -1131,21 +1165,64 @@ async def _select_active_token_only(
             PasswordResetToken.expires_at > now,
         )
     )
-    for row in result.scalars().all():
-        if _verify_reset_token(plaintext, row.token_hash):
-            return row
-    return None
+    # ``.first()`` rather than iterating: with a 64-bit lookup_key
+    # collision odds are 1-in-18-quintillion, so the result set is
+    # effectively size-zero or size-one.  On the astronomical-collision
+    # case bcrypt rejects the row and confirm 400s -- the user simply
+    # re-requests a reset.  No security loss; cleaner than a for loop
+    # that almost never iterates.
+    row = result.scalars().first()
+    if row is None or not _verify_reset_token(plaintext, row.token_hash):
+        return None
+    return row
+
+
+async def _cancel_token_for_disabled_user(
+    session: AsyncSession,
+    token_row: PasswordResetToken,
+    user_row: User | None,
+) -> None:
+    """Auto-cancel a reset token whose owning user is gone / disabled.
+
+    Without this the row would linger as ``active`` for the full
+    30-minute TTL even though confirm refuses it -- consuming the
+    per-user cap and going untraced in the audit log (PR #287 round-5
+    BLOCKER 3).  Cancelling here closes the window and emits the
+    correlated ``user_disabled`` reason so the operator trail does
+    not go cold.
+    """
+    token_row.cancelled_at = datetime.now(UTC)
+    session.add(token_row)
+    await session.commit()
+    fingerprint_email = user_row.email if user_row is not None else ""
+    logger.info(
+        "password_reset_event",
+        extra={
+            "action": "confirm_rejected_user_disabled",
+            "email_fingerprint": _email_log_fingerprint(fingerprint_email),
+            "timestamp": datetime.now(UTC).isoformat(),
+        },
+    )
 
 
 async def _select_active_token_for_email(
     session: AsyncSession, plaintext: str
 ) -> tuple[PasswordResetToken, User] | None:
-    """Find the (token, user) pair matching the supplied plaintext, or ``None``."""
+    """Find the (token, user) pair matching the supplied plaintext, or ``None``.
+
+    If the token is real but the owning user has been soft-deleted /
+    disabled (or vanished entirely), the token is auto-cancelled and
+    a ``confirm_rejected_user_disabled`` audit line is emitted before
+    we return ``None``.  Caller still sees the same generic
+    ``invalid_or_expired_token`` response -- the disabled-user state
+    is server-side audit data only.
+    """
     token_row = await _select_active_token_only(session, plaintext)
     if token_row is None:
         return None
     user_row = await session.get(User, token_row.user_id)
     if user_row is None or user_row.deleted_at is not None or not user_row.is_active:
+        await _cancel_token_for_disabled_user(session, token_row, user_row)
         return None
     return token_row, user_row
 
@@ -1190,9 +1267,13 @@ async def _apply_reset_to_user(
     upfront validation throwaway, one inside this helper -- doubling
     the bcrypt budget on every confirm).
     """
+    # Single ``now`` so the JWT-revocation floor and the token's
+    # consumed-at stamp are exactly identical -- avoids confusing
+    # microsecond drift in audit dashboards.
+    now = datetime.now(UTC)
     user.password_hash = new_password_hash
-    user.password_changed_at = datetime.now(UTC)
-    token_row.used_at = datetime.now(UTC)
+    user.password_changed_at = now
+    token_row.used_at = now
     session.add(user)
     session.add(token_row)
     await _clear_recent_failed_attempts(session, user.email)
@@ -1218,6 +1299,14 @@ async def confirm_password_reset(
     """
     found = await _select_active_token_for_email(session, payload.token)
     if found is None:
+        # Spend the cost-12 password-verify budget that the success
+        # branch's ``_reject_if_password_reuse`` will spend, so the
+        # invalid-token vs. valid-token-with-password-reuse paths
+        # cannot be timing-distinguished (PR #287 round-5 BLOCKER 2).
+        # The user's stored hash is cost-12 so the dummy must match
+        # that cost; the cost-10 ``_consume_dummy_bcrypt`` is too
+        # fast to mask the verify.
+        _consume_dummy_password_verify()
         _log_reset_event("confirm_rejected", "", request)
         raise bad_request("invalid_or_expired_token")
     token_row, user = found

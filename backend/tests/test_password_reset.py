@@ -146,6 +146,36 @@ async def test_request_returns_202_for_unknown_email(
 
 
 @pytest.mark.asyncio
+async def test_request_miss_path_does_not_log_requested_event(
+    async_client: AsyncClient,
+    email_sender: RecordingEmailSender,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Audit log is silent on the miss path (PR #287 round-5 BLOCKER 1).
+
+    The runbook tells operators that ``action=requested`` means the
+    server accepted the request and called the email backend.  Emitting
+    that line for an address with no account would send oncall chasing
+    a missing SMTP delivery for an email that was never sent.
+    """
+    import logging  # noqa: PLC0415
+
+    with caplog.at_level(logging.INFO, logger="routers.auth"):
+        status_code, _ = await _request_reset(async_client, "ghost@example.com")
+    assert status_code == 202
+    assert email_sender.sent == []
+    requested_records = [
+        r
+        for r in caplog.records
+        if r.message == "password_reset_event" and getattr(r, "action", None) == "requested"
+    ]
+    assert requested_records == [], (
+        "miss path must not emit action=requested -- the runbook "
+        "promises that line means a real SMTP delivery happened"
+    )
+
+
+@pytest.mark.asyncio
 async def test_request_returns_202_for_inactive_user(
     async_client: AsyncClient,
     db_session: AsyncSession,
@@ -532,6 +562,74 @@ async def test_cancel_validates_token_length(async_client: AsyncClient) -> None:
     """Tokens shorter than the floor are rejected with 422."""
     response = await async_client.post("/auth/password-reset/cancel", json={"token": "short"})
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_confirm_disabled_user_auto_cancels_token_and_logs(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    email_sender: RecordingEmailSender,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Disabled-user confirm auto-cancels the row and emits a tracing event.
+
+    PR #287 round-5 BLOCKER 3.  Before this fix, an admin who
+    disabled a user mid-flight left an "active" reset row consuming
+    the per-user cap and emitting nothing -- the operator audit
+    trail went cold.  Now the row is cancelled and a
+    ``confirm_rejected_user_disabled`` line carries the email
+    fingerprint so the runbook's grep-by-fingerprint flow still
+    works.
+    """
+    import logging  # noqa: PLC0415
+
+    user = await _create_user(db_session, email="disabled@example.com")
+    user_id = user.id
+    await _request_reset(async_client, "disabled@example.com")
+    plaintext = _extract_token(email_sender.sent[-1].body)
+
+    # Disable the user AFTER the reset token has been minted.
+    user.is_active = False
+    db_session.add(user)
+    await db_session.commit()
+
+    with caplog.at_level(logging.INFO, logger="routers.auth"):
+        response = await async_client.post(
+            "/auth/password-reset/confirm",
+            json={"token": plaintext, "new_password": _NEW_PASSWORD},
+        )
+    # Generic 400 -- the disabled-user state is server-side audit
+    # data only; the wire response is identical to invalid-token.
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid_or_expired_token"
+
+    # The token row was cancelled (so it stops consuming the cap).
+    db_session.expire_all()
+    rows = (
+        (
+            await db_session.execute(
+                select(PasswordResetToken).where(PasswordResetToken.user_id == user_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].cancelled_at is not None
+
+    # And the audit trail carries the user's fingerprint, not "".
+    from routers.auth import _email_log_fingerprint  # noqa: PLC0415
+
+    expected_fp = _email_log_fingerprint("disabled@example.com")
+    matching = [
+        r
+        for r in caplog.records
+        if r.message == "password_reset_event"
+        and getattr(r, "action", None) == "confirm_rejected_user_disabled"
+    ]
+    assert matching, "no confirm_rejected_user_disabled audit line was logged"
+    fingerprint = cast("str", matching[0].__dict__["email_fingerprint"])
+    assert fingerprint == expected_fp
 
 
 @pytest.mark.asyncio

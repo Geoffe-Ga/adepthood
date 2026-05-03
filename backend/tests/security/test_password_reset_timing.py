@@ -146,3 +146,70 @@ async def test_request_ip_is_recorded_with_x_forwarded_for(
 
     rows = (await db_session.execute(select(PasswordResetToken))).scalars().all()
     assert rows[0].requested_ip == "203.0.113.5"
+
+
+def _extract_token_from_body(body: str) -> str:
+    marker = "reset-password?token="
+    start = body.index(marker) + len(marker)
+    end = body.index("\n", start)
+    return body[start:end]
+
+
+async def _measure_confirm(client: AsyncClient, token: str, new_password: str) -> float:
+    start = time.perf_counter()
+    response = await client.post(
+        "/auth/password-reset/confirm",
+        json={"token": token, "new_password": new_password},
+    )
+    duration_ms = (time.perf_counter() - start) * 1_000
+    # Both paths return 4xx -- the only thing being measured is bcrypt cost.
+    assert response.status_code in {200, 400}, response.text
+    return duration_ms
+
+
+@pytest.mark.asyncio
+async def test_confirm_invalid_token_matches_password_reuse_timing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    email_sender: RecordingEmailSender,
+    disable_rate_limit: None,  # noqa: ARG001 -- need >5 confirms across the trial
+) -> None:
+    """Invalid-token confirm spends the same bcrypt budget as the reused-password branch.
+
+    Without the dummy bcrypt on the invalid path, the ~250 ms cost-12
+    verify that ``_reject_if_password_reuse`` runs only on the
+    valid-token-with-password-reuse branch becomes a side channel an
+    attacker can use to detect whether a submitted token matches a
+    real active row (PR #287 round-5 BLOCKER 2).  Asserts the median
+    latency delta between the two paths is within the SPEC R4
+    tolerance.
+    """
+    await _seed_user(db_session, "reuse@example.com")
+    # Set up a real outstanding reset-token row that we will confirm
+    # using the user's CURRENT password (triggers the reuse-check).
+    request_resp = await async_client.post(
+        "/auth/password-reset/request", json={"email": "reuse@example.com"}
+    )
+    assert request_resp.status_code == 202
+    valid_token = _extract_token_from_body(email_sender.sent[-1].body)
+
+    # Warm up so the first sample isn't an outlier.
+    await _measure_confirm(async_client, "x" * 43, "warmup-pw")
+
+    invalid_path: list[float] = []
+    reuse_path: list[float] = []
+    for _ in range(_ITERATIONS):
+        # Invalid path: the token does not exist anywhere in the DB.
+        invalid_path.append(await _measure_confirm(async_client, "x" * 43, "irrelevant-pw"))
+        # Reuse path: real token, but new_password matches the current
+        # one so ``_reject_if_password_reuse`` raises 400 after one
+        # bcrypt verify.  We use the same valid_token for every run --
+        # confirm 400s on the reuse check before marking it used, so
+        # the row stays alive for the next iteration.
+        reuse_path.append(await _measure_confirm(async_client, valid_token, _PASSWORD))
+
+    delta = abs(median(invalid_path) - median(reuse_path))
+    assert delta < _TOLERANCE_MS, (
+        f"confirm timing leak: invalid median={median(invalid_path):.1f}ms "
+        f"reuse median={median(reuse_path):.1f}ms delta={delta:.1f}ms"
+    )
