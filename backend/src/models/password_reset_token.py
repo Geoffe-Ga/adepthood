@@ -37,7 +37,12 @@ class PasswordResetToken(SQLModel, table=True):
     """
 
     id: int | None = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id", index=True, nullable=False)
+    user_id: int = Field(
+        foreign_key="user.id",
+        index=True,
+        nullable=False,
+        ondelete="CASCADE",
+    )
     token_hash: str = Field(nullable=False, max_length=128)
     requested_ip: str = Field(default="", max_length=64)
     requested_user_agent: str = Field(default="", max_length=256)
