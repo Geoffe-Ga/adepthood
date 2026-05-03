@@ -294,12 +294,20 @@ def _create_token(user_id: int) -> tuple[str, str]:
     before swapping in the new one.  Tokens minted before the jti
     column existed have no claim and are treated as legacy-but-valid
     by ``get_current_user`` -- the 1-hour TTL is the grace window.
+
+    ``iat`` is encoded as a fractional Unix timestamp (RFC 7519
+    NumericDate allows non-integer values) so the SPEC R7
+    ``password_changed_at`` gate can distinguish two tokens issued in
+    the same wall-clock second.  Without sub-second precision the
+    integer-second iat collides with a same-second password reset and
+    the wrong token wins (CI repro: BUG-AUTH-024).
     """
+    now = datetime.now(UTC)
     jti = _new_jti()
     payload = {
         "sub": str(user_id),
-        "exp": datetime.now(UTC) + _TOKEN_TTL,
-        "iat": datetime.now(UTC),
+        "exp": (now + _TOKEN_TTL).timestamp(),
+        "iat": now.timestamp(),
         "jti": jti,
     }
     token = str(jwt.encode(payload, _get_secret_key(), algorithm=_JWT_ALGORITHM))
@@ -312,11 +320,12 @@ def _create_dummy_token() -> str:
     Used to return an indistinguishable response when a signup is attempted
     with an already-registered email, preventing account enumeration.
     """
+    now = datetime.now(UTC)
     nonce_key = secrets.token_hex(32)
     payload = {
         "sub": "0",
-        "exp": datetime.now(UTC) + _TOKEN_TTL,
-        "iat": datetime.now(UTC),
+        "exp": (now + _TOKEN_TTL).timestamp(),
+        "iat": now.timestamp(),
     }
     return str(jwt.encode(payload, nonce_key, algorithm=_JWT_ALGORITHM))
 
@@ -695,19 +704,24 @@ def _token_predates_password_reset(
     without an ``iat`` cannot be compared, and an account that has
     never had a password reset has no floor to compare against.
 
-    JWT ``iat`` is encoded as integer Unix seconds, so a token minted
-    in the same wall-clock second as a password reset would otherwise
-    appear to have ``iat < password_changed_at`` (because the column
-    keeps sub-second precision while the JWT claim does not).
-    Truncating both sides to whole seconds before comparison gives the
-    issuance path a one-second cushion -- the gate still rejects every
-    token from a prior second, which is the security property.
+    Both ``token_iat`` and ``password_changed_at`` carry sub-second
+    precision (the former because :func:`_create_token` encodes
+    ``iat`` as a fractional Unix timestamp; the latter because the
+    column is a ``timestamptz`` populated from ``datetime.now(UTC)``).
+    A direct ``<`` comparison correctly distinguishes tokens issued
+    even microseconds before vs. after a password reset.
+
+    Legacy tokens whose ``iat`` was encoded as integer seconds (by an
+    older ``_create_token`` or by an external test fixture) compare
+    against ``password_changed_at`` at second resolution -- the
+    integer-second iat reads as the ``T.000000`` boundary, which is
+    strictly less than any reset that happened later in the same
+    second.  That is the desired semantics: every token from a prior
+    moment is rejected.
     """
     if token_iat is None or password_changed_at is None:
         return False
-    iat_floor = _as_utc_aware(token_iat).replace(microsecond=0)
-    reset_floor = _as_utc_aware(password_changed_at).replace(microsecond=0)
-    return iat_floor < reset_floor
+    return _as_utc_aware(token_iat) < _as_utc_aware(password_changed_at)
 
 
 async def _check_user_active(

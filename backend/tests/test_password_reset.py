@@ -500,6 +500,46 @@ async def test_legacy_token_without_iat_skips_password_reset_gate(
     assert response.status_code == 200
 
 
+@pytest.mark.asyncio
+async def test_token_issued_in_same_second_as_reset_is_rejected(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A token whose iat lands in the same wall-clock second as the reset is rejected.
+
+    SPEC R7 deterministic guard.  The original test relied on timing
+    luck and flaked on faster CI runners where the old token and reset
+    both happened in the same integer-second.  This variant constructs
+    the token's ``iat`` explicitly so the bug surfaces every run.
+    """
+    user = await _create_user(db_session, email="same-sec@example.com")
+    assert user.id is not None
+
+    # Mint a token whose iat is at the START of the current second --
+    # password_changed_at will land later in the same second.
+    floor = datetime.now(UTC).replace(microsecond=0)
+    secret = _get_secret_key()
+    payload = {
+        "sub": str(user.id),
+        "exp": floor + timedelta(hours=1),
+        "iat": floor,  # encoded as int seconds by PyJWT
+        "jti": "same-sec-jti",
+    }
+    old_token = jwt.encode(payload, secret, algorithm=_JWT_ALGORITHM)
+
+    # Set password_changed_at 500 ms after the token's iat -- still in
+    # the same wall-clock second.
+    user.password_changed_at = floor + timedelta(milliseconds=500)
+    db_session.add(user)
+    await db_session.commit()
+
+    response = await async_client.post(
+        "/auth/refresh", headers={"Authorization": f"Bearer {old_token}"}
+    )
+    # Strict semantic: token iat at floor + 0 < pw_changed at floor + 0.5.
+    assert response.status_code == 401
+
+
 def test_hash_reset_token_roundtrips() -> None:
     """``_hash_reset_token`` produces a digest verifiable by bcrypt.checkpw."""
     plain = "abc" * 11
