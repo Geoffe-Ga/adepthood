@@ -314,7 +314,7 @@ describe('habitManager', () => {
       expect(stretch.target).toBeGreaterThanOrEqual(clear.target);
     });
 
-    it('POSTs the goal change to /goals/{id} so edits survive the next load', async () => {
+    it('PUTs the goal change to /goals/{id} so edits survive the next load', async () => {
       useHabitStore.setState({ habits: [makeHabit()] });
 
       const updatedLow: Goal = {

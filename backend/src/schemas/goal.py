@@ -30,6 +30,12 @@ class Goal(BaseModel):
 class GoalUpdate(BaseModel):
     """Payload for ``PUT /goals/{goal_id}``.
 
+    Full-replace REST PUT semantics: every field is required (or has an
+    explicit default) and ``model_dump()`` writes them all to the row.
+    Optional fields like ``description`` revert to ``None`` if omitted —
+    callers building partial-update UIs must read the current goal first
+    and resend its values.
+
     ``habit_id`` is deliberately excluded -- a goal is permanently bound to its
     parent habit.  Allowing the caller to forge ``habit_id`` would let them
     reparent goals across habits (and across tenants if combined with an IDOR).

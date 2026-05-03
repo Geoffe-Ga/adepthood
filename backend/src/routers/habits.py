@@ -119,7 +119,7 @@ async def _refetch_with_goals(session: AsyncSession, habit_id: int) -> Habit:
     """Re-load a habit with eager goals to avoid greenlet lazy-load errors."""
     statement = select(Habit).where(Habit.id == habit_id).options(HABIT_WITH_GOALS_AND_COMPLETIONS)
     result = await session.execute(statement)
-    refreshed = result.scalars().first()
+    refreshed = result.scalars().one_or_none()
     if refreshed is None:
         # Should be unreachable: habit was committed in the same session
         # one statement ago. Surface as a 500 with a stable detail rather

@@ -349,9 +349,15 @@ const fetchFromApi = async (hasCachedData: boolean): Promise<FetchResult> => {
 const recoverStuckHabits = async (cached: Habit[]): Promise<void> => {
   for (const habit of cached) {
     try {
+      // ``POST /habits/`` seeds default goal targets (1/2/3 units / per day)
+      // — any custom targets in the cache are lost on the re-fetch. Tracked
+      // in #286; for now the previous "every log 404s" state is strictly
+      // worse than reverted defaults.
       await habitsApi.create(toApiPayload(habit));
-    } catch {
+    } catch (err) {
       // Best-effort; partial recovery is still better than the stuck state.
+      // Surface to console so Sentry / CI can flag chronic recovery failures.
+      console.warn('recoverStuckHabits: failed to re-push', habit.name, err);
     }
   }
 };
