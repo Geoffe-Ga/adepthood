@@ -93,8 +93,7 @@ _RESET_TOKEN_BYTES = 32
 # * cost-12 -- masks the user-password verify (``_verify_password``).
 #   Used by the confirm endpoint's invalid-token branch so an attacker
 #   cannot tell "real token + reused password" from "bogus token" by
-#   measuring whether ``_reject_if_password_reuse`` ran (PR #287
-#   round-5 BLOCKER 2).
+#   measuring whether ``_reject_if_password_reuse`` ran.
 #
 # The work runs at module import once; each ``_consume_dummy_*`` call
 # only pays the verify cost.  The plaintext is a fixed throwaway so
@@ -912,10 +911,10 @@ def _consume_dummy_password_verify() -> None:
 
     Mirrors ``_verify_password(new_password, user.password_hash)`` cost
     so the invalid-token branch of confirm cannot be timing-
-    distinguished from the valid-token-with-reused-password branch
-    (PR #287 round-5 BLOCKER 2).  The user's stored hash is cost-12
-    (``_hash_password`` uses ``bcrypt.gensalt(rounds=12)``) so the
-    masking dummy must also be cost-12 -- the cost-10 one is too fast.
+    distinguished from the valid-token-with-reused-password branch.
+    The user's stored hash is cost-12 (``_hash_password`` uses
+    ``bcrypt.gensalt(rounds=12)``) so the masking dummy must also be
+    cost-12 -- the cost-10 one is too fast.
     """
     bcrypt.checkpw(_DUMMY_BCRYPT_PASSWORD, _DUMMY_PASSWORD_VERIFY_HASH)
 
@@ -997,8 +996,8 @@ async def _auto_cancel_oldest_active_token(session: AsyncSession, user_id: int) 
 # 16 hex chars = 64 bits = ~18 quintillion-to-one collision odds against
 # any other plaintext, which is fine because bcrypt is the actual
 # security gate -- the lookup key is a pre-filter to keep the SQL scan
-# cheap (PR #287 review BLOCKER 1).  Wider would gain nothing; narrower
-# starts to risk avoidable scans on collisions.
+# cheap.  Wider would gain nothing; narrower starts to risk avoidable
+# scans on collisions.
 _LOOKUP_KEY_HEX_LEN = 16
 
 
@@ -1132,10 +1131,10 @@ async def request_password_reset(
     if user is None:
         # Miss path: do NOT log ``action=requested`` -- the runbook
         # promises that line means "the server accepted the request
-        # and called the email backend" (PR #287 round-5 BLOCKER 1).
-        # Emitting it here would send operators chasing a missing
-        # SMTP delivery for an email that was never sent.  The
-        # constant-time bcrypt below preserves SPEC R4 timing parity.
+        # and called the email backend".  Emitting it here would send
+        # operators chasing a missing SMTP delivery for an email that
+        # was never sent.  The constant-time bcrypt below preserves
+        # SPEC R4 timing parity.
         _consume_dummy_bcrypt()
         return PasswordResetAccepted(message=_RESET_REQUEST_GENERIC_MESSAGE)
     plaintext = await _mint_and_persist_reset_token(session, user, request)
@@ -1186,10 +1185,9 @@ async def _cancel_token_for_disabled_user(
 
     Without this the row would linger as ``active`` for the full
     30-minute TTL even though confirm refuses it -- consuming the
-    per-user cap and going untraced in the audit log (PR #287 round-5
-    BLOCKER 3).  Cancelling here closes the window and emits the
-    correlated ``user_disabled`` reason so the operator trail does
-    not go cold.
+    per-user cap and going untraced in the audit log.  Cancelling
+    here closes the window and emits the correlated ``user_disabled``
+    reason so the operator trail does not go cold.
     """
     token_row.cancelled_at = datetime.now(UTC)
     session.add(token_row)
@@ -1302,10 +1300,9 @@ async def confirm_password_reset(
         # Spend the cost-12 password-verify budget that the success
         # branch's ``_reject_if_password_reuse`` will spend, so the
         # invalid-token vs. valid-token-with-password-reuse paths
-        # cannot be timing-distinguished (PR #287 round-5 BLOCKER 2).
-        # The user's stored hash is cost-12 so the dummy must match
-        # that cost; the cost-10 ``_consume_dummy_bcrypt`` is too
-        # fast to mask the verify.
+        # cannot be timing-distinguished.  The user's stored hash is
+        # cost-12 so the dummy must match that cost; the cost-10
+        # ``_consume_dummy_bcrypt`` is too fast to mask the verify.
         _consume_dummy_password_verify()
         _log_reset_event("confirm_rejected", "", request)
         raise bad_request("invalid_or_expired_token")
@@ -1314,7 +1311,7 @@ async def confirm_password_reset(
     # Hash the new password only AFTER the token is validated -- bcrypt
     # is the most expensive operation in this handler (~250 ms cost-12),
     # so deferring saves the cost on the (expected-common) invalid-token
-    # path (PR #287 round-4 review code-quality note).
+    # path.
     try:
         new_password_hash = _hash_password(payload.new_password)
     except ValueError as exc:

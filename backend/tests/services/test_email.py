@@ -213,3 +213,100 @@ async def test_smtp_sender_invokes_send_message(
         "quit",
     ]
     assert len(sent_messages) == 1
+
+
+def test_smtp_send_blocking_drives_starttls_login_and_quit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct sync test for ``_send_blocking`` and ``_connect``.
+
+    The async ``send`` method runs ``_send_blocking`` via
+    :func:`asyncio.to_thread`, which dispatches into a worker thread
+    that ``coverage.py`` does not trace under the default
+    ``concurrency = ["greenlet"]`` config (PR #287 round-6 BLOCKER 2).
+    Calling ``_send_blocking`` directly keeps the body on the main
+    thread so the line/branch coverage gate sees it.
+    """
+    sent_messages: list[object] = []
+    calls: list[str] = []
+
+    class _StubSmtp:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            calls.append(f"init:{host}:{port}:{timeout}")
+
+        def starttls(self) -> None:
+            calls.append("starttls")
+
+        def login(self, username: str, password: str) -> None:
+            calls.append(f"login:{username}:{password}")
+
+        def send_message(self, msg: object) -> None:
+            sent_messages.append(msg)
+            calls.append("send")
+
+        def quit(self) -> None:
+            calls.append("quit")
+
+    monkeypatch.setattr("services.email.smtplib.SMTP", _StubSmtp)
+    sender = SmtpEmailSender(
+        host="smtp.example.com",
+        port=587,
+        username="user",
+        password="pw",  # pragma: allowlist secret
+        from_address="from@example.com",
+    )
+    sender._send_blocking(  # noqa: SLF001 -- testing the sync internal directly
+        EmailMessagePayload(to="rcpt@example.com", subject="s", body="b"),
+    )
+    assert calls == [
+        "init:smtp.example.com:587:30",
+        "starttls",
+        "login:user:pw",
+        "send",
+        "quit",
+    ]
+    assert len(sent_messages) == 1
+
+
+def test_smtp_connect_quits_even_when_login_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_connect``'s ``finally: client.quit()`` runs even on failure.
+
+    Regression for the reviewer's testing-gap callout: without this
+    test, an SMTP failure mid-handshake could leak a half-open
+    connection through the worker pool.
+    """
+    calls: list[str] = []
+
+    class _ExplodingSmtp:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            calls.append(f"init:{host}:{port}:{timeout}")
+
+        def starttls(self) -> None:
+            calls.append("starttls")
+
+        def login(self, username: str, password: str) -> None:  # noqa: ARG002
+            raise ConnectionError("relay refused AUTH")
+
+        def quit(self) -> None:
+            calls.append("quit")
+
+    monkeypatch.setattr("services.email.smtplib.SMTP", _ExplodingSmtp)
+    sender = SmtpEmailSender(
+        host="smtp.example.com",
+        port=587,
+        username="user",
+        password="pw",  # pragma: allowlist secret
+        from_address="from@example.com",
+    )
+    with pytest.raises(ConnectionError, match="relay refused AUTH"):
+        sender._send_blocking(  # noqa: SLF001 -- direct sync exercise
+            EmailMessagePayload(to="rcpt@example.com", subject="s", body="b"),
+        )
+    # ``quit`` must still have run via the ``finally`` clause.
+    assert calls == [
+        "init:smtp.example.com:587:30",
+        "starttls",
+        "quit",
+    ]

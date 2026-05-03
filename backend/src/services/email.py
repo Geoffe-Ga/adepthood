@@ -87,12 +87,11 @@ def redact_token_in_body(body: str, plaintext_token: str | None) -> str:
     """Mask ``plaintext_token`` inside ``body`` for safe-to-log rendering.
 
     Returns ``body`` unchanged when ``plaintext_token`` is ``None`` /
-    empty (e.g. the change-notification email carries no token).  The
-    caller (``routers.auth._send_reset_email_safely``) redacts the
-    body BEFORE handing it to the sender so the sender contract is
-    "log/transmit whatever I'm given" -- no per-sender redaction
-    state, no way for a future call site to forget to wire the
-    redaction (the security concern flagged in PR #287 review).
+    empty (e.g. the change-notification email carries no token).
+    Adapters which write the body to a log stream call this from
+    inside ``send`` after receiving ``redact_for_log`` from the
+    caller; transmitting adapters (SMTP) ignore the hint and send
+    the body verbatim because the recipient needs the full link.
     """
     if not plaintext_token:
         return body
