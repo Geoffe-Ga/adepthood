@@ -24,7 +24,10 @@ Every reset event lands in the application logs as a
 * `email_fingerprint` -- the SHA-256-prefix-hash from
   `_email_log_fingerprint`; correlate by the SAME fingerprint across
   lines, never by email
-* `ip_address`
+* `ip_address` -- read from `X-Forwarded-For`; trustworthy only if
+  the ingress chain strips/replaces the header (see `DEPLOYMENT.md`
+  "Trusted Proxy / X-Forwarded-For").  Treat as advisory if the
+  deployment exposes the API container directly to the public.
 * `timestamp`
 
 Recover the fingerprint for a given email locally:
@@ -133,9 +136,13 @@ justifies the wrapper.
 `passwordresettoken` rows are not pruned automatically.  Schedule a
 weekly cleanup job that deletes rows where
 `expires_at < now() - interval '7 days'` so the audit window is
-preserved but the table does not grow unbounded.  No prior commit
-exists for this -- it is an open follow-up tracked in the SPEC's
-"Out of scope" section.
+preserved but the table does not grow unbounded.  Note the retention
+window is "7 days **after token expiry**", not 7 days after creation:
+a token minted at T with a 30-minute TTL expires at T+30m and is
+purged at T+30m+7d (~7 days, 30 minutes after creation).  This is
+deliberate -- it gives ops a full week of post-mortem data on every
+expired token.  No prior commit exists for this -- it is an open
+follow-up tracked in the SPEC's "Out of scope" section.
 
 Concrete recipe (PostgreSQL with `pg_cron`):
 

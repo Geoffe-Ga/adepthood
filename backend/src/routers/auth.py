@@ -990,6 +990,13 @@ async def _auto_cancel_oldest_active_token(session: AsyncSession, user_id: int) 
     arrives the oldest is silently auto-cancelled so the new request
     still succeeds (the wire response stays 202 either way to honour
     R4).  Skips the work entirely if the count is below the cap.
+
+    Concurrency: callers must hold the per-user row lock taken in
+    ``_mint_and_persist_reset_token`` (``SELECT user FOR UPDATE``).
+    Without it, two near-simultaneous requests can both read
+    ``count == cap``, both skip the cancel, and both insert -- leaving
+    one extra active row above the cap.  The lock serializes the
+    check-then-cancel-then-insert sequence per user.
     """
     now = datetime.now(UTC)
     result = await session.execute(
@@ -1037,10 +1044,21 @@ async def _mint_and_persist_reset_token(
     user: User,
     request: Request,
 ) -> str:
-    """Create a fresh reset token row and return the plaintext to email out."""
+    """Create a fresh reset token row and return the plaintext to email out.
+
+    Takes a ``SELECT FOR UPDATE`` lock on the user row before counting
+    active tokens so the SPEC R5 cap (max 3 outstanding) holds under
+    concurrent requests for the same account.  Without the lock, two
+    requests landing in the same millisecond can both observe
+    ``count == 3``, both decide a cancel is unnecessary, and both
+    insert -- producing 4 active rows and breaking the cap.  SQLite
+    (test backend) ignores ``FOR UPDATE`` but serializes writes at
+    the connection level anyway, so this is safe in both environments.
+    """
     if user.id is None:
         msg = "User without ID hit reset-token mint path"
         raise RuntimeError(msg)
+    await session.execute(select(User.id).where(User.id == user.id).with_for_update())
     await _auto_cancel_oldest_active_token(session, user.id)
     plaintext = secrets.token_urlsafe(_RESET_TOKEN_BYTES)
     user_agent = request.headers.get("user-agent", "")[:256]

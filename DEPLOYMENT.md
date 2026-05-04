@@ -343,7 +343,7 @@ options:
 | `BOTMASON_SYSTEM_PROMPT` | No | Built-in | Path to prompt file or inline text |
 | `EMAIL_BACKEND` | No | `console` | `console` (logs the email locally) or `smtp` (delivers via SMTP). Required: `smtp` in production. |
 | `SMTP_HOST` | If `EMAIL_BACKEND=smtp` | — | SMTP relay hostname, e.g. `smtp.sendgrid.net` |
-| `SMTP_PORT` | If `EMAIL_BACKEND=smtp` | — | SMTP port (typically `587` for STARTTLS) |
+| `SMTP_PORT` | If `EMAIL_BACKEND=smtp` | — | SMTP port. **Only STARTTLS-on-587 is supported** -- the adapter calls `starttls()` unconditionally. Implicit-TLS port 465 (SMTPS) will silently fail to deliver because the connection negotiation skips the STARTTLS step. Use port 587. |
 | `SMTP_USERNAME` | If `EMAIL_BACKEND=smtp` | — | SMTP relay username |
 | `SMTP_PASSWORD` | If `EMAIL_BACKEND=smtp` | — | SMTP relay password / API key |
 | `EMAIL_FROM` | If `EMAIL_BACKEND=smtp` | — | RFC-5322 "From" address (e.g. `noreply@adepthood.example`). Must be a **monitored** mailbox -- the change-notification "this wasn't me" replies route here, and bounce-handling for invalid recipient addresses also lands here. |
@@ -434,6 +434,24 @@ Verify the wiring after deploy by hitting `/auth/password-reset/request`
 with a known-registered address and confirming the link lands in the
 inbox.  The corresponding runbook lives at `RECOVERY-RUNBOOK.md`
 (operator-facing: how to investigate a reset that did not arrive).
+
+### Trusted Proxy / X-Forwarded-For
+
+The backend reads the client IP from `X-Forwarded-For` and writes it
+verbatim to `passwordresettoken.requested_ip` and to the
+`password_reset_event` audit log.  This is correct **only when every
+ingress path runs through a trusted reverse proxy that overwrites the
+header**.  Railway's edge network does this by default; if you front
+the API with an additional proxy or expose the container directly to
+the public internet, an attacker can spoof the source IP in the audit
+trail by sending the header themselves.
+
+For Railway / managed-edge deployments no extra configuration is
+needed.  For self-managed deployments, terminate TLS at a proxy
+(nginx, Caddy, Cloudflare) that strips inbound `X-Forwarded-For` and
+appends the real peer address.  Operators investigating an abuse
+report should treat the `ip_address` audit field as authoritative
+only to the extent the ingress chain is trusted.
 
 ---
 
