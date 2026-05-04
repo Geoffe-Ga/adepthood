@@ -36,7 +36,12 @@ from schemas.password_reset import (
     PasswordResetConfirm,
     PasswordResetRequest,
 )
-from services.email import EmailMessagePayload, EmailSender, get_email_sender
+from services.email import (
+    EmailDeliveryError,
+    EmailMessagePayload,
+    EmailSender,
+    get_email_sender,
+)
 from services.users import get_user_timezone
 
 logger = logging.getLogger(__name__)
@@ -1087,6 +1092,11 @@ async def _send_reset_email_safely(
     on the hit path while the miss path stayed at 202.  Failures are
     logged with a fingerprint so the operator still has the audit
     trail.
+
+    Only :class:`EmailDeliveryError` (transient wire failure) is
+    swallowed; programmer / configuration errors propagate so they
+    surface in monitoring rather than being masked by the
+    anti-enumeration shield.
     """
     payload = _build_reset_email(to_address, plaintext_token)
     try:
@@ -1097,7 +1107,7 @@ async def _send_reset_email_safely(
         # body verbatim because the user receiving the mail needs the
         # unredacted link.
         await sender.send(payload, redact_for_log=plaintext_token)
-    except Exception:  # noqa: BLE001 -- equivalent shape across all backends
+    except EmailDeliveryError:
         logger.warning(
             "password_reset_email_failed",
             extra={"email_fingerprint": _email_log_fingerprint(to_address)},
@@ -1108,10 +1118,17 @@ async def _send_change_notification_safely(
     sender: EmailSender,
     to_address: str,
 ) -> None:
-    """Send the post-confirm notification, swallowing transport errors."""
+    """Send the post-confirm notification, swallowing transport errors.
+
+    Catches :class:`EmailDeliveryError` only; the reset already
+    succeeded so a downed SMTP relay must not surface a 500 to the
+    user, but a programmer error in the renderer is something we want
+    to see in monitoring (and which would not affect the user-visible
+    flow either way).
+    """
     try:
         await sender.send(_build_change_notification_email(to_address))
-    except Exception:  # noqa: BLE001 -- log + carry on; reset already succeeded
+    except EmailDeliveryError:
         logger.warning(
             "password_change_notification_failed",
             extra={"email_fingerprint": _email_log_fingerprint(to_address)},

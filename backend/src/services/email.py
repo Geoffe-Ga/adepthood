@@ -57,6 +57,19 @@ class EmailMessagePayload:
     body: str
 
 
+class EmailDeliveryError(Exception):
+    """Raised by an :class:`EmailSender` when wire delivery cannot complete.
+
+    The anti-enumeration callers in ``routers.auth`` catch this to
+    preserve identical 202 responses on hit and miss when the SMTP
+    relay is unavailable, refuses the recipient, or times out.  Other
+    exception types (``RuntimeError`` for missing config, programmer
+    bugs, etc.) are intentionally NOT wrapped -- they propagate so
+    they surface in error monitoring rather than silently disappear
+    behind an anti-enumeration shield meant for transient outages.
+    """
+
+
 class EmailSender(Protocol):
     """Smallest viable email port -- a single async ``send`` method."""
 
@@ -196,8 +209,19 @@ class SmtpEmailSender:
         capped at 30 s by the connect timeout.  Offload to a worker
         thread via :func:`asyncio.to_thread` so other in-flight
         requests keep moving.
+
+        Wire failures (SMTP-level rejections, broken sockets, DNS
+        resolution failures, connect timeouts) are converted to
+        :class:`EmailDeliveryError` so callers can catch a single
+        narrow type instead of a blind ``except Exception`` -- the
+        latter would also swallow programmer bugs and configuration
+        errors, which we want to surface loudly.
         """
-        await asyncio.to_thread(self._send_blocking, message)
+        try:
+            await asyncio.to_thread(self._send_blocking, message)
+        except (smtplib.SMTPException, OSError) as exc:
+            msg = f"SMTP delivery failed: {type(exc).__name__}"
+            raise EmailDeliveryError(msg) from exc
 
     def _send_blocking(self, message: EmailMessagePayload) -> None:
         """Synchronous body of :meth:`send` -- called via ``asyncio.to_thread``."""

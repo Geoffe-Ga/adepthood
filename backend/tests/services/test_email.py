@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from services.email import (
     ConsoleEmailSender,
+    EmailDeliveryError,
     EmailMessagePayload,
     RecordingEmailSender,
     SmtpEmailSender,
@@ -54,8 +55,9 @@ async def test_console_sender_redacts_token_in_log(
     with caplog.at_level(logging.INFO):
         await sender.send(payload, redact_for_log="abcdefghijklmnop1234")
     record = next(r for r in caplog.records if r.message == "email_console_send")
-    assert "abcdefghijklmnop1234" not in record.body  # type: ignore[attr-defined]
-    assert "abcdefgh..." in record.body  # type: ignore[attr-defined]
+    body = cast("str", record.__dict__["body"])
+    assert "abcdefghijklmnop1234" not in body
+    assert "abcdefgh..." in body
 
 
 @pytest.mark.asyncio
@@ -72,7 +74,7 @@ async def test_console_sender_no_redact_hint_passes_body_through(
     with caplog.at_level(logging.INFO):
         await sender.send(payload)
     record = next(r for r in caplog.records if r.message == "email_console_send")
-    assert record.body == "Your password was changed."  # type: ignore[attr-defined]
+    assert cast("str", record.__dict__["body"]) == "Your password was changed."
 
 
 @pytest.mark.asyncio
@@ -310,3 +312,90 @@ def test_smtp_connect_quits_even_when_login_raises(
         "starttls",
         "quit",
     ]
+
+
+@pytest.mark.asyncio
+async def test_smtp_send_wraps_wire_failures_in_email_delivery_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The async ``send`` converts SMTP / socket errors to ``EmailDeliveryError``.
+
+    PR #287 round-9 BLOCKER 2: the auth-side wrappers used to catch
+    bare ``Exception`` to keep the anti-enumeration response shape
+    identical on a downed relay.  That also masked programmer bugs.
+    The fix narrows both wrappers to a custom ``EmailDeliveryError``
+    type, which only meaningful if ``SmtpEmailSender.send`` actually
+    raises it on wire failures (rather than letting the underlying
+    ``OSError`` / ``smtplib.SMTPException`` bubble up).
+    """
+    import smtplib  # noqa: PLC0415
+
+    class _RefusedSmtp:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            del host, port, timeout
+
+        def starttls(self) -> None: ...
+
+        def login(self, username: str, password: str) -> None:
+            del username, password
+
+        def send_message(self, msg: object) -> None:
+            del msg
+            raise smtplib.SMTPRecipientsRefused({"x@y.z": (550, b"no such user")})
+
+        def quit(self) -> None: ...
+
+    monkeypatch.setattr("services.email.smtplib.SMTP", _RefusedSmtp)
+    sender = SmtpEmailSender(
+        host="smtp.example.com",
+        port=587,
+        username="user",
+        password="pw",  # pragma: allowlist secret
+        from_address="from@example.com",
+    )
+    with pytest.raises(EmailDeliveryError, match="SMTPRecipientsRefused"):
+        await sender.send(
+            EmailMessagePayload(to="x@y.z", subject="s", body="b"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_smtp_send_propagates_non_wire_errors_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Programmer / config errors are NOT swallowed by ``EmailDeliveryError``.
+
+    The narrowed exception path catches only ``smtplib.SMTPException``
+    and ``OSError``; other exception types must propagate so they
+    surface in monitoring instead of being masked by the
+    anti-enumeration shield meant for transient outages.
+    """
+
+    class _BuggySmtp:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            del host, port, timeout
+
+        def starttls(self) -> None: ...
+
+        def login(self, username: str, password: str) -> None:
+            del username, password
+
+        def send_message(self, msg: object) -> None:
+            del msg
+            msg_text = "renderer produced wrong shape"
+            raise RuntimeError(msg_text)
+
+        def quit(self) -> None: ...
+
+    monkeypatch.setattr("services.email.smtplib.SMTP", _BuggySmtp)
+    sender = SmtpEmailSender(
+        host="smtp.example.com",
+        port=587,
+        username="user",
+        password="pw",  # pragma: allowlist secret
+        from_address="from@example.com",
+    )
+    with pytest.raises(RuntimeError, match="renderer produced wrong shape"):
+        await sender.send(
+            EmailMessagePayload(to="x@y.z", subject="s", body="b"),
+        )
