@@ -39,17 +39,26 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Add ``lookup_key`` column + index on ``passwordresettoken``."""
+    """Add ``lookup_key`` column + index on ``passwordresettoken``.
+
+    Wrapped in ``batch_alter_table`` so the ``alter_column`` to drop
+    the server_default works on SQLite (which lacks ``ALTER COLUMN``
+    DDL natively) as well as PostgreSQL.  The batch path on Postgres
+    produces the same single ALTER TABLE; on SQLite Alembic copies
+    the table, applies changes, then renames -- transparently.
+    This is what makes the round-trip migration test pass on SQLite
+    in CI without changing prod behavior.
+    """
     # NOT NULL with a server-side empty-string default so existing rows
     # are migrated cleanly; new rows always supply the real key from
     # the application layer.  The default is dropped after the column
     # is in place -- the model declares it ``nullable=False`` without a
     # default so any future writer that forgets the key fails loudly.
-    op.add_column(
-        "passwordresettoken",
-        sa.Column("lookup_key", sa.String(length=32), nullable=False, server_default=""),
-    )
-    op.alter_column("passwordresettoken", "lookup_key", server_default=None)
+    with op.batch_alter_table("passwordresettoken") as batch_op:
+        batch_op.add_column(
+            sa.Column("lookup_key", sa.String(length=32), nullable=False, server_default=""),
+        )
+        batch_op.alter_column("lookup_key", server_default=None)
     op.create_index(
         "ix_passwordresettoken_lookup_key",
         "passwordresettoken",
@@ -58,6 +67,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop the ``lookup_key`` column and its index."""
+    """Drop the ``lookup_key`` column and its index.
+
+    ``batch_alter_table`` keeps the column drop SQLite-compatible too
+    (SQLite < 3.35 lacked ``DROP COLUMN``; the batch path always
+    works regardless).
+    """
     op.drop_index("ix_passwordresettoken_lookup_key", table_name="passwordresettoken")
-    op.drop_column("passwordresettoken", "lookup_key")
+    with op.batch_alter_table("passwordresettoken") as batch_op:
+        batch_op.drop_column("lookup_key")

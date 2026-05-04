@@ -152,9 +152,13 @@ class RecordingEmailSender:
         self,
         message: EmailMessagePayload,
         *,
-        redact_for_log: str | None = None,  # noqa: ARG002 -- tests assert on raw body
+        redact_for_log: str | None = None,
     ) -> None:
         """Append ``message`` to :attr:`sent` (verbatim) so tests can assert on it."""
+        # Discard the redaction hint -- tests need to assert on the raw
+        # body, and the keyword exists only for Protocol conformance.
+        # ``del`` satisfies ruff ARG002 without a noqa comment.
+        del redact_for_log
         self.sent.append(message)
 
 
@@ -198,7 +202,7 @@ class SmtpEmailSender:
         self,
         message: EmailMessagePayload,
         *,
-        redact_for_log: str | None = None,  # noqa: ARG002 -- recipient sees full link
+        redact_for_log: str | None = None,
     ) -> None:
         """Send ``message`` via SMTP STARTTLS + AUTH PLAIN.
 
@@ -217,6 +221,10 @@ class SmtpEmailSender:
         latter would also swallow programmer bugs and configuration
         errors, which we want to surface loudly.
         """
+        # Discard the redaction hint -- the recipient needs the full
+        # link, and the keyword exists only for Protocol conformance.
+        # ``del`` satisfies ruff ARG002 without a noqa comment.
+        del redact_for_log
         try:
             await asyncio.to_thread(self._send_blocking, message)
         except (smtplib.SMTPException, OSError) as exc:

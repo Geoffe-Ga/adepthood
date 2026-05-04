@@ -1,8 +1,60 @@
 # Password Recovery Runbook
 
 Operator-facing notes for investigating and recovering from
-password-reset failures.  Companion to the design SPEC and the
-"Password Recovery" section in `DEPLOYMENT.md`.
+password-reset failures.  Companion to the "Password Recovery"
+section in `DEPLOYMENT.md`.
+
+## SPEC Requirements Matrix (R1–R10)
+
+The original SPEC document lived at ``plans/SPEC.md`` while the
+feature was being built; it was retired once every requirement
+landed in code.  Source comments still cross-reference these by
+short label (``SPEC R4``, ``SPEC R7``, etc.) -- this matrix is
+the canonical resolution for those references.
+
+| ID  | Requirement                                                                                   | Where it lives                                                                       |
+| --- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| R1  | Plaintext tokens are 256-bit ``secrets.token_urlsafe(32)``; stored only as bcrypt digest.     | ``auth.py`` ``_RESET_TOKEN_BYTES`` / ``_hash_reset_token``                           |
+| R2  | Token TTL is 30 minutes.                                                                      | ``auth.py`` ``_PASSWORD_RESET_TTL``                                                  |
+| R3  | Single-use: ``used_at`` or ``cancelled_at`` non-null ⇒ confirm rejects with generic 400.      | ``auth.py`` ``_select_active_token_only``                                            |
+| R4  | Anti-enumeration: 202 with identical body on hit and miss; constant-time bcrypt on miss path. | ``auth.py`` ``_consume_dummy_bcrypt`` + ``_consume_dummy_password_verify``           |
+| R5  | Per-IP rate limits (3/hr request, 5/hr confirm) + per-user cap of 3 outstanding tokens.       | ``auth.py`` ``_MAX_OUTSTANDING_TOKENS_PER_USER`` + ``_auto_cancel_oldest_active_token`` |
+| R6  | Successful reset clears the ``LoginAttempt`` lockout window for that email.                   | ``auth.py`` ``_clear_recent_failed_attempts``                                        |
+| R7  | Session invalidation via ``user.password_changed_at`` (Option α from the SPEC).               | ``auth.py`` ``_token_predates_password_reset``                                       |
+| R8  | Out-of-band "your password was changed" email after every successful confirm.                 | ``auth.py`` ``_build_change_notification_email`` -- see "R8 Design Decision" below   |
+| R9  | No PII in logs: ``email_fingerprint`` (SHA-256 prefix), IP, action; never raw email or token. | ``auth.py`` ``_log_reset_event`` + ``_email_log_fingerprint``                        |
+| R10 | Password rules unchanged; reject reuse of the current password.                               | ``auth.py`` ``_reject_if_password_reuse``                                            |
+
+### R8 Design Decision: change-notification recipient action
+
+The SPEC's R8 originally proposed an automated "freeze the account
+(``is_active = False``)" path triggered by the user clicking a
+"this wasn't me" link in the change-notification email.  This PR
+ships R8 in a slightly narrower form:
+
+* The notification is sent on every successful confirm (the SPEC
+  requirement -- shipped).
+* The email asks the user to **request another reset immediately**
+  if the change was unauthorized, which routes operator attention
+  through the ``support`` channel and the audit-log grep flow above.
+* **Automated freeze is deliberately deferred.**  The cancel
+  endpoint marks an outstanding token as ``cancelled_at`` but does
+  not flip ``user.is_active``.  Reasons:
+  * In an account-takeover scenario the attacker already has the
+    new password; an automated freeze on a button-click in the
+    notification is reachable by the attacker too (they intercept
+    the email).
+  * Operator-driven freeze is auditable and reversible -- a
+    button-driven one is not.
+  * The "Manual Override" section below documents the freeze + new
+    password procedure operators run when a user reports
+    unauthorized access.
+
+If the calculus changes (volume justifies automation, or a stronger
+pre-freeze identity-proof exists), promote ``cancel_password_reset``
+to also write ``user.is_active = False`` and emit a
+``confirm_rejected_account_frozen`` audit event.  The migration
+required is a no-op (column already exists).
 
 ## At a Glance
 
