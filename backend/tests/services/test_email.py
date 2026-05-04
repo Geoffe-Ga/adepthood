@@ -175,13 +175,23 @@ def test_reset_email_sender_for_tests_clears_cache() -> None:
 async def test_smtp_sender_invokes_send_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SmtpEmailSender wires STARTTLS + login + send_message in order."""
+    """SmtpEmailSender wires EHLO + STARTTLS + EHLO + login + send_message in order.
+
+    RFC 3207: ``ehlo()`` is called before ``starttls()`` so the server
+    can advertise STARTTLS support, and again after STARTTLS so the
+    client can re-negotiate capabilities (notably ``AUTH``) inside the
+    encrypted channel.  Without the explicit calls some relays hang
+    or reject -- ``smtplib`` does not insert them automatically.
+    """
     sent_messages: list[object] = []
     calls: list[str] = []
 
     class _StubSmtp:
         def __init__(self, host: str, port: int, timeout: int) -> None:
             calls.append(f"init:{host}:{port}:{timeout}")
+
+        def ehlo(self) -> None:
+            calls.append("ehlo")
 
         def starttls(self) -> None:
             calls.append("starttls")
@@ -209,7 +219,9 @@ async def test_smtp_sender_invokes_send_message(
     )
     assert calls == [
         "init:smtp.example.com:587:30",
+        "ehlo",
         "starttls",
+        "ehlo",
         "login:user:pw",
         "send",
         "quit",
@@ -235,6 +247,9 @@ def test_smtp_send_blocking_drives_starttls_login_and_quit(
     class _StubSmtp:
         def __init__(self, host: str, port: int, timeout: int) -> None:
             calls.append(f"init:{host}:{port}:{timeout}")
+
+        def ehlo(self) -> None:
+            calls.append("ehlo")
 
         def starttls(self) -> None:
             calls.append("starttls")
@@ -262,7 +277,9 @@ def test_smtp_send_blocking_drives_starttls_login_and_quit(
     )
     assert calls == [
         "init:smtp.example.com:587:30",
+        "ehlo",
         "starttls",
+        "ehlo",
         "login:user:pw",
         "send",
         "quit",
@@ -284,6 +301,9 @@ def test_smtp_connect_quits_even_when_login_raises(
     class _ExplodingSmtp:
         def __init__(self, host: str, port: int, timeout: int) -> None:
             calls.append(f"init:{host}:{port}:{timeout}")
+
+        def ehlo(self) -> None:
+            calls.append("ehlo")
 
         def starttls(self) -> None:
             calls.append("starttls")
@@ -309,7 +329,9 @@ def test_smtp_connect_quits_even_when_login_raises(
     # ``quit`` must still have run via the ``finally`` clause.
     assert calls == [
         "init:smtp.example.com:587:30",
+        "ehlo",
         "starttls",
+        "ehlo",
         "quit",
     ]
 
@@ -333,6 +355,8 @@ async def test_smtp_send_wraps_wire_failures_in_email_delivery_error(
     class _RefusedSmtp:
         def __init__(self, host: str, port: int, timeout: int) -> None:
             del host, port, timeout
+
+        def ehlo(self) -> None: ...
 
         def starttls(self) -> None: ...
 
@@ -359,6 +383,66 @@ async def test_smtp_send_wraps_wire_failures_in_email_delivery_error(
         )
 
 
+def test_smtp_connect_issues_ehlo_before_and_after_starttls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: EHLO -> STARTTLS -> EHLO -> AUTH ordering per RFC 3207.
+
+    PR #287 round-10 HIGH security: ``smtplib`` does not auto-send
+    ``EHLO`` before ``starttls()``.  Strict relays (mostly hosted
+    Postfix configurations) reject or hang without the explicit call,
+    and the second ``EHLO`` is needed so AUTH capabilities are
+    re-advertised inside the TLS channel.  This test pins the exact
+    call sequence so a future refactor cannot silently regress it.
+    """
+    calls: list[str] = []
+
+    class _StrictSmtp:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            del host, port, timeout
+
+        def ehlo(self) -> None:
+            calls.append("ehlo")
+
+        def starttls(self) -> None:
+            # Reject if EHLO was not the immediately preceding call --
+            # this models a strict RFC-3207 relay.
+            if not calls or calls[-1] != "ehlo":
+                msg = "STARTTLS issued without prior EHLO"
+                raise AssertionError(msg)
+            calls.append("starttls")
+
+        def login(self, username: str, password: str) -> None:
+            del username, password
+            # Reject if EHLO was not the immediately preceding call
+            # (the post-STARTTLS one); this models a relay that only
+            # advertises AUTH inside the TLS channel.
+            if not calls or calls[-1] != "ehlo":
+                msg = "AUTH issued without post-STARTTLS EHLO"
+                raise AssertionError(msg)
+            calls.append("login")
+
+        def send_message(self, msg: object) -> None:
+            del msg
+            calls.append("send")
+
+        def quit(self) -> None:
+            calls.append("quit")
+
+    monkeypatch.setattr("services.email.smtplib.SMTP", _StrictSmtp)
+    sender = SmtpEmailSender(
+        host="smtp.example.com",
+        port=587,
+        username="user",
+        password="pw",  # pragma: allowlist secret
+        from_address="from@example.com",
+    )
+    sender._send_blocking(  # noqa: SLF001 -- direct sync exercise
+        EmailMessagePayload(to="rcpt@example.com", subject="s", body="b"),
+    )
+    assert calls == ["ehlo", "starttls", "ehlo", "login", "send", "quit"]
+
+
 @pytest.mark.asyncio
 async def test_smtp_send_propagates_non_wire_errors_unchanged(
     monkeypatch: pytest.MonkeyPatch,
@@ -374,6 +458,8 @@ async def test_smtp_send_propagates_non_wire_errors_unchanged(
     class _BuggySmtp:
         def __init__(self, host: str, port: int, timeout: int) -> None:
             del host, port, timeout
+
+        def ehlo(self) -> None: ...
 
         def starttls(self) -> None: ...
 

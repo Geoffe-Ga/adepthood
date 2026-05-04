@@ -235,10 +235,21 @@ class SmtpEmailSender:
 
     @contextmanager
     def _connect(self) -> Iterator[smtplib.SMTP]:
-        """Open an authenticated SMTP session; close it on exit."""
+        """Open an authenticated SMTP session; close it on exit.
+
+        RFC 3207 sequence: EHLO -> STARTTLS -> EHLO (re-negotiate
+        capabilities under TLS) -> AUTH.  ``smtplib`` does not auto-
+        send EHLO before ``starttls()`` -- relays that strictly
+        enforce the RFC will hang or reject without it, even though
+        looser ones tolerate the omission.  Calling ``ehlo()``
+        explicitly costs one extra round-trip and removes the
+        compatibility risk.
+        """
         client = smtplib.SMTP(self.host, self.port, timeout=30)
         try:
+            client.ehlo()
             client.starttls()
+            client.ehlo()
             client.login(self.username, self.password)
             yield client
         finally:

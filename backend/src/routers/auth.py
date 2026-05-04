@@ -1303,7 +1303,7 @@ async def _clear_recent_failed_attempts(session: AsyncSession, email: str) -> No
         select(LoginAttempt).where(
             LoginAttempt.email == email,
             LoginAttempt.created_at >= cutoff,
-            LoginAttempt.success == False,  # noqa: E712 -- SQL boolean literal
+            col(LoginAttempt.success).is_(False),
         )
     )
     for row in result.scalars().all():
