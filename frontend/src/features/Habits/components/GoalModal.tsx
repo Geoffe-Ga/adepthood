@@ -520,7 +520,9 @@ const formatUnitLabel = (value: string): string => value.replace(/_/g, ' ');
  *
  * Each chip is exposed to assistive tech as a radio button — selection is
  * mutually exclusive within a row, so ``role="radio"`` + ``checked`` is the
- * accurate semantic, not a generic button toggle.
+ * accurate semantic, not a generic button toggle. The accessible name is
+ * pinned to the formatted label so VoiceOver / TalkBack announce e.g.
+ * "per day" rather than reading the raw "per_day" backend token.
  */
 const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) => (
   <ScrollView
@@ -531,6 +533,7 @@ const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) 
   >
     {options.map((opt) => {
       const isSelected = opt === selected;
+      const label = formatUnitLabel(opt);
       return (
         <TouchableOpacity
           key={opt}
@@ -538,30 +541,19 @@ const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) 
           onPress={() => onSelect(opt)}
           style={[goalEditorStyles.chip, isSelected && goalEditorStyles.chipSelected]}
           accessibilityRole="radio"
+          accessibilityLabel={label}
           accessibilityState={{ checked: isSelected }}
         >
           <Text
             style={[goalEditorStyles.chipText, isSelected && goalEditorStyles.chipTextSelected]}
           >
-            {formatUnitLabel(opt)}
+            {label}
           </Text>
         </TouchableOpacity>
       );
     })}
   </ScrollView>
 );
-
-interface GoalUnitEditorProps {
-  /**
-   * All tier goals belonging to the habit. Any one is a valid display
-   * reference (units are normalized across tiers), but every commit fans
-   * out a PUT for each goal so the backend rows stay in lockstep with the
-   * client's normalized state.
-   */
-  goals: NonEmptyGoals;
-  habitId: number;
-  onUpdateGoal: GoalModalProps['onUpdateGoal'];
-}
 
 /**
  * Tier goals are constructed from the same fixed `TIER_ORDER` (`low`,
@@ -571,6 +563,18 @@ interface GoalUnitEditorProps {
  * honest if they ever try to pass `[]`.
  */
 type NonEmptyGoals = [Goal, ...Goal[]];
+
+interface GoalUnitEditorProps {
+  /**
+   * All tier goals belonging to the habit. Any one is a valid display
+   * reference (units are normalized across tiers via ``normalizeGoalUnits``),
+   * but every commit fans out a PUT for each goal so the backend rows
+   * stay in lockstep with the client's normalized state.
+   */
+  goals: NonEmptyGoals;
+  habitId: number;
+  onUpdateGoal: GoalModalProps['onUpdateGoal'];
+}
 
 interface FrequencyInputProps {
   draft: string;

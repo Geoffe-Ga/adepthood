@@ -376,10 +376,21 @@ const recoverStuckHabits = async (cached: Habit[]): Promise<void> => {
  * specific to the operation (e.g. "couldn't save that check-in") rather
  * than a generic "something went wrong" — users need to know whether to
  * retry or just refresh.
+ *
+ * Restores BOTH the in-memory store AND the on-disk snapshot. The
+ * mutation paths that call this helper (``updateHabit``, ``deleteHabit``,
+ * ``updateGoal``, ``setEmojiForHabit``, ``saveHabitOrder``) all
+ * optimistically ``persistHabits(next)`` before the API round-trip, so a
+ * pure ``setHabits(prev)`` rollback would leave AsyncStorage holding the
+ * failed write. A cold relaunch (process kill + reopen) would then
+ * rehydrate from disk and silently diverge from the server — exactly
+ * the cold-rehydrate failure mode this PR's emoji/order fixes set out
+ * to close. Mirrors the pattern in ``rollbackLogUnitContext``.
  */
 const revertOnFailure = (prev: Habit[], fallback: string): ((err: unknown) => void) => {
   return (err: unknown) => {
     setHabits(prev);
+    void persistHabits(prev);
     Alert.alert("Couldn't sync", formatApiError(err, { fallback }));
   };
 };
