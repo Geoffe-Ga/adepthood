@@ -3,6 +3,7 @@ import {
   Alert,
   Modal,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
@@ -21,6 +22,7 @@ import EmojiSelector from 'react-native-emoji-selector';
 
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
 import { colors, SPACING, STAGE_COLORS } from '../../../design/tokens';
+import { TARGET_UNITS, FREQUENCY_UNITS } from '../constants';
 import styles from '../Habits.styles';
 import type { GoalModalProps, Goal } from '../Habits.types';
 import {
@@ -357,6 +359,12 @@ const GOAL_LABEL_FONT_SIZE = 14;
 const GOAL_INPUT_FONT_SIZE = 15;
 const GOAL_UNIT_FONT_SIZE = 13;
 const GOAL_SECTION_TITLE_LETTER_SPACING = 0.5;
+const GOAL_FIELD_LABEL_FONT_SIZE = 12;
+const GOAL_CHIP_VERTICAL_PADDING = 4;
+const GOAL_CHIP_HORIZONTAL_PADDING = 10;
+const GOAL_CHIP_BORDER_RADIUS = 14;
+const GOAL_CHIP_FONT_SIZE = 12;
+const GOAL_FREQ_INPUT_WIDTH = 56;
 
 const goalEditorStyles = StyleSheet.create({
   container: {
@@ -399,6 +407,47 @@ const goalEditorStyles = StyleSheet.create({
     fontSize: GOAL_UNIT_FONT_SIZE,
     color: colors.text.secondary,
     minWidth: GOAL_UNIT_MIN_WIDTH,
+  },
+  fieldLabel: {
+    fontSize: GOAL_FIELD_LABEL_FONT_SIZE,
+    color: colors.text.secondary,
+    marginRight: SPACING.sm,
+    minWidth: GOAL_UNIT_MIN_WIDTH,
+  },
+  chipRow: {
+    paddingVertical: SPACING.xs,
+  },
+  chip: {
+    paddingVertical: GOAL_CHIP_VERTICAL_PADDING,
+    paddingHorizontal: GOAL_CHIP_HORIZONTAL_PADDING,
+    borderRadius: GOAL_CHIP_BORDER_RADIUS,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginRight: SPACING.xs,
+    backgroundColor: 'transparent',
+  },
+  chipSelected: {
+    backgroundColor: colors.tier.clear,
+    borderColor: colors.tier.clear,
+  },
+  chipText: {
+    fontSize: GOAL_CHIP_FONT_SIZE,
+    color: colors.text.secondary,
+  },
+  chipTextSelected: {
+    color: colors.text.light,
+    fontWeight: '600',
+  },
+  freqInput: {
+    width: GOAL_FREQ_INPUT_WIDTH,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: GOAL_INPUT_BORDER_RADIUS,
+    paddingVertical: GOAL_INPUT_VERTICAL_PADDING,
+    paddingHorizontal: SPACING.sm,
+    textAlign: 'center',
+    fontSize: GOAL_INPUT_FONT_SIZE,
+    marginRight: SPACING.sm,
   },
 });
 
@@ -454,6 +503,153 @@ const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
   );
 };
 
+interface UnitChipRowProps {
+  options: readonly string[];
+  selected: string;
+  testID: string;
+  onSelect: (_value: string) => void;
+}
+
+const formatUnitLabel = (value: string): string => value.replace(/_/g, ' ');
+
+/**
+ * Horizontal chip selector used for ``target_unit`` and ``frequency_unit``.
+ * A chip set fits the existing modal aesthetic without pulling in
+ * ``@react-native-picker/picker``, and lets the user see all options in
+ * one swipe rather than a modal-on-top-of-modal native picker.
+ *
+ * Each chip is exposed to assistive tech as a radio button — selection is
+ * mutually exclusive within a row, so ``role="radio"`` + ``checked`` is the
+ * accurate semantic, not a generic button toggle. The accessible name is
+ * pinned to the formatted label so VoiceOver / TalkBack announce e.g.
+ * "per day" rather than reading the raw "per_day" backend token.
+ */
+const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) => (
+  <ScrollView
+    horizontal
+    showsHorizontalScrollIndicator={false}
+    style={goalEditorStyles.chipRow}
+    testID={testID}
+  >
+    {options.map((opt) => {
+      const isSelected = opt === selected;
+      const label = formatUnitLabel(opt);
+      return (
+        <TouchableOpacity
+          key={opt}
+          testID={`${testID}-${opt}`}
+          onPress={() => onSelect(opt)}
+          style={[goalEditorStyles.chip, isSelected && goalEditorStyles.chipSelected]}
+          accessibilityRole="radio"
+          accessibilityLabel={label}
+          accessibilityState={{ checked: isSelected }}
+        >
+          <Text
+            style={[goalEditorStyles.chipText, isSelected && goalEditorStyles.chipTextSelected]}
+          >
+            {label}
+          </Text>
+        </TouchableOpacity>
+      );
+    })}
+  </ScrollView>
+);
+
+/**
+ * Tier goals are constructed from the same fixed `TIER_ORDER` (`low`,
+ * `clear`, `stretch`) at habit creation, so the array always has at
+ * least one element. Encoding the non-empty contract in the type lets
+ * `goals[0]` resolve as `Goal` (no `!` assertion) and keeps callers
+ * honest if they ever try to pass `[]`.
+ */
+type NonEmptyGoals = [Goal, ...Goal[]];
+
+interface GoalUnitEditorProps {
+  /**
+   * All tier goals belonging to the habit. Any one is a valid display
+   * reference (units are normalized across tiers via ``normalizeGoalUnits``),
+   * but every commit fans out a PUT for each goal so the backend rows
+   * stay in lockstep with the client's normalized state.
+   */
+  goals: NonEmptyGoals;
+  habitId: number;
+  onUpdateGoal: GoalModalProps['onUpdateGoal'];
+}
+
+interface FrequencyInputProps {
+  draft: string;
+  setDraft: (_v: string) => void;
+  onEnd: () => void;
+}
+
+const FrequencyInput = ({ draft, setDraft, onEnd }: FrequencyInputProps) => (
+  <TextInput
+    testID="goal-frequency-input"
+    style={goalEditorStyles.freqInput}
+    value={draft}
+    onChangeText={setDraft}
+    onEndEditing={onEnd}
+    keyboardType="numeric"
+    returnKeyType="done"
+  />
+);
+
+/**
+ * Edits ``target_unit`` / ``frequency`` / ``frequency_unit`` for a habit's
+ * goals. The fields are shared across tiers (``normalizeGoalUnits``
+ * propagates a single edit to all three), so the editor surfaces them once
+ * — but ``onUpdateGoal`` only PUTs the goal whose id is sent, so a commit
+ * fans out one update per tier. Without the fan-out, the ``clear`` and
+ * ``stretch`` rows would stay on their old units server-side even though
+ * the local store displays them as normalized.
+ */
+const GoalUnitEditor = ({ goals, habitId, onUpdateGoal }: GoalUnitEditorProps) => {
+  const reference = goals[0];
+  const [freqDraft, setFreqDraft] = useState(String(reference.frequency));
+  useEffect(() => {
+    setFreqDraft(String(reference.frequency));
+  }, [reference.frequency]);
+
+  const commit = (changes: Partial<Pick<Goal, 'target_unit' | 'frequency' | 'frequency_unit'>>) => {
+    for (const goal of goals) {
+      onUpdateGoal(habitId, { ...goal, ...changes });
+    }
+  };
+
+  const handleFreqEnd = () => {
+    const parsed = Number.parseFloat(freqDraft);
+    if (!Number.isFinite(parsed) || parsed <= 0 || parsed === reference.frequency) {
+      setFreqDraft(String(reference.frequency));
+      return;
+    }
+    commit({ frequency: parsed });
+  };
+
+  return (
+    <View testID="goal-unit-editor">
+      <View style={goalEditorStyles.row}>
+        <Text style={goalEditorStyles.fieldLabel}>Unit</Text>
+        <UnitChipRow
+          options={TARGET_UNITS}
+          selected={reference.target_unit}
+          testID="goal-target-unit"
+          onSelect={(value) => commit({ target_unit: value })}
+        />
+      </View>
+      <View style={goalEditorStyles.row}>
+        <Text style={goalEditorStyles.fieldLabel}>Every</Text>
+        <FrequencyInput draft={freqDraft} setDraft={setFreqDraft} onEnd={handleFreqEnd} />
+        <UnitChipRow
+          options={FREQUENCY_UNITS}
+          selected={reference.frequency_unit}
+          testID="goal-frequency-unit"
+          onSelect={(value) => commit({ frequency_unit: value })}
+        />
+      </View>
+    </View>
+  );
+};
+
 interface GoalTargetEditorProps {
   habit: NonNullable<GoalModalProps['habit']>;
   onUpdateGoal: GoalModalProps['onUpdateGoal'];
@@ -475,17 +671,20 @@ const GoalTargetEditor = ({ habit, onUpdateGoal }: GoalTargetEditorProps) => {
   const orderedGoals = TIER_ORDER.map((tier) => habit.goals.find((g) => g.tier === tier)).filter(
     (g): g is Goal => g !== undefined,
   );
-  if (orderedGoals.length === 0) return null;
+  const [head, ...tail] = orderedGoals;
+  if (head === undefined) return null;
+  const nonEmptyGoals: NonEmptyGoals = [head, ...tail];
   return (
     <View style={goalEditorStyles.container} testID="goal-target-editor">
       <Text style={goalEditorStyles.sectionTitle}>Goals</Text>
-      {orderedGoals.map((goal) => (
+      {nonEmptyGoals.map((goal) => (
         <GoalTargetRow
           key={goal.id ?? goal.tier}
           goal={goal}
           onCommit={(target) => onUpdateGoal(habitId, { ...goal, target })}
         />
       ))}
+      <GoalUnitEditor goals={nonEmptyGoals} habitId={habitId} onUpdateGoal={onUpdateGoal} />
     </View>
   );
 };

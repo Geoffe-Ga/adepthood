@@ -418,15 +418,54 @@ describe('habitManager', () => {
   });
 
   describe('saveHabitOrder', () => {
-    it('replaces habits and persists to storage', () => {
+    it('replaces habits, stamps sort_order, persists, and syncs each row to the API', () => {
       const h1 = makeHabit({ id: 1, name: 'First' });
       const h2 = makeHabit({ id: 2, name: 'Second' });
       useHabitStore.setState({ habits: [h1, h2] });
 
       habitManager.saveHabitOrder([h2, h1]);
 
-      expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual(['Second', 'First']);
+      const stored = useHabitStore.getState().habits;
+      expect(stored.map((h) => h.name)).toEqual(['Second', 'First']);
+      expect(stored.map((h) => h.sort_order)).toEqual([0, 1]);
       expect(saveHabits).toHaveBeenCalled();
+      expect(habitsApi.update).toHaveBeenCalledWith(2, expect.objectContaining({ sort_order: 0 }));
+      expect(habitsApi.update).toHaveBeenCalledWith(1, expect.objectContaining({ sort_order: 1 }));
+    });
+
+    it('rolls back exactly once when any single PUT fails (consolidated Promise.all rollback)', async () => {
+      // Invariant: a partial-failure reorder must restore the pre-write
+      // snapshot once and only once. Per-row ``.catch`` chains would
+      // restore ``prev`` per failure and clobber sibling writes that
+      // already landed in the store. Restoration covers both the store
+      // AND the on-disk snapshot — a hot reload and a cold relaunch
+      // must agree with the rolled-back state.
+      const h1 = makeHabit({ id: 1, name: 'First' });
+      const h2 = makeHabit({ id: 2, name: 'Second' });
+      const original = [h1, h2];
+      useHabitStore.setState({ habits: original });
+      (habitsApi.update as jest.Mock)
+        .mockImplementationOnce(() => Promise.resolve({}) as never)
+        .mockImplementationOnce(() => Promise.reject(new Error('boom')) as never);
+
+      habitManager.saveHabitOrder([h2, h1]);
+      // Optimistic state lands first.
+      expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual(['Second', 'First']);
+
+      // Let the rejected Promise.all settle.
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // Single in-memory rollback to the snapshot taken before the
+      // optimistic write.
+      expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual(['First', 'Second']);
+      // AND the on-disk snapshot rolls back too, so a cold relaunch
+      // sees the same order as the in-memory store.
+      expect(saveHabits).toHaveBeenLastCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 1, name: 'First' }),
+          expect.objectContaining({ id: 2, name: 'Second' }),
+        ]),
+      );
     });
   });
 
@@ -685,7 +724,7 @@ describe('habitManager', () => {
   });
 
   describe('setEmojiForHabit', () => {
-    it('updates the icon of the habit at the given index', () => {
+    it('updates the icon of the habit at the given index and syncs to the API', () => {
       useHabitStore.setState({
         habits: [makeHabit({ id: 1, icon: 'A' }), makeHabit({ id: 2, icon: 'B' })],
       });
@@ -694,6 +733,52 @@ describe('habitManager', () => {
 
       expect(useHabitStore.getState().habits[1]!.icon).toBe('\u{2728}');
       expect(useHabitStore.getState().habits[0]!.icon).toBe('A');
+      expect(habitsApi.update).toHaveBeenCalledWith(
+        2,
+        expect.objectContaining({ icon: '\u{2728}' }),
+      );
+    });
+
+    it('does nothing when the index is out of range', () => {
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, icon: 'A' })] });
+
+      habitManager.setEmojiForHabit(7, '\u{2728}');
+
+      expect(useHabitStore.getState().habits[0]!.icon).toBe('A');
+      expect(habitsApi.update).not.toHaveBeenCalled();
+    });
+
+    it('rolls the icon back IN MEMORY AND ON DISK when the API rejects the PUT', async () => {
+      // Invariant: an emoji edit is optimistic. The optimistic write
+      // lands in BOTH the in-memory store and AsyncStorage (so a hot
+      // reload reflects it). When the server rejects, the rollback
+      // must restore BOTH surfaces — without the on-disk rollback, a
+      // cold relaunch rehydrates the failed write and silently
+      // diverges from the server. That's the same cold-rehydrate
+      // failure mode this PR's emoji/order fixes set out to close.
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, icon: 'A' })] });
+      (habitsApi.update as jest.Mock).mockImplementationOnce(
+        () => Promise.reject(new Error('boom')) as never,
+      );
+
+      habitManager.setEmojiForHabit(0, '\u{2728}');
+      // Optimistic write hits both the store and the disk snapshot.
+      expect(useHabitStore.getState().habits[0]!.icon).toBe('\u{2728}');
+      expect(saveHabits).toHaveBeenLastCalledWith(
+        expect.arrayContaining([expect.objectContaining({ id: 1, icon: '\u{2728}' })]),
+      );
+
+      // Let the rejected catch handler run.
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // In-memory rollback.
+      expect(useHabitStore.getState().habits[0]!.icon).toBe('A');
+      expect(habitsApi.update).toHaveBeenCalledTimes(1);
+      // AND the on-disk snapshot rolls back to the original icon, so
+      // a cold relaunch sees the same state the user does.
+      expect(saveHabits).toHaveBeenLastCalledWith(
+        expect.arrayContaining([expect.objectContaining({ id: 1, icon: 'A' })]),
+      );
     });
   });
 });

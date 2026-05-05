@@ -19,6 +19,13 @@ export interface Habit {
   notificationFrequency?: 'daily' | 'weekly' | 'custom' | 'off';
   notificationDays?: string[];
   milestoneNotifications?: boolean;
+  /**
+   * Persisted display order. The list endpoint sorts ascending by this
+   * value, so the reorder modal needs to write it back through ``PUT
+   * /habits/{id}`` for the order to survive a logout. ``null`` means
+   * "unordered" — the backend buckets nulls last in ascending sort.
+   */
+  sort_order?: number | null;
 
   // --- Client-only fields (not from API) ---
   /**
