@@ -80,6 +80,13 @@ const toApiPayload = (h: Habit): HabitCreatePayload => ({
   notification_frequency: h.notificationFrequency ?? null,
   notification_days: h.notificationDays ?? null,
   milestone_notifications: h.milestoneNotifications ?? false,
+  // ``sort_order`` and ``stage`` are persisted on PUT so reorder + emoji
+  // edits survive a logout/login round-trip — without these, the server
+  // happily replaces the row with the schema defaults (sort_order=null,
+  // stage="") and the next ``GET /habits`` returns the user's tiles in
+  // insertion order with the original onboarding stage label.
+  sort_order: h.sort_order ?? null,
+  stage: h.stage,
 });
 
 const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.list>>): Habit[] =>
@@ -110,6 +117,7 @@ const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.list>>): Ha
       (h.notification_frequency as Habit['notificationFrequency']) ?? undefined,
     notificationDays: h.notification_days ?? undefined,
     milestoneNotifications: h.milestone_notifications,
+    sort_order: h.sort_order ?? null,
   }));
 
 const normalizeGoalUnits = (goals: Goal[], updatedGoal: Goal): void => {
@@ -504,9 +512,29 @@ export const habitManager = {
       );
   },
 
+  /**
+   * Persist a user-chosen ordering. Stamps each habit with a positional
+   * ``sort_order`` (the backend orders the list ascending by it) and PUTs
+   * the row so the order survives a logout — without the per-row PUT, the
+   * reorder used to live only in AsyncStorage and was wiped on the next
+   * cold rehydrate.
+   */
   saveHabitOrder: (ordered: Habit[]): void => {
-    setHabits(ordered);
-    void persistHabits(ordered);
+    const prev = getHabits();
+    const stamped = ordered.map((h, index) => ({ ...h, sort_order: index }));
+    setHabits(stamped);
+    void persistHabits(stamped);
+    for (const habit of stamped) {
+      if (!habit.id) continue;
+      habitsApi
+        .update(habit.id, toApiPayload(habit))
+        .catch(
+          revertOnFailure(
+            prev,
+            "We couldn't save the new habit order. Your previous order was restored — check your connection and try again.",
+          ),
+        );
+    }
   },
 
   /**
@@ -645,8 +673,30 @@ export const habitManager = {
     void persistHabits(next);
   },
 
+  /**
+   * Update a habit's icon and sync to the backend. Previously only mutated
+   * the in-memory store, so the emoji was lost on the next ``GET /habits``
+   * (logout, app restart, or even a stuck-user re-fetch). Persists locally
+   * for instant rehydrate, then PUTs the row; on failure the rollback
+   * restores both the store and the on-disk snapshot.
+   */
   setEmojiForHabit: (index: number, emoji: string): void => {
-    setHabits(getHabits().map((h, i) => (i === index ? { ...h, icon: emoji } : h)));
+    const prev = getHabits();
+    const target = prev[index];
+    if (!target) return;
+    const updated: Habit = { ...target, icon: emoji };
+    const next = prev.map((h, i) => (i === index ? updated : h));
+    setHabits(next);
+    void persistHabits(next);
+    if (!updated.id) return;
+    habitsApi
+      .update(updated.id, toApiPayload(updated))
+      .catch(
+        revertOnFailure(
+          prev,
+          "We couldn't save the new icon. Your previous icon was restored — check your connection and try again.",
+        ),
+      );
   },
 };
 

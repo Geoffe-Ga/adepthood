@@ -418,15 +418,19 @@ describe('habitManager', () => {
   });
 
   describe('saveHabitOrder', () => {
-    it('replaces habits and persists to storage', () => {
+    it('replaces habits, stamps sort_order, persists, and syncs each row to the API', () => {
       const h1 = makeHabit({ id: 1, name: 'First' });
       const h2 = makeHabit({ id: 2, name: 'Second' });
       useHabitStore.setState({ habits: [h1, h2] });
 
       habitManager.saveHabitOrder([h2, h1]);
 
-      expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual(['Second', 'First']);
+      const stored = useHabitStore.getState().habits;
+      expect(stored.map((h) => h.name)).toEqual(['Second', 'First']);
+      expect(stored.map((h) => h.sort_order)).toEqual([0, 1]);
       expect(saveHabits).toHaveBeenCalled();
+      expect(habitsApi.update).toHaveBeenCalledWith(2, expect.objectContaining({ sort_order: 0 }));
+      expect(habitsApi.update).toHaveBeenCalledWith(1, expect.objectContaining({ sort_order: 1 }));
     });
   });
 
@@ -685,7 +689,7 @@ describe('habitManager', () => {
   });
 
   describe('setEmojiForHabit', () => {
-    it('updates the icon of the habit at the given index', () => {
+    it('updates the icon of the habit at the given index and syncs to the API', () => {
       useHabitStore.setState({
         habits: [makeHabit({ id: 1, icon: 'A' }), makeHabit({ id: 2, icon: 'B' })],
       });
@@ -694,6 +698,19 @@ describe('habitManager', () => {
 
       expect(useHabitStore.getState().habits[1]!.icon).toBe('\u{2728}');
       expect(useHabitStore.getState().habits[0]!.icon).toBe('A');
+      expect(habitsApi.update).toHaveBeenCalledWith(
+        2,
+        expect.objectContaining({ icon: '\u{2728}' }),
+      );
+    });
+
+    it('does nothing when the index is out of range', () => {
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, icon: 'A' })] });
+
+      habitManager.setEmojiForHabit(7, '\u{2728}');
+
+      expect(useHabitStore.getState().habits[0]!.icon).toBe('A');
+      expect(habitsApi.update).not.toHaveBeenCalled();
     });
   });
 });

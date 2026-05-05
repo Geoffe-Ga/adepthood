@@ -3,6 +3,7 @@ import {
   Alert,
   Modal,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
@@ -21,6 +22,7 @@ import EmojiSelector from 'react-native-emoji-selector';
 
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
 import { colors, SPACING, STAGE_COLORS } from '../../../design/tokens';
+import { TARGET_UNITS, FREQUENCY_UNITS } from '../constants';
 import styles from '../Habits.styles';
 import type { GoalModalProps, Goal } from '../Habits.types';
 import {
@@ -357,6 +359,12 @@ const GOAL_LABEL_FONT_SIZE = 14;
 const GOAL_INPUT_FONT_SIZE = 15;
 const GOAL_UNIT_FONT_SIZE = 13;
 const GOAL_SECTION_TITLE_LETTER_SPACING = 0.5;
+const GOAL_FIELD_LABEL_FONT_SIZE = 12;
+const GOAL_CHIP_VERTICAL_PADDING = 4;
+const GOAL_CHIP_HORIZONTAL_PADDING = 10;
+const GOAL_CHIP_BORDER_RADIUS = 14;
+const GOAL_CHIP_FONT_SIZE = 12;
+const GOAL_FREQ_INPUT_WIDTH = 56;
 
 const goalEditorStyles = StyleSheet.create({
   container: {
@@ -399,6 +407,47 @@ const goalEditorStyles = StyleSheet.create({
     fontSize: GOAL_UNIT_FONT_SIZE,
     color: colors.text.secondary,
     minWidth: GOAL_UNIT_MIN_WIDTH,
+  },
+  fieldLabel: {
+    fontSize: GOAL_FIELD_LABEL_FONT_SIZE,
+    color: colors.text.secondary,
+    marginRight: SPACING.sm,
+    minWidth: GOAL_UNIT_MIN_WIDTH,
+  },
+  chipRow: {
+    paddingVertical: SPACING.xs,
+  },
+  chip: {
+    paddingVertical: GOAL_CHIP_VERTICAL_PADDING,
+    paddingHorizontal: GOAL_CHIP_HORIZONTAL_PADDING,
+    borderRadius: GOAL_CHIP_BORDER_RADIUS,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginRight: SPACING.xs,
+    backgroundColor: 'transparent',
+  },
+  chipSelected: {
+    backgroundColor: colors.tier.clear,
+    borderColor: colors.tier.clear,
+  },
+  chipText: {
+    fontSize: GOAL_CHIP_FONT_SIZE,
+    color: colors.text.secondary,
+  },
+  chipTextSelected: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  freqInput: {
+    width: GOAL_FREQ_INPUT_WIDTH,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: GOAL_INPUT_BORDER_RADIUS,
+    paddingVertical: GOAL_INPUT_VERTICAL_PADDING,
+    paddingHorizontal: SPACING.sm,
+    textAlign: 'center',
+    fontSize: GOAL_INPUT_FONT_SIZE,
+    marginRight: SPACING.sm,
   },
 });
 
@@ -454,6 +503,116 @@ const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
   );
 };
 
+interface UnitChipRowProps {
+  options: readonly string[];
+  selected: string;
+  testID: string;
+  onSelect: (_value: string) => void;
+}
+
+const formatUnitLabel = (value: string): string => value.replace(/_/g, ' ');
+
+/**
+ * Horizontal chip selector used for ``target_unit`` and ``frequency_unit``.
+ * A chip set fits the existing modal aesthetic without pulling in
+ * ``@react-native-picker/picker``, and lets the user see all options in
+ * one swipe rather than a modal-on-top-of-modal native picker.
+ */
+const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) => (
+  <ScrollView
+    horizontal
+    showsHorizontalScrollIndicator={false}
+    style={goalEditorStyles.chipRow}
+    testID={testID}
+  >
+    {options.map((opt) => {
+      const isSelected = opt === selected;
+      return (
+        <TouchableOpacity
+          key={opt}
+          testID={`${testID}-${opt}`}
+          onPress={() => onSelect(opt)}
+          style={[goalEditorStyles.chip, isSelected && goalEditorStyles.chipSelected]}
+          accessibilityRole="button"
+          accessibilityState={{ selected: isSelected }}
+        >
+          <Text
+            style={[goalEditorStyles.chipText, isSelected && goalEditorStyles.chipTextSelected]}
+          >
+            {formatUnitLabel(opt)}
+          </Text>
+        </TouchableOpacity>
+      );
+    })}
+  </ScrollView>
+);
+
+interface GoalUnitEditorProps {
+  /** Reference goal — units are normalized across tiers, so any tier works. */
+  reference: Goal;
+  habitId: number;
+  onUpdateGoal: GoalModalProps['onUpdateGoal'];
+}
+
+/**
+ * Edits ``target_unit`` / ``frequency`` / ``frequency_unit`` for a habit's
+ * goals. The fields are shared across tiers (``normalizeGoalUnits``
+ * propagates a single edit to all three), so the editor surfaces them once
+ * rather than per-tier — closes the "no way to edit goal frequency and
+ * unit" gap reported by users.
+ */
+const GoalUnitEditor = ({ reference, habitId, onUpdateGoal }: GoalUnitEditorProps) => {
+  const [freqDraft, setFreqDraft] = useState(String(reference.frequency));
+  useEffect(() => {
+    setFreqDraft(String(reference.frequency));
+  }, [reference.frequency]);
+
+  const commit = (changes: Partial<Pick<Goal, 'target_unit' | 'frequency' | 'frequency_unit'>>) => {
+    onUpdateGoal(habitId, { ...reference, ...changes });
+  };
+
+  const handleFreqEnd = () => {
+    const parsed = Number.parseFloat(freqDraft);
+    if (!Number.isFinite(parsed) || parsed <= 0 || parsed === reference.frequency) {
+      setFreqDraft(String(reference.frequency));
+      return;
+    }
+    commit({ frequency: parsed });
+  };
+
+  return (
+    <View testID="goal-unit-editor">
+      <View style={goalEditorStyles.row}>
+        <Text style={goalEditorStyles.fieldLabel}>Unit</Text>
+        <UnitChipRow
+          options={TARGET_UNITS}
+          selected={reference.target_unit}
+          testID="goal-target-unit"
+          onSelect={(value) => commit({ target_unit: value })}
+        />
+      </View>
+      <View style={goalEditorStyles.row}>
+        <Text style={goalEditorStyles.fieldLabel}>Every</Text>
+        <TextInput
+          testID="goal-frequency-input"
+          style={goalEditorStyles.freqInput}
+          value={freqDraft}
+          onChangeText={setFreqDraft}
+          onEndEditing={handleFreqEnd}
+          keyboardType="numeric"
+          returnKeyType="done"
+        />
+        <UnitChipRow
+          options={FREQUENCY_UNITS}
+          selected={reference.frequency_unit}
+          testID="goal-frequency-unit"
+          onSelect={(value) => commit({ frequency_unit: value })}
+        />
+      </View>
+    </View>
+  );
+};
+
 interface GoalTargetEditorProps {
   habit: NonNullable<GoalModalProps['habit']>;
   onUpdateGoal: GoalModalProps['onUpdateGoal'];
@@ -476,6 +635,9 @@ const GoalTargetEditor = ({ habit, onUpdateGoal }: GoalTargetEditorProps) => {
     (g): g is Goal => g !== undefined,
   );
   if (orderedGoals.length === 0) return null;
+  // Units / frequency are normalized across tiers, so any tier is a valid
+  // reference for the shared editor — pick the first one in tier order.
+  const reference = orderedGoals[0]!;
   return (
     <View style={goalEditorStyles.container} testID="goal-target-editor">
       <Text style={goalEditorStyles.sectionTitle}>Goals</Text>
@@ -486,6 +648,7 @@ const GoalTargetEditor = ({ habit, onUpdateGoal }: GoalTargetEditorProps) => {
           onCommit={(target) => onUpdateGoal(habitId, { ...goal, target })}
         />
       ))}
+      <GoalUnitEditor reference={reference} habitId={habitId} onUpdateGoal={onUpdateGoal} />
     </View>
   );
 };
