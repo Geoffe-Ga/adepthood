@@ -434,10 +434,10 @@ describe('habitManager', () => {
     });
 
     it('rolls back exactly once when any single PUT fails (consolidated Promise.all rollback)', async () => {
-      // Regression guard: the original implementation chained ``catch`` on
-      // every per-row PUT, so a 2-of-3 failure restored ``prev`` twice and
-      // clobbered the successful row. With ``Promise.all`` the first
-      // rejection triggers exactly one rollback.
+      // Invariant: a partial-failure reorder must restore the pre-write
+      // snapshot once and only once. Per-row ``.catch`` chains would
+      // restore ``prev`` per failure and clobber sibling writes that
+      // already landed in the store.
       const h1 = makeHabit({ id: 1, name: 'First' });
       const h2 = makeHabit({ id: 2, name: 'Second' });
       const original = [h1, h2];
@@ -735,6 +735,28 @@ describe('habitManager', () => {
 
       expect(useHabitStore.getState().habits[0]!.icon).toBe('A');
       expect(habitsApi.update).not.toHaveBeenCalled();
+    });
+
+    it('rolls the icon back when the API rejects the PUT', async () => {
+      // Invariant: an emoji edit is optimistic but must restore the
+      // previous icon (and the on-disk snapshot) when the server
+      // rejects the write — otherwise the next cold rehydrate diverges
+      // from the server state and the user keeps seeing an icon that
+      // isn't really persisted.
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, icon: 'A' })] });
+      (habitsApi.update as jest.Mock).mockImplementationOnce(
+        () => Promise.reject(new Error('boom')) as never,
+      );
+
+      habitManager.setEmojiForHabit(0, '\u{2728}');
+      // Optimistic update lands first.
+      expect(useHabitStore.getState().habits[0]!.icon).toBe('\u{2728}');
+
+      // Let the rejected catch handler run.
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(useHabitStore.getState().habits[0]!.icon).toBe('A');
+      expect(habitsApi.update).toHaveBeenCalledTimes(1);
     });
   });
 });

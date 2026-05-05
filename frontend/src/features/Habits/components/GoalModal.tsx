@@ -558,20 +558,20 @@ interface GoalUnitEditorProps {
    * out a PUT for each goal so the backend rows stay in lockstep with the
    * client's normalized state.
    */
-  goals: Goal[];
+  goals: NonEmptyGoals;
   habitId: number;
   onUpdateGoal: GoalModalProps['onUpdateGoal'];
 }
 
 /**
- * Edits ``target_unit`` / ``frequency`` / ``frequency_unit`` for a habit's
- * goals. The fields are shared across tiers (``normalizeGoalUnits``
- * propagates a single edit to all three), so the editor surfaces them once
- * — but ``onUpdateGoal`` only PUTs the goal whose id is sent, so a commit
- * fans out one update per tier. Without the fan-out, the ``clear`` and
- * ``stretch`` rows would stay on their old units server-side even though
- * the local store displays them as normalized.
+ * Tier goals are constructed from the same fixed `TIER_ORDER` (`low`,
+ * `clear`, `stretch`) at habit creation, so the array always has at
+ * least one element. Encoding the non-empty contract in the type lets
+ * `goals[0]` resolve as `Goal` (no `!` assertion) and keeps callers
+ * honest if they ever try to pass `[]`.
  */
+type NonEmptyGoals = [Goal, ...Goal[]];
+
 interface FrequencyInputProps {
   draft: string;
   setDraft: (_v: string) => void;
@@ -590,8 +590,17 @@ const FrequencyInput = ({ draft, setDraft, onEnd }: FrequencyInputProps) => (
   />
 );
 
+/**
+ * Edits ``target_unit`` / ``frequency`` / ``frequency_unit`` for a habit's
+ * goals. The fields are shared across tiers (``normalizeGoalUnits``
+ * propagates a single edit to all three), so the editor surfaces them once
+ * — but ``onUpdateGoal`` only PUTs the goal whose id is sent, so a commit
+ * fans out one update per tier. Without the fan-out, the ``clear`` and
+ * ``stretch`` rows would stay on their old units server-side even though
+ * the local store displays them as normalized.
+ */
 const GoalUnitEditor = ({ goals, habitId, onUpdateGoal }: GoalUnitEditorProps) => {
-  const reference = goals[0]!;
+  const reference = goals[0];
   const [freqDraft, setFreqDraft] = useState(String(reference.frequency));
   useEffect(() => {
     setFreqDraft(String(reference.frequency));
@@ -658,18 +667,20 @@ const GoalTargetEditor = ({ habit, onUpdateGoal }: GoalTargetEditorProps) => {
   const orderedGoals = TIER_ORDER.map((tier) => habit.goals.find((g) => g.tier === tier)).filter(
     (g): g is Goal => g !== undefined,
   );
-  if (orderedGoals.length === 0) return null;
+  const [head, ...tail] = orderedGoals;
+  if (head === undefined) return null;
+  const nonEmptyGoals: NonEmptyGoals = [head, ...tail];
   return (
     <View style={goalEditorStyles.container} testID="goal-target-editor">
       <Text style={goalEditorStyles.sectionTitle}>Goals</Text>
-      {orderedGoals.map((goal) => (
+      {nonEmptyGoals.map((goal) => (
         <GoalTargetRow
           key={goal.id ?? goal.tier}
           goal={goal}
           onCommit={(target) => onUpdateGoal(habitId, { ...goal, target })}
         />
       ))}
-      <GoalUnitEditor goals={orderedGoals} habitId={habitId} onUpdateGoal={onUpdateGoal} />
+      <GoalUnitEditor goals={nonEmptyGoals} habitId={habitId} onUpdateGoal={onUpdateGoal} />
     </View>
   );
 };

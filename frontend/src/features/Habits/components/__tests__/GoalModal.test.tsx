@@ -106,9 +106,10 @@ describe('GoalModal unit + frequency editor', () => {
   });
 
   it('fans out a target_unit change to ALL three tier goals', () => {
-    // Regression guard for the reviewer-flagged bug: a unit edit must
-    // PUT every tier so the backend rows stay in lockstep with the
-    // locally-normalized state, not just the reference (low) tier.
+    // Invariant: a unit edit must PUT every tier so the backend rows
+    // stay in lockstep with the locally-normalized state. ``onUpdateGoal``
+    // updates only the goal whose id is sent, so committing on the
+    // reference (low) tier alone leaves clear/stretch stale server-side.
     const { getByTestId, props } = renderModal();
     fireEvent.press(getByTestId('goal-target-unit-minutes'));
 
