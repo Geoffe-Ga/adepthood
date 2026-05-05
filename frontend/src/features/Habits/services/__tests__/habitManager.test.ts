@@ -432,6 +432,30 @@ describe('habitManager', () => {
       expect(habitsApi.update).toHaveBeenCalledWith(2, expect.objectContaining({ sort_order: 0 }));
       expect(habitsApi.update).toHaveBeenCalledWith(1, expect.objectContaining({ sort_order: 1 }));
     });
+
+    it('rolls back exactly once when any single PUT fails (consolidated Promise.all rollback)', async () => {
+      // Regression guard: the original implementation chained ``catch`` on
+      // every per-row PUT, so a 2-of-3 failure restored ``prev`` twice and
+      // clobbered the successful row. With ``Promise.all`` the first
+      // rejection triggers exactly one rollback.
+      const h1 = makeHabit({ id: 1, name: 'First' });
+      const h2 = makeHabit({ id: 2, name: 'Second' });
+      const original = [h1, h2];
+      useHabitStore.setState({ habits: original });
+      (habitsApi.update as jest.Mock)
+        .mockImplementationOnce(() => Promise.resolve({}) as never)
+        .mockImplementationOnce(() => Promise.reject(new Error('boom')) as never);
+
+      habitManager.saveHabitOrder([h2, h1]);
+      // Optimistic state lands first.
+      expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual(['Second', 'First']);
+
+      // Let the rejected Promise.all settle.
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // Single rollback to the snapshot taken before the optimistic write.
+      expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual(['First', 'Second']);
+    });
   });
 
   describe('logUnit primitives (apply / commit / rollback)', () => {

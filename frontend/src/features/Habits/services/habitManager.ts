@@ -515,26 +515,33 @@ export const habitManager = {
   /**
    * Persist a user-chosen ordering. Stamps each habit with a positional
    * ``sort_order`` (the backend orders the list ascending by it) and PUTs
-   * the row so the order survives a logout — without the per-row PUT, the
+   * the rows so the order survives a logout — without the per-row PUT, the
    * reorder used to live only in AsyncStorage and was wiped on the next
    * cold rehydrate.
+   *
+   * Updates fan out via ``Promise.all`` so a single rejection triggers one
+   * deterministic rollback rather than one per failure: the previous
+   * implementation chained ``revertOnFailure`` on every PUT, so the second
+   * (and third…) failure each restored ``prev``, clobbering successful
+   * sibling writes that were already in the store.
    */
   saveHabitOrder: (ordered: Habit[]): void => {
     const prev = getHabits();
     const stamped = ordered.map((h, index) => ({ ...h, sort_order: index }));
     setHabits(stamped);
     void persistHabits(stamped);
+    const updates: Array<Promise<unknown>> = [];
     for (const habit of stamped) {
-      if (!habit.id) continue;
-      habitsApi
-        .update(habit.id, toApiPayload(habit))
-        .catch(
-          revertOnFailure(
-            prev,
-            "We couldn't save the new habit order. Your previous order was restored — check your connection and try again.",
-          ),
-        );
+      if (habit.id == null) continue;
+      updates.push(habitsApi.update(habit.id, toApiPayload(habit)));
     }
+    if (updates.length === 0) return;
+    Promise.all(updates).catch(
+      revertOnFailure(
+        prev,
+        "We couldn't save the new habit order. Your previous order was restored — check your connection and try again.",
+      ),
+    );
   },
 
   /**

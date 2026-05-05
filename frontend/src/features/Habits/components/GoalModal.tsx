@@ -435,7 +435,7 @@ const goalEditorStyles = StyleSheet.create({
     color: colors.text.secondary,
   },
   chipTextSelected: {
-    color: '#fff',
+    color: colors.text.light,
     fontWeight: '600',
   },
   freqInput: {
@@ -517,6 +517,10 @@ const formatUnitLabel = (value: string): string => value.replace(/_/g, ' ');
  * A chip set fits the existing modal aesthetic without pulling in
  * ``@react-native-picker/picker``, and lets the user see all options in
  * one swipe rather than a modal-on-top-of-modal native picker.
+ *
+ * Each chip is exposed to assistive tech as a radio button — selection is
+ * mutually exclusive within a row, so ``role="radio"`` + ``checked`` is the
+ * accurate semantic, not a generic button toggle.
  */
 const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) => (
   <ScrollView
@@ -533,8 +537,8 @@ const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) 
           testID={`${testID}-${opt}`}
           onPress={() => onSelect(opt)}
           style={[goalEditorStyles.chip, isSelected && goalEditorStyles.chipSelected]}
-          accessibilityRole="button"
-          accessibilityState={{ selected: isSelected }}
+          accessibilityRole="radio"
+          accessibilityState={{ checked: isSelected }}
         >
           <Text
             style={[goalEditorStyles.chipText, isSelected && goalEditorStyles.chipTextSelected]}
@@ -548,8 +552,13 @@ const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) 
 );
 
 interface GoalUnitEditorProps {
-  /** Reference goal — units are normalized across tiers, so any tier works. */
-  reference: Goal;
+  /**
+   * All tier goals belonging to the habit. Any one is a valid display
+   * reference (units are normalized across tiers), but every commit fans
+   * out a PUT for each goal so the backend rows stay in lockstep with the
+   * client's normalized state.
+   */
+  goals: Goal[];
   habitId: number;
   onUpdateGoal: GoalModalProps['onUpdateGoal'];
 }
@@ -558,17 +567,40 @@ interface GoalUnitEditorProps {
  * Edits ``target_unit`` / ``frequency`` / ``frequency_unit`` for a habit's
  * goals. The fields are shared across tiers (``normalizeGoalUnits``
  * propagates a single edit to all three), so the editor surfaces them once
- * rather than per-tier — closes the "no way to edit goal frequency and
- * unit" gap reported by users.
+ * — but ``onUpdateGoal`` only PUTs the goal whose id is sent, so a commit
+ * fans out one update per tier. Without the fan-out, the ``clear`` and
+ * ``stretch`` rows would stay on their old units server-side even though
+ * the local store displays them as normalized.
  */
-const GoalUnitEditor = ({ reference, habitId, onUpdateGoal }: GoalUnitEditorProps) => {
+interface FrequencyInputProps {
+  draft: string;
+  setDraft: (_v: string) => void;
+  onEnd: () => void;
+}
+
+const FrequencyInput = ({ draft, setDraft, onEnd }: FrequencyInputProps) => (
+  <TextInput
+    testID="goal-frequency-input"
+    style={goalEditorStyles.freqInput}
+    value={draft}
+    onChangeText={setDraft}
+    onEndEditing={onEnd}
+    keyboardType="numeric"
+    returnKeyType="done"
+  />
+);
+
+const GoalUnitEditor = ({ goals, habitId, onUpdateGoal }: GoalUnitEditorProps) => {
+  const reference = goals[0]!;
   const [freqDraft, setFreqDraft] = useState(String(reference.frequency));
   useEffect(() => {
     setFreqDraft(String(reference.frequency));
   }, [reference.frequency]);
 
   const commit = (changes: Partial<Pick<Goal, 'target_unit' | 'frequency' | 'frequency_unit'>>) => {
-    onUpdateGoal(habitId, { ...reference, ...changes });
+    for (const goal of goals) {
+      onUpdateGoal(habitId, { ...goal, ...changes });
+    }
   };
 
   const handleFreqEnd = () => {
@@ -593,15 +625,7 @@ const GoalUnitEditor = ({ reference, habitId, onUpdateGoal }: GoalUnitEditorProp
       </View>
       <View style={goalEditorStyles.row}>
         <Text style={goalEditorStyles.fieldLabel}>Every</Text>
-        <TextInput
-          testID="goal-frequency-input"
-          style={goalEditorStyles.freqInput}
-          value={freqDraft}
-          onChangeText={setFreqDraft}
-          onEndEditing={handleFreqEnd}
-          keyboardType="numeric"
-          returnKeyType="done"
-        />
+        <FrequencyInput draft={freqDraft} setDraft={setFreqDraft} onEnd={handleFreqEnd} />
         <UnitChipRow
           options={FREQUENCY_UNITS}
           selected={reference.frequency_unit}
@@ -635,9 +659,6 @@ const GoalTargetEditor = ({ habit, onUpdateGoal }: GoalTargetEditorProps) => {
     (g): g is Goal => g !== undefined,
   );
   if (orderedGoals.length === 0) return null;
-  // Units / frequency are normalized across tiers, so any tier is a valid
-  // reference for the shared editor — pick the first one in tier order.
-  const reference = orderedGoals[0]!;
   return (
     <View style={goalEditorStyles.container} testID="goal-target-editor">
       <Text style={goalEditorStyles.sectionTitle}>Goals</Text>
@@ -648,7 +669,7 @@ const GoalTargetEditor = ({ habit, onUpdateGoal }: GoalTargetEditorProps) => {
           onCommit={(target) => onUpdateGoal(habitId, { ...goal, target })}
         />
       ))}
-      <GoalUnitEditor reference={reference} habitId={habitId} onUpdateGoal={onUpdateGoal} />
+      <GoalUnitEditor goals={orderedGoals} habitId={habitId} onUpdateGoal={onUpdateGoal} />
     </View>
   );
 };
