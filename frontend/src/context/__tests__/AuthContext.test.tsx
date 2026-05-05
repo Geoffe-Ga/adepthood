@@ -14,6 +14,9 @@ jest.mock('@/api', () => {
       login: jest.fn(),
       signup: jest.fn(),
       refresh: jest.fn(),
+      requestPasswordReset: jest.fn(),
+      confirmPasswordReset: jest.fn(),
+      cancelPasswordReset: jest.fn(),
     },
     setTokenGetter: jest.fn(),
     setOnUnauthorized: jest.fn(),
@@ -666,6 +669,68 @@ describe('AuthContext', () => {
       await waitFor(() => expect(result.current.authStatus).toBe('reauth-required'));
       expect(resetSpy).not.toHaveBeenCalled();
       resetSpy.mockRestore();
+    });
+  });
+
+  describe('confirmPasswordReset (SPEC plans/SPEC.md)', () => {
+    it('persists the new token, updates state, and lands authenticated', async () => {
+      mockAuth.confirmPasswordReset.mockResolvedValue({
+        token: 'reset-jwt',
+        user_id: 7,
+        timezone: 'America/Los_Angeles',
+      });
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      await act(async () => {
+        await result.current.confirmPasswordReset('a'.repeat(43), 'new-password-123');
+      });
+
+      // applyAuthResponse: persistence-first ordering (BUG-AUTH-005)
+      expect(mockSaveToken).toHaveBeenCalledWith('reset-jwt');
+      expect(result.current.token).toBe('reset-jwt');
+      expect(result.current.userTimezone).toBe('America/Los_Angeles');
+      expect(result.current.authStatus).toBe('authenticated');
+      expect(mockAuth.confirmPasswordReset).toHaveBeenCalledWith({
+        token: 'a'.repeat(43),
+        new_password: 'new-password-123', // pragma: allowlist secret
+      });
+    });
+
+    it('falls back to UTC when the reset response omits timezone', async () => {
+      mockAuth.confirmPasswordReset.mockResolvedValue({
+        token: 'reset-jwt',
+        user_id: 7,
+      });
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      await act(async () => {
+        await result.current.confirmPasswordReset('b'.repeat(43), 'longenough');
+      });
+
+      expect(result.current.userTimezone).toBe('UTC');
+      expect(result.current.authStatus).toBe('authenticated');
+    });
+
+    it('propagates the API error so the screen can surface a friendly message', async () => {
+      const failure = Object.assign(new Error('bad'), {
+        status: 400,
+        detail: 'invalid_or_expired_token',
+      });
+      mockAuth.confirmPasswordReset.mockRejectedValue(failure);
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      await expect(
+        act(async () => {
+          await result.current.confirmPasswordReset('c'.repeat(43), 'longenough');
+        }),
+      ).rejects.toThrow('bad');
+      // The state machine must NOT flip to authenticated on failure.
+      expect(result.current.authStatus).toBe('anonymous');
+      expect(result.current.token).toBeNull();
+      expect(mockSaveToken).not.toHaveBeenCalled();
     });
   });
 });

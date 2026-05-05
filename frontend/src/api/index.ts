@@ -5,7 +5,9 @@ import {
   habitWithGoalsSchema,
   isTier,
   pageSchema,
+  passwordResetAcceptedSchema,
   type Page,
+  type PasswordResetAcceptedT,
   type Tier,
 } from './schemas';
 import type { components, paths } from './types';
@@ -1469,6 +1471,23 @@ export interface AuthResponse {
    */
   timezone?: string;
 }
+/**
+ * Request shapes for the password-recovery endpoints.  Mirror the
+ * backend Pydantic schemas in ``backend/src/schemas/password_reset.py``.
+ */
+export interface PasswordResetRequestPayload {
+  email: string;
+}
+
+export interface PasswordResetConfirmPayload {
+  token: string;
+  new_password: string;
+}
+
+export interface PasswordResetCancelPayload {
+  token: string;
+}
+
 export const auth = {
   login(credentials: AuthRequest): Promise<AuthResponse> {
     return request<AuthResponse>('/auth/login', {
@@ -1489,6 +1508,41 @@ export const auth = {
       method: 'POST',
       token,
       schema: authResponseSchema,
+    });
+  },
+  /**
+   * Kick off password recovery.  Always resolves on a 202 with the
+   * generic anti-enumeration message; the caller should NOT distinguish
+   * registered vs. unregistered email in its UI (SPEC R4).
+   */
+  requestPasswordReset(payload: PasswordResetRequestPayload): Promise<PasswordResetAcceptedT> {
+    return request<PasswordResetAcceptedT>('/auth/password-reset/request', {
+      method: 'POST',
+      body: payload,
+      schema: passwordResetAcceptedSchema,
+    });
+  },
+  /**
+   * Complete the reset by trading a single-use token for a fresh
+   * AuthResponse.  On success the device is logged in and every
+   * outstanding session for the user is invalidated server-side
+   * (SPEC R7).
+   */
+  confirmPasswordReset(payload: PasswordResetConfirmPayload): Promise<AuthResponse> {
+    return request<AuthResponse>('/auth/password-reset/confirm', {
+      method: 'POST',
+      body: payload,
+      schema: authResponseSchema,
+    });
+  },
+  /**
+   * "This wasn't me" -- cancel a still-live token.  Returns 204 with
+   * no body, regardless of whether the token was real (SPEC R4).
+   */
+  cancelPasswordReset(payload: PasswordResetCancelPayload): Promise<void> {
+    return request<void>('/auth/password-reset/cancel', {
+      method: 'POST',
+      body: payload,
     });
   },
 };

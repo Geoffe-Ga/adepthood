@@ -91,6 +91,7 @@ type MockAuth = {
   logout: jest.Mock;
   onUnauthorized: jest.Mock;
   dismissReauth: jest.Mock;
+  confirmPasswordReset: jest.Mock;
 };
 
 function buildAuth(overrides: Partial<MockAuth> = {}): MockAuth {
@@ -104,6 +105,7 @@ function buildAuth(overrides: Partial<MockAuth> = {}): MockAuth {
     logout: jest.fn(() => Promise.resolve()),
     onUnauthorized: jest.fn(),
     dismissReauth: jest.fn(() => Promise.resolve()),
+    confirmPasswordReset: jest.fn(() => Promise.resolve()),
     ...overrides,
   };
 }

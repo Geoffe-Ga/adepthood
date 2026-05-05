@@ -341,6 +341,13 @@ options:
 | `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-4-20250514` (Anthropic) |
 | `WEB_CONCURRENCY` | No | `2` | Number of Uvicorn worker processes |
 | `BOTMASON_SYSTEM_PROMPT` | No | Built-in | Path to prompt file or inline text |
+| `EMAIL_BACKEND` | No | `console` | `console` (logs the email locally) or `smtp` (delivers via SMTP). Required: `smtp` in production. |
+| `SMTP_HOST` | If `EMAIL_BACKEND=smtp` | — | SMTP relay hostname, e.g. `smtp.sendgrid.net` |
+| `SMTP_PORT` | If `EMAIL_BACKEND=smtp` | — | SMTP port. **Only STARTTLS-on-587 is supported** -- the adapter calls `starttls()` unconditionally. Implicit-TLS port 465 (SMTPS) will silently fail to deliver because the connection negotiation skips the STARTTLS step. Use port 587. |
+| `SMTP_USERNAME` | If `EMAIL_BACKEND=smtp` | — | SMTP relay username |
+| `SMTP_PASSWORD` | If `EMAIL_BACKEND=smtp` | — | SMTP relay password / API key |
+| `EMAIL_FROM` | If `EMAIL_BACKEND=smtp` | — | RFC-5322 "From" address (e.g. `noreply@adepthood.example`). Must be a **monitored** mailbox -- the change-notification "this wasn't me" replies route here, and bounce-handling for invalid recipient addresses also lands here. |
+| `SECURITY_CONTACT_ADDRESS` | No (recommended in prod) | `security@adepthood.example` | Address printed inside the change-notification email body so users with a compromised account have somewhere to escalate. Set this to a real, monitored mailbox before launching publicly. |
 
 **Auto-injected by Railway (do not set manually):**
 
@@ -383,6 +390,68 @@ automatically. Deep links work as expected.
 `react-native-gesture-handler` and `react-native-reanimated` have web support.
 Drag-and-drop (`react-native-draggable-flatlist`) may behave differently on
 web — test these interactions.
+
+---
+
+## Password Recovery
+
+The forgotten-password flow needs an email path to ship reset links.
+The backend defaults to a console adapter that simply logs the rendered
+email -- safe in dev / test, useless in production. Set
+`EMAIL_BACKEND=smtp` plus the five `SMTP_*` / `EMAIL_FROM` variables
+above to switch on real delivery.
+
+Recommended setup with SendGrid:
+
+```bash
+EMAIL_BACKEND=smtp
+SMTP_HOST=smtp.sendgrid.net
+SMTP_PORT=587
+SMTP_USERNAME=apikey                # literal string "apikey"
+SMTP_PASSWORD=<sendgrid_api_key>    # the API key itself
+EMAIL_FROM=noreply@yourdomain.example
+SECURITY_CONTACT_ADDRESS=security@yourdomain.example
+```
+
+The `EMAIL_FROM` address must be:
+
+1. **DKIM/SPF-verified** with the provider. Without verification,
+   deliverability collapses for any address the recipient's spam
+   filter has not seen before -- which for password recovery means
+   the user never gets the link.
+2. **Monitored**. Bounce notifications for invalid recipient addresses
+   route back to this mailbox, and a user replying to the
+   change-notification email lands here too. An unmonitored "noreply"
+   address loses both signals.
+
+`SECURITY_CONTACT_ADDRESS` is the inbox printed inside the
+change-notification email body so a user whose account was reset
+without their consent has an escalation path. Set it to a real,
+monitored security inbox before launching to real users; the default
+(`security@adepthood.example`) is a placeholder for dev / first-deploy.
+
+Verify the wiring after deploy by hitting `/auth/password-reset/request`
+with a known-registered address and confirming the link lands in the
+inbox.  The corresponding runbook lives at `RECOVERY-RUNBOOK.md`
+(operator-facing: how to investigate a reset that did not arrive).
+
+### Trusted Proxy / X-Forwarded-For
+
+The backend reads the client IP from `X-Forwarded-For` and writes it
+verbatim to `passwordresettoken.requested_ip` and to the
+`password_reset_event` audit log.  This is correct **only when every
+ingress path runs through a trusted reverse proxy that overwrites the
+header**.  Railway's edge network does this by default; if you front
+the API with an additional proxy or expose the container directly to
+the public internet, an attacker can spoof the source IP in the audit
+trail by sending the header themselves.
+
+For Railway / managed-edge deployments no extra configuration is
+needed.  For self-managed deployments, terminate TLS at a proxy
+(nginx, Caddy, Cloudflare) that strips inbound `X-Forwarded-For` and
+appends the real peer address.  Operators investigating an abuse
+report should treat the `ip_address` audit field as authoritative
+only to the extent the ingress chain is trusted.
 
 ---
 

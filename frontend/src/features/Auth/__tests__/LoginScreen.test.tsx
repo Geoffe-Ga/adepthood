@@ -114,4 +114,10 @@ describe('LoginScreen', () => {
     fireEvent.press(getByText('Sign Up'));
     expect(mockNavigation.navigate).toHaveBeenCalledWith('Signup');
   });
+
+  it('navigates to ForgotPassword when the "Forgot password?" link is tapped', () => {
+    const { getByTestId } = render(<LoginScreen navigation={mockNavigation} />);
+    fireEvent.press(getByTestId('login-forgot-password'));
+    expect(mockNavigation.navigate).toHaveBeenCalledWith('ForgotPassword');
+  });
 });

@@ -110,6 +110,19 @@ class User(SQLModel, table=True):
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
+    # Password recovery (SPEC §R7 option a): a successful
+    # ``/auth/password-reset/confirm`` advances this timestamp so every
+    # token minted before the reset is rejected by
+    # ``_decode_token_payload``'s ``iat`` check.  This is the
+    # "log out everywhere" lever -- one column update revokes the
+    # entire outstanding-JWT fleet without having to enumerate
+    # individual ``jti`` rows.  ``NULL`` means "no reset has happened",
+    # which is the existing-user steady state and disables the gate
+    # entirely so legacy tokens keep working.
+    password_changed_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
     habits: list["Habit"] = Relationship(back_populates="user")
     journals: list["JournalEntry"] = Relationship(back_populates="user")
     responses: list["PromptResponse"] = Relationship(back_populates="user")

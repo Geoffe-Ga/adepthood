@@ -25,8 +25,11 @@ import { ApiKeyProvider } from './context/ApiKeyContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { NetworkStatusProvider } from './context/NetworkStatusContext';
 import { colors, SPACING } from './design/tokens';
+import CancelResetScreen from './features/Auth/CancelResetScreen';
+import ForgotPasswordScreen from './features/Auth/ForgotPasswordScreen';
 import LoginScreen from './features/Auth/LoginScreen';
 import { ReauthSheet } from './features/Auth/ReauthSheet';
+import ResetPasswordScreen from './features/Auth/ResetPasswordScreen';
 import SignupScreen from './features/Auth/SignupScreen';
 import type { RootTabParamList } from './navigation/BottomTabs';
 import type { RootStackParamList } from './navigation/RootStack';
@@ -35,6 +38,9 @@ import RootStack from './navigation/RootStack';
 type AuthStackParamList = {
   Login: undefined;
   Signup: undefined;
+  ForgotPassword: undefined;
+  ResetPassword: { token?: string } | undefined;
+  CancelReset: { token?: string } | undefined;
 };
 
 /**
@@ -47,6 +53,14 @@ type LinkedRootParamList = Omit<RootStackParamList, 'Tabs'> & {
   Tabs: NavigatorScreenParams<RootTabParamList>;
 };
 
+/**
+ * Linking config covering both navigators (auth + root).  The currently
+ * mounted navigator (chosen by ``authStatus``) consumes the matching
+ * routes; entries for the other navigator are ignored, so listing both
+ * stacks here is safe.  ``reset-password?token=...`` is the
+ * password-recovery email landing page -- the parser puts ``token``
+ * into ``route.params`` so ``ResetPasswordScreen`` can pick it up.
+ */
 const linking: LinkingOptions<LinkedRootParamList> = {
   prefixes: ['adepthood://'],
   config: {
@@ -61,6 +75,19 @@ const linking: LinkingOptions<LinkedRootParamList> = {
         },
       },
       ApiKeySettings: 'api-key-settings', // pragma: allowlist secret
+      // Auth-stack routes -- only resolve while the AuthNavigator is mounted.
+      // Cast through ``unknown`` because react-navigation's typing for
+      // ``screens`` is keyed strictly on the param-list, but the same
+      // linking config drives both AuthStack and RootStack here.
+      ...({
+        Login: 'login',
+        Signup: 'signup',
+        ForgotPassword: 'forgot-password', // pragma: allowlist secret
+        ResetPassword: 'reset-password', // pragma: allowlist secret
+        // ``cancel-reset?token=...`` is the "this wasn't me" landing
+        // for the reset email; matches the URL the email body emits.
+        CancelReset: 'cancel-reset', // pragma: allowlist secret
+      } as unknown as Record<string, string>),
     },
   },
 };
@@ -72,6 +99,9 @@ function AuthNavigator() {
     <AuthStack.Navigator screenOptions={{ headerShown: false }}>
       <AuthStack.Screen name="Login" component={LoginScreen} />
       <AuthStack.Screen name="Signup" component={SignupScreen} />
+      <AuthStack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+      <AuthStack.Screen name="ResetPassword" component={ResetPasswordScreen} />
+      <AuthStack.Screen name="CancelReset" component={CancelResetScreen} />
     </AuthStack.Navigator>
   );
 }
