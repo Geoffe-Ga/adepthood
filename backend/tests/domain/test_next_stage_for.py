@@ -1,9 +1,8 @@
 """Tests for ``next_stage_for``.
 
-``next_stage_for`` returns the first *hole* in ``completed_stages`` — i.e.
-``min({1..TOTAL_STAGES} - completed_stages)`` — not ``max(completed) + 1``.
-The distinction matters for legacy rows with gaps (e.g. ``[1, 3]`` where
-``max+1`` would incorrectly advance past stage 2).
+Under BUG-STAGE-002's single-source-of-truth model the helper derives
+the next stage from ``current_stage`` alone (``current_stage + 1``,
+capped by ``TOTAL_STAGES``).  ``completed_stages`` is ignored.
 """
 
 from __future__ import annotations
@@ -18,9 +17,9 @@ from domain.stage_progress import (
 from models.stage_progress import StageProgress
 
 
-def _progress(completed: list[int]) -> StageProgress:
-    """Build a StageProgress with the given completed_stages."""
-    return StageProgress(id=1, user_id=1, current_stage=1, completed_stages=completed)
+def _progress(current: int) -> StageProgress:
+    """Build a StageProgress at the given current stage."""
+    return StageProgress(id=1, user_id=1, current_stage=current, completed_stages=[])
 
 
 def test_no_progress_returns_stage_1() -> None:
@@ -28,44 +27,33 @@ def test_no_progress_returns_stage_1() -> None:
     assert next_stage_for(None) == 1
 
 
-def test_empty_completed_returns_stage_1() -> None:
-    """Progress row with empty completed_stages also starts at stage 1."""
-    assert next_stage_for(_progress([])) == 1
+def test_current_stage_one_returns_two() -> None:
+    """A user at stage 1 advances to stage 2."""
+    assert next_stage_for(_progress(1)) == 2
 
 
-def test_sequential_completions_return_next() -> None:
-    """``[1, 2, 3]`` → 4 (the first unfinished stage)."""
-    assert next_stage_for(_progress([1, 2, 3])) == 4
+def test_current_stage_three_returns_four() -> None:
+    """``current_stage=3`` advances to 4 -- the helper does not consult ``completed_stages``."""
+    assert next_stage_for(_progress(3)) == 4
 
 
-def test_gap_returns_min_missing_not_max_plus_one() -> None:
-    """``[1, 3]`` → 2, not 4 — legacy-gap robustness (BUG-STAGE-001)."""
-    assert next_stage_for(_progress([1, 3])) == 2
+def test_completed_stages_drift_is_ignored() -> None:
+    """A drifted ``completed_stages`` value cannot tilt the answer.
 
-
-def test_single_completion_returns_next() -> None:
-    """``[1]`` → 2."""
-    assert next_stage_for(_progress([1])) == 2
-
-
-def test_mid_chain_gap_returns_earliest_hole() -> None:
-    """``[1, 2, 4, 5]`` → 3, the earliest hole."""
-    assert next_stage_for(_progress([1, 2, 4, 5])) == 3
-
-
-def test_all_stages_completed_raises_domain_error() -> None:
-    """Every stage completed → :class:`AllStagesCompletedError` (not HTTP).
-
-    Router code is responsible for translating this to a 409; keeping the
-    domain exception plain lets non-HTTP callers use ``next_stage_for``
-    without importing FastAPI.
+    Pre-fix this would have read the list and returned the first hole;
+    under the BUG-STAGE-002 contract ``current_stage + 1`` is the only
+    signal that matters.
     """
-    everything = list(range(1, TOTAL_STAGES + 1))
+    progress = StageProgress(id=1, user_id=1, current_stage=5, completed_stages=[1, 99])
+    assert next_stage_for(progress) == 6
+
+
+def test_at_final_stage_raises_domain_error() -> None:
+    """``current_stage == TOTAL_STAGES`` -> :class:`AllStagesCompletedError`."""
     with pytest.raises(AllStagesCompletedError):
-        next_stage_for(_progress(everything))
+        next_stage_for(_progress(TOTAL_STAGES))
 
 
-def test_last_stage_missing_returns_total_stages() -> None:
-    """Only the final stage missing → returns ``TOTAL_STAGES``."""
-    all_but_last = list(range(1, TOTAL_STAGES))
-    assert next_stage_for(_progress(all_but_last)) == TOTAL_STAGES
+def test_one_before_last_returns_total_stages() -> None:
+    """``current_stage = TOTAL_STAGES - 1`` advances to ``TOTAL_STAGES``."""
+    assert next_stage_for(_progress(TOTAL_STAGES - 1)) == TOTAL_STAGES

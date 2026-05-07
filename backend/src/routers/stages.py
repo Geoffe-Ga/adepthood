@@ -12,15 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
+from domain.constants import TOTAL_STAGES
 from domain.stage_progress import (
-    AllStagesCompletedError,
     compute_stage_progress,
     get_stage_habit_history,
     get_stage_practice_history,
     get_user_progress,
     get_user_progress_for_update,
     is_stage_unlocked,
-    next_stage_for,
     stage_exists,
 )
 from errors import bad_request, conflict, forbidden, not_found
@@ -231,21 +230,19 @@ async def _create_initial_progress(
 
 
 def _derive_next_stage(existing: StageProgress) -> tuple[int, list[int]]:
-    """Derive the server-expected next stage from ``existing``'s completion set.
+    """Derive the server-expected next stage from ``existing``.
 
-    Simulates marking ``existing.current_stage`` complete on a detached copy so
-    we can run :func:`next_stage_for` without mutating the tracked ORM row.
+    ``current_stage`` is the single source of truth (BUG-STAGE-002):
+    the next stage is ``current_stage + 1`` capped by the curriculum
+    length.  ``completed_stages`` is recomputed canonically as
+    ``[1..derived_next - 1]`` so the persisted value stays aligned
+    with the wire contract for any legacy admin code that still
+    reads it.
     """
-    candidate_completed = sorted(set(existing.completed_stages or []) | {existing.current_stage})
-    candidate = StageProgress(
-        user_id=existing.user_id,
-        current_stage=existing.current_stage,
-        completed_stages=candidate_completed,
-    )
-    try:
-        derived_next = next_stage_for(candidate)
-    except AllStagesCompletedError as exc:
-        raise conflict("all_stages_completed") from exc
+    if existing.current_stage >= TOTAL_STAGES:
+        raise conflict("all_stages_completed")
+    derived_next = existing.current_stage + 1
+    candidate_completed = list(range(1, derived_next))
     return derived_next, candidate_completed
 
 

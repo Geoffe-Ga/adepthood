@@ -1,7 +1,10 @@
-"""Table-driven tests for is_stage_unlocked (BUG-STAGE-002).
+"""Table-driven tests for is_stage_unlocked.
 
-Every combination of current_stage and completed_stages is tested to
-prevent regressions in the unlock predicate.
+Under BUG-STAGE-002's single-source-of-truth model ``current_stage``
+is the only signal the unlock predicate consults; ``completed_stages``
+is intentionally ignored so that legacy rows or admin scripts that
+update one field without the other cannot make the unlock decision
+disagree with the display path.
 """
 
 from __future__ import annotations
@@ -21,29 +24,21 @@ _CASES: list[tuple[str, int, StageProgress | None, bool]] = [
     ("stage 1 always unlocked (no progress)", 1, None, True),
     ("stage 1 always unlocked (with progress)", 1, _progress(3, [1, 2]), True),
     ("stage 2 locked without progress", 2, None, False),
-    ("stage 2 unlocked when current=2 and 1 completed", 2, _progress(2, [1]), True),
-    ("stage 2 locked when current=2 but 1 NOT completed", 2, _progress(2, []), False),
-    ("stage 3 locked when current=2 (not yet reached)", 3, _progress(2, [1]), False),
-    ("stage 3 unlocked when 2 completed", 3, _progress(2, [1, 2]), True),
-    ("stage 3 unlocked when current=3 and 2 completed", 3, _progress(3, [1, 2]), True),
-    ("stage 3 locked when current=3 but 2 NOT completed", 3, _progress(3, [1]), False),
-    ("stage 4 locked when current=3 and 3 not completed", 4, _progress(3, [1, 2]), False),
-    ("stage 4 unlocked when 3 completed", 4, _progress(3, [1, 2, 3]), True),
-    # Edge: current_stage jumped ahead (DB mutation) without completing predecessors
-    ("stage 5 locked despite current=5 if 4 not completed", 5, _progress(5, [1, 2, 3]), False),
-    ("stage 5 unlocked when current=5 and 4 completed", 5, _progress(5, [1, 2, 3, 4]), True),
-    # BUG-STAGE-001: chain-validation — the immediate predecessor alone is not
-    # enough.  ``completed_stages=[4]`` used to unlock stage 5 under the old
-    # single-step check; the chain check requires every stage in {1..4}.
-    ("BUG-STAGE-001 stage 5 locked when only 4 completed", 5, _progress(5, [4]), False),
-    ("BUG-STAGE-001 stage 5 locked with mid-chain gap", 5, _progress(5, [1, 2, 4]), False),
-    ("BUG-STAGE-001 stage 36 locked when only 35 completed", 36, _progress(36, [35]), False),
-    (
-        "BUG-STAGE-001 stage 5 unlocked only when {1,2,3,4} all completed",
-        5,
-        _progress(5, [1, 2, 3, 4]),
-        True,
-    ),
+    ("stage 2 unlocked when current=2", 2, _progress(2, [1]), True),
+    ("stage 2 unlocked when current=2 (drifted completed list)", 2, _progress(2, []), True),
+    ("stage 3 locked when current=2", 3, _progress(2, [1]), False),
+    ("stage 3 unlocked when current=3", 3, _progress(3, [1, 2]), True),
+    ("stage 3 unlocked when current=3 (drifted completed list)", 3, _progress(3, [1]), True),
+    ("stage 4 locked when current=3", 4, _progress(3, [1, 2]), False),
+    ("stage 4 unlocked when current=4", 4, _progress(4, [1, 2, 3]), True),
+    # ``completed_stages`` is ignored; ``current_stage`` is the single
+    # source of truth (BUG-STAGE-002).  These cases would have flipped
+    # under the old chain-validation contract -- under the new contract
+    # the answer derives from ``current_stage`` alone.
+    ("stage 5 unlocked when current=5 (drifted completed list)", 5, _progress(5, [1, 2, 3]), True),
+    ("stage 5 unlocked when current=5 (canonical)", 5, _progress(5, [1, 2, 3, 4]), True),
+    ("stage 5 locked when current=4", 5, _progress(4, [1, 2, 3, 4]), False),
+    ("stage 36 unlocked when current=36", 36, _progress(36, [35]), True),
 ]
 
 

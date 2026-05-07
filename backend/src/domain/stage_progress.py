@@ -70,42 +70,37 @@ async def get_user_progress_for_update(session: AsyncSession, user_id: int) -> S
 def is_stage_unlocked(stage_number: int, progress: StageProgress | None) -> bool:
     """Determine if a stage is unlocked for the user.
 
-    Stage 1 is always unlocked.  For stage N > 1, **every** prior stage must
-    be in ``completed_stages`` — not just the immediate predecessor.  The
-    single-predecessor shortcut (``(N-1) in completed_stages``) lets any
-    admin tool, data import, or legacy row with a hole in the chain (e.g.
-    ``[35]``) expose every intermediate stage it never actually completed.
-    The chain check closes that gap without depending on the separate
-    ``current_stage`` signal, which can drift out of sync with
-    ``completed_stages`` independently.
+    Stage 1 is always unlocked.  For stage ``N > 1`` the canonical
+    invariant is ``N <= current_stage``; ``current_stage`` is the
+    single source of truth (BUG-STAGE-002), so the stored
+    ``completed_stages`` list is intentionally ignored here -- it can
+    drift on legacy rows or admin scripts that update one field
+    without the other, and the chain-of-prior-stages check used to
+    silently flip the answer between the unlock and display paths.
     """
     if stage_number == _STAGE_1:
         return True
     if progress is None:
         return False
-    required = set(range(1, stage_number))
-    return required.issubset(set(progress.completed_stages or []))
+    return stage_number <= progress.current_stage
 
 
 def next_stage_for(progress: StageProgress | None) -> int:
     """Return the first unfinished stage for ``progress``.
 
-    Fresh users (``progress is None``) start at stage 1.  Otherwise we take
-    ``min({1..TOTAL_STAGES} - completed_stages)`` — the first *hole* in the
-    completion set, not ``max(completed) + 1``.  The distinction matters for
-    legacy rows like ``completed_stages=[1, 3]``: ``max+1`` would advance
-    past stage 2 silently; ``min(missing)`` returns 2 and keeps the chain-
-    validation invariant aligned with unlock-checking on dirty data.  Raises
-    :class:`AllStagesCompletedError` when every stage is already completed
-    so the caller cannot blindly advance past the curriculum.
+    Fresh users (``progress is None``) start at stage 1.  Otherwise
+    the next stage is ``current_stage + 1`` -- ``current_stage`` is the
+    single source of truth (BUG-STAGE-002) so the helper does not
+    consult the stored ``completed_stages`` list.  Raises
+    :class:`AllStagesCompletedError` when the user is already at the
+    final stage so the caller cannot blindly advance past the
+    curriculum.
     """
     if progress is None:
         return _STAGE_1
-    completed = set(progress.completed_stages or [])
-    missing = set(range(1, TOTAL_STAGES + 1)) - completed
-    if not missing:
+    if progress.current_stage >= TOTAL_STAGES:
         raise AllStagesCompletedError
-    return min(missing)
+    return progress.current_stage + 1
 
 
 async def _compute_habits_progress(session: AsyncSession, user_id: int, stage_number: int) -> float:
