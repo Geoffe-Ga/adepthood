@@ -128,8 +128,8 @@ async def test_prompt_response_journal_entry_matches_sanitized(
     # Filter by the stage_reflection tag rather than indexing items[0] so the
     # assertion does not depend on list-ordering (a future change to the
     # default journal sort would otherwise break this test silently).
-    reflections = [e for e in journal.json()["items"] if e["tag"] == "stage_reflection"]
-    assert reflections, "stage-reflection journal entry should exist"
+    reflections = [e for e in journal.json()["items"] if e["tag"] == "weekly_prompt"]
+    assert reflections, "weekly-prompt journal entry should exist"
     assert reflections[0]["message"] == "helloworld"
 
 
@@ -174,7 +174,7 @@ async def test_prompt_response_too_long_returns_422(
     ):
         resp = await async_client.post(
             "/prompts/1/respond",
-            json={"response": "hello"},
+            json={"response": "hello world friend"},
             headers=headers,
         )
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY

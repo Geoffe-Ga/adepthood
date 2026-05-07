@@ -95,10 +95,18 @@ async def get_current_prompt(
 
 @dataclass
 class _HistoryFilters:
-    """Query parameters for prompt history pagination."""
+    """Query parameters for prompt history pagination.
+
+    ``offset`` is capped at ``TOTAL_WEEKS`` (BUG-PROMPT-006): a
+    well-behaved client never goes past the curriculum length, and a
+    misbehaving one cannot force the DB to skip a billion rows.
+    ``include_total=false`` opts out of the count subquery for cursor-
+    style pagination over a small (<= 36) list.
+    """
 
     limit: int = Query(default=50, ge=1, le=200)
-    offset: int = Query(default=0, ge=0)
+    offset: int = Query(default=0, ge=0, le=TOTAL_WEEKS)
+    include_total: bool = Query(default=True)
 
 
 @router.get("/history", response_model=PromptListResponse)
@@ -114,8 +122,11 @@ async def list_prompt_history(
         .order_by(col(PromptResponse.week_number).desc())
     )
 
-    count_query = select(func.count()).select_from(query.subquery())
-    total = (await session.execute(count_query)).scalar() or 0
+    if filters.include_total:
+        count_query = select(func.count()).select_from(query.subquery())
+        total = (await session.execute(count_query)).scalar() or 0
+    else:
+        total = 0  # caller opted out; client computes from the page
 
     query = query.offset(filters.offset).limit(filters.limit)
     result = await session.execute(query)
@@ -125,7 +136,12 @@ async def list_prompt_history(
         items=[
             PromptDetail(
                 week_number=pr.week_number,
-                question=pr.question,
+                # BUG-PROMPT-010: derive ``question`` from the live
+                # ``WEEKLY_PROMPTS`` dict so history and ``/current``
+                # cannot drift when prompts are revised.  Falls back to
+                # the persisted snapshot only if the dict lookup is
+                # ``None`` (a week that was retired entirely).
+                question=get_prompt_for_week(pr.week_number) or pr.question,
                 has_responded=True,
                 response=pr.response,
                 timestamp=pr.timestamp,
@@ -133,7 +149,11 @@ async def list_prompt_history(
             for pr in items
         ],
         total=total,
-        has_more=(filters.offset + filters.limit) < total,
+        has_more=(
+            len(items) == filters.limit
+            if not filters.include_total
+            else (filters.offset + filters.limit) < total
+        ),
     )
 
 
@@ -226,12 +246,14 @@ async def submit_prompt_response(
     )
     session.add(prompt_response)
 
-    # Also create a journal entry so the response appears in journal history
+    # Also create a journal entry so the response appears in journal history.
+    # BUG-PROMPT-008: tag as WEEKLY_PROMPT so stage-scoped aggregates that
+    # filter by STAGE_REFLECTION do not double-count weekly cadence rows.
     journal_entry = JournalEntry(
         message=cleaned_response,
         sender="user",
         user_id=current_user,
-        tag=JournalTag.STAGE_REFLECTION,
+        tag=JournalTag.WEEKLY_PROMPT,
     )
     session.add(journal_entry)
 

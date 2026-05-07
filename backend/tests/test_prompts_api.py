@@ -40,7 +40,7 @@ async def test_unauthenticated_history_returns_401(async_client: AsyncClient) ->
 
 @pytest.mark.asyncio
 async def test_unauthenticated_respond_returns_401(async_client: AsyncClient) -> None:
-    resp = await async_client.post("/prompts/1/respond", json={"response": "test"})
+    resp = await async_client.post("/prompts/1/respond", json={"response": "a thoughtful answer"})
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
 
 
@@ -168,7 +168,7 @@ async def test_submit_response_invalid_week_returns_404(async_client: AsyncClien
     headers = await _signup(async_client)
     resp = await async_client.post(
         "/prompts/99/respond",
-        json={"response": "test"},
+        json={"response": "a thoughtful response"},
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.NOT_FOUND
@@ -224,7 +224,7 @@ async def test_current_week_derives_from_response_count_not_max(
     # Submit a response for week 1 successfully.
     resp1 = await async_client.post(
         "/prompts/1/respond",
-        json={"response": "Ground."},
+        json={"response": "Grounding feels like home."},
         headers=headers,
     )
     assert resp1.status_code == HTTPStatus.CREATED
@@ -232,7 +232,7 @@ async def test_current_week_derives_from_response_count_not_max(
     # Attempt a future week — must fail and NOT be persisted.
     resp_skip = await async_client.post(
         "/prompts/10/respond",
-        json={"response": "sneaky"},
+        json={"response": "sneaky attempt to skip"},
         headers=headers,
     )
     assert resp_skip.status_code == HTTPStatus.FORBIDDEN
@@ -245,7 +245,12 @@ async def test_current_week_derives_from_response_count_not_max(
 
 @pytest.mark.asyncio
 async def test_submit_response_creates_journal_entry(async_client: AsyncClient) -> None:
-    """Submitting a prompt response also creates a journal entry with stage_reflection tag."""
+    """Submitting a prompt response creates a journal entry tagged ``weekly_prompt``.
+
+    BUG-PROMPT-008: weekly cadence rows used to share the
+    ``stage_reflection`` tag with stage-transition reflections,
+    polluting any stage-scoped journal aggregate.
+    """
     headers = await _signup(async_client)
     await async_client.post(
         "/prompts/1/respond",
@@ -253,14 +258,13 @@ async def test_submit_response_creates_journal_entry(async_client: AsyncClient) 
         headers=headers,
     )
 
-    # Check journal entries
     journal_resp = await async_client.get("/journal/", headers=headers)
     assert journal_resp.status_code == HTTPStatus.OK
     journal_data = journal_resp.json()
     assert journal_data["total"] == 1
     entry = journal_data["items"][0]
     assert entry["message"] == "I reflected on grounding."
-    assert entry["tag"] == "stage_reflection"
+    assert entry["tag"] == "weekly_prompt"
     assert entry["sender"] == "user"
 
 
@@ -375,7 +379,7 @@ async def test_concurrent_prompt_responses_allow_exactly_one(
         *[
             concurrent_async_client.post(
                 "/prompts/1/respond",
-                json={"response": f"Attempt {i}"},
+                json={"response": f"A meaningful attempt #{i}"},
                 headers=headers,
             )
             for i in range(5)
@@ -390,3 +394,81 @@ async def test_concurrent_prompt_responses_allow_exactly_one(
 
     assert successes == 1, f"Expected exactly 1 success, got {successes}"
     assert rejections == 4, f"Expected 4 conflicts, got {rejections}"
+
+
+@pytest.mark.asyncio
+async def test_response_rejects_whitespace_only(async_client: AsyncClient) -> None:
+    """BUG-PROMPT-005: a stripped response shorter than the threshold is rejected."""
+    headers = await _signup(async_client)
+    resp = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "   "},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_response_rejects_short_answer(async_client: AsyncClient) -> None:
+    """BUG-PROMPT-005: a short stripped response (< threshold) is rejected."""
+    headers = await _signup(async_client)
+    resp = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "ok."},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_history_offset_is_capped(async_client: AsyncClient) -> None:
+    """BUG-PROMPT-006: out-of-range ``offset`` is rejected at the schema layer."""
+    headers = await _signup(async_client)
+    resp = await async_client.get("/prompts/history?offset=1000000000&limit=1", headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_history_skips_count_when_total_disabled(async_client: AsyncClient) -> None:
+    """BUG-PROMPT-006: ``include_total=false`` returns ``total=0`` and skips the count subquery."""
+    headers = await _signup(async_client)
+    await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "A meaningful first reflection."},
+        headers=headers,
+    )
+    resp = await async_client.get("/prompts/history?include_total=false", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["total"] == 0  # caller opted out
+    assert len(body["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_history_question_uses_live_dict(
+    async_client: AsyncClient,
+) -> None:
+    """BUG-PROMPT-010: the persisted ``question`` snapshot is overridden by the live dict.
+
+    Submit with one snapshot text, then patch the live dict to a new
+    text -- the history endpoint serves the new text so it cannot drift
+    from ``/current``.
+    """
+    from domain import weekly_prompts  # noqa: PLC0415 -- localised monkeypatch
+
+    headers = await _signup(async_client)
+    await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "A meaningful first reflection."},
+        headers=headers,
+    )
+
+    original = weekly_prompts.WEEKLY_PROMPTS[1]
+    weekly_prompts.WEEKLY_PROMPTS[1] = "REVISED prompt for week 1."
+    try:
+        resp = await async_client.get("/prompts/history", headers=headers)
+        assert resp.status_code == HTTPStatus.OK
+        body = resp.json()
+        assert body["items"][0]["question"] == "REVISED prompt for week 1."
+    finally:
+        weekly_prompts.WEEKLY_PROMPTS[1] = original

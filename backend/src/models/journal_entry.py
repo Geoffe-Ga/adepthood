@@ -29,6 +29,11 @@ class JournalTag(enum.StrEnum):
     STAGE_REFLECTION = "stage_reflection"
     PRACTICE_NOTE = "practice_note"
     HABIT_NOTE = "habit_note"
+    # BUG-PROMPT-008: weekly-prompt submissions used to share
+    # ``STAGE_REFLECTION`` with stage-transition reflections, polluting
+    # any stage-scoped journal aggregate.  ``WEEKLY_PROMPT`` separates
+    # the cadences so downstream filters can tell them apart.
+    WEEKLY_PROMPT = "weekly_prompt"
 
 
 class JournalEntry(SQLModel, table=True):
