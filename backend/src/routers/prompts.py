@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import func
+from sqlalchemy import Select, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -109,6 +109,42 @@ class _HistoryFilters:
     include_total: bool = Query(default=True)
 
 
+def _history_detail(pr: PromptResponse) -> PromptDetail:
+    """Serialize a ``PromptResponse`` row, deriving ``question`` from the live dict.
+
+    BUG-PROMPT-010: falls back to the persisted ``question`` snapshot
+    only when the live dict lookup is ``None`` (a week that was retired
+    entirely) so history cannot drift from ``/current``.
+    """
+    return PromptDetail(
+        week_number=pr.week_number,
+        question=get_prompt_for_week(pr.week_number) or pr.question,
+        has_responded=True,
+        response=pr.response,
+        timestamp=pr.timestamp,
+    )
+
+
+async def _maybe_total(
+    session: AsyncSession,
+    query: Select[tuple[PromptResponse]],
+    *,
+    include_total: bool,
+) -> int:
+    """Run the count subquery only when the caller opted in (BUG-PROMPT-006)."""
+    if not include_total:
+        return 0
+    count_query = select(func.count()).select_from(query.subquery())
+    return int((await session.execute(count_query)).scalar() or 0)
+
+
+def _has_more(items_len: int, filters: _HistoryFilters, total: int) -> bool:
+    """Resolve ``has_more`` against either the cursor or the total."""
+    if not filters.include_total:
+        return items_len == filters.limit
+    return (filters.offset + filters.limit) < total
+
+
 @router.get("/history", response_model=PromptListResponse)
 async def list_prompt_history(
     current_user: Annotated[int, Depends(get_current_user)],
@@ -121,39 +157,13 @@ async def list_prompt_history(
         .where(PromptResponse.user_id == current_user)
         .order_by(col(PromptResponse.week_number).desc())
     )
-
-    if filters.include_total:
-        count_query = select(func.count()).select_from(query.subquery())
-        total = (await session.execute(count_query)).scalar() or 0
-    else:
-        total = 0  # caller opted out; client computes from the page
-
-    query = query.offset(filters.offset).limit(filters.limit)
-    result = await session.execute(query)
-    items = list(result.scalars().all())
-
+    total = await _maybe_total(session, query, include_total=filters.include_total)
+    page_query = query.offset(filters.offset).limit(filters.limit)
+    items = list((await session.execute(page_query)).scalars().all())
     return PromptListResponse(
-        items=[
-            PromptDetail(
-                week_number=pr.week_number,
-                # BUG-PROMPT-010: derive ``question`` from the live
-                # ``WEEKLY_PROMPTS`` dict so history and ``/current``
-                # cannot drift when prompts are revised.  Falls back to
-                # the persisted snapshot only if the dict lookup is
-                # ``None`` (a week that was retired entirely).
-                question=get_prompt_for_week(pr.week_number) or pr.question,
-                has_responded=True,
-                response=pr.response,
-                timestamp=pr.timestamp,
-            )
-            for pr in items
-        ],
+        items=[_history_detail(pr) for pr in items],
         total=total,
-        has_more=(
-            len(items) == filters.limit
-            if not filters.include_total
-            else (filters.offset + filters.limit) < total
-        ),
+        has_more=_has_more(len(items), filters, total),
     )
 
 
