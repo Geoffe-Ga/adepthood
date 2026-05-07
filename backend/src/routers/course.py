@@ -12,7 +12,7 @@ from sqlmodel import col, select
 
 from database import get_session
 from domain.course import compute_days_elapsed, filter_content_for_user, next_unlock_day
-from domain.stage_progress import get_user_progress, is_stage_unlocked, stage_exists
+from domain.stage_progress import get_user_progress, is_stage_unlocked
 from errors import forbidden, not_found
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
@@ -349,11 +349,16 @@ async def get_course_progress(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> CourseProgressResponse:
-    """Get read-progress for a stage's content."""
-    if not await stage_exists(session, stage_number):
-        raise not_found("stage")
+    """Get read-progress for a stage's content; gated on the caller's unlock state.
 
+    BUG-COURSE-003: previously this endpoint returned ``total_items`` and
+    ``next_unlock_day`` without checking unlock, letting any authenticated
+    client reconstruct the full 36-stage drip schedule by walking
+    stage_number 1..36.  Now the caller must have the stage unlocked or
+    they get the same 403 the sibling endpoints already issue.
+    """
     stage = await _get_stage_by_number(session, stage_number)
+    await _check_stage_unlocked(session, current_user, stage_number)
     result = await session.execute(
         select(StageContent).where(StageContent.course_stage_id == stage.id)
     )

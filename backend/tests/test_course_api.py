@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
@@ -11,6 +12,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
+from domain.course import compute_days_elapsed
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
@@ -712,3 +714,34 @@ async def test_concurrent_mark_read_collapses_to_one_row(
         )
         rows = list(result.scalars().all())
     assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_progress_endpoint_rejects_locked_stage(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-COURSE-003: ``/course/stages/{n}/progress`` must 403 on a locked stage.
+
+    Pre-fix the endpoint returned ``total_items`` and ``next_unlock_day``
+    for any stage the user could name, letting them reconstruct the full
+    drip schedule by walking 1..36.  Now a locked stage gets the same
+    ``stage_locked`` 403 the sibling list endpoint already issues.
+    """
+    headers, _ = await _signup(async_client, "locked_progress")
+    await _seed_stage_with_content(db_session, stage_number=2)
+    resp = await async_client.get("/course/stages/2/progress", headers=headers)
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.json()["detail"] == "stage_locked"
+
+
+def test_compute_days_elapsed_logs_on_future_timestamp(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """BUG-COURSE-005: a future ``stage_started_at`` clamps to 0 + WARNING."""
+    future = datetime.now(UTC) + timedelta(hours=2)
+    with caplog.at_level(logging.WARNING, logger="domain.course"):
+        days = compute_days_elapsed(future)
+    assert days == 0
+    smell_logs = [r for r in caplog.records if r.message == "stage_started_at_in_future"]
+    assert smell_logs, "expected a stage_started_at_in_future warning"
