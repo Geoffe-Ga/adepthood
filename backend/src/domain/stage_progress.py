@@ -68,7 +68,13 @@ async def get_user_progress_for_update(session: AsyncSession, user_id: int) -> S
 
 
 def is_stage_unlocked(stage_number: int, progress: StageProgress | None) -> bool:
-    """Return True iff ``N <= current_stage`` (or N is stage 1)."""
+    """Return True iff ``N <= current_stage`` (or N is stage 1).
+
+    Relies on the invariant that ``current_stage`` is only advanced via
+    the validated router path (advance must equal ``current + 1``); a
+    direct DB write that bumps ``current_stage`` would unlock prior
+    stages without their prerequisites being completed.
+    """
     if stage_number == _STAGE_1:
         return True
     if progress is None:

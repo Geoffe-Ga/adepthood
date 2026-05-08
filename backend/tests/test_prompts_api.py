@@ -461,7 +461,7 @@ async def test_history_skips_count_when_total_disabled(async_client: AsyncClient
     resp = await async_client.get("/prompts/history?include_total=false", headers=headers)
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
-    assert body["total"] == 0  # caller opted out
+    assert body["total"] is None  # opt-out sentinel; ``has_more`` drives pagination
     assert len(body["items"]) == 1
 
 
@@ -514,6 +514,36 @@ async def test_history_cursor_has_more_true_when_more_remain(
     body = resp.json()
     assert len(body["items"]) == 1
     assert body["has_more"] is True
+
+
+@pytest.mark.asyncio
+async def test_history_total_aware_has_more_false_at_boundary(
+    async_client: AsyncClient,
+) -> None:
+    """Count-aware mode reports ``has_more=False`` when ``offset + limit == total``.
+
+    Pins the strict-less-than comparison in the count-aware branch so a
+    future ``<=`` regression would fail this test instead of inflating
+    ``has_more`` for clients that have read every row.
+    """
+    headers = await _signup(async_client)
+    for week in range(1, 4):
+        resp = await async_client.post(
+            f"/prompts/{week}/respond",
+            json={"response": f"Week {week} reflection text."},
+            headers=headers,
+        )
+        assert resp.status_code == HTTPStatus.CREATED
+
+    resp = await async_client.get(
+        "/prompts/history?include_total=true&limit=3&offset=0",
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["total"] == 3
+    assert len(body["items"]) == 3
+    assert body["has_more"] is False
 
 
 @pytest.mark.asyncio

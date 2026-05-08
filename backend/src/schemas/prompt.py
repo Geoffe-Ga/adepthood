@@ -11,7 +11,9 @@ PROMPT_RESPONSE_MAX_LENGTH = 10_000
 # Threshold checked *after* ``str.strip()`` so a whitespace-padded
 # payload cannot dodge the bound; ``min_length`` alone counts raw
 # characters and would accept three spaces as a valid reflection.
-_PROMPT_RESPONSE_MIN_STRIPPED_LENGTH = 10
+# Exported so the frontend can mirror the same bound client-side
+# without duplicating the magic number.
+PROMPT_RESPONSE_MIN_STRIPPED_LENGTH = 10
 
 
 class PromptDetail(BaseModel):
@@ -38,9 +40,9 @@ class PromptSubmit(BaseModel):
         canonical ``sanitize_user_text`` -> NFC/strip pipeline remains
         the single normalisation step that touches the persisted bytes.
         """
-        if len(value.strip()) < _PROMPT_RESPONSE_MIN_STRIPPED_LENGTH:
+        if len(value.strip()) < PROMPT_RESPONSE_MIN_STRIPPED_LENGTH:
             msg = (
-                f"response must contain at least {_PROMPT_RESPONSE_MIN_STRIPPED_LENGTH} "
+                f"response must contain at least {PROMPT_RESPONSE_MIN_STRIPPED_LENGTH} "
                 "non-whitespace characters"
             )
             raise ValueError(msg)
@@ -48,14 +50,8 @@ class PromptSubmit(BaseModel):
 
 
 class PromptListResponse(BaseModel):
-    """Paginated list of prompt responses.
-
-    ``total`` is ``0`` when the caller requested ``?include_total=false``;
-    the cursor-mode response uses ``has_more`` (driven by a peek row)
-    to signal whether a follow-up page exists, so clients that opted
-    out of counting must not infer a true row count from ``total``.
-    """
+    """Paginated list of prompt responses; ``total`` is ``None`` when not requested."""
 
     items: list[PromptDetail]
-    total: int
+    total: int | None
     has_more: bool
