@@ -48,7 +48,13 @@ class PromptSubmit(BaseModel):
 
 
 class PromptListResponse(BaseModel):
-    """Paginated list of prompt responses."""
+    """Paginated list of prompt responses.
+
+    ``total`` is ``0`` when the caller requested ``?include_total=false``;
+    the cursor-mode response uses ``has_more`` (driven by a peek row)
+    to signal whether a follow-up page exists, so clients that opted
+    out of counting must not infer a true row count from ``total``.
+    """
 
     items: list[PromptDetail]
     total: int

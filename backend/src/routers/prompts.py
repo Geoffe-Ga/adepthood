@@ -126,17 +126,8 @@ async def _maybe_total(
     return int((await session.execute(count_query)).scalar() or 0)
 
 
-def _has_more(items_len: int, filters: _HistoryFilters, total: int) -> bool:
-    """Resolve ``has_more`` against either the cursor or the total.
-
-    The cursor branch is also capped by ``TOTAL_WEEKS`` so a final-page
-    request that happens to fill ``limit`` exactly does not lie about a
-    37th item being available.
-    """
-    if not filters.include_total:
-        page_full = items_len == filters.limit
-        more_remain = (filters.offset + filters.limit) < TOTAL_WEEKS
-        return page_full and more_remain
+def _has_more_with_total(filters: _HistoryFilters, total: int) -> bool:
+    """``has_more`` for the count-aware branch -- compare against the known total."""
     return (filters.offset + filters.limit) < total
 
 
@@ -146,19 +137,45 @@ async def list_prompt_history(
     session: Annotated[AsyncSession, Depends(get_session)],
     filters: Annotated[_HistoryFilters, Depends()],
 ) -> PromptListResponse:
-    """List all past prompts and responses for the user, paginated."""
+    """List all past prompts and responses for the user, paginated.
+
+    ``include_total=true`` (default) runs the count subquery and uses
+    ``offset + limit < total`` for ``has_more``.
+
+    ``include_total=false`` opts out of the count and uses a peek
+    pattern: fetch ``limit + 1`` rows, return at most ``limit`` items,
+    and report ``has_more`` from whether the peek row materialised.
+    This produces an accurate cursor signal without paying for the
+    extra ``COUNT(*)`` -- a 37th item could not exist (offset is capped
+    at ``TOTAL_WEEKS``), but mid-curriculum users with fewer responses
+    than the curriculum length now also get ``has_more=False`` on
+    their last real page.
+
+    When ``include_total=false`` the response carries ``total=0`` as a
+    documented "count not requested" sentinel; clients that need an
+    exact count must opt in or compute from accumulated pages.
+    """
     query = (
         select(PromptResponse)
         .where(PromptResponse.user_id == current_user)
         .order_by(col(PromptResponse.week_number).desc())
     )
     total = await _maybe_total(session, query, include_total=filters.include_total)
-    page_query = query.offset(filters.offset).limit(filters.limit)
-    items = list((await session.execute(page_query)).scalars().all())
+    if filters.include_total:
+        page_query = query.offset(filters.offset).limit(filters.limit)
+        items = list((await session.execute(page_query)).scalars().all())
+        has_more = _has_more_with_total(filters, total)
+    else:
+        # Cursor mode: fetch one extra row so we can tell whether a
+        # follow-up page would have any real items.
+        peek_query = query.offset(filters.offset).limit(filters.limit + 1)
+        rows = list((await session.execute(peek_query)).scalars().all())
+        has_more = len(rows) > filters.limit
+        items = rows[: filters.limit]
     return PromptListResponse(
         items=[_history_detail(pr) for pr in items],
         total=total,
-        has_more=_has_more(len(items), filters, total),
+        has_more=has_more,
     )
 
 

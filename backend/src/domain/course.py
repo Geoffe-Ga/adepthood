@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 def compute_days_elapsed(stage_started_at: datetime) -> int:
     """Return whole days elapsed; clamps a future ``stage_started_at`` to 0 + WARNING."""
     now = datetime.now(UTC)
+    # SQLite drops tzinfo on round-trip, so coerce naive values to UTC
+    # before subtraction to avoid TypeError under the test fixture.
     if stage_started_at.tzinfo is None:
         stage_started_at = stage_started_at.replace(tzinfo=UTC)
     delta = now - stage_started_at

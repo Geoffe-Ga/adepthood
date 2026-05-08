@@ -466,13 +466,66 @@ async def test_history_skips_count_when_total_disabled(async_client: AsyncClient
 
 
 @pytest.mark.asyncio
+async def test_history_cursor_has_more_false_when_no_more_items(
+    async_client: AsyncClient,
+) -> None:
+    """Cursor mode reports ``has_more=False`` on the last real page.
+
+    Submit one response, then page with ``limit=1&offset=1`` -- the
+    peek pattern (``limit + 1`` fetch) returns zero rows, so the
+    response correctly says no more pages exist even though
+    ``offset + limit < TOTAL_WEEKS``.
+    """
+    headers = await _signup(async_client)
+    await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "A meaningful first reflection."},
+        headers=headers,
+    )
+    resp = await async_client.get(
+        "/prompts/history?include_total=false&limit=1&offset=1",
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["items"] == []
+    assert body["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_history_cursor_has_more_true_when_more_remain(
+    async_client: AsyncClient,
+) -> None:
+    """Cursor mode reports ``has_more=True`` when a peek row materialises."""
+    headers = await _signup(async_client)
+    for week in range(1, 4):
+        resp = await async_client.post(
+            f"/prompts/{week}/respond",
+            json={"response": f"Week {week} reflection text."},
+            headers=headers,
+        )
+        assert resp.status_code == HTTPStatus.CREATED
+
+    resp = await async_client.get(
+        "/prompts/history?include_total=false&limit=1&offset=0",
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert len(body["items"]) == 1
+    assert body["has_more"] is True
+
+
+@pytest.mark.asyncio
 async def test_history_question_uses_live_dict(
     async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The persisted ``question`` snapshot is overridden by the live dict.
 
-    Submit a response, then patch ``WEEKLY_PROMPTS`` -- the history
-    endpoint serves the new text so it cannot drift from ``/current``.
+    Submit a response, then patch ``WEEKLY_PROMPTS`` via ``monkeypatch.setitem``
+    -- the fixture restores the dict on test exit so the mutation cannot
+    leak into a parallel run.
     """
     headers = await _signup(async_client)
     await async_client.post(
@@ -481,12 +534,8 @@ async def test_history_question_uses_live_dict(
         headers=headers,
     )
 
-    original = weekly_prompts.WEEKLY_PROMPTS[1]
-    weekly_prompts.WEEKLY_PROMPTS[1] = "REVISED prompt for week 1."
-    try:
-        resp = await async_client.get("/prompts/history", headers=headers)
-        assert resp.status_code == HTTPStatus.OK
-        body = resp.json()
-        assert body["items"][0]["question"] == "REVISED prompt for week 1."
-    finally:
-        weekly_prompts.WEEKLY_PROMPTS[1] = original
+    monkeypatch.setitem(weekly_prompts.WEEKLY_PROMPTS, 1, "REVISED prompt for week 1.")
+    resp = await async_client.get("/prompts/history", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["items"][0]["question"] == "REVISED prompt for week 1."
