@@ -473,13 +473,7 @@ async def test_update_progress_advances_from_current_stage_only(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """BUG-STAGE-002: advance is derived from ``current_stage`` alone.
-
-    A drifted ``completed_stages`` list cannot tilt the server's
-    derived next stage.  ``current_stage=5`` advances to 6 regardless
-    of what ``completed_stages`` looks like; the client asserting 6
-    succeeds.
-    """
+    """Advance derives from ``current_stage`` alone; drift in ``completed_stages`` is ignored."""
     headers, user_id = await _signup(async_client, "dirty")
     progress = StageProgress(user_id=user_id, current_stage=5, completed_stages=[1, 2, 4])
     db_session.add(progress)
@@ -590,7 +584,7 @@ async def test_history_rejects_locked_stage(
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-# ── BUG-STAGE-002: is_stage_unlocked correctness ───────────────────────
+# ── is_stage_unlocked correctness ──────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -598,7 +592,7 @@ async def test_stage_unlocked_uses_current_stage(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """Stage N is unlocked iff ``N <= current_stage`` (BUG-STAGE-002)."""
+    """Stage N is unlocked iff ``N <= current_stage``."""
     headers, user_id = await _signup(async_client)
     await _seed_stages(db_session, count=3)
     progress = StageProgress(user_id=user_id, current_stage=3, completed_stages=[1, 2])
@@ -618,14 +612,7 @@ async def test_stage_unlocked_uses_current_stage_only(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """BUG-STAGE-002: ``current_stage`` is the single source of truth.
-
-    A drifted ``completed_stages`` list (here ``[2]`` with
-    ``current_stage=3``) cannot block the unlock decision -- the
-    display path and the unlock path agree on ``current_stage`` so a
-    legacy DB mutation that touched only one field does not flip
-    stages between locked and unlocked.
-    """
+    """``current_stage`` is the source of truth; a drifted ``completed_stages`` is ignored."""
     headers, user_id = await _signup(async_client)
     await _seed_stages(db_session, count=3)
     progress = StageProgress(user_id=user_id, current_stage=3, completed_stages=[2])

@@ -230,15 +230,7 @@ async def _create_initial_progress(
 
 
 def _derive_next_stage(existing: StageProgress) -> tuple[int, list[int]]:
-    """Derive the server-expected next stage from ``existing``.
-
-    ``current_stage`` is the single source of truth (BUG-STAGE-002):
-    the next stage is ``current_stage + 1`` capped by the curriculum
-    length.  ``completed_stages`` is recomputed canonically as
-    ``[1..derived_next - 1]`` so the persisted value stays aligned
-    with the wire contract for any legacy admin code that still
-    reads it.
-    """
+    """Return ``(current_stage + 1, [1..current_stage])``; raises 409 at curriculum end."""
     if existing.current_stage >= TOTAL_STAGES:
         raise conflict("all_stages_completed")
     derived_next = existing.current_stage + 1

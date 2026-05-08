@@ -1,9 +1,4 @@
-"""Tests for ``next_stage_for``.
-
-Under BUG-STAGE-002's single-source-of-truth model the helper derives
-the next stage from ``current_stage`` alone (``current_stage + 1``,
-capped by ``TOTAL_STAGES``).  ``completed_stages`` is ignored.
-"""
+"""Tests for ``next_stage_for`` -- derives ``current_stage + 1`` (capped by ``TOTAL_STAGES``)."""
 
 from __future__ import annotations
 
@@ -38,12 +33,7 @@ def test_current_stage_three_returns_four() -> None:
 
 
 def test_completed_stages_drift_is_ignored() -> None:
-    """A drifted ``completed_stages`` value cannot tilt the answer.
-
-    Pre-fix this would have read the list and returned the first hole;
-    under the BUG-STAGE-002 contract ``current_stage + 1`` is the only
-    signal that matters.
-    """
+    """A drifted ``completed_stages`` value cannot tilt the answer."""
     progress = StageProgress(id=1, user_id=1, current_stage=5, completed_stages=[1, 99])
     assert next_stage_for(progress) == 6
 

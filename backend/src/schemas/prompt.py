@@ -8,11 +8,9 @@ from pydantic import BaseModel, Field, field_validator
 
 PROMPT_RESPONSE_MAX_LENGTH = 10_000
 
-# BUG-PROMPT-005: ``min_length`` counts raw characters including
-# whitespace, so a payload of three spaces was previously accepted as a
-# valid reflection.  Rejecting anything shorter than this threshold
-# after ``str.strip()`` blocks the trivial auto-advance script without
-# preventing genuinely terse-but-meaningful entries.
+# Threshold checked *after* ``str.strip()`` so a whitespace-padded
+# payload cannot dodge the bound; ``min_length`` alone counts raw
+# characters and would accept three spaces as a valid reflection.
 _PROMPT_RESPONSE_MIN_STRIPPED_LENGTH = 10
 
 
@@ -34,7 +32,12 @@ class PromptSubmit(BaseModel):
     @field_validator("response")
     @classmethod
     def _reject_whitespace_only(cls, value: str) -> str:
-        """Reject responses whose stripped length falls below the threshold."""
+        """Reject responses whose stripped length falls below the threshold.
+
+        The original (unstripped) value is returned so the router's
+        canonical ``sanitize_user_text`` -> NFC/strip pipeline remains
+        the single normalisation step that touches the persisted bytes.
+        """
         if len(value.strip()) < _PROMPT_RESPONSE_MIN_STRIPPED_LENGTH:
             msg = (
                 f"response must contain at least {_PROMPT_RESPONSE_MIN_STRIPPED_LENGTH} "

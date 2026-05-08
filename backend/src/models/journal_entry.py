@@ -29,10 +29,9 @@ class JournalTag(enum.StrEnum):
     STAGE_REFLECTION = "stage_reflection"
     PRACTICE_NOTE = "practice_note"
     HABIT_NOTE = "habit_note"
-    # BUG-PROMPT-008: weekly-prompt submissions used to share
-    # ``STAGE_REFLECTION`` with stage-transition reflections, polluting
-    # any stage-scoped journal aggregate.  ``WEEKLY_PROMPT`` separates
-    # the cadences so downstream filters can tell them apart.
+    # Weekly-prompt submissions share the journal stream but need a
+    # distinct tag so stage-scoped aggregates (filtered by
+    # ``STAGE_REFLECTION``) do not double-count them.
     WEEKLY_PROMPT = "weekly_prompt"
 
 

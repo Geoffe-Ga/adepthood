@@ -68,16 +68,7 @@ async def get_user_progress_for_update(session: AsyncSession, user_id: int) -> S
 
 
 def is_stage_unlocked(stage_number: int, progress: StageProgress | None) -> bool:
-    """Determine if a stage is unlocked for the user.
-
-    Stage 1 is always unlocked.  For stage ``N > 1`` the canonical
-    invariant is ``N <= current_stage``; ``current_stage`` is the
-    single source of truth (BUG-STAGE-002), so the stored
-    ``completed_stages`` list is intentionally ignored here -- it can
-    drift on legacy rows or admin scripts that update one field
-    without the other, and the chain-of-prior-stages check used to
-    silently flip the answer between the unlock and display paths.
-    """
+    """Return True iff ``N <= current_stage`` (or N is stage 1)."""
     if stage_number == _STAGE_1:
         return True
     if progress is None:
@@ -86,16 +77,7 @@ def is_stage_unlocked(stage_number: int, progress: StageProgress | None) -> bool
 
 
 def next_stage_for(progress: StageProgress | None) -> int:
-    """Return the first unfinished stage for ``progress``.
-
-    Fresh users (``progress is None``) start at stage 1.  Otherwise
-    the next stage is ``current_stage + 1`` -- ``current_stage`` is the
-    single source of truth (BUG-STAGE-002) so the helper does not
-    consult the stored ``completed_stages`` list.  Raises
-    :class:`AllStagesCompletedError` when the user is already at the
-    final stage so the caller cannot blindly advance past the
-    curriculum.
-    """
+    """Return ``current_stage + 1`` (or 1 for fresh users); raises at the curriculum end."""
     if progress is None:
         return _STAGE_1
     if progress.current_stage >= TOTAL_STAGES:

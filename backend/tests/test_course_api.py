@@ -721,13 +721,7 @@ async def test_progress_endpoint_rejects_locked_stage(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """BUG-COURSE-003: ``/course/stages/{n}/progress`` must 403 on a locked stage.
-
-    Pre-fix the endpoint returned ``total_items`` and ``next_unlock_day``
-    for any stage the user could name, letting them reconstruct the full
-    drip schedule by walking 1..36.  Now a locked stage gets the same
-    ``stage_locked`` 403 the sibling list endpoint already issues.
-    """
+    """``/course/stages/{n}/progress`` must 403 on a locked stage."""
     headers, _ = await _signup(async_client, "locked_progress")
     await _seed_stage_with_content(db_session, stage_number=2)
     resp = await async_client.get("/course/stages/2/progress", headers=headers)
@@ -738,7 +732,7 @@ async def test_progress_endpoint_rejects_locked_stage(
 def test_compute_days_elapsed_logs_on_future_timestamp(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """BUG-COURSE-005: a future ``stage_started_at`` clamps to 0 + WARNING."""
+    """A future ``stage_started_at`` clamps to 0 and emits a WARNING."""
     future = datetime.now(UTC) + timedelta(hours=2)
     with caplog.at_level(logging.WARNING, logger="domain.course"):
         days = compute_days_elapsed(future)

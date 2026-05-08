@@ -8,6 +8,8 @@ from http import HTTPStatus
 import pytest
 from httpx import AsyncClient
 
+from domain import weekly_prompts
+
 
 async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str]:
     """Create a user and return auth headers."""
@@ -245,12 +247,7 @@ async def test_current_week_derives_from_response_count_not_max(
 
 @pytest.mark.asyncio
 async def test_submit_response_creates_journal_entry(async_client: AsyncClient) -> None:
-    """Submitting a prompt response creates a journal entry tagged ``weekly_prompt``.
-
-    BUG-PROMPT-008: weekly cadence rows used to share the
-    ``stage_reflection`` tag with stage-transition reflections,
-    polluting any stage-scoped journal aggregate.
-    """
+    """Submitting a prompt response creates a journal entry tagged ``weekly_prompt``."""
     headers = await _signup(async_client)
     await async_client.post(
         "/prompts/1/respond",
@@ -398,7 +395,7 @@ async def test_concurrent_prompt_responses_allow_exactly_one(
 
 @pytest.mark.asyncio
 async def test_response_rejects_whitespace_only(async_client: AsyncClient) -> None:
-    """BUG-PROMPT-005: a stripped response shorter than the threshold is rejected."""
+    """A whitespace-only response is rejected at the schema layer."""
     headers = await _signup(async_client)
     resp = await async_client.post(
         "/prompts/1/respond",
@@ -410,7 +407,7 @@ async def test_response_rejects_whitespace_only(async_client: AsyncClient) -> No
 
 @pytest.mark.asyncio
 async def test_response_rejects_short_answer(async_client: AsyncClient) -> None:
-    """BUG-PROMPT-005: a short stripped response (< threshold) is rejected."""
+    """A short stripped response (< threshold) is rejected."""
     headers = await _signup(async_client)
     resp = await async_client.post(
         "/prompts/1/respond",
@@ -421,8 +418,32 @@ async def test_response_rejects_short_answer(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_response_rejects_at_threshold_minus_one(async_client: AsyncClient) -> None:
+    """Boundary: 9 stripped chars is below the 10-char threshold and is rejected."""
+    headers = await _signup(async_client)
+    resp = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "  abcdefghi  "},  # strip()-> 9 chars
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_response_accepts_at_threshold(async_client: AsyncClient) -> None:
+    """Boundary: 10 stripped chars meets the threshold and is accepted."""
+    headers = await _signup(async_client)
+    resp = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "  abcdefghij  "},  # strip()-> 10 chars
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+
+
+@pytest.mark.asyncio
 async def test_history_offset_is_capped(async_client: AsyncClient) -> None:
-    """BUG-PROMPT-006: out-of-range ``offset`` is rejected at the schema layer."""
+    """Out-of-range ``offset`` is rejected at the schema layer."""
     headers = await _signup(async_client)
     resp = await async_client.get("/prompts/history?offset=1000000000&limit=1", headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
@@ -430,7 +451,7 @@ async def test_history_offset_is_capped(async_client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_history_skips_count_when_total_disabled(async_client: AsyncClient) -> None:
-    """BUG-PROMPT-006: ``include_total=false`` returns ``total=0`` and skips the count subquery."""
+    """``include_total=false`` returns ``total=0`` and skips the count subquery."""
     headers = await _signup(async_client)
     await async_client.post(
         "/prompts/1/respond",
@@ -448,14 +469,11 @@ async def test_history_skips_count_when_total_disabled(async_client: AsyncClient
 async def test_history_question_uses_live_dict(
     async_client: AsyncClient,
 ) -> None:
-    """BUG-PROMPT-010: the persisted ``question`` snapshot is overridden by the live dict.
+    """The persisted ``question`` snapshot is overridden by the live dict.
 
-    Submit with one snapshot text, then patch the live dict to a new
-    text -- the history endpoint serves the new text so it cannot drift
-    from ``/current``.
+    Submit a response, then patch ``WEEKLY_PROMPTS`` -- the history
+    endpoint serves the new text so it cannot drift from ``/current``.
     """
-    from domain import weekly_prompts  # noqa: PLC0415 -- localised monkeypatch
-
     headers = await _signup(async_client)
     await async_client.post(
         "/prompts/1/respond",

@@ -1,11 +1,4 @@
-"""Table-driven tests for is_stage_unlocked.
-
-Under BUG-STAGE-002's single-source-of-truth model ``current_stage``
-is the only signal the unlock predicate consults; ``completed_stages``
-is intentionally ignored so that legacy rows or admin scripts that
-update one field without the other cannot make the unlock decision
-disagree with the display path.
-"""
+"""Table-driven tests for ``is_stage_unlocked`` -- ``current_stage`` is the only signal."""
 
 from __future__ import annotations
 
@@ -31,10 +24,9 @@ _CASES: list[tuple[str, int, StageProgress | None, bool]] = [
     ("stage 3 unlocked when current=3 (drifted completed list)", 3, _progress(3, [1]), True),
     ("stage 4 locked when current=3", 4, _progress(3, [1, 2]), False),
     ("stage 4 unlocked when current=4", 4, _progress(4, [1, 2, 3]), True),
-    # ``completed_stages`` is ignored; ``current_stage`` is the single
-    # source of truth (BUG-STAGE-002).  These cases would have flipped
-    # under the old chain-validation contract -- under the new contract
-    # the answer derives from ``current_stage`` alone.
+    # ``completed_stages`` is ignored.  These cases would have flipped
+    # under the old chain-validation contract; the new contract derives
+    # the answer from ``current_stage`` alone.
     ("stage 5 unlocked when current=5 (drifted completed list)", 5, _progress(5, [1, 2, 3]), True),
     ("stage 5 unlocked when current=5 (canonical)", 5, _progress(5, [1, 2, 3, 4]), True),
     ("stage 5 locked when current=4", 5, _progress(4, [1, 2, 3, 4]), False),

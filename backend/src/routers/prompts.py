@@ -95,14 +95,7 @@ async def get_current_prompt(
 
 @dataclass
 class _HistoryFilters:
-    """Query parameters for prompt history pagination.
-
-    ``offset`` is capped at ``TOTAL_WEEKS`` (BUG-PROMPT-006): a
-    well-behaved client never goes past the curriculum length, and a
-    misbehaving one cannot force the DB to skip a billion rows.
-    ``include_total=false`` opts out of the count subquery for cursor-
-    style pagination over a small (<= 36) list.
-    """
+    """Query parameters for prompt history pagination; ``offset`` is capped by curriculum length."""
 
     limit: int = Query(default=50, ge=1, le=200)
     offset: int = Query(default=0, ge=0, le=TOTAL_WEEKS)
@@ -110,12 +103,7 @@ class _HistoryFilters:
 
 
 def _history_detail(pr: PromptResponse) -> PromptDetail:
-    """Serialize a ``PromptResponse`` row, deriving ``question`` from the live dict.
-
-    BUG-PROMPT-010: falls back to the persisted ``question`` snapshot
-    only when the live dict lookup is ``None`` (a week that was retired
-    entirely) so history cannot drift from ``/current``.
-    """
+    """Serialize a ``PromptResponse``; live dict wins, snapshot is the retired-week fallback."""
     return PromptDetail(
         week_number=pr.week_number,
         question=get_prompt_for_week(pr.week_number) or pr.question,
@@ -131,7 +119,7 @@ async def _maybe_total(
     *,
     include_total: bool,
 ) -> int:
-    """Run the count subquery only when the caller opted in (BUG-PROMPT-006)."""
+    """Run the count subquery only when the caller opted in."""
     if not include_total:
         return 0
     count_query = select(func.count()).select_from(query.subquery())
@@ -139,9 +127,16 @@ async def _maybe_total(
 
 
 def _has_more(items_len: int, filters: _HistoryFilters, total: int) -> bool:
-    """Resolve ``has_more`` against either the cursor or the total."""
+    """Resolve ``has_more`` against either the cursor or the total.
+
+    The cursor branch is also capped by ``TOTAL_WEEKS`` so a final-page
+    request that happens to fill ``limit`` exactly does not lie about a
+    37th item being available.
+    """
     if not filters.include_total:
-        return items_len == filters.limit
+        page_full = items_len == filters.limit
+        more_remain = (filters.offset + filters.limit) < TOTAL_WEEKS
+        return page_full and more_remain
     return (filters.offset + filters.limit) < total
 
 
@@ -256,9 +251,9 @@ async def submit_prompt_response(
     )
     session.add(prompt_response)
 
-    # Also create a journal entry so the response appears in journal history.
-    # BUG-PROMPT-008: tag as WEEKLY_PROMPT so stage-scoped aggregates that
-    # filter by STAGE_REFLECTION do not double-count weekly cadence rows.
+    # Mirror the response into the journal stream tagged as a weekly cadence
+    # row so stage-scoped aggregates (filtered by STAGE_REFLECTION) do not
+    # double-count it.
     journal_entry = JournalEntry(
         message=cleaned_response,
         sender="user",

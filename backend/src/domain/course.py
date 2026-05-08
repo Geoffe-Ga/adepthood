@@ -10,16 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 def compute_days_elapsed(stage_started_at: datetime) -> int:
-    """Return whole days since the user started the current stage; clamped to >=0.
-
-    BUG-COURSE-005: a future-dated ``stage_started_at`` (clock skew,
-    admin backfill bug, partial migration) produces a negative
-    ``timedelta`` whose ``.days`` floors to ``-1`` or further; the
-    pre-fix ``max(0, .days)`` quietly returned ``0``, opening every
-    ``release_day == 0`` item.  Now we structured-log a warning so
-    operators can spot the data-integrity smell without re-introducing
-    a 500 path on what is still a clamping fallback.
-    """
+    """Return whole days elapsed; clamps a future ``stage_started_at`` to 0 + WARNING."""
     now = datetime.now(UTC)
     if stage_started_at.tzinfo is None:
         stage_started_at = stage_started_at.replace(tzinfo=UTC)
