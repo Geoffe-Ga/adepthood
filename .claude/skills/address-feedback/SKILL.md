@@ -177,7 +177,7 @@ Match by author login first (`claude[bot]`, `github-actions[bot]`); fall back to
 
 ### Error: Verdict line not found or malformed
 
-The reviewer is supposed to end with `## Verdict: LGTM | CHANGES_REQUESTED | COMMENTS`. If the regex does not match, do not infer the verdict from prose ("looks good to me" is not a verdict). Surface the malformed comment to the user, optionally re-request the review, and **do not merge**.
+The reviewer is supposed to end with a `## Verdict:` line containing exactly one of `LGTM`, `CHANGES_REQUESTED`, or `COMMENTS`. If the regex does not match, do not infer the verdict from prose ("looks good to me" is not a verdict). Surface the malformed comment to the user, optionally re-request the review, and **do not merge**.
 
 ### Error: Verdict comment exists but predates the HEAD push
 

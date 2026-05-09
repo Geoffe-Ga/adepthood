@@ -78,12 +78,12 @@ End the review comment with a single canonical line so downstream automation (`a
 `await-claude-review` matches this regex (case-insensitive):
 
 ```
-^\s*(?:##\s+|\*\*)?Verdict[:\*\s]+(LGTM|CHANGES_REQUESTED|COMMENTS)
+^\s*(?:##\s+|\*\*)?Verdict[:*\s]+(LGTM|CHANGES_REQUESTED|COMMENTS)
 ```
 
 Don't paraphrase ("looks good to me", "approving"); the parser will refuse to infer a verdict from prose and the merge gate will block.
 
-### Step 11 (Iterative Reviewer): Wait for the Author's Response
+### Step 11 (Iterative Reviewer): Wait for the Next Verdict
 
 When you've delivered `CHANGES_REQUESTED` or actionable `COMMENTS` and want to follow the iteration without polling, delegate to `await-claude-review`. It subscribes to PR activity (comments + CI failures — the webhook does **not** deliver CI passes) and wakes the session on the next push's verdict comment. End the turn after subscribing.
 
