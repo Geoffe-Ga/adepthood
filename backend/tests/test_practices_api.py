@@ -193,3 +193,39 @@ async def test_submitted_practice_not_in_listings(
     resp = await async_client.get("/practices/", params={"stage_number": 1}, headers=headers)
     assert resp.status_code == HTTPStatus.OK
     assert len(resp.json()) == 0
+
+
+@pytest.mark.asyncio
+async def test_submit_practice_ignores_smuggled_server_fields(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-PRACTICE-002: extra fields on the body never set ORM columns.
+
+    A future addition to ``PracticeCreate`` overlapping a server-controlled
+    column (``approved``, ``submitted_by_user_id``) would otherwise flow
+    through ``model_dump()`` and let a client mint pre-approved rows.  The
+    explicit-kwargs construction in the router pins the whitelist.  Pydantic
+    silently drops unknown keys today, so the canonical regression is to
+    confirm the persisted row reflects server defaults regardless of body
+    keys.
+    """
+    headers, user_id = await _signup(async_client, username="smuggler")
+    payload = {
+        "stage_number": 1,
+        "name": "Smuggled Practice",
+        "description": "Trying to mint approval",
+        "instructions": "Should not bypass moderation",
+        "default_duration_minutes": 15,
+        # Extra keys a future schema might honour — must be ignored today.
+        "approved": True,
+        "submitted_by_user_id": 999,
+    }
+    resp = await async_client.post("/practices/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.CREATED
+    practice_id = resp.json()["id"]
+
+    persisted = await db_session.get(Practice, practice_id)
+    assert persisted is not None
+    assert persisted.approved is False
+    assert persisted.submitted_by_user_id == user_id

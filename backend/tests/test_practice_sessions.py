@@ -122,7 +122,9 @@ async def test_create_session(async_client: AsyncClient, db_session: AsyncSessio
 
     payload = _session_payload(up_id, reflection="felt calm")
     resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
-    assert resp.status_code == HTTPStatus.OK
+    # BUG-PRACTICE-008: ``create_session`` now returns 201 to match the rest
+    # of the POST contract; tests that asserted 200 captured the prior bug.
+    assert resp.status_code == HTTPStatus.CREATED
     data = resp.json()
     assert data["reflection"] == "felt calm"
     assert data["user_practice_id"] == up_id
@@ -142,7 +144,7 @@ async def test_create_session_without_reflection(
     resp = await async_client.post(
         "/practice-sessions/", json=_session_payload(up_id), headers=headers
     )
-    assert resp.status_code == HTTPStatus.OK
+    assert resp.status_code == HTTPStatus.CREATED
     assert resp.json()["reflection"] is None
 
 
@@ -311,7 +313,7 @@ async def test_create_session_records_server_derived_duration(
         },
         headers=headers,
     )
-    assert resp.status_code == HTTPStatus.OK
+    assert resp.status_code == HTTPStatus.CREATED
     assert resp.json()["duration_minutes"] == pytest.approx(expected_minutes)
     # ``timestamp`` is set to ``ended_at`` so week-count math anchors to when
     # the session actually finished.

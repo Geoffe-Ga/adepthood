@@ -39,10 +39,24 @@ def _plan_request(habits: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     }
 
 
+async def _auth_headers(client: AsyncClient, suffix: str = "") -> dict[str, str]:
+    """Sign up a user and return auth headers (BUG-PRACTICE-010 makes auth required)."""
+    resp = await client.post(
+        "/auth/signup",
+        json={
+            "email": f"energy{suffix}@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+    return {"Authorization": f"Bearer {resp.json()['token']}"}
+
+
 @pytest.mark.asyncio
 async def test_energy_plan_generates_21_day_plan(async_client: AsyncClient) -> None:
     """Energy plan endpoint generates a 21-day plan cycling through habits."""
-    resp = await async_client.post("/v1/energy/plan", json=_plan_request())
+    headers = await _auth_headers(async_client, "21day")
+    resp = await async_client.post("/v1/energy/plan", json=_plan_request(), headers=headers)
     assert resp.status_code == HTTPStatus.OK
 
     data = resp.json()
@@ -63,11 +77,12 @@ async def test_energy_plan_generates_21_day_plan(async_client: AsyncClient) -> N
 @pytest.mark.asyncio
 async def test_energy_plan_net_energy_calculation(async_client: AsyncClient) -> None:
     """Net energy is calculated correctly as sum of (return - cost) per day."""
+    headers = await _auth_headers(async_client, "net")
     habits = [
         {"id": 1, "name": "Run", "energy_cost": 3, "energy_return": 8},
         {"id": 2, "name": "Read", "energy_cost": 1, "energy_return": 4},
     ]
-    resp = await async_client.post("/v1/energy/plan", json=_plan_request(habits))
+    resp = await async_client.post("/v1/energy/plan", json=_plan_request(habits), headers=headers)
     assert resp.status_code == HTTPStatus.OK
 
     data = resp.json()
@@ -80,7 +95,8 @@ async def test_energy_plan_net_energy_calculation(async_client: AsyncClient) -> 
 @pytest.mark.asyncio
 async def test_idempotency_returns_cached_response(async_client: AsyncClient) -> None:
     """Same idempotency key returns identical response without recomputation."""
-    headers = {"X-Idempotency-Key": "test-idempotency-key-123"}
+    auth = await _auth_headers(async_client, "idem")
+    headers = {**auth, "X-Idempotency-Key": "test-idempotency-key-123"}
     payload = _plan_request()
 
     resp1 = await async_client.post("/v1/energy/plan", json=payload, headers=headers)
@@ -96,6 +112,7 @@ async def test_different_idempotency_keys_produce_independent_results(
     async_client: AsyncClient,
 ) -> None:
     """Different idempotency keys are cached independently."""
+    auth = await _auth_headers(async_client, "diffidem")
     with patch.object(energy_service, "idempotency_cache", TTLCache(maxsize=1000, ttl=3600)):
         payload_a = _plan_request([{"id": 1, "name": "A", "energy_cost": 1, "energy_return": 2}])
         payload_b = _plan_request([{"id": 2, "name": "B", "energy_cost": 5, "energy_return": 1}])
@@ -103,12 +120,12 @@ async def test_different_idempotency_keys_produce_independent_results(
         resp_a = await async_client.post(
             "/v1/energy/plan",
             json=payload_a,
-            headers={"X-Idempotency-Key": "key-a"},
+            headers={**auth, "X-Idempotency-Key": "key-a"},
         )
         resp_b = await async_client.post(
             "/v1/energy/plan",
             json=payload_b,
-            headers={"X-Idempotency-Key": "key-b"},
+            headers={**auth, "X-Idempotency-Key": "key-b"},
         )
 
         assert resp_a.json()["plan"]["net_energy"] != resp_b.json()["plan"]["net_energy"]
@@ -117,9 +134,11 @@ async def test_different_idempotency_keys_produce_independent_results(
 @pytest.mark.asyncio
 async def test_empty_habits_returns_400(async_client: AsyncClient) -> None:
     """POST with empty habits list returns 400, not 500."""
+    headers = await _auth_headers(async_client, "empty")
     resp = await async_client.post(
         "/v1/energy/plan",
         json={"habits": [], "start_date": "2025-01-01"},
+        headers=headers,
     )
     assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert resp.json()["detail"] == "habits_must_not_be_empty"
@@ -129,9 +148,10 @@ async def test_empty_habits_returns_400(async_client: AsyncClient) -> None:
 @pytest.mark.parametrize("field", ["energy_cost", "energy_return"])
 async def test_negative_energy_value_rejected(async_client: AsyncClient, field: str) -> None:
     """BUG-SCHEMA-007: clients can't smuggle negative energy values past Pydantic."""
+    headers = await _auth_headers(async_client, f"neg{field}")
     habit = {"id": 1, "name": "X", "energy_cost": 1, "energy_return": 1}
     habit[field] = -1
-    resp = await async_client.post("/v1/energy/plan", json=_plan_request([habit]))
+    resp = await async_client.post("/v1/energy/plan", json=_plan_request([habit]), headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
@@ -139,35 +159,39 @@ async def test_negative_energy_value_rejected(async_client: AsyncClient, field: 
 @pytest.mark.parametrize("field", ["energy_cost", "energy_return"])
 async def test_oversized_energy_value_rejected(async_client: AsyncClient, field: str) -> None:
     """BUG-SCHEMA-007: values above the documented cap are rejected, not clamped."""
+    headers = await _auth_headers(async_client, f"big{field}")
     habit = {"id": 1, "name": "X", "energy_cost": 1, "energy_return": 1}
     habit[field] = 10_001
-    resp = await async_client.post("/v1/energy/plan", json=_plan_request([habit]))
+    resp = await async_client.post("/v1/energy/plan", json=_plan_request([habit]), headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 @pytest.mark.asyncio
 async def test_zero_id_habit_rejected(async_client: AsyncClient) -> None:
     """``id`` must be positive — a zero id would never round-trip to a real habit."""
+    headers = await _auth_headers(async_client, "zeroid")
     habit = {"id": 0, "name": "X", "energy_cost": 1, "energy_return": 1}
-    resp = await async_client.post("/v1/energy/plan", json=_plan_request([habit]))
+    resp = await async_client.post("/v1/energy/plan", json=_plan_request([habit]), headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 @pytest.mark.asyncio
 async def test_too_many_habits_rejected(async_client: AsyncClient) -> None:
     """A pathological 101-habit payload is rejected before it hits the planner."""
+    headers = await _auth_headers(async_client, "many")
     too_many = [
         {"id": i + 1, "name": f"H{i}", "energy_cost": 1, "energy_return": 2} for i in range(101)
     ]
-    resp = await async_client.post("/v1/energy/plan", json=_plan_request(too_many))
+    resp = await async_client.post("/v1/energy/plan", json=_plan_request(too_many), headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 @pytest.mark.asyncio
 async def test_single_habit_fills_all_21_days(async_client: AsyncClient) -> None:
     """A single habit is scheduled for all 21 days of the plan."""
+    headers = await _auth_headers(async_client, "single")
     single = [{"id": 42, "name": "Solo", "energy_cost": 2, "energy_return": 3}]
-    resp = await async_client.post("/v1/energy/plan", json=_plan_request(single))
+    resp = await async_client.post("/v1/energy/plan", json=_plan_request(single), headers=headers)
     assert resp.status_code == HTTPStatus.OK
 
     items = resp.json()["plan"]["items"]

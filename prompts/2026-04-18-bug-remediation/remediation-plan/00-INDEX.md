@@ -36,7 +36,7 @@ Either way, treat the `main` copy of this table as truth. A branch-local tick is
 | 10 | observability-e2e                 | 3 | `claude/10-observability-e2e-OfIPz` / [#268](https://github.com/Geoffe-Ga/adepthood/pull/268) | [x] |
 | 11 | backend-auth-models-schemas-cors  | 4 | `claude/bug-fix-11-backend-auth-models-schemas-cors` | [x] |
 | 12 | backend-feature-routers (12A wave 1) | 4 | `claude/bug-fix-12a-backend-feature-routers-hgcp` / [#276](https://github.com/Geoffe-Ga/adepthood/pull/276) | [x] |
-| 12 | backend-feature-routers (12A wave 2) | 4 | `claude/bug-fix-12a-wave-2-stage-course-prompts` | [ ] |
+| 12 | backend-feature-routers (12A wave 2) | 4 | `claude/bug-fix-12a-wave-2-stage-course-prompts` / [#290](https://github.com/Geoffe-Ga/adepthood/pull/290) | [x] |
 | 12 | backend-feature-routers (12B)        | 4 | | [ ] |
 | 13 | frontend-api-client               | 4 | | [ ] |
 | 14 | frontend-feature-screens          | 4 | | [ ] |
