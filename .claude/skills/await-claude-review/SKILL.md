@@ -56,6 +56,8 @@ The reviewer (see `comprehensive-pr-review`) ends its top-level comment with a l
 ^\s*(?:##\s+|\*\*)?Verdict[:*\s]+(LGTM|CHANGES_REQUESTED|COMMENTS)
 ```
 
+`comprehensive-pr-review` is the canonical source for this format; this skill is the parser side of that contract.
+
 Examples that match:
 
 - `## Verdict: LGTM`
@@ -71,9 +73,9 @@ If the regex does not match, treat the comment as malformed: do **not** infer a 
 Before subscribing, record what "current" means so you can later distinguish a fresh verdict from a stale one.
 
 1. `mcp__github__pull_request_read` with `method: "get"` → record `head.sha`.
-2. `mcp__github__get_commit` with `sha: head.sha` → record `commit.committer.date` as `headPushedAt` (proxy for the latest push time).
+2. `mcp__github__get_commit` with `sha: head.sha` → record `commit.committer.date` as `headPushedAt` (proxy for the latest push time). Note: `committer.date` does not change under a no-op force-push of the same SHA, so prior verdicts on that exact commit remain "current" by this check — acceptable in practice but worth knowing.
 
-### Step 2: Subscribe and End the Turn
+### Step 2: Subscribe, Set the Fallback Expectation, and End the Turn
 
 ```
 mcp__github__subscribe_pr_activity
@@ -84,12 +86,18 @@ pullNumber: <N>
 
 Then **stop**. Do not poll. Do not `sleep`. Do not call `pull_request_read get_comments` in a loop. Webhook events arrive as `<github-webhook-activity>` messages and resume the session on their own.
 
+**Wake delivery is best-effort, not guaranteed.** Some environments suppress comment-event wakes whose author identity overlaps with the session's own identity (e.g., a session running as Claude Code on web may not receive wake events for comments authored by `claude[bot]`, even though the comment exists on GitHub). The webhook delivery system is fire-and-forget — there is no retry queue and no backfill. To stay recoverable:
+
+1. End the turn with a one-sentence note to the user: "If I don't wake within ~5 minutes after the reviewer Action completes, prompt me to check status."
+2. On manual re-engagement, **immediately re-run Step 4** (re-fetch comments + currency check + parse). Do not re-subscribe and wait again — that won't backfill the missed event.
+3. Treat repeated wake failures in the same environment as a stable property of that environment, not a transient bug to retry against. Document the actual deliverable behavior for that workspace alongside this skill if needed.
+
 ### Step 3: On Wake — Classify the Event
 
 When a `<github-webhook-activity>` message arrives, decide what kind of event it is:
 
 - **Top-level PR comment from a reviewer bot** (`claude[bot]`, `github-actions[bot]`, or whichever account posts reviews on this repo) → go to Step 4.
-- **Line-level review comment** → not a verdict; if you're tracking thread resolutions for `address-feedback`, handle there. Otherwise stay subscribed and wait for the next event.
+- **Line-level review comment** → not a verdict. If `address-feedback` is the caller, log it in that skill's triage table for the current pass; otherwise stay subscribed and wait for the next event.
 - **CI failure event** → go to Step 5.
 - **Anything else** → stay subscribed; wait for the next event.
 
@@ -177,3 +185,16 @@ Match by author login (`claude[bot]`, `github-actions[bot]`) AND require the bod
 ### Error: PR merged or closed while waiting
 
 The caller should detect this and call `unsubscribe_pr_activity`. If you see no further events for a long time, ask the user before assuming the PR is still open.
+
+### Error: Subscription confirmed, verdict was posted, but the session never woke
+
+Confirmed real, observed in environments where the session and the reviewer share a bot identity (e.g., Claude Code on web subscribed to a PR where `claude[bot]` posts the verdict). Symptoms: `subscribe_pr_activity` returned success, the reviewer Action completed and posted a verdict comment, the comment is visible via `get_comments`, but no `<github-webhook-activity>` arrived in this conversation.
+
+What to do:
+
+1. On manual re-engagement, **do not re-subscribe and wait again** — the webhook system is fire-and-forget; there is no backfill. Re-subscribing won't replay the missed event.
+2. Run Step 4 directly: `get_comments`, author-login check, currency check, parse the verdict. Proceed to the caller's next step (merge gate, fix loop, etc.) based on the verdict.
+3. If this failure mode is reproducible in your environment, when calling this skill again, end the turn with an explicit fallback prompt to the user (Step 2 of Instructions) so they know to re-engage you after a reasonable wait.
+4. Do **not** retry by re-subscribing in a loop. Repeated subscriptions in this failure mode produce repeated silence, not retries.
+
+This is a delivery-layer property of the environment, not a bug in this skill.

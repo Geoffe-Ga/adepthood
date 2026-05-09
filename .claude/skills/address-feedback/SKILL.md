@@ -123,6 +123,8 @@ When the helper wakes the session:
 - Verdict `COMMENTS` → user decides; if skipping, Step 6.
 - CI failure event for the current HEAD → if the failing job is the reviewer action, the helper retriggers it and stays subscribed; if it's other CI, hand off to `ci-debugging` and keep the subscription open. Either way, do not advance to merge.
 
+Note: wake delivery is best-effort. If the session sits for longer than the reviewer Action's typical runtime (~5 min) without waking, re-engage manually and run `await-claude-review` Step 4 directly — re-subscribing will not backfill a missed event. Once the PR is merged or closed (or the verdict gate is no longer needed), call `mcp__github__unsubscribe_pr_activity` to clean up.
+
 ### Step 6: Merge Gate — All Must Hold
 
 Merge only when **every** condition is true. If any fails, stop and explain which one.
