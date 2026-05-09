@@ -89,6 +89,34 @@ const toApiPayload = (h: Habit): HabitCreatePayload => ({
   stage: h.stage,
 });
 
+/**
+ * Flatten a habit's per-goal completions into the local ``Habit.completions``
+ * shape (BUG-FE-HABIT-301).  The progress bar sums ``completed_units``
+ * across this array; before this fix the mapper hardcoded ``[]``, so a
+ * fresh ``GET /habits`` discarded the only durable record of the user's
+ * logged units and the bar reset to 0% on every cold rehydrate.  Dedupe
+ * by row id because a tiered goal group could in principle return the
+ * same completion under multiple goals in a future shared-goal feature.
+ */
+const flattenCompletions = (
+  goals: NonNullable<Awaited<ReturnType<typeof habitsApi.list>>[number]['goals']>,
+): NonNullable<Habit['completions']> => {
+  const seen = new Set<number>();
+  const flat: NonNullable<Habit['completions']> = [];
+  for (const g of goals) {
+    for (const c of g.completions ?? []) {
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      flat.push({
+        id: String(c.id),
+        timestamp: new Date(c.timestamp),
+        completed_units: c.completed_units,
+      });
+    }
+  }
+  return flat;
+};
+
 const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.list>>): Habit[] =>
   apiHabits.map((h) => ({
     id: h.id,
@@ -110,7 +138,7 @@ const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.list>>): Ha
       is_additive: g.is_additive,
       goal_group_id: g.goal_group_id ?? null,
     })),
-    completions: [],
+    completions: flattenCompletions(h.goals ?? []),
     revealed: true,
     notificationTimes: h.notification_times ?? undefined,
     notificationFrequency:

@@ -638,6 +638,13 @@ async function request<T>(
 
 export type NotificationFrequency = 'daily' | 'weekly' | 'custom' | 'off';
 
+/** One row of a goal's logged completion history (BUG-FE-HABIT-301). */
+export interface ApiGoalCompletion {
+  id: number;
+  timestamp: string;
+  completed_units: number;
+}
+
 export interface ApiGoal {
   id: number;
   habit_id: number;
@@ -650,6 +657,12 @@ export interface ApiGoal {
   frequency_unit: string;
   is_additive: boolean;
   goal_group_id?: number | null;
+  /**
+   * Embedded completions history.  Optional for back-compat with API builds
+   * that haven't shipped the embedded list yet -- callers fall back to an
+   * empty array so the progress bar renders at 0% rather than crashing.
+   */
+  completions?: ApiGoalCompletion[];
 }
 
 export interface ApiGoalGroup {
@@ -749,6 +762,37 @@ function narrowTier(value: unknown): Tier {
   return isTier(value) ? value : 'clear';
 }
 
+/**
+ * Flatten a habit's per-goal completion lists into a single de-duplicated
+ * array for the local ``Habit.completions`` shape (BUG-FE-HABIT-301).
+ *
+ * The frontend models progress at the habit level (sum of all completed
+ * units across the habit's goals), but the backend stores completions on
+ * the ``Goal`` row.  Concatenating across the goal list is what restores
+ * the persisted progress bar after a fresh API rehydrate -- the previous
+ * code hardcoded ``completions: []`` and the bar reset to 0% on every
+ * cold load.  Duplicates by ``id`` are dropped because logging a single
+ * completion against a tiered group could in principle insert one row
+ * per tier in a future shared-goal feature; the dedupe keeps the local
+ * progress sum honest.
+ */
+function flattenCompletions(goals: ApiGoal[]): LocalHabit['completions'] {
+  const seen = new Set<number>();
+  const flat: NonNullable<LocalHabit['completions']> = [];
+  for (const goal of goals) {
+    for (const c of goal.completions ?? []) {
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      flat.push({
+        id: String(c.id),
+        timestamp: new Date(c.timestamp),
+        completed_units: c.completed_units,
+      });
+    }
+  }
+  return flat;
+}
+
 export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
   return {
     id: apiHabit.id,
@@ -770,7 +814,7 @@ export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
       is_additive: g.is_additive,
       goal_group_id: g.goal_group_id ?? null,
     })),
-    completions: [],
+    completions: flattenCompletions(apiHabit.goals),
     notificationTimes: apiHabit.notification_times ?? undefined,
     notificationFrequency: isNotificationFrequency(apiHabit.notification_frequency)
       ? apiHabit.notification_frequency

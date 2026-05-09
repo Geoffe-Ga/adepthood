@@ -54,6 +54,24 @@ def _populate_streak(habit: Habit, current_user: int, user_timezone: str) -> Non
     habit.streak = compute_habit_streak(completions, user_timezone)
 
 
+def _filter_completions_to_caller(habit: Habit, current_user: int) -> None:
+    """Drop any completions on this habit's goals that don't belong to the caller.
+
+    Defense-in-depth that mirrors the existing per-row filter in
+    ``_populate_streak`` and the stats endpoint -- under the current write
+    paths every ``GoalCompletion.user_id`` matches the parent habit's
+    ``user_id`` (the only writer is ``POST /goal_completions/`` and it
+    sources the user from the JWT), but a manual data-repair row, a
+    future shared-goal feature, or an accidental backfill could otherwise
+    leak across tenants when the schema embeds completions on the goal
+    response.  We mutate the in-memory relation rather than rebuild the
+    object graph; SQLAlchemy treats this as a transient list edit and
+    will not flush deletes because we never commit the session.
+    """
+    for goal in habit.goals:
+        goal.completions = [c for c in goal.completions if c.user_id == current_user]
+
+
 def _build_default_goals(habit_id: int, habit_name: str) -> list[Goal]:
     """Three-tier default goals for a newly-created habit."""
     return [
@@ -162,6 +180,7 @@ async def list_habits(
     user_tz = await get_user_timezone(session, current_user)
     for habit in items:
         _populate_streak(habit, current_user, user_tz)
+        _filter_completions_to_caller(habit, current_user)
     serialized = [HabitWithGoals.model_validate(h, from_attributes=True) for h in items]
     if pagination.paginate:
         return build_page(serialized, total, pagination)
@@ -178,6 +197,7 @@ async def get_habit(
     habit = await _get_habit_with_completions(habit_id, current_user, session)
     user_tz = await get_user_timezone(session, current_user)
     _populate_streak(habit, current_user, user_tz)
+    _filter_completions_to_caller(habit, current_user)
     return habit
 
 

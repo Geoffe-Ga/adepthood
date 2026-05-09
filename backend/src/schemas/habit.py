@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from schemas._base import OwnedResourcePublic
-from schemas.goal import Goal
+from schemas.goal import GoalWithCompletions
 
 NOTIFICATION_FREQUENCY = Literal["daily", "weekly", "custom", "off"]
 
@@ -44,9 +44,14 @@ class Habit(OwnedResourcePublic):
 
 
 class HabitWithGoals(Habit):
-    """Habit response that includes nested goals."""
+    """Habit response that includes nested goals (with completions).
 
-    goals: list[Goal] = Field(default_factory=list)
+    Each nested goal embeds its full completions history so a fresh
+    ``GET /habits`` can rebuild the progress bar without a follow-up
+    round-trip per goal (BUG-FE-HABIT-301).
+    """
+
+    goals: list[GoalWithCompletions] = Field(default_factory=list)
 
 
 class HabitCreate(BaseModel):

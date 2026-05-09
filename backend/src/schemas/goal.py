@@ -2,9 +2,27 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from models.goal import GoalTier
+
+
+class GoalCompletionPublic(BaseModel):
+    """Public representation of a :class:`models.goal_completion.GoalCompletion`.
+
+    Embedded in goal responses so the frontend can rebuild a habit's progress
+    bar after a fresh API rehydrate (BUG-FE-HABIT-301).  Without this the
+    backend silently discarded the only durable record of a user's logged
+    units -- the frontend ``mapApiHabits`` hardcoded ``completions: []`` and
+    the progress bar reset to 0% on every cold load even though the streak
+    (a scalar on the parent habit) survived.
+    """
+
+    id: int
+    timestamp: datetime
+    completed_units: float
 
 
 class Goal(BaseModel):
@@ -25,6 +43,24 @@ class Goal(BaseModel):
     frequency_unit: str
     is_additive: bool = True
     goal_group_id: int | None = None
+
+
+class GoalWithCompletions(Goal):
+    """Goal response that includes the embedded completions history.
+
+    Embedded in the habit list / detail responses so the frontend can rebuild
+    a habit's progress bar after a fresh API rehydrate (BUG-FE-HABIT-301).
+    Without this, the backend silently discarded the only durable record of
+    a user's logged units -- ``mapApiHabits`` hardcoded ``completions: []``
+    and the progress bar reset to 0% on every cold load even though the
+    streak (a scalar on the parent habit) survived.
+
+    Kept as a separate schema from :class:`Goal` so endpoints that don't
+    eager-load completions (e.g. ``PUT /goals/{id}``) don't trigger a
+    greenlet lazy-load when Pydantic walks the relation.
+    """
+
+    completions: list[GoalCompletionPublic] = Field(default_factory=list)
 
 
 class GoalUpdate(BaseModel):

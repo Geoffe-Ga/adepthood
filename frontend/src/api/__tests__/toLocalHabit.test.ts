@@ -69,9 +69,53 @@ describe('toLocalHabit', () => {
     expect(local.milestoneNotifications).toBe(true);
   });
 
-  test('initializes completions as empty array', () => {
+  test('initializes completions as empty array when API omits the field', () => {
     const local = toLocalHabit(apiHabit);
     expect(local.completions).toEqual([]);
+  });
+
+  // BUG-FE-HABIT-301: the previous mapper hardcoded ``completions: []`` even
+  // when the backend embedded the history.  Pinning the new contract so a
+  // future refactor that drops the flatten step fails the suite instead of
+  // silently re-introducing the persistence bug.
+  test('flattens embedded goal completions onto the habit', () => {
+    const withCompletions: ApiHabitWithGoals = {
+      ...apiHabit,
+      goals: [
+        {
+          ...apiHabit.goals[0]!,
+          completions: [
+            { id: 7, timestamp: '2024-02-01T10:00:00Z', completed_units: 3 },
+            { id: 8, timestamp: '2024-02-02T10:00:00Z', completed_units: 4 },
+          ],
+        },
+      ],
+    };
+    const local = toLocalHabit(withCompletions);
+    expect(local.completions).toHaveLength(2);
+    expect(local.completions![0]!.completed_units).toBe(3);
+    expect(local.completions![0]!.timestamp).toBeInstanceOf(Date);
+    expect(local.completions![0]!.id).toBe('7');
+  });
+
+  test('dedupes completions by id when multiple goals share a row', () => {
+    const shared: ApiHabitWithGoals = {
+      ...apiHabit,
+      goals: [
+        {
+          ...apiHabit.goals[0]!,
+          completions: [{ id: 11, timestamp: '2024-02-01T10:00:00Z', completed_units: 1 }],
+        },
+        {
+          ...apiHabit.goals[0]!,
+          id: 200,
+          tier: 'low',
+          completions: [{ id: 11, timestamp: '2024-02-01T10:00:00Z', completed_units: 1 }],
+        },
+      ],
+    };
+    const local = toLocalHabit(shared);
+    expect(local.completions).toHaveLength(1);
   });
 
   test('handles null notification fields gracefully', () => {

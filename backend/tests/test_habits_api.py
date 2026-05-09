@@ -291,6 +291,105 @@ async def test_list_habits_includes_goals(
 
 
 @pytest.mark.asyncio
+async def test_get_habit_includes_goal_completions(async_client: AsyncClient) -> None:
+    """``GET /habits/{id}`` embeds each goal's logged completions.
+
+    BUG-FE-HABIT-301 -- before this fix the backend stored completions but
+    never serialized them.  ``mapApiHabits`` on the frontend then hardcoded
+    ``completions: []`` so a habit's progress bar reset to 0% on every cold
+    rehydrate (login, app restart, stuck-user re-fetch) even though the
+    streak (a scalar on the parent habit) survived.  Pinning the contract
+    here so a future schema regression that drops ``completions`` from the
+    nested goal payload fails this test instead of silently re-introducing
+    the persistence bug.
+    """
+    headers = await _signup(async_client)
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    habit_id = create_resp.json()["id"]
+    # Pick the seeded ``clear`` goal so the completion has a deterministic id.
+    goal_id = next(g["id"] for g in create_resp.json()["goals"] if g["tier"] == "clear")
+
+    log_resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal_id, "did_complete": True},
+        headers=headers,
+    )
+    assert log_resp.status_code == HTTPStatus.OK
+
+    resp = await async_client.get(f"/habits/{habit_id}", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    clear_goal = next(g for g in body["goals"] if g["tier"] == "clear")
+    completions = clear_goal["completions"]
+    assert len(completions) == 1
+    [completion] = completions
+    assert completion["completed_units"] > 0
+    assert isinstance(completion["timestamp"], str)
+    assert isinstance(completion["id"], int)
+
+
+@pytest.mark.asyncio
+async def test_list_habits_includes_goal_completions(async_client: AsyncClient) -> None:
+    """``GET /habits/`` (collection) embeds completions on every nested goal."""
+    headers = await _signup(async_client)
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    goal_id = next(g["id"] for g in create_resp.json()["goals"] if g["tier"] == "clear")
+
+    log_resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal_id, "did_complete": True},
+        headers=headers,
+    )
+    assert log_resp.status_code == HTTPStatus.OK
+
+    resp = await async_client.get("/habits/", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    [habit] = resp.json()
+    clear_goal = next(g for g in habit["goals"] if g["tier"] == "clear")
+    assert len(clear_goal["completions"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_get_habit_completions_filtered_to_caller(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A goal's ``completions`` list excludes rows logged by other users.
+
+    Defense-in-depth check: the per-row ``user_id`` filter mirrors the
+    streak-population path (``_populate_streak``) and the stats endpoint,
+    so a completion accidentally written under a different user (data
+    repair, manual SQL, future shared-goal feature) cannot leak across
+    tenants.
+    """
+    from models.goal_completion import GoalCompletion  # noqa: PLC0415
+
+    alice_headers = await _signup(async_client, "alice_persist")
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=alice_headers)
+    habit_id = create_resp.json()["id"]
+    goal_id = next(g["id"] for g in create_resp.json()["goals"] if g["tier"] == "clear")
+
+    # Alice logs her own completion via the API.
+    own_log = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal_id, "did_complete": True},
+        headers=alice_headers,
+    )
+    assert own_log.status_code == HTTPStatus.OK
+
+    # Inject a stray completion under a different user_id (simulates the
+    # cross-tenant data state the streak filter already guards against).
+    stray = GoalCompletion(goal_id=goal_id, user_id=999_999, completed_units=42.0)
+    db_session.add(stray)
+    await db_session.commit()
+
+    resp = await async_client.get(f"/habits/{habit_id}", headers=alice_headers)
+    assert resp.status_code == HTTPStatus.OK
+    clear_goal = next(g for g in resp.json()["goals"] if g["tier"] == "clear")
+    assert len(clear_goal["completions"]) == 1
+    assert clear_goal["completions"][0]["completed_units"] != 42.0
+
+
+@pytest.mark.asyncio
 async def test_invalid_notification_frequency_rejected(async_client: AsyncClient) -> None:
     """notification_frequency must be one of daily/weekly/custom/off or null."""
     headers = await _signup(async_client)

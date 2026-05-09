@@ -96,6 +96,18 @@ export function isTier(value: unknown): value is Tier {
   return typeof value === 'string' && (TIER_VALUES as readonly string[]).includes(value);
 }
 
+/**
+ * One row of a goal's completion history (BUG-FE-HABIT-301).  Embedded on
+ * the goal so a fresh ``GET /habits`` rebuilds the progress bar without a
+ * follow-up round-trip.  Optional in the goal schema for back-compat with
+ * older API builds that have not yet rolled out the embedded list.
+ */
+export const goalCompletionSchema = z.object({
+  id: z.number().int(),
+  timestamp: isoDateTime,
+  completed_units: z.number(),
+});
+
 export const goalSchema = z.object({
   id: z.number().int(),
   habit_id: z.number().int(),
@@ -108,6 +120,7 @@ export const goalSchema = z.object({
   frequency_unit: z.string(),
   is_additive: z.boolean(),
   goal_group_id: z.number().int().nullish(),
+  completions: z.array(goalCompletionSchema).optional(),
 });
 
 export const notificationFrequencySchema = z.enum(['daily', 'weekly', 'custom', 'off']);
