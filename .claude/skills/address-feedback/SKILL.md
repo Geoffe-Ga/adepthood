@@ -112,9 +112,18 @@ For each item, after the fix lands locally:
 2. **Top-level Claude review comment** — there is no thread to resolve. Post a single summary reply via `mcp__github__add_issue_comment` listing each addressed item and the SHA(s) that fixed it.
 3. After pushing, request a fresh review by posting `@claude please re-review` via `mcp__github__add_issue_comment`. The GitHub Action runs again and writes a new verdict comment — that becomes the comment you parse on the next pass.
 
-### Step 5: Push Once and Watch CI
+### Step 5: Push Once and Await the Next Verdict
 
-Push the branch (single push, not one per fix). Optionally `mcp__github__subscribe_pr_activity` so review and CI events surface here. If CI fails, switch to `ci-debugging`; otherwise wait for the new Claude verdict comment.
+Push the branch (single push, not one per fix). Then delegate the wait to `await-claude-review` — it pins the new HEAD, calls `mcp__github__subscribe_pr_activity`, and ends the turn so the session wakes on the bot's verdict comment via `<github-webhook-activity>`. **Do not poll** with `sleep` or repeated `get_comments` calls, and do not wait on CI passes — the webhook does not deliver them; only the comment event is the wake signal.
+
+When the helper wakes the session:
+
+- Verdict `LGTM` for the current HEAD → continue to Step 6.
+- Verdict `CHANGES_REQUESTED` → loop back to Step 2 with the new comment body.
+- Verdict `COMMENTS` → user decides; if skipping, Step 6.
+- CI failure event for the current HEAD → if the failing job is the reviewer action, the helper retriggers it and stays subscribed; if it's other CI, hand off to `ci-debugging` and keep the subscription open. Either way, do not advance to merge.
+
+Note: wake delivery is best-effort. If the session sits for longer than the reviewer Action's typical runtime (~5 min) without waking, re-engage manually and run `await-claude-review` Step 4 directly — re-subscribing will not backfill a missed event. Once the PR is merged or closed (or the verdict gate is no longer needed), call `mcp__github__unsubscribe_pr_activity` to clean up.
 
 ### Step 6: Merge Gate — All Must Hold
 
@@ -170,7 +179,7 @@ Match by author login first (`claude[bot]`, `github-actions[bot]`); fall back to
 
 ### Error: Verdict line not found or malformed
 
-The reviewer is supposed to end with `## Verdict: LGTM | CHANGES_REQUESTED | COMMENTS`. If the regex does not match, do not infer the verdict from prose ("looks good to me" is not a verdict). Surface the malformed comment to the user, optionally re-request the review, and **do not merge**.
+The reviewer is supposed to end with a `## Verdict:` line containing exactly one of `LGTM`, `CHANGES_REQUESTED`, or `COMMENTS`. If the regex does not match, do not infer the verdict from prose ("looks good to me" is not a verdict). Surface the malformed comment to the user, optionally re-request the review, and **do not merge**.
 
 ### Error: Verdict comment exists but predates the HEAD push
 
