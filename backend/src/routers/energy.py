@@ -29,11 +29,20 @@ async def create_plan(
     scheduling work on a thread pool, so an unauthenticated endpoint
     would let a single attacker spawn arbitrary expensive work for free.
     Habit list size is already capped at ``MAX_HABITS_PER_PLAN`` in the
-    request schema; loading per-habit ``energy_cost`` / ``energy_return``
-    server-side from ``Habit.user_id == current_user`` -- so the planner
-    is not steered by client-supplied costs -- is a deliberate follow-up
-    that touches :mod:`services.energy` and is tracked separately to
-    keep this PR scoped to the auth gate.
+    request schema.
+
+    .. warning::
+
+       The auth gate alone does NOT close BUG-PRACTICE-010 in full.
+       The planner is still steered by client-supplied
+       ``energy_cost`` / ``energy_return`` values per habit, so an
+       authenticated user can submit any habit id with arbitrary costs
+       and influence the plan.  Loading those values server-side from
+       ``Habit`` rows owned by ``current_user`` -- and rejecting any
+       client-sent costs -- is the remaining piece.  It needs a
+       ``services.energy`` refactor and is deliberately deferred to
+       12B wave 2; the ``current_user`` parameter is plumbed in so the
+       follow-up is purely additive.
 
     BUG-INFRA-009: ``generate_plan`` (called via :func:`get_or_generate_plan`)
     performs CPU-bound scheduling work.  Running it inline on the event loop

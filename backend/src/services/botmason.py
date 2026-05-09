@@ -69,14 +69,32 @@ DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
 # purpose: every addition is a deliberate audit decision (and any
 # new model needs an entry in :mod:`services.llm_pricing` so cost
 # estimation does not silently fall back to ``$0``).
+#
+# Anthropic IDs intentionally mix two formats per Anthropic's naming:
+#
+#   * ``claude-{family}-{major}-{minor}`` (e.g. ``claude-opus-4-7``,
+#     ``claude-sonnet-4-6``) -- a *floating alias* that always points at
+#     the latest minor release in that family.  Choose this for chat /
+#     dev use where staying current matters more than reproducibility.
+#   * ``claude-{family}-{major}-{YYYYMMDD}`` (e.g.
+#     ``claude-sonnet-4-20250514``, ``claude-haiku-4-5-20251001``) --
+#     a *date-pinned* build.  Choose this for evaluations / experiments
+#     where the model behind the alias must not silently change.
+#
+# Both forms are valid Anthropic endpoints; they are NOT duplicates --
+# an operator deliberately chooses pin-vs-alias by setting ``LLM_MODEL``.
+# Each pin/alias is listed only when there is a matching pricing row in
+# :mod:`services.llm_pricing` so cost estimation stays accurate.
 _ALLOWED_MODELS: dict[str, frozenset[str]] = {
     "openai": frozenset({"gpt-4o-mini", "gpt-4o", "gpt-4-turbo"}),
     "anthropic": frozenset(
         {
+            # Date-pinned (reproducible) builds:
             "claude-sonnet-4-20250514",
+            "claude-haiku-4-5-20251001",
+            # Floating aliases (track latest minor):
             "claude-opus-4-7",
             "claude-sonnet-4-6",
-            "claude-haiku-4-5-20251001",
         }
     ),
 }

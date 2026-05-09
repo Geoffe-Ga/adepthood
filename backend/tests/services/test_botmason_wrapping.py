@@ -250,3 +250,26 @@ class TestBuildMessagesKeyErrorSafety:
         assert messages[1]["role"] == "user"
         assert messages[1]["content"].startswith("<user_input_")
         assert messages[1]["content"].endswith(">")
+
+    def test_anthropic_history_entry_missing_message_does_not_raise(self) -> None:
+        """Same KeyError safety on the Anthropic builder path.
+
+        ``_build_anthropic_messages`` runs in production whenever
+        ``BOTMASON_PROVIDER=anthropic``.  A malformed history row that crashes
+        only the OpenAI variant would still burn the wallet with no response
+        for every Anthropic-deployed environment, so the regression has to
+        cover both builders.
+        """
+        history = [{"sender": "user"}]  # ``message`` key intentionally absent
+        messages, augmented = _build_anthropic_messages("new", history, "PROMPT")
+        # Anthropic builder returns (messages, augmented_system).  No system
+        # role inside ``messages``; only the malformed history turn and the
+        # new user turn.
+        expected_turn_count = 2
+        assert len(messages) == expected_turn_count
+        assert all(m["role"] in {"user", "assistant"} for m in messages)
+        assert messages[0]["role"] == "user"
+        assert messages[0]["content"].startswith("<user_input_")
+        assert messages[0]["content"].endswith(">")
+        # The augmented system prompt is unaffected by malformed history rows.
+        assert _NONCE_RE.search(augmented) is not None
