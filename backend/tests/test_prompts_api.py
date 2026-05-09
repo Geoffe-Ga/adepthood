@@ -451,7 +451,7 @@ async def test_history_offset_is_capped(async_client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_history_skips_count_when_total_disabled(async_client: AsyncClient) -> None:
-    """``include_total=false`` returns ``total=0`` and skips the count subquery."""
+    """``include_total=false`` returns ``total=None`` (opt-out) and skips the count subquery."""
     headers = await _signup(async_client)
     await async_client.post(
         "/prompts/1/respond",
