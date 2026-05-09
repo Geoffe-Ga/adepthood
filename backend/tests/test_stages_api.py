@@ -469,18 +469,11 @@ async def test_update_progress_rejects_completed_stages_injection(
 
 
 @pytest.mark.asyncio
-async def test_update_progress_ignores_client_on_dirty_data(
+async def test_update_progress_advances_from_current_stage_only(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """BUG-SCHEMA-006: client cannot skip past a legacy gap.
-
-    A pre-existing row with ``completed_stages=[1, 2, 4]`` and
-    ``current_stage=5`` encodes a missing stage-3 credit.  The server's
-    derived expectation after "completing" stage 5 is the first hole = 3,
-    not 6.  The client asserting 6 gets ``stage_advance_mismatch`` so the
-    gap must be repaired via the admin helper before advancement resumes.
-    """
+    """Advance derives from ``current_stage`` alone; drift in ``completed_stages`` is ignored."""
     headers, user_id = await _signup(async_client, "dirty")
     progress = StageProgress(user_id=user_id, current_stage=5, completed_stages=[1, 2, 4])
     db_session.add(progress)
@@ -491,8 +484,8 @@ async def test_update_progress_ignores_client_on_dirty_data(
         json={"current_stage": 6},
         headers=headers,
     )
-    assert resp.status_code == HTTPStatus.BAD_REQUEST
-    assert resp.json()["detail"] == "stage_advance_mismatch"
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["current_stage"] == 6
 
 
 @pytest.mark.asyncio
@@ -591,56 +584,46 @@ async def test_history_rejects_locked_stage(
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-# ── BUG-STAGE-002: is_stage_unlocked correctness ───────────────────────
+# ── is_stage_unlocked correctness ──────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_stage_unlocked_via_completed_stages(
+async def test_stage_unlocked_uses_current_stage(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """Stage N+1 unlocks when N is in completed_stages."""
+    """Stage N is unlocked iff ``N <= current_stage``."""
     headers, user_id = await _signup(async_client)
     await _seed_stages(db_session, count=3)
-    # completed_stages includes 1 and 2, current is 2
-    progress = StageProgress(user_id=user_id, current_stage=2, completed_stages=[1, 2])
+    progress = StageProgress(user_id=user_id, current_stage=3, completed_stages=[1, 2])
     db_session.add(progress)
     await db_session.commit()
 
     resp = await async_client.get("/stages", headers=headers)
     data = resp.json()
-    # Stage 3 should be unlocked because stage 2 is in completed_stages
+    # current_stage=3 unlocks stages 1..3.
+    assert data[0]["is_unlocked"] is True
+    assert data[1]["is_unlocked"] is True
     assert data[2]["is_unlocked"] is True
 
 
 @pytest.mark.asyncio
-async def test_stage_unlocked_requires_predecessor_completed(
+async def test_stage_unlocked_uses_current_stage_only(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """BUG-STAGE-001/002: every prior stage must be in ``completed_stages``.
-
-    Seeding ``completed_stages=[2]`` with ``current_stage=3`` leaves stage 1
-    uncredited.  Under the chain-validation rule, stage 2 requires ``{1}`` and
-    stage 3 requires ``{1, 2}``; both fail when stage 1 is missing, so only
-    stage 1 (the always-unlocked root) stays open.
-    """
+    """``current_stage`` is the source of truth; a drifted ``completed_stages`` is ignored."""
     headers, user_id = await _signup(async_client)
     await _seed_stages(db_session, count=3)
-    # current_stage=3 but completed_stages is missing stage 1.
-    # This simulates a DB-level mutation that skipped the completion list.
     progress = StageProgress(user_id=user_id, current_stage=3, completed_stages=[2])
     db_session.add(progress)
     await db_session.commit()
 
     resp = await async_client.get("/stages", headers=headers)
     data = resp.json()
-    # Stage 1: always unlocked
     assert data[0]["is_unlocked"] is True
-    # Stage 2: chain requires {1} ⊆ completed; {2} fails → locked
-    assert data[1]["is_unlocked"] is False
-    # Stage 3: chain requires {1, 2} ⊆ completed; {2} fails → locked (BUG-STAGE-001)
-    assert data[2]["is_unlocked"] is False
+    assert data[1]["is_unlocked"] is True  # current_stage=3 unlocks 1..3
+    assert data[2]["is_unlocked"] is True
 
 
 # ── User isolation ──────────────────────────────────────────────────────

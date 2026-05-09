@@ -8,6 +8,8 @@ from http import HTTPStatus
 import pytest
 from httpx import AsyncClient
 
+from domain import weekly_prompts
+
 
 async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str]:
     """Create a user and return auth headers."""
@@ -40,7 +42,7 @@ async def test_unauthenticated_history_returns_401(async_client: AsyncClient) ->
 
 @pytest.mark.asyncio
 async def test_unauthenticated_respond_returns_401(async_client: AsyncClient) -> None:
-    resp = await async_client.post("/prompts/1/respond", json={"response": "test"})
+    resp = await async_client.post("/prompts/1/respond", json={"response": "a thoughtful answer"})
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
 
 
@@ -168,7 +170,7 @@ async def test_submit_response_invalid_week_returns_404(async_client: AsyncClien
     headers = await _signup(async_client)
     resp = await async_client.post(
         "/prompts/99/respond",
-        json={"response": "test"},
+        json={"response": "a thoughtful response"},
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.NOT_FOUND
@@ -224,7 +226,7 @@ async def test_current_week_derives_from_response_count_not_max(
     # Submit a response for week 1 successfully.
     resp1 = await async_client.post(
         "/prompts/1/respond",
-        json={"response": "Ground."},
+        json={"response": "Grounding feels like home."},
         headers=headers,
     )
     assert resp1.status_code == HTTPStatus.CREATED
@@ -232,7 +234,7 @@ async def test_current_week_derives_from_response_count_not_max(
     # Attempt a future week — must fail and NOT be persisted.
     resp_skip = await async_client.post(
         "/prompts/10/respond",
-        json={"response": "sneaky"},
+        json={"response": "sneaky attempt to skip"},
         headers=headers,
     )
     assert resp_skip.status_code == HTTPStatus.FORBIDDEN
@@ -245,7 +247,7 @@ async def test_current_week_derives_from_response_count_not_max(
 
 @pytest.mark.asyncio
 async def test_submit_response_creates_journal_entry(async_client: AsyncClient) -> None:
-    """Submitting a prompt response also creates a journal entry with stage_reflection tag."""
+    """Submitting a prompt response creates a journal entry tagged ``weekly_prompt``."""
     headers = await _signup(async_client)
     await async_client.post(
         "/prompts/1/respond",
@@ -253,14 +255,13 @@ async def test_submit_response_creates_journal_entry(async_client: AsyncClient) 
         headers=headers,
     )
 
-    # Check journal entries
     journal_resp = await async_client.get("/journal/", headers=headers)
     assert journal_resp.status_code == HTTPStatus.OK
     journal_data = journal_resp.json()
     assert journal_data["total"] == 1
     entry = journal_data["items"][0]
     assert entry["message"] == "I reflected on grounding."
-    assert entry["tag"] == "stage_reflection"
+    assert entry["tag"] == "weekly_prompt"
     assert entry["sender"] == "user"
 
 
@@ -375,7 +376,7 @@ async def test_concurrent_prompt_responses_allow_exactly_one(
         *[
             concurrent_async_client.post(
                 "/prompts/1/respond",
-                json={"response": f"Attempt {i}"},
+                json={"response": f"A meaningful attempt #{i}"},
                 headers=headers,
             )
             for i in range(5)
@@ -390,3 +391,181 @@ async def test_concurrent_prompt_responses_allow_exactly_one(
 
     assert successes == 1, f"Expected exactly 1 success, got {successes}"
     assert rejections == 4, f"Expected 4 conflicts, got {rejections}"
+
+
+@pytest.mark.asyncio
+async def test_response_rejects_whitespace_only(async_client: AsyncClient) -> None:
+    """A whitespace-only response is rejected at the schema layer."""
+    headers = await _signup(async_client)
+    resp = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "   "},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_response_rejects_short_answer(async_client: AsyncClient) -> None:
+    """A short stripped response (< threshold) is rejected."""
+    headers = await _signup(async_client)
+    resp = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "ok."},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_response_rejects_at_threshold_minus_one(async_client: AsyncClient) -> None:
+    """Boundary: 9 stripped chars is below the 10-char threshold and is rejected."""
+    headers = await _signup(async_client)
+    resp = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "  abcdefghi  "},  # strip()-> 9 chars
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_response_accepts_at_threshold(async_client: AsyncClient) -> None:
+    """Boundary: 10 stripped chars meets the threshold and is accepted."""
+    headers = await _signup(async_client)
+    resp = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "  abcdefghij  "},  # strip()-> 10 chars
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+
+
+@pytest.mark.asyncio
+async def test_history_offset_is_capped(async_client: AsyncClient) -> None:
+    """Out-of-range ``offset`` is rejected at the schema layer."""
+    headers = await _signup(async_client)
+    resp = await async_client.get("/prompts/history?offset=1000000000&limit=1", headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_history_skips_count_when_total_disabled(async_client: AsyncClient) -> None:
+    """``include_total=false`` returns ``total=None`` (opt-out) and skips the count subquery."""
+    headers = await _signup(async_client)
+    await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "A meaningful first reflection."},
+        headers=headers,
+    )
+    resp = await async_client.get("/prompts/history?include_total=false", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["total"] is None  # opt-out sentinel; ``has_more`` drives pagination
+    assert len(body["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_history_cursor_has_more_false_when_no_more_items(
+    async_client: AsyncClient,
+) -> None:
+    """Cursor mode reports ``has_more=False`` on the last real page.
+
+    Submit one response, then page with ``limit=1&offset=1`` -- the
+    peek pattern (``limit + 1`` fetch) returns zero rows, so the
+    response correctly says no more pages exist even though
+    ``offset + limit < TOTAL_WEEKS``.
+    """
+    headers = await _signup(async_client)
+    await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "A meaningful first reflection."},
+        headers=headers,
+    )
+    resp = await async_client.get(
+        "/prompts/history?include_total=false&limit=1&offset=1",
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["items"] == []
+    assert body["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_history_cursor_has_more_true_when_more_remain(
+    async_client: AsyncClient,
+) -> None:
+    """Cursor mode reports ``has_more=True`` when a peek row materialises."""
+    headers = await _signup(async_client)
+    for week in range(1, 4):
+        resp = await async_client.post(
+            f"/prompts/{week}/respond",
+            json={"response": f"Week {week} reflection text."},
+            headers=headers,
+        )
+        assert resp.status_code == HTTPStatus.CREATED
+
+    resp = await async_client.get(
+        "/prompts/history?include_total=false&limit=1&offset=0",
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert len(body["items"]) == 1
+    assert body["has_more"] is True
+
+
+@pytest.mark.asyncio
+async def test_history_total_aware_has_more_false_at_boundary(
+    async_client: AsyncClient,
+) -> None:
+    """Count-aware mode reports ``has_more=False`` when ``offset + limit == total``.
+
+    Pins the strict-less-than comparison in the count-aware branch so a
+    future ``<=`` regression would fail this test instead of inflating
+    ``has_more`` for clients that have read every row.
+    """
+    headers = await _signup(async_client)
+    for week in range(1, 4):
+        resp = await async_client.post(
+            f"/prompts/{week}/respond",
+            json={"response": f"Week {week} reflection text."},
+            headers=headers,
+        )
+        assert resp.status_code == HTTPStatus.CREATED
+
+    resp = await async_client.get(
+        "/prompts/history?include_total=true&limit=3&offset=0",
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["total"] == 3
+    assert len(body["items"]) == 3
+    assert body["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_history_question_uses_live_dict(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The persisted ``question`` snapshot is overridden by the live dict.
+
+    Submit a response, then patch ``WEEKLY_PROMPTS`` via ``monkeypatch.setitem``
+    -- the fixture restores the dict on test exit so the mutation cannot
+    leak into a parallel run.
+    """
+    headers = await _signup(async_client)
+    await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "A meaningful first reflection."},
+        headers=headers,
+    )
+
+    monkeypatch.setitem(weekly_prompts.WEEKLY_PROMPTS, 1, "REVISED prompt for week 1.")
+    resp = await async_client.get("/prompts/history", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["items"][0]["question"] == "REVISED prompt for week 1."

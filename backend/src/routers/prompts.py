@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import func
+from sqlalchemy import Select, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -95,10 +95,35 @@ async def get_current_prompt(
 
 @dataclass
 class _HistoryFilters:
-    """Query parameters for prompt history pagination."""
+    """Query parameters for prompt history pagination; ``offset`` is capped by curriculum length."""
 
     limit: int = Query(default=50, ge=1, le=200)
-    offset: int = Query(default=0, ge=0)
+    offset: int = Query(default=0, ge=0, le=TOTAL_WEEKS)
+    include_total: bool = Query(default=True)
+
+
+def _history_detail(pr: PromptResponse) -> PromptDetail:
+    """Serialize a ``PromptResponse``; live dict wins, snapshot is the retired-week fallback."""
+    return PromptDetail(
+        week_number=pr.week_number,
+        question=get_prompt_for_week(pr.week_number) or pr.question,
+        has_responded=True,
+        response=pr.response,
+        timestamp=pr.timestamp,
+    )
+
+
+async def _maybe_total(
+    session: AsyncSession,
+    query: Select[tuple[PromptResponse]],
+    *,
+    include_total: bool,
+) -> int | None:
+    """Run the count subquery only when the caller opted in; ``None`` signals opt-out."""
+    if not include_total:
+        return None
+    count_query = select(func.count()).select_from(query.subquery())
+    return int((await session.execute(count_query)).scalar() or 0)
 
 
 @router.get("/history", response_model=PromptListResponse)
@@ -107,33 +132,35 @@ async def list_prompt_history(
     session: Annotated[AsyncSession, Depends(get_session)],
     filters: Annotated[_HistoryFilters, Depends()],
 ) -> PromptListResponse:
-    """List all past prompts and responses for the user, paginated."""
+    """List all past prompts and responses for the user, paginated.
+
+    With ``include_total=true`` (default) the count subquery runs and
+    ``has_more`` is ``offset + limit < total``.  With
+    ``include_total=false`` the response carries ``total=None`` and
+    uses a peek pattern -- fetch ``limit + 1`` rows, return at most
+    ``limit`` items, set ``has_more`` from whether the peek row
+    materialised -- so cursor pagination stays accurate for mid-
+    curriculum users without paying for ``COUNT(*)``.
+    """
     query = (
         select(PromptResponse)
         .where(PromptResponse.user_id == current_user)
         .order_by(col(PromptResponse.week_number).desc())
     )
-
-    count_query = select(func.count()).select_from(query.subquery())
-    total = (await session.execute(count_query)).scalar() or 0
-
-    query = query.offset(filters.offset).limit(filters.limit)
-    result = await session.execute(query)
-    items = list(result.scalars().all())
-
+    total = await _maybe_total(session, query, include_total=filters.include_total)
+    if total is not None:
+        page_query = query.offset(filters.offset).limit(filters.limit)
+        items = list((await session.execute(page_query)).scalars().all())
+        has_more = (filters.offset + filters.limit) < total
+    else:
+        peek_query = query.offset(filters.offset).limit(filters.limit + 1)
+        rows = list((await session.execute(peek_query)).scalars().all())
+        items = rows[: filters.limit]
+        has_more = len(rows) > filters.limit
     return PromptListResponse(
-        items=[
-            PromptDetail(
-                week_number=pr.week_number,
-                question=pr.question,
-                has_responded=True,
-                response=pr.response,
-                timestamp=pr.timestamp,
-            )
-            for pr in items
-        ],
+        items=[_history_detail(pr) for pr in items],
         total=total,
-        has_more=(filters.offset + filters.limit) < total,
+        has_more=has_more,
     )
 
 
@@ -226,12 +253,14 @@ async def submit_prompt_response(
     )
     session.add(prompt_response)
 
-    # Also create a journal entry so the response appears in journal history
+    # Mirror the response into the journal stream tagged as a weekly cadence
+    # row so stage-scoped aggregates (filtered by STAGE_REFLECTION) do not
+    # double-count it.
     journal_entry = JournalEntry(
         message=cleaned_response,
         sender="user",
         user_id=current_user,
-        tag=JournalTag.STAGE_REFLECTION,
+        tag=JournalTag.WEEKLY_PROMPT,
     )
     session.add(journal_entry)
 
