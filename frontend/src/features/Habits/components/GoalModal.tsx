@@ -365,6 +365,8 @@ const GOAL_CHIP_HORIZONTAL_PADDING = 10;
 const GOAL_CHIP_BORDER_RADIUS = 14;
 const GOAL_CHIP_FONT_SIZE = 12;
 const GOAL_FREQ_INPUT_WIDTH = 56;
+const GOAL_DISPLAY_VERTICAL_PADDING = 6;
+const GOAL_DISPLAY_HORIZONTAL_PADDING = 10;
 
 const goalEditorStyles = StyleSheet.create({
   container: {
@@ -402,6 +404,27 @@ const goalEditorStyles = StyleSheet.create({
     textAlign: 'center',
     fontSize: GOAL_INPUT_FONT_SIZE,
     marginHorizontal: SPACING.sm,
+  },
+  /**
+   * Saved-state chip for the goal target.  Visually distinct from the
+   * editable :class:`input` style -- no border, lighter background -- so
+   * the user can tell at a glance which targets are "settled" versus
+   * "being typed".  Tap target stays >= 32px tall (vertical padding +
+   * font height) for thumb input.
+   */
+  display: {
+    width: GOAL_INPUT_WIDTH,
+    borderRadius: GOAL_INPUT_BORDER_RADIUS,
+    paddingVertical: GOAL_DISPLAY_VERTICAL_PADDING,
+    paddingHorizontal: GOAL_DISPLAY_HORIZONTAL_PADDING,
+    backgroundColor: colors.background.accent,
+    marginHorizontal: SPACING.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  displayText: {
+    fontSize: GOAL_INPUT_FONT_SIZE,
+    fontWeight: '600',
   },
   unit: {
     fontSize: GOAL_UNIT_FONT_SIZE,
@@ -457,21 +480,36 @@ interface GoalTargetRowProps {
 }
 
 /**
- * Single-row editor for one goal tier's numeric target. Drives a controlled
- * TextInput that commits on blur (`onEndEditing`) so the user can type a
- * multi-digit value without firing a network round-trip per keystroke. Empty
- * or non-numeric input is dropped — the goal target reverts to its previous
- * value rather than corrupting to `NaN` or `0`.
+ * Single-row editor for one goal tier's numeric target.
+ *
+ * Two modes:
+ *   - **display** (default) -- shows the saved value as a tappable chip with
+ *     no input chrome.  Communicates "this is the saved value, tap to edit"
+ *     unambiguously, fixing the user-reported bug where typing into the
+ *     always-visible TextInput on web/mobile felt like edits never landed
+ *     because the field never visually settled.
+ *   - **editing** -- TextInput with ``autoFocus`` so the keyboard / soft
+ *     focus ring appears immediately on tap.  Commits on ``onEndEditing``
+ *     (return key + blur per the React Native docs); a non-numeric draft
+ *     reverts to the saved value instead of corrupting the goal target to
+ *     ``NaN`` / ``0``.
+ *
+ * Wiring only ``onEndEditing`` (not ``onBlur``) is deliberate: React Native
+ * fires both back-to-back on a single keyboard dismissal, so duplicating
+ * the commit handler would send two API writes per edit on device.
  */
 const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
+  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(goal.target));
-  // When the underlying goal changes (e.g. marker drag, sibling edit) sync
-  // the draft so the visible value reflects the latest server state.
+  // When the underlying goal changes (sibling edit, marker drag, server
+  // round-trip) sync the draft -- but only while *not* mid-edit, so a
+  // user's in-flight typing is never clobbered by an out-of-band update.
   useEffect(() => {
-    setDraft(String(goal.target));
-  }, [goal.target]);
+    if (!editing) setDraft(String(goal.target));
+  }, [goal.target, editing]);
   const tierLabel = TIER_LABELS[goal.tier] ?? goal.tier;
   const handleEnd = () => {
+    setEditing(false);
     const parsed = Number.parseFloat(draft);
     if (!Number.isFinite(parsed) || parsed === goal.target) {
       setDraft(String(goal.target));
@@ -479,23 +517,35 @@ const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
     }
     onCommit(parsed);
   };
+  const tierColor = getTierColor(goal.tier);
   return (
     <View style={goalEditorStyles.row}>
-      <Text style={[goalEditorStyles.label, { color: getTierColor(goal.tier) }]}>{tierLabel}</Text>
-      <TextInput
-        testID={`goal-target-input-${goal.tier}`}
-        style={goalEditorStyles.input}
-        value={draft}
-        onChangeText={setDraft}
-        // ``onEndEditing`` already covers both the return-key path *and* blur
-        // per the React Native docs; an additional ``onBlur={handleEnd}``
-        // wired the same handler to two events that fire back-to-back for a
-        // single keyboard dismissal — sending two API writes per edit on
-        // device. Keep it single-source.
-        onEndEditing={handleEnd}
-        keyboardType="numeric"
-        returnKeyType="done"
-      />
+      <Text style={[goalEditorStyles.label, { color: tierColor }]}>{tierLabel}</Text>
+      {editing ? (
+        <TextInput
+          testID={`goal-target-input-${goal.tier}`}
+          style={goalEditorStyles.input}
+          value={draft}
+          onChangeText={setDraft}
+          // ``onEndEditing`` covers both the return-key path *and* blur per
+          // the React Native docs; do not also wire ``onBlur`` (sends two
+          // API writes per edit on device).
+          onEndEditing={handleEnd}
+          autoFocus
+          keyboardType="numeric"
+          returnKeyType="done"
+        />
+      ) : (
+        <TouchableOpacity
+          testID={`goal-target-display-${goal.tier}`}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${tierLabel} target, currently ${goal.target}`}
+          onPress={() => setEditing(true)}
+          style={goalEditorStyles.display}
+        >
+          <Text style={[goalEditorStyles.displayText, { color: tierColor }]}>{goal.target}</Text>
+        </TouchableOpacity>
+      )}
       <Text style={goalEditorStyles.unit}>
         {goal.target_unit} / {goal.frequency_unit.replace('_', ' ')}
       </Text>

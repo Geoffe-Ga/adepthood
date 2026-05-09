@@ -72,8 +72,21 @@ describe('GoalModal goal-target editor', () => {
     expect(getByTestId('goal-unit-editor')).toBeTruthy();
   });
 
-  it('commits the per-tier numeric target on blur', () => {
-    const { getByTestId, props } = renderModal();
+  it('shows the saved target value as a tappable chip by default', () => {
+    const { getByTestId, queryByTestId } = renderModal();
+    expect(getByTestId('goal-target-display-low')).toBeTruthy();
+    expect(queryByTestId('goal-target-input-low')).toBeNull();
+  });
+
+  it('switches the row to an editable input when the saved chip is tapped', () => {
+    const { getByTestId } = renderModal();
+    fireEvent.press(getByTestId('goal-target-display-low'));
+    expect(getByTestId('goal-target-input-low')).toBeTruthy();
+  });
+
+  it('commits the per-tier numeric target on blur and returns to the saved chip', () => {
+    const { getByTestId, queryByTestId, props } = renderModal();
+    fireEvent.press(getByTestId('goal-target-display-low'));
     const input = getByTestId('goal-target-input-low');
     fireEvent.changeText(input, '7');
     fireEvent(input, 'endEditing');
@@ -81,10 +94,13 @@ describe('GoalModal goal-target editor', () => {
       42,
       expect.objectContaining({ tier: 'low', target: 7 }),
     );
+    expect(getByTestId('goal-target-display-low')).toBeTruthy();
+    expect(queryByTestId('goal-target-input-low')).toBeNull();
   });
 
   it('reverts the draft and skips the commit when the target input is non-numeric', () => {
     const { getByTestId, props } = renderModal();
+    fireEvent.press(getByTestId('goal-target-display-low'));
     const input = getByTestId('goal-target-input-low');
     fireEvent.changeText(input, 'abc');
     fireEvent(input, 'endEditing');
@@ -93,6 +109,7 @@ describe('GoalModal goal-target editor', () => {
 
   it('skips the commit when the target input matches the current value', () => {
     const { getByTestId, props } = renderModal();
+    fireEvent.press(getByTestId('goal-target-display-low'));
     const input = getByTestId('goal-target-input-low');
     fireEvent.changeText(input, '1'); // already 1
     fireEvent(input, 'endEditing');
