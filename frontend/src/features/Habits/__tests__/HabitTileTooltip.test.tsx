@@ -66,3 +66,45 @@ describe('HabitTile tooltips', () => {
     expect(() => component.root.findByProps({ testID: 'tooltip-clear' })).toThrow();
   });
 });
+
+// All three tier markers (LG / CG / SG) are visible on the bar at all times
+// whenever the corresponding goal exists.  Refactor of the previous logic
+// that gated the stretch marker behind ``hasCleared`` -- SG only appeared
+// once CG was met, which user-tested as confusing and inconsistent with the
+// GoalModal's always-visible stretch marker.
+describe('HabitTile markers', () => {
+  it('renders all three tier markers at zero progress', () => {
+    const fresh: Habit = { ...habit, completions: [] };
+    const component = renderer.create(<HabitTile habit={fresh} onOpenGoals={() => {}} />);
+    expect(component.root.findByProps({ testID: 'marker-low' })).toBeTruthy();
+    expect(component.root.findByProps({ testID: 'marker-clear' })).toBeTruthy();
+    expect(component.root.findByProps({ testID: 'marker-stretch' })).toBeTruthy();
+  });
+
+  it('renders all three tier markers at full progress', () => {
+    const completed: Habit = {
+      ...habit,
+      completions: [{ id: 'c-99', timestamp: new Date(), completed_units: 30 }],
+    };
+    const component = renderer.create(<HabitTile habit={completed} onOpenGoals={() => {}} />);
+    expect(component.root.findByProps({ testID: 'marker-low' })).toBeTruthy();
+    expect(component.root.findByProps({ testID: 'marker-clear' })).toBeTruthy();
+    expect(component.root.findByProps({ testID: 'marker-stretch' })).toBeTruthy();
+  });
+
+  it('renders all three tier markers for a subtractive habit', () => {
+    const subtractive: Habit = {
+      ...habit,
+      goals: [
+        { ...habit.goals[0]!, target: 10, is_additive: false },
+        { ...habit.goals[1]!, target: 5, is_additive: false },
+        { ...habit.goals[2]!, target: 2, is_additive: false },
+      ],
+      completions: [],
+    };
+    const component = renderer.create(<HabitTile habit={subtractive} onOpenGoals={() => {}} />);
+    expect(component.root.findByProps({ testID: 'marker-low' })).toBeTruthy();
+    expect(component.root.findByProps({ testID: 'marker-clear' })).toBeTruthy();
+    expect(component.root.findByProps({ testID: 'marker-stretch' })).toBeTruthy();
+  });
+});

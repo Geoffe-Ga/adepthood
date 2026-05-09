@@ -20,7 +20,6 @@ import {
   getMarkerPositions,
   getProgressBarColor,
   getTierColor,
-  isGoalAchieved,
   isEarlyUnlocked,
   calculateHabitProgress,
 } from './HabitUtils';
@@ -461,29 +460,34 @@ const useHabitTileData = (habit: Habit) => {
     clear: clearMarker,
     stretch: stretchMarker,
   } = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
-  const hasCleared = clearGoal ? isGoalAchieved(clearGoal, habit) : false;
 
+  // All three tier markers are always visible whenever the corresponding
+  // goal exists.  The previous logic gated the stretch marker behind a
+  // ``hasCleared`` flag (so SG popped in only after CG was met), which
+  // user-tested as confusing and inconsistent with the GoalModal where
+  // SG was always shown.  Keeping all three on-screen at once gives the
+  // user a stable mental map of "where am I, where am I going".
   const markers: GoalMarkerEntry[] = [
     {
       goal: lowGoal!,
       tier: 'low',
       markerPosition: lowMarker,
       zIndex: 1,
-      visible: !!lowGoal && lowMarker >= 0,
+      visible: !!lowGoal,
     },
     {
       goal: clearGoal!,
       tier: 'clear',
       markerPosition: clearMarker,
       zIndex: 2,
-      visible: !!clearGoal && clearMarker >= 0,
+      visible: !!clearGoal,
     },
     {
       goal: stretchGoal!,
       tier: 'stretch',
       markerPosition: stretchMarker,
       zIndex: 3,
-      visible: !!stretchGoal && stretchMarker >= 0 && hasCleared,
+      visible: !!stretchGoal,
     },
   ];
 

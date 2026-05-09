@@ -110,7 +110,12 @@ describe('HabitUtils', () => {
     expect(Math.round(pct)).toBe(50);
   });
 
-  test('getMarkerPositions additive', () => {
+  // Unified marker contract: all three markers (LG / CG / SG) live on the
+  // same 0-100 bar so the user always sees their full goal ladder.  The
+  // previous implementation collapsed CG and SG to the same column for
+  // additive goals, which surfaced as "the markers aren't working right"
+  // in the user report.
+  test('getMarkerPositions additive places all three on a stretch-anchored scale', () => {
     const low: Goal = {
       id: 1,
       tier: 'low',
@@ -142,12 +147,18 @@ describe('HabitUtils', () => {
       is_additive: true,
     };
     const pos = getMarkerPositions(low, clear, stretch);
-    expect(pos.low).toBeCloseTo(50);
-    expect(pos.clear).toBe(100);
+    // 2/6 ≈ 33.3, 4/6 ≈ 66.7, stretch always at 100.
+    expect(pos.low).toBeCloseTo(33.33, 1);
+    expect(pos.clear).toBeCloseTo(66.67, 1);
     expect(pos.stretch).toBe(100);
+    // The three positions are strictly increasing -- no two markers share
+    // a column.  Pinning the invariant so a future regression that puts
+    // CG and SG back at 100 fails this test.
+    expect(pos.low).toBeLessThan(pos.clear);
+    expect(pos.clear).toBeLessThan(pos.stretch);
   });
 
-  test('getMarkerPositions subtractive', () => {
+  test('getMarkerPositions subtractive places all three on a low-anchored scale', () => {
     const low: Goal = {
       id: 1,
       tier: 'low',
@@ -179,9 +190,31 @@ describe('HabitUtils', () => {
       is_additive: false,
     };
     const pos = getMarkerPositions(low, clear, stretch);
-    expect(pos.low).toBe(100);
-    expect(Math.round(pos.clear)).toBe(38);
-    expect(pos.stretch).toBe(0);
+    // (10-5)/(10-2) × 100 = 62.5 -- CG sits between LG (failure boundary)
+    // and SG (best).
+    expect(pos.low).toBe(0);
+    expect(pos.clear).toBeCloseTo(62.5, 1);
+    expect(pos.stretch).toBe(100);
+    expect(pos.low).toBeLessThan(pos.clear);
+    expect(pos.clear).toBeLessThan(pos.stretch);
+  });
+
+  test('getMarkerPositions returns zeros when any tier is missing', () => {
+    const onlyLow: Goal = {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 1,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: true,
+    };
+    expect(getMarkerPositions(onlyLow, undefined, undefined)).toEqual({
+      low: 0,
+      clear: 0,
+      stretch: 0,
+    });
   });
 
   test('logHabitUnits accumulates progress and increments streak once per day', () => {
