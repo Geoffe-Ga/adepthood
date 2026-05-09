@@ -241,7 +241,7 @@ async def test_practice_session_reflection_at_max_length(
         json=_practice_session_payload(user_practice_id, reflection=reflection),
         headers=headers,
     )
-    assert resp.status_code == HTTPStatus.OK
+    assert resp.status_code == HTTPStatus.CREATED
     assert resp.json()["reflection"] == reflection
 
 
