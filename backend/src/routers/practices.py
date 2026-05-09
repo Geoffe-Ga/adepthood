@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from typing import Annotated
 
@@ -10,33 +9,38 @@ from fastapi import APIRouter, Depends, Request, status
 from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
-from starlette.requests import Request as StarletteRequest
 
 from database import get_session
 from dependencies.ownership import require_visible_practice
 from models.practice import Practice
 from rate_limit import limiter
-from routers.auth import get_current_user
+from routers.auth import extract_user_id_from_authorization, get_current_user
 from schemas import Page, PaginationParams, build_page
 from schemas.pagination import paginate_query
 from schemas.practice import PracticeCreate, PracticeResponse
 
 
-def _per_user_rate_limit_key(request: StarletteRequest) -> str:
-    """Rate-limit key that prefers a hash of the auth token over IP (BUG-PRACTICE-003).
+def _per_user_rate_limit_key(request: Request) -> str:
+    """Rate-limit key derived from the JWT ``sub`` claim (BUG-PRACTICE-003).
 
-    The default ``slowapi`` key is the remote address, which means a single
-    user can rotate IPs to bypass the per-IP cap and, conversely, multiple
-    legitimate users behind a shared NAT throttle each other.  Hashing the
-    bearer token keeps the limiter keyed to the spending identity without
-    storing a live JWT in the limiter's backing store -- the same shape used
-    by :func:`routers.botmason._per_user_key`.
+    The default ``slowapi`` key is the remote address, which lets a
+    single user rotate IPs to bypass the per-IP cap and, conversely,
+    multiple legitimate users behind a shared NAT throttle each other.
+
+    Keying on the JWT's ``sub`` (the stable user id) instead of a hash
+    of the bearer token means a logout / refresh flow that mints a new
+    token does NOT reset the user's rate-limit bucket -- the budget
+    follows the identity, not the credential.  Decoding here costs one
+    HMAC-SHA256 per request which is dominated by the LLM call below.
+
+    Falls back to the remote address for malformed or missing tokens
+    so the limiter never receives an empty key (and so any pre-auth
+    probe is still throttled before FastAPI's DI rejects it).
     """
-    auth_header = request.headers.get("authorization", "")
-    if auth_header.startswith("Bearer "):
-        digest = hashlib.sha256(auth_header.encode("utf-8")).hexdigest()
-        return f"user:{digest}"
-    return get_remote_address(request)
+    try:
+        return f"user:{extract_user_id_from_authorization(request.headers.get('authorization'))}"
+    except Exception:  # noqa: BLE001 — fall through to IP for any decode failure
+        return get_remote_address(request)
 
 
 logger = logging.getLogger(__name__)

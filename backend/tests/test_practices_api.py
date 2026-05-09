@@ -9,6 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.practice import Practice
+from rate_limit import limiter
 
 _APPROVED_STAGE_1_COUNT = 2
 
@@ -229,3 +230,66 @@ async def test_submit_practice_ignores_smuggled_server_fields(
     assert persisted is not None
     assert persisted.approved is False
     assert persisted.submitted_by_user_id == user_id
+
+
+# -- Rate-limit key (BUG-PRACTICE-003) -------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_key_survives_token_refresh(async_client: AsyncClient) -> None:
+    """The rate-limit bucket must follow the user, not the JWT.
+
+    Hashing the bearer token reset the rate-limit budget on every
+    re-authentication; keying on the JWT ``sub`` (the stable user id)
+    so a logout / login cycle inside the limiter window does not give
+    the user a fresh budget.
+
+    We log in twice as the same user, drive both tokens to the
+    ``5/minute`` cap, and assert the second token sees a 429 without
+    needing to wait for the limiter window to roll over.  Re-using
+    ``submit_practice`` (the rate-limited endpoint) confirms the
+    end-to-end wiring rather than poking the helper in isolation.
+    """
+    # The shared autouse fixture clears the limiter between tests, but
+    # disable_rate_limit also flips ``limiter.enabled``.  Force-enable
+    # so this test is not silently skipped if a sibling left it off.
+    limiter.enabled = True
+
+    email = "rl_refresh@example.com"
+    password = "securepassword123"  # pragma: allowlist secret
+    signup = await async_client.post("/auth/signup", json={"email": email, "password": password})
+    assert signup.status_code == HTTPStatus.OK
+    first_token = signup.json()["token"]
+
+    # Re-login mints a fresh token with a different ``jti`` for the same user.
+    login = await async_client.post("/auth/login", json={"email": email, "password": password})
+    assert login.status_code == HTTPStatus.OK
+    second_token = login.json()["token"]
+    assert first_token != second_token, "test premise: re-login mints distinct tokens"
+
+    payload = {
+        "stage_number": 1,
+        "name": "RL probe",
+        "description": "rate limit probe",
+        "instructions": "n/a",
+        "default_duration_minutes": 1,
+    }
+
+    # Drive the first token to the 5/minute cap.
+    rate_cap = 5
+    for i in range(rate_cap):
+        resp = await async_client.post(
+            "/practices/",
+            json={**payload, "name": f"RL probe {i}"},
+            headers={"Authorization": f"Bearer {first_token}"},
+        )
+        assert resp.status_code == HTTPStatus.CREATED
+
+    # Token-hash keying would give the second token its own bucket and
+    # the next request would succeed; user-id keying refuses it.
+    resp = await async_client.post(
+        "/practices/",
+        json={**payload, "name": "RL probe overflow"},
+        headers={"Authorization": f"Bearer {second_token}"},
+    )
+    assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS

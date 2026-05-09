@@ -658,6 +658,21 @@ def _coerce_sub(payload: dict[str, object]) -> int:
         ) from exc
 
 
+def extract_user_id_from_authorization(authorization: str | None) -> int:
+    """Decode a Bearer JWT and return the user id, or raise 401.
+
+    Public wrapper combining :func:`_decode_token_payload` and
+    :func:`_coerce_sub` so non-router callers (e.g. ``slowapi`` rate-limit
+    key functions) can derive the stable user id from the request without
+    poking at private helpers.  Skips the revocation check on purpose --
+    rate-limiting ahead of FastAPI's DI runs before the canonical
+    ``get_current_user`` dependency, and the revocation lookup needs an
+    ``AsyncSession`` we don't have here; the route handler itself still
+    enforces revocation through :func:`get_current_user`.
+    """
+    return _coerce_sub(_decode_token_payload(authorization))
+
+
 async def _check_token_not_revoked(session: AsyncSession, payload: dict[str, object]) -> None:
     """Reject the request if the token's ``jti`` is in the revocation table.
 
