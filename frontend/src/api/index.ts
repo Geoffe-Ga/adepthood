@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { flattenGoalCompletions } from './flattenGoalCompletions';
 import {
   authResponseSchema,
   habitWithGoalsSchema,
@@ -762,37 +763,6 @@ function narrowTier(value: unknown): Tier {
   return isTier(value) ? value : 'clear';
 }
 
-/**
- * Flatten a habit's per-goal completion lists into a single de-duplicated
- * array for the local ``Habit.completions`` shape (BUG-FE-HABIT-301).
- *
- * The frontend models progress at the habit level (sum of all completed
- * units across the habit's goals), but the backend stores completions on
- * the ``Goal`` row.  Concatenating across the goal list is what restores
- * the persisted progress bar after a fresh API rehydrate -- the previous
- * code hardcoded ``completions: []`` and the bar reset to 0% on every
- * cold load.  Duplicates by ``id`` are dropped because logging a single
- * completion against a tiered group could in principle insert one row
- * per tier in a future shared-goal feature; the dedupe keeps the local
- * progress sum honest.
- */
-function flattenCompletions(goals: ApiGoal[]): LocalHabit['completions'] {
-  const seen = new Set<number>();
-  const flat: NonNullable<LocalHabit['completions']> = [];
-  for (const goal of goals) {
-    for (const c of goal.completions ?? []) {
-      if (seen.has(c.id)) continue;
-      seen.add(c.id);
-      flat.push({
-        id: String(c.id),
-        timestamp: new Date(c.timestamp),
-        completed_units: c.completed_units,
-      });
-    }
-  }
-  return flat;
-}
-
 export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
   return {
     id: apiHabit.id,
@@ -814,7 +784,7 @@ export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
       is_additive: g.is_additive,
       goal_group_id: g.goal_group_id ?? null,
     })),
-    completions: flattenCompletions(apiHabit.goals),
+    completions: flattenGoalCompletions(apiHabit.goals),
     notificationTimes: apiHabit.notification_times ?? undefined,
     notificationFrequency: isNotificationFrequency(apiHabit.notification_frequency)
       ? apiHabit.notification_frequency

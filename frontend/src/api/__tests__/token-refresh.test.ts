@@ -57,7 +57,7 @@ describe('retry-after-refresh on 401', () => {
       id: 1,
       name: 'Habit',
       icon: '✨',
-      start_date: '2024-01-01T00:00:00Z',
+      start_date: '2024-01-01',
       energy_cost: 1,
       energy_return: 2,
       milestone_notifications: false,

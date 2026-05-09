@@ -22,8 +22,36 @@ import { z } from 'zod';
 // Shared primitives
 // ---------------------------------------------------------------------------
 
-/** A string that must be a non-empty ISO-8601 timestamp per backend contract. */
-const isoDateTime = z.string().min(1);
+/**
+ * A full ISO-8601 datetime string with a timezone designator -- e.g.
+ * ``2026-05-09T22:31:22Z`` or ``2026-05-09T22:31:22+00:00``.
+ *
+ * The previous form (``z.string().min(1)``) only enforced non-emptiness,
+ * so a backend response like ``timestamp: "not-a-date"`` passed Zod and
+ * downstream ``new Date("not-a-date")`` produced a silent
+ * ``Invalid Date``. Streak / progress comparisons against that value
+ * silently returned ``false`` and surfaced no error to the user or to
+ * Sentry -- exactly the kind of root-cause-hidden bug the runtime
+ * validators exist to prevent. ``offset: true`` accepts both ``Z`` and
+ * ``±HH:MM`` suffixes so the backend's stdlib ``datetime.isoformat()``
+ * (which emits ``+00:00``) and any future explicit-``Z`` serializer
+ * both pass.
+ */
+const isoDateTime = z.string().datetime({ offset: true });
+
+/**
+ * Calendar-date string in ``YYYY-MM-DD`` form (no time component).
+ *
+ * Distinct from :const:`isoDateTime` because backend fields like
+ * ``Habit.start_date`` are typed as ``datetime.date`` and serialized
+ * without a time / timezone -- ``z.string().datetime()`` would reject
+ * the legitimate value. The regex pins the calendar shape so a malformed
+ * date still fails fast at the validator boundary rather than turning
+ * into ``Invalid Date`` further down the call stack.
+ */
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, {
+  message: 'expected ISO-8601 calendar date (YYYY-MM-DD)',
+});
 
 // ---------------------------------------------------------------------------
 // Pagination envelope (BUG-INFRA-012-018)
@@ -101,11 +129,17 @@ export function isTier(value: unknown): value is Tier {
  * the goal so a fresh ``GET /habits`` rebuilds the progress bar without a
  * follow-up round-trip.  Optional in the goal schema for back-compat with
  * older API builds that have not yet rolled out the embedded list.
+ *
+ * ``completed_units`` is bounded ``>= 0`` to match the domain contract --
+ * "I logged units of effort" cannot be negative; a backend bug or a
+ * manual data-repair row that violates the invariant fails fast at the
+ * validator boundary rather than skewing the summed habit progress
+ * downstream.
  */
 export const goalCompletionSchema = z.object({
   id: z.number().int(),
   timestamp: isoDateTime,
-  completed_units: z.number(),
+  completed_units: z.number().nonnegative(),
 });
 
 export const goalSchema = z.object({
@@ -139,7 +173,7 @@ export const habitSchema = z.object({
   id: z.number().int(),
   name: z.string(),
   icon: z.string(),
-  start_date: isoDateTime,
+  start_date: isoDate,
   energy_cost: z.number(),
   energy_return: z.number(),
   notification_times: z.array(z.string()).nullish(),
