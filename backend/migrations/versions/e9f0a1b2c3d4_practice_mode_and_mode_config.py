@@ -45,6 +45,45 @@ _ALLOWED_MODES = (
 )
 
 
+def _backfill_practice_modes(bind: sa.Connection) -> None:
+    """Backfill ``mode`` + ``mode_config`` on every existing ``practice`` row.
+
+    Uses a reflected SQLAlchemy table so the JSON value is serialized
+    through the active dialect's bind processor — building the value as
+    a Python dict and letting SQLAlchemy adapt it keeps the migration
+    portable between Postgres (production) and SQLite (test DB), where
+    the json_object / json() built-ins differ.
+    """
+    practice_t = sa.Table(
+        "practice",
+        sa.MetaData(),
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("default_duration_minutes", sa.Float),
+        sa.Column("mode", sa.String(length=32)),
+        sa.Column("mode_config", sa.JSON),
+    )
+    rows = bind.execute(
+        sa.select(practice_t.c.id, practice_t.c.default_duration_minutes).where(
+            practice_t.c.mode.is_(None)
+        )
+    ).all()
+    for row in rows:
+        bind.execute(
+            sa.update(practice_t)
+            .where(practice_t.c.id == row.id)
+            .values(
+                mode=_DEFAULT_MODE,
+                mode_config={
+                    "mode": _DEFAULT_MODE,
+                    "duration_minutes": float(row.default_duration_minutes),
+                    "start_bell": True,
+                    "halfway_bell": False,
+                    "end_bell": True,
+                },
+            )
+        )
+
+
 def upgrade() -> None:
     """Add the two columns, backfill, then lock down nullability + CHECK."""
     op.add_column(
@@ -61,26 +100,7 @@ def upgrade() -> None:
         ),
     )
 
-    # Backfill every existing row.  The JSON literal embeds
-    # ``default_duration_minutes`` so the engine has a usable countdown
-    # from day one.  CAST keeps SQLite happy (its JSON1 ext accepts text).
-    op.execute(
-        sa.text(
-            """
-            UPDATE practice
-            SET
-              mode = :mode,
-              mode_config = json_object(
-                'mode', :mode,
-                'duration_minutes', default_duration_minutes,
-                'start_bell', json('true'),
-                'halfway_bell', json('false'),
-                'end_bell', json('true')
-              )
-            WHERE mode IS NULL
-            """
-        ).bindparams(mode=_DEFAULT_MODE)
-    )
+    _backfill_practice_modes(op.get_bind())
 
     op.alter_column("practice", "mode", existing_type=sa.String(length=32), nullable=False)
     op.alter_column("practice", "mode_config", existing_type=sa.JSON(), nullable=False)
