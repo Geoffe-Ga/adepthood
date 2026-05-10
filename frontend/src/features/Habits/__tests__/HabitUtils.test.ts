@@ -2,12 +2,15 @@
 /* global describe, test, expect */
 import { validate as uuidValidate } from 'uuid';
 
+import { VICTORY_COLOR } from '../../../design/tokens';
 import type { Habit, Goal } from '../Habits.types';
 import {
   getProgressPercentage,
   getMarkerPositions,
   getGoalTier,
   calculateHabitProgress,
+  calculateTodaysProgress,
+  getProgressBarColor,
   logHabitUnits,
   calculateHabitStartDate,
   STAGE_DURATIONS_DAYS,
@@ -354,5 +357,113 @@ describe('HabitUtils', () => {
     expect(ids[0]).not.toBe(ids[1]);
     expect(uuidValidate(ids[0]!)).toBe(true);
     expect(uuidValidate(ids[1]!)).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Daily reset: yesterday's completions must NOT keep today's progress bar
+  // full or the "Achieved Today" banner lit. See git branch
+  // claude/fix-habit-daily-reset-hn8v3.
+  // -------------------------------------------------------------------------
+  describe('daily reset of progress display', () => {
+    const additiveGoals: Goal[] = [
+      {
+        id: 1,
+        tier: 'low',
+        title: 'low',
+        target: 1,
+        target_unit: 'u',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: true,
+      },
+      {
+        id: 2,
+        tier: 'clear',
+        title: 'clear',
+        target: 2,
+        target_unit: 'u',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: true,
+      },
+      {
+        id: 3,
+        tier: 'stretch',
+        title: 'stretch',
+        target: 3,
+        target_unit: 'u',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: true,
+      },
+    ];
+
+    const yesterdayUtc = (): Date => {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() - 1);
+      // Anchor at noon UTC so any reasonable user TZ still sees this as
+      // "yesterday" rather than today's local hours.
+      d.setUTCHours(12, 0, 0, 0);
+      return d;
+    };
+
+    test('calculateTodaysProgress ignores completions logged on a previous day', () => {
+      const habit: Habit = {
+        ...baseHabit,
+        goals: additiveGoals,
+        completions: [{ id: 'y-1', timestamp: yesterdayUtc(), completed_units: 5 }],
+      };
+      expect(calculateTodaysProgress(habit, 'UTC')).toBe(0);
+      // The all-time accumulator still sees yesterday's log -- streaks /
+      // stats rely on it. Pinned to keep the two helpers distinct.
+      expect(calculateHabitProgress(habit)).toBe(5);
+    });
+
+    test('getGoalTier reports incomplete when only yesterday hit the stretch goal', () => {
+      const habit: Habit = {
+        ...baseHabit,
+        goals: additiveGoals,
+        completions: [{ id: 'y-1', timestamp: yesterdayUtc(), completed_units: 5 }],
+      };
+      const { currentGoal, completedAllGoals } = getGoalTier(habit, 'UTC');
+      expect(currentGoal.tier).toBe('low');
+      expect(completedAllGoals).toBe(false);
+    });
+
+    test('getProgressPercentage resets to 0 on the new day for additive habits', () => {
+      const habit: Habit = {
+        ...baseHabit,
+        goals: additiveGoals,
+        completions: [{ id: 'y-1', timestamp: yesterdayUtc(), completed_units: 5 }],
+      };
+      const { currentGoal } = getGoalTier(habit, 'UTC');
+      expect(getProgressPercentage(habit, currentGoal, 'UTC')).toBe(0);
+    });
+
+    test('getProgressBarColor drops victory color the day after the goal was met', () => {
+      const habit: Habit = {
+        ...baseHabit,
+        stage: 'Beige',
+        goals: additiveGoals,
+        completions: [{ id: 'y-1', timestamp: yesterdayUtc(), completed_units: 5 }],
+      };
+      expect(getProgressBarColor(habit, 'UTC')).not.toBe(VICTORY_COLOR);
+    });
+
+    test('today-only progress combined with all-time history advances the tier on todays log', () => {
+      const habit: Habit = {
+        ...baseHabit,
+        goals: additiveGoals,
+        completions: [
+          { id: 'y-1', timestamp: yesterdayUtc(), completed_units: 5 },
+          { id: 't-1', timestamp: new Date(), completed_units: 1 },
+        ],
+      };
+      // Today contributed 1 unit -- meets the low goal target (1) but not clear (2).
+      expect(calculateTodaysProgress(habit, 'UTC')).toBe(1);
+      const { currentGoal, completedAllGoals } = getGoalTier(habit, 'UTC');
+      expect(currentGoal.tier).toBe('low');
+      expect(completedAllGoals).toBe(false);
+    });
   });
 });

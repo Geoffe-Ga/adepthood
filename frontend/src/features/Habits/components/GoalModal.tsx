@@ -21,6 +21,7 @@ import type {
 import EmojiSelector from 'react-native-emoji-selector';
 
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
+import { useAuth } from '../../../context/AuthContext';
 import { colors, SPACING, STAGE_COLORS } from '../../../design/tokens';
 import { TARGET_UNITS, FREQUENCY_UNITS } from '../constants';
 import styles from '../Habits.styles';
@@ -31,7 +32,7 @@ import {
   clampPercentage,
   getTierColor,
   getGoalTarget,
-  calculateHabitProgress,
+  calculateTodaysProgress,
 } from '../HabitUtils';
 
 const markerContainerStyle = (leftPct: number, z: number): ViewStyle => ({
@@ -941,9 +942,14 @@ const buildGoalMaps = (m: ReturnType<typeof useGoalMarkers>) => ({
 const buildProgressBarProps = (
   habit: NonNullable<GoalModalProps['habit']>,
   m: ReturnType<typeof useGoalMarkers>,
+  tz: string,
 ) => ({
-  progressPercentage: computeProgressPct(calculateHabitProgress(habit), m.lowGoal, m.stretchGoal),
-  progressBarColor: getProgressBarColor(habit),
+  progressPercentage: computeProgressPct(
+    calculateTodaysProgress(habit, tz),
+    m.lowGoal,
+    m.stretchGoal,
+  ),
+  progressBarColor: getProgressBarColor(habit, tz),
   lowGoal: m.lowGoal,
   clearGoal: m.clearGoal,
   stretchGoal: m.stretchGoal,
@@ -969,6 +975,7 @@ const GoalModalBody = ({
   const [showEmojiSelector, setShowEmojiSelector] = useState(false);
   const goalGroup = useGoalGroup(habit);
   const m = useGoalMarkers(habit, onUpdateGoal);
+  const { userTimezone } = useAuth();
 
   const handleLogUnit = () => {
     if (!habit.id) return;
@@ -986,7 +993,7 @@ const GoalModalBody = ({
         onClose={onClose}
         onUpdateHabit={onUpdateHabit}
       />
-      <GoalProgressBar {...buildProgressBarProps(habit, m)} />
+      <GoalProgressBar {...buildProgressBarProps(habit, m, userTimezone)} />
       <GoalTargetEditor habit={habit} onUpdateGoal={onUpdateGoal} />
       <LogUnitSection logAmount={logAmount} setLogAmount={setLogAmount} onLog={handleLogUnit} />
     </View>

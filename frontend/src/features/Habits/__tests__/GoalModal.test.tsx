@@ -9,6 +9,9 @@ import type { Habit, Goal } from '../Habits.types';
 import { logHabitUnits } from '../HabitUtils';
 
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
+jest.mock('../../../context/AuthContext', () => ({
+  useAuth: () => ({ token: 'test-token', userTimezone: 'UTC' }),
+}));
 
 const sampleGoals: Goal[] = [
   {

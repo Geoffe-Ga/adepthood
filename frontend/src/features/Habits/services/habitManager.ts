@@ -30,7 +30,7 @@ import {
 import { useHabitStore } from '../../../store/useHabitStore';
 import { HABIT_DEFAULTS } from '../HabitDefaults';
 import type { Goal, Habit, OnboardingHabit } from '../Habits.types';
-import { getGoalTier, getGoalTarget, calculateHabitProgress, logHabitUnits } from '../HabitUtils';
+import { getGoalTier, getGoalTarget, calculateTodaysProgress, logHabitUnits } from '../HabitUtils';
 import { updateHabitNotifications, cancelForHabit } from '../hooks/useHabitNotifications';
 
 export type ShowToast = (_config: ToastConfig) => void;
@@ -262,9 +262,12 @@ const applyLogUnit = (
   habit: Habit,
   amount: number,
 ): { updatedHabit: Habit; oldProgress: number; newProgress: number } => {
-  const oldProgress = calculateHabitProgress(habit);
+  // Today-only progress so milestone toasts fire when the user crosses a
+  // tier *today*, not based on yesterday's all-time total. Default UTC bucket
+  // is sufficient here -- the toast just needs same-day pre/post deltas.
+  const oldProgress = calculateTodaysProgress(habit);
   const updatedHabit = logHabitUnits(habit, amount);
-  const newProgress = calculateHabitProgress(updatedHabit);
+  const newProgress = calculateTodaysProgress(updatedHabit);
   return { updatedHabit, oldProgress, newProgress };
 };
 

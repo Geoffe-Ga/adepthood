@@ -11,6 +11,7 @@ import {
 
 import { STAGE_COLORS, spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
+import { DEFAULT_TIMEZONE } from '../../utils/dateUtils';
 
 import type { HabitTileProps, Goal, Habit } from './Habits.types';
 import {
@@ -21,7 +22,7 @@ import {
   getProgressBarColor,
   getTierColor,
   isEarlyUnlocked,
-  calculateHabitProgress,
+  calculateTodaysProgress,
 } from './HabitUtils';
 
 type TierType = 'low' | 'clear' | 'stretch';
@@ -43,9 +44,9 @@ const computeTranslateX = (pct: number): number => {
   return pct === 100 ? -12 : -6;
 };
 
-const formatGoalTooltip = (goal: Goal, habit: Habit): string => {
+const formatGoalTooltip = (goal: Goal, habit: Habit, tz: string): string => {
   const label = TIER_LABELS[goal.tier];
-  const progress = calculateHabitProgress(habit);
+  const progress = calculateTodaysProgress(habit, tz);
   return `${label}: ${progress}/${goal.target} ${goal.target_unit}`;
 };
 
@@ -54,9 +55,10 @@ interface GoalTooltipProps {
   habit: Habit;
   tier: TierType;
   scale: number;
+  tz: string;
 }
 
-const GoalTooltipContent = ({ goal, habit, tier, scale }: GoalTooltipProps) => (
+const GoalTooltipContent = ({ goal, habit, tier, scale, tz }: GoalTooltipProps) => (
   <View
     testID={`tooltip-${tier}`}
     style={{
@@ -79,7 +81,7 @@ const GoalTooltipContent = ({ goal, habit, tier, scale }: GoalTooltipProps) => (
         letterSpacing: 0.5,
       }}
     >
-      {formatGoalTooltip(goal, habit)}
+      {formatGoalTooltip(goal, habit, tz)}
     </Text>
   </View>
 );
@@ -94,6 +96,7 @@ interface GoalMarkerProps {
   scale: number;
   tooltip: TierType | null;
   setTooltip: (_v: TierType | null) => void;
+  tz: string;
 }
 
 const GoalMarker = ({
@@ -106,6 +109,7 @@ const GoalMarker = ({
   scale,
   tooltip,
   setTooltip,
+  tz,
 }: GoalMarkerProps) => {
   const clamped = clampPercentage(markerPosition);
   return (
@@ -120,7 +124,7 @@ const GoalMarker = ({
       }}
     >
       {tooltip === tier && (
-        <GoalTooltipContent goal={goal} habit={habit} tier={tier} scale={scale} />
+        <GoalTooltipContent goal={goal} habit={habit} tier={tier} scale={scale} tz={tz} />
       )}
       <TouchableOpacity
         testID={`marker-${tier}`}
@@ -292,6 +296,7 @@ interface ProgressBarProps {
   scale: number;
   tooltip: TierType | null;
   setTooltip: (_v: TierType | null) => void;
+  tz: string;
 }
 
 interface MarkerListProps {
@@ -301,9 +306,18 @@ interface MarkerListProps {
   scale: number;
   tooltip: TierType | null;
   setTooltip: (_v: TierType | null) => void;
+  tz: string;
 }
 
-const MarkerList = ({ markers, habit, barHeight, scale, tooltip, setTooltip }: MarkerListProps) => (
+const MarkerList = ({
+  markers,
+  habit,
+  barHeight,
+  scale,
+  tooltip,
+  setTooltip,
+  tz,
+}: MarkerListProps) => (
   <>
     {markers
       .filter((m) => m.visible)
@@ -319,6 +333,7 @@ const MarkerList = ({ markers, habit, barHeight, scale, tooltip, setTooltip }: M
           scale={scale}
           tooltip={tooltip}
           setTooltip={setTooltip}
+          tz={tz}
         />
       ))}
   </>
@@ -405,6 +420,7 @@ const ProgressBar = ({
   scale,
   tooltip,
   setTooltip,
+  tz,
 }: ProgressBarProps) => {
   const { fadeAnim, prevColor } = useColorTransition(progressBarColor);
   const widthStyle: DimensionValue = `${progressPercentage}%`;
@@ -436,6 +452,7 @@ const ProgressBar = ({
           scale={scale}
           tooltip={tooltip}
           setTooltip={setTooltip}
+          tz={tz}
         />
       </View>
       <View style={{ position: 'relative', marginTop: spacing(0.5, scale) }}>
@@ -445,14 +462,14 @@ const ProgressBar = ({
   );
 };
 
-const useHabitTileData = (habit: Habit) => {
+const useHabitTileData = (habit: Habit, tz: string) => {
   const lowGoal = habit.goals.find((g) => g.tier === 'low');
   const clearGoal = habit.goals.find((g) => g.tier === 'clear');
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');
 
-  const { currentGoal, completedAllGoals } = getGoalTier(habit);
-  const progressPercentage = clampPercentage(getProgressPercentage(habit, currentGoal));
-  const progressBarColor = getProgressBarColor(habit);
+  const { currentGoal, completedAllGoals } = getGoalTier(habit, tz);
+  const progressPercentage = clampPercentage(getProgressPercentage(habit, currentGoal, tz));
+  const progressBarColor = getProgressBarColor(habit, tz);
   const hasCompletedGoal = completedAllGoals || progressPercentage >= 100;
 
   const {
@@ -592,14 +609,35 @@ interface UnlockedTileProps {
   onOpenGoals?: () => void;
   onLongPress?: () => void;
   onIconPress?: () => void;
+  tz: string;
 }
 
-const UnlockedTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: UnlockedTileProps) => {
+const buildUnlockedTileStyle = (
+  stageColor: string,
+  earlyUnlocked: boolean,
+  scale: number,
+  gridGutter: number,
+  tileMinHeight: number,
+) => ({
+  flex: 1 as const,
+  borderWidth: 1,
+  borderColor: stageColor,
+  borderStyle: (earlyUnlocked ? 'dashed' : undefined) as 'dashed' | undefined,
+  padding: spacing(1, scale),
+  margin: gridGutter / 2,
+  minHeight: tileMinHeight,
+  borderRadius: spacing(1, scale),
+  backgroundColor: '#f8f8f8',
+});
+
+const UnlockedTile = ({ habit, onOpenGoals, onLongPress, onIconPress, tz }: UnlockedTileProps) => {
   const { scale, gridGutter, tileMinHeight, iconInline } = useTileLayout();
   const stageColor = STAGE_COLORS[habit.stage] ?? '#000';
   const [tooltip, setTooltip] = useState<TierType | null>(null);
-  const { progressPercentage, progressBarColor, hasCompletedGoal, markers } =
-    useHabitTileData(habit);
+  const { progressPercentage, progressBarColor, hasCompletedGoal, markers } = useHabitTileData(
+    habit,
+    tz,
+  );
 
   const streakText =
     `${habit.streak} days${hasCompletedGoal ? ' — Achieved Today!' : ''}`.toUpperCase();
@@ -609,17 +647,7 @@ const UnlockedTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: Unlocked
   return (
     <TouchableOpacity
       testID="habit-tile"
-      style={{
-        flex: 1,
-        borderWidth: 1,
-        borderColor: stageColor,
-        borderStyle: earlyUnlocked ? 'dashed' : undefined,
-        padding: spacing(1, scale),
-        margin: gridGutter / 2,
-        minHeight: tileMinHeight,
-        borderRadius: spacing(1, scale),
-        backgroundColor: '#f8f8f8',
-      }}
+      style={buildUnlockedTileStyle(stageColor, earlyUnlocked, scale, gridGutter, tileMinHeight)}
       onPress={onOpenGoals}
       onLongPress={onLongPress}
     >
@@ -641,6 +669,7 @@ const UnlockedTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: Unlocked
         scale={scale}
         tooltip={tooltip}
         setTooltip={setTooltip}
+        tz={tz}
       />
     </TouchableOpacity>
   );
@@ -653,6 +682,7 @@ export const HabitTile = ({
   onLongPress,
   onIconPress,
   onUnlockHabit,
+  tz = DEFAULT_TIMEZONE,
 }: HabitTileProps) => {
   const { scale, gridGutter, tileMinHeight } = useTileLayout();
   const stageColor = STAGE_COLORS[habit.stage] ?? '#000';
@@ -676,6 +706,7 @@ export const HabitTile = ({
       onOpenGoals={onOpenGoals}
       onLongPress={onLongPress}
       onIconPress={onIconPress}
+      tz={tz}
     />
   );
 };

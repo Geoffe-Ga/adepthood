@@ -331,6 +331,7 @@ const useHabitTileRenderer = (
   modals: ReturnType<typeof useModalCoordinator>,
   actions: ReturnType<typeof useHabits>['actions'],
   setSelectedHabit: (_h: Habit) => void,
+  tz: string,
 ) => {
   const renderHabitTile = ({ item, index }: { item: Habit; index: number }) => {
     const isLocked = item.revealed === false;
@@ -363,6 +364,7 @@ const useHabitTileRenderer = (
               }
         }
         onUnlockHabit={actions.unlockHabit}
+        tz={tz}
       />
     );
   };
@@ -468,12 +470,14 @@ const useHabitsScreenState = () => {
   const modals = useModalCoordinator();
   const habitStats = useHabitStats(modals.stats, habitsReturn.selectedHabit);
   const responsive = useResponsive();
+  const { userTimezone } = useAuth();
   const handleSelectMode = useSelectMode(habitsReturn.setMode, modals.closeAll);
   const renderHabitTile = useHabitTileRenderer(
     habitsReturn.mode,
     modals,
     habitsReturn.actions,
     habitsReturn.setSelectedHabit,
+    userTimezone,
   );
   const reveal = useToggleReveal(habitsReturn.habits, habitsReturn.actions, modals.closeAll);
   return {

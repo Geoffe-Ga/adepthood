@@ -2,7 +2,12 @@ import { v4 as uuidv4 } from 'uuid';
 
 import type { ApiHabitStats } from '../../api';
 import { colors, STAGE_COLORS, STAGE_ORDER, VICTORY_COLOR } from '../../design/tokens';
-import { DEFAULT_TIMEZONE, dayKeyInTZ, streakFromCompletions } from '../../utils/dateUtils';
+import {
+  DEFAULT_TIMEZONE,
+  dayKeyInTZ,
+  streakFromCompletions,
+  todayInUserTZ,
+} from '../../utils/dateUtils';
 
 import type { Goal, Habit, Completion, HabitStatsData } from './Habits.types';
 
@@ -58,10 +63,14 @@ export const getTierColor = (tier: 'low' | 'clear' | 'stretch') => {
 
 export const clampPercentage = (value: number): number => Math.min(100, Math.max(0, value));
 
-export const isGoalAchieved = (goal: Goal, habit: Habit): boolean => {
-  const totalProgress = calculateHabitProgress(habit);
+export const isGoalAchieved = (
+  goal: Goal,
+  habit: Habit,
+  tz: string = DEFAULT_TIMEZONE,
+): boolean => {
+  const todayProgress = calculateTodaysProgress(habit, tz);
   const targetValue = getGoalTarget(goal);
-  return goal.is_additive ? totalProgress >= targetValue : totalProgress <= targetValue;
+  return goal.is_additive ? todayProgress >= targetValue : todayProgress <= targetValue;
 };
 
 /** LG/CG/SG on a unified 0-100 bar; missing-tier collapses to {0,0,0} as a failure signal. */
@@ -147,12 +156,43 @@ export const getGoalTarget = (goal: Goal): number => {
   return goal.target;
 };
 
-/** All-time accumulator (NOT today-only) -- a date filter regresses BUG-FE-HABIT-301. See #294. */
+/**
+ * All-time accumulator over the persisted completions array.
+ *
+ * Kept separate from `calculateTodaysProgress` (BUG-FE-HABIT-301 / #294) so
+ * streak / stats / lifetime-total call sites still see every check-in. The
+ * progress-bar and "Achieved Today" display path must use the today-only
+ * helper so yesterday's completions don't keep today's tile lit up.
+ */
 export const calculateHabitProgress = (habit: Habit): number => {
   if (!habit.completions || habit.completions.length === 0) {
     return 0;
   }
   return habit.completions.reduce((sum, c) => sum + c.completed_units, 0);
+};
+
+/**
+ * Sum of completion units logged on the user's *current* calendar day.
+ *
+ * Drives the progress bar fill, tier resolution, victory color, and the
+ * "Achieved Today!" banner so they reset at local midnight even though the
+ * persisted `completions` array retains the full history. `tz` defaults to
+ * UTC for legacy callers; screens reading from `useAuth()` should pass the
+ * authenticated user's IANA zone so the day boundary matches what the user
+ * sees on their wall clock.
+ */
+export const calculateTodaysProgress = (habit: Habit, tz: string = DEFAULT_TIMEZONE): number => {
+  if (!habit.completions || habit.completions.length === 0) {
+    return 0;
+  }
+  const todayKey = todayInUserTZ(tz);
+  let total = 0;
+  for (const c of habit.completions) {
+    if (dayKeyInTZ(c.timestamp, tz) === todayKey) {
+      total += c.completed_units;
+    }
+  }
+  return total;
 };
 
 interface GoalTierResult {
@@ -207,7 +247,7 @@ const resolveSubtractiveTier = (
 
 const TIER_ORDER = { low: 1, clear: 2, stretch: 3 } as const;
 
-export const getGoalTier = (habit: Habit): GoalTierResult => {
+export const getGoalTier = (habit: Habit, tz: string = DEFAULT_TIMEZONE): GoalTierResult => {
   const sortedGoals = [...habit.goals].sort((a, b) => TIER_ORDER[a.tier] - TIER_ORDER[b.tier]);
 
   const lowGoal = sortedGoals[0];
@@ -218,44 +258,48 @@ export const getGoalTier = (habit: Habit): GoalTierResult => {
     return { currentGoal: habit.goals[0]!, nextGoal: null, completedAllGoals: false };
   }
 
-  const totalProgress = calculateHabitProgress(habit);
+  const todayProgress = calculateTodaysProgress(habit, tz);
   return lowGoal.is_additive
-    ? resolveAdditiveTier(totalProgress, lowGoal, clearGoal, stretchGoal)
-    : resolveSubtractiveTier(totalProgress, lowGoal, clearGoal, stretchGoal);
+    ? resolveAdditiveTier(todayProgress, lowGoal, clearGoal, stretchGoal)
+    : resolveSubtractiveTier(todayProgress, lowGoal, clearGoal, stretchGoal);
 };
 
 /** Progress on the unified 0-100 scale shared with :func:`getMarkerPositions`. */
-export const getProgressPercentage = (habit: Habit, currentGoal: Goal): number => {
-  const totalProgress = calculateHabitProgress(habit);
+export const getProgressPercentage = (
+  habit: Habit,
+  currentGoal: Goal,
+  tz: string = DEFAULT_TIMEZONE,
+): number => {
+  const todayProgress = calculateTodaysProgress(habit, tz);
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch') ?? currentGoal;
   const stretchTarget = getGoalTarget(stretchGoal);
 
   if (currentGoal.is_additive) {
     if (stretchTarget <= 0) return 100;
-    return clampPercentage((totalProgress / stretchTarget) * 100);
+    return clampPercentage((todayProgress / stretchTarget) * 100);
   }
 
   const lowGoal = habit.goals.find((g) => g.tier === 'low') ?? currentGoal;
   const range = getGoalTarget(lowGoal) - stretchTarget;
-  if (range <= 0) return totalProgress <= stretchTarget ? 100 : 0;
-  return clampPercentage(100 - ((totalProgress - stretchTarget) / range) * 100);
+  if (range <= 0) return todayProgress <= stretchTarget ? 100 : 0;
+  return clampPercentage(100 - ((todayProgress - stretchTarget) / range) * 100);
 };
 
-export const getProgressBarColor = (habit: Habit): string => {
+export const getProgressBarColor = (habit: Habit, tz: string = DEFAULT_TIMEZONE): string => {
   const stageColor = STAGE_COLORS[habit.stage] ?? '#000';
   const clearGoal = habit.goals.find((g) => g.tier === 'clear');
 
   if (!clearGoal) return stageColor;
 
-  const progress = calculateHabitProgress(habit);
+  const todayProgress = calculateTodaysProgress(habit, tz);
 
   if (clearGoal.is_additive) {
-    return progress >= getGoalTarget(clearGoal) ? VICTORY_COLOR : stageColor;
+    return todayProgress >= getGoalTarget(clearGoal) ? VICTORY_COLOR : stageColor;
   }
 
   // Subtractive: victory when staying at or under stretch target
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');
-  if (stretchGoal && progress <= getGoalTarget(stretchGoal)) {
+  if (stretchGoal && todayProgress <= getGoalTarget(stretchGoal)) {
     return VICTORY_COLOR;
   }
 

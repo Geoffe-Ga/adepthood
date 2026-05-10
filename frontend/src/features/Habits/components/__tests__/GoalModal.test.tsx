@@ -12,6 +12,10 @@ jest.mock('../../../../api', () => ({
   },
 }));
 
+jest.mock('../../../../context/AuthContext', () => ({
+  useAuth: () => ({ token: 'test-token', userTimezone: 'UTC' }),
+}));
+
 // Use real RN primitives — no global ``react-native`` mock — so
 // fireEvent.changeText / press behave as on a real device.
 
