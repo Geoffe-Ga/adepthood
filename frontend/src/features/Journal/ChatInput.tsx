@@ -6,6 +6,12 @@ import { colors } from '../../design/tokens';
 
 import styles from './Journal.styles';
 
+// BUG-FE-JOURNAL-101: server caps the message at 10_000 chars
+// (``JOURNAL_MESSAGE_MAX_LENGTH`` in ``schemas/journal.py``).  Mirroring
+// the cap on the input prevents the user from typing a 50k-char
+// reflection that would surface as a 422 only after Send.
+export const JOURNAL_MESSAGE_MAX_LENGTH = 10_000;
+
 const TAG_OPTIONS: Array<{ value: JournalTag; label: string }> = [
   { value: 'stage_reflection', label: 'Reflection' },
   { value: 'practice_note', label: 'Practice' },
@@ -76,6 +82,7 @@ const InputRow = ({
       placeholderTextColor={colors.text.tertiary}
       multiline
       editable={!disabled}
+      maxLength={JOURNAL_MESSAGE_MAX_LENGTH}
     />
     <TouchableOpacity
       testID="tag-toggle"

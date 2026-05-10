@@ -250,6 +250,9 @@ describe('JournalScreen', () => {
 
     // Streaming is the default transport; the legacy ``chat()`` is reserved
     // for the StreamingUnsupportedError fallback which this test doesn't hit.
+    // BUG-FE-JOURNAL-001 added an AbortController so the third arg now
+    // carries ``{ signal }`` -- assertion accepts the additional arg
+    // without pinning its exact shape (AbortSignals don't equality-match).
     expect(mockBotmasonChatStream).toHaveBeenCalledWith(
       { message: 'New message' },
       expect.objectContaining({
@@ -257,6 +260,7 @@ describe('JournalScreen', () => {
         onComplete: expect.any(Function),
         onStreamError: expect.any(Function),
       }),
+      expect.objectContaining({ signal: expect.anything() }),
     );
     expect(mockBotmasonChat).not.toHaveBeenCalled();
   });

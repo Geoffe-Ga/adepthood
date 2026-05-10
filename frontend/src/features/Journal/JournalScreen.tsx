@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { v4 as uuidv4 } from 'uuid';
@@ -480,6 +480,7 @@ async function runChatStream(
   botPlaceholderId: number | string,
   onFirstChunk: () => void,
   deps: BotSendDeps,
+  signal?: AbortSignal,
 ): Promise<StreamOutcome> {
   const outcome: StreamOutcome = { completed: false, streamError: null };
   let sawFirstChunk = false;
@@ -487,6 +488,11 @@ async function runChatStream(
     { message: text },
     {
       onChunk: (chunk) => {
+        // BUG-FE-JOURNAL-001: skip state updates after the user has
+        // navigated away or fired a fresh send -- without this the
+        // closure keeps writing to an unmounted tree (React warning)
+        // and the wallet keeps draining for a reply nobody will see.
+        if (signal?.aborted) return;
         if (!sawFirstChunk) {
           sawFirstChunk = true;
           onFirstChunk();
@@ -494,6 +500,7 @@ async function runChatStream(
         deps.actions.appendChunk(botPlaceholderId, chunk);
       },
       onComplete: (result) => {
+        if (signal?.aborted) return;
         outcome.completed = true;
         deps.actions.replaceOptimistic(
           botPlaceholderId,
@@ -503,9 +510,11 @@ async function runChatStream(
         deps.setRemainingMessages(result.remaining_messages);
       },
       onStreamError: (err) => {
+        if (signal?.aborted) return;
         outcome.streamError = err.detail;
       },
     },
+    { signal },
   );
   return outcome;
 }
@@ -582,9 +591,25 @@ function useBotSend(deps: BotSendDeps) {
   // bot placeholder itself communicates progress, so the standalone indicator
   // hides to avoid double-signalling.
   const [awaitingBot, setAwaitingBot] = useState(false);
+  // BUG-FE-JOURNAL-001: per-mount AbortController so navigation-away (or a
+  // rapid second send) cancels any in-flight stream, severing the SSE
+  // socket and freeing wallet credit that would otherwise drain for a
+  // reply nobody will see.
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+    },
+    [],
+  );
 
   const sendWithBot = useCallback(
     async (text: string, tag: JournalTag, optimisticUserId: number | string) => {
+      // Cancel any prior in-flight stream so a rapid second send does not
+      // race against an outdated reply landing on top of the new one.
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
       const botPlaceholder = createBotPlaceholder();
       deps.actions.prependMessage(botPlaceholder);
       setAwaitingBot(true);
@@ -594,7 +619,9 @@ function useBotSend(deps: BotSendDeps) {
           botPlaceholder.id,
           () => setAwaitingBot(false),
           deps,
+          controller.signal,
         );
+        if (controller.signal.aborted) return;
         if (!outcome.completed) {
           // Stream closed early — either a provider error event arrived or
           // the socket dropped without a ``complete``. Either way we treat
@@ -608,9 +635,10 @@ function useBotSend(deps: BotSendDeps) {
           );
         }
       } catch (err) {
+        if (controller.signal.aborted) return;
         await handleStreamError(err, text, tag, optimisticUserId, botPlaceholder.id, deps);
       } finally {
-        setAwaitingBot(false);
+        if (!controller.signal.aborted) setAwaitingBot(false);
       }
     },
     [deps],

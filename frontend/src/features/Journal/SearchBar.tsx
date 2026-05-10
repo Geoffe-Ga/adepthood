@@ -88,6 +88,15 @@ const SearchBar = ({ onSearch, resultCount, searchQuery }: SearchBarProps): Reac
   const [text, setText] = useState(searchQuery ?? '');
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // BUG-FE-JOURNAL-105: keep local ``text`` in sync with the controlling
+  // ``searchQuery`` prop.  Without this, a parent that programmatically
+  // resets the query (e.g. clearing on tab change) leaves the input
+  // showing the stale text -- and a pending debounce would then re-fire
+  // ``onSearch(stale)`` and clobber the parent's reset.
+  useEffect(() => {
+    setText((current) => (current === (searchQuery ?? '') ? current : searchQuery ?? ''));
+  }, [searchQuery]);
+
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
