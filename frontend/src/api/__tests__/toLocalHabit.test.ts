@@ -74,10 +74,7 @@ describe('toLocalHabit', () => {
     expect(local.completions).toEqual([]);
   });
 
-  // BUG-FE-HABIT-301: the previous mapper hardcoded ``completions: []`` even
-  // when the backend embedded the history.  Pinning the new contract so a
-  // future refactor that drops the flatten step fails the suite instead of
-  // silently re-introducing the persistence bug.
+  // Pins BUG-FE-HABIT-301: the mapper must flatten embedded completions, not hardcode [].
   test('flattens embedded goal completions onto the habit', () => {
     const withCompletions: ApiHabitWithGoals = {
       ...apiHabit,

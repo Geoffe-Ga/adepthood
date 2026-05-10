@@ -293,21 +293,10 @@ async def test_list_habits_includes_goals(
 
 @pytest.mark.asyncio
 async def test_get_habit_includes_goal_completions(async_client: AsyncClient) -> None:
-    """``GET /habits/{id}`` embeds each goal's logged completions.
-
-    BUG-FE-HABIT-301 -- before this fix the backend stored completions but
-    never serialized them.  ``mapApiHabits`` on the frontend then hardcoded
-    ``completions: []`` so a habit's progress bar reset to 0% on every cold
-    rehydrate (login, app restart, stuck-user re-fetch) even though the
-    streak (a scalar on the parent habit) survived.  Pinning the contract
-    here so a future schema regression that drops ``completions`` from the
-    nested goal payload fails this test instead of silently re-introducing
-    the persistence bug.
-    """
+    """``GET /habits/{id}`` embeds each goal's logged completions (BUG-FE-HABIT-301)."""
     headers = await _signup(async_client)
     create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
     habit_id = create_resp.json()["id"]
-    # Pick the seeded ``clear`` goal so the completion has a deterministic id.
     goal_id = next(g["id"] for g in create_resp.json()["goals"] if g["tier"] == "clear")
 
     log_resp = await async_client.post(
@@ -324,7 +313,8 @@ async def test_get_habit_includes_goal_completions(async_client: AsyncClient) ->
     completions = clear_goal["completions"]
     assert len(completions) == 1
     [completion] = completions
-    assert completion["completed_units"] > 0
+    # Pin the surviving row's identity: seeded clear goal has target=2.0.
+    assert completion["completed_units"] == 2.0
     assert isinstance(completion["timestamp"], str)
     assert isinstance(completion["id"], int)
 
@@ -354,14 +344,7 @@ async def test_list_habits_includes_goal_completions(async_client: AsyncClient) 
 async def test_get_habit_completions_filtered_to_caller(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A goal's ``completions`` list excludes rows logged by other users.
-
-    Defense-in-depth check: the per-row ``user_id`` filter mirrors the
-    streak-population path (``_populate_streak``) and the stats endpoint,
-    so a completion accidentally written under a different user (data
-    repair, manual SQL, future shared-goal feature) cannot leak across
-    tenants.
-    """
+    """Per-row ``user_id`` filter excludes cross-tenant completions from the embed."""
     alice_headers = await _signup(async_client, "alice_persist")
     create_resp = await async_client.post("/habits/", json=sample_payload(), headers=alice_headers)
     habit_id = create_resp.json()["id"]
@@ -375,13 +358,7 @@ async def test_get_habit_completions_filtered_to_caller(
     )
     assert own_log.status_code == HTTPStatus.OK
 
-    # Inject a stray completion under a different user_id (simulates the
-    # cross-tenant data state the streak filter already guards against).
-    # Use a sentinel value Alice's row cannot produce: the seeded clear
-    # goal has ``target=2.0`` so a successful check-in writes
-    # ``completed_units=2.0`` (see ``routers/goal_completions.py``).
-    # ``42.0`` is unmistakable as foreign and lets us equality-assert
-    # on Alice's value rather than just "not the foreign value".
+    # Foreign sentinel (Alice's seeded clear goal writes 2.0); 42.0 is unmistakable.
     stray_units = 42.0
     stray = GoalCompletion(goal_id=goal_id, user_id=999_999, completed_units=stray_units)
     db_session.add(stray)
@@ -392,10 +369,7 @@ async def test_get_habit_completions_filtered_to_caller(
     clear_goal = next(g for g in resp.json()["goals"] if g["tier"] == "clear")
     assert len(clear_goal["completions"]) == 1
     surviving = clear_goal["completions"][0]
-    # Equality on Alice's expected value: target=2.0 of the clear goal,
-    # written by a ``did_complete=True`` check-in.  Stronger than
-    # "not equal to the stray" because it pins the surviving row's
-    # *identity*, not just its absence-of-being-the-other-one.
+    # Equality on Alice's seeded clear-goal target; pins the row's identity, not absence-of-stray.
     assert surviving["completed_units"] == 2.0
     assert surviving["completed_units"] != stray_units
 

@@ -148,9 +148,7 @@ describe('GoalModal tooltips', () => {
 });
 
 describe('GoalModal target editor', () => {
-  // The editor renders each tier's saved target as a tappable chip; tapping
-  // swaps the chip for a TextInput so the user can edit (then ``onEndEditing``
-  // commits and the chip returns).  Tests cover both modes.
+  // Click-to-edit chip → input → commit → chip round-trip; tests cover both modes.
   it('renders a saved-state display for every goal tier by default', () => {
     const testRenderer = renderer.create(
       <GoalModal

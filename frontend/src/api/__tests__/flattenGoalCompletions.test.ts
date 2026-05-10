@@ -2,13 +2,6 @@
 /* global describe, it, expect */
 import { flattenGoalCompletions } from '../flattenGoalCompletions';
 
-// Direct unit tests for the shared helper that ``toLocalHabit``
-// (api/index.ts) and ``mapApiHabits`` (features/Habits/services/
-// habitManager.ts) both delegate to.  The behavioural contract is
-// already exercised through the two callers, but pinning it directly
-// here means a regression in the helper surfaces against the helper
-// itself rather than getting blamed on the mapper layer above it.
-
 describe('flattenGoalCompletions', () => {
   it('returns an empty array when given no goals', () => {
     expect(flattenGoalCompletions([])).toEqual([]);
@@ -31,10 +24,7 @@ describe('flattenGoalCompletions', () => {
   });
 
   it('dedupes by row id when the same completion appears under multiple goals', () => {
-    // Defends the future-shared-goal scenario the reviewer flagged on
-    // PR #293 -- a single ``GoalCompletion`` row may surface under more
-    // than one tier goal and the local habit progress sum must count it
-    // exactly once.
+    // Defends future shared-goal scenarios where one row surfaces under multiple tiers.
     const flat = flattenGoalCompletions([
       { completions: [{ id: 7, timestamp: '2026-05-09T22:00:00Z', completed_units: 1 }] },
       { completions: [{ id: 7, timestamp: '2026-05-09T22:00:00Z', completed_units: 1 }] },

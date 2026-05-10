@@ -2,12 +2,6 @@
 /* global describe, it, expect */
 import { goalCompletionSchema, goalSchema, habitSchema, habitWithGoalsSchema } from '../schemas';
 
-// Validator-edge tests for the runtime contract that protects the rest
-// of the app from a malformed backend response (BUG-FRONTEND-INFRA-024
-// follow-up after PR #293 review feedback). Each block pins a regression
-// the reviewer flagged on the first cut: a date-shaped string passing as
-// a datetime, a negative completion count slipping through, etc.
-
 const baseGoal = {
   id: 1,
   habit_id: 1,
@@ -33,14 +27,6 @@ const baseHabit = {
 };
 
 describe('goalCompletionSchema timestamp validation', () => {
-  // The previous ``isoDateTime`` form (``z.string().min(1)``) accepted any
-  // non-empty string. ``new Date("not-a-date")`` then produced a silent
-  // ``Invalid Date`` and downstream comparisons (streak / progress)
-  // returned ``false`` with no error surfaced to the user.  Tightening to
-  // ``.datetime({ offset: true })`` makes the validator boundary fail
-  // loudly so the upstream root cause (a backend regression, a manual
-  // data-repair row) gets a typed ``ApiValidationError`` instead of a
-  // mystery zero in the UI.
   it('accepts a UTC-suffixed ISO-8601 timestamp', () => {
     expect(() =>
       goalCompletionSchema.parse({ id: 1, timestamp: '2026-05-09T22:31:22Z', completed_units: 1 }),
@@ -64,8 +50,6 @@ describe('goalCompletionSchema timestamp validation', () => {
   });
 
   it('rejects a date-only string (no time component)', () => {
-    // ``YYYY-MM-DD`` is a legitimate ``isoDate`` value but not a datetime
-    // -- the timestamp on a completion always carries a wall-clock time.
     expect(() =>
       goalCompletionSchema.parse({ id: 4, timestamp: '2026-05-09', completed_units: 1 }),
     ).toThrow();
@@ -96,11 +80,6 @@ describe('goalCompletionSchema completed_units validation', () => {
   });
 
   it('rejects a negative amount (domain invariant)', () => {
-    // "I logged units of effort" cannot be negative.  A backend bug or a
-    // manual data-repair row that violates the invariant must not skew
-    // the summed habit progress -- fail at the validator boundary so
-    // Sentry sees a typed ``ApiValidationError`` instead of a silent
-    // negative contribution to ``calculateHabitProgress``.
     expect(() =>
       goalCompletionSchema.parse({
         id: 3,
@@ -129,11 +108,6 @@ describe('goalSchema embedded completions', () => {
   });
 
   it('rejects a goal whose nested completion has a malformed timestamp', () => {
-    // The reviewer's "no test for malformed timestamp handling in
-    // ``toLocalHabit``" finding -- pinned at the schema layer because
-    // ``toLocalHabit`` now relies on Zod to gate the input shape, so a
-    // schema-level rejection means ``new Date()`` is never called on
-    // garbage data.
     expect(() =>
       goalSchema.parse({
         ...baseGoal,
@@ -144,10 +118,6 @@ describe('goalSchema embedded completions', () => {
 });
 
 describe('habitSchema start_date validation', () => {
-  // ``start_date`` is a ``datetime.date`` on the backend, serialized
-  // without a time / timezone.  ``isoDate`` enforces ``YYYY-MM-DD`` so a
-  // silent ``Invalid Date`` cannot creep in here either, while still
-  // accepting the legitimate date-only payload the backend emits.
   it('accepts a valid YYYY-MM-DD date', () => {
     expect(() => habitSchema.parse(baseHabit)).not.toThrow();
   });
@@ -157,9 +127,6 @@ describe('habitSchema start_date validation', () => {
   });
 
   it('rejects a full datetime in the date-only field', () => {
-    // The backend would never send this for ``start_date`` -- if it
-    // started doing so, the schema mismatch is a silent contract drift
-    // we want to catch immediately, not absorb.
     expect(() => habitSchema.parse({ ...baseHabit, start_date: '2024-01-15T00:00:00Z' })).toThrow();
   });
 });

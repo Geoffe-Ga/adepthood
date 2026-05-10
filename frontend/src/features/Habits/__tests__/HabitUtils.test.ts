@@ -110,12 +110,7 @@ describe('HabitUtils', () => {
     expect(Math.round(pct)).toBe(50);
   });
 
-  // Degenerate-input fallback: if the habit lost its stretch tier (a
-  // partial onboarding state, a malformed test fixture), the function
-  // falls back to ``currentGoal`` as its own scale so the bar still
-  // renders something self-consistent rather than dividing by zero or
-  // throwing.  Pinning the contract here so a future refactor that
-  // hardens the fallback into a throw fails this test on purpose.
+  // Pins the missing-stretch fallback: ``stretchGoal ?? currentGoal``.
   test('getProgressPercentage falls back to currentGoal when stretch is missing (additive)', () => {
     const lowOnly: Goal = {
       id: 1,
@@ -132,16 +127,11 @@ describe('HabitUtils', () => {
       goals: [lowOnly],
       completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 2 }],
     };
-    // No stretch on the habit, so ``stretchGoal`` collapses to
-    // ``currentGoal`` (which is ``lowOnly``).  Progress 2 / target 4 = 50%.
+    // No stretch → fallback to ``lowOnly`` as the scale; 2 / 4 = 50%.
     expect(getProgressPercentage(habit, lowOnly)).toBeCloseTo(50);
   });
 
-  // Unified marker contract: all three markers (LG / CG / SG) live on the
-  // same 0-100 bar so the user always sees their full goal ladder.  The
-  // previous implementation collapsed CG and SG to the same column for
-  // additive goals, which surfaced as "the markers aren't working right"
-  // in the user report.
+  // All three markers on the unified 0-100 bar (previous logic collapsed CG/SG to 100).
   test('getMarkerPositions additive places all three on a stretch-anchored scale', () => {
     const low: Goal = {
       id: 1,
@@ -178,9 +168,7 @@ describe('HabitUtils', () => {
     expect(pos.low).toBeCloseTo(33.33, 1);
     expect(pos.clear).toBeCloseTo(66.67, 1);
     expect(pos.stretch).toBe(100);
-    // The three positions are strictly increasing -- no two markers share
-    // a column.  Pinning the invariant so a future regression that puts
-    // CG and SG back at 100 fails this test.
+    // Strictly increasing — guards against a CG/SG-collapsed regression.
     expect(pos.low).toBeLessThan(pos.clear);
     expect(pos.clear).toBeLessThan(pos.stretch);
   });
@@ -217,8 +205,7 @@ describe('HabitUtils', () => {
       is_additive: false,
     };
     const pos = getMarkerPositions(low, clear, stretch);
-    // (10-5)/(10-2) × 100 = 62.5 -- CG sits between LG (failure boundary)
-    // and SG (best).
+    // (10-5)/(10-2) × 100 = 62.5 — CG between LG (failure) and SG (best).
     expect(pos.low).toBe(0);
     expect(pos.clear).toBeCloseTo(62.5, 1);
     expect(pos.stretch).toBe(100);

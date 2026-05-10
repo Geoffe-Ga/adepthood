@@ -134,11 +134,7 @@ secrets.json
 # Development-only assets
 frontend/local-assets/
 
-# git-workflow skill artifacts: per-PR commit message templates rendered
-# by ``git commit -F`` so the pre-commit + commitlint hooks see the exact
-# log text. They describe the in-flight commit, not the project, and rot
-# immediately after merge -- gitignore so the pre-push stop-hook stops
-# yelling at us about untracked files we never meant to track.
+# git-workflow skill per-PR commit message templates — rot after merge.
 plans/github-issues/COMMIT_*.md
 
 # ======================================

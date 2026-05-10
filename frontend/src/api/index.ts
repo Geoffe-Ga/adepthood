@@ -658,11 +658,7 @@ export interface ApiGoal {
   frequency_unit: string;
   is_additive: boolean;
   goal_group_id?: number | null;
-  /**
-   * Embedded completions history.  Optional for back-compat with API builds
-   * that haven't shipped the embedded list yet -- callers fall back to an
-   * empty array so the progress bar renders at 0% rather than crashing.
-   */
+  /** Optional for back-compat with API builds that don't yet embed completions. */
   completions?: ApiGoalCompletion[];
 }
 

@@ -43,9 +43,7 @@ function validHabit(overrides: Partial<ApiHabitWithGoals> = {}): ApiHabitWithGoa
     id: 1,
     name: 'Meditate',
     icon: '🧘',
-    // ``start_date`` is a calendar date on the backend (``datetime.date``),
-    // serialized as ``YYYY-MM-DD``. The schema's ``isoDate`` validator now
-    // pins that shape so a contract drift fails fast; tests must match.
+    // ``start_date`` is calendar-date on the wire (``YYYY-MM-DD``); ``isoDate`` pins the shape.
     start_date: '2024-01-01',
     energy_cost: 1,
     energy_return: 2,

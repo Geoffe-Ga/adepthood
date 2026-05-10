@@ -64,11 +64,7 @@ export const isGoalAchieved = (goal: Goal, habit: Habit): boolean => {
   return goal.is_additive ? totalProgress >= targetValue : totalProgress <= targetValue;
 };
 
-/**
- * LG / CG / SG positions on a unified 0-100 bar (stretch = 100% additive,
- * low = 0% subtractive). Backend always seeds all three tiers; missing-tier
- * collapses to overlapping zeros as a visible-failure signal.
- */
+/** LG/CG/SG on a unified 0-100 bar; missing-tier collapses to {0,0,0} as a failure signal. */
 export const getMarkerPositions = (
   lowGoal?: Goal,
   clearGoal?: Goal,

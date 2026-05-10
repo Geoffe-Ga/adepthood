@@ -112,12 +112,7 @@ describe('habit progress utilities', () => {
       completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 2 }],
     };
 
-    // 2 / 3 = 66.67% on the unified scale (low=33%, clear=66%, stretch=100%).
-    // The previous implementation split the bar into thirds with a per-tier
-    // weighting and produced 33% here -- internally consistent but it
-    // disagreed with the marker positions, which surfaced as "the markers
-    // aren't working right".  The unified scale ties fill width and marker
-    // positions to the same denominator (stretch target).
+    // 2 / 3 = 66.67% on the unified stretch-anchored scale.
     const { currentGoal } = getGoalTier(habit);
     const percentage = getProgressPercentage(habit, currentGoal);
     expect(percentage).toBeCloseTo(66.67, 1);
@@ -241,8 +236,7 @@ describe('habit progress utilities', () => {
     expect(pos.low).toBeCloseTo(33.33, 1);
     expect(pos.clear).toBeCloseTo(66.67, 1);
     expect(pos.stretch).toBe(100);
-    // All three markers sit on distinct columns -- pinning the "always
-    // visible" invariant from the user-reported regression.
+    // Distinct columns — pins the "always-visible" invariant.
     expect(pos.low).toBeLessThan(pos.clear);
     expect(pos.clear).toBeLessThan(pos.stretch);
   });
@@ -250,8 +244,7 @@ describe('habit progress utilities', () => {
   it('computes marker positions for subtractive goals on the low-anchored scale', () => {
     const [low, clear, stretch] = subtractiveGoals;
     const pos = getMarkerPositions(low, clear, stretch);
-    // low=300 (failure boundary, 0%), stretch=0 (best, 100%), clear=200
-    // sits at (300-200)/(300-0) = 33% from the low end.
+    // low=300 (failure, 0%), stretch=0 (best, 100%), clear=200 → 33%.
     expect(pos.low).toBe(0);
     expect(pos.clear).toBeCloseTo(33.33, 1);
     expect(pos.stretch).toBe(100);

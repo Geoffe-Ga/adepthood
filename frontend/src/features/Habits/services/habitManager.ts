@@ -111,10 +111,7 @@ const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.list>>): Ha
       is_additive: g.is_additive,
       goal_group_id: g.goal_group_id ?? null,
     })),
-    // Shared with ``toLocalHabit`` (api/index.ts) so the dedupe / Date
-    // rehydration invariant is single-source -- the duplicated copy was
-    // exactly the divergence risk the persistence fix is designed to
-    // prevent at the data layer.
+    // Shared with ``toLocalHabit`` -- single-source dedupe + Date rehydration.
     completions: flattenGoalCompletions(h.goals ?? []),
     revealed: true,
     notificationTimes: h.notification_times ?? undefined,
