@@ -11,6 +11,7 @@ import {
   calculateHabitProgress,
   calculateTodaysProgress,
   getProgressBarColor,
+  isGoalAchieved,
   logHabitUnits,
   calculateHabitStartDate,
   STAGE_DURATIONS_DAYS,
@@ -461,6 +462,131 @@ describe('HabitUtils', () => {
       };
       // Today contributed 1 unit -- meets the low goal target (1) but not clear (2).
       expect(calculateTodaysProgress(habit, 'UTC')).toBe(1);
+      const { currentGoal, completedAllGoals } = getGoalTier(habit, 'UTC');
+      expect(currentGoal.tier).toBe('low');
+      expect(completedAllGoals).toBe(false);
+    });
+
+    test("calculateTodaysProgress sums today's logs across multiple check-ins", () => {
+      const habit: Habit = {
+        ...baseHabit,
+        goals: additiveGoals,
+        completions: [
+          { id: 'y-1', timestamp: yesterdayUtc(), completed_units: 99 },
+          { id: 't-1', timestamp: new Date(), completed_units: 1.5 },
+          { id: 't-2', timestamp: new Date(), completed_units: 0.5 },
+        ],
+      };
+      // Two of-today logs sum to 2.0; yesterday's 99 is excluded.
+      expect(calculateTodaysProgress(habit, 'UTC')).toBe(2);
+    });
+
+    // -----------------------------------------------------------------------
+    // Subtractive habits ("drink less than X / day"): yesterday's drinks must
+    // not count against today's "stayed under stretch" status either.
+    // -----------------------------------------------------------------------
+    const subtractiveGoals: Goal[] = [
+      {
+        id: 1,
+        tier: 'low',
+        title: 'low',
+        target: 10,
+        target_unit: 'u',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: false,
+      },
+      {
+        id: 2,
+        tier: 'clear',
+        title: 'clear',
+        target: 5,
+        target_unit: 'u',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: false,
+      },
+      {
+        id: 3,
+        tier: 'stretch',
+        title: 'stretch',
+        target: 2,
+        target_unit: 'u',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: false,
+      },
+    ];
+
+    test('subtractive habit re-enters victory state at local midnight', () => {
+      const habit: Habit = {
+        ...baseHabit,
+        stage: 'Blue',
+        goals: subtractiveGoals,
+        // Yesterday the user blew past the low goal; today they have nothing
+        // logged yet so they should be back at "under stretch" (full bar).
+        completions: [{ id: 'y-1', timestamp: yesterdayUtc(), completed_units: 20 }],
+      };
+      const { currentGoal, completedAllGoals } = getGoalTier(habit, 'UTC');
+      expect(currentGoal.tier).toBe('stretch');
+      expect(completedAllGoals).toBe(true);
+      expect(getProgressPercentage(habit, currentGoal, 'UTC')).toBe(100);
+      expect(getProgressBarColor(habit, 'UTC')).toBe(VICTORY_COLOR);
+    });
+
+    test('subtractive habit drops out of victory once today crosses stretch', () => {
+      const habit: Habit = {
+        ...baseHabit,
+        stage: 'Blue',
+        goals: subtractiveGoals,
+        completions: [
+          { id: 'y-1', timestamp: yesterdayUtc(), completed_units: 20 },
+          { id: 't-1', timestamp: new Date(), completed_units: 3 },
+        ],
+      };
+      const { completedAllGoals } = getGoalTier(habit, 'UTC');
+      // Today's 3 units are above stretch (2) but below clear (5) -> still
+      // achieved-clear-not-stretch, so the "all goals" flag flips to false.
+      expect(completedAllGoals).toBe(false);
+    });
+
+    // -----------------------------------------------------------------------
+    // Timezone handling: a completion logged 23:00 wall-clock in NY must be
+    // bucketed into NY's calendar day, not UTC's.
+    // -----------------------------------------------------------------------
+    test('calculateTodaysProgress buckets by the supplied IANA timezone', () => {
+      // 04:00 UTC on a given day == midnight previous day in America/Anchorage
+      // (UTC-9 in winter, UTC-8 in summer -- both flip the calendar date).
+      const earlyUtc = new Date();
+      earlyUtc.setUTCHours(4, 0, 0, 0);
+      const habit: Habit = {
+        ...baseHabit,
+        goals: additiveGoals,
+        completions: [{ id: 'tz-1', timestamp: earlyUtc, completed_units: 2 }],
+      };
+      // In UTC: today.
+      expect(calculateTodaysProgress(habit, 'UTC')).toBe(2);
+      // In Anchorage: still yesterday.
+      expect(calculateTodaysProgress(habit, 'America/Anchorage')).toBe(0);
+    });
+
+    test('isGoalAchieved tracks today, not all-time', () => {
+      const habit: Habit = {
+        ...baseHabit,
+        goals: additiveGoals,
+        completions: [{ id: 'y-1', timestamp: yesterdayUtc(), completed_units: 99 }],
+      };
+      const stretchGoal = additiveGoals.find((g) => g.tier === 'stretch')!;
+      expect(isGoalAchieved(stretchGoal, habit, 'UTC')).toBe(false);
+    });
+
+    test('habit with no completions reports zero today and no achievement', () => {
+      const habit: Habit = {
+        ...baseHabit,
+        goals: additiveGoals,
+        completions: [],
+      };
+      expect(calculateTodaysProgress(habit, 'UTC')).toBe(0);
       const { currentGoal, completedAllGoals } = getGoalTier(habit, 'UTC');
       expect(currentGoal.tier).toBe('low');
       expect(completedAllGoals).toBe(false);
