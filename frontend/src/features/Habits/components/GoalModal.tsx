@@ -405,13 +405,7 @@ const goalEditorStyles = StyleSheet.create({
     fontSize: GOAL_INPUT_FONT_SIZE,
     marginHorizontal: SPACING.sm,
   },
-  /**
-   * Saved-state chip for the goal target.  Visually distinct from the
-   * editable :class:`input` style -- no border, lighter background -- so
-   * the user can tell at a glance which targets are "settled" versus
-   * "being typed".  Tap target stays >= 32px tall (vertical padding +
-   * font height) for thumb input.
-   */
+  /** Saved-state chip — visually distinct from :class:`input` so users see settled vs editing. */
   display: {
     width: GOAL_INPUT_WIDTH,
     borderRadius: GOAL_INPUT_BORDER_RADIUS,
@@ -479,31 +473,11 @@ interface GoalTargetRowProps {
   onCommit: (_target: number) => void;
 }
 
-/**
- * Single-row editor for one goal tier's numeric target.
- *
- * Two modes:
- *   - **display** (default) -- shows the saved value as a tappable chip with
- *     no input chrome.  Communicates "this is the saved value, tap to edit"
- *     unambiguously, fixing the user-reported bug where typing into the
- *     always-visible TextInput on web/mobile felt like edits never landed
- *     because the field never visually settled.
- *   - **editing** -- TextInput with ``autoFocus`` so the keyboard / soft
- *     focus ring appears immediately on tap.  Commits on ``onEndEditing``
- *     (return key + blur per the React Native docs); a non-numeric draft
- *     reverts to the saved value instead of corrupting the goal target to
- *     ``NaN`` / ``0``.
- *
- * Wiring only ``onEndEditing`` (not ``onBlur``) is deliberate: React Native
- * fires both back-to-back on a single keyboard dismissal, so duplicating
- * the commit handler would send two API writes per edit on device.
- */
+/** Click-to-edit target row: chip → TextInput on tap, ``onEndEditing`` only (no double-write). */
 const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(goal.target));
-  // When the underlying goal changes (sibling edit, marker drag, server
-  // round-trip) sync the draft -- but only while *not* mid-edit, so a
-  // user's in-flight typing is never clobbered by an out-of-band update.
+  // Skip sync mid-edit so out-of-band updates don't clobber in-flight typing.
   useEffect(() => {
     if (!editing) setDraft(String(goal.target));
   }, [goal.target, editing]);
@@ -527,9 +501,7 @@ const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
           style={goalEditorStyles.input}
           value={draft}
           onChangeText={setDraft}
-          // ``onEndEditing`` covers both the return-key path *and* blur per
-          // the React Native docs; do not also wire ``onBlur`` (sends two
-          // API writes per edit on device).
+          // ``onEndEditing`` covers return-key + blur; ``onBlur`` would double-write on device.
           onEndEditing={handleEnd}
           autoFocus
           keyboardType="numeric"

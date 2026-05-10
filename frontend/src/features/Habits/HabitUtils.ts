@@ -65,49 +65,15 @@ export const isGoalAchieved = (goal: Goal, habit: Habit): boolean => {
 };
 
 /**
- * Compute the LG / CG / SG marker positions on a unified 0-100 progress
- * bar that always shows all three tiers.
- *
- * Refactor of the previous logic, which (a) collapsed CG and SG to the
- * same 100% column for additive goals so SG was indistinguishable from
- * CG, and (b) used a separate scale per goal-type so the markers and the
- * progress fill could disagree on what "X%" meant. Both bugs surfaced
- * to the user as "the implementation is too complicated".
- *
- * Single contract (additive ``do at least X``):
- *   bar 0%   = nothing logged
- *   bar 100% = stretch target reached
- *   LG       = lowTarget / stretchTarget × 100
- *   CG       = clearTarget / stretchTarget × 100
- *   SG       = 100
- *
- * Single contract (subtractive ``stay under X``, lower current = better):
- *   bar 0%   = at the low limit (failure boundary)
- *   bar 100% = at or under stretch target (best)
- *   LG       = 0
- *   CG       = (lowTarget - clearTarget) / (lowTarget - stretchTarget) × 100
- *   SG       = 100
- *
- * The unified scale lets a single ``getProgressPercentage`` produce a fill
- * width that lines up with the markers, and lets the GoalModal /
- * HabitTile drop their ad-hoc ``hasCleared`` gating that used to hide SG
- * until CG was met.  Frequency-unit normalization runs through
- * ``getGoalTarget`` so a goal stated as "5 / per_week" is on the same
- * scale as a goal stated as "0.7 / per_day".
+ * LG / CG / SG positions on a unified 0-100 bar (stretch = 100% additive,
+ * low = 0% subtractive). Backend always seeds all three tiers; missing-tier
+ * collapses to overlapping zeros as a visible-failure signal.
  */
 export const getMarkerPositions = (
   lowGoal?: Goal,
   clearGoal?: Goal,
   stretchGoal?: Goal,
 ): { low: number; clear: number; stretch: number } => {
-  // Production invariant: every habit is seeded with all three tier
-  // goals by the backend (``_DEFAULT_GOAL_TIERS`` in
-  // ``backend/src/routers/habits.py``), so missing-tier here is a
-  // degenerate input -- a malformed habit, a hand-crafted test
-  // fixture, or a partial onboarding state.  Returning ``{0, 0, 0}``
-  // collapses all three markers to the bar's left edge so the
-  // mismatch is visible to the developer (overlapping markers, not a
-  // silently-positioned single dot) without crashing the render.
   if (!lowGoal || !clearGoal || !stretchGoal) {
     return { low: 0, clear: 0, stretch: 0 };
   }
@@ -117,9 +83,6 @@ export const getMarkerPositions = (
   const stretchTarget = getGoalTarget(stretchGoal);
 
   if (lowGoal.is_additive) {
-    // Defensive fallback for a degenerate stretch=0 config (would be a
-    // divide-by-zero on the next line). Spread the markers across the bar
-    // so the user sees something useful rather than three overlapping dots.
     if (stretchTarget <= 0) return { low: 0, clear: 50, stretch: 100 };
     return {
       low: clampPercentage((lowTarget / stretchTarget) * 100),
@@ -128,7 +91,6 @@ export const getMarkerPositions = (
     };
   }
 
-  // Subtractive: the bar represents "headroom under the low limit".
   const range = lowTarget - stretchTarget;
   if (range <= 0) return { low: 0, clear: 50, stretch: 100 };
   return {
@@ -189,24 +151,7 @@ export const getGoalTarget = (goal: Goal): number => {
   return goal.target;
 };
 
-/**
- * Sum of every ``completed_units`` value the habit has ever logged.
- *
- * **Accumulator semantic, deliberately not date-windowed.** A habit's
- * progress in this codebase is the cumulative effort total against the
- * stretch target, not "today's progress" -- the streak counter
- * (``habit.streak``, computed server-side via ``compute_habit_streak``)
- * already encodes the day-by-day cadence, and the progress bar's job is
- * to show how far the user has come over the life of the habit.
- *
- * If a future reader is tempted to "fix" this by filtering completions
- * to today's calendar day, that would silently regress the
- * BUG-FE-HABIT-301 persistence fix: a habit logged yesterday would
- * read 0% on the bar today, exactly the symptom the embed contract
- * exists to prevent.  The follow-up window-based payload work tracked
- * in #294 will trim the *transport* to a rolling window, but this
- * computation will continue to sum every row the client has cached.
- */
+/** All-time accumulator (NOT today-only) -- a date filter regresses BUG-FE-HABIT-301. See #294. */
 export const calculateHabitProgress = (habit: Habit): number => {
   if (!habit.completions || habit.completions.length === 0) {
     return 0;
@@ -283,32 +228,9 @@ export const getGoalTier = (habit: Habit): GoalTierResult => {
     : resolveSubtractiveTier(totalProgress, lowGoal, clearGoal, stretchGoal);
 };
 
-/**
- * Current progress as a percentage on the unified 0-100 scale shared with
- * :func:`getMarkerPositions` so the fill width and the markers always
- * agree on what "X%" means.
- *
- * Additive: ``min(currentProgress / stretchTarget, 1) × 100``.
- * Subtractive: ``clamp(100 - (currentProgress - stretchTarget) /
- * (lowTarget - stretchTarget) × 100, 0, 100)``.
- *
- * ``currentGoal`` is retained because it carries the ``is_additive``
- * flag (read off the active tier rather than re-derived) and acts as the
- * fallback when a malformed habit is missing low or stretch.  The
- * previous signature also took ``nextGoal`` for a per-tier weighting --
- * the unified scale derives everything from low/stretch directly so
- * ``nextGoal`` was genuinely dead and has been removed (CLAUDE.md
- * forbids ``_unused`` placeholder parameters).
- */
+/** Progress on the unified 0-100 scale shared with :func:`getMarkerPositions`. */
 export const getProgressPercentage = (habit: Habit, currentGoal: Goal): number => {
   const totalProgress = calculateHabitProgress(habit);
-  // Fallback to ``currentGoal`` when stretch (or low, below) is missing
-  // -- a malformed habit that lost a tier still renders something
-  // self-consistent: the active goal becomes its own scale, so the bar
-  // fills based on the only target the habit actually has.  Production
-  // habits are always seeded with all three tiers (see the matching
-  // invariant comment in ``getMarkerPositions``); this fallback is for
-  // tests, in-flight onboarding, and degenerate data.
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch') ?? currentGoal;
   const stretchTarget = getGoalTarget(stretchGoal);
 

@@ -461,12 +461,7 @@ const useHabitTileData = (habit: Habit) => {
     stretch: stretchMarker,
   } = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
 
-  // All three tier markers are always visible whenever the corresponding
-  // goal exists.  The previous logic gated the stretch marker behind a
-  // ``hasCleared`` flag (so SG popped in only after CG was met), which
-  // user-tested as confusing and inconsistent with the GoalModal where
-  // SG was always shown.  Keeping all three on-screen at once gives the
-  // user a stable mental map of "where am I, where am I going".
+  // SG is unconditionally visible (the prior ``hasCleared`` gate caused user-reported confusion).
   const markers: GoalMarkerEntry[] = [
     {
       goal: lowGoal!,

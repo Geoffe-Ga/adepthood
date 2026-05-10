@@ -44,12 +44,7 @@ class Habit(OwnedResourcePublic):
 
 
 class HabitWithGoals(Habit):
-    """Habit response that includes nested goals (with completions).
-
-    Each nested goal embeds its full completions history so a fresh
-    ``GET /habits`` can rebuild the progress bar without a follow-up
-    round-trip per goal (BUG-FE-HABIT-301).
-    """
+    """Habit + nested goals each carrying their embedded completions (BUG-FE-HABIT-301)."""
 
     goals: list[GoalWithCompletions] = Field(default_factory=list)
 

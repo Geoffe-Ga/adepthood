@@ -10,15 +10,7 @@ from models.goal import GoalTier
 
 
 class GoalCompletionPublic(BaseModel):
-    """Public representation of a :class:`models.goal_completion.GoalCompletion`.
-
-    Embedded in goal responses so the frontend can rebuild a habit's progress
-    bar after a fresh API rehydrate (BUG-FE-HABIT-301).  Without this the
-    backend silently discarded the only durable record of a user's logged
-    units -- the frontend ``mapApiHabits`` hardcoded ``completions: []`` and
-    the progress bar reset to 0% on every cold load even though the streak
-    (a scalar on the parent habit) survived.
-    """
+    """One logged check-in row, embedded on the goal (BUG-FE-HABIT-301)."""
 
     id: int
     timestamp: datetime
@@ -46,19 +38,7 @@ class Goal(BaseModel):
 
 
 class GoalWithCompletions(Goal):
-    """Goal response that includes the embedded completions history.
-
-    Embedded in the habit list / detail responses so the frontend can rebuild
-    a habit's progress bar after a fresh API rehydrate (BUG-FE-HABIT-301).
-    Without this, the backend silently discarded the only durable record of
-    a user's logged units -- ``mapApiHabits`` hardcoded ``completions: []``
-    and the progress bar reset to 0% on every cold load even though the
-    streak (a scalar on the parent habit) survived.
-
-    Kept as a separate schema from :class:`Goal` so endpoints that don't
-    eager-load completions (e.g. ``PUT /goals/{id}``) don't trigger a
-    greenlet lazy-load when Pydantic walks the relation.
-    """
+    """Goal + embedded completions; separate from :class:`Goal` to avoid lazy-load on PUT."""
 
     completions: list[GoalCompletionPublic] = Field(default_factory=list)
 

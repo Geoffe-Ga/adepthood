@@ -22,42 +22,10 @@ import { z } from 'zod';
 // Shared primitives
 // ---------------------------------------------------------------------------
 
-/**
- * A full ISO-8601 datetime string with a timezone designator -- e.g.
- * ``2026-05-09T22:31:22Z`` or ``2026-05-09T22:31:22+00:00``.
- *
- * The previous form (``z.string().min(1)``) only enforced non-emptiness,
- * so a backend response like ``timestamp: "not-a-date"`` passed Zod and
- * downstream ``new Date("not-a-date")`` produced a silent
- * ``Invalid Date``. Streak / progress comparisons against that value
- * silently returned ``false`` and surfaced no error to the user or to
- * Sentry -- exactly the kind of root-cause-hidden bug the runtime
- * validators exist to prevent. ``offset: true`` accepts both ``Z`` and
- * ``±HH:MM`` suffixes so the backend's stdlib ``datetime.isoformat()``
- * (which emits ``+00:00``) and any future explicit-``Z`` serializer
- * both pass.
- */
+/** ISO-8601 datetime with a Z or ±HH:MM offset; rejects free-form strings. */
 const isoDateTime = z.string().datetime({ offset: true });
 
-/**
- * Calendar-date string in ``YYYY-MM-DD`` form (no time component).
- *
- * Distinct from :const:`isoDateTime` because backend fields like
- * ``Habit.start_date`` are typed as ``datetime.date`` and serialized
- * without a time / timezone -- ``z.string().datetime()`` would reject
- * the legitimate value. The regex pins the calendar shape so a malformed
- * date still fails fast at the validator boundary rather than turning
- * into ``Invalid Date`` further down the call stack.
- *
- * **Shape-only:** the regex enforces format (`\d{4}-\d{2}-\d{2}`) but
- * does not validate semantic correctness -- ``9999-13-99`` would pass.
- * That tradeoff matches the contract: the backend's ``datetime.date``
- * already enforces semantic validity at the source, and the wire format
- * is the contract this validator defends.  A semantically-valid backend
- * field cannot send a malformed date here; if it ever did, the regex
- * would catch it and downstream ``new Date()`` would not silently turn
- * it into ``Invalid Date``.
- */
+/** ``YYYY-MM-DD`` shape-only; backend's ``datetime.date`` enforces semantics. */
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, {
   message: 'expected ISO-8601 calendar date (YYYY-MM-DD)',
 });
@@ -133,18 +101,7 @@ export function isTier(value: unknown): value is Tier {
   return typeof value === 'string' && (TIER_VALUES as readonly string[]).includes(value);
 }
 
-/**
- * One row of a goal's completion history (BUG-FE-HABIT-301).  Embedded on
- * the goal so a fresh ``GET /habits`` rebuilds the progress bar without a
- * follow-up round-trip.  Optional in the goal schema for back-compat with
- * older API builds that have not yet rolled out the embedded list.
- *
- * ``completed_units`` is bounded ``>= 0`` to match the domain contract --
- * "I logged units of effort" cannot be negative; a backend bug or a
- * manual data-repair row that violates the invariant fails fast at the
- * validator boundary rather than skewing the summed habit progress
- * downstream.
- */
+/** One row of a goal's logged completions (BUG-FE-HABIT-301). */
 export const goalCompletionSchema = z.object({
   id: z.number().int(),
   timestamp: isoDateTime,

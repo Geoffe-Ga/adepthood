@@ -55,33 +55,7 @@ def _populate_streak(habit: Habit, current_user: int, user_timezone: str) -> Non
 
 
 def _filter_completions_to_caller(habit: Habit, current_user: int) -> None:
-    """Drop any completions on this habit's goals that don't belong to the caller.
-
-    Defense-in-depth that mirrors the existing per-row filter in
-    ``_populate_streak`` and the stats endpoint -- under the current write
-    paths every ``GoalCompletion.user_id`` matches the parent habit's
-    ``user_id`` (the only writer is ``POST /goal_completions/`` and it
-    sources the user from the JWT), but a manual data-repair row, a
-    future shared-goal feature, or an accidental backfill could otherwise
-    leak across tenants when the schema embeds completions on the goal
-    response.  We mutate the in-memory relation rather than rebuild the
-    object graph; SQLAlchemy treats this as a transient list edit and
-    will not flush deletes because we never commit the session.
-
-    .. WARNING::
-        Do **not** call ``session.commit()`` after this function returns
-        on the same request. Replacing ``goal.completions`` marks the
-        ``GoalCompletion`` rows that were filtered out as orphaned (the
-        relation has ``cascade="all, delete-orphan"`` semantics by
-        default for a back-populated collection), so a commit would
-        permanently delete the other user's rows from the DB -- a
-        cross-tenant data-loss bug. The two callers
-        (``list_habits`` / ``get_habit``) are pure read endpoints and
-        already follow this rule; if a future caller needs both the
-        filtered response *and* a write, swap this for a read-only
-        projection (build the ``HabitWithGoals`` payload manually with
-        a list comprehension) instead of mutating the ORM relation.
-    """
+    """Drop cross-tenant completions; callers must NOT commit (orphan-delete cascade)."""
     for goal in habit.goals:
         goal.completions = [c for c in goal.completions if c.user_id == current_user]
 
@@ -184,15 +158,7 @@ async def list_habits(
     pagination: Annotated[PaginationParams, Depends()],
 ) -> Page[HabitWithGoals] | list[HabitWithGoals]:
     """Return habits sorted by ``sort_order``; paginated when ``?paginate=true``."""
-    # ``HABIT_WITH_GOALS_AND_COMPLETIONS`` is a
-    # ``selectinload(Habit.goals).selectinload(Goal.completions)`` chain
-    # (see ``load_options.py``).  Both relations are pre-loaded here so
-    # the post-query loop can read ``goal.completions`` -- via
-    # ``_populate_streak`` and ``_filter_completions_to_caller`` -- and
-    # the response serializer can walk the embedded list without
-    # tripping ``MissingGreenlet`` on an async lazy-load.  Any change
-    # that drops or narrows this loader will surface as a runtime panic
-    # the moment the list endpoint is hit.
+    # Eager-load goals + completions; dropping this triggers MissingGreenlet downstream.
     query = (
         select(Habit)
         .where(Habit.user_id == current_user)
