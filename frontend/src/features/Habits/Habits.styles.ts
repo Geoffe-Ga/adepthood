@@ -1308,7 +1308,6 @@ export const styles = StyleSheet.create({
   paginationButtonText: {
     color: COLORS.text.light,
     fontWeight: '600',
-    fontSize: 14,
   },
   paginationLabel: {
     color: COLORS.text.primary,

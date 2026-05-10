@@ -13,7 +13,12 @@ interface AddHabitModalProps {
   onAdd: (_input: AddHabitInput) => void | Promise<void>;
 }
 
-const ENERGY_MIN = 0;
+/**
+ * Energy bounds match `HabitSettingsModal` so a habit created here can be
+ * tuned to the same negative-cost / negative-return range an existing habit
+ * supports — a previous version capped at 0 and produced an inconsistency.
+ */
+const ENERGY_MIN = -10;
 const ENERGY_MAX = 10;
 const DEFAULT_ENERGY = 5;
 
@@ -133,28 +138,32 @@ const EnergyRow = ({
       <Text style={styles.netEnergyValue}>{calculateNetEnergy(energyCost, energyReturn)}</Text>
     </View>
     <View style={styles.validationNote}>
-      <Text style={styles.validationText}>Enter a whole number from 0 to 10.</Text>
+      <Text style={styles.validationText}>Enter a whole number from -10 to 10.</Text>
     </View>
   </View>
 );
 
 interface SaveRowProps {
+  saving: boolean;
   canSave: boolean;
   onSave: () => void;
 }
 
-const SaveRow = ({ canSave, onSave }: SaveRowProps) => (
-  <View style={styles.buttonGroup}>
-    <TouchableOpacity
-      testID="add-habit-save"
-      style={[styles.onboardingContinueButton, !canSave && styles.disabledButton]}
-      onPress={onSave}
-      disabled={!canSave}
-    >
-      <Text style={styles.onboardingContinueButtonText}>Add Habit</Text>
-    </TouchableOpacity>
-  </View>
-);
+const SaveRow = ({ saving, canSave, onSave }: SaveRowProps) => {
+  const disabled = saving || !canSave;
+  return (
+    <View style={styles.buttonGroup}>
+      <TouchableOpacity
+        testID="add-habit-save"
+        style={[styles.onboardingContinueButton, disabled && styles.disabledButton]}
+        onPress={onSave}
+        disabled={disabled}
+      >
+        <Text style={styles.onboardingContinueButtonText}>{saving ? 'Adding…' : 'Add Habit'}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+};
 
 interface AddHabitFormState {
   name: string;
@@ -202,18 +211,35 @@ const useAddHabitForm = (visible: boolean): AddHabitFormState => {
 
 export const AddHabitModal = ({ visible, onClose, onAdd }: AddHabitModalProps) => {
   const f = useAddHabitForm(visible);
+  const [saving, setSaving] = useState(false);
   const trimmed = f.name.trim();
   const canSave = trimmed.length > 0;
 
-  const handleSave = () => {
-    if (!canSave) return;
-    void onAdd({
-      name: trimmed,
-      icon: f.icon,
-      energy_cost: f.energyCost,
-      energy_return: f.energyReturn,
-    });
-    onClose();
+  /**
+   * Await `onAdd` before closing so the optimistic toast (or the rollback
+   * error toast on failure) lands while the modal is still around for the
+   * user to read. Holding `saving` also disables the button so a double-tap
+   * cannot double-submit while the network round-trip is in flight. The
+   * rejection is intentionally swallowed: `habitManager.addHabit` already
+   * routes failures through the rollback toast, so re-throwing here would
+   * surface a duplicate unhandled-promise warning to no user benefit.
+   */
+  const handleSave = async () => {
+    if (!canSave || saving) return;
+    setSaving(true);
+    try {
+      await onAdd({
+        name: trimmed,
+        icon: f.icon,
+        energy_cost: f.energyCost,
+        energy_return: f.energyReturn,
+      });
+    } catch {
+      // already reported by the service layer
+    } finally {
+      setSaving(false);
+      onClose();
+    }
   };
 
   return (
@@ -234,7 +260,7 @@ export const AddHabitModal = ({ visible, onClose, onAdd }: AddHabitModalProps) =
             setEnergyCost={f.setEnergyCost}
             setEnergyReturn={f.setEnergyReturn}
           />
-          <SaveRow canSave={canSave} onSave={handleSave} />
+          <SaveRow saving={saving} canSave={canSave} onSave={() => void handleSave()} />
         </View>
       </View>
     </Modal>

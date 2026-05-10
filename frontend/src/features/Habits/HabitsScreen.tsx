@@ -19,11 +19,12 @@ import OnboardingModal from './components/OnboardingModal';
 import ReorderHabitsModal from './components/ReorderHabitsModal';
 import StatsModal from './components/StatsModal';
 import styles from './Habits.styles';
-import type { Habit, HabitStatsData } from './Habits.types';
+import type { AddHabitInput, Habit, HabitStatsData } from './Habits.types';
 import HabitTile from './HabitTile';
 import { generateStatsForHabit, toLocalHabitStats, calculateMissedDays } from './HabitUtils';
 import { useHabits } from './hooks/useHabits';
 import { useModalCoordinator } from './hooks/useModalCoordinator';
+import { usePagination } from './hooks/usePagination';
 
 /** Habits per page. Ten is the design ceiling that fills the screen 1-up on mobile and 2x5 on landscape/desktop. */
 const HABITS_PER_PAGE = 10;
@@ -206,6 +207,7 @@ interface HabitModalsProps {
   habitStats: HabitStatsData | null;
   habits: Habit[];
   actions: ReturnType<typeof useHabits>['actions'];
+  onAddHabit: (_input: AddHabitInput) => Promise<void>;
 }
 
 const HabitDataModals = ({
@@ -213,7 +215,7 @@ const HabitDataModals = ({
   selectedHabit,
   habitStats,
   actions,
-}: Omit<HabitModalsProps, 'habits'>) => (
+}: Omit<HabitModalsProps, 'habits' | 'onAddHabit'>) => (
   <>
     <GoalModal
       visible={modals.goal}
@@ -240,14 +242,14 @@ const HabitDataModals = ({
   </>
 );
 
-const HabitModals = ({ modals, selectedHabit, habitStats, habits, actions }: HabitModalsProps) => (
+const HabitWriteModals = ({
+  modals,
+  selectedHabit,
+  habits,
+  actions,
+  onAddHabit,
+}: Omit<HabitModalsProps, 'habitStats'>) => (
   <>
-    <HabitDataModals
-      modals={modals}
-      selectedHabit={selectedHabit}
-      habitStats={habitStats}
-      actions={actions}
-    />
     <HabitSettingsModal
       visible={modals.settings}
       habit={selectedHabit}
@@ -274,7 +276,7 @@ const HabitModals = ({ modals, selectedHabit, habitStats, habits, actions }: Hab
     <AddHabitModal
       visible={modals.addHabit}
       onClose={() => modals.close('addHabit')}
-      onAdd={actions.addHabit}
+      onAdd={onAddHabit}
     />
     {modals.emojiPicker && (
       <EmojiPickerModal
@@ -282,6 +284,24 @@ const HabitModals = ({ modals, selectedHabit, habitStats, habits, actions }: Hab
         onClose={() => modals.close('emojiPicker')}
       />
     )}
+  </>
+);
+
+const HabitModals = (props: HabitModalsProps) => (
+  <>
+    <HabitDataModals
+      modals={props.modals}
+      selectedHabit={props.selectedHabit}
+      habitStats={props.habitStats}
+      actions={props.actions}
+    />
+    <HabitWriteModals
+      modals={props.modals}
+      selectedHabit={props.selectedHabit}
+      habits={props.habits}
+      actions={props.actions}
+      onAddHabit={props.onAddHabit}
+    />
   </>
 );
 
@@ -353,6 +373,7 @@ interface PaginationBarProps {
 const PaginationBar = ({ page, pageCount, onPrev, onNext, scale }: PaginationBarProps) => {
   const canPrev = page > 0;
   const canNext = page < pageCount - 1;
+  const textSize = { fontSize: spacing(1.75, scale) };
   return (
     <View style={styles.paginationBar} testID="habits-pagination">
       <TouchableOpacity
@@ -361,9 +382,9 @@ const PaginationBar = ({ page, pageCount, onPrev, onNext, scale }: PaginationBar
         disabled={!canPrev}
         style={[styles.paginationButton, !canPrev && styles.disabledButton]}
       >
-        <Text style={styles.paginationButtonText}>Prev</Text>
+        <Text style={[styles.paginationButtonText, textSize]}>Prev</Text>
       </TouchableOpacity>
-      <Text style={[styles.paginationLabel, { fontSize: spacing(1.75, scale) }]}>
+      <Text style={[styles.paginationLabel, textSize]}>
         Page {page + 1} of {pageCount}
       </Text>
       <TouchableOpacity
@@ -372,7 +393,7 @@ const PaginationBar = ({ page, pageCount, onPrev, onNext, scale }: PaginationBar
         disabled={!canNext}
         style={[styles.paginationButton, !canNext && styles.disabledButton]}
       >
-        <Text style={styles.paginationButtonText}>Next</Text>
+        <Text style={[styles.paginationButtonText, textSize]}>Next</Text>
       </TouchableOpacity>
     </View>
   );
@@ -517,13 +538,7 @@ interface HabitsContentProps {
   gridGutter: number;
   renderItem: (_info: { item: Habit; index: number }) => React.ReactElement;
   onRetry: () => void;
-  pagination: {
-    page: number;
-    pageCount: number;
-    onPrev: () => void;
-    onNext: () => void;
-    scale: number;
-  } | null;
+  pagination: PaginationBarProps | null;
 }
 
 const HabitsContent = ({
@@ -562,26 +577,12 @@ const HabitsContent = ({
   </>
 );
 
-const usePagination = (habitCount: number) => {
-  const pageCount = Math.max(1, Math.ceil(habitCount / HABITS_PER_PAGE));
-  const [page, setPage] = useState(0);
-
-  useEffect(() => {
-    if (page > pageCount - 1) setPage(Math.max(0, pageCount - 1));
-  }, [page, pageCount]);
-
-  const goPrev = useCallback(() => setPage((p) => Math.max(0, p - 1)), []);
-  const goNext = useCallback(() => setPage((p) => Math.min(pageCount - 1, p + 1)), [pageCount]);
-
-  return { page: Math.min(page, pageCount - 1), pageCount, goPrev, goNext };
-};
-
 const useHabitsScreenState = () => {
   const habitsReturn = useHabits();
   const modals = useModalCoordinator();
   const habitStats = useHabitStats(modals.stats, habitsReturn.selectedHabit);
   const responsive = useResponsive();
-  const pagination = usePagination(habitsReturn.habits.length);
+  const pagination = usePagination(habitsReturn.habits.length, HABITS_PER_PAGE);
   const pageOffset = pagination.page * HABITS_PER_PAGE;
   const pagedHabits = useMemo(
     () => habitsReturn.habits.slice(pageOffset, pageOffset + HABITS_PER_PAGE),
@@ -596,6 +597,18 @@ const useHabitsScreenState = () => {
     pageOffset,
   );
   const reveal = useToggleReveal(habitsReturn.habits, habitsReturn.actions, modals.closeAll);
+  /**
+   * Wrap addHabit so the modal can await it, the screen jumps to the page
+   * containing the newly added row, and any in-flight failure surfaces via
+   * the existing rollback toast before the modal closes.
+   */
+  const handleAddHabit = useCallback(
+    async (input: AddHabitInput) => {
+      await habitsReturn.actions.addHabit(input);
+      pagination.goLast();
+    },
+    [habitsReturn.actions, pagination],
+  );
   return {
     ...habitsReturn,
     modals,
@@ -605,6 +618,7 @@ const useHabitsScreenState = () => {
     pagedHabits,
     handleSelectMode,
     renderHabitTile,
+    handleAddHabit,
     ...reveal,
   };
 };
@@ -667,6 +681,7 @@ const HabitsScreen = () => {
         habitStats={state.habitStats}
         habits={habits}
         actions={actions}
+        onAddHabit={state.handleAddHabit}
       />
     </SafeAreaView>
   );

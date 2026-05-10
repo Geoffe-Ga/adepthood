@@ -21,6 +21,10 @@ export interface ConfirmDialogProps {
  * Cross-platform confirmation dialog. `Alert.alert` collapses to a no-op on
  * React Native Web mobile browsers, so destructive flows that depend on the
  * user explicitly confirming need a rendered modal — this is that modal.
+ *
+ * `visible` is forwarded to the underlying `<Modal>` (rather than gating the
+ * body with an early `return null`) so React Native drives the fade animation
+ * on close. The body content is still gated so it's not rendered while hidden.
  */
 export const ConfirmDialog = ({
   visible,
@@ -34,10 +38,9 @@ export const ConfirmDialog = ({
   destructive = false,
   onCancel,
   onConfirm,
-}: ConfirmDialogProps) => {
-  if (!visible) return null;
-  return (
-    <Modal transparent animationType="fade" onRequestClose={onCancel}>
+}: ConfirmDialogProps) => (
+  <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+    {visible && (
       <View style={styles.modalOverlay} testID={testID}>
         <View style={styles.discardModal}>
           <Text style={styles.discardTitle}>{title}</Text>
@@ -58,8 +61,8 @@ export const ConfirmDialog = ({
           </View>
         </View>
       </View>
-    </Modal>
-  );
-};
+    )}
+  </Modal>
+);
 
 export default ConfirmDialog;

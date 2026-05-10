@@ -29,7 +29,7 @@ import {
 } from '../../../storage/habitStorage';
 import { useHabitStore } from '../../../store/useHabitStore';
 import { HABIT_DEFAULTS } from '../HabitDefaults';
-import type { Goal, Habit, OnboardingHabit } from '../Habits.types';
+import type { AddHabitInput, Goal, Habit, OnboardingHabit } from '../Habits.types';
 import { getGoalTier, getGoalTarget, calculateHabitProgress, logHabitUnits } from '../HabitUtils';
 import { updateHabitNotifications, cancelForHabit } from '../hooks/useHabitNotifications';
 
@@ -247,13 +247,6 @@ const buildOnboardingHabits = (newHabits: OnboardingHabit[]) =>
       target: t.target,
     })),
   }));
-
-export interface AddHabitInput {
-  name: string;
-  icon: string;
-  energy_cost?: number;
-  energy_return?: number;
-}
 
 /**
  * Build a brand-new habit row from a minimal user input. Stage cycles through
