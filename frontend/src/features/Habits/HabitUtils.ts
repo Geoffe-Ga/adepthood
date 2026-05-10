@@ -189,6 +189,24 @@ export const getGoalTarget = (goal: Goal): number => {
   return goal.target;
 };
 
+/**
+ * Sum of every ``completed_units`` value the habit has ever logged.
+ *
+ * **Accumulator semantic, deliberately not date-windowed.** A habit's
+ * progress in this codebase is the cumulative effort total against the
+ * stretch target, not "today's progress" -- the streak counter
+ * (``habit.streak``, computed server-side via ``compute_habit_streak``)
+ * already encodes the day-by-day cadence, and the progress bar's job is
+ * to show how far the user has come over the life of the habit.
+ *
+ * If a future reader is tempted to "fix" this by filtering completions
+ * to today's calendar day, that would silently regress the
+ * BUG-FE-HABIT-301 persistence fix: a habit logged yesterday would
+ * read 0% on the bar today, exactly the symptom the embed contract
+ * exists to prevent.  The follow-up window-based payload work tracked
+ * in #294 will trim the *transport* to a rolling window, but this
+ * computation will continue to sum every row the client has cached.
+ */
 export const calculateHabitProgress = (habit: Habit): number => {
   if (!habit.completions || habit.completions.length === 0) {
     return 0;
