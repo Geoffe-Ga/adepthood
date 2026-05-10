@@ -3,6 +3,14 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import {
+  BookOpen,
+  Compass,
+  Flower2,
+  NotebookPen,
+  Sprout,
+  type LucideIcon,
+} from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
@@ -62,6 +70,32 @@ const CourseTab = withBoundary('Course', CourseScreen);
 const JournalTab = withBoundary('Journal', JournalScreen);
 const MapTab = withBoundary('Map', MapScreen);
 
+const TAB_ICON_SIZE = 24;
+const TAB_ICON_STROKE = 2;
+
+/**
+ * Render a lucide icon for a tab bar entry. The wrapper keeps each tab's
+ * ``tabBarIcon`` definition declarative and ensures every icon shares the
+ * same size/stroke so the bar reads as a consistent set.
+ */
+const makeTabIcon =
+  (Icon: LucideIcon) =>
+  ({ color }: { color: string }): React.JSX.Element => (
+    <Icon color={color} size={TAB_ICON_SIZE} strokeWidth={TAB_ICON_STROKE} />
+  );
+
+const TAB_CONFIGS: ReadonlyArray<{
+  name: keyof RootTabParamList;
+  component: React.ComponentType<object>;
+  icon: LucideIcon;
+}> = [
+  { name: 'Habits', component: HabitsTab, icon: Sprout },
+  { name: 'Practice', component: PracticeTab, icon: Flower2 },
+  { name: 'Course', component: CourseTab, icon: BookOpen },
+  { name: 'Journal', component: JournalTab, icon: NotebookPen },
+  { name: 'Map', component: MapTab, icon: Compass },
+];
+
 /**
  * Application-wide bottom tab navigation.
  * Each tab corresponds to a major feature area.
@@ -78,6 +112,8 @@ const BottomTabs = (): React.JSX.Element => {
     <Tab.Navigator
       initialRouteName="Habits"
       screenOptions={{
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.text.tertiaryAccessible,
         headerRight: () => (
           <View style={styles.headerRight}>
             <TouchableOpacity
@@ -102,11 +138,14 @@ const BottomTabs = (): React.JSX.Element => {
         ),
       }}
     >
-      <Tab.Screen name="Habits" component={HabitsTab} />
-      <Tab.Screen name="Practice" component={PracticeTab} />
-      <Tab.Screen name="Course" component={CourseTab} />
-      <Tab.Screen name="Journal" component={JournalTab} />
-      <Tab.Screen name="Map" component={MapTab} />
+      {TAB_CONFIGS.map(({ name, component, icon }) => (
+        <Tab.Screen
+          key={name}
+          name={name}
+          component={component}
+          options={{ tabBarIcon: makeTabIcon(icon) }}
+        />
+      ))}
     </Tab.Navigator>
   );
 };
