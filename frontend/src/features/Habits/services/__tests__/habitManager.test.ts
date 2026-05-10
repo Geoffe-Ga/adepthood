@@ -550,7 +550,7 @@ describe('habitManager', () => {
     it('prepareLogUnit + applyLogUnitContext appends a completion and returns the updated habit', () => {
       useHabitStore.setState({ habits: [makeHabit()] });
 
-      const ctx = habitManager.prepareLogUnit(1, 1);
+      const ctx = habitManager.prepareLogUnit(1, 1, 'UTC');
       expect(ctx).not.toBeNull();
       habitManager.applyLogUnitContext(ctx!);
 
@@ -560,7 +560,7 @@ describe('habitManager', () => {
 
     it('commitLogUnitContext POSTs the goal completion to the API', async () => {
       useHabitStore.setState({ habits: [makeHabit()] });
-      const ctx = habitManager.prepareLogUnit(1, 1)!;
+      const ctx = habitManager.prepareLogUnit(1, 1, 'UTC')!;
       habitManager.applyLogUnitContext(ctx);
 
       await habitManager.commitLogUnitContext(ctx);
@@ -573,7 +573,7 @@ describe('habitManager', () => {
 
     it('buildLogUnitToast returns a milestone config when a tier is reached', () => {
       useHabitStore.setState({ habits: [makeHabit()] });
-      const ctx = habitManager.prepareLogUnit(1, 1)!;
+      const ctx = habitManager.prepareLogUnit(1, 1, 'UTC')!;
 
       const toast = habitManager.buildLogUnitToast(ctx);
 
@@ -594,7 +594,7 @@ describe('habitManager', () => {
           }),
         ],
       });
-      const ctx = habitManager.prepareLogUnit(1, 1)!;
+      const ctx = habitManager.prepareLogUnit(1, 1, 'UTC')!;
 
       const toast = habitManager.buildLogUnitToast(ctx);
 
@@ -607,7 +607,7 @@ describe('habitManager', () => {
       const prev = [habit];
       useHabitStore.setState({ habits: prev });
 
-      const ctx = habitManager.prepareLogUnit(1, 1)!;
+      const ctx = habitManager.prepareLogUnit(1, 1, 'UTC')!;
       habitManager.applyLogUnitContext(ctx);
       expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(1);
 
@@ -625,9 +625,47 @@ describe('habitManager', () => {
     it('prepareLogUnit returns null when no habit matches the id', () => {
       useHabitStore.setState({ habits: [makeHabit({ id: 1 })] });
 
-      const ctx = habitManager.prepareLogUnit(999, 1);
+      const ctx = habitManager.prepareLogUnit(999, 1, 'UTC');
 
       expect(ctx).toBeNull();
+    });
+
+    // Regression: when the tz arg was hardcoded UTC, milestone toasts could
+    // re-fire (or fire on the wrong baseline) when the user's local day
+    // boundary disagreed with UTC's. Pinning the bucketing in two zones with
+    // an inverted boundary proves the tz parameter actually reaches the
+    // calc, not just the function signature.
+    it('prepareLogUnit buckets oldProgress in the supplied IANA zone', () => {
+      // 04:00 UTC is "today" in UTC but "yesterday" in America/Anchorage
+      // (UTC-9 in winter, UTC-8 in summer; both flip the calendar date).
+      const earlyUtc = new Date();
+      earlyUtc.setUTCHours(4, 0, 0, 0);
+
+      useHabitStore.setState({
+        habits: [
+          makeHabit({
+            completions: [{ id: 'pre', timestamp: earlyUtc, completed_units: 1 }],
+          }),
+        ],
+      });
+
+      const utcCtx = habitManager.prepareLogUnit(1, 1, 'UTC')!;
+      // In UTC, the prior completion is in today's bucket -> oldProgress = 1.
+      expect(utcCtx.oldProgress).toBe(1);
+
+      // Reset the store so the second prepareLogUnit sees the same baseline.
+      useHabitStore.setState({
+        habits: [
+          makeHabit({
+            completions: [{ id: 'pre', timestamp: earlyUtc, completed_units: 1 }],
+          }),
+        ],
+      });
+
+      const anchorageCtx = habitManager.prepareLogUnit(1, 1, 'America/Anchorage')!;
+      // In Anchorage, the prior completion landed in yesterday's bucket ->
+      // oldProgress = 0, so milestone detection treats this as a fresh start.
+      expect(anchorageCtx.oldProgress).toBe(0);
     });
   });
 

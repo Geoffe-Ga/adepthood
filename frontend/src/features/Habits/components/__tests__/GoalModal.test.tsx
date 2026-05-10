@@ -12,6 +12,10 @@ jest.mock('../../../../api', () => ({
   },
 }));
 
+jest.mock('../../../../context/AuthContext', () => ({
+  useAuth: () => ({ token: 'test-token', userTimezone: 'UTC' }),
+}));
+
 // Use real RN primitives — no global ``react-native`` mock — so
 // fireEvent.changeText / press behave as on a real device.
 
@@ -270,5 +274,40 @@ describe('GoalModal editor visibility guards', () => {
   it('hides the editor when the habit has no goals', () => {
     const { queryByTestId } = renderModal(makeHabit({ goals: [] }));
     expect(queryByTestId('goal-target-editor')).toBeNull();
+  });
+});
+
+describe('GoalModal progress bar daily reset', () => {
+  const yesterdayUtc = (): Date => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - 1);
+    d.setUTCHours(12, 0, 0, 0);
+    return d;
+  };
+
+  const getFillWidth = (
+    queryByTestId: (id: string) => { props: { style: { width: string } } } | null,
+  ): string => {
+    const fill = queryByTestId('modal-progress-fill');
+    return fill?.props.style.width ?? '';
+  };
+
+  it('renders the progress bar empty when only yesterday hit the stretch goal', () => {
+    const stretchedYesterday = makeHabit({
+      completions: [{ id: 'y-1', timestamp: yesterdayUtc(), completed_units: 9 }],
+    });
+    const { queryByTestId } = renderModal(stretchedYesterday);
+    expect(getFillWidth(queryByTestId as never)).toBe('0%');
+  });
+
+  it("fills the progress bar when today's completions hit the stretch goal", () => {
+    const stretchedToday = makeHabit({
+      completions: [
+        { id: 'y-1', timestamp: yesterdayUtc(), completed_units: 9 },
+        { id: 't-1', timestamp: new Date(), completed_units: 3 },
+      ],
+    });
+    const { queryByTestId } = renderModal(stretchedToday);
+    expect(getFillWidth(queryByTestId as never)).toBe('100%');
   });
 });

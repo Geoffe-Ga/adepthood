@@ -126,6 +126,12 @@ export interface HabitTileProps {
   onLongPress?: () => void;
   onIconPress?: () => void;
   onUnlockHabit?: (_habitId: number) => void;
+  /**
+   * IANA timezone used to bucket completions into the user's calendar day
+   * for the progress bar / "Achieved Today" display. Defaults to UTC when
+   * absent so legacy tests render without an auth context.
+   */
+  tz?: string;
 }
 
 export interface HabitSettingsModalProps {

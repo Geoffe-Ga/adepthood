@@ -430,6 +430,7 @@ const useHabitTileRenderer = (
   modals: ReturnType<typeof useModalCoordinator>,
   actions: ReturnType<typeof useHabits>['actions'],
   setSelectedHabit: (_h: Habit) => void,
+  tz: string,
   pageOffset = 0,
 ) => {
   const renderHabitTile = ({ item, index }: { item: Habit; index: number }) => {
@@ -464,6 +465,7 @@ const useHabitTileRenderer = (
               }
         }
         onUnlockHabit={actions.unlockHabit}
+        tz={tz}
       />
     );
   };
@@ -582,6 +584,7 @@ const useHabitsScreenState = () => {
   const modals = useModalCoordinator();
   const habitStats = useHabitStats(modals.stats, habitsReturn.selectedHabit);
   const responsive = useResponsive();
+  const { userTimezone } = useAuth();
   const pagination = usePagination(habitsReturn.habits.length, HABITS_PER_PAGE);
   const pageOffset = pagination.page * HABITS_PER_PAGE;
   const pagedHabits = useMemo(
@@ -594,6 +597,7 @@ const useHabitsScreenState = () => {
     modals,
     habitsReturn.actions,
     habitsReturn.setSelectedHabit,
+    userTimezone,
     pageOffset,
   );
   const reveal = useToggleReveal(habitsReturn.habits, habitsReturn.actions, modals.closeAll);

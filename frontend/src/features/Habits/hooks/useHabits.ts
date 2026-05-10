@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 
 import { useToast } from '../../../components/ToastProvider';
+import { useAuth } from '../../../context/AuthContext';
 import { useHabitStore } from '../../../store/useHabitStore';
 import type { UseHabitsReturn } from '../Habits.types';
 import { habitManager } from '../services/habitManager';
@@ -32,9 +33,10 @@ export const useHabits = (): UseHabitsReturn => {
   const error = useHabitStore((s) => s.error);
   const storeSetHabits = useHabitStore((s) => s.setHabits);
   const { showToast } = useToast();
+  const { userTimezone } = useAuth();
   const ui = useHabitUI();
   useBootstrapHabits();
-  const actions = useHabitActions(ui, showToast);
+  const actions = useHabitActions(ui, showToast, userTimezone);
 
   return {
     habits,

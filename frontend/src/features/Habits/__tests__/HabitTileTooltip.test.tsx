@@ -104,3 +104,58 @@ describe('HabitTile markers', () => {
     expect(component.root.findByProps({ testID: 'marker-stretch' })).toBeTruthy();
   });
 });
+
+// User-visible symptom of the daily-reset bug: the streak chip read
+// "...— Achieved Today!" the morning after a stretch-goal was met,
+// before the user logged anything new. The fix is anchored at the
+// progress-utility layer, so render-test the chip text to keep the
+// regression nailed at the UI boundary too.
+describe('HabitTile achieved-today banner does not leak across days', () => {
+  const yesterday = (): Date => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - 1);
+    d.setUTCHours(12, 0, 0, 0);
+    return d;
+  };
+
+  const findChipText = (component: ReturnType<typeof renderer.create>): string => {
+    const header = component.root.findByProps({ testID: 'habit-header' });
+    // The chip is the second Text child of the header row.
+    const texts = header.findAllByType('Text' as unknown as React.ComponentType);
+    return texts
+      .map((t: { props: { children: unknown } }) => {
+        const children = t.props.children;
+        return Array.isArray(children) ? children.join('') : String(children);
+      })
+      .join('|');
+  };
+
+  it("does not show 'Achieved Today!' when only yesterday hit the stretch goal", () => {
+    const stretchedYesterday: Habit = {
+      ...habit,
+      streak: 7,
+      // 60 oz logged yesterday is well past the 30 oz stretch target.
+      completions: [{ id: 'y-1', timestamp: yesterday(), completed_units: 60 }],
+    };
+    const component = renderer.create(
+      <HabitTile habit={stretchedYesterday} onOpenGoals={() => {}} tz="UTC" />,
+    );
+    // The chip is rendered upper-cased; match insensitively.
+    expect(findChipText(component).toLowerCase()).not.toContain('achieved today');
+  });
+
+  it("shows 'Achieved Today!' when today's logs hit the stretch goal", () => {
+    const stretchedToday: Habit = {
+      ...habit,
+      streak: 8,
+      completions: [
+        { id: 'y-1', timestamp: yesterday(), completed_units: 60 },
+        { id: 't-1', timestamp: new Date(), completed_units: 30 },
+      ],
+    };
+    const component = renderer.create(
+      <HabitTile habit={stretchedToday} onOpenGoals={() => {}} tz="UTC" />,
+    );
+    expect(findChipText(component).toLowerCase()).toContain('achieved today');
+  });
+});
