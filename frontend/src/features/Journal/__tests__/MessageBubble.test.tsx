@@ -165,14 +165,19 @@ describe('MessageBubble', () => {
     const longText = 'https://example.com/very/long/path/that/should/wrap/inside/the/bubble';
     const msg = makeMessage({ sender: 'bot', message: longText });
     const tree = renderer.create(<MessageBubble message={msg} />);
-    const root = tree.root;
-    const views = root.findAllByType('View') as ViewInstance[];
-    const bubble = views.find((v) => {
-      const flat = StyleSheet.flatten(v.props.style) as ViewStyle | undefined;
-      return flat?.borderBottomLeftRadius !== undefined;
-    });
-    expect(bubble).toBeTruthy();
-    const flatBubble = StyleSheet.flatten(bubble!.props.style) as ViewStyle;
+    const bubble = tree.root.findByProps({ testID: 'bubble' }) as ViewInstance;
+    const flatBubble = StyleSheet.flatten(bubble.props.style) as ViewStyle;
+    expect(flatBubble.flexShrink).toBe(1);
+  });
+
+  it('shrinks the user bubble within its row so long text wraps', () => {
+    // `bubble`/`bubbleText` are shared by both sender roles; guard the user
+    // side too so a future divergence cannot silently reintroduce overflow.
+    const longText = 'https://example.com/another/very/long/path/from/the/user';
+    const msg = makeMessage({ sender: 'user', message: longText });
+    const tree = renderer.create(<MessageBubble message={msg} />);
+    const bubble = tree.root.findByProps({ testID: 'bubble' }) as ViewInstance;
+    const flatBubble = StyleSheet.flatten(bubble.props.style) as ViewStyle;
     expect(flatBubble.flexShrink).toBe(1);
   });
 
@@ -180,11 +185,10 @@ describe('MessageBubble', () => {
     const longText = 'reticulatingsplinesreticulatingsplinesreticulatingsplines';
     const msg = makeMessage({ sender: 'bot', message: longText });
     const tree = renderer.create(<MessageBubble message={msg} />);
-    const root = tree.root;
-    const texts = root.findAllByType('Text') as TextInstance[];
+    const texts = tree.root.findAllByType('Text') as TextInstance[];
     const body = texts.find((t) => t.props.children === longText);
-    expect(body).toBeTruthy();
-    const flat = StyleSheet.flatten(body!.props.style) as TextStyle;
+    if (!body) throw new Error('expected to find body text node');
+    const flat = StyleSheet.flatten(body.props.style) as TextStyle;
     expect(flat.flexShrink).toBe(1);
   });
 });

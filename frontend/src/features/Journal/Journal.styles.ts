@@ -45,6 +45,8 @@ const styles = StyleSheet.create({
   bubbleText: {
     fontSize: 15,
     lineHeight: 21,
+    // Lets Text shrink inside the bubble so the parent's width constraint
+    // propagates and long unbroken tokens (URLs) wrap instead of overflowing.
     flexShrink: 1,
   },
   bubbleTextUser: {
