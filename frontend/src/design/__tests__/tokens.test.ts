@@ -7,9 +7,11 @@ import {
   STAGE_COLORS,
   STAGE_ORDER,
   colors,
+  darkColors,
   radius,
   shadows,
   spacing,
+  touchTarget,
   typography,
 } from '../tokens';
 
@@ -21,7 +23,9 @@ describe('design tokens', () => {
       expect(colors.success).toBe('#535c46');
       expect(colors.warning).toBe('#6c6b63');
       expect(colors.danger).toBe('#7b3f30');
-      expect(colors.neutral).toBe('#8c8c8c');
+      // BUG-FE-UI-001: was #8c8c8c (3.07:1 vs background — fails AA).
+      // Replaced with a slate that clears 4.5:1 for normal text.
+      expect(colors.neutral).toBe('#6e6e6e');
     });
 
     it('exports background shades', () => {
@@ -60,6 +64,29 @@ describe('design tokens', () => {
 
     it('exports border color', () => {
       expect(colors.border).toBe('#ddd');
+    });
+  });
+
+  describe('touchTarget (BUG-FE-UI-002)', () => {
+    it('exports a 44dp minimum interactive size', () => {
+      // 44dp is the WCAG 2.5.5 / Apple HIG / Material baseline.
+      // Shared primitives must size their hit area to at least this value.
+      expect(touchTarget.minimum).toBe(44);
+    });
+  });
+
+  describe('darkColors (BUG-FE-UI-003)', () => {
+    it('exports a Material-anchored dark background scale', () => {
+      expect(darkColors.background.primary).toBe('#121212');
+      expect(darkColors.background.card).toBe('#1e1e1e');
+      expect(darkColors.background.accent).toBe('#2a2a2a');
+    });
+
+    it('ships text shades that clear AA on the dark surface', () => {
+      // Spot-check the values; contrast ratios documented inline in tokens.ts.
+      expect(darkColors.text.primary).toBe('#f5f5f5');
+      expect(darkColors.text.secondary).toBe('#b0b0b0');
+      expect(darkColors.text.tertiary).toBe('#8a8a8a');
     });
   });
 
