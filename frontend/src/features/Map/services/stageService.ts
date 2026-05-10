@@ -14,6 +14,18 @@ import { useStageStore } from '../../../store/useStageStore';
 import { HOTSPOTS, STAGE_COUNT } from '../stageData';
 import type { StageData } from '../stageData';
 
+/**
+ * Clamp a backend-supplied progress fraction into ``[0, 1]`` (BUG-FE-MAP-003).
+ * NaN / Infinity / missing values resolve to 0; values above 1 are
+ * pinned to 1 so the progress bar never overflows its container.
+ */
+export const clampProgress = (raw: number | null | undefined): number => {
+  if (raw === null || raw === undefined || !Number.isFinite(raw)) return 0;
+  if (raw < 0) return 0;
+  if (raw > 1) return 1;
+  return raw;
+};
+
 /** Convert a backend Stage response into a frontend StageData with layout. */
 export const toStageData = (apiStage: Stage): StageData => {
   const index = STAGE_COUNT - apiStage.stage_number; // stage 10 → index 0
@@ -23,7 +35,10 @@ export const toStageData = (apiStage: Stage): StageData => {
     title: apiStage.title,
     subtitle: apiStage.subtitle,
     stageNumber: apiStage.stage_number,
-    progress: apiStage.progress,
+    // BUG-FE-MAP-003: clamp progress into ``[0, 1]`` and coerce NaN /
+    // missing values to 0.  Without this guard a bad payload renders
+    // as "NaN%" or overflows the progress bar (width: 110%).
+    progress: clampProgress(apiStage.progress),
     color: STAGE_COLORS[colorName] ?? '#888',
     isUnlocked: apiStage.is_unlocked,
     category: apiStage.category,

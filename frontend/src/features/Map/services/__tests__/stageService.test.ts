@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, jest } from '@jest/globals';
 import { act } from '@testing-library/react-native';
 
 import type { Stage } from '../../../../api';
+import { clampProgress } from '../stageService';
 
 const mockList = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<Stage[]>>;
 jest.mock('../../../../api', () => ({
@@ -224,6 +225,27 @@ describe('stageService', () => {
 
       expect(useStageStore.getState().currentStage).toBe(2);
       expect(useStageStore.getState().error).toBe('still offline');
+    });
+  });
+
+  describe('clampProgress (BUG-FE-MAP-003)', () => {
+    it('returns valid progress in [0, 1] unchanged', () => {
+      expect(clampProgress(0)).toBe(0);
+      expect(clampProgress(0.5)).toBe(0.5);
+      expect(clampProgress(1)).toBe(1);
+    });
+
+    it('coerces NaN / Infinity / null / undefined to 0', () => {
+      expect(clampProgress(Number.NaN)).toBe(0);
+      expect(clampProgress(Number.POSITIVE_INFINITY)).toBe(0);
+      expect(clampProgress(null)).toBe(0);
+      expect(clampProgress(undefined)).toBe(0);
+    });
+
+    it('clamps negative values to 0 and values above 1 to 1', () => {
+      expect(clampProgress(-0.5)).toBe(0);
+      expect(clampProgress(1.1)).toBe(1);
+      expect(clampProgress(42)).toBe(1);
     });
   });
 });
