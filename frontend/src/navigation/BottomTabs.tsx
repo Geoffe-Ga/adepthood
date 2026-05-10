@@ -73,11 +73,7 @@ const MapTab = withBoundary('Map', MapScreen);
 const TAB_ICON_SIZE = 24;
 const TAB_ICON_STROKE = 2;
 
-/**
- * Render a lucide icon for a tab bar entry. The wrapper keeps each tab's
- * ``tabBarIcon`` definition declarative and ensures every icon shares the
- * same size/stroke so the bar reads as a consistent set.
- */
+/** Returns a tab-bar icon renderer with shared size/stroke for every entry. */
 const makeTabIcon =
   (Icon: LucideIcon) =>
   ({ color }: { color: string }): React.JSX.Element => (
