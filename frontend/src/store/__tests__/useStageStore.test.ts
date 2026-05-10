@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from '@jest/globals';
+import { describe, expect, it, beforeEach, jest } from '@jest/globals';
 import { act } from '@testing-library/react-native';
 
 import type { StageData } from '../../features/Map/stageData';
@@ -92,11 +92,23 @@ describe('useStageStore', () => {
     const { useStageStore } = require('../useStageStore');
     act(() => useStageStore.getState().setStages([makeStage(1, { progress: 0.5 })]));
 
+    // BUG-FE-STATE-003: an unknown-stage call is a no-op, but it now
+    // ALSO warns so contract drift surfaces in observability.  Spy on
+    // ``console.warn`` so the warning does not spam test output and so
+    // the regression -- "the unknown branch must warn at least once" --
+    // is asserted directly.
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
     const before = useStageStore.getState().stages.map((s: StageData) => s.progress);
     act(() => useStageStore.getState().updateStageProgress(99, 1.0));
     const after = useStageStore.getState().stages.map((s: StageData) => s.progress);
 
     expect(after).toEqual(before);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('updateStageProgress called for unknown stage'),
+      expect.objectContaining({ stageNumber: 99 }),
+    );
+    warnSpy.mockRestore();
   });
 
   it('selectStageByNumber returns a stage or undefined', () => {

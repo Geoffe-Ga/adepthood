@@ -103,4 +103,17 @@ describe('authStorage (web)', () => {
     expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith('adepthood_auth_token');
     expect(mockSecureStore.deleteItemAsync).not.toHaveBeenCalled();
   });
+
+  test('BUG-FE-STORAGE-004: saveToken trims whitespace before storing', async () => {
+    const { saveToken } = loadAuthStorage();
+    await saveToken('  my-jwt-token \n');
+    expect(mockAsyncStorage.setItem).toHaveBeenCalledWith('adepthood_auth_token', 'my-jwt-token');
+  });
+
+  test('BUG-FE-STORAGE-004: saveToken rejects empty / whitespace-only input', async () => {
+    const { saveToken, EmptyAuthTokenError } = loadAuthStorage();
+    await expect(saveToken('')).rejects.toBeInstanceOf(EmptyAuthTokenError);
+    await expect(saveToken('   ')).rejects.toBeInstanceOf(EmptyAuthTokenError);
+    expect(mockAsyncStorage.setItem).not.toHaveBeenCalled();
+  });
 });

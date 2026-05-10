@@ -2,7 +2,7 @@
 /* global describe, test, expect, beforeEach, jest */
 import * as SecureStore from 'expo-secure-store';
 
-import { clearLlmApiKey, loadLlmApiKey, saveLlmApiKey } from '../llmKeyStorage';
+import { EmptyApiKeyError, clearLlmApiKey, loadLlmApiKey, saveLlmApiKey } from '../llmKeyStorage';
 
 jest.mock('expo-secure-store', () => ({
   setItemAsync: jest.fn(() => Promise.resolve()),
@@ -25,6 +25,24 @@ describe('llmKeyStorage', () => {
         'adepthood_llm_api_key',
         'sk-user-owned-key',
       );
+    });
+
+    test('BUG-FE-STORAGE-004: trims whitespace before storing', async () => {
+      await saveLlmApiKey('  sk-padded-key  \n');
+      expect(mockSecureStore.setItemAsync).toHaveBeenCalledWith(
+        'adepthood_llm_api_key',
+        'sk-padded-key',
+      );
+    });
+
+    test('BUG-FE-STORAGE-004: rejects an empty key', async () => {
+      await expect(saveLlmApiKey('')).rejects.toBeInstanceOf(EmptyApiKeyError);
+      expect(mockSecureStore.setItemAsync).not.toHaveBeenCalled();
+    });
+
+    test('BUG-FE-STORAGE-004: rejects a whitespace-only key', async () => {
+      await expect(saveLlmApiKey('   \n\t')).rejects.toBeInstanceOf(EmptyApiKeyError);
+      expect(mockSecureStore.setItemAsync).not.toHaveBeenCalled();
     });
   });
 
