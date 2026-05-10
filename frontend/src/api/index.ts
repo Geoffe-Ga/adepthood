@@ -4,6 +4,7 @@ import {
   authResponseSchema,
   habitWithGoalsSchema,
   isTier,
+  loginAuthResponseSchema,
   pageSchema,
   passwordResetAcceptedSchema,
   type Page,
@@ -389,7 +390,25 @@ async function attemptTokenRefresh(): Promise<{ token: string | null; hadToken: 
       headers: { Authorization: `Bearer ${currentToken}` },
     });
     if (!refreshRes.ok) return { token: null, hadToken: true };
-    const data = (await refreshRes.json()) as AuthResponse;
+    const raw: unknown = await refreshRes.json();
+    // BUG-API-007 / BUG-API-017: the prior cast (``as AuthResponse``)
+    // accepted any JSON shape -- a ``{}`` body would set ``data.token``
+    // to ``undefined`` and the bearer header on the next request would
+    // become ``Bearer undefined``, producing a zombie 401.  ``loginAuth
+    // ResponseSchema`` enforces (i) the JWT three-segment shape and
+    // (ii) ``user_id > 0`` (the ``user_id=0`` signup sentinel never
+    // reaches /auth/refresh).  ``safeParse`` keeps us inside the
+    // existing error path -- a malformed body becomes a refresh failure,
+    // not an uncaught exception, so the 401 retry loop continues to
+    // surface ``not_authenticated`` rather than crashing.
+    const parsed = loginAuthResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      console.warn('[api] /auth/refresh response failed validation', {
+        issues: parsed.error.issues,
+      });
+      return { token: null, hadToken: true };
+    }
+    const data = parsed.data;
     // Forward the server's stored timezone so the AuthContext can keep
     // ``userTimezone`` in sync after a cold-start refresh.  Without
     // this, ``userTimezone`` would stay at its ``"UTC"`` default until
@@ -1533,10 +1552,15 @@ export interface PasswordResetCancelPayload {
 
 export const auth = {
   login(credentials: AuthRequest): Promise<AuthResponse> {
+    // BUG-API-017: ``loginAuthResponseSchema`` enforces ``user_id > 0``
+    // because the ``user_id == 0`` anti-enumeration sentinel only fires
+    // on the signup endpoint.  A login that returned zero would be a
+    // server bug, so we reject it at the boundary instead of letting
+    // the AuthContext persist a zombie session.
     return request<AuthResponse>('/auth/login', {
       method: 'POST',
       body: credentials,
-      schema: authResponseSchema,
+      schema: loginAuthResponseSchema,
     });
   },
   signup(credentials: SignupRequest): Promise<AuthResponse> {
@@ -1547,10 +1571,11 @@ export const auth = {
     });
   },
   refresh(token: string): Promise<AuthResponse> {
+    // BUG-API-017: refresh, like login, must never see ``user_id == 0``.
     return request<AuthResponse>('/auth/refresh', {
       method: 'POST',
       token,
-      schema: authResponseSchema,
+      schema: loginAuthResponseSchema,
     });
   },
   /**
@@ -1572,10 +1597,12 @@ export const auth = {
    * (SPEC R7).
    */
   confirmPasswordReset(payload: PasswordResetConfirmPayload): Promise<AuthResponse> {
+    // Mints a real session for an existing user; BUG-API-017 rejects
+    // ``user_id == 0`` here too.
     return request<AuthResponse>('/auth/password-reset/confirm', {
       method: 'POST',
       body: payload,
-      schema: authResponseSchema,
+      schema: loginAuthResponseSchema,
     });
   },
   /**
