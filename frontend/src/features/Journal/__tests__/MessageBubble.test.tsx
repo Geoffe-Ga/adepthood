@@ -1,12 +1,17 @@
 /* eslint-env jest */
 import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
+import { StyleSheet, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import renderer from 'react-test-renderer';
 
 import MessageBubble, { type ChatMessage } from '../MessageBubble';
 
 interface TextInstance {
-  props: { children: unknown };
+  props: { children: unknown; style?: StyleProp<TextStyle> };
+}
+
+interface ViewInstance {
+  props: { style?: StyleProp<ViewStyle> };
 }
 
 const makeMessage = (overrides: Partial<ChatMessage> = {}): ChatMessage => ({
@@ -152,5 +157,34 @@ describe('MessageBubble', () => {
     const root = tree.root;
     const texts = root.findAllByType('Text') as TextInstance[];
     expect(texts.some((t) => t.props.children === 'Hello world')).toBe(true);
+  });
+
+  it('shrinks the bot bubble within its row so long text wraps', () => {
+    // Without flexShrink, a long unbroken word (URL, code identifier) would
+    // push the bubble past the row's maxWidth and Text would not wrap.
+    const longText = 'https://example.com/very/long/path/that/should/wrap/inside/the/bubble';
+    const msg = makeMessage({ sender: 'bot', message: longText });
+    const tree = renderer.create(<MessageBubble message={msg} />);
+    const root = tree.root;
+    const views = root.findAllByType('View') as ViewInstance[];
+    const bubble = views.find((v) => {
+      const flat = StyleSheet.flatten(v.props.style) as ViewStyle | undefined;
+      return flat?.borderBottomLeftRadius !== undefined;
+    });
+    expect(bubble).toBeTruthy();
+    const flatBubble = StyleSheet.flatten(bubble!.props.style) as ViewStyle;
+    expect(flatBubble.flexShrink).toBe(1);
+  });
+
+  it('wraps long bot text by applying a flexible text style', () => {
+    const longText = 'reticulatingsplinesreticulatingsplinesreticulatingsplines';
+    const msg = makeMessage({ sender: 'bot', message: longText });
+    const tree = renderer.create(<MessageBubble message={msg} />);
+    const root = tree.root;
+    const texts = root.findAllByType('Text') as TextInstance[];
+    const body = texts.find((t) => t.props.children === longText);
+    expect(body).toBeTruthy();
+    const flat = StyleSheet.flatten(body!.props.style) as TextStyle;
+    expect(flat.flexShrink).toBe(1);
   });
 });

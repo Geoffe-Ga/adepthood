@@ -30,6 +30,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.sm,
     borderRadius: radius.lg,
+    flexShrink: 1,
   },
   bubbleUser: {
     backgroundColor: colors.secondary,
@@ -44,6 +45,7 @@ const styles = StyleSheet.create({
   bubbleText: {
     fontSize: 15,
     lineHeight: 21,
+    flexShrink: 1,
   },
   bubbleTextUser: {
     color: colors.text.light,
