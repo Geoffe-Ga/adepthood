@@ -30,7 +30,17 @@ const cycleFrequency = (current: string | undefined): 'daily' | 'weekly' | 'cust
 };
 
 const parseEnergyValue = (text: string): number | null => {
-  const value = parseInt(text) || 0;
+  // BUG-FE-HABIT-201: ``parseInt(text) || 0`` silently coerced garbage
+  // ("foo", "1.5e10", "") to ``0`` and accepted it as a valid energy
+  // value, then propagated through to the planner as a real cost --
+  // which the user did not type.  The empty-string allowance is
+  // preserved (it represents "user is mid-edit") but every non-integer
+  // is now rejected so the caller can surface a validation error
+  // instead of silently writing 0.
+  if (text.trim() === '') return null;
+  if (!/^-?\d+$/.test(text.trim())) return null;
+  const value = Number.parseInt(text.trim(), 10);
+  if (!Number.isFinite(value)) return null;
   return value >= ENERGY_MIN && value <= ENERGY_MAX ? value : null;
 };
 

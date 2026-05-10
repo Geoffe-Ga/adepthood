@@ -52,6 +52,43 @@ const MissedDaysText = ({ habitName, missedCount }: { habitName: string; missedC
   );
 };
 
+/**
+ * BUG-FE-HABIT-202: holds the user's calendar pick until they confirm.
+ * Tapping a day used to immediately wipe every prior completion -- the
+ * confirm step makes the data-loss explicit.
+ */
+const useResetFlow = (
+  habit: { id?: number },
+  onNewStartDate: MissedDaysModalProps['onNewStartDate'],
+  onClose: () => void,
+) => {
+  const [pendingDate, setPendingDate] = useState<Date | null>(null);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [showCalendar, setShowCalendar] = useState(false);
+  const onPick = (date: DateData) => {
+    const picked = new Date(date.dateString);
+    setSelectedDate(picked);
+    setPendingDate(picked);
+  };
+  const onConfirm = () => {
+    if (pendingDate && habit.id) {
+      onNewStartDate(habit.id, pendingDate);
+      setPendingDate(null);
+      setShowCalendar(false);
+      onClose();
+    }
+  };
+  return {
+    pendingDate,
+    selectedDate,
+    showCalendar,
+    setShowCalendar,
+    onPick,
+    onConfirm,
+    onCancel: () => setPendingDate(null),
+  };
+};
+
 const MissedDaysBody = ({
   habit,
   missedDays,
@@ -59,8 +96,7 @@ const MissedDaysBody = ({
   onBackfill,
   onNewStartDate,
 }: MissedDaysBodyProps) => {
-  const [showCalendar, setShowCalendar] = useState(false);
-  const [selectedDate, setSelectedDate] = useState(new Date());
+  const reset = useResetFlow(habit, onNewStartDate, onClose);
 
   const handleBackfill = () => {
     if (habit.id) {
@@ -69,23 +105,21 @@ const MissedDaysBody = ({
     }
   };
 
-  const handleDateSelect = (date: DateData) => {
-    setSelectedDate(new Date(date.dateString));
-    setShowCalendar(false);
-    if (habit.id) {
-      onNewStartDate(habit.id, new Date(date.dateString));
-      onClose();
-    }
-  };
-
-  const selectedDateString = selectedDate.toISOString().split('T')[0]!;
+  const selectedDateString = reset.selectedDate.toISOString().split('T')[0]!;
 
   return (
     <View style={styles.missedDaysContent}>
       <MissedDaysText habitName={habit.name} missedCount={missedDays.length} />
-      {showCalendar ? (
+      {reset.pendingDate ? (
+        <ResetConfirmation
+          habitName={habit.name}
+          pendingDate={reset.pendingDate}
+          onConfirm={reset.onConfirm}
+          onCancel={reset.onCancel}
+        />
+      ) : reset.showCalendar ? (
         <Calendar
-          onDayPress={handleDateSelect}
+          onDayPress={reset.onPick}
           markedDates={{
             [selectedDateString ?? '']: {
               selected: true,
@@ -97,13 +131,47 @@ const MissedDaysBody = ({
       ) : (
         <MissedDaysActions
           onBackfill={handleBackfill}
-          onSelectNewDate={() => setShowCalendar(true)}
+          onSelectNewDate={() => reset.setShowCalendar(true)}
           onClose={onClose}
         />
       )}
     </View>
   );
 };
+
+interface ResetConfirmationProps {
+  habitName: string;
+  pendingDate: Date;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+const ResetConfirmation = ({
+  habitName,
+  pendingDate,
+  onConfirm,
+  onCancel,
+}: ResetConfirmationProps) => (
+  <View style={styles.missedDaysButtons}>
+    <Text style={styles.missedDaysQuestion} testID="reset-confirm-warning">
+      {`Reset start date for '${habitName}' to ${pendingDate.toDateString()}? This wipes every prior completion.`}
+    </Text>
+    <TouchableOpacity
+      style={[styles.missedDaysButton, styles.resetButton]}
+      onPress={onConfirm}
+      testID="reset-confirm-yes"
+    >
+      <Text style={styles.missedDaysButtonText}>Yes, reset and erase progress</Text>
+    </TouchableOpacity>
+    <TouchableOpacity
+      style={[styles.missedDaysButton, styles.cancelButton]}
+      onPress={onCancel}
+      testID="reset-confirm-cancel"
+    >
+      <Text style={styles.missedDaysButtonText}>Cancel</Text>
+    </TouchableOpacity>
+  </View>
+);
 
 export const MissedDaysModal = ({
   visible,
