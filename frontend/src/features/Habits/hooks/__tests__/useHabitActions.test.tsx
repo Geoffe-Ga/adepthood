@@ -104,7 +104,7 @@ const renderActions = () => {
   const showToast = jest.fn();
   const { result } = renderHook(() => {
     const ui = useHabitUI();
-    const actions = useHabitActions(ui, showToast);
+    const actions = useHabitActions(ui, showToast, 'UTC');
     return { ui, actions };
   });
   return { result, showToast };

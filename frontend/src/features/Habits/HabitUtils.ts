@@ -156,14 +156,7 @@ export const getGoalTarget = (goal: Goal): number => {
   return goal.target;
 };
 
-/**
- * All-time accumulator over the persisted completions array.
- *
- * Kept separate from `calculateTodaysProgress` (BUG-FE-HABIT-301 / #294) so
- * streak / stats / lifetime-total call sites still see every check-in. The
- * progress-bar and "Achieved Today" display path must use the today-only
- * helper so yesterday's completions don't keep today's tile lit up.
- */
+/** All-time sum across all completions (BUG-FE-HABIT-301); display paths use `calculateTodaysProgress`. */
 export const calculateHabitProgress = (habit: Habit): number => {
   if (!habit.completions || habit.completions.length === 0) {
     return 0;
@@ -171,16 +164,7 @@ export const calculateHabitProgress = (habit: Habit): number => {
   return habit.completions.reduce((sum, c) => sum + c.completed_units, 0);
 };
 
-/**
- * Sum of completion units logged on the user's *current* calendar day.
- *
- * Drives the progress bar fill, tier resolution, victory color, and the
- * "Achieved Today!" banner so they reset at local midnight even though the
- * persisted `completions` array retains the full history. `tz` defaults to
- * UTC for legacy callers; screens reading from `useAuth()` should pass the
- * authenticated user's IANA zone so the day boundary matches what the user
- * sees on their wall clock.
- */
+/** Sum of completion units bucketed into the user's `tz` calendar day (drives the progress bar reset). */
 export const calculateTodaysProgress = (habit: Habit, tz: string = DEFAULT_TIMEZONE): number => {
   if (!habit.completions || habit.completions.length === 0) {
     return 0;

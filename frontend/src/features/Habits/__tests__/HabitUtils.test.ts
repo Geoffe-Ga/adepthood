@@ -360,11 +360,6 @@ describe('HabitUtils', () => {
     expect(uuidValidate(ids[1]!)).toBe(true);
   });
 
-  // -------------------------------------------------------------------------
-  // Daily reset: yesterday's completions must NOT keep today's progress bar
-  // full or the "Achieved Today" banner lit. See git branch
-  // claude/fix-habit-daily-reset-hn8v3.
-  // -------------------------------------------------------------------------
   describe('daily reset of progress display', () => {
     const additiveGoals: Goal[] = [
       {

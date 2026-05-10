@@ -79,6 +79,10 @@ jest.mock('expo-notifications', () => ({
   SchedulableTriggerInputTypes: { DAILY: 'daily', WEEKLY: 'weekly' },
 }));
 
+jest.mock('../../../context/AuthContext', () => ({
+  useAuth: () => ({ token: 'test-token', userTimezone: 'UTC' }),
+}));
+
 const makeGoal = (tier: 'low' | 'clear' | 'stretch', target: number): Goal => ({
   id: tier === 'low' ? 1 : tier === 'clear' ? 2 : 3,
   title: tier,

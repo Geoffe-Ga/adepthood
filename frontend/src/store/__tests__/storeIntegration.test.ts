@@ -57,6 +57,10 @@ jest.mock('react-native', () => ({
   Text: 'Text',
 }));
 
+jest.mock('../../context/AuthContext', () => ({
+  useAuth: () => ({ token: 'test-token', userTimezone: 'UTC' }),
+}));
+
 const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   id: 1,
   stage: 'Beige',

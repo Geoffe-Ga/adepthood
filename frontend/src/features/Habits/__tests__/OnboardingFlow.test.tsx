@@ -62,6 +62,10 @@ jest.mock('react-native', () => ({
   Text: 'Text',
 }));
 
+jest.mock('../../../context/AuthContext', () => ({
+  useAuth: () => ({ token: 'test-token', userTimezone: 'UTC' }),
+}));
+
 // ---------------------------------------------------------------------------
 // Fixtures — simulate what OnboardingModal produces
 // ---------------------------------------------------------------------------

@@ -261,13 +261,14 @@ const syncOnboardingHabits = async (fullHabits: ReturnType<typeof buildOnboardin
 const applyLogUnit = (
   habit: Habit,
   amount: number,
+  tz: string,
 ): { updatedHabit: Habit; oldProgress: number; newProgress: number } => {
   // Today-only progress so milestone toasts fire when the user crosses a
-  // tier *today*, not based on yesterday's all-time total. Default UTC bucket
-  // is sufficient here -- the toast just needs same-day pre/post deltas.
-  const oldProgress = calculateTodaysProgress(habit);
+  // tier *today*, not based on yesterday's all-time total. The caller
+  // forwards the user's IANA zone so the bucket boundary matches the tile.
+  const oldProgress = calculateTodaysProgress(habit, tz);
   const updatedHabit = logHabitUnits(habit, amount);
-  const newProgress = calculateTodaysProgress(updatedHabit);
+  const newProgress = calculateTodaysProgress(updatedHabit, tz);
   return { updatedHabit, oldProgress, newProgress };
 };
 
@@ -570,7 +571,7 @@ export const habitManager = {
    * is captured by value before the optimistic write, so a later
    * concurrent mutate cannot clobber it.
    */
-  prepareLogUnit: (habitId: number, amount: number): LogUnitContext | null => {
+  prepareLogUnit: (habitId: number, amount: number, tz: string): LogUnitContext | null => {
     const prev = getHabits();
     let updated: Habit | null = null;
     let oldProgress = 0;
@@ -579,14 +580,14 @@ export const habitManager = {
     const next = prev.map((h) => {
       if (h.id !== habitId) return h;
       habitName = h.name;
-      const result = applyLogUnit(h, amount);
+      const result = applyLogUnit(h, amount, tz);
       oldProgress = result.oldProgress;
       newProgress = result.newProgress;
       updated = result.updatedHabit;
       return result.updatedHabit;
     });
     if (!updated) return null;
-    const { currentGoal, nextGoal } = getGoalTier(updated);
+    const { currentGoal, nextGoal } = getGoalTier(updated, tz);
     return {
       prev,
       next,

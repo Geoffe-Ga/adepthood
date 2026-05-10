@@ -29,6 +29,7 @@ const SYNC_ERROR_TOAST_DURATION_MS = 6000;
  */
 const useLogUnitMutation = (
   showToast: ShowToast,
+  tz: string,
 ): ((_habitId: number, _amount: number) => void) => {
   const mutation = useOptimisticMutation<LogUnitContext, unknown>({
     apply: (ctx) => habitManager.applyLogUnitContext(ctx),
@@ -52,14 +53,14 @@ const useLogUnitMutation = (
 
   return useCallback(
     (habitId: number, amount: number) => {
-      const ctx = habitManager.prepareLogUnit(habitId, amount);
+      const ctx = habitManager.prepareLogUnit(habitId, amount, tz);
       if (!ctx) return;
       // Fire-and-forget: rollback runs inside the hook before the re-throw
       // and has already surfaced the failure to the user via ``showToast``,
       // so swallow the rejection here to keep UI handlers tidy.
       mutation.mutate(ctx).catch(() => {});
     },
-    [mutation],
+    [mutation, tz],
   );
 };
 
@@ -71,8 +72,9 @@ const useLogUnitMutation = (
 export const useHabitActions = (
   ui: ReturnType<typeof useHabitUI>,
   showToast: ShowToast,
+  tz: string,
 ): HabitsActions => {
-  const logUnit = useLogUnitMutation(showToast);
+  const logUnit = useLogUnitMutation(showToast, tz);
 
   const iconPress = useCallback((index: number) => ui.setEmojiHabitIndex(index), [ui]);
 
