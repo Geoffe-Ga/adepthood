@@ -10,7 +10,9 @@ CI wakes up.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic import command
@@ -25,6 +27,10 @@ TIMESTAMPTZ_MIGRATION = MIGRATIONS_DIR / "78b1620cafde_convert_datetime_columns_
 _RESET_BASE_REVISION = "b5c6d7e8f9a0"  # pragma: allowlist secret
 _RESET_TABLE_REVISION = "c6d7e8f9a0b1"  # pragma: allowlist secret
 _RESET_LOOKUP_REVISION = "d7e8f9a0b1c2"  # pragma: allowlist secret
+
+# ritual-01: practice-mode migration and its baseline (the revision just before).
+_PRACTICE_MODE_BASE_REVISION = "d7e8f9a0b1c2"  # pragma: allowlist secret
+_PRACTICE_MODE_REVISION = "e9f0a1b2c3d4"  # pragma: allowlist secret
 
 
 def test_timestamptz_migration_exists() -> None:
@@ -177,3 +183,134 @@ def test_password_reset_migrations_round_trip_on_sqlite(
     assert _table_exists(db_url, "passwordresettoken")
     assert "password_changed_at" in _columns_of(db_url, "user")
     assert "lookup_key" in _columns_of(db_url, "passwordresettoken")
+
+
+# -- ritual-01 practice-mode migration round-trip ---------------------------
+
+
+def _bootstrap_practice_table(sync_url: str) -> None:
+    """Pre-create a minimal ``practice`` table for the round-trip fixture.
+
+    Mirrors the columns the application-level migration ``e9f0a1b2c3d4``
+    expects to ALTER, without pulling in every preceding migration.  We
+    keep the schema deliberately narrow (no FKs, no CHECKs) so the
+    bootstrap stays SQLite-friendly and the test exercises only what the
+    new migration adds.
+    """
+    bootstrap_engine = create_engine(sync_url)
+    with bootstrap_engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE practice ("
+                " id INTEGER PRIMARY KEY,"
+                " stage_number INTEGER NOT NULL,"
+                " name VARCHAR(255) NOT NULL,"
+                " description VARCHAR(2000) NOT NULL DEFAULT '',"
+                " instructions VARCHAR(10000) NOT NULL DEFAULT '',"
+                " default_duration_minutes FLOAT NOT NULL,"
+                " submitted_by_user_id INTEGER,"
+                " approved BOOLEAN NOT NULL DEFAULT 1"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO practice (id, stage_number, name, default_duration_minutes)"
+                " VALUES (1, 1, 'Sit', 12.5)"
+            )
+        )
+    bootstrap_engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_practice_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite Alembic config positioned just before ritual-01's migration.
+
+    Parallels :func:`alembic_sqlite_config` but bootstraps the
+    ``practice`` table (with one seeded row) and stamps at
+    :data:`_PRACTICE_MODE_BASE_REVISION` so the round-trip exercises
+    only the new migration.
+    """
+    db_path = tmp_path / "practice_mode_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_practice_table(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _PRACTICE_MODE_BASE_REVISION)
+    return cfg
+
+
+def _practice_row(db_url: str, practice_id: int) -> dict[str, Any]:
+    """Fetch a single ``practice`` row as a dict, including mode_config JSON."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT id, default_duration_minutes, mode, mode_config "
+                        "FROM practice WHERE id = :id"
+                    ),
+                    {"id": practice_id},
+                )
+                .mappings()
+                .first()
+            )
+            assert row is not None
+            return dict(row)
+    finally:
+        engine.dispose()
+
+
+def test_practice_mode_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_practice_mode: Config,
+) -> None:
+    """Round-trip ``e9f0a1b2c3d4`` end-to-end: upgrade backfills, downgrade drops.
+
+    Asserts the SQLite-portable backfill produces the documented
+    ``MeditationTimerConfig`` payload (mode + duration + bell flags) and
+    that the downgrade fully reverses the upgrade so a second upgrade is
+    idempotent — the same property the password-reset round-trip
+    enforces for its chain.
+    """
+    cfg = alembic_sqlite_config_practice_mode
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade applies the new columns + backfills the seeded row.
+    command.upgrade(cfg, _PRACTICE_MODE_REVISION)
+    practice_cols = _columns_of(db_url, "practice")
+    assert {"mode", "mode_config"}.issubset(practice_cols)
+
+    row = _practice_row(db_url, practice_id=1)
+    assert row["mode"] == "meditation_timer"
+    # SQLite returns JSON columns as text; parse before asserting on the shape.
+    cfg_payload = json.loads(row["mode_config"])
+    assert cfg_payload == {
+        "mode": "meditation_timer",
+        "duration_minutes": 12.5,
+        "start_bell": True,
+        "halfway_bell": False,
+        "end_bell": True,
+    }
+
+    # Phase 2: downgrade drops both columns; the original row stays.
+    command.downgrade(cfg, _PRACTICE_MODE_BASE_REVISION)
+    practice_cols_after = _columns_of(db_url, "practice")
+    assert "mode" not in practice_cols_after
+    assert "mode_config" not in practice_cols_after
+
+    # Phase 3: re-upgrade — backfill must reproduce the same payload.
+    command.upgrade(cfg, _PRACTICE_MODE_REVISION)
+    row_after = _practice_row(db_url, practice_id=1)
+    assert row_after["mode"] == "meditation_timer"
+    assert json.loads(row_after["mode_config"])["duration_minutes"] == 12.5

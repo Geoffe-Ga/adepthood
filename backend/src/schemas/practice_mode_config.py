@@ -71,6 +71,13 @@ def _validate_interval_bell_offsets(offsets: list[float], duration_minutes: floa
         raise ValueError(msg)
 
 
+def _validate_interval_bell_spacing(interval_minutes: float, duration_minutes: float) -> None:
+    """Reject even-spacing settings whose first bell falls outside the window."""
+    if interval_minutes >= duration_minutes:
+        msg = "interval_minutes must be less than duration_minutes"
+        raise ValueError(msg)
+
+
 class IntervalBellConfig(_ConfigBase):
     """Meditation window with bells at evenly-spaced or explicit offsets.
 
@@ -92,6 +99,8 @@ class IntervalBellConfig(_ConfigBase):
         if has_interval == has_offsets:
             msg = "Set exactly one of interval_minutes or cue_offsets_minutes"
             raise ValueError(msg)
+        if self.interval_minutes is not None:
+            _validate_interval_bell_spacing(self.interval_minutes, self.duration_minutes)
         if self.cue_offsets_minutes is not None:
             _validate_interval_bell_offsets(self.cue_offsets_minutes, self.duration_minutes)
         return self

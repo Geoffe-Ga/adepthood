@@ -34,6 +34,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 _DEFAULT_MODE = "meditation_timer"
 _MODE_CHECK_NAME = "ck_practice_mode_valid"
+# Intentionally duplicated from ``domain.practice_modes.ALL_MODES`` — migrations
+# must not import application modules so the schema can be replayed on a
+# repo state where the model no longer exists.
 _ALLOWED_MODES = (
     "meditation_timer",
     "count_up",
@@ -102,15 +105,18 @@ def upgrade() -> None:
 
     _backfill_practice_modes(op.get_bind())
 
-    op.alter_column("practice", "mode", existing_type=sa.String(length=32), nullable=False)
-    op.alter_column("practice", "mode_config", existing_type=sa.JSON(), nullable=False)
-
+    # batch_alter_table groups the SET-NOT-NULL + CHECK so SQLite rebuilds once.
     quoted = ", ".join(f"'{m}'" for m in _ALLOWED_MODES)
-    op.create_check_constraint(_MODE_CHECK_NAME, "practice", f"mode IN ({quoted})")
+    with op.batch_alter_table("practice") as batch_op:
+        batch_op.alter_column("mode", existing_type=sa.String(length=32), nullable=False)
+        batch_op.alter_column("mode_config", existing_type=sa.JSON(), nullable=False)
+        batch_op.create_check_constraint(_MODE_CHECK_NAME, f"mode IN ({quoted})")
 
 
 def downgrade() -> None:
     """Drop the CHECK and both columns."""
-    op.drop_constraint(_MODE_CHECK_NAME, "practice", type_="check")
-    op.drop_column("practice", "mode_config")
-    op.drop_column("practice", "mode")
+    # Batch mode keeps the downgrade SQLite-compatible (no ALTER CHECK there).
+    with op.batch_alter_table("practice") as batch_op:
+        batch_op.drop_constraint(_MODE_CHECK_NAME, type_="check")
+        batch_op.drop_column("mode_config")
+        batch_op.drop_column("mode")

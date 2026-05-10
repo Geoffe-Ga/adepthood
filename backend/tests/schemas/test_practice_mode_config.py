@@ -193,6 +193,24 @@ def test_interval_bell_rejects_neither_field() -> None:
         )
 
 
+def test_interval_bell_rejects_interval_at_or_past_duration() -> None:
+    """An interval ≥ duration would never fire inside the session window."""
+    with pytest.raises(ValidationError):
+        IntervalBellConfig(
+            mode="interval_bell",
+            duration_minutes=10,
+            interval_minutes=10,
+            bell_tone="bowl",
+        )
+    with pytest.raises(ValidationError):
+        IntervalBellConfig(
+            mode="interval_bell",
+            duration_minutes=10,
+            interval_minutes=15,
+            bell_tone="bowl",
+        )
+
+
 def test_interval_bell_rejects_empty_offsets_list() -> None:
     """An empty offsets list is set-but-meaningless; reject it explicitly."""
     with pytest.raises(ValidationError):

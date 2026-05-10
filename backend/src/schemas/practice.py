@@ -109,7 +109,11 @@ class PracticeCreate(BaseModel):
     description: str = Field(max_length=PRACTICE_DESCRIPTION_MAX_LENGTH)
     instructions: str = Field(max_length=PRACTICE_INSTRUCTIONS_MAX_LENGTH)
     default_duration_minutes: float = Field(gt=0, le=MAX_DURATION_MINUTES)
-    mode: str | None = Field(default=None, max_length=32)
+    # Typed as ``PracticeMode`` so an unknown value (e.g. ``"telepathy"``)
+    # surfaces the enum's "Input should be 'meditation_timer', …" error
+    # instead of falling through to the misleading "mode_config is
+    # required" branch below.
+    mode: PracticeMode | None = None
     mode_config: dict[str, Any] | None = None
 
     @model_validator(mode="after")
@@ -121,7 +125,7 @@ class PracticeCreate(BaseModel):
         :class:`ModeConfigAdapter` so a malformed config is rejected at
         422 instead of leaking into the ORM row.
         """
-        resolved_mode = self.mode or PracticeMode.MEDITATION_TIMER.value
+        resolved_mode = (self.mode or PracticeMode.MEDITATION_TIMER).value
         if self.mode_config is None:
             if resolved_mode != PracticeMode.MEDITATION_TIMER.value:
                 msg = "mode_config is required for non-default modes"

@@ -255,6 +255,36 @@ async def test_submit_practice_rejects_mode_without_config(async_client: AsyncCl
 
 
 @pytest.mark.asyncio
+async def test_submit_practice_rejects_unknown_mode_with_clear_error(
+    async_client: AsyncClient,
+) -> None:
+    """Unknown ``mode`` surfaces an enum error, not the wrong branch.
+
+    Regression for the misleading "mode_config is required" path: typing
+    ``mode`` as ``PracticeMode`` makes Pydantic reject ``"telepathy"`` at
+    field validation time, before the mode-config check runs.
+    """
+    headers, _ = await _signup(async_client)
+    payload = {
+        "stage_number": 1,
+        "name": "Telepathy",
+        "description": "x",
+        "instructions": "x",
+        "default_duration_minutes": 10,
+        "mode": "telepathy",
+    }
+    resp = await async_client.post("/practices/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    body = resp.json()
+    # Pydantic emits an enum-validation error whose ``input`` is the bad
+    # value; the misleading "mode_config is required" message must not
+    # appear.
+    raw = repr(body)
+    assert "telepathy" in raw
+    assert "mode_config is required" not in raw
+
+
+@pytest.mark.asyncio
 async def test_submit_practice_rejects_mode_mismatch(async_client: AsyncClient) -> None:
     """The mode_config discriminator must match the parent mode field."""
     headers, _ = await _signup(async_client)
