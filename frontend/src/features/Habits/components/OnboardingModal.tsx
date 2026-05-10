@@ -23,7 +23,6 @@ import Animated from 'react-native-reanimated';
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
 import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
 import { colors, STAGE_COLORS } from '../../../design/tokens';
-import { DEFAULT_ICONS } from '../constants';
 import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { STAGE_ORDER, calculateHabitStartDate } from '../HabitUtils';
@@ -38,10 +37,9 @@ interface SmoothSliderProps extends SliderProps {
   animationConfig?: Record<string, unknown>;
 }
 
-const SmoothSlider = Slider as React.ComponentType<SmoothSliderProps>;
+import { HABIT_NAME_MAX_LENGTH, MAX_HABITS, validateAndAddHabit } from './onboardingValidation';
 
-const MAX_HABITS = 10;
-const DEFAULT_ENERGY = 5;
+const SmoothSlider = Slider as React.ComponentType<SmoothSliderProps>;
 
 const REVEAL_STAGGER_MS = 150;
 const REVEAL_SORT_PAUSE_MS = 500;
@@ -306,6 +304,7 @@ const HabitInputRow = ({
       placeholder="Enter habit name"
       blurOnSubmit={false}
       onKeyPress={onKeyPress}
+      maxLength={HABIT_NAME_MAX_LENGTH}
       testID="habit-input"
     />
     <TouchableOpacity
@@ -716,16 +715,6 @@ const useOnboardingActions = (
   };
 };
 
-const createNewHabit = (name: string): OnboardingHabit => ({
-  id: Date.now().toString(),
-  name: name.trim(),
-  icon: DEFAULT_ICONS[Math.floor(Math.random() * DEFAULT_ICONS.length)] ?? '⭐',
-  energy_cost: DEFAULT_ENERGY,
-  energy_return: DEFAULT_ENERGY,
-  stage: 'Beige',
-  start_date: new Date(),
-});
-
 const useHabitInput = (
   habits: OnboardingHabit[],
   setHabits: React.Dispatch<React.SetStateAction<OnboardingHabit[]>>,
@@ -737,17 +726,15 @@ const useHabitInput = (
   const inputRef = useRef<TextInput>(null);
 
   const handleAddHabit = () => {
-    if (newHabitName.trim() === '') return;
-    if (habits.length >= MAX_HABITS) {
-      setError(
-        `You've hit the ${MAX_HABITS}-habit limit for onboarding. Remove one you don't need to add a different habit.`,
-      );
+    const outcome = validateAndAddHabit(newHabitName, habits);
+    if (outcome.kind === 'add') {
+      setHabits((prev) => [...prev, outcome.habit]);
+      setNewHabitName('');
+      setError('');
+      inputRef.current?.focus();
       return;
     }
-    setHabits((prev) => [...prev, createNewHabit(newHabitName)]);
-    setNewHabitName('');
-    setError('');
-    inputRef.current?.focus();
+    if (outcome.kind === 'error') setError(outcome.message);
   };
 
   const handleKeyPress = (
@@ -793,20 +780,33 @@ const useOnboardingNavigation = (
     setShowDiscardDialog(false);
     onClose();
   };
+  // BUG-FE-HABIT-103: track in-flight templates request so a second tap
+  // (or a stale callback after navigation) cannot route a successful
+  // fetch into the error branch or step the user past 5 unintentionally.
+  const templatesRequestRef = useRef(0);
   const handleGoToTemplates = () => {
+    const myRequest = templatesRequestRef.current + 1;
+    templatesRequestRef.current = myRequest;
     goalGroupsApi
       .list()
       .then((templates) => {
+        if (templatesRequestRef.current !== myRequest) return;
         setGoalGroupTemplates(templates.filter((t) => t.shared_template));
         setStep(5);
       })
       .catch(() => {
+        if (templatesRequestRef.current !== myRequest) return;
         onSaveHabits(habits);
         onClose();
       });
   };
+  // BUG-FE-HABIT-101: reset onboarding state on finish so reopening the
+  // modal starts at step 1 with an empty habit list, instead of resuming
+  // at step 5 with already-persisted habits.
   const handleFinish = () => {
     onSaveHabits(habits);
+    setStep(1);
+    setHabits([]);
     onClose();
   };
   return {

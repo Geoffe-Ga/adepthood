@@ -45,7 +45,14 @@ export const useModalCoordinator = (): ModalCoordinator => {
   const [menu, setMenu] = useState(false);
 
   const open = useCallback((name: ModalName) => {
-    setModals({ ...INITIAL_STATE, [name]: true });
+    // BUG-FE-HABIT-008: previously this resolved to ``{ [name]: true }``
+    // -- which silently closed every other open modal.  ``onboarding``
+    // raising the ``stats`` modal mid-flow would dismiss onboarding,
+    // and the count-warning toast inside ``OnboardingModal`` would
+    // close its host.  Preserving prior flags lets the screen stack
+    // modals when the UX requires it; callers that need exclusivity
+    // call ``closeAll`` first.
+    setModals((prev) => ({ ...prev, [name]: true }));
     setMenu(false);
   }, []);
 

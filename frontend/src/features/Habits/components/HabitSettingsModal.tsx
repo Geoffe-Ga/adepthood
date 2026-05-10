@@ -19,19 +19,14 @@ import type { Habit, HabitSettingsModalProps } from '../Habits.types';
 import { calculateNetEnergy } from '../HabitUtils';
 
 import ConfirmDialog from './ConfirmDialog';
-
-const ENERGY_MIN = -10;
-const ENERGY_MAX = 10;
+// BUG-FE-HABIT-201: parser lives in its own module so unit tests can
+// import without the RN component tree (see ``parseEnergyValue.ts``).
+import { parseEnergyValue } from './parseEnergyValue';
 
 const cycleFrequency = (current: string | undefined): 'daily' | 'weekly' | 'custom' => {
   if (current === 'daily') return 'weekly';
   if (current === 'weekly') return 'custom';
   return 'daily';
-};
-
-const parseEnergyValue = (text: string): number | null => {
-  const value = parseInt(text) || 0;
-  return value >= ENERGY_MIN && value <= ENERGY_MAX ? value : null;
 };
 
 interface EnergySettingsProps {
