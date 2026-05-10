@@ -23,7 +23,6 @@ import Animated from 'react-native-reanimated';
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
 import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
 import { colors, STAGE_COLORS } from '../../../design/tokens';
-import { DEFAULT_ICONS } from '../constants';
 import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { STAGE_ORDER, calculateHabitStartDate } from '../HabitUtils';
@@ -38,10 +37,9 @@ interface SmoothSliderProps extends SliderProps {
   animationConfig?: Record<string, unknown>;
 }
 
-const SmoothSlider = Slider as React.ComponentType<SmoothSliderProps>;
+import { HABIT_NAME_MAX_LENGTH, MAX_HABITS, validateAndAddHabit } from './onboardingValidation';
 
-const MAX_HABITS = 10;
-const DEFAULT_ENERGY = 5;
+const SmoothSlider = Slider as React.ComponentType<SmoothSliderProps>;
 
 const REVEAL_STAGGER_MS = 150;
 const REVEAL_SORT_PAUSE_MS = 500;
@@ -717,70 +715,6 @@ const useOnboardingActions = (
   };
 };
 
-// BUG-FE-HABIT-105: maximum length for an onboarding habit name.  TextInput
-// also enforces the cap; the parse-time guard is defence in depth so a
-// programmatic ``setHabits`` cannot smuggle a 10k-char name past the UI.
-const HABIT_NAME_MAX_LENGTH = 80;
-
-let habitIdCounter = 0;
-
-const generateHabitId = (): string => {
-  habitIdCounter += 1;
-  // ``Date.now()`` alone collided on rapid taps within the same
-  // millisecond (common on web with React 18 auto-batching), breaking
-  // ``DraggableFlatList`` keys.  Pairing with a monotonically-increasing
-  // counter guarantees uniqueness even when ``Date.now()`` is identical.
-  return `${Date.now()}-${habitIdCounter}`;
-};
-
-/**
- * Strip control / newline / tab characters and clamp to the max length.
- * Matches the backend ``sanitize_user_text`` shape from prompt 04 so a
- * round-trip does not silently rewrite the displayed name.
- */
-const sanitizeHabitName = (raw: string): string => {
-  // Strip control characters (0x00-0x1F + 0x7F) including newlines and
-  // tabs so a 10k-char one-liner cannot smuggle past the input cap.
-  let out = '';
-  for (let i = 0; i < raw.length; i += 1) {
-    const code = raw.charCodeAt(i);
-    if (code <= 31 || code === 127) continue;
-    out += raw[i];
-  }
-  return out.trim().slice(0, HABIT_NAME_MAX_LENGTH);
-};
-
-const createNewHabit = (name: string): OnboardingHabit => ({
-  id: generateHabitId(),
-  name: sanitizeHabitName(name),
-  icon: DEFAULT_ICONS[Math.floor(Math.random() * DEFAULT_ICONS.length)] ?? '⭐',
-  energy_cost: DEFAULT_ENERGY,
-  energy_return: DEFAULT_ENERGY,
-  stage: 'Beige',
-  start_date: new Date(),
-});
-
-type AddHabitOutcome = { ok: true } | { ok: false; error: string };
-
-const validateAndAddHabit = (
-  raw: string,
-  habits: OnboardingHabit[],
-): AddHabitOutcome | { habit: OnboardingHabit } => {
-  const cleaned = sanitizeHabitName(raw);
-  if (cleaned === '') return { ok: true } as AddHabitOutcome;
-  if (habits.length >= MAX_HABITS) {
-    return {
-      ok: false,
-      error: `You've hit the ${MAX_HABITS}-habit limit for onboarding. Remove one you don't need to add a different habit.`,
-    };
-  }
-  const lower = cleaned.toLowerCase();
-  if (habits.some((h) => h.name.toLowerCase() === lower)) {
-    return { ok: false, error: "You've already added that one. Pick a different name." };
-  }
-  return { habit: createNewHabit(cleaned) };
-};
-
 const useHabitInput = (
   habits: OnboardingHabit[],
   setHabits: React.Dispatch<React.SetStateAction<OnboardingHabit[]>>,
@@ -793,14 +727,14 @@ const useHabitInput = (
 
   const handleAddHabit = () => {
     const outcome = validateAndAddHabit(newHabitName, habits);
-    if ('habit' in outcome) {
+    if (outcome.kind === 'add') {
       setHabits((prev) => [...prev, outcome.habit]);
       setNewHabitName('');
       setError('');
       inputRef.current?.focus();
       return;
     }
-    if (!outcome.ok) setError(outcome.error);
+    if (outcome.kind === 'error') setError(outcome.message);
   };
 
   const handleKeyPress = (

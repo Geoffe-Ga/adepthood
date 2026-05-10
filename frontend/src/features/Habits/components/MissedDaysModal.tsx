@@ -146,7 +146,7 @@ interface ResetConfirmationProps {
   onCancel: () => void;
 }
 
-const ResetConfirmation = ({
+export const ResetConfirmation = ({
   habitName,
   pendingDate,
   onConfirm,

@@ -140,9 +140,12 @@ const useReorderState = ({
   const [pickerVisible, setPickerVisible] = useState(false);
   const wasVisibleRef = useRef(false);
 
-  // Initialise the ordering only on the open transition. The previous
-  // implementation re-fired on every ``startDate`` change and clobbered the
-  // user's drag order, which felt like a "frozen" reorder.
+  // BUG-FE-HABIT-204: initialise the ordering only on the open transition;
+  // the previous implementation re-fired on every ``startDate`` change and
+  // clobbered the user's drag.  Date-picker changes go through
+  // ``handleConfirmDate`` below, which calls ``updateStartDates`` directly,
+  // so the start-date propagation handled by PR #302's dedicated effect is
+  // already covered here without a second effect.
   useEffect(() => {
     const justOpened = visible && !wasVisibleRef.current;
     wasVisibleRef.current = visible;

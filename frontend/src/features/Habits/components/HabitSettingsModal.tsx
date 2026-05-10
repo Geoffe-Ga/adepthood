@@ -19,29 +19,14 @@ import type { Habit, HabitSettingsModalProps } from '../Habits.types';
 import { calculateNetEnergy } from '../HabitUtils';
 
 import ConfirmDialog from './ConfirmDialog';
-
-const ENERGY_MIN = -10;
-const ENERGY_MAX = 10;
+// BUG-FE-HABIT-201: parser lives in its own module so unit tests can
+// import without the RN component tree (see ``parseEnergyValue.ts``).
+import { parseEnergyValue } from './parseEnergyValue';
 
 const cycleFrequency = (current: string | undefined): 'daily' | 'weekly' | 'custom' => {
   if (current === 'daily') return 'weekly';
   if (current === 'weekly') return 'custom';
   return 'daily';
-};
-
-const parseEnergyValue = (text: string): number | null => {
-  // BUG-FE-HABIT-201: ``parseInt(text) || 0`` silently coerced garbage
-  // ("foo", "1.5e10", "") to ``0`` and accepted it as a valid energy
-  // value, then propagated through to the planner as a real cost --
-  // which the user did not type.  The empty-string allowance is
-  // preserved (it represents "user is mid-edit") but every non-integer
-  // is now rejected so the caller can surface a validation error
-  // instead of silently writing 0.
-  if (text.trim() === '') return null;
-  if (!/^-?\d+$/.test(text.trim())) return null;
-  const value = Number.parseInt(text.trim(), 10);
-  if (!Number.isFinite(value)) return null;
-  return value >= ENERGY_MIN && value <= ENERGY_MAX ? value : null;
 };
 
 interface EnergySettingsProps {
