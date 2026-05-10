@@ -339,6 +339,36 @@ const setError = (error: string | null): void => {
 
 const getHabits = (): Habit[] => useHabitStore.getState().habits;
 
+/**
+ * Per-habit promise mutex for notification rescheduling (BUG-FE-HABIT-005).
+ *
+ * Two rapid ``updateHabit`` calls on the same habit used to interleave:
+ * the second would read the pre-first-edit ``notificationIds`` (still in
+ * the store because the first call had not yet flushed its return value)
+ * and double-schedule on the device.  Chaining each habit's reschedule
+ * onto the prior one and then writing the returned ids back into the
+ * store before persisting closes both halves of the race.
+ */
+const rescheduleQueue: Map<number, Promise<void>> = new Map();
+
+const rescheduleAndPersist = (habit: Habit): Promise<void> => {
+  if (!habit.id) return Promise.resolve();
+  const habitId = habit.id;
+  const prior = rescheduleQueue.get(habitId) ?? Promise.resolve();
+  const next = prior
+    .catch(() => undefined)
+    .then(async () => {
+      const live = getHabits().find((h) => h.id === habitId);
+      const target: Habit = live ?? habit;
+      const ids = await updateHabitNotifications(target);
+      const refreshed: Habit = { ...target, notificationIds: ids };
+      setHabits(getHabits().map((h) => (h.id === habitId ? refreshed : h)));
+      await persistHabits(getHabits());
+    });
+  rescheduleQueue.set(habitId, next);
+  return next;
+};
+
 // ---------------------------------------------------------------------------
 // API sync helpers — every mutation optimistically updates the store and
 // rolls back on network failure.
@@ -527,8 +557,13 @@ export const habitManager = {
     const prev = getHabits();
     const next = prev.map((h) => (h.id === updatedHabit.id ? updatedHabit : h));
     setHabits(next);
-    void updateHabitNotifications(updatedHabit);
-    void persistHabits(next);
+    // BUG-FE-HABIT-005: serialize per-habit notification rescheduling and
+    // write the freshly-returned ids back onto the habit before
+    // persisting.  The previous ``void updateHabitNotifications(...)``
+    // discarded the return value, so a second rapid edit would still
+    // see the pre-first-edit ``notificationIds`` and double-schedule.
+    if (updatedHabit.id) void rescheduleAndPersist(updatedHabit);
+    else void persistHabits(next);
     if (!updatedHabit.id) return;
     habitsApi
       .update(updatedHabit.id, toApiPayload(updatedHabit))

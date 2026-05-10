@@ -78,4 +78,18 @@ describe('OnboardingModal Step 1 interactions', () => {
     fireEvent.press(getByTestId('count-warning-continue'));
     getByText('Energy Cost');
   });
+
+  it('BUG-FE-HABIT-105: rejects a case-insensitive duplicate name with an inline error', () => {
+    const { getByPlaceholderText, getByTestId, getByText } = render(
+      <OnboardingModal visible onClose={jest.fn()} onSaveHabits={jest.fn()} />,
+    );
+    const input = getByPlaceholderText('Enter habit name');
+    fireEvent.changeText(input, 'Meditate');
+    fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
+    expect(getByTestId('habit-count')).toHaveTextContent('1 / 10');
+    fireEvent.changeText(input, 'meditate');
+    fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
+    getByText(/already added/i);
+    expect(getByTestId('habit-count')).toHaveTextContent('1 / 10');
+  });
 });

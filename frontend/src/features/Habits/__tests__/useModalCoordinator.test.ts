@@ -18,7 +18,11 @@ describe('useModalCoordinator', () => {
     expect(result.current.menu).toBe(false);
   });
 
-  it('opens exactly one modal at a time', () => {
+  it('BUG-FE-HABIT-008: open() preserves prior modal flags', () => {
+    // Before the fix, ``open('stats')`` would close ``goal``.  Stacking
+    // a count-warning toast inside the onboarding flow then dismissed
+    // onboarding itself.  ``open`` now ORs the requested flag onto
+    // existing state; callers that need exclusivity ``closeAll()`` first.
     const { result } = renderHook(() => useModalCoordinator());
 
     act(() => result.current.open('goal'));
@@ -27,7 +31,7 @@ describe('useModalCoordinator', () => {
 
     act(() => result.current.open('stats'));
     expect(result.current.stats).toBe(true);
-    expect(result.current.goal).toBe(false);
+    expect(result.current.goal).toBe(true);
   });
 
   it('closeAll resets every modal to false', () => {
