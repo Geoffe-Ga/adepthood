@@ -9,7 +9,6 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.practice import Practice
-from rate_limit import limiter
 
 _APPROVED_STAGE_1_COUNT = 2
 
@@ -249,12 +248,11 @@ async def test_rate_limit_key_survives_token_refresh(async_client: AsyncClient) 
     needing to wait for the limiter window to roll over.  Re-using
     ``submit_practice`` (the rate-limited endpoint) confirms the
     end-to-end wiring rather than poking the helper in isolation.
-    """
-    # The shared autouse fixture clears the limiter between tests, but
-    # disable_rate_limit also flips ``limiter.enabled``.  Force-enable
-    # so this test is not silently skipped if a sibling left it off.
-    limiter.enabled = True
 
+    The autouse ``_reset_rate_limiter`` fixture in ``conftest.py`` already
+    forces ``limiter.enabled = True`` and clears storage on entry/exit,
+    so we do not need to manage limiter state manually here.
+    """
     email = "rl_refresh@example.com"
     password = "securepassword123"  # pragma: allowlist secret
     signup = await async_client.post("/auth/signup", json={"email": email, "password": password})
