@@ -104,8 +104,27 @@ export const selectHabitsError = (state: HabitStoreState): string | null => stat
  * Factory for a "single habit by ID" selector. The habit lookup is O(1) via
  * the canonical `habitsById` map, and Zustand will only trigger a re-render
  * when that specific habit's reference changes.
+ *
+ * BUG-FE-STATE-002: the previous implementation returned a fresh closure
+ * on every call, which forced ``useHabitStore(selectHabitById(id))``
+ * callers to re-subscribe Zustand on every render -- one extra forced
+ * render per id change, plus subtle re-render storms when the id was
+ * stable but the selector identity churned.  ``selectorCache`` keys the
+ * closure on the id (and a single ``NULL_SELECTOR`` for the
+ * ``id == null`` branch) so repeat calls return the SAME function and
+ * Zustand's internal slice ref stays warm.
  */
-export const selectHabitById =
-  (id: number | null | undefined) =>
-  (state: HabitStoreState): Habit | undefined =>
-    id == null ? undefined : state.habitsById[id];
+const NULL_SELECTOR = (_state: HabitStoreState): Habit | undefined => undefined;
+const habitByIdSelectorCache = new Map<number, (_state: HabitStoreState) => Habit | undefined>();
+
+export const selectHabitById = (
+  id: number | null | undefined,
+): ((_state: HabitStoreState) => Habit | undefined) => {
+  if (id == null) return NULL_SELECTOR;
+  let cached = habitByIdSelectorCache.get(id);
+  if (cached === undefined) {
+    cached = (state: HabitStoreState) => state.habitsById[id];
+    habitByIdSelectorCache.set(id, cached);
+  }
+  return cached;
+};

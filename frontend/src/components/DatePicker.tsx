@@ -129,30 +129,104 @@ const ROW_STYLE = { flexDirection: 'row' as const, marginTop: 8 };
 
 interface QuickDateButtonsProps {
   onSelectDate: (_date: Date) => void;
+  minDate?: string;
+  maxDate?: string;
+  disabledDate?: (_date: Date) => boolean;
 }
 
-const QuickDateButtons: React.FC<QuickDateButtonsProps> = ({ onSelectDate }) => (
+/**
+ * BUG-FE-UI-107: pre-compute the candidate date for each quick-select
+ * button and disable the button when the candidate is out of range or
+ * blocked by ``disabledDate``.  The previous implementation always
+ * fired ``commitDate`` and let validation set an error -- which still
+ * left the picker open and confused the user about whether the action
+ * succeeded.  Disabling at the source means an out-of-range option
+ * never tempts the user to begin with.
+ */
+const isQuickCandidateAllowed = (
+  candidate: Date,
+  minDate?: string,
+  maxDate?: string,
+  disabledDate?: (_date: Date) => boolean,
+): boolean => {
+  const min = minDate ? parseISODate(minDate) : undefined;
+  const max = maxDate ? parseISODate(maxDate) : undefined;
+  if (!isDateWithinRange(candidate, min, max)) return false;
+  return !disabledDate?.(candidate);
+};
+
+interface QuickButtonProps {
+  candidate: Date;
+  label: string;
+  // Internal prop name distinct from ``accessibilityLabel`` so test
+  // helpers that find the inner TouchableOpacity by its
+  // ``accessibilityLabel`` prop do not also match this wrapper.
+  a11yLabel: string;
+  style?: { marginLeft: number };
+  onSelectDate: (_date: Date) => void;
+  minDate?: string;
+  maxDate?: string;
+  disabledDate?: (_date: Date) => boolean;
+}
+
+const QuickButton: React.FC<QuickButtonProps> = ({
+  candidate,
+  label,
+  a11yLabel,
+  style,
+  onSelectDate,
+  minDate,
+  maxDate,
+  disabledDate,
+}) => {
+  const allowed = isQuickCandidateAllowed(candidate, minDate, maxDate, disabledDate);
+  return (
+    <TouchableOpacity
+      onPress={() => onSelectDate(candidate)}
+      disabled={!allowed}
+      style={style}
+      accessibilityLabel={a11yLabel}
+      accessibilityState={{ disabled: !allowed }}
+    >
+      <Text>{label}</Text>
+    </TouchableOpacity>
+  );
+};
+
+const QUICK_OPTIONS: ReadonlyArray<{
+  factory: () => Date;
+  label: string;
+  a11yLabel: string;
+}> = [
+  { factory: getLocalToday, label: 'today', a11yLabel: 'Select today' },
+  { factory: getNextMonday, label: 'next monday', a11yLabel: 'Select next Monday' },
+  {
+    factory: getFirstOfNextMonth,
+    label: 'first of next month',
+    a11yLabel: 'Select first of next month',
+  },
+];
+
+const QuickDateButtons: React.FC<QuickDateButtonsProps> = ({
+  onSelectDate,
+  minDate,
+  maxDate,
+  disabledDate,
+}) => (
   <View style={ROW_STYLE}>
-    <TouchableOpacity
-      onPress={() => onSelectDate(getLocalToday())}
-      accessibilityLabel="Select today"
-    >
-      <Text>today</Text>
-    </TouchableOpacity>
-    <TouchableOpacity
-      onPress={() => onSelectDate(getNextMonday())}
-      style={QUICK_BUTTON_STYLE}
-      accessibilityLabel="Select next Monday"
-    >
-      <Text>next monday</Text>
-    </TouchableOpacity>
-    <TouchableOpacity
-      onPress={() => onSelectDate(getFirstOfNextMonth())}
-      style={QUICK_BUTTON_STYLE}
-      accessibilityLabel="Select first of next month"
-    >
-      <Text>first of next month</Text>
-    </TouchableOpacity>
+    {QUICK_OPTIONS.map((option, idx) => (
+      <QuickButton
+        key={option.label}
+        candidate={option.factory()}
+        label={option.label}
+        a11yLabel={option.a11yLabel}
+        style={idx === 0 ? undefined : QUICK_BUTTON_STYLE}
+        onSelectDate={onSelectDate}
+        minDate={minDate}
+        maxDate={maxDate}
+        disabledDate={disabledDate}
+      />
+    ))}
   </View>
 );
 
@@ -261,6 +335,18 @@ const makeHandleChangeText = (
   };
 };
 
+interface NativePickerSlotProps {
+  value: string;
+  minDate?: string;
+  maxDate?: string;
+  pickerVisible: boolean;
+  setPickerVisible: (_v: boolean) => void;
+  commitDate: (_d: Date) => void;
+}
+
+const NativePickerSlot: React.FC<NativePickerSlotProps> = (props) =>
+  Platform.OS === 'web' ? null : <NativePicker {...props} />;
+
 const DatePicker: React.FC<DatePickerProps> = ({
   value,
   onChange,
@@ -276,9 +362,7 @@ const DatePicker: React.FC<DatePickerProps> = ({
   const [pickerVisible, setPickerVisible] = useState(false);
 
   useEffect(() => {
-    if (value) {
-      setTextValue(formatDisplayDate(parseISODate(value), locale));
-    }
+    if (value) setTextValue(formatDisplayDate(parseISODate(value), locale));
   }, [value, locale]);
 
   const commitDate = useCommitDate(onChange, setError, minDate, maxDate, disabledDate);
@@ -296,17 +380,20 @@ const DatePicker: React.FC<DatePickerProps> = ({
         commitDate={commitDate}
       />
       {error && <Text accessibilityRole="alert">{error}</Text>}
-      {Platform.OS !== 'web' && (
-        <NativePicker
-          value={value}
-          minDate={minDate}
-          maxDate={maxDate}
-          pickerVisible={pickerVisible}
-          setPickerVisible={setPickerVisible}
-          commitDate={commitDate}
-        />
-      )}
-      <QuickDateButtons onSelectDate={commitDate} />
+      <NativePickerSlot
+        value={value}
+        minDate={minDate}
+        maxDate={maxDate}
+        pickerVisible={pickerVisible}
+        setPickerVisible={setPickerVisible}
+        commitDate={commitDate}
+      />
+      <QuickDateButtons
+        onSelectDate={commitDate}
+        minDate={minDate}
+        maxDate={maxDate}
+        disabledDate={disabledDate}
+      />
     </View>
   );
 };

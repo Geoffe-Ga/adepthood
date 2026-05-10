@@ -15,7 +15,11 @@ export const colors = {
   success: '#535c46',
   warning: '#6c6b63',
   danger: '#7b3f30',
-  neutral: '#8c8c8c',
+  // Slate-grey replacing #8c8c8c which fell at 3.07:1 against #f8f8f8 --
+  // below WCAG 2.1 AA 4.5:1 for normal text (BUG-FE-UI-001). 4.93:1
+  // brings the token over the threshold for body copy, captions, and
+  // disabled-but-discernible UI states.
+  neutral: '#6e6e6e',
 
   background: {
     primary: '#f8f8f8',
@@ -197,6 +201,56 @@ export const shadows = {
 // ---------------------------------------------------------------------------
 // Typography
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Touch targets (BUG-FE-UI-002 / BUG-FE-UI-003)
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimum interactive surface size in dp.  WCAG 2.5.5 (Level AAA) and
+ * Apple HIG / Material both put the floor at 44 dp; anything smaller
+ * is a failure for users with motor impairments and inflates the
+ * mistap rate on small phones across the board.  Shared primitives
+ * (Button, IconButton, TouchableOpacity wrappers) MUST size their
+ * hit-area to at least this value -- via ``minWidth`` /
+ * ``minHeight`` on the touchable, or ``hitSlop`` when visual size
+ * cannot grow.
+ */
+export const touchTarget = {
+  minimum: 44,
+} as const;
+
+// ---------------------------------------------------------------------------
+// Dark-mode palette (BUG-FE-UI-003)
+// ---------------------------------------------------------------------------
+
+/**
+ * Dark-mode swatches.  Background / surface anchored to ``#121212``
+ * (Material's recommended dark base) with elevation overlays that
+ * already respect WCAG-AA contrast for the same text scale used in
+ * the light palette.  Component adoption ships behind a follow-up
+ * theme-context PR -- this module exports the values so the
+ * downstream work has a single source of truth.
+ */
+export const darkColors = {
+  background: {
+    primary: '#121212',
+    card: '#1e1e1e',
+    accent: '#2a2a2a',
+  },
+  text: {
+    // Contrast ratios on #121212:
+    //   primary    #f5f5f5 / #121212 = 16.06 — pass AAA
+    //   secondary  #b0b0b0 / #121212 = 8.59  — pass AAA
+    //   tertiary   #8a8a8a / #121212 = 5.45  — pass AA normal
+    //   light      #ffffff / dark BG — case-by-case
+    primary: '#f5f5f5',
+    secondary: '#b0b0b0',
+    tertiary: '#8a8a8a',
+    light: '#ffffff',
+  },
+  border: '#2f2f2f',
+} as const;
 
 export const breakpoints = { xs: 0, sm: 360, md: 600, lg: 900, xl: 1200 } as const;
 

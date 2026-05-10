@@ -75,7 +75,19 @@ export const useStageStore = create<StageStoreState>((set) => ({
   updateStageProgress: (stageNumber, progress) =>
     set((state) => {
       const existing = state.stagesByNumber[stageNumber];
-      if (!existing) return state;
+      if (!existing) {
+        // BUG-FE-STATE-003: previously the unknown-stage branch silently
+        // returned the same state object, masking contract drift between
+        // the client's ``stagesByNumber`` (loaded once at sign-in) and a
+        // backend that added a new stage.  Logging at ``warn`` keeps the
+        // UI quiet (no thrown error, no broken render) while surfacing
+        // the drift to Sentry / console reporters.
+        console.warn('[useStageStore] updateStageProgress called for unknown stage', {
+          stageNumber,
+          progress,
+        });
+        return state;
+      }
       const stagesByNumber = {
         ...state.stagesByNumber,
         [stageNumber]: { ...existing, progress },
@@ -101,7 +113,25 @@ export const selectCurrentStage = (state: StageStoreState): number => state.curr
 export const selectStagesLoading = (state: StageStoreState): boolean => state.loading;
 export const selectStagesError = (state: StageStoreState): string | null => state.error;
 
-export const selectStageByNumber =
-  (stageNumber: number | null | undefined) =>
-  (state: StageStoreState): StageData | undefined =>
-    stageNumber == null ? undefined : state.stagesByNumber[stageNumber];
+// BUG-FE-STATE-002: memoize per stage number so repeat
+// ``useStageStore(selectStageByNumber(n))`` calls return the SAME
+// closure and Zustand's internal slice ref stays warm.  Without the
+// cache, every render minted a fresh selector and Zustand re-subscribed
+// the store with one extra forced render per id change.
+const NULL_STAGE_SELECTOR = (_state: StageStoreState): StageData | undefined => undefined;
+const stageByNumberSelectorCache = new Map<
+  number,
+  (_state: StageStoreState) => StageData | undefined
+>();
+
+export const selectStageByNumber = (
+  stageNumber: number | null | undefined,
+): ((_state: StageStoreState) => StageData | undefined) => {
+  if (stageNumber == null) return NULL_STAGE_SELECTOR;
+  let cached = stageByNumberSelectorCache.get(stageNumber);
+  if (cached === undefined) {
+    cached = (state: StageStoreState) => state.stagesByNumber[stageNumber];
+    stageByNumberSelectorCache.set(stageNumber, cached);
+  }
+  return cached;
+};

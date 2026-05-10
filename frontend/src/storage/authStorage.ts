@@ -62,17 +62,32 @@ const TOKEN_KEY = 'adepthood_auth_token';
 // accepts and the long-term migration plan (httpOnly session cookie).
 const isWeb = Platform.OS === 'web';
 
+export class EmptyAuthTokenError extends Error {
+  constructor() {
+    super('auth token cannot be empty');
+    this.name = 'EmptyAuthTokenError';
+  }
+}
+
 export async function saveToken(token: string): Promise<void> {
+  // BUG-FE-STORAGE-004: trim and reject empty / whitespace-only tokens
+  // at the boundary.  Without this, an accidental save (e.g. a stale
+  // ``''`` returned by a malformed refresh response that slipped past
+  // the Zod gate -- BUG-API-007 closed it, this is defence in depth)
+  // would silently clear the previous valid token and bounce the user
+  // to the login screen.
+  const trimmed = token.trim();
+  if (!trimmed) throw new EmptyAuthTokenError();
   if (isWeb) {
     // BUG-FE-AUTH-007: web persists to localStorage — XSS risk accepted
     // until the backend httpOnly-cookie session migration ships.  See the
     // file-header note for context.  Reviewers: any new web persistence
     // path here MUST go through the same ``isWeb`` branch (or be replaced
     // by a cookie-based session).
-    await AsyncStorage.setItem(TOKEN_KEY, token);
+    await AsyncStorage.setItem(TOKEN_KEY, trimmed);
     return;
   }
-  await SecureStore.setItemAsync(TOKEN_KEY, token);
+  await SecureStore.setItemAsync(TOKEN_KEY, trimmed);
 }
 
 export async function loadToken(): Promise<string | null> {
