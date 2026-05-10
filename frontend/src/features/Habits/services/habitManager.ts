@@ -19,7 +19,7 @@ import type { CheckInResult, GoalUpdatePayload, HabitCreatePayload } from '../..
 import { formatApiError } from '../../../api/errorMessages';
 import { flattenGoalCompletions } from '../../../api/flattenGoalCompletions';
 import type { ToastConfig } from '../../../components/Toast';
-import { colors } from '../../../design/tokens';
+import { colors, STAGE_ORDER } from '../../../design/tokens';
 import {
   saveHabits as persistHabits,
   loadHabits as loadCachedHabits,
@@ -29,7 +29,7 @@ import {
 } from '../../../storage/habitStorage';
 import { useHabitStore } from '../../../store/useHabitStore';
 import { HABIT_DEFAULTS } from '../HabitDefaults';
-import type { Goal, Habit, OnboardingHabit } from '../Habits.types';
+import type { AddHabitInput, Goal, Habit, OnboardingHabit } from '../Habits.types';
 import { getGoalTier, getGoalTarget, calculateHabitProgress, logHabitUnits } from '../HabitUtils';
 import { updateHabitNotifications, cancelForHabit } from '../hooks/useHabitNotifications';
 
@@ -247,6 +247,37 @@ const buildOnboardingHabits = (newHabits: OnboardingHabit[]) =>
       target: t.target,
     })),
   }));
+
+/**
+ * Build a brand-new habit row from a minimal user input. Stage cycles through
+ * STAGE_ORDER so habits added after the original ten still pick up an
+ * aptitude color; ids are negative placeholders that get replaced when the
+ * server round-trip succeeds and `loadHabits` rehydrates from the API.
+ */
+const buildAddedHabit = (input: AddHabitInput, existingCount: number): Habit => {
+  const stage = STAGE_ORDER[existingCount % STAGE_ORDER.length] ?? 'Clear Light';
+  const tempId = -Date.now();
+  return {
+    id: tempId,
+    stage,
+    name: input.name.trim(),
+    icon: input.icon,
+    streak: 0,
+    energy_cost: input.energy_cost ?? 5,
+    energy_return: input.energy_return ?? 5,
+    start_date: new Date(),
+    goals: GOAL_TIERS.map((t, ti) => ({
+      id: tempId - ti - 1,
+      title: `${t.label} goal for ${input.name.trim()}`,
+      ...DEFAULT_GOAL_CONFIG,
+      tier: t.tier,
+      target: t.target,
+    })),
+    completions: [],
+    revealed: true,
+    sort_order: existingCount,
+  };
+};
 
 const syncOnboardingHabits = async (fullHabits: ReturnType<typeof buildOnboardingHabits>) => {
   for (const habit of fullHabits) {
@@ -523,6 +554,30 @@ export const habitManager = {
           "We couldn't delete that habit on the server. It's back in your list — check your connection and try again.",
         ),
       );
+  },
+
+  /**
+   * Create a single habit outside the onboarding scaffolding flow. Optimistically
+   * appends a placeholder row to the store so the user sees instant feedback,
+   * then POSTs to ``/habits/`` and re-runs ``loadHabits`` so the temporary
+   * negative ids are replaced with the server-assigned ones (otherwise the
+   * goal-completion POSTs would 404 on the next log).
+   */
+  addHabit: async (input: AddHabitInput): Promise<void> => {
+    const prev = getHabits();
+    const newHabit = buildAddedHabit(input, prev.length);
+    const next = [...prev, newHabit];
+    setHabits(next);
+    void persistHabits(next);
+    try {
+      await habitsApi.create(toApiPayload(newHabit));
+      await loadHabits();
+    } catch (err) {
+      revertOnFailure(
+        prev,
+        "We couldn't create that habit on the server. Check your connection and try again.",
+      )(err);
+    }
   },
 
   /**

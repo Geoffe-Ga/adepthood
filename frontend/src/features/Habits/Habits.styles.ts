@@ -1290,6 +1290,30 @@ export const styles = StyleSheet.create({
     color: COLORS.text.tertiary,
   },
 
+  // ===== Pagination =====
+  paginationBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+  },
+  paginationButton: {
+    backgroundColor: COLORS.secondary,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.lg,
+    borderRadius: BORDER_RADIUS.xs,
+    ...SHADOWS.small,
+  },
+  paginationButtonText: {
+    color: COLORS.text.light,
+    fontWeight: '600',
+  },
+  paginationLabel: {
+    color: COLORS.text.primary,
+    fontWeight: '600',
+  },
+
   // ===== Overflow Menu =====
   topBar: {
     flexDirection: 'row',

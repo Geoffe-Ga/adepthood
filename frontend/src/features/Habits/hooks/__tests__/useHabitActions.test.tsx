@@ -47,7 +47,7 @@ jest.mock('react-native', () => ({
   StyleSheet: { create: (s: Record<string, unknown>) => s },
 }));
 
-import { goalCompletions as goalCompletionsApi } from '../../../../api';
+import { goalCompletions as goalCompletionsApi, habits as habitsApi } from '../../../../api';
 import { saveHabits } from '../../../../storage/habitStorage';
 import { useHabitStore } from '../../../../store/useHabitStore';
 import type { Habit } from '../../Habits.types';
@@ -205,6 +205,21 @@ describe('useHabitActions.logUnit', () => {
     expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(0);
     expect(goalCompletionsApi.create).not.toHaveBeenCalled();
     expect(showToast).not.toHaveBeenCalled();
+  });
+});
+
+describe('useHabitActions.addHabit', () => {
+  it('forwards to the manager and POSTs the new habit to /habits/', async () => {
+    useHabitStore.setState({ habits: [] });
+    const { result } = renderActions();
+
+    await act(async () => {
+      await result.current.actions.addHabit({ name: 'Brand New', icon: '🆕' });
+    });
+
+    expect(habitsApi.create).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Brand New', icon: '🆕' }),
+    );
   });
 });
 

@@ -160,12 +160,20 @@ export interface ReorderHabitsModalProps {
   onSaveOrder: (_habits: Habit[]) => void;
 }
 
+export interface AddHabitInput {
+  name: string;
+  icon: string;
+  energy_cost?: number;
+  energy_return?: number;
+}
+
 export interface HabitsActions {
   loadHabits: () => Promise<void>;
   updateGoal: (_habitId: number, _updatedGoal: Goal) => void;
   logUnit: (_habitId: number, _amount: number) => void;
   updateHabit: (_updatedHabit: Habit) => void;
   deleteHabit: (_habitId: number) => void;
+  addHabit: (_input: AddHabitInput) => Promise<void>;
   saveHabitOrder: (_orderedHabits: Habit[]) => void;
   backfillMissedDays: (_habitId: number, _days: Date[]) => void;
   setNewStartDate: (_habitId: number, _newDate: Date) => void;

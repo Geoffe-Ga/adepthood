@@ -4,7 +4,6 @@ import {
   View,
   Text,
   TouchableOpacity,
-  Alert,
   Modal,
   TextInput,
   Platform,
@@ -18,6 +17,8 @@ import { DAYS_OF_WEEK } from '../constants';
 import styles from '../Habits.styles';
 import type { Habit, HabitSettingsModalProps } from '../Habits.types';
 import { calculateNetEnergy } from '../HabitUtils';
+
+import ConfirmDialog from './ConfirmDialog';
 
 const ENERGY_MIN = -10;
 const ENERGY_MAX = 10;
@@ -505,6 +506,7 @@ const useSettingsHandlers = (
   handleChange: <K extends keyof Habit>(_field: K, _value: Habit[K]) => void,
 ) => {
   const notif = useNotificationHandlers(editedHabit, handleChange);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const handleSave = () => {
     if (editedHabit && habit?.id) {
@@ -515,20 +517,24 @@ const useSettingsHandlers = (
 
   const handleDelete = () => {
     if (!habit?.id) return;
-    Alert.alert('Delete Habit', `Are you sure you want to delete "${habit.name}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          onDeleteProp(habit.id!);
-          onClose();
-        },
-      },
-    ]);
+    setShowDeleteConfirm(true);
   };
 
-  return { ...notif, handleSave, handleDelete };
+  const confirmDelete = () => {
+    if (!habit?.id) return;
+    setShowDeleteConfirm(false);
+    onDeleteProp(habit.id);
+    onClose();
+  };
+
+  return {
+    ...notif,
+    handleSave,
+    handleDelete,
+    showDeleteConfirm,
+    setShowDeleteConfirm,
+    confirmDelete,
+  };
 };
 
 const SettingsModalHeader = ({ onClose }: { onClose: () => void }) => (
@@ -537,6 +543,55 @@ const SettingsModalHeader = ({ onClose }: { onClose: () => void }) => (
     <TouchableOpacity onPress={onClose} style={styles.closeButton}>
       <Text style={styles.closeButtonText}>×</Text>
     </TouchableOpacity>
+  </View>
+);
+
+interface SettingsBodyProps {
+  editedHabit: Habit;
+  showEmojiSelector: boolean;
+  setShowEmojiSelector: (_v: boolean) => void;
+  handleChange: <K extends keyof Habit>(_field: K, _value: Habit[K]) => void;
+  allHabits: Habit[];
+  onClose: () => void;
+  onOpenReorderModal: HabitSettingsModalProps['onOpenReorderModal'];
+  h: ReturnType<typeof useSettingsHandlers>;
+}
+
+const SettingsModalBody = ({
+  editedHabit,
+  showEmojiSelector,
+  setShowEmojiSelector,
+  handleChange,
+  allHabits,
+  onClose,
+  onOpenReorderModal,
+  h,
+}: SettingsBodyProps) => (
+  <View style={styles.modalOverlay}>
+    <View
+      style={[styles.settingsModalContent, { borderTopColor: STAGE_COLORS[editedHabit.stage] }]}
+    >
+      <SettingsModalHeader onClose={onClose} />
+      <SettingsForm
+        editedHabit={editedHabit}
+        showEmojiSelector={showEmojiSelector}
+        setShowEmojiSelector={setShowEmojiSelector}
+        handleChange={handleChange}
+        allHabits={allHabits}
+        onOpenReorderModal={onOpenReorderModal}
+        notificationTime={h.notificationTime}
+        showTimePicker={h.showTimePicker}
+        showDaysPicker={h.showDaysPicker}
+        setShowTimePicker={h.setShowTimePicker}
+        setShowDaysPicker={h.setShowDaysPicker}
+        onTimeChange={h.handleTimeChange}
+        onAddTime={h.handleAddTime}
+        onRemoveTime={h.handleRemoveTime}
+        onToggleDay={h.handleToggleDay}
+        onSave={h.handleSave}
+        onDelete={h.handleDelete}
+      />
+    </View>
   </View>
 );
 
@@ -566,32 +621,28 @@ export const HabitSettingsModal = ({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View
-          style={[styles.settingsModalContent, { borderTopColor: STAGE_COLORS[editedHabit.stage] }]}
-        >
-          <SettingsModalHeader onClose={onClose} />
-          <SettingsForm
-            editedHabit={editedHabit}
-            showEmojiSelector={showEmojiSelector}
-            setShowEmojiSelector={setShowEmojiSelector}
-            handleChange={handleChange}
-            allHabits={allHabits}
-            onOpenReorderModal={onOpenReorderModal}
-            notificationTime={h.notificationTime}
-            showTimePicker={h.showTimePicker}
-            showDaysPicker={h.showDaysPicker}
-            setShowTimePicker={h.setShowTimePicker}
-            setShowDaysPicker={h.setShowDaysPicker}
-            onTimeChange={h.handleTimeChange}
-            onAddTime={h.handleAddTime}
-            onRemoveTime={h.handleRemoveTime}
-            onToggleDay={h.handleToggleDay}
-            onSave={h.handleSave}
-            onDelete={h.handleDelete}
-          />
-        </View>
-      </View>
+      <SettingsModalBody
+        editedHabit={editedHabit}
+        showEmojiSelector={showEmojiSelector}
+        setShowEmojiSelector={setShowEmojiSelector}
+        handleChange={handleChange}
+        allHabits={allHabits}
+        onClose={onClose}
+        onOpenReorderModal={onOpenReorderModal}
+        h={h}
+      />
+      <ConfirmDialog
+        visible={h.showDeleteConfirm}
+        title="Are you sure?"
+        message="This is permanent."
+        testID="delete-habit-confirm"
+        cancelTestID="delete-habit-cancel"
+        confirmTestID="delete-habit-confirm-button"
+        confirmLabel="Delete"
+        destructive
+        onCancel={() => h.setShowDeleteConfirm(false)}
+        onConfirm={h.confirmDelete}
+      />
     </Modal>
   );
 };
