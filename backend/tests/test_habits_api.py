@@ -377,7 +377,13 @@ async def test_get_habit_completions_filtered_to_caller(
 
     # Inject a stray completion under a different user_id (simulates the
     # cross-tenant data state the streak filter already guards against).
-    stray = GoalCompletion(goal_id=goal_id, user_id=999_999, completed_units=42.0)
+    # Use a sentinel value Alice's row cannot produce: the seeded clear
+    # goal has ``target=2.0`` so a successful check-in writes
+    # ``completed_units=2.0`` (see ``routers/goal_completions.py``).
+    # ``42.0`` is unmistakable as foreign and lets us equality-assert
+    # on Alice's value rather than just "not the foreign value".
+    stray_units = 42.0
+    stray = GoalCompletion(goal_id=goal_id, user_id=999_999, completed_units=stray_units)
     db_session.add(stray)
     await db_session.commit()
 
@@ -385,7 +391,13 @@ async def test_get_habit_completions_filtered_to_caller(
     assert resp.status_code == HTTPStatus.OK
     clear_goal = next(g for g in resp.json()["goals"] if g["tier"] == "clear")
     assert len(clear_goal["completions"]) == 1
-    assert clear_goal["completions"][0]["completed_units"] != 42.0
+    surviving = clear_goal["completions"][0]
+    # Equality on Alice's expected value: target=2.0 of the clear goal,
+    # written by a ``did_complete=True`` check-in.  Stronger than
+    # "not equal to the stray" because it pins the surviving row's
+    # *identity*, not just its absence-of-being-the-other-one.
+    assert surviving["completed_units"] == 2.0
+    assert surviving["completed_units"] != stray_units
 
 
 @pytest.mark.asyncio

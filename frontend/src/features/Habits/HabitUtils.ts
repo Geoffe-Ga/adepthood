@@ -100,6 +100,14 @@ export const getMarkerPositions = (
   clearGoal?: Goal,
   stretchGoal?: Goal,
 ): { low: number; clear: number; stretch: number } => {
+  // Production invariant: every habit is seeded with all three tier
+  // goals by the backend (``_DEFAULT_GOAL_TIERS`` in
+  // ``backend/src/routers/habits.py``), so missing-tier here is a
+  // degenerate input -- a malformed habit, a hand-crafted test
+  // fixture, or a partial onboarding state.  Returning ``{0, 0, 0}``
+  // collapses all three markers to the bar's left edge so the
+  // mismatch is visible to the developer (overlapping markers, not a
+  // silently-positioned single dot) without crashing the render.
   if (!lowGoal || !clearGoal || !stretchGoal) {
     return { low: 0, clear: 0, stretch: 0 };
   }
@@ -276,6 +284,13 @@ export const getGoalTier = (habit: Habit): GoalTierResult => {
  */
 export const getProgressPercentage = (habit: Habit, currentGoal: Goal): number => {
   const totalProgress = calculateHabitProgress(habit);
+  // Fallback to ``currentGoal`` when stretch (or low, below) is missing
+  // -- a malformed habit that lost a tier still renders something
+  // self-consistent: the active goal becomes its own scale, so the bar
+  // fills based on the only target the habit actually has.  Production
+  // habits are always seeded with all three tiers (see the matching
+  // invariant comment in ``getMarkerPositions``); this fallback is for
+  // tests, in-flight onboarding, and degenerate data.
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch') ?? currentGoal;
   const stretchTarget = getGoalTarget(stretchGoal);
 

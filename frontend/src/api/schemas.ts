@@ -48,6 +48,15 @@ const isoDateTime = z.string().datetime({ offset: true });
  * the legitimate value. The regex pins the calendar shape so a malformed
  * date still fails fast at the validator boundary rather than turning
  * into ``Invalid Date`` further down the call stack.
+ *
+ * **Shape-only:** the regex enforces format (`\d{4}-\d{2}-\d{2}`) but
+ * does not validate semantic correctness -- ``9999-13-99`` would pass.
+ * That tradeoff matches the contract: the backend's ``datetime.date``
+ * already enforces semantic validity at the source, and the wire format
+ * is the contract this validator defends.  A semantically-valid backend
+ * field cannot send a malformed date here; if it ever did, the regex
+ * would catch it and downstream ``new Date()`` would not silently turn
+ * it into ``Invalid Date``.
  */
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, {
   message: 'expected ISO-8601 calendar date (YYYY-MM-DD)',

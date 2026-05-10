@@ -184,6 +184,15 @@ async def list_habits(
     pagination: Annotated[PaginationParams, Depends()],
 ) -> Page[HabitWithGoals] | list[HabitWithGoals]:
     """Return habits sorted by ``sort_order``; paginated when ``?paginate=true``."""
+    # ``HABIT_WITH_GOALS_AND_COMPLETIONS`` is a
+    # ``selectinload(Habit.goals).selectinload(Goal.completions)`` chain
+    # (see ``load_options.py``).  Both relations are pre-loaded here so
+    # the post-query loop can read ``goal.completions`` -- via
+    # ``_populate_streak`` and ``_filter_completions_to_caller`` -- and
+    # the response serializer can walk the embedded list without
+    # tripping ``MissingGreenlet`` on an async lazy-load.  Any change
+    # that drops or narrows this loader will surface as a runtime panic
+    # the moment the list endpoint is hit.
     query = (
         select(Habit)
         .where(Habit.user_id == current_user)

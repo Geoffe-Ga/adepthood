@@ -110,6 +110,33 @@ describe('HabitUtils', () => {
     expect(Math.round(pct)).toBe(50);
   });
 
+  // Degenerate-input fallback: if the habit lost its stretch tier (a
+  // partial onboarding state, a malformed test fixture), the function
+  // falls back to ``currentGoal`` as its own scale so the bar still
+  // renders something self-consistent rather than dividing by zero or
+  // throwing.  Pinning the contract here so a future refactor that
+  // hardens the fallback into a throw fails this test on purpose.
+  test('getProgressPercentage falls back to currentGoal when stretch is missing (additive)', () => {
+    const lowOnly: Goal = {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 4,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: true,
+    };
+    const habit: Habit = {
+      ...baseHabit,
+      goals: [lowOnly],
+      completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 2 }],
+    };
+    // No stretch on the habit, so ``stretchGoal`` collapses to
+    // ``currentGoal`` (which is ``lowOnly``).  Progress 2 / target 4 = 50%.
+    expect(getProgressPercentage(habit, lowOnly)).toBeCloseTo(50);
+  });
+
   // Unified marker contract: all three markers (LG / CG / SG) live on the
   // same 0-100 bar so the user always sees their full goal ladder.  The
   // previous implementation collapsed CG and SG to the same column for
