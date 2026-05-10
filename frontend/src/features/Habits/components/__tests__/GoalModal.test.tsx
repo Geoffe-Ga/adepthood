@@ -78,14 +78,33 @@ describe('GoalModal goal-target editor', () => {
     expect(queryByTestId('goal-target-input-low')).toBeNull();
   });
 
-  it('switches the row to an editable input when the saved chip is tapped', () => {
+  it('switches the row to a recessed input plus Save button when the chip is tapped', () => {
     const { getByTestId } = renderModal();
     fireEvent.press(getByTestId('goal-target-display-low'));
     expect(getByTestId('goal-target-input-low')).toBeTruthy();
+    // Save is the explicit affordance the chip-on-blur design lacked --
+    // its presence is what tells the user their typed change is savable.
+    expect(getByTestId('goal-target-save-low')).toBeTruthy();
   });
 
-  it('commits the per-tier numeric target on blur and returns to the saved chip', () => {
+  it('commits the per-tier numeric target when the Save button is pressed', () => {
     const { getByTestId, queryByTestId, props } = renderModal();
+    fireEvent.press(getByTestId('goal-target-display-low'));
+    const input = getByTestId('goal-target-input-low');
+    fireEvent.changeText(input, '7');
+    fireEvent.press(getByTestId('goal-target-save-low'));
+    expect(props.onUpdateGoal).toHaveBeenCalledTimes(1);
+    expect(props.onUpdateGoal).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({ tier: 'low', target: 7 }),
+    );
+    expect(getByTestId('goal-target-display-low')).toBeTruthy();
+    expect(queryByTestId('goal-target-input-low')).toBeNull();
+    expect(queryByTestId('goal-target-save-low')).toBeNull();
+  });
+
+  it('still commits on blur (endEditing) so keyboard-dismiss saves what the user typed', () => {
+    const { getByTestId, props } = renderModal();
     fireEvent.press(getByTestId('goal-target-display-low'));
     const input = getByTestId('goal-target-input-low');
     fireEvent.changeText(input, '7');
@@ -94,25 +113,48 @@ describe('GoalModal goal-target editor', () => {
       42,
       expect.objectContaining({ tier: 'low', target: 7 }),
     );
-    expect(getByTestId('goal-target-display-low')).toBeTruthy();
-    expect(queryByTestId('goal-target-input-low')).toBeNull();
   });
 
-  it('reverts the draft and skips the commit when the target input is non-numeric', () => {
+  it('collapses the Save-then-blur double event into a single onUpdateGoal call', () => {
+    // Tapping Save fires onPress, then the TextInput blurs and fires
+    // onEndEditing. Without the submittedRef guard we would PUT twice.
+    const { getByTestId, props } = renderModal();
+    fireEvent.press(getByTestId('goal-target-display-low'));
+    const input = getByTestId('goal-target-input-low');
+    fireEvent.changeText(input, '9');
+    fireEvent.press(getByTestId('goal-target-save-low'));
+    fireEvent(input, 'endEditing');
+    expect(props.onUpdateGoal).toHaveBeenCalledTimes(1);
+  });
+
+  it('collapses the Return-key-then-blur sequence into a single onUpdateGoal call', () => {
+    // Symmetric to the Save-then-blur test: pressing Return fires
+    // onSubmitEditing AND onEndEditing on most platforms; the submittedRef
+    // guard must dedupe that pair the same way it dedupes Save+blur.
+    const { getByTestId, props } = renderModal();
+    fireEvent.press(getByTestId('goal-target-display-low'));
+    const input = getByTestId('goal-target-input-low');
+    fireEvent.changeText(input, '9');
+    fireEvent(input, 'submitEditing');
+    fireEvent(input, 'endEditing');
+    expect(props.onUpdateGoal).toHaveBeenCalledTimes(1);
+  });
+
+  it('reverts the draft and skips the commit when the input is non-numeric', () => {
     const { getByTestId, props } = renderModal();
     fireEvent.press(getByTestId('goal-target-display-low'));
     const input = getByTestId('goal-target-input-low');
     fireEvent.changeText(input, 'abc');
-    fireEvent(input, 'endEditing');
+    fireEvent.press(getByTestId('goal-target-save-low'));
     expect(props.onUpdateGoal).not.toHaveBeenCalled();
   });
 
-  it('skips the commit when the target input matches the current value', () => {
+  it('skips the commit when the input matches the current value', () => {
     const { getByTestId, props } = renderModal();
     fireEvent.press(getByTestId('goal-target-display-low'));
     const input = getByTestId('goal-target-input-low');
     fireEvent.changeText(input, '1'); // already 1
-    fireEvent(input, 'endEditing');
+    fireEvent.press(getByTestId('goal-target-save-low'));
     expect(props.onUpdateGoal).not.toHaveBeenCalled();
   });
 });

@@ -65,6 +65,15 @@ describe('design tokens', () => {
     it('exports border color', () => {
       expect(colors.border).toBe('#ddd');
     });
+
+    it('exports bevel palette for recessed controls', () => {
+      // Two-tone bevel is the only portable way to fake ``box-shadow: inset``
+      // in React Native; freezing these keeps the goal-target editor's
+      // sunken-input treatment stable across refactors.
+      expect(colors.bevel.recessedSurface).toBe('#e9e9e9');
+      expect(colors.bevel.edgeDark).toBe('#bcbcbc');
+      expect(colors.bevel.edgeLight).toBe('#ffffff');
+    });
   });
 
   describe('touchTarget (BUG-FE-UI-002)', () => {
