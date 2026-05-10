@@ -142,6 +142,35 @@ let llmApiKeyGetter: (() => string | null) | null = null;
 /** Header used to forward a user-provided LLM API key (BYOK, issue #185). */
 export const LLM_API_KEY_HEADER = 'X-LLM-API-Key'; // pragma: allowlist secret
 
+/**
+ * Canonical header name for client-supplied idempotency keys (BUG-API-008).
+ * Matches the IETF draft (``draft-ietf-httpapi-idempotency-key-header``)
+ * the backend already routes through its dedupe middleware.
+ */
+export const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';
+
+/**
+ * Build a deterministic idempotency key for a mutation (BUG-API-008).
+ *
+ * The shape ``intent[:part]*`` is intentional: a key derived from the
+ * user's INTENT (e.g. ``log-unit:42:2026-05-10``) is stable across the
+ * built-in retry loop and across the user retrying after a network blip
+ * -- both surface the same key, so the backend dedupes the duplicate
+ * write instead of recording it twice.  Wall-clock values are forbidden
+ * here on purpose: a UUID or ``Date.now()`` would defeat dedup by
+ * minting a fresh key on every attempt.
+ *
+ * Callers pass the result via ``headers: { [IDEMPOTENCY_KEY_HEADER]: ... }``
+ * on POST/PUT/PATCH; the existing ``hasIdempotencyHeader`` check then
+ * promotes the request into the retry-eligible set automatically.
+ */
+export function idempotencyKey(intent: string, ...parts: (string | number)[]): string {
+  if (!intent) {
+    throw new Error('idempotencyKey: intent must be non-empty');
+  }
+  return parts.length === 0 ? intent : `${intent}:${parts.join(':')}`;
+}
+
 export function setTokenGetter(getter: (() => string | null) | null) {
   tokenGetter = getter;
 }
@@ -904,8 +933,26 @@ export interface CheckInResult {
 
 export const goalCompletions = {
   // Trailing slash — see the rationale on the ``habits`` client above.
-  create(payload: GoalCompletionPayload, token?: string): Promise<CheckInResult> {
-    return request<CheckInResult>('/goal_completions/', { method: 'POST', body: payload, token });
+  //
+  // BUG-API-008: ``options.idempotencyKey`` lets the caller (the check-in
+  // screen) pass a deterministic key built via :func:`idempotencyKey`
+  // (e.g. ``log-unit:${goalId}:${dayISO}``).  Without it, a network blip
+  // mid-tap or the user mashing the button surfaces as duplicate
+  // completions; with it, the backend's dedupe layer reuses the prior
+  // result.  Optional for back-compat with screens that have not yet
+  // adopted the helper.
+  create(
+    payload: GoalCompletionPayload,
+    options: { token?: string; idempotencyKey?: string } = {},
+  ): Promise<CheckInResult> {
+    return request<CheckInResult>('/goal_completions/', {
+      method: 'POST',
+      body: payload,
+      token: options.token,
+      headers: options.idempotencyKey
+        ? { [IDEMPOTENCY_KEY_HEADER]: options.idempotencyKey }
+        : undefined,
+    });
   },
 };
 

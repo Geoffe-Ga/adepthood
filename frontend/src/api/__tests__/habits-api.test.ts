@@ -1,6 +1,13 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import { habits, goalCompletions, goals, ApiError } from '../index';
+import {
+  habits,
+  goalCompletions,
+  goals,
+  ApiError,
+  IDEMPOTENCY_KEY_HEADER,
+  idempotencyKey,
+} from '../index';
 
 // Mock global fetch
 const mockFetch = jest.fn() as jest.Mock;
@@ -111,7 +118,7 @@ describe('goalCompletions API client', () => {
 
     const response = await goalCompletions.create(
       { goal_id: 42, did_complete: true },
-      'test-token',
+      { token: 'test-token' },
     );
 
     const [url, init] = mockFetch.mock.calls[0];
@@ -131,7 +138,35 @@ describe('goalCompletions API client', () => {
       }),
     );
 
-    await expect(goalCompletions.create({ goal_id: 999 }, 'test-token')).rejects.toThrow(ApiError);
+    await expect(goalCompletions.create({ goal_id: 999 }, { token: 'test-token' })).rejects.toThrow(
+      ApiError,
+    );
+  });
+
+  test('BUG-API-008: forwards an Idempotency-Key header when supplied', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ streak: 1, milestones: [], reason_code: 'ok' }));
+
+    await goalCompletions.create(
+      { goal_id: 7, did_complete: true },
+      { idempotencyKey: 'log-unit:7:2026-05-10' },
+    );
+
+    const [, init] = mockFetch.mock.calls[0];
+    expect(init.headers[IDEMPOTENCY_KEY_HEADER]).toBe('log-unit:7:2026-05-10');
+  });
+});
+
+describe('idempotencyKey helper (BUG-API-008)', () => {
+  test('formats intent + parts with colon delimiter', () => {
+    expect(idempotencyKey('log-unit', 42, '2026-05-10')).toBe('log-unit:42:2026-05-10');
+  });
+
+  test('returns intent alone when no parts are supplied', () => {
+    expect(idempotencyKey('reset-streak')).toBe('reset-streak');
+  });
+
+  test('rejects an empty intent so callers cannot mint a deduplicating-on-nothing key', () => {
+    expect(() => idempotencyKey('')).toThrow(/non-empty/);
   });
 });
 
