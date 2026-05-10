@@ -39,7 +39,7 @@ Either way, treat the `main` copy of this table as truth. A branch-local tick is
 | 12 | backend-feature-routers (12A wave 2) | 4 | `claude/bug-fix-12a-wave-2-stage-course-prompts` / [#290](https://github.com/Geoffe-Ga/adepthood/pull/290) | [x] |
 | 12 | backend-feature-routers (12B wave 1) | 4 | `claude/bug-fix-remediation-p3HUm` | [x] |
 | 12 | backend-feature-routers (12B wave 2) | 4 | | [ ] |
-| 13 | frontend-api-client               | 4 | | [ ] |
+| 13 | frontend-api-client               | 4 | `claude/bug-fix-13-frontend-api-client` | [x] |
 | 14 | frontend-feature-screens          | 4 | | [ ] |
 | 15 | frontend-design-state-tests       | 4 | | [ ] |
 
