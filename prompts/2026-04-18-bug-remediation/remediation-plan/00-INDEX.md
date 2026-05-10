@@ -41,7 +41,7 @@ Either way, treat the `main` copy of this table as truth. A branch-local tick is
 | 12 | backend-feature-routers (12B wave 2) | 4 | | [ ] |
 | 13 | frontend-api-client               | 4 | | [ ] |
 | 14 | frontend-feature-screens          | 4 | | [ ] |
-| 15 | frontend-design-state-tests       | 4 | | [ ] |
+| 15 | frontend-design-state-tests       | 4 | `claude/bug-fix-15-frontend-design-state-tests` | [x] |
 
 ## Wave ordering and parallelism
 
