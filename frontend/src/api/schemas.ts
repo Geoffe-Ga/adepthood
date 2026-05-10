@@ -57,12 +57,29 @@ export type Page<T> = {
 // Auth schemas
 // ---------------------------------------------------------------------------
 
+/**
+ * JWT structural shape: three URL-safe-base64 segments joined by dots
+ * (``header.payload.signature``).  Reject anything else at the client
+ * boundary so a dummy token cannot pass the auth-response gate
+ * (BUG-API-017).  This is a STRUCTURAL check, not a signature check --
+ * cryptographic verification still belongs to the backend; the regex
+ * exists so a payload like ``{"token": "x"}`` cannot persist as a
+ * "valid" session and produce zombie auth state on the next request.
+ */
+const JWT_REGEX = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+export const jwtSchema = z.string().regex(JWT_REGEX, {
+  message: 'token must be three base64url segments separated by dots',
+});
+
 export const authResponseSchema = z.object({
-  token: z.string().min(1),
+  token: jwtSchema,
   // ``user_id`` is ``0`` in the anti-enumeration signup response (BUG-AUTH-002):
   // when a caller signs up with an already-registered email the backend returns
   // a dummy token and ``user_id=0`` so the wire shape is indistinguishable from
-  // a fresh signup. Real signups return a positive autoincrement id.
+  // a fresh signup. Real signups return a positive autoincrement id.  Login
+  // and refresh paths use ``loginAuthResponseSchema`` below which rejects
+  // ``user_id=0`` -- a refreshed session whose user id is zero would be a
+  // zombie token, never the anti-enumeration sentinel.
   user_id: z.number().int().nonnegative(),
   // IANA timezone the server has on record so the frontend can compute
   // "today" in the user's calendar without a follow-up ``GET /users/me``.
@@ -71,7 +88,21 @@ export const authResponseSchema = z.object({
   timezone: z.string().optional(),
 });
 
+/**
+ * Strict variant for ``/auth/login`` and ``/auth/refresh`` (BUG-API-017):
+ * ``user_id`` MUST be positive.  The signup endpoint deliberately echoes
+ * ``user_id=0`` for already-registered emails so the wire shape stays
+ * indistinguishable; no other auth path has that affordance, so a
+ * zero-id login or refresh is by definition a server bug or a forged
+ * payload and we reject it at the boundary instead of letting it
+ * persist as a zombie session.
+ */
+export const loginAuthResponseSchema = authResponseSchema.extend({
+  user_id: z.number().int().positive(),
+});
+
 export type AuthResponseT = z.infer<typeof authResponseSchema>;
+export type LoginAuthResponseT = z.infer<typeof loginAuthResponseSchema>;
 
 /**
  * Response for ``POST /auth/password-reset/request``.  Always 202 with

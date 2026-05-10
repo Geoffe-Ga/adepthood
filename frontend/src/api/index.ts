@@ -5,6 +5,7 @@ import {
   authResponseSchema,
   habitWithGoalsSchema,
   isTier,
+  loginAuthResponseSchema,
   pageSchema,
   passwordResetAcceptedSchema,
   type Page,
@@ -141,6 +142,35 @@ let llmApiKeyGetter: (() => string | null) | null = null;
 
 /** Header used to forward a user-provided LLM API key (BYOK, issue #185). */
 export const LLM_API_KEY_HEADER = 'X-LLM-API-Key'; // pragma: allowlist secret
+
+/**
+ * Canonical header name for client-supplied idempotency keys (BUG-API-008).
+ * Matches the IETF draft (``draft-ietf-httpapi-idempotency-key-header``)
+ * the backend already routes through its dedupe middleware.
+ */
+export const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';
+
+/**
+ * Build a deterministic idempotency key for a mutation (BUG-API-008).
+ *
+ * The shape ``intent[:part]*`` is intentional: a key derived from the
+ * user's INTENT (e.g. ``log-unit:42:2026-05-10``) is stable across the
+ * built-in retry loop and across the user retrying after a network blip
+ * -- both surface the same key, so the backend dedupes the duplicate
+ * write instead of recording it twice.  Wall-clock values are forbidden
+ * here on purpose: a UUID or ``Date.now()`` would defeat dedup by
+ * minting a fresh key on every attempt.
+ *
+ * Callers pass the result via ``headers: { [IDEMPOTENCY_KEY_HEADER]: ... }``
+ * on POST/PUT/PATCH; the existing ``hasIdempotencyHeader`` check then
+ * promotes the request into the retry-eligible set automatically.
+ */
+export function idempotencyKey(intent: string, ...parts: (string | number)[]): string {
+  if (!intent) {
+    throw new Error('idempotencyKey: intent must be non-empty');
+  }
+  return parts.length === 0 ? intent : `${intent}:${parts.join(':')}`;
+}
 
 export function setTokenGetter(getter: (() => string | null) | null) {
   tokenGetter = getter;
@@ -390,7 +420,25 @@ async function attemptTokenRefresh(): Promise<{ token: string | null; hadToken: 
       headers: { Authorization: `Bearer ${currentToken}` },
     });
     if (!refreshRes.ok) return { token: null, hadToken: true };
-    const data = (await refreshRes.json()) as AuthResponse;
+    const raw: unknown = await refreshRes.json();
+    // BUG-API-007 / BUG-API-017: the prior cast (``as AuthResponse``)
+    // accepted any JSON shape -- a ``{}`` body would set ``data.token``
+    // to ``undefined`` and the bearer header on the next request would
+    // become ``Bearer undefined``, producing a zombie 401.  ``loginAuth
+    // ResponseSchema`` enforces (i) the JWT three-segment shape and
+    // (ii) ``user_id > 0`` (the ``user_id=0`` signup sentinel never
+    // reaches /auth/refresh).  ``safeParse`` keeps us inside the
+    // existing error path -- a malformed body becomes a refresh failure,
+    // not an uncaught exception, so the 401 retry loop continues to
+    // surface ``not_authenticated`` rather than crashing.
+    const parsed = loginAuthResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      console.warn('[api] /auth/refresh response failed validation', {
+        issues: parsed.error.issues,
+      });
+      return { token: null, hadToken: true };
+    }
+    const data = parsed.data;
     // Forward the server's stored timezone so the AuthContext can keep
     // ``userTimezone`` in sync after a cold-start refresh.  Without
     // this, ``userTimezone`` would stay at its ``"UTC"`` default until
@@ -400,6 +448,62 @@ async function attemptTokenRefresh(): Promise<{ token: string | null; hadToken: 
   } catch {
     return { token: null, hadToken: true };
   }
+}
+
+/**
+ * Re-open the SSE stream after a 401 with a freshly refreshed token, or
+ * fire the unauthorized callback and return ``null`` if refresh is not
+ * possible.  Closes BUG-API-002 by sharing the refresh-then-retry
+ * semantics with the non-streaming :func:`request` path.
+ *
+ * Lives here -- not inside :func:`botmason.chatStream` -- so the helper
+ * can be unit-tested in isolation against a mocked fetch and so the
+ * router stays declarative.
+ */
+/**
+ * Outcome of a refresh-then-retry attempt on the SSE channel.  Returning
+ * the extracted detail alongside the response lets ``chatStream`` reuse
+ * the value when the retry also fails -- ``Response.json()`` on an
+ * already-consumed body throws ``TypeError: body used already`` in any
+ * spec-conforming fetch implementation, so the body MUST be read once.
+ */
+interface StreamRetryOutcome {
+  /** Refreshed and reopened stream response, or ``null`` when refresh failed. */
+  res: Response | null;
+  /** Detail string parsed from ``initialRes`` body before refresh ran. */
+  initialDetail: string;
+}
+
+async function retryStreamWithRefresh(
+  payload: ChatRequest,
+  options: { token?: string; signal?: AbortSignal },
+  initialRes: Response,
+): Promise<StreamRetryOutcome> {
+  // BUG-API-002 review fix: read the body EXACTLY once and thread the
+  // result back to the caller.  The previous implementation also called
+  // ``extractErrorDetail(initialRes)`` here, then ``chatStream`` did the
+  // same on the failure path -- ``Response.json()`` rejects the second
+  // call with ``TypeError: body used already`` in production fetch, so
+  // the thrown ``ApiError`` would be replaced by an uncaught TypeError.
+  // Mocks in Jest do not enforce single-read semantics, which is why the
+  // unit tests passed.
+  const initialDetail = await extractErrorDetail(initialRes);
+  const refresh = await attemptTokenRefresh();
+  if (refresh.token === null) {
+    onUnauthorizedCallback?.(reasonForUnauthorized(initialDetail, refresh.hadToken));
+    return { res: null, initialDetail };
+  }
+  const retryRes = await openChatStream(payload, { ...options, token: refresh.token });
+  if (retryRes.ok) return { res: retryRes, initialDetail };
+  if (retryRes.status === 401) {
+    const retryDetail = await extractErrorDetail(retryRes);
+    onUnauthorizedCallback?.(reasonForUnauthorized(retryDetail, true));
+    return { res: null, initialDetail };
+  }
+  // Non-401 retry failure -- propagate to the caller through
+  // ``handleErrorResponse`` for a uniform ``ApiError`` shape.
+  await handleErrorResponse(retryRes);
+  return { res: null, initialDetail }; // unreachable; ``handleErrorResponse`` always throws
 }
 
 function doFetch(
@@ -859,8 +963,26 @@ export interface CheckInResult {
 
 export const goalCompletions = {
   // Trailing slash — see the rationale on the ``habits`` client above.
-  create(payload: GoalCompletionPayload, token?: string): Promise<CheckInResult> {
-    return request<CheckInResult>('/goal_completions/', { method: 'POST', body: payload, token });
+  //
+  // BUG-API-008: ``options.idempotencyKey`` lets the caller (the check-in
+  // screen) pass a deterministic key built via :func:`idempotencyKey`
+  // (e.g. ``log-unit:${goalId}:${dayISO}``).  Without it, a network blip
+  // mid-tap or the user mashing the button surfaces as duplicate
+  // completions; with it, the backend's dedupe layer reuses the prior
+  // result.  Optional for back-compat with screens that have not yet
+  // adopted the helper.
+  create(
+    payload: GoalCompletionPayload,
+    options: { token?: string; idempotencyKey?: string } = {},
+  ): Promise<CheckInResult> {
+    return request<CheckInResult>('/goal_completions/', {
+      method: 'POST',
+      body: payload,
+      token: options.token,
+      headers: options.idempotencyKey
+        ? { [IDEMPOTENCY_KEY_HEADER]: options.idempotencyKey }
+        : undefined,
+    });
   },
 };
 
@@ -1020,9 +1142,17 @@ export class StreamingUnsupportedError extends Error {
   }
 }
 
-// Server-Sent Events frame separator (blank line). Extracted as a constant so
-// the parser and splitter stay in lock-step.
-const SSE_FRAME_SEPARATOR = '\n\n';
+// Server-Sent Events frame separator: a blank line.  Per the spec
+// (RFC EventSource / WHATWG HTML), a frame ends at LF-LF, CR-CR, or
+// CRLF-CRLF -- production servers behind Cloudflare or nginx commonly
+// emit CRLF-terminated frames, so a parser keyed only on ``\n\n``
+// silently dropped every event from a CRLF source (BUG-API-011).
+//
+// The regex captures any of the three terminators; ``SSE_FRAME_SEPARATOR_RE``
+// is what the buffer scanner uses while ``SSE_LINE_BREAK`` is used to
+// split a single frame into its ``event:`` / ``data:`` lines.
+const SSE_FRAME_SEPARATOR_RE = /\r\n\r\n|\n\n|\r\r/;
+const SSE_LINE_BREAK_RE = /\r\n|\n|\r/;
 const SSE_EVENT_PREFIX = 'event: ';
 const SSE_DATA_PREFIX = 'data: ';
 
@@ -1049,7 +1179,9 @@ function parseSseFrame(frame: string): SsePayload | null {
   if (!frame.trim()) return null;
   let event = '';
   let data = '';
-  for (const line of frame.split('\n')) {
+  // BUG-API-011: split on any line break (LF / CRLF / CR) so a frame
+  // emitted by a server using CRLF line endings is parsed correctly.
+  for (const line of frame.split(SSE_LINE_BREAK_RE)) {
     if (line.startsWith(SSE_EVENT_PREFIX)) event = line.slice(SSE_EVENT_PREFIX.length);
     else if (line.startsWith(SSE_DATA_PREFIX)) data = line.slice(SSE_DATA_PREFIX.length);
   }
@@ -1078,9 +1210,22 @@ function dispatchSseFrame(frame: string, callbacks: ChatStreamCallbacks): void {
   } else if (parsed.event === 'complete') {
     callbacks.onComplete(payload as ChatResponse);
   } else if (parsed.event === 'error') {
-    callbacks.onStreamError(payload as { status: number; detail: string });
+    const errPayload = payload as { status: number; detail: string };
+    // BUG-API-014: a 401 inside a stream means the session expired
+    // mid-reply (token aged out, or the user signed out from another
+    // device).  The error frame is the only auth signal we get on the
+    // SSE channel, so route it through the same global unauthorized
+    // callback as the non-streaming path.  ``hadToken=true`` because
+    // the stream could not have opened without a session token.
+    if (errPayload.status === HTTP_UNAUTHORIZED) {
+      onUnauthorizedCallback?.(reasonForUnauthorized(errPayload.detail ?? null, true));
+    }
+    callbacks.onStreamError(errPayload);
   }
 }
+
+/** HTTP status that indicates an authorization failure. */
+const HTTP_UNAUTHORIZED = 401;
 
 /** Server-reported detail string when a single SSE frame can't be parsed as JSON. */
 const MALFORMED_FRAME_DETAIL = 'malformed_stream_frame';
@@ -1116,31 +1261,59 @@ async function openChatStream(
 async function readChatStream(
   readable: MinimalReadable,
   callbacks: ChatStreamCallbacks,
+  signal?: AbortSignal,
 ): Promise<void> {
   const reader = readable.getReader();
+  // BUG-API-012: ``fetchWithTimeout`` already wires the signal to the
+  // underlying ``fetch``'s AbortController -- but in some runtimes the
+  // body reader is not torn down until the underlying socket actually
+  // closes, so the user-perceived "Stop" tap takes seconds to fire.
+  // Cancelling the reader directly on abort makes ``reader.read()``
+  // resolve with ``done: true`` immediately so the loop exits and the
+  // SSE generator yields control back to the caller.
+  const cancelOnAbort = (): void => {
+    void reader.cancel?.();
+  };
+  if (signal) {
+    if (signal.aborted) cancelOnAbort();
+    else signal.addEventListener('abort', cancelOnAbort, { once: true });
+  }
   const decoder = new TextDecoder();
   let buffer = '';
   let done = false;
-  while (!done) {
-    const chunk = await reader.read();
-    done = chunk.done;
-    if (chunk.value) buffer += decoder.decode(chunk.value, { stream: true });
-    buffer = drainCompletedFrames(buffer, callbacks);
+  try {
+    while (!done) {
+      const chunk = await reader.read();
+      done = chunk.done;
+      if (chunk.value) buffer += decoder.decode(chunk.value, { stream: true });
+      buffer = drainCompletedFrames(buffer, callbacks);
+    }
+    // Any trailing bytes that arrived without a terminating blank line still
+    // need to be dispatched — servers may elide the final separator.
+    if (buffer.trim()) dispatchSseFrame(buffer, callbacks);
+  } finally {
+    signal?.removeEventListener('abort', cancelOnAbort);
   }
-  // Any trailing bytes that arrived without a terminating blank line still
-  // need to be dispatched — servers may elide the final separator.
-  if (buffer.trim()) dispatchSseFrame(buffer, callbacks);
 }
 
+/**
+ * Walk ``buffer`` for completed SSE frames, dispatch each, and return the
+ * trailing partial-frame remainder for the next read.
+ *
+ * BUG-API-011: scans for any of LF-LF / CR-CR / CRLF-CRLF (per the
+ * EventSource spec) so a server using CRLF terminators is parsed.
+ * Previous version keyed on ``"\n\n"`` only and silently swallowed the
+ * entire stream.
+ */
 function drainCompletedFrames(buffer: string, callbacks: ChatStreamCallbacks): string {
-  const separatorIndex = buffer.lastIndexOf(SSE_FRAME_SEPARATOR);
-  if (separatorIndex === -1) return buffer;
-  const complete = buffer.slice(0, separatorIndex);
-  const remainder = buffer.slice(separatorIndex + SSE_FRAME_SEPARATOR.length);
-  for (const frame of complete.split(SSE_FRAME_SEPARATOR)) {
+  let remainder = buffer;
+  while (true) {
+    const match = SSE_FRAME_SEPARATOR_RE.exec(remainder);
+    if (match === null) return remainder;
+    const frame = remainder.slice(0, match.index);
     dispatchSseFrame(frame, callbacks);
+    remainder = remainder.slice(match.index + match[0].length);
   }
-  return remainder;
 }
 
 export const botmason = {
@@ -1175,27 +1348,33 @@ export const botmason = {
     options: { token?: string; signal?: AbortSignal } = {},
   ): Promise<void> {
     const res = await openChatStream(payload, options);
-    if (!res.ok) {
-      if (res.status === 401) {
-        // BUG-API-018: route the streaming 401 through the same
-        // classifier as the non-streaming path so the AuthContext sees
-        // a structured reason rather than a vague "session expired"
-        // for an anonymous caller hitting /journal/chat/stream.
-        // ``resolveToken(options.token)`` mirrors the non-streaming
-        // path so an implicit (getter-supplied) session token is
-        // counted as ``hadToken`` even when the caller did not pass
-        // ``options.token`` explicitly.
-        const detail = await extractErrorDetail(res);
-        onUnauthorizedCallback?.(
-          reasonForUnauthorized(detail, resolveToken(options.token) !== null),
-        );
-        throw new ApiError(res.status, detail);
-      }
-      return handleErrorResponse(res);
+    if (res.ok) {
+      const readable = asReadableStream(res.body);
+      if (!readable) throw new StreamingUnsupportedError();
+      await readChatStream(readable, callbacks, options.signal);
+      return;
     }
-    const readable = asReadableStream(res.body);
-    if (!readable) throw new StreamingUnsupportedError();
-    await readChatStream(readable, callbacks);
+    if (res.status === 401) {
+      // BUG-API-002: a 401 on the streaming endpoint MUST go through the
+      // same refresh-once-then-fail flow as ``request``.  The previous
+      // path fired the unauthorized callback on the first 401 and gave
+      // up, so a transient blip (token aged out mid-keystroke) logged
+      // the user out instead of recovering silently.
+      //
+      // ``retryStreamWithRefresh`` reads ``res`` body once and threads
+      // the detail back via ``initialDetail`` so this failure path can
+      // throw the real ``ApiError`` without re-reading an already
+      // consumed body (review fix for PR #297).
+      const outcome = await retryStreamWithRefresh(payload, options, res);
+      if (outcome.res !== null) {
+        const readable = asReadableStream(outcome.res.body);
+        if (!readable) throw new StreamingUnsupportedError();
+        await readChatStream(readable, callbacks, options.signal);
+        return;
+      }
+      throw new ApiError(res.status, outcome.initialDetail);
+    }
+    return handleErrorResponse(res);
   },
   getBalance(token?: string): Promise<BalanceResponse> {
     return request<BalanceResponse>('/user/balance', { token });
@@ -1500,10 +1679,15 @@ export interface PasswordResetCancelPayload {
 
 export const auth = {
   login(credentials: AuthRequest): Promise<AuthResponse> {
+    // BUG-API-017: ``loginAuthResponseSchema`` enforces ``user_id > 0``
+    // because the ``user_id == 0`` anti-enumeration sentinel only fires
+    // on the signup endpoint.  A login that returned zero would be a
+    // server bug, so we reject it at the boundary instead of letting
+    // the AuthContext persist a zombie session.
     return request<AuthResponse>('/auth/login', {
       method: 'POST',
       body: credentials,
-      schema: authResponseSchema,
+      schema: loginAuthResponseSchema,
     });
   },
   signup(credentials: SignupRequest): Promise<AuthResponse> {
@@ -1514,10 +1698,11 @@ export const auth = {
     });
   },
   refresh(token: string): Promise<AuthResponse> {
+    // BUG-API-017: refresh, like login, must never see ``user_id == 0``.
     return request<AuthResponse>('/auth/refresh', {
       method: 'POST',
       token,
-      schema: authResponseSchema,
+      schema: loginAuthResponseSchema,
     });
   },
   /**
@@ -1539,10 +1724,12 @@ export const auth = {
    * (SPEC R7).
    */
   confirmPasswordReset(payload: PasswordResetConfirmPayload): Promise<AuthResponse> {
+    // Mints a real session for an existing user; BUG-API-017 rejects
+    // ``user_id == 0`` here too.
     return request<AuthResponse>('/auth/password-reset/confirm', {
       method: 'POST',
       body: payload,
-      schema: authResponseSchema,
+      schema: loginAuthResponseSchema,
     });
   },
   /**

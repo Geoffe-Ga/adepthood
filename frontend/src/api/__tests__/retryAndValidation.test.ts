@@ -81,27 +81,56 @@ describe('BUG-024: Zod validation at the API boundary', () => {
   });
 
   test('auth.signup accepts user_id=0 (duplicate-email sentinel, BUG-AUTH-002)', async () => {
-    // The backend returns ``user_id: 0`` together with a dummy JWT when the
-    // email is already registered, so the response is indistinguishable in
-    // shape from a fresh signup and account enumeration is blocked. The
-    // frontend must accept this sentinel, not reject it as a validation
-    // failure.
-    mockFetch.mockReturnValueOnce(jsonResponse({ token: 'dummy', user_id: 0 }));
+    // The backend returns ``user_id: 0`` together with a JWT-shaped dummy
+    // token when the email is already registered, so the response is
+    // indistinguishable in shape from a fresh signup and account enumeration
+    // is blocked. The frontend must accept this sentinel, not reject it as
+    // a validation failure.  BUG-API-017 still requires the token's three
+    // base64url-segments shape.
+    const dummyJwt = `${'a'.repeat(8)}.${'b'.repeat(8)}.${'c'.repeat(8)}`;
+    mockFetch.mockReturnValueOnce(jsonResponse({ token: dummyJwt, user_id: 0 }));
     const result = await auth.signup({
       email: 'u@test.com',
       password: 'securepass123', // pragma: allowlist secret
     });
     expect(result.user_id).toBe(0);
-    expect(result.token).toBe('dummy');
+    expect(result.token).toBe(dummyJwt);
   });
 
   test('auth.signup still rejects negative user_id', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse({ token: 'x', user_id: -1 }));
+    const dummyJwt = `${'a'.repeat(8)}.${'b'.repeat(8)}.${'c'.repeat(8)}`;
+    mockFetch.mockReturnValueOnce(jsonResponse({ token: dummyJwt, user_id: -1 }));
     await expect(
       auth.signup({
         email: 'u@test.com',
         password: 'securepass123', // pragma: allowlist secret
       }),
+    ).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
+  test('BUG-API-017: auth.signup rejects a token that is not three JWT segments', async () => {
+    // A backend bug or MITM that returns ``token: "dummy"`` (one segment,
+    // not three base64url segments) used to persist as a session and
+    // produce zombie 401s on the next request.  The schema now rejects
+    // it at the boundary.
+    mockFetch.mockReturnValueOnce(jsonResponse({ token: 'dummy', user_id: 1 }));
+    await expect(
+      auth.signup({
+        email: 'u@test.com',
+        password: 'securepass123', // pragma: allowlist secret
+      }),
+    ).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
+  test('BUG-API-017: auth.login rejects user_id=0 (signup-only sentinel)', async () => {
+    // ``user_id == 0`` is the anti-enumeration sentinel for signup; a
+    // login response with that id would be a server bug or forged payload,
+    // never a legitimate session.  Reject it instead of letting it
+    // persist as a session that fails every subsequent authed call.
+    const dummyJwt = `${'a'.repeat(8)}.${'b'.repeat(8)}.${'c'.repeat(8)}`;
+    mockFetch.mockReturnValueOnce(jsonResponse({ token: dummyJwt, user_id: 0 }));
+    await expect(
+      auth.login({ email: 'u@test.com', password: 'p' }), // pragma: allowlist secret
     ).rejects.toBeInstanceOf(ApiValidationError);
   });
 

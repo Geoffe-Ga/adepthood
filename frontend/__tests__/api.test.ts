@@ -66,10 +66,11 @@ describe('API client request composition', () => {
 
   it('logs in via POST /auth/login', async () => {
     const creds = { email: 'u@example.com', password: 'p' }; // pragma: allowlist secret
-    global.fetch = jest
-      .fn()
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ token: 'aaaaaaaa.bbbbbbbb.cccccccc', user_id: 1 }),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .mockResolvedValue({ ok: true, json: async () => ({ token: 'tk', user_id: 1 }) }) as any;
+    }) as any;
     // Re-bind after overwriting global.fetch
     api = require('@/api');
     await api.auth.login(creds);
@@ -86,10 +87,11 @@ describe('API client request composition', () => {
 
   it('signs up via POST /auth/signup', async () => {
     const creds = { email: 'u@example.com', password: 'p' }; // pragma: allowlist secret
-    global.fetch = jest
-      .fn()
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ token: 'aaaaaaaa.bbbbbbbb.cccccccc', user_id: 1 }),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .mockResolvedValue({ ok: true, json: async () => ({ token: 'tk', user_id: 1 }) }) as any;
+    }) as any;
     api = require('@/api');
     await api.auth.signup(creds);
     expect(fetch).toHaveBeenCalledWith(

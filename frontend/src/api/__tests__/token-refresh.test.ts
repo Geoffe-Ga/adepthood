@@ -22,6 +22,18 @@ function jsonResponse(data: unknown, status = 200) {
   });
 }
 
+/**
+ * JWT-shaped fixture token (BUG-API-017): three base64url segments
+ * separated by dots.  The schema validator now rejects anything that
+ * does not match this shape, so test fixtures must use it too.
+ */
+function fixtureJwt(label = 'refreshed'): string {
+  // Base64url alphabet only; padding with the label keeps tests
+  // self-describing in failure output without adding any decode logic.
+  const seg = (s: string) => `${'a'.repeat(8)}${s}`;
+  return `${seg('h')}.${seg(label)}.${seg('s')}`;
+}
+
 let capturedToken: string | null = null;
 const mockOnUnauthorized = jest.fn();
 const mockOnTokenRefreshed = jest.fn();
@@ -38,11 +50,12 @@ beforeEach(() => {
 
 describe('auth.refresh', () => {
   test('sends POST to /auth/refresh with token in header', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse({ token: 'new-jwt', user_id: 1 }));
+    const newJwt = fixtureJwt('newjwt');
+    mockFetch.mockReturnValueOnce(jsonResponse({ token: newJwt, user_id: 1 }));
 
     const result = await auth.refresh('my-token');
 
-    expect(result.token).toBe('new-jwt');
+    expect(result.token).toBe(newJwt);
     const [url, init] = mockFetch.mock.calls[0];
     expect(url).toBe('http://test/auth/refresh');
     expect(init.method).toBe('POST');
@@ -66,10 +79,11 @@ describe('retry-after-refresh on 401', () => {
       goals: [],
     };
 
+    const refreshedToken = fixtureJwt('refreshedtoken');
     // First call: 401 from /habits
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'unauthorized' }, 401));
     // Second call: refresh succeeds
-    mockFetch.mockReturnValueOnce(jsonResponse({ token: 'refreshed-token', user_id: 1 }));
+    mockFetch.mockReturnValueOnce(jsonResponse({ token: refreshedToken, user_id: 1 }));
     // Third call: retry /habits with new token succeeds
     mockFetch.mockReturnValueOnce(jsonResponse([sampleHabit]));
 
@@ -84,13 +98,13 @@ describe('retry-after-refresh on 401', () => {
 
     // Verify the retry uses the new token
     const [, retryInit] = mockFetch.mock.calls[2];
-    expect(retryInit.headers).toMatchObject({ Authorization: 'Bearer refreshed-token' });
+    expect(retryInit.headers).toMatchObject({ Authorization: `Bearer ${refreshedToken}` });
 
     // The onTokenRefreshed callback receives the new token plus the
     // server's stored timezone so the AuthContext can keep
     // ``userTimezone`` in sync.  ``undefined`` is the value when the
     // server omits the field (legacy / mocked responses).
-    expect(mockOnTokenRefreshed).toHaveBeenCalledWith('refreshed-token', undefined);
+    expect(mockOnTokenRefreshed).toHaveBeenCalledWith(refreshedToken, undefined);
 
     expect(result).toEqual([sampleHabit]);
   });
@@ -110,7 +124,7 @@ describe('retry-after-refresh on 401', () => {
     // First call: 401
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'unauthorized' }, 401));
     // Refresh succeeds
-    mockFetch.mockReturnValueOnce(jsonResponse({ token: 'new-token', user_id: 1 }));
+    mockFetch.mockReturnValueOnce(jsonResponse({ token: fixtureJwt('newtok'), user_id: 1 }));
     // Retry also returns 401
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'unauthorized' }, 401));
 
