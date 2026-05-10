@@ -21,7 +21,7 @@ import type {
 import EmojiSelector from 'react-native-emoji-selector';
 
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
-import { colors, SPACING, STAGE_COLORS } from '../../../design/tokens';
+import { colors, SPACING, STAGE_COLORS, shadows } from '../../../design/tokens';
 import { TARGET_UNITS, FREQUENCY_UNITS } from '../constants';
 import styles from '../Habits.styles';
 import type { GoalModalProps, Goal } from '../Habits.types';
@@ -367,6 +367,17 @@ const GOAL_CHIP_FONT_SIZE = 12;
 const GOAL_FREQ_INPUT_WIDTH = 56;
 const GOAL_DISPLAY_VERTICAL_PADDING = 6;
 const GOAL_DISPLAY_HORIZONTAL_PADDING = 10;
+const GOAL_SAVE_BUTTON_VERTICAL_PADDING = 6;
+const GOAL_SAVE_BUTTON_HORIZONTAL_PADDING = 12;
+const GOAL_SAVE_BUTTON_FONT_SIZE = 13;
+
+// Bevel-border palette evoking a sunken / pressed-in input. RN has no
+// portable inset-shadow, so the classic two-tone trick is used: dark top +
+// left, light bottom + right reads as a depression in the surface, while
+// the convex chip uses ``shadows.small`` (raised) on a ``card`` surface.
+const RECESSED_BEVEL_DARK = '#bcbcbc';
+const RECESSED_BEVEL_LIGHT = '#ffffff';
+const RECESSED_SURFACE = '#e9e9e9';
 
 const goalEditorStyles = StyleSheet.create({
   container: {
@@ -394,27 +405,49 @@ const goalEditorStyles = StyleSheet.create({
     fontSize: GOAL_LABEL_FONT_SIZE,
     fontWeight: '500',
   },
+  /** Edit-mode field — recessed (sunken) bevel so it reads as "open for input". */
   input: {
     width: GOAL_INPUT_WIDTH,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderTopColor: RECESSED_BEVEL_DARK,
+    borderLeftColor: RECESSED_BEVEL_DARK,
+    borderBottomColor: RECESSED_BEVEL_LIGHT,
+    borderRightColor: RECESSED_BEVEL_LIGHT,
     borderRadius: GOAL_INPUT_BORDER_RADIUS,
     paddingVertical: GOAL_INPUT_VERTICAL_PADDING,
     paddingHorizontal: SPACING.sm,
     textAlign: 'center',
     fontSize: GOAL_INPUT_FONT_SIZE,
     marginHorizontal: SPACING.sm,
+    backgroundColor: RECESSED_SURFACE,
   },
-  /** Saved-state chip — visually distinct from :class:`input` so users see settled vs editing. */
+  /** Saved-state chip — convex (raised) so users read it as a tappable button, not a label. */
   display: {
     width: GOAL_INPUT_WIDTH,
     borderRadius: GOAL_INPUT_BORDER_RADIUS,
     paddingVertical: GOAL_DISPLAY_VERTICAL_PADDING,
     paddingHorizontal: GOAL_DISPLAY_HORIZONTAL_PADDING,
-    backgroundColor: colors.background.accent,
+    backgroundColor: colors.background.card,
+    borderWidth: 1,
+    borderColor: colors.border,
     marginHorizontal: SPACING.sm,
     alignItems: 'center',
     justifyContent: 'center',
+    ...shadows.small,
+  },
+  saveButton: {
+    paddingVertical: GOAL_SAVE_BUTTON_VERTICAL_PADDING,
+    paddingHorizontal: GOAL_SAVE_BUTTON_HORIZONTAL_PADDING,
+    borderRadius: GOAL_INPUT_BORDER_RADIUS,
+    marginRight: SPACING.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadows.small,
+  },
+  saveButtonText: {
+    color: colors.text.light,
+    fontWeight: '600',
+    fontSize: GOAL_SAVE_BUTTON_FONT_SIZE,
   },
   displayText: {
     fontSize: GOAL_INPUT_FONT_SIZE,
@@ -473,16 +506,31 @@ interface GoalTargetRowProps {
   onCommit: (_target: number) => void;
 }
 
-/** Click-to-edit target row: chip → TextInput on tap, ``onEndEditing`` only (no double-write). */
-const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
+/**
+ * Editing-state machine for a single tier goal's target value.
+ *
+ * ``submittedRef`` is the gate that collapses the Save-button-press →
+ * TextInput-blur double event into one ``onCommit``: ``setEditing(false)``
+ * is asynchronous so it can't guard the second call; the ref is set
+ * synchronously and reset on each ``startEdit``.
+ */
+const useTargetDraft = (goal: Goal, onCommit: (_target: number) => void) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(goal.target));
+  const submittedRef = useRef(false);
   // Skip sync mid-edit so out-of-band updates don't clobber in-flight typing.
   useEffect(() => {
     if (!editing) setDraft(String(goal.target));
   }, [goal.target, editing]);
-  const tierLabel = TIER_LABELS[goal.tier] ?? goal.tier;
-  const handleEnd = () => {
+
+  const startEdit = () => {
+    submittedRef.current = false;
+    setEditing(true);
+  };
+
+  const trySave = () => {
+    if (submittedRef.current) return;
+    submittedRef.current = true;
     setEditing(false);
     const parsed = Number.parseFloat(draft);
     if (!Number.isFinite(parsed) || parsed === goal.target) {
@@ -491,28 +539,57 @@ const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
     }
     onCommit(parsed);
   };
+
+  return { editing, draft, setDraft, startEdit, trySave };
+};
+
+/**
+ * Click-to-edit target row. Two visual states convey the affordance:
+ *   - **convex chip** (saved): a raised, card-surface button — tap to edit.
+ *   - **recessed input + Save button** (editing): sunken field next to a
+ *     filled tier-colored Save button — tap Save (or press Return / blur)
+ *     to commit.
+ */
+const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
+  const { editing, draft, setDraft, startEdit, trySave } = useTargetDraft(goal, onCommit);
+  const tierLabel = TIER_LABELS[goal.tier] ?? goal.tier;
   const tierColor = getTierColor(goal.tier);
+
   return (
     <View style={goalEditorStyles.row}>
       <Text style={[goalEditorStyles.label, { color: tierColor }]}>{tierLabel}</Text>
       {editing ? (
-        <TextInput
-          testID={`goal-target-input-${goal.tier}`}
-          style={goalEditorStyles.input}
-          value={draft}
-          onChangeText={setDraft}
-          // ``onEndEditing`` covers return-key + blur; ``onBlur`` would double-write on device.
-          onEndEditing={handleEnd}
-          autoFocus
-          keyboardType="numeric"
-          returnKeyType="done"
-        />
+        <>
+          <TextInput
+            testID={`goal-target-input-${goal.tier}`}
+            style={goalEditorStyles.input}
+            value={draft}
+            onChangeText={setDraft}
+            // Both events back the same commit so return-key, blur, and
+            // explicit Save-button taps each save reliably; the hook's
+            // ``submittedRef`` collapses duplicate fires into one commit.
+            onEndEditing={trySave}
+            onSubmitEditing={trySave}
+            autoFocus
+            keyboardType="numeric"
+            returnKeyType="done"
+          />
+          <TouchableOpacity
+            testID={`goal-target-save-${goal.tier}`}
+            accessibilityRole="button"
+            accessibilityLabel={`Save ${tierLabel} target`}
+            onPress={trySave}
+            style={[goalEditorStyles.saveButton, { backgroundColor: tierColor }]}
+          >
+            <Text style={goalEditorStyles.saveButtonText}>Save</Text>
+          </TouchableOpacity>
+        </>
       ) : (
         <TouchableOpacity
           testID={`goal-target-display-${goal.tier}`}
           accessibilityRole="button"
           accessibilityLabel={`Edit ${tierLabel} target, currently ${goal.target}`}
-          onPress={() => setEditing(true)}
+          onPress={startEdit}
           style={goalEditorStyles.display}
         >
           <Text style={[goalEditorStyles.displayText, { color: tierColor }]}>{goal.target}</Text>
