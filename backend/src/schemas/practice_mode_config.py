@@ -56,6 +56,21 @@ class MetronomeConfig(_ConfigBase):
     timer: MeditationTimerConfig
 
 
+def _validate_interval_bell_offsets(offsets: list[float], duration_minutes: float) -> None:
+    """Validate an explicit ``cue_offsets_minutes`` list.
+
+    Extracted from :class:`IntervalBellConfig` so the validator method
+    stays at xenon rank A — the offset-content rules are independent of
+    the "set exactly one field" check and read more clearly side by side.
+    """
+    if not offsets:
+        msg = "cue_offsets_minutes must contain at least one offset"
+        raise ValueError(msg)
+    if any(o <= 0 or o > duration_minutes for o in offsets):
+        msg = "cue offsets must fall within (0, duration_minutes]"
+        raise ValueError(msg)
+
+
 class IntervalBellConfig(_ConfigBase):
     """Meditation window with bells at evenly-spaced or explicit offsets.
 
@@ -78,12 +93,7 @@ class IntervalBellConfig(_ConfigBase):
             msg = "Set exactly one of interval_minutes or cue_offsets_minutes"
             raise ValueError(msg)
         if self.cue_offsets_minutes is not None:
-            if not self.cue_offsets_minutes:
-                msg = "cue_offsets_minutes must contain at least one offset"
-                raise ValueError(msg)
-            if any(o <= 0 or o > self.duration_minutes for o in self.cue_offsets_minutes):
-                msg = "cue offsets must fall within (0, duration_minutes]"
-                raise ValueError(msg)
+            _validate_interval_bell_offsets(self.cue_offsets_minutes, self.duration_minutes)
         return self
 
 
