@@ -98,7 +98,7 @@ describe('habit progress utilities', () => {
     expect(calculateHabitProgress(habit)).toBeCloseTo(3.5);
   });
 
-  it('offsets progress percentage after clear goal for additive habits', () => {
+  it('reports additive progress against the stretch target on a unified 0-100 scale', () => {
     const habit: Habit = {
       id: 2,
       stage: 'Beige',
@@ -112,9 +112,10 @@ describe('habit progress utilities', () => {
       completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 2 }],
     };
 
-    const { currentGoal, nextGoal } = getGoalTier(habit);
-    const percentage = getProgressPercentage(habit, currentGoal, nextGoal);
-    expect(percentage).toBeCloseTo(33);
+    // 2 / 3 = 66.67% on the unified stretch-anchored scale.
+    const { currentGoal } = getGoalTier(habit);
+    const percentage = getProgressPercentage(habit, currentGoal);
+    expect(percentage).toBeCloseTo(66.67, 1);
   });
 
   it('calculates progress percentage for subtractive habits', () => {
@@ -131,8 +132,8 @@ describe('habit progress utilities', () => {
       completions: [{ id: 'c-2', timestamp: new Date(), completed_units: 150 }],
     };
 
-    const { currentGoal, nextGoal } = getGoalTier(habit);
-    const percentage = getProgressPercentage(habit, currentGoal, nextGoal);
+    const { currentGoal } = getGoalTier(habit);
+    const percentage = getProgressPercentage(habit, currentGoal);
     expect(percentage).toBeCloseTo(50);
   });
 
@@ -228,18 +229,26 @@ describe('habit progress utilities', () => {
     expect(clampPercentage(-20)).toBe(0);
   });
 
-  it('computes marker positions for additive goals', () => {
+  it('computes marker positions for additive goals on the stretch-anchored scale', () => {
     const [low, clear, stretch] = additiveGoals;
     const pos = getMarkerPositions(low, clear, stretch);
-    expect(pos.low).toBeCloseTo(50);
-    expect(pos.clear).toBe(100);
+    // low=1, clear=2, stretch=3 -- markers at 33, 67, 100 respectively.
+    expect(pos.low).toBeCloseTo(33.33, 1);
+    expect(pos.clear).toBeCloseTo(66.67, 1);
+    expect(pos.stretch).toBe(100);
+    // Distinct columns — pins the "always-visible" invariant.
+    expect(pos.low).toBeLessThan(pos.clear);
+    expect(pos.clear).toBeLessThan(pos.stretch);
   });
 
-  it('computes marker positions for subtractive goals', () => {
+  it('computes marker positions for subtractive goals on the low-anchored scale', () => {
     const [low, clear, stretch] = subtractiveGoals;
     const pos = getMarkerPositions(low, clear, stretch);
-    expect(pos.low).toBe(100);
-    expect(pos.stretch).toBe(0);
-    expect(pos.clear).toBeGreaterThan(0);
+    // low=300 (failure, 0%), stretch=0 (best, 100%), clear=200 → 33%.
+    expect(pos.low).toBe(0);
+    expect(pos.clear).toBeCloseTo(33.33, 1);
+    expect(pos.stretch).toBe(100);
+    expect(pos.low).toBeLessThan(pos.clear);
+    expect(pos.clear).toBeLessThan(pos.stretch);
   });
 });

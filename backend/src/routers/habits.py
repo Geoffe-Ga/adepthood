@@ -54,6 +54,12 @@ def _populate_streak(habit: Habit, current_user: int, user_timezone: str) -> Non
     habit.streak = compute_habit_streak(completions, user_timezone)
 
 
+def _filter_completions_to_caller(habit: Habit, current_user: int) -> None:
+    """Drop cross-tenant completions; callers must NOT commit (orphan-delete cascade)."""
+    for goal in habit.goals:
+        goal.completions = [c for c in goal.completions if c.user_id == current_user]
+
+
 def _build_default_goals(habit_id: int, habit_name: str) -> list[Goal]:
     """Three-tier default goals for a newly-created habit."""
     return [
@@ -152,6 +158,7 @@ async def list_habits(
     pagination: Annotated[PaginationParams, Depends()],
 ) -> Page[HabitWithGoals] | list[HabitWithGoals]:
     """Return habits sorted by ``sort_order``; paginated when ``?paginate=true``."""
+    # Eager-load goals + completions; dropping this triggers MissingGreenlet downstream.
     query = (
         select(Habit)
         .where(Habit.user_id == current_user)
@@ -162,6 +169,7 @@ async def list_habits(
     user_tz = await get_user_timezone(session, current_user)
     for habit in items:
         _populate_streak(habit, current_user, user_tz)
+        _filter_completions_to_caller(habit, current_user)
     serialized = [HabitWithGoals.model_validate(h, from_attributes=True) for h in items]
     if pagination.paginate:
         return build_page(serialized, total, pagination)
@@ -178,6 +186,7 @@ async def get_habit(
     habit = await _get_habit_with_completions(habit_id, current_user, session)
     user_tz = await get_user_timezone(session, current_user)
     _populate_streak(habit, current_user, user_tz)
+    _filter_completions_to_caller(habit, current_user)
     return habit
 
 

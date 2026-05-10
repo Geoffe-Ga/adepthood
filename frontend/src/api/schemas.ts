@@ -22,8 +22,13 @@ import { z } from 'zod';
 // Shared primitives
 // ---------------------------------------------------------------------------
 
-/** A string that must be a non-empty ISO-8601 timestamp per backend contract. */
-const isoDateTime = z.string().min(1);
+/** ISO-8601 datetime with a Z or ±HH:MM offset; rejects free-form strings. */
+const isoDateTime = z.string().datetime({ offset: true });
+
+/** ``YYYY-MM-DD`` shape-only; backend's ``datetime.date`` enforces semantics. */
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, {
+  message: 'expected ISO-8601 calendar date (YYYY-MM-DD)',
+});
 
 // ---------------------------------------------------------------------------
 // Pagination envelope (BUG-INFRA-012-018)
@@ -96,6 +101,13 @@ export function isTier(value: unknown): value is Tier {
   return typeof value === 'string' && (TIER_VALUES as readonly string[]).includes(value);
 }
 
+/** One row of a goal's logged completions (BUG-FE-HABIT-301). */
+export const goalCompletionSchema = z.object({
+  id: z.number().int(),
+  timestamp: isoDateTime,
+  completed_units: z.number().nonnegative(),
+});
+
 export const goalSchema = z.object({
   id: z.number().int(),
   habit_id: z.number().int(),
@@ -108,6 +120,7 @@ export const goalSchema = z.object({
   frequency_unit: z.string(),
   is_additive: z.boolean(),
   goal_group_id: z.number().int().nullish(),
+  completions: z.array(goalCompletionSchema).optional(),
 });
 
 export const notificationFrequencySchema = z.enum(['daily', 'weekly', 'custom', 'off']);
@@ -126,7 +139,7 @@ export const habitSchema = z.object({
   id: z.number().int(),
   name: z.string(),
   icon: z.string(),
-  start_date: isoDateTime,
+  start_date: isoDate,
   energy_cost: z.number(),
   energy_return: z.number(),
   notification_times: z.array(z.string()).nullish(),

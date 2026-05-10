@@ -148,11 +148,8 @@ describe('GoalModal tooltips', () => {
 });
 
 describe('GoalModal target editor', () => {
-  // Mobile users had no way to change goal targets — the only mechanism was
-  // dragging tiny 12px markers on the progress bar, which is undiscoverable
-  // on touch and doesn't fire reliably for thumb-sized hits. The editor
-  // surfaces a TextInput per tier so target adjustments work on phone.
-  it('renders an editable target input for every goal tier', () => {
+  // Click-to-edit chip → input → commit → chip round-trip; tests cover both modes.
+  it('renders a saved-state display for every goal tier by default', () => {
     const testRenderer = renderer.create(
       <GoalModal
         visible
@@ -164,12 +161,33 @@ describe('GoalModal target editor', () => {
       />,
     );
 
-    expect(testRenderer.root.findByProps({ testID: 'goal-target-input-low' })).toBeTruthy();
-    expect(testRenderer.root.findByProps({ testID: 'goal-target-input-clear' })).toBeTruthy();
-    expect(testRenderer.root.findByProps({ testID: 'goal-target-input-stretch' })).toBeTruthy();
+    expect(testRenderer.root.findByProps({ testID: 'goal-target-display-low' })).toBeTruthy();
+    expect(testRenderer.root.findByProps({ testID: 'goal-target-display-clear' })).toBeTruthy();
+    expect(testRenderer.root.findByProps({ testID: 'goal-target-display-stretch' })).toBeTruthy();
+    expect(() => testRenderer.root.findByProps({ testID: 'goal-target-input-clear' })).toThrow();
   });
 
-  it('calls onUpdateGoal with the new target when the input is committed', () => {
+  it('switches the tapped row to an input', () => {
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={() => {}}
+        onUpdateGoal={() => {}}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    const display = testRenderer.root.findByProps({ testID: 'goal-target-display-clear' });
+    renderer.act(() => {
+      display.props.onPress();
+    });
+
+    expect(testRenderer.root.findByProps({ testID: 'goal-target-input-clear' })).toBeTruthy();
+  });
+
+  it('commits on onEndEditing and returns the row to display mode', () => {
     const onUpdateGoal = jest.fn();
     const testRenderer = renderer.create(
       <GoalModal
@@ -182,6 +200,9 @@ describe('GoalModal target editor', () => {
       />,
     );
 
+    renderer.act(() => {
+      testRenderer.root.findByProps({ testID: 'goal-target-display-clear' }).props.onPress();
+    });
     const input = testRenderer.root.findByProps({ testID: 'goal-target-input-clear' });
     renderer.act(() => {
       input.props.onChangeText('5');
@@ -195,6 +216,9 @@ describe('GoalModal target editor', () => {
       expect.objectContaining({ id: 2, tier: 'clear', target: 5 }),
     );
     expect(onUpdateGoal).toHaveBeenCalledTimes(1);
+    // Row collapses back to the saved-state chip on commit.
+    expect(testRenderer.root.findByProps({ testID: 'goal-target-display-clear' })).toBeTruthy();
+    expect(() => testRenderer.root.findByProps({ testID: 'goal-target-input-clear' })).toThrow();
   });
 
   it('does not duplicate onUpdateGoal when both onEndEditing and onBlur could fire', () => {
@@ -219,6 +243,9 @@ describe('GoalModal target editor', () => {
       />,
     );
 
+    renderer.act(() => {
+      testRenderer.root.findByProps({ testID: 'goal-target-display-clear' }).props.onPress();
+    });
     const input = testRenderer.root.findByProps({ testID: 'goal-target-input-clear' });
 
     // ``onEndEditing`` is the canonical commit path on RN: per the React
@@ -242,6 +269,9 @@ describe('GoalModal target editor', () => {
       />,
     );
 
+    renderer.act(() => {
+      testRenderer.root.findByProps({ testID: 'goal-target-display-low' }).props.onPress();
+    });
     const input = testRenderer.root.findByProps({ testID: 'goal-target-input-low' });
     renderer.act(() => {
       input.props.onEndEditing();
@@ -263,6 +293,9 @@ describe('GoalModal target editor', () => {
       />,
     );
 
+    renderer.act(() => {
+      testRenderer.root.findByProps({ testID: 'goal-target-display-clear' }).props.onPress();
+    });
     const input = testRenderer.root.findByProps({ testID: 'goal-target-input-clear' });
     renderer.act(() => {
       input.props.onChangeText('abc');
@@ -310,9 +343,9 @@ describe('GoalModal backdrop close', () => {
       />,
     );
 
-    // Walking up the tree from a body input must not hit ``onPress === onClose``.
-    const input = testRenderer.root.findByProps({ testID: 'goal-target-input-low' });
-    let node: typeof input | null = input.parent;
+    // Walking up the tree from a body element must not hit ``onPress === onClose``.
+    const display = testRenderer.root.findByProps({ testID: 'goal-target-display-low' });
+    let node: typeof display | null = display.parent;
     while (node) {
       const press = (node.props as { onPress?: unknown }).onPress;
       if (typeof press === 'function' && press === onClose) {

@@ -134,6 +134,9 @@ secrets.json
 # Development-only assets
 frontend/local-assets/
 
+# git-workflow skill per-PR commit message templates — rot after merge.
+plans/github-issues/COMMIT_*.md
+
 # ======================================
 # Keep these tracked
 # ======================================

@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from models.goal import GoalTier
+
+
+class GoalCompletionPublic(BaseModel):
+    """One logged check-in row, embedded on the goal (BUG-FE-HABIT-301)."""
+
+    id: int
+    timestamp: datetime
+    completed_units: float
 
 
 class Goal(BaseModel):
@@ -25,6 +35,12 @@ class Goal(BaseModel):
     frequency_unit: str
     is_additive: bool = True
     goal_group_id: int | None = None
+
+
+class GoalWithCompletions(Goal):
+    """Goal + embedded completions; separate from :class:`Goal` to avoid lazy-load on PUT."""
+
+    completions: list[GoalCompletionPublic] = Field(default_factory=list)
 
 
 class GoalUpdate(BaseModel):

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { flattenGoalCompletions } from './flattenGoalCompletions';
 import {
   authResponseSchema,
   habitWithGoalsSchema,
@@ -638,6 +639,13 @@ async function request<T>(
 
 export type NotificationFrequency = 'daily' | 'weekly' | 'custom' | 'off';
 
+/** One row of a goal's logged completion history (BUG-FE-HABIT-301). */
+export interface ApiGoalCompletion {
+  id: number;
+  timestamp: string;
+  completed_units: number;
+}
+
 export interface ApiGoal {
   id: number;
   habit_id: number;
@@ -650,6 +658,8 @@ export interface ApiGoal {
   frequency_unit: string;
   is_additive: boolean;
   goal_group_id?: number | null;
+  /** Optional for back-compat with API builds that don't yet embed completions. */
+  completions?: ApiGoalCompletion[];
 }
 
 export interface ApiGoalGroup {
@@ -770,7 +780,7 @@ export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
       is_additive: g.is_additive,
       goal_group_id: g.goal_group_id ?? null,
     })),
-    completions: [],
+    completions: flattenGoalCompletions(apiHabit.goals),
     notificationTimes: apiHabit.notification_times ?? undefined,
     notificationFrequency: isNotificationFrequency(apiHabit.notification_frequency)
       ? apiHabit.notification_frequency

@@ -17,6 +17,7 @@ import {
 } from '../../../api';
 import type { CheckInResult, GoalUpdatePayload, HabitCreatePayload } from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
+import { flattenGoalCompletions } from '../../../api/flattenGoalCompletions';
 import type { ToastConfig } from '../../../components/Toast';
 import { colors } from '../../../design/tokens';
 import {
@@ -110,7 +111,8 @@ const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.list>>): Ha
       is_additive: g.is_additive,
       goal_group_id: g.goal_group_id ?? null,
     })),
-    completions: [],
+    // Shared with ``toLocalHabit`` -- single-source dedupe + Date rehydration.
+    completions: flattenGoalCompletions(h.goals ?? []),
     revealed: true,
     notificationTimes: h.notification_times ?? undefined,
     notificationFrequency:

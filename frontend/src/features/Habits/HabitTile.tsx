@@ -20,7 +20,6 @@ import {
   getMarkerPositions,
   getProgressBarColor,
   getTierColor,
-  isGoalAchieved,
   isEarlyUnlocked,
   calculateHabitProgress,
 } from './HabitUtils';
@@ -451,8 +450,8 @@ const useHabitTileData = (habit: Habit) => {
   const clearGoal = habit.goals.find((g) => g.tier === 'clear');
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');
 
-  const { currentGoal, nextGoal, completedAllGoals } = getGoalTier(habit);
-  const progressPercentage = clampPercentage(getProgressPercentage(habit, currentGoal, nextGoal));
+  const { currentGoal, completedAllGoals } = getGoalTier(habit);
+  const progressPercentage = clampPercentage(getProgressPercentage(habit, currentGoal));
   const progressBarColor = getProgressBarColor(habit);
   const hasCompletedGoal = completedAllGoals || progressPercentage >= 100;
 
@@ -461,29 +460,29 @@ const useHabitTileData = (habit: Habit) => {
     clear: clearMarker,
     stretch: stretchMarker,
   } = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
-  const hasCleared = clearGoal ? isGoalAchieved(clearGoal, habit) : false;
 
+  // SG is unconditionally visible (the prior ``hasCleared`` gate caused user-reported confusion).
   const markers: GoalMarkerEntry[] = [
     {
       goal: lowGoal!,
       tier: 'low',
       markerPosition: lowMarker,
       zIndex: 1,
-      visible: !!lowGoal && lowMarker >= 0,
+      visible: !!lowGoal,
     },
     {
       goal: clearGoal!,
       tier: 'clear',
       markerPosition: clearMarker,
       zIndex: 2,
-      visible: !!clearGoal && clearMarker >= 0,
+      visible: !!clearGoal,
     },
     {
       goal: stretchGoal!,
       tier: 'stretch',
       markerPosition: stretchMarker,
       zIndex: 3,
-      visible: !!stretchGoal && stretchMarker >= 0 && hasCleared,
+      visible: !!stretchGoal,
     },
   ];
 

@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from schemas._base import OwnedResourcePublic
-from schemas.goal import Goal
+from schemas.goal import GoalWithCompletions
 
 NOTIFICATION_FREQUENCY = Literal["daily", "weekly", "custom", "off"]
 
@@ -44,9 +44,9 @@ class Habit(OwnedResourcePublic):
 
 
 class HabitWithGoals(Habit):
-    """Habit response that includes nested goals."""
+    """Habit + nested goals each carrying their embedded completions (BUG-FE-HABIT-301)."""
 
-    goals: list[Goal] = Field(default_factory=list)
+    goals: list[GoalWithCompletions] = Field(default_factory=list)
 
 
 class HabitCreate(BaseModel):

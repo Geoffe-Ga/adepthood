@@ -43,7 +43,8 @@ function validHabit(overrides: Partial<ApiHabitWithGoals> = {}): ApiHabitWithGoa
     id: 1,
     name: 'Meditate',
     icon: '🧘',
-    start_date: '2024-01-01T00:00:00Z',
+    // ``start_date`` is calendar-date on the wire (``YYYY-MM-DD``); ``isoDate`` pins the shape.
+    start_date: '2024-01-01',
     energy_cost: 1,
     energy_return: 2,
     milestone_notifications: false,

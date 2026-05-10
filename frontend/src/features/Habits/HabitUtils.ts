@@ -64,30 +64,36 @@ export const isGoalAchieved = (goal: Goal, habit: Habit): boolean => {
   return goal.is_additive ? totalProgress >= targetValue : totalProgress <= targetValue;
 };
 
+/** LG/CG/SG on a unified 0-100 bar; missing-tier collapses to {0,0,0} as a failure signal. */
 export const getMarkerPositions = (
   lowGoal?: Goal,
   clearGoal?: Goal,
   stretchGoal?: Goal,
 ): { low: number; clear: number; stretch: number } => {
-  if (!lowGoal) return { low: 0, clear: 0, stretch: 0 };
-
-  if (lowGoal.is_additive) {
-    if (clearGoal) {
-      const low = clampPercentage((lowGoal.target / clearGoal.target) * 100);
-      const clear = 100;
-      const stretch = stretchGoal ? 100 : 0;
-      return { low, clear, stretch };
-    }
-    return { low: 100, clear: 0, stretch: 0 };
+  if (!lowGoal || !clearGoal || !stretchGoal) {
+    return { low: 0, clear: 0, stretch: 0 };
   }
 
-  const maxTarget = lowGoal.target;
-  const minTarget = stretchGoal ? stretchGoal.target : 0;
-  const normalize = (v: number) => ((v - minTarget) / (maxTarget - minTarget)) * 100;
-  const stretch = 0;
-  const clear = clearGoal ? clampPercentage(normalize(clearGoal.target)) : 50;
-  const low = 100;
-  return { low, clear, stretch };
+  const lowTarget = getGoalTarget(lowGoal);
+  const clearTarget = getGoalTarget(clearGoal);
+  const stretchTarget = getGoalTarget(stretchGoal);
+
+  if (lowGoal.is_additive) {
+    if (stretchTarget <= 0) return { low: 0, clear: 50, stretch: 100 };
+    return {
+      low: clampPercentage((lowTarget / stretchTarget) * 100),
+      clear: clampPercentage((clearTarget / stretchTarget) * 100),
+      stretch: 100,
+    };
+  }
+
+  const range = lowTarget - stretchTarget;
+  if (range <= 0) return { low: 0, clear: 50, stretch: 100 };
+  return {
+    low: 0,
+    clear: clampPercentage(((lowTarget - clearTarget) / range) * 100),
+    stretch: 100,
+  };
 };
 
 /**
@@ -141,6 +147,7 @@ export const getGoalTarget = (goal: Goal): number => {
   return goal.target;
 };
 
+/** All-time accumulator (NOT today-only) -- a date filter regresses BUG-FE-HABIT-301. See #294. */
 export const calculateHabitProgress = (habit: Habit): number => {
   if (!habit.completions || habit.completions.length === 0) {
     return 0;
@@ -217,71 +224,21 @@ export const getGoalTier = (habit: Habit): GoalTierResult => {
     : resolveSubtractiveTier(totalProgress, lowGoal, clearGoal, stretchGoal);
 };
 
-// The progress bar is split into thirds visually: the first 33%
-// represents low->clear progress, and the remaining 67% represents
-// clear->stretch. This weighting reflects that reaching stretch
-// goals requires proportionally more effort than reaching clear.
-const STRETCH_SEGMENT_PCT = 67;
-const CLEAR_OFFSET_PCT = 33;
-
-const getAdditiveSegmentPct = (
-  totalProgress: number,
-  currentGoal: Goal,
-  nextGoal: Goal,
-): number | null => {
-  const currentTarget = getGoalTarget(currentGoal);
-  const nextTarget = getGoalTarget(nextGoal);
-  if (totalProgress < currentTarget) return null;
-
-  if (currentGoal.tier === 'clear' && nextGoal.tier === 'stretch') {
-    const segmentPct =
-      ((totalProgress - currentTarget) / (nextTarget - currentTarget)) * STRETCH_SEGMENT_PCT +
-      CLEAR_OFFSET_PCT;
-    return Math.min(100, segmentPct);
-  }
-  if (currentGoal.tier === 'low' && nextGoal.tier === 'clear') {
-    return Math.min(100, ((totalProgress - currentTarget) / (nextTarget - currentTarget)) * 100);
-  }
-  return null;
-};
-
-const getAdditiveProgressPct = (
-  totalProgress: number,
-  currentGoal: Goal,
-  nextGoal: Goal | null,
-): number => {
-  if (nextGoal) {
-    const segmentPct = getAdditiveSegmentPct(totalProgress, currentGoal, nextGoal);
-    if (segmentPct !== null) return segmentPct;
-  }
-  return Math.min(100, (totalProgress / getGoalTarget(currentGoal)) * 100);
-};
-
-const getSubtractiveProgressPct = (habit: Habit, totalProgress: number): number => {
-  const lowGoal = habit.goals.find((g) => g.tier === 'low')!;
-  const stretchGoal = habit.goals.find((g) => g.tier === 'stretch')!;
-  const lowTarget = getGoalTarget(lowGoal);
+/** Progress on the unified 0-100 scale shared with :func:`getMarkerPositions`. */
+export const getProgressPercentage = (habit: Habit, currentGoal: Goal): number => {
+  const totalProgress = calculateHabitProgress(habit);
+  const stretchGoal = habit.goals.find((g) => g.tier === 'stretch') ?? currentGoal;
   const stretchTarget = getGoalTarget(stretchGoal);
 
-  if (totalProgress <= stretchTarget) return 100;
-  if (totalProgress >= lowTarget) return 0;
-  return 100 - ((totalProgress - stretchTarget) / (lowTarget - stretchTarget)) * 100;
-};
+  if (currentGoal.is_additive) {
+    if (stretchTarget <= 0) return 100;
+    return clampPercentage((totalProgress / stretchTarget) * 100);
+  }
 
-// Returns current progress as a percentage between 0 and 100.
-//
-// The calculation supports both additive (e.g. "do X more") and
-// subtractive (e.g. "drink X less") habit types. The function also
-// ensures progress never overflows beyond the 0-100 range.
-export const getProgressPercentage = (
-  habit: Habit,
-  currentGoal: Goal,
-  nextGoal: Goal | null,
-): number => {
-  const totalProgress = calculateHabitProgress(habit);
-  return currentGoal.is_additive
-    ? getAdditiveProgressPct(totalProgress, currentGoal, nextGoal)
-    : getSubtractiveProgressPct(habit, totalProgress);
+  const lowGoal = habit.goals.find((g) => g.tier === 'low') ?? currentGoal;
+  const range = getGoalTarget(lowGoal) - stretchTarget;
+  if (range <= 0) return totalProgress <= stretchTarget ? 100 : 0;
+  return clampPercentage(100 - ((totalProgress - stretchTarget) / range) * 100);
 };
 
 export const getProgressBarColor = (habit: Habit): string => {
