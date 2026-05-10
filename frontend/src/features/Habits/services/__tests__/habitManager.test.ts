@@ -417,6 +417,83 @@ describe('habitManager', () => {
     });
   });
 
+  describe('addHabit', () => {
+    it('optimistically appends the habit before the API resolves', async () => {
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Existing' })] });
+      let resolveCreate: (() => void) | undefined;
+      (habitsApi.create as jest.Mock).mockImplementationOnce(
+        () => new Promise<unknown>((r) => (resolveCreate = () => r({}))),
+      );
+
+      const inFlight = habitManager.addHabit({ name: 'Brand New', icon: '🆕' });
+
+      // Optimistic insert: present in the store before the API resolves.
+      const optimistic = useHabitStore.getState().habits;
+      expect(optimistic).toHaveLength(2);
+      expect(optimistic[1]!.name).toBe('Brand New');
+      expect(optimistic[1]!.icon).toBe('🆕');
+      expect(optimistic[1]!.sort_order).toBe(1);
+
+      resolveCreate?.();
+      await inFlight;
+    });
+
+    it('cycles new habits through STAGE_ORDER for their aptitude color', async () => {
+      useHabitStore.setState({ habits: [] });
+      await habitManager.addHabit({ name: 'First', icon: '1️⃣' });
+      const { habits } = useHabitStore.getState();
+      expect(habits[habits.length - 1]!.stage).toBe('Beige');
+    });
+
+    it('posts the new habit to the server and reloads to pick up server ids', async () => {
+      useHabitStore.setState({ habits: [makeHabit({ id: 1 })] });
+      const serverHabit = {
+        ...makeHabit({ id: 99, name: 'Brand New' }),
+        start_date: '2026-05-10',
+        milestone_notifications: false,
+      };
+      (habitsApi.list as jest.Mock).mockImplementationOnce(() => Promise.resolve([serverHabit]));
+
+      await habitManager.addHabit({
+        name: 'Brand New',
+        icon: '🆕',
+        energy_cost: 4,
+        energy_return: 8,
+      });
+
+      expect(habitsApi.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'Brand New',
+          icon: '🆕',
+          energy_cost: 4,
+          energy_return: 8,
+        }),
+      );
+      // loadHabits ran, so the temporary negative id was replaced by id: 99.
+      expect(useHabitStore.getState().habits[0]!.id).toBe(99);
+    });
+
+    it('rolls the store back and surfaces an error toast on API failure', async () => {
+      const previousHabits = [makeHabit({ id: 1, name: 'Existing' })];
+      useHabitStore.setState({ habits: previousHabits });
+      (habitsApi.create as jest.Mock).mockImplementationOnce(() =>
+        Promise.reject(new Error('offline')),
+      );
+      const { Alert } = require('react-native');
+
+      await habitManager.addHabit({ name: 'Will Fail', icon: '🛑' });
+
+      const { habits } = useHabitStore.getState();
+      expect(habits).toHaveLength(1);
+      expect(habits[0]!.name).toBe('Existing');
+      expect(saveHabits).toHaveBeenLastCalledWith(previousHabits);
+      expect(Alert.alert).toHaveBeenCalledWith(
+        "Couldn't sync",
+        expect.stringContaining("couldn't create that habit"),
+      );
+    });
+  });
+
   describe('saveHabitOrder', () => {
     it('replaces habits, stamps sort_order, persists, and syncs each row to the API', () => {
       const h1 = makeHabit({ id: 1, name: 'First' });

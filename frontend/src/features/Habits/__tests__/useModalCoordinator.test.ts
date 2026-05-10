@@ -13,6 +13,7 @@ describe('useModalCoordinator', () => {
     expect(result.current.reorder).toBe(false);
     expect(result.current.missedDays).toBe(false);
     expect(result.current.onboarding).toBe(false);
+    expect(result.current.addHabit).toBe(false);
     expect(result.current.emojiPicker).toBe(false);
     expect(result.current.menu).toBe(false);
   });
@@ -42,7 +43,19 @@ describe('useModalCoordinator', () => {
     expect(result.current.reorder).toBe(false);
     expect(result.current.missedDays).toBe(false);
     expect(result.current.onboarding).toBe(false);
+    expect(result.current.addHabit).toBe(false);
     expect(result.current.emojiPicker).toBe(false);
+    expect(result.current.menu).toBe(false);
+  });
+
+  it('open("addHabit") opens the AddHabit modal and collapses the menu', () => {
+    const { result } = renderHook(() => useModalCoordinator());
+
+    act(() => result.current.toggleMenu());
+    expect(result.current.menu).toBe(true);
+
+    act(() => result.current.open('addHabit'));
+    expect(result.current.addHabit).toBe(true);
     expect(result.current.menu).toBe(false);
   });
 

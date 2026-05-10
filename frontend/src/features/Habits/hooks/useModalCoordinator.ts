@@ -7,6 +7,7 @@ export type ModalName =
   | 'reorder'
   | 'missedDays'
   | 'onboarding'
+  | 'addHabit'
   | 'emojiPicker';
 
 interface ModalState {
@@ -16,6 +17,7 @@ interface ModalState {
   reorder: boolean;
   missedDays: boolean;
   onboarding: boolean;
+  addHabit: boolean;
   emojiPicker: boolean;
 }
 
@@ -26,6 +28,7 @@ const INITIAL_STATE: ModalState = {
   reorder: false,
   missedDays: false,
   onboarding: false,
+  addHabit: false,
   emojiPicker: false,
 };
 

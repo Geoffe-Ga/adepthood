@@ -98,6 +98,7 @@ export const useHabitActions = (
       logUnit,
       updateHabit: habitManager.updateHabit,
       deleteHabit: habitManager.deleteHabit,
+      addHabit: habitManager.addHabit,
       saveHabitOrder: habitManager.saveHabitOrder,
       backfillMissedDays: habitManager.backfillMissedDays,
       setNewStartDate: habitManager.setNewStartDate,

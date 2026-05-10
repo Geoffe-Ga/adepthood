@@ -113,7 +113,7 @@ const MessageBubble = ({ message, errorLabel, onRetry }: MessageBubbleProps): Re
           <Text style={styles.botAvatarText}>B</Text>
         </View>
       )}
-      <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleBot]}>
+      <View testID="bubble" style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleBot]}>
         <Text
           testID={showCursor ? 'streaming-bubble-text' : undefined}
           style={[styles.bubbleText, isUser ? styles.bubbleTextUser : styles.bubbleTextBot]}
