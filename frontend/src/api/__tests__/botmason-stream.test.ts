@@ -203,4 +203,71 @@ describe('botmason.chatStream', () => {
 
     expect(errors).toEqual([{ status: 502, detail: 'malformed_stream_frame' }]);
   });
+
+  test('BUG-API-002: 401 triggers token refresh and retries the stream once', async () => {
+    // First fetch hits the SSE endpoint and returns 401.
+    // Second fetch is the /auth/refresh call.
+    // Third fetch retries the SSE endpoint and succeeds.
+    const refreshedToken = `${'a'.repeat(8)}.${'b'.repeat(8)}.${'c'.repeat(8)}`;
+    mockFetch
+      .mockReturnValueOnce(
+        Promise.resolve({
+          ok: false,
+          status: 401,
+          json: () => Promise.resolve({ detail: 'unauthorized' }),
+        }),
+      )
+      .mockReturnValueOnce(
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ token: refreshedToken, user_id: 1 }),
+        }),
+      )
+      .mockReturnValueOnce(
+        streamResponse([`event: complete\ndata: ${JSON.stringify(sampleComplete)}\n\n`]),
+      );
+
+    const onComplete = jest.fn();
+    await botmason.chatStream(
+      { message: 'hi' },
+      { onChunk: jest.fn(), onComplete, onStreamError: jest.fn() },
+    );
+
+    // Three fetches: original SSE 401, /auth/refresh, retry SSE.
+    const expectedCallCount = 3;
+    expect(mockFetch).toHaveBeenCalledTimes(expectedCallCount);
+    const [, refreshInit] = mockFetch.mock.calls[1];
+    expect(mockFetch.mock.calls[1][0]).toContain('/auth/refresh');
+    expect(refreshInit.method).toBe('POST');
+    // Retry SSE call must use the new token, not the stale one.
+    const [, retryInit] = mockFetch.mock.calls[2];
+    expect(retryInit.headers.Authorization).toBe(`Bearer ${refreshedToken}`);
+    expect(onComplete).toHaveBeenCalledWith(sampleComplete);
+  });
+
+  test('BUG-API-002: refresh failure surfaces ApiError without re-querying the stream', async () => {
+    // 401 on the SSE endpoint, then 401 on /auth/refresh too.
+    mockFetch
+      .mockReturnValueOnce(
+        Promise.resolve({
+          ok: false,
+          status: 401,
+          json: () => Promise.resolve({ detail: 'unauthorized' }),
+        }),
+      )
+      .mockReturnValueOnce(
+        Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({}) }),
+      );
+
+    await expect(
+      botmason.chatStream(
+        { message: 'hi' },
+        { onChunk: jest.fn(), onComplete: jest.fn(), onStreamError: jest.fn() },
+      ),
+    ).rejects.toBeInstanceOf(ApiError);
+    // Must not retry the stream when refresh failed.
+    const expectedCallCount = 2;
+    expect(mockFetch).toHaveBeenCalledTimes(expectedCallCount);
+  });
 });

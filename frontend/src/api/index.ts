@@ -401,6 +401,42 @@ async function attemptTokenRefresh(): Promise<{ token: string | null; hadToken: 
   }
 }
 
+/**
+ * Re-open the SSE stream after a 401 with a freshly refreshed token, or
+ * fire the unauthorized callback and return ``null`` if refresh is not
+ * possible.  Closes BUG-API-002 by sharing the refresh-then-retry
+ * semantics with the non-streaming :func:`request` path.
+ *
+ * Lives here -- not inside :func:`botmason.chatStream` -- so the helper
+ * can be unit-tested in isolation against a mocked fetch and so the
+ * router stays declarative.
+ */
+async function retryStreamWithRefresh(
+  payload: ChatRequest,
+  options: { token?: string; signal?: AbortSignal },
+  initialRes: Response,
+): Promise<Response | null> {
+  const refresh = await attemptTokenRefresh();
+  // ``initialRes`` already gave us the 401 detail; reuse it so the
+  // unauthorized-callback reason matches what the server actually said.
+  const initialDetail = await extractErrorDetail(initialRes);
+  if (refresh.token === null) {
+    onUnauthorizedCallback?.(reasonForUnauthorized(initialDetail, refresh.hadToken));
+    return null;
+  }
+  const retryRes = await openChatStream(payload, { ...options, token: refresh.token });
+  if (retryRes.ok) return retryRes;
+  if (retryRes.status === 401) {
+    const retryDetail = await extractErrorDetail(retryRes);
+    onUnauthorizedCallback?.(reasonForUnauthorized(retryDetail, true));
+    return null;
+  }
+  // Non-401 retry failure -- propagate to the caller through
+  // ``handleErrorResponse`` for a uniform ``ApiError`` shape.
+  await handleErrorResponse(retryRes);
+  return null; // unreachable; ``handleErrorResponse`` always throws
+}
+
 function doFetch(
   url: string,
   init: RequestInit | undefined,
@@ -1165,27 +1201,34 @@ export const botmason = {
     options: { token?: string; signal?: AbortSignal } = {},
   ): Promise<void> {
     const res = await openChatStream(payload, options);
-    if (!res.ok) {
-      if (res.status === 401) {
-        // BUG-API-018: route the streaming 401 through the same
-        // classifier as the non-streaming path so the AuthContext sees
-        // a structured reason rather than a vague "session expired"
-        // for an anonymous caller hitting /journal/chat/stream.
-        // ``resolveToken(options.token)`` mirrors the non-streaming
-        // path so an implicit (getter-supplied) session token is
-        // counted as ``hadToken`` even when the caller did not pass
-        // ``options.token`` explicitly.
-        const detail = await extractErrorDetail(res);
-        onUnauthorizedCallback?.(
-          reasonForUnauthorized(detail, resolveToken(options.token) !== null),
-        );
-        throw new ApiError(res.status, detail);
-      }
-      return handleErrorResponse(res);
+    if (res.ok) {
+      const readable = asReadableStream(res.body);
+      if (!readable) throw new StreamingUnsupportedError();
+      await readChatStream(readable, callbacks);
+      return;
     }
-    const readable = asReadableStream(res.body);
-    if (!readable) throw new StreamingUnsupportedError();
-    await readChatStream(readable, callbacks);
+    if (res.status === 401) {
+      // BUG-API-002: a 401 on the streaming endpoint MUST go through the
+      // same refresh-once-then-fail flow as ``request``.  The previous
+      // path fired the unauthorized callback on the first 401 and gave
+      // up, so a transient blip (token aged out mid-keystroke) logged
+      // the user out instead of recovering silently.
+      const refreshedRes = await retryStreamWithRefresh(payload, options, res);
+      if (refreshedRes !== null) {
+        const readable = asReadableStream(refreshedRes.body);
+        if (!readable) throw new StreamingUnsupportedError();
+        await readChatStream(readable, callbacks);
+        return;
+      }
+      // Refresh path failed -- the unauthorized callback (and the
+      // structured ``UnauthorizedReason``) was already fired inside
+      // ``retryStreamWithRefresh`` so the auth context can react.  Mirror
+      // ``handleErrorResponse`` shape so callers see ``ApiError`` either
+      // way.
+      const detail = await extractErrorDetail(res);
+      throw new ApiError(res.status, detail);
+    }
+    return handleErrorResponse(res);
   },
   getBalance(token?: string): Promise<BalanceResponse> {
     return request<BalanceResponse>('/user/balance', { token });
