@@ -219,8 +219,8 @@ describe('Onboarding → Habit lifecycle flow', () => {
     act(() => result.current.actions.logUnit(1, 0.5));
 
     const habit = result.current.habits.find((h: Habit) => h.id === 1)!;
-    const { currentGoal, nextGoal } = getGoalTier(habit);
-    const pct = getProgressPercentage(habit, currentGoal, nextGoal);
+    const { currentGoal } = getGoalTier(habit);
+    const pct = getProgressPercentage(habit, currentGoal);
 
     expect(pct).toBeGreaterThan(0);
     expect(pct).toBeLessThanOrEqual(100);

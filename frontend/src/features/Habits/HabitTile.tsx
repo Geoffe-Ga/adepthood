@@ -450,8 +450,8 @@ const useHabitTileData = (habit: Habit) => {
   const clearGoal = habit.goals.find((g) => g.tier === 'clear');
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');
 
-  const { currentGoal, nextGoal, completedAllGoals } = getGoalTier(habit);
-  const progressPercentage = clampPercentage(getProgressPercentage(habit, currentGoal, nextGoal));
+  const { currentGoal, completedAllGoals } = getGoalTier(habit);
+  const progressPercentage = clampPercentage(getProgressPercentage(habit, currentGoal));
   const progressBarColor = getProgressBarColor(habit);
   const hasCompletedGoal = completedAllGoals || progressPercentage >= 100;
 

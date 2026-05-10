@@ -11,6 +11,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.goal import Goal
+from models.goal_completion import GoalCompletion
 
 
 def sample_payload(**overrides: object) -> dict[str, object]:
@@ -361,8 +362,6 @@ async def test_get_habit_completions_filtered_to_caller(
     repair, manual SQL, future shared-goal feature) cannot leak across
     tenants.
     """
-    from models.goal_completion import GoalCompletion  # noqa: PLC0415
-
     alice_headers = await _signup(async_client, "alice_persist")
     create_resp = await async_client.post("/habits/", json=sample_payload(), headers=alice_headers)
     habit_id = create_resp.json()["id"]

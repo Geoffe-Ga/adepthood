@@ -266,19 +266,15 @@ export const getGoalTier = (habit: Habit): GoalTierResult => {
  * Subtractive: ``clamp(100 - (currentProgress - stretchTarget) /
  * (lowTarget - stretchTarget) × 100, 0, 100)``.
  *
- * ``currentGoal`` / ``nextGoal`` were used by the previous segment-based
- * implementation to pick a per-tier weighting; the unified scale derives
- * everything from low/stretch directly so callers no longer need to
- * resolve the active tier first.  The parameters are kept on the
- * signature so existing call sites (``HabitTile``, the screen-level test
- * harness) compile without churn -- they're treated as a fallback when a
- * habit was malformed and is missing one of low/stretch.
+ * ``currentGoal`` is retained because it carries the ``is_additive``
+ * flag (read off the active tier rather than re-derived) and acts as the
+ * fallback when a malformed habit is missing low or stretch.  The
+ * previous signature also took ``nextGoal`` for a per-tier weighting --
+ * the unified scale derives everything from low/stretch directly so
+ * ``nextGoal`` was genuinely dead and has been removed (CLAUDE.md
+ * forbids ``_unused`` placeholder parameters).
  */
-export const getProgressPercentage = (
-  habit: Habit,
-  currentGoal: Goal,
-  _nextGoal: Goal | null,
-): number => {
+export const getProgressPercentage = (habit: Habit, currentGoal: Goal): number => {
   const totalProgress = calculateHabitProgress(habit);
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch') ?? currentGoal;
   const stretchTarget = getGoalTarget(stretchGoal);

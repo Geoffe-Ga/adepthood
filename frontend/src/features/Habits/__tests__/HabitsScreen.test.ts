@@ -118,8 +118,8 @@ describe('habit progress utilities', () => {
     // disagreed with the marker positions, which surfaced as "the markers
     // aren't working right".  The unified scale ties fill width and marker
     // positions to the same denominator (stretch target).
-    const { currentGoal, nextGoal } = getGoalTier(habit);
-    const percentage = getProgressPercentage(habit, currentGoal, nextGoal);
+    const { currentGoal } = getGoalTier(habit);
+    const percentage = getProgressPercentage(habit, currentGoal);
     expect(percentage).toBeCloseTo(66.67, 1);
   });
 
@@ -137,8 +137,8 @@ describe('habit progress utilities', () => {
       completions: [{ id: 'c-2', timestamp: new Date(), completed_units: 150 }],
     };
 
-    const { currentGoal, nextGoal } = getGoalTier(habit);
-    const percentage = getProgressPercentage(habit, currentGoal, nextGoal);
+    const { currentGoal } = getGoalTier(habit);
+    const percentage = getProgressPercentage(habit, currentGoal);
     expect(percentage).toBeCloseTo(50);
   });
 

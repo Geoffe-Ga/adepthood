@@ -67,6 +67,20 @@ def _filter_completions_to_caller(habit: Habit, current_user: int) -> None:
     response.  We mutate the in-memory relation rather than rebuild the
     object graph; SQLAlchemy treats this as a transient list edit and
     will not flush deletes because we never commit the session.
+
+    .. WARNING::
+        Do **not** call ``session.commit()`` after this function returns
+        on the same request. Replacing ``goal.completions`` marks the
+        ``GoalCompletion`` rows that were filtered out as orphaned (the
+        relation has ``cascade="all, delete-orphan"`` semantics by
+        default for a back-populated collection), so a commit would
+        permanently delete the other user's rows from the DB -- a
+        cross-tenant data-loss bug. The two callers
+        (``list_habits`` / ``get_habit``) are pure read endpoints and
+        already follow this rule; if a future caller needs both the
+        filtered response *and* a write, swap this for a read-only
+        projection (build the ``HabitWithGoals`` payload manually with
+        a list comprehension) instead of mutating the ORM relation.
     """
     for goal in habit.goals:
         goal.completions = [c for c in goal.completions if c.user_id == current_user]

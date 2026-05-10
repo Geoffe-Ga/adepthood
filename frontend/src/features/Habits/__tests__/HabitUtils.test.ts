@@ -63,8 +63,8 @@ describe('HabitUtils', () => {
       goals,
       completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 7 }],
     };
-    const { currentGoal, nextGoal } = getGoalTier(habit);
-    expect(getProgressPercentage(habit, currentGoal, nextGoal)).toBe(100);
+    const { currentGoal } = getGoalTier(habit);
+    expect(getProgressPercentage(habit, currentGoal)).toBe(100);
   });
 
   test('getProgressPercentage subtractive returns proportion', () => {
@@ -105,8 +105,8 @@ describe('HabitUtils', () => {
       goals,
       completions: [{ id: 'c-2', timestamp: new Date(), completed_units: 6 }],
     };
-    const { currentGoal, nextGoal } = getGoalTier(habit);
-    const pct = getProgressPercentage(habit, currentGoal, nextGoal);
+    const { currentGoal } = getGoalTier(habit);
+    const pct = getProgressPercentage(habit, currentGoal);
     expect(Math.round(pct)).toBe(50);
   });
 
