@@ -1112,9 +1112,17 @@ export class StreamingUnsupportedError extends Error {
   }
 }
 
-// Server-Sent Events frame separator (blank line). Extracted as a constant so
-// the parser and splitter stay in lock-step.
-const SSE_FRAME_SEPARATOR = '\n\n';
+// Server-Sent Events frame separator: a blank line.  Per the spec
+// (RFC EventSource / WHATWG HTML), a frame ends at LF-LF, CR-CR, or
+// CRLF-CRLF -- production servers behind Cloudflare or nginx commonly
+// emit CRLF-terminated frames, so a parser keyed only on ``\n\n``
+// silently dropped every event from a CRLF source (BUG-API-011).
+//
+// The regex captures any of the three terminators; ``SSE_FRAME_SEPARATOR_RE``
+// is what the buffer scanner uses while ``SSE_LINE_BREAK`` is used to
+// split a single frame into its ``event:`` / ``data:`` lines.
+const SSE_FRAME_SEPARATOR_RE = /\r\n\r\n|\n\n|\r\r/;
+const SSE_LINE_BREAK_RE = /\r\n|\n|\r/;
 const SSE_EVENT_PREFIX = 'event: ';
 const SSE_DATA_PREFIX = 'data: ';
 
@@ -1141,7 +1149,9 @@ function parseSseFrame(frame: string): SsePayload | null {
   if (!frame.trim()) return null;
   let event = '';
   let data = '';
-  for (const line of frame.split('\n')) {
+  // BUG-API-011: split on any line break (LF / CRLF / CR) so a frame
+  // emitted by a server using CRLF line endings is parsed correctly.
+  for (const line of frame.split(SSE_LINE_BREAK_RE)) {
     if (line.startsWith(SSE_EVENT_PREFIX)) event = line.slice(SSE_EVENT_PREFIX.length);
     else if (line.startsWith(SSE_DATA_PREFIX)) data = line.slice(SSE_DATA_PREFIX.length);
   }
@@ -1170,9 +1180,22 @@ function dispatchSseFrame(frame: string, callbacks: ChatStreamCallbacks): void {
   } else if (parsed.event === 'complete') {
     callbacks.onComplete(payload as ChatResponse);
   } else if (parsed.event === 'error') {
-    callbacks.onStreamError(payload as { status: number; detail: string });
+    const errPayload = payload as { status: number; detail: string };
+    // BUG-API-014: a 401 inside a stream means the session expired
+    // mid-reply (token aged out, or the user signed out from another
+    // device).  The error frame is the only auth signal we get on the
+    // SSE channel, so route it through the same global unauthorized
+    // callback as the non-streaming path.  ``hadToken=true`` because
+    // the stream could not have opened without a session token.
+    if (errPayload.status === HTTP_UNAUTHORIZED) {
+      onUnauthorizedCallback?.(reasonForUnauthorized(errPayload.detail ?? null, true));
+    }
+    callbacks.onStreamError(errPayload);
   }
 }
+
+/** HTTP status that indicates an authorization failure. */
+const HTTP_UNAUTHORIZED = 401;
 
 /** Server-reported detail string when a single SSE frame can't be parsed as JSON. */
 const MALFORMED_FRAME_DETAIL = 'malformed_stream_frame';
@@ -1208,31 +1231,59 @@ async function openChatStream(
 async function readChatStream(
   readable: MinimalReadable,
   callbacks: ChatStreamCallbacks,
+  signal?: AbortSignal,
 ): Promise<void> {
   const reader = readable.getReader();
+  // BUG-API-012: ``fetchWithTimeout`` already wires the signal to the
+  // underlying ``fetch``'s AbortController -- but in some runtimes the
+  // body reader is not torn down until the underlying socket actually
+  // closes, so the user-perceived "Stop" tap takes seconds to fire.
+  // Cancelling the reader directly on abort makes ``reader.read()``
+  // resolve with ``done: true`` immediately so the loop exits and the
+  // SSE generator yields control back to the caller.
+  const cancelOnAbort = (): void => {
+    void reader.cancel?.();
+  };
+  if (signal) {
+    if (signal.aborted) cancelOnAbort();
+    else signal.addEventListener('abort', cancelOnAbort, { once: true });
+  }
   const decoder = new TextDecoder();
   let buffer = '';
   let done = false;
-  while (!done) {
-    const chunk = await reader.read();
-    done = chunk.done;
-    if (chunk.value) buffer += decoder.decode(chunk.value, { stream: true });
-    buffer = drainCompletedFrames(buffer, callbacks);
+  try {
+    while (!done) {
+      const chunk = await reader.read();
+      done = chunk.done;
+      if (chunk.value) buffer += decoder.decode(chunk.value, { stream: true });
+      buffer = drainCompletedFrames(buffer, callbacks);
+    }
+    // Any trailing bytes that arrived without a terminating blank line still
+    // need to be dispatched — servers may elide the final separator.
+    if (buffer.trim()) dispatchSseFrame(buffer, callbacks);
+  } finally {
+    signal?.removeEventListener('abort', cancelOnAbort);
   }
-  // Any trailing bytes that arrived without a terminating blank line still
-  // need to be dispatched — servers may elide the final separator.
-  if (buffer.trim()) dispatchSseFrame(buffer, callbacks);
 }
 
+/**
+ * Walk ``buffer`` for completed SSE frames, dispatch each, and return the
+ * trailing partial-frame remainder for the next read.
+ *
+ * BUG-API-011: scans for any of LF-LF / CR-CR / CRLF-CRLF (per the
+ * EventSource spec) so a server using CRLF terminators is parsed.
+ * Previous version keyed on ``"\n\n"`` only and silently swallowed the
+ * entire stream.
+ */
 function drainCompletedFrames(buffer: string, callbacks: ChatStreamCallbacks): string {
-  const separatorIndex = buffer.lastIndexOf(SSE_FRAME_SEPARATOR);
-  if (separatorIndex === -1) return buffer;
-  const complete = buffer.slice(0, separatorIndex);
-  const remainder = buffer.slice(separatorIndex + SSE_FRAME_SEPARATOR.length);
-  for (const frame of complete.split(SSE_FRAME_SEPARATOR)) {
+  let remainder = buffer;
+  while (true) {
+    const match = SSE_FRAME_SEPARATOR_RE.exec(remainder);
+    if (match === null) return remainder;
+    const frame = remainder.slice(0, match.index);
     dispatchSseFrame(frame, callbacks);
+    remainder = remainder.slice(match.index + match[0].length);
   }
-  return remainder;
 }
 
 export const botmason = {
@@ -1270,7 +1321,7 @@ export const botmason = {
     if (res.ok) {
       const readable = asReadableStream(res.body);
       if (!readable) throw new StreamingUnsupportedError();
-      await readChatStream(readable, callbacks);
+      await readChatStream(readable, callbacks, options.signal);
       return;
     }
     if (res.status === 401) {
@@ -1283,7 +1334,7 @@ export const botmason = {
       if (refreshedRes !== null) {
         const readable = asReadableStream(refreshedRes.body);
         if (!readable) throw new StreamingUnsupportedError();
-        await readChatStream(readable, callbacks);
+        await readChatStream(readable, callbacks, options.signal);
         return;
       }
       // Refresh path failed -- the unauthorized callback (and the

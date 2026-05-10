@@ -5,6 +5,7 @@ import {
   botmason,
   LLM_API_KEY_HEADER,
   setLlmApiKeyGetter,
+  setOnUnauthorized,
   setTokenGetter,
   StreamingUnsupportedError,
 } from '../index';
@@ -244,6 +245,110 @@ describe('botmason.chatStream', () => {
     const [, retryInit] = mockFetch.mock.calls[2];
     expect(retryInit.headers.Authorization).toBe(`Bearer ${refreshedToken}`);
     expect(onComplete).toHaveBeenCalledWith(sampleComplete);
+  });
+
+  test('BUG-API-011: parses CRLF-terminated frames (production servers behind nginx)', async () => {
+    // A server that emits CRLF line endings + CRLF-CRLF frame terminators
+    // used to silently drop every event because the parser keyed only on
+    // ``"\n\n"`` and ``"\n"``.  This regression exercises the same
+    // sample_complete payload but with CRLF framing throughout.
+    const frames = [
+      'event: chunk\r\ndata: {"text":"Hello "}\r\n\r\n',
+      'event: chunk\r\ndata: {"text":"world"}\r\n\r\n',
+      `event: complete\r\ndata: ${JSON.stringify(sampleComplete)}\r\n\r\n`,
+    ];
+    mockFetch.mockReturnValueOnce(streamResponse(frames));
+
+    const events: Array<[string, unknown]> = [];
+    await botmason.chatStream(
+      { message: 'hi' },
+      {
+        onChunk: (t) => events.push(['chunk', t]),
+        onComplete: (r) => events.push(['complete', r]),
+        onStreamError: (e) => events.push(['error', e]),
+      },
+    );
+
+    expect(events).toEqual([
+      ['chunk', 'Hello '],
+      ['chunk', 'world'],
+      ['complete', sampleComplete],
+    ]);
+  });
+
+  test('BUG-API-012: an aborted signal cancels the reader so the stream returns promptly', async () => {
+    // Build a reader that would loop forever (server hung) so abort is the
+    // only way out.  After ``signal.abort()`` we expect ``reader.cancel``
+    // to fire and ``read()`` to resolve ``done: true`` so chatStream
+    // returns instead of hanging the test.
+    const cancelSpy = jest.fn();
+    let resolveRead: (val: { done: boolean; value?: Uint8Array }) => void = () => {};
+    const body = {
+      getReader: () => ({
+        read: () =>
+          new Promise<{ done: boolean; value?: Uint8Array }>((resolve) => {
+            resolveRead = resolve;
+          }),
+        cancel: () => {
+          cancelSpy();
+          // Wake the pending ``read()`` so the loop exits.
+          resolveRead({ done: true });
+          return Promise.resolve();
+        },
+      }),
+    };
+    mockFetch.mockReturnValueOnce(
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        body,
+        json: () => Promise.resolve({}),
+      } as unknown as Response),
+    );
+
+    const controller = new AbortController();
+    const streamPromise = botmason.chatStream(
+      { message: 'hi' },
+      { onChunk: jest.fn(), onComplete: jest.fn(), onStreamError: jest.fn() },
+      { signal: controller.signal },
+    );
+    // Wait for the reader to actually start reading so the abort listener
+    // is attached before we fire the abort.  Multiple microtask flushes
+    // because the chain is several ``await``s deep before
+    // ``readChatStream`` installs its listener.
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    controller.abort();
+    await streamPromise;
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test('BUG-API-014: a 401 error frame mid-stream fires the unauthorized callback', async () => {
+    // The stream opens cleanly (200), but the server emits an
+    // ``event: error`` frame with status 401 because the token was
+    // revoked from another device.  The non-streaming path routes 401
+    // through the global callback; the streaming path now does the same
+    // so the AuthContext can react identically.
+    const onUnauthorized = jest.fn();
+    setOnUnauthorized(onUnauthorized);
+    try {
+      const frames = [
+        `event: error\ndata: ${JSON.stringify({ status: 401, detail: 'unauthorized' })}\n\n`,
+      ];
+      mockFetch.mockReturnValueOnce(streamResponse(frames));
+
+      const onStreamError = jest.fn();
+      await botmason.chatStream(
+        { message: 'hi' },
+        { onChunk: jest.fn(), onComplete: jest.fn(), onStreamError },
+      );
+
+      expect(onUnauthorized).toHaveBeenCalledWith('session_expired');
+      // Caller-supplied onStreamError still fires so the UI can show a
+      // mid-stream failure banner.
+      expect(onStreamError).toHaveBeenCalledWith({ status: 401, detail: 'unauthorized' });
+    } finally {
+      setOnUnauthorized(null);
+    }
   });
 
   test('BUG-API-002: refresh failure surfaces ApiError without re-querying the stream', async () => {
