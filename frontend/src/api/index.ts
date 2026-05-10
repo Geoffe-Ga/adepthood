@@ -459,30 +459,50 @@ async function attemptTokenRefresh(): Promise<{ token: string | null; hadToken: 
  * can be unit-tested in isolation against a mocked fetch and so the
  * router stays declarative.
  */
+/**
+ * Outcome of a refresh-then-retry attempt on the SSE channel.  Returning
+ * the extracted detail alongside the response lets ``chatStream`` reuse
+ * the value when the retry also fails -- ``Response.json()`` on an
+ * already-consumed body throws ``TypeError: body used already`` in any
+ * spec-conforming fetch implementation, so the body MUST be read once.
+ */
+interface StreamRetryOutcome {
+  /** Refreshed and reopened stream response, or ``null`` when refresh failed. */
+  res: Response | null;
+  /** Detail string parsed from ``initialRes`` body before refresh ran. */
+  initialDetail: string;
+}
+
 async function retryStreamWithRefresh(
   payload: ChatRequest,
   options: { token?: string; signal?: AbortSignal },
   initialRes: Response,
-): Promise<Response | null> {
-  const refresh = await attemptTokenRefresh();
-  // ``initialRes`` already gave us the 401 detail; reuse it so the
-  // unauthorized-callback reason matches what the server actually said.
+): Promise<StreamRetryOutcome> {
+  // BUG-API-002 review fix: read the body EXACTLY once and thread the
+  // result back to the caller.  The previous implementation also called
+  // ``extractErrorDetail(initialRes)`` here, then ``chatStream`` did the
+  // same on the failure path -- ``Response.json()`` rejects the second
+  // call with ``TypeError: body used already`` in production fetch, so
+  // the thrown ``ApiError`` would be replaced by an uncaught TypeError.
+  // Mocks in Jest do not enforce single-read semantics, which is why the
+  // unit tests passed.
   const initialDetail = await extractErrorDetail(initialRes);
+  const refresh = await attemptTokenRefresh();
   if (refresh.token === null) {
     onUnauthorizedCallback?.(reasonForUnauthorized(initialDetail, refresh.hadToken));
-    return null;
+    return { res: null, initialDetail };
   }
   const retryRes = await openChatStream(payload, { ...options, token: refresh.token });
-  if (retryRes.ok) return retryRes;
+  if (retryRes.ok) return { res: retryRes, initialDetail };
   if (retryRes.status === 401) {
     const retryDetail = await extractErrorDetail(retryRes);
     onUnauthorizedCallback?.(reasonForUnauthorized(retryDetail, true));
-    return null;
+    return { res: null, initialDetail };
   }
   // Non-401 retry failure -- propagate to the caller through
   // ``handleErrorResponse`` for a uniform ``ApiError`` shape.
   await handleErrorResponse(retryRes);
-  return null; // unreachable; ``handleErrorResponse`` always throws
+  return { res: null, initialDetail }; // unreachable; ``handleErrorResponse`` always throws
 }
 
 function doFetch(
@@ -1330,20 +1350,19 @@ export const botmason = {
       // path fired the unauthorized callback on the first 401 and gave
       // up, so a transient blip (token aged out mid-keystroke) logged
       // the user out instead of recovering silently.
-      const refreshedRes = await retryStreamWithRefresh(payload, options, res);
-      if (refreshedRes !== null) {
-        const readable = asReadableStream(refreshedRes.body);
+      //
+      // ``retryStreamWithRefresh`` reads ``res`` body once and threads
+      // the detail back via ``initialDetail`` so this failure path can
+      // throw the real ``ApiError`` without re-reading an already
+      // consumed body (review fix for PR #297).
+      const outcome = await retryStreamWithRefresh(payload, options, res);
+      if (outcome.res !== null) {
+        const readable = asReadableStream(outcome.res.body);
         if (!readable) throw new StreamingUnsupportedError();
         await readChatStream(readable, callbacks, options.signal);
         return;
       }
-      // Refresh path failed -- the unauthorized callback (and the
-      // structured ``UnauthorizedReason``) was already fired inside
-      // ``retryStreamWithRefresh`` so the auth context can react.  Mirror
-      // ``handleErrorResponse`` shape so callers see ``ApiError`` either
-      // way.
-      const detail = await extractErrorDetail(res);
-      throw new ApiError(res.status, detail);
+      throw new ApiError(res.status, outcome.initialDetail);
     }
     return handleErrorResponse(res);
   },

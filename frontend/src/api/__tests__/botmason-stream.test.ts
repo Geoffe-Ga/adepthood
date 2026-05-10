@@ -353,6 +353,11 @@ describe('botmason.chatStream', () => {
 
   test('BUG-API-002: refresh failure surfaces ApiError without re-querying the stream', async () => {
     // 401 on the SSE endpoint, then 401 on /auth/refresh too.
+    // PR #297 review: assert the thrown ``error.detail`` carries the
+    // server's actual detail string ("unauthorized"), not the generic
+    // "Request failed" fallback that ``extractErrorDetail`` returns when
+    // the body has been consumed.  This pins the contract that the
+    // initial response body is read EXACTLY once.
     mockFetch
       .mockReturnValueOnce(
         Promise.resolve({
@@ -365,14 +370,51 @@ describe('botmason.chatStream', () => {
         Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({}) }),
       );
 
-    await expect(
-      botmason.chatStream(
+    const error: unknown = await botmason
+      .chatStream(
         { message: 'hi' },
         { onChunk: jest.fn(), onComplete: jest.fn(), onStreamError: jest.fn() },
-      ),
-    ).rejects.toBeInstanceOf(ApiError);
+      )
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(401);
+    expect((error as ApiError).detail).toBe('unauthorized');
     // Must not retry the stream when refresh failed.
     const expectedCallCount = 2;
     expect(mockFetch).toHaveBeenCalledTimes(expectedCallCount);
+  });
+
+  test('BUG-API-002: 401 + refresh fail does not double-read the response body', async () => {
+    // PR #297 review: in production fetch, calling ``.json()`` on a
+    // ``Response`` whose ``bodyUsed`` is true throws
+    // ``TypeError: body used already``.  This test mimics that semantic
+    // by throwing on a second read; the chatStream path MUST not trigger
+    // the throw -- it must thread the parsed detail back from
+    // ``retryStreamWithRefresh`` instead of re-reading.
+    let bodyUsed = false;
+    const initialRes = {
+      ok: false,
+      status: 401,
+      json: () => {
+        if (bodyUsed) return Promise.reject(new TypeError('body used already'));
+        bodyUsed = true;
+        return Promise.resolve({ detail: 'unauthorized' });
+      },
+    };
+    mockFetch
+      .mockReturnValueOnce(Promise.resolve(initialRes))
+      .mockReturnValueOnce(
+        Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({}) }),
+      );
+
+    const error: unknown = await botmason
+      .chatStream(
+        { message: 'hi' },
+        { onChunk: jest.fn(), onComplete: jest.fn(), onStreamError: jest.fn() },
+      )
+      .catch((e: unknown) => e);
+    // Must surface ``ApiError`` with the real detail, not a TypeError.
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).detail).toBe('unauthorized');
   });
 });
