@@ -371,14 +371,6 @@ const GOAL_SAVE_BUTTON_VERTICAL_PADDING = 6;
 const GOAL_SAVE_BUTTON_HORIZONTAL_PADDING = 12;
 const GOAL_SAVE_BUTTON_FONT_SIZE = 13;
 
-// Bevel-border palette evoking a sunken / pressed-in input. RN has no
-// portable inset-shadow, so the classic two-tone trick is used: dark top +
-// left, light bottom + right reads as a depression in the surface, while
-// the convex chip uses ``shadows.small`` (raised) on a ``card`` surface.
-const RECESSED_BEVEL_DARK = '#bcbcbc';
-const RECESSED_BEVEL_LIGHT = '#ffffff';
-const RECESSED_SURFACE = '#e9e9e9';
-
 const goalEditorStyles = StyleSheet.create({
   container: {
     marginVertical: SPACING.md,
@@ -409,17 +401,17 @@ const goalEditorStyles = StyleSheet.create({
   input: {
     width: GOAL_INPUT_WIDTH,
     borderWidth: 1,
-    borderTopColor: RECESSED_BEVEL_DARK,
-    borderLeftColor: RECESSED_BEVEL_DARK,
-    borderBottomColor: RECESSED_BEVEL_LIGHT,
-    borderRightColor: RECESSED_BEVEL_LIGHT,
+    borderTopColor: colors.bevel.edgeDark,
+    borderLeftColor: colors.bevel.edgeDark,
+    borderBottomColor: colors.bevel.edgeLight,
+    borderRightColor: colors.bevel.edgeLight,
     borderRadius: GOAL_INPUT_BORDER_RADIUS,
     paddingVertical: GOAL_INPUT_VERTICAL_PADDING,
     paddingHorizontal: SPACING.sm,
     textAlign: 'center',
     fontSize: GOAL_INPUT_FONT_SIZE,
     marginHorizontal: SPACING.sm,
-    backgroundColor: RECESSED_SURFACE,
+    backgroundColor: colors.bevel.recessedSurface,
   },
   /** Saved-state chip — convex (raised) so users read it as a tappable button, not a label. */
   display: {

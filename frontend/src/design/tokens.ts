@@ -68,6 +68,22 @@ export const colors = {
   successText: '#2e7d32',
 
   border: '#ddd',
+
+  /**
+   * Bevel palette for recessed (sunken) controls. React Native has no
+   * portable ``box-shadow: inset`` primitive, so depth is conveyed via the
+   * classic two-tone bevel: a darker edge along the top + left of the
+   * surface and a lighter edge along the bottom + right reads as a
+   * depression. Used by the goal-target editor's input field; pair with
+   * ``shadows.small`` on the saved-state chip for the convex counterpart.
+   * Dark-mode equivalents will live alongside the rest of ``darkColors``
+   * when that theme ships.
+   */
+  bevel: {
+    recessedSurface: '#e9e9e9',
+    edgeDark: '#bcbcbc',
+    edgeLight: '#ffffff',
+  },
 } as const;
 
 // ---------------------------------------------------------------------------

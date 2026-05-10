@@ -127,6 +127,19 @@ describe('GoalModal goal-target editor', () => {
     expect(props.onUpdateGoal).toHaveBeenCalledTimes(1);
   });
 
+  it('collapses the Return-key-then-blur sequence into a single onUpdateGoal call', () => {
+    // Symmetric to the Save-then-blur test: pressing Return fires
+    // onSubmitEditing AND onEndEditing on most platforms; the submittedRef
+    // guard must dedupe that pair the same way it dedupes Save+blur.
+    const { getByTestId, props } = renderModal();
+    fireEvent.press(getByTestId('goal-target-display-low'));
+    const input = getByTestId('goal-target-input-low');
+    fireEvent.changeText(input, '9');
+    fireEvent(input, 'submitEditing');
+    fireEvent(input, 'endEditing');
+    expect(props.onUpdateGoal).toHaveBeenCalledTimes(1);
+  });
+
   it('reverts the draft and skips the commit when the input is non-numeric', () => {
     const { getByTestId, props } = renderModal();
     fireEvent.press(getByTestId('goal-target-display-low'));
