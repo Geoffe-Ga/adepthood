@@ -53,6 +53,14 @@ _PRACTICE_DEFAULTS: dict[str, object] = {
     "instructions": "Close your eyes and breathe",
     "default_duration_minutes": 10,
     "approved": True,
+    "mode": "meditation_timer",
+    "mode_config": {
+        "mode": "meditation_timer",
+        "duration_minutes": 10,
+        "start_bell": True,
+        "halfway_bell": False,
+        "end_bell": True,
+    },
 }
 
 

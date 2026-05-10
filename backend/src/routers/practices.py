@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Request, status
 from slowapi.util import get_remote_address
@@ -104,6 +104,10 @@ async def submit_practice(
     visible and turns any new client-controlled field into a deliberate
     audit decision.
     """
+    # ``PracticeCreate._resolve_mode_and_config`` fills in both fields
+    # during model validation, so they are guaranteed non-None on a
+    # validated payload.  ``cast`` narrows the annotation without
+    # introducing a runtime check the validator already guarantees.
     practice = Practice(
         stage_number=payload.stage_number,
         name=payload.name,
@@ -112,6 +116,8 @@ async def submit_practice(
         default_duration_minutes=payload.default_duration_minutes,
         submitted_by_user_id=current_user,
         approved=False,
+        mode=cast("str", payload.mode),
+        mode_config=cast("dict[str, Any]", payload.mode_config),
     )
     session.add(practice)
     await session.commit()

@@ -29,6 +29,17 @@ async def _signup(
     return {"Authorization": f"Bearer {data['token']}"}, data["user_id"]
 
 
+def _timer_cfg(duration_minutes: float) -> dict[str, object]:
+    """Build a minimal meditation-timer config payload for fixtures."""
+    return {
+        "mode": "meditation_timer",
+        "duration_minutes": duration_minutes,
+        "start_bell": True,
+        "halfway_bell": False,
+        "end_bell": True,
+    }
+
+
 async def _seed_practices(db_session: AsyncSession) -> list[Practice]:
     """Insert a set of approved and unapproved practices."""
     practices = [
@@ -39,6 +50,8 @@ async def _seed_practices(db_session: AsyncSession) -> list[Practice]:
             instructions="Close your eyes and breathe",
             default_duration_minutes=10,
             approved=True,
+            mode="meditation_timer",
+            mode_config=_timer_cfg(10),
         ),
         Practice(
             stage_number=1,
@@ -47,6 +60,8 @@ async def _seed_practices(db_session: AsyncSession) -> list[Practice]:
             instructions="Write for 10 minutes",
             default_duration_minutes=10,
             approved=True,
+            mode="meditation_timer",
+            mode_config=_timer_cfg(10),
         ),
         Practice(
             stage_number=2,
@@ -55,6 +70,8 @@ async def _seed_practices(db_session: AsyncSession) -> list[Practice]:
             instructions="Follow a yoga sequence",
             default_duration_minutes=20,
             approved=True,
+            mode="meditation_timer",
+            mode_config=_timer_cfg(20),
         ),
         Practice(
             stage_number=1,
@@ -64,6 +81,8 @@ async def _seed_practices(db_session: AsyncSession) -> list[Practice]:
             default_duration_minutes=5,
             submitted_by_user_id=1,
             approved=False,
+            mode="meditation_timer",
+            mode_config=_timer_cfg(5),
         ),
     ]
     for p in practices:
@@ -174,6 +193,103 @@ async def test_submit_practice(async_client: AsyncClient) -> None:
     # submitter's user id.  Server-side ownership lives on the row.
     assert "submitted_by_user_id" not in data
     assert data["approved"] is False
+    # ritual-01: omitting mode + mode_config defaults to a meditation timer
+    # derived from default_duration_minutes.
+    assert data["mode"] == "meditation_timer"
+    assert data["mode_config"]["duration_minutes"] == 15
+    assert data["mode_config"]["mode"] == "meditation_timer"
+
+
+@pytest.mark.asyncio
+async def test_submit_practice_with_metronome_mode(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """ritual-01: clients can ship a non-default mode with a matching config."""
+    headers, _ = await _signup(async_client)
+    payload = {
+        "stage_number": 6,
+        "name": "Shadow drum",
+        "description": "Metronome-led shadow practice",
+        "instructions": "Sit with what arises in time with the click",
+        "default_duration_minutes": 30,
+        "mode": "metronome",
+        "mode_config": {
+            "mode": "metronome",
+            "bpm": 60,
+            "timer": {
+                "mode": "meditation_timer",
+                "duration_minutes": 30,
+                "halfway_bell": True,
+            },
+        },
+    }
+    resp = await async_client.post("/practices/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.CREATED
+    data = resp.json()
+    assert data["mode"] == "metronome"
+    assert data["mode_config"]["bpm"] == 60
+    assert data["mode_config"]["timer"]["duration_minutes"] == 30
+
+    # The ORM round-trip keeps the JSON intact.
+    persisted = await db_session.get(Practice, data["id"])
+    assert persisted is not None
+    assert persisted.mode == "metronome"
+    assert persisted.mode_config["bpm"] == 60
+
+
+@pytest.mark.asyncio
+async def test_submit_practice_rejects_mode_without_config(async_client: AsyncClient) -> None:
+    """Non-default modes must include a mode_config; 422 otherwise."""
+    headers, _ = await _signup(async_client)
+    payload = {
+        "stage_number": 2,
+        "name": "Tarot",
+        "description": "Card meditation",
+        "instructions": "Sit with the card",
+        "default_duration_minutes": 5,
+        "mode": "tarot",
+    }
+    resp = await async_client.post("/practices/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_submit_practice_rejects_mode_mismatch(async_client: AsyncClient) -> None:
+    """The mode_config discriminator must match the parent mode field."""
+    headers, _ = await _signup(async_client)
+    payload = {
+        "stage_number": 1,
+        "name": "Mismatched",
+        "description": "x",
+        "instructions": "x",
+        "default_duration_minutes": 10,
+        "mode": "meditation_timer",
+        "mode_config": {"mode": "count_up"},
+    }
+    resp = await async_client.post("/practices/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_submit_practice_rejects_invalid_mode_config(async_client: AsyncClient) -> None:
+    """Mode-specific range checks (e.g. BPM bounds) surface as 422."""
+    headers, _ = await _signup(async_client)
+    payload = {
+        "stage_number": 6,
+        "name": "Bad metronome",
+        "description": "x",
+        "instructions": "x",
+        "default_duration_minutes": 30,
+        "mode": "metronome",
+        "mode_config": {
+            "mode": "metronome",
+            "bpm": 9001,  # out of [20, 240]
+            "timer": {"mode": "meditation_timer", "duration_minutes": 30},
+        },
+    }
+    resp = await async_client.post("/practices/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 @pytest.mark.asyncio

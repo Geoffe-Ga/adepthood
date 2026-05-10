@@ -153,8 +153,13 @@ def test_password_reset_migrations_round_trip_on_sqlite(
     db_url = cfg.get_main_option("sqlalchemy.url")
     assert db_url is not None
 
-    # Phase 1: upgrade head -> both migrations applied.
-    command.upgrade(cfg, "head")
+    # Phase 1: upgrade to the password-reset chain head -> both migrations
+    # applied.  We pin the target instead of using ``head`` because the
+    # fixture bootstrap only creates the ``user`` table; later migrations
+    # in the chain (e.g. ritual-01's ALTER TABLE practice) would fail
+    # against the minimal schema.  The test's stated scope is the two
+    # password-reset migrations, so pinning to their head matches intent.
+    command.upgrade(cfg, _RESET_LOOKUP_REVISION)
     assert _table_exists(db_url, "passwordresettoken")
     user_cols = _columns_of(db_url, "user")
     assert "password_changed_at" in user_cols
@@ -168,7 +173,7 @@ def test_password_reset_migrations_round_trip_on_sqlite(
 
     # Phase 3: upgrade again -> the cycle is idempotent (catches downgrade
     # scripts that leave residue and break the second upgrade).
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, _RESET_LOOKUP_REVISION)
     assert _table_exists(db_url, "passwordresettoken")
     assert "password_changed_at" in _columns_of(db_url, "user")
     assert "lookup_key" in _columns_of(db_url, "passwordresettoken")
