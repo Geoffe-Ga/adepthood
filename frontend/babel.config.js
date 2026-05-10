@@ -1,16 +1,13 @@
 /* eslint-disable */
-// BUG-FE-TEST-003: ``react-native-reanimated/plugin`` MUST be the last
-// plugin and only loads in production.  In test (jest) the plugin's
-// worklet transform fights with babel-preset-expo's CommonJS output and
-// produces opaque "Reanimated 2 failed to create a worklet" runtime
-// errors that obscure the real test failure.  Scoping the plugin to
-// ``env.production`` keeps animations working in release builds while
-// letting the Jest pipeline run the same transforms it always has.
+// ``react-native-reanimated/plugin`` MUST be the last plugin and is needed
+// in BOTH dev (Metro ``NODE_ENV=development``) and prod builds — without
+// it ``useAnimatedStyle`` / worklets throw at runtime.  The earlier
+// ``env.production``-only scope (PR #298 review fix) accidentally also
+// stripped the plugin from Metro dev, so we keep the plugin unconditional
+// here and mock the module in Jest setup instead (see
+// ``__mocks__/react-native-reanimated.js`` + the ``moduleNameMapper`` in
+// ``jest.config.js``).
 module.exports = {
   presets: ['babel-preset-expo'],
-  env: {
-    production: {
-      plugins: ['react-native-reanimated/plugin'],
-    },
-  },
+  plugins: ['react-native-reanimated/plugin'],
 };

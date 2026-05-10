@@ -18,7 +18,7 @@ module.exports = {
   // global.  Tracked for a follow-up that opts component test files
   // into ``@jest-environment jsdom`` per-file via the docblock pragma.
   testEnvironment: 'node',
-  setupFilesAfterEnv: ['@testing-library/jest-native/extend-expect'],
+  setupFilesAfterEnv: ['@testing-library/jest-native/extend-expect', '<rootDir>/jest.setup.js'],
   roots: ['<rootDir>/src', '<rootDir>/__tests__'],
   moduleDirectories: ['node_modules', 'src'],
   moduleNameMapper: {

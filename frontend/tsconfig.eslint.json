@@ -12,6 +12,7 @@
     "__tests__/**/*.tsx",
     "@types/**/*.d.ts",
     "eslint.config.cjs",
-    "jest.config.js"
+    "jest.config.js",
+    "jest.setup.js"
   ]
 }
