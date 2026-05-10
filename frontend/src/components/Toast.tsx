@@ -69,6 +69,14 @@ export default function Toast({ message, icon, color, duration, onDismiss }: Toa
   return (
     <Animated.View
       testID="toast-container"
+      // BUG-FE-UI-104: announce toasts to screen readers as the
+      // container appears.  ``polite`` (vs. ``assertive``) lets the
+      // current utterance finish so the toast does not interrupt
+      // critical flow speech; ``alert`` semantics give VoiceOver /
+      // TalkBack the right cue category.
+      accessibilityLiveRegion="polite"
+      accessibilityRole="alert"
+      accessibilityLabel={message}
       style={[
         styles.container,
         { opacity, transform: [{ translateY }], borderLeftColor: borderColor },
