@@ -2,6 +2,7 @@
 /* global describe, it, expect, beforeEach, jest */
 import { NavigationContainer } from '@react-navigation/native';
 import { render, fireEvent } from '@testing-library/react-native';
+import { BookOpen, Compass, Flower2, NotebookPen, Sprout } from 'lucide-react-native';
 import React from 'react';
 
 const mockLogout = jest.fn(() => Promise.resolve());
@@ -52,5 +53,21 @@ describe('BottomTabs', () => {
 
     fireEvent.press(getByText('Logout'));
     expect(mockLogout).toHaveBeenCalled();
+  });
+
+  it('renders a lucide icon for each of the five tabs', () => {
+    const { UNSAFE_getAllByType } = render(
+      <NavigationContainer>
+        <BottomTabs />
+      </NavigationContainer>,
+    );
+
+    // The focused tab's icon may render more than once (active-state
+    // animation in @react-navigation/bottom-tabs); only assert each icon
+    // appears at least once, which is what makeTabIcon being invoked
+    // for every TAB_CONFIGS entry guarantees.
+    for (const Icon of [Sprout, Flower2, BookOpen, NotebookPen, Compass]) {
+      expect(UNSAFE_getAllByType(Icon).length).toBeGreaterThanOrEqual(1);
+    }
   });
 });
