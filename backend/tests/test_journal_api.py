@@ -411,3 +411,30 @@ async def test_user_cannot_delete_other_users_entry(async_client: AsyncClient) -
 
     resp = await async_client.delete(f"/journal/{entry_id}", headers=bob_headers)
     assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+# ── Length and search bounds ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_empty_message(async_client: AsyncClient) -> None:
+    """BUG-JOURNAL-001: empty body must be rejected at the schema layer."""
+    headers = await _signup(async_client, "empty")
+    resp = await async_client.post("/journal/", json={"message": ""}, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_search_rejects_below_min_length(async_client: AsyncClient) -> None:
+    """BUG-JOURNAL-009: ``ILIKE '%a%'`` matches almost everything; cap min length."""
+    headers = await _signup(async_client, "shortq")
+    resp = await async_client.get("/journal/?search=a", headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_search_rejects_oversized_query(async_client: AsyncClient) -> None:
+    """BUG-JOURNAL-009: a 5MB ``term`` would pin a worker on ``ILIKE`` planning."""
+    headers = await _signup(async_client, "longq")
+    resp = await async_client.get(f"/journal/?search={'x' * 65}", headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY

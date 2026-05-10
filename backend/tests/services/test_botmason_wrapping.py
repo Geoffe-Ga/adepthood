@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from services.botmason import (
     _augment_system_prompt,
     _build_anthropic_messages,
     _build_messages,
+    _get_model,
     _make_nonce,
     _wrap_user_input,
 )
@@ -181,3 +184,92 @@ class TestBuildAnthropicMessages:
         nonce_a = _NONCE_RE.search(sys_a).group(0)  # type: ignore[union-attr]
         nonce_b = _NONCE_RE.search(sys_b).group(0)  # type: ignore[union-attr]
         assert nonce_a != nonce_b
+
+
+class TestGetModelAllowlist:
+    """``_get_model`` enforces a per-provider allowlist (BUG-BM-001)."""
+
+    def test_default_openai_model_is_allowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("LLM_MODEL", raising=False)
+        assert _get_model("openai") == "gpt-4o-mini"
+
+    def test_default_anthropic_model_is_allowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("LLM_MODEL", raising=False)
+        assert _get_model("anthropic") == "claude-sonnet-4-20250514"
+
+    def test_env_override_to_allowed_model_is_accepted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+        assert _get_model("openai") == "gpt-4o"
+
+    def test_env_override_to_unlisted_model_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An operator who sets ``LLM_MODEL`` to an unvetted value fails fast.
+
+        Without the gate the call would silently flow to the provider with
+        whatever string is on the wire — possibly a far more expensive
+        tier, possibly a model that does not exist on the account.  The
+        request would burn one wallet message before surfacing the error.
+        """
+        monkeypatch.setenv("LLM_MODEL", "gpt-99-turbo-megamax")
+        with pytest.raises(RuntimeError, match="not on the openai allowlist"):
+            _get_model("openai")
+
+    def test_anthropic_model_set_for_openai_provider_is_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Cross-wiring providers (Anthropic key + Anthropic model name through OpenAI)."""
+        monkeypatch.setenv("LLM_MODEL", "claude-opus-4-7")
+        with pytest.raises(RuntimeError, match="not on the openai allowlist"):
+            _get_model("openai")
+
+    def test_unknown_provider_bypasses_allowlist(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Stub / unknown providers never call out, so model selection is moot."""
+        monkeypatch.setenv("LLM_MODEL", "anything-goes")
+        assert _get_model("stub") == "anything-goes"
+
+
+class TestBuildMessagesKeyErrorSafety:
+    """``_build_messages`` survives malformed history rows (BUG-BM-005)."""
+
+    def test_history_entry_missing_message_does_not_raise(self) -> None:
+        """A history row without a ``message`` key must not surface as ``KeyError``.
+
+        The wallet has already been pre-flight-deducted by the time
+        ``_build_messages`` runs; a ``KeyError`` here would burn the
+        message with no response.  Treating the missing field as an
+        empty string lets the request continue and produces a turn the
+        model naturally ignores.
+        """
+        history = [{"sender": "user"}]  # ``message`` key intentionally absent
+        messages = _build_messages("new", history, "PROMPT")
+        # Three turns: system, the malformed user history row, and the new prompt.
+        expected_turn_count = 3
+        assert len(messages) == expected_turn_count
+        # The malformed row produces an empty wrapped user turn rather than a crash.
+        assert messages[1]["role"] == "user"
+        assert messages[1]["content"].startswith("<user_input_")
+        assert messages[1]["content"].endswith(">")
+
+    def test_anthropic_history_entry_missing_message_does_not_raise(self) -> None:
+        """Same KeyError safety on the Anthropic builder path.
+
+        ``_build_anthropic_messages`` runs in production whenever
+        ``BOTMASON_PROVIDER=anthropic``.  A malformed history row that crashes
+        only the OpenAI variant would still burn the wallet with no response
+        for every Anthropic-deployed environment, so the regression has to
+        cover both builders.
+        """
+        history = [{"sender": "user"}]  # ``message`` key intentionally absent
+        messages, augmented = _build_anthropic_messages("new", history, "PROMPT")
+        # Anthropic builder returns (messages, augmented_system).  No system
+        # role inside ``messages``; only the malformed history turn and the
+        # new user turn.
+        expected_turn_count = 2
+        assert len(messages) == expected_turn_count
+        assert all(m["role"] in {"user", "assistant"} for m in messages)
+        assert messages[0]["role"] == "user"
+        assert messages[0]["content"].startswith("<user_input_")
+        assert messages[0]["content"].endswith(">")
+        # The augmented system prompt is unaffected by malformed history rows.
+        assert _NONCE_RE.search(augmented) is not None

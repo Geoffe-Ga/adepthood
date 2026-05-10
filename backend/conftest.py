@@ -152,9 +152,19 @@ async def async_client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, 
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter() -> Generator[None, None, None]:
-    """Clear the rate limiter's in-memory storage between tests."""
+    """Reset both the limiter's storage AND its ``enabled`` flag between tests.
+
+    ``limiter.reset()`` clears the in-memory bucket counts but does NOT
+    restore ``limiter.enabled`` -- so a test using the ``disable_rate_limit``
+    fixture would leave the limiter off for every subsequent test that
+    runs in the same process.  Forcing ``enabled = True`` here makes the
+    autouse contract a single source of truth: every test starts with the
+    limiter on and storage empty, regardless of what its predecessors did.
+    """
+    limiter.enabled = True
     limiter.reset()
     yield
+    limiter.enabled = True
     limiter.reset()
 
 

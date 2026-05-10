@@ -134,7 +134,7 @@ async def _create_practice_session(
         json=_session_window_payload(user_practice_id),
         headers=headers,
     )
-    assert resp.status_code == HTTPStatus.OK
+    assert resp.status_code == HTTPStatus.CREATED
     return int(resp.json()["id"])
 
 
@@ -542,7 +542,7 @@ async def test_no_user_id_in_owned_resource_responses(
         json=_session_window_payload(user_practice_id),
         headers=alice_headers,
     )
-    assert create_session.status_code == HTTPStatus.OK
+    assert create_session.status_code == HTTPStatus.CREATED
 
     practice = await _seed_practice(db_session, name="Catalog Scrub")
 

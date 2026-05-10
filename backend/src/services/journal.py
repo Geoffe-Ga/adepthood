@@ -19,21 +19,40 @@ from security import sanitize_user_text
 from services.botmason import CONVERSATION_HISTORY_LIMIT, LLMResponse
 from services.llm_pricing import estimate_cost_usd
 
+# Conversation-history senders that participate in BotMason chat
+# (BUG-JOURNAL-008).  Free-form journal entries written via
+# ``POST /journal/`` carry ``sender="user"`` too, but the only senders that
+# round-trip through the LLM are the chat user and the bot itself.  Future
+# senders (e.g. ``"system"``) must be added explicitly so they cannot
+# silently poison the LLM prompt.
+_CHAT_SENDERS = ("user", "bot")
+
 
 async def load_recent_conversation(
     session: AsyncSession,
     user_id: int,
 ) -> list[dict[str, str]]:
-    """Return the last ``CONVERSATION_HISTORY_LIMIT`` messages chronologically.
+    """Return the last ``CONVERSATION_HISTORY_LIMIT`` chat messages chronologically.
 
     Centralising the query keeps the streaming and non-streaming endpoints in
     sync: if the context window grows later, both inherit the new behaviour
     without drift.  Each entry is returned as a plain dict so provider
     adapters do not need to know about ORM types.
+
+    Filters to ``sender IN ('user', 'bot')`` (BUG-JOURNAL-008) so a future
+    sender value (e.g. ``"system"``) cannot silently poison the LLM
+    prompt — every new sender must be added to ``_CHAT_SENDERS`` as a
+    deliberate audit decision.  Free-form journal entries written via
+    ``POST /journal/`` also carry ``sender="user"``; tag-scoping the
+    history (so private notes do not bleed into the chat context) is a
+    separate change tracked alongside the chat-tag follow-up.
     """
     history_query = (
         select(JournalEntry)
-        .where(JournalEntry.user_id == user_id)
+        .where(
+            JournalEntry.user_id == user_id,
+            col(JournalEntry.sender).in_(_CHAT_SENDERS),
+        )
         .order_by(col(JournalEntry.id).desc())
         .limit(CONVERSATION_HISTORY_LIMIT)
     )

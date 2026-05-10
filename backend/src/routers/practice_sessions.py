@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, func, select
 
@@ -25,7 +25,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/practice-sessions", tags=["practice-sessions"])
 
 
-@router.post("/", response_model=PracticeSessionResponse)
+@router.post(
+    "/",
+    response_model=PracticeSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_session(
     payload: PracticeSessionCreate,
     current_user: Annotated[int, Depends(get_current_user)],

@@ -56,9 +56,48 @@ _ANTHROPIC_KEY_PREFIX = "sk-ant-"
 STUB_MODEL_NAME = "stub"
 
 # Centralised default models so the choice lives in one place (BUG-JOURNAL-011).
-# ``LLM_MODEL`` env var overrides at runtime.
+# ``LLM_MODEL`` env var overrides at runtime — but only to a value listed
+# in :data:`_ALLOWED_MODELS` for the active provider (BUG-BM-001).
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
+
+# Closed allowlist per provider (BUG-BM-001).  Without this gate, an
+# operator who set ``LLM_MODEL=gpt-4o-most-expensive`` (or, worse,
+# accidentally pointed an Anthropic key at an OpenAI model name)
+# would silently route traffic through an unintended billing tier or
+# break in cryptic ways at provider call time.  The set is small on
+# purpose: every addition is a deliberate audit decision (and any
+# new model needs an entry in :mod:`services.llm_pricing` so cost
+# estimation does not silently fall back to ``$0``).
+#
+# Anthropic IDs intentionally mix two formats per Anthropic's naming:
+#
+#   * ``claude-{family}-{major}-{minor}`` (e.g. ``claude-opus-4-7``,
+#     ``claude-sonnet-4-6``) -- a *floating alias* that always points at
+#     the latest minor release in that family.  Choose this for chat /
+#     dev use where staying current matters more than reproducibility.
+#   * ``claude-{family}-{major}-{YYYYMMDD}`` (e.g.
+#     ``claude-sonnet-4-20250514``, ``claude-haiku-4-5-20251001``) --
+#     a *date-pinned* build.  Choose this for evaluations / experiments
+#     where the model behind the alias must not silently change.
+#
+# Both forms are valid Anthropic endpoints; they are NOT duplicates --
+# an operator deliberately chooses pin-vs-alias by setting ``LLM_MODEL``.
+# Each pin/alias is listed only when there is a matching pricing row in
+# :mod:`services.llm_pricing` so cost estimation stays accurate.
+_ALLOWED_MODELS: dict[str, frozenset[str]] = {
+    "openai": frozenset({"gpt-4o-mini", "gpt-4o", "gpt-4-turbo"}),
+    "anthropic": frozenset(
+        {
+            # Date-pinned (reproducible) builds:
+            "claude-sonnet-4-20250514",
+            "claude-haiku-4-5-20251001",
+            # Floating aliases (track latest minor):
+            "claude-opus-4-7",
+            "claude-sonnet-4-6",
+        }
+    ),
+}
 
 # Timeout in seconds for LLM provider HTTP calls (BUG-JOURNAL-005).
 _LLM_TIMEOUT_SECONDS = 30.0
@@ -300,6 +339,20 @@ def _wrap_user_input(text: str, nonce: str) -> str:
     return f"<user_input_{nonce}>{sanitize_user_text(text)}</user_input_{nonce}>"
 
 
+def _entry_message(entry: dict[str, str]) -> str:
+    """Return ``entry["message"]`` with a safe empty-string fallback (BUG-BM-005).
+
+    Mirrors the ``.get("message", "")`` shape already used by
+    :func:`_dynamic_max_tokens`.  Without this, a malformed history
+    row (missing ``message`` after a future schema change, or a row
+    constructed by a test fixture that forgot the field) would raise
+    ``KeyError`` mid-request and burn one wallet message with no
+    response — far worse than emitting an empty turn the model
+    naturally ignores.
+    """
+    return entry.get("message", "")
+
+
 def _build_messages(
     user_message: str,
     conversation_history: list[dict[str, str]],
@@ -321,17 +374,43 @@ def _build_messages(
     ]
     for entry in conversation_history:
         role = "assistant" if entry.get("sender") == "bot" else "user"
-        content = _wrap_user_input(entry["message"], nonce) if role == "user" else entry["message"]
+        message = _entry_message(entry)
+        content = _wrap_user_input(message, nonce) if role == "user" else message
         messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": _wrap_user_input(user_message, nonce)})
     return messages
 
 
-def _get_model(provider: str) -> str:
-    """Return the model ID from ``LLM_MODEL`` env or the provider's default."""
+def _provider_default_model(provider: str) -> str:
+    """Return the built-in default model for ``provider``."""
     if provider == "anthropic":
-        return os.getenv("LLM_MODEL", DEFAULT_ANTHROPIC_MODEL)
-    return os.getenv("LLM_MODEL", DEFAULT_OPENAI_MODEL)
+        return DEFAULT_ANTHROPIC_MODEL
+    return DEFAULT_OPENAI_MODEL
+
+
+def _get_model(provider: str) -> str:
+    """Return the validated model ID for ``provider`` (BUG-BM-001).
+
+    Resolves to ``LLM_MODEL`` env var when set; otherwise the per-provider
+    default.  Either way the chosen value MUST appear in the provider's
+    entry in :data:`_ALLOWED_MODELS` -- a misconfigured env var fails
+    fast at request time rather than silently routing traffic through
+    an unvetted model (and an unknown cost row).  Unknown providers
+    (including ``"stub"``) bypass the check: they never hit a real
+    provider so model selection is moot.
+    """
+    requested = os.getenv("LLM_MODEL") or _provider_default_model(provider)
+    allowed = _ALLOWED_MODELS.get(provider)
+    if allowed is None:
+        return requested
+    if requested not in allowed:
+        msg = (
+            f"LLM_MODEL={requested!r} is not on the {provider} allowlist; "
+            "add it to services.botmason._ALLOWED_MODELS only after a pricing "
+            "row exists in services.llm_pricing."
+        )
+        raise RuntimeError(msg)
+    return requested
 
 
 def _build_anthropic_messages(
@@ -352,7 +431,8 @@ def _build_anthropic_messages(
     messages: list[dict[str, str]] = []
     for entry in conversation_history:
         role = "assistant" if entry.get("sender") == "bot" else "user"
-        content = _wrap_user_input(entry["message"], nonce) if role == "user" else entry["message"]
+        message = _entry_message(entry)
+        content = _wrap_user_input(message, nonce) if role == "user" else message
         messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": _wrap_user_input(user_message, nonce)})
     return messages, _augment_system_prompt(system_prompt, nonce)

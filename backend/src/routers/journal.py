@@ -49,11 +49,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/journal", tags=["journal"])
 
 
+# BUG-JOURNAL-009: ``search`` is run as ``ILIKE '%term%'`` against an
+# uncapped column; without a length bound a 5MB query can pin a worker.
+# A min-length of 3 also guards against substring-search noise (a single
+# ``%a%`` matches almost every row in a chatty user's history) and keeps
+# the cardinality of the LIKE plan reasonable.
+JOURNAL_SEARCH_MIN_LENGTH = 3
+JOURNAL_SEARCH_MAX_LENGTH = 64
+
+
 @dataclass
 class _ListFilters:
     """Query parameters for listing journal entries."""
 
-    search: str | None = Query(default=None)
+    search: str | None = Query(
+        default=None,
+        min_length=JOURNAL_SEARCH_MIN_LENGTH,
+        max_length=JOURNAL_SEARCH_MAX_LENGTH,
+    )
     tag: JournalTag | None = None
     practice_session_id: int | None = Query(default=None)
     limit: int = Query(default=50, ge=1, le=200)

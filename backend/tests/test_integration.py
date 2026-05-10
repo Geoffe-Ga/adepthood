@@ -210,7 +210,7 @@ async def test_practice_session_week_count(
             },
             headers=headers,
         )
-        assert resp.status_code == HTTPStatus.OK
+        assert resp.status_code == HTTPStatus.CREATED
 
     # Check week count
     resp = await async_client.get("/practice-sessions/week-count", headers=headers)

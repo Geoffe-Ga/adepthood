@@ -18,7 +18,7 @@ class JournalMessageCreate(BaseModel):
     impersonate other users or forge bot messages.
     """
 
-    message: str = Field(max_length=JOURNAL_MESSAGE_MAX_LENGTH)
+    message: str = Field(min_length=1, max_length=JOURNAL_MESSAGE_MAX_LENGTH)
     tag: JournalTag = JournalTag.FREEFORM
     practice_session_id: int | None = None
     user_practice_id: int | None = None
@@ -32,7 +32,7 @@ class JournalBotMessageCreate(BaseModel):
     (BUG-JOURNAL-002).
     """
 
-    message: str = Field(max_length=JOURNAL_MESSAGE_MAX_LENGTH)
+    message: str = Field(min_length=1, max_length=JOURNAL_MESSAGE_MAX_LENGTH)
     tag: JournalTag = JournalTag.FREEFORM
     practice_session_id: int | None = None
     user_practice_id: int | None = None
