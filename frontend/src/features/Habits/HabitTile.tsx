@@ -266,6 +266,9 @@ const HabitHeader = ({
 
 const TOTAL_HABITS = 10;
 
+/** Tile border thickness so the aptitude/stage color reads clearly at a glance. */
+export const TILE_BORDER_WIDTH = 3;
+
 const useTileLayout = () => {
   const { width, height, columns, scale, gridGutter } = useResponsive();
   const rows = columns === 2 ? TOTAL_HABITS / columns : TOTAL_HABITS;
@@ -533,7 +536,7 @@ const getLockedTileStyle = (
   tileMinHeight: number,
 ) => ({
   flex: 1 as const,
-  borderWidth: 1,
+  borderWidth: TILE_BORDER_WIDTH,
   borderColor: stageColor,
   padding: spacing(1, scale),
   margin: gridGutter / 2,
@@ -611,7 +614,7 @@ const UnlockedTile = ({ habit, onOpenGoals, onLongPress, onIconPress }: Unlocked
       testID="habit-tile"
       style={{
         flex: 1,
-        borderWidth: 1,
+        borderWidth: TILE_BORDER_WIDTH,
         borderColor: stageColor,
         borderStyle: earlyUnlocked ? 'dashed' : undefined,
         padding: spacing(1, scale),

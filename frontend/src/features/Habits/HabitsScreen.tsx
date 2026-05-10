@@ -1,7 +1,7 @@
 // HabitsScreen.tsx
 
-import { BarChart2, Check, Lock, MoreHorizontal, Pencil, Unlock, Zap } from 'lucide-react';
-import React, { useCallback, useEffect, useState } from 'react';
+import { BarChart2, Check, Lock, MoreHorizontal, Pencil, Plus, Unlock, Zap } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, TouchableOpacity, View, Modal } from 'react-native';
 import EmojiSelector from 'react-native-emoji-selector';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,6 +11,7 @@ import { useAuth } from '../../context/AuthContext';
 import { spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 
+import AddHabitModal from './components/AddHabitModal';
 import GoalModal from './components/GoalModal';
 import HabitSettingsModal from './components/HabitSettingsModal';
 import MissedDaysModal from './components/MissedDaysModal';
@@ -23,6 +24,9 @@ import HabitTile from './HabitTile';
 import { generateStatsForHabit, toLocalHabitStats, calculateMissedDays } from './HabitUtils';
 import { useHabits } from './hooks/useHabits';
 import { useModalCoordinator } from './hooks/useModalCoordinator';
+
+/** Habits per page. Ten is the design ceiling that fills the screen 1-up on mobile and 2x5 on landscape/desktop. */
+const HABITS_PER_PAGE = 10;
 
 export { DEFAULT_ICONS, TARGET_UNITS, FREQUENCY_UNITS, DAYS_OF_WEEK } from './constants';
 export { calculateNetEnergy } from './HabitUtils';
@@ -78,20 +82,63 @@ interface OverflowMenuProps {
   onToggle: () => void;
   onSelectMode: (_mode: 'quickLog' | 'stats' | 'edit') => void;
   onOpenOnboarding: () => void;
+  onOpenAddHabit: () => void;
   allRevealed: boolean;
   onToggleReveal: () => void;
 }
 
+type MenuAction = 'quickLog' | 'stats' | 'edit' | 'addHabit' | 'onboarding';
+
 const MENU_ITEMS: Array<{
   Icon: typeof Check;
   label: string;
-  mode: 'quickLog' | 'stats' | 'edit' | null;
+  action: MenuAction;
 }> = [
-  { Icon: Check, label: 'Quick Log', mode: 'quickLog' },
-  { Icon: BarChart2, label: 'Stats', mode: 'stats' },
-  { Icon: Pencil, label: 'Edit', mode: 'edit' },
-  { Icon: Zap, label: 'Energy Scaffolding', mode: null },
+  { Icon: Check, label: 'Quick Log', action: 'quickLog' },
+  { Icon: BarChart2, label: 'Stats', action: 'stats' },
+  { Icon: Pencil, label: 'Edit', action: 'edit' },
+  { Icon: Plus, label: 'Add Habit', action: 'addHabit' },
+  { Icon: Zap, label: 'Energy Scaffolding', action: 'onboarding' },
 ];
+
+interface OverflowMenuListProps {
+  scale: number;
+  iconMargin: { marginRight: number };
+  handleMenuPress: (_action: MenuAction) => void;
+  allRevealed: boolean;
+  onToggleReveal: () => void;
+}
+
+const OverflowMenuList = ({
+  scale,
+  iconMargin,
+  handleMenuPress,
+  allRevealed,
+  onToggleReveal,
+}: OverflowMenuListProps) => {
+  const RevealIcon = allRevealed ? Lock : Unlock;
+  const revealLabel = allRevealed ? 'Lock Unstarted Habits' : 'Reveal All Habits';
+  return (
+    <View testID="overflow-menu" style={[styles.mobileMenu, { top: spacing(4, scale), right: 0 }]}>
+      {MENU_ITEMS.map((item) => (
+        <MenuItem
+          key={item.label}
+          icon={<item.Icon size={spacing(2, scale)} style={iconMargin} />}
+          label={item.label}
+          onPress={() => handleMenuPress(item.action)}
+          scale={scale}
+        />
+      ))}
+      <MenuItem
+        key="reveal-toggle"
+        icon={<RevealIcon size={spacing(2, scale)} style={iconMargin} />}
+        label={revealLabel}
+        onPress={onToggleReveal}
+        scale={scale}
+      />
+    </View>
+  );
+};
 
 const OverflowMenu = ({
   scale,
@@ -99,12 +146,16 @@ const OverflowMenu = ({
   onToggle,
   onSelectMode,
   onOpenOnboarding,
+  onOpenAddHabit,
   allRevealed,
   onToggleReveal,
 }: OverflowMenuProps) => {
   const iconMargin = { marginRight: spacing(1, scale) };
-  const RevealIcon = allRevealed ? Lock : Unlock;
-  const revealLabel = allRevealed ? 'Lock Unstarted Habits' : 'Reveal All Habits';
+  const handleMenuPress = (action: MenuAction) => {
+    if (action === 'onboarding') onOpenOnboarding();
+    else if (action === 'addHabit') onOpenAddHabit();
+    else onSelectMode(action);
+  };
   return (
     <View style={styles.overflowMenuContainer} testID="overflow-menu-wrapper">
       <TouchableOpacity
@@ -115,27 +166,13 @@ const OverflowMenu = ({
         <MoreHorizontal size={spacing(3, scale)} />
       </TouchableOpacity>
       {menuVisible && (
-        <View
-          testID="overflow-menu"
-          style={[styles.mobileMenu, { top: spacing(4, scale), right: 0 }]}
-        >
-          {MENU_ITEMS.map((item) => (
-            <MenuItem
-              key={item.label}
-              icon={<item.Icon size={spacing(2, scale)} style={iconMargin} />}
-              label={item.label}
-              onPress={item.mode ? () => onSelectMode(item.mode!) : onOpenOnboarding}
-              scale={scale}
-            />
-          ))}
-          <MenuItem
-            key="reveal-toggle"
-            icon={<RevealIcon size={spacing(2, scale)} style={iconMargin} />}
-            label={revealLabel}
-            onPress={onToggleReveal}
-            scale={scale}
-          />
-        </View>
+        <OverflowMenuList
+          scale={scale}
+          iconMargin={iconMargin}
+          handleMenuPress={handleMenuPress}
+          allRevealed={allRevealed}
+          onToggleReveal={onToggleReveal}
+        />
       )}
     </View>
   );
@@ -234,6 +271,11 @@ const HabitModals = ({ modals, selectedHabit, habitStats, habits, actions }: Hab
       onClose={() => modals.close('onboarding')}
       onSaveHabits={actions.onboardingSave}
     />
+    <AddHabitModal
+      visible={modals.addHabit}
+      onClose={() => modals.close('addHabit')}
+      onAdd={actions.addHabit}
+    />
     {modals.emojiPicker && (
       <EmojiPickerModal
         onSelect={actions.emojiSelect}
@@ -300,6 +342,42 @@ const HabitList = ({ habits, columns, gridGutter, renderItem }: HabitListProps) 
   />
 );
 
+interface PaginationBarProps {
+  page: number;
+  pageCount: number;
+  onPrev: () => void;
+  onNext: () => void;
+  scale: number;
+}
+
+const PaginationBar = ({ page, pageCount, onPrev, onNext, scale }: PaginationBarProps) => {
+  const canPrev = page > 0;
+  const canNext = page < pageCount - 1;
+  return (
+    <View style={styles.paginationBar} testID="habits-pagination">
+      <TouchableOpacity
+        testID="pagination-prev"
+        onPress={onPrev}
+        disabled={!canPrev}
+        style={[styles.paginationButton, !canPrev && styles.disabledButton]}
+      >
+        <Text style={styles.paginationButtonText}>Prev</Text>
+      </TouchableOpacity>
+      <Text style={[styles.paginationLabel, { fontSize: spacing(1.75, scale) }]}>
+        Page {page + 1} of {pageCount}
+      </Text>
+      <TouchableOpacity
+        testID="pagination-next"
+        onPress={onNext}
+        disabled={!canNext}
+        style={[styles.paginationButton, !canNext && styles.disabledButton]}
+      >
+        <Text style={styles.paginationButtonText}>Next</Text>
+      </TouchableOpacity>
+    </View>
+  );
+};
+
 interface EnergyFooterProps {
   showCTA: boolean;
   showArchive: boolean;
@@ -331,9 +409,11 @@ const useHabitTileRenderer = (
   modals: ReturnType<typeof useModalCoordinator>,
   actions: ReturnType<typeof useHabits>['actions'],
   setSelectedHabit: (_h: Habit) => void,
+  pageOffset = 0,
 ) => {
   const renderHabitTile = ({ item, index }: { item: Habit; index: number }) => {
     const isLocked = item.revealed === false;
+    const globalIndex = pageOffset + index;
     return (
       <HabitTile
         habit={item}
@@ -358,7 +438,7 @@ const useHabitTileRenderer = (
           isLocked
             ? undefined
             : () => {
-                actions.iconPress(index);
+                actions.iconPress(globalIndex);
                 modals.open('emojiPicker');
               }
         }
@@ -437,6 +517,13 @@ interface HabitsContentProps {
   gridGutter: number;
   renderItem: (_info: { item: Habit; index: number }) => React.ReactElement;
   onRetry: () => void;
+  pagination: {
+    page: number;
+    pageCount: number;
+    onPrev: () => void;
+    onNext: () => void;
+    scale: number;
+  } | null;
 }
 
 const HabitsContent = ({
@@ -447,33 +534,66 @@ const HabitsContent = ({
   gridGutter,
   renderItem,
   onRetry,
+  pagination,
 }: HabitsContentProps) => (
   <>
     {error && <ErrorBanner error={error} onRetry={onRetry} />}
     {loading ? (
       <LoadingSpinner />
     ) : (
-      <HabitList
-        habits={habits}
-        columns={columns}
-        gridGutter={gridGutter}
-        renderItem={renderItem}
-      />
+      <>
+        <HabitList
+          habits={habits}
+          columns={columns}
+          gridGutter={gridGutter}
+          renderItem={renderItem}
+        />
+        {pagination && (
+          <PaginationBar
+            page={pagination.page}
+            pageCount={pagination.pageCount}
+            onPrev={pagination.onPrev}
+            onNext={pagination.onNext}
+            scale={pagination.scale}
+          />
+        )}
+      </>
     )}
   </>
 );
+
+const usePagination = (habitCount: number) => {
+  const pageCount = Math.max(1, Math.ceil(habitCount / HABITS_PER_PAGE));
+  const [page, setPage] = useState(0);
+
+  useEffect(() => {
+    if (page > pageCount - 1) setPage(Math.max(0, pageCount - 1));
+  }, [page, pageCount]);
+
+  const goPrev = useCallback(() => setPage((p) => Math.max(0, p - 1)), []);
+  const goNext = useCallback(() => setPage((p) => Math.min(pageCount - 1, p + 1)), [pageCount]);
+
+  return { page: Math.min(page, pageCount - 1), pageCount, goPrev, goNext };
+};
 
 const useHabitsScreenState = () => {
   const habitsReturn = useHabits();
   const modals = useModalCoordinator();
   const habitStats = useHabitStats(modals.stats, habitsReturn.selectedHabit);
   const responsive = useResponsive();
+  const pagination = usePagination(habitsReturn.habits.length);
+  const pageOffset = pagination.page * HABITS_PER_PAGE;
+  const pagedHabits = useMemo(
+    () => habitsReturn.habits.slice(pageOffset, pageOffset + HABITS_PER_PAGE),
+    [habitsReturn.habits, pageOffset],
+  );
   const handleSelectMode = useSelectMode(habitsReturn.setMode, modals.closeAll);
   const renderHabitTile = useHabitTileRenderer(
     habitsReturn.mode,
     modals,
     habitsReturn.actions,
     habitsReturn.setSelectedHabit,
+    pageOffset,
   );
   const reveal = useToggleReveal(habitsReturn.habits, habitsReturn.actions, modals.closeAll);
   return {
@@ -481,16 +601,34 @@ const useHabitsScreenState = () => {
     modals,
     habitStats,
     responsive,
+    pagination,
+    pagedHabits,
     handleSelectMode,
     renderHabitTile,
     ...reveal,
   };
 };
 
+const buildPaginationProps = (
+  pagination: ReturnType<typeof usePagination>,
+  scale: number,
+): PaginationBarProps | null =>
+  pagination.pageCount > 1
+    ? {
+        page: pagination.page,
+        pageCount: pagination.pageCount,
+        onPrev: pagination.goPrev,
+        onNext: pagination.goNext,
+        scale,
+      }
+    : null;
+
 const HabitsScreen = () => {
   const state = useHabitsScreenState();
-  const { habits, loading, error, modals, actions, ui, responsive } = state;
+  const { habits, loading, error, modals, actions, ui, responsive, pagination, pagedHabits } =
+    state;
   const { columns, gridGutter, scale, isLG, isXL } = responsive;
+  const paginationProps = buildPaginationProps(pagination, scale);
   return (
     <SafeAreaView style={[styles.container, { padding: spacing(isLG || isXL ? 2 : 1, scale) }]}>
       <View style={styles.topBar}>
@@ -500,18 +638,20 @@ const HabitsScreen = () => {
           onToggle={modals.toggleMenu}
           onSelectMode={state.handleSelectMode}
           onOpenOnboarding={() => modals.open('onboarding')}
+          onOpenAddHabit={() => modals.open('addHabit')}
           allRevealed={state.allRevealed}
           onToggleReveal={state.handleToggleReveal}
         />
       </View>
       <HabitsContent
-        habits={habits}
+        habits={pagedHabits}
         loading={loading}
         error={error}
         columns={columns}
         gridGutter={gridGutter}
         renderItem={state.renderHabitTile}
         onRetry={() => void actions.loadHabits()}
+        pagination={paginationProps}
       />
       <EnergyFooter
         showCTA={ui.showEnergyCTA}
