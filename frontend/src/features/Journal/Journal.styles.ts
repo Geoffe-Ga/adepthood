@@ -228,6 +228,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: SPACING.xl,
+    // The parent FlatList is `inverted`, which applies scaleY(-1) to its
+    // contents — including ListEmptyComponent. Counter-flip here so the
+    // heading reads top-to-bottom, left-to-right.
+    transform: [{ scaleY: -1 }],
   },
   emptyIcon: {
     fontSize: 48,
