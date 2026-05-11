@@ -216,6 +216,75 @@ def _ensure_final_response(final_response: LLMResponse | None) -> LLMResponse:
     return final_response
 
 
+def _start_disconnect_watcher(request: Request | None) -> asyncio.Task[None] | None:
+    """Spin up the disconnect-watcher task if both a request and a current task exist.
+
+    Returns ``None`` when the caller cannot supply a request (e.g. unit
+    tests that drive ``stream_bot_response`` directly) or when no
+    asyncio task is active (defensive: should never happen inside a real
+    handler).  Splitting this out drops a two-clause guard from
+    ``stream_bot_response`` so the generator's cyclomatic complexity
+    stays under xenon's A-rank cap.
+    """
+    if request is None:
+        return None
+    current_task = asyncio.current_task()
+    if current_task is None:  # pragma: no cover - defensive; never null in a handler
+        return None
+    return asyncio.create_task(_watch_for_disconnect(request, current_task))
+
+
+async def _stop_disconnect_watcher(watcher: asyncio.Task[None] | None) -> None:
+    """Cancel and await the disconnect watcher, swallowing the expected CancelledError.
+
+    Symmetric to ``_start_disconnect_watcher``; lives here so the
+    generator's ``finally`` block is a one-line cleanup call.
+    """
+    if watcher is None:
+        return
+    watcher.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await watcher
+
+
+async def _drive_stream_to_completion(
+    session: AsyncSession,
+    user_id: int,
+    context: PreflightedRequest,
+    history: list[dict[str, str]],
+) -> AsyncIterator[bytes]:
+    """Drain the provider, persist + commit on success, yield SSE events.
+
+    Extracted from ``stream_bot_response`` so the outer generator's
+    exception-handler shell stays under xenon's A-rank cyclomatic-
+    complexity cap.  This helper owns the happy-path branching (yield
+    each chunk, capture final, commit) while the caller owns the
+    cancel / provider-error / cleanup branches.
+    """
+    final_response: LLMResponse | None = None
+    # BUG-BM-007: true pass-through — yield each chunk as it arrives from
+    # the provider instead of collecting all chunks first.
+    async for chunk_text, final in _botmason.generate_response_stream(
+        context.message, history, api_key=context.api_key
+    ):
+        if chunk_text:
+            yield sse_event("chunk", {"text": chunk_text})
+        if final is not None:
+            final_response = final
+
+    resolved_final = _ensure_final_response(final_response)
+
+    # Stream completed successfully — persist and commit.
+    await persist_user_message(session, user_id, context.message)
+    yield await finalise_stream_commit(
+        session=session,
+        current_user=user_id,
+        final_response=resolved_final,
+        new_balance=context.spent.offering_balance,
+        remaining_messages=context.remaining_messages,
+    )
+
+
 async def stream_bot_response(
     session: AsyncSession,
     user_id: int,
@@ -249,42 +318,13 @@ async def stream_bot_response(
     history = await load_recent_conversation(session, user_id)
 
     # BUG-BM-006: spin up the disconnect watcher if we have a request object.
-    # The watcher runs as a background task and cancels the current task if
-    # the client disconnects.
-    current_task = asyncio.current_task()
-    watcher: asyncio.Task[None] | None = None
-    if context.request is not None and current_task is not None:
-        watcher = asyncio.create_task(_watch_for_disconnect(context.request, current_task))
+    watcher = _start_disconnect_watcher(context.request)
 
     try:
-        final_response: LLMResponse | None = None
-
-        # BUG-BM-007: true pass-through — yield each chunk as it arrives from
-        # the provider instead of collecting all chunks first.
-        async for chunk_text, final in _botmason.generate_response_stream(
-            context.message, history, api_key=context.api_key
-        ):
-            if chunk_text:
-                yield sse_event("chunk", {"text": chunk_text})
-            if final is not None:
-                final_response = final
-
-        resolved_final = _ensure_final_response(final_response)
-
-        # Stream completed successfully — persist and commit.
-        await persist_user_message(session, user_id, context.message)
-        complete_event = await finalise_stream_commit(
-            session=session,
-            current_user=user_id,
-            final_response=resolved_final,
-            new_balance=context.spent.offering_balance,
-            remaining_messages=context.remaining_messages,
-        )
-        yield complete_event
+        async for event in _drive_stream_to_completion(session, user_id, context, history):
+            yield event
 
     except asyncio.CancelledError:
-        # Client disconnected (BUG-BM-006): rollback the uncommitted wallet
-        # deduction so the user is not charged for the abandoned stream.
         logger.info(
             "stream_cancelled_by_disconnect for user_id=%s; rolling back deduction", user_id
         )
@@ -292,18 +332,12 @@ async def stream_bot_response(
         raise  # Re-raise so Starlette can close the connection cleanly.
 
     except Exception:
-        # BUG-BM-013: BUG-INFRA-011: provider error — rollback the uncommitted
-        # wallet deduction so the user is not charged for a failed turn.
         logger.exception("Stream provider error for user_id=%s", user_id)
         await _rollback_quietly(session, user_id, "provider_error")
         yield sse_event("error", {"status": 502, "detail": "llm_provider_error"})
 
     finally:
-        # Cancel the watcher regardless of how we exited.
-        if watcher is not None:
-            watcher.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await watcher
+        await _stop_disconnect_watcher(watcher)
 
 
 async def finalise_stream_commit(

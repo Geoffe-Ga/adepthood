@@ -121,6 +121,59 @@ def _idempotency_cache_key(user_id: int, raw_key: str) -> str:
 _IDEMPOTENCY_STORE: dict[str, int] = {}
 
 
+async def _lookup_idempotent_session(
+    session: AsyncSession,
+    user_id: int,
+    idempotency_key: str,
+) -> PracticeSession | None:
+    """Return the cached ``PracticeSession`` row for an idempotency key, if any.
+
+    Split out of ``create_session`` to keep the route handler under
+    xenon's A-rank complexity cap.  Returns ``None`` when no cached
+    session id is known OR when the cached id no longer resolves (the
+    row was deleted between requests, in which case the next POST is
+    treated as a fresh log).
+    """
+    cache_key = _idempotency_cache_key(user_id, idempotency_key)
+    existing_id = _IDEMPOTENCY_STORE.get(cache_key)
+    if existing_id is None:
+        return None
+    result = await session.execute(select(PracticeSession).where(PracticeSession.id == existing_id))
+    return result.scalars().first()
+
+
+def _remember_idempotent_session(user_id: int, idempotency_key: str, session_id: int) -> None:
+    """Persist the ``(user_id, idempotency_key) → session_id`` mapping for future replays."""
+    cache_key = _idempotency_cache_key(user_id, idempotency_key)
+    _IDEMPOTENCY_STORE[cache_key] = session_id
+
+
+def _build_practice_session(
+    *, user_id: int, payload: PracticeSessionCreate, practice: Practice
+) -> PracticeSession:
+    """Construct an unpersisted ``PracticeSession`` row from the create payload.
+
+    The conditional ``mode_metadata.model_dump()`` adds a branch that
+    pushes ``create_session`` above xenon's A-rank cyclomatic-complexity
+    cap; lifting the row construction into a helper keeps the route
+    handler simple.
+    """
+    mode_metadata = (
+        payload.mode_metadata.model_dump() if payload.mode_metadata is not None else None
+    )
+    return PracticeSession(
+        user_id=user_id,
+        user_practice_id=payload.user_practice_id,
+        duration_minutes=payload.duration_minutes,
+        reflection=payload.reflection,
+        timestamp=payload.ended_at,
+        mode=practice.mode,
+        mode_metadata=mode_metadata,
+        completed=payload.completed,
+        insight=payload.insight,
+    )
+
+
 @router.post(
     "/",
     response_model=PracticeSessionResponse,
@@ -147,39 +200,17 @@ async def create_session(
     """
     # BUG-PRACTICE-007: idempotency check before any DB work.
     if idempotency_key is not None:
-        cache_key = _idempotency_cache_key(current_user, idempotency_key)
-        existing_id = _IDEMPOTENCY_STORE.get(cache_key)
-        if existing_id is not None:
-            existing = (
-                (
-                    await session.execute(
-                        select(PracticeSession).where(PracticeSession.id == existing_id)
-                    )
-                )
-                .scalars()
-                .first()
-            )
-            if existing is not None:
-                return existing
+        cached = await _lookup_idempotent_session(session, current_user, idempotency_key)
+        if cached is not None:
+            return cached
 
     user_practice = await _resolve_user_practice_for_session(
         session, payload.user_practice_id, current_user
     )
     practice = await _resolve_practice_with_mode(session, user_practice, payload)
 
-    duration_minutes = payload.duration_minutes
-    practice_session = PracticeSession(
-        user_id=current_user,
-        user_practice_id=payload.user_practice_id,
-        duration_minutes=duration_minutes,
-        reflection=payload.reflection,
-        timestamp=payload.ended_at,
-        mode=practice.mode,
-        mode_metadata=(
-            payload.mode_metadata.model_dump() if payload.mode_metadata is not None else None
-        ),
-        completed=payload.completed,
-        insight=payload.insight,
+    practice_session = _build_practice_session(
+        user_id=current_user, payload=payload, practice=practice
     )
     session.add(practice_session)
     await session.commit()
@@ -187,15 +218,14 @@ async def create_session(
 
     # Cache the new session id against the idempotency key so retries are deduplicated.
     if idempotency_key is not None and practice_session.id is not None:
-        cache_key = _idempotency_cache_key(current_user, idempotency_key)
-        _IDEMPOTENCY_STORE[cache_key] = practice_session.id
+        _remember_idempotent_session(current_user, idempotency_key, practice_session.id)
 
     logger.info(
         "practice_session_logged",
         extra={
             "user_id": current_user,
             "user_practice_id": payload.user_practice_id,
-            "duration_minutes": duration_minutes,
+            "duration_minutes": payload.duration_minutes,
             "mode": practice.mode,
             "completed": payload.completed,
         },
