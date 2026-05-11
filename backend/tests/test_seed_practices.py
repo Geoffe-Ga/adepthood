@@ -20,6 +20,11 @@ from seed_practices import (
 from seed_stages import STAGE_DEFINITIONS
 
 _EXPECTED_PRESET_COUNT = 10
+#: Stage number outside the canonical 1..10 range. Used by the
+#: name-collision test to plant a user submission that the seeder must
+#: ignore — the bare ``Practice`` model has no FK or range check on
+#: ``stage_number``, so any out-of-range integer works.
+_OUT_OF_RANGE_STAGE = 999
 _SENSE_ORDER: tuple[tuple[str, int], ...] = (
     ("sight", 5),
     ("touch", 4),
@@ -65,7 +70,7 @@ async def test_seed_practices_does_not_collide_with_user_named_practice(
     as the stage 1 preset must not suppress the stage 1 insert.
     """
     fake = Practice(
-        stage_number=999,  # outside the canonical 1..10 range
+        stage_number=_OUT_OF_RANGE_STAGE,
         name=PRESET_PRACTICES[0]["name"],
         description="user submission",
         instructions="user instructions",

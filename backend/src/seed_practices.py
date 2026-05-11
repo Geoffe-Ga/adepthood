@@ -11,14 +11,21 @@ being inserted.
 ``STAGE_TO_PRESET_NAME`` is exported for the frequency-banner endpoint
 (ritual-05) which needs to look up "what's the canonical practice for the
 user's current stage" without re-encoding the table here.
+
+Call :func:`seed_stages.seed_stages` before this seeder so a ``CourseStage``
+row exists for each preset's ``stage_number``. There's no FK from
+``Practice.stage_number`` to ``CourseStage.stage_number`` so the seeder
+won't crash without it, but downstream readers (e.g. the frequency-banner
+endpoint) assume both tables are populated.
 """
 
 from __future__ import annotations
 
+from types import MappingProxyType
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from models.practice import Practice
 from schemas.practice_mode_config import ModeConfigAdapter
@@ -176,19 +183,32 @@ if len(set(_stage_numbers)) != len(_stage_numbers):
     msg = f"Duplicate stage_number in PRESET_PRACTICES: {_dupes}"
     raise ValueError(msg)
 
-PRESET_PRACTICES = _PRESET_PRACTICES
+#: Immutable view of the preset definitions. Tuple (not list) so callers
+#: can't accidentally ``.append()`` or ``.clear()`` and silently de-sync
+#: :data:`STAGE_TO_PRESET_NAME`.
+PRESET_PRACTICES: tuple[dict[str, Any], ...] = tuple(_PRESET_PRACTICES)
 
-#: Lookup table consumed by ritual-05's frequency-banner endpoint.
-STAGE_TO_PRESET_NAME: dict[int, str] = {p["stage_number"]: p["name"] for p in PRESET_PRACTICES}
+#: Read-only lookup consumed by ritual-05's frequency-banner endpoint.
+#: ``MappingProxyType`` forbids mutation so the table can't drift from
+#: :data:`PRESET_PRACTICES` after import.
+STAGE_TO_PRESET_NAME: MappingProxyType[int, str] = MappingProxyType(
+    {p["stage_number"]: p["name"] for p in PRESET_PRACTICES}
+)
 
 
 async def seed_practices(session: AsyncSession) -> int:
     """Insert preset practices that don't already exist by ``(stage, name)``.
 
     Returns the number of rows inserted. Idempotent: re-running on a
-    populated DB returns 0.
+    populated DB returns 0. The existence query filters on
+    ``submitted_by_user_id IS NULL`` so user submissions can't shadow a
+    preset by colliding on ``(stage_number, name)``.
     """
-    result = await session.execute(select(Practice.stage_number, Practice.name))
+    result = await session.execute(
+        select(Practice.stage_number, Practice.name).where(
+            col(Practice.submitted_by_user_id).is_(None)
+        )
+    )
     existing: set[tuple[int, str]] = {(row[0], row[1]) for row in result.all()}
 
     inserted = 0
