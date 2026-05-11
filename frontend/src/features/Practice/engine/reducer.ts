@@ -6,10 +6,7 @@ import type {
   RepCounterConfig,
   SenseGroundingConfig,
 } from './types';
-import { TAROT_DECK_SIZE } from './types';
-
-const MS_PER_MINUTE = 60_000;
-const DEFAULT_TAROT_MINUTES = 5;
+import { DEFAULT_TAROT_MINUTES, MS_PER_MINUTE, TAROT_DECK_SIZE } from './types';
 
 export function initialState(config: ModeConfig, startCardIndex = 0): EngineState {
   return {
@@ -44,7 +41,7 @@ export function ritualReducer(
     case 'RESUME':
       return handleResume(state, action.now);
     case 'CANCEL':
-      return initialState(config, state.currentStepIndex);
+      return handleCancel(state, config);
     case 'COMPLETE':
       return handleComplete(state, action.now);
     case 'TICK':
@@ -77,6 +74,11 @@ function handleStart(state: EngineState, now: number, config: ModeConfig): Engin
     },
     0,
   );
+}
+
+function handleCancel(state: EngineState, config: ModeConfig): EngineState {
+  if (state.status === 'idle') return state;
+  return initialState(config, state.currentStepIndex);
 }
 
 function handleResume(state: EngineState, now: number): EngineState {

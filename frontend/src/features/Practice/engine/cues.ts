@@ -6,11 +6,10 @@ import type {
   ModeConfig,
   TarotConfig,
 } from './types';
+import { DEFAULT_TAROT_MINUTES, MS_PER_MINUTE } from './types';
 
-const MS_PER_MINUTE = 60_000;
 // Defensive: at bpm=240 over the max session this would otherwise blow up.
 const MAX_METRONOME_TICKS = 10_000;
-const DEFAULT_TAROT_MINUTES = 5;
 
 export function scheduledCues(config: ModeConfig): readonly Cue[] {
   switch (config.mode) {

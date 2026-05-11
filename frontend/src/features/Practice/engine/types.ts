@@ -25,6 +25,7 @@ export interface MeditationTimerConfig {
 
 export interface CountUpConfig {
   mode: 'count_up';
+  /** View-layer only: nudge copy after this much elapsed time. No engine effect. */
   soft_cap_minutes?: number | null;
 }
 
@@ -67,6 +68,7 @@ export interface TarotConfig {
   mode: 'tarot';
   deck: 'major_arcana';
   per_card_minutes?: number;
+  /** View-layer only: suppress the countdown ring during the sit. No engine effect. */
   hide_timer_during_meditation?: boolean;
 }
 
@@ -137,4 +139,7 @@ export type EngineAction =
   | { type: 'TAP' }
   | { type: 'ADVANCE_STEP' };
 
+export const MS_PER_MINUTE = 60_000;
+export const DEFAULT_TAROT_MINUTES = 5;
+/** 22 cards in a major arcana deck; tarot's cycle wraps modulo this. */
 export const TAROT_DECK_SIZE = 22;

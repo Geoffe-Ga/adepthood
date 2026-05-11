@@ -314,6 +314,19 @@ describe('ritualReducer — guard rails', () => {
     expect(s.elapsedMs).toBe(30_000);
   });
 
+  it('CANCEL on idle returns the same state reference (no extra allocation)', () => {
+    const idle = initialState({ mode: 'meditation_timer', duration_minutes: 5 });
+    const after = ritualReducer(
+      idle,
+      { type: 'CANCEL' },
+      {
+        mode: 'meditation_timer',
+        duration_minutes: 5,
+      },
+    );
+    expect(after).toBe(idle);
+  });
+
   it('TICK on a 0-minute meditation_timer guards against divide-by-zero', () => {
     const zero: MeditationTimerConfig = { mode: 'meditation_timer', duration_minutes: 0 };
     const s = drive(zero, [

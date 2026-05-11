@@ -74,6 +74,8 @@ describe('useRitualEngine', () => {
 
     act(() => jest.advanceTimersByTime(30_000));
     expect(result.current[0].cuesStruck).toBe(2);
+    expect(deps.audio.play).toHaveBeenCalledWith('halfway_bell');
+    expect(deps.haptics.cue).toHaveBeenCalledWith('halfway_bell');
 
     act(() => jest.advanceTimersByTime(30_000));
     expect(result.current[0].status).toBe('complete');
@@ -93,8 +95,8 @@ describe('useRitualEngine', () => {
     act(() => jest.advanceTimersByTime(30_000));
     act(() => result.current[1].resume());
     act(() => jest.advanceTimersByTime(5_000));
-    expect(result.current[0].elapsedMs).toBeGreaterThanOrEqual(15_000);
-    expect(result.current[0].elapsedMs).toBeLessThan(20_000);
+    // Fake timers + wall-clock subtraction make this exact: 10s + 5s = 15s.
+    expect(result.current[0].elapsedMs).toBe(15_000);
 
     act(() => result.current[1].cancel());
     expect(result.current[0].status).toBe('idle');
@@ -127,8 +129,23 @@ describe('useRitualEngine', () => {
     expect(tarotHook.result.current[0].status).toBe('complete');
   });
 
-  it('clears the ticker on unmount and on transition to complete', () => {
+  it('clears the ticker when status transitions away from running', () => {
     const config: MeditationTimerConfig = { mode: 'meditation_timer', duration_minutes: 1 };
+    const deps = makeDeps();
+    const setSpy = jest.spyOn(deps, 'setIntervalMs');
+    const clearSpy = jest.spyOn(deps, 'clearIntervalMs');
+    const { result } = renderEngine(config, deps);
+
+    act(() => result.current[1].start());
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    act(() => jest.advanceTimersByTime(60_000));
+    expect(result.current[0].status).toBe('complete');
+    // status transition from 'running' → 'complete' fires the effect cleanup.
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the ticker on unmount while still running', () => {
+    const config: MeditationTimerConfig = { mode: 'meditation_timer', duration_minutes: 5 };
     const deps = makeDeps();
     const setSpy = jest.spyOn(deps, 'setIntervalMs');
     const clearSpy = jest.spyOn(deps, 'clearIntervalMs');
@@ -136,13 +153,9 @@ describe('useRitualEngine', () => {
 
     act(() => result.current[1].start());
     expect(setSpy).toHaveBeenCalledTimes(1);
-    act(() => jest.advanceTimersByTime(60_000));
-    expect(result.current[0].status).toBe('complete');
-    expect(clearSpy).toHaveBeenCalled();
-
-    const before = clearSpy.mock.calls.length;
+    expect(clearSpy).not.toHaveBeenCalled();
     unmount();
-    expect(clearSpy.mock.calls.length).toBeGreaterThanOrEqual(before);
+    expect(clearSpy).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to default Date.now / setInterval / noop adapters', () => {

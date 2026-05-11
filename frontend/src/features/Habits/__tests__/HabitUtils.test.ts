@@ -1,5 +1,5 @@
 /* eslint-env jest */
-/* global describe, test, expect */
+/* global describe, test, expect, jest */
 import { validate as uuidValidate } from 'uuid';
 
 import { VICTORY_COLOR } from '../../../design/tokens';
@@ -550,19 +550,25 @@ describe('HabitUtils', () => {
     // bucketed into NY's calendar day, not UTC's.
     // -----------------------------------------------------------------------
     test('calculateTodaysProgress buckets by the supplied IANA timezone', () => {
-      // 04:00 UTC on a given day == midnight previous day in America/Anchorage
-      // (UTC-9 in winter, UTC-8 in summer -- both flip the calendar date).
-      const earlyUtc = new Date();
-      earlyUtc.setUTCHours(4, 0, 0, 0);
-      const habit: Habit = {
-        ...baseHabit,
-        goals: additiveGoals,
-        completions: [{ id: 'tz-1', timestamp: earlyUtc, completed_units: 2 }],
-      };
-      // In UTC: today.
-      expect(calculateTodaysProgress(habit, 'UTC')).toBe(2);
-      // In Anchorage: still yesterday.
-      expect(calculateTodaysProgress(habit, 'America/Anchorage')).toBe(0);
+      // Anchor "now" to 12:00 UTC so the relationship between the completion
+      // (04:00 UTC same day) and the UTC/Anchorage "today" is deterministic
+      // regardless of when CI runs. Without this anchor, runs in the early
+      // UTC morning (before ~08:00 UTC) saw Anchorage's "today" coincide with
+      // the completion's previous-day bucket and flipped the assertion.
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-05-15T12:00:00.000Z'));
+      try {
+        const earlyUtc = new Date('2026-05-15T04:00:00.000Z');
+        const habit: Habit = {
+          ...baseHabit,
+          goals: additiveGoals,
+          completions: [{ id: 'tz-1', timestamp: earlyUtc, completed_units: 2 }],
+        };
+        expect(calculateTodaysProgress(habit, 'UTC')).toBe(2);
+        expect(calculateTodaysProgress(habit, 'America/Anchorage')).toBe(0);
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     test('isGoalAchieved tracks today, not all-time', () => {
