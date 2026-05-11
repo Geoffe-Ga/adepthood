@@ -1637,7 +1637,7 @@ export interface FrequencyResponse {
   banner_text: string;
 }
 
-function validateFrequencyResponse(data: unknown): data is FrequencyResponse {
+export function validateFrequencyResponse(data: unknown): data is FrequencyResponse {
   if (typeof data !== 'object' || data === null) return false;
   const f = data as Record<string, unknown>;
   return (

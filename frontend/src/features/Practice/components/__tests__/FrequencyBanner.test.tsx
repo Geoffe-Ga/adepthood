@@ -4,6 +4,7 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
 import type { FrequencyResponse } from '@/api';
+import { COLOR_PALETTE } from '@/features/Practice/data/colorPalette';
 
 const samplePayload: FrequencyResponse = {
   stage_number: 5,
@@ -82,7 +83,10 @@ describe('FrequencyBanner', () => {
     const flatStyle = Array.isArray(content.props.style)
       ? Object.assign({}, ...content.props.style)
       : content.props.style;
-    expect(flatStyle.backgroundColor).toBe('#f29f67');
+    // Track the palette constant rather than a hardcoded hex so a designer
+    // tweak to the Orange swatch doesn't break this assertion before the
+    // WCAG-contrast contract has a chance to flag it.
+    expect(flatStyle.backgroundColor).toBe(COLOR_PALETTE.Orange.bg);
   });
 
   it('falls back to the neutral swatch when the server sends an unknown colour', () => {
@@ -97,8 +101,8 @@ describe('FrequencyBanner', () => {
     const flatStyle = Array.isArray(content.props.style)
       ? Object.assign({}, ...content.props.style)
       : content.props.style;
-    // Clear Light fallback (#ffffff) keeps the banner legible.
-    expect(flatStyle.backgroundColor).toBe('#ffffff');
+    // Clear Light fallback keeps the banner legible.
+    expect(flatStyle.backgroundColor).toBe(COLOR_PALETTE['Clear Light'].bg);
   });
 
   it('invokes the onSwitch callback when the banner body is tapped', () => {

@@ -260,7 +260,9 @@ function SubmitOwnButton({ onPress }: { onPress: () => void }) {
   );
 }
 
-const noop = () => {};
+// Swallow taps on the sheet body so they don't bubble to the backdrop
+// `Pressable` and trigger a dismiss.
+const swallowTap = () => {};
 
 export function PracticeSwitcherSheet(props: PracticeSwitcherSheetProps) {
   const { visible, currentPracticeId, onClose, onSubmitOwn } = props;
@@ -286,7 +288,7 @@ export function PracticeSwitcherSheet(props: PracticeSwitcherSheetProps) {
         style={styles.backdrop}
         testID="practice-switcher-backdrop"
       >
-        <Pressable onPress={noop} style={styles.sheet}>
+        <Pressable onPress={swallowTap} style={styles.sheet}>
           <View style={styles.handle} />
           <SheetHeader onClose={onClose} />
           {state.writeError && (

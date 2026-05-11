@@ -75,7 +75,7 @@ interface RenderOptions {
   onReplaced?: (_practice: UserPractice) => void;
   // `undefined` is meaningful (it should hide the CTA), so the helper has
   // to distinguish "not provided" from "explicitly undefined". We use the
-  // `'submit-own' in opts` check below to preserve that distinction.
+  // `'onSubmitOwn' in opts` check below to preserve that distinction.
   onSubmitOwn?: () => void;
 }
 
@@ -211,6 +211,15 @@ describe('PracticeSwitcherSheet', () => {
     const { findByTestId } = renderSheet({ onClose });
     const close = await findByTestId('practice-switcher-close');
     fireEvent.press(close);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('tapping the backdrop fires onClose (tap-to-dismiss gesture)', async () => {
+    mockPracticesList.mockResolvedValue(samplePractices);
+    const onClose = jest.fn();
+    const { findByTestId } = renderSheet({ onClose });
+    const backdrop = await findByTestId('practice-switcher-backdrop');
+    fireEvent.press(backdrop);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

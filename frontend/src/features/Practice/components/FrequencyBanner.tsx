@@ -65,14 +65,14 @@ function BannerContent({ data, swatch, onSwitch }: BannerContentProps) {
   return (
     <TouchableOpacity
       accessibilityRole="button"
-      accessibilityLabel={`Tap to switch your practice. ${data.banner_text}`}
+      accessibilityLabel={data.banner_text}
+      accessibilityHint="Tap to switch your current practice"
       activeOpacity={0.85}
       onPress={onSwitch}
       style={[styles.content, { backgroundColor: swatch.bg }]}
       testID="frequency-banner-content"
     >
       <View style={styles.headerRow}>
-        <View style={[styles.colorDot, { backgroundColor: swatch.bg, borderColor: swatch.text }]} />
         <View style={[styles.aspectChip, { borderColor: swatch.text }]}>
           <Text style={[styles.aspectChipText, textStyle]} testID="frequency-banner-aspect">
             {data.aspect}
@@ -153,13 +153,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: SPACING.sm,
-  },
-  colorDot: {
-    width: 18,
-    height: 18,
-    borderRadius: BORDER_RADIUS.circle,
-    borderWidth: 1.5,
-    marginRight: SPACING.sm,
   },
   aspectChip: {
     paddingHorizontal: SPACING.sm,
