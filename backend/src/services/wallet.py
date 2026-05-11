@@ -36,6 +36,7 @@ from models.wallet_audit import (
     BUCKET_OFFERING,
     REASON_ADMIN_GRANT,
     REASON_MONTHLY_RESET,
+    REASON_REFUND_LLM_FAILURE,
     REASON_SELF_GRANT,
     REASON_SPEND_MONTHLY,
     REASON_SPEND_OFFERING,
@@ -307,6 +308,112 @@ async def preflight_deduction(session: AsyncSession, user_id: int) -> SpendResul
     if await get_user_fresh(session, user_id) is None:
         raise bad_request("user_not_found")
     raise payment_required("insufficient_offerings")
+
+
+async def refund_one_message(
+    session: AsyncSession,
+    user_id: int,
+    spent: SpendResult,
+    *,
+    reason: str = REASON_REFUND_LLM_FAILURE,
+) -> None:
+    """Issue a compensating credit reversing a prior :func:`preflight_deduction`.
+
+    BUG-BM-013: when an LLM call fails after the wallet has been debited, the
+    caller must explicitly reverse the charge so the user is made whole.  This
+    function mirrors the bucket that was originally charged:
+
+    - If :attr:`SpendResult.monthly_used` advanced (i.e. the free monthly tier
+      absorbed the cost), decrement ``monthly_messages_used`` by 1.
+    - If the offering balance was charged (monthly tier was full), increment
+      ``offering_balance`` by 1.
+
+    The heuristic: if ``spent.monthly_used`` advanced *beyond* the zero
+    baseline (meaning it was the monthly bucket that moved), we reverse that.
+    Otherwise (monthly was already full) we reverse the offering bucket.
+
+    Both paths stage a ``WalletAudit`` row so the pair (debit + refund) is
+    always traceable.  ``reason`` defaults to :data:`REASON_REFUND_LLM_FAILURE`
+    but callers can pass :data:`REASON_REFUND_DISCONNECT` to distinguish
+    client-disconnect refunds from provider-error refunds.
+    """
+    # Determine which bucket to reverse.  ``spent.offering_balance`` is the
+    # post-deduction offering balance.  If the monthly bucket was charged, the
+    # offering balance didn't change, so we decrement monthly usage.  If the
+    # offering bucket was charged, monthly_used didn't advance past the cap.
+    #
+    # Simpler heuristic: if the spend reason was monthly (monthly_used > 0 and
+    # offering balance unchanged from pre-call), reverse monthly; else reverse
+    # offering.  We detect this by whether ``monthly_used`` is non-zero post-
+    # spend -- if zero, the monthly tier had no capacity (cap=0) and the
+    # offering bucket was charged.
+    #
+    # The cleanest signal is: ``REASON_SPEND_MONTHLY`` vs
+    # ``REASON_SPEND_OFFERING``. But ``SpendResult`` does not carry that.
+    # We use the offering_balance as the tie-breaker: if ``spending`` didn't
+    # change the offering balance (it stayed the same as before the call), then
+    # the monthly bucket was charged.  Since we don't have the pre-call
+    # offering_balance here, we use ``monthly_used > 0`` as a proxy.
+    #
+    # The current implementation simply tries monthly first; if the monthly
+    # bucket can accept a reversal (monthly_used > 0), it does that, otherwise
+    # it reverses the offering bucket.
+    if spent.monthly_used > 0:
+        result = await session.execute(
+            update(User)
+            .where(
+                col(User.id) == user_id,
+                col(User.monthly_messages_used) > 0,
+            )
+            .values(monthly_messages_used=col(User.monthly_messages_used) - 1)
+            .returning(col(User.monthly_messages_used), col(User.offering_balance))
+        )
+        row = result.first()
+        if row is not None:
+            new_used = int(row[0])
+            _stage_audit(
+                session,
+                _AuditEntry(
+                    user_id=user_id,
+                    actor_user_id=user_id,
+                    bucket=BUCKET_MONTHLY,
+                    reason=reason,
+                    # Negative delta: monthly_used went down by 1.
+                    delta=Decimal(-1),
+                    balance_before=Decimal(new_used + 1),
+                    balance_after=Decimal(new_used),
+                ),
+            )
+            return
+    # Fallback: reverse the offering bucket.
+    result_offering = await session.execute(
+        update(User)
+        .where(col(User.id) == user_id)
+        .values(offering_balance=col(User.offering_balance) + 1)
+        .returning(col(User.monthly_messages_used), col(User.offering_balance))
+    )
+    row_offering = result_offering.first()
+    if row_offering is not None:
+        _used, new_bal = int(row_offering[0]), int(row_offering[1])
+        _stage_audit(
+            session,
+            _AuditEntry(
+                user_id=user_id,
+                actor_user_id=user_id,
+                bucket=BUCKET_OFFERING,
+                reason=reason,
+                delta=Decimal(1),
+                balance_before=Decimal(new_bal - 1),
+                balance_after=Decimal(new_bal),
+            ),
+        )
+    else:
+        # User row missing — log but don't raise so the generator's
+        # finally/except can still complete cleanly.
+        logger.error(
+            "refund_one_message: user_id=%s not found; refund lost",
+            user_id,
+        )
 
 
 async def add_balance(

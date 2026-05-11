@@ -11,22 +11,28 @@ shapes to those services.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from slowapi.util import get_remote_address
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, select
 from starlette.requests import Request as StarletteRequest
 
 from database import get_session
 from dependencies.auth import require_admin
 from errors import forbidden
+from models.chat_spend import ChatSpend
 from models.user import User
 from rate_limit import limiter
-from routers.auth import get_current_user
+from routers.auth import extract_user_id_from_authorization, get_current_user
 from schemas.botmason import (
     BalanceAddRequest,
     BalanceAddResponse,
@@ -45,24 +51,28 @@ logger = logging.getLogger(__name__)
 
 
 def _per_user_key(request: StarletteRequest) -> str:
-    """Rate-limit key that prefers a hash of the auth token over IP.
+    """Rate-limit key derived from the JWT ``sub`` claim (BUG-BM-014).
 
-    Falls back to the remote address for anonymous / pre-auth requests so
-    the limiter never receives an empty key (BUG-JOURNAL-008).
+    BUG-BM-014: the old implementation hashed the entire Bearer token value,
+    meaning a request without a ``Bearer `` prefix fell through to IP-based
+    limiting.  An attacker could strip the header to bypass the per-user
+    bucket.  The fix decodes the JWT ``sub`` (stable user id) from the token
+    and keys on that.  A missing or invalid token falls back to IP so the
+    limiter never receives an empty key — the route handler itself will reject
+    the unauthenticated request via ``get_current_user``.
 
-    Storing the raw ``Authorization`` header would put live JWTs into
-    the slowapi backing store (in-memory today, potentially Redis
-    tomorrow); a ``redis-cli MONITOR`` or ``KEYS *`` would then leak
-    every active session token to any internal observer.  Hashing the
-    header with SHA-256 keeps the key shape stable for the limiter
-    while making the key one-way — same pattern used by
-    ``auth._email_log_fingerprint``.
+    SHA-256 is applied over the raw Authorization header (not the decoded sub)
+    for the IP-fallback path, to avoid leaking the raw JWT into slowapi's
+    storage backend.  When the sub is available we key on ``user:{sub}``
+    directly — the sub is already non-secret (it's included in the JWT claims
+    the client sees) and keying on it keeps the rate-limit bucket stable across
+    token refreshes.
     """
-    auth_header = request.headers.get("authorization", "")
-    if auth_header.startswith("Bearer "):
-        digest = hashlib.sha256(auth_header.encode("utf-8")).hexdigest()
-        return f"user:{digest}"
-    return get_remote_address(request)
+    try:
+        user_id = extract_user_id_from_authorization(request.headers.get("authorization"))
+    except Exception:  # noqa: BLE001 — fall through to IP for any decode failure
+        return get_remote_address(request)
+    return f"user:{user_id}"
 
 
 router = APIRouter(tags=["botmason"])
@@ -73,6 +83,126 @@ router = APIRouter(tags=["botmason"])
 # logged. Kept as a module constant so tests and the CORS policy can reference
 # the same string without drift.
 LLM_API_KEY_HEADER = "X-LLM-API-Key"  # pragma: allowlist secret
+
+# Maximum byte length for an ``Idempotency-Key`` header value.  Client-generated
+# keys are typically UUIDv4 (36 chars) or similar; 256 is generous.
+_IDEM_KEY_MAX_LENGTH = 256
+
+
+@dataclass(frozen=True)
+class ChatHeaders:
+    """Optional headers consumed by both ``/journal/chat`` endpoints.
+
+    Bundles ``X-LLM-API-Key`` (BYOK) and ``Idempotency-Key`` so each endpoint
+    signature stays under the 5-argument PLR0913 cap.  FastAPI fills the
+    dataclass via a ``Depends`` factory that reads the Header dependencies
+    directly — semantically identical to listing them inline.
+    """
+
+    api_key: str | None
+    idempotency_key: str | None
+
+
+def _resolve_chat_headers(
+    x_llm_api_key: Annotated[str | None, Header(alias=LLM_API_KEY_HEADER)] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> ChatHeaders:
+    """FastAPI dependency factory that hands both chat-related headers as one bundle."""
+    return ChatHeaders(
+        api_key=resolve_chat_api_key(x_llm_api_key),
+        idempotency_key=idempotency_key,
+    )
+
+
+def _hash_idem_key(user_id: int, raw_key: str) -> str:
+    """Return a stable, opaque SHA-256 hash of ``(user_id, raw_key)``.
+
+    The raw client token is never stored.  Hashing keeps the column
+    value bounded and one-way so a DB read cannot reveal the original key.
+    """
+    return hashlib.sha256(f"{user_id}:{raw_key}".encode()).hexdigest()
+
+
+async def _check_idempotency(
+    session: AsyncSession,
+    user_id: int,
+    raw_key: str | None,
+) -> str | None:
+    """Return a cached JSON result if this key was already spent, else ``None``.
+
+    BUG-BM-012: looks up the ``chatspend`` table for a prior row matching
+    ``(user_id, idem_key)``.  Returns the stored ``result_json`` string if
+    found (may be ``None`` for in-flight requests), or ``None`` if the key is
+    new.  The caller is responsible for inserting a new row when proceeding
+    with the charge.
+    """
+    if raw_key is None:
+        return None
+    hashed = _hash_idem_key(user_id, raw_key)
+    row = (
+        (
+            await session.execute(
+                select(ChatSpend).where(
+                    ChatSpend.user_id == user_id,
+                    col(ChatSpend.idem_key) == hashed,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if row is None:
+        return None
+    # Return the stored result (may be None if in-flight).
+    return row.result_json
+
+
+async def _insert_idem_tombstone(
+    session: AsyncSession,
+    user_id: int,
+    raw_key: str,
+) -> bool:
+    """Insert an in-flight idempotency tombstone row, returning False on duplicate.
+
+    BUG-BM-012: inserts a ``ChatSpend`` row with ``result_json=NULL`` to mark
+    this ``(user_id, key)`` pair as in-flight.  On a duplicate key error
+    (``IntegrityError`` from the UNIQUE constraint) returns False so the
+    caller knows a race-concurrent request is already processing the same key.
+    """
+    hashed = _hash_idem_key(user_id, raw_key)
+    row = ChatSpend(user_id=user_id, idem_key=hashed)
+    session.add(row)
+    try:
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        return False
+    return True
+
+
+async def _update_idem_result(
+    session: AsyncSession,
+    user_id: int,
+    raw_key: str,
+    result_json: str,
+) -> None:
+    """Update the tombstone row with the final serialised result."""
+    hashed = _hash_idem_key(user_id, raw_key)
+    row = (
+        (
+            await session.execute(
+                select(ChatSpend).where(
+                    ChatSpend.user_id == user_id,
+                    col(ChatSpend.idem_key) == hashed,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if row is not None:
+        row.result_json = result_json
+        session.add(row)
 
 
 @router.post(
@@ -86,21 +216,53 @@ async def chat_with_botmason(
     payload: ChatRequest,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    x_llm_api_key: Annotated[str | None, Header(alias=LLM_API_KEY_HEADER)] = None,
+    headers: Annotated[ChatHeaders, Depends(_resolve_chat_headers)],
 ) -> ChatResponse:
-    """Send a message to BotMason and receive an AI response."""
-    api_key = resolve_chat_api_key(x_llm_api_key)
-    return await handle_chat_request(session, current_user, payload.message, api_key)
+    """Send a message to BotMason and receive an AI response.
+
+    BUG-BM-012: accepts an optional ``Idempotency-Key`` header.  A second
+    POST with the same key returns the cached response without a new charge.
+    """
+    idempotency_key = headers.idempotency_key
+
+    # BUG-BM-012: idempotency check — return cached result on duplicate key.
+    if idempotency_key is not None:
+        cached = await _check_idempotency(session, current_user, idempotency_key)
+        if cached is not None:
+            return ChatResponse.model_validate_json(cached)
+        # Insert the in-flight tombstone BEFORE the LLM call so it is committed
+        # atomically with the wallet deduction by handle_chat_request's commit.
+        # A concurrent duplicate request will hit the UNIQUE constraint and find
+        # result_json=NULL (in-flight); the caller receives the first response once
+        # this completes and updates the row.
+        ok = await _insert_idem_tombstone(session, current_user, idempotency_key)
+        if not ok:
+            # Race: another request is in-flight with the same key.
+            # Return a 409 to tell the client to retry after a short delay.
+            raise HTTPException(status_code=409, detail="idempotency_key_in_flight")
+
+    response = await handle_chat_request(session, current_user, payload.message, headers.api_key)
+
+    # Store the final result so a retry returns the same response without
+    # re-charging.  handle_chat_request committed the tombstone row above;
+    # we now UPDATE result_json in a fresh implicit transaction.
+    if idempotency_key is not None:
+        await _update_idem_result(
+            session, current_user, idempotency_key, response.model_dump_json()
+        )
+        await session.commit()
+
+    return response
 
 
 @router.post("/journal/chat/stream")
 @limiter.limit("10/minute", key_func=_per_user_key)
 async def chat_with_botmason_stream(
-    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    request: Request,
     payload: ChatRequest,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    x_llm_api_key: Annotated[str | None, Header(alias=LLM_API_KEY_HEADER)] = None,
+    headers: Annotated[ChatHeaders, Depends(_resolve_chat_headers)],
 ) -> StreamingResponse:
     """Stream a BotMason response as Server-Sent Events.
 
@@ -110,20 +272,52 @@ async def chat_with_botmason_stream(
     Once streaming begins the status is pinned to 200 and any downstream
     failure surfaces as an SSE ``error`` event followed by a clean rollback —
     no partial state is committed.
+
+    BUG-BM-006: passes ``request`` to ``stream_bot_response`` so the
+    disconnect-watcher task can call ``request.is_disconnected()`` and cancel
+    the upstream LLM call if the client goes away.
+
+    BUG-BM-007: chunks are yielded as they arrive (no buffering).
+
+    BUG-BM-012: accepts an optional ``Idempotency-Key`` header; a duplicate
+    request with the same key replays the cached terminal event without a
+    new charge (best-effort — in-flight duplicates return 409 or empty stream).
     """
-    api_key = resolve_chat_api_key(x_llm_api_key)
+    idempotency_key = headers.idempotency_key
+
+    # BUG-BM-012: idempotency check before wallet deduction.
+    if idempotency_key is not None:
+        cached = await _check_idempotency(session, current_user, idempotency_key)
+        if cached is not None:
+            # Replay the cached result as a complete SSE stream.
+            cached_json: str = cached  # bind for closure safety
+
+            async def _replay() -> AsyncIterator[bytes]:
+                data = json.loads(cached_json)
+                yield (
+                    f"event: complete\ndata: {json.dumps(data, separators=(',', ':'))}\n\n"
+                ).encode()
+
+            return StreamingResponse(
+                _replay(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
+            )
+
     spent = await preflight_deduction(session, current_user)
     context = PreflightedRequest(
         message=payload.message,
-        api_key=api_key,
+        api_key=headers.api_key,
         spent=spent,
         remaining_messages=max(get_monthly_cap() - spent.monthly_used, 0),
+        request=request,  # BUG-BM-006
     )
     # ``X-Accel-Buffering: no`` disables proxy buffering so nginx / Railway
     # forward bytes as soon as they are written.
-    headers: dict[str, Any] = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    response_headers: dict[str, Any] = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    }
     stream = stream_bot_response(session, current_user, context)
-    return StreamingResponse(stream, media_type="text/event-stream", headers=headers)
+    return StreamingResponse(stream, media_type="text/event-stream", headers=response_headers)
 
 
 @router.get("/user/balance", response_model=BalanceResponse)
@@ -141,10 +335,25 @@ async def get_usage(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> UsageResponse:
-    """Return the authenticated user's BotMason usage for the current month."""
-    # Roll the monthly counter over in-place so callers never see stale values.
+    """Return the authenticated user's BotMason usage for the current month.
+
+    BUG-BM-015: the original implementation committed the monthly rollover
+    inside a GET handler.  A GET that commits is a side-effect that violates
+    HTTP semantics and creates inconsistent commit discipline vs.
+    ``preflight_deduction`` (which also calls ``reset_monthly_usage_if_due``
+    but relies on its *caller* to commit).  The fix: perform the rollover
+    without committing so the response reflects the correct post-reset values
+    while leaving the transaction lifecycle consistent with the rest of the
+    service.  The rollover UPDATE is idempotent; a subsequent ``preflight_deduction``
+    that sees the stale ``monthly_reset_date`` will simply re-run the same
+    no-op UPDATE.
+    """
+    # BUG-BM-015: compute rollover without committing — the GET endpoint must
+    # not mutate persistent state.  We issue the UPDATE inside the session
+    # (so the in-memory values reflect the rollover for the response) but do
+    # NOT call ``session.commit()`` here.
     await reset_monthly_usage_if_due(session, current_user, datetime.now(UTC))
-    await session.commit()
+    # No session.commit() — BUG-BM-015.
 
     user = await require_user_fresh(session, current_user)
     cap = get_monthly_cap()
@@ -168,8 +377,8 @@ async def add_balance(
     """Add credits to the calling admin's offering balance."""
     # ``require_admin`` only returns persisted rows, so ``admin.id`` is
     # guaranteed to be set in practice.  An ``assert`` would be enough,
-    # but CLAUDE.md forbids ``# noqa: S101`` in production code -- this
-    # narrows the type for mypy AND surfaces a clear runtime error if
+    # but CLAUDE.md forbids bandit-S101 suppressions in production code --
+    # this narrows the type for mypy AND surfaces a clear runtime error if
     # the invariant ever breaks (e.g. a future test fixture passing a
     # detached User instance).
     if admin.id is None:

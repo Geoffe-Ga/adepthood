@@ -48,6 +48,15 @@ REASON_SELF_GRANT = "self_grant"
 # the same as ``user_id`` for resets — they're scheduled
 # system-initiated mutations rather than admin actions.
 REASON_MONTHLY_RESET = "monthly_reset"
+# ``refund_llm_failure`` — compensating credit issued when an LLM call fails
+# after ``preflight_deduction`` has already debited the wallet (BUG-BM-013).
+# Recorded in the audit log so an operator can reconcile "charged then
+# refunded" pairs and flag any that lack a corresponding refund.
+REASON_REFUND_LLM_FAILURE = "refund_llm_failure"
+# ``refund_disconnect`` — compensating credit issued when the HTTP client
+# disconnects before the LLM stream completes (BUG-BM-006).  Distinct from
+# ``refund_llm_failure`` so each disconnect event is individually reportable.
+REASON_REFUND_DISCONNECT = "refund_disconnect"
 
 # Bucket tokens — which side of the wallet was changed.  ``monthly`` is
 # the free per-calendar-month allocation; ``offering`` is the durable
