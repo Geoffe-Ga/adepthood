@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
+from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col
 
 from models.practice import Practice
 from models.practice_session import PracticeSession
+from models.user import User
 
 _DEFAULT_DURATION = 5.0
 _EXPECTED_SESSION_COUNT = 2
@@ -670,3 +674,138 @@ async def test_insights_scoped_to_user(async_client: AsyncClient, db_session: As
     body = resp.json()
     assert body["per_mode_counts"] == {}
     assert body["last_insight"] is None
+
+
+# -- BUG-PRACTICE-007: idempotency key on session creation ------------------
+
+
+@pytest.mark.asyncio
+async def test_duplicate_idempotency_key_returns_same_session(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """POSTing with the same Idempotency-Key twice returns the first session (BUG-PRACTICE-007).
+
+    A mobile client that retries after a network blip must not create two
+    sessions with the same idempotency key -- the second response must echo the
+    first row without incrementing the week count.
+    """
+    headers, _ = await _signup(async_client)
+    up_id = await _create_user_practice(async_client, db_session, headers)
+    idem_headers = {**headers, "Idempotency-Key": "test-idem-key-001"}
+
+    resp1 = await async_client.post(
+        "/practice-sessions/", json=_session_payload(up_id), headers=idem_headers
+    )
+    assert resp1.status_code == HTTPStatus.CREATED
+    first_id = resp1.json()["id"]
+
+    resp2 = await async_client.post(
+        "/practice-sessions/", json=_session_payload(up_id), headers=idem_headers
+    )
+    # Second POST with same idempotency key must return the cached row (200 or 201).
+    assert resp2.status_code in (HTTPStatus.OK, HTTPStatus.CREATED)
+    # Must be the SAME session row -- no duplicate created.
+    assert resp2.json()["id"] == first_id
+
+    # Exactly one session in the DB.
+    wk = await async_client.get("/practice-sessions/week-count", headers=headers)
+    assert wk.json()["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_different_idempotency_keys_create_separate_sessions(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Different idempotency keys are independent -- each creates a new session."""
+    headers, _ = await _signup(async_client)
+    up_id = await _create_user_practice(async_client, db_session, headers)
+
+    resp1 = await async_client.post(
+        "/practice-sessions/",
+        json=_session_payload(up_id),
+        headers={**headers, "Idempotency-Key": "key-a"},
+    )
+    resp2 = await async_client.post(
+        "/practice-sessions/",
+        json=_session_payload(up_id),
+        headers={**headers, "Idempotency-Key": "key-b"},
+    )
+    assert resp1.status_code == HTTPStatus.CREATED
+    assert resp2.status_code == HTTPStatus.CREATED
+    assert resp1.json()["id"] != resp2.json()["id"]
+
+    wk = await async_client.get("/practice-sessions/week-count", headers=headers)
+    assert wk.json()["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_no_idempotency_key_still_works(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """When the header is absent sessions are created normally (header is optional)."""
+    headers, _ = await _signup(async_client)
+    up_id = await _create_user_practice(async_client, db_session, headers)
+
+    resp = await async_client.post(
+        "/practice-sessions/", json=_session_payload(up_id), headers=headers
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+
+
+# -- BUG-PRACTICE-009: week_count uses user's local timezone ----------------
+
+
+@pytest.mark.asyncio
+async def test_week_count_uses_user_timezone_sunday_evening(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A session logged on UTC-Sunday evening lands in the *previous* local week.
+
+    BUG-PRACTICE-009: the old implementation used UTC Monday midnight as the
+    week boundary regardless of the user's timezone.  A user in UTC-8 on
+    Sunday at 20:00 local (= 04:00 UTC Monday) would see their Sunday session
+    counted in the "new" week.  The fix keyed the boundary on the user's
+    ``timezone`` column via ``ZoneInfo``.
+
+    This test sets the user's timezone to ``America/Los_Angeles`` (UTC-8 in
+    winter, UTC-7 in summer) and injects a session whose UTC timestamp falls
+    in the old approach's "current week" but should appear in the "previous
+    week" from the user's perspective.
+    """
+    headers, user_id = await _signup(async_client)
+
+    # Set user timezone to America/Los_Angeles (UTC-8 standard / UTC-7 DST).
+    await db_session.execute(
+        update(User).where(col(User.id) == user_id).values(timezone="America/Los_Angeles")
+    )
+    await db_session.commit()
+
+    # Manufacture a timestamp that is in the "current" UTC week but in the
+    # "previous" Los Angeles local week.
+    # Use a known fixed point: find the UTC Monday of the current week, then
+    # subtract 1 hour so the session is in "last week" LA-time on that
+    # boundary.  We fake the session directly in the DB to avoid the
+    # backdate-cap constraint on the API.
+    la_tz = ZoneInfo("America/Los_Angeles")
+    now_la = datetime.now(la_tz)
+    # Monday of the current local week (00:00 LA time).
+    local_monday = now_la - timedelta(days=now_la.weekday())
+    local_monday = local_monday.replace(hour=0, minute=0, second=0, microsecond=0)
+    # A timestamp 30 minutes BEFORE the local Monday boundary is in last week
+    # from the user's perspective, even if it may be in the current UTC week.
+    session_ts = local_monday - timedelta(minutes=30)
+
+    up_id = await _create_user_practice(async_client, db_session, headers)
+    old_session = PracticeSession(
+        user_id=user_id,
+        user_practice_id=up_id,
+        duration_minutes=5.0,
+        timestamp=session_ts,
+    )
+    db_session.add(old_session)
+    await db_session.commit()
+
+    resp = await async_client.get("/practice-sessions/week-count", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    # The session is BEFORE this week's start in LA time, so it must NOT count.
+    assert resp.json()["count"] == 0
