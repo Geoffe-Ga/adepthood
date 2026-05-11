@@ -1,6 +1,6 @@
 """add userpractice.custom_name + userpractice.mode_config_override
 
-Revision ID: f0a1b2c3d4e5
+Revision ID: 83b01b64cad3
 Revises: e9f0a1b2c3d4
 Create Date: 2026-05-11 01:00:00.000000
 
@@ -23,7 +23,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "f0a1b2c3d4e5"  # pragma: allowlist secret
+revision: str = "83b01b64cad3"  # pragma: allowlist secret
 down_revision: Union[str, Sequence[str], None] = "e9f0a1b2c3d4"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

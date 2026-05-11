@@ -241,3 +241,84 @@ async def test_customize_requires_auth(async_client: AsyncClient) -> None:
         json={"custom_name": "x"},
     )
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+async def test_customize_rejects_blank_custom_name(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    blank: str,
+) -> None:
+    """Empty / whitespace-only custom_name must 422 (review H2).
+
+    Without this guard the value would persist, then ``effective_name``'s
+    falsy check would silently fall back to the catalog name — producing a
+    contradictory response shape that the reviewer flagged.
+    """
+    headers, user_id = await _signup(async_client)
+    practice = await _seed_practice(db_session)
+    up_id = await _create_user_practice(async_client, db_session, headers, user_id, practice)
+
+    resp = await async_client.patch(
+        f"/user-practices/{up_id}/customize",
+        json={"custom_name": blank},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_customize_strips_surrounding_whitespace_on_custom_name(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Surrounding whitespace on a non-blank custom_name is stripped.
+
+    Keeps ``effective_name`` well-formed for display while preserving
+    the user's intent (the leading/trailing spaces are noise).
+    """
+    headers, user_id = await _signup(async_client)
+    practice = await _seed_practice(db_session)
+    up_id = await _create_user_practice(async_client, db_session, headers, user_id, practice)
+
+    resp = await async_client.patch(
+        f"/user-practices/{up_id}/customize",
+        json={"custom_name": "  My Sit  "},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["custom_name"] == "My Sit"
+    assert resp.json()["effective_name"] == "My Sit"
+
+
+# -- List endpoint coverage (review B1) -------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_user_practices_populates_effective_fields(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """List endpoint populates effective_* on every row (review B1).
+
+    Mirrors the GET-one shape so frontend code never has to merge by
+    hand. Pins the contract that the reviewer flagged as silently broken.
+    """
+    headers, user_id = await _signup(async_client)
+    practice = await _seed_practice(db_session)
+    up_id = await _create_user_practice(async_client, db_session, headers, user_id, practice)
+    await async_client.patch(
+        f"/user-practices/{up_id}/customize",
+        json={"custom_name": "List Test"},
+        headers=headers,
+    )
+
+    resp = await async_client.get("/user-practices/", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    items = resp.json()
+    assert len(items) == 1
+    item = items[0]
+    assert item["effective_name"] == "List Test"
+    assert item["effective_config"] is not None
+    assert item["effective_config"]["mode"] == "meditation_timer"
+    assert item["effective_config"]["duration_minutes"] == 10

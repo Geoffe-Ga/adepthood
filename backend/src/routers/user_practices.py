@@ -120,6 +120,56 @@ async def create_user_practice(
     return user_practice
 
 
+def _list_row_payload(item: UserPractice, practice: Practice | None) -> dict[str, Any]:
+    """Build the response dict for one row in the list endpoint.
+
+    Falls back to ``effective_*: None`` when the catalog row is missing
+    (a user-practice can outlive its catalog parent during soft-deletes
+    where the FK isn't enforced) so the list endpoint never crashes on
+    that edge case.
+    """
+    payload: dict[str, Any] = {
+        **_user_practice_payload(item),
+        "effective_name": None,
+        "effective_config": None,
+    }
+    if practice is not None:
+        payload["effective_name"] = effective_name(practice, item)
+        payload["effective_config"] = effective_config(practice, item).model_dump()
+    return payload
+
+
+async def _load_catalog_map(session: AsyncSession, practice_ids: set[int]) -> dict[int, Practice]:
+    """One batched ``SELECT … WHERE id IN (…)`` over the catalog.
+
+    Avoids the N+1 the per-row resolver would incur in the list path.
+    """
+    if not practice_ids:
+        return {}
+    rows = (
+        (await session.execute(select(Practice).where(col(Practice.id).in_(practice_ids))))
+        .scalars()
+        .all()
+    )
+    return {p.id: p for p in rows if p.id is not None}
+
+
+async def _build_list_response(
+    session: AsyncSession, items: list[UserPractice]
+) -> list[UserPracticeResponse]:
+    """Resolve ``effective_name`` / ``effective_config`` for each item.
+
+    ritual-03 review B1: GET /user-practices/ used to return null for both
+    fields, contradicting the documented "merged view in every response"
+    contract. Catalog rows are batched via :func:`_load_catalog_map`.
+    """
+    catalog = await _load_catalog_map(session, {item.practice_id for item in items})
+    return [
+        UserPracticeResponse.model_validate(_list_row_payload(item, catalog.get(item.practice_id)))
+        for item in items
+    ]
+
+
 @router.get("/", response_model=None)
 async def list_user_practices(
     current_user: Annotated[int, Depends(get_current_user)],
@@ -134,7 +184,7 @@ async def list_user_practices(
     """
     query = select(UserPractice).where(UserPractice.user_id == current_user)
     items, total = await paginate_query(session, query, pagination)
-    serialized = [UserPracticeResponse.model_validate(u, from_attributes=True) for u in items]
+    serialized = await _build_list_response(session, list(items))
     if pagination.paginate:
         return build_page(serialized, total, pagination)
     return serialized
@@ -145,9 +195,12 @@ async def _resolve_effective_fields(
 ) -> tuple[str, dict[str, Any]]:
     """Look up the catalog Practice and return (effective_name, effective_config_dict).
 
-    ritual-03: shared between GET, PATCH, and POST so every response shape
-    carries the same merged view. ``effective_config`` is dumped to a
-    dict for JSON serialization through the discriminated-union schema.
+    ritual-03: used by the GET-one endpoint. The PATCH path holds its
+    own ``practice`` reference from pre-flight validation and calls the
+    resolvers directly to avoid a redundant DB round-trip; the list
+    endpoint batches catalog lookups via ``_build_list_response``.
+    ``effective_config`` is dumped to a dict for JSON serialization
+    through the discriminated-union schema.
     """
     practice = await _resolve_practice(session, user_practice.practice_id)
     name = effective_name(practice, user_practice)

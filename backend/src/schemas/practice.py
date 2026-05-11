@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from domain.constants import TOTAL_STAGES as MAX_STAGE_NUMBER
 from domain.practice_modes import PracticeMode
@@ -212,8 +212,30 @@ class UserPracticeCustomize(BaseModel):
     :func:`domain.practice_resolution.effective_config` for the guard.
     """
 
-    custom_name: str | None = Field(default=None, max_length=PRACTICE_NAME_MAX_LENGTH)
+    custom_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=PRACTICE_NAME_MAX_LENGTH,
+    )
     mode_config_override: dict[str, Any] | None = None
+
+    @field_validator("custom_name")
+    @classmethod
+    def _strip_and_reject_whitespace(cls, value: str | None) -> str | None:
+        """Trim surrounding whitespace and reject "" / "   " custom names.
+
+        Without this an empty / whitespace-only string would persist, then
+        ``effective_name``'s falsy check would silently fall back to the
+        catalog name — producing a contradictory response that says
+        ``custom_name = "   "`` alongside ``effective_name = "<catalog>"``.
+        """
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            msg = "custom_name cannot be empty or whitespace-only"
+            raise ValueError(msg)
+        return stripped
 
 
 # -- PracticeSession --------------------------------------------------------
