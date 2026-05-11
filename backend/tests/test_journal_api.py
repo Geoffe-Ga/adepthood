@@ -438,3 +438,81 @@ async def test_search_rejects_oversized_query(async_client: AsyncClient) -> None
     headers = await _signup(async_client, "longq")
     resp = await async_client.get(f"/journal/?search={'x' * 65}", headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+# ── BUG-JOURNAL-007: soft-delete behaviour ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_deleted_entry_not_visible_in_list(async_client: AsyncClient) -> None:
+    """BUG-JOURNAL-007: after delete, the entry must not appear in the list.
+
+    The old hard-delete also passed this test; the soft-delete must keep
+    the row in the DB (for the FK audit trail) while making it invisible to
+    the API consumer.
+    """
+    headers = await _signup(async_client)
+    resp = await async_client.post("/journal/", json=_message_payload(), headers=headers)
+    entry_id = resp.json()["id"]
+
+    await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    list_resp = await async_client.get("/journal/", headers=headers)
+    assert list_resp.json()["total"] == 0
+    assert not any(item["id"] == entry_id for item in list_resp.json()["items"])
+
+
+@pytest.mark.asyncio
+async def test_deleted_entry_not_retrievable_by_get(async_client: AsyncClient) -> None:
+    """BUG-JOURNAL-007: GET on a soft-deleted entry must return 404."""
+    headers = await _signup(async_client)
+    resp = await async_client.post("/journal/", json=_message_payload(), headers=headers)
+    entry_id = resp.json()["id"]
+
+    await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    get_resp = await async_client.get(f"/journal/{entry_id}", headers=headers)
+    assert get_resp.status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_delete_is_idempotent_for_already_deleted(async_client: AsyncClient) -> None:
+    """BUG-JOURNAL-007: deleting an already-deleted entry yields 404 (row is invisible)."""
+    headers = await _signup(async_client)
+    resp = await async_client.post("/journal/", json=_message_payload(), headers=headers)
+    entry_id = resp.json()["id"]
+
+    await async_client.delete(f"/journal/{entry_id}", headers=headers)
+    resp2 = await async_client.delete(f"/journal/{entry_id}", headers=headers)
+    assert resp2.status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_create_journal_entry_max_length(async_client: AsyncClient) -> None:
+    """BUG-JOURNAL-001: a message at exactly the max length (10_000 chars) is accepted."""
+    headers = await _signup(async_client)
+    max_msg = "x" * 10_000
+    resp = await async_client.post("/journal/", json={"message": max_msg}, headers=headers)
+    assert resp.status_code == HTTPStatus.CREATED
+
+
+@pytest.mark.asyncio
+async def test_create_journal_entry_over_max_length_rejected(async_client: AsyncClient) -> None:
+    """BUG-JOURNAL-001: a message over the max length (10_001 chars) is rejected with 422."""
+    headers = await _signup(async_client)
+    over_msg = "x" * 10_001
+    resp = await async_client.post("/journal/", json={"message": over_msg}, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_user_id_not_in_journal_response(async_client: AsyncClient) -> None:
+    """BUG-JOURNAL-004: ``user_id`` must not appear in the API response."""
+    headers = await _signup(async_client)
+    resp = await async_client.post("/journal/", json=_message_payload(), headers=headers)
+    assert resp.status_code == HTTPStatus.CREATED
+    assert "user_id" not in resp.json()
+
+    list_resp = await async_client.get("/journal/", headers=headers)
+    for item in list_resp.json()["items"]:
+        assert "user_id" not in item

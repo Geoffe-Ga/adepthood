@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, select
 
 from database import get_session
 from errors import forbidden, not_found
@@ -82,8 +83,22 @@ async def require_owned_journal_entry(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> JournalEntry:
-    """Resolve ``entry_id`` and verify the caller owns it."""
-    entry = await session.get(JournalEntry, entry_id)
+    """Resolve ``entry_id`` and verify the caller owns it.
+
+    BUG-JOURNAL-007: soft-deleted rows are treated as non-existent (404)
+    so a user cannot GET or DELETE an entry they already deleted.
+    BUG-JOURNAL-006: the ownership check uses the identity-map result from
+    the primary-key lookup; a future refactor should push the ``user_id``
+    filter into the WHERE clause, but the existing pattern is preserved here
+    to avoid touching more files than Prompt 12B owns.
+    """
+    result = await session.execute(
+        select(JournalEntry).where(
+            JournalEntry.id == entry_id,
+            col(JournalEntry.deleted_at).is_(None),  # BUG-JOURNAL-007
+        )
+    )
+    entry = result.scalars().first()
     if entry is None:
         raise not_found("journal_entry")
     if entry.user_id != current_user:

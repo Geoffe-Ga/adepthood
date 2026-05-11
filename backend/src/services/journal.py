@@ -52,6 +52,7 @@ async def load_recent_conversation(
         .where(
             JournalEntry.user_id == user_id,
             col(JournalEntry.sender).in_(_CHAT_SENDERS),
+            col(JournalEntry.deleted_at).is_(None),  # BUG-JOURNAL-008: exclude soft-deleted
         )
         .order_by(col(JournalEntry.id).desc())
         .limit(CONVERSATION_HISTORY_LIMIT)

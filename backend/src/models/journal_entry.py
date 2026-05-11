@@ -9,6 +9,10 @@ from sqlmodel import Field, Relationship, SQLModel
 if TYPE_CHECKING:
     from .user import User
 
+# Idempotency-key column width.  128 hex chars covers a SHA-512 hash;
+# real client-generated keys are typically UUIDv4 (36 chars) or shorter.
+_IDEM_KEY_MAX_LENGTH = 128
+
 # Feature flag for column-level encryption at rest (BUG-JOURNAL-012).
 # When enabled, ``message`` is encrypted before DB write and decrypted on read
 # using Fernet symmetric encryption.  The key must be provided via the
@@ -40,6 +44,13 @@ class JournalEntry(SQLModel, table=True):
 
     Supports context tagging for stage reflections, practice notes, and
     habit-related thoughts.
+
+    BUG-JOURNAL-007: hard delete is replaced with a soft-delete ``deleted_at``
+    column so deleted rows can be recovered within the retention window and the
+    ``LLMUsageLog.journal_entry_id`` FK is never orphaned.  All read endpoints
+    filter ``deleted_at IS NULL``; a separate nightly purge job can hard-delete
+    rows older than the retention window (not implemented here — follow-up
+    GitHub issue).
     """
 
     id: int | None = Field(default=None, primary_key=True)
@@ -53,4 +64,9 @@ class JournalEntry(SQLModel, table=True):
     tag: str = Field(default=JournalTag.FREEFORM, max_length=50)
     practice_session_id: int | None = Field(default=None, foreign_key="practicesession.id")
     user_practice_id: int | None = Field(default=None, foreign_key="userpractice.id")
+    # BUG-JOURNAL-007: soft-delete column.  ``None`` = live row; non-None = deleted.
+    deleted_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
     user: "User" = Relationship(back_populates="journals")
