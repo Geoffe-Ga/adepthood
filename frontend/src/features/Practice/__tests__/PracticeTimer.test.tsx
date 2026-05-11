@@ -2,14 +2,26 @@
 /* eslint-env jest */
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 
+// Track every created sound so tests can assert ``unloadAsync`` is fired on
+// unmount (BUG-FE-PRACTICE-103) and inspect ``setOnPlaybackStatusUpdate``
+// wiring without re-shadowing the mock per case.
+const createdSounds: Array<{
+  playAsync: jest.Mock;
+  unloadAsync: jest.Mock;
+  setOnPlaybackStatusUpdate: jest.Mock;
+}> = [];
+
 jest.mock('expo-av', () => ({
   Audio: {
     Sound: {
-      createAsync: (jest.fn() as any).mockResolvedValue({
-        sound: {
+      createAsync: (jest.fn() as any).mockImplementation(async () => {
+        const sound = {
           playAsync: (jest.fn() as any).mockResolvedValue(undefined),
           unloadAsync: (jest.fn() as any).mockResolvedValue(undefined),
-        },
+          setOnPlaybackStatusUpdate: jest.fn(),
+        };
+        createdSounds.push(sound);
+        return { sound };
       }),
     },
   },
@@ -35,6 +47,7 @@ describe('PracticeTimer', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();
+    createdSounds.length = 0;
   });
 
   afterEach(() => {
@@ -255,5 +268,76 @@ describe('PracticeTimer', () => {
     // Time should have advanced further
     const timeAfterResume = getByTestId('time-remaining').props.children;
     expect(timeAfterResume).not.toBe(timeAfterPause);
+  });
+
+  describe('regression: interval / sound cleanup', () => {
+    it('BUG-FE-PRACTICE-102: rapid Start → Cancel → Start does not stack intervals', () => {
+      // Two intervals firing in parallel would double the per-tick
+      // decrement; the fix is the defensive ``clearTimer()`` at the top
+      // of ``handleStart``.  We assert the countdown advances exactly one
+      // second per real second after the re-start, never two.
+      const { getByTestId } = render(
+        <PracticeTimer durationMinutes={1} onComplete={mockOnComplete} onCancel={mockOnCancel} />,
+      );
+
+      act(() => fireEvent.press(getByTestId('start-button')));
+      act(() => jest.advanceTimersByTime(2000));
+      act(() => fireEvent.press(getByTestId('cancel-button')));
+
+      // Start again immediately — old interval should be gone, only one
+      // fresh interval driving the clock.
+      act(() => fireEvent.press(getByTestId('start-button')));
+      act(() => jest.advanceTimersByTime(3000));
+
+      // 60s − 3 ticks = 57s.  A leaked interval would double-decrement
+      // to 54s.
+      expect(getByTestId('time-remaining').props.children).toBe('00:57');
+    });
+
+    it('BUG-FE-PRACTICE-103: unmount unloads every sound that was created', async () => {
+      const { getByTestId, unmount } = render(
+        <PracticeTimer durationMinutes={10} onComplete={mockOnComplete} onCancel={mockOnCancel} />,
+      );
+
+      // Triggers ``playSound(SOUND_START)``.  Flush microtasks so the
+      // ``createAsync`` promise resolves and the handle lands in the
+      // module-level ``liveSounds`` array before unmount.
+      act(() => fireEvent.press(getByTestId('start-button')));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(createdSounds).toHaveLength(1);
+      expect(createdSounds[0]!.unloadAsync).not.toHaveBeenCalled();
+
+      unmount();
+
+      expect(createdSounds[0]!.unloadAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('BUG-FE-PRACTICE-104: resume does not stack a second interval on top of pause', () => {
+      // ``handlePause`` already clears, but if a render between pause
+      // and resume re-subscribed the scheduling effect we'd resume with
+      // two intervals running.  The defensive ``clearTimer()`` at the
+      // top of ``handleResume`` collapses that ambiguity; the tick rate
+      // after resume must remain 1 s per second.
+      const { getByTestId } = render(
+        <PracticeTimer durationMinutes={1} onComplete={mockOnComplete} onCancel={mockOnCancel} />,
+      );
+
+      act(() => fireEvent.press(getByTestId('start-button')));
+      act(() => jest.advanceTimersByTime(2000));
+      act(() => fireEvent.press(getByTestId('pause-button')));
+
+      const timeAtPause = getByTestId('time-remaining').props.children;
+      expect(timeAtPause).toBe('00:58');
+
+      act(() => fireEvent.press(getByTestId('resume-button')));
+      act(() => jest.advanceTimersByTime(3000));
+
+      // 58 − 3 = 55s.  Two stacked intervals would over-decrement to 52s.
+      expect(getByTestId('time-remaining').props.children).toBe('00:55');
+    });
   });
 });

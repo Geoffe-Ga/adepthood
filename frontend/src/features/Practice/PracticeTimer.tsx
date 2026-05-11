@@ -1,4 +1,4 @@
-import { Audio } from 'expo-av';
+import { Audio, type AVPlaybackStatus } from 'expo-av';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
@@ -33,24 +33,17 @@ const MS_PER_SECOND = 1000;
 // stays a free function (used inside callbacks where mounting a hook
 // is not an option).  The Practice screen is a singleton in this app,
 // so cross-instance leakage is not a concern.
-interface LoadedSound {
-  unloadAsync: () => Promise<unknown>;
-  playAsync: () => Promise<unknown>;
-  setOnPlaybackStatusUpdate: (
-    cb: (status: { isLoaded: boolean; didJustFinish?: boolean }) => void,
-  ) => void;
-}
+type LoadedSound = InstanceType<typeof Audio.Sound>;
 type SoundHandle = { sound: LoadedSound; timeoutId: ReturnType<typeof setTimeout> | null };
 const liveSounds: SoundHandle[] = [];
 const SOUND_UNLOAD_TIMEOUT_MS = 3000;
 
 async function playSound(source: number): Promise<void> {
   try {
-    const created = await Audio.Sound.createAsync(source);
-    const sound = created.sound as unknown as LoadedSound;
+    const { sound } = await Audio.Sound.createAsync(source);
     const handle: SoundHandle = { sound, timeoutId: null };
     liveSounds.push(handle);
-    sound.setOnPlaybackStatusUpdate((status) => {
+    sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
       if (!status.isLoaded || !status.didJustFinish) return;
       cleanupHandle(handle);
     });
