@@ -609,6 +609,7 @@ const LockedTile = ({
 
 interface UnlockedTileProps {
   habit: Habit;
+  stageColor: string;
   onOpenGoals?: () => void;
   onLongPress?: () => void;
   onIconPress?: () => void;
@@ -633,9 +634,15 @@ const buildUnlockedTileStyle = (
   backgroundColor: '#f8f8f8',
 });
 
-const UnlockedTile = ({ habit, onOpenGoals, onLongPress, onIconPress, tz }: UnlockedTileProps) => {
+const UnlockedTile = ({
+  habit,
+  stageColor,
+  onOpenGoals,
+  onLongPress,
+  onIconPress,
+  tz,
+}: UnlockedTileProps) => {
   const { scale, gridGutter, tileMinHeight, iconInline } = useTileLayout();
-  const stageColor = STAGE_COLORS[habit.stage] ?? '#000';
   const [tooltip, setTooltip] = useState<TierType | null>(null);
   const { progressPercentage, progressBarColor, hasCompletedGoal, markers } = useHabitTileData(
     habit,
@@ -686,9 +693,10 @@ export const HabitTile = ({
   onIconPress,
   onUnlockHabit,
   tz = DEFAULT_TIMEZONE,
+  stageColorOverride,
 }: HabitTileProps) => {
   const { scale, gridGutter, tileMinHeight } = useTileLayout();
-  const stageColor = STAGE_COLORS[habit.stage] ?? '#000';
+  const stageColor = stageColorOverride ?? STAGE_COLORS[habit.stage] ?? '#000';
 
   if (locked) {
     return (
@@ -706,6 +714,7 @@ export const HabitTile = ({
   return (
     <UnlockedTile
       habit={habit}
+      stageColor={stageColor}
       onOpenGoals={onOpenGoals}
       onLongPress={onLongPress}
       onIconPress={onIconPress}

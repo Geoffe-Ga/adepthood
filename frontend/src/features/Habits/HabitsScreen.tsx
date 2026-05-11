@@ -8,7 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { habits as habitsApi } from '../../api';
 import { useAuth } from '../../context/AuthContext';
-import { spacing } from '../../design/tokens';
+import { STAGE_COLORS, STAGE_ORDER, spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 
 import AddHabitModal from './components/AddHabitModal';
@@ -436,10 +436,16 @@ const useHabitTileRenderer = (
   const renderHabitTile = ({ item, index }: { item: Habit; index: number }) => {
     const isLocked = item.revealed === false;
     const globalIndex = pageOffset + index;
+    // Position-based palette: tiles paint Beige → Clear Light by row, and
+    // each page restarts the sequence — so a freshly added 11th habit on
+    // page 2 reads as Beige again instead of inheriting page 1's gradient.
+    const stageName = STAGE_ORDER[index % STAGE_ORDER.length] ?? 'Beige';
+    const stageColorOverride = STAGE_COLORS[stageName];
     return (
       <HabitTile
         habit={item}
         locked={isLocked}
+        stageColorOverride={stageColorOverride}
         onOpenGoals={
           isLocked
             ? undefined
