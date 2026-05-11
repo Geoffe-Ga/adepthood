@@ -32,6 +32,10 @@ _RESET_LOOKUP_REVISION = "d7e8f9a0b1c2"  # pragma: allowlist secret
 _PRACTICE_MODE_BASE_REVISION = "d7e8f9a0b1c2"  # pragma: allowlist secret
 _PRACTICE_MODE_REVISION = "e9f0a1b2c3d4"  # pragma: allowlist secret
 
+# ritual-04: practice-session metadata migration (mode + mode_metadata + …).
+_PRACTICE_SESSION_METADATA_BASE_REVISION = "e9f0a1b2c3d4"  # pragma: allowlist secret
+_PRACTICE_SESSION_METADATA_REVISION = "f0a1b2c3d4e5"  # pragma: allowlist secret
+
 
 def test_timestamptz_migration_exists() -> None:
     """Regression guard: the migration file must stay where Alembic finds it."""
@@ -314,3 +318,110 @@ def test_practice_mode_migration_round_trip_on_sqlite(
     row_after = _practice_row(db_url, practice_id=1)
     assert row_after["mode"] == "meditation_timer"
     assert json.loads(row_after["mode_config"])["duration_minutes"] == 12.5
+
+
+# -- ritual-04 practice-session metadata migration round-trip ---------------
+
+
+def _bootstrap_practicesession_table(sync_url: str) -> None:
+    """Pre-create a minimal ``practicesession`` table for the round-trip fixture.
+
+    Mirrors the columns the ritual-04 migration ``f0a1b2c3d4e5`` expects
+    to ALTER, without pulling in every preceding migration.  One legacy
+    row is inserted so the backfill branches can be observed.
+    """
+    bootstrap_engine = create_engine(sync_url)
+    with bootstrap_engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE practicesession ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " user_practice_id INTEGER NOT NULL,"
+                " duration_minutes FLOAT NOT NULL,"
+                " timestamp DATETIME NOT NULL,"
+                " reflection VARCHAR(5000)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO practicesession"
+                " (id, user_id, user_practice_id, duration_minutes, timestamp)"
+                " VALUES (1, 1, 1, 7.5, '2026-05-01 12:00:00')"
+            )
+        )
+    bootstrap_engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_practice_session_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config positioned just before ritual-04's migration."""
+    db_path = tmp_path / "practice_session_metadata_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_practicesession_table(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _PRACTICE_SESSION_METADATA_BASE_REVISION)
+    return cfg
+
+
+def _practicesession_row(db_url: str, session_id: int) -> dict[str, Any]:
+    """Fetch a ``practicesession`` row including ritual-04 columns."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT id, mode, mode_metadata, completed, insight"
+                        " FROM practicesession WHERE id = :id"
+                    ),
+                    {"id": session_id},
+                )
+                .mappings()
+                .first()
+            )
+            assert row is not None
+            return dict(row)
+    finally:
+        engine.dispose()
+
+
+def test_practice_session_metadata_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_practice_session_metadata: Config,
+) -> None:
+    """Round-trip ``f0a1b2c3d4e5``: upgrade backfills, downgrade drops, re-upgrade idempotent."""
+    cfg = alembic_sqlite_config_practice_session_metadata
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade applies the four new columns and backfills the seeded row.
+    command.upgrade(cfg, _PRACTICE_SESSION_METADATA_REVISION)
+    cols = _columns_of(db_url, "practicesession")
+    assert {"mode", "mode_metadata", "completed", "insight"}.issubset(cols)
+    row = _practicesession_row(db_url, session_id=1)
+    assert row["mode"] == "meditation_timer"
+    assert row["mode_metadata"] is None
+    assert bool(row["completed"]) is True
+    assert row["insight"] is None
+
+    # Phase 2: downgrade drops the new columns.
+    command.downgrade(cfg, _PRACTICE_SESSION_METADATA_BASE_REVISION)
+    cols_after = _columns_of(db_url, "practicesession")
+    assert {"mode", "mode_metadata", "completed", "insight"}.isdisjoint(cols_after)
+
+    # Phase 3: re-upgrade reproduces the backfill on the same legacy row.
+    command.upgrade(cfg, _PRACTICE_SESSION_METADATA_REVISION)
+    row_again = _practicesession_row(db_url, session_id=1)
+    assert row_again["mode"] == "meditation_timer"
+    assert bool(row_again["completed"]) is True
