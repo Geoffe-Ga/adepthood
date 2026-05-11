@@ -4,8 +4,8 @@ Revision ID: 83b01b64cad3
 Revises: e9f0a1b2c3d4
 Create Date: 2026-05-11 01:00:00.000000
 
-ritual-03: lets a user rename their selected practice ("My Morning Sit")
-and override individual mode_config fields (duration, BPM, prompts, …)
+Lets a user rename their selected practice ("My Morning Sit") and
+override individual mode_config fields (duration, BPM, prompts, …)
 without mutating the shared ``Practice`` catalog row.
 
 Both columns are nullable; ``None`` means "use the catalog value". The

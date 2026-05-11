@@ -157,10 +157,10 @@ class UserPracticeResponse(OwnedResourcePublic):
     -- so echoing the surrogate key adds no information and aids
     enumeration.
 
-    ``effective_name`` and ``effective_config`` (ritual-03) collapse the
-    catalog row + the user's optional overrides into a single payload so
-    frontend code never has to merge by hand. Both are populated by the
-    router from :mod:`domain.practice_resolution`.
+    ``effective_name`` and ``effective_config`` collapse the catalog row
+    plus the user's optional overrides into a single payload so frontend
+    code never has to merge by hand. Both are populated by the router
+    from :mod:`domain.practice_resolution`.
     """
 
     id: int
@@ -203,7 +203,7 @@ class UserPracticeDetail(OwnedResourcePublic):
 
 
 class UserPracticeCustomize(BaseModel):
-    """PATCH body for ``/user-practices/{id}/customize`` (ritual-03).
+    """PATCH body for ``/user-practices/{id}/customize``.
 
     Both fields are nullable: passing ``None`` clears the override and
     falls back to the catalog value. Omitting a field leaves the existing

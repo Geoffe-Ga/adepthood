@@ -120,13 +120,37 @@ async def create_user_practice(
     return user_practice
 
 
+def _safe_resolve_config(item: UserPractice, practice: Practice) -> dict[str, Any] | None:
+    """Resolve ``effective_config`` defensively for read paths.
+
+    Pre-flight validation at the PATCH edge prevents corrupt overrides
+    from being written through the normal API, but a row can arrive via
+    direct DB tooling, an admin script, or a catalog mode being edited
+    after users stored overrides for it. Returning ``None`` with a
+    warning lets the rest of the user's list still render instead of
+    blowing up the whole page with a 500.
+    """
+    try:
+        return effective_config(practice, item).model_dump()
+    except (ValueError, ValidationError):
+        logger.warning(
+            "corrupt_mode_config_override",
+            extra={
+                "user_practice_id": item.id,
+                "practice_id": practice.id,
+                "mode": practice.mode,
+            },
+        )
+        return None
+
+
 def _list_row_payload(item: UserPractice, practice: Practice | None) -> dict[str, Any]:
     """Build the response dict for one row in the list endpoint.
 
     Falls back to ``effective_*: None`` when the catalog row is missing
     (a user-practice can outlive its catalog parent during soft-deletes
-    where the FK isn't enforced) so the list endpoint never crashes on
-    that edge case.
+    where the FK isn't enforced) or when the stored override is
+    corrupt — see :func:`_safe_resolve_config`.
     """
     payload: dict[str, Any] = {
         **_user_practice_payload(item),
@@ -135,7 +159,7 @@ def _list_row_payload(item: UserPractice, practice: Practice | None) -> dict[str
     }
     if practice is not None:
         payload["effective_name"] = effective_name(practice, item)
-        payload["effective_config"] = effective_config(practice, item).model_dump()
+        payload["effective_config"] = _safe_resolve_config(item, practice)
     return payload
 
 
@@ -159,9 +183,10 @@ async def _build_list_response(
 ) -> list[UserPracticeResponse]:
     """Resolve ``effective_name`` / ``effective_config`` for each item.
 
-    ritual-03 review B1: GET /user-practices/ used to return null for both
-    fields, contradicting the documented "merged view in every response"
-    contract. Catalog rows are batched via :func:`_load_catalog_map`.
+    Catalog rows are batched via :func:`_load_catalog_map`; corrupt
+    overrides fall through to ``effective_config: None`` via
+    :func:`_safe_resolve_config` so a single bad row never crashes
+    the whole page.
     """
     catalog = await _load_catalog_map(session, {item.practice_id for item in items})
     return [
@@ -192,20 +217,19 @@ async def list_user_practices(
 
 async def _resolve_effective_fields(
     session: AsyncSession, user_practice: UserPractice
-) -> tuple[str, dict[str, Any]]:
+) -> tuple[str, dict[str, Any] | None]:
     """Look up the catalog Practice and return (effective_name, effective_config_dict).
 
-    ritual-03: used by the GET-one endpoint. The PATCH path holds its
-    own ``practice`` reference from pre-flight validation and calls the
-    resolvers directly to avoid a redundant DB round-trip; the list
-    endpoint batches catalog lookups via ``_build_list_response``.
-    ``effective_config`` is dumped to a dict for JSON serialization
-    through the discriminated-union schema.
+    Used by the GET-one endpoint. PATCH holds its own ``practice``
+    reference from pre-flight validation and calls the resolvers
+    directly to avoid a redundant DB round-trip; the list endpoint
+    batches catalog lookups via :func:`_load_catalog_map`. The config
+    is resolved via :func:`_safe_resolve_config` so a corrupt stored
+    override falls through to ``None`` rather than crashing the GET.
     """
     practice = await _resolve_practice(session, user_practice.practice_id)
     name = effective_name(practice, user_practice)
-    cfg = effective_config(practice, user_practice)
-    return name, cfg.model_dump()
+    return name, _safe_resolve_config(user_practice, practice)
 
 
 def _user_practice_payload(user_practice: UserPractice) -> dict[str, Any]:
@@ -278,7 +302,7 @@ async def customize_user_practice(
     session: Annotated[AsyncSession, Depends(get_session)],
     user_practice: Annotated[UserPractice, Depends(require_owned_user_practice)],
 ) -> dict[str, Any]:
-    """Per-user override of name + mode_config (ritual-03).
+    """Per-user override of name + mode_config.
 
     Both fields are nullable; passing ``None`` clears the override and
     falls back to the catalog value. Mode-shifting is rejected with

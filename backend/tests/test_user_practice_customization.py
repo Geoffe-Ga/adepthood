@@ -150,6 +150,81 @@ async def test_customize_clears_override_with_explicit_null(
 
 
 @pytest.mark.asyncio
+async def test_customize_partial_patch_preserves_other_field(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A PATCH that touches only one field must not clobber the other.
+
+    ``model_fields_set`` is what makes this work — without it Pydantic
+    would deserialize an omitted field as ``None`` and the router would
+    happily overwrite the existing override.
+    """
+    headers, user_id = await _signup(async_client)
+    practice = await _seed_practice(db_session)
+    up_id = await _create_user_practice(async_client, db_session, headers, user_id, practice)
+
+    # 1. Set both fields together.
+    both = await async_client.patch(
+        f"/user-practices/{up_id}/customize",
+        json={"custom_name": "Original", "mode_config_override": _timer_cfg(33)},
+        headers=headers,
+    )
+    assert both.status_code == HTTPStatus.OK
+
+    # 2. PATCH only custom_name → mode_config_override must survive.
+    only_name = await async_client.patch(
+        f"/user-practices/{up_id}/customize",
+        json={"custom_name": "Renamed"},
+        headers=headers,
+    )
+    assert only_name.status_code == HTTPStatus.OK
+    body = only_name.json()
+    assert body["custom_name"] == "Renamed"
+    assert body["mode_config_override"]["duration_minutes"] == 33
+
+    # 3. PATCH only mode_config_override → custom_name must survive.
+    only_cfg = await async_client.patch(
+        f"/user-practices/{up_id}/customize",
+        json={"mode_config_override": _timer_cfg(44)},
+        headers=headers,
+    )
+    assert only_cfg.status_code == HTTPStatus.OK
+    body = only_cfg.json()
+    assert body["custom_name"] == "Renamed"
+    assert body["mode_config_override"]["duration_minutes"] == 44
+
+
+@pytest.mark.asyncio
+async def test_customize_empty_body_is_idempotent_no_op(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``PATCH {}`` returns 200 without changing anything.
+
+    Pins the documented partial-PATCH contract — no fields set means no
+    writes. A future regression that clobbered fields on an empty body
+    would fail this test.
+    """
+    headers, user_id = await _signup(async_client)
+    practice = await _seed_practice(db_session)
+    up_id = await _create_user_practice(async_client, db_session, headers, user_id, practice)
+
+    await async_client.patch(
+        f"/user-practices/{up_id}/customize",
+        json={"custom_name": "Sticky", "mode_config_override": _timer_cfg(25)},
+        headers=headers,
+    )
+    resp = await async_client.patch(
+        f"/user-practices/{up_id}/customize",
+        json={},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["custom_name"] == "Sticky"
+    assert body["mode_config_override"]["duration_minutes"] == 25
+
+
+@pytest.mark.asyncio
 async def test_customize_does_not_mutate_catalog_practice(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -250,11 +325,12 @@ async def test_customize_rejects_blank_custom_name(
     db_session: AsyncSession,
     blank: str,
 ) -> None:
-    """Empty / whitespace-only custom_name must 422 (review H2).
+    """Empty / whitespace-only custom_name must 422.
 
     Without this guard the value would persist, then ``effective_name``'s
-    falsy check would silently fall back to the catalog name — producing a
-    contradictory response shape that the reviewer flagged.
+    falsy check would silently fall back to the catalog name — yielding a
+    contradictory response (``custom_name=""`` alongside ``effective_name=
+    "<catalog>"``).
     """
     headers, user_id = await _signup(async_client)
     practice = await _seed_practice(db_session)
@@ -292,17 +368,73 @@ async def test_customize_strips_surrounding_whitespace_on_custom_name(
     assert resp.json()["effective_name"] == "My Sit"
 
 
-# -- List endpoint coverage (review B1) -------------------------------------
+# -- List endpoint coverage -------------------------------------------------
+
+
+async def _force_corrupt_override(db_session: AsyncSession, user_practice_id: int) -> None:
+    """Plant a mode-mismatched override directly via the ORM.
+
+    Pre-flight validation at the PATCH edge prevents this through the
+    API, but corrupt rows can arrive via direct DB tooling or a catalog
+    mode being edited after users stored overrides. The read paths must
+    tolerate them.
+    """
+    persisted = await db_session.get(UserPractice, user_practice_id)
+    assert persisted is not None
+    persisted.mode_config_override = {"mode": "count_up"}  # catalog mode is meditation_timer
+    db_session.add(persisted)
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_list_falls_back_when_override_is_corrupt(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A row with a corrupt stored override returns 200 with effective_config=null.
+
+    Regression: a single bad row used to crash the entire user's list
+    with a 500 because ``effective_config()`` propagated its
+    ``ValueError``. The read path now logs a warning and falls through.
+    """
+    headers, user_id = await _signup(async_client)
+    practice = await _seed_practice(db_session)
+    up_id = await _create_user_practice(async_client, db_session, headers, user_id, practice)
+    await _force_corrupt_override(db_session, up_id)
+
+    resp = await async_client.get("/user-practices/", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    items = resp.json()
+    assert len(items) == 1
+    assert items[0]["effective_config"] is None
+    # ``effective_name`` is unaffected — the corrupt field is only the config.
+    assert items[0]["effective_name"] == practice.name
+
+
+@pytest.mark.asyncio
+async def test_get_one_falls_back_when_override_is_corrupt(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Detail endpoint mirrors the list endpoint's safe-resolution behavior."""
+    headers, user_id = await _signup(async_client)
+    practice = await _seed_practice(db_session)
+    up_id = await _create_user_practice(async_client, db_session, headers, user_id, practice)
+    await _force_corrupt_override(db_session, up_id)
+
+    resp = await async_client.get(f"/user-practices/{up_id}", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["effective_config"] is None
+    assert body["effective_name"] == practice.name
 
 
 @pytest.mark.asyncio
 async def test_list_user_practices_populates_effective_fields(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """List endpoint populates effective_* on every row (review B1).
+    """List endpoint populates effective_* on every row.
 
     Mirrors the GET-one shape so frontend code never has to merge by
-    hand. Pins the contract that the reviewer flagged as silently broken.
+    hand. Pins the cross-endpoint consistency contract.
     """
     headers, user_id = await _signup(async_client)
     practice = await _seed_practice(db_session)
