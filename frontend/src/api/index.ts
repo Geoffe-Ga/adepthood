@@ -1651,6 +1651,53 @@ export const userPractices = {
   },
 };
 
+/**
+ * Server-assembled frequency banner payload. Mirrors the
+ * `FrequencyResponse` schema introduced in ritual-05
+ * (`backend/src/routers/user_practices.py::GET /user-practices/current/frequency`).
+ *
+ * `banner_text` is the fully formatted English string — the client
+ * renders it verbatim, never assembling the copy from the structured
+ * fields. The structured fields are still exposed for chips and tests.
+ *
+ * TODO(ritual-05): once #310 (frequency-copy endpoint) merges, drop this
+ * inline shape in favour of the OpenAPI-generated `components['schemas']
+ * ['FrequencyResponse']` reference for end-to-end type alignment.
+ */
+export interface FrequencyResponse {
+  stage_number: number;
+  color: string;
+  aspect: string;
+  practice_name: string;
+  practice_id: number;
+  user_practice_id: number | null;
+  banner_text: string;
+}
+
+export function validateFrequencyResponse(data: unknown): data is FrequencyResponse {
+  if (typeof data !== 'object' || data === null) return false;
+  const f = data as Record<string, unknown>;
+  return (
+    typeof f.stage_number === 'number' &&
+    typeof f.color === 'string' &&
+    typeof f.aspect === 'string' &&
+    typeof f.practice_name === 'string' &&
+    typeof f.practice_id === 'number' &&
+    (f.user_practice_id === null || typeof f.user_practice_id === 'number') &&
+    typeof f.banner_text === 'string'
+  );
+}
+
+export const frequency = {
+  async current(token?: string): Promise<FrequencyResponse> {
+    const data = await request<FrequencyResponse>('/user-practices/current/frequency', { token });
+    if (!validateFrequencyResponse(data)) {
+      throw new Error('Invalid frequency response');
+    }
+    return data;
+  },
+};
+
 export const practiceSessions = {
   create(payload: PracticeSessionCreate, token?: string): Promise<PracticeSessionResponse> {
     return request<PracticeSessionResponse>('/practice-sessions/', {
@@ -1804,6 +1851,7 @@ export default {
   course,
   practices,
   userPractices,
+  frequency,
   practiceSessions,
   auth,
   energy,
