@@ -436,16 +436,13 @@ const useHabitTileRenderer = (
   const renderHabitTile = ({ item, index }: { item: Habit; index: number }) => {
     const isLocked = item.revealed === false;
     const globalIndex = pageOffset + index;
-    // Position-based palette: tiles paint Beige → Clear Light by row, and
-    // each page restarts the sequence — so a freshly added 11th habit on
-    // page 2 reads as Beige again instead of inheriting page 1's gradient.
-    const stageName = STAGE_ORDER[index % STAGE_ORDER.length] ?? 'Beige';
-    const stageColorOverride = STAGE_COLORS[stageName];
+    // index is page-relative, so each page restarts the Beige → Clear Light gradient.
+    const stageColor = STAGE_COLORS[STAGE_ORDER[index % STAGE_ORDER.length]!]!;
     return (
       <HabitTile
         habit={item}
         locked={isLocked}
-        stageColorOverride={stageColorOverride}
+        stageColor={stageColor}
         onOpenGoals={
           isLocked
             ? undefined

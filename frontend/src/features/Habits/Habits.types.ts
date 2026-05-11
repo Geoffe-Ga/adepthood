@@ -132,13 +132,8 @@ export interface HabitTileProps {
    * absent so legacy tests render without an auth context.
    */
   tz?: string;
-  /**
-   * When the list paints tiles with a position-based gradient (Beige →
-   * Clear Light), the renderer passes the resolved hex here. Falls back
-   * to ``STAGE_COLORS[habit.stage]`` when omitted so direct ``<HabitTile>``
-   * uses (e.g. tests) keep their stage-driven coloring.
-   */
-  stageColorOverride?: string;
+  /** Border/accent color; falls back to ``STAGE_COLORS[habit.stage]`` when omitted. */
+  stageColor?: string;
 }
 
 export interface HabitSettingsModalProps {

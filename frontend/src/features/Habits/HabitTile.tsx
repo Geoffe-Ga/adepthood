@@ -693,16 +693,16 @@ export const HabitTile = ({
   onIconPress,
   onUnlockHabit,
   tz = DEFAULT_TIMEZONE,
-  stageColorOverride,
+  stageColor,
 }: HabitTileProps) => {
   const { scale, gridGutter, tileMinHeight } = useTileLayout();
-  const stageColor = stageColorOverride ?? STAGE_COLORS[habit.stage] ?? '#000';
+  const color = stageColor ?? STAGE_COLORS[habit.stage] ?? '#000';
 
   if (locked) {
     return (
       <LockedTile
         habit={habit}
-        stageColor={stageColor}
+        stageColor={color}
         scale={scale}
         gridGutter={gridGutter}
         tileMinHeight={tileMinHeight}
@@ -714,7 +714,7 @@ export const HabitTile = ({
   return (
     <UnlockedTile
       habit={habit}
-      stageColor={stageColor}
+      stageColor={color}
       onOpenGoals={onOpenGoals}
       onLongPress={onLongPress}
       onIconPress={onIconPress}
