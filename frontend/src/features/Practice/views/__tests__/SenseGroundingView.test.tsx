@@ -1,0 +1,131 @@
+import { describe, expect, it } from '@jest/globals';
+import { fireEvent, render } from '@testing-library/react-native';
+import React from 'react';
+
+import type { SenseGroundingConfig } from '../../engine/types';
+import SenseGroundingView from '../SenseGroundingView';
+
+import { fakeControls, fakeState } from './fixtures';
+
+const config: SenseGroundingConfig = {
+  mode: 'sense_grounding',
+  prompts: [
+    { sense: 'sight', label: 'Five things you can see right now' },
+    { sense: 'touch', label: 'Four things you can feel' },
+    { sense: 'hearing', label: 'Three things you can hear' },
+    { sense: 'smell', label: 'Two things you can smell' },
+    { sense: 'taste', label: 'One thing you can taste' },
+  ],
+};
+
+describe('SenseGroundingView', () => {
+  it('renders the 5-4-3-2-1 badge and the current sense count', () => {
+    const { getByTestId, getByText } = render(
+      <SenseGroundingView
+        config={config}
+        state={fakeState({ status: 'running', currentStepIndex: 0 })}
+        controls={fakeControls()}
+      />,
+    );
+    expect(getByTestId('sense-grounding-badge').props.children).toBe('5-4-3-2-1');
+    expect(getByText('SEE')).toBeTruthy();
+    expect(getByText(/5 things you can/)).toBeTruthy();
+  });
+
+  it('shows the active prompt label for the current step', () => {
+    const { getByTestId } = render(
+      <SenseGroundingView
+        config={config}
+        state={fakeState({ status: 'running', currentStepIndex: 2 })}
+        controls={fakeControls()}
+      />,
+    );
+    expect(getByTestId('sense-grounding-prompt').props.children).toBe('Three things you can hear');
+  });
+
+  it('labels the primary button "Mark <sense> done" per step', () => {
+    const senses = ['sight', 'touch', 'hearing', 'smell', 'taste'] as const;
+    for (const [idx, sense] of senses.entries()) {
+      const { getByText, unmount } = render(
+        <SenseGroundingView
+          config={config}
+          state={fakeState({ status: 'running', currentStepIndex: idx })}
+          controls={fakeControls()}
+        />,
+      );
+      expect(getByText(`Mark ${sense} done`)).toBeTruthy();
+      unmount();
+    }
+  });
+
+  it('calls controls.tap when the advance button is pressed', () => {
+    const controls = fakeControls();
+    const { getByTestId } = render(
+      <SenseGroundingView
+        config={config}
+        state={fakeState({ status: 'running', currentStepIndex: 1 })}
+        controls={controls}
+      />,
+    );
+    fireEvent.press(getByTestId('sense-grounding-advance'));
+    expect(controls.tap).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the Start control while idle and forwards controls.start', () => {
+    const controls = fakeControls();
+    const { getByTestId } = render(
+      <SenseGroundingView
+        config={config}
+        state={fakeState({ status: 'idle', currentStepIndex: 0 })}
+        controls={controls}
+      />,
+    );
+    fireEvent.press(getByTestId('ritual-start'));
+    expect(controls.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders the completion card with a Save CTA when status is complete', () => {
+    const { getByTestId, queryByTestId } = render(
+      <SenseGroundingView
+        config={config}
+        state={fakeState({
+          status: 'complete',
+          currentStepIndex: config.prompts.length,
+        })}
+        controls={fakeControls()}
+      />,
+    );
+    expect(getByTestId('sense-grounding-complete')).toBeTruthy();
+    expect(queryByTestId('sense-grounding-advance')).toBeNull();
+  });
+
+  it('sets the header accessibility role', () => {
+    const { getByTestId } = render(
+      <SenseGroundingView
+        config={config}
+        state={fakeState({ status: 'running', currentStepIndex: 0 })}
+        controls={fakeControls()}
+      />,
+    );
+    expect(getByTestId('sense-grounding-header').props.accessibilityRole).toBe('header');
+  });
+
+  it('exposes an accessibility label that updates with the current sense', () => {
+    const { getByTestId, rerender } = render(
+      <SenseGroundingView
+        config={config}
+        state={fakeState({ status: 'running', currentStepIndex: 0 })}
+        controls={fakeControls()}
+      />,
+    );
+    expect(getByTestId('sense-grounding-advance').props.accessibilityLabel).toBe('Mark sight done');
+    rerender(
+      <SenseGroundingView
+        config={config}
+        state={fakeState({ status: 'running', currentStepIndex: 3 })}
+        controls={fakeControls()}
+      />,
+    );
+    expect(getByTestId('sense-grounding-advance').props.accessibilityLabel).toBe('Mark smell done');
+  });
+});
