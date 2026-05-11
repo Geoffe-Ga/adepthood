@@ -37,6 +37,15 @@ async def _signup(client: AsyncClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {resp.json()['token']}"}
 
 
+_TIMER_CFG: dict[str, object] = {
+    "mode": "meditation_timer",
+    "duration_minutes": 10,
+    "start_bell": True,
+    "halfway_bell": False,
+    "end_bell": True,
+}
+
+
 async def _seed(db_session: AsyncSession, count: int) -> None:
     for i in range(count):
         db_session.add(
@@ -47,6 +56,8 @@ async def _seed(db_session: AsyncSession, count: int) -> None:
                 instructions="",
                 default_duration_minutes=10,
                 approved=True,
+                mode="meditation_timer",
+                mode_config=_TIMER_CFG,
             )
         )
     await db_session.commit()

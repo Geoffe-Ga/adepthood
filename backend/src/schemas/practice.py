@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
-from typing import Self
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from domain.constants import TOTAL_STAGES as MAX_STAGE_NUMBER
+from domain.practice_modes import PracticeMode
 from schemas._base import OwnedResourcePublic
+from schemas.practice_mode_config import (
+    MeditationTimerConfig,
+    ModeConfig,
+    ModeConfigAdapter,
+)
 
 PRACTICE_NAME_MAX_LENGTH = 255
 PRACTICE_DESCRIPTION_MAX_LENGTH = 2_000
@@ -53,6 +59,23 @@ def _session_window_violations(
 # -- Practice ---------------------------------------------------------------
 
 
+def _validate_mode_config_payload(mode: str, payload: object) -> ModeConfig:
+    """Validate a raw ``mode_config`` value against the discriminated union.
+
+    Pydantic raises ``ValidationError`` for any structural / range failure,
+    which FastAPI surfaces as 422. The mismatch check below is the one
+    rule that isn't expressible inside the union itself — the union picks
+    the right subclass from ``payload['mode']``; this guard rejects
+    callers who submitted a config whose embedded ``mode`` disagrees with
+    the parent ``mode`` field.
+    """
+    cfg = ModeConfigAdapter.validate_python(payload)
+    if cfg.mode != mode:
+        msg = f"mode_config.mode='{cfg.mode}' does not match mode='{mode}'"
+        raise ValueError(msg)
+    return cfg
+
+
 class PracticeResponse(OwnedResourcePublic):
     """Public representation of a practice.
 
@@ -69,16 +92,51 @@ class PracticeResponse(OwnedResourcePublic):
     instructions: str
     default_duration_minutes: float
     approved: bool
+    mode: str
+    mode_config: ModeConfig
 
 
 class PracticeCreate(BaseModel):
-    """Payload for submitting a new user-created practice."""
+    """Payload for submitting a new user-created practice.
+
+    ``mode`` and ``mode_config`` are optional for backwards compatibility:
+    omitting both falls back to a meditation timer derived from
+    ``default_duration_minutes`` so existing clients keep working.
+    """
 
     stage_number: int = Field(ge=1, le=MAX_STAGE_NUMBER)
     name: str = Field(min_length=1, max_length=PRACTICE_NAME_MAX_LENGTH)
     description: str = Field(max_length=PRACTICE_DESCRIPTION_MAX_LENGTH)
     instructions: str = Field(max_length=PRACTICE_INSTRUCTIONS_MAX_LENGTH)
     default_duration_minutes: float = Field(gt=0, le=MAX_DURATION_MINUTES)
+    # Typed as ``PracticeMode`` so an unknown value (e.g. ``"telepathy"``)
+    # surfaces the enum's "Input should be 'meditation_timer', …" error
+    # instead of falling through to the misleading "mode_config is
+    # required" branch below.
+    mode: PracticeMode | None = None
+    mode_config: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _resolve_mode_and_config(self) -> Self:
+        """Fill in defaults and cross-validate ``mode`` ↔ ``mode_config``.
+
+        The Pydantic model exposes raw types so the wire format stays JSON
+        friendly, but the validator round-trips the payload through
+        :class:`ModeConfigAdapter` so a malformed config is rejected at
+        422 instead of leaking into the ORM row.
+        """
+        resolved_mode = (self.mode or PracticeMode.MEDITATION_TIMER).value
+        if self.mode_config is None:
+            if resolved_mode != PracticeMode.MEDITATION_TIMER.value:
+                msg = "mode_config is required for non-default modes"
+                raise ValueError(msg)
+            default = MeditationTimerConfig(duration_minutes=self.default_duration_minutes)
+            object.__setattr__(self, "mode_config", default.model_dump())
+        else:
+            cfg = _validate_mode_config_payload(resolved_mode, self.mode_config)
+            object.__setattr__(self, "mode_config", cfg.model_dump())
+        object.__setattr__(self, "mode", resolved_mode)
+        return self
 
 
 # -- UserPractice -----------------------------------------------------------
