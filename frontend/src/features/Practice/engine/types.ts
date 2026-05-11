@@ -103,7 +103,9 @@ export interface RitualControls {
 }
 
 export interface AudioAdapter {
-  play: (kind: CueKind) => void;
+  play: (kind: CueKind) => void | Promise<void>;
+  /** Free any loaded sound resources. Optional; safe to omit for no-op adapters. */
+  dispose?: () => void;
 }
 
 export interface HapticsAdapter {
