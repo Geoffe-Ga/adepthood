@@ -1550,11 +1550,27 @@ export interface UserPractice {
   stage_number: number;
   start_date: string;
   end_date: string | null;
+  /** ritual-03: per-user display name override; null when no override set. */
+  custom_name?: string | null;
+  /** ritual-03: per-user mode_config override (validated server-side as ModeConfig). */
+  mode_config_override?: Record<string, unknown> | null;
 }
 
 export interface UserPracticeCreate {
   practice_id: number;
   stage_number: number;
+}
+
+/**
+ * Payload for ``PATCH /user-practices/{id}/customize`` (ritual-03).
+ *
+ * Both fields are nullable so a request can clear an override by passing
+ * ``null`` explicitly: the backend treats ``null`` as "remove" and ``undefined``
+ * (field absent from JSON) as "leave alone".
+ */
+export interface UserPracticeCustomize {
+  custom_name?: string | null;
+  mode_config_override?: Record<string, unknown> | null;
 }
 
 export interface PracticeSessionCreate {
@@ -1611,6 +1627,26 @@ export const userPractices = {
   },
   list(token?: string): Promise<UserPractice[]> {
     return request<UserPractice[]>('/user-practices/', { token });
+  },
+  /**
+   * PATCH the per-user overrides (custom name + mode_config_override).
+   *
+   * Passing ``mode_config_override: null`` resets to the catalog default;
+   * passing ``undefined`` (or omitting the field) leaves the existing
+   * override untouched. The endpoint is documented in ritual-03; until
+   * that PR lands, this client method targets the agreed-upon route so
+   * the frontend can be cut over with no extra refactor.
+   */
+  customize(
+    userPracticeId: number,
+    payload: UserPracticeCustomize,
+    token?: string,
+  ): Promise<UserPractice> {
+    return request<UserPractice>(`/user-practices/${userPracticeId}/customize`, {
+      method: 'PATCH',
+      body: payload,
+      token,
+    });
   },
 };
 

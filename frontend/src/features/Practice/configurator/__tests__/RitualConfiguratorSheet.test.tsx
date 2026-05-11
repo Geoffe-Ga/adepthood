@@ -1,0 +1,190 @@
+import { describe, expect, it, jest } from '@jest/globals';
+import { act, fireEvent, render } from '@testing-library/react-native';
+import React from 'react';
+
+import type { ModeConfig } from '../../engine/types';
+import RitualConfiguratorSheet from '../RitualConfiguratorSheet';
+
+import { ApiError, type UserPractice } from '@/api';
+
+const updated: UserPractice = {
+  id: 17,
+  user_id: 1,
+  practice_id: 9,
+  stage_number: 3,
+  start_date: '2026-05-01',
+  end_date: null,
+  custom_name: 'My Sit',
+  mode_config_override: null,
+};
+
+const flushPromises = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+function renderSheet(
+  overrides: Partial<React.ComponentProps<typeof RitualConfiguratorSheet>> = {},
+) {
+  const customize = jest.fn(async () => updated);
+  const onClose = jest.fn();
+  const onSaved = jest.fn();
+  const baseConfig: ModeConfig = { mode: 'meditation_timer', duration_minutes: 10 };
+  const utils = render(
+    <RitualConfiguratorSheet
+      visible
+      userPracticeId={17}
+      initialName="Morning Sit"
+      aspect="Body"
+      initialConfig={baseConfig}
+      customize={customize}
+      onClose={onClose}
+      onSaved={onSaved}
+      {...overrides}
+    />,
+  );
+  return { ...utils, customize, onClose, onSaved };
+}
+
+describe('RitualConfiguratorSheet', () => {
+  it('renders the meditation timer form by default', () => {
+    const { getByTestId } = renderSheet();
+    expect(getByTestId('meditation-timer-form')).toBeTruthy();
+    expect(getByTestId('ritual-configurator-aspect')).toBeTruthy();
+  });
+
+  it('disables save until the form is dirty', () => {
+    const { getByTestId } = renderSheet();
+    const save = getByTestId('ritual-configurator-save');
+    expect(save.props.accessibilityState?.disabled).toBe(true);
+  });
+
+  it('builds the customize payload from the edited fields on save', async () => {
+    const { getByTestId, customize, onClose, onSaved } = renderSheet();
+    fireEvent.changeText(getByTestId('ritual-configurator-name'), 'My Morning Sit');
+    fireEvent.changeText(getByTestId('meditation-timer-duration'), '15');
+    await act(async () => {
+      fireEvent.press(getByTestId('ritual-configurator-save'));
+      await flushPromises();
+    });
+    expect(customize).toHaveBeenCalledWith(17, {
+      custom_name: 'My Morning Sit',
+      mode_config_override: {
+        mode: 'meditation_timer',
+        duration_minutes: 15,
+      },
+    });
+    expect(onSaved).toHaveBeenCalledWith(updated);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('omits the custom_name when only the config changed', async () => {
+    const { getByTestId, customize } = renderSheet();
+    fireEvent.changeText(getByTestId('meditation-timer-duration'), '12');
+    await act(async () => {
+      fireEvent.press(getByTestId('ritual-configurator-save'));
+      await flushPromises();
+    });
+    expect(customize).toHaveBeenCalledWith(17, {
+      custom_name: undefined,
+      mode_config_override: { mode: 'meditation_timer', duration_minutes: 12 },
+    });
+  });
+
+  it('shows validation errors and blocks save when out of range', () => {
+    const { getByTestId, queryByTestId } = renderSheet();
+    fireEvent.changeText(getByTestId('meditation-timer-duration'), '0');
+    expect(queryByTestId('configurator-errors')).toBeTruthy();
+    expect(getByTestId('ritual-configurator-save').props.accessibilityState?.disabled).toBe(true);
+  });
+
+  it('sends nulls for both fields when the user resets to default', async () => {
+    const { getByTestId, customize, onSaved, onClose } = renderSheet();
+    await act(async () => {
+      fireEvent.press(getByTestId('ritual-configurator-reset'));
+      await flushPromises();
+    });
+    expect(customize).toHaveBeenCalledWith(17, {
+      custom_name: null,
+      mode_config_override: null,
+    });
+    expect(onSaved).toHaveBeenCalledWith(updated);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders the API error message and keeps the sheet open on failure', async () => {
+    const customize = jest.fn(async () => {
+      throw new ApiError(500, 'internal');
+    });
+    const onClose = jest.fn();
+    const { getByTestId } = renderSheet({ customize, onClose });
+    fireEvent.changeText(getByTestId('ritual-configurator-name'), 'My Sit');
+    await act(async () => {
+      fireEvent.press(getByTestId('ritual-configurator-save'));
+      await flushPromises();
+    });
+    expect(getByTestId('ritual-configurator-api-error').props.children).toBe(
+      'Could not save practice.',
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('renders the unknown-mode notice for unsupported modes', () => {
+    const unknownConfig = { mode: 'mystery' } as unknown as ModeConfig;
+    const { getByTestId } = renderSheet({ initialConfig: unknownConfig });
+    expect(getByTestId('ritual-configurator-unknown')).toBeTruthy();
+  });
+
+  it('cancels without calling the API', () => {
+    const { getByTestId, customize, onClose } = renderSheet();
+    fireEvent.press(getByTestId('ritual-configurator-cancel'));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(customize).not.toHaveBeenCalled();
+  });
+
+  it('renders each supported mode form by discriminator', () => {
+    const cases: { config: ModeConfig; testID: string }[] = [
+      { config: { mode: 'count_up', soft_cap_minutes: null }, testID: 'count-up-form' },
+      {
+        config: {
+          mode: 'metronome',
+          bpm: 60,
+          timer: { mode: 'meditation_timer', duration_minutes: 10 },
+        },
+        testID: 'metronome-form',
+      },
+      {
+        config: {
+          mode: 'interval_bell',
+          duration_minutes: 20,
+          interval_minutes: 5,
+          cue_offsets_minutes: null,
+          bell_tone: 'bowl',
+        },
+        testID: 'interval-bell-form',
+      },
+      {
+        config: { mode: 'rep_counter', target_reps: 10, unit_label: 'reps' },
+        testID: 'rep-counter-form',
+      },
+      {
+        config: {
+          mode: 'sense_grounding',
+          prompts: [{ sense: 'sight', label: 'See' }],
+        },
+        testID: 'sense-grounding-form',
+      },
+      {
+        config: {
+          mode: 'tarot',
+          deck: 'major_arcana',
+          per_card_minutes: 5,
+          hide_timer_during_meditation: true,
+        },
+        testID: 'tarot-form',
+      },
+    ];
+    cases.forEach(({ config, testID }) => {
+      const { getByTestId, unmount } = renderSheet({ initialConfig: config });
+      expect(getByTestId(testID)).toBeTruthy();
+      unmount();
+    });
+  });
+});
