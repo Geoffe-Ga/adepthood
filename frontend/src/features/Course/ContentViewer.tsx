@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Text, TouchableOpacity, View } from 'react-native';
 
 import { course as courseApi, type ContentItem } from '../../api';
@@ -86,18 +86,32 @@ function useMarkReadHandler(
 ): { marking: boolean; isRead: boolean; handleMarkRead: () => Promise<void> } {
   const [marking, setMarking] = useState(false);
   const [isRead, setIsRead] = useState(item.is_read);
+  // BUG-FE-COURSE-005: a fast back-tap while ``markRead`` is in flight
+  // used to land ``setMarking(false)`` on an unmounted component, firing
+  // the React "state update on an unmounted" warning and (in stricter
+  // future versions) tearing down updates of subsequent screens.  The
+  // mounted-ref guard skips the setState calls without changing the
+  // happy-path behaviour.
+  const isMountedRef = useRef(true);
+  useEffect(
+    () => () => {
+      isMountedRef.current = false;
+    },
+    [],
+  );
 
   const handleMarkRead = useCallback(async () => {
     if (isRead || marking) return;
     setMarking(true);
     try {
       await courseApi.markRead(item.id);
+      if (!isMountedRef.current) return;
       setIsRead(true);
       onMarkRead();
     } catch (err) {
       console.error('Failed to mark content as read:', err);
     } finally {
-      setMarking(false);
+      if (isMountedRef.current) setMarking(false);
     }
   }, [isRead, marking, item.id, onMarkRead]);
 

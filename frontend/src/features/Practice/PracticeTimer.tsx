@@ -1,4 +1,4 @@
-import { Audio } from 'expo-av';
+import { Audio, type AVPlaybackStatus } from 'expo-av';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
@@ -21,17 +21,56 @@ const TIMER_INTERVAL_MS = 1000;
 const SECONDS_PER_MINUTE = 60;
 const MS_PER_SECOND = 1000;
 
+// BUG-FE-PRACTICE-103: track every live ``Audio.Sound`` so the unmount
+// cleanup can unload them.  The previous implementation captured each
+// sound in a local 3-second ``setTimeout`` with no tracking; over a long
+// session the native ``AVAudioPlayer`` / ``MediaPlayer`` handles
+// accumulated, and on unmount the timeout fired against an orphaned
+// sound.  ``setOnPlaybackStatusUpdate`` unloads on natural completion;
+// the unmount path iterates the ref to flush anything still live.
+//
+// The store is module-level rather than a hook ref so ``playSound``
+// stays a free function (used inside callbacks where mounting a hook
+// is not an option).  The Practice screen is a singleton in this app,
+// so cross-instance leakage is not a concern.
+type LoadedSound = InstanceType<typeof Audio.Sound>;
+type SoundHandle = { sound: LoadedSound; timeoutId: ReturnType<typeof setTimeout> | null };
+const liveSounds: SoundHandle[] = [];
+const SOUND_UNLOAD_TIMEOUT_MS = 3000;
+
 async function playSound(source: number): Promise<void> {
   try {
     const { sound } = await Audio.Sound.createAsync(source);
+    const handle: SoundHandle = { sound, timeoutId: null };
+    liveSounds.push(handle);
+    sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
+      if (!status.isLoaded || !status.didJustFinish) return;
+      cleanupHandle(handle);
+    });
     await sound.playAsync();
-    setTimeout(() => {
-      sound.unloadAsync();
-    }, 3000);
+    // Fallback in case ``didJustFinish`` never fires (e.g. interruption).
+    handle.timeoutId = setTimeout(() => {
+      cleanupHandle(handle);
+    }, SOUND_UNLOAD_TIMEOUT_MS);
   } catch (err) {
     console.warn('Audio playback failed, falling back to vibration:', err);
     Vibration.vibrate(200);
   }
+}
+
+function cleanupHandle(handle: SoundHandle): void {
+  const index = liveSounds.indexOf(handle);
+  if (index === -1) return; // already cleaned up
+  liveSounds.splice(index, 1);
+  if (handle.timeoutId !== null) clearTimeout(handle.timeoutId);
+  handle.sound.unloadAsync().catch((err: unknown) => {
+    console.warn('Sound unload failed:', err);
+  });
+}
+
+function unloadAllSounds(): void {
+  // Iterate a copy because ``cleanupHandle`` mutates ``liveSounds``.
+  for (const handle of [...liveSounds]) cleanupHandle(handle);
 }
 
 const SOUND_END = require('../../../assets/sounds/bell-end.mp3');
@@ -96,6 +135,12 @@ function useStartPauseResume(totalSeconds: number, ts: ReturnType<typeof useTime
   } = ts;
 
   const handleStart = useCallback(() => {
+    // BUG-FE-PRACTICE-102: clear any leftover interval before scheduling
+    // a fresh one.  Rapid Start -> Cancel -> Start used to leak the
+    // first interval into the second run, halving the countdown.  The
+    // effect's cleanup eventually catches it, but the overlap window is
+    // visible; clearing here closes it deterministically.
+    clearTimer();
     setState('running');
     halfwayPlayedRef.current = false;
     setRemaining(totalSeconds);
@@ -110,6 +155,7 @@ function useStartPauseResume(totalSeconds: number, ts: ReturnType<typeof useTime
     halfwayPlayedRef,
     effectiveStartMsRef,
     pauseStartMsRef,
+    clearTimer,
   ]);
 
   const handlePause = useCallback(() => {
@@ -119,6 +165,11 @@ function useStartPauseResume(totalSeconds: number, ts: ReturnType<typeof useTime
   }, [pauseStartMsRef, setState, clearTimer]);
 
   const handleResume = useCallback(() => {
+    // BUG-FE-PRACTICE-104: ensure no stale interval survives the pause
+    // window.  ``handlePause`` already clears, but a re-render of the
+    // scheduling effect between pause and resume could theoretically
+    // resubscribe; clearing here is cheap and removes the ambiguity.
+    clearTimer();
     // Slide the start anchor forward by the paused interval so the
     // visible count-down resumes exactly where it left off and the
     // wall-clock duration submitted on completion never includes the
@@ -128,7 +179,7 @@ function useStartPauseResume(totalSeconds: number, ts: ReturnType<typeof useTime
     }
     pauseStartMsRef.current = null;
     setState('running');
-  }, [effectiveStartMsRef, pauseStartMsRef, setState]);
+  }, [effectiveStartMsRef, pauseStartMsRef, setState, clearTimer]);
 
   return { handleStart, handlePause, handleResume };
 }
@@ -231,6 +282,12 @@ function useTimerEffects(
     return () => {
       clearTimer();
       deactivateKeepAwake(KEEP_AWAKE_TAG);
+      // BUG-FE-PRACTICE-103: flush any in-flight ``Audio.Sound`` so we
+      // don't leak native AVAudioPlayer / MediaPlayer handles when the
+      // user navigates away mid-session (and so the orphaned
+      // ``setTimeout`` cannot fire against an already-detached
+      // instance).
+      unloadAllSounds();
     };
   }, [clearTimer]);
 }
