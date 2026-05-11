@@ -123,13 +123,23 @@ def test_every_preset_is_approved_and_unsubmitted() -> None:
 
 
 def test_sense_grounding_preset_has_5_4_3_2_1_prompts() -> None:
-    """Stage 1's preset implements the 5-4-3-2-1 grounding technique."""
+    """Stage 1's preset implements the 5-4-3-2-1 grounding technique.
+
+    Checks the sense order and the per-sense count independently so a
+    label-copy change (e.g. "Name 5 …" → "Identify five …") fails on a
+    clear assertion rather than a silent ``ValueError`` from ``int()``.
+    """
     preset = next(p for p in PRESET_PRACTICES if p["stage_number"] == 1)
     cfg = SenseGroundingConfig.model_validate(preset["mode_config"])
-    senses = [(p.sense, int(p.label.split()[1])) for p in cfg.prompts]
-    assert senses == list(_SENSE_ORDER), (
-        f"Expected 5-sight → 4-touch → 3-hearing → 2-smell → 1-taste; got {senses}"
-    )
+
+    expected_senses = [sense for sense, _ in _SENSE_ORDER]
+    expected_counts = [count for _, count in _SENSE_ORDER]
+    assert [p.sense for p in cfg.prompts] == expected_senses
+    # Counts are still parsed from the label so a copy change that drops
+    # the count (e.g. "Things you can see") fails loudly; the assertion
+    # above protects the sense order even if the label parse fails.
+    actual_counts = [int(p.label.split()[1]) for p in cfg.prompts]
+    assert actual_counts == expected_counts
 
 
 def test_shadow_work_preset_uses_valid_metronome_config() -> None:
