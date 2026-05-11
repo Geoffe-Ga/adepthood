@@ -132,6 +132,8 @@ export interface HabitTileProps {
    * absent so legacy tests render without an auth context.
    */
   tz?: string;
+  /** Border/accent color; falls back to ``STAGE_COLORS[habit.stage]`` when omitted. */
+  stageColor?: string;
 }
 
 export interface HabitSettingsModalProps {
