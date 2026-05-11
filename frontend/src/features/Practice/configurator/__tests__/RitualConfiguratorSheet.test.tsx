@@ -132,6 +132,32 @@ describe('RitualConfiguratorSheet', () => {
     expect(getByTestId('ritual-configurator-unknown')).toBeTruthy();
   });
 
+  it('disables Save and Reset while the API call is in flight', async () => {
+    let resolveCustomize: ((value: UserPractice) => void) | undefined;
+    const customize = jest.fn(
+      () =>
+        new Promise<UserPractice>((resolve) => {
+          resolveCustomize = resolve;
+        }),
+    );
+    const { getByTestId } = renderSheet({ customize });
+    fireEvent.changeText(getByTestId('ritual-configurator-name'), 'My Sit');
+    fireEvent.press(getByTestId('ritual-configurator-save'));
+    expect(getByTestId('ritual-configurator-save').props.accessibilityState?.disabled).toBe(true);
+    expect(getByTestId('ritual-configurator-reset').props.accessibilityState?.disabled).toBe(true);
+    await act(async () => {
+      resolveCustomize?.(updated);
+      await flushPromises();
+    });
+  });
+
+  it('blocks save when the name is cleared and shows an inline error', () => {
+    const { getByTestId, queryByTestId } = renderSheet();
+    fireEvent.changeText(getByTestId('ritual-configurator-name'), '');
+    expect(queryByTestId('configurator-errors')).toBeTruthy();
+    expect(getByTestId('ritual-configurator-save').props.accessibilityState?.disabled).toBe(true);
+  });
+
   it('cancels without calling the API', () => {
     const { getByTestId, customize, onClose } = renderSheet();
     fireEvent.press(getByTestId('ritual-configurator-cancel'));

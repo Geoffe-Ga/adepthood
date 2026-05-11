@@ -11,11 +11,13 @@ import type {
 import {
   BPM_MAX,
   BPM_MIN,
+  CUSTOM_NAME_MAX,
   DURATION_MAX_MINUTES,
   DURATION_MIN_MINUTES,
   PROMPT_LABEL_MAX,
   UNIT_LABEL_MAX,
   validateCountUp,
+  validateCustomName,
   validateIntervalBell,
   validateMeditationTimer,
   validateMetronome,
@@ -119,18 +121,18 @@ describe('validateIntervalBell', () => {
     expect(validateIntervalBell({ ...evenBase, interval_minutes: 20 })[0]).toMatch(/less than/);
   });
 
-  it('rejects setting both interval and offsets', () => {
-    expect(validateIntervalBell({ ...evenBase, cue_offsets_minutes: [5] })[0]).toMatch(/either/);
+  it('rejects setting both interval and offsets with a "not both" message', () => {
+    expect(validateIntervalBell({ ...evenBase, cue_offsets_minutes: [5] })[0]).toMatch(/not both/i);
   });
 
-  it('rejects setting neither interval nor offsets', () => {
+  it('rejects setting neither interval nor offsets with a "select one" message', () => {
     expect(
       validateIntervalBell({
         ...evenBase,
         interval_minutes: null,
         cue_offsets_minutes: null,
       })[0],
-    ).toMatch(/either/);
+    ).toMatch(/select/i);
   });
 
   it('accepts custom offsets within duration', () => {
@@ -269,6 +271,27 @@ describe('validateTarot', () => {
   it('omits per_card_minutes check when undefined', () => {
     const partial: TarotConfig = { mode: 'tarot', deck: 'major_arcana' };
     expect(validateTarot(partial)).toEqual([]);
+  });
+});
+
+describe('validateCustomName', () => {
+  it('accepts a normal name', () => {
+    expect(validateCustomName('My Morning Sit')).toEqual([]);
+  });
+
+  it('rejects an empty/whitespace-only name', () => {
+    expect(validateCustomName('')[0]).toMatch(/empty/i);
+    expect(validateCustomName('   ')[0]).toMatch(/empty/i);
+  });
+
+  it('rejects oversize names', () => {
+    expect(validateCustomName('x'.repeat(CUSTOM_NAME_MAX + 1))[0]).toMatch(
+      new RegExp(`≤ ${CUSTOM_NAME_MAX}`),
+    );
+  });
+
+  it('accepts a name at the exact length boundary', () => {
+    expect(validateCustomName('x'.repeat(CUSTOM_NAME_MAX))).toEqual([]);
   });
 });
 

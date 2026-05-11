@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 
 import type { ModeConfig } from '../engine/types';
-import { validateModeConfig } from '../engine/validation';
+import { CUSTOM_NAME_MAX, validateCustomName, validateModeConfig } from '../engine/validation';
 
 import CountUpForm from './forms/CountUpForm';
 import IntervalBellForm from './forms/IntervalBellForm';
@@ -45,17 +45,9 @@ export interface RitualConfiguratorSheetProps {
  * practice mode is a separate flow (ritual-10).
  */
 const RitualConfiguratorSheet = (props: RitualConfiguratorSheetProps): React.JSX.Element => {
-  const [name, setName] = useState(props.initialName);
-  const [config, setConfig] = useState<ModeConfig>(props.initialConfig);
+  const edit = useEditState(props.initialName, props.initialConfig);
   const state = useSaveState();
-
-  const dirty = useMemo(
-    () => name !== props.initialName || !isShallowEqualConfig(config, props.initialConfig),
-    [name, config, props.initialName, props.initialConfig],
-  );
-  const errors = useMemo(() => validateModeConfig(config), [config]);
-  const canSave = dirty && errors.length === 0 && !state.submitting;
-
+  const canSave = edit.dirty && edit.errors.length === 0 && !state.submitting;
   return (
     <Modal visible={props.visible} transparent animationType="slide" onRequestClose={props.onClose}>
       <KeyboardAvoidingView
@@ -65,37 +57,70 @@ const RitualConfiguratorSheet = (props: RitualConfiguratorSheetProps): React.JSX
       >
         <View style={styles.sheet} testID="ritual-configurator-sheet">
           <ConfiguratorHeader
-            name={name}
+            name={edit.name}
             aspect={props.aspect ?? null}
-            onNameChange={setName}
+            onNameChange={edit.setName}
             onCancel={props.onClose}
-            onSave={() => state.save(props, { name, config })}
+            onSave={() => state.save(props, { name: edit.name, config: edit.config })}
             canSave={canSave}
           />
           <ScrollView style={styles.body} keyboardShouldPersistTaps="handled">
-            <ConfiguratorBody config={config} onChange={setConfig} />
-            <ErrorList errors={errors} />
+            <ConfiguratorBody config={edit.config} onChange={edit.setConfig} />
+            <ErrorList errors={edit.errors} />
             {state.apiError !== null && (
               <Text style={styles.apiError} testID="ritual-configurator-api-error">
                 {state.apiError}
               </Text>
             )}
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityLabel="Reset to default"
-              onPress={() => state.reset(props)}
-              style={styles.resetButton}
-              testID="ritual-configurator-reset"
-              disabled={state.submitting}
-            >
-              <Text style={styles.resetText}>Reset to default</Text>
-            </TouchableOpacity>
+            <ResetButton disabled={state.submitting} onPress={() => state.reset(props)} />
           </ScrollView>
         </View>
       </KeyboardAvoidingView>
     </Modal>
   );
 };
+
+interface EditState {
+  name: string;
+  config: ModeConfig;
+  setName: (next: string) => void;
+  setConfig: (next: ModeConfig) => void;
+  errors: readonly string[];
+  dirty: boolean;
+}
+
+function useEditState(initialName: string, initialConfig: ModeConfig): EditState {
+  const [name, setName] = useState(initialName);
+  const [config, setConfig] = useState<ModeConfig>(initialConfig);
+  const dirty = useMemo(
+    () => name !== initialName || !deepEqualConfig(config, initialConfig),
+    [name, config, initialName, initialConfig],
+  );
+  const errors = useMemo(
+    () => [...validateCustomName(name), ...validateModeConfig(config)],
+    [name, config],
+  );
+  return { name, config, setName, setConfig, errors, dirty };
+}
+
+interface ResetButtonProps {
+  disabled: boolean;
+  onPress: () => void;
+}
+
+const ResetButton = ({ disabled, onPress }: ResetButtonProps): React.JSX.Element => (
+  <TouchableOpacity
+    accessibilityRole="button"
+    accessibilityLabel="Reset to default"
+    accessibilityState={{ disabled }}
+    onPress={disabled ? undefined : onPress}
+    style={styles.resetButton}
+    testID="ritual-configurator-reset"
+    disabled={disabled}
+  >
+    <Text style={styles.resetText}>Reset to default</Text>
+  </TouchableOpacity>
+);
 
 interface HeaderProps {
   name: string;
@@ -121,6 +146,7 @@ const ConfiguratorHeader = ({
         value={name}
         onChangeText={onNameChange}
         placeholder="Practice name"
+        maxLength={CUSTOM_NAME_MAX}
         testID="ritual-configurator-name"
       />
       {aspect !== null && aspect.length > 0 && (
@@ -225,7 +251,7 @@ function useSaveState(): SaveState {
     (props: RitualConfiguratorSheetProps, values: SaveValues) =>
       run(props, {
         custom_name: values.name === props.initialName ? undefined : values.name,
-        mode_config_override: values.config as unknown as Record<string, unknown>,
+        mode_config_override: values.config,
       }),
     [run],
   );
@@ -239,7 +265,16 @@ function useSaveState(): SaveState {
   return { submitting, apiError, save, reset };
 }
 
-function isShallowEqualConfig(a: ModeConfig, b: ModeConfig): boolean {
+/**
+ * Structural equality check for ``ModeConfig`` payloads.
+ *
+ * ``JSON.stringify`` is a deep, value-based comparison (not shallow). V8
+ * preserves insertion order for string keys, and the discriminated-union
+ * configs are constructed from spread + literal patches so key order is
+ * stable in practice. If a future ``ModeConfig`` variant carries dynamic
+ * keys this will need a proper structural equality helper.
+ */
+function deepEqualConfig(a: ModeConfig, b: ModeConfig): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 

@@ -16,6 +16,7 @@ import type { components, paths } from './types';
 
 import { API_BASE_URL } from '@/config';
 import type { Habit as LocalHabit } from '@/features/Habits/Habits.types';
+import type { ModeConfig } from '@/features/Practice/engine/types';
 
 // Re-export OpenAPI types for convenience
 export type EnergyPlanRequest =
@@ -1553,7 +1554,7 @@ export interface UserPractice {
   /** ritual-03: per-user display name override; null when no override set. */
   custom_name?: string | null;
   /** ritual-03: per-user mode_config override (validated server-side as ModeConfig). */
-  mode_config_override?: Record<string, unknown> | null;
+  mode_config_override?: ModeConfig | null;
 }
 
 export interface UserPracticeCreate {
@@ -1570,7 +1571,7 @@ export interface UserPracticeCreate {
  */
 export interface UserPracticeCustomize {
   custom_name?: string | null;
-  mode_config_override?: Record<string, unknown> | null;
+  mode_config_override?: ModeConfig | null;
 }
 
 export interface PracticeSessionCreate {

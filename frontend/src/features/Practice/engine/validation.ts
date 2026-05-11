@@ -24,6 +24,8 @@ export const DURATION_MAX_MINUTES = 24 * 60;
 export const PROMPT_LABEL_MAX = 255;
 export const UNIT_LABEL_MAX = 64;
 export const TARGET_REPS_MIN = 1;
+/** Mirrors the backend ``UserPractice.custom_name`` column (ritual-03). */
+export const CUSTOM_NAME_MAX = 255;
 
 export const ALLOWED_SENSES: readonly SenseKind[] = ['sight', 'touch', 'hearing', 'smell', 'taste'];
 
@@ -90,25 +92,33 @@ function checkIntervalSpacing(interval: number, duration: number): string[] {
   return [];
 }
 
+function checkBellTone(tone: IntervalBellConfig['bell_tone']): string[] {
+  return ALLOWED_BELL_TONES.includes(tone) ? [] : ['Unknown bell tone'];
+}
+
 export function validateIntervalBell(config: IntervalBellConfig): string[] {
   const errors: string[] = [];
   pushIfOutOfDurationRange(errors, 'Duration', config.duration_minutes);
-  const hasInterval = config.interval_minutes !== undefined && config.interval_minutes !== null;
-  const hasOffsets =
-    config.cue_offsets_minutes !== undefined && config.cue_offsets_minutes !== null;
-  if (hasInterval === hasOffsets) {
+  const interval = config.interval_minutes ?? null;
+  const offsets = config.cue_offsets_minutes ?? null;
+  // The two spacing strategies are mutually exclusive (mirrors the Pydantic
+  // model_validator in ``backend/src/schemas/practice_mode_config.py``).
+  // Split the two violation classes so the surfaced error tells the user
+  // which side of the constraint they tripped.
+  if (interval === null && offsets === null) {
+    errors.push('Select a spacing method: even intervals or custom offsets');
+    return errors;
+  }
+  if (interval !== null && offsets !== null) {
     errors.push('Choose either even intervals or custom offsets, not both');
     return errors;
   }
-  if (hasInterval && config.interval_minutes !== null && config.interval_minutes !== undefined) {
-    errors.push(...checkIntervalSpacing(config.interval_minutes, config.duration_minutes));
+  if (interval !== null) {
+    errors.push(...checkIntervalSpacing(interval, config.duration_minutes));
+  } else if (offsets !== null) {
+    errors.push(...checkOffsetList(offsets, config.duration_minutes));
   }
-  if (hasOffsets && config.cue_offsets_minutes) {
-    errors.push(...checkOffsetList(config.cue_offsets_minutes, config.duration_minutes));
-  }
-  if (!ALLOWED_BELL_TONES.includes(config.bell_tone)) {
-    errors.push('Unknown bell tone');
-  }
+  errors.push(...checkBellTone(config.bell_tone));
   return errors;
 }
 
@@ -175,6 +185,22 @@ const VALIDATORS: {
   sense_grounding: validateSenseGrounding,
   tarot: validateTarot,
 };
+
+/**
+ * Validate the user-supplied ``custom_name`` override.  Trimmed length must
+ * be non-empty; raw length is capped at :data:`CUSTOM_NAME_MAX` to match the
+ * ``UserPractice.custom_name`` column added in ritual-03.
+ */
+export function validateCustomName(name: string): string[] {
+  const errors: string[] = [];
+  if (name.trim().length === 0) {
+    errors.push('Name cannot be empty');
+  }
+  if (name.length > CUSTOM_NAME_MAX) {
+    errors.push(`Name must be ≤ ${CUSTOM_NAME_MAX} characters`);
+  }
+  return errors;
+}
 
 export function validateModeConfig(config: ModeConfig): string[] {
   // The mapped-type ``VALIDATORS`` table guarantees every mode has a
