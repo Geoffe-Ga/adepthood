@@ -198,6 +198,103 @@ describe('GoalModal unit + frequency editor', () => {
   });
 });
 
+describe('GoalModal direction toggle', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('renders an Add up / Cut back chip pair reflecting the habit direction', () => {
+    const { getByTestId } = renderModal();
+    const additive = getByTestId('goal-direction-additive');
+    const subtractive = getByTestId('goal-direction-subtractive');
+    expect(additive.props.accessibilityRole).toBe('radio');
+    expect(additive.props.accessibilityState).toEqual({ checked: true });
+    expect(subtractive.props.accessibilityState).toEqual({ checked: false });
+  });
+
+  it('marks the subtractive chip checked when the habit is subtractive', () => {
+    const subtractiveHabit = makeHabit({
+      goals: [
+        makeGoal('low', { target: 25, is_additive: false }),
+        makeGoal('clear', { target: 6, is_additive: false }),
+        makeGoal('stretch', { target: 0, is_additive: false }),
+      ],
+    });
+    const { getByTestId } = renderModal(subtractiveHabit);
+    expect(getByTestId('goal-direction-additive').props.accessibilityState).toEqual({
+      checked: false,
+    });
+    expect(getByTestId('goal-direction-subtractive').props.accessibilityState).toEqual({
+      checked: true,
+    });
+  });
+
+  it('flips all three tiers when switching from additive to subtractive and inverts target order', () => {
+    // Habit starts additive with low=1, clear=2, stretch=3. Switching to
+    // subtractive ("Cut back") should send PUTs for all three tiers with
+    // is_additive=false and the targets inverted so ``low`` (the most
+    // lenient limit) gets the largest target and ``stretch`` (the strictest
+    // cap) gets the smallest. PUTs fan out in ascending-new-target order so
+    // each clamp in ``normalizeGoalTiers`` is a no-op.
+    const { getByTestId, props } = renderModal();
+    fireEvent.press(getByTestId('goal-direction-subtractive'));
+
+    expect(props.onUpdateGoal).toHaveBeenCalledTimes(3);
+    expect(props.onUpdateGoal).toHaveBeenNthCalledWith(
+      1,
+      42,
+      expect.objectContaining({ tier: 'stretch', target: 1, is_additive: false }),
+    );
+    expect(props.onUpdateGoal).toHaveBeenNthCalledWith(
+      2,
+      42,
+      expect.objectContaining({ tier: 'clear', target: 2, is_additive: false }),
+    );
+    expect(props.onUpdateGoal).toHaveBeenNthCalledWith(
+      3,
+      42,
+      expect.objectContaining({ tier: 'low', target: 3, is_additive: false }),
+    );
+  });
+
+  it('flips back to additive and restores ascending target order', () => {
+    const subtractiveHabit = makeHabit({
+      goals: [
+        makeGoal('low', { target: 25, is_additive: false }),
+        makeGoal('clear', { target: 6, is_additive: false }),
+        makeGoal('stretch', { target: 0, is_additive: false }),
+      ],
+    });
+    const { getByTestId, props } = renderModal(subtractiveHabit);
+    fireEvent.press(getByTestId('goal-direction-additive'));
+
+    expect(props.onUpdateGoal).toHaveBeenCalledTimes(3);
+    // Smallest new target first so each PUT's clamp is a no-op against the
+    // already-additive suffix. For additive, ``low`` takes the smallest.
+    expect(props.onUpdateGoal).toHaveBeenNthCalledWith(
+      1,
+      42,
+      expect.objectContaining({ tier: 'low', target: 0, is_additive: true }),
+    );
+    expect(props.onUpdateGoal).toHaveBeenNthCalledWith(
+      2,
+      42,
+      expect.objectContaining({ tier: 'clear', target: 6, is_additive: true }),
+    );
+    expect(props.onUpdateGoal).toHaveBeenNthCalledWith(
+      3,
+      42,
+      expect.objectContaining({ tier: 'stretch', target: 25, is_additive: true }),
+    );
+  });
+
+  it('does nothing when the user taps the chip already selected', () => {
+    const { getByTestId, props } = renderModal();
+    fireEvent.press(getByTestId('goal-direction-additive'));
+    expect(props.onUpdateGoal).not.toHaveBeenCalled();
+  });
+});
+
 describe('GoalModal editor visibility guards', () => {
   beforeEach(() => {
     jest.clearAllMocks();

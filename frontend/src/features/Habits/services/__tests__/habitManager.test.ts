@@ -359,6 +359,33 @@ describe('habitManager', () => {
       );
     });
 
+    it('propagates is_additive to sibling tiers so a direction flip lands atomically', () => {
+      // Updating ``low`` alone with ``is_additive=false`` must also flip
+      // clear + stretch locally — otherwise ``normalizeGoalTiers`` would key
+      // off ``low.is_additive`` and run the wrong clamp on subsequent fan-out
+      // PUTs, leaving the store in a half-additive / half-subtractive state.
+      useHabitStore.setState({ habits: [makeHabit()] });
+
+      const flippedLow: Goal = {
+        id: 1,
+        title: 'Low',
+        tier: 'low',
+        target: 1,
+        target_unit: 'units',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: false,
+      };
+
+      habitManager.updateGoal(1, flippedLow);
+
+      const { goals } = useHabitStore.getState().habits[0]!;
+      for (const tier of ['low', 'clear', 'stretch'] as const) {
+        const goal = goals.find((g) => g.tier === tier)!;
+        expect(goal.is_additive).toBe(false);
+      }
+    });
+
     it('skips the network call for synthetic goals with no id', async () => {
       useHabitStore.setState({ habits: [makeHabit()] });
 
