@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Header, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, func, select
 
@@ -95,6 +98,158 @@ async def _resolve_practice_with_mode(
     return practice
 
 
+def _idempotency_cache_key(user_id: int, raw_key: str) -> str:
+    """Return a stable, opaque hash for ``(user_id, raw_key)`` idempotency storage.
+
+    The raw header value may be up to 256 chars of client-controlled text.
+    Hashing it with SHA-256 (a) keeps the cache key bounded, (b) prevents
+    a crafted key from escaping the per-user namespace via a collision
+    across users, and (c) means the raw client token is never stored or
+    logged -- same reasoning as the rate-limit key in ``practices.py``.
+    The ``user:`` prefix keeps the key space disjoint from the raw hash
+    space in any future backing store (Redis, DB column, …).
+    """
+    digest = hashlib.sha256(f"{user_id}:{raw_key}".encode()).hexdigest()
+    return f"user:{digest}"
+
+
+# Module-level in-process idempotency store.  Maps ``cache_key → session_id``
+# for the lifetime of the process.  This is sufficient for a single-worker
+# deployment; a multi-worker production deployment should replace this with a
+# shared backing store (Redis, DB table) at the same interface.
+# The store is intentionally not bounded -- sessions are small ints so memory
+# growth is negligible for realistic request rates.
+_IDEMPOTENCY_STORE: dict[str, int] = {}
+
+# Per-cache-key locks that serialise the check-then-insert critical section
+# inside ``create_session`` so two concurrent requests with the same
+# ``(user_id, Idempotency-Key)`` cannot both pass the lookup, both insert a
+# fresh row, and both call ``_remember_idempotent_session``.  Without these,
+# the late writer overwrites the early writer's ``session_id`` and the second
+# response no longer matches the first — breaking the idempotency guarantee.
+# The lookup of the lock itself is guarded by a coarser ``_IDEMPOTENCY_LOCKS_GUARD``
+# so the per-key Lock object is initialised exactly once even under contention.
+_IDEMPOTENCY_LOCKS: dict[str, asyncio.Lock] = {}
+_IDEMPOTENCY_LOCKS_GUARD = asyncio.Lock()
+
+
+async def _acquire_idem_lock(cache_key: str) -> asyncio.Lock:
+    """Return the ``asyncio.Lock`` for ``cache_key``, creating it if needed.
+
+    The double-check pattern under ``_IDEMPOTENCY_LOCKS_GUARD`` keeps the
+    lazy initialisation atomic — two concurrent first-time requests cannot
+    each create their own Lock and then race past each other holding
+    different lock objects.
+    """
+    async with _IDEMPOTENCY_LOCKS_GUARD:
+        lock = _IDEMPOTENCY_LOCKS.get(cache_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _IDEMPOTENCY_LOCKS[cache_key] = lock
+        return lock
+
+
+async def _lookup_idempotent_session(
+    session: AsyncSession,
+    user_id: int,
+    idempotency_key: str,
+) -> PracticeSession | None:
+    """Return the cached ``PracticeSession`` row for an idempotency key, if any.
+
+    Split out of ``create_session`` to keep the route handler under
+    xenon's A-rank complexity cap.  Returns ``None`` when no cached
+    session id is known OR when the cached id no longer resolves (the
+    row was deleted between requests, in which case the next POST is
+    treated as a fresh log).
+    """
+    cache_key = _idempotency_cache_key(user_id, idempotency_key)
+    existing_id = _IDEMPOTENCY_STORE.get(cache_key)
+    if existing_id is None:
+        return None
+    result = await session.execute(select(PracticeSession).where(PracticeSession.id == existing_id))
+    return result.scalars().first()
+
+
+def _remember_idempotent_session(user_id: int, idempotency_key: str, session_id: int) -> None:
+    """Persist the ``(user_id, idempotency_key) → session_id`` mapping for future replays."""
+    cache_key = _idempotency_cache_key(user_id, idempotency_key)
+    _IDEMPOTENCY_STORE[cache_key] = session_id
+
+
+def _build_practice_session(
+    *, user_id: int, payload: PracticeSessionCreate, practice: Practice
+) -> PracticeSession:
+    """Construct an unpersisted ``PracticeSession`` row from the create payload.
+
+    The conditional ``mode_metadata.model_dump()`` adds a branch that
+    pushes ``create_session`` above xenon's A-rank cyclomatic-complexity
+    cap; lifting the row construction into a helper keeps the route
+    handler simple.
+    """
+    mode_metadata = (
+        payload.mode_metadata.model_dump() if payload.mode_metadata is not None else None
+    )
+    return PracticeSession(
+        user_id=user_id,
+        user_practice_id=payload.user_practice_id,
+        duration_minutes=payload.duration_minutes,
+        reflection=payload.reflection,
+        timestamp=payload.ended_at,
+        mode=practice.mode,
+        mode_metadata=mode_metadata,
+        completed=payload.completed,
+        insight=payload.insight,
+    )
+
+
+async def _perform_create_session(
+    payload: PracticeSessionCreate,
+    current_user: int,
+    session: AsyncSession,
+    idempotency_key: str | None,
+) -> PracticeSession:
+    """Lookup-or-insert the practice session under the optional idempotency key.
+
+    Extracted from ``create_session`` so the caller can wrap the entire
+    critical section in a per-key ``asyncio.Lock`` (BUG-PRACTICE-007
+    follow-up): the lookup, the DB insert, and the ``_remember_…`` write
+    must all execute as one atomic unit so two concurrent requests with
+    the same key cannot both miss the cache, both insert, and both
+    remember — clobbering each other's ``session_id`` mapping.
+    """
+    if idempotency_key is not None:
+        cached = await _lookup_idempotent_session(session, current_user, idempotency_key)
+        if cached is not None:
+            return cached
+
+    user_practice = await _resolve_user_practice_for_session(
+        session, payload.user_practice_id, current_user
+    )
+    practice = await _resolve_practice_with_mode(session, user_practice, payload)
+
+    practice_session = _build_practice_session(
+        user_id=current_user, payload=payload, practice=practice
+    )
+    session.add(practice_session)
+    await session.commit()
+    await session.refresh(practice_session)
+
+    if idempotency_key is not None and practice_session.id is not None:
+        _remember_idempotent_session(current_user, idempotency_key, practice_session.id)
+
+    logger.info(
+        "practice_session_logged",
+        extra={
+            "user_id": current_user,
+            "user_practice_id": payload.user_practice_id,
+            "duration_minutes": payload.duration_minutes,
+            "mode": practice.mode,
+            "completed": payload.completed,
+        },
+    )
+    return practice_session
+
+
 @router.post(
     "/",
     response_model=PracticeSessionResponse,
@@ -104,6 +259,7 @@ async def create_session(
     payload: PracticeSessionCreate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> PracticeSession:
     """Log a practice session against a user-practice selection.
 
@@ -112,40 +268,20 @@ async def create_session(
     or query parameter — FastAPI's DI cannot extract body fields into
     sub-dependencies.  The ordering and exception types match the shared
     dep so the IDOR matrix test sees the same 403 for cross-user calls.
-    """
-    user_practice = await _resolve_user_practice_for_session(
-        session, payload.user_practice_id, current_user
-    )
-    practice = await _resolve_practice_with_mode(session, user_practice, payload)
 
-    duration_minutes = payload.duration_minutes
-    practice_session = PracticeSession(
-        user_id=current_user,
-        user_practice_id=payload.user_practice_id,
-        duration_minutes=duration_minutes,
-        reflection=payload.reflection,
-        timestamp=payload.ended_at,
-        mode=practice.mode,
-        mode_metadata=(
-            payload.mode_metadata.model_dump() if payload.mode_metadata is not None else None
-        ),
-        completed=payload.completed,
-        insight=payload.insight,
-    )
-    session.add(practice_session)
-    await session.commit()
-    await session.refresh(practice_session)
-    logger.info(
-        "practice_session_logged",
-        extra={
-            "user_id": current_user,
-            "user_practice_id": payload.user_practice_id,
-            "duration_minutes": duration_minutes,
-            "mode": practice.mode,
-            "completed": payload.completed,
-        },
-    )
-    return practice_session
+    Accepts an optional ``Idempotency-Key`` header (BUG-PRACTICE-007): if a
+    key is present and a session was already created under the same
+    ``(user_id, key)`` pair, the cached session row is returned without
+    creating a duplicate.  The check-then-insert critical section runs
+    under a per-key ``asyncio.Lock`` so concurrent same-key requests on
+    one worker can never both produce a row.
+    """
+    if idempotency_key is None:
+        return await _perform_create_session(payload, current_user, session, None)
+    cache_key = _idempotency_cache_key(current_user, idempotency_key)
+    lock = await _acquire_idem_lock(cache_key)
+    async with lock:
+        return await _perform_create_session(payload, current_user, session, idempotency_key)
 
 
 @router.get("/", response_model=None)
@@ -222,15 +358,46 @@ async def get_insights(
     return PracticeInsightsResponse.model_validate(insights, from_attributes=True)
 
 
+def _start_of_week_utc(tz_name: str) -> datetime:
+    """Return the UTC-aware start-of-current-week boundary in the given timezone.
+
+    BUG-PRACTICE-009: the legacy implementation computed ``start_of_week``
+    using UTC midnight of the Monday in the *UTC* week.  Users east of UTC
+    (e.g. UTC+9, Tokyo) saw their Sunday sessions land in the "next week"
+    bucket; users west of UTC (e.g. UTC-8, California) saw their Monday
+    sessions sometimes disappear if the UTC boundary had already crossed.
+
+    The fix localises ``datetime.now()`` to the user's configured timezone
+    (sourced from ``User.timezone``), finds that week's Monday at 00:00 local
+    time, then converts back to a UTC-aware datetime so the SQL comparison is
+    always apples-to-apples.  ``ZoneInfoNotFoundError`` is caught so a
+    corrupted ``timezone`` value falls back to UTC rather than a 500 error.
+    """
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("UTC")
+    now_local = datetime.now(tz)
+    # Monday of the current local week at midnight.
+    local_monday = now_local - timedelta(days=now_local.weekday())
+    local_midnight = local_monday.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Return as a UTC-aware datetime for SQL comparison.
+    return local_midnight.astimezone(UTC)
+
+
 @router.get("/week-count")
 async def week_count(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict[str, int]:
-    """Return the number of sessions the authenticated user completed this week."""
-    now = datetime.now(UTC)
-    start_of_week = now - timedelta(days=now.weekday())
-    start_of_week = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+    """Return the number of sessions the authenticated user completed this week.
+
+    BUG-PRACTICE-009: the week boundary is derived from the user's stored
+    ``timezone`` field (``User.timezone``) so a user in ``America/Los_Angeles``
+    sees their Monday-through-Sunday window, not the UTC equivalent.
+    """
+    user_tz = await get_user_timezone(session, current_user)
+    start_of_week = _start_of_week_utc(user_tz)
     statement = select(func.count()).where(
         PracticeSession.user_id == current_user,
         PracticeSession.timestamp >= start_of_week,

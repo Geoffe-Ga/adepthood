@@ -14,7 +14,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlmodel import col
+from sqlmodel import col, select
 
 import services.botmason as botmason_mod
 from models.user import User
@@ -1524,6 +1524,149 @@ async def test_stub_stream_yields_words_then_final() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_stream_provider_error_issues_refund(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-BM-013: a provider error after preflight must refund the wallet.
+
+    The streaming endpoint pre-debits the wallet before opening the SSE
+    stream.  If the LLM call fails the user must get their credit back.
+    """
+    headers = await _signup(async_client)
+    await _add_balance(db_session, amount=1)
+
+    async def _boom(
+        *_args: object, **_kwargs: object
+    ) -> AsyncIterator[tuple[str, LLMResponse | None]]:
+        if False:  # pragma: no cover
+            yield "", None
+        msg = "provider_error"
+        raise RuntimeError(msg)
+
+    with patch.object(botmason_mod, "generate_response_stream", _boom):
+        resp = await async_client.post(
+            "/journal/chat/stream", json={"message": "Hi"}, headers=headers
+        )
+
+    assert resp.status_code == HTTPStatus.OK
+    events = _parse_sse_events(resp.text)
+    assert any(name == "error" for name, _ in events)
+
+    # Wallet must be refunded.
+    balance = await async_client.get("/user/balance", headers=headers)
+    assert balance.json()["balance"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_chat_idempotency_key_prevents_double_charge(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-BM-012: duplicate POST with same Idempotency-Key returns cached result.
+
+    A second call with the same key must NOT deduct the wallet again and
+    must return the same response as the first call.
+    """
+    headers = await _signup(async_client)
+    await _add_balance(db_session, amount=2)
+    idem_headers = {**headers, "Idempotency-Key": "test-idem-001"}
+
+    resp1 = await async_client.post(
+        "/journal/chat", json={"message": "Hello"}, headers=idem_headers
+    )
+    assert resp1.status_code == HTTPStatus.CREATED
+    first_response = resp1.json()["response"]
+
+    resp2 = await async_client.post(
+        "/journal/chat", json={"message": "Hello again"}, headers=idem_headers
+    )
+    assert resp2.status_code == HTTPStatus.CREATED
+    # Must return the cached response, not a new one.
+    assert resp2.json()["response"] == first_response
+
+    # Only one deduction should have happened.
+    balance = await async_client.get("/user/balance", headers=headers)
+    assert balance.json()["balance"] == 1  # Started with 2, spent 1.
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_chat_different_idempotency_keys_are_independent(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-BM-012: different idempotency keys create independent charges."""
+    headers = await _signup(async_client)
+    await _add_balance(db_session, amount=2)
+
+    resp1 = await async_client.post(
+        "/journal/chat",
+        json={"message": "Hello"},
+        headers={**headers, "Idempotency-Key": "key-a"},
+    )
+    resp2 = await async_client.post(
+        "/journal/chat",
+        json={"message": "Hello"},
+        headers={**headers, "Idempotency-Key": "key-b"},
+    )
+    assert resp1.status_code == HTTPStatus.CREATED
+    assert resp2.status_code == HTTPStatus.CREATED
+
+    balance = await async_client.get("/user/balance", headers=headers)
+    assert balance.json()["balance"] == 0  # Both deducted.
+
+
+@pytest.mark.asyncio
+async def test_chat_without_idempotency_key_still_works(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-BM-012: the Idempotency-Key header is optional."""
+    headers = await _signup(async_client)
+    await _add_balance(db_session, amount=1)
+
+    resp = await async_client.post("/journal/chat", json={"message": "Hi"}, headers=headers)
+    assert resp.status_code == HTTPStatus.CREATED
+
+
+@pytest.mark.asyncio
+async def test_stream_true_passthrough_yields_chunks_incrementally(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-BM-007: stream endpoint yields chunks as they arrive (not buffered).
+
+    We verify the chunk events appear BEFORE the complete event, and that
+    reassembling them equals the final response.  The stub streamer yields
+    words one-by-one so there should be multiple chunk events.
+    """
+    headers = await _signup(async_client)
+    await _add_balance(db_session, amount=1)
+
+    resp = await async_client.post(
+        "/journal/chat/stream", json={"message": "Tell me about the path"}, headers=headers
+    )
+    assert resp.status_code == HTTPStatus.OK
+    events = _parse_sse_events(resp.text)
+
+    # Must have at least one chunk before the complete.
+    chunk_indices = [i for i, (name, _) in enumerate(events) if name == "chunk"]
+    complete_indices = [i for i, (name, _) in enumerate(events) if name == "complete"]
+    assert len(chunk_indices) >= 1
+    assert len(complete_indices) == 1
+    # All chunks must come before the complete event.
+    assert max(chunk_indices) < complete_indices[0]
+
+    # Reassembled chunks must equal the complete response.
+    chunk_text = "".join(str(data["text"]) for name, data in events if name == "chunk")
+    complete_payload = next(data for name, data in events if name == "complete")
+    assert chunk_text == complete_payload["response"]
+
+
+@pytest.mark.asyncio
 async def test_stream_dispatch_routes_to_configured_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1576,3 +1719,119 @@ async def test_stream_dispatch_routes_to_configured_provider(
     ]
     assert anthropic_chunks[-1][1] is not None
     assert anthropic_chunks[-1][1].text == "sk-ant-override"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_stream_idempotency_key_prevents_double_charge(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-BM-012 (stream): duplicate streaming POST replays without re-charging.
+
+    Address-feedback regression: the original 12B implementation only checked
+    ``ChatSpend`` on the stream path but never wrote the cached result back,
+    so the second call with the same ``Idempotency-Key`` always missed the
+    cache and re-charged the wallet.  This test would have caught that —
+    keeping it here pins the contract so the bug cannot regress.
+    """
+    headers = await _signup(async_client)
+    await _add_balance(db_session, amount=2)
+    idem_headers = {**headers, "Idempotency-Key": "stream-idem-001"}
+
+    resp1 = await async_client.post(
+        "/journal/chat/stream", json={"message": "Hello stream"}, headers=idem_headers
+    )
+    assert resp1.status_code == HTTPStatus.OK
+    events1 = _parse_sse_events(resp1.text)
+    complete1 = next(data for name, data in events1 if name == "complete")
+    first_response_text = complete1["response"]
+
+    resp2 = await async_client.post(
+        "/journal/chat/stream", json={"message": "ignored on replay"}, headers=idem_headers
+    )
+    assert resp2.status_code == HTTPStatus.OK
+    events2 = _parse_sse_events(resp2.text)
+    complete2 = next(data for name, data in events2 if name == "complete")
+    assert complete2["response"] == first_response_text
+
+    # Only one deduction should have happened (started with 2, used 1).
+    balance = await async_client.get("/user/balance", headers=headers)
+    assert balance.json()["balance"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_stream_idempotency_key_different_keys_charge_independently(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Different stream idempotency keys must each deduct the wallet."""
+    headers = await _signup(async_client)
+    await _add_balance(db_session, amount=2)
+
+    resp_a = await async_client.post(
+        "/journal/chat/stream",
+        json={"message": "Hello"},
+        headers={**headers, "Idempotency-Key": "stream-key-a"},
+    )
+    resp_b = await async_client.post(
+        "/journal/chat/stream",
+        json={"message": "Hello"},
+        headers={**headers, "Idempotency-Key": "stream-key-b"},
+    )
+    assert resp_a.status_code == HTTPStatus.OK
+    assert resp_b.status_code == HTTPStatus.OK
+    balance = await async_client.get("/user/balance", headers=headers)
+    assert balance.json()["balance"] == 0  # Both deducted.
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_chat_stuck_in_flight_tombstone_returns_409_until_cleared(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Pin the current behaviour of a tombstone whose ``result_json`` stayed NULL.
+
+    Reviewer-flagged scenario: if the server crashes between
+    ``insert_idem_tombstone`` and ``update_idem_result`` (or rolls back the
+    whole transaction after the tombstone was committed in another flow),
+    the row sits forever with ``result_json = NULL``.  Today every retry
+    with the same key hits the UNIQUE constraint at the tombstone insert
+    and gets 409.  This test pins that behaviour so a future cleanup job
+    (tracked separately) has a regression target — the test will need to
+    flip to assert eventual recovery once the cleanup ships.
+
+    We simulate the crash by directly inserting a NULL-``result_json``
+    ``ChatSpend`` row (matching what a half-completed request would have
+    left behind), then verify the subsequent retry returns 409.
+    """
+    from models.chat_spend import ChatSpend  # noqa: PLC0415
+    from services.chat_idempotency import hash_idem_key  # noqa: PLC0415
+
+    headers = await _signup(async_client)
+    await _add_balance(db_session, amount=2)
+
+    # Find the user_id from the auth token's sub.
+    user_row = (await db_session.execute(select(User))).scalars().first()
+    assert user_row is not None
+    assert user_row.id is not None
+
+    # Plant a stuck-in-flight tombstone with NULL result_json.
+    stuck_key = "crash-key-001"
+    db_session.add(ChatSpend(user_id=user_row.id, idem_key=hash_idem_key(user_row.id, stuck_key)))
+    await db_session.commit()
+
+    # A retry with the same key collides on UNIQUE → 409 (NOT a re-charge).
+    resp = await async_client.post(
+        "/journal/chat",
+        json={"message": "retry after crash"},
+        headers={**headers, "Idempotency-Key": stuck_key},
+    )
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.json()["detail"] == "idempotency_key_in_flight"
+
+    # Wallet stays untouched -- no LLM call was made.
+    balance = await async_client.get("/user/balance", headers=headers)
+    assert balance.json()["balance"] == 2

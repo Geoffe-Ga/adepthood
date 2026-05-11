@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
@@ -127,9 +128,17 @@ async def list_journal_entries(
     session: Annotated[AsyncSession, Depends(get_session)],
     filters: Annotated[_ListFilters, Depends()],
 ) -> JournalListResponse:
-    """List journal entries for the current user with optional filtering."""
+    """List journal entries for the current user with optional filtering.
+
+    BUG-JOURNAL-007: soft-deleted entries (``deleted_at IS NOT NULL``) are
+    excluded so the list surface never resurfaces deleted content.
+    """
     conditions = _build_filter_conditions(filters)
-    query = select(JournalEntry).where(JournalEntry.user_id == current_user, *conditions)
+    query = select(JournalEntry).where(
+        JournalEntry.user_id == current_user,
+        col(JournalEntry.deleted_at).is_(None),  # BUG-JOURNAL-007: exclude soft-deleted
+        *conditions,
+    )
 
     # Count total before pagination
     count_query = select(func.count()).select_from(query.subquery())
@@ -165,11 +174,23 @@ async def delete_journal_entry(
     session: Annotated[AsyncSession, Depends(get_session)],
     entry: Annotated[JournalEntry, Depends(require_owned_journal_entry)],
 ) -> Response:
-    """Delete a journal entry. Returns 204 No Content on success."""
+    """Soft-delete a journal entry (BUG-JOURNAL-007).
+
+    Stamps ``deleted_at = utcnow()`` instead of issuing a hard ``DELETE``.
+    This preserves the ``LLMUsageLog.journal_entry_id`` FK reference so the
+    usage audit trail is never orphaned, and allows recovery within the
+    configurable retention window.  Soft-deleted rows are invisible to all
+    read paths (list, get, ``load_recent_conversation``) which filter
+    ``deleted_at IS NULL``.
+    """
     entry_id = entry.id
-    await session.delete(entry)
+    entry.deleted_at = datetime.now(UTC)
+    session.add(entry)
     await session.commit()
-    logger.info("journal_entry_deleted", extra={"user_id": current_user, "entry_id": entry_id})
+    logger.info(
+        "journal_entry_soft_deleted",
+        extra={"user_id": current_user, "entry_id": entry_id},
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
