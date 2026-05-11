@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -13,6 +14,7 @@ from sqlmodel import col, select
 from database import get_session
 from dependencies.ownership import require_owned_user_practice
 from domain.dates import today_in_tz
+from domain.practice_resolution import effective_config, effective_name
 from domain.stage_progress import get_user_progress, is_stage_unlocked
 from errors import bad_request, conflict, forbidden, not_found
 from models.practice import Practice
@@ -23,9 +25,11 @@ from schemas import Page, PaginationParams, build_page
 from schemas.pagination import paginate_query
 from schemas.practice import (
     UserPracticeCreate,
+    UserPracticeCustomize,
     UserPracticeDetail,
     UserPracticeResponse,
 )
+from schemas.practice_mode_config import ModeConfigAdapter
 from services.users import get_user_timezone
 
 logger = logging.getLogger(__name__)
@@ -136,6 +140,34 @@ async def list_user_practices(
     return serialized
 
 
+async def _resolve_effective_fields(
+    session: AsyncSession, user_practice: UserPractice
+) -> tuple[str, dict[str, Any]]:
+    """Look up the catalog Practice and return (effective_name, effective_config_dict).
+
+    ritual-03: shared between GET, PATCH, and POST so every response shape
+    carries the same merged view. ``effective_config`` is dumped to a
+    dict for JSON serialization through the discriminated-union schema.
+    """
+    practice = await _resolve_practice(session, user_practice.practice_id)
+    name = effective_name(practice, user_practice)
+    cfg = effective_config(practice, user_practice)
+    return name, cfg.model_dump()
+
+
+def _user_practice_payload(user_practice: UserPractice) -> dict[str, Any]:
+    """Serialize the user-practice row's stored columns (no resolution yet)."""
+    return {
+        "id": user_practice.id,
+        "practice_id": user_practice.practice_id,
+        "stage_number": user_practice.stage_number,
+        "start_date": user_practice.start_date,
+        "end_date": user_practice.end_date,
+        "custom_name": user_practice.custom_name,
+        "mode_config_override": user_practice.mode_config_override,
+    }
+
+
 @router.get("/{user_practice_id}", response_model=UserPracticeDetail)
 async def get_user_practice(
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -151,12 +183,88 @@ async def get_user_practice(
         .order_by(col(PracticeSession.timestamp).desc())
     )
     sessions = list(sessions_result.scalars().all())
+    name, cfg = await _resolve_effective_fields(session, user_practice)
 
     return {
-        "id": user_practice.id,
-        "practice_id": user_practice.practice_id,
-        "stage_number": user_practice.stage_number,
-        "start_date": user_practice.start_date,
-        "end_date": user_practice.end_date,
+        **_user_practice_payload(user_practice),
+        "effective_name": name,
+        "effective_config": cfg,
+        "sessions": sessions,
+    }
+
+
+def _validate_override_against_catalog(override: dict[str, Any] | None, practice: Practice) -> None:
+    """Pre-flight validation: reject malformed or mode-mismatched overrides.
+
+    Raises ``HTTPException`` directly so the endpoint short-circuits
+    *before* persisting; without this guard, a bad override would land in
+    the DB and the post-write resolver would 500. Pydantic's
+    ``ValidationError`` is caught here and re-raised as a 422 with
+    structured error details so the client can show field-level messages.
+    Mode mismatch is mapped to a domain-meaningful 400.
+    """
+    if override is None:
+        return
+    try:
+        cfg = ModeConfigAdapter.validate_python(override)
+    except ValidationError as exc:
+        # Preserve Pydantic's structured per-field errors so the client
+        # can render field-level messages — ``unprocessable()`` only
+        # accepts a string detail.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=exc.errors(),
+        ) from exc
+    if cfg.mode != practice.mode:
+        raise bad_request("mode_mismatch")
+
+
+@router.patch("/{user_practice_id}/customize", response_model=UserPracticeDetail)
+async def customize_user_practice(
+    payload: UserPracticeCustomize,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_practice: Annotated[UserPractice, Depends(require_owned_user_practice)],
+) -> dict[str, Any]:
+    """Per-user override of name + mode_config (ritual-03).
+
+    Both fields are nullable; passing ``None`` clears the override and
+    falls back to the catalog value. Mode-shifting is rejected with
+    400 ``mode_mismatch`` because mode changes are conceptually a
+    practice replacement, not a tweak.
+    """
+    practice = await _resolve_practice(session, user_practice.practice_id)
+    fields_set = payload.model_fields_set
+
+    if "mode_config_override" in fields_set:
+        _validate_override_against_catalog(payload.mode_config_override, practice)
+        user_practice.mode_config_override = payload.mode_config_override
+    if "custom_name" in fields_set:
+        user_practice.custom_name = payload.custom_name
+
+    session.add(user_practice)
+    await session.commit()
+    await session.refresh(user_practice)
+
+    name = effective_name(practice, user_practice)
+    cfg = effective_config(practice, user_practice).model_dump()
+
+    sessions_result = await session.execute(
+        select(PracticeSession)
+        .where(PracticeSession.user_practice_id == user_practice.id)
+        .order_by(col(PracticeSession.timestamp).desc())
+    )
+    sessions = list(sessions_result.scalars().all())
+    logger.info(
+        "user_practice_customized",
+        extra={
+            "user_practice_id": user_practice.id,
+            "user_id": user_practice.user_id,
+            "fields_changed": sorted(fields_set),
+        },
+    )
+    return {
+        **_user_practice_payload(user_practice),
+        "effective_name": name,
+        "effective_config": cfg,
         "sessions": sessions,
     }

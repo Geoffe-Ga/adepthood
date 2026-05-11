@@ -156,6 +156,11 @@ class UserPracticeResponse(OwnedResourcePublic):
     returned to its owner -- cross-user fetches raise 403 in the router
     -- so echoing the surrogate key adds no information and aids
     enumeration.
+
+    ``effective_name`` and ``effective_config`` (ritual-03) collapse the
+    catalog row + the user's optional overrides into a single payload so
+    frontend code never has to merge by hand. Both are populated by the
+    router from :mod:`domain.practice_resolution`.
     """
 
     id: int
@@ -163,6 +168,10 @@ class UserPracticeResponse(OwnedResourcePublic):
     stage_number: int
     start_date: date
     end_date: date | None = None
+    custom_name: str | None = None
+    mode_config_override: dict[str, Any] | None = None
+    effective_name: str | None = None
+    effective_config: ModeConfig | None = None
 
 
 class PracticeSessionSummary(BaseModel):
@@ -186,7 +195,25 @@ class UserPracticeDetail(OwnedResourcePublic):
     stage_number: int
     start_date: date
     end_date: date | None = None
+    custom_name: str | None = None
+    mode_config_override: dict[str, Any] | None = None
+    effective_name: str | None = None
+    effective_config: ModeConfig | None = None
     sessions: list[PracticeSessionSummary]
+
+
+class UserPracticeCustomize(BaseModel):
+    """PATCH body for ``/user-practices/{id}/customize`` (ritual-03).
+
+    Both fields are nullable: passing ``None`` clears the override and
+    falls back to the catalog value. Omitting a field leaves the existing
+    value untouched (resolved at the router via ``model_fields_set``).
+    The ``mode`` cannot be changed here — see
+    :func:`domain.practice_resolution.effective_config` for the guard.
+    """
+
+    custom_name: str | None = Field(default=None, max_length=PRACTICE_NAME_MAX_LENGTH)
+    mode_config_override: dict[str, Any] | None = None
 
 
 # -- PracticeSession --------------------------------------------------------

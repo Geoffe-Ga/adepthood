@@ -1,6 +1,7 @@
 from datetime import date
+from typing import Any
 
-from sqlalchemy import Column, Date, Index
+from sqlalchemy import JSON, Column, Date, Index
 from sqlmodel import Field, SQLModel
 
 # Bound at module scope so :class:`Index`'s ``*_where`` predicates can
@@ -42,3 +43,19 @@ class UserPractice(SQLModel, table=True):
     stage_number: int
     start_date: date
     end_date: date | None = Field(default=None, sa_column=_END_DATE_COLUMN)
+    custom_name: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Per-user display name; falls back to Practice.name when null.",
+    )
+    # ``mode`` itself is intentionally not overridable — a user who wants a
+    # different mode should select a different preset / submit a new
+    # practice. The override only swaps fields *within* the catalog mode.
+    mode_config_override: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+        description=(
+            "Per-user override of Practice.mode_config. Validated against "
+            "the catalog mode at the API edge by domain.practice_resolution."
+        ),
+    )

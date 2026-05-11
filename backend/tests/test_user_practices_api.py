@@ -50,6 +50,14 @@ async def _seed_practice(db_session: AsyncSession, **overrides: object) -> Pract
         "instructions": "Close your eyes and breathe",
         "default_duration_minutes": 10,
         "approved": True,
+        "mode": "meditation_timer",
+        "mode_config": {
+            "mode": "meditation_timer",
+            "duration_minutes": 10,
+            "start_bell": True,
+            "halfway_bell": False,
+            "end_bell": True,
+        },
     }
     defaults.update(overrides)
     practice = Practice(**defaults)
@@ -355,6 +363,14 @@ async def test_concurrent_picks_for_same_stage_yield_one_open_row(
             instructions="y",
             default_duration_minutes=5,
             approved=True,
+            mode="meditation_timer",
+            mode_config={
+                "mode": "meditation_timer",
+                "duration_minutes": 5,
+                "start_bell": True,
+                "halfway_bell": False,
+                "end_bell": True,
+            },
         )
         session.add(practice)
         await session.commit()
