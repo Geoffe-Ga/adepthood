@@ -14,7 +14,7 @@
     "expo-av": "~15.0.2",
     "expo-haptics": "~14.0.1",
     "expo-keep-awake": "~14.0.3",
-    "expo-notifications": "~0.29.14",
+    "expo-notifications": "~55.0.22",
     "expo-secure-store": "^55.0.11",
     "expo-status-bar": "~2.0.1",
     "lucide-react": "0.542.0",
