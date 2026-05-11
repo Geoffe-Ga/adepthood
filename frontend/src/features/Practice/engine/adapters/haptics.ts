@@ -33,6 +33,11 @@ async function fireHaptic(kind: CueKind): Promise<void> {
         return;
       case 'metronome_tick':
         return;
+      default:
+        // Exhaustiveness guard: if a new CueKind is added to the union, the
+        // assignment below fails to compile, forcing this switch to be updated.
+        ((_x: never): void => undefined)(kind);
+        return;
     }
   } catch {
     // Haptic hardware may be unavailable (web, simulator). Swallow silently;

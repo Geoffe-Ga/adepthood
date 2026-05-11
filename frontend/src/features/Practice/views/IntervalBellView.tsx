@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { scheduledCues } from '../engine/cues';
@@ -16,7 +16,9 @@ interface Props {
 }
 
 const IntervalBellView = ({ config, state, controls }: Props): React.JSX.Element => {
-  const cues = scheduledCues(config);
+  // Cue schedule is config-derived and pure; memoise so engine TICK re-renders
+  // (which arrive 10× per second) don't rebuild the list each time.
+  const cues = useMemo(() => scheduledCues(config), [config]);
   const untilNextMs =
     state.nextCueAtMs !== null ? Math.max(0, state.nextCueAtMs - state.elapsedMs) : 0;
   return (
