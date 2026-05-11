@@ -14,7 +14,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlmodel import col
+from sqlmodel import col, select
 
 import services.botmason as botmason_mod
 from models.user import User
@@ -1784,3 +1784,54 @@ async def test_stream_idempotency_key_different_keys_charge_independently(
     assert resp_b.status_code == HTTPStatus.OK
     balance = await async_client.get("/user/balance", headers=headers)
     assert balance.json()["balance"] == 0  # Both deducted.
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_chat_stuck_in_flight_tombstone_returns_409_until_cleared(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Pin the current behaviour of a tombstone whose ``result_json`` stayed NULL.
+
+    Reviewer-flagged scenario: if the server crashes between
+    ``insert_idem_tombstone`` and ``update_idem_result`` (or rolls back the
+    whole transaction after the tombstone was committed in another flow),
+    the row sits forever with ``result_json = NULL``.  Today every retry
+    with the same key hits the UNIQUE constraint at the tombstone insert
+    and gets 409.  This test pins that behaviour so a future cleanup job
+    (tracked separately) has a regression target — the test will need to
+    flip to assert eventual recovery once the cleanup ships.
+
+    We simulate the crash by directly inserting a NULL-``result_json``
+    ``ChatSpend`` row (matching what a half-completed request would have
+    left behind), then verify the subsequent retry returns 409.
+    """
+    from models.chat_spend import ChatSpend  # noqa: PLC0415
+    from services.chat_idempotency import hash_idem_key  # noqa: PLC0415
+
+    headers = await _signup(async_client)
+    await _add_balance(db_session, amount=2)
+
+    # Find the user_id from the auth token's sub.
+    user_row = (await db_session.execute(select(User))).scalars().first()
+    assert user_row is not None
+    assert user_row.id is not None
+
+    # Plant a stuck-in-flight tombstone with NULL result_json.
+    stuck_key = "crash-key-001"
+    db_session.add(ChatSpend(user_id=user_row.id, idem_key=hash_idem_key(user_row.id, stuck_key)))
+    await db_session.commit()
+
+    # A retry with the same key collides on UNIQUE → 409 (NOT a re-charge).
+    resp = await async_client.post(
+        "/journal/chat",
+        json={"message": "retry after crash"},
+        headers={**headers, "Idempotency-Key": stuck_key},
+    )
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.json()["detail"] == "idempotency_key_in_flight"
+
+    # Wallet stays untouched -- no LLM call was made.
+    balance = await async_client.get("/user/balance", headers=headers)
+    assert balance.json()["balance"] == 2

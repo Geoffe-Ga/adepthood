@@ -72,14 +72,22 @@ async def insert_idem_tombstone(
     A ``False`` return means another request with the same key is already
     in flight (or has completed) — the caller should surface 409 to the
     client, or for a streaming endpoint, refuse to open the stream.
+
+    The INSERT is wrapped in a ``begin_nested()`` SAVEPOINT so a collision
+    only rolls back the tombstone attempt — any work already staged on the
+    session by the caller survives.  The prior implementation called the
+    bare ``session.rollback()``, which discarded the whole session and
+    would have silently lost other pending changes if a future caller
+    staged work before the tombstone insert.  Today's call sites are safe
+    (the tombstone insert is the first DB mutation in each flow) but the
+    savepoint removes the footgun.
     """
     hashed = hash_idem_key(user_id, raw_key)
-    row = ChatSpend(user_id=user_id, idem_key=hashed)
-    session.add(row)
     try:
-        await session.flush()
+        async with session.begin_nested():
+            session.add(ChatSpend(user_id=user_id, idem_key=hashed))
+            await session.flush()
     except IntegrityError:
-        await session.rollback()
         return False
     return True
 

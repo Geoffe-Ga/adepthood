@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Column, DateTime, String, UniqueConstraint
+from sqlalchemy import Column, DateTime, String, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 # SHA-256 hex digest is 64 chars; column headroom to 128 for future hash
@@ -49,9 +49,12 @@ class ChatSpend(SQLModel, table=True):
             index=True,
         ),
     )
-    # Serialised response payload (JSON string).  Set to NULL during in-flight;
-    # populated once the LLM call completes and the row is updated.
-    result_json: str | None = Field(default=None, sa_column=Column(String, nullable=True))
+    # Serialised response payload (JSON string).  ``Text`` (unbounded) rather
+    # than ``String`` (also unbounded but emits ``VARCHAR`` on some backends)
+    # so the model matches the migration's ``sa.Text()`` exactly — without
+    # the alignment, ``alembic --autogenerate`` would flag a spurious diff.
+    # NULL during the in-flight window; populated when the LLM call completes.
+    result_json: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
