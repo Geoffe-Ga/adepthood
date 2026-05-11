@@ -162,9 +162,10 @@ export const MAJOR_ARCANA: readonly TarotCard[] = [
  * Resolve a day offset (0-based; day 0 is the user's first day) to a card.
  *
  * The cycle wraps modulo {@link TAROT_DECK_SIZE}, so day 22 returns the
- * Fool again. Negative offsets are not expected — callers should clamp
- * pre-start days to 0 — but JavaScript's `%` operator already produces a
- * non-negative result for the inputs we accept.
+ * Fool again. Callers should pre-clamp pre-start days to 0; negative
+ * inputs are nonetheless guarded by the double-modulo expression below
+ * (JavaScript's `%` returns a negative result for negative operands, so
+ * a single `% SIZE` would leak `-1`).
  */
 export function cardForDayIndex(daysSinceStart: number): TarotCard {
   const normalised = ((daysSinceStart % TAROT_DECK_SIZE) + TAROT_DECK_SIZE) % TAROT_DECK_SIZE;

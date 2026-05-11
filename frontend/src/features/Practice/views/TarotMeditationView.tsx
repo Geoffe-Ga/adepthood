@@ -112,26 +112,27 @@ const TarotFooter = ({ state, controls, hideTimer, onSave }: FooterProps): React
   if (state.status === 'paused') {
     return <RitualControlsBar status={state.status} controls={controls} startLabel="Begin" />;
   }
-  if (state.status === 'complete') {
-    return (
-      <View style={styles.completeRow}>
-        <Pressable
-          style={styles.save}
-          onPress={onSave}
-          disabled={!onSave}
-          testID="tarot-save"
-          accessibilityRole="button"
-          accessibilityLabel="Save session and reflect"
-        >
-          <Text style={styles.saveText}>Save session</Text>
-        </Pressable>
-      </View>
-    );
-  }
+  if (state.status === 'complete') return <TarotSaveButton onSave={onSave} />;
   // status === 'running' && !hideTimer — let the parent surface the standard
   // controls bar; the timer is already visible above.
   return <RitualControlsBar status={state.status} controls={controls} startLabel="Begin" />;
 };
+
+const TarotSaveButton = ({ onSave }: { onSave?: () => void }): React.JSX.Element => (
+  <View style={styles.completeRow}>
+    <Pressable
+      style={[styles.save, !onSave && styles.saveDisabled]}
+      onPress={onSave}
+      disabled={!onSave}
+      testID="tarot-save"
+      accessibilityRole="button"
+      accessibilityLabel="Save session and reflect"
+      accessibilityState={{ disabled: !onSave }}
+    >
+      <Text style={styles.saveText}>Save session</Text>
+    </Pressable>
+  </View>
+);
 
 const styles = StyleSheet.create({
   container: { alignItems: 'center', padding: SPACING.xl },
@@ -214,6 +215,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     ...shadows.small,
   },
+  saveDisabled: { opacity: 0.5 },
   saveText: { color: colors.text.light, fontSize: 18, fontWeight: '600' },
 });
 

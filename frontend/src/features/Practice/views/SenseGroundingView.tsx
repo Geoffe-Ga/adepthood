@@ -42,9 +42,11 @@ interface Props {
   config: SenseGroundingConfig;
   state: RitualState;
   controls: RitualControls;
+  /** Optional Save callback; the parent typically launches the insight modal. */
+  onSave?: () => void;
 }
 
-const SenseGroundingView = ({ config, state, controls }: Props): React.JSX.Element => {
+const SenseGroundingView = ({ config, state, controls, onSave }: Props): React.JSX.Element => {
   const total = config.prompts.length;
   const currentIdx = Math.min(state.currentStepIndex, total - 1);
   const activePrompt = config.prompts[currentIdx];
@@ -54,7 +56,7 @@ const SenseGroundingView = ({ config, state, controls }: Props): React.JSX.Eleme
     <View style={styles.container} testID="sense-grounding-view">
       <SenseHeader prompt={isComplete ? null : activePrompt} />
       {isComplete ? (
-        <CompleteCard />
+        <CompleteCard onSave={onSave} />
       ) : (
         activePrompt && (
           <ActivePrompt prompt={activePrompt} canAdvance={canAdvance} onTap={controls.tap} />
@@ -84,12 +86,23 @@ const SenseHeader = ({ prompt }: { prompt: SensePrompt | null | undefined }): Re
   </View>
 );
 
-const CompleteCard = (): React.JSX.Element => (
+const CompleteCard = ({ onSave }: { onSave?: () => void }): React.JSX.Element => (
   <View style={styles.completeCard} testID="sense-grounding-complete">
     <Text style={styles.completeTitle}>Grounding complete</Text>
     <Text style={styles.completeBody}>
       You moved through all five senses. Save the session below.
     </Text>
+    <Pressable
+      style={[styles.save, !onSave && styles.saveDisabled]}
+      onPress={onSave}
+      disabled={!onSave}
+      testID="sense-grounding-save"
+      accessibilityRole="button"
+      accessibilityLabel="Save session and reflect"
+      accessibilityState={{ disabled: !onSave }}
+    >
+      <Text style={styles.saveText}>Save session</Text>
+    </Pressable>
   </View>
 );
 
@@ -180,7 +193,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.text.secondaryAccessible,
     textAlign: 'center',
+    marginBottom: SPACING.lg,
   },
+  save: {
+    backgroundColor: colors.success,
+    paddingVertical: SPACING.buttonV,
+    paddingHorizontal: SPACING.xxl,
+    borderRadius: BORDER_RADIUS.lg,
+    minWidth: 220,
+    alignItems: 'center',
+    ...shadows.small,
+  },
+  saveDisabled: { opacity: 0.5 },
+  saveText: { color: colors.text.light, fontSize: 18, fontWeight: '600' },
 });
 
 export default SenseGroundingView;

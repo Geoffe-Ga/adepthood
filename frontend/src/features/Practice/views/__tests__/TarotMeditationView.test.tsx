@@ -114,6 +114,23 @@ describe('TarotMeditationView', () => {
     expect(onSave).toHaveBeenCalledTimes(1);
   });
 
+  it('disables the Save CTA and dims it when onSave is omitted', () => {
+    const { getByTestId } = render(
+      <TarotMeditationView
+        state={fakeState({ status: 'complete', remainingMs: 0 })}
+        controls={fakeControls()}
+        card={FOOL}
+        hideTimer
+      />,
+    );
+    const save = getByTestId('tarot-save');
+    expect(save.props.accessibilityState).toEqual({ disabled: true });
+    const flattened = Array.isArray(save.props.style)
+      ? Object.assign({}, ...save.props.style.filter(Boolean))
+      : save.props.style;
+    expect(flattened.opacity).toBe(0.5);
+  });
+
   it('renders the card name and keyword in every status', () => {
     const statuses = ['idle', 'running', 'paused', 'complete'] as const;
     for (const status of statuses) {

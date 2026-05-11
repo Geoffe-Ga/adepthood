@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
@@ -84,7 +84,7 @@ describe('SenseGroundingView', () => {
     expect(controls.start).toHaveBeenCalledTimes(1);
   });
 
-  it('renders the completion card with a Save CTA when status is complete', () => {
+  it('renders the completion card and hides the advance button when complete', () => {
     const { getByTestId, queryByTestId } = render(
       <SenseGroundingView
         config={config}
@@ -97,6 +97,56 @@ describe('SenseGroundingView', () => {
     );
     expect(getByTestId('sense-grounding-complete')).toBeTruthy();
     expect(queryByTestId('sense-grounding-advance')).toBeNull();
+  });
+
+  it('renders a Save CTA in the complete card and forwards onSave when pressed', () => {
+    const onSave = jest.fn();
+    const { getByTestId } = render(
+      <SenseGroundingView
+        config={config}
+        state={fakeState({
+          status: 'complete',
+          currentStepIndex: config.prompts.length,
+        })}
+        controls={fakeControls()}
+        onSave={onSave}
+      />,
+    );
+    fireEvent.press(getByTestId('sense-grounding-save'));
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables the Save CTA when onSave is omitted', () => {
+    const { getByTestId } = render(
+      <SenseGroundingView
+        config={config}
+        state={fakeState({
+          status: 'complete',
+          currentStepIndex: config.prompts.length,
+        })}
+        controls={fakeControls()}
+      />,
+    );
+    const save = getByTestId('sense-grounding-save');
+    expect(save.props.accessibilityState).toEqual({ disabled: true });
+  });
+
+  it('disables the advance button when paused and ignores taps', () => {
+    const controls = fakeControls();
+    const { getByTestId } = render(
+      <SenseGroundingView
+        config={config}
+        state={fakeState({ status: 'paused', currentStepIndex: 1 })}
+        controls={controls}
+      />,
+    );
+    fireEvent.press(getByTestId('sense-grounding-advance'));
+    expect(controls.tap).not.toHaveBeenCalled();
+    expect(getByTestId('sense-grounding-advance').props.accessibilityState).toEqual({
+      disabled: true,
+    });
+    expect(getByTestId('ritual-resume')).toBeTruthy();
+    expect(getByTestId('ritual-cancel')).toBeTruthy();
   });
 
   it('sets the header accessibility role', () => {
