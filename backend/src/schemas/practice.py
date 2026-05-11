@@ -15,11 +15,13 @@ from schemas.practice_mode_config import (
     ModeConfig,
     ModeConfigAdapter,
 )
+from schemas.practice_session_metadata import SessionMetadata
 
 PRACTICE_NAME_MAX_LENGTH = 255
 PRACTICE_DESCRIPTION_MAX_LENGTH = 2_000
 PRACTICE_INSTRUCTIONS_MAX_LENGTH = 10_000
 PRACTICE_REFLECTION_MAX_LENGTH = 5_000
+PRACTICE_INSIGHT_MAX_LENGTH = 2_000
 
 MAX_DURATION_MINUTES = 24 * 60
 
@@ -202,6 +204,12 @@ class PracticeSessionCreate(BaseModel):
     bug cannot resurface invisibly on a stale build.
 
     ``user_id`` is derived from the authenticated user's token.
+
+    The ritual-04 fields (``mode_metadata``, ``completed``, ``insight``)
+    are optional so existing clients keep working.  The session's stored
+    ``mode`` is set server-side from the resolved practice mode at write
+    time; the discriminator on ``mode_metadata`` must match it or the
+    request is rejected with 400 ``mode_metadata_mismatch``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -210,6 +218,9 @@ class PracticeSessionCreate(BaseModel):
     started_at: datetime
     ended_at: datetime
     reflection: str | None = Field(default=None, max_length=PRACTICE_REFLECTION_MAX_LENGTH)
+    mode_metadata: SessionMetadata | None = None
+    completed: bool = True
+    insight: str | None = Field(default=None, max_length=PRACTICE_INSIGHT_MAX_LENGTH)
 
     @model_validator(mode="after")
     def _check_times(self) -> Self:
@@ -236,3 +247,25 @@ class PracticeSessionResponse(OwnedResourcePublic):
     duration_minutes: float
     timestamp: datetime
     reflection: str | None = None
+    mode: str
+    mode_metadata: dict[str, Any] | None = None
+    completed: bool = True
+    insight: str | None = None
+
+
+class PracticeSessionWeeklyCount(BaseModel):
+    """One bucket of the rolling weekly-count series for the insights endpoint."""
+
+    week_start: date
+    count: int
+
+
+class PracticeInsightsResponse(BaseModel):
+    """Rollup payload returned by ``GET /practice-sessions/insights``."""
+
+    weekly_counts: list[PracticeSessionWeeklyCount]
+    streak_weeks: int
+    total_minutes_30d: float
+    avg_duration_minutes_30d: float | None = None
+    per_mode_counts: dict[str, int]
+    last_insight: str | None = None

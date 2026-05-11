@@ -6,23 +6,93 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, func, select
 
 from database import get_session
 from dependencies.ownership import require_owned_user_practice
-from errors import forbidden, not_found
+from domain.practice_insights import build_insights
+from errors import bad_request, forbidden, not_found
+from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.user_practice import UserPractice
 from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
 from schemas.pagination import paginate_query
-from schemas.practice import PracticeSessionCreate, PracticeSessionResponse
+from schemas.practice import (
+    PracticeInsightsResponse,
+    PracticeSessionCreate,
+    PracticeSessionResponse,
+)
+from services.users import get_user_timezone
+
+# Window for the insights SQL fetch.  Slightly larger than the 8-week rollup
+# (~56 days) so a session logged late in the oldest bucket still lands in
+# the right week after timezone normalization.
+_INSIGHTS_LOOKBACK_DAYS = 60
+
+# ``Cache-Control`` for the insights endpoint: each client may cache for one
+# minute so a chatty frontend doesn't hammer the DB while a user idles on
+# the screen.  ``private`` keeps shared proxies from cross-pollinating
+# per-user rollups.
+_INSIGHTS_CACHE_CONTROL = "private, max-age=60"
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/practice-sessions", tags=["practice-sessions"])
+
+
+async def _resolve_user_practice_for_session(
+    session: AsyncSession,
+    user_practice_id: int,
+    current_user: int,
+) -> UserPractice:
+    """Fetch the target ``UserPractice`` and enforce the 404→403 split.
+
+    Pulled out of :func:`create_session` because the body-parameter
+    ownership check can't ride :func:`require_owned_user_practice`
+    (FastAPI's DI cannot extract body fields into sub-deps).  Keeping
+    the lookup here keeps the handler's branching shallow enough for
+    xenon rank A while preserving the canonical 404-then-403 order the
+    IDOR matrix test relies on.
+    """
+    user_practice = (
+        (await session.execute(select(UserPractice).where(UserPractice.id == user_practice_id)))
+        .scalars()
+        .first()
+    )
+    if user_practice is None:
+        raise not_found("user_practice")
+    if user_practice.user_id != current_user:
+        raise forbidden("forbidden")
+    return user_practice
+
+
+async def _resolve_practice_with_mode(
+    session: AsyncSession,
+    user_practice: UserPractice,
+    payload: PracticeSessionCreate,
+) -> Practice:
+    """Load the catalog practice and validate the metadata discriminator.
+
+    A 400 ``mode_metadata_mismatch`` is returned when the request's
+    ``mode_metadata`` references a mode that disagrees with the resolved
+    practice — distinct from a 422 schema failure: the union deserialized
+    cleanly; the caller just targeted the wrong practice.
+    """
+    practice = (
+        (await session.execute(select(Practice).where(Practice.id == user_practice.practice_id)))
+        .scalars()
+        .first()
+    )
+    if practice is None:
+        # Defensive: a UserPractice row whose practice was deleted is a
+        # data-integrity issue.  Surface as 404 so the client retries.
+        raise not_found("practice")
+    if payload.mode_metadata is not None and payload.mode_metadata.mode != practice.mode:
+        raise bad_request("mode_metadata_mismatch")
+    return practice
 
 
 @router.post(
@@ -43,14 +113,10 @@ async def create_session(
     sub-dependencies.  The ordering and exception types match the shared
     dep so the IDOR matrix test sees the same 403 for cross-user calls.
     """
-    result = await session.execute(
-        select(UserPractice).where(UserPractice.id == payload.user_practice_id)
+    user_practice = await _resolve_user_practice_for_session(
+        session, payload.user_practice_id, current_user
     )
-    user_practice = result.scalars().first()
-    if user_practice is None:
-        raise not_found("user_practice")
-    if user_practice.user_id != current_user:
-        raise forbidden("forbidden")
+    practice = await _resolve_practice_with_mode(session, user_practice, payload)
 
     duration_minutes = payload.duration_minutes
     practice_session = PracticeSession(
@@ -59,6 +125,12 @@ async def create_session(
         duration_minutes=duration_minutes,
         reflection=payload.reflection,
         timestamp=payload.ended_at,
+        mode=practice.mode,
+        mode_metadata=(
+            payload.mode_metadata.model_dump() if payload.mode_metadata is not None else None
+        ),
+        completed=payload.completed,
+        insight=payload.insight,
     )
     session.add(practice_session)
     await session.commit()
@@ -69,6 +141,8 @@ async def create_session(
             "user_id": current_user,
             "user_practice_id": payload.user_practice_id,
             "duration_minutes": duration_minutes,
+            "mode": practice.mode,
+            "completed": payload.completed,
         },
     )
     return practice_session
@@ -105,6 +179,43 @@ async def list_sessions(
     if pagination.paginate:
         return build_page(serialized, total, pagination)
     return serialized
+
+
+@router.get("/insights", response_model=PracticeInsightsResponse)
+async def get_insights(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    response: Response,
+) -> PracticeInsightsResponse:
+    """Return the mode-aware analytics rollup for the authenticated user.
+
+    Single query fetches the last :data:`_INSIGHTS_LOOKBACK_DAYS` of the
+    user's sessions; :func:`domain.practice_insights.build_insights` does
+    the bucketing in memory (cheap — a heavy user accrues hundreds of
+    rows in this window, not millions).
+
+    The response carries a private one-minute ``Cache-Control`` so the
+    frontend can poll the screen without thrashing the DB.
+    """
+    response.headers["Cache-Control"] = _INSIGHTS_CACHE_CONTROL
+    user_tz = await get_user_timezone(session, current_user)
+    cutoff = datetime.now(UTC) - timedelta(days=_INSIGHTS_LOOKBACK_DAYS)
+    rows = (
+        (
+            await session.execute(
+                select(PracticeSession)
+                .where(
+                    PracticeSession.user_id == current_user,
+                    PracticeSession.timestamp >= cutoff,
+                )
+                .order_by(col(PracticeSession.timestamp).desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    insights = build_insights(rows, tz=user_tz)
+    return PracticeInsightsResponse.model_validate(insights, from_attributes=True)
 
 
 @router.get("/week-count")

@@ -409,3 +409,219 @@ async def test_week_count_scoped_to_user(
     resp = await async_client.get("/practice-sessions/week-count", headers=bob_headers)
     assert resp.status_code == HTTPStatus.OK
     assert resp.json()["count"] == 0
+
+
+# -- ritual-04: mode-aware metadata + insights ------------------------------
+
+
+async def _create_typed_user_practice(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    headers: dict[str, str],
+    *,
+    mode: str = "rep_counter",
+    stage_number: int = 1,
+) -> tuple[int, Practice]:
+    """Seed a non-default-mode practice and return ``(user_practice_id, practice)``."""
+    mode_configs: dict[str, dict[str, object]] = {
+        "rep_counter": {
+            "mode": "rep_counter",
+            "target_reps": 108,
+            "unit_label": "breath cycles",
+        },
+        "metronome": {
+            "mode": "metronome",
+            "bpm": 72,
+            "timer": {
+                "mode": "meditation_timer",
+                "duration_minutes": 10,
+                "start_bell": True,
+                "halfway_bell": False,
+                "end_bell": True,
+            },
+        },
+    }
+    practice = Practice(
+        stage_number=stage_number,
+        name=f"{mode} practice",
+        description="Test fixture",
+        instructions="Test fixture",
+        default_duration_minutes=10,
+        approved=True,
+        mode=mode,
+        mode_config=mode_configs[mode],
+    )
+    db_session.add(practice)
+    await db_session.commit()
+    await db_session.refresh(practice)
+
+    resp = await async_client.post(
+        "/user-practices/",
+        json={"practice_id": practice.id, "stage_number": stage_number},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    return int(resp.json()["id"]), practice
+
+
+@pytest.mark.asyncio
+async def test_create_session_persists_mode_metadata(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Rep-counter session round-trips its ``mode_metadata`` payload."""
+    headers, _ = await _signup(async_client)
+    up_id, _practice = await _create_typed_user_practice(async_client, db_session, headers)
+
+    expected_rep_count = 42
+    payload = _session_payload(
+        up_id,
+        mode_metadata={"mode": "rep_counter", "rep_count": expected_rep_count},
+        insight="counted faster than yesterday",
+    )
+    resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.CREATED
+    body = resp.json()
+    assert body["mode"] == "rep_counter"
+    assert body["mode_metadata"] == {"mode": "rep_counter", "rep_count": expected_rep_count}
+    assert body["insight"] == "counted faster than yesterday"
+    assert body["completed"] is True
+
+
+@pytest.mark.asyncio
+async def test_create_session_records_partial_completion(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``completed=false`` with positive duration counts toward weekly totals."""
+    headers, _ = await _signup(async_client)
+    up_id = await _create_user_practice(async_client, db_session, headers)
+    payload = _session_payload(up_id, completed=False)
+    resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.CREATED
+    assert resp.json()["completed"] is False
+
+    wk = await async_client.get("/practice-sessions/week-count", headers=headers)
+    assert wk.status_code == HTTPStatus.OK
+    assert wk.json()["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_create_session_rejects_mismatched_mode_metadata(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Sending ``rep_counter`` metadata against a meditation-timer practice → 400."""
+    headers, _ = await _signup(async_client)
+    up_id = await _create_user_practice(async_client, db_session, headers)
+    payload = _session_payload(
+        up_id,
+        mode_metadata={"mode": "rep_counter", "rep_count": 10},
+    )
+    resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.json()["detail"] == "mode_metadata_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_create_session_rejects_invalid_metadata_payload(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A malformed metadata payload (BPM out of range) is rejected at 422."""
+    headers, _ = await _signup(async_client)
+    up_id, _ = await _create_typed_user_practice(
+        async_client, db_session, headers, mode="metronome"
+    )
+    payload = _session_payload(
+        up_id,
+        mode_metadata={"mode": "metronome", "bpm_used": 0},
+    )
+    resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_create_session_without_metadata_defaults_to_meditation_timer_mode(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Existing clients (no metadata) still get the resolved practice mode echoed."""
+    headers, _ = await _signup(async_client)
+    up_id = await _create_user_practice(async_client, db_session, headers)
+    resp = await async_client.post(
+        "/practice-sessions/", json=_session_payload(up_id), headers=headers
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    body = resp.json()
+    assert body["mode"] == "meditation_timer"
+    assert body["mode_metadata"] is None
+    assert body["insight"] is None
+    assert body["completed"] is True
+
+
+# -- ritual-04: insights endpoint -------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_insights_requires_auth(async_client: AsyncClient) -> None:
+    resp = await async_client.get("/practice-sessions/insights")
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_insights_empty_user_returns_empty_rollup(async_client: AsyncClient) -> None:
+    """A user with no sessions still gets the full shape (8 zero buckets)."""
+    headers, _ = await _signup(async_client)
+    resp = await async_client.get("/practice-sessions/insights", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    expected_history_weeks = 8
+    assert len(body["weekly_counts"]) == expected_history_weeks
+    assert all(b["count"] == 0 for b in body["weekly_counts"])
+    assert body["streak_weeks"] == 0
+    assert body["total_minutes_30d"] == 0.0
+    assert body["avg_duration_minutes_30d"] is None
+    assert body["per_mode_counts"] == {}
+    assert body["last_insight"] is None
+    # Cache-Control is set so a chatty UI doesn't hammer the DB.
+    assert resp.headers["cache-control"] == "private, max-age=60"
+
+
+@pytest.mark.asyncio
+async def test_insights_aggregates_recent_sessions(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A POST-driven smoke test: two rep-counter sessions land in the rollup."""
+    headers, _ = await _signup(async_client)
+    up_id, _ = await _create_typed_user_practice(async_client, db_session, headers)
+    for reps in (10, 20):
+        await async_client.post(
+            "/practice-sessions/",
+            json=_session_payload(
+                up_id,
+                mode_metadata={"mode": "rep_counter", "rep_count": reps},
+                insight=f"reps={reps}",
+            ),
+            headers=headers,
+        )
+
+    resp = await async_client.get("/practice-sessions/insights", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    expected_session_count = 2
+    assert body["per_mode_counts"] == {"rep_counter": expected_session_count}
+    assert body["weekly_counts"][-1]["count"] == expected_session_count
+    assert body["last_insight"] == "reps=20"
+
+
+@pytest.mark.asyncio
+async def test_insights_scoped_to_user(async_client: AsyncClient, db_session: AsyncSession) -> None:
+    """Bob's insights must never see Alice's sessions."""
+    alice_headers, _ = await _signup(async_client, "alice")
+    bob_headers, _ = await _signup(async_client, "bob")
+    up_id = await _create_user_practice(async_client, db_session, alice_headers)
+    await async_client.post(
+        "/practice-sessions/", json=_session_payload(up_id), headers=alice_headers
+    )
+
+    resp = await async_client.get("/practice-sessions/insights", headers=bob_headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["per_mode_counts"] == {}
+    assert body["last_insight"] is None
