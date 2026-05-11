@@ -158,6 +158,27 @@ describe('useRitualEngine', () => {
     expect(clearSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('re-fires start_bell on a fresh start() after cancel()', () => {
+    const config: MeditationTimerConfig = {
+      mode: 'meditation_timer',
+      duration_minutes: 1,
+    };
+    const deps = makeDeps();
+    const { result } = renderEngine(config, deps);
+
+    act(() => result.current[1].start());
+    expect(deps.audio.play).toHaveBeenNthCalledWith(1, 'start_bell');
+
+    act(() => result.current[1].cancel());
+    deps.audio.play.mockClear();
+    deps.haptics.cue.mockClear();
+
+    act(() => result.current[1].start());
+    // Without the prevCueIndexRef reset, the second start_bell is suppressed
+    // by the first session's high-water mark.
+    expect(deps.audio.play).toHaveBeenCalledWith('start_bell');
+  });
+
   it('falls back to default Date.now / setInterval / noop adapters', () => {
     const config: MeditationTimerConfig = { mode: 'meditation_timer', duration_minutes: 1 };
     const { result } = renderHook(() => useRitualEngine(config));

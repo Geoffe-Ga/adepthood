@@ -152,11 +152,12 @@ function handleAdvanceStep(state: EngineState, config: ModeConfig): EngineState 
 
 function tapRep(state: EngineState, config: RepCounterConfig): EngineState {
   const repCount = state.repCount + 1;
+  const target = config.target_reps;
   return {
     ...state,
     repCount,
-    progress: Math.min(1, repCount / config.target_reps),
-    status: repCount >= config.target_reps ? 'complete' : state.status,
+    progress: target > 0 ? Math.min(1, repCount / target) : 0,
+    status: repCount >= target ? 'complete' : state.status,
   };
 }
 
@@ -191,7 +192,7 @@ export function getTotalMs(config: ModeConfig): number | null {
 function getProgress(state: EngineState, config: ModeConfig, elapsedMs: number): number {
   if (config.mode === 'count_up') return 0;
   if (config.mode === 'rep_counter') {
-    return Math.min(1, state.repCount / config.target_reps);
+    return config.target_reps > 0 ? Math.min(1, state.repCount / config.target_reps) : 0;
   }
   if (config.mode === 'sense_grounding') {
     const total = config.prompts.length;

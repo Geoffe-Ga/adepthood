@@ -66,6 +66,17 @@ function buildControls(
   };
 }
 
+/**
+ * Drives the ritual state machine for a given preset config.
+ *
+ * Caller contract: `config` must be a stable reference for the lifetime of
+ * a session. The reducer captures it in a closure; the cue list and the
+ * elapsedMs anchor are built once at START. Changing `config` mid-session
+ * leaves the `state.cues` schedule from the old config in place while new
+ * TICKs are scored against the new `getTotalMs(config)` — call
+ * `controls.cancel()` first, then re-render with the new config and call
+ * `controls.start()` again.
+ */
 export function useRitualEngine(
   config: ModeConfig,
   deps: EngineDeps = {},
@@ -84,7 +95,15 @@ export function useRitualEngine(
   );
 
   const prevCueIndexRef = useRef(0);
+  const prevCuesRef = useRef(state.cues);
   useEffect(() => {
+    // A new `state.cues` reference means the reducer rebuilt the schedule
+    // (START or CANCEL). Reset the high-water mark so the next session's
+    // start_bell isn't suppressed by the prior session's final index.
+    if (state.cues !== prevCuesRef.current) {
+      prevCueIndexRef.current = 0;
+      prevCuesRef.current = state.cues;
+    }
     const prev = prevCueIndexRef.current;
     if (state.cueIndex > prev) {
       const { audio, haptics } = depsRef.current;

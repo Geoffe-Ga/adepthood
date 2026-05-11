@@ -156,6 +156,17 @@ describe('ritualReducer — rep_counter', () => {
     ]);
     expect(s.status).toBe('complete');
   });
+
+  it('guards target_reps=0 against NaN progress', () => {
+    const zero: RepCounterConfig = { mode: 'rep_counter', target_reps: 0, unit_label: 'r' };
+    let s = drive(zero, [{ type: 'START', now: 0 }]);
+    expect(s.progress).toBe(0);
+    s = ritualReducer(s, { type: 'TAP' }, zero);
+    // 1 >= 0, so the reducer flags complete; progress stays 0 instead of NaN.
+    expect(Number.isNaN(s.progress)).toBe(false);
+    expect(s.progress).toBe(0);
+    expect(s.status).toBe('complete');
+  });
 });
 
 describe('ritualReducer — sense_grounding', () => {
