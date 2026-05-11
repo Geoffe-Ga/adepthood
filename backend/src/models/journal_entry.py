@@ -9,10 +9,6 @@ from sqlmodel import Field, Relationship, SQLModel
 if TYPE_CHECKING:
     from .user import User
 
-# Idempotency-key column width.  128 hex chars covers a SHA-512 hash;
-# real client-generated keys are typically UUIDv4 (36 chars) or shorter.
-_IDEM_KEY_MAX_LENGTH = 128
-
 # Feature flag for column-level encryption at rest (BUG-JOURNAL-012).
 # When enabled, ``message`` is encrypted before DB write and decrypted on read
 # using Fernet symmetric encryption.  The key must be provided via the

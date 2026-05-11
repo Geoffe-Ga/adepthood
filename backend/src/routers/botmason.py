@@ -10,7 +10,6 @@ shapes to those services.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -23,13 +22,11 @@ from fastapi.responses import StreamingResponse
 from slowapi.util import get_remote_address
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col, select
 from starlette.requests import Request as StarletteRequest
 
 from database import get_session
 from dependencies.auth import require_admin
 from errors import forbidden
-from models.chat_spend import ChatSpend
 from models.user import User
 from rate_limit import limiter
 from routers.auth import extract_user_id_from_authorization, get_current_user
@@ -41,6 +38,7 @@ from schemas.botmason import (
     ChatResponse,
     UsageResponse,
 )
+from services import chat_idempotency
 from services import wallet as wallet_service
 from services.botmason import resolve_chat_api_key
 from services.chat_stream import PreflightedRequest, handle_chat_request, stream_bot_response
@@ -70,7 +68,12 @@ def _per_user_key(request: StarletteRequest) -> str:
     """
     try:
         user_id = extract_user_id_from_authorization(request.headers.get("authorization"))
-    except Exception:  # noqa: BLE001 — fall through to IP for any decode failure
+    except HTTPException:
+        # ``extract_user_id_from_authorization`` only raises ``HTTPException``
+        # (401 ``unauthorized``) on a missing / malformed / expired token.
+        # That's the entire failure surface, so the prior bare except plus
+        # ruff-BLE001 suppression has been replaced with a targeted catch
+        # per the CLAUDE.md anti-suppression rule.
         return get_remote_address(request)
     return f"user:{user_id}"
 
@@ -114,95 +117,38 @@ def _resolve_chat_headers(
     )
 
 
-def _hash_idem_key(user_id: int, raw_key: str) -> str:
-    """Return a stable, opaque SHA-256 hash of ``(user_id, raw_key)``.
-
-    The raw client token is never stored.  Hashing keeps the column
-    value bounded and one-way so a DB read cannot reveal the original key.
-    """
-    return hashlib.sha256(f"{user_id}:{raw_key}".encode()).hexdigest()
+_check_idempotency = chat_idempotency.check_idempotency
+_insert_idem_tombstone = chat_idempotency.insert_idem_tombstone
+_update_idem_result = chat_idempotency.update_idem_result
 
 
-async def _check_idempotency(
+async def _handle_chat_with_idem_409(
     session: AsyncSession,
-    user_id: int,
-    raw_key: str | None,
-) -> str | None:
-    """Return a cached JSON result if this key was already spent, else ``None``.
+    current_user: int,
+    message: str,
+    api_key: str | None,
+    idempotency_key: str | None,
+) -> ChatResponse:
+    """Call ``handle_chat_request`` and translate UNIQUE-constraint races to 409.
 
-    BUG-BM-012: looks up the ``chatspend`` table for a prior row matching
-    ``(user_id, idem_key)``.  Returns the stored ``result_json`` string if
-    found (may be ``None`` for in-flight requests), or ``None`` if the key is
-    new.  The caller is responsible for inserting a new row when proceeding
-    with the charge.
+    SQLite (test env) and any DB whose UNIQUE-index check is deferred to
+    commit time can race past ``_insert_idem_tombstone``: both concurrent
+    requests pass the flush, both call the LLM, and the second
+    ``session.commit()`` inside ``handle_chat_request`` raises
+    ``IntegrityError`` from the UNIQUE ``(user_id, idem_key)`` constraint.
+    Map to 409 instead of an opaque 500.  PostgreSQL's immediate-blocking
+    semantics short-circuit this path during the tombstone flush, so this
+    catch is defence-in-depth there.
+
+    Extracted into its own helper so ``chat_with_botmason`` stays under
+    xenon's A-rank cyclomatic-complexity cap.
     """
-    if raw_key is None:
-        return None
-    hashed = _hash_idem_key(user_id, raw_key)
-    row = (
-        (
-            await session.execute(
-                select(ChatSpend).where(
-                    ChatSpend.user_id == user_id,
-                    col(ChatSpend.idem_key) == hashed,
-                )
-            )
-        )
-        .scalars()
-        .first()
-    )
-    if row is None:
-        return None
-    # Return the stored result (may be None if in-flight).
-    return row.result_json
-
-
-async def _insert_idem_tombstone(
-    session: AsyncSession,
-    user_id: int,
-    raw_key: str,
-) -> bool:
-    """Insert an in-flight idempotency tombstone row, returning False on duplicate.
-
-    BUG-BM-012: inserts a ``ChatSpend`` row with ``result_json=NULL`` to mark
-    this ``(user_id, key)`` pair as in-flight.  On a duplicate key error
-    (``IntegrityError`` from the UNIQUE constraint) returns False so the
-    caller knows a race-concurrent request is already processing the same key.
-    """
-    hashed = _hash_idem_key(user_id, raw_key)
-    row = ChatSpend(user_id=user_id, idem_key=hashed)
-    session.add(row)
     try:
-        await session.flush()
-    except IntegrityError:
-        await session.rollback()
-        return False
-    return True
-
-
-async def _update_idem_result(
-    session: AsyncSession,
-    user_id: int,
-    raw_key: str,
-    result_json: str,
-) -> None:
-    """Update the tombstone row with the final serialised result."""
-    hashed = _hash_idem_key(user_id, raw_key)
-    row = (
-        (
-            await session.execute(
-                select(ChatSpend).where(
-                    ChatSpend.user_id == user_id,
-                    col(ChatSpend.idem_key) == hashed,
-                )
-            )
-        )
-        .scalars()
-        .first()
-    )
-    if row is not None:
-        row.result_json = result_json
-        session.add(row)
+        return await handle_chat_request(session, current_user, message, api_key)
+    except IntegrityError as exc:
+        if idempotency_key is not None:
+            raise HTTPException(status_code=409, detail="idempotency_key_in_flight") from exc
+        raise
 
 
 @router.post(
@@ -241,7 +187,9 @@ async def chat_with_botmason(
             # Return a 409 to tell the client to retry after a short delay.
             raise HTTPException(status_code=409, detail="idempotency_key_in_flight")
 
-    response = await handle_chat_request(session, current_user, payload.message, headers.api_key)
+    response = await _handle_chat_with_idem_409(
+        session, current_user, payload.message, headers.api_key, idempotency_key
+    )
 
     # Store the final result so a retry returns the same response without
     # re-charging.  handle_chat_request committed the tombstone row above;
@@ -279,13 +227,22 @@ async def chat_with_botmason_stream(
 
     BUG-BM-007: chunks are yielded as they arrive (no buffering).
 
-    BUG-BM-012: accepts an optional ``Idempotency-Key`` header; a duplicate
-    request with the same key replays the cached terminal event without a
-    new charge (best-effort — in-flight duplicates return 409 or empty stream).
+    BUG-BM-012: accepts an optional ``Idempotency-Key`` header.  Three states:
+
+    1. *Cached result present* — replay the stored payload as a single
+       ``complete`` SSE event without consulting the wallet or LLM.
+    2. *Tombstone exists with no result* (in-flight elsewhere) — 409.
+    3. *Unseen key* — insert a tombstone, run the stream, then write the
+       cached payload back so the next duplicate replays from cache.
+
+    Previously this endpoint did only step 1 — duplicates with an in-flight
+    or fresh key would skip past the cache check, run a second LLM call, and
+    charge the wallet again.  The fix mirrors the non-streaming endpoint's
+    insert-tombstone-then-update flow and is wired into
+    ``_drive_stream_to_completion`` via ``PreflightedRequest.idempotency_key``.
     """
     idempotency_key = headers.idempotency_key
 
-    # BUG-BM-012: idempotency check before wallet deduction.
     if idempotency_key is not None:
         cached = await _check_idempotency(session, current_user, idempotency_key)
         if cached is not None:
@@ -301,6 +258,12 @@ async def chat_with_botmason_stream(
             return StreamingResponse(
                 _replay(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
             )
+        # No cached result — try to claim the in-flight slot.  Returns False
+        # if a concurrent request already holds the slot (in-flight or
+        # completed-but-NULL-result_json on a previous failure path).
+        ok = await _insert_idem_tombstone(session, current_user, idempotency_key)
+        if not ok:
+            raise HTTPException(status_code=409, detail="idempotency_key_in_flight")
 
     spent = await preflight_deduction(session, current_user)
     context = PreflightedRequest(
@@ -309,6 +272,7 @@ async def chat_with_botmason_stream(
         spent=spent,
         remaining_messages=max(get_monthly_cap() - spent.monthly_used, 0),
         request=request,  # BUG-BM-006
+        idempotency_key=idempotency_key,  # BUG-BM-012 — drives post-commit cache write
     )
     # ``X-Accel-Buffering: no`` disables proxy buffering so nginx / Railway
     # forward bytes as soon as they are written.

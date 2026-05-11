@@ -1719,3 +1719,68 @@ async def test_stream_dispatch_routes_to_configured_provider(
     ]
     assert anthropic_chunks[-1][1] is not None
     assert anthropic_chunks[-1][1].text == "sk-ant-override"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_stream_idempotency_key_prevents_double_charge(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """BUG-BM-012 (stream): duplicate streaming POST replays without re-charging.
+
+    Address-feedback regression: the original 12B implementation only checked
+    ``ChatSpend`` on the stream path but never wrote the cached result back,
+    so the second call with the same ``Idempotency-Key`` always missed the
+    cache and re-charged the wallet.  This test would have caught that —
+    keeping it here pins the contract so the bug cannot regress.
+    """
+    headers = await _signup(async_client)
+    await _add_balance(db_session, amount=2)
+    idem_headers = {**headers, "Idempotency-Key": "stream-idem-001"}
+
+    resp1 = await async_client.post(
+        "/journal/chat/stream", json={"message": "Hello stream"}, headers=idem_headers
+    )
+    assert resp1.status_code == HTTPStatus.OK
+    events1 = _parse_sse_events(resp1.text)
+    complete1 = next(data for name, data in events1 if name == "complete")
+    first_response_text = complete1["response"]
+
+    resp2 = await async_client.post(
+        "/journal/chat/stream", json={"message": "ignored on replay"}, headers=idem_headers
+    )
+    assert resp2.status_code == HTTPStatus.OK
+    events2 = _parse_sse_events(resp2.text)
+    complete2 = next(data for name, data in events2 if name == "complete")
+    assert complete2["response"] == first_response_text
+
+    # Only one deduction should have happened (started with 2, used 1).
+    balance = await async_client.get("/user/balance", headers=headers)
+    assert balance.json()["balance"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_stream_idempotency_key_different_keys_charge_independently(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Different stream idempotency keys must each deduct the wallet."""
+    headers = await _signup(async_client)
+    await _add_balance(db_session, amount=2)
+
+    resp_a = await async_client.post(
+        "/journal/chat/stream",
+        json={"message": "Hello"},
+        headers={**headers, "Idempotency-Key": "stream-key-a"},
+    )
+    resp_b = await async_client.post(
+        "/journal/chat/stream",
+        json={"message": "Hello"},
+        headers={**headers, "Idempotency-Key": "stream-key-b"},
+    )
+    assert resp_a.status_code == HTTPStatus.OK
+    assert resp_b.status_code == HTTPStatus.OK
+    balance = await async_client.get("/user/balance", headers=headers)
+    assert balance.json()["balance"] == 0  # Both deducted.

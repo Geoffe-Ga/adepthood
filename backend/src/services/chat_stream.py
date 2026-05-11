@@ -44,6 +44,7 @@ from starlette.requests import Request
 
 from schemas.botmason import ChatResponse
 from services import botmason as _botmason
+from services import chat_idempotency
 from services.botmason import LLMResponse, generate_response
 from services.journal import (
     load_recent_conversation,
@@ -144,6 +145,15 @@ class PreflightedRequest:
     BUG-BM-006: ``request`` is included so the streaming generator can poll
     ``request.is_disconnected()`` to detect when the HTTP client has gone away
     and cancel the upstream LLM call.
+
+    BUG-BM-012 follow-up: ``idempotency_key`` carries the raw header value so
+    ``_drive_stream_to_completion`` can call
+    :func:`services.chat_idempotency.update_idem_result` AFTER
+    ``finalise_stream_commit`` succeeds — that's the step the original
+    streaming flow missed, which meant duplicate stream requests would
+    re-charge the wallet because the cached row never got its
+    ``result_json`` filled in.  ``None`` means the caller didn't supply a
+    key and no caching writeback is required.
     """
 
     message: str
@@ -151,6 +161,7 @@ class PreflightedRequest:
     spent: SpendResult
     remaining_messages: int
     request: Request | None = None
+    idempotency_key: str | None = None
 
 
 async def _watch_for_disconnect(
@@ -276,13 +287,31 @@ async def _drive_stream_to_completion(
 
     # Stream completed successfully — persist and commit.
     await persist_user_message(session, user_id, context.message)
-    yield await finalise_stream_commit(
+    complete_event, complete_payload = await finalise_stream_commit(
         session=session,
         current_user=user_id,
         final_response=resolved_final,
         new_balance=context.spent.offering_balance,
         remaining_messages=context.remaining_messages,
     )
+
+    # BUG-BM-012 follow-up: write the cached response back to ChatSpend so a
+    # duplicate streaming request with the same Idempotency-Key replays this
+    # event instead of re-charging the wallet.  The tombstone row was
+    # already inserted by the router pre-flight; here we just fill in
+    # ``result_json``.  A separate commit is needed because
+    # ``finalise_stream_commit`` already committed the wallet deduction —
+    # we cannot share its transaction.
+    if context.idempotency_key is not None:
+        await chat_idempotency.update_idem_result(
+            session,
+            user_id,
+            context.idempotency_key,
+            json.dumps(complete_payload, separators=(",", ":")),
+        )
+        await session.commit()
+
+    yield complete_event
 
 
 async def stream_bot_response(
@@ -347,8 +376,14 @@ async def finalise_stream_commit(
     final_response: LLMResponse,
     new_balance: int,
     remaining_messages: int,
-) -> bytes:
+) -> tuple[bytes, dict[str, Any]]:
     """Persist the bot entry + usage log and encode the terminal SSE event.
+
+    Returns ``(sse_bytes, payload_dict)`` so the streaming generator can
+    forward the encoded event to the client AND hand the structured payload
+    to the idempotency writeback (BUG-BM-012 follow-up — duplicate stream
+    requests with the same ``Idempotency-Key`` need a cached result to
+    replay).  Returning both forms avoids re-parsing the SSE bytes.
 
     Split out so the main streaming generator stays linear and so this commit
     path is easy to unit-test in isolation.  The user row is re-read after
@@ -364,13 +399,11 @@ async def finalise_stream_commit(
         msg = "user_not_found"
         raise RuntimeError(msg)
 
-    return sse_event(
-        "complete",
-        {
-            "response": final_response.text,
-            "remaining_balance": new_balance,
-            "remaining_messages": remaining_messages,
-            "monthly_reset_date": user_after.monthly_reset_date.isoformat(),
-            "bot_entry_id": bot_entry.id,
-        },
-    )
+    payload: dict[str, Any] = {
+        "response": final_response.text,
+        "remaining_balance": new_balance,
+        "remaining_messages": remaining_messages,
+        "monthly_reset_date": user_after.monthly_reset_date.isoformat(),
+        "bot_entry_id": bot_entry.id,
+    }
+    return sse_event("complete", payload), payload

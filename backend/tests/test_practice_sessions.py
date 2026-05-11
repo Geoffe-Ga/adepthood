@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from zoneinfo import ZoneInfo
@@ -750,6 +751,42 @@ async def test_no_idempotency_key_still_works(
         "/practice-sessions/", json=_session_payload(up_id), headers=headers
     )
     assert resp.status_code == HTTPStatus.CREATED
+
+
+@pytest.mark.asyncio
+async def test_concurrent_idempotency_key_creates_one_session(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Address-feedback regression: TOCTOU race on the in-process store.
+
+    Without a per-key lock, two coroutines that race through the
+    ``_lookup_idempotent_session`` check before either reaches
+    ``_remember_idempotent_session`` would both pass the cache check, both
+    INSERT a fresh ``PracticeSession`` row, and both update the dict —
+    leaving two rows in the DB and the dict mapping the late writer's
+    session id (or even an orphan).
+
+    With the lock, the second coroutine waits for the first to finish the
+    DB write + dict update, then sees the cached id and returns the same
+    row.  Exactly one session must land in the DB.
+    """
+    headers, _ = await _signup(async_client)
+    up_id = await _create_user_practice(async_client, db_session, headers)
+    idem_headers = {**headers, "Idempotency-Key": "race-key-001"}
+    body = _session_payload(up_id)
+
+    resp_a, resp_b = await asyncio.gather(
+        async_client.post("/practice-sessions/", json=body, headers=idem_headers),
+        async_client.post("/practice-sessions/", json=body, headers=idem_headers),
+    )
+
+    assert resp_a.status_code in (HTTPStatus.OK, HTTPStatus.CREATED)
+    assert resp_b.status_code in (HTTPStatus.OK, HTTPStatus.CREATED)
+    # Both responses describe the SAME row -- no duplicate created.
+    assert resp_a.json()["id"] == resp_b.json()["id"]
+
+    wk = await async_client.get("/practice-sessions/week-count", headers=headers)
+    assert wk.json()["count"] == 1
 
 
 # -- BUG-PRACTICE-009: week_count uses user's local timezone ----------------
