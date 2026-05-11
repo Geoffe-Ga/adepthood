@@ -10,9 +10,9 @@ post-session.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from schemas.practice_mode_config import Sense
 
@@ -54,6 +54,19 @@ class IntervalBellMetadata(_MetadataBase):
     mode: Literal["interval_bell"] = "interval_bell"
     intervals_struck: int = Field(ge=0, le=_MAX_INTERVALS)
     total_intervals: int = Field(ge=0, le=_MAX_INTERVALS)
+
+    @model_validator(mode="after")
+    def _check_struck_within_total(self) -> Self:
+        """Reject ``intervals_struck > total_intervals`` (PR #311 review).
+
+        Each field individually satisfies its ge/le bounds; only the
+        cross-field invariant catches the nonsense state of striking more
+        bells than were scheduled.
+        """
+        if self.intervals_struck > self.total_intervals:
+            msg = "intervals_struck cannot exceed total_intervals"
+            raise ValueError(msg)
+        return self
 
 
 class RepCounterMetadata(_MetadataBase):

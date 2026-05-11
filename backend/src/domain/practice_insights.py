@@ -143,10 +143,17 @@ def _rolling_30d_stats(
     today: date,
     tz: str | None,
 ) -> tuple[float, float | None, dict[str, int]]:
-    """Total minutes, average duration, and per-mode counts over the last 30 days."""
+    """Total minutes, average duration, and per-mode counts over the last 30 days.
+
+    Mirrors the ``duration_minutes <= 0`` guard from :func:`_bucket_by_week`
+    so a quick-cancel session never inflates ``per_mode_counts`` or drags
+    the average toward zero while the weekly cadence is unchanged.
+    """
     durations: list[float] = []
     per_mode: Counter[str] = Counter()
     for session in sessions:
+        if session.duration_minutes <= 0:
+            continue
         if not _is_in_30d_window(session, today, tz):
             continue
         durations.append(session.duration_minutes)
@@ -163,6 +170,12 @@ def _last_insight(sessions: Iterable[PracticeSession]) -> str | None:
     timestamp via :func:`max` so the caller doesn't have to pre-sort.
     Naive SQLite timestamps are normalized to UTC so the comparison key
     never mixes aware/naive datetimes.
+
+    The router supplies the full 60-day fetch window — wider than the
+    30-day rollup — on purpose: a user who took a multi-week pause should
+    still see their last takeaway when they return rather than a blank
+    card.  Narrowing this to 30 days would silently hide insights during
+    onboarding-back-from-lull.
     """
     with_insight = [s for s in sessions if s.insight is not None]
     if not with_insight:

@@ -198,6 +198,10 @@ async def get_insights(
     frontend can poll the screen without thrashing the DB.
     """
     response.headers["Cache-Control"] = _INSIGHTS_CACHE_CONTROL
+    # Defense-in-depth: a misconfigured upstream that ignores ``private``
+    # still has the right cache key when ``Vary: Authorization`` is set,
+    # so one user's rollup cannot leak to another sharing the proxy.
+    response.headers["Vary"] = "Authorization"
     user_tz = await get_user_timezone(session, current_user)
     cutoff = datetime.now(UTC) - timedelta(days=_INSIGHTS_LOOKBACK_DAYS)
     rows = (

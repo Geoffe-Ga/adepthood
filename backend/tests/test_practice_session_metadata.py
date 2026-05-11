@@ -108,6 +108,23 @@ def test_interval_bell_rejects_negative_counts() -> None:
         IntervalBellMetadata(mode="interval_bell", intervals_struck=-1, total_intervals=4)
 
 
+def test_interval_bell_rejects_struck_greater_than_total() -> None:
+    """``intervals_struck`` cannot exceed ``total_intervals`` (PR #311 review HIGH).
+
+    Each field individually passes its ge/le bounds; only the cross-field
+    invariant rejects the nonsense state of "struck more bells than were
+    scheduled".
+    """
+    with pytest.raises(ValidationError):
+        IntervalBellMetadata(mode="interval_bell", intervals_struck=10, total_intervals=4)
+
+
+def test_interval_bell_accepts_equal_struck_and_total() -> None:
+    """Completing every scheduled interval is valid (boundary)."""
+    payload = IntervalBellMetadata(mode="interval_bell", intervals_struck=4, total_intervals=4)
+    assert payload.intervals_struck == payload.total_intervals == 4
+
+
 def test_sense_grounding_rejects_unknown_sense() -> None:
     with pytest.raises(ValidationError):
         SessionMetadataAdapter.validate_python(

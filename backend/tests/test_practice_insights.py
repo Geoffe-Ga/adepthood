@@ -178,6 +178,27 @@ def test_30d_window_excludes_old_sessions() -> None:
     assert "metronome" not in insights.per_mode_counts
 
 
+def test_30d_stats_skip_zero_duration_sessions() -> None:
+    """Quick-cancel sessions must not pollute 30d stats (PR #311 review HIGH).
+
+    The weekly bucket already ignores ``duration_minutes <= 0``; mirroring
+    the guard in the 30d window keeps the two dimensions in sync so a
+    habit of cancelling never silently inflates ``per_mode_counts`` or
+    drags the average toward zero.
+    """
+    now = _now_utc()
+    sessions = [
+        _session(timestamp=now, duration_minutes=20.0, mode="meditation_timer"),
+        _session(timestamp=now - timedelta(days=1), duration_minutes=0.0, mode="rep_counter"),
+        _session(timestamp=now - timedelta(days=2), duration_minutes=0.0, mode="metronome"),
+    ]
+    insights = build_insights(sessions, tz="UTC")
+    # Only the 20-minute session reaches the rollup.
+    assert insights.per_mode_counts == {"meditation_timer": 1}
+    assert insights.total_minutes_30d == pytest.approx(20.0)
+    assert insights.avg_duration_minutes_30d == pytest.approx(20.0)
+
+
 # -- last_insight -----------------------------------------------------------
 
 

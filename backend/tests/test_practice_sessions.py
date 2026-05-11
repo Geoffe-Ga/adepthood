@@ -440,6 +440,12 @@ async def _create_typed_user_practice(
                 "end_bell": True,
             },
         },
+        "interval_bell": {
+            "mode": "interval_bell",
+            "duration_minutes": 20,
+            "interval_minutes": 5,
+            "bell_tone": "bowl",
+        },
     }
     practice = Practice(
         stage_number=stage_number,
@@ -521,6 +527,43 @@ async def test_create_session_rejects_mismatched_mode_metadata(
 
 
 @pytest.mark.asyncio
+async def test_create_session_persists_interval_bell_metadata(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """IntervalBell metadata round-trips through POST and the cross-field invariant fires.
+
+    Closes the end-to-end coverage gap flagged in the PR #311 review: the
+    cross-field validator was schema-tested but not exercised over HTTP.
+    """
+    headers, _ = await _signup(async_client)
+    up_id, _ = await _create_typed_user_practice(
+        async_client, db_session, headers, mode="interval_bell"
+    )
+
+    valid = _session_payload(
+        up_id,
+        mode_metadata={"mode": "interval_bell", "intervals_struck": 4, "total_intervals": 6},
+    )
+    resp = await async_client.post("/practice-sessions/", json=valid, headers=headers)
+    assert resp.status_code == HTTPStatus.CREATED
+    expected_struck = 4
+    expected_total = 6
+    assert resp.json()["mode_metadata"] == {
+        "mode": "interval_bell",
+        "intervals_struck": expected_struck,
+        "total_intervals": expected_total,
+    }
+
+    # Cross-field invariant: striking more bells than scheduled → 422.
+    bad = _session_payload(
+        up_id,
+        mode_metadata={"mode": "interval_bell", "intervals_struck": 10, "total_intervals": 4},
+    )
+    resp_bad = await async_client.post("/practice-sessions/", json=bad, headers=headers)
+    assert resp_bad.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
 async def test_create_session_rejects_invalid_metadata_payload(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -581,6 +624,8 @@ async def test_insights_empty_user_returns_empty_rollup(async_client: AsyncClien
     assert body["last_insight"] is None
     # Cache-Control is set so a chatty UI doesn't hammer the DB.
     assert resp.headers["cache-control"] == "private, max-age=60"
+    # Vary: Authorization is defense-in-depth against a proxy that ignores ``private``.
+    assert resp.headers["vary"] == "Authorization"
 
 
 @pytest.mark.asyncio
