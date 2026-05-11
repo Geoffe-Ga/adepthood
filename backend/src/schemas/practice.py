@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from domain.constants import TOTAL_STAGES as MAX_STAGE_NUMBER
 from domain.practice_modes import PracticeMode
@@ -158,6 +158,11 @@ class UserPracticeResponse(OwnedResourcePublic):
     returned to its owner -- cross-user fetches raise 403 in the router
     -- so echoing the surrogate key adds no information and aids
     enumeration.
+
+    ``effective_name`` and ``effective_config`` collapse the catalog row
+    plus the user's optional overrides into a single payload so frontend
+    code never has to merge by hand. Both are populated by the router
+    from :mod:`domain.practice_resolution`.
     """
 
     id: int
@@ -165,6 +170,10 @@ class UserPracticeResponse(OwnedResourcePublic):
     stage_number: int
     start_date: date
     end_date: date | None = None
+    custom_name: str | None = None
+    mode_config_override: dict[str, Any] | None = None
+    effective_name: str | None = None
+    effective_config: ModeConfig | None = None
 
 
 class PracticeSessionSummary(BaseModel):
@@ -188,7 +197,47 @@ class UserPracticeDetail(OwnedResourcePublic):
     stage_number: int
     start_date: date
     end_date: date | None = None
+    custom_name: str | None = None
+    mode_config_override: dict[str, Any] | None = None
+    effective_name: str | None = None
+    effective_config: ModeConfig | None = None
     sessions: list[PracticeSessionSummary]
+
+
+class UserPracticeCustomize(BaseModel):
+    """PATCH body for ``/user-practices/{id}/customize``.
+
+    Both fields are nullable: passing ``None`` clears the override and
+    falls back to the catalog value. Omitting a field leaves the existing
+    value untouched (resolved at the router via ``model_fields_set``).
+    The ``mode`` cannot be changed here — see
+    :func:`domain.practice_resolution.effective_config` for the guard.
+    """
+
+    custom_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=PRACTICE_NAME_MAX_LENGTH,
+    )
+    mode_config_override: dict[str, Any] | None = None
+
+    @field_validator("custom_name")
+    @classmethod
+    def _strip_and_reject_whitespace(cls, value: str | None) -> str | None:
+        """Trim surrounding whitespace and reject "" / "   " custom names.
+
+        Without this an empty / whitespace-only string would persist, then
+        ``effective_name``'s falsy check would silently fall back to the
+        catalog name — producing a contradictory response that says
+        ``custom_name = "   "`` alongside ``effective_name = "<catalog>"``.
+        """
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            msg = "custom_name cannot be empty or whitespace-only"
+            raise ValueError(msg)
+        return stripped
 
 
 # -- PracticeSession --------------------------------------------------------
