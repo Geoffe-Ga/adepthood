@@ -26,6 +26,7 @@ module.exports = {
     '^@react-native-async-storage/async-storage$': '<rootDir>/src/__mocks__/async-storage.js',
     '^expo-secure-store$': '<rootDir>/src/__mocks__/expo-secure-store.js',
     '^expo-av$': '<rootDir>/src/__mocks__/expo-av.js',
+    '^expo-haptics$': '<rootDir>/src/__mocks__/expo-haptics.js',
     '^expo-keep-awake$': '<rootDir>/src/__mocks__/expo-keep-awake.js',
     '^@react-native-community/netinfo$': '<rootDir>/src/__mocks__/netinfo.js',
   },
