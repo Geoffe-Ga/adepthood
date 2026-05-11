@@ -20,8 +20,6 @@ revision.
 
 from typing import Sequence, Union
 
-from alembic import op  # noqa: F401 — required for alembic to recognise the file
-
 # revision identifiers, used by Alembic.
 revision: str = "c5ed9dd1dabc"  # pragma: allowlist secret
 # Tuple of both prior heads; alembic stitches them together at this point.

@@ -152,17 +152,22 @@ jobs:
           # "alembic downgrade -1" is ambiguous when the head is a merge
           # migration (down_revision is a tuple of two prior heads), so we
           # resolve the previous revision explicitly via the script
-          # directory.  Falls back to "-1" for linear chains.
+          # directory.  Falls back to "-1" for linear chains and for the
+          # transient multi-head state (where get_current_head returns
+          # None) so the error message stays clear.
           prev=$(python -c "
           from alembic.config import Config
           from alembic.script import ScriptDirectory
           sd = ScriptDirectory.from_config(Config('alembic.ini'))
           head = sd.get_current_head()
-          rev = sd.get_revision(head)
-          parent = rev.down_revision
-          if isinstance(parent, tuple):
-              parent = parent[0]
-          print(parent or '-1')
+          if head is None:
+              print('-1')
+          else:
+              rev = sd.get_revision(head)
+              parent = rev.down_revision
+              if isinstance(parent, tuple):
+                  parent = parent[0]
+              print(parent or '-1')
           ")
           alembic downgrade "$prev"
           alembic upgrade head

@@ -125,29 +125,36 @@ def test_every_preset_is_approved_and_unsubmitted() -> None:
 def test_sense_grounding_preset_has_5_4_3_2_1_prompts() -> None:
     """Stage 1's preset implements the 5-4-3-2-1 grounding technique.
 
-    Checks the sense order and the per-sense count independently so a
-    label-copy change (e.g. "Name 5 …" → "Identify five …") fails on a
-    clear assertion rather than a silent ``ValueError`` from ``int()``.
+    Asserts the sense order from ``_SENSE_ORDER`` and that each label
+    contains the expected count token. Pure substring check (no
+    ``int()`` parse) so a wording drift fails on a clear assertion
+    rather than a silent ``ValueError``.
     """
     preset = next(p for p in PRESET_PRACTICES if p["stage_number"] == 1)
     cfg = SenseGroundingConfig.model_validate(preset["mode_config"])
 
-    expected_senses = [sense for sense, _ in _SENSE_ORDER]
-    expected_counts = [count for _, count in _SENSE_ORDER]
-    assert [p.sense for p in cfg.prompts] == expected_senses
-    # Counts are still parsed from the label so a copy change that drops
-    # the count (e.g. "Things you can see") fails loudly; the assertion
-    # above protects the sense order even if the label parse fails.
-    actual_counts = [int(p.label.split()[1]) for p in cfg.prompts]
-    assert actual_counts == expected_counts
+    assert [p.sense for p in cfg.prompts] == [sense for sense, _ in _SENSE_ORDER]
+    for prompt, (_, expected_count) in zip(cfg.prompts, _SENSE_ORDER, strict=True):
+        # Match " <count> " (surrounded by whitespace) so "10" wouldn't
+        # accidentally satisfy a check for "1".
+        assert f" {expected_count} " in f" {prompt.label} ", (
+            f"prompt {prompt.label!r} is missing the expected count {expected_count}"
+        )
 
 
-def test_shadow_work_preset_uses_valid_metronome_config() -> None:
-    """Stage 6's preset is the metronome practice with a 30-minute window."""
+def test_shadow_work_preset_uses_exact_metronome_config() -> None:
+    """Stage 6's preset pins the metronome BPM, duration, and halfway bell.
+
+    Exact-value assertions (not range checks) so a mutation that bumps
+    BPM 60→200 or duration 30→1 fails loudly — the schema-range checks
+    in ``test_every_preset_mode_config_is_valid`` already cover the
+    "within bounds" property.
+    """
     preset = next(p for p in PRESET_PRACTICES if p["stage_number"] == 6)
     cfg = MetronomeConfig.model_validate(preset["mode_config"])
-    assert 20 <= cfg.bpm <= 240
-    assert cfg.timer.duration_minutes > 0
+    assert cfg.bpm == 60
+    assert cfg.timer.duration_minutes == 30
+    assert cfg.timer.halfway_bell is True
 
 
 def test_stage_to_preset_name_map_matches_preset_list() -> None:

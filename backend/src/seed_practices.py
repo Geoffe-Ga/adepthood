@@ -24,6 +24,13 @@ from models.practice import Practice
 from schemas.practice_mode_config import ModeConfigAdapter
 from seed_practice_copy import PRESET_COPY
 
+#: Nominal ``default_duration_minutes`` for the Dog Walkin' Shamanism
+#: preset, which uses ``count_up`` mode and has no real target. The
+#: catalog UI hides the duration tile for ``count_up``; this value is a
+#: non-null fallback so existing list endpoints don't need to
+#: special-case the field.
+_COUNT_UP_NOMINAL_DURATION_MINUTES = 20
+
 
 def _meditation_timer(duration_minutes: float, *, halfway_bell: bool = False) -> dict[str, Any]:
     """Build a meditation_timer ``mode_config`` payload."""
@@ -137,8 +144,7 @@ _PRESET_PRACTICES: list[dict[str, Any]] = [
         "Dog Walkin' Shamanism",
         mode="count_up",
         mode_config={"mode": "count_up", "soft_cap_minutes": None},
-        # Count-up has no target; carry a nominal default for the tile.
-        default_duration_minutes=20,
+        default_duration_minutes=_COUNT_UP_NOMINAL_DURATION_MINUTES,
     ),
     _build_preset(
         9,
