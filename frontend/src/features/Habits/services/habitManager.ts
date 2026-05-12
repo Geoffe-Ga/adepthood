@@ -120,11 +120,7 @@ const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.list>>): Ha
     sort_order: h.sort_order ?? null,
   }));
 
-// ``is_additive`` is propagated alongside unit/frequency because it is a
-// habit-level property stored per-goal: flipping the direction on one tier
-// without the others leaves the store in an inconsistent half-additive,
-// half-subtractive state that ``normalizeGoalTiers`` can't clamp correctly
-// (the clamp keys off ``low.is_additive``).
+// is_additive is propagated so single-tier flips can't leave the store half-additive (normalizeGoalTiers keys off low.is_additive).
 const normalizeGoalUnits = (goals: Goal[], updatedGoal: Goal): void => {
   const {
     target_unit: unit,
