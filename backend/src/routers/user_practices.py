@@ -17,11 +17,13 @@ from domain.dates import today_in_tz
 from domain.practice_resolution import effective_config, effective_name
 from domain.stage_progress import get_user_progress, is_stage_unlocked
 from errors import bad_request, conflict, forbidden, not_found
+from models.course_stage import CourseStage
 from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.user_practice import UserPractice
 from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
+from schemas.frequency import FrequencyResponse, render_banner_text
 from schemas.pagination import paginate_query
 from schemas.practice import (
     UserPracticeCreate,
@@ -30,7 +32,15 @@ from schemas.practice import (
     UserPracticeResponse,
 )
 from schemas.practice_mode_config import ModeConfigAdapter
+from seed_practices import STAGE_TO_PRESET_NAME
 from services.users import get_user_timezone
+
+# Stage 1 is always the curriculum's entry point — users without a
+# ``StageProgress`` row see the stage-1 banner because they have not yet
+# advanced. Mirrors ``domain.stage_progress._STAGE_1`` (kept duplicated
+# rather than imported so this router doesn't reach into a private
+# constant in another module).
+_DEFAULT_STAGE_NUMBER = 1
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +253,179 @@ def _user_practice_payload(user_practice: UserPractice) -> dict[str, Any]:
         "custom_name": user_practice.custom_name,
         "mode_config_override": user_practice.mode_config_override,
     }
+
+
+async def _load_course_stage(session: AsyncSession, stage_number: int) -> CourseStage:
+    """Fetch the ``CourseStage`` for a stage number or raise 404.
+
+    The banner copy interpolates ``spiral_dynamics_color`` and ``aspect``
+    from this row; a half-seeded environment (e.g. preset practices
+    landed but stage definitions didn't) is a deployment bug, not a
+    user-recoverable state — surfacing it as 404 with a stable detail
+    string makes the misconfiguration debuggable in logs.
+    """
+    result = await session.execute(
+        select(CourseStage).where(CourseStage.stage_number == stage_number)
+    )
+    course_stage = result.scalars().first()
+    if course_stage is None:
+        raise not_found("course_stage")
+    return course_stage
+
+
+async def _load_active_user_practice(
+    session: AsyncSession, user_id: int, stage_number: int
+) -> UserPractice | None:
+    """Return the user's open ``UserPractice`` for a stage, or ``None``.
+
+    "Open" mirrors the production partial unique index
+    (``ix_user_practice_active_stage``): ``end_date IS NULL``. The
+    constraint guarantees ≤ 1 row matches so ``.first()`` is safe; a
+    legacy DB without the index would still resolve deterministically
+    because we order by ``id DESC`` and pick the most recent open row.
+    """
+    result = await session.execute(
+        select(UserPractice)
+        .where(
+            UserPractice.user_id == user_id,
+            UserPractice.stage_number == stage_number,
+            col(UserPractice.end_date).is_(None),
+        )
+        .order_by(col(UserPractice.id).desc())
+    )
+    return result.scalars().first()
+
+
+async def _load_preset_practice(session: AsyncSession, stage_number: int) -> Practice:
+    """Look up the seeded preset for a stage by ``(stage_number, name)``.
+
+    The lookup key comes from :data:`STAGE_TO_PRESET_NAME` (exported
+    from :mod:`seed_practices`) so the banner stays in sync with the
+    seeder by construction — a typo in either place is caught at the
+    seeder's import-time validation, not on the first banner fetch.
+
+    Raises 404 when the preset row is missing (same half-seeded
+    deployment posture as :func:`_load_course_stage`).
+    """
+    preset_name = STAGE_TO_PRESET_NAME.get(stage_number)
+    if preset_name is None:
+        raise not_found("preset_practice")
+    result = await session.execute(
+        select(Practice).where(
+            Practice.stage_number == stage_number,
+            Practice.name == preset_name,
+            col(Practice.submitted_by_user_id).is_(None),
+        )
+    )
+    practice = result.scalars().first()
+    if practice is None:
+        raise not_found("preset_practice")
+    return practice
+
+
+def _build_frequency_response(
+    *,
+    course_stage: CourseStage,
+    practice_name: str,
+    practice_id: int,
+    user_practice_id: int | None,
+) -> FrequencyResponse:
+    """Compose the response payload with the banner text rendered once.
+
+    Kept as a thin helper so the endpoint's two branches (active
+    selection vs preset fallback) share one call site for the render —
+    a wording or field-list drift between the two branches becomes
+    impossible by construction.
+    """
+    return FrequencyResponse(
+        stage_number=course_stage.stage_number,
+        color=course_stage.spiral_dynamics_color,
+        aspect=course_stage.aspect,
+        practice_name=practice_name,
+        practice_id=practice_id,
+        user_practice_id=user_practice_id,
+        banner_text=render_banner_text(
+            color=course_stage.spiral_dynamics_color,
+            aspect=course_stage.aspect,
+            practice_name=practice_name,
+        ),
+    )
+
+
+async def _frequency_from_active(
+    session: AsyncSession, course_stage: CourseStage, active: UserPractice
+) -> FrequencyResponse:
+    """Build the banner from an active ``UserPractice`` selection.
+
+    ``_resolve_practice`` 400s on unapproved rows; for the banner path
+    we only need the catalog row to exist (the user already selected
+    it, so its approval state shouldn't break their read view).
+    """
+    practice_row = (
+        (await session.execute(select(Practice).where(Practice.id == active.practice_id)))
+        .scalars()
+        .first()
+    )
+    if practice_row is None:
+        raise not_found("practice")
+    practice_id = practice_row.id if practice_row.id is not None else active.practice_id
+    return _build_frequency_response(
+        course_stage=course_stage,
+        practice_name=effective_name(practice_row, active),
+        practice_id=practice_id,
+        user_practice_id=active.id,
+    )
+
+
+async def _frequency_from_preset(
+    session: AsyncSession, course_stage: CourseStage, stage_number: int
+) -> FrequencyResponse:
+    """Build the banner from the seeded preset for a stage.
+
+    Surfaces ``user_practice_id = None`` so the client can distinguish
+    "showing the unselected default" from "showing the user's pick".
+    """
+    preset = await _load_preset_practice(session, stage_number)
+    preset_id = preset.id if preset.id is not None else 0
+    return _build_frequency_response(
+        course_stage=course_stage,
+        practice_name=preset.name,
+        practice_id=preset_id,
+        user_practice_id=None,
+    )
+
+
+@router.get("/current/frequency", response_model=FrequencyResponse)
+async def get_current_frequency(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> FrequencyResponse:
+    """Return the banner payload for the user's current stage (ritual-05).
+
+    Collapses four lookups (``StageProgress`` → ``CourseStage`` →
+    ``UserPractice`` → ``Practice``) into one response so the client
+    never has to assemble the banner copy from parts. The template
+    lives server-side in :mod:`schemas.frequency` so a wording change
+    is a single-file edit.
+
+    Resolution order for the practice slot:
+
+    1. The user's active ``UserPractice`` for the current stage (open
+       row, ``end_date IS NULL``). ``effective_name`` from
+       :mod:`domain.practice_resolution` honours ``custom_name``.
+    2. The seeded preset for the stage (via
+       :data:`seed_practices.STAGE_TO_PRESET_NAME`) — ``user_practice_id``
+       is ``None`` to signal "showing the unselected default" to the
+       client.
+    """
+    progress = await get_user_progress(session, current_user)
+    stage_number = progress.current_stage if progress is not None else _DEFAULT_STAGE_NUMBER
+
+    course_stage = await _load_course_stage(session, stage_number)
+    active = await _load_active_user_practice(session, current_user, stage_number)
+    if active is not None:
+        return await _frequency_from_active(session, course_stage, active)
+    return await _frequency_from_preset(session, course_stage, stage_number)
 
 
 @router.get("/{user_practice_id}", response_model=UserPracticeDetail)
