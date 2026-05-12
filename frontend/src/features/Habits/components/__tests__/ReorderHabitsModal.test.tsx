@@ -1,26 +1,17 @@
 /* eslint-env jest */
-/**
- * Regression tests for ``ReorderHabitsModal`` covering two bugs reported
- * on the habits screen:
- *
- *  1. The order would snap back to the stage-default after the user
- *     dragged a habit and then picked a new start date (or any other
- *     state change that re-fired the initialisation effect). To users
- *     the manual reorder appeared to "freeze" because their drags had
- *     no visible effect once they touched anything else.
- *  2. Tapping the start-date button opened a date picker wrapped in a
- *     bare ``<Modal>`` with no dismissal affordance. On iOS the picker
- *     stayed on screen with no way to back out and the whole app froze.
- *     The fix swaps in the shared ``<DatePicker>`` component (which
- *     already wraps ``react-native-modal-datetime-picker`` with proper
- *     confirm/cancel handling) and is exercised here through its
- *     accessibility label.
- */
-import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render, act } from '@testing-library/react-native';
+// Regression tests for the three reorder-modal bugs: drag freeze, picker dismissal, and the iOS sibling-mount.
+import { describe, expect, it, jest, beforeEach } from '@jest/globals';
+import { fireEvent, render, act, within } from '@testing-library/react-native';
 import React from 'react';
 
+import { useProgramStore } from '../../../../store/useProgramStore';
 import type { Habit } from '../../Habits.types';
+
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  setItem: jest.fn(() => Promise.resolve()),
+  getItem: jest.fn(() => Promise.resolve(null)),
+  removeItem: jest.fn(() => Promise.resolve()),
+}));
 
 jest.mock('react-native-draggable-flatlist', () => {
   const ReactLib = require('react');
@@ -42,27 +33,43 @@ jest.mock('react-native-draggable-flatlist', () => {
 
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
 
+// Captured picker props so structural / prop tests can introspect them.
+const lastModalDatePickerProps: { current: Record<string, unknown> | null } = { current: null };
+
 jest.mock('react-native-modal-datetime-picker', () => {
   const ReactLib = require('react');
-  const { Text, TouchableOpacity } = require('react-native');
+  const { Text, TouchableOpacity, View } = require('react-native');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ModalDatePickerMock = ({ isVisible, onConfirm, onCancel }: any) =>
-    isVisible
+  const ModalDatePickerMock = (props: any) => {
+    lastModalDatePickerProps.current = props;
+    return props.isVisible
       ? ReactLib.createElement(
-          ReactLib.Fragment,
-          null,
+          View,
+          { testID: 'modal-datetime-picker-root' },
           ReactLib.createElement(
             TouchableOpacity,
-            { testID: 'modal-datetime-confirm', onPress: () => onConfirm(new Date('2026-06-01')) },
+            {
+              testID: 'modal-datetime-confirm',
+              onPress: () => props.onConfirm(new Date(2026, 5, 1)),
+            },
             ReactLib.createElement(Text, null, 'Confirm'),
           ),
           ReactLib.createElement(
             TouchableOpacity,
-            { testID: 'modal-datetime-cancel', onPress: onCancel },
+            { testID: 'modal-datetime-cancel', onPress: props.onCancel },
             ReactLib.createElement(Text, null, 'Cancel'),
+          ),
+          ReactLib.createElement(
+            TouchableOpacity,
+            {
+              testID: 'modal-datetime-confirm-past',
+              onPress: () => props.onConfirm(new Date(2020, 0, 1)),
+            },
+            ReactLib.createElement(Text, null, 'Confirm past'),
           ),
         )
       : null;
+  };
   return { __esModule: true, default: ModalDatePickerMock };
 });
 
@@ -91,6 +98,11 @@ const getOrderedIds = (list: ReturnType<typeof render>): number[] => {
   return data.map((h) => h.id);
 };
 
+beforeEach(() => {
+  lastModalDatePickerProps.current = null;
+  act(() => useProgramStore.getState().hydrateProgramStartDate(null));
+});
+
 describe('ReorderHabitsModal — drag persistence (BUG: re-sort freezes)', () => {
   it('preserves the dragged order across multiple consecutive drags', () => {
     const result = render(
@@ -99,20 +111,17 @@ describe('ReorderHabitsModal — drag persistence (BUG: re-sort freezes)', () =>
 
     const list = result.getByTestId('reorder-list');
 
-    // First drag: move habit 3 (Red) to the front.
     act(() => {
       list.props.onDragEnd({ data: [HABITS[2], HABITS[0], HABITS[1]] });
     });
     expect(getOrderedIds(result)).toEqual([3, 1, 2]);
 
-    // Second drag: move habit 2 (Purple) to the front of the current order.
     const afterFirst = result.getByTestId('reorder-list').props.data as Habit[];
     act(() => {
       list.props.onDragEnd({ data: [afterFirst[2], afterFirst[0], afterFirst[1]] });
     });
     expect(getOrderedIds(result)).toEqual([2, 3, 1]);
 
-    // Third drag: swap the first two.
     const afterSecond = result.getByTestId('reorder-list').props.data as Habit[];
     act(() => {
       list.props.onDragEnd({ data: [afterSecond[1], afterSecond[0], afterSecond[2]] });
@@ -131,17 +140,58 @@ describe('ReorderHabitsModal — drag persistence (BUG: re-sort freezes)', () =>
     });
     expect(getOrderedIds(result)).toEqual([3, 1, 2]);
 
-    // Open the date picker and confirm a new date.
     fireEvent.press(result.getByTestId('reorder-start-date'));
     fireEvent.press(result.getByTestId('modal-datetime-confirm'));
 
-    // The user's manual order must survive the date change.
     expect(getOrderedIds(result)).toEqual([3, 1, 2]);
   });
 });
 
-describe('ReorderHabitsModal — date picker dismissal (BUG: app seizes)', () => {
-  it('mounts the date picker only after the user opens it and dismisses cleanly on cancel', () => {
+describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible in edit mode)', () => {
+  it('mounts the picker as a sibling of the parent Modal, not a descendant', () => {
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    fireEvent.press(result.getByTestId('reorder-start-date'));
+
+    // Anchor the assertion to the modal overlay's testID; nesting the
+    // picker inside this subtree is exactly the iOS bug we're guarding
+    // against.  ``within(...).queryByTestId`` returns null when the
+    // descendant isn't present, which is the passing condition.
+    const overlay = result.getByTestId('reorder-modal-overlay');
+    expect(within(overlay).queryByTestId('modal-datetime-picker-root')).toBeNull();
+    // Sanity-check the picker actually mounted somewhere reachable.
+    expect(result.getByTestId('modal-datetime-picker-root')).toBeTruthy();
+  });
+
+  it('does not pass a minimumDate so past dates are selectable', () => {
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    fireEvent.press(result.getByTestId('reorder-start-date'));
+
+    const props = lastModalDatePickerProps.current!;
+    expect(props).not.toBeNull();
+    expect(props.minimumDate).toBeUndefined();
+  });
+
+  it('accepts a confirmed past date and updates the master program start date', () => {
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    fireEvent.press(result.getByTestId('reorder-start-date'));
+    fireEvent.press(result.getByTestId('modal-datetime-confirm-past'));
+
+    const stored = useProgramStore.getState().programStartDate!;
+    expect(stored.getFullYear()).toBe(2020);
+    expect(stored.getMonth()).toBe(0);
+    expect(stored.getDate()).toBe(1);
+  });
+
+  it('mounts the picker only after the user opens it and dismisses cleanly on cancel', () => {
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
     );
@@ -153,11 +203,10 @@ describe('ReorderHabitsModal — date picker dismissal (BUG: app seizes)', () =>
 
     fireEvent.press(result.getByTestId('modal-datetime-cancel'));
     expect(result.queryByTestId('modal-datetime-confirm')).toBeNull();
-    // Order is unchanged after cancel.
     expect(getOrderedIds(result)).toEqual([1, 2, 3]);
   });
 
-  it('persists the chosen date and recomputes start_date offsets', () => {
+  it('persists the chosen date, recomputes start_date offsets, and writes the master anchor', () => {
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
     );
@@ -166,10 +215,58 @@ describe('ReorderHabitsModal — date picker dismissal (BUG: app seizes)', () =>
     fireEvent.press(result.getByTestId('modal-datetime-confirm'));
 
     const data = result.getByTestId('reorder-list').props.data as Habit[];
-    // First habit should anchor to the confirmed date (2026-06-01 in mock).
     expect(new Date(data[0]!.start_date).toISOString().slice(0, 10)).toBe('2026-06-01');
-    // Second habit is 21 days later.
     expect(new Date(data[1]!.start_date).toISOString().slice(0, 10)).toBe('2026-06-22');
+
+    const stored = useProgramStore.getState().programStartDate!;
+    expect(stored.getFullYear()).toBe(2026);
+    expect(stored.getMonth()).toBe(5);
+    expect(stored.getDate()).toBe(1);
+  });
+
+  it('clears pickerVisible when the parent modal closes (e.g. Android back button)', () => {
+    // Reviewer #2 blocker: ``onRequestClose`` (Android back) bypasses
+    // both ``handleCancelDate`` and ``handleConfirmDate``, so without an
+    // explicit reset the picker would spring back open on re-render
+    // even though the user never tapped the start-date button.
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    fireEvent.press(result.getByTestId('reorder-start-date'));
+    expect(result.getByTestId('modal-datetime-cancel')).toBeTruthy();
+
+    // Parent modal closes via the system back button -- no handler runs
+    // inside the picker's own confirm/cancel paths.
+    result.rerender(
+      <ReorderHabitsModal
+        visible={false}
+        habits={HABITS}
+        onClose={jest.fn()}
+        onSaveOrder={jest.fn()}
+      />,
+    );
+
+    // Re-open the parent modal.  The picker must NOT re-mount on its
+    // own; only an explicit start-date tap should bring it back.
+    result.rerender(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+    expect(result.queryByTestId('modal-datetime-cancel')).toBeNull();
+  });
+});
+
+describe('ReorderHabitsModal — program-anchor wiring', () => {
+  it('seeds the start date from the existing program anchor on open', () => {
+    act(() => useProgramStore.getState().hydrateProgramStartDate(new Date(2024, 2, 15)));
+
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    // First habit's start_date must match the anchor (March 15, 2024).
+    const data = result.getByTestId('reorder-list').props.data as Habit[];
+    expect(new Date(data[0]!.start_date).toISOString().slice(0, 10)).toBe('2024-03-15');
   });
 });
 

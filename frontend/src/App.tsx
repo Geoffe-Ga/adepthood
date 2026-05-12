@@ -34,6 +34,7 @@ import SignupScreen from './features/Auth/SignupScreen';
 import type { RootTabParamList } from './navigation/BottomTabs';
 import type { RootStackParamList } from './navigation/RootStack';
 import RootStack from './navigation/RootStack';
+import { useHydrateProgramStore } from './store/useProgramStore';
 
 type AuthStackParamList = {
   Login: undefined;
@@ -181,6 +182,19 @@ function ThemedStatusBar(): React.JSX.Element {
   return <StatusBar barStyle={scheme === 'dark' ? 'light-content' : 'dark-content'} />;
 }
 
+function AppShell(): React.JSX.Element {
+  useHydrateProgramStore();
+  return (
+    <NavigationContainer linking={linking}>
+      <SafeAreaView style={styles.safeArea}>
+        <ThemedStatusBar />
+        <OfflineBanner />
+        <RootNavigator />
+      </SafeAreaView>
+    </NavigationContainer>
+  );
+}
+
 export default function App(): React.JSX.Element {
   if (CONFIG_ERROR) {
     return <ConfigErrorScreen message={CONFIG_ERROR} />;
@@ -192,13 +206,7 @@ export default function App(): React.JSX.Element {
           <AuthProvider>
             <ApiKeyProvider>
               <ToastProvider>
-                <NavigationContainer linking={linking}>
-                  <SafeAreaView style={styles.safeArea}>
-                    <ThemedStatusBar />
-                    <OfflineBanner />
-                    <RootNavigator />
-                  </SafeAreaView>
-                </NavigationContainer>
+                <AppShell />
               </ToastProvider>
             </ApiKeyProvider>
           </AuthProvider>

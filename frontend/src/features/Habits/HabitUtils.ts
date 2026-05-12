@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 
 import type { ApiHabitStats } from '../../api';
+import { STAGE_DURATIONS_DAYS } from '../../constants/program';
 import { colors, STAGE_COLORS, STAGE_ORDER, VICTORY_COLOR } from '../../design/tokens';
 import {
   DEFAULT_TIMEZONE,
@@ -12,17 +13,10 @@ import {
 import type { Goal, Habit, Completion, HabitStatsData } from './Habits.types';
 
 export { STAGE_ORDER };
+// Re-export so existing call sites stay valid; canonical definition lives in src/constants/program.ts.
+export { STAGE_DURATIONS_DAYS };
 
-/** Milliseconds in one calendar day, used for date-difference arithmetic. */
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
-
-/**
- * Number of days per APTITUDE stage. The 36-week program has 10 stages:
- * stages 1–8 are 21-day cycles (3 weeks each, totaling 24 weeks) and
- * stages 9–10 are 42-day cycles (6 weeks each, totaling 12 weeks).
- * Grand total: 24 + 12 = 36 weeks.
- */
-export const STAGE_DURATIONS_DAYS = [21, 21, 21, 21, 21, 21, 21, 21, 42, 42] as const;
 
 /**
  * Calculate the start date for a habit based on its order in the onboarding

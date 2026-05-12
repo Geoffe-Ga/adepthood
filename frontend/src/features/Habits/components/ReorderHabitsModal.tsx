@@ -4,17 +4,12 @@ import { Modal, Platform, Text, TouchableOpacity, View } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 
 import { STAGE_COLORS } from '../../../design/tokens';
+import { useProgramStore } from '../../../store/useProgramStore';
 import styles from '../Habits.styles';
 import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
 import { STAGE_ORDER, calculateHabitStartDate } from '../HabitUtils';
 
-// ``react-native-modal-datetime-picker`` ships as ES modules and isn't in the
-// jest ``transformIgnorePatterns`` allowlist. Mirror the lazy-require pattern
-// from ``src/components/DatePicker.tsx`` so screen tests that transitively
-// import this modal don't blow up at module-load time, while production still
-// gets the real picker with confirm/cancel affordances (fixes the iOS
-// app-seize bug where the previous ``<Modal><DateTimePicker/></Modal>`` had
-// no way to be dismissed).
+// Lazy require so jest (which doesn't transform this ES-module package) can load this file.
 let DateTimePickerModal: ComponentType<Record<string, unknown>> = () => null;
 if (Platform.OS !== 'web') {
   try {
@@ -58,21 +53,12 @@ const ReorderHabitItem = ({ item, drag, isActive }: ReorderItemProps) => (
   </TouchableOpacity>
 );
 
-interface ReorderDatePickerProps {
+interface ReorderDateButtonProps {
   startDate: Date;
-  pickerVisible: boolean;
   onOpenPicker: () => void;
-  onConfirm: (_date: Date) => void;
-  onCancel: () => void;
 }
 
-const ReorderDatePicker = ({
-  startDate,
-  pickerVisible,
-  onOpenPicker,
-  onConfirm,
-  onCancel,
-}: ReorderDatePickerProps) => (
+const ReorderDateButton = ({ startDate, onOpenPicker }: ReorderDateButtonProps) => (
   <View style={styles.datePickerContainer}>
     <Text style={styles.datePickerLabel}>First Habit Start Date:</Text>
     <TouchableOpacity
@@ -82,13 +68,6 @@ const ReorderDatePicker = ({
     >
       <Text style={styles.datePickerButtonText}>{formatDate(startDate)}</Text>
     </TouchableOpacity>
-    <DateTimePickerModal
-      isVisible={pickerVisible}
-      mode="date"
-      date={startDate}
-      onConfirm={onConfirm}
-      onCancel={onCancel}
-    />
   </View>
 );
 
@@ -111,13 +90,6 @@ const ReorderList = ({ orderedHabits, onDragEnd }: ReorderListProps) => (
   </View>
 );
 
-interface ReorderBodyProps {
-  habits: Habit[];
-  visible: boolean;
-  onClose: () => void;
-  onSaveOrder: (_habits: Habit[]) => void;
-}
-
 interface ReorderState {
   orderedHabits: Habit[];
   startDate: Date;
@@ -129,23 +101,40 @@ interface ReorderState {
   handleSave: () => void;
 }
 
+interface ReorderHookInput {
+  habits: Habit[];
+  visible: boolean;
+  onClose: () => void;
+  onSaveOrder: (_habits: Habit[]) => void;
+}
+
 const useReorderState = ({
   habits,
   visible,
   onClose,
   onSaveOrder,
-}: ReorderBodyProps): ReorderState => {
+}: ReorderHookInput): ReorderState => {
+  const programStartDate = useProgramStore((s) => s.programStartDate);
+  const setProgramStartDate = useProgramStore((s) => s.setProgramStartDate);
+
   const [orderedHabits, setOrderedHabits] = useState<Habit[]>([]);
-  const [startDate, setStartDate] = useState(new Date());
+  const [startDate, setStartDate] = useState<Date>(() => programStartDate ?? new Date());
   const [pickerVisible, setPickerVisible] = useState(false);
   const wasVisibleRef = useRef(false);
 
-  // BUG-FE-HABIT-204: initialise the ordering only on the open transition;
-  // the previous implementation re-fired on every ``startDate`` change and
-  // clobbered the user's drag.  Date-picker changes go through
-  // ``handleConfirmDate`` below, which calls ``updateStartDates`` directly,
-  // so the start-date propagation handled by PR #302's dedicated effect is
-  // already covered here without a second effect.
+  useEffect(() => {
+    if (!visible && programStartDate) setStartDate(programStartDate);
+  }, [visible, programStartDate]);
+
+  // Reset the picker flag when the parent modal closes so that an
+  // ``onRequestClose`` dismissal (Android back button) doesn't leave
+  // ``pickerVisible=true`` and spring the picker open on re-render.
+  useEffect(() => {
+    if (!visible) setPickerVisible(false);
+  }, [visible]);
+
+  // BUG-FE-HABIT-204: only seed the ordered list on the open transition;
+  // re-firing on every startDate change clobbered manual drags.
   useEffect(() => {
     const justOpened = visible && !wasVisibleRef.current;
     wasVisibleRef.current = visible;
@@ -166,6 +155,8 @@ const useReorderState = ({
       setPickerVisible(false);
       setStartDate(selectedDate);
       setOrderedHabits((prev) => updateStartDates(prev, selectedDate));
+      // Master-date write-through: every consumer that derives week/stage updates.
+      setProgramStartDate(selectedDate);
     },
     handleCancelDate: () => setPickerVisible(false),
     handleSave: () => {
@@ -175,45 +166,73 @@ const useReorderState = ({
   };
 };
 
-const ReorderBody = (props: ReorderBodyProps) => {
-  const s = useReorderState(props);
-  return (
-    <View style={styles.reorderModalContent}>
-      <View style={styles.modalHeader}>
-        <Text style={styles.modalTitle}>Reorder Habits</Text>
-        <TouchableOpacity onPress={props.onClose} style={styles.closeButton}>
-          <Text style={styles.closeButtonText}>×</Text>
-        </TouchableOpacity>
-      </View>
-      <ReorderDatePicker
-        startDate={s.startDate}
-        pickerVisible={s.pickerVisible}
-        onOpenPicker={() => s.setPickerVisible(true)}
-        onConfirm={s.handleConfirmDate}
-        onCancel={s.handleCancelDate}
-      />
-      <Text style={styles.reorderInstructions}>
-        Drag habits to reorder. Habits 1-8 start 21 days apart, habits 9-10 start 42 days apart.
-      </Text>
-      <ReorderList orderedHabits={s.orderedHabits} onDragEnd={s.handleDragEnd} />
-      <TouchableOpacity style={styles.saveOrderButton} onPress={s.handleSave}>
-        <Text style={styles.saveOrderButtonText}>Save Order</Text>
+interface ReorderBodyProps {
+  onClose: () => void;
+  orderedHabits: Habit[];
+  startDate: Date;
+  onOpenPicker: () => void;
+  onDragEnd: (_a: { data: Habit[] }) => void;
+  onSave: () => void;
+}
+
+const ReorderBody = ({
+  onClose,
+  orderedHabits,
+  startDate,
+  onOpenPicker,
+  onDragEnd,
+  onSave,
+}: ReorderBodyProps) => (
+  <View style={styles.reorderModalContent}>
+    <View style={styles.modalHeader}>
+      <Text style={styles.modalTitle}>Reorder Habits</Text>
+      <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+        <Text style={styles.closeButtonText}>×</Text>
       </TouchableOpacity>
     </View>
-  );
-};
+    <ReorderDateButton startDate={startDate} onOpenPicker={onOpenPicker} />
+    <Text style={styles.reorderInstructions}>
+      Drag habits to reorder. Habits 1-8 start 21 days apart, habits 9-10 start 42 days apart.
+    </Text>
+    <ReorderList orderedHabits={orderedHabits} onDragEnd={onDragEnd} />
+    <TouchableOpacity style={styles.saveOrderButton} onPress={onSave}>
+      <Text style={styles.saveOrderButtonText}>Save Order</Text>
+    </TouchableOpacity>
+  </View>
+);
 
+// Mount the picker as a SIBLING of the parent <Modal>: iOS animates nested UIViewController modals underneath the parent, hiding them.
 export const ReorderHabitsModal = ({
   visible,
   habits,
   onClose,
   onSaveOrder,
-}: ReorderHabitsModalProps) => (
-  <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-    <View style={styles.modalOverlay}>
-      <ReorderBody habits={habits} visible={visible} onClose={onClose} onSaveOrder={onSaveOrder} />
-    </View>
-  </Modal>
-);
+}: ReorderHabitsModalProps) => {
+  const state = useReorderState({ habits, visible, onClose, onSaveOrder });
+  return (
+    <>
+      <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+        <View testID="reorder-modal-overlay" style={styles.modalOverlay}>
+          <ReorderBody
+            onClose={onClose}
+            orderedHabits={state.orderedHabits}
+            startDate={state.startDate}
+            onOpenPicker={() => state.setPickerVisible(true)}
+            onDragEnd={state.handleDragEnd}
+            onSave={state.handleSave}
+          />
+        </View>
+      </Modal>
+      <DateTimePickerModal
+        isVisible={visible && state.pickerVisible}
+        mode="date"
+        date={state.startDate}
+        // No ``minimumDate``: the master anchor must accept past dates.
+        onConfirm={state.handleConfirmDate}
+        onCancel={state.handleCancelDate}
+      />
+    </>
+  );
+};
 
 export default ReorderHabitsModal;
