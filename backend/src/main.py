@@ -1,4 +1,9 @@
-"""Main FastAPI application instance."""
+"""Main FastAPI application instance.
+
+The app object lives at module scope so the ASGI server (``uvicorn``,
+the test client) can import it as ``main:app`` without paying for a
+factory call on every reload.
+"""
 
 import asyncio
 import ipaddress
