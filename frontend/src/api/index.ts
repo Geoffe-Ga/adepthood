@@ -1574,6 +1574,62 @@ export interface UserPracticeCustomize {
   mode_config_override?: ModeConfig | null;
 }
 
+/**
+ * Per-mode session metadata mirroring the backend
+ * :class:`schemas.practice_session_metadata.SessionMetadata`
+ * discriminated union (ritual-04). The runtime payload is plain JSON;
+ * the discriminator must match the resolved practice mode or the server
+ * returns 400 ``mode_metadata_mismatch``.
+ */
+export interface MeditationTimerSessionMetadata {
+  mode: 'meditation_timer';
+}
+
+export interface CountUpSessionMetadata {
+  mode: 'count_up';
+}
+
+export interface MetronomeSessionMetadata {
+  mode: 'metronome';
+  bpm_used: number;
+}
+
+export interface IntervalBellSessionMetadata {
+  mode: 'interval_bell';
+  intervals_struck: number;
+  total_intervals: number;
+}
+
+export interface RepCounterSessionMetadata {
+  mode: 'rep_counter';
+  rep_count: number;
+}
+
+export interface SenseGroundingSessionMetadata {
+  mode: 'sense_grounding';
+  // Sense union duplicated inline (the engine layer owns the named type at
+  // ``features/Practice/engine/types.SenseKind``); we keep the api wire
+  // surface free of feature-layer imports.
+  // KEEP IN SYNC WITH ``features/Practice/engine/types.SenseKind`` —
+  // adding a new sense requires updating both unions or the engine emits
+  // a value the wire layer can't represent (and TS won't catch it).
+  senses_completed: ReadonlyArray<'sight' | 'touch' | 'hearing' | 'smell' | 'taste'>;
+}
+
+export interface TarotSessionMetadata {
+  mode: 'tarot';
+  card_index: number;
+}
+
+export type SessionMetadata =
+  | MeditationTimerSessionMetadata
+  | CountUpSessionMetadata
+  | MetronomeSessionMetadata
+  | IntervalBellSessionMetadata
+  | RepCounterSessionMetadata
+  | SenseGroundingSessionMetadata
+  | TarotSessionMetadata;
+
 export interface PracticeSessionCreate {
   user_practice_id: number;
   // BUG-PRACTICE-006 / BUG-FE-PRACTICE-101: clients send wall-clock ISO
@@ -1582,6 +1638,12 @@ export interface PracticeSessionCreate {
   started_at: string;
   ended_at: string;
   reflection?: string | null;
+  /** ritual-04: per-mode session metadata; discriminator must match practice mode. */
+  mode_metadata?: SessionMetadata | null;
+  /** ritual-04: ``true`` means the engine reached its terminal state. */
+  completed?: boolean;
+  /** ritual-12: short post-session insight (≤ 2,000 chars; distinct from ``reflection``). */
+  insight?: string | null;
 }
 
 export interface PracticeSessionResponse {
@@ -1591,6 +1653,11 @@ export interface PracticeSessionResponse {
   duration_minutes: number;
   timestamp: string;
   reflection: string | null;
+  /** ritual-04 fields — older sessions may have these absent on the wire. */
+  mode?: string;
+  mode_metadata?: SessionMetadata | null;
+  completed?: boolean;
+  insight?: string | null;
 }
 
 export interface WeekCountResponse {
