@@ -19,6 +19,7 @@ import type { HabitHistoryItem, PracticeHistoryItem, StageHistoryResponse } from
 import { stages as stagesApi } from '../../api';
 import { MAP_BACKGROUND_URI } from '../../constants/images';
 import { useAppNavigation } from '../../navigation/hooks';
+import { useDerivedCurrentStage } from '../../store/useProgramProgression';
 import {
   selectCurrentStage,
   selectStages,
@@ -441,7 +442,11 @@ const MapScreen = (): React.JSX.Element => {
   const stages = useStageStore(selectStages);
   const loading = useStageStore(selectStagesLoading);
   const error = useStageStore(selectStagesError);
-  const currentStage = useStageStore(selectCurrentStage);
+  const storeCurrentStage = useStageStore(selectCurrentStage);
+  // Prefer the date-driven stage when the master anchor is set; the
+  // server's count-based ``currentStage`` is the fallback for users who
+  // haven't picked an anchor yet.
+  const currentStage = useDerivedCurrentStage(storeCurrentStage);
   const [activeStage, setActiveStage] = useState<StageData | null>(null);
   const navigatingRef = useRef(false);
 

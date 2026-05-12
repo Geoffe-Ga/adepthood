@@ -11,6 +11,7 @@ import {
 } from '../../api';
 import { STAGE_COLORS, colors } from '../../design/tokens';
 import { useAppNavigation, useAppRoute } from '../../navigation/hooks';
+import { useProgramStore, programStage } from '../../store/useProgramStore';
 import { deriveCurrentStage } from '../Map/services/stageService';
 
 import ContentCard from './ContentCard';
@@ -25,6 +26,7 @@ const DEFAULT_STAGE_NUMBER = 1;
 function useStagesLoader() {
   const route = useAppRoute<'Course'>();
   const routeStageNumber = route.params?.stageNumber ?? null;
+  const programAnchor = useProgramStore((s) => s.programStartDate);
 
   const [allStages, setAllStages] = useState<Stage[]>([]);
   const [selectedStage, setSelectedStage] = useState(routeStageNumber ?? DEFAULT_STAGE_NUMBER);
@@ -36,12 +38,14 @@ function useStagesLoader() {
       try {
         const stagesList = await stagesApi.list();
         setAllStages(stagesList);
-        // Derive current stage from server-owned progression
-        // (completed_count + 1), not from "max unlocked" — the latter lifts
-        // the selector to stage N when only `is_unlocked` is ahead,
-        // visually rewarding any skip-ahead attempt.
         if (routeStageNumber === null) {
-          setSelectedStage(deriveCurrentStage(stagesList));
+          // Master date wins when the user has picked an anchor; otherwise
+          // fall back to the server-owned, count-based progression
+          // (``completed_count + 1``) — "max unlocked" would visually
+          // reward skip-ahead attempts whenever ``is_unlocked`` ran
+          // ahead of completion.
+          const dateDerived = programStage(programAnchor);
+          setSelectedStage(dateDerived ?? deriveCurrentStage(stagesList));
         }
       } catch (err) {
         console.error('Failed to load stages:', err);
@@ -50,7 +54,7 @@ function useStagesLoader() {
       }
     };
     void init();
-  }, [routeStageNumber]);
+  }, [routeStageNumber, programAnchor]);
 
   return { allStages, selectedStage, setSelectedStage, loading };
 }

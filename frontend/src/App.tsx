@@ -3,7 +3,7 @@
 import type { LinkingOptions, NavigatorScreenParams } from '@react-navigation/native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   ActivityIndicator,
   Appearance,
@@ -34,6 +34,8 @@ import SignupScreen from './features/Auth/SignupScreen';
 import type { RootTabParamList } from './navigation/BottomTabs';
 import type { RootStackParamList } from './navigation/RootStack';
 import RootStack from './navigation/RootStack';
+import { loadProgramStartDate } from './storage/programStorage';
+import { useProgramStore } from './store/useProgramStore';
 
 type AuthStackParamList = {
   Login: undefined;
@@ -181,6 +183,39 @@ function ThemedStatusBar(): React.JSX.Element {
   return <StatusBar barStyle={scheme === 'dark' ? 'light-content' : 'dark-content'} />;
 }
 
+/**
+ * Hydrate the program-anchor master date from AsyncStorage on cold start
+ * so the very first render of the Map / Practice / Course / Journal
+ * banner uses the correct date-derived stage and week.  Skipping this
+ * effect would briefly flash the server's count-based fallback before
+ * the user's anchor loads -- a noticeable UI glitch on slow devices.
+ */
+function useProgramAnchorHydration(): void {
+  const hydrate = useProgramStore((s) => s.hydrateProgramStartDate);
+  useEffect(() => {
+    let cancelled = false;
+    void loadProgramStartDate().then((date) => {
+      if (!cancelled) hydrate(date);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrate]);
+}
+
+function AppShell(): React.JSX.Element {
+  useProgramAnchorHydration();
+  return (
+    <NavigationContainer linking={linking}>
+      <SafeAreaView style={styles.safeArea}>
+        <ThemedStatusBar />
+        <OfflineBanner />
+        <RootNavigator />
+      </SafeAreaView>
+    </NavigationContainer>
+  );
+}
+
 export default function App(): React.JSX.Element {
   if (CONFIG_ERROR) {
     return <ConfigErrorScreen message={CONFIG_ERROR} />;
@@ -192,13 +227,7 @@ export default function App(): React.JSX.Element {
           <AuthProvider>
             <ApiKeyProvider>
               <ToastProvider>
-                <NavigationContainer linking={linking}>
-                  <SafeAreaView style={styles.safeArea}>
-                    <ThemedStatusBar />
-                    <OfflineBanner />
-                    <RootNavigator />
-                  </SafeAreaView>
-                </NavigationContainer>
+                <AppShell />
               </ToastProvider>
             </ApiKeyProvider>
           </AuthProvider>

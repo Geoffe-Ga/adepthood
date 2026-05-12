@@ -27,6 +27,7 @@ import { colors, SPACING, BORDER_RADIUS, shadows } from '@/design/tokens';
 import { stageService } from '@/features/Map/services/stageService';
 import { useOptimisticMutation } from '@/hooks/useOptimisticMutation';
 import { useAppNavigation, useAppRoute } from '@/navigation/hooks';
+import { useDerivedCurrentStage } from '@/store/useProgramProgression';
 import { selectCurrentStage, useStageStore } from '@/store/useStageStore';
 
 type ScreenView = 'selection' | 'timer' | 'summary' | 'reflection';
@@ -587,6 +588,12 @@ const PracticeScreen = (): React.JSX.Element => {
   // a stage-1 practice.
   const storeCurrentStage = useStageStore(selectCurrentStage);
   const storeStages = useStageStore((s) => s.stages);
+  // Master date wiring: when the user has set a program start date,
+  // derive the active stage from ``today - programStartDate`` so the
+  // practice screen tracks the real elapsed time rather than the
+  // server's count-based current stage.  Falls back to the store value
+  // when no anchor is set.
+  const derivedCurrentStage = useDerivedCurrentStage(storeCurrentStage);
 
   useEffect(() => {
     if (storeStages.length === 0) {
@@ -594,7 +601,7 @@ const PracticeScreen = (): React.JSX.Element => {
     }
   }, [storeStages.length]);
 
-  const stageNumber = route.params?.stageNumber ?? storeCurrentStage;
+  const stageNumber = route.params?.stageNumber ?? derivedCurrentStage;
   const loader = usePracticeLoader(stageNumber);
   const session = useSessionFlow(
     loader.activeUserPractice,

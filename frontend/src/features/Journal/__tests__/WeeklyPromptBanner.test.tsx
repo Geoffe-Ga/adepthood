@@ -1,10 +1,21 @@
 /* eslint-env jest */
-import { describe, it, expect, jest } from '@jest/globals';
-import { render, fireEvent } from '@testing-library/react-native';
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { render, fireEvent, act } from '@testing-library/react-native';
 import React from 'react';
 
 import type { PromptDetail } from '../../../api';
+import { useProgramStore } from '../../../store/useProgramStore';
 import WeeklyPromptBanner from '../WeeklyPromptBanner';
+
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  setItem: jest.fn(() => Promise.resolve()),
+  getItem: jest.fn(() => Promise.resolve(null)),
+  removeItem: jest.fn(() => Promise.resolve()),
+}));
+
+beforeEach(() => {
+  act(() => useProgramStore.getState().hydrateProgramStartDate(null));
+});
 
 const samplePrompt: PromptDetail = {
   week_number: 3,
@@ -37,5 +48,20 @@ describe('WeeklyPromptBanner', () => {
     );
     fireEvent.press(getByTestId('prompt-respond-button'));
     expect(onRespond).toHaveBeenCalledTimes(1);
+  });
+
+  it('overrides the displayed week with the master program anchor when set', () => {
+    // Anchor 14 days ago -> week 3 by the date-driven rule, regardless of
+    // what the server-supplied ``prompt.week_number`` says.
+    const today = new Date();
+    const anchor = new Date(today);
+    anchor.setDate(anchor.getDate() - 14);
+    act(() => useProgramStore.getState().hydrateProgramStartDate(anchor));
+
+    const promptOnWeek1: PromptDetail = { ...samplePrompt, week_number: 1 };
+    const { getByText } = render(
+      <WeeklyPromptBanner prompt={promptOnWeek1} onRespond={jest.fn()} />,
+    );
+    expect(getByText('Week 3 Reflection')).toBeTruthy();
   });
 });
