@@ -1610,6 +1610,9 @@ export interface SenseGroundingSessionMetadata {
   // Sense union duplicated inline (the engine layer owns the named type at
   // ``features/Practice/engine/types.SenseKind``); we keep the api wire
   // surface free of feature-layer imports.
+  // KEEP IN SYNC WITH ``features/Practice/engine/types.SenseKind`` —
+  // adding a new sense requires updating both unions or the engine emits
+  // a value the wire layer can't represent (and TS won't catch it).
   senses_completed: ReadonlyArray<'sight' | 'touch' | 'hearing' | 'smell' | 'taste'>;
 }
 

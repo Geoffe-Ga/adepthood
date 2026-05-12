@@ -19,7 +19,7 @@
  * Skip enabled so the user can still close the prompt without losing the
  * analytics row.
  */
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -72,11 +72,17 @@ interface ValidationResult {
 }
 
 function validate(input: string): ValidationResult {
+  // Caps are evaluated against the trimmed value because that is what gets
+  // POSTed to ``/practice-sessions`` (and what the backend's
+  // ``PRACTICE_INSIGHT_MAX_LENGTH`` validator actually sees). Evaluating on
+  // raw ``input.length`` would block a user who, mid-sentence, lands on the
+  // cap with a trailing space — surprising UX given the trailing whitespace
+  // is dropped before the send.
   const trimmed = input.trim();
   return {
     trimmed,
-    withinSoftCap: input.length <= PRACTICE_INSIGHT_SOFT_CAP,
-    withinHardCap: input.length <= PRACTICE_INSIGHT_HARD_CAP,
+    withinSoftCap: trimmed.length <= PRACTICE_INSIGHT_SOFT_CAP,
+    withinHardCap: trimmed.length <= PRACTICE_INSIGHT_HARD_CAP,
   };
 }
 
@@ -224,6 +230,21 @@ function SheetContent(props: SheetContentProps) {
   );
 }
 
+/**
+ * Resets the draft each time the modal re-opens.
+ *
+ * ``visible: false`` null-renders rather than unmounts, so ``useState('')``
+ * would otherwise carry the previous session's text forward on the retry
+ * path. Extracted so the component body stays under the line cap.
+ */
+function useDraftState(visible: boolean) {
+  const [draft, setDraft] = useState('');
+  useEffect(() => {
+    if (visible) setDraft('');
+  }, [visible]);
+  return [draft, setDraft] as const;
+}
+
 export function InsightCaptureModal({
   visible,
   mode,
@@ -233,7 +254,7 @@ export function InsightCaptureModal({
   onSkip,
   onJournal,
 }: InsightCaptureModalProps): React.JSX.Element | null {
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useDraftState(visible);
   const { trimmed, withinSoftCap, withinHardCap } = validate(draft);
 
   const handleSave = useCallback(() => {

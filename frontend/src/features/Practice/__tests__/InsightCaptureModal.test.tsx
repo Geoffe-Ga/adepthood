@@ -145,4 +145,41 @@ describe('InsightCaptureModal', () => {
   it('exposes the hard cap constant matching the backend column max_length', () => {
     expect(PRACTICE_INSIGHT_HARD_CAP).toBe(2_000);
   });
+
+  it('clears the draft when the modal is re-shown after dismissal (retry path)', () => {
+    // Render a controlled wrapper so we can flip ``visible`` without
+    // remounting — the bug the reviewer flagged is that the draft state
+    // survived an open → close → open cycle because the component is
+    // null-rendered (not unmounted) when ``visible`` is false.
+    function Harness({ visible }: { visible: boolean }) {
+      return (
+        <InsightCaptureModal
+          visible={visible}
+          mode="meditation_timer"
+          durationMinutes={10}
+          modeMetadata={{ mode: 'meditation_timer' }}
+          onSave={jest.fn()}
+          onSkip={jest.fn()}
+        />
+      );
+    }
+    const { getByTestId, rerender } = render(<Harness visible />);
+    fireEvent.changeText(getByTestId('insight-input'), 'stale draft from a prior session');
+    rerender(<Harness visible={false} />);
+    rerender(<Harness visible />);
+    expect(getByTestId('insight-input').props.value).toBe('');
+  });
+
+  it('keeps Save enabled when the raw input crosses the hard cap only via trailing whitespace', () => {
+    // The submitted value is ``trimmed``; evaluating the cap against
+    // ``trimmed.length`` means a user who types right up to the cap and
+    // then adds a trailing space (e.g. mid-sentence) is not blocked.
+    const onSave = jest.fn();
+    const { getByTestId, queryByTestId } = renderModal({ onSave });
+    const atCap = 'x'.repeat(PRACTICE_INSIGHT_HARD_CAP);
+    fireEvent.changeText(getByTestId('insight-input'), `${atCap}    `);
+    expect(queryByTestId('insight-hard-error')).toBeNull();
+    fireEvent.press(getByTestId('insight-save'));
+    expect(onSave).toHaveBeenCalledWith(atCap);
+  });
 });
