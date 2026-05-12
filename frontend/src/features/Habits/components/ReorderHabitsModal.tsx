@@ -9,13 +9,7 @@ import styles from '../Habits.styles';
 import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
 import { STAGE_ORDER, calculateHabitStartDate } from '../HabitUtils';
 
-// ``react-native-modal-datetime-picker`` ships as ES modules and isn't in the
-// jest ``transformIgnorePatterns`` allowlist. Mirror the lazy-require pattern
-// from ``src/components/DatePicker.tsx`` so screen tests that transitively
-// import this modal don't blow up at module-load time, while production still
-// gets the real picker with confirm/cancel affordances (fixes the iOS
-// app-seize bug where the previous ``<Modal><DateTimePicker/></Modal>`` had
-// no way to be dismissed).
+// Lazy require so jest (which doesn't transform this ES-module package) can load this file.
 let DateTimePickerModal: ComponentType<Record<string, unknown>> = () => null;
 if (Platform.OS !== 'web') {
   try {
@@ -107,7 +101,7 @@ interface ReorderState {
   handleSave: () => void;
 }
 
-interface ReorderBodyProps {
+interface ReorderHookInput {
   habits: Habit[];
   visible: boolean;
   onClose: () => void;
@@ -119,12 +113,7 @@ const useReorderState = ({
   visible,
   onClose,
   onSaveOrder,
-}: ReorderBodyProps): ReorderState => {
-  // Seed from the program-wide master date so the picker reflects the
-  // user's existing anchor on re-open.  ``programStartDate`` is the
-  // single source of truth for "when does the program start" (drives
-  // BotMason week, active practice, course unlock, current map stage);
-  // updating it here propagates to every consumer.
+}: ReorderHookInput): ReorderState => {
   const programStartDate = useProgramStore((s) => s.programStartDate);
   const setProgramStartDate = useProgramStore((s) => s.setProgramStartDate);
 
@@ -133,19 +122,19 @@ const useReorderState = ({
   const [pickerVisible, setPickerVisible] = useState(false);
   const wasVisibleRef = useRef(false);
 
-  // Keep the modal's local startDate aligned with the store while the
-  // modal is closed, so re-opening reflects an out-of-band change (e.g.
-  // future onboarding flow that also writes the program anchor).
   useEffect(() => {
     if (!visible && programStartDate) setStartDate(programStartDate);
   }, [visible, programStartDate]);
 
-  // BUG-FE-HABIT-204: initialise the ordering only on the open transition;
-  // the previous implementation re-fired on every ``startDate`` change and
-  // clobbered the user's drag.  Date-picker changes go through
-  // ``handleConfirmDate`` below, which calls ``updateStartDates`` directly,
-  // so the start-date propagation handled by PR #302's dedicated effect is
-  // already covered here without a second effect.
+  // Reset the picker flag when the parent modal closes so that an
+  // ``onRequestClose`` dismissal (Android back button) doesn't leave
+  // ``pickerVisible=true`` and spring the picker open on re-render.
+  useEffect(() => {
+    if (!visible) setPickerVisible(false);
+  }, [visible]);
+
+  // BUG-FE-HABIT-204: only seed the ordered list on the open transition;
+  // re-firing on every startDate change clobbered manual drags.
   useEffect(() => {
     const justOpened = visible && !wasVisibleRef.current;
     wasVisibleRef.current = visible;
@@ -166,8 +155,7 @@ const useReorderState = ({
       setPickerVisible(false);
       setStartDate(selectedDate);
       setOrderedHabits((prev) => updateStartDates(prev, selectedDate));
-      // Master-date write-through: every consumer that derives week/stage
-      // from ``programStartDate`` re-renders on the next paint.
+      // Master-date write-through: every consumer that derives week/stage updates.
       setProgramStartDate(selectedDate);
     },
     handleCancelDate: () => setPickerVisible(false),
@@ -178,41 +166,42 @@ const useReorderState = ({
   };
 };
 
-const ReorderBody = (props: ReorderBodyProps & ReorderState) => (
+interface ReorderBodyProps {
+  onClose: () => void;
+  orderedHabits: Habit[];
+  startDate: Date;
+  onOpenPicker: () => void;
+  onDragEnd: (_a: { data: Habit[] }) => void;
+  onSave: () => void;
+}
+
+const ReorderBody = ({
+  onClose,
+  orderedHabits,
+  startDate,
+  onOpenPicker,
+  onDragEnd,
+  onSave,
+}: ReorderBodyProps) => (
   <View style={styles.reorderModalContent}>
     <View style={styles.modalHeader}>
       <Text style={styles.modalTitle}>Reorder Habits</Text>
-      <TouchableOpacity onPress={props.onClose} style={styles.closeButton}>
+      <TouchableOpacity onPress={onClose} style={styles.closeButton}>
         <Text style={styles.closeButtonText}>×</Text>
       </TouchableOpacity>
     </View>
-    <ReorderDateButton
-      startDate={props.startDate}
-      onOpenPicker={() => props.setPickerVisible(true)}
-    />
+    <ReorderDateButton startDate={startDate} onOpenPicker={onOpenPicker} />
     <Text style={styles.reorderInstructions}>
       Drag habits to reorder. Habits 1-8 start 21 days apart, habits 9-10 start 42 days apart.
     </Text>
-    <ReorderList orderedHabits={props.orderedHabits} onDragEnd={props.handleDragEnd} />
-    <TouchableOpacity style={styles.saveOrderButton} onPress={props.handleSave}>
+    <ReorderList orderedHabits={orderedHabits} onDragEnd={onDragEnd} />
+    <TouchableOpacity style={styles.saveOrderButton} onPress={onSave}>
       <Text style={styles.saveOrderButtonText}>Save Order</Text>
     </TouchableOpacity>
   </View>
 );
 
-/**
- * Mounting the ``DateTimePickerModal`` as a *sibling* of the outer RN
- * ``<Modal>`` -- not as a descendant -- is the load-bearing structural
- * choice that makes the picker actually appear on iOS during habit
- * edit mode.  React Native's ``<Modal>`` on iOS uses a native
- * ``UIViewController`` presentation; any modal mounted inside an
- * already-presented modal animates *underneath* the parent and is
- * invisible to the user (this is the bug the previous fix in PR #299
- * left behind).  By rendering the picker outside the parent modal,
- * ``react-native-modal-datetime-picker``'s own
- * ``presentationStyle: overFullScreen`` modal stacks above everything
- * else and is reachable.
- */
+// Mount the picker as a SIBLING of the parent <Modal>: iOS animates nested UIViewController modals underneath the parent, hiding them.
 export const ReorderHabitsModal = ({
   visible,
   habits,
@@ -223,13 +212,14 @@ export const ReorderHabitsModal = ({
   return (
     <>
       <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-        <View style={styles.modalOverlay}>
+        <View testID="reorder-modal-overlay" style={styles.modalOverlay}>
           <ReorderBody
-            habits={habits}
-            visible={visible}
             onClose={onClose}
-            onSaveOrder={onSaveOrder}
-            {...state}
+            orderedHabits={state.orderedHabits}
+            startDate={state.startDate}
+            onOpenPicker={() => state.setPickerVisible(true)}
+            onDragEnd={state.handleDragEnd}
+            onSave={state.handleSave}
           />
         </View>
       </Modal>
@@ -237,9 +227,7 @@ export const ReorderHabitsModal = ({
         isVisible={visible && state.pickerVisible}
         mode="date"
         date={state.startDate}
-        // Intentionally NO ``minimumDate`` -- the program anchor MUST
-        // accept past dates so a user who already started the journey
-        // can backdate their start to land on the right week today.
+        // No ``minimumDate``: the master anchor must accept past dates.
         onConfirm={state.handleConfirmDate}
         onCancel={state.handleCancelDate}
       />

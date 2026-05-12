@@ -1,28 +1,7 @@
 /* eslint-env jest */
-/**
- * Regression tests for ``ReorderHabitsModal`` covering three bugs reported
- * on the habits screen:
- *
- *  1. The order would snap back to the stage-default after the user
- *     dragged a habit and then picked a new start date (or any other
- *     state change that re-fired the initialisation effect). To users
- *     the manual reorder appeared to "freeze" because their drags had
- *     no visible effect once they touched anything else.
- *  2. Tapping the start-date button opened a date picker wrapped in a
- *     bare ``<Modal>`` with no dismissal affordance. On iOS the picker
- *     stayed on screen with no way to back out and the whole app froze.
- *     PR #299 added confirm/cancel affordances via
- *     ``react-native-modal-datetime-picker``.
- *  3. After PR #299 the picker *still* did not appear on iOS during
- *     habit edit mode because it was rendered as a descendant of the
- *     parent ``<Modal>``; nested ``UIViewController`` presentations
- *     animate underneath each other on iOS.  The picker is now
- *     mounted as a SIBLING of the parent modal.  These tests assert the
- *     sibling structure, that past dates are accepted, and that
- *     confirming a date propagates to the shared program-anchor store.
- */
+// Regression tests for the three reorder-modal bugs: drag freeze, picker dismissal, and the iOS sibling-mount.
 import { describe, expect, it, jest, beforeEach } from '@jest/globals';
-import { fireEvent, render, act } from '@testing-library/react-native';
+import { fireEvent, render, act, within } from '@testing-library/react-native';
 import React from 'react';
 
 import { useProgramStore } from '../../../../store/useProgramStore';
@@ -54,8 +33,7 @@ jest.mock('react-native-draggable-flatlist', () => {
 
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
 
-// Capture the most recent props passed to the picker so structural / prop
-// tests can introspect them without relying on rendered output.
+// Captured picker props so structural / prop tests can introspect them.
 const lastModalDatePickerProps: { current: Record<string, unknown> | null } = { current: null };
 
 jest.mock('react-native-modal-datetime-picker', () => {
@@ -177,40 +155,14 @@ describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible i
 
     fireEvent.press(result.getByTestId('reorder-start-date'));
 
-    // The picker must be reachable from the test renderer's root, and
-    // must NOT be a descendant of the modal overlay -- if it were, iOS
-    // would animate it underneath the parent and the user would tap an
-    // invisible target.
-    const reorderList = result.getByTestId('reorder-list');
-    const pickerRoot = result.getByTestId('modal-datetime-picker-root');
-
-    const isDescendantOf = (
-      node: { children?: ReadonlyArray<unknown> } | null,
-      target: object,
-    ): boolean => {
-      if (!node || !Array.isArray(node.children)) return false;
-      for (const child of node.children) {
-        if (child === target) return true;
-        if (
-          typeof child === 'object' &&
-          child !== null &&
-          isDescendantOf(child as { children?: ReadonlyArray<unknown> }, target)
-        ) {
-          return true;
-        }
-      }
-      return false;
-    };
-
-    // Find a common modal-overlay ancestor by walking up from reorderList.
-    // The test verifies the picker is NOT inside that ancestor subtree.
-    let modalSubtreeRoot: unknown = reorderList;
-    for (let depth = 0; depth < 6 && modalSubtreeRoot; depth += 1) {
-      modalSubtreeRoot = (modalSubtreeRoot as { parent?: unknown }).parent ?? null;
-    }
-    expect(
-      isDescendantOf(modalSubtreeRoot as { children?: ReadonlyArray<unknown> }, pickerRoot),
-    ).toBe(false);
+    // Anchor the assertion to the modal overlay's testID; nesting the
+    // picker inside this subtree is exactly the iOS bug we're guarding
+    // against.  ``within(...).queryByTestId`` returns null when the
+    // descendant isn't present, which is the passing condition.
+    const overlay = result.getByTestId('reorder-modal-overlay');
+    expect(within(overlay).queryByTestId('modal-datetime-picker-root')).toBeNull();
+    // Sanity-check the picker actually mounted somewhere reachable.
+    expect(result.getByTestId('modal-datetime-picker-root')).toBeTruthy();
   });
 
   it('does not pass a minimumDate so past dates are selectable', () => {
@@ -270,6 +222,37 @@ describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible i
     expect(stored.getFullYear()).toBe(2026);
     expect(stored.getMonth()).toBe(5);
     expect(stored.getDate()).toBe(1);
+  });
+
+  it('clears pickerVisible when the parent modal closes (e.g. Android back button)', () => {
+    // Reviewer #2 blocker: ``onRequestClose`` (Android back) bypasses
+    // both ``handleCancelDate`` and ``handleConfirmDate``, so without an
+    // explicit reset the picker would spring back open on re-render
+    // even though the user never tapped the start-date button.
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    fireEvent.press(result.getByTestId('reorder-start-date'));
+    expect(result.getByTestId('modal-datetime-cancel')).toBeTruthy();
+
+    // Parent modal closes via the system back button -- no handler runs
+    // inside the picker's own confirm/cancel paths.
+    result.rerender(
+      <ReorderHabitsModal
+        visible={false}
+        habits={HABITS}
+        onClose={jest.fn()}
+        onSaveOrder={jest.fn()}
+      />,
+    );
+
+    // Re-open the parent modal.  The picker must NOT re-mount on its
+    // own; only an explicit start-date tap should bring it back.
+    result.rerender(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+    expect(result.queryByTestId('modal-datetime-cancel')).toBeNull();
   });
 });
 

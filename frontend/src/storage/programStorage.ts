@@ -1,16 +1,4 @@
-/**
- * Program start date persistence.
- *
- * The program start date is the master anchor for the 36-week APTITUDE
- * journey: BotMason's weekly prompt, the active practice, the unlocked
- * course content, and the highlighted map stage all derive from
- * ``today - programStartDate``.  It is stored in AsyncStorage as an
- * ISO-8601 date string (``YYYY-MM-DD``) so that the calendar day is
- * preserved across timezone changes.  ``null`` means the user has not
- * picked a start date yet -- consumers must then fall back to their
- * server-derived progression signal.
- */
-
+// Stores the program anchor as YYYY-MM-DD (local calendar day) so TZ shifts can't roll the date.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const PROGRAM_START_DATE_KEY = '@adepthood/program_start_date';
