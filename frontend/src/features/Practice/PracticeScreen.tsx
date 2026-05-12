@@ -1,305 +1,192 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+/**
+ * `PracticeScreen` — ritual-11 composition shell.
+ *
+ * Replaces the pre-ritual-11 729-LoC monolith with a layered surface that
+ * delegates to the new pieces:
+ *
+ *   - `useActivePractice` resolves the user's active practice + effective
+ *     config from the stage catalogue and any per-user overrides.
+ *   - `useWeeklyProgress` reads the ritual-04 insights endpoint (with a
+ *     fallback to the legacy `week-count` route) for the bar at the foot.
+ *   - `FrequencyBanner` (ritual-10) renders the server-formatted banner.
+ *   - `ActiveRitualSession` owns the engine, mode dispatch, configurator
+ *     sheet, and the ritual-12 insight capture modal when a practice is
+ *     active.
+ *   - `PracticeSwitcherSheet` (ritual-10) handles practice replacement.
+ *
+ * The screen itself stays under ~250 LoC by keeping all state inside the
+ * extracted hooks and the inner session component.
+ */
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  AppState,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import type { AppStateStatus } from 'react-native';
 
 import PracticeSelector from './PracticeSelector';
-import PracticeTimer from './PracticeTimer';
 import WeeklyProgress from './WeeklyProgress';
 
-import type {
-  PracticeItem,
-  PracticeSessionCreate,
-  PracticeSessionResponse,
-  UserPractice,
-} from '@/api';
-import { practices, userPractices, practiceSessions } from '@/api';
-import { formatApiError } from '@/api/errorMessages';
-import { colors, SPACING, BORDER_RADIUS, shadows } from '@/design/tokens';
+import type { PracticeSessionResponse, UserPractice } from '@/api';
+import { useAuth } from '@/context/AuthContext';
+import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
 import { stageService } from '@/features/Map/services/stageService';
-import { useOptimisticMutation } from '@/hooks/useOptimisticMutation';
+import ActiveRitualSession from '@/features/Practice/components/ActiveRitualSession';
+import { FrequencyBanner } from '@/features/Practice/components/FrequencyBanner';
+import { PracticeSwitcherSheet } from '@/features/Practice/components/PracticeSwitcherSheet';
+import { useActivePractice } from '@/features/Practice/hooks/useActivePractice';
+import { useWeeklyProgress } from '@/features/Practice/hooks/useWeeklyProgress';
 import { useAppNavigation, useAppRoute } from '@/navigation/hooks';
 import { useDerivedCurrentStage } from '@/store/useProgramProgression';
 import { selectCurrentStage, useStageStore } from '@/store/useStageStore';
 
-type ScreenView = 'selection' | 'timer' | 'summary' | 'reflection';
+type ActivePracticeHook = ReturnType<typeof useActivePractice>;
+type WeeklyProgressHook = ReturnType<typeof useWeeklyProgress>;
 
-// --- Hook: practice list state ---
+const PracticeScreen = (): React.JSX.Element => {
+  const stageNumber = useResolvedStageNumber();
+  const { userTimezone } = useAuth();
+  const active = useActivePractice(stageNumber);
+  const weekly = useWeeklyProgress();
+  const [showSwitcher, setShowSwitcher] = useState(false);
+  const handleSwitcherReplaced = useSwitcherReplaced(active.updateActivePractice, weekly.refresh);
+  const handleWriteReflection = useWriteReflection(active.effectiveName, active.practice);
 
-function usePracticeListState() {
-  const [availablePractices, setAvailablePractices] = useState<PracticeItem[]>([]);
-  const [activeUserPractice, setActiveUserPractice] = useState<UserPractice | null>(null);
-  const [selectedPractice, setSelectedPractice] = useState<PracticeItem | null>(null);
-  const [weekCount, setWeekCount] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // BUG-FE-PRACTICE-005: incrementWeekCount and decrementWeekCount are
-  // the apply / rollback primitives consumed by `useOptimisticMutation`
-  // in `useSessionFlow`. Splitting the increment from the save flow
-  // means a save failure restores the bar instead of leaving it
-  // optimistically bumped, and an authoritative refetch on success
-  // replaces the optimistic value with the server's count.
-  const incrementWeekCount = useCallback(() => setWeekCount((prev) => prev + 1), []);
-  const decrementWeekCount = useCallback(() => setWeekCount((prev) => Math.max(0, prev - 1)), []);
-
-  return {
-    availablePractices,
-    setAvailablePractices,
-    activeUserPractice,
-    setActiveUserPractice,
-    selectedPractice,
-    setSelectedPractice,
-    weekCount,
-    setWeekCount,
-    isLoading,
-    setIsLoading,
-    error,
-    setError,
-    incrementWeekCount,
-    decrementWeekCount,
-  };
-}
-
-// --- Hook: load practice data ---
-
-function usePracticeSelect(
-  stageNumber: number,
-  availablePractices: PracticeItem[],
-  setActiveUserPractice: (_up: UserPractice) => void,
-  setSelectedPractice: (_p: PracticeItem | null) => void,
-  setError: (_e: string | null) => void,
-) {
-  const isSubmittingRef = useRef(false);
-  const selectPractice = useCallback(
-    async (practiceId: number) => {
-      if (isSubmittingRef.current) return;
-      isSubmittingRef.current = true;
-      try {
-        const newUp = await userPractices.create({
-          practice_id: practiceId,
-          stage_number: stageNumber,
-        });
-        setActiveUserPractice(newUp);
-        const matching = availablePractices.find((p) => p.id === practiceId);
-        if (matching) setSelectedPractice(matching);
-      } catch (err) {
-        setError(
-          formatApiError(err, {
-            fallback:
-              "We couldn't save your practice selection. Check your connection and try again.",
-          }),
-        );
-      } finally {
-        isSubmittingRef.current = false;
-      }
-    },
-    [stageNumber, availablePractices, setActiveUserPractice, setSelectedPractice, setError],
+  if (active.isLoading) return <LoadingView />;
+  if (active.error && !active.activeUserPractice) {
+    return <ErrorView error={active.error} onRetry={active.refresh} />;
+  }
+  return (
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.scrollContent}
+      testID="practice-screen"
+    >
+      <FrequencyBanner onSwitch={() => setShowSwitcher(true)} />
+      <PracticeBody
+        active={active}
+        weekly={weekly}
+        userTimezone={userTimezone}
+        onSwitchPractice={() => setShowSwitcher(true)}
+        onWriteReflection={handleWriteReflection}
+      />
+      <WeeklyProgress count={weekly.count} />
+      <PracticeSwitcherSheet
+        visible={showSwitcher}
+        stageNumber={stageNumber}
+        currentPracticeId={active.activeUserPractice?.practice_id ?? null}
+        onClose={() => setShowSwitcher(false)}
+        onReplaced={handleSwitcherReplaced}
+      />
+    </ScrollView>
   );
-  return selectPractice;
-}
+};
 
-function useLoadPracticeData(stageNumber: number, state: ReturnType<typeof usePracticeListState>) {
-  const {
-    setIsLoading,
-    setError,
-    setAvailablePractices,
-    setWeekCount,
-    setActiveUserPractice,
-    setSelectedPractice,
-  } = state;
-
-  return useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const [practiceList, userPracticeList, weekResult] = await Promise.all([
-        practices.list(stageNumber),
-        userPractices.list(),
-        practiceSessions.weekCount(),
-      ]);
-      setAvailablePractices(practiceList);
-      setWeekCount(weekResult.count);
-      const active = userPracticeList.find((up: UserPractice) => up.stage_number === stageNumber);
-      if (active) {
-        setActiveUserPractice(active);
-        const match = practiceList.find((p: PracticeItem) => p.id === active.practice_id);
-        if (match) setSelectedPractice(match);
-      }
-    } catch (err) {
-      setError(
-        formatApiError(err, {
-          fallback:
-            "We couldn't load your practices. Check your connection, then tap Retry to try again.",
-        }),
-      );
-    } finally {
-      setIsLoading(false);
-    }
-  }, [
-    stageNumber,
-    setIsLoading,
-    setError,
-    setAvailablePractices,
-    setWeekCount,
-    setActiveUserPractice,
-    setSelectedPractice,
-  ]);
-}
-
-function usePracticeLoader(stageNumber: number) {
-  const state = usePracticeListState();
-  const loadData = useLoadPracticeData(stageNumber, state);
-
+function useResolvedStageNumber(): number {
+  const route = useAppRoute<'Practice'>();
+  const storeCurrentStage = useStageStore(selectCurrentStage);
+  const storeStages = useStageStore((s) => s.stages);
+  // Master-date wiring (#323): when the user has set a program start date,
+  // derive the active stage from ``today - programStartDate`` so the
+  // screen tracks real elapsed time rather than the server's count-based
+  // current stage. Falls back to the store value when no anchor is set.
+  const derivedCurrentStage = useDerivedCurrentStage(storeCurrentStage);
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    if (storeStages.length === 0) void stageService.loadStages();
+  }, [storeStages.length]);
+  return route.params?.stageNumber ?? derivedCurrentStage;
+}
 
-  const handleSelectPractice = usePracticeSelect(
-    stageNumber,
-    state.availablePractices,
-    state.setActiveUserPractice,
-    state.setSelectedPractice,
-    state.setError,
+function useSwitcherReplaced(
+  updateActivePractice: ActivePracticeHook['updateActivePractice'],
+  refreshWeekly: WeeklyProgressHook['refresh'],
+): (_next: UserPractice) => void {
+  // Take stable function references (not the whole hook bag); the parent
+  // hook objects are new on every render, so depending on them would
+  // re-create the callback each pass.
+  return useCallback(
+    (next: UserPractice) => {
+      updateActivePractice(next);
+      void refreshWeekly();
+    },
+    [updateActivePractice, refreshWeekly],
   );
-
-  return { ...state, loadData, handleSelectPractice };
 }
 
-// --- Hook: session save/reflection flow ---
-
-const SECONDS_PER_MINUTE = 60;
-const MS_PER_SECOND = 1000;
-
-interface CompletedWindow {
-  startedAt: Date;
-  endedAt: Date;
-}
-
-interface SaveSessionInput {
-  payload: PracticeSessionCreate;
-}
-
-interface SaveSessionResult {
-  session: PracticeSessionResponse;
-  weekCount: number;
-}
-
-/**
- * BUG-FE-PRACTICE-005: optimistic increment + authoritative refetch on
- * success + decrement rollback on failure. Before this change the count
- * was bumped only on success, but never reconciled against the server —
- * duplicate saves (e.g. double-tap before `isSaving` gated the second
- * press) drifted the local count above the server's truth. The hook
- * serializes apply/commit/rollback so a concurrent failure can't strand
- * an extra unit on the bar.
- */
-function useSaveSessionMutation(
-  incrementWeekCount: () => void,
-  decrementWeekCount: () => void,
-  setWeekCount: (_count: number) => void,
-  setSavedSession: (_s: PracticeSessionResponse | null) => void,
-  setError: (_err: string | null) => void,
-) {
-  return useOptimisticMutation<SaveSessionInput, SaveSessionResult>({
-    apply: () => incrementWeekCount(),
-    commit: async ({ payload }) => {
-      const session = await practiceSessions.create(payload);
-      const weekResult = await practiceSessions.weekCount();
-      return { session, weekCount: weekResult.count };
+function useWriteReflection(
+  effectiveName: string | null,
+  practice: ActivePracticeHook['practice'],
+): (_args: { session: PracticeSessionResponse; insight: string | null }) => void {
+  const navigation = useAppNavigation();
+  // The captured ``insight`` is persisted on the server-side
+  // ``practice_session.insight`` column (ritual-04). A follow-up will
+  // extend `RootTabParamList.Journal` with an ``initialDraft`` field so
+  // BotMason can open with the user's just-typed sentence; until then the
+  // journal opens blank and the insight is queryable alongside the session.
+  return useCallback(
+    ({ session }) => {
+      const name = effectiveName ?? practice?.name ?? 'Practice';
+      navigation.navigate('Journal', {
+        tag: 'practice_note',
+        practiceSessionId: session.id,
+        userPracticeId: session.user_practice_id,
+        practiceName: name,
+        practiceDuration: Math.round(session.duration_minutes),
+      });
     },
-    rollback: (_input, err) => {
-      decrementWeekCount();
-      setError(
-        formatApiError(err, {
-          fallback:
-            "We couldn't save your practice session. Check your connection and try again — your timer minutes are still safe here.",
-        }),
-      );
-    },
-    onSuccess: (_input, result) => {
-      setWeekCount(result.weekCount);
-      setSavedSession(result.session);
-      setError(null);
-    },
-  });
-}
-
-function useSessionFlow(
-  activeUserPractice: UserPractice | null,
-  incrementWeekCount: () => void,
-  decrementWeekCount: () => void,
-  setWeekCount: (_count: number) => void,
-) {
-  const [completedWindow, setCompletedWindow] = useState<CompletedWindow | null>(null);
-  const [savedSession, setSavedSession] = useState<PracticeSessionResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  // BUG-FE-PRACTICE-101 / -105: derive completedMinutes from the wall-
-  // clock window so the displayed duration matches what the server will
-  // store; the client never claims a number it computed and submits.
-  const completedMinutes = completedWindow
-    ? (completedWindow.endedAt.getTime() - completedWindow.startedAt.getTime()) /
-      MS_PER_SECOND /
-      SECONDS_PER_MINUTE
-    : 0;
-
-  const setCompletedSession = useCallback((startedAt: Date, endedAt: Date) => {
-    setCompletedWindow({ startedAt, endedAt });
-  }, []);
-
-  const saveMutation = useSaveSessionMutation(
-    incrementWeekCount,
-    decrementWeekCount,
-    setWeekCount,
-    setSavedSession,
-    setError,
+    [effectiveName, practice, navigation],
   );
-
-  const handleSaveSession = useCallback(async () => {
-    if (!activeUserPractice || !completedWindow) return;
-    // BUG-FE-PRACTICE-101 / -105: submit wall-clock ISO timestamps so the
-    // server can derive the canonical duration.
-    const payload: PracticeSessionCreate = {
-      user_practice_id: activeUserPractice.id,
-      started_at: completedWindow.startedAt.toISOString(),
-      ended_at: completedWindow.endedAt.toISOString(),
-    };
-    try {
-      await saveMutation.mutate({ payload });
-    } catch {
-      // Already rolled back; rollback closure surfaced the error.
-    }
-  }, [activeUserPractice, completedWindow, saveMutation]);
-
-  const clearSession = useCallback(() => {
-    setSavedSession(null);
-    setCompletedWindow(null);
-  }, []);
-
-  return {
-    completedMinutes,
-    setCompletedSession,
-    savedSession,
-    isSaving: saveMutation.pending,
-    saveError: error,
-    handleSaveSession,
-    clearSession,
-  };
 }
 
-// --- Sub-components ---
+interface PracticeBodyProps {
+  active: ActivePracticeHook;
+  weekly: WeeklyProgressHook;
+  userTimezone: string;
+  onSwitchPractice: () => void;
+  onWriteReflection: (_args: { session: PracticeSessionResponse; insight: string | null }) => void;
+}
+
+const PracticeBody = ({
+  active,
+  weekly,
+  userTimezone,
+  onSwitchPractice,
+  onWriteReflection,
+}: PracticeBodyProps): React.JSX.Element => {
+  if (active.activeUserPractice && active.practice && active.effectiveConfig) {
+    return (
+      <ActiveRitualSession
+        key={`practice-${active.activeUserPractice.id}`}
+        userPractice={active.activeUserPractice}
+        effectiveName={active.effectiveName ?? active.practice.name}
+        effectiveConfig={active.effectiveConfig}
+        userTimezone={userTimezone}
+        onSessionApply={weekly.increment}
+        onSessionRollback={weekly.decrement}
+        onSessionCommitted={() => void weekly.refresh()}
+        onUserPracticeUpdated={active.updateActivePractice}
+        onWriteReflection={onWriteReflection}
+        onSwitchPractice={onSwitchPractice}
+      />
+    );
+  }
+  return (
+    <View testID="selection-view">
+      <PracticeSelector
+        practices={active.availablePractices}
+        selectedPracticeId={active.activeUserPractice?.practice_id ?? null}
+        onSelect={(id) => void active.selectPractice(id)}
+        isLoading={false}
+      />
+    </View>
+  );
+};
 
 const LoadingView = (): React.JSX.Element => (
-  <View style={localStyles.centered} testID="practice-loading">
+  <View style={styles.centered} testID="practice-loading">
     <ActivityIndicator size="large" color={colors.primary} />
   </View>
 );
@@ -309,379 +196,29 @@ const ErrorView = ({
   onRetry,
 }: {
   error: string;
-  onRetry: () => void;
+  onRetry: () => Promise<void> | void;
 }): React.JSX.Element => (
-  <View style={localStyles.centered} testID="practice-error">
-    <Text style={localStyles.errorText}>{error}</Text>
-    <TouchableOpacity style={localStyles.retryButton} onPress={onRetry} testID="retry-button">
-      <Text style={localStyles.retryButtonText}>Retry</Text>
-    </TouchableOpacity>
-  </View>
-);
-
-interface TimerViewProps {
-  practiceName: string;
-  durationMinutes: number;
-  onComplete: (_startedAt: Date, _endedAt: Date) => void;
-  onCancel: () => void;
-}
-
-const TimerView = ({
-  practiceName,
-  durationMinutes,
-  onComplete,
-  onCancel,
-}: TimerViewProps): React.JSX.Element => (
-  <View style={localStyles.timerContainer} testID="timer-view">
-    <Text style={localStyles.timerTitle}>{practiceName}</Text>
-    <PracticeTimer durationMinutes={durationMinutes} onComplete={onComplete} onCancel={onCancel} />
-  </View>
-);
-
-interface SummaryViewProps {
-  completedMinutes: number;
-  isSaving: boolean;
-  onSave: () => void;
-  onSkip: () => void;
-}
-
-const SummaryView = ({
-  completedMinutes,
-  isSaving,
-  onSave,
-  onSkip,
-}: SummaryViewProps): React.JSX.Element => (
-  <View style={localStyles.centered} testID="summary-view">
-    <Text style={localStyles.summaryTitle}>Practice Complete</Text>
-    <Text style={localStyles.summaryDuration} testID="summary-duration">
-      {Math.round(completedMinutes)} minutes
-    </Text>
+  <View style={styles.centered} testID="practice-error">
+    <Text style={styles.errorText}>{error}</Text>
     <TouchableOpacity
-      style={localStyles.saveButton}
-      onPress={onSave}
-      disabled={isSaving}
-      testID="save-session-button"
+      style={styles.retryButton}
+      onPress={() => void onRetry()}
+      testID="retry-button"
     >
-      <Text style={localStyles.saveButtonText}>{isSaving ? 'Saving...' : 'Save Session'}</Text>
-    </TouchableOpacity>
-    <TouchableOpacity style={localStyles.skipButton} onPress={onSkip} testID="skip-save-button">
-      <Text style={localStyles.skipButtonText}>Skip</Text>
+      <Text style={styles.retryButtonText}>Retry</Text>
     </TouchableOpacity>
   </View>
 );
 
-const ReflectionView = ({
-  onWrite,
-  onSkip,
-}: {
-  onWrite: () => void;
-  onSkip: () => void;
-}): React.JSX.Element => (
-  <View style={localStyles.centered} testID="reflection-view">
-    <Text style={localStyles.summaryTitle}>Write a Reflection?</Text>
-    <Text style={localStyles.summaryDuration}>
-      Capture your thoughts from this practice session in your journal.
-    </Text>
-    <TouchableOpacity
-      style={localStyles.saveButton}
-      onPress={onWrite}
-      testID="write-reflection-button"
-    >
-      <Text style={localStyles.saveButtonText}>Yes, Write a Reflection</Text>
-    </TouchableOpacity>
-    <TouchableOpacity
-      style={localStyles.skipButton}
-      onPress={onSkip}
-      testID="skip-reflection-button"
-    >
-      <Text style={localStyles.skipButtonText}>Skip</Text>
-    </TouchableOpacity>
-  </View>
-);
-
-interface SelectionViewProps {
-  weekCount: number;
-  selectedPractice: PracticeItem | null;
-  activeUserPractice: UserPractice | null;
-  availablePractices: PracticeItem[];
-  onStartTimer: () => void;
-  onSelectPractice: (_id: number) => void;
-}
-
-const SelectionView = ({
-  weekCount,
-  selectedPractice,
-  activeUserPractice,
-  availablePractices,
-  onStartTimer,
-  onSelectPractice,
-}: SelectionViewProps): React.JSX.Element => (
-  <ScrollView style={localStyles.screen} testID="selection-view">
-    <WeeklyProgress count={weekCount} />
-    {selectedPractice && activeUserPractice ? (
-      <View style={localStyles.activePractice} testID="active-practice-card">
-        <Text style={localStyles.activePracticeLabel}>Your Practice</Text>
-        <Text style={localStyles.activePracticeName}>{selectedPractice.name}</Text>
-        <Text style={localStyles.activePracticeDesc}>{selectedPractice.description}</Text>
-        <TouchableOpacity
-          style={localStyles.startButton}
-          onPress={onStartTimer}
-          testID="start-practice-button"
-        >
-          <Text style={localStyles.startButtonText}>Start Practice</Text>
-        </TouchableOpacity>
-      </View>
-    ) : (
-      <PracticeSelector
-        practices={availablePractices}
-        selectedPracticeId={activeUserPractice?.practice_id ?? null}
-        onSelect={onSelectPractice}
-        isLoading={false}
-      />
-    )}
-  </ScrollView>
-);
-
-const TIMER_STATE_KEY = '@adepthood/timer_state';
-
-function useTimerPersistence(view: string) {
-  const startedAtRef = useRef<number | null>(null);
-  const pausedAtRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (view === 'timer') {
-      startedAtRef.current = Date.now();
-    } else {
-      startedAtRef.current = null;
-      pausedAtRef.current = null;
-      void AsyncStorage.removeItem(TIMER_STATE_KEY);
-    }
-  }, [view]);
-
-  useEffect(() => {
-    const handleAppStateChange = (nextState: AppStateStatus) => {
-      if (view !== 'timer') return;
-      if (nextState === 'background' || nextState === 'inactive') {
-        void AsyncStorage.setItem(
-          TIMER_STATE_KEY,
-          JSON.stringify({
-            started_at: startedAtRef.current,
-            paused_at: pausedAtRef.current,
-            backgrounded_at: Date.now(),
-          }),
-        );
-      }
-    };
-    const sub = AppState.addEventListener('change', handleAppStateChange);
-    return () => sub.remove();
-  }, [view]);
-}
-
-// --- Hook: view routing ---
-
-function usePracticeView(
-  loader: ReturnType<typeof usePracticeLoader>,
-  session: ReturnType<typeof useSessionFlow>,
-) {
-  const navigation = useAppNavigation();
-  const [view, setView] = useState<ScreenView>('selection');
-  const { setCompletedSession, handleSaveSession, clearSession, savedSession, completedMinutes } =
-    session;
-  const { selectedPractice } = loader;
-
-  const handleTimerComplete = useCallback(
-    (startedAt: Date, endedAt: Date) => {
-      setCompletedSession(startedAt, endedAt);
-      setView('summary');
-    },
-    [setCompletedSession],
-  );
-
-  const handleSaveAndAdvance = useCallback(async () => {
-    await handleSaveSession();
-    setView('reflection');
-  }, [handleSaveSession]);
-
-  const goToSelection = useCallback(() => {
-    clearSession();
-    setView('selection');
-  }, [clearSession]);
-
-  const handleWriteReflection = useCallback(() => {
-    if (!savedSession || !selectedPractice) return;
-    navigation.navigate('Journal', {
-      tag: 'practice_note',
-      practiceSessionId: savedSession.id,
-      userPracticeId: savedSession.user_practice_id,
-      practiceName: selectedPractice.name,
-      practiceDuration: Math.round(completedMinutes),
-    });
-    clearSession();
-    setView('selection');
-  }, [savedSession, selectedPractice, completedMinutes, clearSession, navigation]);
-
-  return {
-    view,
-    setView,
-    handleTimerComplete,
-    handleSaveAndAdvance,
-    goToSelection,
-    handleWriteReflection,
-  };
-}
-
-// --- View router ---
-
-function PracticeViewRouter({
-  loader,
-  session,
-  pv,
-}: {
-  loader: ReturnType<typeof usePracticeLoader>;
-  session: ReturnType<typeof useSessionFlow>;
-  pv: ReturnType<typeof usePracticeView>;
-}): React.JSX.Element {
-  if (pv.view === 'timer' && loader.selectedPractice) {
-    return (
-      <TimerView
-        practiceName={loader.selectedPractice.name}
-        durationMinutes={loader.selectedPractice.default_duration_minutes}
-        onComplete={pv.handleTimerComplete}
-        onCancel={pv.goToSelection}
-      />
-    );
-  }
-
-  if (pv.view === 'summary') {
-    return (
-      <SummaryView
-        completedMinutes={session.completedMinutes}
-        isSaving={session.isSaving}
-        onSave={pv.handleSaveAndAdvance}
-        onSkip={pv.goToSelection}
-      />
-    );
-  }
-
-  if (pv.view === 'reflection') {
-    return <ReflectionView onWrite={pv.handleWriteReflection} onSkip={pv.goToSelection} />;
-  }
-
-  return (
-    <SelectionView
-      weekCount={loader.weekCount}
-      selectedPractice={loader.selectedPractice}
-      activeUserPractice={loader.activeUserPractice}
-      availablePractices={loader.availablePractices}
-      onStartTimer={() => pv.setView('timer')}
-      onSelectPractice={loader.handleSelectPractice}
-    />
-  );
-}
-
-// --- Main component ---
-
-const PracticeScreen = (): React.JSX.Element => {
-  const route = useAppRoute<'Practice'>();
-  // Fall back to the backend-derived current stage rather than a hard-coded
-  // 1 so a deep-link with no route param doesn't enrol a stage-4 user in
-  // a stage-1 practice.
-  const storeCurrentStage = useStageStore(selectCurrentStage);
-  const storeStages = useStageStore((s) => s.stages);
-  // Master date wiring: when the user has set a program start date,
-  // derive the active stage from ``today - programStartDate`` so the
-  // practice screen tracks the real elapsed time rather than the
-  // server's count-based current stage.  Falls back to the store value
-  // when no anchor is set.
-  const derivedCurrentStage = useDerivedCurrentStage(storeCurrentStage);
-
-  useEffect(() => {
-    if (storeStages.length === 0) {
-      void stageService.loadStages();
-    }
-  }, [storeStages.length]);
-
-  const stageNumber = route.params?.stageNumber ?? derivedCurrentStage;
-  const loader = usePracticeLoader(stageNumber);
-  const session = useSessionFlow(
-    loader.activeUserPractice,
-    loader.incrementWeekCount,
-    loader.decrementWeekCount,
-    loader.setWeekCount,
-  );
-  const pv = usePracticeView(loader, session);
-  useTimerPersistence(pv.view);
-
-  const combinedError = loader.error ?? session.saveError;
-
-  if (loader.isLoading && pv.view === 'selection') return <LoadingView />;
-  if (combinedError) return <ErrorView error={combinedError} onRetry={loader.loadData} />;
-
-  return <PracticeViewRouter loader={loader} session={session} pv={pv} />;
-};
-
-const localStyles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.background.primary,
-  },
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.background.primary },
+  scrollContent: { padding: SPACING.md, paddingBottom: SPACING.xxl },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: SPACING.xxl,
     backgroundColor: colors.background.primary,
-  },
-  timerContainer: {
-    flex: 1,
-    backgroundColor: colors.background.primary,
-    paddingTop: SPACING.xxl,
-    alignItems: 'center',
-  },
-  timerTitle: {
-    fontSize: 22,
-    fontWeight: '600',
-    color: colors.text.primary,
-    marginBottom: SPACING.lg,
-    textAlign: 'center',
-  },
-  activePractice: {
-    margin: SPACING.lg,
-    backgroundColor: colors.background.card,
-    borderRadius: BORDER_RADIUS.lg,
-    padding: SPACING.xl,
-    ...shadows.medium,
-  },
-  activePracticeLabel: {
-    fontSize: 13,
-    color: colors.text.tertiary,
-    fontWeight: '500',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: SPACING.xs,
-  },
-  activePracticeName: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: colors.text.primary,
-    marginBottom: SPACING.sm,
-  },
-  activePracticeDesc: {
-    fontSize: 15,
-    color: colors.text.secondary,
-    lineHeight: 22,
-    marginBottom: SPACING.lg,
-  },
-  startButton: {
-    backgroundColor: colors.primary,
-    borderRadius: BORDER_RADIUS.lg,
-    paddingVertical: SPACING.md,
-    alignItems: 'center',
-  },
-  startButtonText: {
-    color: colors.text.light,
-    fontSize: 17,
-    fontWeight: '600',
   },
   errorText: {
     color: colors.danger,
@@ -695,42 +232,7 @@ const localStyles = StyleSheet.create({
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.xl,
   },
-  retryButtonText: {
-    color: colors.text.light,
-    fontWeight: '600',
-  },
-  summaryTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: colors.text.primary,
-    marginBottom: SPACING.md,
-  },
-  summaryDuration: {
-    fontSize: 18,
-    color: colors.text.secondary,
-    marginBottom: SPACING.xxl,
-  },
-  saveButton: {
-    backgroundColor: colors.primary,
-    borderRadius: BORDER_RADIUS.lg,
-    paddingVertical: SPACING.md,
-    paddingHorizontal: SPACING.xxl,
-    marginBottom: SPACING.md,
-    minWidth: 200,
-    alignItems: 'center',
-  },
-  saveButtonText: {
-    color: colors.text.light,
-    fontSize: 17,
-    fontWeight: '600',
-  },
-  skipButton: {
-    paddingVertical: SPACING.sm,
-  },
-  skipButtonText: {
-    color: colors.text.tertiary,
-    fontSize: 15,
-  },
+  retryButtonText: { color: colors.text.light, fontWeight: '600' },
 });
 
 export default PracticeScreen;

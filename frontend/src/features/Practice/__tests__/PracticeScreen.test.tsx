@@ -2,52 +2,61 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 
-import type { PracticeItem, UserPractice } from '../../../api';
+import type { FrequencyResponse, PracticeItem, UserPractice } from '../../../api';
+import type { ModeConfig } from '../engine/types';
 
-const samplePractices: PracticeItem[] = [
-  {
-    id: 1,
-    stage_number: 1,
-    name: 'Breath Awareness',
-    description: 'Focus on the breath to develop concentration.',
-    instructions: 'Sit comfortably and focus on your breathing.',
-    default_duration_minutes: 10,
-    submitted_by_user_id: null,
-    approved: true,
-  },
-  {
-    id: 2,
-    stage_number: 1,
-    name: 'Body Scan',
-    description: 'Progressively scan through body sensations.',
-    instructions: 'Start at the crown and slowly move attention downward.',
-    default_duration_minutes: 15,
-    submitted_by_user_id: null,
-    approved: true,
-  },
-];
+const samplePractice = (overrides: Partial<PracticeItem> = {}): PracticeItem => ({
+  id: 1,
+  stage_number: 1,
+  name: 'Breath Awareness',
+  description: 'Focus on the breath to develop concentration.',
+  instructions: 'Sit comfortably and focus on your breathing.',
+  default_duration_minutes: 10,
+  submitted_by_user_id: null,
+  approved: true,
+  mode: 'meditation_timer',
+  mode_config: { mode: 'meditation_timer', duration_minutes: 10 },
+  ...overrides,
+});
 
-const sampleUserPractice: UserPractice = {
+const sampleUserPractice = (overrides: Partial<UserPractice> = {}): UserPractice => ({
   id: 10,
   user_id: 1,
   practice_id: 1,
   stage_number: 1,
-  start_date: '2026-01-15',
+  start_date: '2026-04-12',
   end_date: null,
+  ...overrides,
+});
+
+const sampleFrequency: FrequencyResponse = {
+  stage_number: 1,
+  color: 'Beige',
+  aspect: 'Body',
+  practice_name: 'Breath Awareness',
+  practice_id: 1,
+  user_practice_id: 10,
+  banner_text: 'You are in the Beige frequency of APTITUDE.',
 };
 
-const mockPracticesList = (jest.fn() as any).mockResolvedValue(samplePractices);
+const mockPracticesList = (jest.fn() as any).mockResolvedValue([samplePractice()]);
 const mockUserPracticesList = (jest.fn() as any).mockResolvedValue([]);
-const mockUserPracticesCreate = (jest.fn() as any).mockResolvedValue(sampleUserPractice);
+const mockUserPracticesCreate = (jest.fn() as any).mockResolvedValue(sampleUserPractice());
+const mockUserPracticesCustomize = (jest.fn() as any).mockResolvedValue(sampleUserPractice());
 const mockPracticeSessionsCreate = (jest.fn() as any).mockResolvedValue({
   id: 100,
-  user_id: 1,
   user_practice_id: 10,
   duration_minutes: 10,
-  timestamp: '2026-01-15T10:30:00Z',
+  timestamp: '2026-04-12T10:30:00Z',
   reflection: null,
+  mode: 'meditation_timer',
+  mode_metadata: null,
+  completed: true,
+  insight: null,
 });
 const mockWeekCount = (jest.fn() as any).mockResolvedValue({ count: 2 });
+const mockInsights = (jest.fn() as any).mockRejectedValue(new Error('insights unavailable'));
+const mockFrequency = (jest.fn() as any).mockResolvedValue(sampleFrequency);
 
 jest.mock('../../../api', () => ({
   practices: {
@@ -57,11 +66,20 @@ jest.mock('../../../api', () => ({
   userPractices: {
     create: (...args: unknown[]) => mockUserPracticesCreate(...args),
     list: (...args: unknown[]) => mockUserPracticesList(...args),
+    customize: (...args: unknown[]) => mockUserPracticesCustomize(...args),
   },
   practiceSessions: {
     create: (...args: unknown[]) => mockPracticeSessionsCreate(...args),
     weekCount: (...args: unknown[]) => mockWeekCount(...args),
+    insights: (...args: unknown[]) => mockInsights(...args),
   },
+  frequency: {
+    current: (...args: unknown[]) => mockFrequency(...args),
+  },
+}));
+
+jest.mock('../../../context/AuthContext', () => ({
+  useAuth: () => ({ token: 'test-token', userTimezone: 'UTC' }),
 }));
 
 const mockNavigate = jest.fn();
@@ -76,7 +94,7 @@ jest.mock('expo-av', () => ({
     Sound: {
       createAsync: (jest.fn() as any).mockResolvedValue({
         sound: {
-          playAsync: (jest.fn() as any).mockResolvedValue(undefined),
+          replayAsync: (jest.fn() as any).mockResolvedValue(undefined),
           unloadAsync: (jest.fn() as any).mockResolvedValue(undefined),
           setOnPlaybackStatusUpdate: jest.fn(),
         },
@@ -88,447 +106,463 @@ jest.mock('expo-av', () => ({
 jest.mock('expo-keep-awake', () => ({
   activateKeepAwakeAsync: (jest.fn() as any).mockResolvedValue(undefined),
   deactivateKeepAwake: jest.fn(),
+  useKeepAwake: jest.fn(),
 }));
 
-jest.mock('react-native/Libraries/Vibration/Vibration', () => ({
-  vibrate: jest.fn(),
+jest.mock('expo-haptics', () => ({
+  impactAsync: (jest.fn() as any).mockResolvedValue(undefined),
+  selectionAsync: (jest.fn() as any).mockResolvedValue(undefined),
+  ImpactFeedbackStyle: { Light: 'light', Medium: 'medium', Heavy: 'heavy' },
 }));
 
 // eslint-disable-next-line import/order
 const { render, waitFor, fireEvent, act } = require('@testing-library/react-native');
 const PracticeScreen = require('../PracticeScreen').default;
 
+interface ModeFixture {
+  label: string;
+  practice: PracticeItem;
+  mountTestId: string;
+}
+
+const modeFixtures: ModeFixture[] = [
+  {
+    label: 'meditation_timer',
+    practice: samplePractice({
+      id: 11,
+      mode: 'meditation_timer',
+      mode_config: { mode: 'meditation_timer', duration_minutes: 10 },
+    }),
+    mountTestId: 'meditation-timer-view',
+  },
+  {
+    label: 'count_up',
+    practice: samplePractice({
+      id: 12,
+      mode: 'count_up',
+      mode_config: { mode: 'count_up' },
+    }),
+    mountTestId: 'count-up-timer-view',
+  },
+  {
+    label: 'metronome',
+    practice: samplePractice({
+      id: 13,
+      mode: 'metronome',
+      mode_config: {
+        mode: 'metronome',
+        bpm: 60,
+        timer: { mode: 'meditation_timer', duration_minutes: 5 },
+      },
+    }),
+    mountTestId: 'metronome-view',
+  },
+  {
+    label: 'interval_bell',
+    practice: samplePractice({
+      id: 14,
+      mode: 'interval_bell',
+      mode_config: {
+        mode: 'interval_bell',
+        duration_minutes: 10,
+        interval_minutes: 2,
+        bell_tone: 'bowl',
+      },
+    }),
+    mountTestId: 'interval-bell-view',
+  },
+  {
+    label: 'rep_counter',
+    practice: samplePractice({
+      id: 15,
+      mode: 'rep_counter',
+      mode_config: { mode: 'rep_counter', target_reps: 108, unit_label: 'beads' },
+    }),
+    mountTestId: 'rep-counter-view',
+  },
+  {
+    label: 'sense_grounding',
+    practice: samplePractice({
+      id: 16,
+      mode: 'sense_grounding',
+      mode_config: {
+        mode: 'sense_grounding',
+        prompts: [
+          { sense: 'sight', label: 'five sights' },
+          { sense: 'touch', label: 'four touches' },
+          { sense: 'hearing', label: 'three sounds' },
+          { sense: 'smell', label: 'two scents' },
+          { sense: 'taste', label: 'one taste' },
+        ],
+      } as ModeConfig,
+    }),
+    mountTestId: 'sense-grounding-view',
+  },
+  {
+    label: 'tarot',
+    practice: samplePractice({
+      id: 17,
+      mode: 'tarot',
+      mode_config: { mode: 'tarot', deck: 'major_arcana', per_card_minutes: 5 },
+    }),
+    mountTestId: 'tarot-meditation-view',
+  },
+];
+
 describe('PracticeScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockPracticesList.mockResolvedValue(samplePractices);
+    mockPracticesList.mockResolvedValue([samplePractice()]);
     mockUserPracticesList.mockResolvedValue([]);
     mockWeekCount.mockResolvedValue({ count: 2 });
-    mockUserPracticesCreate.mockResolvedValue(sampleUserPractice);
+    mockInsights.mockRejectedValue(new Error('insights unavailable'));
+    mockFrequency.mockResolvedValue(sampleFrequency);
+    mockUserPracticesCreate.mockResolvedValue(sampleUserPractice());
     mockNavigate.mockClear();
   });
 
-  it('shows loading indicator initially', () => {
+  it('shows loading indicator initially', async () => {
     mockPracticesList.mockReturnValue(new Promise(() => {}));
     mockUserPracticesList.mockReturnValue(new Promise(() => {}));
+    mockInsights.mockReturnValue(new Promise(() => {}));
     mockWeekCount.mockReturnValue(new Promise(() => {}));
-
+    mockFrequency.mockReturnValue(new Promise(() => {}));
     const { getByTestId } = render(<PracticeScreen />);
     expect(getByTestId('practice-loading')).toBeTruthy();
-  });
-
-  it('renders selection view with practice selector after loading', async () => {
-    const { getByTestId, getByText } = render(<PracticeScreen />);
-
-    await waitFor(() => {
-      expect(getByTestId('selection-view')).toBeTruthy();
-      expect(getByText('Breath Awareness')).toBeTruthy();
-      expect(getByText('Body Scan')).toBeTruthy();
+    await act(async () => {
+      await Promise.resolve();
     });
   });
 
-  it('shows weekly progress', async () => {
-    const { getByTestId } = render(<PracticeScreen />);
-
+  it('renders selector + weekly progress when the user has no active practice', async () => {
+    const { getByTestId, getByText } = render(<PracticeScreen />);
     await waitFor(() => {
+      expect(getByTestId('selection-view')).toBeTruthy();
+      expect(getByText('Breath Awareness')).toBeTruthy();
       expect(getByTestId('weekly-progress')).toBeTruthy();
     });
   });
 
-  it('shows error state when API fails', async () => {
+  it('shows error state when the load fails', async () => {
     mockPracticesList.mockRejectedValue(new Error('Network error'));
-
     const { getByTestId, getByText } = render(<PracticeScreen />);
-
     await waitFor(() => {
       expect(getByTestId('practice-error')).toBeTruthy();
       expect(getByText(/couldn't load your practices/i)).toBeTruthy();
     });
   });
 
-  it('shows retry button on error', async () => {
-    mockPracticesList.mockRejectedValue(new Error('Network error'));
-
-    const { getByTestId } = render(<PracticeScreen />);
-
-    await waitFor(() => {
-      expect(getByTestId('retry-button')).toBeTruthy();
-    });
-  });
-
   it('selects a practice via the selector', async () => {
     const { getByTestId, getByText } = render(<PracticeScreen />);
-
     await waitFor(() => {
       expect(getByText('Breath Awareness')).toBeTruthy();
     });
-
     await act(async () => {
       fireEvent.press(getByTestId('select-practice-1'));
     });
-
-    expect(mockUserPracticesCreate).toHaveBeenCalledWith({
-      practice_id: 1,
-      stage_number: 1,
-    });
+    expect(mockUserPracticesCreate).toHaveBeenCalledWith({ practice_id: 1, stage_number: 1 });
   });
 
-  it('shows active practice card when user has selected a practice', async () => {
-    mockUserPracticesList.mockResolvedValue([sampleUserPractice]);
-
-    const { getByTestId, getByText } = render(<PracticeScreen />);
-
+  it('renders the active practice card with configure gear when a practice is selected', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId } = render(<PracticeScreen />);
     await waitFor(() => {
       expect(getByTestId('active-practice-card')).toBeTruthy();
-      expect(getByText('Breath Awareness')).toBeTruthy();
-      expect(getByTestId('start-practice-button')).toBeTruthy();
+      expect(getByTestId('active-practice-configure')).toBeTruthy();
+      expect(getByTestId('meditation-timer-view')).toBeTruthy();
     });
   });
 
-  it('navigates to timer view when Start Practice is pressed', async () => {
-    mockUserPracticesList.mockResolvedValue([sampleUserPractice]);
-
+  it('opens the configurator sheet when the gear is pressed', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId } = render(<PracticeScreen />);
-
     await waitFor(() => {
-      expect(getByTestId('start-practice-button')).toBeTruthy();
+      expect(getByTestId('active-practice-configure')).toBeTruthy();
     });
-
     await act(async () => {
-      fireEvent.press(getByTestId('start-practice-button'));
+      fireEvent.press(getByTestId('active-practice-configure'));
     });
-
-    expect(getByTestId('timer-view')).toBeTruthy();
+    expect(getByTestId('ritual-configurator-sheet')).toBeTruthy();
   });
 
-  it('shows summary view after timer completes', async () => {
+  it('opens the practice switcher when the banner is tapped', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => {
+      expect(getByTestId('frequency-banner-content')).toBeTruthy();
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('frequency-banner-content'));
+    });
+    await waitFor(() => {
+      expect(getByTestId('practice-switcher-sheet')).toBeTruthy();
+    });
+  });
+
+  describe.each(modeFixtures)('mode dispatch — $label', ({ practice, mountTestId }) => {
+    it(`mounts ${mountTestId} for ${practice.mode}`, async () => {
+      mockPracticesList.mockResolvedValue([practice]);
+      mockUserPracticesList.mockResolvedValue([
+        sampleUserPractice({ id: practice.id + 100, practice_id: practice.id }),
+      ]);
+      const { getByTestId } = render(<PracticeScreen />);
+      await waitFor(() => {
+        expect(getByTestId(mountTestId)).toBeTruthy();
+      });
+    });
+  });
+
+  it('opens the insight capture modal when the engine completes a meditation timer', async () => {
     jest.useFakeTimers();
-    mockUserPracticesList.mockResolvedValue([sampleUserPractice]);
-
-    const { getByTestId } = render(<PracticeScreen />);
-
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId, queryByTestId } = render(<PracticeScreen />);
     await waitFor(() => {
-      expect(getByTestId('start-practice-button')).toBeTruthy();
+      expect(getByTestId('ritual-start')).toBeTruthy();
     });
-
+    expect(queryByTestId('insight-save')).toBeFalsy();
     await act(async () => {
-      fireEvent.press(getByTestId('start-practice-button'));
+      fireEvent.press(getByTestId('ritual-start'));
     });
-
-    expect(getByTestId('timer-view')).toBeTruthy();
-
-    // Start the timer
     await act(async () => {
-      fireEvent.press(getByTestId('start-button'));
+      jest.advanceTimersByTime(11 * 60 * 1000);
     });
-
-    // Advance past the full duration (10 minutes = 600 seconds)
-    await act(async () => {
-      jest.advanceTimersByTime(601000);
-    });
-
     await waitFor(() => {
-      expect(getByTestId('summary-view')).toBeTruthy();
-      expect(getByTestId('summary-duration')).toBeTruthy();
+      expect(getByTestId('insight-save')).toBeTruthy();
+      expect(getByTestId('insight-summary')).toBeTruthy();
     });
-
     jest.useRealTimers();
   });
 
-  it('saves session when Save Session button is pressed', async () => {
+  it('does NOT open the insight modal when the user cancels mid-session', async () => {
     jest.useFakeTimers();
-    mockUserPracticesList.mockResolvedValue([sampleUserPractice]);
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId, queryByTestId } = render(<PracticeScreen />);
+    await waitFor(() => {
+      expect(getByTestId('ritual-start')).toBeTruthy();
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('ritual-start'));
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(500);
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('ritual-cancel'));
+    });
+    expect(queryByTestId('insight-save')).toBeFalsy();
+    expect(mockPracticeSessionsCreate).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
 
+  it('submits an insight + mode metadata when Save is pressed', async () => {
+    jest.useFakeTimers();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId } = render(<PracticeScreen />);
-
     await waitFor(() => {
-      expect(getByTestId('start-practice-button')).toBeTruthy();
+      expect(getByTestId('ritual-start')).toBeTruthy();
     });
-
     await act(async () => {
-      fireEvent.press(getByTestId('start-practice-button'));
+      fireEvent.press(getByTestId('ritual-start'));
     });
-
     await act(async () => {
-      fireEvent.press(getByTestId('start-button'));
+      jest.advanceTimersByTime(11 * 60 * 1000);
     });
-
-    await act(async () => {
-      jest.advanceTimersByTime(601000);
-    });
-
     await waitFor(() => {
-      expect(getByTestId('save-session-button')).toBeTruthy();
+      expect(getByTestId('insight-save')).toBeTruthy();
     });
-
     await act(async () => {
-      fireEvent.press(getByTestId('save-session-button'));
+      fireEvent.changeText(getByTestId('insight-input'), 'My mind quieted.');
     });
-
-    // BUG-FE-PRACTICE-101: client must submit ISO timestamps, not a
-    // setInterval-derived ``duration_minutes`` (the backend rejects the
-    // legacy field with 422).
+    await act(async () => {
+      fireEvent.press(getByTestId('insight-save'));
+    });
     expect(mockPracticeSessionsCreate).toHaveBeenCalledTimes(1);
-    const submittedPayload = mockPracticeSessionsCreate.mock.calls[0][0];
-    expect(submittedPayload).toEqual(
+    const payload = mockPracticeSessionsCreate.mock.calls[0][0];
+    expect(payload).toEqual(
       expect.objectContaining({
         user_practice_id: 10,
+        mode_metadata: { mode: 'meditation_timer' },
+        completed: true,
+        insight: 'My mind quieted.',
         started_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
         ended_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
       }),
     );
-    expect(submittedPayload).not.toHaveProperty('duration_minutes');
-    const submittedDurationMs =
-      new Date(submittedPayload.ended_at).getTime() -
-      new Date(submittedPayload.started_at).getTime();
-    expect(submittedDurationMs).toBeGreaterThan(0);
-    expect(submittedDurationMs).toBeLessThanOrEqual(10 * 60 * 1000);
-
-    jest.useRealTimers();
-  });
-
-  it('calls practices.list with stage number', async () => {
-    render(<PracticeScreen />);
-
-    await waitFor(() => {
-      expect(mockPracticesList).toHaveBeenCalledWith(1);
-    });
-  });
-
-  it('fetches week count on mount', async () => {
-    render(<PracticeScreen />);
-
-    await waitFor(() => {
-      expect(mockWeekCount).toHaveBeenCalled();
-    });
-  });
-
-  it('shows reflection prompt after saving a session', async () => {
-    jest.useFakeTimers();
-    mockUserPracticesList.mockResolvedValue([sampleUserPractice]);
-
-    const { getByTestId, getByText } = render(<PracticeScreen />);
-
-    await waitFor(() => {
-      expect(getByTestId('start-practice-button')).toBeTruthy();
-    });
-
-    await act(async () => {
-      fireEvent.press(getByTestId('start-practice-button'));
-    });
-
-    await act(async () => {
-      fireEvent.press(getByTestId('start-button'));
-    });
-
-    await act(async () => {
-      jest.advanceTimersByTime(601000);
-    });
-
-    await waitFor(() => {
-      expect(getByTestId('save-session-button')).toBeTruthy();
-    });
-
-    await act(async () => {
-      fireEvent.press(getByTestId('save-session-button'));
-    });
-
-    await waitFor(() => {
-      expect(getByTestId('reflection-view')).toBeTruthy();
-      expect(getByText('Write a Reflection?')).toBeTruthy();
-      expect(getByTestId('write-reflection-button')).toBeTruthy();
-      expect(getByTestId('skip-reflection-button')).toBeTruthy();
-    });
-
-    jest.useRealTimers();
-  });
-
-  it('navigates to Journal when Write Reflection is pressed', async () => {
-    jest.useFakeTimers();
-    mockUserPracticesList.mockResolvedValue([sampleUserPractice]);
-
-    const { getByTestId } = render(<PracticeScreen />);
-
-    await waitFor(() => {
-      expect(getByTestId('start-practice-button')).toBeTruthy();
-    });
-
-    await act(async () => {
-      fireEvent.press(getByTestId('start-practice-button'));
-    });
-
-    await act(async () => {
-      fireEvent.press(getByTestId('start-button'));
-    });
-
-    await act(async () => {
-      jest.advanceTimersByTime(601000);
-    });
-
-    await waitFor(() => {
-      expect(getByTestId('save-session-button')).toBeTruthy();
-    });
-
-    await act(async () => {
-      fireEvent.press(getByTestId('save-session-button'));
-    });
-
-    await waitFor(() => {
-      expect(getByTestId('write-reflection-button')).toBeTruthy();
-    });
-
-    await act(async () => {
-      fireEvent.press(getByTestId('write-reflection-button'));
-    });
-
-    expect(mockNavigate).toHaveBeenCalledWith('Journal', {
-      tag: 'practice_note',
-      practiceSessionId: 100,
-      userPracticeId: 10,
-      practiceName: 'Breath Awareness',
-      practiceDuration: 10,
-    });
-
-    jest.useRealTimers();
-  });
-
-  it('returns to selection when Skip Reflection is pressed', async () => {
-    jest.useFakeTimers();
-    mockUserPracticesList.mockResolvedValue([sampleUserPractice]);
-
-    const { getByTestId } = render(<PracticeScreen />);
-
-    await waitFor(() => {
-      expect(getByTestId('start-practice-button')).toBeTruthy();
-    });
-
-    await act(async () => {
-      fireEvent.press(getByTestId('start-practice-button'));
-    });
-
-    await act(async () => {
-      fireEvent.press(getByTestId('start-button'));
-    });
-
-    await act(async () => {
-      jest.advanceTimersByTime(601000);
-    });
-
-    await waitFor(() => {
-      expect(getByTestId('save-session-button')).toBeTruthy();
-    });
-
-    await act(async () => {
-      fireEvent.press(getByTestId('save-session-button'));
-    });
-
-    await waitFor(() => {
-      expect(getByTestId('skip-reflection-button')).toBeTruthy();
-    });
-
-    await act(async () => {
-      fireEvent.press(getByTestId('skip-reflection-button'));
-    });
-
-    await waitFor(() => {
-      expect(getByTestId('selection-view')).toBeTruthy();
-    });
-
-    jest.useRealTimers();
-  });
-
-  it('refetches the authoritative week count after a successful save (BUG-FE-PRACTICE-005)', async () => {
-    jest.useFakeTimers();
-    mockUserPracticesList.mockResolvedValue([sampleUserPractice]);
-    // Initial load returns count=2, post-save returns count=3 — the
-    // hook's onSuccess closure overrides the optimistic +1 with the
-    // authoritative value so the bar tracks server truth even when
-    // remote state diverged (e.g. another device added a session).
-    mockWeekCount.mockResolvedValueOnce({ count: 2 }).mockResolvedValueOnce({ count: 7 });
-
-    const { getByTestId, getByText } = render(<PracticeScreen />);
-
-    await waitFor(() => {
-      expect(getByTestId('start-practice-button')).toBeTruthy();
-    });
-    await act(async () => {
-      fireEvent.press(getByTestId('start-practice-button'));
-    });
-    await act(async () => {
-      fireEvent.press(getByTestId('start-button'));
-    });
-    await act(async () => {
-      jest.advanceTimersByTime(601000);
-    });
-    await waitFor(() => {
-      expect(getByTestId('save-session-button')).toBeTruthy();
-    });
-    await act(async () => {
-      fireEvent.press(getByTestId('save-session-button'));
-    });
-
-    // weekCount() is called twice: once on mount (returns 2) and once
-    // post-save inside `commit` (returns 7). Without the refetch, the
-    // bar would only show the optimistic 2+1=3.
-    await waitFor(() => {
-      expect(mockWeekCount).toHaveBeenCalledTimes(2);
-    });
-    // Skip back to selection so the WeeklyProgress bar is visible.
-    await waitFor(() => {
-      expect(getByTestId('skip-reflection-button')).toBeTruthy();
-    });
-    await act(async () => {
-      fireEvent.press(getByTestId('skip-reflection-button'));
-    });
-    await waitFor(() => {
-      expect(getByText(/7\s*\/\s*\d+/)).toBeTruthy();
-    });
-
+    expect(payload).not.toHaveProperty('duration_minutes');
     jest.useRealTimers();
   });
 
   it('rolls back the optimistic week-count increment when save fails (BUG-FE-PRACTICE-005)', async () => {
     jest.useFakeTimers();
-    mockUserPracticesList.mockResolvedValue([sampleUserPractice]);
-    mockWeekCount.mockResolvedValueOnce({ count: 2 }); // initial mount
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    mockInsights.mockResolvedValueOnce({
+      weekly_counts: [{ week_start: '2026-05-11', count: 2 }],
+      streak_weeks: 0,
+      total_minutes_30d: 0,
+      avg_duration_minutes_30d: null,
+      per_mode_counts: {},
+      last_insight: null,
+    });
     mockPracticeSessionsCreate.mockRejectedValueOnce(new Error('502 Bad Gateway'));
-
     const { getByTestId, getByText } = render(<PracticeScreen />);
-
     await waitFor(() => {
-      expect(getByTestId('start-practice-button')).toBeTruthy();
+      expect(getByTestId('ritual-start')).toBeTruthy();
+    });
+    expect(getByText(/2\s*\/\s*\d+/)).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(getByTestId('ritual-start'));
     });
     await act(async () => {
-      fireEvent.press(getByTestId('start-practice-button'));
-    });
-    await act(async () => {
-      fireEvent.press(getByTestId('start-button'));
-    });
-    await act(async () => {
-      jest.advanceTimersByTime(601000);
+      jest.advanceTimersByTime(11 * 60 * 1000);
     });
     await waitFor(() => {
-      expect(getByTestId('save-session-button')).toBeTruthy();
+      expect(getByTestId('insight-save')).toBeTruthy();
     });
     await act(async () => {
-      fireEvent.press(getByTestId('save-session-button'));
+      fireEvent.press(getByTestId('insight-save'));
     });
-
-    // The error route shows the retry screen with the formatted message
-    // — the rollback closure surfaced the failure. Before the fix, the
-    // increment had ALREADY fired so the bar was bumped to 3 even
-    // though the server never accepted the session; with the
-    // rollback closure the optimistic 3 is decremented back to 2 and
-    // the user only sees the error toast.
     await waitFor(() => {
+      expect(getByTestId('active-practice-save-error')).toBeTruthy();
       expect(getByText(/We couldn't save your practice session/)).toBeTruthy();
     });
-
-    // The post-save weekCount() refetch should NOT have been called —
-    // it lives inside `commit`, which threw before reaching it. A bare
-    // mount-time call is the only invocation expected.
-    expect(mockWeekCount).toHaveBeenCalledTimes(1);
-
+    expect(getByText(/2\s*\/\s*\d+/)).toBeTruthy();
+    expect(mockInsights).toHaveBeenCalledTimes(1);
+    expect(mockWeekCount).not.toHaveBeenCalled();
     jest.useRealTimers();
+  });
+
+  it('refetches the authoritative week count after a successful save', async () => {
+    jest.useFakeTimers();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    mockInsights
+      .mockResolvedValueOnce({
+        weekly_counts: [{ week_start: '2026-05-11', count: 2 }],
+        streak_weeks: 0,
+        total_minutes_30d: 0,
+        avg_duration_minutes_30d: null,
+        per_mode_counts: {},
+        last_insight: null,
+      })
+      .mockResolvedValueOnce({
+        weekly_counts: [{ week_start: '2026-05-11', count: 7 }],
+        streak_weeks: 0,
+        total_minutes_30d: 70,
+        avg_duration_minutes_30d: 10,
+        per_mode_counts: { meditation_timer: 7 },
+        last_insight: null,
+      });
+    const { getByTestId, getByText } = render(<PracticeScreen />);
+    await waitFor(() => {
+      expect(getByTestId('ritual-start')).toBeTruthy();
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('ritual-start'));
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(11 * 60 * 1000);
+    });
+    await waitFor(() => {
+      expect(getByTestId('insight-save')).toBeTruthy();
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('insight-save'));
+    });
+    await waitFor(() => {
+      expect(mockInsights).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(getByText(/7\s*\/\s*\d+/)).toBeTruthy();
+    });
+    jest.useRealTimers();
+  });
+
+  it('Skip submits the session without an insight', async () => {
+    jest.useFakeTimers();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => {
+      expect(getByTestId('ritual-start')).toBeTruthy();
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('ritual-start'));
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(11 * 60 * 1000);
+    });
+    await waitFor(() => {
+      expect(getByTestId('insight-skip')).toBeTruthy();
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('insight-skip'));
+    });
+    expect(mockPracticeSessionsCreate).toHaveBeenCalledTimes(1);
+    expect(mockPracticeSessionsCreate.mock.calls[0][0].insight).toBeNull();
+    jest.useRealTimers();
+  });
+
+  it('navigates to Journal when "Save & journal with BotMason" is pressed', async () => {
+    jest.useFakeTimers();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => {
+      expect(getByTestId('ritual-start')).toBeTruthy();
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('ritual-start'));
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(11 * 60 * 1000);
+    });
+    await waitFor(() => {
+      expect(getByTestId('insight-journal')).toBeTruthy();
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('insight-journal'));
+    });
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith(
+        'Journal',
+        expect.objectContaining({
+          tag: 'practice_note',
+          practiceSessionId: 100,
+          userPracticeId: 10,
+          practiceName: 'Breath Awareness',
+        }),
+      );
+    });
+    jest.useRealTimers();
+  });
+
+  it('uses the ritual-04 insights endpoint when available, skipping the legacy fallback', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    mockInsights.mockResolvedValueOnce({
+      weekly_counts: [
+        { week_start: '2026-04-06', count: 3 },
+        { week_start: '2026-04-13', count: 5 },
+      ],
+      streak_weeks: 2,
+      total_minutes_30d: 100,
+      avg_duration_minutes_30d: 12.5,
+      per_mode_counts: { meditation_timer: 7 },
+      last_insight: null,
+    });
+    const { getByTestId, getByText } = render(<PracticeScreen />);
+    await waitFor(() => {
+      expect(getByTestId('weekly-progress')).toBeTruthy();
+      expect(getByText(/5\s*\/\s*\d+/)).toBeTruthy();
+    });
+    expect(mockInsights).toHaveBeenCalled();
+    expect(mockWeekCount).not.toHaveBeenCalled();
+  });
+
+  it('falls back to week-count when the insights endpoint errors', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    mockInsights.mockRejectedValueOnce(new Error('insights 404'));
+    mockWeekCount.mockResolvedValueOnce({ count: 9 });
+    const { getByText } = render(<PracticeScreen />);
+    await waitFor(() => {
+      expect(getByText(/9\s*\/\s*\d+/)).toBeTruthy();
+    });
+    expect(mockWeekCount).toHaveBeenCalled();
   });
 });
