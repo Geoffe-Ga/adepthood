@@ -1542,6 +1542,10 @@ export interface PracticeItem {
   default_duration_minutes: number;
   submitted_by_user_id: number | null;
   approved: boolean;
+  /** ritual-01: discriminator for ``mode_config``. Older fixtures may omit. */
+  mode?: string;
+  /** ritual-01: per-mode authoring config (validated server-side as ModeConfig). */
+  mode_config?: ModeConfig;
 }
 
 export interface UserPractice {
@@ -1555,6 +1559,10 @@ export interface UserPractice {
   custom_name?: string | null;
   /** ritual-03: per-user mode_config override (validated server-side as ModeConfig). */
   mode_config_override?: ModeConfig | null;
+  /** ritual-03: server-resolved (custom_name ?? practice.name); may be absent on legacy payloads. */
+  effective_name?: string | null;
+  /** ritual-03: server-resolved (mode_config_override ?? practice.mode_config). */
+  effective_config?: ModeConfig | null;
 }
 
 export interface UserPracticeCreate {
@@ -1662,6 +1670,28 @@ export interface PracticeSessionResponse {
 
 export interface WeekCountResponse {
   count: number;
+}
+
+/**
+ * Ritual-04 rollup payload served at ``GET /practice-sessions/insights``.
+ *
+ * Mirrors ``backend/src/schemas/practice.py::PracticeInsightsResponse``.
+ * `useWeeklyProgress` prefers the latest `weekly_counts` bucket but falls
+ * back to `practiceSessions.weekCount()` if this route is unavailable.
+ */
+export interface PracticeWeeklyBucket {
+  /** ISO date (YYYY-MM-DD) of the bucket's Monday in the user's TZ. */
+  week_start: string;
+  count: number;
+}
+
+export interface PracticeInsightsResponse {
+  weekly_counts: PracticeWeeklyBucket[];
+  streak_weeks: number;
+  total_minutes_30d: number;
+  avg_duration_minutes_30d: number | null;
+  per_mode_counts: Record<string, number>;
+  last_insight: string | null;
 }
 
 function validatePracticeItem(item: unknown): item is PracticeItem {
@@ -1775,6 +1805,13 @@ export const practiceSessions = {
   },
   weekCount(token?: string): Promise<WeekCountResponse> {
     return request<WeekCountResponse>('/practice-sessions/week-count', { token });
+  },
+  /**
+   * Ritual-04 rollup. The frontend prefers this when available and falls
+   * back to ``weekCount()`` on failure — see `useWeeklyProgress`.
+   */
+  insights(token?: string): Promise<PracticeInsightsResponse> {
+    return request<PracticeInsightsResponse>('/practice-sessions/insights', { token });
   },
 };
 
