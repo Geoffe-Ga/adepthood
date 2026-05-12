@@ -243,6 +243,45 @@ async def test_frequency_ignores_ended_user_practice(
     assert body["practice_name"] == STAGE_TO_PRESET_NAME[1]
 
 
+# -- Orphaned catalog row → 404 ---------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_frequency_orphaned_practice_returns_404(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An active ``UserPractice`` whose catalog row is missing → 404.
+
+    The FK on ``UserPractice.practice_id`` isn't enforced in SQLite test
+    mode, and production uses ``ondelete=SET NULL`` on
+    ``submitted_by_user_id`` but no cascade on the practice FK itself,
+    so a manually-soft-deleted ``Practice`` row can leave its
+    ``UserPractice`` selections dangling. The banner endpoint surfaces
+    this loudly as ``practice_not_found`` rather than rendering a
+    half-formed banner.
+    """
+    await _seed_catalog(db_session)
+    headers, user_id = await _signup(async_client, "orphan-user")
+    db_session.add(StageProgress(user_id=user_id, current_stage=1))
+    await db_session.commit()
+
+    # Reference a Practice.id that was never inserted — SQLite doesn't
+    # enforce the FK, so the row lands without complaint.
+    missing_practice_id = 99_999
+    orphan = UserPractice(
+        user_id=user_id,
+        practice_id=missing_practice_id,
+        stage_number=1,
+        start_date=date(2024, 1, 1),
+    )
+    db_session.add(orphan)
+    await db_session.commit()
+
+    resp = await async_client.get("/user-practices/current/frequency", headers=headers)
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "practice_not_found"
+
+
 # -- Banner template wording lock -------------------------------------------
 
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import ValidationError
@@ -368,11 +368,15 @@ async def _frequency_from_active(
     )
     if practice_row is None:
         raise not_found("practice")
-    practice_id = practice_row.id if practice_row.id is not None else active.practice_id
+    # ``Practice.id`` is typed ``int | None`` to model the pre-insert
+    # state; a row returned from a ``SELECT`` always has its primary
+    # key set, so the cast narrows the type for mypy without a silent
+    # ``or 0`` fallback that would mask a real bug. Same pattern as
+    # :func:`domain.stage_progress.get_stage_habit_history`.
     return _build_frequency_response(
         course_stage=course_stage,
         practice_name=effective_name(practice_row, active),
-        practice_id=practice_id,
+        practice_id=cast("int", practice_row.id),
         user_practice_id=active.id,
     )
 
@@ -386,11 +390,12 @@ async def _frequency_from_preset(
     "showing the unselected default" from "showing the user's pick".
     """
     preset = await _load_preset_practice(session, stage_number)
-    preset_id = preset.id if preset.id is not None else 0
+    # See :func:`_frequency_from_active` for the rationale on the
+    # post-SELECT id cast.
     return _build_frequency_response(
         course_stage=course_stage,
         practice_name=preset.name,
-        practice_id=preset_id,
+        practice_id=cast("int", preset.id),
         user_practice_id=None,
     )
 
