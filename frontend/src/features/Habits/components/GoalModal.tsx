@@ -742,6 +742,64 @@ const GoalUnitEditor = ({ goals, habitId, onUpdateGoal }: GoalUnitEditorProps) =
   );
 };
 
+const DIRECTION_OPTIONS = [
+  { value: true, label: 'Add up', testID: 'goal-direction-additive' },
+  { value: false, label: 'Cut back', testID: 'goal-direction-subtractive' },
+] as const;
+
+interface GoalDirectionRowProps {
+  isAdditive: boolean;
+  onChange: (_v: boolean) => void;
+}
+
+const GoalDirectionRow = ({ isAdditive, onChange }: GoalDirectionRowProps) => (
+  <View style={goalEditorStyles.row} testID="goal-direction-row">
+    <Text style={goalEditorStyles.fieldLabel}>Type</Text>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={goalEditorStyles.chipRow}
+      testID="goal-direction-chips"
+    >
+      {DIRECTION_OPTIONS.map((opt) => {
+        const selected = opt.value === isAdditive;
+        return (
+          <TouchableOpacity
+            key={opt.label}
+            testID={opt.testID}
+            onPress={() => onChange(opt.value)}
+            style={[goalEditorStyles.chip, selected && goalEditorStyles.chipSelected]}
+            accessibilityRole="radio"
+            accessibilityLabel={opt.label}
+            accessibilityState={{ checked: selected }}
+          >
+            <Text
+              style={[goalEditorStyles.chipText, selected && goalEditorStyles.chipTextSelected]}
+            >
+              {opt.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </ScrollView>
+  </View>
+);
+
+// Emit PUTs in ascending new-target order so each normalizeGoalTiers clamp is a no-op.
+const buildDirectionChangePayloads = (goals: readonly Goal[], newIsAdditive: boolean): Goal[] => {
+  const ascendingTargets = goals.map((g) => g.target).sort((a, b) => a - b);
+  const tiersByAscendingNewTarget = newIsAdditive
+    ? (['low', 'clear', 'stretch'] as const)
+    : (['stretch', 'clear', 'low'] as const);
+  return tiersByAscendingNewTarget
+    .map((tier, i) => {
+      const goal = goals.find((g) => g.tier === tier);
+      if (!goal) return null;
+      return { ...goal, is_additive: newIsAdditive, target: ascendingTargets[i]! };
+    })
+    .filter((g): g is Goal => g !== null);
+};
+
 interface GoalTargetEditorProps {
   habit: NonNullable<GoalModalProps['habit']>;
   onUpdateGoal: GoalModalProps['onUpdateGoal'];
@@ -766,9 +824,18 @@ const GoalTargetEditor = ({ habit, onUpdateGoal }: GoalTargetEditorProps) => {
   const [head, ...tail] = orderedGoals;
   if (head === undefined) return null;
   const nonEmptyGoals: NonEmptyGoals = [head, ...tail];
+
+  const handleDirectionChange = (newIsAdditive: boolean) => {
+    if (nonEmptyGoals.every((g) => g.is_additive === newIsAdditive)) return;
+    for (const payload of buildDirectionChangePayloads(nonEmptyGoals, newIsAdditive)) {
+      onUpdateGoal(habitId, payload);
+    }
+  };
+
   return (
     <View style={goalEditorStyles.container} testID="goal-target-editor">
       <Text style={goalEditorStyles.sectionTitle}>Goals</Text>
+      <GoalDirectionRow isAdditive={head.is_additive} onChange={handleDirectionChange} />
       {nonEmptyGoals.map((goal) => (
         <GoalTargetRow
           key={goal.id ?? goal.tier}
