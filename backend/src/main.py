@@ -18,7 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_session
+from database import async_session_factory, get_session
 from errors import install_exception_handlers
 from middleware import (
     CorrelationIdMiddleware,
@@ -42,6 +42,9 @@ from routers.practices import router as practices_router
 from routers.prompts import router as prompts_router
 from routers.stages import router as stages_router
 from routers.user_practices import router as user_practices_router
+from seed_content import seed_content
+from seed_practices import seed_practices
+from seed_stages import seed_stages
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +237,21 @@ def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONRespo
 install_trace_id_logging()
 
 
+async def _seed_startup_data(session: AsyncSession) -> None:
+    """Run the three idempotent seeders in dependency order.
+
+    ``seed_practices`` and ``seed_content`` both read from the seeded
+    ``CourseStage`` rows, so stages must land first. Each seeder inserts
+    only the rows it would expect to find missing (matched by stable keys
+    like ``stage_number`` or ``(stage_number, name)``), so repeated calls
+    are no-ops once steady state is reached.
+    """
+    await seed_stages(session)
+    await seed_practices(session)
+    await seed_content(session)
+    await session.commit()
+
+
 @asynccontextmanager
 async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown lifecycle for the application."""
@@ -246,6 +264,22 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # underlying check is the same lazy guard ``_get_secret_key`` already does;
     # invoking it here turns "first user pays" into "deploy never goes live".
     _get_secret_key()
+
+    # ritual-practice ops: on every boot, seed the catalog (stages, presets,
+    # placeholder course content) so a fresh database is immediately usable.
+    # Opt-out via ``SKIP_STARTUP_SEED=1`` for tests and contexts where the
+    # database is intentionally empty (e.g. integration suites mounting a
+    # mocked alembic chain). A seeder failure is logged and swallowed — the
+    # orchestrator should still be able to take the pod live so an operator
+    # can SSH in and run ``alembic upgrade head`` if migrations are missing.
+    if os.getenv("SKIP_STARTUP_SEED") != "1":
+        try:
+            async with async_session_factory() as session:
+                await _seed_startup_data(session)
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "startup seed failed; continuing without seeded catalog"
+            )
 
     yield
 

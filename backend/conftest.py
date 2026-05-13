@@ -5,6 +5,11 @@ from pathlib import Path
 
 # Set SECRET_KEY for tests before any app modules are imported
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-unit-tests-only")
+# Opt out of the startup seeder for the test suite — fixtures mount a clean
+# SQLite per test and the seeders would add 30+ rows of noise to every
+# ``async_client`` fixture. Lifespan-seeding behaviour itself is exercised by
+# ``tests/test_lifespan_seeding.py``, which sets / unsets this flag locally.
+os.environ.setdefault("SKIP_STARTUP_SEED", "1")
 
 # Absolute path to the repo root (directory that contains 'backend')
 REPO_ROOT = (Path(__file__).parent / "..").resolve()

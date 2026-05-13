@@ -63,7 +63,10 @@ fixable = ["ALL"]
 "backend/conftest.py" = ["S101"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["src", "tests"]
+# ``conftest`` lives at backend/conftest.py (outside ``src/``) but is
+# project-local for import purposes; matching isort's auto-discovery
+# keeps the two import-sorters from oscillating on test files.
+known-first-party = ["src", "tests", "conftest", "scripts"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
