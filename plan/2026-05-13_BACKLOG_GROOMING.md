@@ -22,8 +22,9 @@
 
 ## P0 — blocks "fully operational"
 
-1. **Bundle `metronome-tick.wav`** in `frontend/assets/sounds/` and wire it in `engine/adapters/audio.ts`. Today every metronome session loses its primary cue audio. The graceful fallback masks the gap — easy to ship and not notice in QA.
-2. **Wire seeders into application startup** (FastAPI lifespan or a one-shot migration data step). `ritual-02`, `ritual-05`, and the stage-copy seeds are merged as scripts but nothing invokes them. On a fresh database the practice catalog and frequency banner are empty.
+1. **Wire seeders into application startup** (FastAPI lifespan or a one-shot migration data step). `ritual-02`, `ritual-05`, and the stage-copy seeds are merged as scripts but nothing invokes them. On a fresh database the practice catalog and frequency banner are empty.
+
+> **Audio is deliberately deferred — see the "Audio (separate PR)" section below.** The metronome session running silent is a known, intentional gap; the adapter degrades gracefully and warns once. We want to verify the rest of the epic end-to-end without entangling licensing / asset-production work.
 
 ## P1 — launch-critical
 
@@ -62,9 +63,37 @@
 - `useMountedRef`'s `mountedRef.current = true` reassignment lacks Strict Mode comment (#315).
 - `useFrequency` shipped at ~478% of LoC estimate (#315) — flag for planning calibration on future configurator-style features.
 
+## Audio (separate PR — deferred until everything else is verified)
+
+Sound is intentionally split off so the rest of the epic can be exercised
+end-to-end on a build with zero audio assets. The current behaviour on
+main is acceptable for that smoke pass: the expo audio adapter loads each
+cue best-effort, missing files warn-once and fall back to silent, and the
+ritual completes regardless. The audio PR can then land independently,
+without blocking ops verification.
+
+Scope of the dedicated audio PR (call it `ritual-audio`):
+
+- Verify or replace the three existing bells (`bell-start.mp3`,
+  `bell-half.mp3`, `bell-end.mp3`) — licensing audit + format normalisation
+  (sample rate, bit depth, peak loudness so cues don't clip across modes).
+- Bundle `metronome-tick.wav` and wire it through the existing slot in
+  `engine/adapters/audio.ts` (the entry is already a `null` placeholder so
+  the wiring is a one-line replace).
+- Per-tone variants for `interval_bell` matching `IntervalBellConfig.bell_tone`
+  (`bowl`, `chime`, `gong`) — today the adapter reuses `bell-half.mp3` for
+  all three (commented in `audio.ts`).
+- A render/playback smoke test on iOS + Android + web that asserts each
+  cue plays at the expected loudness and the metronome doesn't clip at
+  240 BPM.
+
+Until that PR ships, treat the metronome's silent ticks as an intentional
+known gap, not a P0.
+
 ## Recommended next actions
 
-1. **One ops PR** that lands P0-1, P0-2, P1-3, P1-9 together. These are operational, not feature work, and trying to split them invites further drift.
-2. **One backlog-cleanup PR** that lands P1-5, P1-6, P1-7. These are small, schema-adjacent, and best landed before more consumers depend on them.
+1. **One ops PR** that lands P0-1 (seeders) + P1-3 (CI downgrade) + P1-9 (extract `resolve_prev_revision.py`). Operational, not feature work, naturally batches. **Excludes audio** — that is the deferred `ritual-audio` PR above.
+2. **One backlog-cleanup PR** that lands P1-5, P1-6, P1-7. Small, schema-adjacent, best landed before more consumers depend on them.
 3. **One self-audit pass** (P1-4 + P1-8): walk each CHANGES_REQUESTED PR's blocker list against the merged diff; close the audit loop with comments on each PR.
-4. Defer all P2 items to a dedicated `ritual-polish` follow-up issue with the per-PR breakdown above — most are 1–5 lines each and naturally batch.
+4. **`ritual-audio` PR** (deferred): see the dedicated section above. Land after the ops verification is complete.
+5. Defer all P2 items to a dedicated `ritual-polish` follow-up issue with the per-PR breakdown above — most are 1–5 lines each and naturally batch.
