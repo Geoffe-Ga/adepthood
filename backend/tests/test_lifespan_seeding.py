@@ -17,7 +17,6 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
-import models as _models  # noqa: F401 — registers SQLModel tables
 from conftest import test_engine
 from main import _seed_startup_data, app, lifespan
 from models.course_stage import CourseStage
