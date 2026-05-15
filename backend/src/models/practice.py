@@ -1,6 +1,6 @@
 from typing import Any
 
-from sqlalchemy import JSON, CheckConstraint, Column, Index, func, text
+from sqlalchemy import JSON, CheckConstraint, Column
 from sqlmodel import Field, SQLModel
 
 from domain.practice_modes import ALL_MODES, PracticeMode
@@ -17,28 +17,20 @@ def _mode_check_constraint() -> CheckConstraint:
     return CheckConstraint(f"mode IN ({quoted})", name="ck_practice_mode_valid")
 
 
-def _preset_unique_index() -> Index:
-    """Partial functional unique index on ``(stage_number, lower(trim(name)))``.
-
-    Scoped to presets via ``submitted_by_user_id IS NULL`` so a user-submitted
-    practice can still share a name with the preset (or with another user
-    submission). Closes the seeder race that two-pod rolling restarts could
-    otherwise produce — see migration ``d2e3f4a5b6c7``.
-    """
-    return Index(
-        "ix_practice_preset_stage_lower_name_unique",
-        "stage_number",
-        func.lower(func.trim(text("name"))),
-        unique=True,
-        postgresql_where=text("submitted_by_user_id IS NULL"),
-        sqlite_where=text("submitted_by_user_id IS NULL"),
-    )
-
-
 class Practice(SQLModel, table=True):
-    """Defines a single practice users can perform."""
+    """Defines a single practice users can perform.
 
-    __table_args__ = (_mode_check_constraint(), _preset_unique_index())
+    A partial functional unique index on
+    ``(stage_number, lower(trim(name))) WHERE submitted_by_user_id IS NULL``
+    lives at the DB layer (migration ``d2e3f4a5b6c7``) but is intentionally
+    NOT declared in ``__table_args__``: alembic's autogenerate cannot
+    round-trip a partial functional index against a raw-SQL migration, and
+    declaring it would cause ``alembic check`` to flag false drift. The
+    constraint is exercised by the regression tests in
+    ``tests/test_seed_practices.py``.
+    """
+
+    __table_args__ = (_mode_check_constraint(),)
 
     id: int | None = Field(default=None, primary_key=True)
     stage_number: int
