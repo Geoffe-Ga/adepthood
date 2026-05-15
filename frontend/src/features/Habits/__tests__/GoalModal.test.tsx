@@ -59,6 +59,19 @@ const sampleHabit: Habit = {
   completions: [],
 };
 
+/**
+ * Expand the inline edit region. The modal opens collapsed by default —
+ * only the title row and the Log Units bar are mounted — so any test that
+ * pokes the goal target editor or the progress markers needs to flip the
+ * pencil to a checkmark first.
+ */
+const expandEditRegion = (testRenderer: ReturnType<typeof renderer.create>): void => {
+  const toggle = testRenderer.root.findByProps({ testID: 'goal-modal-edit-toggle' });
+  renderer.act(() => {
+    toggle.props.onPress();
+  });
+};
+
 describe('GoalModal hook order', () => {
   it('renders without crashing when habit becomes available', () => {
     const testRenderer = renderer.create(
@@ -101,6 +114,7 @@ describe('GoalModal progress', () => {
         onUpdateHabit={() => {}}
       />,
     );
+    expandEditRegion(testRenderer);
 
     expect(testRenderer.root.findByProps({ testID: 'modal-marker-stretch' })).toBeTruthy();
     const initialFill = testRenderer.root.findByProps({ testID: 'modal-progress-fill' });
@@ -137,6 +151,7 @@ describe('GoalModal tooltips', () => {
         onUpdateHabit={() => {}}
       />,
     );
+    expandEditRegion(testRenderer);
 
     const lowMarker = testRenderer.root.findByProps({ testID: 'modal-marker-low' });
     renderer.act(() => {
@@ -152,7 +167,7 @@ describe('GoalModal tooltips', () => {
 
 describe('GoalModal target editor', () => {
   // Click-to-edit chip → input → commit → chip round-trip; tests cover both modes.
-  it('renders a saved-state display for every goal tier by default', () => {
+  it('renders a saved-state display for every goal tier in edit mode', () => {
     const testRenderer = renderer.create(
       <GoalModal
         visible
@@ -163,6 +178,7 @@ describe('GoalModal target editor', () => {
         onUpdateHabit={() => {}}
       />,
     );
+    expandEditRegion(testRenderer);
 
     expect(testRenderer.root.findByProps({ testID: 'goal-target-display-low' })).toBeTruthy();
     expect(testRenderer.root.findByProps({ testID: 'goal-target-display-clear' })).toBeTruthy();
@@ -181,6 +197,7 @@ describe('GoalModal target editor', () => {
         onUpdateHabit={() => {}}
       />,
     );
+    expandEditRegion(testRenderer);
 
     const display = testRenderer.root.findByProps({ testID: 'goal-target-display-clear' });
     renderer.act(() => {
@@ -202,6 +219,7 @@ describe('GoalModal target editor', () => {
         onUpdateHabit={() => {}}
       />,
     );
+    expandEditRegion(testRenderer);
 
     renderer.act(() => {
       testRenderer.root.findByProps({ testID: 'goal-target-display-clear' }).props.onPress();
@@ -245,6 +263,7 @@ describe('GoalModal target editor', () => {
         onUpdateHabit={() => {}}
       />,
     );
+    expandEditRegion(testRenderer);
 
     renderer.act(() => {
       testRenderer.root.findByProps({ testID: 'goal-target-display-clear' }).props.onPress();
@@ -271,6 +290,7 @@ describe('GoalModal target editor', () => {
         onUpdateHabit={() => {}}
       />,
     );
+    expandEditRegion(testRenderer);
 
     renderer.act(() => {
       testRenderer.root.findByProps({ testID: 'goal-target-display-low' }).props.onPress();
@@ -295,6 +315,7 @@ describe('GoalModal target editor', () => {
         onUpdateHabit={() => {}}
       />,
     );
+    expandEditRegion(testRenderer);
 
     renderer.act(() => {
       testRenderer.root.findByProps({ testID: 'goal-target-display-clear' }).props.onPress();
@@ -345,6 +366,7 @@ describe('GoalModal backdrop close', () => {
         onUpdateHabit={() => {}}
       />,
     );
+    expandEditRegion(testRenderer);
 
     // Walking up the tree from a body element must not hit ``onPress === onClose``.
     const display = testRenderer.root.findByProps({ testID: 'goal-target-display-low' });
@@ -358,5 +380,81 @@ describe('GoalModal backdrop close', () => {
     }
 
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('GoalModal edit toggle', () => {
+  // The modal opens collapsed so the primary action (logging units) stays
+  // one tap away; only the pencil reveals the goal editor surface.
+  it('hides the goal editor and progress bar by default', () => {
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={() => {}}
+        onUpdateGoal={() => {}}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    expect(() => testRenderer.root.findByProps({ testID: 'goal-modal-edit-region' })).toThrow();
+    expect(() => testRenderer.root.findByProps({ testID: 'goal-target-editor' })).toThrow();
+    expect(() => testRenderer.root.findByProps({ testID: 'modal-progress-fill' })).toThrow();
+  });
+
+  it('renders Log Units controls in both collapsed and expanded states', () => {
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={() => {}}
+        onUpdateGoal={() => {}}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    // Collapsed: the Log Units controls are the deliberate primary affordance.
+    expect(testRenderer.root.findByProps({ testID: 'goal-modal-log-unit-section' })).toBeTruthy();
+
+    expandEditRegion(testRenderer);
+
+    expect(testRenderer.root.findByProps({ testID: 'goal-modal-log-unit-section' })).toBeTruthy();
+  });
+
+  it('toggles the goal editor visibility when the pencil/checkmark is pressed', () => {
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={() => {}}
+        onUpdateGoal={() => {}}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+
+    const toggle = testRenderer.root.findByProps({ testID: 'goal-modal-edit-toggle' });
+    // First press: pencil → checkmark, editor mounts.
+    expect(toggle.props.accessibilityState).toEqual({ expanded: false });
+    renderer.act(() => {
+      toggle.props.onPress();
+    });
+    expect(testRenderer.root.findByProps({ testID: 'goal-modal-edit-region' })).toBeTruthy();
+    expect(testRenderer.root.findByProps({ testID: 'goal-target-editor' })).toBeTruthy();
+    expect(
+      testRenderer.root.findByProps({ testID: 'goal-modal-edit-toggle' }).props.accessibilityState,
+    ).toEqual({ expanded: true });
+
+    // Second press: checkmark → pencil, editor unmounts.
+    renderer.act(() => {
+      testRenderer.root.findByProps({ testID: 'goal-modal-edit-toggle' }).props.onPress();
+    });
+    expect(() => testRenderer.root.findByProps({ testID: 'goal-modal-edit-region' })).toThrow();
+    expect(() => testRenderer.root.findByProps({ testID: 'goal-target-editor' })).toThrow();
+    expect(
+      testRenderer.root.findByProps({ testID: 'goal-modal-edit-toggle' }).props.accessibilityState,
+    ).toEqual({ expanded: false });
   });
 });

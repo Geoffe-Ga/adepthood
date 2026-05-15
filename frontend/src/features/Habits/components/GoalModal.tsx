@@ -1,3 +1,4 @@
+import { Check, Pencil } from 'lucide-react-native';
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Alert,
@@ -22,7 +23,7 @@ import EmojiSelector from 'react-native-emoji-selector';
 
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
 import { useAuth } from '../../../context/AuthContext';
-import { colors, SPACING, STAGE_COLORS, shadows } from '../../../design/tokens';
+import { colors, SPACING, STAGE_COLORS, shadows, touchTarget } from '../../../design/tokens';
 import { TARGET_UNITS, FREQUENCY_UNITS } from '../constants';
 import styles from '../Habits.styles';
 import type { GoalModalProps, Goal } from '../Habits.types';
@@ -329,7 +330,7 @@ interface LogUnitSectionProps {
 }
 
 const LogUnitSection = ({ logAmount, setLogAmount, onLog }: LogUnitSectionProps) => (
-  <View style={styles.actionButtons}>
+  <View style={styles.actionButtons} testID="goal-modal-log-unit-section">
     <View style={styles.logUnitContainer}>
       <TextInput
         style={styles.logUnitInput}
@@ -1005,6 +1006,30 @@ const useGoalMarkers = (
   };
 };
 
+const EDIT_TOGGLE_ICON_SIZE = 22;
+
+interface EditToggleButtonProps {
+  isEditing: boolean;
+  onToggle: () => void;
+}
+
+const EditToggleButton = ({ isEditing, onToggle }: EditToggleButtonProps) => (
+  <TouchableOpacity
+    testID="goal-modal-edit-toggle"
+    accessibilityRole="button"
+    accessibilityLabel={isEditing ? 'Save and close edit mode' : 'Edit habit goals'}
+    accessibilityState={{ expanded: isEditing }}
+    onPress={onToggle}
+    style={editToggleStyles.button}
+  >
+    {isEditing ? (
+      <Check size={EDIT_TOGGLE_ICON_SIZE} color={colors.text.secondary} />
+    ) : (
+      <Pencil size={EDIT_TOGGLE_ICON_SIZE} color={colors.text.secondary} />
+    )}
+  </TouchableOpacity>
+);
+
 interface GoalModalHeaderProps {
   habit: NonNullable<GoalModalProps['habit']>;
   goalGroup: ApiGoalGroup | null;
@@ -1012,6 +1037,8 @@ interface GoalModalHeaderProps {
   setShowEmojiSelector: (_v: boolean) => void;
   onClose: () => void;
   onUpdateHabit: GoalModalProps['onUpdateHabit'];
+  isEditing: boolean;
+  onToggleEdit: () => void;
 }
 
 const GoalModalHeader = ({
@@ -1021,10 +1048,13 @@ const GoalModalHeader = ({
   setShowEmojiSelector,
   onClose,
   onUpdateHabit,
+  isEditing,
+  onToggleEdit,
 }: GoalModalHeaderProps) => (
   <>
     <View style={styles.modalHeader}>
       <Text style={styles.modalTitle}>{habit.name}</Text>
+      <EditToggleButton isEditing={isEditing} onToggle={onToggleEdit} />
       <TouchableOpacity onPress={() => setShowEmojiSelector(true)}>
         <Text style={styles.iconLarge}>{habit.icon}</Text>
       </TouchableOpacity>
@@ -1109,6 +1139,12 @@ const GoalModalBody = ({
 }: GoalModalBodyProps) => {
   const [logAmount, setLogAmount] = useState('1');
   const [showEmojiSelector, setShowEmojiSelector] = useState(false);
+  // Inline edit mode is collapsed by default so the modal opens as a quick
+  // log-units affordance; tapping the pencil expands the goal editor for
+  // intentional changes, and the checkmark collapses it back. Per-field
+  // commits inside the editor already persist optimistically, so the
+  // checkmark only needs to flip the local view state.
+  const [isEditing, setIsEditing] = useState(false);
   const goalGroup = useGoalGroup(habit);
   const m = useGoalMarkers(habit, onUpdateGoal);
   const { userTimezone } = useAuth();
@@ -1128,9 +1164,15 @@ const GoalModalBody = ({
         setShowEmojiSelector={setShowEmojiSelector}
         onClose={onClose}
         onUpdateHabit={onUpdateHabit}
+        isEditing={isEditing}
+        onToggleEdit={() => setIsEditing((prev) => !prev)}
       />
-      <GoalProgressBar {...buildProgressBarProps(habit, m, userTimezone)} />
-      <GoalTargetEditor habit={habit} onUpdateGoal={onUpdateGoal} />
+      {isEditing && (
+        <View testID="goal-modal-edit-region">
+          <GoalProgressBar {...buildProgressBarProps(habit, m, userTimezone)} />
+          <GoalTargetEditor habit={habit} onUpdateGoal={onUpdateGoal} />
+        </View>
+      )}
       <LogUnitSection logAmount={logAmount} setLogAmount={setLogAmount} onLog={handleLogUnit} />
     </View>
   );
@@ -1182,6 +1224,16 @@ const goalGroupBadgeStyles = StyleSheet.create({
     fontSize: 12,
     color: '#555',
     fontStyle: 'italic',
+  },
+});
+
+const editToggleStyles = StyleSheet.create({
+  button: {
+    minWidth: touchTarget.minimum,
+    minHeight: touchTarget.minimum,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: SPACING.xs,
   },
 });
 

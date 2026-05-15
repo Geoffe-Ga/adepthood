@@ -49,6 +49,12 @@ const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   ...overrides,
 });
 
+/**
+ * Render the modal and immediately expand the inline edit region. The
+ * pencil/checkmark toggle defaults to collapsed, but every test below
+ * targets the goal editor surface — so opening edit mode is a fixture
+ * concern, not part of the behaviour under test.
+ */
 const renderModal = (
   habit: Habit | null = makeHabit(),
   overrides: Partial<React.ComponentProps<typeof GoalModal>> = {},
@@ -62,7 +68,10 @@ const renderModal = (
     onUpdateHabit: jest.fn(),
     ...overrides,
   };
-  return { ...render(<GoalModal {...props} />), props };
+  const utils = render(<GoalModal {...props} />);
+  const toggle = utils.queryByTestId('goal-modal-edit-toggle');
+  if (toggle) fireEvent.press(toggle);
+  return { ...utils, props };
 };
 
 describe('GoalModal goal-target editor', () => {
