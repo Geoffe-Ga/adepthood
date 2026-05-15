@@ -308,9 +308,14 @@ async def test_customize_rejects_oversize_mode_config_override(
     )
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
     body = resp.json()
-    # The message must clearly identify the size cap so an operator can act.
+    # The message must clearly identify the SIZE guard — not a structural
+    # error from the discriminated union or any other validator that happens
+    # to mention "size". The literal "too large" is what
+    # ``_validate_override_size`` emits and only what that guard emits, so a
+    # regression that re-orders validators or removes the size cap fails
+    # this assertion immediately.
     flattened = repr(body).lower()
-    assert "too large" in flattened or "max_length" in flattened or "size" in flattened
+    assert "too large" in flattened
 
 
 @pytest.mark.asyncio
