@@ -31,6 +31,11 @@ down_revision: Union[str, Sequence[str], None] = "b9c0d1e2f3a4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+# Opt-out marker for the migration round-trip-pattern test (P1-6).
+# This migration only emits log records — there is no schema or data change
+# to reverse. The downgrade is intentionally a no-op.
+ALEMBIC_INTENTIONAL_EMPTY_DOWNGRADE = True
+
 
 _logger = logging.getLogger("alembic.runtime.migration")
 

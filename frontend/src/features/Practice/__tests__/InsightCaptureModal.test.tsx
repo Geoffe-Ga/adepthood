@@ -142,7 +142,11 @@ describe('InsightCaptureModal', () => {
     expect(onSkip).toHaveBeenCalledTimes(1);
   });
 
-  it('exposes the hard cap constant matching the backend column max_length', () => {
+  it('pins the hard cap constant to the cross-system value (2000 chars)', () => {
+    // Cross-system contract: the backend mirror is asserted in
+    // ``backend/tests/test_openapi_insight_cap_contract.py``.  Together the
+    // two tests bracket the contract — bumping the cap on one side without
+    // the other will fail the corresponding test before merge.
     expect(PRACTICE_INSIGHT_HARD_CAP).toBe(2_000);
   });
 
