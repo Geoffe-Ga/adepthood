@@ -145,32 +145,43 @@ jobs:
           uv pip install --system -r backend/requirements-lock.txt
           uv pip install --system -r backend/requirements-dev.txt
 
-      - name: Upgrade, downgrade, re-upgrade (round-trip)
+      - name: Upgrade, downgrade, re-upgrade (round-trip, branch 0)
         working-directory: backend
         run: |
+          # ``alembic downgrade -1`` is ambiguous when the head is a merge
+          # migration (``down_revision`` is a tuple of prior heads), so the
+          # branch is resolved explicitly. ``--branch 0`` selects the first
+          # parent — for ``c5ed9dd1dabc`` that's the ritual-03 head.
           alembic upgrade head
-          # "alembic downgrade -1" is ambiguous when the head is a merge
-          # migration (down_revision is a tuple of two prior heads), so we
-          # resolve the previous revision explicitly via the script
-          # directory.  Falls back to "-1" for linear chains and for the
-          # transient multi-head state (where get_current_head returns
-          # None) so the error message stays clear.
-          prev=$(python -c "
-          from alembic.config import Config
-          from alembic.script import ScriptDirectory
-          sd = ScriptDirectory.from_config(Config('alembic.ini'))
-          head = sd.get_current_head()
-          if head is None:
-              print('-1')
-          else:
-              rev = sd.get_revision(head)
-              parent = rev.down_revision
-              if isinstance(parent, tuple):
-                  parent = parent[0]
-              print(parent or '-1')
-          ")
+          prev=$(python -m scripts.resolve_prev_revision alembic.ini --branch 0)
           alembic downgrade "$prev"
           alembic upgrade head
+
+      - name: Downgrade through merge-head branch 1, then re-upgrade
+        working-directory: backend
+        run: |
+          # Same round-trip, but through the *other* parent of the merge
+          # head. Without this step, an ``alembic downgrade`` bug along the
+          # ritual-04 → soft-delete → chat-spend chain ships undetected.
+          # The script exits 2 (and only 2) when branch 1 doesn't exist on
+          # the current head; any other non-zero exit is an unexpected
+          # failure and must propagate. This distinction is why stderr is
+          # NOT swallowed — a real ImportError / file-not-found / decode
+          # error here would otherwise be masked.
+          alembic upgrade head
+          set +e
+          prev=$(python -m scripts.resolve_prev_revision alembic.ini --branch 1)
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            alembic downgrade "$prev"
+            alembic upgrade head
+          elif [ "$rc" -eq 2 ]; then
+            echo "Head is not a merge migration; skipping branch-1 round-trip."
+          else
+            echo "::error::resolve_prev_revision failed with exit code $rc"
+            exit "$rc"
+          fi
 
       - name: Detect migration drift (models vs. migrations)
         working-directory: backend
