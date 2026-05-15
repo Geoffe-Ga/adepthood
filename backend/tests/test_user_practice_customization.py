@@ -311,9 +311,9 @@ async def test_customize_rejects_oversize_mode_config_override(
     # The message must clearly identify the SIZE guard — not a structural
     # error from the discriminated union or any other validator that happens
     # to mention "size". The literal "too large" is what
-    # ``_validate_override_size`` emits and only what that guard emits, so a
-    # regression that re-orders validators or removes the size cap fails
-    # this assertion immediately.
+    # ``UserPracticeCustomize._cap_override_size`` emits and only what that
+    # guard emits, so a regression that re-orders validators or removes the
+    # size cap fails this assertion immediately.
     flattened = repr(body).lower()
     assert "too large" in flattened
 

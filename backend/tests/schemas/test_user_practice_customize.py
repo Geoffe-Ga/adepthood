@@ -53,6 +53,10 @@ def _padded_to_exact_wire_size(target_bytes: int) -> dict[str, object]:
 def test_override_under_cap_passes() -> None:
     """A small override is accepted by the size guard (schema layer)."""
     payload = _padded(100)
+    # ASCII-only pad — ``ensure_ascii=True`` (the json.dumps default used
+    # here) and ``ensure_ascii=False`` (used by the validator) produce
+    # identical byte counts for this payload, so the size assertion is
+    # equivalent. The dedicated CJK test below covers the divergent case.
     assert len(json.dumps(payload).encode("utf-8")) < MODE_CONFIG_OVERRIDE_MAX_BYTES
     model = UserPracticeCustomize.model_validate({"mode_config_override": payload})
     assert model.mode_config_override == payload
@@ -61,6 +65,7 @@ def test_override_under_cap_passes() -> None:
 def test_override_just_over_cap_fails_with_size_message() -> None:
     """A payload past the cap fires the size validator with an actionable message."""
     payload = _padded(MODE_CONFIG_OVERRIDE_MAX_BYTES + 100)
+    # ASCII-only pad — see note in ``test_override_under_cap_passes``.
     assert len(json.dumps(payload).encode("utf-8")) > MODE_CONFIG_OVERRIDE_MAX_BYTES
 
     with pytest.raises(ValidationError) as exc:
