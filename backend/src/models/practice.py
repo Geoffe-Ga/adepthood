@@ -1,6 +1,6 @@
 from typing import Any
 
-from sqlalchemy import JSON, CheckConstraint, Column
+from sqlalchemy import JSON, CheckConstraint, Column, Index, func, text
 from sqlmodel import Field, SQLModel
 
 from domain.practice_modes import ALL_MODES, PracticeMode
@@ -17,10 +17,28 @@ def _mode_check_constraint() -> CheckConstraint:
     return CheckConstraint(f"mode IN ({quoted})", name="ck_practice_mode_valid")
 
 
+def _preset_unique_index() -> Index:
+    """Partial functional unique index on ``(stage_number, lower(trim(name)))``.
+
+    Scoped to presets via ``submitted_by_user_id IS NULL`` so a user-submitted
+    practice can still share a name with the preset (or with another user
+    submission). Closes the seeder race that two-pod rolling restarts could
+    otherwise produce — see migration ``d2e3f4a5b6c7``.
+    """
+    return Index(
+        "ix_practice_preset_stage_lower_name_unique",
+        "stage_number",
+        func.lower(func.trim(text("name"))),
+        unique=True,
+        postgresql_where=text("submitted_by_user_id IS NULL"),
+        sqlite_where=text("submitted_by_user_id IS NULL"),
+    )
+
+
 class Practice(SQLModel, table=True):
     """Defines a single practice users can perform."""
 
-    __table_args__ = (_mode_check_constraint(),)
+    __table_args__ = (_mode_check_constraint(), _preset_unique_index())
 
     id: int | None = Field(default=None, primary_key=True)
     stage_number: int

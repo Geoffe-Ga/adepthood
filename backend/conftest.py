@@ -69,6 +69,12 @@ _SQLITE_ALWAYS_INDEXES: tuple[str, ...] = (
     # ``lower()`` / ``trim()`` in functional indexes natively.
     'CREATE UNIQUE INDEX IF NOT EXISTS "ix_habit_user_lower_name_unique_test" '
     "ON habit (user_id, lower(trim(name)))",
+    # practice presets: one preset row per (stage_number, normalized name).
+    # Closes the seeder-race duplication noted in PR fixing the
+    # 5-4-3-2-1 duplicate. Mirrors production migration ``d2e3f4a5b6c7``;
+    # user-submitted practices are exempt via the partial ``WHERE`` clause.
+    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_practice_preset_stage_lower_name_unique_test" '
+    "ON practice (stage_number, lower(trim(name))) WHERE submitted_by_user_id IS NULL",
 )
 
 # Concurrency-only indexes: the regular ``db_session`` fixture deliberately
