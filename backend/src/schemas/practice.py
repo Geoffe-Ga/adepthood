@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Self
 
@@ -21,7 +22,45 @@ PRACTICE_NAME_MAX_LENGTH = 255
 PRACTICE_DESCRIPTION_MAX_LENGTH = 2_000
 PRACTICE_INSTRUCTIONS_MAX_LENGTH = 10_000
 PRACTICE_REFLECTION_MAX_LENGTH = 5_000
+# Cross-system contract: frontend mirror lives at
+# ``frontend/src/features/Practice/components/InsightCaptureModal.tsx``
+# (``PRACTICE_INSIGHT_HARD_CAP``). The OpenAPI schema's ``maxLength`` on
+# ``PracticeSessionCreate.insight`` is what the frontend should authoritatively
+# read; the explicit cross-check is in
+# ``tests/test_openapi_insight_cap_contract.py``.
 PRACTICE_INSIGHT_MAX_LENGTH = 2_000
+# 8 KiB is comfortably above the largest legitimate ModeConfig
+# (sense_grounding with a 5-prompt list weighs ~400 bytes after JSON
+# encoding) while keeping a single PATCH request bounded so a malicious
+# client cannot dump megabytes into the ``mode_config_override`` JSON
+# column. The cap is enforced via the JSON-encoded byte length so a
+# payload that arrives nested-but-empty still passes; only the wire
+# size counts.
+MODE_CONFIG_OVERRIDE_MAX_BYTES = 8 * 1_024
+
+
+def _validate_override_size(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Reject override payloads larger than ``MODE_CONFIG_OVERRIDE_MAX_BYTES``.
+
+    Pydantic's discriminated union runs after this check, so the message the
+    client sees identifies the size problem explicitly rather than a noisy
+    structural-validation diff over the bloated payload.
+    """
+    if value is None:
+        return None
+    # ``ensure_ascii=False`` so multibyte characters count by their wire size,
+    # not their escaped ASCII length — a 1 KB Chinese-character payload should
+    # measure as ~3 KB, not ~10 KB (otherwise a legitimate i18n override
+    # could trip the cap).
+    size = len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+    if size > MODE_CONFIG_OVERRIDE_MAX_BYTES:
+        msg = (
+            f"mode_config_override is too large ({size} bytes); "
+            f"must be at most {MODE_CONFIG_OVERRIDE_MAX_BYTES} bytes"
+        )
+        raise ValueError(msg)
+    return value
+
 
 MAX_DURATION_MINUTES = 24 * 60
 
@@ -220,6 +259,12 @@ class UserPracticeCustomize(BaseModel):
         max_length=PRACTICE_NAME_MAX_LENGTH,
     )
     mode_config_override: dict[str, Any] | None = None
+
+    @field_validator("mode_config_override")
+    @classmethod
+    def _cap_override_size(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Reject oversize override payloads — see ``_validate_override_size``."""
+        return _validate_override_size(value)
 
     @field_validator("custom_name")
     @classmethod

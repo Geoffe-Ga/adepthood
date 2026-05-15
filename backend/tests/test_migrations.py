@@ -10,6 +10,7 @@ CI wakes up.
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 from typing import Any
@@ -74,6 +75,119 @@ def test_both_directions_exist(direction: str) -> None:
             continue
         body = path.read_text()
         assert f"def {direction}" in body, f"{path.name} missing {direction}()"
+
+
+def _migration_files() -> list[Path]:
+    return sorted(p for p in MIGRATIONS_DIR.glob("*.py") if not p.name.startswith("_"))
+
+
+def _is_trivial_body(body: list[ast.stmt]) -> bool:
+    """Return True if a function body is only a docstring (or empty / pass).
+
+    A migration whose ``downgrade`` is just a docstring carries no rollback
+    logic — for a real schema migration that's the same class of bug
+    BUG-INFRA-022 caught. The exception is no-op merge migrations whose
+    ``downgrade`` is intentionally empty (the prior heads remain applied
+    after the merge); we whitelist them by filename via ``_is_no_op_merge``.
+    """
+    if not body:
+        return True
+    if len(body) == 1:
+        only = body[0]
+        if isinstance(only, ast.Pass):
+            return True
+        if (
+            isinstance(only, ast.Expr)
+            and isinstance(only.value, ast.Constant)
+            and isinstance(only.value.value, str)
+        ):
+            # Sole docstring.
+            return True
+    # A body containing a docstring + ``pass`` is still trivial.
+    return (
+        len(body) == 2
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+        and isinstance(body[1], ast.Pass)
+    )
+
+
+def _is_no_op_merge(path: Path) -> bool:
+    """Identify a no-op merge migration by Alembic's filename convention.
+
+    ``alembic merge -m '...'`` emits files named ``<rev>_merge_*.py``. Such
+    migrations exist solely to unify multiple heads and ship empty
+    ``upgrade``/``downgrade`` bodies — that's the intended contract, not a
+    placeholder gap.
+    """
+    return "_merge_" in path.name
+
+
+def _has_intentional_empty_downgrade_marker(tree: ast.Module) -> bool:
+    """Return True if the migration module declares ``ALEMBIC_INTENTIONAL_EMPTY_DOWNGRADE = True``.
+
+    Read-only audit migrations and other no-op data migrations set this
+    marker so the round-trip-pattern test recognises the empty downgrade
+    as intentional. Writing the assignment explicitly forces a deliberate
+    act when authoring such a migration.
+    """
+    for node in tree.body:
+        if not isinstance(node, ast.Assign | ast.AnnAssign):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if (
+                isinstance(target, ast.Name)
+                and target.id == "ALEMBIC_INTENTIONAL_EMPTY_DOWNGRADE"
+                and isinstance(node.value, ast.Constant)
+                and node.value.value is True
+            ):
+                return True
+    return False
+
+
+@pytest.mark.parametrize("migration", _migration_files(), ids=lambda p: p.name)
+def test_downgrade_is_non_trivial_unless_no_op_merge(migration: Path) -> None:
+    """Codifies the migration round-trip pattern flagged in the ritual-practice grooming.
+
+    Every non-merge migration must have a downgrade body that actually
+    rewinds the upgrade. A stub like ``def downgrade(): pass`` or
+    ``def downgrade(): \"\"\"TODO\"\"\"`` is rejected here, so a regression
+    that ships an unreversible migration fails at unit-test speed instead
+    of waiting for the migration-drift CI job (which only catches it via
+    Postgres round-trip and only for the branch CI happens to traverse).
+    """
+    tree = ast.parse(migration.read_text())
+    downgrade = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == "downgrade"
+        ),
+        None,
+    )
+    assert downgrade is not None, f"{migration.name}: no ``downgrade`` function defined"
+    trivial = _is_trivial_body(downgrade.body)
+    if _is_no_op_merge(migration):
+        # Merge migrations MUST be trivial; an op call here would be unexpected.
+        assert trivial, (
+            f"{migration.name}: merge migrations are expected to have an empty downgrade; "
+            "if this one really needs to roll back schema, rename it off the ``_merge_`` "
+            "convention so the contract test recognises it as a regular migration."
+        )
+        return
+    if _has_intentional_empty_downgrade_marker(tree):
+        # A read-only audit or other no-op data migration that explicitly
+        # opts out. The marker assignment is the deliberate "I meant this".
+        return
+    assert not trivial, (
+        f"{migration.name}: downgrade body is empty / docstring-only / ``pass``. "
+        "Every non-merge migration must actually reverse its upgrade — this is the "
+        "round-trip contract from BUG-INFRA-022 + ritual-practice backlog P1-6. "
+        "If this migration is genuinely a no-op (e.g. read-only data audit), add "
+        "``ALEMBIC_INTENTIONAL_EMPTY_DOWNGRADE = True`` at module level."
+    )
 
 
 @pytest.fixture

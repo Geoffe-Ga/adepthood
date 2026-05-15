@@ -41,7 +41,17 @@ import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 
 /** Soft cap — the modal nudges the user toward a single sentence past this. */
 export const PRACTICE_INSIGHT_SOFT_CAP = 200;
-/** Hard cap — matches `backend.src.schemas.practice.PRACTICE_INSIGHT_MAX_LENGTH`. */
+/**
+ * Hard cap — mirrors `backend.src.schemas.practice.PRACTICE_INSIGHT_MAX_LENGTH`.
+ *
+ * The contract is pinned end-to-end:
+ * - This value is asserted to be `2_000` in
+ *   `__tests__/InsightCaptureModal.test.tsx` (frontend mirror).
+ * - The backend constant, the Pydantic field's `max_length`, and the
+ *   FastAPI-generated OpenAPI schema's `maxLength` for the `insight`
+ *   field are all pinned in `backend/tests/test_openapi_insight_cap_contract.py`.
+ * Drift on either side fires before merge.
+ */
 export const PRACTICE_INSIGHT_HARD_CAP = 2_000;
 
 export interface InsightCaptureModalProps {

@@ -282,6 +282,38 @@ async def test_customize_rejects_invalid_mode_config(
 
 
 @pytest.mark.asyncio
+async def test_customize_rejects_oversize_mode_config_override(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An override payload past the size cap is rejected at the schema layer.
+
+    Mitigates payload bloat / DoS via the unbounded JSON column noted in the
+    ritual-practice backlog. The cap is generous (8 KiB after JSON encoding)
+    so any legitimate ModeConfig — even with the worst-case
+    sense_grounding prompt list — fits comfortably.
+    """
+    headers, user_id = await _signup(async_client)
+    practice = await _seed_practice(db_session)
+    up_id = await _create_user_practice(async_client, db_session, headers, user_id, practice)
+
+    # ~10 KiB payload: the dict has a single oversized junk key. The Pydantic
+    # discriminated union would reject this on shape, but the size cap fires
+    # first so we get a 413/422 with a clear "too large" message rather than
+    # a noisy validation diff.
+    huge_override = {**_timer_cfg(10), "_junk": "x" * 10_000}
+    resp = await async_client.patch(
+        f"/user-practices/{up_id}/customize",
+        json={"mode_config_override": huge_override},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    body = resp.json()
+    # The message must clearly identify the size cap so an operator can act.
+    flattened = repr(body).lower()
+    assert "too large" in flattened or "max_length" in flattened or "size" in flattened
+
+
+@pytest.mark.asyncio
 async def test_customize_403_on_other_user(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
