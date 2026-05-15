@@ -15,7 +15,11 @@ multi-head state) to stdout so a shell can capture it via ``$(...)``.
 
 Exit codes:
     0 — resolved a revision (or fell back to ``-1`` for an empty / multi-head graph).
-    Non-zero — invalid arguments or branch index out of range.
+    2 — requested ``--branch`` index does not exist (e.g. branch 1 on a linear
+        head). The CI workflow treats this as "expected skip — no branch here"
+        and distinguishes it from any other non-zero exit which signals an
+        unexpected script failure.
+    1 — argparse usage error (set by argparse).
 """
 
 from __future__ import annotations
@@ -69,6 +73,13 @@ def resolve_prev_revision(alembic_ini: Path, *, branch: int = 0) -> str:
                 f"{len(parent)} parents: {parent!r}"
             )
         return parent[branch]
+    if branch > 0:
+        # Linear head (single string parent) but caller asked for branch N>0.
+        # CI uses this signal to "expected-skip" branch-1 round-trips when the
+        # current head isn't a merge migration.
+        raise IndexError(
+            f"branch index {branch} requested but head has a single linear parent: {parent!r}"
+        )
     return parent
 
 
@@ -89,7 +100,15 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
-    sys.stdout.write(resolve_prev_revision(args.alembic_ini, branch=args.branch) + "\n")
+    try:
+        revision = resolve_prev_revision(args.alembic_ini, branch=args.branch)
+    except IndexError as exc:
+        # "Expected skip" path — exit 2 so CI can tell this apart from an
+        # unexpected failure (which would exit non-zero with stderr noise
+        # the workflow has no business silently swallowing).
+        sys.stderr.write(f"{exc}\n")
+        return 2
+    sys.stdout.write(revision + "\n")
     return 0
 
 

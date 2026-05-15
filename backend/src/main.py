@@ -246,10 +246,12 @@ async def _seed_startup_data(session: AsyncSession) -> None:
     like ``stage_number`` or ``(stage_number, name)``), so repeated calls
     are no-ops once steady state is reached.
     """
+    # Each seeder commits its own inserts before returning, so this function
+    # does not need a trailing commit; the dependency-order contract above is
+    # what callers rely on.
     await seed_stages(session)
     await seed_practices(session)
     await seed_content(session)
-    await session.commit()
 
 
 @asynccontextmanager
@@ -277,9 +279,7 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
             async with async_session_factory() as session:
                 await _seed_startup_data(session)
         except Exception:
-            logging.getLogger(__name__).exception(
-                "startup seed failed; continuing without seeded catalog"
-            )
+            logger.exception("startup seed failed; continuing without seeded catalog")
 
     yield
 

@@ -163,16 +163,24 @@ jobs:
           # Same round-trip, but through the *other* parent of the merge
           # head. Without this step, an ``alembic downgrade`` bug along the
           # ritual-04 → soft-delete → chat-spend chain ships undetected.
-          # ``|| true`` on the script call lets this step skip itself
-          # gracefully when the head isn't a merge (branch 1 returns
-          # IndexError → non-zero exit). When it is a merge, the step
-          # exercises the second parent.
+          # The script exits 2 (and only 2) when branch 1 doesn't exist on
+          # the current head; any other non-zero exit is an unexpected
+          # failure and must propagate. This distinction is why stderr is
+          # NOT swallowed — a real ImportError / file-not-found / decode
+          # error here would otherwise be masked.
           alembic upgrade head
-          if prev=$(python -m scripts.resolve_prev_revision alembic.ini --branch 1 2>/dev/null); then
+          set +e
+          prev=$(python -m scripts.resolve_prev_revision alembic.ini --branch 1)
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
             alembic downgrade "$prev"
             alembic upgrade head
-          else
+          elif [ "$rc" -eq 2 ]; then
             echo "Head is not a merge migration; skipping branch-1 round-trip."
+          else
+            echo "::error::resolve_prev_revision failed with exit code $rc"
+            exit "$rc"
           fi
 
       - name: Detect migration drift (models vs. migrations)

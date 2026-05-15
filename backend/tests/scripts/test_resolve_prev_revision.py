@@ -120,6 +120,36 @@ def test_branch_index_out_of_range_raises(merge_chain: Path) -> None:
         resolve_prev_revision(merge_chain / "alembic.ini", branch=5)
 
 
+def test_cli_returns_exit_code_2_for_out_of_range_branch(
+    merge_chain: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--branch`` past the last parent is the "not a merge head along this axis" signal.
+
+    The CI workflow distinguishes exit code 2 ("expected skip") from any other
+    non-zero exit ("unexpected failure") so stderr suppression doesn't hide
+    real script breakage.
+    """
+    exit_code = cli([str(merge_chain / "alembic.ini"), "--branch", "5"])
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    # The message goes to stderr so the captured stdout stays a clean empty
+    # string the CI YAML can compare against.
+    assert "branch index 5" in captured.err
+    assert captured.out == ""
+
+
+def test_cli_linear_chain_with_branch_one_returns_exit_code_2(
+    linear_chain: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A linear head with ``--branch 1`` requested is also "expected skip" (exit 2)."""
+    exit_code = cli([str(linear_chain / "alembic.ini"), "--branch", "1"])
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
 def test_transient_multi_head_returns_dash_one(tmp_path: Path) -> None:
     """Forked / unmerged heads fall back to ``-1`` so alembic's own error surfaces."""
     versions = tmp_path / "versions"

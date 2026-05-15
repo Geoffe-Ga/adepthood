@@ -17,10 +17,14 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
+# Direct import rather than a fixture: the lifespan patch needs the engine
+# object itself (so it can wire a session factory at it), not a per-test
+# session yielded from a fixture.
 from conftest import test_engine
 from main import _seed_startup_data, app, lifespan
 from models.course_stage import CourseStage
 from models.practice import Practice
+from models.stage_content import StageContent
 
 
 @asynccontextmanager
@@ -39,17 +43,23 @@ async def _isolated_factory_patch() -> AsyncGenerator[None, None]:
 
 
 @pytest.mark.asyncio
-async def test_seed_startup_data_inserts_stages_and_practices(
+async def test_seed_startup_data_inserts_stages_practices_and_content(
     db_session: AsyncSession,
 ) -> None:
-    """Happy path: a fresh DB ends with 10 stages and 10 presets after one call."""
+    """Happy path: fresh DB ends with all three seeders' rows present after one call."""
     await _seed_startup_data(db_session)
 
     stages = (await db_session.execute(select(CourseStage))).scalars().all()
     practices = (await db_session.execute(select(Practice))).scalars().all()
+    contents = (await db_session.execute(select(StageContent))).scalars().all()
 
     assert len(stages) == 10
     assert len(practices) == 10
+    # ``seed_content`` ships 9 placeholder StageContent rows across stages 1-3;
+    # asserting the count here means a future regression that drops the
+    # content seeder from the lifespan would fail this test, not surface only
+    # in a manual /course/stages/{n}/content smoke check.
+    assert len(contents) == 9
 
 
 @pytest.mark.asyncio
