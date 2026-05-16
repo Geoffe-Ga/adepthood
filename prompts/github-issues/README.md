@@ -196,3 +196,36 @@ Recommended execution order by priority:
 - **~65 issues** across 7 phases
 - Phases 1–5 complete, Phase 6 (Gumroad monetization) and Phase 7 (cleanup) are active
 - Phase 7 is all pure refactoring — no behavior changes, can run in parallel with Phase 6
+
+## Feature Epics (outside the numbered phases)
+
+Feature work that extends the catalog or product surface, not part of the
+refactor roadmap. Each epic owns its own sub-issues and can ship
+independently.
+
+### Generalize grounding techniques
+
+Add **Find Shapes**, **Find Colors**, **Touch Grass**, and **Mindful
+Eating** by extending the mode-discriminated practice engine with two
+new modes (`tallied_grounding`, `mindful_anchor`). Existing
+`sense_grounding` (5-4-3-2-1) is untouched.
+
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| — | [Epic tracker](grounding-techniques-epic.md) | — | — |
+| 01 | [Add `tallied_grounding` mode](grounding-techniques-01-tallied-mode-backend.md) | Backend | ~250 |
+| 02 | [Add `mindful_anchor` mode](grounding-techniques-02-mindful-anchor-mode-backend.md) | Backend | ~200 |
+| 03 | [Seed Find Shapes + Find Colors presets](grounding-techniques-03-presets-shapes-and-colors.md) | Backend | ~100 |
+| 04 | [Seed Touch Grass + Mindful Eating presets](grounding-techniques-04-presets-touch-grass-and-mindful-eating.md) | Backend | ~100 |
+| 05 | [Build `TalliedGroundingView`](grounding-techniques-05-tallied-view-frontend.md) | Frontend | ~250 |
+| 06 | [Build `MindfulAnchorView`](grounding-techniques-06-mindful-anchor-view-frontend.md) | Frontend | ~200 |
+
+Dependency graph:
+
+```
+01 tallied-mode-backend ──┬── 03 tallied-presets
+                          └── 05 tallied-view-frontend
+
+02 mindful-anchor-mode ───┬── 04 mindful-anchor-presets
+                          └── 06 mindful-anchor-view-frontend
+```
