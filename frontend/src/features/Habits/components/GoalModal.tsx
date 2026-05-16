@@ -1139,11 +1139,6 @@ const GoalModalBody = ({
 }: GoalModalBodyProps) => {
   const [logAmount, setLogAmount] = useState('1');
   const [showEmojiSelector, setShowEmojiSelector] = useState(false);
-  // Inline edit mode is collapsed by default so the modal opens as a quick
-  // log-units affordance; tapping the pencil expands the goal editor for
-  // intentional changes, and the checkmark collapses it back. Per-field
-  // commits inside the editor already persist optimistically, so the
-  // checkmark only needs to flip the local view state.
   const [isEditing, setIsEditing] = useState(false);
   const goalGroup = useGoalGroup(habit);
   const m = useGoalMarkers(habit, onUpdateGoal);

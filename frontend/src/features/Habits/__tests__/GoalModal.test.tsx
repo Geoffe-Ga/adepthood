@@ -59,12 +59,6 @@ const sampleHabit: Habit = {
   completions: [],
 };
 
-/**
- * Expand the inline edit region. The modal opens collapsed by default —
- * only the title row and the Log Units bar are mounted — so any test that
- * pokes the goal target editor or the progress markers needs to flip the
- * pencil to a checkmark first.
- */
 const expandEditRegion = (testRenderer: ReturnType<typeof renderer.create>): void => {
   const toggle = testRenderer.root.findByProps({ testID: 'goal-modal-edit-toggle' });
   renderer.act(() => {
@@ -386,7 +380,7 @@ describe('GoalModal backdrop close', () => {
 describe('GoalModal edit toggle', () => {
   // The modal opens collapsed so the primary action (logging units) stays
   // one tap away; only the pencil reveals the goal editor surface.
-  it('hides the goal editor and progress bar by default', () => {
+  it('renders the header toggle and Log Units while hiding the editor by default', () => {
     const testRenderer = renderer.create(
       <GoalModal
         visible
@@ -397,6 +391,10 @@ describe('GoalModal edit toggle', () => {
         onUpdateHabit={() => {}}
       />,
     );
+
+    const toggle = testRenderer.root.findByProps({ testID: 'goal-modal-edit-toggle' });
+    expect(toggle.props.accessibilityState).toEqual({ expanded: false });
+    expect(testRenderer.root.findByProps({ testID: 'goal-modal-log-unit-section' })).toBeTruthy();
 
     expect(() => testRenderer.root.findByProps({ testID: 'goal-modal-edit-region' })).toThrow();
     expect(() => testRenderer.root.findByProps({ testID: 'goal-target-editor' })).toThrow();

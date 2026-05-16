@@ -49,12 +49,6 @@ const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   ...overrides,
 });
 
-/**
- * Render the modal and immediately expand the inline edit region. The
- * pencil/checkmark toggle defaults to collapsed, but every test below
- * targets the goal editor surface — so opening edit mode is a fixture
- * concern, not part of the behaviour under test.
- */
 const renderModal = (
   habit: Habit | null = makeHabit(),
   overrides: Partial<React.ComponentProps<typeof GoalModal>> = {},
