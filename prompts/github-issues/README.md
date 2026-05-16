@@ -203,6 +203,21 @@ Feature work that extends the catalog or product surface, not part of the
 refactor roadmap. Each epic owns its own sub-issues and can ship
 independently.
 
+### Customizable practices, catalog browse, and share links
+
+Two new modes (`random_interval_bell`, `card_meditation`) round out the engine to 11; users can browse a global catalog, create custom practices in any mode, assign customs to any stage, and share a practice via private link. Rider-Waite-Smith deck content ships bundled.
+
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| — | [Epic tracker](custom-practices-epic.md) | — | — |
+| 01 | [Add `random_interval_bell` mode](custom-practices-01-random-interval-bell-backend.md) | Backend | ~200 |
+| 02 | [Add `card_meditation` mode](custom-practices-02-card-meditation-backend.md) | Backend | ~250 |
+| 03 | [Practice share-link feature](custom-practices-03-share-link-feature.md) | Full-stack | ~400 |
+| 04 | [Ship RWS deck content + asset folder](custom-practices-04-rws-deck-content.md) | Frontend | ~200 |
+| 05 | [Build `RandomIntervalBellView` + form](custom-practices-05-random-interval-bell-frontend.md) | Frontend | ~250 |
+| 06 | [Build `CardMeditationView` + image picker](custom-practices-06-card-meditation-frontend.md) | Frontend | ~350 |
+| 07 | [Catalog browse + Create-custom flow](custom-practices-07-catalog-and-create-flow.md) | Frontend | ~450 |
+
 ### Generalize grounding techniques
 
 Add **Find Shapes**, **Find Colors**, **Touch Grass**, and **Mindful
