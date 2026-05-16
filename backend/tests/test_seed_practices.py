@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -118,9 +120,10 @@ async def test_preset_unique_index_allows_user_submission_with_same_name(
     db_session.add(preset)
     await db_session.commit()
 
-    # Carry a synthetic user id — the bare ``Practice`` model has no FK back
-    # to ``user``, so any non-null integer suffices to fall outside the
-    # partial index's predicate.
+    # Carry a synthetic user id. The model declares a FK to ``user.id`` but
+    # SQLite's FK enforcement is off by default in tests; the relevant
+    # contract here is that any non-null value falls outside the partial
+    # index's ``WHERE submitted_by_user_id IS NULL`` predicate.
     user_submission = Practice(
         **{**PRESET_PRACTICES[0], "submitted_by_user_id": 12_345, "approved": False}
     )
@@ -129,29 +132,55 @@ async def test_preset_unique_index_allows_user_submission_with_same_name(
 
 
 @pytest.mark.asyncio
-async def test_seed_practices_swallows_race_loser_integrity_error(
+async def test_seed_practices_skips_already_seeded_preset(
     db_session: AsyncSession,
 ) -> None:
-    """A peer process committing the preset between our SELECT and COMMIT is benign.
+    """A pre-seeded preset is skipped by the existence-check pre-pass.
 
-    The seeder catches ``IntegrityError``, rolls back, and returns 0 — the
-    work has already been done by the peer. This is the production-race
-    behaviour: rolling restart triggers two concurrent ``lifespan`` runs,
-    one of them wins the insert, the other one's commit raises, both end
-    up with the same correct state.
+    This is the idempotency path the seeder is designed around: if any
+    preset is already in the DB, the SELECT in ``_existing_preset_keys``
+    finds it, ``seed_practices`` doesn't try to insert it, and only the
+    missing rows land.
     """
-    # Simulate the peer's insert landing first by seeding the row directly.
     db_session.add(Practice(**PRESET_PRACTICES[0]))
     await db_session.commit()
 
-    # Now stage a fresh Practice with the same key and call the seeder —
-    # the seeder's pre-check (SELECT existing keys) ought to skip it. We
-    # verify that even if it somehow tries (e.g. someone refactors the
-    # existence check away), the IntegrityError handler returns 0 rather
-    # than crashing startup.
     inserted = await seed_practices(db_session)
-    # The remaining 9 presets are still inserted; only the dupe is skipped.
     assert inserted == _EXPECTED_PRESET_COUNT - 1
+
+
+@pytest.mark.asyncio
+async def test_seed_practices_race_loser_returns_zero(
+    db_session: AsyncSession,
+) -> None:
+    """The actual race-loser path: SELECT misses, COMMIT loses the race.
+
+    Reproduces the production scenario by patching ``_existing_preset_keys``
+    to return an empty set — the seeder then stages every preset for insert,
+    but the row(s) the "race-winner" peer already committed make the unique
+    index fire on commit. ``_commit_or_yield_to_race_winner`` catches the
+    ``IntegrityError``, rolls back, and returns 0.
+
+    This is the only test that actually exercises the ``except IntegrityError``
+    branch — the previous ``test_seed_practices_skips_already_seeded_preset``
+    short-circuits before reaching it via the pre-pass.
+    """
+    # Simulate the race-winner peer's commit landing first.
+    for definition in PRESET_PRACTICES:
+        db_session.add(Practice(**definition))
+    await db_session.commit()
+
+    # Patch the existence check to claim the table is empty so the seeder
+    # actually attempts every insert — the DB unique index is the only
+    # arbiter, just like the production race.
+    with patch("seed_practices._existing_preset_keys", new=AsyncMock(return_value=set())):
+        result = await seed_practices(db_session)
+
+    assert result == 0
+    # The original 10 rows are still the only ones in the DB — no duplicate
+    # leaked past the rollback.
+    rows = (await db_session.execute(select(Practice))).scalars().all()
+    assert len(rows) == _EXPECTED_PRESET_COUNT
 
 
 @pytest.mark.asyncio
