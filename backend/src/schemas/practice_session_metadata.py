@@ -14,13 +14,25 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
-from schemas.practice_mode_config import Sense
+from schemas.practice_mode_config import (
+    TALLIED_CATEGORIES_MAX,
+    TALLIED_ROUNDS_MAX,
+    TALLIED_TARGET_MAX,
+    Sense,
+)
 
 _MAX_REPS = 1_000_000
 _MAX_BPM = 240
 _MIN_BPM = 1
 _MAX_TAROT_INDEX = 21  # 22-card major arcana, zero-indexed.
 _MAX_INTERVALS = 1_000
+# Public ceilings derived from the authoring-side ceilings so the
+# post-session cap can never silently lag a config bump (e.g. raising
+# the categories limit). The cross-module guard in
+# ``test_practice_session_metadata.py`` locks this derivation in case
+# the underlying constants are ever inlined.
+MAX_TALLIED_ROUNDS = TALLIED_ROUNDS_MAX
+MAX_TALLIED_ITEMS = TALLIED_ROUNDS_MAX * TALLIED_CATEGORIES_MAX * TALLIED_TARGET_MAX
 
 
 class _MetadataBase(BaseModel):
@@ -90,6 +102,28 @@ class TarotMetadata(_MetadataBase):
     card_index: int = Field(ge=0, le=_MAX_TAROT_INDEX)
 
 
+class TalliedGroundingMetadata(_MetadataBase):
+    """How many rounds the user finished, plus the total items tallied.
+
+    The cross-field validator rejects ``rounds_completed > total_rounds``;
+    each field individually satisfies its ge/le bounds, mirroring the
+    invariant on :class:`IntervalBellMetadata`.
+    """
+
+    mode: Literal["tallied_grounding"] = "tallied_grounding"
+    rounds_completed: int = Field(ge=0, le=MAX_TALLIED_ROUNDS)
+    total_rounds: int = Field(ge=1, le=MAX_TALLIED_ROUNDS)
+    items_completed: int = Field(ge=0, le=MAX_TALLIED_ITEMS)
+
+    @model_validator(mode="after")
+    def _check_completed_within_total(self) -> Self:
+        """Reject ``rounds_completed > total_rounds``."""
+        if self.rounds_completed > self.total_rounds:
+            msg = "rounds_completed cannot exceed total_rounds"
+            raise ValueError(msg)
+        return self
+
+
 #: Discriminated union over all per-mode session metadata payloads.
 SessionMetadata = Annotated[
     MeditationTimerMetadata
@@ -98,7 +132,8 @@ SessionMetadata = Annotated[
     | IntervalBellMetadata
     | RepCounterMetadata
     | SenseGroundingMetadata
-    | TarotMetadata,
+    | TarotMetadata
+    | TalliedGroundingMetadata,
     Field(discriminator="mode"),
 ]
 

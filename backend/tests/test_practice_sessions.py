@@ -451,6 +451,18 @@ async def _create_typed_user_practice(
             "interval_minutes": 5,
             "bell_tone": "bowl",
         },
+        "sense_grounding": {
+            "mode": "sense_grounding",
+            "prompts": [{"sense": "sight", "label": "Name 5 things you can see"}],
+        },
+        "tallied_grounding": {
+            "mode": "tallied_grounding",
+            "rounds": 3,
+            "categories": [
+                {"key": "shapes", "label": "Find shapes", "target_count": 5},
+                {"key": "colors", "label": "Find colors", "target_count": 4},
+            ],
+        },
     }
     practice = Practice(
         stage_number=stage_number,
@@ -583,6 +595,81 @@ async def test_create_session_rejects_invalid_metadata_payload(
     )
     resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_create_session_rejects_tallied_metadata_on_sense_grounding_practice(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Posting a ``tallied_grounding`` session to a ``sense_grounding`` practice → 400.
+
+    The Pydantic union deserialises the metadata cleanly, but the resolved
+    practice's mode disagrees with the metadata's discriminator — the same
+    contract enforced for every cross-mode mismatch.
+    """
+    headers, _ = await _signup(async_client)
+    up_id, _ = await _create_typed_user_practice(
+        async_client, db_session, headers, mode="sense_grounding"
+    )
+    payload = _session_payload(
+        up_id,
+        mode_metadata={
+            "mode": "tallied_grounding",
+            "rounds_completed": 1,
+            "total_rounds": 3,
+            "items_completed": 5,
+        },
+    )
+    resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.json()["detail"] == "mode_metadata_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_create_session_persists_tallied_grounding_metadata(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A ``tallied_grounding`` session round-trips its metadata through POST.
+
+    Mirrors :func:`test_create_session_persists_interval_bell_metadata` so
+    the new mode gets the same end-to-end coverage: schema dispatch +
+    cross-field validator firing over HTTP.
+    """
+    headers, _ = await _signup(async_client)
+    up_id, _ = await _create_typed_user_practice(
+        async_client, db_session, headers, mode="tallied_grounding"
+    )
+
+    valid = _session_payload(
+        up_id,
+        mode_metadata={
+            "mode": "tallied_grounding",
+            "rounds_completed": 2,
+            "total_rounds": 3,
+            "items_completed": 18,
+        },
+    )
+    resp = await async_client.post("/practice-sessions/", json=valid, headers=headers)
+    assert resp.status_code == HTTPStatus.CREATED
+    assert resp.json()["mode_metadata"] == {
+        "mode": "tallied_grounding",
+        "rounds_completed": 2,
+        "total_rounds": 3,
+        "items_completed": 18,
+    }
+
+    # Cross-field invariant: completing more rounds than total → 422.
+    bad = _session_payload(
+        up_id,
+        mode_metadata={
+            "mode": "tallied_grounding",
+            "rounds_completed": 5,
+            "total_rounds": 3,
+            "items_completed": 18,
+        },
+    )
+    resp_bad = await async_client.post("/practice-sessions/", json=bad, headers=headers)
+    assert resp_bad.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 @pytest.mark.asyncio

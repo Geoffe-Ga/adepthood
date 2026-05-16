@@ -18,6 +18,16 @@ _DURATION_MIN_MINUTES = 0.5
 _DURATION_MAX_MINUTES = 24 * 60
 _PROMPT_LABEL_MAX = 255
 _UNIT_LABEL_MAX = 64
+_TALLIED_KEY_MAX = 64
+_TALLIED_LABEL_MAX = 255
+_TALLIED_KEY_PATTERN = r"^[a-z][a-z0-9_]*$"
+# Public ceilings: imported by ``schemas.practice_session_metadata`` to
+# derive its post-session caps so the two modules cannot silently diverge
+# when these values change. Treat any new ceiling that the metadata
+# module also needs as part of the same public contract.
+TALLIED_TARGET_MAX = 20
+TALLIED_ROUNDS_MAX = 10
+TALLIED_CATEGORIES_MAX = 12
 
 Sense = Literal["sight", "touch", "hearing", "smell", "taste"]
 BellTone = Literal["bowl", "chime", "gong"]
@@ -131,6 +141,47 @@ class SenseGroundingConfig(_ConfigBase):
     prompts: list[SensePrompt] = Field(min_length=1)
 
 
+class TalliedCategory(_ConfigBase):
+    """One category in a tallied-grounding round (e.g. "shapes", "colors")."""
+
+    key: str = Field(
+        min_length=1,
+        max_length=_TALLIED_KEY_MAX,
+        pattern=_TALLIED_KEY_PATTERN,
+        description=(
+            "Snake-case analytics slug matching ``^[a-z][a-z0-9_]*$`` "
+            "(hyphens and uppercase are rejected)."
+        ),
+    )
+    label: str = Field(min_length=1, max_length=_TALLIED_LABEL_MAX)
+    target_count: int = Field(ge=1, le=TALLIED_TARGET_MAX)
+
+
+class TalliedGroundingConfig(_ConfigBase):
+    """Rounds-by-categories-by-target-count shape shared by Find Shapes / Find Colors.
+
+    Each round walks every category in order; the user tallies up to
+    ``target_count`` items per category before advancing. ``key`` is the
+    machine slug used for analytics and translation lookups; ``label`` is
+    the display string.
+    """
+
+    mode: Literal["tallied_grounding"] = "tallied_grounding"
+    rounds: int = Field(ge=1, le=TALLIED_ROUNDS_MAX)
+    categories: list[TalliedCategory] = Field(min_length=1, max_length=TALLIED_CATEGORIES_MAX)
+
+    @model_validator(mode="after")
+    def _check_unique_category_keys(self) -> Self:
+        """Reject duplicate ``key`` values — analytics rely on uniqueness."""
+        seen: set[str] = set()
+        for category in self.categories:
+            if category.key in seen:
+                msg = f"duplicate category key: {category.key!r}"
+                raise ValueError(msg)
+            seen.add(category.key)
+        return self
+
+
 class TarotConfig(_ConfigBase):
     """Meditate on one major-arcana card per day, rotating through 22."""
 
@@ -148,7 +199,8 @@ ModeConfig = Annotated[
     | IntervalBellConfig
     | RepCounterConfig
     | SenseGroundingConfig
-    | TarotConfig,
+    | TarotConfig
+    | TalliedGroundingConfig,
     Field(discriminator="mode"),
 ]
 

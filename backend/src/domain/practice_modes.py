@@ -22,6 +22,7 @@ class PracticeMode(StrEnum):
     REP_COUNTER = "rep_counter"
     SENSE_GROUNDING = "sense_grounding"
     TAROT = "tarot"
+    TALLIED_GROUNDING = "tallied_grounding"
 
 
 #: Ordered tuple of wire values, suitable for CHECK constraints and docs.
