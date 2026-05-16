@@ -288,6 +288,39 @@ async def test_fetch_public_page_works_when_password_unset() -> None:
 
 
 @pytest.mark.asyncio
+async def test_public_page_401_does_not_trigger_reauth() -> None:
+    """A 401 on a public URL must surface as a fetch error, not re-auth.
+
+    ``_requires_auth`` documents the public-page contract; the
+    ``_fetch_and_clean`` retry path must honour it or a misconfigured
+    public page would attempt to authenticate with an empty password
+    and surface ``SquarespaceAuthError`` instead of the real upstream
+    failure.
+    """
+    auth_posts: list[Request] = []
+
+    def handler(request: Request) -> Response:
+        if request.method == "POST":
+            auth_posts.append(request)
+            return Response(200, html="<html><body>OK</body></html>")
+        if request.method == "GET" and request.url.path == "/philosophy":
+            return Response(401, html="<html><body>Forbidden</body></html>")
+        return Response(404)
+
+    transport = MockTransport(handler)
+    client = SquarespaceClient(
+        base_url=_BASE_URL,
+        password="open-sesame",  # pragma: allowlist secret
+        http_client_factory=_build_factory(transport),
+    )
+
+    with pytest.raises(SquarespaceFetchError):
+        await client.fetch(f"{_BASE_URL}/philosophy")
+    assert len(auth_posts) == 0
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_auth_failure_logs_response_details(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

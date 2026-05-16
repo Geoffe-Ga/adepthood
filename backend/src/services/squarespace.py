@@ -388,10 +388,13 @@ class SquarespaceClient:
         response = await self._raw_get(url)
 
         # Session might have expired between authentication and this
-        # request; if so, log in once more and retry exactly once.
-        if response.status_code == httpx.codes.UNAUTHORIZED or self._looks_like_password_page(
-            response.text
-        ):
+        # request; if so, log in once more and retry exactly once.  Skip
+        # the re-auth for public URLs — they never had a cookie, and a
+        # 401 there is a real error, not a stale-session indicator.
+        looks_locked = response.status_code == httpx.codes.UNAUTHORIZED or (
+            self._looks_like_password_page(response.text)
+        )
+        if looks_locked and self._requires_auth(url):
             self._authenticated = False
             await self._ensure_authenticated()
             response = await self._raw_get(url)
