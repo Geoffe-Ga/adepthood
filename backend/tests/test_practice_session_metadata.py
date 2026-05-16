@@ -196,14 +196,16 @@ def test_tallied_grounding_accepts_items_completed_at_ceiling() -> None:
 
     Mirrors :func:`test_interval_bell_accepts_equal_struck_and_total` — the
     rejection test pins the off-by-one, this one pins the inclusive bound.
+    Computing the ceiling from the config-module constants keeps the test
+    in sync with any future ceiling bump.
     """
+    expected_items = TALLIED_ROUNDS_MAX * TALLIED_CATEGORIES_MAX * TALLIED_TARGET_MAX
     payload = TalliedGroundingMetadata(
         mode="tallied_grounding",
-        rounds_completed=10,
-        total_rounds=10,
-        items_completed=2400,
+        rounds_completed=TALLIED_ROUNDS_MAX,
+        total_rounds=TALLIED_ROUNDS_MAX,
+        items_completed=expected_items,
     )
-    expected_items = 2400
     assert payload.items_completed == expected_items
 
 

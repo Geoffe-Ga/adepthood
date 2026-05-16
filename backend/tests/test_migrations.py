@@ -632,12 +632,11 @@ def _count_practice_with_mode(db_url: str, mode: str) -> int:
     engine = create_engine(_sync_url(db_url))
     try:
         with engine.connect() as conn:
-            row = conn.execute(
+            count: int = conn.execute(
                 text("SELECT count(*) FROM practice WHERE mode = :m"),
                 {"m": mode},
-            ).first()
-            assert row is not None
-            return int(row[0])
+            ).scalar_one()
+            return count
     finally:
         engine.dispose()
 
@@ -662,7 +661,7 @@ def test_tallied_grounding_migration_round_trip_on_sqlite(
     # Phase 2: downgrade — refuses to run while a tallied_grounding row exists.
     # The migration's ``downgrade()`` raises a concrete ``RuntimeError`` rather
     # than any random Exception — pinning the class avoids masking unrelated
-    # failures (PR #343 review feedback).
+    # failures.
     with pytest.raises(RuntimeError, match="tallied_grounding"):
         command.downgrade(cfg, _TALLIED_GROUNDING_BASE_REVISION)
 
@@ -679,7 +678,7 @@ def test_tallied_grounding_migration_round_trip_on_sqlite(
     # ``IntegrityError`` is the precise class SQLAlchemy raises on a CHECK
     # constraint violation; using it (rather than the broad ``Exception``)
     # avoids masking unrelated failures whose message happens to mention
-    # "CHECK" (PR #343 review feedback).
+    # "CHECK".
     with pytest.raises(IntegrityError):
         _insert_practice_row(db_url, mode="tallied_grounding", name="Should fail")
 

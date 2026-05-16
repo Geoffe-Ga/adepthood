@@ -48,6 +48,12 @@ _ALLOWED_MODES_AFTER_UPGRADE = (
     "tallied_grounding",
 )
 
+# These must be exactly the modes present at the down_revision
+# (``d2e3f4a5b6c7``) — every entry in ``_ALLOWED_MODES_AFTER_UPGRADE``
+# except the one this migration adds. The derivation is mechanical;
+# any future copy-paste of this module must keep that invariant or the
+# downgrade will recreate the CHECK with a different set than callers
+# expect.
 _ALLOWED_MODES_BEFORE_UPGRADE = tuple(
     m for m in _ALLOWED_MODES_AFTER_UPGRADE if m != _NEW_MODE
 )
