@@ -1786,16 +1786,23 @@ export function validateFrequencyResponse(data: unknown): data is FrequencyRespo
 }
 
 export const frequency = {
+  /**
+   * @param stageNumber Optional override. Pins the banner to a specific
+   *   stage instead of the server-stored ``StageProgress.current_stage``;
+   *   omit to keep the legacy "server decides" behaviour.
+   * @param token Optional auth token. NOTE: ``stageNumber`` is the first
+   *   parameter — a positional ``token`` would silently bind to it.
+   *   Pass ``undefined`` for ``stageNumber`` if you only want to set
+   *   ``token`` (``current(undefined, jwt)``).
+   */
   async current(stageNumber?: number | null, token?: string): Promise<FrequencyResponse> {
-    // Pin the banner to a client-supplied stage when the master-date wiring
-    // (#323) has diverged from the server-stored ``StageProgress.current_stage``.
-    // Omitting the override preserves the legacy "server decides" path so
-    // older clients keep working.
-    const qs =
-      stageNumber !== undefined && stageNumber !== null ? `?stage_number=${stageNumber}` : '';
-    const data = await request<FrequencyResponse>(`/user-practices/current/frequency${qs}`, {
-      token,
-    });
+    const query = new URLSearchParams();
+    if (stageNumber != null) query.set('stage_number', String(stageNumber));
+    const qs = query.toString();
+    const data = await request<FrequencyResponse>(
+      `/user-practices/current/frequency${qs ? `?${qs}` : ''}`,
+      { token },
+    );
     if (!validateFrequencyResponse(data)) {
       throw new Error('Invalid frequency response');
     }

@@ -24,10 +24,10 @@ export interface FrequencyBannerProps {
    */
   data?: FrequencyResponse;
   /**
-   * Pin the banner to a specific stage (master-date wiring, #323). When
-   * omitted the server picks the stage from ``StageProgress``; passing
-   * the same date-derived stage the practice card uses keeps the banner
-   * and the card in lockstep.
+   * Pin the banner to a specific stage. When omitted the server picks
+   * the stage from the user's stored progress; passing the same stage
+   * the practice card resolves keeps the banner and the card in
+   * lockstep on every render.
    */
   stageNumber?: number | null;
   /** Called when the banner body is tapped — open the switcher sheet. */

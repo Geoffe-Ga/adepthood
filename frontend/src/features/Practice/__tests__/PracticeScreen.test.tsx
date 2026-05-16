@@ -285,13 +285,13 @@ describe('PracticeScreen', () => {
     expect(getByTestId('ritual-configurator-sheet')).toBeTruthy();
   });
 
-  it('pins the frequency banner to the resolved stage (master-date wiring #323)', async () => {
-    // The card and the banner must read the same stage. When the user
-    // moves the program start date their derived stage advances even
-    // though the server-stored ``StageProgress.current_stage`` lags
-    // behind; passing the resolved stage to the frequency endpoint
-    // keeps the banner colour in lockstep with the practice card
-    // (regression for the Beige-banner-over-Purple-practice bug).
+  it('pins the frequency banner to the resolved stage', async () => {
+    // The card and the banner must read the same stage. When the
+    // client's resolved stage advances ahead of the server-stored
+    // ``StageProgress.current_stage`` (e.g. the user moves their
+    // program start date), passing the resolved stage to the
+    // frequency endpoint keeps the banner colour in lockstep with the
+    // practice card.
     mockRouteParams.stageNumber = 2;
     try {
       const { getByTestId } = render(<PracticeScreen />);

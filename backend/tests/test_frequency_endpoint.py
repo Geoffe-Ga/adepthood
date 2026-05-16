@@ -460,27 +460,24 @@ def test_every_stage_has_a_preset_name() -> None:
     assert set(STAGE_TO_PRESET_NAME) == expected_stages
 
 
-# -- ``?stage_number=`` override (BUG-PRACTICE-BANNER-STAGE) -----------------
+# -- ``?stage_number=`` override --------------------------------------------
 #
-# The Practice screen derives the active stage client-side from the user's
-# program start date (master-date wiring, #323). The card and selector use
-# that derived stage, but the banner used to hit this endpoint with no
-# override and so always rendered the server-stored ``current_stage`` —
-# leaving the banner showing Beige while the card already showed Purple.
-# Allowing the client to pin the banner to a specific stage keeps the
-# two surfaces in lockstep on the same render.
+# A client that resolves the active stage itself (e.g. from a stored
+# program-start date) needs the banner to follow its choice instead of
+# whatever ``StageProgress.current_stage`` happens to hold — otherwise
+# the banner and the active-practice card disagree on the same render.
 
 
 @pytest.mark.asyncio
 async def test_frequency_stage_number_override_uses_requested_stage(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """``?stage_number=4`` renders the Purple/Body banner for a fresh user.
+    """``?stage_number=N`` renders the catalogue banner for stage ``N``.
 
-    A client whose date-derived stage is Purple (4) but whose server-stored
-    ``current_stage`` is still 1 must see the Purple banner when it asks
-    for stage 4 — not the Beige fallback the server would compute on its
-    own.
+    A client whose resolved stage is past stage 1 but whose server-stored
+    ``current_stage`` is still 1 must see the stage-``N`` banner when it
+    asks for stage ``N`` — not the stage-1 fallback the server would
+    compute on its own.
     """
     await _seed_catalog(db_session)
     headers, _user_id = await _signup(async_client, "purple-client")
@@ -493,7 +490,6 @@ async def test_frequency_stage_number_override_uses_requested_stage(
     assert resp.status_code == HTTPStatus.OK, resp.text
     body = resp.json()
 
-    # Stage 2 = Purple / Body (per seed_stages._STAGE_DEFINITIONS).
     assert body["stage_number"] == 2
     assert body["color"] == "Purple"
     assert body["practice_name"] == STAGE_TO_PRESET_NAME[2]
@@ -567,24 +563,25 @@ async def test_frequency_without_override_still_uses_stage_progress(
 
 
 @pytest.mark.asyncio
-async def test_frequency_stage_number_unknown_returns_404(
+async def test_frequency_stage_number_above_max_is_rejected(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A stage outside the seeded range surfaces the same 404 as a half-seed.
+    """A stage above ``len(STAGE_DEFINITIONS)`` is rejected at validation.
 
-    Mirrors :func:`_load_course_stage`: a missing ``CourseStage`` row is
-    a misconfiguration, not a silently-rendered banner.
+    The bound is derived from the seeded catalogue so adding an 11th
+    stage to ``STAGE_DEFINITIONS`` automatically widens the accepted
+    range — there is no separate magic number to update.
     """
     await _seed_catalog(db_session)
-    headers, _user_id = await _signup(async_client, "bad-stage")
+    headers, _user_id = await _signup(async_client, "out-of-range")
 
+    over_max = len(STAGE_DEFINITIONS) + 1
     resp = await async_client.get(
         "/user-practices/current/frequency",
-        params={"stage_number": 99},
+        params={"stage_number": over_max},
         headers=headers,
     )
-    assert resp.status_code == HTTPStatus.NOT_FOUND
-    assert resp.json()["detail"] == "course_stage_not_found"
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 @pytest.mark.asyncio

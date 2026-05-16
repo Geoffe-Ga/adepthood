@@ -33,6 +33,7 @@ from schemas.practice import (
 )
 from schemas.practice_mode_config import ModeConfigAdapter
 from seed_practices import STAGE_TO_PRESET_NAME
+from seed_stages import STAGE_DEFINITIONS
 from services.users import get_user_timezone
 
 # Stage 1 is always the curriculum's entry point — users without a
@@ -408,12 +409,12 @@ async def get_current_frequency(
         int | None,
         Query(
             ge=1,
+            le=len(STAGE_DEFINITIONS),
             description=(
                 "Pin the banner to a specific stage. When omitted the server "
-                "derives the stage from the user's ``StageProgress``. The "
-                "client passes its date-derived stage here so the banner "
-                "stays in lockstep with the practice card after the user "
-                "moves their program start date (master-date wiring, #323)."
+                "derives the stage from the user's StageProgress. Clients pass "
+                "their own resolved stage here so the banner stays in lockstep "
+                "with whatever practice the user is actually looking at."
             ),
         ),
     ] = None,
@@ -428,10 +429,10 @@ async def get_current_frequency(
 
     Stage resolution:
 
-    * ``stage_number`` query param (when provided) wins. This is the
-      client-derived stage from the master-date wiring (#323) — the
-      practice card uses the same value, so passing it keeps the
-      banner aligned with the card on every render.
+    * ``stage_number`` query param (when provided) wins. Clients that
+      resolve the active stage on their own pass it here so the banner
+      tracks the practice they're showing, instead of whatever
+      ``StageProgress.current_stage`` happens to hold.
     * Otherwise fall back to ``StageProgress.current_stage`` (or stage
       1 for a fresh user with no progress row).
 
