@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text

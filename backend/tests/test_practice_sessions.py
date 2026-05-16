@@ -748,6 +748,36 @@ async def test_create_session_accepts_chosen_key_when_required(
 
 
 @pytest.mark.asyncio
+async def test_create_session_rejects_chosen_key_not_in_catalog(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A submitted ``chosen_option_key`` must exist in the catalog's option list.
+
+    Without this check, a client can persist phantom keys like
+    ``"mud"`` against a catalog of ``["grass", "stone"]``; analytics
+    rollups that ``GROUP BY chosen_option_key`` would then surface
+    fabricated categories.
+    """
+    headers, _ = await _signup(async_client)
+    up_id, _practice = await _create_typed_user_practice(
+        async_client, db_session, headers, mode="mindful_anchor_required"
+    )
+
+    payload = _session_payload(
+        up_id,
+        mode_metadata={
+            "mode": "mindful_anchor",
+            "chosen_option_key": "mud",
+            "duration_seconds": 45,
+            "met_min_duration": True,
+        },
+    )
+    resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.json()["detail"] == "chosen_option_key_not_in_catalog"
+
+
+@pytest.mark.asyncio
 async def test_create_session_allows_missing_chosen_key_when_optional(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:

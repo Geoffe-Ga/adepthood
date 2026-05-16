@@ -75,6 +75,29 @@ async def _resolve_user_practice_for_session(
     return user_practice
 
 
+def _require_chosen_option_key_when_required(
+    cfg: MindfulAnchorConfig, metadata: MindfulAnchorMetadata
+) -> None:
+    """Reject sessions that omit ``chosen_option_key`` against a required-choice config."""
+    if cfg.require_option_choice and metadata.chosen_option_key is None:
+        raise bad_request("chosen_option_key_required")
+
+
+def _require_chosen_option_key_in_catalog(
+    cfg: MindfulAnchorConfig, metadata: MindfulAnchorMetadata
+) -> None:
+    """Reject a ``chosen_option_key`` the catalog never declared.
+
+    Without this, a client could persist phantom keys (``"mud"`` against
+    a catalog of ``["grass", "stone"]``) that pollute analytics rollups
+    grouping on the field.
+    """
+    if metadata.chosen_option_key is None:
+        return
+    if metadata.chosen_option_key not in {opt.key for opt in cfg.options}:
+        raise bad_request("chosen_option_key_not_in_catalog")
+
+
 def _enforce_mindful_anchor_invariants(
     practice: Practice,
     user_practice: UserPractice,
@@ -83,16 +106,15 @@ def _enforce_mindful_anchor_invariants(
     """Reject a ``mindful_anchor`` session whose metadata violates the catalog config.
 
     The metadata schema cannot see the catalog config (the discriminated
-    union has no back-reference), so the cross-field invariant
-    ``require_option_choice=True ⇒ chosen_option_key is not None`` is
-    enforced here. Extracted from :func:`_validate_session_metadata` to
-    keep the validation pipeline at xenon rank A.
+    union has no back-reference), so the cross-field invariants are
+    enforced here via :func:`_require_chosen_option_key_when_required`
+    and :func:`_require_chosen_option_key_in_catalog`.
     """
     cfg = effective_config(practice, user_practice)
     if not isinstance(cfg, MindfulAnchorConfig):
         return
-    if cfg.require_option_choice and metadata.chosen_option_key is None:
-        raise bad_request("chosen_option_key_required")
+    _require_chosen_option_key_when_required(cfg, metadata)
+    _require_chosen_option_key_in_catalog(cfg, metadata)
 
 
 def _validate_session_metadata(
