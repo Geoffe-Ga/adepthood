@@ -19,9 +19,7 @@ import type { Habit, HabitSettingsModalProps } from '../Habits.types';
 import { calculateNetEnergy } from '../HabitUtils';
 
 import ConfirmDialog from './ConfirmDialog';
-// BUG-FE-HABIT-201: parser lives in its own module so unit tests can
-// import without the RN component tree (see ``parseEnergyValue.ts``).
-import { parseEnergyValue } from './parseEnergyValue';
+import { EnergyTextInput } from './EnergyTextInput';
 
 const cycleFrequency = (current: string | undefined): 'daily' | 'weekly' | 'custom' => {
   if (current === 'daily') return 'weekly';
@@ -43,23 +41,15 @@ const EnergySettings = ({ habit, netEnergy, onChange }: EnergySettingsProps) => 
       <Text style={styles.energyHeaderText}>Net</Text>
     </View>
     <View style={styles.energyRow}>
-      <TextInput
+      <EnergyTextInput
         style={styles.energyInput}
-        value={habit.energy_cost.toString()}
-        onChangeText={(text) => {
-          const value = parseEnergyValue(text);
-          if (value !== null) onChange('energy_cost', value);
-        }}
-        keyboardType="numeric"
+        value={habit.energy_cost}
+        onCommit={(value) => onChange('energy_cost', value)}
       />
-      <TextInput
+      <EnergyTextInput
         style={styles.energyInput}
-        value={habit.energy_return.toString()}
-        onChangeText={(text) => {
-          const value = parseEnergyValue(text);
-          if (value !== null) onChange('energy_return', value);
-        }}
-        keyboardType="numeric"
+        value={habit.energy_return}
+        onCommit={(value) => onChange('energy_return', value)}
       />
       <Text style={styles.netEnergyValue}>{netEnergy}</Text>
     </View>

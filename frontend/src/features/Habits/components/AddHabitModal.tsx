@@ -7,27 +7,15 @@ import styles from '../Habits.styles';
 import type { AddHabitInput } from '../Habits.types';
 import { calculateNetEnergy } from '../HabitUtils';
 
+import { EnergyTextInput } from './EnergyTextInput';
+
 interface AddHabitModalProps {
   visible: boolean;
   onClose: () => void;
   onAdd: (_input: AddHabitInput) => void | Promise<void>;
 }
 
-/**
- * Energy bounds match `HabitSettingsModal` so a habit created here can be
- * tuned to the same negative-cost / negative-return range an existing habit
- * supports — a previous version capped at 0 and produced an inconsistency.
- */
-const ENERGY_MIN = -10;
-const ENERGY_MAX = 10;
 const DEFAULT_ENERGY = 5;
-
-const parseEnergy = (text: string): number | null => {
-  const value = parseInt(text, 10);
-  if (Number.isNaN(value)) return null;
-  if (value < ENERGY_MIN || value > ENERGY_MAX) return null;
-  return value;
-};
 
 const randomDefaultIcon = (): string =>
   DEFAULT_ICONS[Math.floor(Math.random() * DEFAULT_ICONS.length)] ?? '⭐';
@@ -115,25 +103,17 @@ const EnergyRow = ({
       <Text style={styles.energyHeaderText}>Net</Text>
     </View>
     <View style={styles.energyRow}>
-      <TextInput
+      <EnergyTextInput
         testID="add-habit-cost"
         style={styles.energyInput}
-        value={energyCost.toString()}
-        onChangeText={(text) => {
-          const value = parseEnergy(text);
-          if (value !== null) setEnergyCost(value);
-        }}
-        keyboardType="numeric"
+        value={energyCost}
+        onCommit={setEnergyCost}
       />
-      <TextInput
+      <EnergyTextInput
         testID="add-habit-return"
         style={styles.energyInput}
-        value={energyReturn.toString()}
-        onChangeText={(text) => {
-          const value = parseEnergy(text);
-          if (value !== null) setEnergyReturn(value);
-        }}
-        keyboardType="numeric"
+        value={energyReturn}
+        onCommit={setEnergyReturn}
       />
       <Text style={styles.netEnergyValue}>{calculateNetEnergy(energyCost, energyReturn)}</Text>
     </View>

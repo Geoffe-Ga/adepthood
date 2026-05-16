@@ -38,17 +38,32 @@ describe('AddHabitModal', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects out-of-range energy inputs and keeps the previous value', () => {
-    const { getByTestId } = render(<AddHabitModal visible onClose={jest.fn()} onAdd={noopAdd} />);
+  it('lets the user type freely and only commits valid energy values', async () => {
+    const onAdd = jest.fn(() => Promise.resolve());
+    const { getByTestId } = render(<AddHabitModal visible onClose={jest.fn()} onAdd={onAdd} />);
     const cost = getByTestId('add-habit-cost');
-    fireEvent.changeText(cost, '5');
-    expect(cost.props.value).toBe('5');
-    fireEvent.changeText(cost, '99');
-    expect(cost.props.value).toBe('5');
+    // Mid-edit states must surface in the field so the user can actually
+    // edit on mobile — the prior implementation snapped the value back to
+    // the last committed integer and made the input feel uneditable.
+    fireEvent.changeText(cost, '');
+    expect(cost.props.value).toBe('');
+    fireEvent.changeText(cost, '-');
+    expect(cost.props.value).toBe('-');
     fireEvent.changeText(cost, '-3');
     expect(cost.props.value).toBe('-3');
+    // Out-of-range stays visible mid-edit but does not commit.
     fireEvent.changeText(cost, '-99');
+    expect(cost.props.value).toBe('-99');
+    // Blur with an invalid buffer rolls back to the last committed value.
+    fireEvent(cost, 'blur');
     expect(cost.props.value).toBe('-3');
+
+    fireEvent.changeText(getByTestId('add-habit-name'), 'Walk');
+    await act(async () => {
+      fireEvent.press(getByTestId('add-habit-save'));
+      await flushPromises();
+    });
+    expect(onAdd).toHaveBeenCalledWith(expect.objectContaining({ energy_cost: -3 }));
   });
 
   it('closes the modal even when onAdd rejects', async () => {
