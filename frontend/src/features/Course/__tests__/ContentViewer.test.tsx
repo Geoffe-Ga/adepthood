@@ -1,37 +1,51 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-env jest */
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { Linking } from 'react-native';
+import { describe, expect, it, jest, beforeEach } from '@jest/globals';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import React from 'react';
 
+import type * as Api from '../../../api';
 import type { ContentItem } from '../../../api';
+import ContentViewer from '../ContentViewer';
 
-const mockMarkRead = (jest.fn() as any).mockResolvedValue({
+jest.mock('../../../api', () => ({
+  course: {
+    markRead: jest.fn(),
+    contentBody: jest.fn(),
+  },
+}));
+
+const { course: courseApi } = jest.requireMock('../../../api') as {
+  course: {
+    markRead: jest.MockedFunction<typeof Api.course.markRead>;
+    contentBody: jest.MockedFunction<typeof Api.course.contentBody>;
+  };
+};
+
+const HAPPY_BODY = {
+  url: 'https://aptitude.guru/course/beige-1',
+  title: 'Chapter One',
+  body_html: '<article><h1>Chapter One</h1><p>Hi.</p></article>',
+};
+
+const HAPPY_COMPLETION = {
   id: 1,
   user_id: 1,
   content_id: 1,
   completed_at: '2026-01-15T10:00:00Z',
-});
+};
 
-jest.mock('../../../api', () => ({
-  course: {
-    markRead: (...args: unknown[]) => mockMarkRead(...args),
-  },
-}));
-
-// eslint-disable-next-line import/order
-const { render, fireEvent, waitFor, act } = require('@testing-library/react-native');
-const ContentViewer = require('../ContentViewer').default;
-
-const makeItem = (overrides: Partial<ContentItem> = {}): ContentItem => ({
-  id: 1,
-  title: 'Test Article',
-  content_type: 'essay',
-  release_day: 0,
-  url: 'https://example.com/article',
-  is_locked: false,
-  is_read: false,
-  ...overrides,
-});
+function makeItem(overrides: Partial<ContentItem> = {}): ContentItem {
+  return {
+    id: 1,
+    title: 'Test Article',
+    content_type: 'chapter',
+    release_day: 0,
+    url: 'https://aptitude.guru/course/beige-1',
+    is_locked: false,
+    is_read: false,
+    ...overrides,
+  };
+}
 
 describe('ContentViewer', () => {
   let onBack: jest.Mock;
@@ -39,51 +53,57 @@ describe('ContentViewer', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    onBack = jest.fn() as any;
-    onMarkRead = jest.fn() as any;
-    mockMarkRead.mockResolvedValue({
-      id: 1,
-      user_id: 1,
-      content_id: 1,
-      completed_at: '2026-01-15T10:00:00Z',
+    onBack = jest.fn();
+    onMarkRead = jest.fn();
+    courseApi.markRead.mockResolvedValue(HAPPY_COMPLETION);
+    courseApi.contentBody.mockResolvedValue(HAPPY_BODY);
+  });
+
+  it('renders the content title initially, then swaps to the live title', async () => {
+    const item = makeItem({ title: 'Loading Title' });
+    const { getByText, findByText } = render(
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+    );
+    expect(getByText('Loading Title')).toBeTruthy();
+    await findByText('Chapter One');
+  });
+
+  it('fetches the content body via the API', async () => {
+    const item = makeItem();
+    render(<ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />);
+    await waitFor(() => {
+      expect(courseApi.contentBody).toHaveBeenCalledWith(item.id);
     });
   });
 
-  it('renders the content title', () => {
+  it('renders the cleaned HTML inside a WebView', async () => {
     const item = makeItem();
-    const { getByText } = render(
+    const { findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
     );
-    expect(getByText('Test Article')).toBeTruthy();
+    const webview = await findByTestId('reader-webview');
+    const html = String(webview.props['data-source-html']);
+    expect(html).toContain('<article>');
+    expect(html).toContain('Chapter One');
   });
 
-  it('calls onBack when back button is pressed', () => {
+  it('calls onBack when back button is pressed', async () => {
     const item = makeItem();
-    const { getByTestId } = render(
+    const { getByTestId, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
     );
-    fireEvent.press(getByTestId('viewer-back-button'));
+    // Wait until the load settles so we don't hit "state update on unmounted".
+    await findByTestId('reader-webview');
+    fireEvent.press(getByTestId('reader-back-button'));
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
-  it('opens URL when open in browser is pressed', () => {
-    const openURLSpy = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined as any);
-    const item = makeItem({ url: 'https://example.com/test' });
-    const { getByTestId } = render(
-      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
-    );
-
-    fireEvent.press(getByTestId('open-url-button'));
-    expect(openURLSpy).toHaveBeenCalledWith('https://example.com/test');
-    openURLSpy.mockRestore();
-  });
-
-  it('marks content as read when button is pressed', async () => {
+  it('marks content as read when the button is pressed', async () => {
     const item = makeItem();
-    const { getByTestId, getByText } = render(
+    const { getByTestId, getByText, findByText } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
     );
-
+    await findByText('Chapter One');
     expect(getByText('Mark as Read')).toBeTruthy();
 
     await act(async () => {
@@ -91,48 +111,49 @@ describe('ContentViewer', () => {
     });
 
     await waitFor(() => {
-      expect(mockMarkRead).toHaveBeenCalledWith(1);
+      expect(courseApi.markRead).toHaveBeenCalledWith(1);
       expect(onMarkRead).toHaveBeenCalledTimes(1);
       expect(getByText('✓ Read')).toBeTruthy();
     });
   });
 
-  it('shows already read state when item is pre-read', () => {
+  it('shows already-read state when item is pre-read', async () => {
     const item = makeItem({ is_read: true });
-    const { getByText } = render(
+    const { getByText, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
     );
+    await findByTestId('reader-webview');
     expect(getByText('✓ Read')).toBeTruthy();
   });
 
-  it('disables mark-read button when already read', () => {
+  it('disables mark-read when already read', async () => {
     const item = makeItem({ is_read: true });
-    const { getByTestId } = render(
+    const { getByTestId, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
     );
-
+    await findByTestId('reader-webview');
     fireEvent.press(getByTestId('mark-read-button'));
-    expect(mockMarkRead).not.toHaveBeenCalled();
+    expect(courseApi.markRead).not.toHaveBeenCalled();
   });
 
-  it('shows reflect button when item has been read', () => {
+  it('shows the reflect button when the item is read', async () => {
     const item = makeItem({ is_read: true });
-    const onReflect = jest.fn() as any;
-    const { getByTestId, getByText } = render(
+    const onReflect = jest.fn();
+    const { getByTestId, getByText, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} onReflect={onReflect} />,
     );
+    await findByTestId('reader-webview');
     expect(getByTestId('reflect-button')).toBeTruthy();
     expect(getByText('Reflect in Journal')).toBeTruthy();
   });
 
-  it('shows reflect button after marking content as read', async () => {
+  it('shows the reflect button after marking content as read', async () => {
     const item = makeItem({ is_read: false });
-    const onReflect = jest.fn() as any;
-    const { getByTestId, queryByTestId } = render(
+    const onReflect = jest.fn();
+    const { getByTestId, queryByTestId, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} onReflect={onReflect} />,
     );
-
-    // Initially no reflect button
+    await findByTestId('reader-webview');
     expect(queryByTestId('reflect-button')).toBeNull();
 
     await act(async () => {
@@ -144,58 +165,51 @@ describe('ContentViewer', () => {
     });
   });
 
-  it('calls onReflect when reflect button is pressed', () => {
+  it('calls onReflect when the reflect button is pressed', async () => {
     const item = makeItem({ is_read: true });
-    const onReflect = jest.fn() as any;
-    const { getByTestId } = render(
+    const onReflect = jest.fn();
+    const { getByTestId, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} onReflect={onReflect} />,
     );
-
+    await findByTestId('reader-webview');
     fireEvent.press(getByTestId('reflect-button'));
     expect(onReflect).toHaveBeenCalledTimes(1);
   });
 
-  it('does not render reflect button when onReflect is not provided', () => {
+  it('omits the reflect button when no callback is provided', async () => {
     const item = makeItem({ is_read: true });
-    const { queryByTestId } = render(
+    const { queryByTestId, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
     );
+    await findByTestId('reader-webview');
     expect(queryByTestId('reflect-button')).toBeNull();
   });
 
-  it('does not open javascript: URLs', () => {
-    const openURLSpy = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined as any);
-    const item = makeItem({ url: 'javascript:alert(1)' });
-    const { getByTestId } = render(
+  it('surfaces a retry UI when the content body fails to load', async () => {
+    courseApi.contentBody.mockRejectedValueOnce({ detail: 'cms_unavailable' });
+    const item = makeItem();
+    const { findByTestId, getByText } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
     );
+    await findByTestId('reader-error');
+    expect(getByText(/temporarily unreachable/i)).toBeTruthy();
 
-    fireEvent.press(getByTestId('open-url-button'));
-    expect(openURLSpy).not.toHaveBeenCalled();
-    openURLSpy.mockRestore();
+    courseApi.contentBody.mockResolvedValueOnce({
+      url: 'https://aptitude.guru/course/beige-1',
+      title: 'Chapter One',
+      body_html: '<article>retry worked</article>',
+    });
+    fireEvent.press(await findByTestId('reader-retry-button'));
+    const webview = await findByTestId('reader-webview');
+    expect(String(webview.props['data-source-html'])).toContain('retry worked');
   });
 
-  it('does not open tel: URLs', () => {
-    const openURLSpy = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined as any);
-    const item = makeItem({ url: 'tel:+1234567890' });
-    const { getByTestId } = render(
+  it('shows a server-config message when the CMS auth detail comes back', async () => {
+    courseApi.contentBody.mockRejectedValueOnce({ detail: 'cms_auth_failed' });
+    const item = makeItem();
+    const { findByText } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
     );
-
-    fireEvent.press(getByTestId('open-url-button'));
-    expect(openURLSpy).not.toHaveBeenCalled();
-    openURLSpy.mockRestore();
-  });
-
-  it('does not open file: URLs', () => {
-    const openURLSpy = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined as any);
-    const item = makeItem({ url: 'file:///etc/passwd' });
-    const { getByTestId } = render(
-      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
-    );
-
-    fireEvent.press(getByTestId('open-url-button'));
-    expect(openURLSpy).not.toHaveBeenCalled();
-    openURLSpy.mockRestore();
+    await findByText(/site password is not set/i);
   });
 });

@@ -17,6 +17,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
+from content_config import SITE_RESOURCES
 from models.user import User
 from rate_limit import DEFAULT_RATE_LIMIT
 
@@ -198,6 +199,48 @@ async def test_journal_list_rate_limit_returns_429(async_client: AsyncClient) ->
 
     # 31st request should be rate-limited
     resp = await async_client.get("/journal/", headers=headers)
+    assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert resp.json()["detail"] == "rate_limit_exceeded"
+    assert "retry-after" in resp.headers
+
+
+# ── Per-endpoint: GET /course/content/{id}/body (30/minute) ─────────────
+
+
+@pytest.mark.asyncio
+async def test_content_body_rate_limit_returns_429(async_client: AsyncClient) -> None:
+    """GET /course/content/{id}/body returns 429 after 30 requests/minute.
+
+    The endpoint proxies to Squarespace on a cache miss; without the
+    decorator a single authenticated user can sustain expensive upstream
+    fetches against the configured CMS.  The handler returns 404 here
+    (no seeded content) but the limit fires before the handler on
+    request 31, regardless of response code.
+    """
+    headers = await _signup(async_client)
+
+    for _ in range(30):
+        await async_client.get("/course/content/1/body", headers=headers)
+
+    resp = await async_client.get("/course/content/1/body", headers=headers)
+    assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert resp.json()["detail"] == "rate_limit_exceeded"
+    assert "retry-after" in resp.headers
+
+
+# ── Per-endpoint: GET /course/site-resources/{slug}/body (30/minute) ────
+
+
+@pytest.mark.asyncio
+async def test_site_resource_body_rate_limit_returns_429(async_client: AsyncClient) -> None:
+    """GET /course/site-resources/{slug}/body returns 429 after 30 requests/minute."""
+    headers = await _signup(async_client)
+    slug = SITE_RESOURCES[0].slug
+
+    for _ in range(30):
+        await async_client.get(f"/course/site-resources/{slug}/body", headers=headers)
+
+    resp = await async_client.get(f"/course/site-resources/{slug}/body", headers=headers)
     assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
     assert resp.json()["detail"] == "rate_limit_exceeded"
     assert "retry-after" in resp.headers

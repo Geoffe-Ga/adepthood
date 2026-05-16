@@ -1516,6 +1516,21 @@ export interface ContentCompletion {
   completed_at: string;
 }
 
+/** Cleaned Squarespace HTML body returned by the in-app content endpoints. */
+export interface ContentBody {
+  url: string;
+  title: string;
+  body_html: string;
+}
+
+/** One entry in the always-available "Site Resources" list. */
+export interface SiteResource {
+  slug: string;
+  title: string;
+  description: string;
+  url: string;
+}
+
 export const course = {
   stageContent(stageNumber: number, token?: string): Promise<ContentItem[]> {
     return request<ContentItem[]>(`/course/stages/${stageNumber}/content`, { token });
@@ -1528,6 +1543,15 @@ export const course = {
   },
   stageProgress(stageNumber: number, token?: string): Promise<CourseProgress> {
     return request<CourseProgress>(`/course/stages/${stageNumber}/progress`, { token });
+  },
+  contentBody(contentId: number, token?: string): Promise<ContentBody> {
+    return request<ContentBody>(`/course/content/${contentId}/body`, { token });
+  },
+  siteResources(token?: string): Promise<SiteResource[]> {
+    return request<SiteResource[]>('/course/site-resources', { token });
+  },
+  siteResourceBody(slug: string, token?: string): Promise<ContentBody> {
+    return request<ContentBody>(`/course/site-resources/${slug}/body`, { token });
   },
 };
 

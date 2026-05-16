@@ -265,6 +265,76 @@ const styles = StyleSheet.create({
   contentList: {
     flex: 1,
   },
+
+  // WebView body
+  webview: {
+    flex: 1,
+    backgroundColor: colors.background.primary,
+  },
+  webviewError: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: SPACING.xl,
+  },
+  webviewErrorTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text.primary,
+    marginBottom: SPACING.sm,
+    textAlign: 'center',
+  },
+  webviewErrorSubtitle: {
+    fontSize: 14,
+    color: colors.text.secondary,
+    marginBottom: SPACING.md,
+    textAlign: 'center',
+  },
+  retryButton: {
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.lg,
+    borderRadius: radius.md,
+    backgroundColor: colors.secondary,
+  },
+  retryText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.text.light,
+  },
+
+  // Site resources panel
+  resourcesPanel: {
+    paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.md,
+    paddingBottom: SPACING.sm,
+    backgroundColor: colors.background.card,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  resourcesHeading: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.text.tertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: SPACING.sm,
+  },
+  resourcesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACING.sm,
+  },
+  resourceChip: {
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.background.accent,
+  },
+  resourceChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.text.primary,
+  },
 });
 
 export default styles;
