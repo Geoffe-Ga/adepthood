@@ -17,6 +17,7 @@ import contextlib
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
+from typing import cast
 
 import pytest
 from httpx import AsyncClient
@@ -128,13 +129,22 @@ class _StubSquarespaceClient:
 
 @contextlib.contextmanager
 def _patch_client(stub: _StubSquarespaceClient) -> Iterator[None]:
-    """Swap the module-level singleton for the test's duration."""
-    original = squarespace_module._singleton  # noqa: SLF001
-    squarespace_module._singleton = stub  # type: ignore[assignment]  # noqa: SLF001
+    """Swap the module-level singleton for the test's duration.
+
+    Uses the module's public ``set_squarespace_client_for_tests`` setter
+    so the test does not have to touch a private — drops the
+    ``# noqa: SLF001`` and ``# type: ignore`` the previous pattern
+    needed.  ``cast`` keeps mypy happy: the production singleton is a
+    ``SquarespaceClient`` but our stub satisfies the same structural
+    ``fetch`` contract used by the routes.
+    """
+    squarespace_module.set_squarespace_client_for_tests(
+        cast("squarespace_module.SquarespaceClient", stub),
+    )
     try:
         yield
     finally:
-        squarespace_module._singleton = original  # noqa: SLF001
+        squarespace_module.reset_squarespace_client_for_tests()
 
 
 def _signup_user_id(resp_json: dict[str, object]) -> int:
@@ -337,4 +347,72 @@ async def test_site_resource_body_unknown_slug_returns_404(
             "/course/site-resources/this-does-not-exist/body", headers=headers
         )
     assert resp.status_code == HTTPStatus.NOT_FOUND
-    assert stub.calls == []
+
+
+@pytest.mark.asyncio
+async def test_site_resource_body_502_when_cms_unreachable(async_client: AsyncClient) -> None:
+    """Resource body shares the chapter body's error mapping — 502 on fetch error."""
+    headers = await _signup(async_client, "rsbad")
+    stub = _StubSquarespaceClient(raise_exc=SquarespaceFetchError("upstream 503"))
+    with _patch_client(stub):
+        resp = await async_client.get("/course/site-resources/about/body", headers=headers)
+    assert resp.status_code == HTTPStatus.BAD_GATEWAY
+    assert resp.json()["detail"] == "cms_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_site_resource_body_503_when_cms_auth_misconfigured(
+    async_client: AsyncClient,
+) -> None:
+    """Resource body returns 503 ``cms_auth_failed`` when the site password is missing."""
+    headers = await _signup(async_client, "rsnoauth")
+    stub = _StubSquarespaceClient(raise_exc=SquarespaceAuthError("missing"))
+    with _patch_client(stub):
+        resp = await async_client.get("/course/site-resources/philosophy/body", headers=headers)
+    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert resp.json()["detail"] == "cms_auth_failed"
+
+
+@pytest.mark.asyncio
+async def test_content_body_serves_today_chapter_on_release_day_boundary(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``release_day == days_elapsed`` is the user's "today" chapter — must serve, not 404.
+
+    Boundary noted in review: previous tests covered ``release_day < days``
+    (already past) and ``release_day > days`` (future); this nails the
+    equality case so the off-by-one stays caught.
+    """
+    resp = await async_client.post(
+        "/auth/signup",
+        json={
+            "email": "boundary@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },  # pragma: allowlist secret
+    )
+    headers = {"Authorization": f"Bearer {resp.json()['token']}"}
+    user_id = _signup_user_id(resp.json())
+
+    stage = CourseStage(**_stage_data(stage_number=1))
+    db_session.add(stage)
+    await db_session.flush()
+    item = StageContent(
+        course_stage_id=stage.id,
+        title="Chapter 1",
+        content_type="chapter",
+        release_day=0,
+        url="https://aptitude.guru/course/beige-1",
+    )
+    db_session.add(item)
+    await db_session.commit()
+    await db_session.refresh(item)
+
+    # Just enrolled today — days_elapsed == 0, release_day == 0.
+    await _set_user_stage(db_session, user_id, stage_number=1, days_ago=0)
+
+    stub = _StubSquarespaceClient(body_html="<article>Day 0</article>", title="Day Zero")
+    with _patch_client(stub):
+        body_resp = await async_client.get(f"/course/content/{item.id}/body", headers=headers)
+    assert body_resp.status_code == HTTPStatus.OK
+    assert body_resp.json()["body_html"] == "<article>Day 0</article>"
+    assert stub.calls == ["https://aptitude.guru/course/beige-1"]

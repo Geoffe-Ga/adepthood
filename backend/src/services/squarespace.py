@@ -39,12 +39,12 @@ import logging
 import os
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Final
 from urllib.parse import urlparse
 
 import httpx
-from bs4 import BeautifulSoup, Tag  # type: ignore[import-untyped]
+from bs4 import BeautifulSoup, Tag
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,6 @@ class FetchedContent:
     url: str
     title: str
     body_html: str
-    fetched_at: float = field(default_factory=time.time)
 
 
 class SquarespaceFetchError(RuntimeError):
@@ -291,16 +290,36 @@ class SquarespaceClient:
             msg = f"URL {url!r} is outside the configured site ({self._base_url})."
             raise SquarespaceFetchError(msg)
 
+    def _prune_expired(self, now: float) -> None:
+        """Drop expired entries so the cache cannot grow without bound.
+
+        Called from every ``fetch`` so the only growth is in *live*
+        entries.  Intentionally O(n) on cache size — for the expected
+        workload (a few dozen URLs over the program) this is cheaper
+        than wiring an LRU.  If the cache ever has to hold more than a
+        few hundred entries, swap to ``cachetools.TTLCache``.
+        """
+        stale = [key for key, entry in self._cache.items() if entry.expires_at <= now]
+        for key in stale:
+            self._cache.pop(key, None)
+
     async def fetch(self, url: str) -> FetchedContent:
         """Return cleaned HTML for ``url``, using the cache when fresh.
 
         Raises :class:`SquarespaceFetchError` on network errors,
         :class:`SquarespaceAuthError` when the site password is missing
         or wrong.
+
+        Note: with multiple uvicorn workers each holds its own cache,
+        so the worst-case fetch rate is ``WEB_CONCURRENCY`` per TTL
+        window per URL — by design, since we want the cache local to
+        the process for the lowest possible read latency.
         """
+        now = time.time()
         self._validate_url(url)
+        self._prune_expired(now)
         cached = self._cache.get(url)
-        if cached is not None and cached.expires_at > time.time():
+        if cached is not None and cached.expires_at > now:
             return cached.content
 
         await self._ensure_authenticated()
@@ -308,7 +327,7 @@ class SquarespaceClient:
 
         self._cache[url] = _CacheEntry(
             content=content,
-            expires_at=time.time() + self._cache_ttl,
+            expires_at=now + self._cache_ttl,
         )
         return content
 
@@ -398,7 +417,11 @@ def _extract_article(url: str, html: str) -> FetchedContent:
 # --------------------------------------------------------------------------- #
 
 
-_singleton: SquarespaceClient | None = None
+# Mutable container so we can replace the instance without ``global``
+# (and therefore without a ruff PLW0603 suppression).  The dict has
+# exactly one key — ``"client"`` — and its value is the lazily-built
+# singleton or ``None``.
+_state: dict[str, SquarespaceClient | None] = {"client": None}
 
 
 def get_squarespace_client() -> SquarespaceClient:
@@ -408,17 +431,25 @@ def get_squarespace_client() -> SquarespaceClient:
     set never instantiates the client and therefore never reads the env var
     at import time.
     """
-    global _singleton  # noqa: PLW0603 — module-level lazy singleton
-    if _singleton is None:
-        _singleton = SquarespaceClient()
-    return _singleton
+    client = _state["client"]
+    if client is None:
+        client = SquarespaceClient()
+        _state["client"] = client
+    return client
+
+
+def set_squarespace_client_for_tests(client: SquarespaceClient | None) -> None:
+    """Replace (or clear) the process-wide client.
+
+    Tests use this to swap in a ``MockTransport``-backed double for the
+    duration of a test, then restore the original at teardown.  Public
+    on purpose — keeps the test contract on the module's public API and
+    lets us drop the ``# noqa: SLF001`` suppressions the previous
+    pattern required.
+    """
+    _state["client"] = client
 
 
 def reset_squarespace_client_for_tests() -> None:
-    """Drop the singleton so the next test sees a fresh client.
-
-    Public on purpose — both unit tests in this package and FastAPI
-    integration tests use it to swap in a ``MockTransport``.
-    """
-    global _singleton  # noqa: PLW0603 — see get_squarespace_client
-    _singleton = None
+    """Drop the singleton so the next test sees a fresh client."""
+    set_squarespace_client_for_tests(None)

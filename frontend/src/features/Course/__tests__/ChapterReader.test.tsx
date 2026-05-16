@@ -1,46 +1,49 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-env jest */
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, expect, it, jest, beforeEach } from '@jest/globals';
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import React from 'react';
+import { Text } from 'react-native';
 
-const mockContentBody = (jest.fn() as any).mockResolvedValue({
-  url: 'https://aptitude.guru/course/beige-1',
-  title: 'Chapter One',
-  body_html: '<article>chapter body</article>',
-});
-const mockSiteResourceBody = (jest.fn() as any).mockResolvedValue({
-  url: 'https://aptitude.guru/philosophy',
-  title: 'Philosophy',
-  body_html: '<article>philosophy body</article>',
-});
+import type * as Api from '../../../api';
+import ChapterReader from '../ChapterReader';
 
 jest.mock('../../../api', () => ({
   course: {
-    contentBody: (...args: unknown[]) => mockContentBody(...args),
-    siteResourceBody: (...args: unknown[]) => mockSiteResourceBody(...args),
+    contentBody: jest.fn(),
+    siteResourceBody: jest.fn(),
   },
 }));
 
-// eslint-disable-next-line import/order
-const { render, fireEvent, waitFor } = require('@testing-library/react-native');
-const ChapterReader = require('../ChapterReader').default;
+const { course: courseApi } = jest.requireMock('../../../api') as {
+  course: {
+    contentBody: jest.MockedFunction<typeof Api.course.contentBody>;
+    siteResourceBody: jest.MockedFunction<typeof Api.course.siteResourceBody>;
+  };
+};
+
+const { contentBody: mockContentBody, siteResourceBody: mockSiteResourceBody } = courseApi;
+
+const HAPPY_CHAPTER = {
+  url: 'https://aptitude.guru/course/beige-1',
+  title: 'Chapter One',
+  body_html: '<article>chapter body</article>',
+};
+
+const HAPPY_RESOURCE = {
+  url: 'https://aptitude.guru/philosophy',
+  title: 'Philosophy',
+  body_html: '<article>philosophy body</article>',
+};
 
 describe('ChapterReader', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockContentBody.mockResolvedValue({
-      url: 'https://aptitude.guru/course/beige-1',
-      title: 'Chapter One',
-      body_html: '<article>chapter body</article>',
-    });
-    mockSiteResourceBody.mockResolvedValue({
-      url: 'https://aptitude.guru/philosophy',
-      title: 'Philosophy',
-      body_html: '<article>philosophy body</article>',
-    });
+    mockContentBody.mockResolvedValue(HAPPY_CHAPTER);
+    mockSiteResourceBody.mockResolvedValue(HAPPY_RESOURCE);
   });
 
   it('renders the fallback title until the live one arrives', async () => {
-    const onBack = jest.fn() as any;
+    const onBack = jest.fn();
     const { getByText, findByText } = render(
       <ChapterReader
         source={{ kind: 'content', id: 7 }}
@@ -53,21 +56,19 @@ describe('ChapterReader', () => {
   });
 
   it('routes content sources to course.contentBody', async () => {
-    const onBack = jest.fn() as any;
     render(
-      <ChapterReader source={{ kind: 'content', id: 42 }} fallbackTitle="x" onBack={onBack} />,
+      <ChapterReader source={{ kind: 'content', id: 42 }} fallbackTitle="x" onBack={jest.fn()} />,
     );
     await waitFor(() => expect(mockContentBody).toHaveBeenCalledWith(42));
     expect(mockSiteResourceBody).not.toHaveBeenCalled();
   });
 
   it('routes resource sources to course.siteResourceBody', async () => {
-    const onBack = jest.fn() as any;
     render(
       <ChapterReader
         source={{ kind: 'resource', slug: 'philosophy' }}
         fallbackTitle="x"
-        onBack={onBack}
+        onBack={jest.fn()}
       />,
     );
     await waitFor(() => expect(mockSiteResourceBody).toHaveBeenCalledWith('philosophy'));
@@ -75,13 +76,11 @@ describe('ChapterReader', () => {
   });
 
   it('renders a footer when one is provided', async () => {
-    const { Text } = require('react-native');
-    const onBack = jest.fn() as any;
     const { findByText } = render(
       <ChapterReader
         source={{ kind: 'content', id: 1 }}
         fallbackTitle="x"
-        onBack={onBack}
+        onBack={jest.fn()}
         footer={<Text>FOOTER_HERE</Text>}
       />,
     );
@@ -89,7 +88,7 @@ describe('ChapterReader', () => {
   });
 
   it('triggers onBack from the header back button', async () => {
-    const onBack = jest.fn() as any;
+    const onBack = jest.fn();
     const { findByTestId } = render(
       <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={onBack} />,
     );
@@ -98,12 +97,11 @@ describe('ChapterReader', () => {
   });
 
   it('wraps the cleaned HTML in a styled document', async () => {
-    const onBack = jest.fn() as any;
     const { findByTestId } = render(
-      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={onBack} />,
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
     );
     const webview = await findByTestId('reader-webview');
-    const html: string = webview.props['data-source-html'];
+    const html = String(webview.props['data-source-html']);
     expect(html).toMatch(/^<!doctype html>/i);
     expect(html).toContain('<article>chapter body</article>');
     // Mobile viewport is set so the WebView renders at native scale.
@@ -116,13 +114,20 @@ describe('ChapterReader', () => {
       title: 'After retry',
       body_html: '<article>retried</article>',
     });
-    const onBack = jest.fn() as any;
     const { findByTestId, findByText } = render(
-      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={onBack} />,
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
     );
     await findByText(/temporarily unreachable/i);
     fireEvent.press(await findByTestId('reader-retry-button'));
     const webview = await findByTestId('reader-webview');
-    expect(webview.props['data-source-html']).toContain('retried');
+    expect(String(webview.props['data-source-html'])).toContain('retried');
+  });
+
+  it('shows the server-config message when the CMS auth detail comes back', async () => {
+    mockContentBody.mockRejectedValueOnce({ detail: 'cms_auth_failed' });
+    const { findByText } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    await findByText(/site password is not set/i);
   });
 });

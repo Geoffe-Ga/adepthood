@@ -102,12 +102,17 @@ before the new chip will appear in the app.
 The Squarespace site password is a single env var on the backend:
 
 ```
-SQUARESPACE_SITE_PASSWORD=ToBeYourOwnGuru
+SQUARESPACE_SITE_PASSWORD=<set-from-team-secrets-manager>
 ```
 
-* The same string you give Gumroad buyers.
-* Rotating: change the Squarespace site password, update the env var,
-  redeploy backend.  The frontend never sees the password.
+* The live value matches the password Gumroad buyers receive. Read it
+  from the team secrets manager (1Password / Doppler / Railway env).
+  **Never commit the literal value to this repo** — git history is
+  forever, and rotating Squarespace's password does not retroactively
+  invalidate the value in old commits.
+* Rotating: change the Squarespace site password, update the secret in
+  the secrets manager, redeploy backend.  The frontend never sees the
+  password.
 * If the password is missing or wrong, every chapter endpoint returns
   `503 cms_auth_failed` and the in-app reader shows
   "The course site password is not set on the server. Reach out so we

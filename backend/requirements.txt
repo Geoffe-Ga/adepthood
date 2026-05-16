@@ -16,4 +16,4 @@ tzdata
 pytest
 pytest-asyncio
 httpx
-beautifulsoup4
+beautifulsoup4==4.14.3

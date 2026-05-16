@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Linking, Text, TouchableOpacity, View } from 'react-native';
 import { WebView } from 'react-native-webview';
+import type { ShouldStartLoadRequest } from 'react-native-webview/lib/WebViewTypes';
 
 import { course as courseApi, type ContentBody } from '../../api';
 import { colors } from '../../design/tokens';
@@ -129,6 +130,32 @@ const ErrorView = ({ message, onRetry }: ErrorViewProps): React.JSX.Element => (
 const CMS_AUTH_DETAIL = 'cms_auth_failed';
 const CMS_UNAVAILABLE_DETAIL = 'cms_unavailable';
 
+/**
+ * URL scheme prefixes that we let the WebView load in-frame.  The WebView's
+ * ``source={{ html }}`` boots at ``about:blank``; ``data:`` is used by some
+ * RN platforms while wiring the document.  Everything else (links inside
+ * a chapter, embedded forms, etc.) is handed off to the system browser via
+ * ``Linking.openURL`` so the user is never silently navigated away inside
+ * the in-app reader.  This is the mitigation for the broad
+ * ``originWhitelist={['*']}`` we still pass — required for the inline HTML
+ * to render at all on web/iOS, but dangerous on its own without this guard.
+ */
+const _IN_FRAME_URL_PREFIXES = ['about:', 'data:', 'file:'] as const;
+
+function shouldLoadInWebView(request: ShouldStartLoadRequest): boolean {
+  const { url } = request;
+  if (_IN_FRAME_URL_PREFIXES.some((prefix) => url.startsWith(prefix))) {
+    return true;
+  }
+  // Hand the navigation to the OS — the system browser can authenticate
+  // the user against Squarespace separately if the link points back to
+  // the site, and external links open as the user expects.
+  void Linking.openURL(url).catch((err) => {
+    console.warn('Failed to open URL from chapter:', err);
+  });
+  return false;
+}
+
 function describeError(err: unknown): string {
   if (err && typeof err === 'object' && 'detail' in err) {
     const detail = (err as { detail: unknown }).detail;
@@ -165,6 +192,11 @@ function useContentBody(source: ChapterReaderSource): {
     isMountedRef.current = true;
     setLoading(true);
     setError(null);
+    // The API call omits the explicit token — ``api/index.ts``'s
+    // ``request()`` helper falls back to the global ``tokenGetter``
+    // (set by ``AuthContext`` at sign-in), so the bearer header is
+    // attached automatically.  Same pattern as ``stagesApi.list()``
+    // and the other "no explicit token" callers in the codebase.
     const promise =
       source.kind === 'content'
         ? courseApi.contentBody(source.id)
@@ -212,6 +244,7 @@ const ChapterReader = ({
           testID="reader-webview"
           source={{ html: buildDocument(body.body_html) }}
           originWhitelist={['*']}
+          onShouldStartLoadWithRequest={shouldLoadInWebView}
           style={styles.webview}
           accessibilityLabel={headerTitle}
         />

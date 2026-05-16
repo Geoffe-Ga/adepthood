@@ -84,6 +84,21 @@ if len(set(_placeholder_pairs)) != len(_placeholder_pairs):
     _err = f"Duplicate (stage_number, release_day) in placeholders: {_dupes}"
     raise ValueError(_err)
 
+# Match the import-time validation philosophy from ``content_config.py``:
+# if a stage has been added to ``STAGE_PLANS`` but its placeholder rows
+# are still in this file, fail loudly at boot rather than seeding both
+# the planned chapters AND the stale placeholders side-by-side.
+_overlapping_stages = {int(d["stage_number"]) for d in _PLACEHOLDER_DEFINITIONS} & _PLANNED_STAGES
+if _overlapping_stages:
+    _err = (
+        "Stage(s) "
+        f"{sorted(_overlapping_stages)} have entries in both "
+        "STAGE_PLANS (content_config.py) and _PLACEHOLDER_DEFINITIONS — "
+        "remove the placeholders so the seeder isn't reconciling against a "
+        "stale source of truth."
+    )
+    raise ValueError(_err)
+
 
 def _placeholder_records() -> list[ChapterRecord]:
     """Convert placeholder dicts into ``ChapterRecord``.
