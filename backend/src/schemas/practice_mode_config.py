@@ -21,12 +21,13 @@ _UNIT_LABEL_MAX = 64
 _TALLIED_KEY_MAX = 64
 _TALLIED_LABEL_MAX = 255
 _TALLIED_KEY_PATTERN = r"^[a-z][a-z0-9_]*$"
-_TALLIED_TARGET_MIN = 1
-_TALLIED_TARGET_MAX = 20
-_TALLIED_ROUNDS_MIN = 1
-_TALLIED_ROUNDS_MAX = 10
-_TALLIED_CATEGORIES_MIN = 1
-_TALLIED_CATEGORIES_MAX = 12
+# Public ceilings: imported by ``schemas.practice_session_metadata`` to
+# derive its post-session caps so the two modules cannot silently diverge
+# when these values change. Treat any new ceiling that the metadata
+# module also needs as part of the same public contract.
+TALLIED_TARGET_MAX = 20
+TALLIED_ROUNDS_MAX = 10
+TALLIED_CATEGORIES_MAX = 12
 
 Sense = Literal["sight", "touch", "hearing", "smell", "taste"]
 BellTone = Literal["bowl", "chime", "gong"]
@@ -147,9 +148,13 @@ class TalliedCategory(_ConfigBase):
         min_length=1,
         max_length=_TALLIED_KEY_MAX,
         pattern=_TALLIED_KEY_PATTERN,
+        description=(
+            "Snake-case analytics slug matching ``^[a-z][a-z0-9_]*$`` "
+            "(hyphens and uppercase are rejected)."
+        ),
     )
     label: str = Field(min_length=1, max_length=_TALLIED_LABEL_MAX)
-    target_count: int = Field(ge=_TALLIED_TARGET_MIN, le=_TALLIED_TARGET_MAX)
+    target_count: int = Field(ge=1, le=TALLIED_TARGET_MAX)
 
 
 class TalliedGroundingConfig(_ConfigBase):
@@ -162,10 +167,8 @@ class TalliedGroundingConfig(_ConfigBase):
     """
 
     mode: Literal["tallied_grounding"] = "tallied_grounding"
-    rounds: int = Field(ge=_TALLIED_ROUNDS_MIN, le=_TALLIED_ROUNDS_MAX)
-    categories: list[TalliedCategory] = Field(
-        min_length=_TALLIED_CATEGORIES_MIN, max_length=_TALLIED_CATEGORIES_MAX
-    )
+    rounds: int = Field(ge=1, le=TALLIED_ROUNDS_MAX)
+    categories: list[TalliedCategory] = Field(min_length=1, max_length=TALLIED_CATEGORIES_MAX)
 
     @model_validator(mode="after")
     def _check_unique_category_keys(self) -> Self:

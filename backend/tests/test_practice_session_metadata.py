@@ -5,7 +5,14 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from schemas.practice_mode_config import (
+    TALLIED_CATEGORIES_MAX,
+    TALLIED_ROUNDS_MAX,
+    TALLIED_TARGET_MAX,
+)
 from schemas.practice_session_metadata import (
+    _MAX_TALLIED_ITEMS,
+    _MAX_TALLIED_ROUNDS,
     CountUpMetadata,
     IntervalBellMetadata,
     MeditationTimerMetadata,
@@ -182,6 +189,35 @@ def test_tallied_grounding_rejects_items_above_ceiling() -> None:
             total_rounds=10,
             items_completed=2401,
         )
+
+
+def test_tallied_grounding_accepts_items_completed_at_ceiling() -> None:
+    """The exact ceiling (every round * every category * every target) is valid (boundary).
+
+    Mirrors :func:`test_interval_bell_accepts_equal_struck_and_total` — the
+    rejection test pins the off-by-one, this one pins the inclusive bound.
+    """
+    payload = TalliedGroundingMetadata(
+        mode="tallied_grounding",
+        rounds_completed=10,
+        total_rounds=10,
+        items_completed=2400,
+    )
+    expected_items = 2400
+    assert payload.items_completed == expected_items
+
+
+def test_tallied_metadata_ceilings_match_config_constants() -> None:
+    """Lock the metadata ceiling to the authoring-side ceiling constants.
+
+    The metadata module derives ``_MAX_TALLIED_ROUNDS`` and
+    ``_MAX_TALLIED_ITEMS`` from the config module so a future bump (e.g.
+    raising the categories limit) cannot leave the post-session cap
+    silently stale. This test pins the contract: it fails loudly if the
+    derivation is ever inlined or the underlying constants change.
+    """
+    assert _MAX_TALLIED_ROUNDS == TALLIED_ROUNDS_MAX
+    assert _MAX_TALLIED_ITEMS == TALLIED_ROUNDS_MAX * TALLIED_CATEGORIES_MAX * TALLIED_TARGET_MAX
 
 
 def test_tallied_grounding_rejects_total_rounds_above_max() -> None:

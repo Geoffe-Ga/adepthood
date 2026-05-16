@@ -14,15 +14,24 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
-from schemas.practice_mode_config import Sense
+from schemas.practice_mode_config import (
+    TALLIED_CATEGORIES_MAX,
+    TALLIED_ROUNDS_MAX,
+    TALLIED_TARGET_MAX,
+    Sense,
+)
 
 _MAX_REPS = 1_000_000
 _MAX_BPM = 240
 _MIN_BPM = 1
 _MAX_TAROT_INDEX = 21  # 22-card major arcana, zero-indexed.
 _MAX_INTERVALS = 1_000
-_MAX_TALLIED_ROUNDS = 10
-_MAX_TALLIED_ITEMS = 2_400  # 10 rounds * 12 categories * 20 target_count ceiling.
+# Derived from the authoring-side ceilings so the post-session cap can
+# never silently lag a config bump (e.g. raising the categories limit).
+# The cross-module guard in ``test_practice_session_metadata.py`` locks
+# this derivation in case the underlying constants are ever inlined.
+_MAX_TALLIED_ROUNDS = TALLIED_ROUNDS_MAX
+_MAX_TALLIED_ITEMS = TALLIED_ROUNDS_MAX * TALLIED_CATEGORIES_MAX * TALLIED_TARGET_MAX
 
 
 class _MetadataBase(BaseModel):
