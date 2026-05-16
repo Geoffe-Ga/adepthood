@@ -1786,8 +1786,16 @@ export function validateFrequencyResponse(data: unknown): data is FrequencyRespo
 }
 
 export const frequency = {
-  async current(token?: string): Promise<FrequencyResponse> {
-    const data = await request<FrequencyResponse>('/user-practices/current/frequency', { token });
+  async current(stageNumber?: number | null, token?: string): Promise<FrequencyResponse> {
+    // Pin the banner to a client-supplied stage when the master-date wiring
+    // (#323) has diverged from the server-stored ``StageProgress.current_stage``.
+    // Omitting the override preserves the legacy "server decides" path so
+    // older clients keep working.
+    const qs =
+      stageNumber !== undefined && stageNumber !== null ? `?stage_number=${stageNumber}` : '';
+    const data = await request<FrequencyResponse>(`/user-practices/current/frequency${qs}`, {
+      token,
+    });
     if (!validateFrequencyResponse(data)) {
       throw new Error('Invalid frequency response');
     }

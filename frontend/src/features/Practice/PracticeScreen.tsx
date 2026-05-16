@@ -65,7 +65,7 @@ const PracticeScreen = (): React.JSX.Element => {
       contentContainerStyle={styles.scrollContent}
       testID="practice-screen"
     >
-      <FrequencyBanner onSwitch={() => setShowSwitcher(true)} />
+      <FrequencyBanner stageNumber={stageNumber} onSwitch={() => setShowSwitcher(true)} />
       <PracticeBody
         active={active}
         weekly={weekly}

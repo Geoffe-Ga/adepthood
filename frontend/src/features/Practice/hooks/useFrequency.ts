@@ -28,7 +28,7 @@ function toError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
 }
 
-export function useFrequency(): UseFrequencyResult {
+export function useFrequency(stageNumber?: number | null): UseFrequencyResult {
   const [data, setData] = useState<FrequencyResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -48,7 +48,7 @@ export function useFrequency(): UseFrequencyResult {
     setIsLoading(true);
     setError(null);
     try {
-      const result = await frequency.current();
+      const result = await frequency.current(stageNumber);
       if (!mountedRef.current) return;
       setData(result);
     } catch (err) {
@@ -57,7 +57,7 @@ export function useFrequency(): UseFrequencyResult {
     } finally {
       if (mountedRef.current) setIsLoading(false);
     }
-  }, []);
+  }, [stageNumber]);
 
   useEffect(() => {
     void fetchOnce();

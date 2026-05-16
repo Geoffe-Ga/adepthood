@@ -285,6 +285,25 @@ describe('PracticeScreen', () => {
     expect(getByTestId('ritual-configurator-sheet')).toBeTruthy();
   });
 
+  it('pins the frequency banner to the resolved stage (master-date wiring #323)', async () => {
+    // The card and the banner must read the same stage. When the user
+    // moves the program start date their derived stage advances even
+    // though the server-stored ``StageProgress.current_stage`` lags
+    // behind; passing the resolved stage to the frequency endpoint
+    // keeps the banner colour in lockstep with the practice card
+    // (regression for the Beige-banner-over-Purple-practice bug).
+    mockRouteParams.stageNumber = 2;
+    try {
+      const { getByTestId } = render(<PracticeScreen />);
+      await waitFor(() => {
+        expect(getByTestId('selection-view')).toBeTruthy();
+      });
+      expect(mockFrequency).toHaveBeenCalledWith(2);
+    } finally {
+      delete mockRouteParams.stageNumber;
+    }
+  });
+
   it('opens the practice switcher when the banner is tapped', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId } = render(<PracticeScreen />);
