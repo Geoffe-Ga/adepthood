@@ -29,10 +29,7 @@ const updateStartDates = (habits: Habit[], startDate: Date): Habit[] =>
     start_date: calculateHabitStartDate(startDate, index),
   }));
 
-/** The displayed stage in the reorder modal comes from list position so the
- *  color reconfigures live as the user drags, matching how
- *  ``HabitsScreen`` paints tile borders (BUG-FE-HABIT — position-based,
- *  not the stored ``habit.stage`` field). */
+/** Stage at this position; matches HabitsScreen's index-based coloring. */
 const stageAtPosition = (index: number): string =>
   STAGE_ORDER[index % STAGE_ORDER.length] ?? 'Clear Light';
 
@@ -72,9 +69,7 @@ interface ReorderDateButtonProps {
   onSelectDate: (_date: Date) => void;
 }
 
-// ``react-native-modal-datetime-picker`` is a no-op on web, so on the
-// browser app we render an HTML ``<input type="date">`` overlaid on the
-// button.  Tapping the button opens the OS's native date picker.
+// Web fallback: react-native-modal-datetime-picker is a no-op on web.
 const WebDateButton = ({
   startDate,
   onSelectDate,
@@ -184,14 +179,7 @@ const useReorderState = ({
     if (!visible) setPickerVisible(false);
   }, [visible]);
 
-  // BUG-FE-HABIT-204: only seed the ordered list on the open transition;
-  // re-firing on every startDate change clobbered manual drags.
-  // Preserve the order the parent passed in -- the API already sorts
-  // ascending by ``sort_order``, which is the order the main screen
-  // shows.  Re-sorting by ``STAGE_ORDER.indexOf(item.stage)`` here was
-  // shoving newly-added habits (whose stored ``stage`` was assigned by
-  // total count, not list position) to the bottom even though the main
-  // screen had them at the top.
+  // Seed only on the open transition; preserve parent order (sort_order).
   useEffect(() => {
     const justOpened = visible && !wasVisibleRef.current;
     wasVisibleRef.current = visible;
