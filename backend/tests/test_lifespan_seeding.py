@@ -21,6 +21,7 @@ from sqlmodel import select
 # object itself (so it can wire a session factory at it), not a per-test
 # session yielded from a fixture.
 from conftest import test_engine
+from content_config import STAGE_PLANS
 from main import _seed_startup_data, app, lifespan
 from models.course_stage import CourseStage
 from models.practice import Practice
@@ -55,11 +56,13 @@ async def test_seed_startup_data_inserts_stages_practices_and_content(
 
     assert len(stages) == 10
     assert len(practices) == 10
-    # ``seed_content`` ships 9 placeholder StageContent rows across stages 1-3;
-    # asserting the count here means a future regression that drops the
-    # content seeder from the lifespan would fail this test, not surface only
-    # in a manual /course/stages/{n}/content smoke check.
-    assert len(contents) == 9
+    # ``seed_content`` seeds the chapters configured for the beige stage
+    # (14 today) plus the 6 placeholder rows that still cover stages 2
+    # and 3.  Asserting the count means a regression that drops the
+    # content seeder from the lifespan fails this test, not just a
+    # /course smoke check.  Adjust this when ``content_config`` changes.
+    expected_content_count = sum(p.chapter_count for p in STAGE_PLANS) + 6
+    assert len(contents) == expected_content_count
 
 
 @pytest.mark.asyncio

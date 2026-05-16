@@ -41,3 +41,27 @@ class ContentCompletionResponse(OwnedResourcePublic):
     id: int
     content_id: int
     completed_at: datetime
+
+
+class ContentBodyResponse(BaseModel):
+    """Cleaned Squarespace HTML for in-app rendering.
+
+    ``url`` is the canonical Squarespace URL of the source page so the
+    frontend can offer "Open original" as a fallback.  ``title`` is the
+    article title parsed out of the page; the client should prefer it
+    over the ``ContentItemResponse.title`` field, which is what the
+    backend seeded.
+    """
+
+    url: str
+    title: str
+    body_html: str
+
+
+class SiteResourceResponse(BaseModel):
+    """One entry in the always-available "Site Resources" list."""
+
+    slug: str
+    title: str
+    description: str
+    url: str

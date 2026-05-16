@@ -5,11 +5,12 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from content_config import SITE_RESOURCES, find_resource
 from database import get_session
 from domain.course import compute_days_elapsed, filter_content_for_user, next_unlock_day
 from domain.stage_progress import get_user_progress, is_stage_unlocked
@@ -20,9 +21,16 @@ from models.stage_content import StageContent
 from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
 from schemas.course import (
+    ContentBodyResponse,
     ContentCompletionResponse,
     ContentItemResponse,
     CourseProgressResponse,
+    SiteResourceResponse,
+)
+from services.squarespace import (
+    SquarespaceAuthError,
+    SquarespaceFetchError,
+    get_squarespace_client,
 )
 
 logger = logging.getLogger(__name__)
@@ -376,3 +384,141 @@ async def get_course_progress(
         progress_percent=progress_pct,
         next_unlock_day=nud,
     )
+
+
+# --------------------------------------------------------------------------- #
+# In-app Squarespace rendering                                                 #
+# --------------------------------------------------------------------------- #
+
+
+_CMS_ERROR_DETAIL = "cms_unavailable"
+_CMS_AUTH_ERROR_DETAIL = "cms_auth_failed"
+
+
+async def _fetch_squarespace_body(url: str) -> ContentBodyResponse:
+    """Fetch + clean a Squarespace URL, mapping errors to HTTPExceptions.
+
+    Auth misconfiguration becomes a 503 (the server, not the caller, is
+    misconfigured) and surfaces a distinct detail token so the frontend
+    can render a "Set the site password" admin nudge in dev without
+    leaking which env var is missing in prod.
+    """
+    client = get_squarespace_client()
+    try:
+        fetched = await client.fetch(url)
+    except SquarespaceAuthError as exc:
+        logger.exception("squarespace_auth_failed", extra={"url": url})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_CMS_AUTH_ERROR_DETAIL,
+        ) from exc
+    except SquarespaceFetchError as exc:
+        logger.warning("squarespace_fetch_failed: %s", exc, extra={"url": url})
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=_CMS_ERROR_DETAIL,
+        ) from exc
+    return ContentBodyResponse(
+        url=fetched.url,
+        title=fetched.title,
+        body_html=fetched.body_html,
+    )
+
+
+async def _load_content_with_stage(
+    session: AsyncSession, content_id: int
+) -> tuple[StageContent, CourseStage]:
+    """Load ``content_id`` and its parent stage, 404-ing on either miss."""
+    result = await session.execute(select(StageContent).where(StageContent.id == content_id))
+    item = result.scalars().first()
+    if item is None:
+        raise not_found("content")
+    stage_result = await session.execute(
+        select(CourseStage).where(CourseStage.id == item.course_stage_id)
+    )
+    stage = stage_result.scalars().first()
+    if stage is None:
+        raise not_found("stage")
+    return item, stage
+
+
+async def _check_released_for_user(
+    session: AsyncSession, user_id: int, stage_number: int, release_day: int
+) -> None:
+    """Raise 404 unless the user has reached ``release_day`` on this stage.
+
+    Mirrors the drip-feed gating applied on the metadata endpoint so the
+    in-app body endpoint cannot leak a chapter ahead of its release_day.
+    """
+    days = await _days_for_user_stage(session, user_id, stage_number)
+    if 0 <= days < _PAST_STAGE_DAYS_SENTINEL and release_day > days:
+        raise not_found("content")
+
+
+async def _resolve_released_content_url(
+    session: AsyncSession, user_id: int, content_id: int
+) -> str:
+    """Gate on stage-unlock + release_day, return the source URL.
+
+    Mirrors the 404-mask used by sibling endpoints (BUG-COURSE-004):
+    locked, unreleased, missing-URL, and nonexistent rows all surface
+    as ``content_not_found`` so ``content_id`` is not an enumeration
+    oracle.
+    """
+    item, stage = await _load_content_with_stage(session, content_id)
+    if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number):
+        raise not_found("content")
+    await _check_released_for_user(session, user_id, stage.stage_number, item.release_day)
+    if not item.url:
+        raise not_found("content")
+    return item.url
+
+
+@router.get("/content/{content_id}/body", response_model=ContentBodyResponse)
+async def get_content_body(
+    content_id: int,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ContentBodyResponse:
+    """Return cleaned Squarespace HTML for a content item.
+
+    Mirrors :func:`get_content_item` for gating — a locked or non-existent
+    content row both return ``content_not_found`` (BUG-COURSE-004) so the
+    URL cannot be used as an enumeration oracle.  The drip-feed unlock
+    check is applied here too: locked-day content never escapes the CMS.
+    """
+    url = await _resolve_released_content_url(session, current_user, content_id)
+    return await _fetch_squarespace_body(url)
+
+
+@router.get("/site-resources", response_model=list[SiteResourceResponse])
+async def list_site_resources(
+    _current_user: Annotated[int, Depends(get_current_user)],
+) -> list[SiteResourceResponse]:
+    """Return the configured site-wide resource links.
+
+    These pages (philosophy, about, …) are not stage-gated, but we still
+    require authentication so the list is not crawlable by anyone with
+    the URL.  Editing this list happens in ``content_config.py``.
+    """
+    return [
+        SiteResourceResponse(
+            slug=resource.slug,
+            title=resource.title,
+            description=resource.description,
+            url=resource.url,
+        )
+        for resource in SITE_RESOURCES
+    ]
+
+
+@router.get("/site-resources/{slug}/body", response_model=ContentBodyResponse)
+async def get_site_resource_body(
+    slug: str,
+    _current_user: Annotated[int, Depends(get_current_user)],
+) -> ContentBodyResponse:
+    """Return cleaned Squarespace HTML for a configured site resource."""
+    resource = find_resource(slug)
+    if resource is None:
+        raise not_found("resource")
+    return await _fetch_squarespace_body(resource.url)

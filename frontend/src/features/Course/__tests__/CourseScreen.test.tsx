@@ -84,6 +84,30 @@ const mockMarkRead = (jest.fn() as any).mockResolvedValue({
   content_id: 1,
   completed_at: '2026-01-15T10:00:00Z',
 });
+const mockSiteResources = (jest.fn() as any).mockResolvedValue([
+  {
+    slug: 'philosophy',
+    title: 'Philosophy',
+    description: '',
+    url: 'https://aptitude.guru/philosophy',
+  },
+  {
+    slug: 'about',
+    title: 'About',
+    description: '',
+    url: 'https://aptitude.guru/about',
+  },
+]);
+const mockContentBody = (jest.fn() as any).mockResolvedValue({
+  url: 'https://aptitude.guru/course/beige-1',
+  title: 'Chapter One',
+  body_html: '<article>x</article>',
+});
+const mockSiteResourceBody = (jest.fn() as any).mockResolvedValue({
+  url: 'https://aptitude.guru/philosophy',
+  title: 'Philosophy',
+  body_html: '<article>philosophy</article>',
+});
 
 jest.mock('../../../api', () => ({
   stages: {
@@ -93,6 +117,9 @@ jest.mock('../../../api', () => ({
     stageContent: (...args: unknown[]) => mockStageContent(...args),
     stageProgress: (...args: unknown[]) => mockStageProgress(...args),
     markRead: (...args: unknown[]) => mockMarkRead(...args),
+    contentBody: (...args: unknown[]) => mockContentBody(...args),
+    siteResources: (...args: unknown[]) => mockSiteResources(...args),
+    siteResourceBody: (...args: unknown[]) => mockSiteResourceBody(...args),
   },
 }));
 
@@ -211,7 +238,7 @@ describe('CourseScreen', () => {
     });
 
     await waitFor(() => {
-      expect(getByTestId('content-viewer')).toBeTruthy();
+      expect(getByTestId('chapter-reader')).toBeTruthy();
     });
   });
 
@@ -226,7 +253,7 @@ describe('CourseScreen', () => {
       fireEvent.press(getByTestId('content-card-2'));
     });
 
-    expect(queryByTestId('content-viewer')).toBeNull();
+    expect(queryByTestId('chapter-reader')).toBeNull();
   });
 
   it('returns from content viewer when back is pressed', async () => {
@@ -242,16 +269,16 @@ describe('CourseScreen', () => {
     });
 
     await waitFor(() => {
-      expect(getByTestId('content-viewer')).toBeTruthy();
+      expect(getByTestId('chapter-reader')).toBeTruthy();
     });
 
     // Go back
     await act(async () => {
-      fireEvent.press(getByTestId('viewer-back-button'));
+      fireEvent.press(getByTestId('reader-back-button'));
     });
 
     await waitFor(() => {
-      expect(queryByTestId('content-viewer')).toBeNull();
+      expect(queryByTestId('chapter-reader')).toBeNull();
       expect(getByTestId('content-list')).toBeTruthy();
     });
   });
@@ -292,7 +319,7 @@ describe('CourseScreen', () => {
     });
 
     await waitFor(() => {
-      expect(getByTestId('content-viewer')).toBeTruthy();
+      expect(getByTestId('chapter-reader')).toBeTruthy();
     });
 
     // Press reflect button

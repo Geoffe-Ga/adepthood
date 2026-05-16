@@ -7,6 +7,7 @@ import {
   stages as stagesApi,
   type ContentItem,
   type CourseProgress,
+  type SiteResource,
   type Stage,
 } from '../../api';
 import { STAGE_COLORS, colors } from '../../design/tokens';
@@ -14,9 +15,11 @@ import { useAppNavigation, useAppRoute } from '../../navigation/hooks';
 import { useProgramStore, programStage } from '../../store/useProgramStore';
 import { deriveCurrentStage } from '../Map/services/stageService';
 
+import ChapterReader from './ChapterReader';
 import ContentCard from './ContentCard';
 import ContentViewer from './ContentViewer';
 import styles from './Course.styles';
+import SiteResourcesPanel from './SiteResourcesPanel';
 import StageSelector from './StageSelector';
 
 const DEFAULT_STAGE_NUMBER = 1;
@@ -204,12 +207,20 @@ const ContentArea = ({
 function useCourseViewer(selectedStage: number) {
   const navigation = useAppNavigation();
   const [viewingItem, setViewingItem] = useState<ContentItem | null>(null);
+  const [viewingResource, setViewingResource] = useState<SiteResource | null>(null);
 
   const handleContentPress = useCallback((item: ContentItem) => {
     if (!item.is_locked) setViewingItem(item);
   }, []);
 
-  const handleBack = useCallback(() => setViewingItem(null), []);
+  const handleResourcePress = useCallback((resource: SiteResource) => {
+    setViewingResource(resource);
+  }, []);
+
+  const handleBack = useCallback(() => {
+    setViewingItem(null);
+    setViewingResource(null);
+  }, []);
 
   const handleReflect = useCallback(() => {
     if (!viewingItem) return;
@@ -221,10 +232,45 @@ function useCourseViewer(selectedStage: number) {
     setViewingItem(null);
   }, [viewingItem, selectedStage, navigation]);
 
-  return { viewingItem, setViewingItem, handleContentPress, handleBack, handleReflect };
+  return {
+    viewingItem,
+    setViewingItem,
+    viewingResource,
+    setViewingResource,
+    handleContentPress,
+    handleResourcePress,
+    handleBack,
+    handleReflect,
+  };
 }
 
 // --- Main component ---
+
+function renderOverlay(
+  viewer: ReturnType<typeof useCourseViewer>,
+  onMarkRead: () => void,
+): React.JSX.Element | null {
+  if (viewer.viewingItem) {
+    return (
+      <ContentViewer
+        item={viewer.viewingItem}
+        onBack={viewer.handleBack}
+        onMarkRead={onMarkRead}
+        onReflect={viewer.handleReflect}
+      />
+    );
+  }
+  if (viewer.viewingResource) {
+    return (
+      <ChapterReader
+        source={{ kind: 'resource', slug: viewer.viewingResource.slug }}
+        fallbackTitle={viewer.viewingResource.title}
+        onBack={viewer.handleBack}
+      />
+    );
+  }
+  return null;
+}
 
 const CourseScreen = (): React.JSX.Element => {
   const { allStages, selectedStage, setSelectedStage, loading } = useStagesLoader();
@@ -239,16 +285,8 @@ const CourseScreen = (): React.JSX.Element => {
     [setSelectedStage, viewer],
   );
 
-  if (viewer.viewingItem) {
-    return (
-      <ContentViewer
-        item={viewer.viewingItem}
-        onBack={viewer.handleBack}
-        onMarkRead={stageContent.handleMarkRead}
-        onReflect={viewer.handleReflect}
-      />
-    );
-  }
+  const overlay = renderOverlay(viewer, stageContent.handleMarkRead);
+  if (overlay !== null) return overlay;
 
   if (loading) return <CourseLoadingState />;
 
@@ -261,6 +299,7 @@ const CourseScreen = (): React.JSX.Element => {
         selectedStage={selectedStage}
         onSelectStage={handleStageSelect}
       />
+      <SiteResourcesPanel onSelect={viewer.handleResourcePress} />
       {selectedStageData && <StageMetadata stage={selectedStageData} />}
       <CourseProgressBar
         progress={stageContent.progress}

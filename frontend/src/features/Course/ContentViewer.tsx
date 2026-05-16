@@ -1,33 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
 
 import { course as courseApi, type ContentItem } from '../../api';
 import { colors } from '../../design/tokens';
-import { isValidUrl } from '../../utils/url';
 
+import ChapterReader from './ChapterReader';
 import styles from './Course.styles';
-
-interface ViewerHeaderProps {
-  title: string;
-  onBack: () => void;
-}
-
-const ViewerHeader = ({ title, onBack }: ViewerHeaderProps): React.JSX.Element => (
-  <View style={styles.viewerHeader}>
-    <TouchableOpacity
-      onPress={onBack}
-      style={styles.viewerBackButton}
-      testID="viewer-back-button"
-      accessibilityRole="button"
-      accessibilityLabel="Go back"
-    >
-      <Text style={styles.viewerBackText}>{'← Back'}</Text>
-    </TouchableOpacity>
-    <Text style={styles.viewerTitle} numberOfLines={1}>
-      {title}
-    </Text>
-  </View>
-);
 
 interface ViewerFooterProps {
   isRead: boolean;
@@ -126,35 +104,20 @@ const ContentViewer = ({
 }: ContentViewerProps): React.JSX.Element => {
   const { marking, isRead, handleMarkRead } = useMarkReadHandler(item, onMarkRead);
 
-  const handleOpenUrl = useCallback(async () => {
-    if (!item.url || !isValidUrl(item.url)) return;
-    try {
-      await Linking.openURL(item.url);
-    } catch (err) {
-      console.error('Failed to open URL:', err);
-    }
-  }, [item.url]);
-
   return (
-    <View style={styles.viewerContainer} testID="content-viewer">
-      <ViewerHeader title={item.title} onBack={onBack} />
-      <View style={styles.loadingContainer}>
-        <TouchableOpacity
-          onPress={handleOpenUrl}
-          testID="open-url-button"
-          accessibilityLabel="Open in browser"
-          accessibilityRole="link"
-        >
-          <Text style={styles.viewerBackText}>{'Open in Browser'}</Text>
-        </TouchableOpacity>
-      </View>
-      <ViewerFooter
-        isRead={isRead}
-        marking={marking}
-        onMarkRead={handleMarkRead}
-        onReflect={onReflect}
-      />
-    </View>
+    <ChapterReader
+      source={{ kind: 'content', id: item.id }}
+      fallbackTitle={item.title}
+      onBack={onBack}
+      footer={
+        <ViewerFooter
+          isRead={isRead}
+          marking={marking}
+          onMarkRead={handleMarkRead}
+          onReflect={onReflect}
+        />
+      }
+    />
   );
 };
 

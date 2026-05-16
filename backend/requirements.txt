@@ -16,3 +16,4 @@ tzdata
 pytest
 pytest-asyncio
 httpx
+beautifulsoup4
