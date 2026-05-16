@@ -3,6 +3,7 @@ import type { ComponentType } from 'react';
 import { Modal, Platform, Text, TouchableOpacity, View } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 
+import { parseISODate, toISODate } from '../../../components/DatePicker';
 import { STAGE_COLORS } from '../../../design/tokens';
 import { useProgramStore } from '../../../store/useProgramStore';
 import styles from '../Habits.styles';
@@ -28,46 +29,91 @@ const updateStartDates = (habits: Habit[], startDate: Date): Habit[] =>
     start_date: calculateHabitStartDate(startDate, index),
   }));
 
+/** Stage at this position; matches HabitsScreen's index-based coloring. */
+const stageAtPosition = (index: number): string =>
+  STAGE_ORDER[index % STAGE_ORDER.length] ?? 'Clear Light';
+
 interface ReorderItemProps {
   item: Habit;
+  index: number;
   drag: () => void;
   isActive: boolean;
 }
 
-const ReorderHabitItem = ({ item, drag, isActive }: ReorderItemProps) => (
-  <TouchableOpacity
-    onLongPress={drag}
-    disabled={isActive}
-    style={[
-      styles.reorderItem,
-      isActive && styles.reorderItemActive,
-      { borderLeftColor: STAGE_COLORS[item.stage] || '#ccc', borderLeftWidth: 4 },
-    ]}
-  >
-    <View style={styles.reorderItemContent}>
-      <Text style={styles.reorderItemText}>
-        {item.icon} {item.name} ({item.stage})
-      </Text>
-      <Text style={styles.reorderItemDate}>{formatDate(new Date(item.start_date))}</Text>
-    </View>
-  </TouchableOpacity>
-);
+const ReorderHabitItem = ({ item, index, drag, isActive }: ReorderItemProps) => {
+  const stage = stageAtPosition(index);
+  const color = STAGE_COLORS[stage] ?? '#ccc';
+  return (
+    <TouchableOpacity
+      onLongPress={drag}
+      disabled={isActive}
+      style={[
+        styles.reorderItem,
+        isActive && styles.reorderItemActive,
+        { borderLeftColor: color, borderLeftWidth: 4 },
+      ]}
+    >
+      <View style={styles.reorderItemContent}>
+        <Text style={styles.reorderItemText}>
+          {item.icon} {item.name} ({stage})
+        </Text>
+        <Text style={styles.reorderItemDate}>{formatDate(new Date(item.start_date))}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+};
 
 interface ReorderDateButtonProps {
   startDate: Date;
   onOpenPicker: () => void;
+  onSelectDate: (_date: Date) => void;
 }
 
-const ReorderDateButton = ({ startDate, onOpenPicker }: ReorderDateButtonProps) => (
+// Web fallback: react-native-modal-datetime-picker is a no-op on web.
+const WebDateButton = ({
+  startDate,
+  onSelectDate,
+}: Pick<ReorderDateButtonProps, 'startDate' | 'onSelectDate'>) => (
+  <View style={[styles.datePickerButton, { position: 'relative' }]} testID="reorder-start-date">
+    <Text style={styles.datePickerButtonText}>{formatDate(startDate)}</Text>
+    <input
+      aria-label="First habit start date"
+      data-testid="reorder-start-date-input"
+      type="date"
+      value={toISODate(startDate)}
+      onChange={(e) => {
+        if (e.target.value) onSelectDate(parseISODate(e.target.value));
+      }}
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: '100%',
+        opacity: 0,
+        cursor: 'pointer',
+        border: 0,
+        padding: 0,
+        margin: 0,
+      }}
+    />
+  </View>
+);
+
+const ReorderDateButton = ({ startDate, onOpenPicker, onSelectDate }: ReorderDateButtonProps) => (
   <View style={styles.datePickerContainer}>
     <Text style={styles.datePickerLabel}>First Habit Start Date:</Text>
-    <TouchableOpacity
-      testID="reorder-start-date"
-      style={styles.datePickerButton}
-      onPress={onOpenPicker}
-    >
-      <Text style={styles.datePickerButtonText}>{formatDate(startDate)}</Text>
-    </TouchableOpacity>
+    {Platform.OS === 'web' ? (
+      <WebDateButton startDate={startDate} onSelectDate={onSelectDate} />
+    ) : (
+      <TouchableOpacity
+        testID="reorder-start-date"
+        style={styles.datePickerButton}
+        onPress={onOpenPicker}
+      >
+        <Text style={styles.datePickerButtonText}>{formatDate(startDate)}</Text>
+      </TouchableOpacity>
+    )}
   </View>
 );
 
@@ -82,8 +128,8 @@ const ReorderList = ({ orderedHabits, onDragEnd }: ReorderListProps) => (
       style={{ flex: 1 }}
       data={orderedHabits}
       keyExtractor={(item) => (item.id ? item.id.toString() : item.name)}
-      renderItem={({ item, drag, isActive }) => (
-        <ReorderHabitItem item={item} drag={drag} isActive={isActive} />
+      renderItem={({ item, drag, isActive, getIndex }) => (
+        <ReorderHabitItem item={item} index={getIndex() ?? 0} drag={drag} isActive={isActive} />
       )}
       onDragEnd={onDragEnd}
     />
@@ -133,16 +179,12 @@ const useReorderState = ({
     if (!visible) setPickerVisible(false);
   }, [visible]);
 
-  // BUG-FE-HABIT-204: only seed the ordered list on the open transition;
-  // re-firing on every startDate change clobbered manual drags.
+  // Seed only on the open transition; preserve parent order (sort_order).
   useEffect(() => {
     const justOpened = visible && !wasVisibleRef.current;
     wasVisibleRef.current = visible;
     if (!justOpened || habits.length === 0) return;
-    const sortedHabits = [...habits].sort(
-      (a, b) => STAGE_ORDER.indexOf(a.stage) - STAGE_ORDER.indexOf(b.stage),
-    );
-    setOrderedHabits(updateStartDates(sortedHabits, startDate));
+    setOrderedHabits(updateStartDates(habits, startDate));
   }, [visible, habits, startDate]);
 
   return {
@@ -171,6 +213,7 @@ interface ReorderBodyProps {
   orderedHabits: Habit[];
   startDate: Date;
   onOpenPicker: () => void;
+  onSelectDate: (_d: Date) => void;
   onDragEnd: (_a: { data: Habit[] }) => void;
   onSave: () => void;
 }
@@ -180,6 +223,7 @@ const ReorderBody = ({
   orderedHabits,
   startDate,
   onOpenPicker,
+  onSelectDate,
   onDragEnd,
   onSave,
 }: ReorderBodyProps) => (
@@ -190,7 +234,11 @@ const ReorderBody = ({
         <Text style={styles.closeButtonText}>×</Text>
       </TouchableOpacity>
     </View>
-    <ReorderDateButton startDate={startDate} onOpenPicker={onOpenPicker} />
+    <ReorderDateButton
+      startDate={startDate}
+      onOpenPicker={onOpenPicker}
+      onSelectDate={onSelectDate}
+    />
     <Text style={styles.reorderInstructions}>
       Drag habits to reorder. Habits 1-8 start 21 days apart, habits 9-10 start 42 days apart.
     </Text>
@@ -218,6 +266,7 @@ export const ReorderHabitsModal = ({
             orderedHabits={state.orderedHabits}
             startDate={state.startDate}
             onOpenPicker={() => state.setPickerVisible(true)}
+            onSelectDate={state.handleConfirmDate}
             onDragEnd={state.handleDragEnd}
             onSave={state.handleSave}
           />

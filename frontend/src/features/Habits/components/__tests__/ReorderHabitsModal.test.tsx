@@ -1,6 +1,6 @@
 /* eslint-env jest */
 // Regression tests for the three reorder-modal bugs: drag freeze, picker dismissal, and the iOS sibling-mount.
-import { describe, expect, it, jest, beforeEach } from '@jest/globals';
+import { describe, expect, it, jest, beforeEach, afterEach } from '@jest/globals';
 import { fireEvent, render, act, within } from '@testing-library/react-native';
 import React from 'react';
 
@@ -289,5 +289,90 @@ describe('ReorderHabitsModal — save flow', () => {
     const saved = onSave.mock.calls[0]![0] as Habit[];
     expect(saved.map((h) => h.id)).toEqual([2, 3, 1]);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ReorderHabitsModal — stage is derived from list position, not stored field', () => {
+  it('labels the parentheses by list position, ignoring item.stage', () => {
+    // Stored stages deliberately disagree with positional order.
+    const habits: Habit[] = [
+      makeHabit(1, 'Yellow', 'first'),
+      makeHabit(2, '', 'second'),
+      makeHabit(3, 'Clear Light', 'third'),
+    ];
+
+    const result = render(
+      <ReorderHabitsModal visible habits={habits} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    expect(result.queryByText('⭐ first (Beige)')).toBeTruthy();
+    expect(result.queryByText('⭐ second (Purple)')).toBeTruthy();
+    expect(result.queryByText('⭐ third (Red)')).toBeTruthy();
+  });
+
+  it('does not re-sort by item.stage on open — uses the order the parent passed in', () => {
+    const habits: Habit[] = [
+      makeHabit(7, 'Yellow', 'skincare'), // stored 7th-color, but listed first
+      makeHabit(1, 'Beige', 'journal'),
+      makeHabit(2, 'Purple', 'fitness'),
+    ];
+
+    const result = render(
+      <ReorderHabitsModal visible habits={habits} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    expect(getOrderedIds(result)).toEqual([7, 1, 2]);
+  });
+
+  it('updates stage labels live as the user drags rows into new positions', () => {
+    const habits: Habit[] = [
+      makeHabit(1, 'Beige', 'a'),
+      makeHabit(2, 'Purple', 'b'),
+      makeHabit(3, 'Red', 'c'),
+    ];
+
+    const result = render(
+      <ReorderHabitsModal visible habits={habits} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    const list = result.getByTestId('reorder-list');
+    act(() => {
+      list.props.onDragEnd({ data: [habits[2], habits[0], habits[1]] });
+    });
+
+    expect(result.queryByText('⭐ c (Beige)')).toBeTruthy();
+    expect(result.queryByText('⭐ a (Purple)')).toBeTruthy();
+    expect(result.queryByText('⭐ b (Red)')).toBeTruthy();
+  });
+});
+
+describe('ReorderHabitsModal — date picker on web', () => {
+  const Platform = require('react-native').Platform as { OS: string };
+  let originalOS: string;
+  beforeEach(() => {
+    originalOS = Platform.OS;
+    Platform.OS = 'web';
+  });
+  afterEach(() => {
+    Platform.OS = originalOS;
+  });
+
+  it('renders an HTML date input on web that updates the master program anchor', () => {
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    const input = result.UNSAFE_root.findByProps({ type: 'date' });
+    expect(input).toBeTruthy();
+    expect(input.props['aria-label']).toBe('First habit start date');
+
+    act(() => {
+      input.props.onChange({ target: { value: '2026-09-01' } });
+    });
+
+    const stored = useProgramStore.getState().programStartDate!;
+    expect(stored.getFullYear()).toBe(2026);
+    expect(stored.getMonth()).toBe(8);
+    expect(stored.getDate()).toBe(1);
   });
 });
