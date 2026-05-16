@@ -384,20 +384,25 @@ class SquarespaceClient:
         except httpx.HTTPError as exc:
             raise SquarespaceFetchError(f"Network error fetching {url}: {exc}") from exc
 
-    async def _fetch_and_clean(self, url: str) -> FetchedContent:
-        response = await self._raw_get(url)
+    async def _retry_if_session_expired(self, url: str, response: httpx.Response) -> httpx.Response:
+        """Re-authenticate and retry once if the response looks locked.
 
-        # Session might have expired between authentication and this
-        # request; if so, log in once more and retry exactly once.  Skip
-        # the re-auth for public URLs — they never had a cookie, and a
-        # 401 there is a real error, not a stale-session indicator.
-        looks_locked = response.status_code == httpx.codes.UNAUTHORIZED or (
+        Public URLs are exempt: they never had a cookie, and a 401 or
+        password-lookalike body there indicates a real upstream error,
+        not a stale session.
+        """
+        locked = response.status_code == httpx.codes.UNAUTHORIZED or (
             self._looks_like_password_page(response.text)
         )
-        if looks_locked and self._requires_auth(url):
-            self._authenticated = False
-            await self._ensure_authenticated()
-            response = await self._raw_get(url)
+        if not (locked and self._requires_auth(url)):
+            return response
+        self._authenticated = False
+        await self._ensure_authenticated()
+        return await self._raw_get(url)
+
+    async def _fetch_and_clean(self, url: str) -> FetchedContent:
+        response = await self._raw_get(url)
+        response = await self._retry_if_session_expired(url, response)
 
         if response.status_code >= _HTTP_ERROR_THRESHOLD:
             raise SquarespaceFetchError(
