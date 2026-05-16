@@ -19,6 +19,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 MIGRATIONS_DIR = Path(__file__).parent.parent / "migrations" / "versions"
 
@@ -659,7 +660,10 @@ def test_tallied_grounding_migration_round_trip_on_sqlite(
     assert _count_practice_with_mode(db_url, "tallied_grounding") == 1
 
     # Phase 2: downgrade — refuses to run while a tallied_grounding row exists.
-    with pytest.raises(Exception, match="tallied_grounding"):
+    # The migration's ``downgrade()`` raises a concrete ``RuntimeError`` rather
+    # than any random Exception — pinning the class avoids masking unrelated
+    # failures (PR #343 review feedback).
+    with pytest.raises(RuntimeError, match="tallied_grounding"):
         command.downgrade(cfg, _TALLIED_GROUNDING_BASE_REVISION)
 
     # Phase 3: clear the offending row, then downgrade cleanly.
@@ -672,7 +676,11 @@ def test_tallied_grounding_migration_round_trip_on_sqlite(
     command.downgrade(cfg, _TALLIED_GROUNDING_BASE_REVISION)
 
     # Phase 4: the original CHECK is back — inserting tallied_grounding now fails.
-    with pytest.raises(Exception, match="CHECK"):
+    # ``IntegrityError`` is the precise class SQLAlchemy raises on a CHECK
+    # constraint violation; using it (rather than the broad ``Exception``)
+    # avoids masking unrelated failures whose message happens to mention
+    # "CHECK" (PR #343 review feedback).
+    with pytest.raises(IntegrityError):
         _insert_practice_row(db_url, mode="tallied_grounding", name="Should fail")
 
     # Phase 5: re-upgrade — tallied_grounding inserts succeed again (idempotent cycle).

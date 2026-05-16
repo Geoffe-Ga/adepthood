@@ -26,12 +26,13 @@ _MAX_BPM = 240
 _MIN_BPM = 1
 _MAX_TAROT_INDEX = 21  # 22-card major arcana, zero-indexed.
 _MAX_INTERVALS = 1_000
-# Derived from the authoring-side ceilings so the post-session cap can
-# never silently lag a config bump (e.g. raising the categories limit).
-# The cross-module guard in ``test_practice_session_metadata.py`` locks
-# this derivation in case the underlying constants are ever inlined.
-_MAX_TALLIED_ROUNDS = TALLIED_ROUNDS_MAX
-_MAX_TALLIED_ITEMS = TALLIED_ROUNDS_MAX * TALLIED_CATEGORIES_MAX * TALLIED_TARGET_MAX
+# Public ceilings derived from the authoring-side ceilings so the
+# post-session cap can never silently lag a config bump (e.g. raising
+# the categories limit). The cross-module guard in
+# ``test_practice_session_metadata.py`` locks this derivation in case
+# the underlying constants are ever inlined.
+MAX_TALLIED_ROUNDS = TALLIED_ROUNDS_MAX
+MAX_TALLIED_ITEMS = TALLIED_ROUNDS_MAX * TALLIED_CATEGORIES_MAX * TALLIED_TARGET_MAX
 
 
 class _MetadataBase(BaseModel):
@@ -110,9 +111,9 @@ class TalliedGroundingMetadata(_MetadataBase):
     """
 
     mode: Literal["tallied_grounding"] = "tallied_grounding"
-    rounds_completed: int = Field(ge=0, le=_MAX_TALLIED_ROUNDS)
-    total_rounds: int = Field(ge=1, le=_MAX_TALLIED_ROUNDS)
-    items_completed: int = Field(ge=0, le=_MAX_TALLIED_ITEMS)
+    rounds_completed: int = Field(ge=0, le=MAX_TALLIED_ROUNDS)
+    total_rounds: int = Field(ge=1, le=MAX_TALLIED_ROUNDS)
+    items_completed: int = Field(ge=0, le=MAX_TALLIED_ITEMS)
 
     @model_validator(mode="after")
     def _check_completed_within_total(self) -> Self:

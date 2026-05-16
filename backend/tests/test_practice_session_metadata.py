@@ -11,8 +11,8 @@ from schemas.practice_mode_config import (
     TALLIED_TARGET_MAX,
 )
 from schemas.practice_session_metadata import (
-    _MAX_TALLIED_ITEMS,
-    _MAX_TALLIED_ROUNDS,
+    MAX_TALLIED_ITEMS,
+    MAX_TALLIED_ROUNDS,
     CountUpMetadata,
     IntervalBellMetadata,
     MeditationTimerMetadata,
@@ -210,14 +210,14 @@ def test_tallied_grounding_accepts_items_completed_at_ceiling() -> None:
 def test_tallied_metadata_ceilings_match_config_constants() -> None:
     """Lock the metadata ceiling to the authoring-side ceiling constants.
 
-    The metadata module derives ``_MAX_TALLIED_ROUNDS`` and
-    ``_MAX_TALLIED_ITEMS`` from the config module so a future bump (e.g.
+    The metadata module derives ``MAX_TALLIED_ROUNDS`` and
+    ``MAX_TALLIED_ITEMS`` from the config module so a future bump (e.g.
     raising the categories limit) cannot leave the post-session cap
     silently stale. This test pins the contract: it fails loudly if the
     derivation is ever inlined or the underlying constants change.
     """
-    assert _MAX_TALLIED_ROUNDS == TALLIED_ROUNDS_MAX
-    assert _MAX_TALLIED_ITEMS == TALLIED_ROUNDS_MAX * TALLIED_CATEGORIES_MAX * TALLIED_TARGET_MAX
+    assert MAX_TALLIED_ROUNDS == TALLIED_ROUNDS_MAX
+    assert MAX_TALLIED_ITEMS == TALLIED_ROUNDS_MAX * TALLIED_CATEGORIES_MAX * TALLIED_TARGET_MAX
 
 
 def test_tallied_grounding_rejects_total_rounds_above_max() -> None:
