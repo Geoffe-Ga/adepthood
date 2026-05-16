@@ -64,7 +64,7 @@ async def test_fetch_authenticates_once_then_returns_clean_article() -> None:
     page_gets: list[Request] = []
 
     def handler(request: Request) -> Response:
-        if request.method == "POST" and request.url.path == "/":
+        if request.method == "POST" and request.url.path == "/course":
             auth_posts.append(request)
             return Response(200, html="<html><body>OK</body></html>")
         if request.method == "GET" and request.url.path == "/course/beige-1":
@@ -106,7 +106,7 @@ async def test_fetch_reauthenticates_when_session_expires() -> None:
     def handler(request: Request) -> Response:
         nonlocal gets
         request_log.append((request.method, request.url.path))
-        if request.method == "POST" and request.url.path == "/":
+        if request.method == "POST" and request.url.path == "/course":
             return Response(200, html="<html><body>OK</body></html>")
         if request.method == "GET" and request.url.path == "/course/beige-1":
             gets += 1
@@ -231,6 +231,98 @@ async def test_invalidate_cache_forces_refetch() -> None:
     client.invalidate_cache()
     await client.fetch(_CHAPTER_URL)
     assert gets == 3
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_fetch_skips_auth_for_public_pages() -> None:
+    """Public pages outside ``/course`` are not gated and must skip auth."""
+    auth_posts: list[Request] = []
+    page_gets: list[Request] = []
+
+    def handler(request: Request) -> Response:
+        if request.method == "POST":
+            auth_posts.append(request)
+            return Response(200, html="<html><body>OK</body></html>")
+        if request.method == "GET" and request.url.path == "/about":
+            page_gets.append(request)
+            return Response(200, html=_ARTICLE_PAGE)
+        return Response(404)
+
+    transport = MockTransport(handler)
+    client = SquarespaceClient(
+        base_url=_BASE_URL,
+        password="open-sesame",  # pragma: allowlist secret
+        http_client_factory=_build_factory(transport),
+    )
+
+    await client.fetch(f"{_BASE_URL}/about")
+
+    assert len(auth_posts) == 0
+    assert len(page_gets) == 1
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_fetch_public_page_works_when_password_unset() -> None:
+    """A missing password must not break public-page fetches."""
+    page_gets: list[Request] = []
+
+    def handler(request: Request) -> Response:
+        if request.method == "GET" and request.url.path == "/philosophy":
+            page_gets.append(request)
+            return Response(200, html=_ARTICLE_PAGE)
+        return Response(404)
+
+    transport = MockTransport(handler)
+    client = SquarespaceClient(
+        base_url=_BASE_URL,
+        password="",
+        http_client_factory=_build_factory(transport),
+    )
+
+    fetched = await client.fetch(f"{_BASE_URL}/philosophy")
+    assert "<article>" in fetched.body_html
+    assert len(page_gets) == 1
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_auth_failure_logs_response_details(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """On a 4xx auth response, the warning log carries enough to debug."""
+
+    def handler(request: Request) -> Response:
+        if request.method == "POST":
+            return Response(
+                403,
+                text="Host not in allowlist",
+                headers={"content-type": "text/plain", "server": "envoy"},
+            )
+        return Response(404)
+
+    transport = MockTransport(handler)
+    client = SquarespaceClient(
+        base_url=_BASE_URL,
+        password="open-sesame",  # pragma: allowlist secret
+        http_client_factory=_build_factory(transport),
+    )
+
+    with (
+        caplog.at_level("WARNING", logger="services.squarespace"),
+        pytest.raises(SquarespaceAuthError),
+    ):
+        await client.fetch(_CHAPTER_URL)
+
+    record = next(r for r in caplog.records if r.message == "squarespace_auth_http_error")
+    # ``logger.warning(..., extra={...})`` merges the dict into the record's
+    # ``__dict__`` but those attributes are invisible to static analysis.
+    fields = record.__dict__
+    assert fields["status"] == 403
+    assert fields["auth_url"] == f"{_BASE_URL}/course"
+    assert "Host not in allowlist" in fields["body_preview"]
+    assert fields["content_type"] == "text/plain"
     await client.aclose()
 
 
