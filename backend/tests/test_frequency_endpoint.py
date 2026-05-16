@@ -458,3 +458,147 @@ def test_every_stage_has_a_preset_name() -> None:
     """
     expected_stages = {int(s["stage_number"]) for s in STAGE_DEFINITIONS}
     assert set(STAGE_TO_PRESET_NAME) == expected_stages
+
+
+# -- ``?stage_number=`` override --------------------------------------------
+#
+# A client that resolves the active stage itself (e.g. from a stored
+# program-start date) needs the banner to follow its choice instead of
+# whatever ``StageProgress.current_stage`` happens to hold — otherwise
+# the banner and the active-practice card disagree on the same render.
+
+
+@pytest.mark.asyncio
+async def test_frequency_stage_number_override_uses_requested_stage(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``?stage_number=N`` renders the catalogue banner for stage ``N``.
+
+    A client whose resolved stage is past stage 1 but whose server-stored
+    ``current_stage`` is still 1 must see the stage-``N`` banner when it
+    asks for stage ``N`` — not the stage-1 fallback the server would
+    compute on its own.
+    """
+    await _seed_catalog(db_session)
+    headers, _user_id = await _signup(async_client, "purple-client")
+
+    resp = await async_client.get(
+        "/user-practices/current/frequency",
+        params={"stage_number": 2},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body = resp.json()
+
+    assert body["stage_number"] == 2
+    assert body["color"] == "Purple"
+    assert body["practice_name"] == STAGE_TO_PRESET_NAME[2]
+    assert body["user_practice_id"] is None
+    assert body["banner_text"] == render_banner_text(
+        color="Purple",
+        aspect=body["aspect"],
+        practice_name=STAGE_TO_PRESET_NAME[2],
+    )
+
+
+@pytest.mark.asyncio
+async def test_frequency_stage_number_override_honours_user_selection(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """When a ``UserPractice`` exists for the requested stage, surface it.
+
+    The override path must still consult the user's selection — otherwise
+    a custom_name or a non-preset pick would silently disappear when the
+    client pinned the stage explicitly.
+    """
+    await _seed_catalog(db_session)
+    headers, user_id = await _signup(async_client, "override-selector")
+
+    # Unlock stage 5 so the selection clears the stage gate.
+    db_session.add(StageProgress(user_id=user_id, current_stage=5, completed_stages=[1, 2, 3, 4]))
+    await db_session.commit()
+
+    preset_id = await _fetch_preset_id(db_session, 5)
+    create_resp = await async_client.post(
+        "/user-practices/",
+        json={"practice_id": preset_id, "stage_number": 5},
+        headers=headers,
+    )
+    assert create_resp.status_code == HTTPStatus.CREATED, create_resp.text
+    user_practice_id = create_resp.json()["id"]
+
+    resp = await async_client.get(
+        "/user-practices/current/frequency",
+        params={"stage_number": 5},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body = resp.json()
+
+    assert body["stage_number"] == 5
+    assert body["user_practice_id"] == user_practice_id
+    assert body["practice_id"] == preset_id
+
+
+@pytest.mark.asyncio
+async def test_frequency_without_override_still_uses_stage_progress(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Omitting ``stage_number`` preserves the legacy behaviour.
+
+    Existing clients (and the server-side fallback) must keep working —
+    the override is additive, not a replacement.
+    """
+    await _seed_catalog(db_session)
+    headers, user_id = await _signup(async_client, "no-override")
+
+    db_session.add(StageProgress(user_id=user_id, current_stage=3, completed_stages=[1, 2]))
+    await db_session.commit()
+
+    resp = await async_client.get("/user-practices/current/frequency", headers=headers)
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body = resp.json()
+    assert body["stage_number"] == 3
+    assert body["color"] == "Red"
+
+
+@pytest.mark.asyncio
+async def test_frequency_stage_number_above_max_is_rejected(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A stage above ``len(STAGE_DEFINITIONS)`` is rejected at validation.
+
+    The bound is derived from the seeded catalogue so adding an 11th
+    stage to ``STAGE_DEFINITIONS`` automatically widens the accepted
+    range — there is no separate magic number to update.
+    """
+    await _seed_catalog(db_session)
+    headers, _user_id = await _signup(async_client, "out-of-range")
+
+    over_max = len(STAGE_DEFINITIONS) + 1
+    resp = await async_client.get(
+        "/user-practices/current/frequency",
+        params={"stage_number": over_max},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_frequency_stage_number_must_be_positive(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A non-positive ``stage_number`` is rejected at the validation layer.
+
+    Stage indices are 1-based across the codebase; passing 0 or a
+    negative value is a client bug, not a server-state question.
+    """
+    await _seed_catalog(db_session)
+    headers, _user_id = await _signup(async_client, "zero-stage")
+
+    resp = await async_client.get(
+        "/user-practices/current/frequency",
+        params={"stage_number": 0},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY

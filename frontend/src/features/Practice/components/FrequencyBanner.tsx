@@ -23,6 +23,13 @@ export interface FrequencyBannerProps {
    * storybook and testing.
    */
   data?: FrequencyResponse;
+  /**
+   * Pin the banner to a specific stage. When omitted the server picks
+   * the stage from the user's stored progress; passing the same stage
+   * the practice card resolves keeps the banner and the card in
+   * lockstep on every render.
+   */
+  stageNumber?: number | null;
   /** Called when the banner body is tapped — open the switcher sheet. */
   onSwitch: () => void;
 }
@@ -90,8 +97,8 @@ function BannerContent({ data, swatch, onSwitch }: BannerContentProps) {
   );
 }
 
-export function FrequencyBanner({ data: injected, onSwitch }: FrequencyBannerProps) {
-  const hook = useFrequency();
+export function FrequencyBanner({ data: injected, stageNumber, onSwitch }: FrequencyBannerProps) {
+  const hook = useFrequency(stageNumber);
   // Injected data wins for storybook / tests; otherwise consume the hook.
   const data = injected ?? hook.data;
   const isLoading = injected ? false : hook.isLoading;

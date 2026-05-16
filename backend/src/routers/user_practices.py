@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +33,7 @@ from schemas.practice import (
 )
 from schemas.practice_mode_config import ModeConfigAdapter
 from seed_practices import STAGE_TO_PRESET_NAME
+from seed_stages import STAGE_DEFINITIONS
 from services.users import get_user_timezone
 
 # Stage 1 is always the curriculum's entry point — users without a
@@ -404,8 +405,21 @@ async def _frequency_from_preset(
 async def get_current_frequency(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    stage_number: Annotated[
+        int | None,
+        Query(
+            ge=1,
+            le=len(STAGE_DEFINITIONS),
+            description=(
+                "Pin the banner to a specific stage. When omitted the server "
+                "derives the stage from the user's StageProgress. Clients pass "
+                "their own resolved stage here so the banner stays in lockstep "
+                "with whatever practice the user is actually looking at."
+            ),
+        ),
+    ] = None,
 ) -> FrequencyResponse:
-    """Return the banner payload for the user's current stage (ritual-05).
+    """Return the banner payload for a stage (ritual-05).
 
     Collapses four lookups (``StageProgress`` → ``CourseStage`` →
     ``UserPractice`` → ``Practice``) into one response so the client
@@ -413,9 +427,18 @@ async def get_current_frequency(
     lives server-side in :mod:`schemas.frequency` so a wording change
     is a single-file edit.
 
+    Stage resolution:
+
+    * ``stage_number`` query param (when provided) wins. Clients that
+      resolve the active stage on their own pass it here so the banner
+      tracks the practice they're showing, instead of whatever
+      ``StageProgress.current_stage`` happens to hold.
+    * Otherwise fall back to ``StageProgress.current_stage`` (or stage
+      1 for a fresh user with no progress row).
+
     Resolution order for the practice slot:
 
-    1. The user's active ``UserPractice`` for the current stage (open
+    1. The user's active ``UserPractice`` for the resolved stage (open
        row, ``end_date IS NULL``). ``effective_name`` from
        :mod:`domain.practice_resolution` honours ``custom_name``.
     2. The seeded preset for the stage (via
@@ -423,8 +446,9 @@ async def get_current_frequency(
        is ``None`` to signal "showing the unselected default" to the
        client.
     """
-    progress = await get_user_progress(session, current_user)
-    stage_number = progress.current_stage if progress is not None else _DEFAULT_STAGE_NUMBER
+    if stage_number is None:
+        progress = await get_user_progress(session, current_user)
+        stage_number = progress.current_stage if progress is not None else _DEFAULT_STAGE_NUMBER
 
     course_stage = await _load_course_stage(session, stage_number)
     active = await _load_active_user_practice(session, current_user, stage_number)

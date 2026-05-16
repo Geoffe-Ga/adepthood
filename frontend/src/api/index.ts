@@ -1810,8 +1810,23 @@ export function validateFrequencyResponse(data: unknown): data is FrequencyRespo
 }
 
 export const frequency = {
-  async current(token?: string): Promise<FrequencyResponse> {
-    const data = await request<FrequencyResponse>('/user-practices/current/frequency', { token });
+  /**
+   * @param stageNumber Optional override. Pins the banner to a specific
+   *   stage instead of the server-stored ``StageProgress.current_stage``;
+   *   omit to keep the legacy "server decides" behaviour.
+   * @param token Optional auth token. NOTE: ``stageNumber`` is the first
+   *   parameter — a positional ``token`` would silently bind to it.
+   *   Pass ``undefined`` for ``stageNumber`` if you only want to set
+   *   ``token`` (``current(undefined, jwt)``).
+   */
+  async current(stageNumber?: number | null, token?: string): Promise<FrequencyResponse> {
+    const query = new URLSearchParams();
+    if (stageNumber != null) query.set('stage_number', String(stageNumber));
+    const qs = query.toString();
+    const data = await request<FrequencyResponse>(
+      `/user-practices/current/frequency${qs ? `?${qs}` : ''}`,
+      { token },
+    );
     if (!validateFrequencyResponse(data)) {
       throw new Error('Invalid frequency response');
     }

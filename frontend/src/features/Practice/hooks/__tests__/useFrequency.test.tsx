@@ -98,6 +98,43 @@ describe('useFrequency', () => {
     expect(mockFrequencyCurrent).toHaveBeenCalledTimes(2);
   });
 
+  it('passes a stage_number override into the API client', async () => {
+    // Master-date wiring (#323): the Practice screen passes its
+    // date-derived stage to the hook so the banner pins to the same
+    // stage as the practice card, not whatever the server-stored
+    // current_stage happens to be.
+    mockFrequencyCurrent.mockResolvedValue(sampleFrequency);
+
+    const { result } = renderHook(() => useFrequency(7));
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(mockFrequencyCurrent).toHaveBeenCalledWith(7);
+  });
+
+  it('refetches when the stage_number changes', async () => {
+    // Date moves → derived stage changes → banner should re-pin.
+    mockFrequencyCurrent.mockResolvedValue(sampleFrequency);
+
+    const { result, rerender } = renderHook(({ stage }: { stage: number }) => useFrequency(stage), {
+      initialProps: { stage: 1 },
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+    expect(mockFrequencyCurrent).toHaveBeenLastCalledWith(1);
+
+    rerender({ stage: 3 });
+
+    await waitFor(() => {
+      expect(mockFrequencyCurrent).toHaveBeenLastCalledWith(3);
+    });
+    expect(mockFrequencyCurrent).toHaveBeenCalledTimes(2);
+  });
+
   it('ignores a stale response if the component unmounted before it resolved', async () => {
     let resolveFn: ((value: FrequencyResponse) => void) | undefined;
     mockFrequencyCurrent.mockReturnValueOnce(
