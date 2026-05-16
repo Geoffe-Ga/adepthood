@@ -37,6 +37,10 @@ _PRACTICE_MODE_REVISION = "e9f0a1b2c3d4"  # pragma: allowlist secret
 _PRACTICE_SESSION_METADATA_BASE_REVISION = "e9f0a1b2c3d4"  # pragma: allowlist secret
 _PRACTICE_SESSION_METADATA_REVISION = "f0a1b2c3d4e5"  # pragma: allowlist secret
 
+# grounding-techniques 01: tallied_grounding CHECK-constraint migration.
+_TALLIED_GROUNDING_BASE_REVISION = "d2e3f4a5b6c7"  # pragma: allowlist secret
+_TALLIED_GROUNDING_REVISION = "a1b2c3d4e5f7"  # pragma: allowlist secret
+
 
 def test_timestamptz_migration_exists() -> None:
     """Regression guard: the migration file must stay where Alembic finds it."""
@@ -539,3 +543,139 @@ def test_practice_session_metadata_migration_round_trip_on_sqlite(
     row_again = _practicesession_row(db_url, session_id=1)
     assert row_again["mode"] == "meditation_timer"
     assert bool(row_again["completed"]) is True
+
+
+# -- grounding-techniques 01 tallied_grounding CHECK constraint -------------
+
+_ORIGINAL_SEVEN_MODES = (
+    "meditation_timer",
+    "count_up",
+    "metronome",
+    "interval_bell",
+    "rep_counter",
+    "sense_grounding",
+    "tarot",
+)
+
+
+def _bootstrap_practice_with_seven_mode_check(sync_url: str) -> None:
+    """Pre-create a ``practice`` table with the pre-tallied 7-mode CHECK constraint.
+
+    Mirrors the schema in place at :data:`_TALLIED_GROUNDING_BASE_REVISION`
+    just before our migration runs: ``mode`` is constrained to the
+    original seven values. Keeps the bootstrap SQLite-friendly so the
+    round-trip exercises only our new migration.
+    """
+    quoted = ", ".join(f"'{m}'" for m in _ORIGINAL_SEVEN_MODES)
+    bootstrap_engine = create_engine(sync_url)
+    with bootstrap_engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE practice ("
+                " id INTEGER PRIMARY KEY,"
+                " stage_number INTEGER NOT NULL,"
+                " name VARCHAR(255) NOT NULL,"
+                " description VARCHAR(2000) NOT NULL DEFAULT '',"
+                " instructions VARCHAR(10000) NOT NULL DEFAULT '',"
+                " default_duration_minutes FLOAT NOT NULL,"
+                " submitted_by_user_id INTEGER,"
+                " approved BOOLEAN NOT NULL DEFAULT 1,"
+                " mode VARCHAR(32) NOT NULL DEFAULT 'meditation_timer',"
+                " mode_config TEXT NOT NULL DEFAULT '{}',"
+                f" CONSTRAINT ck_practice_mode_valid CHECK (mode IN ({quoted}))"
+                ")"
+            )
+        )
+    bootstrap_engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_tallied_grounding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config positioned just before grounding-techniques 01's migration."""
+    db_path = tmp_path / "tallied_grounding_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_practice_with_seven_mode_check(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _TALLIED_GROUNDING_BASE_REVISION)
+    return cfg
+
+
+def _insert_practice_row(db_url: str, *, mode: str, name: str) -> None:
+    """Insert a single practice row with the given mode (raises on CHECK violation)."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO practice (stage_number, name, default_duration_minutes, mode)"
+                    " VALUES (:s, :n, :d, :m)"
+                ),
+                {"s": 1, "n": name, "d": 10.0, "m": mode},
+            )
+    finally:
+        engine.dispose()
+
+
+def _count_practice_with_mode(db_url: str, mode: str) -> int:
+    """Count practice rows carrying a particular mode value."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT count(*) FROM practice WHERE mode = :m"),
+                {"m": mode},
+            ).first()
+            assert row is not None
+            return int(row[0])
+    finally:
+        engine.dispose()
+
+
+def test_tallied_grounding_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_tallied_grounding: Config,
+) -> None:
+    """Round-trip ``a1b2c3d4e5f7``: upgrade allows the new mode; downgrade reverts the CHECK.
+
+    Acceptance criterion #4 from issue #337: the migration runs cleanly
+    on a fresh DB and rolls back on an empty ``practice`` table.
+    """
+    cfg = alembic_sqlite_config_tallied_grounding
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade — the new CHECK should accept tallied_grounding inserts.
+    command.upgrade(cfg, _TALLIED_GROUNDING_REVISION)
+    _insert_practice_row(db_url, mode="tallied_grounding", name="Find shapes")
+    assert _count_practice_with_mode(db_url, "tallied_grounding") == 1
+
+    # Phase 2: downgrade — refuses to run while a tallied_grounding row exists.
+    with pytest.raises(Exception, match="tallied_grounding"):
+        command.downgrade(cfg, _TALLIED_GROUNDING_BASE_REVISION)
+
+    # Phase 3: clear the offending row, then downgrade cleanly.
+    sync_engine = create_engine(_sync_url(db_url))
+    try:
+        with sync_engine.begin() as conn:
+            conn.execute(text("DELETE FROM practice WHERE mode = 'tallied_grounding'"))
+    finally:
+        sync_engine.dispose()
+    command.downgrade(cfg, _TALLIED_GROUNDING_BASE_REVISION)
+
+    # Phase 4: the original CHECK is back — inserting tallied_grounding now fails.
+    with pytest.raises(Exception, match="CHECK"):
+        _insert_practice_row(db_url, mode="tallied_grounding", name="Should fail")
+
+    # Phase 5: re-upgrade — tallied_grounding inserts succeed again (idempotent cycle).
+    command.upgrade(cfg, _TALLIED_GROUNDING_REVISION)
+    _insert_practice_row(db_url, mode="tallied_grounding", name="Find colors")
+    assert _count_practice_with_mode(db_url, "tallied_grounding") == 1

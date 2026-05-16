@@ -12,6 +12,7 @@ _EXPECTED_MEMBERS: tuple[str, ...] = (
     "rep_counter",
     "sense_grounding",
     "tarot",
+    "tallied_grounding",
 )
 
 

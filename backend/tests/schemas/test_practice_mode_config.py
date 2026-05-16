@@ -14,6 +14,8 @@ from schemas.practice_mode_config import (
     ModeConfigAdapter,
     RepCounterConfig,
     SenseGroundingConfig,
+    TalliedCategory,
+    TalliedGroundingConfig,
     TarotConfig,
 )
 
@@ -116,6 +118,23 @@ def test_sense_grounding_default_prompts_round_trip() -> None:
     )
     assert isinstance(cfg, SenseGroundingConfig)
     assert [p.sense for p in cfg.prompts] == ["sight", "touch", "hearing", "smell", "taste"]
+
+
+def test_tallied_grounding_round_trip() -> None:
+    cfg = _ADAPTER.validate_python(
+        {
+            "mode": "tallied_grounding",
+            "rounds": 3,
+            "categories": [
+                {"key": "shapes", "label": "Find shapes", "target_count": 5},
+                {"key": "colors", "label": "Find colors", "target_count": 4},
+            ],
+        }
+    )
+    assert isinstance(cfg, TalliedGroundingConfig)
+    assert cfg.rounds == 3
+    assert [c.key for c in cfg.categories] == ["shapes", "colors"]
+    assert cfg.categories[0].target_count == 5
 
 
 def test_tarot_round_trip() -> None:
@@ -256,6 +275,72 @@ def test_rep_counter_rejects_zero_target() -> None:
 def test_tarot_rejects_zero_per_card_minutes() -> None:
     with pytest.raises(ValidationError):
         TarotConfig(mode="tarot", deck="major_arcana", per_card_minutes=0)
+
+
+def test_tallied_grounding_rejects_duplicate_keys() -> None:
+    """The cross-field validator rejects two categories sharing the same ``key``."""
+    with pytest.raises(ValidationError):
+        TalliedGroundingConfig(
+            mode="tallied_grounding",
+            rounds=2,
+            categories=[
+                TalliedCategory(key="shapes", label="Find shapes", target_count=5),
+                TalliedCategory(key="shapes", label="Also shapes", target_count=3),
+            ],
+        )
+
+
+def test_tallied_grounding_rejects_rounds_below_one() -> None:
+    with pytest.raises(ValidationError):
+        TalliedGroundingConfig(
+            mode="tallied_grounding",
+            rounds=0,
+            categories=[TalliedCategory(key="shapes", label="Find shapes", target_count=5)],
+        )
+
+
+def test_tallied_grounding_rejects_empty_categories() -> None:
+    with pytest.raises(ValidationError):
+        TalliedGroundingConfig(mode="tallied_grounding", rounds=1, categories=[])
+
+
+def test_tallied_grounding_rejects_target_count_above_max() -> None:
+    """``target_count`` must stay within (0, 20]."""
+    with pytest.raises(ValidationError):
+        TalliedCategory(key="shapes", label="Find shapes", target_count=21)
+
+
+def test_tallied_grounding_rejects_zero_target_count() -> None:
+    with pytest.raises(ValidationError):
+        TalliedCategory(key="shapes", label="Find shapes", target_count=0)
+
+
+def test_tallied_grounding_rejects_invalid_key_slug() -> None:
+    """The ``key`` slug must match the documented identifier regex."""
+    with pytest.raises(ValidationError):
+        TalliedCategory(key="9bad", label="Bad", target_count=5)
+    with pytest.raises(ValidationError):
+        TalliedCategory(key="Spaces Bad", label="Bad", target_count=5)
+
+
+def test_tallied_grounding_rejects_rounds_above_max() -> None:
+    with pytest.raises(ValidationError):
+        TalliedGroundingConfig(
+            mode="tallied_grounding",
+            rounds=11,
+            categories=[TalliedCategory(key="shapes", label="Find shapes", target_count=5)],
+        )
+
+
+def test_tallied_grounding_rejects_too_many_categories() -> None:
+    with pytest.raises(ValidationError):
+        TalliedGroundingConfig(
+            mode="tallied_grounding",
+            rounds=1,
+            categories=[
+                TalliedCategory(key=f"k{i}", label=f"L{i}", target_count=1) for i in range(13)
+            ],
+        )
 
 
 def test_discriminator_keyed_payload_dispatches_to_right_model() -> None:

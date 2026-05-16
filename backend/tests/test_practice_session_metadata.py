@@ -13,6 +13,7 @@ from schemas.practice_session_metadata import (
     RepCounterMetadata,
     SenseGroundingMetadata,
     SessionMetadataAdapter,
+    TalliedGroundingMetadata,
     TarotMetadata,
 )
 
@@ -70,6 +71,21 @@ def test_tarot_round_trip() -> None:
     assert payload.card_index == 5
 
 
+def test_tallied_grounding_round_trip() -> None:
+    payload = SessionMetadataAdapter.validate_python(
+        {
+            "mode": "tallied_grounding",
+            "rounds_completed": 2,
+            "total_rounds": 3,
+            "items_completed": 27,
+        }
+    )
+    assert isinstance(payload, TalliedGroundingMetadata)
+    assert payload.rounds_completed == 2
+    assert payload.total_rounds == 3
+    assert payload.items_completed == 27
+
+
 # -- Validators --------------------------------------------------------------
 
 
@@ -123,6 +139,59 @@ def test_interval_bell_accepts_equal_struck_and_total() -> None:
     """Completing every scheduled interval is valid (boundary)."""
     payload = IntervalBellMetadata(mode="interval_bell", intervals_struck=4, total_intervals=4)
     assert payload.intervals_struck == payload.total_intervals == 4
+
+
+def test_tallied_grounding_rejects_rounds_completed_above_total() -> None:
+    """``rounds_completed`` cannot exceed ``total_rounds`` (cross-field invariant)."""
+    with pytest.raises(ValidationError):
+        TalliedGroundingMetadata(
+            mode="tallied_grounding",
+            rounds_completed=4,
+            total_rounds=3,
+            items_completed=10,
+        )
+
+
+def test_tallied_grounding_accepts_equal_rounds() -> None:
+    """Completing every scheduled round is valid (boundary)."""
+    payload = TalliedGroundingMetadata(
+        mode="tallied_grounding",
+        rounds_completed=3,
+        total_rounds=3,
+        items_completed=15,
+    )
+    assert payload.rounds_completed == payload.total_rounds == 3
+
+
+def test_tallied_grounding_rejects_negative_items_completed() -> None:
+    with pytest.raises(ValidationError):
+        TalliedGroundingMetadata(
+            mode="tallied_grounding",
+            rounds_completed=0,
+            total_rounds=1,
+            items_completed=-1,
+        )
+
+
+def test_tallied_grounding_rejects_items_above_ceiling() -> None:
+    """``items_completed`` is capped at the 10-rounds * 12-categories * 20-target ceiling."""
+    with pytest.raises(ValidationError):
+        TalliedGroundingMetadata(
+            mode="tallied_grounding",
+            rounds_completed=10,
+            total_rounds=10,
+            items_completed=2401,
+        )
+
+
+def test_tallied_grounding_rejects_total_rounds_above_max() -> None:
+    with pytest.raises(ValidationError):
+        TalliedGroundingMetadata(
+            mode="tallied_grounding",
+            rounds_completed=0,
+            total_rounds=11,
+            items_completed=0,
+        )
 
 
 def test_sense_grounding_rejects_unknown_sense() -> None:

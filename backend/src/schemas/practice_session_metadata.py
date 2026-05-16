@@ -21,6 +21,8 @@ _MAX_BPM = 240
 _MIN_BPM = 1
 _MAX_TAROT_INDEX = 21  # 22-card major arcana, zero-indexed.
 _MAX_INTERVALS = 1_000
+_MAX_TALLIED_ROUNDS = 10
+_MAX_TALLIED_ITEMS = 2_400  # 10 rounds * 12 categories * 20 target_count ceiling.
 
 
 class _MetadataBase(BaseModel):
@@ -90,6 +92,28 @@ class TarotMetadata(_MetadataBase):
     card_index: int = Field(ge=0, le=_MAX_TAROT_INDEX)
 
 
+class TalliedGroundingMetadata(_MetadataBase):
+    """How many rounds the user finished, plus the total items tallied.
+
+    The cross-field validator rejects ``rounds_completed > total_rounds``;
+    each field individually satisfies its ge/le bounds, mirroring the
+    invariant on :class:`IntervalBellMetadata`.
+    """
+
+    mode: Literal["tallied_grounding"] = "tallied_grounding"
+    rounds_completed: int = Field(ge=0, le=_MAX_TALLIED_ROUNDS)
+    total_rounds: int = Field(ge=1, le=_MAX_TALLIED_ROUNDS)
+    items_completed: int = Field(ge=0, le=_MAX_TALLIED_ITEMS)
+
+    @model_validator(mode="after")
+    def _check_completed_within_total(self) -> Self:
+        """Reject ``rounds_completed > total_rounds``."""
+        if self.rounds_completed > self.total_rounds:
+            msg = "rounds_completed cannot exceed total_rounds"
+            raise ValueError(msg)
+        return self
+
+
 #: Discriminated union over all per-mode session metadata payloads.
 SessionMetadata = Annotated[
     MeditationTimerMetadata
@@ -98,7 +122,8 @@ SessionMetadata = Annotated[
     | IntervalBellMetadata
     | RepCounterMetadata
     | SenseGroundingMetadata
-    | TarotMetadata,
+    | TarotMetadata
+    | TalliedGroundingMetadata,
     Field(discriminator="mode"),
 ]
 
