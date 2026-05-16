@@ -57,6 +57,15 @@ _DEFAULT_CACHE_TTL: Final[int] = 60 * 60  # 1 hour
 _REQUEST_TIMEOUT_SECONDS: Final[float] = 10.0
 _HTTP_ERROR_THRESHOLD: Final[int] = 400
 _USER_AGENT: Final[str] = "AdepthoodApp/1.0 (+https://adepthood.com)"
+# Squarespace section under which the site password is configured.  The
+# rest of aptitude.guru (philosophy, about, …) is publicly readable and
+# does not require — or accept — the password POST.  Posting to a URL
+# outside this section returns 403 from Squarespace's edge.
+_AUTH_PATH: Final[str] = "/course"
+# Number of response bytes we capture on the auth-failure log line.
+# Enough to read a Squarespace error message or a WAF block page without
+# bloating the log.
+_AUTH_FAILURE_BODY_PREVIEW: Final[int] = 500
 #: Selectors we strip wholesale before returning the article body.  These
 #: are intentionally Squarespace-generic — site theme changes occasionally
 #: rename block classes, but the *roles* (header, footer, nav) are stable.
@@ -233,25 +242,29 @@ class SquarespaceClient:
     async def _authenticate(self) -> None:
         """POST the site password and capture the resulting cookie.
 
-        Squarespace site-wide passwords are submitted to the same URL as
-        the page being viewed; the server then sets a ``SiteUserInfo``-
-        family cookie on the domain.  We send to the site root since the
-        cookie applies site-wide.
+        The password gate on aptitude.guru is configured on the
+        ``/course`` section, not the site root.  Posting elsewhere
+        returns 403 from Squarespace's edge — the server only accepts
+        a password POST at a URL inside the protected section.  The
+        ``SiteUserInfo``-family cookie set by a successful POST applies
+        to every subsequent request under that section.
         """
         if not self._password:
             raise SquarespaceAuthError(
                 "SQUARESPACE_SITE_PASSWORD is not configured on the backend.",
             )
+        auth_url = f"{self._base_url}{_AUTH_PATH}"
         client = await self._ensure_client()
         try:
             response = await client.post(
-                f"{self._base_url}/",
+                auth_url,
                 data={"password": self._password},
             )
         except httpx.HTTPError as exc:
             raise SquarespaceFetchError(f"Network error during auth: {exc}") from exc
 
         if response.status_code >= _HTTP_ERROR_THRESHOLD:
+            self._log_auth_failure(auth_url, response)
             raise SquarespaceAuthError(
                 f"Squarespace rejected the site password (HTTP {response.status_code}).",
             )
@@ -264,6 +277,26 @@ class SquarespaceClient:
         self._authenticated = True
         logger.info("squarespace_authenticated", extra={"base_url": self._base_url})
 
+    @staticmethod
+    def _log_auth_failure(auth_url: str, response: httpx.Response) -> None:
+        """Emit a single warning with the data we need to debug 4xx auth.
+
+        Includes the status, content-type, server header, and a short
+        body preview.  Cookies are deliberately not logged — they could
+        carry session tokens on the success path and there is no
+        diagnostic value in them on the failure path.
+        """
+        logger.warning(
+            "squarespace_auth_http_error",
+            extra={
+                "auth_url": auth_url,
+                "status": response.status_code,
+                "content_type": response.headers.get("content-type"),
+                "server": response.headers.get("server"),
+                "body_preview": response.text[:_AUTH_FAILURE_BODY_PREVIEW],
+            },
+        )
+
     async def _ensure_authenticated(self) -> None:
         """Authenticate once per process unless the cookie has been cleared."""
         if self._authenticated:
@@ -272,6 +305,18 @@ class SquarespaceClient:
             if self._authenticated:
                 return
             await self._authenticate()
+
+    @staticmethod
+    def _requires_auth(url: str) -> bool:
+        """True when ``url`` falls under the password-protected section.
+
+        Public site pages (``/about``, ``/philosophy``, …) do not need
+        — and do not accept — the site password POST, so we skip
+        authentication for them.  This also means a misconfigured
+        ``SQUARESPACE_SITE_PASSWORD`` does not break those pages.
+        """
+        path = urlparse(url).path
+        return path == _AUTH_PATH or path.startswith(f"{_AUTH_PATH}/")
 
     # ------------------------------------------------------------------ #
     # Fetch                                                               #
@@ -322,7 +367,8 @@ class SquarespaceClient:
         if cached is not None and cached.expires_at > now:
             return cached.content
 
-        await self._ensure_authenticated()
+        if self._requires_auth(url):
+            await self._ensure_authenticated()
         content = await self._fetch_and_clean(url)
 
         self._cache[url] = _CacheEntry(
@@ -338,17 +384,25 @@ class SquarespaceClient:
         except httpx.HTTPError as exc:
             raise SquarespaceFetchError(f"Network error fetching {url}: {exc}") from exc
 
+    async def _retry_if_session_expired(self, url: str, response: httpx.Response) -> httpx.Response:
+        """Re-authenticate and retry once if the response looks locked.
+
+        Public URLs are exempt: they never had a cookie, and a 401 or
+        password-lookalike body there indicates a real upstream error,
+        not a stale session.
+        """
+        locked = response.status_code == httpx.codes.UNAUTHORIZED or (
+            self._looks_like_password_page(response.text)
+        )
+        if not (locked and self._requires_auth(url)):
+            return response
+        self._authenticated = False
+        await self._ensure_authenticated()
+        return await self._raw_get(url)
+
     async def _fetch_and_clean(self, url: str) -> FetchedContent:
         response = await self._raw_get(url)
-
-        # Session might have expired between authentication and this
-        # request; if so, log in once more and retry exactly once.
-        if response.status_code == httpx.codes.UNAUTHORIZED or self._looks_like_password_page(
-            response.text
-        ):
-            self._authenticated = False
-            await self._ensure_authenticated()
-            response = await self._raw_get(url)
+        response = await self._retry_if_session_expired(url, response)
 
         if response.status_code >= _HTTP_ERROR_THRESHOLD:
             raise SquarespaceFetchError(
