@@ -212,6 +212,29 @@ class MindfulAnchorOption(_ConfigBase):
     description: str | None = Field(default=None, max_length=_OPTION_DESCRIPTION_MAX)
 
 
+def _reject_duplicate_option_keys(options: list[MindfulAnchorOption]) -> None:
+    """Reject any options list containing duplicate ``key`` slugs.
+
+    Extracted from :class:`MindfulAnchorConfig` so the validator method
+    stays at xenon rank A — the duplicate-key check is independent of
+    the "require_option_choice ⇒ options non-empty" rule and reads more
+    clearly on its own.
+    """
+    keys = [opt.key for opt in options]
+    if len(keys) != len(set(keys)):
+        msg = "options must not contain duplicate keys"
+        raise ValueError(msg)
+
+
+def _reject_empty_options_when_choice_required(
+    options: list[MindfulAnchorOption], *, require_option_choice: bool
+) -> None:
+    """Reject the contradictory ``require_option_choice=True`` + empty list state."""
+    if require_option_choice and not options:
+        msg = "options must be non-empty when require_option_choice is True"
+        raise ValueError(msg)
+
+
 class MindfulAnchorConfig(_ConfigBase):
     """Single mindful act with an optional chooser and a soft duration floor.
 
@@ -231,13 +254,10 @@ class MindfulAnchorConfig(_ConfigBase):
 
     @model_validator(mode="after")
     def _check_options_invariants(self) -> Self:
-        keys = [opt.key for opt in self.options]
-        if len(keys) != len(set(keys)):
-            msg = "options must not contain duplicate keys"
-            raise ValueError(msg)
-        if self.require_option_choice and not self.options:
-            msg = "options must be non-empty when require_option_choice is True"
-            raise ValueError(msg)
+        _reject_duplicate_option_keys(self.options)
+        _reject_empty_options_when_choice_required(
+            self.options, require_option_choice=self.require_option_choice
+        )
         return self
 
 
