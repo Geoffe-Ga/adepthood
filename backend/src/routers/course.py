@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -18,6 +18,7 @@ from errors import forbidden, not_found
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
+from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
 from schemas.course import (
@@ -32,6 +33,12 @@ from services.squarespace import (
     SquarespaceFetchError,
     get_squarespace_client,
 )
+
+# CMS proxy endpoints fan out to Squarespace + BeautifulSoup on a cache
+# miss, so they are an order of magnitude more expensive than the rest of
+# this router.  Capping below the 60/minute global default keeps a single
+# authenticated user from sustaining upstream load on aptitude.guru.
+_CMS_PROXY_RATE_LIMIT = "30/minute"
 
 logger = logging.getLogger(__name__)
 
@@ -475,7 +482,9 @@ async def _resolve_released_content_url(
 
 
 @router.get("/content/{content_id}/body", response_model=ContentBodyResponse)
+@limiter.limit(_CMS_PROXY_RATE_LIMIT)
 async def get_content_body(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     content_id: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -513,7 +522,9 @@ async def list_site_resources(
 
 
 @router.get("/site-resources/{slug}/body", response_model=ContentBodyResponse)
+@limiter.limit(_CMS_PROXY_RATE_LIMIT)
 async def get_site_resource_body(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     slug: str,
     _current_user: Annotated[int, Depends(get_current_user)],
 ) -> ContentBodyResponse:
