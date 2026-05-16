@@ -463,7 +463,28 @@ async def _create_typed_user_practice(
                 {"key": "colors", "label": "Find colors", "target_count": 4},
             ],
         },
+        "mindful_anchor_required": {
+            "mode": "mindful_anchor",
+            "instruction": "Pick a surface and stand there until you feel settled.",
+            "min_duration_seconds": 30,
+            "options": [
+                {"key": "grass", "label": "Grass"},
+                {"key": "stone", "label": "Stone"},
+            ],
+            "require_option_choice": True,
+        },
+        "mindful_anchor_optional": {
+            "mode": "mindful_anchor",
+            "instruction": "Pick a surface (optional) and stand there until you feel settled.",
+            "min_duration_seconds": 0,
+            "options": [
+                {"key": "grass", "label": "Grass"},
+            ],
+            "require_option_choice": False,
+        },
     }
+    catalog_mode = mode_configs[mode]["mode"]
+    assert isinstance(catalog_mode, str)
     practice = Practice(
         stage_number=stage_number,
         name=f"{mode} practice",
@@ -471,7 +492,7 @@ async def _create_typed_user_practice(
         instructions="Test fixture",
         default_duration_minutes=10,
         approved=True,
-        mode=mode,
+        mode=catalog_mode,
         mode_config=mode_configs[mode],
     )
     db_session.add(practice)
@@ -670,6 +691,83 @@ async def test_create_session_persists_tallied_grounding_metadata(
     )
     resp_bad = await async_client.post("/practice-sessions/", json=bad, headers=headers)
     assert resp_bad.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_create_session_rejects_missing_chosen_key_when_required(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``require_option_choice=True`` ⇒ ``chosen_option_key`` must be set.
+
+    The metadata schema alone can't see the catalog config, so the
+    server enforces this cross-field invariant at the router layer when
+    creating a session.
+    """
+    headers, _ = await _signup(async_client)
+    up_id, _practice = await _create_typed_user_practice(
+        async_client, db_session, headers, mode="mindful_anchor_required"
+    )
+
+    payload = _session_payload(
+        up_id,
+        mode_metadata={
+            "mode": "mindful_anchor",
+            "duration_seconds": 45,
+            "met_min_duration": True,
+        },
+    )
+    resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.json()["detail"] == "chosen_option_key_required"
+
+
+@pytest.mark.asyncio
+async def test_create_session_accepts_chosen_key_when_required(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A ``mindful_anchor`` session with the chosen key set round-trips cleanly."""
+    headers, _ = await _signup(async_client)
+    up_id, _practice = await _create_typed_user_practice(
+        async_client, db_session, headers, mode="mindful_anchor_required"
+    )
+
+    payload = _session_payload(
+        up_id,
+        mode_metadata={
+            "mode": "mindful_anchor",
+            "chosen_option_key": "grass",
+            "duration_seconds": 45,
+            "met_min_duration": True,
+        },
+    )
+    resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.CREATED
+    body = resp.json()
+    assert body["mode"] == "mindful_anchor"
+    assert body["mode_metadata"]["chosen_option_key"] == "grass"
+
+
+@pytest.mark.asyncio
+async def test_create_session_allows_missing_chosen_key_when_optional(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """When ``require_option_choice=False`` the chooser is optional."""
+    headers, _ = await _signup(async_client)
+    up_id, _practice = await _create_typed_user_practice(
+        async_client, db_session, headers, mode="mindful_anchor_optional"
+    )
+
+    payload = _session_payload(
+        up_id,
+        mode_metadata={
+            "mode": "mindful_anchor",
+            "duration_seconds": 10,
+            "met_min_duration": False,
+        },
+    )
+    resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.CREATED
+    assert resp.json()["mode_metadata"]["chosen_option_key"] is None
 
 
 @pytest.mark.asyncio

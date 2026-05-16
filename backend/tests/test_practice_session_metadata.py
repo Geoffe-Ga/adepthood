@@ -313,3 +313,20 @@ def test_mindful_anchor_metadata_rejects_overlong_option_key() -> None:
             duration_seconds=10,
             met_min_duration=False,
         )
+
+
+def test_mindful_anchor_metadata_rejects_invalid_option_key_slug() -> None:
+    """``chosen_option_key`` mirrors option keys and must satisfy the slug regex.
+
+    Length alone is not enough: a 64-char string can still contain
+    uppercase, spaces, leading digits, or hyphens, none of which would
+    ever match a valid catalog option key.
+    """
+    for invalid in ("Grass", "has spaces", "1leading_digit", "trailing-dash"):
+        with pytest.raises(ValidationError):
+            MindfulAnchorMetadata(
+                mode="mindful_anchor",
+                chosen_option_key=invalid,
+                duration_seconds=10,
+                met_min_duration=False,
+            )

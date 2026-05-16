@@ -16,6 +16,8 @@ from sqlmodel import col, func, select
 from database import get_session
 from dependencies.ownership import require_owned_user_practice
 from domain.practice_insights import build_insights
+from domain.practice_modes import PracticeMode
+from domain.practice_resolution import effective_config
 from errors import bad_request, forbidden, not_found
 from models.practice import Practice
 from models.practice_session import PracticeSession
@@ -28,6 +30,8 @@ from schemas.practice import (
     PracticeSessionCreate,
     PracticeSessionResponse,
 )
+from schemas.practice_mode_config import MindfulAnchorConfig
+from schemas.practice_session_metadata import MindfulAnchorMetadata
 from services.users import get_user_timezone
 
 # Window for the insights SQL fetch.  Slightly larger than the 8-week rollup
@@ -72,6 +76,26 @@ async def _resolve_user_practice_for_session(
     return user_practice
 
 
+def _enforce_mindful_anchor_invariants(
+    practice: Practice,
+    user_practice: UserPractice,
+    metadata: MindfulAnchorMetadata,
+) -> None:
+    """Reject a ``mindful_anchor`` session whose metadata violates the catalog config.
+
+    The metadata schema cannot see the catalog config (the discriminated
+    union has no back-reference), so the cross-field invariant
+    ``require_option_choice=True ⇒ chosen_option_key is not None`` is
+    enforced here. Extracted from :func:`_resolve_practice_with_mode` to
+    keep that helper at xenon rank A.
+    """
+    cfg = effective_config(practice, user_practice)
+    if not isinstance(cfg, MindfulAnchorConfig):
+        return
+    if cfg.require_option_choice and metadata.chosen_option_key is None:
+        raise bad_request("chosen_option_key_required")
+
+
 async def _resolve_practice_with_mode(
     session: AsyncSession,
     user_practice: UserPractice,
@@ -95,6 +119,10 @@ async def _resolve_practice_with_mode(
         raise not_found("practice")
     if payload.mode_metadata is not None and payload.mode_metadata.mode != practice.mode:
         raise bad_request("mode_metadata_mismatch")
+    if practice.mode == PracticeMode.MINDFUL_ANCHOR.value and isinstance(
+        payload.mode_metadata, MindfulAnchorMetadata
+    ):
+        _enforce_mindful_anchor_invariants(practice, user_practice, payload.mode_metadata)
     return practice
 
 

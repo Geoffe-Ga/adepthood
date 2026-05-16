@@ -15,6 +15,8 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from schemas.practice_mode_config import (
+    OPTION_KEY_MAX,
+    OPTION_KEY_PATTERN,
     TALLIED_CATEGORIES_MAX,
     TALLIED_ROUNDS_MAX,
     TALLIED_TARGET_MAX,
@@ -34,7 +36,6 @@ _MAX_INTERVALS = 1_000
 MAX_TALLIED_ROUNDS = TALLIED_ROUNDS_MAX
 MAX_TALLIED_ITEMS = TALLIED_ROUNDS_MAX * TALLIED_CATEGORIES_MAX * TALLIED_TARGET_MAX
 _MAX_ANCHOR_DURATION_SECONDS = 4 * 60 * 60  # 4 hours; well above any plausible mindful act.
-_MAX_OPTION_KEY = 64
 
 
 class _MetadataBase(BaseModel):
@@ -135,7 +136,9 @@ class MindfulAnchorMetadata(_MetadataBase):
     """
 
     mode: Literal["mindful_anchor"] = "mindful_anchor"
-    chosen_option_key: str | None = Field(default=None, max_length=_MAX_OPTION_KEY)
+    chosen_option_key: str | None = Field(
+        default=None, max_length=OPTION_KEY_MAX, pattern=OPTION_KEY_PATTERN
+    )
     duration_seconds: int = Field(ge=0, le=_MAX_ANCHOR_DURATION_SECONDS)
     met_min_duration: bool
 

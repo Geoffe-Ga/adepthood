@@ -28,10 +28,13 @@ _TALLIED_KEY_PATTERN = r"^[a-z][a-z0-9_]*$"
 TALLIED_TARGET_MAX = 20
 TALLIED_ROUNDS_MAX = 10
 TALLIED_CATEGORIES_MAX = 12
-_OPTION_KEY_MAX = 64
+# Shared with ``schemas.practice_session_metadata`` so the option-key bound
+# is encoded once: ``MindfulAnchorMetadata.chosen_option_key`` mirrors the
+# values the catalog config emits.
+OPTION_KEY_MAX = 64
+OPTION_KEY_PATTERN = r"^[a-z][a-z0-9_]*$"
 _OPTION_LABEL_MAX = 255
 _OPTION_DESCRIPTION_MAX = 500
-_OPTION_KEY_PATTERN = r"^[a-z][a-z0-9_]*$"
 _INSTRUCTION_MAX = 500
 _MIN_DURATION_SECONDS_MAX = 3_600
 _MINDFUL_ANCHOR_OPTIONS_MAX = 20
@@ -207,7 +210,7 @@ class MindfulAnchorOption(_ConfigBase):
     alongside the label.
     """
 
-    key: str = Field(min_length=1, max_length=_OPTION_KEY_MAX, pattern=_OPTION_KEY_PATTERN)
+    key: str = Field(min_length=1, max_length=OPTION_KEY_MAX, pattern=OPTION_KEY_PATTERN)
     label: str = Field(min_length=1, max_length=_OPTION_LABEL_MAX)
     description: str | None = Field(default=None, max_length=_OPTION_DESCRIPTION_MAX)
 
