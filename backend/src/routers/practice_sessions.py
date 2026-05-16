@@ -16,7 +16,6 @@ from sqlmodel import col, func, select
 from database import get_session
 from dependencies.ownership import require_owned_user_practice
 from domain.practice_insights import build_insights
-from domain.practice_modes import PracticeMode
 from domain.practice_resolution import effective_config
 from errors import bad_request, forbidden, not_found
 from models.practice import Practice
@@ -86,8 +85,8 @@ def _enforce_mindful_anchor_invariants(
     The metadata schema cannot see the catalog config (the discriminated
     union has no back-reference), so the cross-field invariant
     ``require_option_choice=True ⇒ chosen_option_key is not None`` is
-    enforced here. Extracted from :func:`_resolve_practice_with_mode` to
-    keep that helper at xenon rank A.
+    enforced here. Extracted from :func:`_validate_session_metadata` to
+    keep the validation pipeline at xenon rank A.
     """
     cfg = effective_config(practice, user_practice)
     if not isinstance(cfg, MindfulAnchorConfig):
@@ -96,17 +95,42 @@ def _enforce_mindful_anchor_invariants(
         raise bad_request("chosen_option_key_required")
 
 
+def _validate_session_metadata(
+    practice: Practice,
+    user_practice: UserPractice,
+    payload: PracticeSessionCreate,
+) -> None:
+    """Run every metadata-vs-catalog check before the session is persisted.
+
+    Two rules currently live here:
+
+    - ``mode_metadata.mode`` must match the resolved practice mode
+      (else 400 ``mode_metadata_mismatch``).
+    - For ``mindful_anchor`` practices, ``chosen_option_key`` must be
+      set whenever ``require_option_choice=True``
+      (delegated to :func:`_enforce_mindful_anchor_invariants`).
+
+    Extracted from :func:`_resolve_practice_with_mode` so the lookup
+    stays at xenon rank A.
+    """
+    if payload.mode_metadata is None:
+        return
+    if payload.mode_metadata.mode != practice.mode:
+        raise bad_request("mode_metadata_mismatch")
+    if isinstance(payload.mode_metadata, MindfulAnchorMetadata):
+        _enforce_mindful_anchor_invariants(practice, user_practice, payload.mode_metadata)
+
+
 async def _resolve_practice_with_mode(
     session: AsyncSession,
     user_practice: UserPractice,
     payload: PracticeSessionCreate,
 ) -> Practice:
-    """Load the catalog practice and validate the metadata discriminator.
+    """Load the catalog practice and validate the request metadata.
 
-    A 400 ``mode_metadata_mismatch`` is returned when the request's
-    ``mode_metadata`` references a mode that disagrees with the resolved
-    practice — distinct from a 422 schema failure: the union deserialized
-    cleanly; the caller just targeted the wrong practice.
+    The actual cross-field checks live in
+    :func:`_validate_session_metadata`; this wrapper just resolves the
+    catalog row and delegates so it stays trivially simple.
     """
     practice = (
         (await session.execute(select(Practice).where(Practice.id == user_practice.practice_id)))
@@ -117,12 +141,7 @@ async def _resolve_practice_with_mode(
         # Defensive: a UserPractice row whose practice was deleted is a
         # data-integrity issue.  Surface as 404 so the client retries.
         raise not_found("practice")
-    if payload.mode_metadata is not None and payload.mode_metadata.mode != practice.mode:
-        raise bad_request("mode_metadata_mismatch")
-    if practice.mode == PracticeMode.MINDFUL_ANCHOR.value and isinstance(
-        payload.mode_metadata, MindfulAnchorMetadata
-    ):
-        _enforce_mindful_anchor_invariants(practice, user_practice, payload.mode_metadata)
+    _validate_session_metadata(practice, user_practice, payload)
     return practice
 
 
