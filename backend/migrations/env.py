@@ -60,6 +60,7 @@ _RAW_SQL_MANAGED_INDEXES: frozenset[str] = frozenset(
         "ix_goal_completion_goal_user_timestamp",  # d4e5f6a7b8c9: composite
         "ix_user_practice_active_stage",  # f6a7b8c9d0e1: partial unique
         "ix_habit_user_lower_name_unique",  # b5c6d7e8f9a0: lower(trim(name))
+        "ix_practice_preset_stage_lower_name_unique",  # d2e3f4a5b6c7: lower(trim(name)) WHERE submitted_by_user_id IS NULL
     }
 )
 

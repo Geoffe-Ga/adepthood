@@ -18,7 +18,17 @@ def _mode_check_constraint() -> CheckConstraint:
 
 
 class Practice(SQLModel, table=True):
-    """Defines a single practice users can perform."""
+    """Defines a single practice users can perform.
+
+    A partial functional unique index on
+    ``(stage_number, lower(trim(name))) WHERE submitted_by_user_id IS NULL``
+    lives at the DB layer (migration ``d2e3f4a5b6c7``) but is intentionally
+    NOT declared in ``__table_args__``: alembic's autogenerate cannot
+    round-trip a partial functional index against a raw-SQL migration, and
+    declaring it would cause ``alembic check`` to flag false drift. The
+    constraint is exercised by the regression tests in
+    ``tests/test_seed_practices.py``.
+    """
 
     __table_args__ = (_mode_check_constraint(),)
 

@@ -24,6 +24,7 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -196,6 +197,33 @@ STAGE_TO_PRESET_NAME: MappingProxyType[int, str] = MappingProxyType(
 )
 
 
+async def _existing_preset_keys(session: AsyncSession) -> set[tuple[int, str]]:
+    """Return ``(stage_number, name)`` for every preset already in the DB."""
+    result = await session.execute(
+        select(Practice.stage_number, Practice.name).where(
+            col(Practice.submitted_by_user_id).is_(None)
+        )
+    )
+    return {(row[0], row[1]) for row in result.all()}
+
+
+async def _commit_or_yield_to_race_winner(session: AsyncSession, inserted: int) -> int:
+    """Commit ``inserted`` new rows, treating a unique-index collision as a no-op.
+
+    Race-loser path: a peer process committed the same preset(s) between
+    our SELECT and our COMMIT. Roll back and return 0 — the work has
+    already been done by the peer. Migration ``d2e3f4a5b6c7`` is what
+    makes the database arbitrate; without it both peers would commit and
+    we'd ship the duplicate the index was added to prevent.
+    """
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        return 0
+    return inserted
+
+
 async def seed_practices(session: AsyncSession) -> int:
     """Insert preset practices that don't already exist by ``(stage, name)``.
 
@@ -204,13 +232,7 @@ async def seed_practices(session: AsyncSession) -> int:
     ``submitted_by_user_id IS NULL`` so user submissions can't shadow a
     preset by colliding on ``(stage_number, name)``.
     """
-    result = await session.execute(
-        select(Practice.stage_number, Practice.name).where(
-            col(Practice.submitted_by_user_id).is_(None)
-        )
-    )
-    existing: set[tuple[int, str]] = {(row[0], row[1]) for row in result.all()}
-
+    existing = await _existing_preset_keys(session)
     inserted = 0
     for definition in PRESET_PRACTICES:
         key = (definition["stage_number"], definition["name"])
@@ -218,7 +240,6 @@ async def seed_practices(session: AsyncSession) -> int:
             continue
         session.add(Practice(**definition))
         inserted += 1
-
-    if inserted:
-        await session.commit()
-    return inserted
+    if not inserted:
+        return 0
+    return await _commit_or_yield_to_race_winner(session, inserted)

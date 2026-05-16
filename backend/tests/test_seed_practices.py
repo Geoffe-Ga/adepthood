@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -55,6 +58,127 @@ async def test_seed_practices_idempotent(db_session: AsyncSession) -> None:
     assert first == _EXPECTED_PRESET_COUNT
     assert second == 0
 
+    rows = (await db_session.execute(select(Practice))).scalars().all()
+    assert len(rows) == _EXPECTED_PRESET_COUNT
+
+
+@pytest.mark.asyncio
+async def test_preset_unique_index_rejects_duplicate_seed_insert(
+    db_session: AsyncSession,
+) -> None:
+    """The partial unique index closes the seeder race.
+
+    Without the index, two concurrent ``lifespan`` runs can each pass the
+    existence SELECT before either commits, double-inserting every preset.
+    This test simulates the race by attempting two raw INSERTs of the same
+    preset row and verifies the DB rejects the second with ``IntegrityError``.
+    """
+    first = Practice(**PRESET_PRACTICES[0])
+    db_session.add(first)
+    await db_session.commit()
+
+    # Same (stage_number, name) with submitted_by_user_id IS NULL — must fail.
+    dupe = Practice(**PRESET_PRACTICES[0])
+    db_session.add(dupe)
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_preset_unique_index_is_case_and_whitespace_insensitive(
+    db_session: AsyncSession,
+) -> None:
+    """``lower(trim(name))`` collapses "5-4-3-2-1 grounding" / "  5-4-3-2-1 Grounding"."""
+    first = Practice(**PRESET_PRACTICES[0])
+    db_session.add(first)
+    await db_session.commit()
+
+    raw_name = PRESET_PRACTICES[0]["name"]
+    skewed = Practice(
+        **{
+            **PRESET_PRACTICES[0],
+            "name": f"  {raw_name.upper()}  ",
+        }
+    )
+    db_session.add(skewed)
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_preset_unique_index_allows_user_submission_with_same_name(
+    db_session: AsyncSession,
+) -> None:
+    """The partial ``WHERE submitted_by_user_id IS NULL`` clause exempts user submissions.
+
+    A user submitting their own practice with the same display name as a
+    preset is a legitimate scenario the index must NOT reject.
+    """
+    preset = Practice(**PRESET_PRACTICES[0])
+    db_session.add(preset)
+    await db_session.commit()
+
+    # Carry a synthetic user id. The model declares a FK to ``user.id`` but
+    # SQLite's FK enforcement is off by default in tests; the relevant
+    # contract here is that any non-null value falls outside the partial
+    # index's ``WHERE submitted_by_user_id IS NULL`` predicate.
+    user_submission = Practice(
+        **{**PRESET_PRACTICES[0], "submitted_by_user_id": 12_345, "approved": False}
+    )
+    db_session.add(user_submission)
+    await db_session.commit()  # MUST NOT raise
+
+
+@pytest.mark.asyncio
+async def test_seed_practices_skips_already_seeded_preset(
+    db_session: AsyncSession,
+) -> None:
+    """A pre-seeded preset is skipped by the existence-check pre-pass.
+
+    This is the idempotency path the seeder is designed around: if any
+    preset is already in the DB, the SELECT in ``_existing_preset_keys``
+    finds it, ``seed_practices`` doesn't try to insert it, and only the
+    missing rows land.
+    """
+    db_session.add(Practice(**PRESET_PRACTICES[0]))
+    await db_session.commit()
+
+    inserted = await seed_practices(db_session)
+    assert inserted == _EXPECTED_PRESET_COUNT - 1
+
+
+@pytest.mark.asyncio
+async def test_seed_practices_race_loser_returns_zero(
+    db_session: AsyncSession,
+) -> None:
+    """The actual race-loser path: SELECT misses, COMMIT loses the race.
+
+    Reproduces the production scenario by patching ``_existing_preset_keys``
+    to return an empty set — the seeder then stages every preset for insert,
+    but the row(s) the "race-winner" peer already committed make the unique
+    index fire on commit. ``_commit_or_yield_to_race_winner`` catches the
+    ``IntegrityError``, rolls back, and returns 0.
+
+    This is the only test that actually exercises the ``except IntegrityError``
+    branch — the previous ``test_seed_practices_skips_already_seeded_preset``
+    short-circuits before reaching it via the pre-pass.
+    """
+    # Simulate the race-winner peer's commit landing first.
+    for definition in PRESET_PRACTICES:
+        db_session.add(Practice(**definition))
+    await db_session.commit()
+
+    # Patch the existence check to claim the table is empty so the seeder
+    # actually attempts every insert — the DB unique index is the only
+    # arbiter, just like the production race.
+    with patch("seed_practices._existing_preset_keys", new=AsyncMock(return_value=set())):
+        result = await seed_practices(db_session)
+
+    assert result == 0
+    # The original 10 rows are still the only ones in the DB — no duplicate
+    # leaked past the rollback.
     rows = (await db_session.execute(select(Practice))).scalars().all()
     assert len(rows) == _EXPECTED_PRESET_COUNT
 
