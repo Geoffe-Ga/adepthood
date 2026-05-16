@@ -10,24 +10,14 @@ interface EnergyTextInputProps {
   testID?: string;
 }
 
-/**
- * Controlled-but-tolerant numeric input for the cost / return fields.
- *
- * The previous wiring fed the parsed integer straight back into the
- * ``TextInput`` ``value`` prop, so any keystroke that produced an
- * intermediate string (``""`` after a backspace, a lone ``"-"`` while
- * typing ``"-5"``, or ``"58"`` mid-edit toward ``"8"``) failed parsing,
- * left the numeric state untouched, and snapped the input back to its
- * prior value. On mobile this looked like the field was uneditable.
- *
- * The buffer here holds whatever the user has typed; the parsed integer
- * only escapes to ``onCommit`` when the buffer is a valid integer in
- * range. ``onBlur`` rolls the buffer back to the last committed value
- * so an invalid mid-edit doesn't strand a stale string on screen.
- */
+// Local string buffer so mid-edit states ('', '-', '58') aren't snapped
+// back to the last committed integer on every keystroke.
 export const EnergyTextInput = ({ value, onCommit, style, testID }: EnergyTextInputProps) => {
   const [text, setText] = useState<string>(value.toString());
 
+  // External value changes (e.g. modal reset, opening for a different habit)
+  // override the buffer. Don't drive ``value`` from a timer or auto-save loop
+  // while the user is typing — it will stomp their in-progress edit.
   useEffect(() => {
     setText(value.toString());
   }, [value]);
@@ -55,5 +45,3 @@ export const EnergyTextInput = ({ value, onCommit, style, testID }: EnergyTextIn
     />
   );
 };
-
-export default EnergyTextInput;
