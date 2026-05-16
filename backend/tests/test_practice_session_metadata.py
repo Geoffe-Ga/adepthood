@@ -17,6 +17,7 @@ from schemas.practice_session_metadata import (
     IntervalBellMetadata,
     MeditationTimerMetadata,
     MetronomeMetadata,
+    MindfulAnchorMetadata,
     RepCounterMetadata,
     SenseGroundingMetadata,
     SessionMetadataAdapter,
@@ -91,6 +92,35 @@ def test_tallied_grounding_round_trip() -> None:
     assert payload.rounds_completed == 2
     assert payload.total_rounds == 3
     assert payload.items_completed == 27
+
+
+def test_mindful_anchor_metadata_round_trip() -> None:
+    payload = SessionMetadataAdapter.validate_python(
+        {
+            "mode": "mindful_anchor",
+            "chosen_option_key": "grass",
+            "duration_seconds": 120,
+            "met_min_duration": True,
+        }
+    )
+    assert isinstance(payload, MindfulAnchorMetadata)
+    assert payload.chosen_option_key == "grass"
+    assert payload.duration_seconds == 120
+    assert payload.met_min_duration is True
+
+
+def test_mindful_anchor_metadata_with_no_option_chosen() -> None:
+    """Optional chooser: a session may complete without picking from the list."""
+    payload = SessionMetadataAdapter.validate_python(
+        {
+            "mode": "mindful_anchor",
+            "duration_seconds": 30,
+            "met_min_duration": False,
+        }
+    )
+    assert isinstance(payload, MindfulAnchorMetadata)
+    assert payload.chosen_option_key is None
+    assert payload.met_min_duration is False
 
 
 # -- Validators --------------------------------------------------------------
@@ -251,3 +281,35 @@ def test_discriminator_dispatches_to_right_subclass() -> None:
     """The union picks the right model purely from ``mode``."""
     payload = SessionMetadataAdapter.validate_python({"mode": "count_up"})
     assert type(payload) is CountUpMetadata
+
+
+# -- Mindful-anchor metadata validators -------------------------------------
+
+
+def test_mindful_anchor_metadata_rejects_negative_duration() -> None:
+    with pytest.raises(ValidationError):
+        MindfulAnchorMetadata(
+            mode="mindful_anchor",
+            duration_seconds=-1,
+            met_min_duration=False,
+        )
+
+
+def test_mindful_anchor_metadata_rejects_duration_past_cap() -> None:
+    """Four-hour cap guards against bogus client clocks."""
+    with pytest.raises(ValidationError):
+        MindfulAnchorMetadata(
+            mode="mindful_anchor",
+            duration_seconds=14_401,
+            met_min_duration=False,
+        )
+
+
+def test_mindful_anchor_metadata_rejects_overlong_option_key() -> None:
+    with pytest.raises(ValidationError):
+        MindfulAnchorMetadata(
+            mode="mindful_anchor",
+            chosen_option_key="x" * 65,
+            duration_seconds=10,
+            met_min_duration=False,
+        )

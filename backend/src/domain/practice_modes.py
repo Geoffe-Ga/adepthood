@@ -23,6 +23,7 @@ class PracticeMode(StrEnum):
     SENSE_GROUNDING = "sense_grounding"
     TAROT = "tarot"
     TALLIED_GROUNDING = "tallied_grounding"
+    MINDFUL_ANCHOR = "mindful_anchor"
 
 
 #: Ordered tuple of wire values, suitable for CHECK constraints and docs.

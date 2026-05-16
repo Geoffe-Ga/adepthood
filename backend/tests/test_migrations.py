@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
@@ -41,6 +42,12 @@ _PRACTICE_SESSION_METADATA_REVISION = "f0a1b2c3d4e5"  # pragma: allowlist secret
 # grounding-techniques 01: tallied_grounding CHECK-constraint migration.
 _TALLIED_GROUNDING_BASE_REVISION = "d2e3f4a5b6c7"  # pragma: allowlist secret
 _TALLIED_GROUNDING_REVISION = "a1b2c3d4e5f7"  # pragma: allowlist secret
+
+# grounding-techniques-02: extend ck_practice_mode_valid to include mindful_anchor.
+# Chains off the tallied_grounding migration so the two new modes coexist on
+# a single linear timeline.
+_MINDFUL_ANCHOR_BASE_REVISION = "a1b2c3d4e5f7"  # pragma: allowlist secret
+_MINDFUL_ANCHOR_REVISION = "f4a5b6c7d8e9"  # pragma: allowlist secret
 
 
 def test_timestamptz_migration_exists() -> None:
@@ -557,17 +564,18 @@ _ORIGINAL_SEVEN_MODES = (
     "sense_grounding",
     "tarot",
 )
+_EIGHT_MODES_AFTER_TALLIED = (*_ORIGINAL_SEVEN_MODES, "tallied_grounding")
 
 
-def _bootstrap_practice_with_seven_mode_check(sync_url: str) -> None:
-    """Pre-create a ``practice`` table with the pre-tallied 7-mode CHECK constraint.
+def _bootstrap_practice_with_mode_check(sync_url: str, allowed_modes: tuple[str, ...]) -> None:
+    """Pre-create a ``practice`` table whose CHECK pins ``mode`` to ``allowed_modes``.
 
-    Mirrors the schema in place at :data:`_TALLIED_GROUNDING_BASE_REVISION`
-    just before our migration runs: ``mode`` is constrained to the
-    original seven values. Keeps the bootstrap SQLite-friendly so the
-    round-trip exercises only our new migration.
+    Mirrors the schema in place at whichever revision the test stamps to,
+    just before that revision's migration runs. Keeping the bootstrap
+    SQLite-friendly (no FKs, no extra CHECKs) means the round-trip
+    exercises only the migration under test.
     """
-    quoted = ", ".join(f"'{m}'" for m in _ORIGINAL_SEVEN_MODES)
+    quoted = ", ".join(f"'{m}'" for m in allowed_modes)
     bootstrap_engine = create_engine(sync_url)
     with bootstrap_engine.begin() as conn:
         conn.execute(
@@ -601,7 +609,7 @@ def alembic_sqlite_config_tallied_grounding(
     async_url = f"sqlite+aiosqlite:///{db_path}"
     monkeypatch.setenv("DATABASE_URL", async_url)
 
-    _bootstrap_practice_with_seven_mode_check(sync_url)
+    _bootstrap_practice_with_mode_check(sync_url, _ORIGINAL_SEVEN_MODES)
 
     cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
     cfg.config_file_name = None
@@ -686,3 +694,89 @@ def test_tallied_grounding_migration_round_trip_on_sqlite(
     command.upgrade(cfg, _TALLIED_GROUNDING_REVISION)
     _insert_practice_row(db_url, mode="tallied_grounding", name="Find colors")
     assert _count_practice_with_mode(db_url, "tallied_grounding") == 1
+
+
+# -- grounding-techniques-02 mindful_anchor migration round-trip ------------
+
+
+@pytest.fixture
+def alembic_sqlite_config_mindful_anchor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config positioned just before ``f4a5b6c7d8e9``.
+
+    The down_revision is the tallied_grounding migration so the
+    pre-upgrade CHECK already lists eight modes; bootstrap mirrors that
+    state.
+    """
+    db_path = tmp_path / "mindful_anchor_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_practice_with_mode_check(sync_url, _EIGHT_MODES_AFTER_TALLIED)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _MINDFUL_ANCHOR_BASE_REVISION)
+    return cfg
+
+
+def test_mindful_anchor_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_mindful_anchor: Config,
+) -> None:
+    """Round-trip ``f4a5b6c7d8e9``: upgrade allows ``mindful_anchor``; downgrade reverts.
+
+    Phase 1: upgrade lets a ``mindful_anchor`` row insert succeed
+    (proving the CHECK was widened). Phase 2: with that row deleted,
+    downgrade narrows the CHECK and rejects future ``mindful_anchor``
+    inserts. Phase 3: re-upgrade is idempotent.
+    """
+    cfg = alembic_sqlite_config_mindful_anchor
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade widens the CHECK.
+    command.upgrade(cfg, _MINDFUL_ANCHOR_REVISION)
+    _insert_practice_row(db_url, mode="mindful_anchor", name="Touch grass")
+    assert _count_practice_with_mode(db_url, "mindful_anchor") == 1
+
+    # Phase 2: clear the new-mode row, then downgrade and prove the CHECK is
+    # back in force.
+    sync_engine = create_engine(_sync_url(db_url))
+    try:
+        with sync_engine.begin() as conn:
+            conn.execute(text("DELETE FROM practice WHERE mode = 'mindful_anchor'"))
+    finally:
+        sync_engine.dispose()
+    command.downgrade(cfg, _MINDFUL_ANCHOR_BASE_REVISION)
+    with pytest.raises(IntegrityError):
+        _insert_practice_row(db_url, mode="mindful_anchor", name="Should fail")
+
+    # Phase 3: re-upgrade so the cycle is idempotent.
+    command.upgrade(cfg, _MINDFUL_ANCHOR_REVISION)
+    _insert_practice_row(db_url, mode="mindful_anchor", name="Mindful eating")
+    assert _count_practice_with_mode(db_url, "mindful_anchor") == 1
+
+
+def test_mindful_anchor_downgrade_refuses_with_existing_rows(
+    alembic_sqlite_config_mindful_anchor: Config,
+) -> None:
+    """The downgrade aborts when ``mindful_anchor`` rows still exist.
+
+    Narrowing the CHECK while data violates it would either rewrite
+    history or leave the DB in an inconsistent state. The migration
+    refuses to run and the operator clears the rows themselves.
+    """
+    cfg = alembic_sqlite_config_mindful_anchor
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _MINDFUL_ANCHOR_REVISION)
+    _insert_practice_row(db_url, mode="mindful_anchor", name="Stick around")
+
+    with pytest.raises(RuntimeError, match="mindful_anchor"):
+        command.downgrade(cfg, _MINDFUL_ANCHOR_BASE_REVISION)

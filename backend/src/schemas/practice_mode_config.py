@@ -28,6 +28,13 @@ _TALLIED_KEY_PATTERN = r"^[a-z][a-z0-9_]*$"
 TALLIED_TARGET_MAX = 20
 TALLIED_ROUNDS_MAX = 10
 TALLIED_CATEGORIES_MAX = 12
+_OPTION_KEY_MAX = 64
+_OPTION_LABEL_MAX = 255
+_OPTION_DESCRIPTION_MAX = 500
+_OPTION_KEY_PATTERN = r"^[a-z][a-z0-9_]*$"
+_INSTRUCTION_MAX = 500
+_MIN_DURATION_SECONDS_MAX = 3_600
+_MINDFUL_ANCHOR_OPTIONS_MAX = 20
 
 Sense = Literal["sight", "touch", "hearing", "smell", "taste"]
 BellTone = Literal["bowl", "chime", "gong"]
@@ -191,6 +198,49 @@ class TarotConfig(_ConfigBase):
     hide_timer_during_meditation: bool = True
 
 
+class MindfulAnchorOption(_ConfigBase):
+    """One pickable anchor for a single-action mindful practice.
+
+    ``key`` is a stable machine identifier (used by session metadata to
+    record which option the user chose); ``label`` is the human-facing
+    string the UI renders; ``description`` is an optional hint shown
+    alongside the label.
+    """
+
+    key: str = Field(min_length=1, max_length=_OPTION_KEY_MAX, pattern=_OPTION_KEY_PATTERN)
+    label: str = Field(min_length=1, max_length=_OPTION_LABEL_MAX)
+    description: str | None = Field(default=None, max_length=_OPTION_DESCRIPTION_MAX)
+
+
+class MindfulAnchorConfig(_ConfigBase):
+    """Single mindful act with an optional chooser and a soft duration floor.
+
+    Covers practices like Touch Grass or Mindful Eating — one instruction,
+    one "mark complete" action, an optional list of anchors to pick from,
+    and a soft minimum the client can nudge against without the server
+    rejecting shorter sessions.
+    """
+
+    mode: Literal["mindful_anchor"] = "mindful_anchor"
+    instruction: str = Field(min_length=1, max_length=_INSTRUCTION_MAX)
+    min_duration_seconds: int = Field(ge=0, le=_MIN_DURATION_SECONDS_MAX)
+    options: list[MindfulAnchorOption] = Field(
+        default_factory=list, max_length=_MINDFUL_ANCHOR_OPTIONS_MAX
+    )
+    require_option_choice: bool = False
+
+    @model_validator(mode="after")
+    def _check_options_invariants(self) -> Self:
+        keys = [opt.key for opt in self.options]
+        if len(keys) != len(set(keys)):
+            msg = "options must not contain duplicate keys"
+            raise ValueError(msg)
+        if self.require_option_choice and not self.options:
+            msg = "options must be non-empty when require_option_choice is True"
+            raise ValueError(msg)
+        return self
+
+
 #: Discriminated union over all per-mode config payloads, keyed on ``mode``.
 ModeConfig = Annotated[
     MeditationTimerConfig
@@ -200,7 +250,8 @@ ModeConfig = Annotated[
     | RepCounterConfig
     | SenseGroundingConfig
     | TarotConfig
-    | TalliedGroundingConfig,
+    | TalliedGroundingConfig
+    | MindfulAnchorConfig,
     Field(discriminator="mode"),
 ]
 

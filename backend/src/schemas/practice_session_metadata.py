@@ -33,6 +33,8 @@ _MAX_INTERVALS = 1_000
 # the underlying constants are ever inlined.
 MAX_TALLIED_ROUNDS = TALLIED_ROUNDS_MAX
 MAX_TALLIED_ITEMS = TALLIED_ROUNDS_MAX * TALLIED_CATEGORIES_MAX * TALLIED_TARGET_MAX
+_MAX_ANCHOR_DURATION_SECONDS = 4 * 60 * 60  # 4 hours; well above any plausible mindful act.
+_MAX_OPTION_KEY = 64
 
 
 class _MetadataBase(BaseModel):
@@ -124,6 +126,20 @@ class TalliedGroundingMetadata(_MetadataBase):
         return self
 
 
+class MindfulAnchorMetadata(_MetadataBase):
+    """What the user picked (if anything) and how long the mindful act lasted.
+
+    ``met_min_duration`` is emitted by the client so the analytics rollup
+    can distinguish "long enough" from "abandoned early" without re-running
+    the soft-floor comparison against the catalog config at every query.
+    """
+
+    mode: Literal["mindful_anchor"] = "mindful_anchor"
+    chosen_option_key: str | None = Field(default=None, max_length=_MAX_OPTION_KEY)
+    duration_seconds: int = Field(ge=0, le=_MAX_ANCHOR_DURATION_SECONDS)
+    met_min_duration: bool
+
+
 #: Discriminated union over all per-mode session metadata payloads.
 SessionMetadata = Annotated[
     MeditationTimerMetadata
@@ -133,7 +149,8 @@ SessionMetadata = Annotated[
     | RepCounterMetadata
     | SenseGroundingMetadata
     | TarotMetadata
-    | TalliedGroundingMetadata,
+    | TalliedGroundingMetadata
+    | MindfulAnchorMetadata,
     Field(discriminator="mode"),
 ]
 
