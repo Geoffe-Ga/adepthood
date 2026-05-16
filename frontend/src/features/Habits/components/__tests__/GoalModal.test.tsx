@@ -62,7 +62,10 @@ const renderModal = (
     onUpdateHabit: jest.fn(),
     ...overrides,
   };
-  return { ...render(<GoalModal {...props} />), props };
+  const utils = render(<GoalModal {...props} />);
+  const toggle = utils.queryByTestId('goal-modal-edit-toggle');
+  if (toggle) fireEvent.press(toggle);
+  return { ...utils, props };
 };
 
 describe('GoalModal goal-target editor', () => {
