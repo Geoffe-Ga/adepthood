@@ -368,7 +368,9 @@ async def test_site_resource_body_503_when_cms_auth_misconfigured(
     headers = await _signup(async_client, "rsnoauth")
     stub = _StubSquarespaceClient(raise_exc=SquarespaceAuthError("missing"))
     with _patch_client(stub):
-        resp = await async_client.get("/course/site-resources/philosophy/body", headers=headers)
+        resp = await async_client.get(
+            "/course/site-resources/aptitude-stages/body", headers=headers
+        )
     assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE
     assert resp.json()["detail"] == "cms_auth_failed"
 

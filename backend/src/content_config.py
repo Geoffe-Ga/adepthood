@@ -108,20 +108,28 @@ STAGE_PLANS: Final[list[StageContentPlan]] = [
 #: Pages that are not stage-gated. Order here is the order shown in the UI.
 SITE_RESOURCES: Final[list[SiteResource]] = [
     SiteResource(
-        slug="philosophy",
-        title="Philosophy",
-        description="The ideas the program is built on.",
+        slug="liminal-creep",
+        title="Who Benefits?",
+        description="Why the program exists.",
+        path="/philosophy/liminal-creep",
+    ),
+    SiteResource(
+        slug="archetypal-wavelength",
+        title="Archetypal Wavelength Intro",
+        description="The shape of human development.",
+        path="/philosophy/archetypal-wavelength",
+    ),
+    SiteResource(
+        slug="aptitude-stages",
+        title="APTITUDE Stages",
+        description="The 36-week stage map.",
+        path="/philosophy/aptitude-stages",
     ),
     SiteResource(
         slug="about",
-        title="About",
-        description="Who Adepthood is for and how it works.",
-    ),
-    SiteResource(
-        slug="course",
-        title="Course Overview",
-        description="The full course map at a glance.",
-        path="/course",
+        title="APTITUDE Intro",
+        description="What Adepthood is and who it's for.",
+        path="/about",
     ),
 ]
 
