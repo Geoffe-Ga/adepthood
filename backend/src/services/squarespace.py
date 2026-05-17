@@ -56,6 +56,8 @@ _DEFAULT_BASE_URL: Final[str] = "https://aptitude.guru"
 _DEFAULT_CACHE_TTL: Final[int] = 60 * 60  # 1 hour
 _REQUEST_TIMEOUT_SECONDS: Final[float] = 10.0
 _HTTP_ERROR_THRESHOLD: Final[int] = 400
+_HTTP_UNAUTHORIZED: Final[int] = 401
+_HTTP_FORBIDDEN: Final[int] = 403
 _USER_AGENT: Final[str] = "AdepthoodApp/1.0 (+https://adepthood.com)"
 # Squarespace section under which the site password is configured.  The
 # rest of aptitude.guru (philosophy, about, …) is publicly readable and
@@ -239,34 +241,47 @@ class SquarespaceClient:
         body_class = " ".join(soup.body.get("class", [])) if soup.body else ""
         return "password" in body_class.lower() or "site-password" in html.lower()
 
-    async def _authenticate(self) -> None:
-        """POST the site password and capture the resulting cookie.
+    async def _authenticate(self, target_url: str) -> None:
+        """POST the site password to ``target_url`` and capture the cookie.
 
-        The password gate on aptitude.guru is configured on the
-        ``/course`` section, not the site root.  Posting elsewhere
-        returns 403 from Squarespace's edge — the server only accepts
-        a password POST at a URL inside the protected section.  The
-        ``SiteUserInfo``-family cookie set by a successful POST applies
-        to every subsequent request under that section.
+        Squarespace's section-scoped password gate accepts the POST at
+        the URL of the page being viewed; a hardcoded section root may
+        not exist as a real page (e.g. ``/course`` 404s on aptitude.guru
+        but ``/course/beige-1`` is real).  The ``SiteUserInfo`` cookie
+        set by a successful POST applies to every page in the section,
+        so we only need to authenticate once against any valid page.
+
+        Error classification:
+        * 401 / 403 — credential rejected by the gate → ``AuthError``.
+        * 404 / 5xx — page or upstream issue, not the password →
+          ``FetchError``.  Mapping 404 to ``AuthError`` would hide
+          content bugs (e.g. a misconfigured URL in ``content_config``).
+        * Response that still looks like the password page →
+          ``AuthError`` (password accepted nothing).
         """
         if not self._password:
             raise SquarespaceAuthError(
                 "SQUARESPACE_SITE_PASSWORD is not configured on the backend.",
             )
-        auth_url = f"{self._base_url}{_AUTH_PATH}"
         client = await self._ensure_client()
         try:
             response = await client.post(
-                auth_url,
+                target_url,
                 data={"password": self._password},
             )
         except httpx.HTTPError as exc:
             raise SquarespaceFetchError(f"Network error during auth: {exc}") from exc
 
-        if response.status_code >= _HTTP_ERROR_THRESHOLD:
-            self._log_auth_failure(auth_url, response)
+        if response.status_code in (_HTTP_UNAUTHORIZED, _HTTP_FORBIDDEN):
+            self._log_auth_failure(target_url, response)
             raise SquarespaceAuthError(
                 f"Squarespace rejected the site password (HTTP {response.status_code}).",
+            )
+        if response.status_code >= _HTTP_ERROR_THRESHOLD:
+            self._log_auth_failure(target_url, response)
+            raise SquarespaceFetchError(
+                f"Squarespace returned HTTP {response.status_code} during auth POST to "
+                f"{target_url}.",
             )
 
         # If the post still returns a password page, the password was
@@ -297,14 +312,18 @@ class SquarespaceClient:
             },
         )
 
-    async def _ensure_authenticated(self) -> None:
-        """Authenticate once per process unless the cookie has been cleared."""
+    async def _ensure_authenticated(self, target_url: str) -> None:
+        """Authenticate once per process unless the cookie has been cleared.
+
+        ``target_url`` is the URL the caller is about to fetch — we POST
+        the password there so the gate sees a real page in the section.
+        """
         if self._authenticated:
             return
         async with self._auth_lock:
             if self._authenticated:
                 return
-            await self._authenticate()
+            await self._authenticate(target_url)
 
     @staticmethod
     def _requires_auth(url: str) -> bool:
@@ -368,7 +387,7 @@ class SquarespaceClient:
             return cached.content
 
         if self._requires_auth(url):
-            await self._ensure_authenticated()
+            await self._ensure_authenticated(url)
         content = await self._fetch_and_clean(url)
 
         self._cache[url] = _CacheEntry(
@@ -397,7 +416,7 @@ class SquarespaceClient:
         if not (locked and self._requires_auth(url)):
             return response
         self._authenticated = False
-        await self._ensure_authenticated()
+        await self._ensure_authenticated(url)
         return await self._raw_get(url)
 
     async def _fetch_and_clean(self, url: str) -> FetchedContent:

@@ -64,7 +64,7 @@ async def test_fetch_authenticates_once_then_returns_clean_article() -> None:
     page_gets: list[Request] = []
 
     def handler(request: Request) -> Response:
-        if request.method == "POST" and request.url.path == "/course":
+        if request.method == "POST" and request.url.path == "/course/beige-1":
             auth_posts.append(request)
             return Response(200, html="<html><body>OK</body></html>")
         if request.method == "GET" and request.url.path == "/course/beige-1":
@@ -106,7 +106,7 @@ async def test_fetch_reauthenticates_when_session_expires() -> None:
     def handler(request: Request) -> Response:
         nonlocal gets
         request_log.append((request.method, request.url.path))
-        if request.method == "POST" and request.url.path == "/course":
+        if request.method == "POST" and request.url.path == "/course/beige-1":
             return Response(200, html="<html><body>OK</body></html>")
         if request.method == "GET" and request.url.path == "/course/beige-1":
             gets += 1
@@ -353,9 +353,70 @@ async def test_auth_failure_logs_response_details(
     # ``__dict__`` but those attributes are invisible to static analysis.
     fields = record.__dict__
     assert fields["status"] == 403
-    assert fields["auth_url"] == f"{_BASE_URL}/course"
+    assert fields["auth_url"] == _CHAPTER_URL
     assert "Host not in allowlist" in fields["body_preview"]
     assert fields["content_type"] == "text/plain"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_auth_posts_password_to_target_url() -> None:
+    """The auth POST goes to the URL we're fetching, not a hardcoded path.
+
+    Squarespace's section-scoped password gate is configured on real
+    pages — POSTing to a non-existent section root returns 404 even
+    when the password is correct.  Verifying the POST target equals
+    the requested URL pins the fix for the production regression where
+    we POSTed to ``/course`` (which 404s on aptitude.guru) instead of
+    ``/course/beige-1`` (a real page).
+    """
+    posted_paths: list[str] = []
+
+    def handler(request: Request) -> Response:
+        if request.method == "POST":
+            posted_paths.append(request.url.path)
+            return Response(200, html="<html><body>OK</body></html>")
+        if request.method == "GET" and request.url.path == "/course/beige-1":
+            return Response(200, html=_ARTICLE_PAGE)
+        return Response(404)
+
+    transport = MockTransport(handler)
+    client = SquarespaceClient(
+        base_url=_BASE_URL,
+        password="open-sesame",  # pragma: allowlist secret
+        http_client_factory=_build_factory(transport),
+    )
+
+    await client.fetch(_CHAPTER_URL)
+    assert posted_paths == ["/course/beige-1"]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_404_during_auth_post_raises_fetch_error_not_auth_error() -> None:
+    """A 404 on the auth POST is a missing page, not a rejected password.
+
+    Mapping 4xx-as-AuthError would mask content-config bugs (e.g. a
+    SiteResource pointing at a URL that doesn't exist on Squarespace)
+    behind a 503 ``cms_auth_failed``.  401/403 mean the password is
+    wrong; 404/5xx mean the page or upstream is the problem.
+    """
+
+    def handler(request: Request) -> Response:
+        if request.method == "POST":
+            return Response(404, text="Not found")
+        return Response(404)
+
+    transport = MockTransport(handler)
+    client = SquarespaceClient(
+        base_url=_BASE_URL,
+        password="open-sesame",  # pragma: allowlist secret
+        http_client_factory=_build_factory(transport),
+    )
+
+    with pytest.raises(SquarespaceFetchError) as exc_info:
+        await client.fetch(_CHAPTER_URL)
+    assert not isinstance(exc_info.value, SquarespaceAuthError)
     await client.aclose()
 
 
