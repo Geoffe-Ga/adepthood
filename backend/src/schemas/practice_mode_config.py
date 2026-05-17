@@ -38,6 +38,17 @@ _OPTION_DESCRIPTION_MAX = 500
 _INSTRUCTION_MAX = 500
 _MIN_DURATION_SECONDS_MAX = 3_600
 _MINDFUL_ANCHOR_OPTIONS_MAX = 20
+# Shared with ``schemas.practice_session_metadata`` so the deck slug and
+# card-name caps are encoded once. ``CardMeditationMetadata`` mirrors the
+# same bounds it sees coming back from sessions.
+CARD_DECK_ID_MAX = 64
+CARD_DECK_ID_PATTERN = r"^[a-z][a-z0-9_]*$"
+CARD_NAME_MAX = 120
+_CARD_IMAGE_ASSET_KEY_MAX = 200
+_CARD_IMAGE_URI_MAX = 500
+_CARD_SYMBOLISM_MAX = 500
+_CARD_MEDITATION_CARDS_MAX = 200
+_CARD_MEDITATION_CUSTOM_DECK_ID = "custom"
 
 Sense = Literal["sight", "touch", "hearing", "smell", "taste"]
 BellTone = Literal["bowl", "chime", "gong"]
@@ -264,6 +275,62 @@ class MindfulAnchorConfig(_ConfigBase):
         return self
 
 
+class CardMeditationCard(_ConfigBase):
+    """One card in a card-meditation deck — bundled or user-curated.
+
+    ``image_asset_key`` is an opaque handle the frontend resolves against
+    a bundled deck manifest (e.g. ``"rws/major/00_fool"``); the server
+    never dereferences it. ``image_uri`` is a client-local URI (the most
+    common case is a phone-photo ``file:///...`` path for a custom deck)
+    that the server likewise never fetches. The two are mutually
+    exclusive — a card either points at a curated asset *or* at a local
+    file, never both — and both being unset is also valid for a text-only
+    card whose meaning rides entirely on ``name`` and ``symbolism``.
+    """
+
+    name: str = Field(min_length=1, max_length=CARD_NAME_MAX)
+    image_asset_key: str | None = Field(
+        default=None, min_length=1, max_length=_CARD_IMAGE_ASSET_KEY_MAX
+    )
+    image_uri: str | None = Field(default=None, min_length=1, max_length=_CARD_IMAGE_URI_MAX)
+    symbolism: str | None = Field(default=None, max_length=_CARD_SYMBOLISM_MAX)
+
+    @model_validator(mode="after")
+    def _check_exclusive_image_fields(self) -> Self:
+        if self.image_asset_key is not None and self.image_uri is not None:
+            msg = "set at most one of image_asset_key or image_uri"
+            raise ValueError(msg)
+        return self
+
+
+class CardMeditationConfig(_ConfigBase):
+    """Deck-agnostic card meditation — bundled deck *or* user-curated cards.
+
+    ``deck_id`` is the slug the frontend uses to resolve which bundled
+    deck (``"rws"``, ``"thoth"``, …) to render; the sentinel ``"custom"``
+    signals a user-curated deck whose cards travel inline in ``cards``.
+    For bundled decks the ``cards`` field stays ``None`` because the
+    frontend already owns the canonical card list.
+    """
+
+    mode: Literal["card_meditation"] = "card_meditation"
+    deck_id: str = Field(min_length=1, max_length=CARD_DECK_ID_MAX, pattern=CARD_DECK_ID_PATTERN)
+    per_card_minutes: float = Field(default=5, ge=_DURATION_MIN_MINUTES, le=_DURATION_MAX_MINUTES)
+    shuffle: bool = True
+    reveal_after_meditation: bool = False
+    hide_timer_during_meditation: bool = True
+    cards: list[CardMeditationCard] | None = Field(
+        default=None, max_length=_CARD_MEDITATION_CARDS_MAX
+    )
+
+    @model_validator(mode="after")
+    def _check_custom_deck_carries_cards(self) -> Self:
+        if self.deck_id == _CARD_MEDITATION_CUSTOM_DECK_ID and not self.cards:
+            msg = "cards must be a non-empty list when deck_id is 'custom'"
+            raise ValueError(msg)
+        return self
+
+
 #: Discriminated union over all per-mode config payloads, keyed on ``mode``.
 ModeConfig = Annotated[
     MeditationTimerConfig
@@ -274,7 +341,8 @@ ModeConfig = Annotated[
     | SenseGroundingConfig
     | TarotConfig
     | TalliedGroundingConfig
-    | MindfulAnchorConfig,
+    | MindfulAnchorConfig
+    | CardMeditationConfig,
     Field(discriminator="mode"),
 ]
 

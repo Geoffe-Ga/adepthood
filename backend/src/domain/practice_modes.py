@@ -24,6 +24,7 @@ class PracticeMode(StrEnum):
     TAROT = "tarot"
     TALLIED_GROUNDING = "tallied_grounding"
     MINDFUL_ANCHOR = "mindful_anchor"
+    CARD_MEDITATION = "card_meditation"
 
 
 #: Ordered tuple of wire values, suitable for CHECK constraints and docs.

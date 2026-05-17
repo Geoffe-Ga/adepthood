@@ -48,6 +48,12 @@ _TALLIED_GROUNDING_REVISION = "a1b2c3d4e5f7"  # pragma: allowlist secret
 _MINDFUL_ANCHOR_BASE_REVISION = "a1b2c3d4e5f7"  # pragma: allowlist secret
 _MINDFUL_ANCHOR_REVISION = "f4a5b6c7d8e9"  # pragma: allowlist secret
 
+# custom-practices-02: extend ck_practice_mode_valid to include card_meditation.
+# Chains off the mindful_anchor migration so the three custom-practice modes
+# coexist on a single linear timeline.
+_CARD_MEDITATION_BASE_REVISION = "f4a5b6c7d8e9"  # pragma: allowlist secret
+_CARD_MEDITATION_REVISION = "a2b3c4d5e6f8"  # pragma: allowlist secret
+
 
 def test_timestamptz_migration_exists() -> None:
     """Regression guard: the migration file must stay where Alembic finds it."""
@@ -564,6 +570,7 @@ _ORIGINAL_SEVEN_MODES = (
     "tarot",
 )
 _EIGHT_MODES_AFTER_TALLIED = (*_ORIGINAL_SEVEN_MODES, "tallied_grounding")
+_NINE_MODES_AFTER_MINDFUL_ANCHOR = (*_EIGHT_MODES_AFTER_TALLIED, "mindful_anchor")
 
 
 def _bootstrap_practice_with_mode_check(sync_url: str, allowed_modes: tuple[str, ...]) -> None:
@@ -779,3 +786,93 @@ def test_mindful_anchor_downgrade_refuses_with_existing_rows(
 
     with pytest.raises(RuntimeError, match="mindful_anchor"):
         command.downgrade(cfg, _MINDFUL_ANCHOR_BASE_REVISION)
+
+
+# -- custom-practices-02 card_meditation migration round-trip --------------
+
+
+@pytest.fixture
+def alembic_sqlite_config_card_meditation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config positioned just before ``a2b3c4d5e6f8``.
+
+    The down_revision is the mindful_anchor migration so the pre-upgrade
+    CHECK already lists nine modes; bootstrap mirrors that state.
+    """
+    db_path = tmp_path / "card_meditation_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_practice_with_mode_check(sync_url, _NINE_MODES_AFTER_MINDFUL_ANCHOR)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _CARD_MEDITATION_BASE_REVISION)
+    return cfg
+
+
+def test_card_meditation_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_card_meditation: Config,
+) -> None:
+    """Round-trip ``a2b3c4d5e6f8``: upgrade allows ``card_meditation``; downgrade reverts.
+
+    Phase 1: upgrade lets a ``card_meditation`` row insert succeed
+    (proving the CHECK was widened). Phase 2: with that row deleted,
+    downgrade narrows the CHECK and rejects future ``card_meditation``
+    inserts. Phase 3: re-upgrade is idempotent.
+    """
+    cfg = alembic_sqlite_config_card_meditation
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade widens the CHECK.
+    command.upgrade(cfg, _CARD_MEDITATION_REVISION)
+    _insert_practice_row(db_url, mode="card_meditation", name="RWS daily card")
+    assert _count_practice_with_mode(db_url, "card_meditation") == 1
+
+    # Phase 2: clear the new-mode row, then downgrade and prove the CHECK is
+    # back in force. ``tarot`` must still insert successfully — the new
+    # mode is additive, not a replacement.
+    sync_engine = create_engine(_sync_url(db_url))
+    try:
+        with sync_engine.begin() as conn:
+            conn.execute(text("DELETE FROM practice WHERE mode = 'card_meditation'"))
+    finally:
+        sync_engine.dispose()
+    command.downgrade(cfg, _CARD_MEDITATION_BASE_REVISION)
+    with pytest.raises(IntegrityError):
+        _insert_practice_row(db_url, mode="card_meditation", name="Should fail")
+    _insert_practice_row(db_url, mode="tarot", name="Tarot still works")
+    assert _count_practice_with_mode(db_url, "tarot") == 1
+
+    # Phase 3: re-upgrade so the cycle is idempotent. The phase-1 row was
+    # deleted to enable the downgrade, so only this new row remains.
+    command.upgrade(cfg, _CARD_MEDITATION_REVISION)
+    _insert_practice_row(db_url, mode="card_meditation", name="Custom phone deck")
+    assert _count_practice_with_mode(db_url, "card_meditation") == 1
+
+
+def test_card_meditation_downgrade_refuses_with_existing_rows(
+    alembic_sqlite_config_card_meditation: Config,
+) -> None:
+    """The downgrade aborts when ``card_meditation`` rows still exist.
+
+    Mirrors the mindful_anchor guard: narrowing the CHECK while data
+    violates it would either rewrite history or leave the DB in an
+    inconsistent state. The migration refuses to run and the operator
+    clears the rows themselves.
+    """
+    cfg = alembic_sqlite_config_card_meditation
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _CARD_MEDITATION_REVISION)
+    _insert_practice_row(db_url, mode="card_meditation", name="Stick around")
+
+    with pytest.raises(RuntimeError, match="card_meditation"):
+        command.downgrade(cfg, _CARD_MEDITATION_BASE_REVISION)
