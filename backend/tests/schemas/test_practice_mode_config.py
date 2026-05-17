@@ -6,6 +6,8 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from schemas.practice_mode_config import (
+    CARD_MEDITATION_CARDS_MAX,
+    CARD_MEDITATION_CUSTOM_DECK_ID,
     CardMeditationCard,
     CardMeditationConfig,
     CountUpConfig,
@@ -467,7 +469,7 @@ def _custom_deck_payload(**overrides: object) -> dict[str, object]:
     """Minimal valid custom-deck ``card_meditation`` config (two phone photos)."""
     payload: dict[str, object] = {
         "mode": "card_meditation",
-        "deck_id": "custom",
+        "deck_id": CARD_MEDITATION_CUSTOM_DECK_ID,
         "per_card_minutes": 5,
         "shuffle": True,
         "reveal_after_meditation": True,
@@ -559,16 +561,37 @@ def test_card_meditation_rejects_zero_per_card_minutes() -> None:
 
 
 def test_card_meditation_rejects_too_many_cards() -> None:
-    """The 200-card cap guards against bloated payloads in a single config."""
-    cards = [{"name": f"Card {i}"} for i in range(201)]
+    """The cards-list cap guards against bloated payloads in a single config."""
+    cards = [{"name": f"Card {i}"} for i in range(CARD_MEDITATION_CARDS_MAX + 1)]
     with pytest.raises(ValidationError):
         _ADAPTER.validate_python(_custom_deck_payload(cards=cards))
+
+
+def test_card_meditation_accepts_cards_at_ceiling() -> None:
+    """The exact ceiling is a valid (inclusive) boundary — pins the off-by-one.
+
+    Mirrors :func:`test_tallied_grounding_accepts_items_completed_at_ceiling`
+    so the cards-list bound is locked at the inclusive edge rather than
+    just rejecting overflow.
+    """
+    cards = [{"name": f"Card {i}"} for i in range(CARD_MEDITATION_CARDS_MAX)]
+    cfg = _ADAPTER.validate_python(_custom_deck_payload(cards=cards))
+    assert isinstance(cfg, CardMeditationConfig)
+    assert cfg.cards is not None
+    assert len(cfg.cards) == CARD_MEDITATION_CARDS_MAX
 
 
 def test_card_meditation_rejects_extra_fields() -> None:
     """``extra="forbid"`` catches typos like ``perCardMinutes`` or ``deckId``."""
     with pytest.raises(ValidationError):
         _ADAPTER.validate_python(_bundled_deck_payload(perCardMinutes=5))
+
+
+def test_card_meditation_shuffle_false_round_trip() -> None:
+    """``shuffle=False`` round-trips so curated decks can present cards in order."""
+    cfg = _ADAPTER.validate_python(_bundled_deck_payload(shuffle=False))
+    assert isinstance(cfg, CardMeditationConfig)
+    assert cfg.shuffle is False
 
 
 def test_card_meditation_does_not_disturb_tarot() -> None:
@@ -582,3 +605,46 @@ def test_card_meditation_does_not_disturb_tarot() -> None:
         }
     )
     assert type(cfg) is TarotConfig
+
+
+# -- card_meditation image_uri scheme allowlist ----------------------------
+
+
+@pytest.mark.parametrize(
+    "safe_uri",
+    [
+        "file:///var/mobile/IMG_0123.jpg",
+        "content://media/external/images/media/1234",
+        "ph://4D2D4E51-1FE2-4B7B-9F61-3C2D5E6F1A2B/L0/001",
+        "asset://photos/IMG_0125.jpg",
+    ],
+)
+def test_card_meditation_card_accepts_safe_image_uri_schemes(safe_uri: str) -> None:
+    """The four mobile-local schemes round-trip cleanly through validation."""
+    card = CardMeditationCard(name="Photo", image_uri=safe_uri)
+    assert card.image_uri == safe_uri
+
+
+@pytest.mark.parametrize(
+    "unsafe_uri",
+    [
+        "http://attacker.com/beacon",
+        "https://attacker.com/beacon",
+        "javascript:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "ftp://example.com/x",
+        "vbscript:msgbox(1)",
+        "/var/photos/IMG.jpg",  # missing scheme
+        "file:/var/photos/IMG.jpg",  # missing double-slash
+    ],
+)
+def test_card_meditation_card_rejects_unsafe_image_uri_schemes(unsafe_uri: str) -> None:
+    """Network / script / data URIs are stored-XSS or SSRF staging vectors.
+
+    The server never fetches ``image_uri``, but the value travels back to
+    every client that reads the practice; allowing arbitrary schemes
+    would let a malicious draft poison the catalog payload. The schema
+    allowlist closes that vector at the boundary.
+    """
+    with pytest.raises(ValidationError):
+        CardMeditationCard(name="Photo", image_uri=unsafe_uri)

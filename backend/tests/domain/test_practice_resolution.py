@@ -11,6 +11,7 @@ from domain.practice_resolution import effective_config, effective_name
 from models.practice import Practice
 from models.user_practice import UserPractice
 from schemas.practice_mode_config import (
+    CardMeditationConfig,
     CountUpConfig,
     IntervalBellConfig,
     MeditationTimerConfig,
@@ -193,3 +194,44 @@ def test_effective_config_tarot_round_trip() -> None:
     cfg = effective_config(practice, _user_practice())
     assert isinstance(cfg, TarotConfig)
     assert cfg.per_card_minutes == 5
+
+
+def test_effective_config_card_meditation_bundled_deck_round_trip() -> None:
+    """The catalog config for a bundled-deck card_meditation resolves cleanly."""
+    catalog_cfg = {
+        "mode": "card_meditation",
+        "deck_id": "rws",
+        "per_card_minutes": 7,
+        "shuffle": True,
+        "reveal_after_meditation": False,
+        "hide_timer_during_meditation": True,
+        "cards": None,
+    }
+    practice = _practice("card_meditation", catalog_cfg)
+    cfg = effective_config(practice, _user_practice())
+    assert isinstance(cfg, CardMeditationConfig)
+    assert cfg.deck_id == "rws"
+    assert cfg.per_card_minutes == 7
+    assert cfg.cards is None
+
+
+def test_effective_config_card_meditation_custom_deck_round_trip() -> None:
+    """A custom-deck catalog config carries cards through the resolver."""
+    catalog_cfg = {
+        "mode": "card_meditation",
+        "deck_id": "custom",
+        "per_card_minutes": 5,
+        "shuffle": False,
+        "reveal_after_meditation": True,
+        "hide_timer_during_meditation": True,
+        "cards": [
+            {"name": "Mountain", "image_uri": "file:///var/mobile/IMG_0123.jpg"},
+            {"name": "River", "image_uri": "file:///var/mobile/IMG_0124.jpg"},
+        ],
+    }
+    practice = _practice("card_meditation", catalog_cfg)
+    cfg = effective_config(practice, _user_practice())
+    assert isinstance(cfg, CardMeditationConfig)
+    assert cfg.shuffle is False
+    assert cfg.cards is not None
+    assert [c.name for c in cfg.cards] == ["Mountain", "River"]

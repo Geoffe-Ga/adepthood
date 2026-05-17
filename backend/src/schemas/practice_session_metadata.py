@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from schemas.practice_mode_config import (
     CARD_DECK_ID_MAX,
     CARD_DECK_ID_PATTERN,
+    CARD_MEDITATION_CARDS_MAX,
     CARD_NAME_MAX,
     OPTION_KEY_MAX,
     OPTION_KEY_PATTERN,
@@ -39,13 +40,14 @@ _MAX_INTERVALS = 1_000
 MAX_TALLIED_ROUNDS = TALLIED_ROUNDS_MAX
 MAX_TALLIED_ITEMS = TALLIED_ROUNDS_MAX * TALLIED_CATEGORIES_MAX * TALLIED_TARGET_MAX
 _MAX_ANCHOR_DURATION_SECONDS = 4 * 60 * 60  # 4 hours; well above any plausible mindful act.
-# Index ceiling for a card_meditation deck: matches the cards-list cap on
-# :class:`schemas.practice_mode_config.CardMeditationConfig` (200 cards,
-# zero-indexed). Keeping it here as a derived bound would require
-# importing the private cap; the constant is short enough that pinning it
-# inline keeps the two modules independently readable while the
-# round-trip test below double-checks both stay in sync.
-_MAX_CARD_INDEX = 199
+# Index ceiling for a card_meditation deck. Derived from the authoring-
+# side cap so a future bump to ``CARD_MEDITATION_CARDS_MAX`` cannot leave
+# the post-session index ceiling silently stale. The cross-module guard
+# in ``test_card_meditation_metadata_ceiling_matches_config_constant``
+# locks this derivation in case the constant is ever inlined. Re-exported
+# at module scope so the contract test asserts against the same name a
+# caller would import.
+MAX_CARD_INDEX = CARD_MEDITATION_CARDS_MAX - 1
 
 
 class _MetadataBase(BaseModel):
@@ -166,7 +168,7 @@ class CardMeditationMetadata(_MetadataBase):
     mode: Literal["card_meditation"] = "card_meditation"
     deck_id: str = Field(min_length=1, max_length=CARD_DECK_ID_MAX, pattern=CARD_DECK_ID_PATTERN)
     card_drawn_name: str = Field(min_length=1, max_length=CARD_NAME_MAX)
-    card_drawn_index: int | None = Field(default=None, ge=0, le=_MAX_CARD_INDEX)
+    card_drawn_index: int | None = Field(default=None, ge=0, le=MAX_CARD_INDEX)
 
 
 #: Discriminated union over all per-mode session metadata payloads.

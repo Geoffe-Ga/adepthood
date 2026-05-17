@@ -44,11 +44,26 @@ _MINDFUL_ANCHOR_OPTIONS_MAX = 20
 CARD_DECK_ID_MAX = 64
 CARD_DECK_ID_PATTERN = r"^[a-z][a-z0-9_]*$"
 CARD_NAME_MAX = 120
+# Public so ``schemas.practice_session_metadata`` can derive its
+# ``card_drawn_index`` ceiling without the two modules silently drifting
+# (see ``test_card_meditation_metadata_ceiling_matches_config_constant``).
+CARD_MEDITATION_CARDS_MAX = 200
+# Sentinel deck id that signals a user-curated deck whose cards travel
+# inline in the config. Public so tests and callers reference one
+# canonical literal — a rename here would catch any stale string.
+CARD_MEDITATION_CUSTOM_DECK_ID = "custom"
 _CARD_IMAGE_ASSET_KEY_MAX = 200
 _CARD_IMAGE_URI_MAX = 500
 _CARD_SYMBOLISM_MAX = 500
-_CARD_MEDITATION_CARDS_MAX = 200
-_CARD_MEDITATION_CUSTOM_DECK_ID = "custom"
+# Allowlist mobile-local URI schemes for ``image_uri``. The server never
+# fetches the URI, but the value round-trips through the API to every
+# client that reads the practice, so a stored
+# ``http://attacker.com/beacon`` or ``javascript:...`` would be a stored
+# XSS/SSRF staging vector if a frontend ever renders the string as an
+# image source without re-sanitising. Restricting to the schemes mobile
+# clients actually produce (``file``, ``content``, ``ph``, ``asset``)
+# closes that vector at the schema boundary.
+_CARD_IMAGE_URI_PATTERN = r"^(file|content|ph|asset)://[^\s<>\"]+$"
 
 Sense = Literal["sight", "touch", "hearing", "smell", "taste"]
 BellTone = Literal["bowl", "chime", "gong"]
@@ -288,12 +303,36 @@ class CardMeditationCard(_ConfigBase):
     card whose meaning rides entirely on ``name`` and ``symbolism``.
     """
 
-    name: str = Field(min_length=1, max_length=CARD_NAME_MAX)
-    image_asset_key: str | None = Field(
-        default=None, min_length=1, max_length=_CARD_IMAGE_ASSET_KEY_MAX
+    name: str = Field(
+        min_length=1,
+        max_length=CARD_NAME_MAX,
+        description="Card title shown above the image / symbolism block.",
     )
-    image_uri: str | None = Field(default=None, min_length=1, max_length=_CARD_IMAGE_URI_MAX)
-    symbolism: str | None = Field(default=None, max_length=_CARD_SYMBOLISM_MAX)
+    image_asset_key: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=_CARD_IMAGE_ASSET_KEY_MAX,
+        description=(
+            "Opaque handle resolved against the bundled deck manifest "
+            "(e.g. ``rws/major/00_fool``). The server never dereferences it."
+        ),
+    )
+    image_uri: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=_CARD_IMAGE_URI_MAX,
+        pattern=_CARD_IMAGE_URI_PATTERN,
+        description=(
+            "Mobile-local URI (``file://``, ``content://``, ``ph://``, ``asset://``). "
+            "The server never fetches it and rejects network/script schemes at "
+            "the schema boundary."
+        ),
+    )
+    symbolism: str | None = Field(
+        default=None,
+        max_length=_CARD_SYMBOLISM_MAX,
+        description="Short reflection prompt rendered alongside the card image.",
+    )
 
     @model_validator(mode="after")
     def _check_exclusive_image_fields(self) -> Self:
@@ -320,13 +359,15 @@ class CardMeditationConfig(_ConfigBase):
     reveal_after_meditation: bool = False
     hide_timer_during_meditation: bool = True
     cards: list[CardMeditationCard] | None = Field(
-        default=None, max_length=_CARD_MEDITATION_CARDS_MAX
+        default=None, max_length=CARD_MEDITATION_CARDS_MAX
     )
 
     @model_validator(mode="after")
     def _check_custom_deck_carries_cards(self) -> Self:
-        if self.deck_id == _CARD_MEDITATION_CUSTOM_DECK_ID and not self.cards:
-            msg = "cards must be a non-empty list when deck_id is 'custom'"
+        if self.deck_id == CARD_MEDITATION_CUSTOM_DECK_ID and not self.cards:
+            msg = (
+                f"cards must be a non-empty list when deck_id is {CARD_MEDITATION_CUSTOM_DECK_ID!r}"
+            )
             raise ValueError(msg)
         return self
 
