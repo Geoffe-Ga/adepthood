@@ -6,6 +6,10 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from schemas.practice_mode_config import (
+    CARD_MEDITATION_CARDS_MAX,
+    CARD_MEDITATION_CUSTOM_DECK_ID,
+    CardMeditationCard,
+    CardMeditationConfig,
     CountUpConfig,
     IntervalBellConfig,
     MeditationTimerConfig,
@@ -441,3 +445,206 @@ def test_mindful_anchor_rejects_extra_fields() -> None:
     """``extra="forbid"`` catches typos like ``minDurationSeconds``."""
     with pytest.raises(ValidationError):
         _ADAPTER.validate_python(_mindful_anchor_payload(extra_junk="nope"))
+
+
+# -- card_meditation config -------------------------------------------------
+
+
+def _bundled_deck_payload(**overrides: object) -> dict[str, object]:
+    """Minimal valid ``card_meditation`` config pointing at a bundled deck."""
+    payload: dict[str, object] = {
+        "mode": "card_meditation",
+        "deck_id": "rws",
+        "per_card_minutes": 7,
+        "shuffle": True,
+        "reveal_after_meditation": False,
+        "hide_timer_during_meditation": True,
+        "cards": None,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _custom_deck_payload(**overrides: object) -> dict[str, object]:
+    """Minimal valid custom-deck ``card_meditation`` config (two phone photos)."""
+    payload: dict[str, object] = {
+        "mode": "card_meditation",
+        "deck_id": CARD_MEDITATION_CUSTOM_DECK_ID,
+        "per_card_minutes": 5,
+        "shuffle": True,
+        "reveal_after_meditation": True,
+        "hide_timer_during_meditation": True,
+        "cards": [
+            {
+                "name": "Mountain",
+                "image_uri": "file:///var/.../IMG_0123.jpg",
+                "symbolism": "Stillness.",
+            },
+            {"name": "River", "image_uri": "file:///var/.../IMG_0124.jpg", "symbolism": "Flow."},
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_card_meditation_bundled_deck_round_trip() -> None:
+    """Bundled deck: ``cards`` is ``None`` because the frontend owns the canonical list."""
+    cfg = _ADAPTER.validate_python(_bundled_deck_payload())
+    assert isinstance(cfg, CardMeditationConfig)
+    assert cfg.deck_id == "rws"
+    assert cfg.per_card_minutes == 7
+    assert cfg.cards is None
+
+
+def test_card_meditation_custom_deck_round_trip() -> None:
+    """Custom deck: ``cards`` carries the user-curated list inline."""
+    cfg = _ADAPTER.validate_python(_custom_deck_payload())
+    assert isinstance(cfg, CardMeditationConfig)
+    assert cfg.deck_id == "custom"
+    assert cfg.cards is not None
+    assert [c.name for c in cfg.cards] == ["Mountain", "River"]
+
+
+def test_card_meditation_custom_deck_requires_cards() -> None:
+    """``deck_id="custom"`` with ``cards=None`` is contradictory and rejected."""
+    with pytest.raises(ValidationError):
+        _ADAPTER.validate_python(_custom_deck_payload(cards=None))
+
+
+def test_card_meditation_custom_deck_rejects_empty_cards_list() -> None:
+    """``deck_id="custom"`` with an empty list is the same contradiction in disguise."""
+    with pytest.raises(ValidationError):
+        _ADAPTER.validate_python(_custom_deck_payload(cards=[]))
+
+
+def test_card_meditation_card_rejects_both_image_fields() -> None:
+    """A card can carry a curated asset key *or* a client-local URI, never both."""
+    with pytest.raises(ValidationError):
+        CardMeditationCard(
+            name="Confusing",
+            image_asset_key="rws/major/00_fool",
+            image_uri="file:///photos/IMG.jpg",
+        )
+
+
+def test_card_meditation_card_accepts_neither_image_field() -> None:
+    """A text-only card (no images at all) is valid — its meaning rides on name + symbolism."""
+    card = CardMeditationCard(name="Stillness", symbolism="Sit with it.")
+    assert card.image_asset_key is None
+    assert card.image_uri is None
+
+
+def test_card_meditation_card_accepts_only_asset_key() -> None:
+    """A bundled-deck card carries an opaque asset key the frontend resolves."""
+    card = CardMeditationCard(name="The Fool", image_asset_key="rws/major/00_fool")
+    assert card.image_asset_key == "rws/major/00_fool"
+    assert card.image_uri is None
+
+
+def test_card_meditation_rejects_invalid_deck_id_slug() -> None:
+    """``deck_id`` must satisfy the snake-case slug regex (no uppercase, no leading digits)."""
+    for bad in ("RWS", "1deck", "deck-id", "deck id"):
+        with pytest.raises(ValidationError):
+            _ADAPTER.validate_python(_bundled_deck_payload(deck_id=bad))
+
+
+def test_card_meditation_rejects_empty_deck_id() -> None:
+    """An empty ``deck_id`` cannot resolve to any bundled deck or the custom sentinel."""
+    with pytest.raises(ValidationError):
+        _ADAPTER.validate_python(_bundled_deck_payload(deck_id=""))
+
+
+def test_card_meditation_rejects_zero_per_card_minutes() -> None:
+    """``per_card_minutes`` is a hard floor — a zero-minute card is meaningless."""
+    with pytest.raises(ValidationError):
+        _ADAPTER.validate_python(_bundled_deck_payload(per_card_minutes=0))
+
+
+def test_card_meditation_rejects_too_many_cards() -> None:
+    """The cards-list cap guards against bloated payloads in a single config."""
+    cards = [{"name": f"Card {i}"} for i in range(CARD_MEDITATION_CARDS_MAX + 1)]
+    with pytest.raises(ValidationError):
+        _ADAPTER.validate_python(_custom_deck_payload(cards=cards))
+
+
+def test_card_meditation_accepts_cards_at_ceiling() -> None:
+    """The exact ceiling is a valid (inclusive) boundary — pins the off-by-one.
+
+    Mirrors :func:`test_tallied_grounding_accepts_items_completed_at_ceiling`
+    so the cards-list bound is locked at the inclusive edge rather than
+    just rejecting overflow.
+    """
+    cards = [{"name": f"Card {i}"} for i in range(CARD_MEDITATION_CARDS_MAX)]
+    cfg = _ADAPTER.validate_python(_custom_deck_payload(cards=cards))
+    assert isinstance(cfg, CardMeditationConfig)
+    assert cfg.cards is not None
+    assert len(cfg.cards) == CARD_MEDITATION_CARDS_MAX
+
+
+def test_card_meditation_rejects_extra_fields() -> None:
+    """``extra="forbid"`` catches typos like ``perCardMinutes`` or ``deckId``."""
+    with pytest.raises(ValidationError):
+        _ADAPTER.validate_python(_bundled_deck_payload(perCardMinutes=5))
+
+
+def test_card_meditation_shuffle_false_round_trip() -> None:
+    """``shuffle=False`` round-trips so curated decks can present cards in order."""
+    cfg = _ADAPTER.validate_python(_bundled_deck_payload(shuffle=False))
+    assert isinstance(cfg, CardMeditationConfig)
+    assert cfg.shuffle is False
+
+
+def test_card_meditation_does_not_disturb_tarot() -> None:
+    """Adding ``card_meditation`` to the union must not change ``tarot`` dispatch."""
+    cfg = _ADAPTER.validate_python(
+        {
+            "mode": "tarot",
+            "deck": "major_arcana",
+            "per_card_minutes": 5,
+            "hide_timer_during_meditation": True,
+        }
+    )
+    assert type(cfg) is TarotConfig
+
+
+# -- card_meditation image_uri scheme allowlist ----------------------------
+
+
+@pytest.mark.parametrize(
+    "safe_uri",
+    [
+        "file:///var/mobile/IMG_0123.jpg",
+        "content://media/external/images/media/1234",
+        "ph://4D2D4E51-1FE2-4B7B-9F61-3C2D5E6F1A2B/L0/001",
+        "asset://photos/IMG_0125.jpg",
+    ],
+)
+def test_card_meditation_card_accepts_safe_image_uri_schemes(safe_uri: str) -> None:
+    """The four mobile-local schemes round-trip cleanly through validation."""
+    card = CardMeditationCard(name="Photo", image_uri=safe_uri)
+    assert card.image_uri == safe_uri
+
+
+@pytest.mark.parametrize(
+    "unsafe_uri",
+    [
+        "http://attacker.com/beacon",
+        "https://attacker.com/beacon",
+        "javascript:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "ftp://example.com/x",
+        "vbscript:msgbox(1)",
+        "/var/photos/IMG.jpg",  # missing scheme
+        "file:/var/photos/IMG.jpg",  # missing double-slash
+    ],
+)
+def test_card_meditation_card_rejects_unsafe_image_uri_schemes(unsafe_uri: str) -> None:
+    """Network / script / data URIs are stored-XSS or SSRF staging vectors.
+
+    The server never fetches ``image_uri``, but the value travels back to
+    every client that reads the practice; allowing arbitrary schemes
+    would let a malicious draft poison the catalog payload. The schema
+    allowlist closes that vector at the boundary.
+    """
+    with pytest.raises(ValidationError):
+        CardMeditationCard(name="Photo", image_uri=unsafe_uri)

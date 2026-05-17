@@ -15,6 +15,10 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from schemas.practice_mode_config import (
+    CARD_DECK_ID_MAX,
+    CARD_DECK_ID_PATTERN,
+    CARD_MEDITATION_CARDS_MAX,
+    CARD_NAME_MAX,
     OPTION_KEY_MAX,
     OPTION_KEY_PATTERN,
     TALLIED_CATEGORIES_MAX,
@@ -36,6 +40,14 @@ _MAX_INTERVALS = 1_000
 MAX_TALLIED_ROUNDS = TALLIED_ROUNDS_MAX
 MAX_TALLIED_ITEMS = TALLIED_ROUNDS_MAX * TALLIED_CATEGORIES_MAX * TALLIED_TARGET_MAX
 _MAX_ANCHOR_DURATION_SECONDS = 4 * 60 * 60  # 4 hours; well above any plausible mindful act.
+# Index ceiling for a card_meditation deck. Derived from the authoring-
+# side cap so a future bump to ``CARD_MEDITATION_CARDS_MAX`` cannot leave
+# the post-session index ceiling silently stale. The cross-module guard
+# in ``test_card_meditation_metadata_ceiling_matches_config_constant``
+# locks this derivation in case the constant is ever inlined. Re-exported
+# at module scope so the contract test asserts against the same name a
+# caller would import.
+MAX_CARD_INDEX = CARD_MEDITATION_CARDS_MAX - 1
 
 
 class _MetadataBase(BaseModel):
@@ -143,6 +155,22 @@ class MindfulAnchorMetadata(_MetadataBase):
     met_min_duration: bool
 
 
+class CardMeditationMetadata(_MetadataBase):
+    """Which card the user drew (by name and optional index).
+
+    ``card_drawn_index`` is optional because a custom deck may shuffle on
+    the client side without echoing positions back, and a bundled deck
+    may identify the card purely by name. The name is the authoritative
+    field; the index is a convenience for analytics that want to
+    correlate sessions with deck positions.
+    """
+
+    mode: Literal["card_meditation"] = "card_meditation"
+    deck_id: str = Field(min_length=1, max_length=CARD_DECK_ID_MAX, pattern=CARD_DECK_ID_PATTERN)
+    card_drawn_name: str = Field(min_length=1, max_length=CARD_NAME_MAX)
+    card_drawn_index: int | None = Field(default=None, ge=0, le=MAX_CARD_INDEX)
+
+
 #: Discriminated union over all per-mode session metadata payloads.
 SessionMetadata = Annotated[
     MeditationTimerMetadata
@@ -153,7 +181,8 @@ SessionMetadata = Annotated[
     | SenseGroundingMetadata
     | TarotMetadata
     | TalliedGroundingMetadata
-    | MindfulAnchorMetadata,
+    | MindfulAnchorMetadata
+    | CardMeditationMetadata,
     Field(discriminator="mode"),
 ]
 

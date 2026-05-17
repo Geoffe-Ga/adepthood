@@ -482,6 +482,35 @@ async def _create_typed_user_practice(
             ],
             "require_option_choice": False,
         },
+        "card_meditation_bundled": {
+            "mode": "card_meditation",
+            "deck_id": "rws",
+            "per_card_minutes": 7,
+            "shuffle": True,
+            "reveal_after_meditation": False,
+            "hide_timer_during_meditation": True,
+            "cards": None,
+        },
+        "card_meditation_custom": {
+            "mode": "card_meditation",
+            "deck_id": "custom",
+            "per_card_minutes": 5,
+            "shuffle": True,
+            "reveal_after_meditation": True,
+            "hide_timer_during_meditation": True,
+            "cards": [
+                {
+                    "name": "Mountain",
+                    "image_uri": "file:///var/mobile/IMG_0123.jpg",
+                    "symbolism": "Stillness.",
+                },
+                {
+                    "name": "River",
+                    "image_uri": "file:///var/mobile/IMG_0124.jpg",
+                    "symbolism": "Flow.",
+                },
+            ],
+        },
     }
     catalog_mode = mode_configs[mode]["mode"]
     assert isinstance(catalog_mode, str)
@@ -798,6 +827,142 @@ async def test_create_session_allows_missing_chosen_key_when_optional(
     resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
     assert resp.status_code == HTTPStatus.CREATED
     assert resp.json()["mode_metadata"]["chosen_option_key"] is None
+
+
+@pytest.mark.asyncio
+async def test_create_session_persists_card_meditation_metadata_bundled_deck(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A bundled-deck ``card_meditation`` session round-trips its metadata.
+
+    Mirrors :func:`test_create_session_persists_tallied_grounding_metadata`
+    so the new mode gets the same end-to-end coverage: schema dispatch
+    plus JSON-column round-trip over HTTP. ``card_drawn_index`` is the
+    optional field whose round-trip would otherwise be untested.
+    """
+    headers, _ = await _signup(async_client)
+    up_id, _ = await _create_typed_user_practice(
+        async_client, db_session, headers, mode="card_meditation_bundled"
+    )
+
+    payload = _session_payload(
+        up_id,
+        mode_metadata={
+            "mode": "card_meditation",
+            "deck_id": "rws",
+            "card_drawn_name": "The Fool",
+            "card_drawn_index": 0,
+        },
+    )
+    resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.CREATED
+    body = resp.json()
+    assert body["mode"] == "card_meditation"
+    assert body["mode_metadata"] == {
+        "mode": "card_meditation",
+        "deck_id": "rws",
+        "card_drawn_name": "The Fool",
+        "card_drawn_index": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_session_persists_card_meditation_metadata_custom_deck(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A custom-deck ``card_meditation`` session round-trips without ``card_drawn_index``.
+
+    Custom decks often shuffle on the client without echoing positions
+    back, so the optional-index path must round-trip as ``None``.
+    """
+    headers, _ = await _signup(async_client)
+    up_id, _ = await _create_typed_user_practice(
+        async_client, db_session, headers, mode="card_meditation_custom"
+    )
+
+    payload = _session_payload(
+        up_id,
+        mode_metadata={
+            "mode": "card_meditation",
+            "deck_id": "custom",
+            "card_drawn_name": "Mountain",
+        },
+    )
+    resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.CREATED
+    body = resp.json()
+    assert body["mode_metadata"]["card_drawn_name"] == "Mountain"
+    assert body["mode_metadata"]["card_drawn_index"] is None
+
+
+@pytest.mark.asyncio
+async def test_create_session_rejects_card_meditation_metadata_on_tarot_practice(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Posting ``card_meditation`` metadata against a ``tarot`` practice → 400.
+
+    The Pydantic union deserialises the metadata cleanly, but the
+    resolved practice's mode disagrees with the metadata's
+    discriminator — exercising the ``mode_metadata_mismatch`` branch of
+    ``_validate_session_metadata`` for the new mode.
+    """
+    headers, _ = await _signup(async_client)
+    # Seed a tarot practice directly so the resolved mode is ``tarot``.
+    practice = Practice(
+        stage_number=1,
+        name="tarot practice",
+        description="Test fixture",
+        instructions="Test fixture",
+        default_duration_minutes=10,
+        approved=True,
+        mode="tarot",
+        mode_config={"mode": "tarot", "deck": "major_arcana", "per_card_minutes": 5},
+    )
+    db_session.add(practice)
+    await db_session.commit()
+    await db_session.refresh(practice)
+    resp_up = await async_client.post(
+        "/user-practices/",
+        json={"practice_id": practice.id, "stage_number": 1},
+        headers=headers,
+    )
+    assert resp_up.status_code == HTTPStatus.CREATED
+    up_id = int(resp_up.json()["id"])
+
+    payload = _session_payload(
+        up_id,
+        mode_metadata={
+            "mode": "card_meditation",
+            "deck_id": "rws",
+            "card_drawn_name": "The Fool",
+        },
+    )
+    resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.json()["detail"] == "mode_metadata_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_create_session_rejects_card_meditation_index_past_cap(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``card_drawn_index`` past the schema ceiling fails Pydantic validation → 422."""
+    headers, _ = await _signup(async_client)
+    up_id, _ = await _create_typed_user_practice(
+        async_client, db_session, headers, mode="card_meditation_bundled"
+    )
+
+    payload = _session_payload(
+        up_id,
+        mode_metadata={
+            "mode": "card_meditation",
+            "deck_id": "rws",
+            "card_drawn_name": "Phantom",
+            "card_drawn_index": 1_000_000,
+        },
+    )
+    resp = await async_client.post("/practice-sessions/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 @pytest.mark.asyncio

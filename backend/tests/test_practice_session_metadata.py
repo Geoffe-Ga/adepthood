@@ -6,13 +6,16 @@ import pytest
 from pydantic import ValidationError
 
 from schemas.practice_mode_config import (
+    CARD_MEDITATION_CARDS_MAX,
     TALLIED_CATEGORIES_MAX,
     TALLIED_ROUNDS_MAX,
     TALLIED_TARGET_MAX,
 )
 from schemas.practice_session_metadata import (
+    MAX_CARD_INDEX,
     MAX_TALLIED_ITEMS,
     MAX_TALLIED_ROUNDS,
+    CardMeditationMetadata,
     CountUpMetadata,
     IntervalBellMetadata,
     MeditationTimerMetadata,
@@ -330,3 +333,109 @@ def test_mindful_anchor_metadata_rejects_invalid_option_key_slug() -> None:
                 duration_seconds=10,
                 met_min_duration=False,
             )
+
+
+# -- card_meditation metadata ----------------------------------------------
+
+
+def test_card_meditation_metadata_round_trip() -> None:
+    payload = SessionMetadataAdapter.validate_python(
+        {
+            "mode": "card_meditation",
+            "deck_id": "rws",
+            "card_drawn_name": "The Fool",
+            "card_drawn_index": 0,
+        }
+    )
+    assert isinstance(payload, CardMeditationMetadata)
+    assert payload.deck_id == "rws"
+    assert payload.card_drawn_name == "The Fool"
+    assert payload.card_drawn_index == 0
+
+
+def test_card_meditation_metadata_index_is_optional() -> None:
+    """Custom decks may shuffle on the client without echoing positions back."""
+    payload = SessionMetadataAdapter.validate_python(
+        {
+            "mode": "card_meditation",
+            "deck_id": "custom",
+            "card_drawn_name": "Mountain",
+        }
+    )
+    assert isinstance(payload, CardMeditationMetadata)
+    assert payload.card_drawn_index is None
+
+
+def test_card_meditation_metadata_rejects_negative_index() -> None:
+    with pytest.raises(ValidationError):
+        CardMeditationMetadata(
+            mode="card_meditation",
+            deck_id="rws",
+            card_drawn_name="The Fool",
+            card_drawn_index=-1,
+        )
+
+
+def test_card_meditation_metadata_rejects_index_past_cap() -> None:
+    """The cards-list cap on the config side bounds the index to 0..MAX_CARD_INDEX.
+
+    Computing the reject value from the config constant keeps this test
+    in sync with any future ceiling bump — the analogue of
+    :func:`test_tallied_grounding_rejects_items_above_ceiling`.
+    """
+    with pytest.raises(ValidationError):
+        CardMeditationMetadata(
+            mode="card_meditation",
+            deck_id="rws",
+            card_drawn_name="The Fool",
+            card_drawn_index=CARD_MEDITATION_CARDS_MAX,
+        )
+
+
+def test_card_meditation_metadata_accepts_index_at_ceiling() -> None:
+    """``MAX_CARD_INDEX`` itself is valid (inclusive bound, off-by-one guard)."""
+    payload = CardMeditationMetadata(
+        mode="card_meditation",
+        deck_id="rws",
+        card_drawn_name="The World",
+        card_drawn_index=MAX_CARD_INDEX,
+    )
+    assert payload.card_drawn_index == MAX_CARD_INDEX
+
+
+def test_card_meditation_metadata_ceiling_matches_config_constant() -> None:
+    """Lock ``MAX_CARD_INDEX`` to the authoring-side ``CARD_MEDITATION_CARDS_MAX``.
+
+    Mirrors :func:`test_tallied_metadata_ceilings_match_config_constants`:
+    the metadata module derives the index ceiling from the config-side
+    cap so a future bump (e.g. raising the cards-list limit) cannot
+    leave the post-session index cap silently stale. This test pins the
+    contract — it fails loudly if the derivation is ever inlined or the
+    underlying constant changes without the metadata module noticing.
+    """
+    assert MAX_CARD_INDEX == CARD_MEDITATION_CARDS_MAX - 1
+
+
+def test_card_meditation_metadata_rejects_empty_card_name() -> None:
+    with pytest.raises(ValidationError):
+        CardMeditationMetadata(
+            mode="card_meditation",
+            deck_id="rws",
+            card_drawn_name="",
+        )
+
+
+def test_card_meditation_metadata_rejects_invalid_deck_slug() -> None:
+    """``deck_id`` mirrors the config-side regex (lowercase snake_case)."""
+    with pytest.raises(ValidationError):
+        CardMeditationMetadata(
+            mode="card_meditation",
+            deck_id="Bad-Deck",
+            card_drawn_name="The Fool",
+        )
+
+
+def test_card_meditation_metadata_does_not_disturb_tarot() -> None:
+    """Adding ``card_meditation`` to the union must not change ``tarot`` dispatch."""
+    payload = SessionMetadataAdapter.validate_python({"mode": "tarot", "card_index": 5})
+    assert type(payload) is TarotMetadata
