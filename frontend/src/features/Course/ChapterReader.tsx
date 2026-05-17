@@ -101,13 +101,17 @@ function buildDocument(bodyHtml: string): string {
  */
 function renderBody(html: string, title: string): React.ReactElement {
   if (Platform.OS === 'web') {
-    return React.createElement('iframe', {
-      'data-testid': 'reader-iframe',
-      srcDoc: html,
-      title,
-      sandbox: 'allow-popups',
-      style: { width: '100%', height: '100%', border: 0 },
-    });
+    return (
+      <View style={styles.webview}>
+        {React.createElement('iframe', {
+          'data-testid': 'reader-iframe',
+          srcDoc: html,
+          title,
+          sandbox: 'allow-popups',
+          style: { width: '100%', height: '100%', border: 0 },
+        })}
+      </View>
+    );
   }
   return (
     <WebView
@@ -276,9 +280,10 @@ const ChapterReader = ({
         </View>
       )}
       {!loading && error !== null && <ErrorView message={error} onRetry={retry} />}
-      {!loading && error === null && body !== null && (
-        <View style={styles.webview}>{renderBody(buildDocument(body.body_html), headerTitle)}</View>
-      )}
+      {!loading &&
+        error === null &&
+        body !== null &&
+        renderBody(buildDocument(body.body_html), headerTitle)}
       {footer}
     </View>
   );
