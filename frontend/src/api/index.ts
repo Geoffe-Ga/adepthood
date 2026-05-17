@@ -1854,6 +1854,105 @@ export const practiceSessions = {
   },
 };
 
+// Practice share-link types and client (issue #348)
+
+/**
+ * Owner-supplied knobs for ``POST /practices/{id}/share-link``.
+ *
+ * Both fields are optional: omitting ``expires_in_days`` mints a never-expiring
+ * link and omitting ``max_uses`` mints an unlimited one. The backend caps
+ * the values (``ge=1, le=365`` for days, ``le=1000`` for max_uses).
+ */
+export interface ShareLinkCreateRequest {
+  expires_in_days?: number | null;
+  max_uses?: number | null;
+}
+
+/** Owner-facing view of a share link row. */
+export interface ShareLinkResponse {
+  id: number;
+  token: string;
+  practice_id: number;
+  created_at: string;
+  expires_at: string | null;
+  max_uses: number | null;
+  use_count: number;
+  revoked_at: string | null;
+}
+
+/**
+ * Recipient-facing preview returned by ``GET /practices/share/{token}``.
+ *
+ * Mirrors the catalog payload minus anything that would leak the source
+ * row's owner id. ``created_by_display_name`` is the email-local-part the
+ * backend derives so the recipient sees *something* identifying the
+ * sender (full email is not exposed).
+ */
+export interface ShareLinkPreviewResponse {
+  practice_id: number;
+  stage_number: number;
+  name: string;
+  description: string;
+  instructions: string;
+  default_duration_minutes: number;
+  mode: string;
+  mode_config: Record<string, unknown>;
+  created_by_display_name: string | null;
+  expires_at: string | null;
+  max_uses: number | null;
+  use_count: number;
+}
+
+/** Result of redeeming a share link into a private draft. */
+export interface ShareLinkImportResponse {
+  practice_id: number;
+  stage_number: number;
+  name: string;
+  approved: boolean;
+}
+
+export const practiceShare = {
+  /**
+   * Mint a new share link for a practice the caller owns (or any preset).
+   * Backend rate-limits to 10/hour per user.
+   */
+  create(
+    practiceId: number,
+    payload: ShareLinkCreateRequest = {},
+    token?: string,
+  ): Promise<ShareLinkResponse> {
+    return request<ShareLinkResponse>(`/practices/${practiceId}/share-link`, {
+      method: 'POST',
+      body: payload,
+      token,
+    });
+  },
+  /** List the caller's outstanding share links for a practice (owner only). */
+  list(practiceId: number, token?: string): Promise<ShareLinkResponse[]> {
+    return request<ShareLinkResponse[]>(`/practices/${practiceId}/share-links`, { token });
+  },
+  /** Preview a share link by token. Any signed-in user may call. */
+  preview(shareToken: string, token?: string): Promise<ShareLinkPreviewResponse> {
+    return request<ShareLinkPreviewResponse>(`/practices/share/${encodeURIComponent(shareToken)}`, {
+      token,
+    });
+  },
+  /** Redeem a share link, cloning the source into the recipient's catalog. */
+  import(shareToken: string, token?: string): Promise<ShareLinkImportResponse> {
+    return request<ShareLinkImportResponse>(
+      `/practices/share/${encodeURIComponent(shareToken)}/import`,
+      { method: 'POST', token },
+    );
+  },
+  /** Revoke a share link the caller minted. Idempotent. */
+  revoke(shareLinkId: number, token?: string): Promise<void> {
+    return request<void>(`/practices/share-links/${shareLinkId}`, {
+      method: 'DELETE',
+      token,
+    });
+  },
+};
+
 // Auth types and client
 export interface AuthRequest {
   email: string;
@@ -1993,6 +2092,7 @@ export default {
   stages,
   course,
   practices,
+  practiceShare,
   userPractices,
   frequency,
   practiceSessions,

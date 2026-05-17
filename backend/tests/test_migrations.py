@@ -54,6 +54,12 @@ _MINDFUL_ANCHOR_REVISION = "f4a5b6c7d8e9"  # pragma: allowlist secret
 _CARD_MEDITATION_BASE_REVISION = "f4a5b6c7d8e9"  # pragma: allowlist secret
 _CARD_MEDITATION_REVISION = "a2b3c4d5e6f8"  # pragma: allowlist secret
 
+# custom-practices-03: practice share-link token table (issue #348).  Rebased
+# onto card_meditation's head so the chain stays linear after the parallel
+# work merged.
+_PRACTICE_SHARE_LINK_BASE_REVISION = "a2b3c4d5e6f8"  # pragma: allowlist secret
+_PRACTICE_SHARE_LINK_REVISION = "f5b6c7d8e9a0"  # pragma: allowlist secret
+
 
 def test_timestamptz_migration_exists() -> None:
     """Regression guard: the migration file must stay where Alembic finds it."""
@@ -876,3 +882,100 @@ def test_card_meditation_downgrade_refuses_with_existing_rows(
 
     with pytest.raises(RuntimeError, match="card_meditation"):
         command.downgrade(cfg, _CARD_MEDITATION_BASE_REVISION)
+
+
+# -- custom-practices-03 practice share-link table round-trip ----------------
+
+
+def _bootstrap_practice_share_link_baseline(sync_url: str) -> None:
+    """Bootstrap the minimal schema required by the share-link migration.
+
+    The migration adds ``practicesharelink`` with FKs to ``practice`` and
+    ``user``; SQLite needs both parent tables present (FK enforcement is
+    off by default, but ``op.create_table`` still validates the column
+    references).  Mirrors the bootstrap style used by the password-reset
+    and practice-mode round-trip tests so a future schema change to
+    either parent surfaces as a deliberate bump of this fixture.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE user ( id INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL)")
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE practice ("
+                " id INTEGER PRIMARY KEY,"
+                " stage_number INTEGER NOT NULL,"
+                " name VARCHAR(255) NOT NULL,"
+                " description VARCHAR(2000) NOT NULL DEFAULT '',"
+                " instructions VARCHAR(10000) NOT NULL DEFAULT '',"
+                " default_duration_minutes FLOAT NOT NULL,"
+                " submitted_by_user_id INTEGER,"
+                " approved BOOLEAN NOT NULL DEFAULT 1,"
+                " mode VARCHAR(32) NOT NULL DEFAULT 'meditation_timer',"
+                " mode_config TEXT NOT NULL DEFAULT '{}'"
+                ")"
+            )
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_practice_share_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config positioned just before ``f5b6c7d8e9a0``."""
+    db_path = tmp_path / "share_link_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_practice_share_link_baseline(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _PRACTICE_SHARE_LINK_BASE_REVISION)
+    return cfg
+
+
+def test_practice_share_link_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_practice_share_link: Config,
+) -> None:
+    """Round-trip ``f5b6c7d8e9a0``: upgrade creates the table; downgrade drops it.
+
+    Phase 1: upgrade installs ``practicesharelink`` with the expected
+    columns and unique index on ``token``.  Phase 2: downgrade removes
+    the table cleanly.  Phase 3: re-upgrade is idempotent.
+    """
+    cfg = alembic_sqlite_config_practice_share_link
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade.
+    command.upgrade(cfg, _PRACTICE_SHARE_LINK_REVISION)
+    assert _table_exists(db_url, "practicesharelink")
+    cols = _columns_of(db_url, "practicesharelink")
+    expected = {
+        "id",
+        "token",
+        "practice_id",
+        "created_by_user_id",
+        "created_at",
+        "expires_at",
+        "max_uses",
+        "use_count",
+        "revoked_at",
+    }
+    assert expected.issubset(cols)
+
+    # Phase 2: downgrade drops the table.
+    command.downgrade(cfg, _PRACTICE_SHARE_LINK_BASE_REVISION)
+    assert not _table_exists(db_url, "practicesharelink")
+
+    # Phase 3: re-upgrade is idempotent.
+    command.upgrade(cfg, _PRACTICE_SHARE_LINK_REVISION)
+    assert _table_exists(db_url, "practicesharelink")

@@ -38,6 +38,7 @@ from routers.goals import router as goals_router
 from routers.habits import router as habits_router
 from routers.journal import router as journal_router
 from routers.practice_sessions import router as practice_sessions_router
+from routers.practice_share import router as practice_share_router
 from routers.practices import router as practices_router
 from routers.prompts import router as prompts_router
 from routers.stages import router as stages_router
@@ -333,6 +334,7 @@ app.include_router(auth_router)
 app.include_router(botmason_router)
 app.include_router(course_router)
 app.include_router(practices_router)
+app.include_router(practice_share_router)
 app.include_router(user_practices_router)
 app.include_router(practice_sessions_router)
 app.include_router(habits_router)
