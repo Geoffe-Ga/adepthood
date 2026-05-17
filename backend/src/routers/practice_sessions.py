@@ -16,6 +16,7 @@ from sqlmodel import col, func, select
 from database import get_session
 from dependencies.ownership import require_owned_user_practice
 from domain.practice_insights import build_insights
+from domain.practice_resolution import effective_config
 from errors import bad_request, forbidden, not_found
 from models.practice import Practice
 from models.practice_session import PracticeSession
@@ -28,6 +29,8 @@ from schemas.practice import (
     PracticeSessionCreate,
     PracticeSessionResponse,
 )
+from schemas.practice_mode_config import MindfulAnchorConfig
+from schemas.practice_session_metadata import MindfulAnchorMetadata
 from services.users import get_user_timezone
 
 # Window for the insights SQL fetch.  Slightly larger than the 8-week rollup
@@ -72,17 +75,84 @@ async def _resolve_user_practice_for_session(
     return user_practice
 
 
+def _require_chosen_option_key_when_required(
+    cfg: MindfulAnchorConfig, metadata: MindfulAnchorMetadata
+) -> None:
+    """Reject sessions that omit ``chosen_option_key`` against a required-choice config."""
+    if cfg.require_option_choice and metadata.chosen_option_key is None:
+        raise bad_request("chosen_option_key_required")
+
+
+def _require_chosen_option_key_in_catalog(
+    cfg: MindfulAnchorConfig, metadata: MindfulAnchorMetadata
+) -> None:
+    """Reject a ``chosen_option_key`` the catalog never declared.
+
+    Without this, a client could persist phantom keys (``"mud"`` against
+    a catalog of ``["grass", "stone"]``) that pollute analytics rollups
+    grouping on the field.
+    """
+    if metadata.chosen_option_key is None:
+        return
+    if metadata.chosen_option_key not in {opt.key for opt in cfg.options}:
+        raise bad_request("chosen_option_key_not_in_catalog")
+
+
+def _enforce_mindful_anchor_invariants(
+    practice: Practice,
+    user_practice: UserPractice,
+    metadata: MindfulAnchorMetadata,
+) -> None:
+    """Reject a ``mindful_anchor`` session whose metadata violates the catalog config.
+
+    The metadata schema cannot see the catalog config (the discriminated
+    union has no back-reference), so the cross-field invariants are
+    enforced here via :func:`_require_chosen_option_key_when_required`
+    and :func:`_require_chosen_option_key_in_catalog`.
+    """
+    cfg = effective_config(practice, user_practice)
+    if not isinstance(cfg, MindfulAnchorConfig):
+        return
+    _require_chosen_option_key_when_required(cfg, metadata)
+    _require_chosen_option_key_in_catalog(cfg, metadata)
+
+
+def _validate_session_metadata(
+    practice: Practice,
+    user_practice: UserPractice,
+    payload: PracticeSessionCreate,
+) -> None:
+    """Run every metadata-vs-catalog check before the session is persisted.
+
+    Two rules currently live here:
+
+    - ``mode_metadata.mode`` must match the resolved practice mode
+      (else 400 ``mode_metadata_mismatch``).
+    - For ``mindful_anchor`` practices, ``chosen_option_key`` must be
+      set whenever ``require_option_choice=True``
+      (delegated to :func:`_enforce_mindful_anchor_invariants`).
+
+    Extracted from :func:`_resolve_practice_with_mode` so the lookup
+    stays at xenon rank A.
+    """
+    if payload.mode_metadata is None:
+        return
+    if payload.mode_metadata.mode != practice.mode:
+        raise bad_request("mode_metadata_mismatch")
+    if isinstance(payload.mode_metadata, MindfulAnchorMetadata):
+        _enforce_mindful_anchor_invariants(practice, user_practice, payload.mode_metadata)
+
+
 async def _resolve_practice_with_mode(
     session: AsyncSession,
     user_practice: UserPractice,
     payload: PracticeSessionCreate,
 ) -> Practice:
-    """Load the catalog practice and validate the metadata discriminator.
+    """Load the catalog practice and validate the request metadata.
 
-    A 400 ``mode_metadata_mismatch`` is returned when the request's
-    ``mode_metadata`` references a mode that disagrees with the resolved
-    practice — distinct from a 422 schema failure: the union deserialized
-    cleanly; the caller just targeted the wrong practice.
+    The actual cross-field checks live in
+    :func:`_validate_session_metadata`; this wrapper just resolves the
+    catalog row and delegates so it stays trivially simple.
     """
     practice = (
         (await session.execute(select(Practice).where(Practice.id == user_practice.practice_id)))
@@ -93,8 +163,7 @@ async def _resolve_practice_with_mode(
         # Defensive: a UserPractice row whose practice was deleted is a
         # data-integrity issue.  Surface as 404 so the client retries.
         raise not_found("practice")
-    if payload.mode_metadata is not None and payload.mode_metadata.mode != practice.mode:
-        raise bad_request("mode_metadata_mismatch")
+    _validate_session_metadata(practice, user_practice, payload)
     return practice
 
 

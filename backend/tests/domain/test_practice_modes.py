@@ -13,6 +13,7 @@ _EXPECTED_MEMBERS: tuple[str, ...] = (
     "sense_grounding",
     "tarot",
     "tallied_grounding",
+    "mindful_anchor",
 )
 
 

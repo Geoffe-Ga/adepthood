@@ -10,6 +10,8 @@ from schemas.practice_mode_config import (
     IntervalBellConfig,
     MeditationTimerConfig,
     MetronomeConfig,
+    MindfulAnchorConfig,
+    MindfulAnchorOption,
     ModeConfig,
     ModeConfigAdapter,
     RepCounterConfig,
@@ -148,6 +150,28 @@ def test_tarot_round_trip() -> None:
     )
     assert isinstance(cfg, TarotConfig)
     assert cfg.deck == "major_arcana"
+
+
+def test_mindful_anchor_config_round_trip() -> None:
+    cfg = _ADAPTER.validate_python(
+        {
+            "mode": "mindful_anchor",
+            "instruction": "Stand barefoot on a natural surface and breathe slowly.",
+            "min_duration_seconds": 60,
+            "options": [
+                {"key": "grass", "label": "Grass", "description": "Cool, springy blades."},
+                {"key": "soil", "label": "Soil", "description": None},
+                {"key": "stone", "label": "Stone"},
+            ],
+            "require_option_choice": True,
+        }
+    )
+    assert isinstance(cfg, MindfulAnchorConfig)
+    assert cfg.instruction.startswith("Stand barefoot")
+    assert cfg.min_duration_seconds == 60
+    assert [o.key for o in cfg.options] == ["grass", "soil", "stone"]
+    assert cfg.options[2].description is None
+    assert cfg.require_option_choice is True
 
 
 # -- Validators --------------------------------------------------------------
@@ -347,3 +371,73 @@ def test_discriminator_keyed_payload_dispatches_to_right_model() -> None:
     """The union adapter picks the right subclass purely from ``mode``."""
     cfg = _ADAPTER.validate_python({"mode": "count_up"})
     assert type(cfg) is CountUpConfig
+
+
+# -- Mindful-anchor validators ----------------------------------------------
+
+
+def _mindful_anchor_payload(**overrides: object) -> dict[str, object]:
+    """Minimal valid ``mindful_anchor`` config payload for negative-path tests."""
+    payload: dict[str, object] = {
+        "mode": "mindful_anchor",
+        "instruction": "Mark when you have settled.",
+        "min_duration_seconds": 0,
+        "options": [],
+        "require_option_choice": False,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_mindful_anchor_rejects_duplicate_option_keys() -> None:
+    """Duplicate ``key`` slugs are nonsense — the chooser can't disambiguate."""
+    with pytest.raises(ValidationError):
+        _ADAPTER.validate_python(
+            _mindful_anchor_payload(
+                options=[
+                    {"key": "grass", "label": "Grass"},
+                    {"key": "grass", "label": "Cool grass"},
+                ],
+            )
+        )
+
+
+def test_mindful_anchor_requires_options_when_choice_required() -> None:
+    """``require_option_choice=True`` with an empty option list is contradictory."""
+    with pytest.raises(ValidationError):
+        _ADAPTER.validate_python(
+            _mindful_anchor_payload(options=[], require_option_choice=True),
+        )
+
+
+def test_mindful_anchor_allows_no_options_when_choice_not_required() -> None:
+    """An empty option list is fine when the chooser is optional."""
+    cfg = _ADAPTER.validate_python(
+        _mindful_anchor_payload(options=[], require_option_choice=False),
+    )
+    assert isinstance(cfg, MindfulAnchorConfig)
+    assert cfg.options == []
+
+
+def test_mindful_anchor_option_rejects_invalid_key_slug() -> None:
+    """Option keys must match the documented slug regex (lowercase, snake-style)."""
+    with pytest.raises(ValidationError):
+        MindfulAnchorOption(key="Grass", label="Grass")
+
+
+def test_mindful_anchor_rejects_empty_instruction() -> None:
+    """An empty instruction string would leave the user with no prompt."""
+    with pytest.raises(ValidationError):
+        _ADAPTER.validate_python(_mindful_anchor_payload(instruction=""))
+
+
+def test_mindful_anchor_rejects_negative_duration_floor() -> None:
+    """``min_duration_seconds`` is a soft floor but must still be non-negative."""
+    with pytest.raises(ValidationError):
+        _ADAPTER.validate_python(_mindful_anchor_payload(min_duration_seconds=-1))
+
+
+def test_mindful_anchor_rejects_extra_fields() -> None:
+    """``extra="forbid"`` catches typos like ``minDurationSeconds``."""
+    with pytest.raises(ValidationError):
+        _ADAPTER.validate_python(_mindful_anchor_payload(extra_junk="nope"))
