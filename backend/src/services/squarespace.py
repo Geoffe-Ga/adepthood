@@ -272,6 +272,20 @@ class SquarespaceClient:
         except httpx.HTTPError as exc:
             raise SquarespaceFetchError(f"Network error during auth: {exc}") from exc
 
+        self._raise_for_auth_response(target_url, response)
+
+        self._authenticated = True
+        logger.info("squarespace_authenticated", extra={"base_url": self._base_url})
+
+    def _raise_for_auth_response(self, target_url: str, response: httpx.Response) -> None:
+        """Classify an auth POST response and raise the right exception.
+
+        401 / 403 mean the credential was rejected; other 4xx / 5xx
+        mean the page or upstream is the problem and should not be
+        reported as an auth failure.  A 200 that still looks like the
+        password gate means the POST succeeded transport-wise but the
+        site stayed locked.
+        """
         if response.status_code in (_HTTP_UNAUTHORIZED, _HTTP_FORBIDDEN):
             self._log_auth_failure(target_url, response)
             raise SquarespaceAuthError(
@@ -283,14 +297,8 @@ class SquarespaceClient:
                 f"Squarespace returned HTTP {response.status_code} during auth POST to "
                 f"{target_url}.",
             )
-
-        # If the post still returns a password page, the password was
-        # accepted-but-not-set, or wrong.  Either way, fail loudly.
         if self._looks_like_password_page(response.text):
             raise SquarespaceAuthError("Squarespace password did not unlock the site.")
-
-        self._authenticated = True
-        logger.info("squarespace_authenticated", extra={"base_url": self._base_url})
 
     @staticmethod
     def _log_auth_failure(auth_url: str, response: httpx.Response) -> None:
