@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Linking, Platform, Text, TouchableOpacity, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import type { ShouldStartLoadRequest } from 'react-native-webview/lib/WebViewTypes';
 
@@ -33,8 +33,7 @@ interface ChapterReaderProps {
  * second backend round-trip just to render the same chrome on every
  * chapter.
  */
-function buildDocument(bodyHtml: string): string {
-  const styleBlock = `
+const READER_STYLE_BLOCK = `
     :root { color-scheme: light dark; }
     html, body { margin: 0; padding: 0; }
     body {
@@ -73,15 +72,53 @@ function buildDocument(bodyHtml: string): string {
       a { color: #d4b878; }
     }
   `;
+
+function buildDocument(bodyHtml: string): string {
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
-  <style>${styleBlock}</style>
+  <base target="_blank" />
+  <style>${READER_STYLE_BLOCK}</style>
 </head>
 <body>${bodyHtml}</body>
 </html>`;
+}
+
+/**
+ * Render the cleaned chapter HTML.  React Native's WebView throws
+ * "WebView does not support this platform" when bundled for web, so we
+ * branch on ``Platform.OS`` and fall back to an ``<iframe srcdoc>`` —
+ * the closest web-native equivalent (isolated document, no script
+ * execution unless the sandbox allows it, links honour ``<base
+ * target="_blank">`` and open in a new tab).
+ *
+ * ``sandbox="allow-popups"`` lets external links open in a new tab
+ * while blocking scripts, forms, same-origin access, and top-level
+ * navigation — matching the ``onShouldStartLoadWithRequest`` guard
+ * we use on native.
+ */
+function renderBody(html: string, title: string): React.ReactElement {
+  if (Platform.OS === 'web') {
+    return React.createElement('iframe', {
+      'data-testid': 'reader-iframe',
+      srcDoc: html,
+      title,
+      sandbox: 'allow-popups',
+      style: { width: '100%', height: '100%', border: 0 },
+    });
+  }
+  return (
+    <WebView
+      testID="reader-webview"
+      source={{ html }}
+      originWhitelist={['*']}
+      onShouldStartLoadWithRequest={shouldLoadInWebView}
+      style={styles.webview}
+      accessibilityLabel={title}
+    />
+  );
 }
 
 interface HeaderProps {
@@ -240,14 +277,7 @@ const ChapterReader = ({
       )}
       {!loading && error !== null && <ErrorView message={error} onRetry={retry} />}
       {!loading && error === null && body !== null && (
-        <WebView
-          testID="reader-webview"
-          source={{ html: buildDocument(body.body_html) }}
-          originWhitelist={['*']}
-          onShouldStartLoadWithRequest={shouldLoadInWebView}
-          style={styles.webview}
-          accessibilityLabel={headerTitle}
-        />
+        <View style={styles.webview}>{renderBody(buildDocument(body.body_html), headerTitle)}</View>
       )}
       {footer}
     </View>
