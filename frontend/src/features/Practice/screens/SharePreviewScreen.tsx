@@ -285,21 +285,19 @@ export function SharePreviewScreen({
       </View>
     );
   }
-  if (state.loadError) {
+  if (state.loadError || !state.preview) {
+    // ``preview`` is set on success and cleared on load failure, so the
+    // ``!preview`` half of the union here is exactly the same state as
+    // ``loadError`` is set -- the explicit guard is just a type-narrow
+    // for TypeScript. Fall back to a generic banner on the
+    // theoretically-unreachable ``!preview && !loadError`` path.
     return (
       <ScrollView contentContainerStyle={styles.scroll}>
         <ErrorView
-          banner={state.loadError}
-          onRetry={state.loadError.detail === null ? load : undefined}
+          banner={state.loadError ?? { kind: 'preview', detail: null }}
+          onRetry={(state.loadError?.detail ?? null) === null ? load : undefined}
         />
       </ScrollView>
-    );
-  }
-  if (!state.preview) {
-    return (
-      <View style={styles.loading}>
-        <Text style={styles.bodyText}>Nothing to show.</Text>
-      </View>
     );
   }
   return (

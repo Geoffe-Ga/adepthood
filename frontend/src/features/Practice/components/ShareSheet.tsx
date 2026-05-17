@@ -468,6 +468,10 @@ function SheetBody({ state, copyMessage, onCopy, onClose }: SheetBodyProps) {
   );
 }
 
+// Auto-dismiss the "copied" banner after a beat so a second copy in
+// quick succession doesn't read as a stale toast (PR #359 review).
+const COPY_BANNER_TIMEOUT_MS = 3000;
+
 export function ShareSheet({ visible, practiceId, onClose }: ShareSheetProps): React.JSX.Element {
   const state = useShareSheetState({ visible, practiceId });
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
@@ -478,6 +482,12 @@ export function ShareSheet({ visible, practiceId, onClose }: ShareSheetProps): R
       ok ? 'Link copied to clipboard.' : 'Could not copy — long-press the link to copy manually.',
     );
   }, []);
+
+  useEffect(() => {
+    if (!copyMessage) return undefined;
+    const timer = setTimeout(() => setCopyMessage(null), COPY_BANNER_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [copyMessage]);
 
   return (
     <Modal animationType="slide" onRequestClose={onClose} transparent visible={visible}>

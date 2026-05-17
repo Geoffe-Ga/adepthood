@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import cast
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlmodel import select
 
 from models.practice import Practice
 from models.practice_share_link import PracticeShareLink
@@ -514,3 +516,135 @@ async def test_non_owner_cannot_list_share_links(async_client: AsyncClient) -> N
         headers=other_headers,
     )
     assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+# -- Regression: PR #359 review feedback --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_share_links_only_returns_caller_links_for_preset(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Listing a preset's share links must not leak other users' links.
+
+    Regression for PR #359 review: ``_ensure_owner_or_preset`` lets any
+    authenticated user list a preset's links, but the WHERE clause must
+    still scope to ``created_by_user_id == caller`` so user A cannot
+    see the tokens user B minted for the same preset.
+    """
+    preset_id = await _seed_preset(db_session)
+    alice_headers, _ = await _signup(async_client, "preset_alice")
+    bob_headers, _ = await _signup(async_client, "preset_bob")
+    await _mint_link(async_client, alice_headers, preset_id)
+    bob_link = await _mint_link(async_client, bob_headers, preset_id)
+
+    resp = await async_client.get(
+        f"/practices/{preset_id}/share-links",
+        headers=bob_headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert {row["id"] for row in body} == {bob_link["id"]}
+
+
+@pytest.mark.asyncio
+async def test_list_share_links_respects_limit_query(async_client: AsyncClient) -> None:
+    """``?limit=N`` caps the response so a long-lived practice never returns an unbounded payload.
+
+    Regression for PR #359 review: an owner that has minted dozens of
+    links could otherwise dump them all in one response.  We mint a
+    handful and assert the slice respects both the default and an
+    explicit limit.
+    """
+    owner_headers, _ = await _signup(async_client, "owner_limit")
+    practice_id = await _create_custom_practice(async_client, owner_headers)
+    mint_count = 5
+    for _ in range(mint_count):
+        await _mint_link(async_client, owner_headers, practice_id)
+
+    full = await async_client.get(
+        f"/practices/{practice_id}/share-links",
+        headers=owner_headers,
+    )
+    assert full.status_code == HTTPStatus.OK
+    assert len(full.json()) == mint_count
+
+    capped = await async_client.get(
+        f"/practices/{practice_id}/share-links",
+        params={"limit": 2},
+        headers=owner_headers,
+    )
+    assert capped.status_code == HTTPStatus.OK
+    assert len(capped.json()) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_share_links_rejects_limit_out_of_range(async_client: AsyncClient) -> None:
+    """``limit`` is bounded by the documented ``[1, 200]`` window."""
+    headers, _ = await _signup(async_client, "owner_limit_bounds")
+    practice_id = await _create_custom_practice(async_client, headers)
+    too_low = await async_client.get(
+        f"/practices/{practice_id}/share-links",
+        params={"limit": 0},
+        headers=headers,
+    )
+    too_high = await async_client.get(
+        f"/practices/{practice_id}/share-links",
+        params={"limit": 1_000},
+        headers=headers,
+    )
+    assert too_low.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert too_high.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_concurrent_imports_cannot_exceed_max_uses(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """``max_uses=1`` holds when two recipients import simultaneously.
+
+    Regression for PR #359 review: the prior ``use_count += 1`` did a
+    Python-side read-modify-write so two concurrent importers could
+    both read ``use_count=0``, both clone, and both commit.  The
+    atomic ``UPDATE ... SET use_count = use_count + 1 WHERE
+    use_count < max_uses`` makes the loser's update match zero rows
+    and the endpoint returns 410 instead of cloning a second copy.
+    """
+    owner_headers, _ = await _signup(concurrent_async_client, "owner_race")
+    practice_id = await _create_custom_practice(concurrent_async_client, owner_headers)
+    link = await _mint_link(concurrent_async_client, owner_headers, practice_id, max_uses=1)
+    token = cast("str", link["token"])
+
+    r1_headers, _ = await _signup(concurrent_async_client, "racer1")
+    r2_headers, _ = await _signup(concurrent_async_client, "racer2")
+
+    responses = await asyncio.gather(
+        concurrent_async_client.post(f"/practices/share/{token}/import", headers=r1_headers),
+        concurrent_async_client.post(f"/practices/share/{token}/import", headers=r2_headers),
+    )
+    statuses = sorted(r.status_code for r in responses)
+    assert statuses == [HTTPStatus.CREATED, HTTPStatus.GONE]
+    loser = next(r for r in responses if r.status_code == HTTPStatus.GONE)
+    assert loser.json()["detail"] == "share_link_exhausted"
+
+    async with concurrent_session_factory() as session:
+        row = (
+            (
+                await session.execute(
+                    select(PracticeShareLink).where(PracticeShareLink.id == link["id"])
+                )
+            )
+            .scalars()
+            .one()
+        )
+        assert row.use_count == 1
+        clones = (
+            (await session.execute(select(Practice).where(Practice.name == "Sandbox practice")))
+            .scalars()
+            .all()
+        )
+        # One source row + one imported clone = two.  A bypass would
+        # yield three (the source plus two clones).
+        assert len(clones) == 2

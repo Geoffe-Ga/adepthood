@@ -28,10 +28,13 @@ from __future__ import annotations
 import logging
 import secrets
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, cast
+from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from slowapi.util import get_remote_address
+from sqlalchemy import or_ as sa_or
+from sqlalchemy import update as sa_update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -343,6 +346,41 @@ async def preview_share_link(
     )
 
 
+async def _atomically_claim_use_slot(session: AsyncSession, link_id: int) -> bool:
+    """Increment ``use_count`` only if the cap still allows.
+
+    The WHERE clause encodes the precondition (link not revoked and
+    ``max_uses IS NULL OR use_count < max_uses``) inside the same
+    statement that performs the increment, so two concurrent importers
+    of a ``max_uses=1`` link cannot both pass the read-side check and
+    both bump the counter (the bug flagged in PR #359 review).
+
+    Returns ``True`` when the row was updated, ``False`` when the cap
+    or revocation gate caused the UPDATE to match zero rows.  The
+    expiry check stays in the read-side :func:`_check_link_alive`
+    because ``datetime.now(UTC)`` cannot be expressed inside a portable
+    UPDATE expression and clock skew between request handlers is
+    smaller than the typical expiry granularity (days, not microseconds).
+    """
+    use_count_col = col(PracticeShareLink.use_count)
+    max_uses_col = col(PracticeShareLink.max_uses)
+    statement = (
+        sa_update(PracticeShareLink)
+        .where(
+            col(PracticeShareLink.id) == link_id,
+            col(PracticeShareLink.revoked_at).is_(None),
+            sa_or(max_uses_col.is_(None), use_count_col < max_uses_col),
+        )
+        .values(use_count=use_count_col + 1)
+    )
+    # ``AsyncSession.execute`` is typed as returning ``Result[Any]`` even for
+    # UPDATE statements; the runtime object is a ``CursorResult`` carrying
+    # the ``rowcount`` attribute the contract here depends on.  Cast keeps
+    # the type-checker honest without resorting to ``type: ignore``.
+    result = cast("CursorResult[Any]", await session.execute(statement))
+    return result.rowcount > 0
+
+
 @router.post(
     "/share/{token}/import",
     response_model=ShareLinkImportResponse,
@@ -361,10 +399,14 @@ async def import_share_link(
     owns the original row -- cloning it would just clutter their
     catalog with a duplicate.
 
-    The ``use_count`` increment happens in the same commit as the
-    clone so a crash between INSERT and UPDATE cannot leave the
-    counter behind reality (recipients get an extra import, the cap
-    misfires by one).
+    Race safety: :func:`_atomically_claim_use_slot` issues a single
+    ``UPDATE ... SET use_count = use_count + 1 WHERE ... AND
+    use_count < max_uses`` so two concurrent importers of a
+    ``max_uses=1`` link cannot both bypass the cap.  The loser sees
+    ``rowcount == 0`` and gets the same 410 ``share_link_exhausted``
+    that a sequential third importer would.  The increment and the
+    clone live in the same transaction so a crash between the two
+    rolls both back together.
     """
     link = await _load_active_link(session, token)
     if link.created_by_user_id == current_user:
@@ -374,10 +416,15 @@ async def import_share_link(
     if source is None:
         raise _gone(_DETAIL_REVOKED)
 
+    if not await _atomically_claim_use_slot(session, cast("int", link.id)):
+        # The link was exhausted (or revoked) between the read-side
+        # check and the atomic update -- treat the loser the same way
+        # the read-side check would treat a fresh request.
+        await session.rollback()
+        raise _gone(_DETAIL_EXHAUSTED)
+
     copy = _clone_practice_for_recipient(source, current_user)
     session.add(copy)
-    link.use_count += 1
-    session.add(link)
     await session.commit()
     await session.refresh(copy)
 
@@ -426,17 +473,33 @@ async def revoke_share_link(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+_LIST_LIMIT_DEFAULT = 50
+_LIST_LIMIT_MAX = 200
+
+
 @router.get("/{practice_id}/share-links", response_model=list[ShareLinkResponse])
 async def list_share_links(
     practice_id: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    limit: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=_LIST_LIMIT_MAX,
+            description="Maximum links to return (newest first). Defaults to 50.",
+        ),
+    ] = _LIST_LIMIT_DEFAULT,
 ) -> list[PracticeShareLink]:
     """List the share links the caller has minted for a practice.
 
     Powers the "active links with Revoke" panel in the frontend's
     ``ShareSheet``.  Visibility mirrors ``create_share_link``: the
     caller must own the source practice (preset or self-submitted).
+
+    Bounded by ``limit`` (default 50, max 200) so a long-lived practice
+    cannot produce an unbounded payload.  Rows are returned newest-first
+    so the most relevant links appear in the first page.
     """
     await _ensure_owner_or_preset(session, practice_id, current_user)
 
@@ -447,6 +510,7 @@ async def list_share_links(
             PracticeShareLink.created_by_user_id == current_user,
         )
         .order_by(col(PracticeShareLink.created_at).desc())
+        .limit(limit)
     )
     return list(result.scalars().all())
 

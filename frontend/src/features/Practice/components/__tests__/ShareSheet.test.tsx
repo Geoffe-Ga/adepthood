@@ -1,6 +1,6 @@
 /* eslint-env jest */
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
 import type { ShareLinkCreateRequest, ShareLinkResponse } from '../../../../api/practiceShare';
@@ -179,5 +179,30 @@ describe('ShareSheet', () => {
     // Jest's jsdom may or may not provide navigator.clipboard; just assert
     // the helper does not throw and returns a boolean.
     expect(typeof result).toBe('boolean');
+  });
+
+  describe('copy-banner auto-dismiss (PR #359 review)', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('clears the copy banner after the timeout so a second copy is fresh', async () => {
+      mockList.mockResolvedValueOnce(sampleLinks);
+      const { findByTestId, queryByTestId, getByTestId } = renderSheet();
+      const copyBtn = await findByTestId('share-sheet-copy-1');
+      fireEvent.press(copyBtn);
+      await waitFor(() => {
+        expect(getByTestId('share-sheet-copy-banner')).toBeTruthy();
+      });
+      act(() => {
+        jest.advanceTimersByTime(4000);
+      });
+      await waitFor(() => {
+        expect(queryByTestId('share-sheet-copy-banner')).toBeNull();
+      });
+    });
   });
 });

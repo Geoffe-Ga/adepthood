@@ -45,9 +45,14 @@ class PracticeShareLink(SQLModel, table=True):
     keeps the FK as ``SET NULL`` on user deletion so audit history
     survives a right-to-be-forgotten purge.
 
-    ``use_count`` starts at zero and ``UPDATE ... SET use_count =
-    use_count + 1 WHERE ...`` increments atomically inside the import
-    transaction so the cap holds even under concurrent redemptions.
+    ``use_count`` starts at zero.  The import endpoint issues a single
+    ``UPDATE ... SET use_count = use_count + 1 WHERE id = ? AND
+    revoked_at IS NULL AND (max_uses IS NULL OR use_count < max_uses)``
+    so the read of the current count, the cap check, and the increment
+    are all one statement.  Two concurrent imports of a ``max_uses=1``
+    link therefore cannot both pass the cap -- the loser's ``rowcount``
+    is zero and the endpoint returns 410 ``share_link_exhausted``
+    instead of cloning a second copy.
     """
 
     id: int | None = Field(default=None, primary_key=True)
