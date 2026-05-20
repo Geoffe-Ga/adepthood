@@ -1,36 +1,10 @@
-/**
- * Rider-Waite-Smith deck content for the ``card_meditation`` practice mode.
- *
- * The full 78 cards (22 major arcana + 14 cards × 4 suits) are encoded
- * here as read-only metadata. Each card carries:
- *
- *   - ``slug`` — snake_case identifier matching ``^[a-z][a-z0-9_]*$``;
- *     used to compose ``asset_key`` and as a stable key for any UI list.
- *   - ``name`` — human-facing title rendered above the card image.
- *   - ``keyword`` — one-to-three-word reflection seed (≤ 24 chars).
- *   - ``symbolism`` — single-sentence prompt (≤ 90 chars) to ground the
- *     meditation when the user is unfamiliar with the card.
- *   - ``asset_key`` — opaque handle of the form ``rws/<slug>`` that
- *     ``resolveCardImage`` maps to a bundled image asset. The backend
- *     stores this string verbatim (see
- *     ``backend/src/schemas/practice_mode_config.py::CardMeditationCard``)
- *     and never dereferences it.
- *
- * Until real card art ships, every ``asset_key`` resolves to the bundled
- * ``_placeholder.png`` — the bundler is happy and the layout is testable.
- * See ``frontend/assets/cards/README.md`` for image-drop instructions.
- */
+// Rider-Waite-Smith deck content (78 cards) for the card_meditation practice mode.
 
 import type { CardMeta } from './index';
 
 const DECK_ID = 'rws';
 
-/**
- * ``CardMeta`` with a non-nullable ``asset_key``. The RWS deck always
- * ships images (placeholder today, real art tomorrow), so the resolver
- * can rely on this tighter shape — it stays assignable to ``CardMeta``
- * because ``string`` narrows ``string | null``.
- */
+/** `CardMeta` with a non-nullable `asset_key` — the RWS deck always ships images. */
 export type RwsCardMeta = CardMeta & { readonly asset_key: string };
 
 type CardRow = readonly [slug: string, name: string, keyword: string, symbolism: string];

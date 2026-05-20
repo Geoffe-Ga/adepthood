@@ -1,22 +1,4 @@
-/**
- * Bundled-deck manifest for the ``card_meditation`` practice mode.
- *
- * The backend stores only ``deck_id`` (and per-card ``image_asset_key`` /
- * ``image_uri`` for custom decks); the frontend resolves these against
- * this manifest at render time. v1 ships two bundled decks:
- *
- *   - ``major_arcana_text`` — the 22-card text-only deck already shipped
- *     by ``data/tarot.ts``. ``asset_key`` is ``null`` for every card so
- *     the existing text-only view keeps working unchanged.
- *   - ``rws`` — the full 78-card Rider-Waite-Smith deck. Card art is
- *     resolved by ``assetResolver.resolveCardImage`` and currently
- *     points at a placeholder image until real RWS scans ship (see
- *     ``frontend/assets/cards/README.md``).
- *
- * Adding a future deck (Thoth, Marseille, an oracle deck) means: drop a
- * sibling module beside ``rws.ts``, export its ``readonly CardMeta[]``,
- * and append a ``DeckMeta`` entry to ``BUNDLED_DECKS``.
- */
+// Bundled-deck manifest for the card_meditation practice mode (v1: major_arcana_text + rws).
 
 import { MAJOR_ARCANA } from '../tarot';
 

@@ -1,27 +1,4 @@
-/**
- * Resolve a card ``asset_key`` (e.g. ``rws/the_fool``) to a bundled
- * ``ImageSourcePropType`` Metro can render via ``<Image source={...} />``.
- *
- * Metro statically analyses ``require()`` calls at bundle time and
- * refuses dynamic paths — so the per-card image map *must* be a literal
- * table of static ``require()`` calls. Until real card art ships, every
- * RWS card resolves to the bundled placeholder; the table below holds
- * one ``require()`` for the placeholder and points every key at it.
- *
- * When real images land (one batch per suit is fine), the migration is
- * mechanical:
- *
- *   1. Drop image files into ``frontend/assets/cards/rws/`` using the
- *      slug-derived filenames documented in
- *      ``frontend/assets/cards/README.md``.
- *   2. Replace ``PLACEHOLDER`` on a card-by-card basis with a per-card
- *      ``require('../../../../assets/cards/rws/<slug>.jpg')``.
- *
- * ``resolveCardImage(null)`` returns ``null`` so callers can branch on
- * "this card is text-only" without a separate flag. An unknown
- * ``asset_key`` also returns ``null`` rather than throwing — a missing
- * image must not crash the practice session.
- */
+// Resolves a card asset_key (e.g. "rws/the_fool") to a Metro-bundled image; null for text-only/unknown keys.
 
 import type { ImageSourcePropType } from 'react-native';
 
