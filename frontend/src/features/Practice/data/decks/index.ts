@@ -2,7 +2,7 @@
 
 import { MAJOR_ARCANA } from '../tarot';
 
-import { RWS_CARDS } from './rws';
+import { deriveSlug, RWS_CARDS } from './rws';
 
 export interface CardMeta {
   /** Snake_case identifier matching ``^[a-z][a-z0-9_]*$``; stable across renames. */
@@ -34,10 +34,7 @@ export interface DeckMeta {
 
 function majorArcanaTextCards(): readonly CardMeta[] {
   return MAJOR_ARCANA.map((card) => ({
-    slug: card.name
-      .toLowerCase()
-      .replaceAll(/[^a-z0-9]+/g, '_')
-      .replaceAll(/^_+|_+$/g, ''),
+    slug: deriveSlug(card.name),
     name: card.name,
     keyword: card.keyword,
     symbolism: card.symbolism,

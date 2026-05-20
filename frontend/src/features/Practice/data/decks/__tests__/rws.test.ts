@@ -63,6 +63,15 @@ describe('RWS_CARDS', () => {
       expect(card.symbolism.length).toBeGreaterThan(0);
     }
   });
+
+  it('keeps keyword and symbolism within their documented length limits', () => {
+    const MAX_KEYWORD_LENGTH = 24;
+    const MAX_SYMBOLISM_LENGTH = 90;
+    for (const card of RWS_CARDS) {
+      expect(card.keyword.length).toBeLessThanOrEqual(MAX_KEYWORD_LENGTH);
+      expect(card.symbolism.length).toBeLessThanOrEqual(MAX_SYMBOLISM_LENGTH);
+    }
+  });
 });
 
 describe('resolveCardImage', () => {

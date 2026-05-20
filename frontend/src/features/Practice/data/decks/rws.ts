@@ -1,5 +1,7 @@
 // Rider-Waite-Smith deck content (78 cards) for the card_meditation practice mode.
 
+import { MAJOR_ARCANA } from '../tarot';
+
 import type { CardMeta } from './index';
 
 const DECK_ID = 'rws';
@@ -9,95 +11,18 @@ export type RwsCardMeta = CardMeta & { readonly asset_key: string };
 
 type CardRow = readonly [slug: string, name: string, keyword: string, symbolism: string];
 
-const MAJOR_ARCANA_ROWS: readonly CardRow[] = [
-  [
-    'the_fool',
-    'The Fool',
-    'Beginnings',
-    'Stepping off the cliff with open eyes and an open heart.',
-  ],
-  [
-    'the_magician',
-    'The Magician',
-    'Manifestation',
-    'Channelling will into form; tools of every element to hand.',
-  ],
-  [
-    'the_high_priestess',
-    'The High Priestess',
-    'Intuition',
-    'The veiled gate between the seen and the felt.',
-  ],
-  [
-    'the_empress',
-    'The Empress',
-    'Abundance',
-    'Fertile garden, ripening, the body as a place to belong.',
-  ],
-  [
-    'the_emperor',
-    'The Emperor',
-    'Structure',
-    'Throne of stone — order, boundary, the limits that protect.',
-  ],
-  [
-    'the_hierophant',
-    'The Hierophant',
-    'Tradition',
-    'The keeper of inherited keys; teacher, lineage, vow.',
-  ],
-  ['the_lovers', 'The Lovers', 'Choice', 'Two paths converge; the heart speaks before the mind.'],
-  ['the_chariot', 'The Chariot', 'Will', 'Reins held in tension — two beasts moving as one.'],
-  ['strength', 'Strength', 'Gentle power', 'A woman closing the lion’s jaws with a soft hand.'],
-  [
-    'the_hermit',
-    'The Hermit',
-    'Solitude',
-    'Lantern raised on the mountain path; light made for one.',
-  ],
-  [
-    'wheel_of_fortune',
-    'Wheel of Fortune',
-    'Turning',
-    'Cycles within cycles; what rose will fall, what fell will rise.',
-  ],
-  ['justice', 'Justice', 'Truth', 'Sword and scales — clear sight, fair weight, honest cut.'],
-  [
-    'the_hanged_man',
-    'The Hanged Man',
-    'Surrender',
-    'Suspended upside-down; the view changes when struggle stops.',
-  ],
-  ['death', 'Death', 'Release', 'The threshold; what is finished, allowed to be finished.'],
-  [
-    'temperance',
-    'Temperance',
-    'Blending',
-    'Water poured between two cups without spill — middle way.',
-  ],
-  ['the_devil', 'The Devil', 'Shadow', 'Chains loose enough to slip; the bondage we agree to.'],
-  [
-    'the_tower',
-    'The Tower',
-    'Rupture',
-    'Lightning splits the false structure; rubble before renewal.',
-  ],
-  ['the_star', 'The Star', 'Hope', 'Naked under the night sky, pouring water on parched earth.'],
-  ['the_moon', 'The Moon', 'Mystery', 'Tides, dreams, and the long path between the towers.'],
-  ['the_sun', 'The Sun', 'Joy', 'Child on horseback in a garden — uncomplicated gladness.'],
-  [
-    'judgement',
-    'Judgement',
-    'Awakening',
-    'The trumpet calls; the buried rise into their own names.',
-  ],
-  [
-    'the_world',
-    'The World',
-    'Completion',
-    'The dance finished; the circle closes and opens again.',
-  ],
-];
+/** Derive a card slug from its display name; shared with the major_arcana_text deck. */
+export function deriveSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/g, '_')
+    .replaceAll(/^_+|_+$/g, '');
+}
+
+// Major arcana derive from the canonical MAJOR_ARCANA (tarot.ts) so the two decks cannot drift.
+const MAJOR_ARCANA_ROWS: readonly CardRow[] = MAJOR_ARCANA.map(
+  (card): CardRow => [deriveSlug(card.name), card.name, card.keyword, card.symbolism],
+);
 
 const SUITS = [
   { slug: 'wands', display: 'Wands' },
