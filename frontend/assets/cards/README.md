@@ -135,7 +135,8 @@ or restored editions:
 
 ## Adding a future deck
 
-1. Pick a snake*case `deck_id` matching `^[a-z]a-z0-9*]\*$`(e.g.`thoth`, `marseille`, `wild_unknown`).
+1. Pick a `snake_case` `deck_id` matching the slug pattern
+   `^[a-z][a-z0-9_]*$` (e.g. `thoth`, `marseille`, `wild_unknown`).
 2. Create `frontend/src/features/Practice/data/decks/<deck_id>.ts`
    exporting `readonly CardMeta[]` with the same `slug`,`name`,
    `keyword`, `symbolism`, `asset_key: "<deck_id>/<slug>"` shape.
