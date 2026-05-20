@@ -76,6 +76,11 @@ const linking: LinkingOptions<LinkedRootParamList> = {
         },
       },
       ApiKeySettings: 'api-key-settings', // pragma: allowlist secret
+      // Practice share-link landing (issue #348). The recipient
+      // taps ``adepthood://practices/share/<token>`` -- the parser
+      // pulls ``token`` into ``route.params`` for
+      // ``SharePreviewScreen`` to fetch + render.
+      SharePreview: 'practices/share/:token',
       // Auth-stack routes -- only resolve while the AuthNavigator is mounted.
       // Cast through ``unknown`` because react-navigation's typing for
       // ``screens`` is keyed strictly on the param-list, but the same
