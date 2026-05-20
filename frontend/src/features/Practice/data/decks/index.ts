@@ -11,7 +11,7 @@ export interface CardMeta {
   readonly name: string;
   /** One-to-three-word reflection seed; ≤ 24 chars to fit narrow phones. */
   readonly keyword: string;
-  /** Single-sentence prompt grounding the meditation; ≤ 90 chars. */
+  /** One-sentence symbolism note (≤ 90 chars); revealed only after the sit, never before — the card must meet the user unprimed. */
   readonly symbolism: string;
   /**
    * Opaque handle of the form ``<deck_id>/<slug>`` resolved by
