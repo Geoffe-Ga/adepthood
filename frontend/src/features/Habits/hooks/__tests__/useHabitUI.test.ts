@@ -34,18 +34,20 @@ afterEach(() => {
 });
 
 describe('useHabitUI — energy scaffolding CTA', () => {
-  it('shows the CTA when nothing has been archived', async () => {
+  it('starts hidden and reveals the CTA once the load confirms it is not archived', async () => {
     mockLoad.mockResolvedValueOnce(false);
     const { result } = renderHook(() => useHabitUI());
-    expect(result.current.showEnergyCTA).toBe(true);
-    await waitFor(() => expect(mockLoad).toHaveBeenCalled());
-    expect(result.current.showEnergyCTA).toBe(true);
+    // Hidden before the async read resolves — no flash for archived users.
+    expect(result.current.showEnergyCTA).toBe(false);
+    await waitFor(() => expect(result.current.showEnergyCTA).toBe(true));
   });
 
-  it('hides the CTA on mount when it was archived in a previous session', async () => {
+  it('keeps the CTA hidden when it was archived in a previous session', async () => {
     mockLoad.mockResolvedValueOnce(true);
     const { result } = renderHook(() => useHabitUI());
-    await waitFor(() => expect(result.current.showEnergyCTA).toBe(false));
+    expect(result.current.showEnergyCTA).toBe(false);
+    await waitFor(() => expect(mockLoad).toHaveBeenCalled());
+    expect(result.current.showEnergyCTA).toBe(false);
   });
 
   it('persists the archived flag when the CTA is archived', async () => {

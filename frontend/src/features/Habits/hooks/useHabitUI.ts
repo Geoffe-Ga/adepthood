@@ -37,16 +37,16 @@ export const useHabitUI = (): HabitUIState => {
   const selectedHabit = useHabitStore(selectHabitById(selectedHabitId)) ?? null;
   const [mode, setMode] = useState<HabitScreenMode>('normal');
   const [emojiHabitIndex, setEmojiHabitIndex] = useState<number | null>(null);
-  const [showEnergyCTA, setShowEnergyCTA] = useState(true);
+  // Start hidden so a previously-archived CTA never flashes before the async
+  // storage read resolves; the effect reveals it only when it isn't archived.
+  const [showEnergyCTA, setShowEnergyCTA] = useState(false);
   const [showArchiveMessage, setShowArchiveMessage] = useState(false);
 
-  // Rehydrate the archived state from device storage: a CTA the user archived
-  // in a previous session must stay archived across logins, not reappear.
   useEffect(() => {
     let cancelled = false;
     loadEnergyScaffoldingArchived()
       .then((archived) => {
-        if (!cancelled && archived) setShowEnergyCTA(false);
+        if (!cancelled) setShowEnergyCTA(!archived);
       })
       .catch((err: unknown) => {
         console.warn('[useHabitUI] failed to load energy-CTA archived state', err);
