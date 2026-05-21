@@ -208,8 +208,14 @@ interface CardPhotoFieldProps {
 
 const CardPhotoField = ({ index, card, onUpdate }: CardPhotoFieldProps): React.JSX.Element => {
   const choosePhoto = async () => {
-    const photo = await pickCardPhoto();
-    if (photo) onUpdate(index, { image_uri: photo.uri, image_asset_key: null });
+    try {
+      const photo = await pickCardPhoto();
+      if (photo) onUpdate(index, { image_uri: photo.uri, image_asset_key: null });
+    } catch (error) {
+      // A broken native build can reject the permission/picker call; keep the
+      // form usable and leave a breadcrumb rather than crashing the editor.
+      console.warn('Card photo picker failed:', error);
+    }
   };
   return (
     <View style={styles.photoRow}>

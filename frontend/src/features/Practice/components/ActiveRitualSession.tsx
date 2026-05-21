@@ -562,12 +562,15 @@ function harvestSummaryMetadata(
       const idx = normalizeTarotIndex(tarotCardIndex);
       return { mode: 'tarot', card_index: idx, card_name: cardForDayIndex(idx).name };
     }
-    case 'card_meditation':
-      return {
-        mode: 'card_meditation',
-        deck_id: config.deck_id,
-        card_name: pickCard(config).card.name,
-      };
+    case 'card_meditation': {
+      // Reuse the wire harvest (and its single `pickCard` draw) rather than
+      // drawing the card a second time — mirrors the `interval_bell` reuse.
+      const wire = harvestMetadata(config, state) as Extract<
+        SessionMetadata,
+        { mode: 'card_meditation' }
+      >;
+      return { mode: 'card_meditation', deck_id: wire.deck_id, card_name: wire.card_drawn_name };
+    }
   }
 }
 

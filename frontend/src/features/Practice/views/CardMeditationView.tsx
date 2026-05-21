@@ -26,18 +26,18 @@ import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
  *
  * The timer is hidden while running when `hide_timer_during_meditation`
  * is set; pausing brings it back as an honesty-over-purism escape hatch.
+ * Saving is handled by the parent's post-completion insight modal — the
+ * complete state here just surfaces the standard controls bar.
  */
 interface Props {
   config: CardMeditationConfig;
   state: RitualState;
   controls: RitualControls;
-  /** Optional Save callback; the parent typically launches the insight modal. */
-  onSave?: () => void;
 }
 
 const PLACEHOLDER_COPY = 'Sit. The card will be revealed when the timer ends.';
 
-const CardMeditationView = ({ config, state, controls, onSave }: Props): React.JSX.Element => {
+const CardMeditationView = ({ config, state, controls }: Props): React.JSX.Element => {
   const [picked] = useState<PickedCard>(() => pickCard(config));
   const reveal = config.reveal_after_meditation ?? false;
   const hideTimer = config.hide_timer_during_meditation ?? true;
@@ -54,7 +54,7 @@ const CardMeditationView = ({ config, state, controls, onSave }: Props): React.J
           {formatTime(state.remainingMs ?? 0)}
         </Text>
       )}
-      <CardFooter state={state} controls={controls} hideTimer={hideTimer} onSave={onSave} />
+      <CardFooter state={state} controls={controls} hideTimer={hideTimer} />
     </View>
   );
 };
@@ -110,10 +110,9 @@ interface FooterProps {
   state: RitualState;
   controls: RitualControls;
   hideTimer: boolean;
-  onSave?: () => void;
 }
 
-const CardFooter = ({ state, controls, hideTimer, onSave }: FooterProps): React.JSX.Element => {
+const CardFooter = ({ state, controls, hideTimer }: FooterProps): React.JSX.Element => {
   if (state.status === 'idle') {
     return (
       <Pressable
@@ -142,26 +141,10 @@ const CardFooter = ({ state, controls, hideTimer, onSave }: FooterProps): React.
       </Pressable>
     );
   }
-  if (state.status === 'complete') return <SaveButton onSave={onSave} />;
-  // running (timer visible) or paused — surface the standard controls bar.
+  // running (timer visible), paused, or complete — surface the standard
+  // controls bar; the parent opens the insight modal on completion.
   return <RitualControlsBar status={state.status} controls={controls} startLabel="Begin" />;
 };
-
-const SaveButton = ({ onSave }: { onSave?: () => void }): React.JSX.Element => (
-  <View style={styles.completeRow}>
-    <Pressable
-      style={[styles.save, !onSave && styles.saveDisabled]}
-      onPress={onSave}
-      disabled={!onSave}
-      testID="card-meditation-save"
-      accessibilityRole="button"
-      accessibilityLabel="Save session and reflect"
-      accessibilityState={{ disabled: !onSave }}
-    >
-      <Text style={styles.saveText}>Save session</Text>
-    </Pressable>
-  </View>
-);
 
 const CARD_WIDTH = 280;
 const CARD_MIN_HEIGHT = 380;
@@ -240,18 +223,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     letterSpacing: 1,
   },
-  completeRow: { alignItems: 'center', marginTop: SPACING.md },
-  save: {
-    backgroundColor: colors.success,
-    paddingVertical: SPACING.buttonV,
-    paddingHorizontal: SPACING.xxl,
-    borderRadius: BORDER_RADIUS.lg,
-    minWidth: 220,
-    alignItems: 'center',
-    ...shadows.small,
-  },
-  saveDisabled: { opacity: 0.5 },
-  saveText: { color: colors.text.light, fontSize: 18, fontWeight: '600' },
 });
 
 export default CardMeditationView;

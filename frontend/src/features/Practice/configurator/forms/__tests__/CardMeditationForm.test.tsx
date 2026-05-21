@@ -109,6 +109,21 @@ describe('CardMeditationForm — custom card editor', () => {
     expect(onChange).toHaveBeenCalledWith(custom([card]));
   });
 
+  it('shows the surviving card values in their rows after card 0 is removed', () => {
+    const alpha: CardMeditationCard = { ...EMPTY_CARD, name: 'Alpha' };
+    const beta: CardMeditationCard = { ...EMPTY_CARD, name: 'Beta' };
+    const onChange = jest.fn();
+    const { getByTestId, queryByTestId, rerender } = render(
+      <CardMeditationForm value={custom([alpha, beta])} onChange={onChange} />,
+    );
+    fireEvent.press(getByTestId('card-meditation-remove-card-0'));
+    // The rows are fully controlled, so re-rendering with the filtered list
+    // pulls each row's value straight from props — no stale index-key state.
+    rerender(<CardMeditationForm value={custom([beta])} onChange={onChange} />);
+    expect(getByTestId('card-meditation-card-name-0').props.value).toBe('Beta');
+    expect(queryByTestId('card-meditation-card-name-1')).toBeNull();
+  });
+
   it('edits a card name and symbolism', () => {
     const onChange = jest.fn();
     const { getByTestId } = render(
@@ -154,6 +169,19 @@ describe('CardMeditationForm — custom card editor', () => {
     fireEvent.press(getByTestId('card-meditation-choose-photo-0'));
     await waitFor(() => expect(mockPickCardPhoto).toHaveBeenCalledTimes(1));
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('survives a photo-picker failure without crashing or updating the card', async () => {
+    mockPickCardPhoto.mockRejectedValueOnce(new Error('native module unavailable'));
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const onChange = jest.fn();
+    const { getByTestId } = render(
+      <CardMeditationForm value={custom([EMPTY_CARD])} onChange={onChange} />,
+    );
+    fireEvent.press(getByTestId('card-meditation-choose-photo-0'));
+    await waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(onChange).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('renders a thumbnail for a card that already has a photo', () => {

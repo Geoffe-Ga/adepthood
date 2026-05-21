@@ -8,6 +8,10 @@ export interface PickedPhoto {
   readonly uri: string;
 }
 
+// Slight compression: the full-resolution original can be several MB and the
+// URI is stored inline in the practice config. 0.8 is visually lossless here.
+const IMAGE_QUALITY = 0.8;
+
 /**
  * Open the media library and return the chosen photo.
  *
@@ -23,7 +27,7 @@ export async function pickCardPhoto(): Promise<PickedPhoto | null> {
   }
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ['images'],
-    quality: 1,
+    quality: IMAGE_QUALITY,
   });
   if (result.canceled) {
     return null;

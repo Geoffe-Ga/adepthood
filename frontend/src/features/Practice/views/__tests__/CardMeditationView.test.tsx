@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { describe, expect, it } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
@@ -204,21 +204,7 @@ describe('CardMeditationView', () => {
     expect(getByTestId('ritual-controls-bar')).toBeTruthy();
   });
 
-  it('saves the session from the complete-state Save button', () => {
-    const onSave = jest.fn();
-    const { getByTestId } = render(
-      <CardMeditationView
-        config={config()}
-        state={fakeState({ status: 'complete', remainingMs: 0 })}
-        controls={fakeControls()}
-        onSave={onSave}
-      />,
-    );
-    fireEvent.press(getByTestId('card-meditation-save'));
-    expect(onSave).toHaveBeenCalledTimes(1);
-  });
-
-  it('disables the Save button when no onSave handler is supplied', () => {
+  it('surfaces the standard controls bar on completion', () => {
     const { getByTestId } = render(
       <CardMeditationView
         config={config()}
@@ -226,8 +212,7 @@ describe('CardMeditationView', () => {
         controls={fakeControls()}
       />,
     );
-    expect(getByTestId('card-meditation-save').props.accessibilityState).toEqual({
-      disabled: true,
-    });
+    expect(getByTestId('ritual-controls-bar')).toBeTruthy();
+    expect(getByTestId('ritual-complete-label')).toBeTruthy();
   });
 });
