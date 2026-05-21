@@ -457,6 +457,107 @@ async def test_completion_request_rejects_unknown_fields(
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
+# ── Backfilling a missed past day ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_backfill_past_date_records_completion(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``completed_on`` logs a check-in against a past calendar day."""
+    headers, user_id = await _signup(async_client, "backfiller")
+    goal = await _seed_goal(db_session, user_id)
+    yesterday = today_in_tz("UTC") - timedelta(days=1)
+
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "completed_on": yesterday.isoformat()},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["reason_code"] == "streak_incremented"
+
+    result = await db_session.execute(
+        select(GoalCompletion).where(GoalCompletion.goal_id == goal.id)
+    )
+    completions = list(result.scalars().all())
+    assert len(completions) == 1
+    assert completions[0].timestamp.date() == yesterday
+
+
+@pytest.mark.asyncio
+async def test_backfill_future_date_is_rejected(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A ``completed_on`` after today is a 400 -- you cannot log the future."""
+    headers, user_id = await _signup(async_client, "future_backfiller")
+    goal = await _seed_goal(db_session, user_id)
+    tomorrow = today_in_tz("UTC") + timedelta(days=1)
+
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "completed_on": tomorrow.isoformat()},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.json()["detail"] == "completion_date_in_future"
+
+
+@pytest.mark.asyncio
+async def test_backfill_same_past_day_is_idempotent(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Backfilling the same past day twice does not insert a second row."""
+    headers, user_id = await _signup(async_client, "idempotent_backfiller")
+    goal = await _seed_goal(db_session, user_id)
+    yesterday = today_in_tz("UTC") - timedelta(days=1)
+    payload = {"goal_id": goal.id, "completed_on": yesterday.isoformat()}
+
+    first = await async_client.post("/goal_completions/", json=payload, headers=headers)
+    assert first.status_code == HTTPStatus.OK
+
+    second = await async_client.post("/goal_completions/", json=payload, headers=headers)
+    assert second.status_code == HTTPStatus.OK
+    assert second.json()["reason_code"] == "already_logged_today"
+
+    result = await db_session.execute(
+        select(GoalCompletion).where(GoalCompletion.goal_id == goal.id)
+    )
+    assert len(list(result.scalars().all())) == 1
+
+
+@pytest.mark.asyncio
+async def test_backfill_past_day_coexists_with_today(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A backfilled past day and a same-session today log are distinct rows."""
+    headers, user_id = await _signup(async_client, "coexist_backfiller")
+    goal = await _seed_goal(db_session, user_id)
+    yesterday = today_in_tz("UTC") - timedelta(days=1)
+
+    backfill = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "completed_on": yesterday.isoformat()},
+        headers=headers,
+    )
+    assert backfill.status_code == HTTPStatus.OK
+
+    today_log = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "did_complete": True},
+        headers=headers,
+    )
+    assert today_log.status_code == HTTPStatus.OK
+    # Yesterday + today is a two-day streak.
+    expected_streak = 2
+    assert today_log.json()["streak"] == expected_streak
+
+    result = await db_session.execute(
+        select(GoalCompletion).where(GoalCompletion.goal_id == goal.id)
+    )
+    assert len(list(result.scalars().all())) == 2
+
+
 @pytest.mark.asyncio
 async def test_response_streak_matches_db_after_commit(
     async_client: AsyncClient, db_session: AsyncSession
