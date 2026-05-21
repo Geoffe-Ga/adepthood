@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-import { STAGE_COLORS, VICTORY_COLOR } from '../../../design/tokens';
+import { brightenColor, STAGE_COLORS } from '../../../design/tokens';
 import type { Habit, Goal } from '../Habits.types';
 import {
   calculateHabitProgress,
@@ -168,7 +168,7 @@ describe('habit progress utilities', () => {
       completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 2 }],
     };
 
-    expect(getProgressBarColor(habit)).toBe(VICTORY_COLOR);
+    expect(getProgressBarColor(habit)).toBe(brightenColor(STAGE_COLORS.Blue!));
   });
 
   it('returns victory color when under stretch target (subtractive)', () => {
@@ -186,7 +186,7 @@ describe('habit progress utilities', () => {
     };
 
     // No completions = 0 progress, which is <= stretch target (0) → victory
-    expect(getProgressBarColor(habit)).toBe(VICTORY_COLOR);
+    expect(getProgressBarColor(habit)).toBe(brightenColor(STAGE_COLORS.Blue!));
   });
 
   it('returns stage color when stretch threshold is broken (subtractive)', () => {

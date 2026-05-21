@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import type { ApiHabitStats } from '../../api';
 import { STAGE_DURATIONS_DAYS } from '../../constants/program';
-import { colors, STAGE_COLORS, STAGE_ORDER, VICTORY_COLOR } from '../../design/tokens';
+import { brightenColor, colors, STAGE_COLORS, STAGE_ORDER } from '../../design/tokens';
 import {
   DEFAULT_TIMEZONE,
   dayKeyInTZ,
@@ -263,6 +263,11 @@ export const getProgressPercentage = (
   return clampPercentage(100 - ((todayProgress - stretchTarget) / range) * 100);
 };
 
+/**
+ * Progress-bar color for a habit: the stage color while the goal is
+ * unmet, and a brighter shade of that same stage color once it is met
+ * (BUG-FE-HABIT: the old flat gold clashed with every stage palette).
+ */
 export const getProgressBarColor = (habit: Habit, tz: string = DEFAULT_TIMEZONE): string => {
   const stageColor = STAGE_COLORS[habit.stage] ?? '#000';
   const clearGoal = habit.goals.find((g) => g.tier === 'clear');
@@ -272,13 +277,13 @@ export const getProgressBarColor = (habit: Habit, tz: string = DEFAULT_TIMEZONE)
   const todayProgress = calculateTodaysProgress(habit, tz);
 
   if (clearGoal.is_additive) {
-    return todayProgress >= getGoalTarget(clearGoal) ? VICTORY_COLOR : stageColor;
+    return todayProgress >= getGoalTarget(clearGoal) ? brightenColor(stageColor) : stageColor;
   }
 
   // Subtractive: victory when staying at or under stretch target
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');
   if (stretchGoal && todayProgress <= getGoalTarget(stretchGoal)) {
-    return VICTORY_COLOR;
+    return brightenColor(stageColor);
   }
 
   return stageColor;

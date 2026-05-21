@@ -28,6 +28,7 @@ import {
   replacePendingCheckIns,
 } from '../../../storage/habitStorage';
 import { useHabitStore } from '../../../store/useHabitStore';
+import { dayKeyInTZ, todayInUserTZ } from '../../../utils/dateUtils';
 import { HABIT_DEFAULTS } from '../HabitDefaults';
 import type { AddHabitInput, Goal, Habit, OnboardingHabit } from '../Habits.types';
 import { getGoalTier, getGoalTarget, calculateTodaysProgress, logHabitUnits } from '../HabitUtils';
@@ -300,12 +301,15 @@ const applyLogUnit = (
   habit: Habit,
   amount: number,
   tz: string,
+  date?: Date,
 ): { updatedHabit: Habit; oldProgress: number; newProgress: number } => {
   // Today-only progress so milestone toasts fire when the user crosses a
   // tier *today*, not based on yesterday's all-time total. The caller
   // forwards the user's IANA zone so the bucket boundary matches the tile.
+  // ``date`` backfills a missed day; a past-day log leaves today's
+  // progress untouched so no milestone celebration fires for it.
   const oldProgress = calculateTodaysProgress(habit, tz);
-  const updatedHabit = logHabitUnits(habit, amount);
+  const updatedHabit = logHabitUnits(habit, amount, date);
   const newProgress = calculateTodaysProgress(updatedHabit, tz);
   return { updatedHabit, oldProgress, newProgress };
 };
@@ -328,6 +332,12 @@ export interface LogUnitContext {
   newProgress: number;
   currentGoal: Goal;
   nextGoal: Goal | null;
+  /**
+   * ``YYYY-MM-DD`` day to backfill, sent to the API as ``completed_on``.
+   * ``undefined`` when the log is for today — the server then defaults
+   * the completion to the current wall-clock time.
+   */
+  completedOn?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -668,7 +678,12 @@ export const habitManager = {
    * is captured by value before the optimistic write, so a later
    * concurrent mutate cannot clobber it.
    */
-  prepareLogUnit: (habitId: number, amount: number, tz: string): LogUnitContext | null => {
+  prepareLogUnit: (
+    habitId: number,
+    amount: number,
+    tz: string,
+    date?: Date,
+  ): LogUnitContext | null => {
     const prev = getHabits();
     let updated: Habit | null = null;
     let oldProgress = 0;
@@ -677,7 +692,7 @@ export const habitManager = {
     const next = prev.map((h) => {
       if (h.id !== habitId) return h;
       habitName = h.name;
-      const result = applyLogUnit(h, amount, tz);
+      const result = applyLogUnit(h, amount, tz, date);
       oldProgress = result.oldProgress;
       newProgress = result.newProgress;
       updated = result.updatedHabit;
@@ -685,6 +700,11 @@ export const habitManager = {
     });
     if (!updated) return null;
     const { currentGoal, nextGoal } = getGoalTier(updated, tz);
+    // Only send ``completed_on`` for a genuine backfill — a date that
+    // resolves to today is left undefined so the server stamps the
+    // completion with the real wall-clock time.
+    const dayKey = date ? dayKeyInTZ(date, tz) : undefined;
+    const completedOn = dayKey && dayKey !== todayInUserTZ(tz) ? dayKey : undefined;
     return {
       prev,
       next,
@@ -695,6 +715,7 @@ export const habitManager = {
       newProgress,
       currentGoal,
       nextGoal,
+      completedOn,
     };
   },
 
@@ -718,6 +739,7 @@ export const habitManager = {
     return goalCompletionsApi.create({
       goal_id: ctx.currentGoal.id,
       did_complete: true,
+      completed_on: ctx.completedOn,
     });
   },
 

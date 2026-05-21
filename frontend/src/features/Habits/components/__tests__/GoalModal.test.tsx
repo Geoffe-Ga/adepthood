@@ -19,6 +19,7 @@ jest.mock('../../../../context/AuthContext', () => ({
 // Use real RN primitives — no global ``react-native`` mock — so
 // fireEvent.changeText / press behave as on a real device.
 
+import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import type { Goal, Habit } from '../../Habits.types';
 import { GoalModal } from '../GoalModal';
 
@@ -409,5 +410,59 @@ describe('GoalModal progress bar daily reset', () => {
     });
     const { queryByTestId } = renderModal(stretchedToday);
     expect(getFillWidth(queryByTestId as never)).toBe('100%');
+  });
+});
+
+describe('GoalModal log-date stepper', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('defaults the log date to Today', () => {
+    const { getByTestId } = renderModal();
+    expect(getByTestId('log-date-label').props.children).toBe('Today');
+  });
+
+  it('disables the next arrow while the date is Today so the future cannot be logged', () => {
+    const { getByTestId } = renderModal();
+    expect(getByTestId('log-date-next').props.accessibilityState).toEqual({ disabled: true });
+  });
+
+  it('steps back to Yesterday and re-enables the next arrow', () => {
+    const { getByTestId } = renderModal();
+    fireEvent.press(getByTestId('log-date-prev'));
+    expect(getByTestId('log-date-label').props.children).toBe('Yesterday');
+    expect(getByTestId('log-date-next').props.accessibilityState).toEqual({ disabled: false });
+  });
+
+  it('shows an explicit calendar date once stepped back beyond yesterday', () => {
+    const { getByTestId } = renderModal();
+    fireEvent.press(getByTestId('log-date-prev'));
+    fireEvent.press(getByTestId('log-date-prev'));
+    const label = getByTestId('log-date-label').props.children;
+    expect(label).not.toBe('Today');
+    expect(label).not.toBe('Yesterday');
+  });
+
+  it('returns to Today when the next arrow undoes a step back', () => {
+    const { getByTestId } = renderModal();
+    fireEvent.press(getByTestId('log-date-prev'));
+    fireEvent.press(getByTestId('log-date-next'));
+    expect(getByTestId('log-date-label').props.children).toBe('Today');
+  });
+
+  it('logs against the stepped-back day, passing the date to onLogUnit', () => {
+    const { getByTestId, getByText, props } = renderModal();
+    fireEvent.press(getByTestId('log-date-prev'));
+    fireEvent.press(getByText('Log Units'));
+
+    const calls = (props.onLogUnit as unknown as jest.Mock).mock.calls;
+    expect(calls).toHaveLength(1);
+    const [habitId, amount, date] = calls[0] as [number, number, Date];
+    expect(habitId).toBe(42);
+    expect(amount).toBe(1);
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    expect(dayKeyInTZ(date, 'UTC')).toBe(dayKeyInTZ(yesterday, 'UTC'));
   });
 });
