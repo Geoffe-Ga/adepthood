@@ -13,7 +13,7 @@ from sqlmodel import col, select
 from content_config import SITE_RESOURCES, find_resource
 from database import get_session
 from domain.course import compute_days_elapsed, filter_content_for_user, next_unlock_day
-from domain.stage_progress import get_user_progress, is_stage_unlocked
+from domain.stage_progress import ensure_user_progress, get_user_progress, is_stage_unlocked
 from errors import forbidden, not_found
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
@@ -63,15 +63,18 @@ async def _get_stage_by_number(session: AsyncSession, stage_number: int) -> Cour
 async def _days_for_user_stage(session: AsyncSession, user_id: int, stage_number: int) -> int:
     """Compute how many days the user has been on the given stage.
 
+    First course access provisions a ``current_stage=1`` StageProgress
+    row via :func:`ensure_user_progress`, so the drip-feed clock has a
+    real ``stage_started_at`` even for users who never explicitly
+    advanced a stage — without it every chapter read as locked.
+
     Returns:
     - ``_PAST_STAGE_DAYS_SENTINEL`` when the user has already moved past
       this stage (all content should be unlocked).
     - The actual days elapsed when the user is currently on this stage.
-    - ``-1`` when the user has no progress or hasn't reached this stage.
+    - ``-1`` when the user has not yet reached this stage.
     """
-    progress = await get_user_progress(session, user_id)
-    if progress is None:
-        return -1
+    progress = await ensure_user_progress(session, user_id)
     if progress.current_stage > stage_number:
         return _PAST_STAGE_DAYS_SENTINEL
     if progress.current_stage == stage_number:

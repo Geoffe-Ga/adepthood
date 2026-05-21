@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import cast
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -28,6 +29,7 @@ __all__ = [
     "TOTAL_STAGES",
     "AllStagesCompletedError",
     "compute_stage_progress",
+    "ensure_user_progress",
     "get_stage_habit_history",
     "get_stage_practice_history",
     "get_user_progress",
@@ -65,6 +67,41 @@ async def get_user_progress_for_update(session: AsyncSession, user_id: int) -> S
         select(StageProgress).where(StageProgress.user_id == user_id).with_for_update()
     )
     return result.scalars().first()
+
+
+async def ensure_user_progress(session: AsyncSession, user_id: int) -> StageProgress:
+    """Return the user's :class:`StageProgress`, creating a stage-1 row if absent.
+
+    The drip-feed clock — ``StageProgress.stage_started_at`` — starts the
+    first time a user reads course content.  A user who never explicitly
+    advanced a stage had no row at all, so drip-feed gating fell back to
+    a ``-1`` day count and locked every chapter, even ``release_day=0``
+    ones.  Provisioning a ``current_stage=1`` bootstrap row on first
+    access gives :func:`domain.course.compute_days_elapsed` a real start
+    timestamp so day-0 content unlocks immediately.
+
+    ``begin_nested`` wraps the insert in a SAVEPOINT so two concurrent
+    first-access requests race on the ``user_id`` unique constraint
+    without corrupting the outer transaction: the loser catches the
+    ``IntegrityError``, re-reads, and returns the winner's row so both
+    callers observe the same provisioned state.
+    """
+    progress = await get_user_progress(session, user_id)
+    if progress is not None:
+        return progress
+    progress = StageProgress(user_id=user_id, current_stage=_STAGE_1, completed_stages=[])
+    try:
+        async with session.begin_nested():
+            session.add(progress)
+        await session.commit()
+        await session.refresh(progress)
+    except IntegrityError as exc:
+        existing = await get_user_progress(session, user_id)
+        if existing is None:
+            msg = "StageProgress creation lost the race but the winner's row is missing"
+            raise RuntimeError(msg) from exc
+        return existing
+    return progress
 
 
 def is_stage_unlocked(stage_number: int, progress: StageProgress | None) -> bool:

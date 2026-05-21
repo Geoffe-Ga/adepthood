@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
 from domain.course import compute_days_elapsed
+from domain.stage_progress import ensure_user_progress
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
@@ -178,11 +179,19 @@ async def test_list_content_rejects_locked_stage(
 
 
 @pytest.mark.asyncio
-async def test_list_content_no_progress_record(
+async def test_list_content_fresh_user_unlocks_day_zero(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """Without a StageProgress record, all items are locked."""
+    """First content access provisions a stage-1 StageProgress row.
+
+    A user who never explicitly advanced a stage had no StageProgress
+    row, so drip-feed gating fell back to a ``-1`` day count and locked
+    every chapter — even ``release_day=0`` ones — leaving the in-app
+    reader permanently empty.  Listing stage content now provisions a
+    ``current_stage=1`` row, starting the drip clock at day 0 so the
+    day-0 chapter unlocks immediately while later ones stay gated.
+    """
     headers, _ = await _signup(async_client)
     await _seed_stage_with_content(db_session, stage_number=1)
 
@@ -191,10 +200,51 @@ async def test_list_content_no_progress_record(
     data = resp.json()
     expected_count = 3
     assert len(data) == expected_count
-    # All items should be locked (no progress record means day 0 not started)
-    for item in data:
-        assert item["is_locked"] is True
-        assert item["url"] is None
+
+    by_title = {item["title"]: item for item in data}
+    assert by_title["Day 1 Essay"]["is_locked"] is False
+    assert by_title["Day 1 Essay"]["url"] == "https://cms.example.com/s1-essay"
+    assert by_title["Day 3 Video"]["is_locked"] is True
+    assert by_title["Day 3 Video"]["url"] is None
+    assert by_title["Day 7 Prompt"]["is_locked"] is True
+    assert by_title["Day 7 Prompt"]["url"] is None
+
+
+@pytest.mark.asyncio
+async def test_first_course_access_provisions_stage_progress(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Reading stage content creates the user's StageProgress row if absent."""
+    headers, user_id = await _signup(async_client)
+    await _seed_stage_with_content(db_session, stage_number=1)
+
+    before = await db_session.execute(select(StageProgress).where(StageProgress.user_id == user_id))
+    assert before.scalars().first() is None
+
+    resp = await async_client.get("/course/stages/1/content", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+
+    after = await db_session.execute(select(StageProgress).where(StageProgress.user_id == user_id))
+    progress = after.scalars().first()
+    assert progress is not None
+    assert progress.current_stage == 1
+    assert progress.completed_stages == []
+
+
+@pytest.mark.asyncio
+async def test_ensure_user_progress_is_idempotent(db_session: AsyncSession) -> None:
+    """ensure_user_progress creates one row and returns it on repeat calls."""
+    user_id = 4242
+    first = await ensure_user_progress(db_session, user_id)
+    assert first.current_stage == 1
+    assert first.completed_stages == []
+
+    second = await ensure_user_progress(db_session, user_id)
+    assert second.id == first.id
+
+    result = await db_session.execute(select(StageProgress).where(StageProgress.user_id == user_id))
+    assert len(list(result.scalars().all())) == 1
 
 
 @pytest.mark.asyncio
@@ -622,21 +672,25 @@ async def test_past_stage_content_fully_unlocked(
 
 
 @pytest.mark.asyncio
-async def test_course_progress_no_next_unlock_when_not_on_stage(
+async def test_course_progress_fresh_user_reports_next_unlock(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """BUG-COURSE-004: next_unlock_day should be None when the user has not started the stage.
+    """BUG-COURSE-004: a fresh user's progress reports a real next unlock, not -1.
 
-    The endpoint must not pass -1 to next_unlock_day.
+    First course access provisions a ``current_stage=1`` row (drip clock
+    at day 0), so the stage-1 progress endpoint reports
+    ``next_unlock_day=3`` — the release_day of the first still-locked
+    chapter — instead of feeding a negative day count to next_unlock_day.
     """
     headers, _user_id = await _signup(async_client)
     await _seed_stage_with_content(db_session, stage_number=1)
-    # User has no progress record
+
     resp = await async_client.get("/course/stages/1/progress", headers=headers)
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
-    assert data["next_unlock_day"] is None
+    expected_next = 3
+    assert data["next_unlock_day"] == expected_next
 
 
 # ── Concurrency: BUG-COURSE-002 mark-read TOCTOU ──────────────────────
@@ -714,6 +768,65 @@ async def test_concurrent_mark_read_collapses_to_one_row(
         )
         rows = list(result.scalars().all())
     assert len(rows) == 1
+
+
+_CONCURRENT_COURSE_ACCESS_FANOUT = 5
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_concurrent_first_course_access_yields_one_progress_row(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Concurrent first reads provision exactly one StageProgress row.
+
+    First-access provisioning does a SELECT-then-INSERT; without the
+    SAVEPOINT + IntegrityError re-fetch, two simultaneous content reads
+    could both observe "no row" and both insert, tripping the
+    ``user_id`` unique constraint.  Every request must still succeed and
+    the user must end with exactly one ``current_stage=1`` row.
+    """
+    signup_resp = await concurrent_async_client.post(
+        "/auth/signup",
+        json={
+            "email": "racecourse@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    headers = {"Authorization": f"Bearer {signup_resp.json()['token']}"}
+    user_id = signup_resp.json()["user_id"]
+
+    async with concurrent_session_factory() as session:
+        stage = CourseStage(**_stage_data(stage_number=1))
+        session.add(stage)
+        await session.flush()
+        session.add(
+            StageContent(
+                course_stage_id=stage.id,
+                title="Day 1",
+                content_type="essay",
+                release_day=0,
+                url="https://cms.example.com/s1-day1",
+            )
+        )
+        await session.commit()
+
+    responses = await asyncio.gather(
+        *[
+            concurrent_async_client.get("/course/stages/1/content", headers=headers)
+            for _ in range(_CONCURRENT_COURSE_ACCESS_FANOUT)
+        ]
+    )
+
+    assert all(r.status_code == HTTPStatus.OK for r in responses)
+    async with concurrent_session_factory() as session:
+        result = await session.execute(
+            select(StageProgress).where(StageProgress.user_id == user_id)
+        )
+        rows = list(result.scalars().all())
+    assert len(rows) == 1
+    assert rows[0].current_stage == 1
 
 
 @pytest.mark.asyncio
