@@ -1,8 +1,14 @@
-"""Seed script for the 10 stage-aligned default :class:`Practice` rows.
+"""Seed script for the default :class:`Practice` catalog rows.
 
-Mirrors :mod:`seed_stages` — defines the canonical preset list, validates
-each ``mode_config`` payload at import time so a typo crashes the seeder
-(not the runtime), and inserts only what is missing on a per-call basis.
+Mirrors :mod:`seed_stages` — defines the preset list, validates each
+``mode_config`` payload at import time so a typo crashes the seeder (not
+the runtime), and inserts only what is missing on a per-call basis.
+
+Each :class:`~models.course_stage.CourseStage` has exactly one *canonical*
+preset (see :data:`CANONICAL_PRESET_PRACTICES`). A stage may additionally
+carry *alternative* presets — extra catalog entries a user can pick
+instead — without those alternatives shadowing the canonical pointer in
+:data:`STAGE_TO_PRESET_NAME`.
 
 The match key is ``(stage_number, name)`` so a user-submitted practice with
 the same display name on a different stage does not block a preset from
@@ -62,6 +68,47 @@ def _sense_grounding_prompts() -> list[dict[str, str]]:
     ]
 
 
+def _touch_grass_options() -> list[dict[str, str]]:
+    """Natural surfaces a user can stand barefoot on for the Touch Grass preset."""
+    return [
+        {"key": "grass", "label": "Grass", "description": "A lawn, a park, a meadow."},
+        {"key": "soil", "label": "Soil", "description": "Garden bed, forest floor, planter."},
+        {"key": "sand", "label": "Sand", "description": "A beach or a sandbox."},
+        {"key": "stone", "label": "Stone", "description": "Bare rock, a flagstone path."},
+    ]
+
+
+def _mindful_eating_options() -> list[dict[str, str]]:
+    """Grounding foods a user can choose for the Mindful Eating preset."""
+    return [
+        {
+            "key": "nuts_seeds",
+            "label": "Nuts or seeds",
+            "description": "Almonds, walnuts, pumpkin seeds.",
+        },
+        {
+            "key": "root_vegetable",
+            "label": "Root vegetable",
+            "description": "Carrot, beet, sweet potato.",
+        },
+        {
+            "key": "whole_grain",
+            "label": "Whole-grain bread",
+            "description": "Dense, hearty, a slow chew.",
+        },
+        {
+            "key": "dark_chocolate",
+            "label": "Dark chocolate",
+            "description": "A single square, savored.",
+        },
+        {
+            "key": "fresh_fruit",
+            "label": "Fresh fruit",
+            "description": "Apple, pear, berries.",
+        },
+    ]
+
+
 def _build_preset(
     stage_number: int,
     name: str,
@@ -71,7 +118,7 @@ def _build_preset(
     default_duration_minutes: float,
 ) -> dict[str, Any]:
     """Compose one preset row, drawing description / instructions from copy."""
-    description, instructions = PRESET_COPY[stage_number]
+    description, instructions = PRESET_COPY[name]
     return {
         "stage_number": stage_number,
         "name": name,
@@ -85,7 +132,9 @@ def _build_preset(
     }
 
 
-_PRESET_PRACTICES: list[dict[str, Any]] = [
+#: The one canonical preset per stage. :data:`STAGE_TO_PRESET_NAME` and the
+#: frequency-banner endpoint resolve against exactly this list.
+_CANONICAL_PRESETS: list[dict[str, Any]] = [
     _build_preset(
         1,
         "5-4-3-2-1 grounding",
@@ -170,6 +219,49 @@ _PRESET_PRACTICES: list[dict[str, Any]] = [
     ),
 ]
 
+#: Per-stage alternative presets — extra catalog entries a user may pick
+#: instead of the stage's canonical practice. Deliberately excluded from
+#: :data:`STAGE_TO_PRESET_NAME` so the frequency banner keeps pointing at
+#: the one canonical preset per stage.
+_ALTERNATIVE_PRESETS: list[dict[str, Any]] = [
+    _build_preset(
+        1,
+        "Touch Grass",
+        mode="mindful_anchor",
+        mode_config={
+            "mode": "mindful_anchor",
+            "instruction": (
+                "Stand barefoot on the earth. Notice the texture, "
+                "temperature, and pressure under your feet. "
+                "Stay until you feel settled."
+            ),
+            "min_duration_seconds": 120,
+            "options": _touch_grass_options(),
+            "require_option_choice": True,
+        },
+        default_duration_minutes=3,
+    ),
+    _build_preset(
+        1,
+        "Mindful Eating",
+        mode="mindful_anchor",
+        mode_config={
+            "mode": "mindful_anchor",
+            "instruction": (
+                "Eat one small portion slowly. Notice texture, "
+                "temperature, aroma, and flavor with each bite. "
+                "Pause between bites."
+            ),
+            "min_duration_seconds": 180,
+            "options": _mindful_eating_options(),
+            "require_option_choice": True,
+        },
+        default_duration_minutes=5,
+    ),
+]
+
+_PRESET_PRACTICES: list[dict[str, Any]] = [*_CANONICAL_PRESETS, *_ALTERNATIVE_PRESETS]
+
 
 # Validate every preset's mode_config at import time — a typo here crashes
 # the seeder (a deliberate, immediate failure) rather than poisoning the DB
@@ -177,23 +269,30 @@ _PRESET_PRACTICES: list[dict[str, Any]] = [
 for _preset in _PRESET_PRACTICES:
     ModeConfigAdapter.validate_python(_preset["mode_config"])
 
-# Reject duplicate stage_numbers at import time, mirroring seed_stages.py.
-_stage_numbers = [p["stage_number"] for p in _PRESET_PRACTICES]
+# Reject duplicate canonical stage_numbers at import time, mirroring
+# seed_stages.py. Alternatives intentionally share a stage with their
+# canonical sibling, so the check is scoped to the canonical list.
+_stage_numbers = [p["stage_number"] for p in _CANONICAL_PRESETS]
 if len(set(_stage_numbers)) != len(_stage_numbers):
     _dupes = sorted(n for n in _stage_numbers if _stage_numbers.count(n) > 1)
-    msg = f"Duplicate stage_number in PRESET_PRACTICES: {_dupes}"
+    msg = f"Duplicate stage_number among canonical presets: {_dupes}"
     raise ValueError(msg)
 
-#: Immutable view of the preset definitions. Tuple (not list) so callers
-#: can't accidentally ``.append()`` or ``.clear()`` and silently de-sync
-#: :data:`STAGE_TO_PRESET_NAME`.
+#: Immutable view of every preset definition (canonical + alternatives).
+#: Tuple (not list) so callers can't accidentally ``.append()`` or
+#: ``.clear()`` and silently de-sync :data:`STAGE_TO_PRESET_NAME`.
 PRESET_PRACTICES: tuple[dict[str, Any], ...] = tuple(_PRESET_PRACTICES)
+
+#: The one canonical preset per stage. :data:`STAGE_TO_PRESET_NAME` and the
+#: frequency-banner endpoint resolve against exactly this subset; per-stage
+#: alternatives in :data:`PRESET_PRACTICES` are excluded.
+CANONICAL_PRESET_PRACTICES: tuple[dict[str, Any], ...] = tuple(_CANONICAL_PRESETS)
 
 #: Read-only lookup consumed by ritual-05's frequency-banner endpoint.
 #: ``MappingProxyType`` forbids mutation so the table can't drift from
-#: :data:`PRESET_PRACTICES` after import.
+#: :data:`CANONICAL_PRESET_PRACTICES` after import.
 STAGE_TO_PRESET_NAME: MappingProxyType[int, str] = MappingProxyType(
-    {p["stage_number"]: p["name"] for p in PRESET_PRACTICES}
+    {p["stage_number"]: p["name"] for p in CANONICAL_PRESET_PRACTICES}
 )
 
 
