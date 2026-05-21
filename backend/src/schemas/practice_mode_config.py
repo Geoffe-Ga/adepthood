@@ -65,12 +65,13 @@ _CARD_SYMBOLISM_MAX = 500
 # closes that vector at the schema boundary.
 _CARD_IMAGE_URI_PATTERN = r"^(file|content|ph|asset)://[^\s<>\"]+$"
 # Bounds for ``random_interval_bell``. The min interval has a 5-second
-# floor (anything tighter is not a meditation cue), the max interval a
-# 10-second floor so a config can never pin both bounds below the min
-# floor. Both share a 1-hour ceiling — a single gap longer than that is
-# better modelled as a plain timer. ``max_bells`` caps total strikes so
-# a session's recorded offset list (see ``RandomIntervalBellMetadata``)
-# stays bounded.
+# floor (anything tighter is not a meditation cue) and the max interval
+# a 10-second floor; both share a 1-hour ceiling — a single gap longer
+# than that is better modelled as a plain timer. These floors only
+# bound each field on its own; the ``max >= min`` ordering for an
+# actual config is enforced by the cross-field validator below.
+# ``max_bells`` caps total strikes so a session's recorded offset list
+# (see ``RandomIntervalBellMetadata``) stays bounded.
 _RANDOM_BELL_MIN_INTERVAL_FLOOR = 5
 _RANDOM_BELL_MAX_INTERVAL_FLOOR = 10
 _RANDOM_BELL_INTERVAL_CEILING = 3_600

@@ -99,16 +99,36 @@ class IntervalBellMetadata(_MetadataBase):
 class RandomIntervalBellMetadata(_MetadataBase):
     """How many bells a random-interval session struck, and their spacing.
 
-    ``interval_seconds`` records the actual gaps between consecutive
-    bells so a post-session reflection can show the real rhythm — the
-    schedule is generated client-side and is not otherwise recoverable.
-    The list may be empty (a session that struck only the start bell, or
-    none at all) and is capped at the same ceiling as ``bells_struck``.
+    ``bells_struck`` is the total count of bells that rang. Each entry of
+    ``interval_seconds`` is the gap, in whole seconds, before one struck
+    bell (since the previous bell, or session start for the first) — so
+    the list carries one entry per bell whose timing the client logged
+    and never holds more entries than ``bells_struck``. The
+    cross-field validator enforces that bound; an entry per bell is the
+    only cardinality the metadata commits to. The list may be empty when
+    a session logs no per-bell timing, and each gap is at least one
+    second (a zero- or negative-length gap is physically impossible).
     """
 
     mode: Literal["random_interval_bell"] = "random_interval_bell"
     bells_struck: int = Field(ge=0, le=_MAX_INTERVALS)
-    interval_seconds: list[int] = Field(default_factory=list, max_length=_MAX_INTERVALS)
+    interval_seconds: list[Annotated[int, Field(ge=1)]] = Field(
+        default_factory=list, max_length=_MAX_INTERVALS
+    )
+
+    @model_validator(mode="after")
+    def _check_intervals_within_bells(self) -> Self:
+        """Reject more recorded gaps than bells struck.
+
+        Each ``interval_seconds`` entry is the wait before one struck
+        bell, so the list cannot be longer than ``bells_struck`` — that
+        would mean timing a bell that never rang. Mirrors the
+        struck-within-total invariant on :class:`IntervalBellMetadata`.
+        """
+        if len(self.interval_seconds) > self.bells_struck:
+            msg = "interval_seconds cannot hold more entries than bells_struck"
+            raise ValueError(msg)
+        return self
 
 
 class RepCounterMetadata(_MetadataBase):

@@ -450,6 +450,7 @@ _RANDOM_BELL_MAX = 1_000
 
 
 def test_random_interval_bell_metadata_round_trip() -> None:
+    """One ``interval_seconds`` entry per struck bell (``len == bells_struck``)."""
     payload = SessionMetadataAdapter.validate_python(
         {
             "mode": "random_interval_bell",
@@ -508,6 +509,45 @@ def test_random_interval_bell_metadata_rejects_negative_bells() -> None:
 def test_random_interval_bell_metadata_rejects_bells_past_cap() -> None:
     with pytest.raises(ValidationError):
         RandomIntervalBellMetadata(mode="random_interval_bell", bells_struck=_RANDOM_BELL_MAX + 1)
+
+
+def test_random_interval_bell_metadata_rejects_nonpositive_interval() -> None:
+    """Each gap is at least one second — a zero or negative gap is impossible."""
+    for bad in (0, -5):
+        with pytest.raises(ValidationError):
+            RandomIntervalBellMetadata(
+                mode="random_interval_bell", bells_struck=1, interval_seconds=[bad]
+            )
+
+
+def test_random_interval_bell_metadata_rejects_more_intervals_than_bells() -> None:
+    """``interval_seconds`` cannot record more gaps than bells that rang.
+
+    Each entry times one struck bell, so a list longer than
+    ``bells_struck`` would mean timing a bell that never rang — the
+    cross-field validator rejects it.
+    """
+    with pytest.raises(ValidationError):
+        RandomIntervalBellMetadata(
+            mode="random_interval_bell", bells_struck=2, interval_seconds=[10, 20, 30]
+        )
+
+
+def test_random_interval_bell_metadata_accepts_intervals_equal_to_bells() -> None:
+    """One entry per struck bell is the inclusive boundary the contract allows."""
+    payload = RandomIntervalBellMetadata(
+        mode="random_interval_bell", bells_struck=3, interval_seconds=[10, 20, 30]
+    )
+    assert len(payload.interval_seconds) == payload.bells_struck == 3
+
+
+def test_random_interval_bell_metadata_accepts_fewer_intervals_than_bells() -> None:
+    """A partial timing log (fewer gaps than bells) is valid."""
+    payload = RandomIntervalBellMetadata(
+        mode="random_interval_bell", bells_struck=5, interval_seconds=[10, 20]
+    )
+    assert payload.bells_struck == 5
+    assert payload.interval_seconds == [10, 20]
 
 
 def test_random_interval_bell_metadata_rejects_extra_fields() -> None:
