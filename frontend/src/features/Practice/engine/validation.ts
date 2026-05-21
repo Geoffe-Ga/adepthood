@@ -14,6 +14,8 @@ import type {
   SenseGroundingConfig,
   SenseKind,
   SensePrompt,
+  TalliedCategory,
+  TalliedGroundingConfig,
   TarotConfig,
 } from './types';
 
@@ -26,6 +28,17 @@ export const UNIT_LABEL_MAX = 64;
 export const TARGET_REPS_MIN = 1;
 /** Mirrors the backend ``UserPractice.custom_name`` column (ritual-03). */
 export const CUSTOM_NAME_MAX = 255;
+
+/** Tallied-grounding bounds — mirror ``practice_mode_config.py``. */
+export const TALLIED_ROUNDS_MIN = 1;
+export const TALLIED_ROUNDS_MAX = 10;
+export const TALLIED_CATEGORIES_MIN = 1;
+export const TALLIED_CATEGORIES_MAX = 12;
+export const TALLIED_TARGET_MIN = 1;
+export const TALLIED_TARGET_MAX = 20;
+export const TALLIED_KEY_MAX = 64;
+export const TALLIED_LABEL_MAX = 255;
+export const TALLIED_KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
 
 export const ALLOWED_SENSES: readonly SenseKind[] = ['sight', 'touch', 'hearing', 'smell', 'taste'];
 
@@ -174,6 +187,61 @@ export function validateTarot(config: TarotConfig): string[] {
   return errors;
 }
 
+function checkTalliedCategory(category: TalliedCategory, index: number): string[] {
+  const errors: string[] = [];
+  const position = `Category ${index + 1}`;
+  if (!TALLIED_KEY_PATTERN.test(category.key) || category.key.length > TALLIED_KEY_MAX) {
+    errors.push(`${position}: key must match ^[a-z][a-z0-9_]*$ and be ≤ ${TALLIED_KEY_MAX} chars`);
+  }
+  const labelLen = category.label.trim().length;
+  if (labelLen === 0) {
+    errors.push(`${position}: label cannot be empty`);
+  }
+  if (category.label.length > TALLIED_LABEL_MAX) {
+    errors.push(`${position}: label must be ≤ ${TALLIED_LABEL_MAX} characters`);
+  }
+  if (
+    !Number.isInteger(category.target_count) ||
+    category.target_count < TALLIED_TARGET_MIN ||
+    category.target_count > TALLIED_TARGET_MAX
+  ) {
+    errors.push(
+      `${position}: target count must be a whole number between ` +
+        `${TALLIED_TARGET_MIN} and ${TALLIED_TARGET_MAX}`,
+    );
+  }
+  return errors;
+}
+
+export function validateTalliedGrounding(config: TalliedGroundingConfig): string[] {
+  const errors: string[] = [];
+  if (
+    !Number.isInteger(config.rounds) ||
+    config.rounds < TALLIED_ROUNDS_MIN ||
+    config.rounds > TALLIED_ROUNDS_MAX
+  ) {
+    errors.push(
+      `Rounds must be a whole number between ${TALLIED_ROUNDS_MIN} and ${TALLIED_ROUNDS_MAX}`,
+    );
+  }
+  if (config.categories.length < TALLIED_CATEGORIES_MIN) {
+    errors.push('At least one category is required');
+    return errors;
+  }
+  if (config.categories.length > TALLIED_CATEGORIES_MAX) {
+    errors.push(`At most ${TALLIED_CATEGORIES_MAX} categories are allowed`);
+  }
+  const seenKeys = new Set<string>();
+  config.categories.forEach((category, index) => {
+    errors.push(...checkTalliedCategory(category, index));
+    if (seenKeys.has(category.key)) {
+      errors.push(`Category ${index + 1}: duplicate key "${category.key}"`);
+    }
+    seenKeys.add(category.key);
+  });
+  return errors;
+}
+
 const VALIDATORS: {
   [K in ModeConfig['mode']]: (config: Extract<ModeConfig, { mode: K }>) => string[];
 } = {
@@ -183,6 +251,7 @@ const VALIDATORS: {
   interval_bell: validateIntervalBell,
   rep_counter: validateRepCounter,
   sense_grounding: validateSenseGrounding,
+  tallied_grounding: validateTalliedGrounding,
   tarot: validateTarot,
 };
 

@@ -199,6 +199,23 @@ const modeFixtures: ModeFixture[] = [
     mountTestId: 'sense-grounding-view',
   },
   {
+    label: 'tallied_grounding',
+    practice: samplePractice({
+      id: 18,
+      mode: 'tallied_grounding',
+      mode_config: {
+        mode: 'tallied_grounding',
+        rounds: 3,
+        categories: [
+          { key: 'squares', label: 'a square', target_count: 3 },
+          { key: 'triangles', label: 'a triangle', target_count: 3 },
+          { key: 'circles', label: 'a circle', target_count: 3 },
+        ],
+      } as ModeConfig,
+    }),
+    mountTestId: 'tallied-grounding-view',
+  },
+  {
     label: 'tarot',
     practice: samplePractice({
       id: 17,
