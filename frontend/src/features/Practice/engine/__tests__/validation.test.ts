@@ -5,6 +5,7 @@ import type {
   IntervalBellConfig,
   MeditationTimerConfig,
   MetronomeConfig,
+  MindfulAnchorConfig,
   RepCounterConfig,
   SenseGroundingConfig,
   TalliedGroundingConfig,
@@ -17,6 +18,11 @@ import {
   CUSTOM_NAME_MAX,
   DURATION_MAX_MINUTES,
   DURATION_MIN_MINUTES,
+  INSTRUCTION_MAX,
+  MIN_DURATION_SECONDS_MAX,
+  MINDFUL_ANCHOR_OPTIONS_MAX,
+  OPTION_DESCRIPTION_MAX,
+  OPTION_LABEL_MAX,
   PROMPT_LABEL_MAX,
   TALLIED_CATEGORIES_MAX,
   TALLIED_LABEL_MAX,
@@ -27,6 +33,7 @@ import {
   validateIntervalBell,
   validateMeditationTimer,
   validateMetronome,
+  validateMindfulAnchor,
   validateModeConfig,
   validateRepCounter,
   validateCardMeditation,
@@ -471,6 +478,99 @@ describe('validateCardMeditation', () => {
       cards: Array.from({ length: CARD_MEDITATION_CARDS_MAX + 1 }, () => card),
     };
     expect(validateCardMeditation(config).some((e) => /at most/.test(e))).toBe(true);
+  });
+});
+
+describe('validateMindfulAnchor', () => {
+  const base: MindfulAnchorConfig = {
+    mode: 'mindful_anchor',
+    instruction: 'Rest a bare palm on the grass.',
+    min_duration_seconds: 120,
+    options: [
+      { key: 'grass', label: 'Grass', description: 'A lawn or a verge.' },
+      { key: 'soil', label: 'Soil' },
+    ],
+    require_option_choice: true,
+  };
+
+  it('accepts a valid config', () => {
+    expect(validateMindfulAnchor(base)).toEqual([]);
+  });
+
+  it('accepts a config with no options when no choice is required', () => {
+    expect(
+      validateMindfulAnchor({
+        ...base,
+        options: [],
+        require_option_choice: false,
+      }),
+    ).toEqual([]);
+  });
+
+  it('rejects an empty instruction', () => {
+    expect(validateMindfulAnchor({ ...base, instruction: '   ' })[0]).toMatch(/empty/i);
+  });
+
+  it('rejects an oversize instruction', () => {
+    expect(
+      validateMindfulAnchor({ ...base, instruction: 'x'.repeat(INSTRUCTION_MAX + 1) }),
+    ).toEqual([`Instruction must be ≤ ${INSTRUCTION_MAX} characters`]);
+  });
+
+  it('rejects a non-integer or out-of-range minimum duration', () => {
+    expect(validateMindfulAnchor({ ...base, min_duration_seconds: 12.5 })).toHaveLength(1);
+    expect(validateMindfulAnchor({ ...base, min_duration_seconds: -1 })).toHaveLength(1);
+    expect(
+      validateMindfulAnchor({ ...base, min_duration_seconds: MIN_DURATION_SECONDS_MAX + 1 }),
+    ).toHaveLength(1);
+  });
+
+  it('rejects too many options', () => {
+    const options = Array.from({ length: MINDFUL_ANCHOR_OPTIONS_MAX + 1 }, (_unused, index) => ({
+      key: `opt_${index}`,
+      label: `Option ${index}`,
+    }));
+    expect(validateMindfulAnchor({ ...base, options })[0]).toMatch(
+      new RegExp(`At most ${MINDFUL_ANCHOR_OPTIONS_MAX}`),
+    );
+  });
+
+  it('rejects malformed option keys, labels, and descriptions', () => {
+    const errors = validateMindfulAnchor({
+      ...base,
+      options: [
+        { key: 'Bad Key', label: 'ok' },
+        { key: 'blank', label: '   ' },
+        { key: 'long', label: 'x'.repeat(OPTION_LABEL_MAX + 1) },
+        { key: 'desc', label: 'ok', description: 'x'.repeat(OPTION_DESCRIPTION_MAX + 1) },
+      ],
+    });
+    expect(errors.some((e) => /Option 1: key/.test(e))).toBe(true);
+    expect(errors.some((e) => /Option 2: label cannot be empty/.test(e))).toBe(true);
+    expect(errors.some((e) => /Option 3: label must be/.test(e))).toBe(true);
+    expect(errors.some((e) => /Option 4: description must be/.test(e))).toBe(true);
+  });
+
+  it('rejects duplicate option keys', () => {
+    expect(
+      validateMindfulAnchor({
+        ...base,
+        options: [
+          { key: 'grass', label: 'Grass' },
+          { key: 'grass', label: 'More grass' },
+        ],
+      }),
+    ).toContain('Option keys must be unique');
+  });
+
+  it('rejects requiring a choice with no options', () => {
+    expect(validateMindfulAnchor({ ...base, options: [], require_option_choice: true })).toContain(
+      'Add at least one option when a choice is required',
+    );
+  });
+
+  it('is reachable through validateModeConfig dispatch', () => {
+    expect(validateModeConfig(base)).toEqual([]);
   });
 });
 

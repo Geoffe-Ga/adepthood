@@ -352,6 +352,9 @@ const MODE_FORMS: FormTable = {
   // form yet — the wizard saves the smart defaults verbatim until the
   // dedicated form lands in a follow-up.
   tallied_grounding: null,
+  // ``mindful_anchor`` ships a runtime engine + view but no configurator
+  // form yet — same deferral pattern as ``tallied_grounding``.
+  mindful_anchor: null,
 };
 
 const ConfiguratorBody = ({ config, onChange }: ConfiguratorBodyProps): React.JSX.Element => {

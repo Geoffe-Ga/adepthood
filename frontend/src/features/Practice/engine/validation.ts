@@ -11,6 +11,8 @@ import type {
   IntervalBellConfig,
   MeditationTimerConfig,
   MetronomeConfig,
+  MindfulAnchorConfig,
+  MindfulAnchorOption,
   ModeConfig,
   RandomIntervalBellConfig,
   RepCounterConfig,
@@ -55,6 +57,15 @@ export const TALLIED_TARGET_MAX = 20;
 export const TALLIED_KEY_MAX = 64;
 export const TALLIED_LABEL_MAX = 255;
 export const TALLIED_KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
+
+// Mirror ``backend/src/schemas/practice_mode_config.py`` mindful-anchor caps.
+export const INSTRUCTION_MAX = 500;
+export const MIN_DURATION_SECONDS_MAX = 3_600;
+export const MINDFUL_ANCHOR_OPTIONS_MAX = 20;
+export const OPTION_KEY_MAX = 64;
+export const OPTION_LABEL_MAX = 255;
+export const OPTION_DESCRIPTION_MAX = 500;
+export const OPTION_KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
 
 export const ALLOWED_SENSES: readonly SenseKind[] = ['sight', 'touch', 'hearing', 'smell', 'taste'];
 
@@ -246,6 +257,57 @@ export function validateSenseGrounding(config: SenseGroundingConfig): string[] {
   return errors;
 }
 
+function checkAnchorOption(option: MindfulAnchorOption, index: number): string[] {
+  const errors: string[] = [];
+  const label = `Option ${index + 1}`;
+  if (!OPTION_KEY_PATTERN.test(option.key) || option.key.length > OPTION_KEY_MAX) {
+    errors.push(`${label}: key must be a slug (lowercase, ≤ ${OPTION_KEY_MAX} chars)`);
+  }
+  if (option.label.trim().length === 0) {
+    errors.push(`${label}: label cannot be empty`);
+  }
+  if (option.label.length > OPTION_LABEL_MAX) {
+    errors.push(`${label}: label must be ≤ ${OPTION_LABEL_MAX} characters`);
+  }
+  if (option.description !== undefined && option.description.length > OPTION_DESCRIPTION_MAX) {
+    errors.push(`${label}: description must be ≤ ${OPTION_DESCRIPTION_MAX} characters`);
+  }
+  return errors;
+}
+
+export function validateMindfulAnchor(config: MindfulAnchorConfig): string[] {
+  const errors: string[] = [];
+  if (config.instruction.trim().length === 0) {
+    errors.push('Instruction cannot be empty');
+  }
+  if (config.instruction.length > INSTRUCTION_MAX) {
+    errors.push(`Instruction must be ≤ ${INSTRUCTION_MAX} characters`);
+  }
+  if (
+    !Number.isInteger(config.min_duration_seconds) ||
+    config.min_duration_seconds < 0 ||
+    config.min_duration_seconds > MIN_DURATION_SECONDS_MAX
+  ) {
+    errors.push(
+      `Minimum duration must be a whole number of seconds (0–${MIN_DURATION_SECONDS_MAX})`,
+    );
+  }
+  if (config.options.length > MINDFUL_ANCHOR_OPTIONS_MAX) {
+    errors.push(`At most ${MINDFUL_ANCHOR_OPTIONS_MAX} options are allowed`);
+  }
+  config.options.forEach((option, index) => {
+    errors.push(...checkAnchorOption(option, index));
+  });
+  const keys = config.options.map((option) => option.key);
+  if (new Set(keys).size !== keys.length) {
+    errors.push('Option keys must be unique');
+  }
+  if (config.require_option_choice && config.options.length === 0) {
+    errors.push('Add at least one option when a choice is required');
+  }
+  return errors;
+}
+
 export function validateTarot(config: TarotConfig): string[] {
   const errors: string[] = [];
   if (config.per_card_minutes !== undefined) {
@@ -367,6 +429,7 @@ const VALIDATORS: {
   tallied_grounding: validateTalliedGrounding,
   tarot: validateTarot,
   card_meditation: validateCardMeditation,
+  mindful_anchor: validateMindfulAnchor,
 };
 
 /**

@@ -144,6 +144,25 @@ export interface TalliedGroundingConfig {
   categories: readonly TalliedCategory[];
 }
 
+/** One pickable anchor for a single-action mindful practice (Touch Grass, etc.). */
+export interface MindfulAnchorOption {
+  /** Stable machine identifier recorded in session metadata. */
+  key: string;
+  /** Human-facing label rendered in the chooser. */
+  label: string;
+  /** Optional hint shown alongside the label. */
+  description?: string;
+}
+
+export interface MindfulAnchorConfig {
+  mode: 'mindful_anchor';
+  instruction: string;
+  /** Soft floor (seconds) the view nudges against; never a hard lock. */
+  min_duration_seconds: number;
+  options: readonly MindfulAnchorOption[];
+  require_option_choice: boolean;
+}
+
 export type ModeConfig =
   | MeditationTimerConfig
   | CountUpConfig
@@ -154,7 +173,8 @@ export type ModeConfig =
   | SenseGroundingConfig
   | TalliedGroundingConfig
   | TarotConfig
-  | CardMeditationConfig;
+  | CardMeditationConfig
+  | MindfulAnchorConfig;
 
 /** Random-bell session metadata; `interval_seconds[i]` is the gap before struck bell `i`. */
 export interface RandomIntervalBellMetadata {
@@ -173,6 +193,16 @@ export interface TalliedGroundingMetadata {
   rounds_completed: number;
   total_rounds: number;
   items_completed: number;
+}
+
+/** Per-session payload emitted by `MindfulAnchorView` on save. */
+export interface MindfulAnchorMetadata {
+  mode: 'mindful_anchor';
+  /** `key` of the chosen option, or `null` when none was offered/picked. */
+  chosen_option_key: string | null;
+  duration_seconds: number;
+  /** Whether `duration_seconds` cleared the config's soft floor. */
+  met_min_duration: boolean;
 }
 
 export interface RitualState {

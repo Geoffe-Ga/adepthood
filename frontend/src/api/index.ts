@@ -1680,6 +1680,19 @@ export interface TalliedGroundingSessionMetadata {
   items_completed: number;
 }
 
+/**
+ * Mirrors the engine ``MindfulAnchorMetadata`` shape
+ * (``features/Practice/engine/types``). ``met_min_duration`` is emitted by
+ * the client so the analytics rollup can tell "long enough" from
+ * "abandoned early" without re-running the soft-floor comparison.
+ */
+export interface MindfulAnchorSessionMetadata {
+  mode: 'mindful_anchor';
+  chosen_option_key: string | null;
+  duration_seconds: number;
+  met_min_duration: boolean;
+}
+
 export type SessionMetadata =
   | MeditationTimerSessionMetadata
   | CountUpSessionMetadata
@@ -1690,7 +1703,8 @@ export type SessionMetadata =
   | SenseGroundingSessionMetadata
   | TalliedGroundingSessionMetadata
   | TarotSessionMetadata
-  | CardMeditationSessionMetadata;
+  | CardMeditationSessionMetadata
+  | MindfulAnchorSessionMetadata;
 
 export interface PracticeSessionCreate {
   user_practice_id: number;
