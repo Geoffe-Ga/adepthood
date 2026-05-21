@@ -26,6 +26,12 @@ from main import _seed_startup_data, app, lifespan
 from models.course_stage import CourseStage
 from models.practice import Practice
 from models.stage_content import StageContent
+from seed_practices import PRESET_PRACTICES
+
+#: Total preset rows the practice seeder inserts — sourced from
+#: ``PRESET_PRACTICES`` so adding a catalog preset doesn't silently drift
+#: this test's expectation.
+_EXPECTED_PRACTICE_COUNT = len(PRESET_PRACTICES)
 
 
 @asynccontextmanager
@@ -55,7 +61,7 @@ async def test_seed_startup_data_inserts_stages_practices_and_content(
     contents = (await db_session.execute(select(StageContent))).scalars().all()
 
     assert len(stages) == 10
-    assert len(practices) == 10
+    assert len(practices) == _EXPECTED_PRACTICE_COUNT
     # ``seed_content`` seeds the chapters configured for the beige stage
     # (14 today) plus the 6 placeholder rows that still cover stages 2
     # and 3.  Asserting the count means a regression that drops the
@@ -77,7 +83,7 @@ async def test_seed_startup_data_is_idempotent(
     practices = (await db_session.execute(select(Practice))).scalars().all()
 
     assert len(stages) == 10
-    assert len(practices) == 10
+    assert len(practices) == _EXPECTED_PRACTICE_COUNT
 
 
 @pytest.mark.asyncio
