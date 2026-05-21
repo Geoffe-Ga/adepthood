@@ -504,6 +504,27 @@ async def test_backfill_future_date_is_rejected(
 
 
 @pytest.mark.asyncio
+async def test_backfill_beyond_lookback_window_is_rejected(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A ``completed_on`` older than the 30-day window is a 400.
+
+    Caps how far a streak can be manufactured by backfilling past days.
+    """
+    headers, user_id = await _signup(async_client, "ancient_backfiller")
+    goal = await _seed_goal(db_session, user_id)
+    too_old = today_in_tz("UTC") - timedelta(days=31)
+
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "completed_on": too_old.isoformat()},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.json()["detail"] == "completion_date_too_old"
+
+
+@pytest.mark.asyncio
 async def test_backfill_same_past_day_is_idempotent(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:

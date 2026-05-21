@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -48,6 +48,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/goal_completions", tags=["goals"])
 
 _DEFAULT_THRESHOLDS = [1, 3, 7, 14, 30]
+
+# A completion may be backfilled at most this many days into the past.
+# Beyond this window a user could manufacture an arbitrarily long streak
+# by logging one consecutive past day at a time.
+_MAX_BACKFILL_DAYS = 30
 
 
 class GoalCompletionRequest(BaseModel):
@@ -132,14 +137,17 @@ def _held_response(current_user: int, goal_id: int, old_streak: int) -> CheckInR
 
 
 def _resolve_target_day(completed_on: date | None, user_timezone: str) -> date:
-    """Return the calendar day to log against; reject a future date.
+    """Return the calendar day to log against.
 
-    Defaults to the user's today when ``completed_on`` is omitted.
+    Defaults to the user's today when ``completed_on`` is omitted. Rejects
+    a future date, and a backfill older than ``_MAX_BACKFILL_DAYS`` days.
     """
     today = today_in_tz(user_timezone)
     target_day = completed_on or today
     if target_day > today:
         raise bad_request("completion_date_in_future")
+    if target_day < today - timedelta(days=_MAX_BACKFILL_DAYS):
+        raise bad_request("completion_date_too_old")
     return target_day
 
 
