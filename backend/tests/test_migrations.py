@@ -60,6 +60,12 @@ _CARD_MEDITATION_REVISION = "a2b3c4d5e6f8"  # pragma: allowlist secret
 _PRACTICE_SHARE_LINK_BASE_REVISION = "a2b3c4d5e6f8"  # pragma: allowlist secret
 _PRACTICE_SHARE_LINK_REVISION = "f5b6c7d8e9a0"  # pragma: allowlist secret
 
+# custom-practices-01: extend ck_practice_mode_valid to include
+# random_interval_bell (issue #346).  Chains off the share-link head so the
+# timeline stays linear.
+_RANDOM_INTERVAL_BELL_BASE_REVISION = "f5b6c7d8e9a0"  # pragma: allowlist secret
+_RANDOM_INTERVAL_BELL_REVISION = "b6c7d8e9a0b1"  # pragma: allowlist secret
+
 
 def test_timestamptz_migration_exists() -> None:
     """Regression guard: the migration file must stay where Alembic finds it."""
@@ -577,6 +583,7 @@ _ORIGINAL_SEVEN_MODES = (
 )
 _EIGHT_MODES_AFTER_TALLIED = (*_ORIGINAL_SEVEN_MODES, "tallied_grounding")
 _NINE_MODES_AFTER_MINDFUL_ANCHOR = (*_EIGHT_MODES_AFTER_TALLIED, "mindful_anchor")
+_TEN_MODES_AFTER_CARD_MEDITATION = (*_NINE_MODES_AFTER_MINDFUL_ANCHOR, "card_meditation")
 
 
 def _bootstrap_practice_with_mode_check(sync_url: str, allowed_modes: tuple[str, ...]) -> None:
@@ -979,3 +986,92 @@ def test_practice_share_link_migration_round_trip_on_sqlite(
     # Phase 3: re-upgrade is idempotent.
     command.upgrade(cfg, _PRACTICE_SHARE_LINK_REVISION)
     assert _table_exists(db_url, "practicesharelink")
+
+
+# -- custom-practices-01 random_interval_bell migration round-trip ----------
+
+
+@pytest.fixture
+def alembic_sqlite_config_random_interval_bell(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config positioned just before ``b6c7d8e9a0b1``.
+
+    The down_revision is the share-link migration so the pre-upgrade
+    CHECK already lists ten modes; bootstrap mirrors that state.
+    """
+    db_path = tmp_path / "random_interval_bell_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_practice_with_mode_check(sync_url, _TEN_MODES_AFTER_CARD_MEDITATION)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _RANDOM_INTERVAL_BELL_BASE_REVISION)
+    return cfg
+
+
+def test_random_interval_bell_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_random_interval_bell: Config,
+) -> None:
+    """Round-trip ``b6c7d8e9a0b1``: upgrade allows the new mode; downgrade reverts.
+
+    Phase 1: upgrade lets a ``random_interval_bell`` row insert succeed
+    (proving the CHECK was widened). Phase 2: with that row deleted,
+    downgrade narrows the CHECK and rejects future inserts while leaving
+    ``interval_bell`` untouched. Phase 3: re-upgrade is idempotent.
+    """
+    cfg = alembic_sqlite_config_random_interval_bell
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade widens the CHECK.
+    command.upgrade(cfg, _RANDOM_INTERVAL_BELL_REVISION)
+    _insert_practice_row(db_url, mode="random_interval_bell", name="Random bell")
+    assert _count_practice_with_mode(db_url, "random_interval_bell") == 1
+
+    # Phase 2: clear the new-mode row, then downgrade and prove the CHECK is
+    # back in force. ``interval_bell`` must still insert successfully — the
+    # new mode is additive, not a replacement.
+    sync_engine = create_engine(_sync_url(db_url))
+    try:
+        with sync_engine.begin() as conn:
+            conn.execute(text("DELETE FROM practice WHERE mode = 'random_interval_bell'"))
+    finally:
+        sync_engine.dispose()
+    command.downgrade(cfg, _RANDOM_INTERVAL_BELL_BASE_REVISION)
+    with pytest.raises(IntegrityError):
+        _insert_practice_row(db_url, mode="random_interval_bell", name="Should fail")
+    _insert_practice_row(db_url, mode="interval_bell", name="Interval bell still works")
+    assert _count_practice_with_mode(db_url, "interval_bell") == 1
+
+    # Phase 3: re-upgrade so the cycle is idempotent.
+    command.upgrade(cfg, _RANDOM_INTERVAL_BELL_REVISION)
+    _insert_practice_row(db_url, mode="random_interval_bell", name="Random bell again")
+    assert _count_practice_with_mode(db_url, "random_interval_bell") == 1
+
+
+def test_random_interval_bell_downgrade_refuses_with_existing_rows(
+    alembic_sqlite_config_random_interval_bell: Config,
+) -> None:
+    """The downgrade aborts when ``random_interval_bell`` rows still exist.
+
+    Mirrors the card_meditation guard: narrowing the CHECK while data
+    violates it would either rewrite history or leave the DB in an
+    inconsistent state. The migration refuses to run and the operator
+    clears the rows themselves.
+    """
+    cfg = alembic_sqlite_config_random_interval_bell
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _RANDOM_INTERVAL_BELL_REVISION)
+    _insert_practice_row(db_url, mode="random_interval_bell", name="Stick around")
+
+    with pytest.raises(RuntimeError, match="random_interval_bell"):
+        command.downgrade(cfg, _RANDOM_INTERVAL_BELL_BASE_REVISION)

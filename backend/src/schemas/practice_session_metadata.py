@@ -96,6 +96,21 @@ class IntervalBellMetadata(_MetadataBase):
         return self
 
 
+class RandomIntervalBellMetadata(_MetadataBase):
+    """How many bells a random-interval session struck, and their spacing.
+
+    ``interval_seconds`` records the actual gaps between consecutive
+    bells so a post-session reflection can show the real rhythm — the
+    schedule is generated client-side and is not otherwise recoverable.
+    The list may be empty (a session that struck only the start bell, or
+    none at all) and is capped at the same ceiling as ``bells_struck``.
+    """
+
+    mode: Literal["random_interval_bell"] = "random_interval_bell"
+    bells_struck: int = Field(ge=0, le=_MAX_INTERVALS)
+    interval_seconds: list[int] = Field(default_factory=list, max_length=_MAX_INTERVALS)
+
+
 class RepCounterMetadata(_MetadataBase):
     """Total reps the user tapped through during the session."""
 
@@ -177,6 +192,7 @@ SessionMetadata = Annotated[
     | CountUpMetadata
     | MetronomeMetadata
     | IntervalBellMetadata
+    | RandomIntervalBellMetadata
     | RepCounterMetadata
     | SenseGroundingMetadata
     | TarotMetadata

@@ -64,6 +64,18 @@ _CARD_SYMBOLISM_MAX = 500
 # clients actually produce (``file``, ``content``, ``ph``, ``asset``)
 # closes that vector at the schema boundary.
 _CARD_IMAGE_URI_PATTERN = r"^(file|content|ph|asset)://[^\s<>\"]+$"
+# Bounds for ``random_interval_bell``. The min interval has a 5-second
+# floor (anything tighter is not a meditation cue), the max interval a
+# 10-second floor so a config can never pin both bounds below the min
+# floor. Both share a 1-hour ceiling — a single gap longer than that is
+# better modelled as a plain timer. ``max_bells`` caps total strikes so
+# a session's recorded offset list (see ``RandomIntervalBellMetadata``)
+# stays bounded.
+_RANDOM_BELL_MIN_INTERVAL_FLOOR = 5
+_RANDOM_BELL_MAX_INTERVAL_FLOOR = 10
+_RANDOM_BELL_INTERVAL_CEILING = 3_600
+_RANDOM_BELL_MAX_BELLS_CEILING = 1_000
+_SECONDS_PER_MINUTE = 60
 
 Sense = Literal["sight", "touch", "hearing", "smell", "taste"]
 BellTone = Literal["bowl", "chime", "gong"]
@@ -149,6 +161,47 @@ class IntervalBellConfig(_ConfigBase):
             _validate_interval_bell_spacing(self.interval_minutes, self.duration_minutes)
         if self.cue_offsets_minutes is not None:
             _validate_interval_bell_offsets(self.cue_offsets_minutes, self.duration_minutes)
+        return self
+
+
+class RandomIntervalBellConfig(_ConfigBase):
+    """Meditation window with bells at random offsets between min/max bounds.
+
+    Unlike :class:`IntervalBellConfig` — whose cues are deterministic,
+    either evenly spaced or an explicit list — this mode rings the bell
+    at unpredictable intervals so attention has to re-anchor with each
+    strike. The client generates the random schedule; the server only
+    validates the bounds here and later records what actually happened
+    (see :class:`~schemas.practice_session_metadata.RandomIntervalBellMetadata`).
+    """
+
+    mode: Literal["random_interval_bell"] = "random_interval_bell"
+    duration_minutes: float = Field(ge=_DURATION_MIN_MINUTES, le=_DURATION_MAX_MINUTES)
+    min_interval_seconds: int = Field(
+        ge=_RANDOM_BELL_MIN_INTERVAL_FLOOR, le=_RANDOM_BELL_INTERVAL_CEILING
+    )
+    max_interval_seconds: int = Field(
+        ge=_RANDOM_BELL_MAX_INTERVAL_FLOOR, le=_RANDOM_BELL_INTERVAL_CEILING
+    )
+    bell_tone: BellTone = "bowl"
+    max_bells: int | None = Field(default=None, ge=1, le=_RANDOM_BELL_MAX_BELLS_CEILING)
+    start_bell: bool = True
+    end_bell: bool = True
+
+    @model_validator(mode="after")
+    def _check_interval_bounds(self) -> Self:
+        """Reject a max below the min, or a min that cannot fit one gap.
+
+        Each field individually satisfies its ge/le bounds; only these
+        cross-field checks catch ``max < min`` (an empty range) and a
+        ``min`` longer than the whole session (no bell could ever fire).
+        """
+        if self.max_interval_seconds < self.min_interval_seconds:
+            msg = "max_interval_seconds must be >= min_interval_seconds"
+            raise ValueError(msg)
+        if self.min_interval_seconds > self.duration_minutes * _SECONDS_PER_MINUTE:
+            msg = "min_interval_seconds must fit within duration_minutes"
+            raise ValueError(msg)
         return self
 
 
@@ -378,6 +431,7 @@ ModeConfig = Annotated[
     | CountUpConfig
     | MetronomeConfig
     | IntervalBellConfig
+    | RandomIntervalBellConfig
     | RepCounterConfig
     | SenseGroundingConfig
     | TarotConfig

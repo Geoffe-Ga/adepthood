@@ -71,7 +71,17 @@ repos:
       - id: pip-audit
         name: pip-audit (backend dependencies)
         files: ^backend/
-        args: ["-r", "backend/requirements.txt"]
+        # PYSEC-2025-183 (pyjwt): no fix released — 2.12.1 is the latest
+        # published version and the advisory lists no patched release.
+        # Suppressed as a documented last resort; revisit when pyjwt
+        # ships a fix and drop this --ignore-vuln entry.
+        args:
+          [
+            "-r",
+            "backend/requirements.txt",
+            "--ignore-vuln",
+            "PYSEC-2025-183",
+          ]
 
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0
