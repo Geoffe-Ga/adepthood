@@ -71,19 +71,7 @@ repos:
       - id: pip-audit
         name: pip-audit (backend dependencies)
         files: ^backend/
-        # PYSEC-2025-183 / CVE-2025-45768 (GHSA-xpf8-484v-j9w6): suppressed —
-        # no upstream fix exists (pyjwt 2.12.1 is the latest PyPI release and
-        # is the flagged version; the advisory lists no fixed_in range). The
-        # advisory is GitHub-"unreviewed", described in a single gist-sourced
-        # sentence ("weak encryption"), and is a category error: PyJWT signs
-        # JWS tokens, it does not encrypt them — readable claims are JWT's
-        # documented design. EPSS ~0.0007. Tracked for re-evaluation in #363;
-        # re-review by 2026-06-20.
-        args:
-          - "-r"
-          - "backend/requirements.txt"
-          - "--ignore-vuln"
-          - "PYSEC-2025-183"
+        args: ["-r", "backend/requirements.txt"]
 
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0
