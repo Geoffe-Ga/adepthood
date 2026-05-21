@@ -265,8 +265,7 @@ export const getProgressPercentage = (
 
 /**
  * Progress-bar color for a habit: the stage color while the goal is
- * unmet, and a brighter shade of that same stage color once it is met
- * (BUG-FE-HABIT: the old flat gold clashed with every stage palette).
+ * unmet, and a brighter shade of that same stage color once it is met.
  */
 export const getProgressBarColor = (habit: Habit, tz: string = DEFAULT_TIMEZONE): string => {
   const stageColor = STAGE_COLORS[habit.stage] ?? '#000';
