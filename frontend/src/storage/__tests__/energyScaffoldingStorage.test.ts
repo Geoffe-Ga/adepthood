@@ -26,6 +26,11 @@ describe('energyScaffoldingStorage', () => {
       await saveEnergyScaffoldingArchived(true);
       expect(mockAsyncStorage.setItem).toHaveBeenCalledWith(KEY, 'true');
     });
+
+    test('persists a cleared flag as JSON', async () => {
+      await saveEnergyScaffoldingArchived(false);
+      expect(mockAsyncStorage.setItem).toHaveBeenCalledWith(KEY, 'false');
+    });
   });
 
   describe('loadEnergyScaffoldingArchived', () => {
@@ -51,9 +56,10 @@ describe('energyScaffoldingStorage', () => {
       expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith(KEY);
     });
 
-    test('returns false when AsyncStorage throws', async () => {
+    test('returns false without deleting data when AsyncStorage throws', async () => {
       mockAsyncStorage.getItem.mockRejectedValueOnce(new Error('boom'));
       await expect(loadEnergyScaffoldingArchived()).resolves.toBe(false);
+      expect(mockAsyncStorage.removeItem).not.toHaveBeenCalled();
     });
   });
 });
