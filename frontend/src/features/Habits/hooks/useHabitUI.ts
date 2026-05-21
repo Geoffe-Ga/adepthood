@@ -1,5 +1,9 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
+import {
+  loadEnergyScaffoldingArchived,
+  saveEnergyScaffoldingArchived,
+} from '../../../storage/energyScaffoldingStorage';
 import { selectHabitById, useHabitStore } from '../../../store/useHabitStore';
 import type { Habit, HabitScreenMode } from '../Habits.types';
 
@@ -36,6 +40,22 @@ export const useHabitUI = (): HabitUIState => {
   const [showEnergyCTA, setShowEnergyCTA] = useState(true);
   const [showArchiveMessage, setShowArchiveMessage] = useState(false);
 
+  // Rehydrate the archived state from device storage: a CTA the user archived
+  // in a previous session must stay archived across logins, not reappear.
+  useEffect(() => {
+    let cancelled = false;
+    loadEnergyScaffoldingArchived()
+      .then((archived) => {
+        if (!cancelled && archived) setShowEnergyCTA(false);
+      })
+      .catch((err: unknown) => {
+        console.warn('[useHabitUI] failed to load energy-CTA archived state', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const setSelectedHabit = useCallback((habit: Habit | null) => {
     setSelectedHabitId(habit?.id ?? null);
   }, []);
@@ -44,6 +64,9 @@ export const useHabitUI = (): HabitUIState => {
     setShowEnergyCTA(false);
     setShowArchiveMessage(true);
     setTimeout(() => setShowArchiveMessage(false), ARCHIVE_MESSAGE_DURATION_MS);
+    saveEnergyScaffoldingArchived(true).catch((err: unknown) => {
+      console.warn('[useHabitUI] failed to persist energy-CTA archived state', err);
+    });
   }, []);
 
   return {
