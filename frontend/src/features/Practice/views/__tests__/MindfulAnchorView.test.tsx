@@ -41,6 +41,7 @@ describe('MindfulAnchorView', () => {
         config={optionConfig}
         state={fakeState({ status: 'idle' })}
         controls={fakeControls()}
+        onComplete={jest.fn()}
       />,
     );
     expect(getByTestId('mindful-anchor-instruction')).toHaveTextContent(optionConfig.instruction);
@@ -52,6 +53,7 @@ describe('MindfulAnchorView', () => {
         config={optionConfig}
         state={fakeState({ status: 'idle' })}
         controls={fakeControls()}
+        onComplete={jest.fn()}
       />,
     );
     expect(getByTestId('mindful-anchor-options')).toBeTruthy();
@@ -65,6 +67,7 @@ describe('MindfulAnchorView', () => {
         config={bareConfig}
         state={fakeState({ status: 'idle' })}
         controls={fakeControls()}
+        onComplete={jest.fn()}
       />,
     );
     expect(queryByTestId('mindful-anchor-options')).toBeNull();
@@ -76,6 +79,7 @@ describe('MindfulAnchorView', () => {
         config={optionConfig}
         state={fakeState({ status: 'running' })}
         controls={fakeControls()}
+        onComplete={jest.fn()}
       />,
     );
     expect(queryByTestId('mindful-anchor-options')).toBeNull();
@@ -88,6 +92,7 @@ describe('MindfulAnchorView', () => {
         config={optionConfig}
         state={fakeState({ status: 'idle' })}
         controls={controls}
+        onComplete={jest.fn()}
       />,
     );
     const begin = getByTestId('mindful-anchor-begin');
@@ -103,6 +108,7 @@ describe('MindfulAnchorView', () => {
         config={optionConfig}
         state={fakeState({ status: 'idle' })}
         controls={controls}
+        onComplete={jest.fn()}
       />,
     );
     fireEvent.press(getByTestId('mindful-anchor-option-grass'));
@@ -122,6 +128,7 @@ describe('MindfulAnchorView', () => {
         config={bareConfig}
         state={fakeState({ status: 'idle' })}
         controls={controls}
+        onComplete={jest.fn()}
       />,
     );
     const begin = getByTestId('mindful-anchor-begin');
@@ -136,6 +143,7 @@ describe('MindfulAnchorView', () => {
         config={bareConfig}
         state={fakeState({ status: 'idle' })}
         controls={fakeControls()}
+        onComplete={jest.fn()}
       />,
     );
     expect(queryByTestId('mindful-anchor-elapsed')).toBeNull();
@@ -144,6 +152,7 @@ describe('MindfulAnchorView', () => {
         config={bareConfig}
         state={fakeState({ status: 'running' })}
         controls={fakeControls()}
+        onComplete={jest.fn()}
       />,
     );
     expect(queryByTestId('mindful-anchor-elapsed')).toBeTruthy();
@@ -155,6 +164,7 @@ describe('MindfulAnchorView', () => {
         config={bareConfig}
         state={fakeState({ status: 'running' })}
         controls={fakeControls()}
+        onComplete={jest.fn()}
       />,
     );
     const elapsed = getByTestId('mindful-anchor-elapsed');
@@ -206,6 +216,7 @@ describe('MindfulAnchorView', () => {
         config={optionConfig}
         state={fakeState({ status: 'running' })}
         controls={fakeControls()}
+        onComplete={jest.fn()}
       />,
     );
     act(() => {
@@ -350,6 +361,7 @@ describe('MindfulAnchorView', () => {
         config={bareConfig}
         state={fakeState({ status: 'running' })}
         controls={controls}
+        onComplete={jest.fn()}
       />,
     );
     fireEvent.press(getByTestId('ritual-pause'));
@@ -359,6 +371,7 @@ describe('MindfulAnchorView', () => {
         config={bareConfig}
         state={fakeState({ status: 'complete' })}
         controls={controls}
+        onComplete={jest.fn()}
       />,
     );
     expect(getByTestId('ritual-complete-label')).toBeTruthy();
@@ -366,20 +379,27 @@ describe('MindfulAnchorView', () => {
     expect(queryByTestId('mindful-anchor-elapsed')).toBeNull();
   });
 
-  it('completes cleanly when no onComplete handler is wired', () => {
+  it('saves immediately without a dialog when min_duration_seconds is zero', () => {
+    const onComplete = jest.fn();
     const controls = fakeControls();
-    const { getByTestId } = render(
+    const zeroConfig: MindfulAnchorConfig = { ...bareConfig, min_duration_seconds: 0 };
+    const { getByTestId, queryByTestId } = render(
       <MindfulAnchorView
-        config={bareConfig}
+        config={zeroConfig}
         state={fakeState({ status: 'running' })}
         controls={controls}
+        onComplete={onComplete}
       />,
     );
-    act(() => {
-      jest.advanceTimersByTime(5000);
-    });
     fireEvent.press(getByTestId('mindful-anchor-save'));
+    expect(queryByTestId('mindful-anchor-confirm')).toBeNull();
     expect(controls.complete).toHaveBeenCalledTimes(1);
+    expect(onComplete).toHaveBeenCalledWith({
+      mode: 'mindful_anchor',
+      chosen_option_key: null,
+      duration_seconds: 0,
+      met_min_duration: true,
+    });
   });
 
   it('matches the option-chooser snapshot', () => {
@@ -388,6 +408,7 @@ describe('MindfulAnchorView', () => {
         config={optionConfig}
         state={fakeState({ status: 'idle' })}
         controls={fakeControls()}
+        onComplete={jest.fn()}
       />,
     );
     expect(toJSON()).toMatchSnapshot();

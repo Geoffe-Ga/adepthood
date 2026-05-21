@@ -29,13 +29,19 @@ import RitualControlsBar from './RitualControlsBar';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 
 const MS_PER_SECOND = 1000;
+/** Caps the instruction card so long copy stays readable on wide screens. */
+const INSTRUCTION_CARD_MAX_WIDTH = 340;
 
 interface Props {
   config: MindfulAnchorConfig;
   state: RitualState;
   controls: RitualControls;
-  /** Receives the session payload the instant the user confirms Save. */
-  onComplete?: (_metadata: MindfulAnchorMetadata) => void;
+  /**
+   * Receives the session payload the instant the user confirms Save.
+   * Required: `ActiveRitualSession` always wires this so the dispatcher
+   * can harvest `MindfulAnchorMetadata`.
+   */
+  onComplete: (_metadata: MindfulAnchorMetadata) => void;
 }
 
 interface AnchorState {
@@ -79,9 +85,13 @@ function useAnchorState(
     setConfirmVisible(false);
   }, [status]);
 
+  // `elapsedSeconds` is in the dep array, so `commit` always re-binds to the
+  // latest tick — including the seconds that pass while the soft-gate confirm
+  // dialog sits open. The saved `duration_seconds` reflects the moment the
+  // user actually confirms, not the moment they first tapped Save.
   const commit = useCallback(() => {
     setConfirmVisible(false);
-    onComplete?.({
+    onComplete({
       mode: 'mindful_anchor',
       chosen_option_key: selectedOptionKey,
       duration_seconds: elapsedSeconds,
@@ -299,7 +309,7 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.xl,
     marginBottom: SPACING.xl,
-    maxWidth: 340,
+    maxWidth: INSTRUCTION_CARD_MAX_WIDTH,
     ...shadows.small,
   },
   instructionText: {
