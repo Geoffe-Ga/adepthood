@@ -6,7 +6,12 @@ import type {
   RepCounterConfig,
   SenseGroundingConfig,
 } from './types';
-import { DEFAULT_TAROT_MINUTES, MS_PER_MINUTE, TAROT_DECK_SIZE } from './types';
+import {
+  DEFAULT_CARD_MEDITATION_MINUTES,
+  DEFAULT_TAROT_MINUTES,
+  MS_PER_MINUTE,
+  TAROT_DECK_SIZE,
+} from './types';
 
 export function initialState(config: ModeConfig, startCardIndex = 0): EngineState {
   return {
@@ -183,10 +188,17 @@ export function getTotalMs(config: ModeConfig): number | null {
     case 'metronome':
       return config.timer.duration_minutes * MS_PER_MINUTE;
     case 'tarot':
-      return (config.per_card_minutes ?? DEFAULT_TAROT_MINUTES) * MS_PER_MINUTE;
+      return perCardTotalMs(config.per_card_minutes, DEFAULT_TAROT_MINUTES);
+    case 'card_meditation':
+      return perCardTotalMs(config.per_card_minutes, DEFAULT_CARD_MEDITATION_MINUTES);
     case 'rep_counter':
       return config.time_cap_minutes != null ? config.time_cap_minutes * MS_PER_MINUTE : null;
   }
+}
+
+/** Resolve a per-card sit length (with its mode default) to milliseconds. */
+function perCardTotalMs(minutes: number | undefined, fallback: number): number {
+  return (minutes ?? fallback) * MS_PER_MINUTE;
 }
 
 function getProgress(state: EngineState, config: ModeConfig, elapsedMs: number): number {

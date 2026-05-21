@@ -38,6 +38,7 @@ import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 import { InsightCaptureModal } from '@/features/Practice/components/InsightCaptureModal';
 import RitualConfiguratorSheet from '@/features/Practice/configurator/RitualConfiguratorSheet';
+import { buildCardMeditationMetadata, pickCard } from '@/features/Practice/data/resolveCard';
 import { cardForDayIndex } from '@/features/Practice/data/tarot';
 import { scheduledCues } from '@/features/Practice/engine/cues';
 import type {
@@ -50,6 +51,7 @@ import type {
 } from '@/features/Practice/engine/types';
 import { useRitualEngine } from '@/features/Practice/engine/useRitualEngine';
 import type { ModeSummaryKind, ModeSummaryMetadata } from '@/features/Practice/insights/format';
+import CardMeditationView from '@/features/Practice/views/CardMeditationView';
 import CountUpTimerView from '@/features/Practice/views/CountUpTimerView';
 import IntervalBellView from '@/features/Practice/views/IntervalBellView';
 import MeditationTimerView from '@/features/Practice/views/MeditationTimerView';
@@ -407,6 +409,8 @@ function ModeView({ config, state, controls, tarotCardIndex }: ModeViewProps): R
           hideTimer={config.hide_timer_during_meditation ?? false}
         />
       );
+    case 'card_meditation':
+      return <CardMeditationView config={config} state={state} controls={controls} />;
   }
 }
 
@@ -491,6 +495,8 @@ function harvestMetadata(config: ModeConfig, state: RitualState): SessionMetadat
         mode: 'tarot',
         card_index: normalizeTarotIndex(state.currentStepIndex),
       };
+    case 'card_meditation':
+      return buildCardMeditationMetadata(config, pickCard(config));
   }
 }
 
@@ -556,6 +562,12 @@ function harvestSummaryMetadata(
       const idx = normalizeTarotIndex(tarotCardIndex);
       return { mode: 'tarot', card_index: idx, card_name: cardForDayIndex(idx).name };
     }
+    case 'card_meditation':
+      return {
+        mode: 'card_meditation',
+        deck_id: config.deck_id,
+        card_name: pickCard(config).card.name,
+      };
   }
 }
 

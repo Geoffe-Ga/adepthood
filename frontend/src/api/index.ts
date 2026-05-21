@@ -1653,6 +1653,14 @@ export interface TarotSessionMetadata {
   card_index: number;
 }
 
+export interface CardMeditationSessionMetadata {
+  mode: 'card_meditation';
+  deck_id: string;
+  card_drawn_name: string;
+  /** Canonical deck index; omitted when the draw cannot be positioned. */
+  card_drawn_index?: number;
+}
+
 export type SessionMetadata =
   | MeditationTimerSessionMetadata
   | CountUpSessionMetadata
@@ -1660,7 +1668,8 @@ export type SessionMetadata =
   | IntervalBellSessionMetadata
   | RepCounterSessionMetadata
   | SenseGroundingSessionMetadata
-  | TarotSessionMetadata;
+  | TarotSessionMetadata
+  | CardMeditationSessionMetadata;
 
 export interface PracticeSessionCreate {
   user_practice_id: number;

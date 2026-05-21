@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 
 import type {
+  CardMeditationConfig,
   IntervalBellConfig,
   MeditationTimerConfig,
   MetronomeConfig,
@@ -8,6 +9,7 @@ import type {
   SenseGroundingConfig,
   TarotConfig,
 } from '../types';
+import { CARD_MEDITATION_CARDS_MAX, CARD_MEDITATION_NAME_MAX } from '../types';
 import {
   BPM_MAX,
   BPM_MIN,
@@ -23,6 +25,7 @@ import {
   validateMetronome,
   validateModeConfig,
   validateRepCounter,
+  validateCardMeditation,
   validateSenseGrounding,
   validateTarot,
 } from '../validation';
@@ -274,6 +277,88 @@ describe('validateTarot', () => {
   });
 });
 
+describe('validateCardMeditation', () => {
+  const bundled: CardMeditationConfig = {
+    mode: 'card_meditation',
+    deck_id: 'rws',
+    cards: null,
+    per_card_minutes: 5,
+  };
+
+  it('accepts a valid bundled-deck config', () => {
+    expect(validateCardMeditation(bundled)).toEqual([]);
+  });
+
+  it('rejects per-card minutes outside range', () => {
+    expect(validateCardMeditation({ ...bundled, per_card_minutes: 0 })).toHaveLength(1);
+  });
+
+  it('rejects an invalid deck id', () => {
+    expect(validateCardMeditation({ ...bundled, deck_id: 'Bad Deck' })[0]).toMatch(/deck id/i);
+  });
+
+  it('rejects a custom deck with no cards', () => {
+    const empty: CardMeditationConfig = { mode: 'card_meditation', deck_id: 'custom', cards: [] };
+    expect(validateCardMeditation(empty)[0]).toMatch(/at least one card/i);
+    expect(validateCardMeditation({ ...empty, cards: null })[0]).toMatch(/at least one card/i);
+  });
+
+  it('accepts a custom deck with a valid card', () => {
+    const config: CardMeditationConfig = {
+      mode: 'card_meditation',
+      deck_id: 'custom',
+      cards: [{ name: 'Sunrise', image_asset_key: null, image_uri: null, symbolism: null }],
+    };
+    expect(validateCardMeditation(config)).toEqual([]);
+  });
+
+  it('rejects a custom card with an empty name', () => {
+    const config: CardMeditationConfig = {
+      mode: 'card_meditation',
+      deck_id: 'custom',
+      cards: [{ name: '  ', image_asset_key: null, image_uri: null, symbolism: null }],
+    };
+    expect(validateCardMeditation(config)[0]).toMatch(/name cannot be empty/i);
+  });
+
+  it('rejects a custom card that sets two image sources', () => {
+    const config: CardMeditationConfig = {
+      mode: 'card_meditation',
+      deck_id: 'custom',
+      cards: [
+        { name: 'Both', image_asset_key: 'rws/the_fool', image_uri: 'file:///x', symbolism: null },
+      ],
+    };
+    expect(validateCardMeditation(config)[0]).toMatch(/at most one image/i);
+  });
+
+  it('rejects a custom card with an oversize name', () => {
+    const config: CardMeditationConfig = {
+      mode: 'card_meditation',
+      deck_id: 'custom',
+      cards: [
+        {
+          name: 'x'.repeat(CARD_MEDITATION_NAME_MAX + 1),
+          image_asset_key: null,
+          image_uri: null,
+          symbolism: null,
+        },
+      ],
+    };
+    expect(validateCardMeditation(config).some((e) => /≤/.test(e))).toBe(true);
+  });
+
+  it('rejects a custom deck above the card cap', () => {
+    const card = { name: 'c', image_asset_key: null, image_uri: null, symbolism: null };
+    const config: CardMeditationConfig = {
+      mode: 'card_meditation',
+      deck_id: 'custom',
+      cards: Array.from({ length: CARD_MEDITATION_CARDS_MAX + 1 }, () => card),
+    };
+    expect(validateCardMeditation(config).some((e) => /at most/.test(e))).toBe(true);
+  });
+});
+
 describe('validateCustomName', () => {
   it('accepts a normal name', () => {
     expect(validateCustomName('My Morning Sit')).toEqual([]);
@@ -333,6 +418,13 @@ describe('validateModeConfig dispatch', () => {
         mode: 'tarot',
         deck: 'major_arcana',
         per_card_minutes: 5,
+      }),
+    ).toEqual([]);
+    expect(
+      validateModeConfig({
+        mode: 'card_meditation',
+        deck_id: 'rws',
+        cards: null,
       }),
     ).toEqual([]);
   });

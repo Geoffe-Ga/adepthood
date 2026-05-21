@@ -241,6 +241,31 @@ describe('ritualReducer — tarot', () => {
   });
 });
 
+describe('ritualReducer — card_meditation', () => {
+  it('completes after per_card_minutes elapse', () => {
+    const config: ModeConfig = {
+      mode: 'card_meditation',
+      deck_id: 'rws',
+      cards: null,
+      per_card_minutes: 3,
+    };
+    let s = drive(config, [{ type: 'START', now: 0 }]);
+    expect(s.status).toBe('running');
+    s = ritualReducer(s, { type: 'TICK', now: 3 * MIN }, config);
+    expect(s.status).toBe('complete');
+    expect(s.cuesStruck).toBe(1);
+  });
+
+  it('defaults per_card_minutes to 5 when omitted', () => {
+    const config: ModeConfig = { mode: 'card_meditation', deck_id: 'rws', cards: null };
+    const s = drive(config, [
+      { type: 'START', now: 0 },
+      { type: 'TICK', now: 5 * MIN },
+    ]);
+    expect(s.status).toBe('complete');
+  });
+});
+
 const allConfigs: readonly [string, ModeConfig][] = [
   ['meditation_timer', { mode: 'meditation_timer', duration_minutes: 10 }],
   ['count_up', { mode: 'count_up' }],
@@ -255,6 +280,10 @@ const allConfigs: readonly [string, ModeConfig][] = [
   ['rep_counter', { mode: 'rep_counter', target_reps: 5, unit_label: 'reps' }],
   ['sense_grounding', { mode: 'sense_grounding', prompts: [{ sense: 'sight', label: 'a tree' }] }],
   ['tarot', { mode: 'tarot', deck: 'major_arcana', per_card_minutes: 5 }],
+  [
+    'card_meditation',
+    { mode: 'card_meditation', deck_id: 'rws', cards: null, per_card_minutes: 5 },
+  ],
 ];
 
 describe.each(allConfigs)('lifecycle — %s', (_mode, config) => {

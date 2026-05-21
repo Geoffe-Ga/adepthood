@@ -5,6 +5,8 @@
 // list means the payload is acceptable.
 
 import type {
+  CardMeditationCard,
+  CardMeditationConfig,
   CountUpConfig,
   IntervalBellConfig,
   MeditationTimerConfig,
@@ -15,6 +17,13 @@ import type {
   SenseKind,
   SensePrompt,
   TarotConfig,
+} from './types';
+import {
+  CARD_DECK_ID_PATTERN,
+  CARD_MEDITATION_CARDS_MAX,
+  CARD_MEDITATION_CUSTOM_DECK_ID,
+  CARD_MEDITATION_NAME_MAX,
+  CARD_MEDITATION_SYMBOLISM_MAX,
 } from './types';
 
 export const BPM_MIN = 20;
@@ -174,6 +183,48 @@ export function validateTarot(config: TarotConfig): string[] {
   return errors;
 }
 
+function checkCard(card: CardMeditationCard, index: number): string[] {
+  const errors: string[] = [];
+  const position = `Card ${index + 1}`;
+  if (card.name.trim().length === 0) {
+    errors.push(`${position}: name cannot be empty`);
+  }
+  if (card.name.length > CARD_MEDITATION_NAME_MAX) {
+    errors.push(`${position}: name must be ≤ ${CARD_MEDITATION_NAME_MAX} characters`);
+  }
+  if (card.image_asset_key !== null && card.image_uri !== null) {
+    errors.push(`${position}: set at most one image source`);
+  }
+  if (card.symbolism !== null && card.symbolism.length > CARD_MEDITATION_SYMBOLISM_MAX) {
+    errors.push(`${position}: symbolism must be ≤ ${CARD_MEDITATION_SYMBOLISM_MAX} characters`);
+  }
+  return errors;
+}
+
+export function validateCardMeditation(config: CardMeditationConfig): string[] {
+  const errors: string[] = [];
+  if (config.per_card_minutes !== undefined) {
+    pushIfOutOfDurationRange(errors, 'Per-card minutes', config.per_card_minutes);
+  }
+  if (!CARD_DECK_ID_PATTERN.test(config.deck_id)) {
+    errors.push('Deck id is invalid');
+  }
+  if (config.deck_id === CARD_MEDITATION_CUSTOM_DECK_ID) {
+    const cards = config.cards ?? [];
+    if (cards.length === 0) {
+      errors.push('Add at least one card to use a custom deck');
+      return errors;
+    }
+    if (cards.length > CARD_MEDITATION_CARDS_MAX) {
+      errors.push(`A custom deck can hold at most ${CARD_MEDITATION_CARDS_MAX} cards`);
+    }
+    cards.forEach((card, index) => {
+      errors.push(...checkCard(card, index));
+    });
+  }
+  return errors;
+}
+
 const VALIDATORS: {
   [K in ModeConfig['mode']]: (config: Extract<ModeConfig, { mode: K }>) => string[];
 } = {
@@ -184,6 +235,7 @@ const VALIDATORS: {
   rep_counter: validateRepCounter,
   sense_grounding: validateSenseGrounding,
   tarot: validateTarot,
+  card_meditation: validateCardMeditation,
 };
 
 /**

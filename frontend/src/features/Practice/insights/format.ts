@@ -55,6 +55,12 @@ export interface ModeSummaryTarot {
   readonly card_name: string;
 }
 
+export interface ModeSummaryCardMeditation {
+  readonly mode: 'card_meditation';
+  readonly deck_id: string;
+  readonly card_name: string;
+}
+
 export type ModeSummaryMetadata =
   | ModeSummaryMeditationTimer
   | ModeSummaryCountUp
@@ -62,7 +68,8 @@ export type ModeSummaryMetadata =
   | ModeSummaryIntervalBell
   | ModeSummaryRepCounter
   | ModeSummarySenseGrounding
-  | ModeSummaryTarot;
+  | ModeSummaryTarot
+  | ModeSummaryCardMeditation;
 
 export type ModeSummaryKind = ModeSummaryMetadata['mode'];
 
@@ -108,6 +115,10 @@ export function formatModeSummary<M extends ModeSummaryKind>(
     }
     case 'tarot': {
       const m = metadata as ModeSummaryTarot;
+      return `${m.card_name} for ${mmss}`;
+    }
+    case 'card_meditation': {
+      const m = metadata as ModeSummaryCardMeditation;
       return `${m.card_name} for ${mmss}`;
     }
     default:
