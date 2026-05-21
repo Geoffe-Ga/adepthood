@@ -131,14 +131,29 @@ def _held_response(current_user: int, goal_id: int, old_streak: int) -> CheckInR
     return CheckInResult(streak=old_streak, milestones=[], reason_code="streak_held")
 
 
-def _backfill_timestamp(user_timezone: str, day: date) -> datetime:
-    """Return a UTC datetime at the midpoint of ``day`` in the user's TZ.
+def _resolve_target_day(completed_on: date | None, user_timezone: str) -> date:
+    """Return the calendar day to log against; reject a future date.
 
-    Anchored mid-day so the stored ``timestamp`` lands unambiguously
-    inside the user's local calendar day regardless of DST shoulder
-    days, and so the unique-per-day index buckets it on ``day``.
+    Defaults to the user's today when ``completed_on`` is omitted.
     """
-    start, end = day_bounds_in_tz(user_timezone, day)
+    today = today_in_tz(user_timezone)
+    target_day = completed_on or today
+    if target_day > today:
+        raise bad_request("completion_date_in_future")
+    return target_day
+
+
+def _completion_timestamp(completed_on: date | None, user_timezone: str) -> datetime | None:
+    """Stored timestamp for the completion row.
+
+    ``None`` lets the model default (now) stand for a same-day log. For a
+    backfilled day, anchors mid-day in the user's TZ so the value lands
+    unambiguously inside that local calendar day regardless of DST
+    shoulder days, and buckets on it under the unique-per-day index.
+    """
+    if completed_on is None:
+        return None
+    start, end = day_bounds_in_tz(user_timezone, completed_on)
     return start + (end - start) / 2
 
 
@@ -207,11 +222,7 @@ async def create_goal_completion(
     """
     goal, habit, goal_id = await _get_owned_goal_and_habit(session, payload.goal_id, current_user)
     user_tz = await get_user_timezone(session, current_user)
-
-    today = today_in_tz(user_tz)
-    target_day = payload.completed_on or today
-    if target_day > today:
-        raise bad_request("completion_date_in_future")
+    target_day = _resolve_target_day(payload.completed_on, user_tz)
 
     if await _already_logged_on(session, goal_id, current_user, user_tz, target_day):
         return await _idempotent_already_logged_response(session, goal_id, current_user, user_tz)
@@ -234,6 +245,6 @@ async def create_goal_completion(
         did_complete=payload.did_complete,
         is_scheduled=is_scheduled,
         old_streak=old_streak,
-        timestamp=_backfill_timestamp(user_tz, target_day) if payload.completed_on else None,
+        timestamp=_completion_timestamp(payload.completed_on, user_tz),
     )
     return await _try_persist_or_idempotent(session, job)
