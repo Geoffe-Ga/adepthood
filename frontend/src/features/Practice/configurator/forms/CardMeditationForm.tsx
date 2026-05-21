@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { resolveCardImage } from '../../data/assetResolver';
@@ -116,13 +116,30 @@ const KnownDeckSummary = ({ deck }: { deck: DeckMeta }): React.JSX.Element => {
   );
 };
 
+// Monotonic source of per-row keys. Cards have no persistable id (the
+// backend config schema is `extra="forbid"`), so row identity is tracked
+// transiently here instead of on the card object.
+let nextCardKey = 0;
+
 const CustomCardEditor = ({ value, onChange }: Props): React.JSX.Element => {
   const cards = value.cards ?? [];
+  // One stable key per row, kept in lockstep with add/remove so a non-tail
+  // removal cannot shift a surviving row onto a different key (which would
+  // let React reuse the wrong row instance).
+  const keysRef = useRef<string[] | null>(null);
+  keysRef.current ??= cards.map(() => `card-${(nextCardKey += 1)}`);
+  const keys = keysRef.current;
   const setCards = (next: readonly CardMeditationCard[]) => onChange({ ...value, cards: next });
   const updateCard = (index: number, patch: Partial<CardMeditationCard>) =>
     setCards(cards.map((card, i) => (i === index ? { ...card, ...patch } : card)));
-  const removeCard = (index: number) => setCards(cards.filter((_, i) => i !== index));
-  const addCard = () => setCards([...cards, EMPTY_CARD]);
+  const removeCard = (index: number) => {
+    keysRef.current = keys.filter((_, i) => i !== index);
+    setCards(cards.filter((_, i) => i !== index));
+  };
+  const addCard = () => {
+    keysRef.current = [...keys, `card-${(nextCardKey += 1)}`];
+    setCards([...cards, EMPTY_CARD]);
+  };
   return (
     <View testID="card-meditation-card-editor">
       <Text style={styles.sectionTitle}>Your cards</Text>
@@ -136,7 +153,7 @@ const CustomCardEditor = ({ value, onChange }: Props): React.JSX.Element => {
       )}
       {cards.map((card, index) => (
         <CardRow
-          key={index}
+          key={keys[index] ?? `card-fallback-${index}`}
           index={index}
           card={card}
           onUpdate={updateCard}
@@ -213,8 +230,8 @@ const CardPhotoField = ({ index, card, onUpdate }: CardPhotoFieldProps): React.J
       if (photo) onUpdate(index, { image_uri: photo.uri, image_asset_key: null });
     } catch (error) {
       // A broken native build can reject the permission/picker call; keep the
-      // form usable and leave a breadcrumb rather than crashing the editor.
-      console.warn('Card photo picker failed:', error);
+      // form usable and leave a dev-only breadcrumb rather than crashing.
+      if (__DEV__) console.warn('Card photo picker failed:', error);
     }
   };
   return (
@@ -264,7 +281,7 @@ const AdvancedSection = ({ value, onChange }: Props): React.JSX.Element => {
 
 const AdvancedFields = ({ value, onChange }: Props): React.JSX.Element => (
   <View testID="card-meditation-advanced-fields">
-    <LabeledRow label="Per-card minutes">
+    <LabeledRow label="Minutes with the card">
       <NumericField
         value={value.per_card_minutes ?? DEFAULT_CARD_MEDITATION_MINUTES}
         onChange={(minutes) =>

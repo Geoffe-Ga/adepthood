@@ -78,10 +78,11 @@ describe('CardMeditationForm — bundled deck summary', () => {
   });
 
   it('reports an unavailable deck gracefully', () => {
-    const { getByTestId } = render(
+    const { getByTestId, getByText } = render(
       <CardMeditationForm value={bundled({ deck_id: 'retired_deck' })} onChange={jest.fn()} />,
     );
     expect(getByTestId('card-meditation-deck-summary')).toBeTruthy();
+    expect(getByText('This deck is no longer available.')).toBeTruthy();
   });
 });
 

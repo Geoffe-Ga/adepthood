@@ -38,6 +38,7 @@ import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 import { InsightCaptureModal } from '@/features/Practice/components/InsightCaptureModal';
 import RitualConfiguratorSheet from '@/features/Practice/configurator/RitualConfiguratorSheet';
+import type { PickedCard } from '@/features/Practice/data/resolveCard';
 import { buildCardMeditationMetadata, pickCard } from '@/features/Practice/data/resolveCard';
 import { cardForDayIndex } from '@/features/Practice/data/tarot';
 import { scheduledCues } from '@/features/Practice/engine/cues';
@@ -93,6 +94,8 @@ interface ActiveSession {
   wireMetadata: SessionMetadata;
   summaryMetadata: ModeSummaryMetadata;
   tarotCardIndex: number;
+  /** The card drawn for a `card_meditation` session; `null` for other modes. */
+  cardPick: PickedCard | null;
   completedWindow: { start: Date; end: Date } | null;
   isSaving: boolean;
   saveError: string | null;
@@ -116,6 +119,7 @@ export function ActiveRitualSession(props: ActiveRitualSessionProps): React.JSX.
         state={session.state}
         controls={session.controls}
         tarotCardIndex={session.tarotCardIndex}
+        cardPick={session.cardPick}
         saveError={session.saveError}
       />
       <RitualConfiguratorSheet
@@ -182,13 +186,14 @@ function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
   useKeepAwakeWhileRunning(state.status);
   const window = useCompletionWindow(state.status);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const cardPick = useCardPick(props.effectiveConfig);
   const wireMetadata = useMemo<SessionMetadata>(
-    () => harvestMetadata(props.effectiveConfig, state),
-    [props.effectiveConfig, state],
+    () => harvestMetadata(props.effectiveConfig, state, cardPick),
+    [props.effectiveConfig, state, cardPick],
   );
   const summaryMetadata = useMemo<ModeSummaryMetadata>(
-    () => harvestSummaryMetadata(props.effectiveConfig, state, tarotCardIndex),
-    [props.effectiveConfig, state, tarotCardIndex],
+    () => harvestSummaryMetadata(props.effectiveConfig, state, tarotCardIndex, cardPick),
+    [props.effectiveConfig, state, tarotCardIndex, cardPick],
   );
   const saveMutation = useSaveMutation({
     apply: props.onSessionApply,
@@ -214,12 +219,22 @@ function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
     wireMetadata,
     summaryMetadata,
     tarotCardIndex,
+    cardPick,
     completedWindow: window.completedWindow,
     isSaving: saveMutation.pending,
     saveError,
     submitSession,
     finishAndReset,
   };
+}
+
+/**
+ * Draw the `card_meditation` card once per session. Resolving it here (not
+ * separately in the view and the metadata harvest) guarantees the displayed
+ * card and the recorded card are always the same draw.
+ */
+function useCardPick(config: ModeConfig): PickedCard | null {
+  return useMemo(() => (config.mode === 'card_meditation' ? pickCard(config) : null), [config]);
 }
 
 function useTarotCardIndex(props: ActiveRitualSessionProps): number {
@@ -334,6 +349,7 @@ interface SessionCardProps {
   state: RitualState;
   controls: RitualControls;
   tarotCardIndex: number;
+  cardPick: PickedCard | null;
   saveError: string | null;
 }
 
@@ -369,6 +385,7 @@ function SessionCard(props: SessionCardProps): React.JSX.Element {
         state={props.state}
         controls={props.controls}
         tarotCardIndex={props.tarotCardIndex}
+        cardPick={props.cardPick}
       />
       {props.saveError !== null && (
         <Text style={styles.error} testID="active-practice-save-error">
@@ -384,9 +401,16 @@ interface ModeViewProps {
   state: RitualState;
   controls: RitualControls;
   tarotCardIndex: number;
+  cardPick: PickedCard | null;
 }
 
-function ModeView({ config, state, controls, tarotCardIndex }: ModeViewProps): React.JSX.Element {
+function ModeView({
+  config,
+  state,
+  controls,
+  tarotCardIndex,
+  cardPick,
+}: ModeViewProps): React.JSX.Element {
   switch (config.mode) {
     case 'meditation_timer':
       return <MeditationTimerView state={state} controls={controls} />;
@@ -410,7 +434,9 @@ function ModeView({ config, state, controls, tarotCardIndex }: ModeViewProps): R
         />
       );
     case 'card_meditation':
-      return <CardMeditationView config={config} state={state} controls={controls} />;
+      return (
+        <CardMeditationView config={config} state={state} controls={controls} picked={cardPick} />
+      );
   }
 }
 
@@ -476,7 +502,11 @@ function parseDayKeyMs(key: string): number | null {
  * validates this discriminator against the resolved practice mode and
  * returns 400 ``mode_metadata_mismatch`` otherwise.
  */
-function harvestMetadata(config: ModeConfig, state: RitualState): SessionMetadata {
+function harvestMetadata(
+  config: ModeConfig,
+  state: RitualState,
+  cardPick: PickedCard | null,
+): SessionMetadata {
   switch (config.mode) {
     case 'meditation_timer':
       return { mode: 'meditation_timer' };
@@ -496,7 +526,9 @@ function harvestMetadata(config: ModeConfig, state: RitualState): SessionMetadat
         card_index: normalizeTarotIndex(state.currentStepIndex),
       };
     case 'card_meditation':
-      return buildCardMeditationMetadata(config, pickCard(config));
+      // `cardPick` is resolved once in `useActiveSession`; the fallback only
+      // guards a direct call without a pre-resolved draw.
+      return buildCardMeditationMetadata(config, cardPick ?? pickCard(config));
   }
 }
 
@@ -530,6 +562,7 @@ function harvestSummaryMetadata(
   config: ModeConfig,
   state: RitualState,
   tarotCardIndex: number,
+  cardPick: PickedCard | null,
 ): ModeSummaryMetadata {
   switch (config.mode) {
     case 'meditation_timer':
@@ -563,9 +596,9 @@ function harvestSummaryMetadata(
       return { mode: 'tarot', card_index: idx, card_name: cardForDayIndex(idx).name };
     }
     case 'card_meditation': {
-      // Reuse the wire harvest (and its single `pickCard` draw) rather than
-      // drawing the card a second time — mirrors the `interval_bell` reuse.
-      const wire = harvestMetadata(config, state) as Extract<
+      // Reuse the wire harvest (and its single card draw) rather than drawing
+      // the card a second time — mirrors the `interval_bell` reuse above.
+      const wire = harvestMetadata(config, state, cardPick) as Extract<
         SessionMetadata,
         { mode: 'card_meditation' }
       >;

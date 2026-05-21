@@ -33,12 +33,23 @@ interface Props {
   config: CardMeditationConfig;
   state: RitualState;
   controls: RitualControls;
+  /**
+   * The drawn card, resolved once by the parent so the view and the
+   * harvested session metadata never describe different cards. `null` /
+   * omitted only in isolation tests, where the view draws its own card.
+   */
+  picked?: PickedCard | null;
 }
 
 const PLACEHOLDER_COPY = 'Sit. The card will be revealed when the timer ends.';
 
-const CardMeditationView = ({ config, state, controls }: Props): React.JSX.Element => {
-  const [picked] = useState<PickedCard>(() => pickCard(config));
+const CardMeditationView = ({
+  config,
+  state,
+  controls,
+  picked: pickedProp,
+}: Props): React.JSX.Element => {
+  const [picked] = useState<PickedCard>(() => pickedProp ?? pickCard(config));
   const reveal = config.reveal_after_meditation ?? false;
   const hideTimer = config.hide_timer_during_meditation ?? true;
   const showCard = !reveal || state.status === 'complete';
@@ -67,14 +78,13 @@ const RevealPlaceholder = (): React.JSX.Element => (
 
 const CardFace = ({ card }: { card: CardMeditationCard }): React.JSX.Element => {
   // A device-local `image_uri` may no longer resolve (the user deleted the
-  // photo); `uriError` flips the card to its text rendering instead of
-  // crashing on a broken source.
+  // photo); `uriError` then drops to the bundled asset or text rendering
+  // instead of crashing on a broken source.
   const [uriError, setUriError] = useState(false);
-  const useUri = card.image_uri !== null && !uriError;
+  const deviceSource: ImageSourcePropType | null =
+    card.image_uri !== null && !uriError ? { uri: card.image_uri } : null;
   const assetSource = card.image_asset_key !== null ? resolveCardImage(card.image_asset_key) : null;
-  const imageSource: ImageSourcePropType | null = useUri
-    ? { uri: card.image_uri ?? undefined }
-    : assetSource;
+  const imageSource: ImageSourcePropType | null = deviceSource ?? assetSource;
   const altText = card.symbolism !== null && card.symbolism.length > 0 ? card.symbolism : card.name;
   return (
     <View
@@ -90,7 +100,7 @@ const CardFace = ({ card }: { card: CardMeditationCard }): React.JSX.Element => 
           testID="card-meditation-card-image"
           accessibilityLabel={altText}
           onError={() => {
-            if (useUri) setUriError(true);
+            if (deviceSource !== null) setUriError(true);
           }}
         />
       )}
@@ -149,16 +159,17 @@ const CardFooter = ({ state, controls, hideTimer }: FooterProps): React.JSX.Elem
 const CARD_WIDTH = 280;
 const CARD_MIN_HEIGHT = 380;
 const CARD_IMAGE_HEIGHT = 280;
+/** Generous dark frame around the artwork — lowers visual noise during the sit. */
+const CARD_BORDER_WIDTH = 8;
 
 const styles = StyleSheet.create({
   container: { alignItems: 'center', padding: SPACING.xl },
   card: {
     width: CARD_WIDTH,
     minHeight: CARD_MIN_HEIGHT,
-    // Generous dark frame: lowers visual noise and lets the artwork settle.
     backgroundColor: colors.primary,
     borderRadius: BORDER_RADIUS.xl,
-    borderWidth: 8,
+    borderWidth: CARD_BORDER_WIDTH,
     borderColor: colors.primary,
     padding: SPACING.lg,
     alignItems: 'center',

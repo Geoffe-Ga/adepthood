@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
+import type { PickedCard } from '../../data/resolveCard';
 import type { CardMeditationCard, CardMeditationConfig } from '../../engine/types';
 import CardMeditationView from '../CardMeditationView';
 
@@ -36,6 +37,22 @@ describe('CardMeditationView', () => {
     );
     expect(getByTestId('card-meditation-card-image')).toBeTruthy();
     expect(getByTestId('card-meditation-card-name').props.children).toBeTruthy();
+  });
+
+  it('renders the card supplied by the parent via the picked prop', () => {
+    const picked: PickedCard = {
+      card: { name: 'Parent Card', image_asset_key: null, image_uri: null, symbolism: null },
+      index: 3,
+    };
+    const { getByTestId } = render(
+      <CardMeditationView
+        config={config()}
+        state={fakeState()}
+        controls={fakeControls()}
+        picked={picked}
+      />,
+    );
+    expect(getByTestId('card-meditation-card-name').props.children).toBe('Parent Card');
   });
 
   it('renders a custom card from its device image_uri', () => {

@@ -20,6 +20,7 @@ import type {
 } from './types';
 import {
   CARD_DECK_ID_PATTERN,
+  CARD_IMAGE_URI_PATTERN,
   CARD_MEDITATION_CARDS_MAX,
   CARD_MEDITATION_CUSTOM_DECK_ID,
   CARD_MEDITATION_NAME_MAX,
@@ -194,6 +195,9 @@ function checkCard(card: CardMeditationCard, index: number): string[] {
   }
   if (card.image_asset_key !== null && card.image_uri !== null) {
     errors.push(`${position}: set at most one image source`);
+  }
+  if (card.image_uri !== null && !CARD_IMAGE_URI_PATTERN.test(card.image_uri)) {
+    errors.push(`${position}: photo must be a device file, not a web link`);
   }
   if (card.symbolism !== null && card.symbolism.length > CARD_MEDITATION_SYMBOLISM_MAX) {
     errors.push(`${position}: symbolism must be ≤ ${CARD_MEDITATION_SYMBOLISM_MAX} characters`);

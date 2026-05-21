@@ -194,3 +194,9 @@ export const CARD_MEDITATION_NAME_MAX = 120;
 export const CARD_MEDITATION_SYMBOLISM_MAX = 500;
 /** Deck-id slug pattern; mirrors the backend `CARD_DECK_ID_PATTERN`. */
 export const CARD_DECK_ID_PATTERN = /^[a-z][a-z0-9_]*$/;
+/**
+ * Allowed schemes for a card's `image_uri`; mirrors the backend
+ * `_CARD_IMAGE_URI_PATTERN`. Network/script schemes are rejected so a
+ * stored URI can never trigger a fetch when rendered as an image source.
+ */
+export const CARD_IMAGE_URI_PATTERN = /^(file|content|ph|asset):\/\/[^\s<>"]+$/;

@@ -1,4 +1,3 @@
-/* eslint-env jest */
 import { describe, expect, it } from '@jest/globals';
 
 import type { CardMeditationCard, CardMeditationConfig } from '../../engine/types';

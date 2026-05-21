@@ -1,4 +1,3 @@
-/* eslint-env jest */
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import * as ImagePicker from 'expo-image-picker';
 

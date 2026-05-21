@@ -321,6 +321,28 @@ describe('validateCardMeditation', () => {
     expect(validateCardMeditation(config)[0]).toMatch(/name cannot be empty/i);
   });
 
+  it('rejects a custom card whose photo uri uses a network scheme', () => {
+    const config: CardMeditationConfig = {
+      mode: 'card_meditation',
+      deck_id: 'custom',
+      cards: [
+        { name: 'Web', image_asset_key: null, image_uri: 'https://x/y.png', symbolism: null },
+      ],
+    };
+    expect(validateCardMeditation(config)[0]).toMatch(/web link/i);
+  });
+
+  it('accepts a custom card with a device-file photo uri', () => {
+    const config: CardMeditationConfig = {
+      mode: 'card_meditation',
+      deck_id: 'custom',
+      cards: [
+        { name: 'Photo', image_asset_key: null, image_uri: 'file:///p.jpg', symbolism: null },
+      ],
+    };
+    expect(validateCardMeditation(config)).toEqual([]);
+  });
+
   it('rejects a custom card that sets two image sources', () => {
     const config: CardMeditationConfig = {
       mode: 'card_meditation',
