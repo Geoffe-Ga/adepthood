@@ -185,14 +185,17 @@ def _validated_header_key(header_value: str | None) -> str | None:
 
     Returns ``None`` when the header is absent or empty (so the caller can
     fall back to the env var).  Raises 400 when the value is present but
-    fails length or format checks for the active provider.
+    matches no known provider's key format.  Validation is keyed on the
+    key itself — not on ``BOTMASON_PROVIDER`` — because a BYOK key selects
+    its own provider; a stub-configured server must still accept a real
+    OpenAI / Anthropic key and reject obvious garbage.
     """
     if header_value is None:
         return None
     key = header_value.strip()
     if not key:
         return None
-    if len(key) > LLM_API_KEY_MAX_LENGTH or not validate_llm_api_key_format(key, get_provider()):
+    if provider_for_api_key(key) is None:
         raise bad_request("invalid_llm_api_key_format")
     return key
 
@@ -225,6 +228,41 @@ def validate_llm_api_key_format(api_key: str, provider: str) -> bool:
     if not _has_valid_length(api_key):
         return False
     return _matches_provider_rule(api_key, _PROVIDER_KEY_RULES.get(provider))
+
+
+def provider_for_api_key(api_key: str) -> str | None:
+    """Return the LLM provider a user-supplied BYOK key belongs to, or ``None``.
+
+    A key's prefix unambiguously identifies its provider: Anthropic keys
+    carry the more specific ``sk-ant-`` prefix, OpenAI keys the bare ``sk-``.
+    Each rule in :data:`_PROVIDER_KEY_RULES` already rejects the *other*
+    provider's prefix, so at most one rule matches a well-formed key.
+    Returns ``None`` for any value that matches no known provider so callers
+    can reject it as malformed.
+
+    This is what lets a BYOK key activate a real model even when the server
+    default is ``stub`` — the key, not ``BOTMASON_PROVIDER``, decides the
+    provider whenever one is supplied.
+    """
+    for provider in _PROVIDER_KEY_RULES:
+        if validate_llm_api_key_format(api_key, provider):
+            return provider
+    return None
+
+
+def _provider_for_request(api_key: str | None) -> str:
+    """Return the LLM provider to serve this request.
+
+    A user-supplied BYOK key selects its own provider (derived from the key
+    prefix) so a valid key activates a real model even when the server
+    default is ``stub``.  Requests without a user key fall back to the
+    server-configured :func:`get_provider`.
+    """
+    if api_key is not None:
+        derived = provider_for_api_key(api_key)
+        if derived is not None:
+            return derived
+    return get_provider()
 
 
 def get_system_prompt() -> str:
@@ -512,11 +550,15 @@ async def generate_response(
     server-side ``LLM_API_KEY`` env var. When ``api_key`` is ``None`` the
     env var is used; the key is never persisted or logged by this layer.
 
+    A supplied ``api_key`` also selects the provider: its prefix decides
+    whether the call routes to OpenAI or Anthropic, so a BYOK key activates
+    a real model even when ``BOTMASON_PROVIDER`` is the default ``stub``.
+
     Returns an :class:`LLMResponse` carrying both the generated text and the
     token counts needed to log usage downstream.
     """
     resolved_prompt = system_prompt or get_system_prompt()
-    provider = get_provider()
+    provider = _provider_for_request(api_key)
 
     if provider == "openai":
         return await _call_openai(user_message, conversation_history, resolved_prompt, api_key)
@@ -727,9 +769,13 @@ async def generate_response_stream(
     consumers. The terminal yield carries an :class:`LLMResponse` so callers
     can persist the full message and record usage without a second round-trip
     to the provider.
+
+    As with :func:`generate_response`, a supplied ``api_key`` selects the
+    provider by prefix, so a BYOK key streams from a real model even when
+    ``BOTMASON_PROVIDER`` is the default ``stub``.
     """
     resolved_prompt = system_prompt or get_system_prompt()
-    streamer = _select_provider_streamer(get_provider())
+    streamer = _select_provider_streamer(_provider_for_request(api_key))
     if streamer is None:
         async for item in _stream_stub(user_message):
             yield item
