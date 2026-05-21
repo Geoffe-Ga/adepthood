@@ -29,12 +29,13 @@ interface Props {
 const TalliedGroundingView = ({ config, state, controls, onSave }: Props): React.JSX.Element => {
   const total = totalSteps(config);
   const isComplete = state.status === 'complete' || state.currentStepIndex >= total;
-  const position = decompose(state.currentStepIndex, config);
+  // Skip the decomposition entirely once complete — the result would be unused.
+  const position = isComplete ? null : decompose(state.currentStepIndex, config);
   const canAdvance = state.status === 'running' && !isComplete;
   return (
     <View style={styles.container} testID="tallied-grounding-view">
-      <TalliedHeader config={config} position={isComplete ? null : position} />
-      {isComplete ? (
+      <TalliedHeader config={config} position={position} />
+      {position === null ? (
         <CompleteCard onSave={onSave} />
       ) : (
         <ActivePrompt position={position} canAdvance={canAdvance} onTap={controls.tap} />

@@ -3,7 +3,6 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 
 import type { FrequencyResponse, PracticeItem, UserPractice } from '../../../api';
-import type { ModeConfig } from '../engine/types';
 
 const samplePractice = (overrides: Partial<PracticeItem> = {}): PracticeItem => ({
   id: 1,
@@ -194,7 +193,7 @@ const modeFixtures: ModeFixture[] = [
           { sense: 'smell', label: 'two scents' },
           { sense: 'taste', label: 'one taste' },
         ],
-      } as ModeConfig,
+      },
     }),
     mountTestId: 'sense-grounding-view',
   },
@@ -211,7 +210,7 @@ const modeFixtures: ModeFixture[] = [
           { key: 'triangles', label: 'a triangle', target_count: 3 },
           { key: 'circles', label: 'a circle', target_count: 3 },
         ],
-      } as ModeConfig,
+      },
     }),
     mountTestId: 'tallied-grounding-view',
   },

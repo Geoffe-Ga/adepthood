@@ -510,7 +510,7 @@ function harvestMetadata(config: ModeConfig, state: RitualState): SessionMetadat
 function harvestTalliedGrounding(
   config: TalliedGroundingConfig,
   state: RitualState,
-): SessionMetadata {
+): Extract<SessionMetadata, { mode: 'tallied_grounding' }> {
   const perRound = totalStepsPerRound(config);
   const itemsCompleted = Math.min(state.currentStepIndex, totalSteps(config));
   return {
@@ -579,18 +579,9 @@ function harvestSummaryMetadata(
       >;
       return { mode: 'sense_grounding', senses_completed: wire.senses_completed };
     }
-    case 'tallied_grounding': {
-      const wire = harvestTalliedGrounding(config, state) as Extract<
-        SessionMetadata,
-        { mode: 'tallied_grounding' }
-      >;
-      return {
-        mode: 'tallied_grounding',
-        rounds_completed: wire.rounds_completed,
-        total_rounds: wire.total_rounds,
-        items_completed: wire.items_completed,
-      };
-    }
+    case 'tallied_grounding':
+      // Wire and summary shapes are identical — no presentation-only extras.
+      return harvestTalliedGrounding(config, state);
     case 'tarot': {
       const idx = normalizeTarotIndex(tarotCardIndex);
       return { mode: 'tarot', card_index: idx, card_name: cardForDayIndex(idx).name };
