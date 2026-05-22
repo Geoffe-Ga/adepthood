@@ -53,6 +53,7 @@ import {
   replacePendingCheckIns,
 } from '../../../../storage/habitStorage';
 import { useHabitStore } from '../../../../store/useHabitStore';
+import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import type { Goal, Habit, OnboardingHabit } from '../../Habits.types';
 import { habitManager } from '../habitManager';
 
@@ -595,6 +596,39 @@ describe('habitManager', () => {
       expect(goalCompletionsApi.create).toHaveBeenCalledWith({
         goal_id: ctx.currentGoal.id,
         did_complete: true,
+      });
+    });
+
+    it('prepareLogUnit records completedOn when backfilling a past day', () => {
+      useHabitStore.setState({ habits: [makeHabit()] });
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+
+      const ctx = habitManager.prepareLogUnit(1, 1, 'UTC', yesterday)!;
+
+      expect(ctx.completedOn).toBe(dayKeyInTZ(yesterday, 'UTC'));
+    });
+
+    it('prepareLogUnit leaves completedOn undefined when the date is today', () => {
+      useHabitStore.setState({ habits: [makeHabit()] });
+
+      const ctx = habitManager.prepareLogUnit(1, 1, 'UTC', new Date())!;
+
+      expect(ctx.completedOn).toBeUndefined();
+    });
+
+    it('commitLogUnitContext forwards completed_on for a backfilled day', async () => {
+      useHabitStore.setState({ habits: [makeHabit()] });
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const ctx = habitManager.prepareLogUnit(1, 1, 'UTC', yesterday)!;
+
+      await habitManager.commitLogUnitContext(ctx);
+
+      expect(goalCompletionsApi.create).toHaveBeenCalledWith({
+        goal_id: ctx.currentGoal.id,
+        did_complete: true,
+        completed_on: dayKeyInTZ(yesterday, 'UTC'),
       });
     });
 

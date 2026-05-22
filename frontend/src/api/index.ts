@@ -954,6 +954,11 @@ export const habits = {
 export interface GoalCompletionPayload {
   goal_id: number;
   did_complete?: boolean;
+  /**
+   * Calendar day (``YYYY-MM-DD``, user's timezone) the check-in is for.
+   * Omit to log today; supply a past day to backfill a missed one.
+   */
+  completed_on?: string;
 }
 
 export interface CheckInResult {

@@ -398,7 +398,8 @@ describe('GoalModal edit toggle', () => {
 
     expect(() => testRenderer.root.findByProps({ testID: 'goal-modal-edit-region' })).toThrow();
     expect(() => testRenderer.root.findByProps({ testID: 'goal-target-editor' })).toThrow();
-    expect(() => testRenderer.root.findByProps({ testID: 'modal-progress-fill' })).toThrow();
+    // The progress bar is always visible now — only the editor collapses.
+    expect(testRenderer.root.findByProps({ testID: 'modal-progress-fill' })).toBeTruthy();
   });
 
   it('renders Log Units controls in both collapsed and expanded states', () => {

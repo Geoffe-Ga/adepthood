@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { jest, describe, afterEach, it, expect } from '@jest/globals';
 
-import { STAGE_COLORS, VICTORY_COLOR } from '../../../design/tokens';
+import { brightenColor, STAGE_COLORS } from '../../../design/tokens';
 
 const renderer = require('react-test-renderer');
 
@@ -84,7 +84,7 @@ const assertTileLayout = (tile: any, height: number, expectedColumns: number): v
   const val = parseFloat(fillStyle.width);
   expect(val).toBeGreaterThanOrEqual(0);
   expect(val).toBeLessThanOrEqual(100);
-  const validBarColors = [...colorValues, VICTORY_COLOR];
+  const validBarColors = [...colorValues, ...colorValues.map(brightenColor)];
   expect(validBarColors).toContain(fillStyle.backgroundColor);
 };
 

@@ -2,7 +2,7 @@
 /* global describe, test, expect, jest */
 import { validate as uuidValidate } from 'uuid';
 
-import { VICTORY_COLOR } from '../../../design/tokens';
+import { brightenColor, STAGE_COLORS } from '../../../design/tokens';
 import type { Habit, Goal } from '../Habits.types';
 import {
   getProgressPercentage,
@@ -443,7 +443,7 @@ describe('HabitUtils', () => {
         goals: additiveGoals,
         completions: [{ id: 'y-1', timestamp: yesterdayUtc(), completed_units: 5 }],
       };
-      expect(getProgressBarColor(habit, 'UTC')).not.toBe(VICTORY_COLOR);
+      expect(getProgressBarColor(habit, 'UTC')).toBe(STAGE_COLORS.Beige);
     });
 
     test('today-only progress combined with all-time history advances the tier on todays log', () => {
@@ -526,7 +526,7 @@ describe('HabitUtils', () => {
       expect(currentGoal.tier).toBe('stretch');
       expect(completedAllGoals).toBe(true);
       expect(getProgressPercentage(habit, currentGoal, 'UTC')).toBe(100);
-      expect(getProgressBarColor(habit, 'UTC')).toBe(VICTORY_COLOR);
+      expect(getProgressBarColor(habit, 'UTC')).toBe(brightenColor(STAGE_COLORS.Blue!));
     });
 
     test('subtractive habit drops out of victory once today crosses stretch', () => {

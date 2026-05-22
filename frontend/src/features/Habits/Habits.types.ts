@@ -102,7 +102,8 @@ export interface GoalModalProps {
   habit: Habit | null;
   onClose: () => void;
   onUpdateGoal: (_habitId: number, _updatedGoal: Goal) => void;
-  onLogUnit: (_habitId: number, _amount: number) => void;
+  /** ``date`` backfills a past day; omit to log against today. */
+  onLogUnit: (_habitId: number, _amount: number, _date?: Date) => void;
   onUpdateHabit: (_updatedHabit: Habit) => void;
 }
 
@@ -178,7 +179,8 @@ export interface AddHabitInput {
 export interface HabitsActions {
   loadHabits: () => Promise<void>;
   updateGoal: (_habitId: number, _updatedGoal: Goal) => void;
-  logUnit: (_habitId: number, _amount: number) => void;
+  /** ``date`` backfills a past day; omit to log against today. */
+  logUnit: (_habitId: number, _amount: number, _date?: Date) => void;
   updateHabit: (_updatedHabit: Habit) => void;
   deleteHabit: (_habitId: number) => void;
   addHabit: (_input: AddHabitInput) => Promise<void>;
