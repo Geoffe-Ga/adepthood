@@ -501,8 +501,10 @@ function parseDayKeyMs(key: string): number | null {
  * `unit_label`, `card_name` from `ModeSummaryMetadata`). The backend
  * validates this discriminator against the resolved practice mode and
  * returns 400 ``mode_metadata_mismatch`` otherwise.
+ *
+ * Exported for unit testing the per-mode harvest branches.
  */
-function harvestMetadata(
+export function harvestMetadata(
   config: ModeConfig,
   state: RitualState,
   cardPick: PickedCard | null,
@@ -557,8 +559,10 @@ function normalizeTarotIndex(index: number): number {
  * Presentation-layer metadata for the ritual-12 `InsightCaptureModal`
  * summary. Carries the same fields as the wire `SessionMetadata` plus
  * presentation-only extras (`unit_label`, `card_name`) the formatter needs.
+ *
+ * Exported for unit testing the per-mode harvest branches.
  */
-function harvestSummaryMetadata(
+export function harvestSummaryMetadata(
   config: ModeConfig,
   state: RitualState,
   tarotCardIndex: number,
