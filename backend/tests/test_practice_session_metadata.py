@@ -21,6 +21,7 @@ from schemas.practice_session_metadata import (
     MeditationTimerMetadata,
     MetronomeMetadata,
     MindfulAnchorMetadata,
+    RandomIntervalBellMetadata,
     RepCounterMetadata,
     SenseGroundingMetadata,
     SessionMetadataAdapter,
@@ -439,3 +440,127 @@ def test_card_meditation_metadata_does_not_disturb_tarot() -> None:
     """Adding ``card_meditation`` to the union must not change ``tarot`` dispatch."""
     payload = SessionMetadataAdapter.validate_python({"mode": "tarot", "card_index": 5})
     assert type(payload) is TarotMetadata
+
+
+# -- random_interval_bell metadata ------------------------------------------
+
+#: Inclusive ceiling for ``bells_struck`` and ``interval_seconds`` length —
+#: mirrors the private ``_MAX_INTERVALS`` in the metadata module.
+_RANDOM_BELL_MAX = 1_000
+
+
+def test_random_interval_bell_metadata_round_trip() -> None:
+    """One ``interval_seconds`` entry per struck bell (``len == bells_struck``)."""
+    payload = SessionMetadataAdapter.validate_python(
+        {
+            "mode": "random_interval_bell",
+            "bells_struck": 3,
+            "interval_seconds": [42, 88, 17],
+        }
+    )
+    assert isinstance(payload, RandomIntervalBellMetadata)
+    assert payload.bells_struck == 3
+    assert payload.interval_seconds == [42, 88, 17]
+
+
+def test_random_interval_bell_metadata_defaults_to_empty_list() -> None:
+    """A session that struck no recorded gaps still round-trips."""
+    payload = SessionMetadataAdapter.validate_python(
+        {"mode": "random_interval_bell", "bells_struck": 0}
+    )
+    assert isinstance(payload, RandomIntervalBellMetadata)
+    assert payload.interval_seconds == []
+
+
+def test_random_interval_bell_metadata_accepts_empty_interval_list() -> None:
+    """An explicit empty ``interval_seconds`` list is valid."""
+    payload = SessionMetadataAdapter.validate_python(
+        {"mode": "random_interval_bell", "bells_struck": 1, "interval_seconds": []}
+    )
+    assert isinstance(payload, RandomIntervalBellMetadata)
+    assert payload.interval_seconds == []
+
+
+def test_random_interval_bell_metadata_accepts_max_length_list() -> None:
+    """A full-length ``interval_seconds`` list at the ceiling is valid (boundary)."""
+    payload = RandomIntervalBellMetadata(
+        mode="random_interval_bell",
+        bells_struck=_RANDOM_BELL_MAX,
+        interval_seconds=[1] * _RANDOM_BELL_MAX,
+    )
+    assert len(payload.interval_seconds) == _RANDOM_BELL_MAX
+
+
+def test_random_interval_bell_metadata_rejects_overlong_list() -> None:
+    """A list past the ceiling is rejected — the cap bounds the payload."""
+    with pytest.raises(ValidationError):
+        RandomIntervalBellMetadata(
+            mode="random_interval_bell",
+            bells_struck=0,
+            interval_seconds=[1] * (_RANDOM_BELL_MAX + 1),
+        )
+
+
+def test_random_interval_bell_metadata_rejects_negative_bells() -> None:
+    with pytest.raises(ValidationError):
+        RandomIntervalBellMetadata(mode="random_interval_bell", bells_struck=-1)
+
+
+def test_random_interval_bell_metadata_rejects_bells_past_cap() -> None:
+    with pytest.raises(ValidationError):
+        RandomIntervalBellMetadata(mode="random_interval_bell", bells_struck=_RANDOM_BELL_MAX + 1)
+
+
+def test_random_interval_bell_metadata_rejects_nonpositive_interval() -> None:
+    """Each gap is at least one second — a zero or negative gap is impossible."""
+    for bad in (0, -5):
+        with pytest.raises(ValidationError):
+            RandomIntervalBellMetadata(
+                mode="random_interval_bell", bells_struck=1, interval_seconds=[bad]
+            )
+
+
+def test_random_interval_bell_metadata_rejects_more_intervals_than_bells() -> None:
+    """``interval_seconds`` cannot record more gaps than bells that rang.
+
+    Each entry times one struck bell, so a list longer than
+    ``bells_struck`` would mean timing a bell that never rang — the
+    cross-field validator rejects it.
+    """
+    with pytest.raises(ValidationError):
+        RandomIntervalBellMetadata(
+            mode="random_interval_bell", bells_struck=2, interval_seconds=[10, 20, 30]
+        )
+
+
+def test_random_interval_bell_metadata_accepts_intervals_equal_to_bells() -> None:
+    """One entry per struck bell is the inclusive boundary the contract allows."""
+    payload = RandomIntervalBellMetadata(
+        mode="random_interval_bell", bells_struck=3, interval_seconds=[10, 20, 30]
+    )
+    assert len(payload.interval_seconds) == payload.bells_struck == 3
+
+
+def test_random_interval_bell_metadata_accepts_fewer_intervals_than_bells() -> None:
+    """A partial timing log (fewer gaps than bells) is valid."""
+    payload = RandomIntervalBellMetadata(
+        mode="random_interval_bell", bells_struck=5, interval_seconds=[10, 20]
+    )
+    assert payload.bells_struck == 5
+    assert payload.interval_seconds == [10, 20]
+
+
+def test_random_interval_bell_metadata_rejects_extra_fields() -> None:
+    """``extra="forbid"`` catches typos like ``bellsStruck``."""
+    with pytest.raises(ValidationError):
+        SessionMetadataAdapter.validate_python(
+            {"mode": "random_interval_bell", "bells_struck": 1, "bellsStruck": 1}
+        )
+
+
+def test_random_interval_bell_metadata_does_not_disturb_interval_bell() -> None:
+    """Adding ``random_interval_bell`` must not change ``interval_bell`` dispatch."""
+    payload = SessionMetadataAdapter.validate_python(
+        {"mode": "interval_bell", "intervals_struck": 4, "total_intervals": 6}
+    )
+    assert type(payload) is IntervalBellMetadata

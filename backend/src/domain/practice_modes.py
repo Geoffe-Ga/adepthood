@@ -25,6 +25,7 @@ class PracticeMode(StrEnum):
     TALLIED_GROUNDING = "tallied_grounding"
     MINDFUL_ANCHOR = "mindful_anchor"
     CARD_MEDITATION = "card_meditation"
+    RANDOM_INTERVAL_BELL = "random_interval_bell"
 
 
 #: Ordered tuple of wire values, suitable for CHECK constraints and docs.

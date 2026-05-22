@@ -18,6 +18,7 @@ from schemas.practice_mode_config import (
     MindfulAnchorOption,
     ModeConfig,
     ModeConfigAdapter,
+    RandomIntervalBellConfig,
     RepCounterConfig,
     SenseGroundingConfig,
     TalliedCategory,
@@ -648,3 +649,120 @@ def test_card_meditation_card_rejects_unsafe_image_uri_schemes(unsafe_uri: str) 
     """
     with pytest.raises(ValidationError):
         CardMeditationCard(name="Photo", image_uri=unsafe_uri)
+
+
+# -- random_interval_bell config --------------------------------------------
+
+
+def _random_interval_bell_payload(**overrides: object) -> dict[str, object]:
+    """Minimal valid ``random_interval_bell`` config payload."""
+    payload: dict[str, object] = {
+        "mode": "random_interval_bell",
+        "duration_minutes": 20,
+        "min_interval_seconds": 30,
+        "max_interval_seconds": 120,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_random_interval_bell_round_trip() -> None:
+    """The full payload round-trips and dispatches to the right subclass."""
+    cfg = _ADAPTER.validate_python(
+        _random_interval_bell_payload(
+            bell_tone="chime",
+            max_bells=12,
+            start_bell=False,
+            end_bell=False,
+        )
+    )
+    assert isinstance(cfg, RandomIntervalBellConfig)
+    assert cfg.min_interval_seconds == 30
+    assert cfg.max_interval_seconds == 120
+    assert cfg.bell_tone == "chime"
+    assert cfg.max_bells == 12
+    assert cfg.start_bell is False
+    assert cfg.end_bell is False
+
+
+def test_random_interval_bell_defaults() -> None:
+    """The minimal payload defaults to a bowl tone, both bells on, no cap."""
+    cfg = _ADAPTER.validate_python(_random_interval_bell_payload())
+    assert isinstance(cfg, RandomIntervalBellConfig)
+    assert cfg.bell_tone == "bowl"
+    assert cfg.max_bells is None
+    assert cfg.start_bell is True
+    assert cfg.end_bell is True
+
+
+def test_random_interval_bell_rejects_max_below_min() -> None:
+    """``max_interval_seconds < min_interval_seconds`` is an empty range."""
+    with pytest.raises(ValidationError):
+        _ADAPTER.validate_python(
+            _random_interval_bell_payload(min_interval_seconds=120, max_interval_seconds=60)
+        )
+
+
+def test_random_interval_bell_accepts_equal_min_and_max() -> None:
+    """A degenerate but valid range — every gap is the same length (boundary)."""
+    cfg = _ADAPTER.validate_python(
+        _random_interval_bell_payload(min_interval_seconds=60, max_interval_seconds=60)
+    )
+    assert isinstance(cfg, RandomIntervalBellConfig)
+    assert cfg.min_interval_seconds == cfg.max_interval_seconds == 60
+
+
+def test_random_interval_bell_rejects_min_beyond_duration() -> None:
+    """A ``min`` longer than the whole session means no bell could ever fire."""
+    with pytest.raises(ValidationError):
+        _ADAPTER.validate_python(
+            _random_interval_bell_payload(
+                duration_minutes=1,
+                min_interval_seconds=120,
+                max_interval_seconds=180,
+            )
+        )
+
+
+def test_random_interval_bell_accepts_min_equal_to_duration() -> None:
+    """``min`` exactly equal to the window fits one bell (inclusive boundary)."""
+    cfg = _ADAPTER.validate_python(
+        _random_interval_bell_payload(
+            duration_minutes=1,
+            min_interval_seconds=60,
+            max_interval_seconds=60,
+        )
+    )
+    assert isinstance(cfg, RandomIntervalBellConfig)
+    assert cfg.min_interval_seconds == 60
+
+
+def test_random_interval_bell_rejects_subfloor_min_interval() -> None:
+    """``min_interval_seconds`` has a 5-second floor — tighter is not a cue."""
+    with pytest.raises(ValidationError):
+        _ADAPTER.validate_python(_random_interval_bell_payload(min_interval_seconds=4))
+
+
+def test_random_interval_bell_rejects_zero_max_bells() -> None:
+    """``max_bells`` is an optional cap but, when set, must allow at least one."""
+    with pytest.raises(ValidationError):
+        _ADAPTER.validate_python(_random_interval_bell_payload(max_bells=0))
+
+
+def test_random_interval_bell_rejects_extra_fields() -> None:
+    """``extra="forbid"`` catches typos like ``minIntervalSeconds``."""
+    with pytest.raises(ValidationError):
+        _ADAPTER.validate_python(_random_interval_bell_payload(minIntervalSeconds=30))
+
+
+def test_random_interval_bell_does_not_disturb_interval_bell() -> None:
+    """Adding ``random_interval_bell`` to the union must not change dispatch."""
+    cfg = _ADAPTER.validate_python(
+        {
+            "mode": "interval_bell",
+            "duration_minutes": 20,
+            "interval_minutes": 5,
+            "bell_tone": "bowl",
+        }
+    )
+    assert type(cfg) is IntervalBellConfig
