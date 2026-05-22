@@ -12,17 +12,22 @@ from sqlmodel import select
 from models.practice import Practice
 from schemas.practice_mode_config import (
     MetronomeConfig,
+    MindfulAnchorConfig,
     ModeConfigAdapter,
     SenseGroundingConfig,
 )
 from seed_practices import (
+    CANONICAL_PRESET_PRACTICES,
     PRESET_PRACTICES,
     STAGE_TO_PRESET_NAME,
     seed_practices,
 )
 from seed_stages import STAGE_DEFINITIONS
 
-_EXPECTED_PRESET_COUNT = 10
+#: Total catalog presets the seeder inserts. Derived from the source list
+#: so adding a preset never silently drifts these expectations — mirrors
+#: the dynamic count in ``test_lifespan_seeding.py``.
+_EXPECTED_PRESET_COUNT = len(PRESET_PRACTICES)
 #: Stage number outside the canonical 1..10 range. Used by the
 #: name-collision test to plant a user submission that the seeder must
 #: ignore — the bare ``Practice`` model has no FK or range check on
@@ -42,7 +47,7 @@ _SENSE_ORDER: tuple[tuple[str, int], ...] = (
 
 @pytest.mark.asyncio
 async def test_seed_practices_inserts_all(db_session: AsyncSession) -> None:
-    """Empty DB → all 10 presets are inserted; the function returns 10."""
+    """Empty DB → every preset is inserted; the function returns the count."""
     inserted = await seed_practices(db_session)
     assert inserted == _EXPECTED_PRESET_COUNT
 
@@ -216,18 +221,89 @@ async def test_seed_practices_does_not_collide_with_user_named_practice(
     assert inserted == _EXPECTED_PRESET_COUNT
 
 
+async def _seed_and_fetch(db_session: AsyncSession, name: str) -> Practice:
+    """Run the seeder, then return the single ``Practice`` row named ``name``."""
+    await seed_practices(db_session)
+    result = await db_session.execute(select(Practice).where(Practice.name == name))
+    return result.scalars().one()
+
+
+@pytest.mark.asyncio
+async def test_touch_grass_preset_seeds(db_session: AsyncSession) -> None:
+    """Touch Grass seeds as a stage-1 mindful_anchor preset with 4 anchor options."""
+    row = await _seed_and_fetch(db_session, "Touch Grass")
+
+    assert row.stage_number == 1
+    assert row.mode == "mindful_anchor"
+    assert row.description
+    assert row.instructions
+
+    cfg = MindfulAnchorConfig.model_validate(row.mode_config)
+    assert [opt.key for opt in cfg.options] == ["grass", "soil", "sand", "stone"]
+    assert cfg.require_option_choice is True
+    assert cfg.min_duration_seconds == 120
+    assert all(opt.description for opt in cfg.options)
+
+
+@pytest.mark.asyncio
+async def test_mindful_eating_preset_seeds(db_session: AsyncSession) -> None:
+    """Mindful Eating seeds as a mindful_anchor preset with 5 options and a 180s floor."""
+    row = await _seed_and_fetch(db_session, "Mindful Eating")
+
+    assert row.stage_number == 1
+    assert row.mode == "mindful_anchor"
+
+    cfg = MindfulAnchorConfig.model_validate(row.mode_config)
+    assert [opt.key for opt in cfg.options] == [
+        "nuts_seeds",
+        "root_vegetable",
+        "whole_grain",
+        "dark_chocolate",
+        "fresh_fruit",
+    ]
+    assert cfg.instruction.strip() != ""
+    assert cfg.min_duration_seconds == 180
+    assert cfg.require_option_choice is True
+
+
+@pytest.mark.asyncio
+async def test_seed_is_idempotent_with_new_presets(db_session: AsyncSession) -> None:
+    """Re-running the seeder leaves exactly one row for each mindful_anchor preset."""
+    first = await seed_practices(db_session)
+    second = await seed_practices(db_session)
+    assert first == _EXPECTED_PRESET_COUNT
+    assert second == 0
+
+    for name in ("Touch Grass", "Mindful Eating"):
+        result = await db_session.execute(select(Practice).where(Practice.name == name))
+        assert len(result.scalars().all()) == 1
+
+
 # -- Preset data validation -------------------------------------------------
 
 
-def test_preset_practices_count_matches_stage_total() -> None:
-    """One preset per CourseStage row, exactly."""
-    assert len(PRESET_PRACTICES) == len(STAGE_DEFINITIONS) == _EXPECTED_PRESET_COUNT
+def test_canonical_presets_match_stage_total() -> None:
+    """Exactly one canonical preset per CourseStage row.
+
+    The full :data:`PRESET_PRACTICES` list is larger than the stage count
+    because a stage may carry alternative presets alongside its canonical
+    one; the canonical subset stays 1:1 with the stages.
+    """
+    assert len(CANONICAL_PRESET_PRACTICES) == len(STAGE_DEFINITIONS)
+    assert len(PRESET_PRACTICES) > len(CANONICAL_PRESET_PRACTICES)
 
 
-def test_preset_practices_cover_each_stage_once() -> None:
-    """Stage numbers 1..10 appear exactly once across the preset list."""
-    seen = sorted(p["stage_number"] for p in PRESET_PRACTICES)
-    assert seen == list(range(1, _EXPECTED_PRESET_COUNT + 1))
+def test_canonical_presets_cover_each_stage_once() -> None:
+    """Stage numbers 1..10 appear exactly once across the canonical presets."""
+    seen = sorted(p["stage_number"] for p in CANONICAL_PRESET_PRACTICES)
+    assert seen == list(range(1, len(STAGE_DEFINITIONS) + 1))
+
+
+def test_every_preset_sits_on_a_known_stage() -> None:
+    """Every preset — canonical or alternative — lands on a defined stage."""
+    valid_stages = set(range(1, len(STAGE_DEFINITIONS) + 1))
+    for preset in PRESET_PRACTICES:
+        assert preset["stage_number"] in valid_stages
 
 
 def test_every_preset_mode_config_is_valid() -> None:
@@ -286,7 +362,23 @@ def test_shadow_work_preset_uses_exact_metronome_config() -> None:
     assert cfg.timer.halfway_bell is True
 
 
-def test_stage_to_preset_name_map_matches_preset_list() -> None:
-    """``STAGE_TO_PRESET_NAME`` is the source of truth ritual-05 imports."""
-    expected = {p["stage_number"]: p["name"] for p in PRESET_PRACTICES}
+def test_stage_to_preset_name_map_matches_canonical_presets() -> None:
+    """``STAGE_TO_PRESET_NAME`` is the canonical-preset table ritual-05 imports."""
+    expected = {p["stage_number"]: p["name"] for p in CANONICAL_PRESET_PRACTICES}
     assert expected == STAGE_TO_PRESET_NAME
+
+
+def test_alternative_presets_never_shadow_the_canonical_pointer() -> None:
+    """Touch Grass / Mindful Eating sit on stage 1 but never become its canonical preset.
+
+    They are seeded into the catalog (so the chooser can offer them) yet
+    excluded from ``STAGE_TO_PRESET_NAME`` so the frequency-banner endpoint
+    keeps resolving stage 1 to the canonical 5-4-3-2-1 grounding preset.
+    """
+    alternative_names = {"Touch Grass", "Mindful Eating"}
+    all_names = {p["name"] for p in PRESET_PRACTICES}
+    canonical_names = {p["name"] for p in CANONICAL_PRESET_PRACTICES}
+    assert alternative_names <= all_names
+    assert alternative_names.isdisjoint(canonical_names)
+    assert alternative_names.isdisjoint(STAGE_TO_PRESET_NAME.values())
+    assert STAGE_TO_PRESET_NAME[1] == "5-4-3-2-1 grounding"
