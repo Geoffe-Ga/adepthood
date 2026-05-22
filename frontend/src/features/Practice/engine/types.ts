@@ -107,6 +107,30 @@ export interface CardMeditationConfig {
   cards?: readonly CardMeditationCard[] | null;
 }
 
+/**
+ * One category in a tallied-grounding round. `key` is the machine slug
+ * used for analytics; `label` is the display string and is expected to
+ * carry its own article (e.g. `"a square"`) so the view can render
+ * `Find {label}` directly. Mirrors the backend `TalliedCategory`.
+ */
+export interface TalliedCategory {
+  key: string;
+  label: string;
+  target_count: number;
+}
+
+/**
+ * Rounds-by-categories-by-target-count shape shared by Find Shapes and
+ * Find Colors. Total steps = `rounds × sum(category.target_count)`; the
+ * view derives `(round, category, item)` from the linear
+ * `currentStepIndex`. Mirrors the backend `TalliedGroundingConfig`.
+ */
+export interface TalliedGroundingConfig {
+  mode: 'tallied_grounding';
+  rounds: number;
+  categories: readonly TalliedCategory[];
+}
+
 export type ModeConfig =
   | MeditationTimerConfig
   | CountUpConfig
@@ -114,8 +138,21 @@ export type ModeConfig =
   | IntervalBellConfig
   | RepCounterConfig
   | SenseGroundingConfig
+  | TalliedGroundingConfig
   | TarotConfig
   | CardMeditationConfig;
+
+/**
+ * Per-session metadata emitted when a tallied-grounding ritual completes.
+ * Mirrors the backend `TalliedGroundingMetadata`; `rounds_completed` never
+ * exceeds `total_rounds`.
+ */
+export interface TalliedGroundingMetadata {
+  mode: 'tallied_grounding';
+  rounds_completed: number;
+  total_rounds: number;
+  items_completed: number;
+}
 
 export interface RitualState {
   status: EngineStatus;

@@ -8,6 +8,10 @@ import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
 const LOGIN_FALLBACK =
   "We couldn't sign you in. Check your connection, then try again in a moment.";
 
+// Cap the form width so fields don't stretch edge-to-edge on laptop/desktop
+// browsers; on phones the screen is narrower than this so it has no effect.
+const FORM_MAX_WIDTH = 480;
+
 interface Props {
   navigation: { navigate: (_screen: string) => void };
 }
@@ -123,20 +127,22 @@ export default function LoginScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Adepthood</Text>
-      <LoginFields
-        email={email}
-        setEmail={setEmail}
-        password={password}
-        setPassword={setPassword}
-      />
-      {error && <Text style={styles.error}>{error}</Text>}
-      <LoginActions
-        submitting={submitting}
-        onLogin={handleLogin}
-        onNavigateSignup={() => navigation.navigate('Signup')}
-        onNavigateForgot={() => navigation.navigate('ForgotPassword')}
-      />
+      <View style={styles.form}>
+        <Text style={styles.title}>Adepthood</Text>
+        <LoginFields
+          email={email}
+          setEmail={setEmail}
+          password={password}
+          setPassword={setPassword}
+        />
+        {error && <Text style={styles.error}>{error}</Text>}
+        <LoginActions
+          submitting={submitting}
+          onLogin={handleLogin}
+          onNavigateSignup={() => navigation.navigate('Signup')}
+          onNavigateForgot={() => navigation.navigate('ForgotPassword')}
+        />
+      </View>
     </View>
   );
 }
@@ -147,6 +153,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: SPACING.xl,
     backgroundColor: colors.background.card,
+  },
+  form: {
+    width: '100%',
+    maxWidth: FORM_MAX_WIDTH,
+    alignSelf: 'center',
   },
   title: { fontSize: 28, fontWeight: 'bold', textAlign: 'center', marginBottom: SPACING.xxl },
   input: {

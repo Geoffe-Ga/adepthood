@@ -24,6 +24,7 @@ from services.botmason import (
     LLMResponse,
     generate_response,
     get_system_prompt,
+    provider_for_api_key,
     validate_llm_api_key_format,
 )
 from services.usage import (
@@ -1011,6 +1012,92 @@ async def test_generate_response_uses_override_key(
 
     assert result.text == "overridden"
     assert _forwarded_key(mock_call) == _VALID_OPENAI_KEY
+
+
+def test_provider_for_api_key_derives_provider_from_prefix() -> None:
+    """A BYOK key resolves to the provider its prefix identifies."""
+    assert provider_for_api_key(_VALID_OPENAI_KEY) == "openai"
+    assert provider_for_api_key(_VALID_ANTHROPIC_KEY) == "anthropic"
+    assert provider_for_api_key("not-a-real-key") is None
+    assert provider_for_api_key("") is None
+
+
+@pytest.mark.asyncio
+async def test_byok_key_activates_real_provider_on_stub_server(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
+) -> None:
+    """A BYOK key routes to its real provider even when the server default is stub.
+
+    Regression: ``generate_response`` previously dispatched purely on
+    ``BOTMASON_PROVIDER``, so a user-supplied key changed nothing on a
+    stub-configured server — pasting an LLM token had no effect at all.
+    """
+    monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    headers = await _signup(async_client)
+    await _add_balance(db_session, amount=1)
+    headers[LLM_API_KEY_HEADER] = _VALID_OPENAI_KEY
+
+    mock_call = AsyncMock(return_value=_mock_openai_response("real-llm-response"))
+    with patch.object(botmason_mod, "_call_openai", mock_call):
+        resp = await async_client.post(
+            "/journal/chat",
+            json={"message": "Hello"},
+            headers=headers,
+        )
+
+    assert resp.status_code == HTTPStatus.CREATED
+    assert resp.json()["response"] == "real-llm-response"
+    assert _forwarded_key(mock_call) == _VALID_OPENAI_KEY
+
+
+@pytest.mark.asyncio
+async def test_generate_response_byok_key_overrides_stub_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``generate_response`` dispatches on the BYOK key's provider, not the env."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    mock_call = AsyncMock(return_value=_mock_openai_response("byok-on-stub"))
+    with patch.object(botmason_mod, "_call_openai", mock_call):
+        result = await generate_response("hi", [], api_key=_VALID_OPENAI_KEY)
+
+    assert result.text == "byok-on-stub"
+    assert _forwarded_key(mock_call) == _VALID_OPENAI_KEY
+
+
+@pytest.mark.asyncio
+async def test_generate_response_stream_byok_key_overrides_stub_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``generate_response_stream`` also honours the BYOK key's provider on a stub server."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    async def _fake(
+        _msg: str,
+        _history: list[dict[str, str]],
+        _prompt: str,
+        api_key: str | None,
+    ) -> AsyncIterator[tuple[str, LLMResponse | None]]:
+        yield "", _mock_openai_response(api_key or "")
+
+    monkeypatch.setattr(botmason_mod, "_stream_openai", _fake)
+    chunks = [
+        item
+        async for item in botmason_mod.generate_response_stream(
+            "hi",
+            [],
+            api_key=_VALID_OPENAI_KEY,
+        )
+    ]
+
+    assert chunks[-1][1] is not None
+    assert chunks[-1][1].text == _VALID_OPENAI_KEY
 
 
 # ── Monthly message cap / token wallet (issue #186) ───────────────────

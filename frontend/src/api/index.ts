@@ -1661,6 +1661,13 @@ export interface CardMeditationSessionMetadata {
   card_drawn_index?: number;
 }
 
+export interface TalliedGroundingSessionMetadata {
+  mode: 'tallied_grounding';
+  rounds_completed: number;
+  total_rounds: number;
+  items_completed: number;
+}
+
 export type SessionMetadata =
   | MeditationTimerSessionMetadata
   | CountUpSessionMetadata
@@ -1668,6 +1675,7 @@ export type SessionMetadata =
   | IntervalBellSessionMetadata
   | RepCounterSessionMetadata
   | SenseGroundingSessionMetadata
+  | TalliedGroundingSessionMetadata
   | TarotSessionMetadata
   | CardMeditationSessionMetadata;
 

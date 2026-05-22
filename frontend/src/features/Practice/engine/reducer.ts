@@ -1,10 +1,14 @@
 import { scheduledCues } from './cues';
+import { totalSteps } from './tallied';
 import type {
+  CardMeditationConfig,
   EngineAction,
   EngineState,
   ModeConfig,
   RepCounterConfig,
   SenseGroundingConfig,
+  TalliedGroundingConfig,
+  TarotConfig,
 } from './types';
 import {
   DEFAULT_CARD_MEDITATION_MINUTES,
@@ -143,12 +147,14 @@ function handleTap(state: EngineState, config: ModeConfig): EngineState {
   if (state.status !== 'running') return state;
   if (config.mode === 'rep_counter') return tapRep(state, config);
   if (config.mode === 'sense_grounding') return advanceSense(state, config);
+  if (config.mode === 'tallied_grounding') return advanceTallied(state, config);
   return state;
 }
 
 function handleAdvanceStep(state: EngineState, config: ModeConfig): EngineState {
   if (state.status !== 'running') return state;
   if (config.mode === 'sense_grounding') return advanceSense(state, config);
+  if (config.mode === 'tallied_grounding') return advanceTallied(state, config);
   if (config.mode === 'tarot') {
     return { ...state, currentStepIndex: (state.currentStepIndex + 1) % TAROT_DECK_SIZE };
   }
@@ -177,10 +183,22 @@ function advanceSense(state: EngineState, config: SenseGroundingConfig): EngineS
   };
 }
 
+function advanceTallied(state: EngineState, config: TalliedGroundingConfig): EngineState {
+  const idx = state.currentStepIndex + 1;
+  const total = totalSteps(config);
+  return {
+    ...state,
+    currentStepIndex: idx,
+    progress: total > 0 ? Math.min(1, idx / total) : 0,
+    status: idx >= total ? 'complete' : state.status,
+  };
+}
+
 export function getTotalMs(config: ModeConfig): number | null {
   switch (config.mode) {
     case 'count_up':
     case 'sense_grounding':
+    case 'tallied_grounding':
       return null;
     case 'meditation_timer':
     case 'interval_bell':
@@ -188,28 +206,47 @@ export function getTotalMs(config: ModeConfig): number | null {
     case 'metronome':
       return config.timer.duration_minutes * MS_PER_MINUTE;
     case 'tarot':
-      return perCardTotalMs(config.per_card_minutes, DEFAULT_TAROT_MINUTES);
+      return tarotTotalMs(config);
     case 'card_meditation':
-      return perCardTotalMs(config.per_card_minutes, DEFAULT_CARD_MEDITATION_MINUTES);
+      return cardMeditationTotalMs(config);
     case 'rep_counter':
-      return config.time_cap_minutes != null ? config.time_cap_minutes * MS_PER_MINUTE : null;
+      return repCounterTotalMs(config);
   }
 }
 
-/** Resolve a per-card sit length (with its mode default) to milliseconds. */
-function perCardTotalMs(minutes: number | undefined, fallback: number): number {
-  return (minutes ?? fallback) * MS_PER_MINUTE;
+function tarotTotalMs(config: TarotConfig): number {
+  return (config.per_card_minutes ?? DEFAULT_TAROT_MINUTES) * MS_PER_MINUTE;
+}
+
+function cardMeditationTotalMs(config: CardMeditationConfig): number {
+  return (config.per_card_minutes ?? DEFAULT_CARD_MEDITATION_MINUTES) * MS_PER_MINUTE;
+}
+
+function repCounterTotalMs(config: RepCounterConfig): number | null {
+  return config.time_cap_minutes != null ? config.time_cap_minutes * MS_PER_MINUTE : null;
+}
+
+/** Fraction in [0, 1] of a step- or rep-counted ritual; 0 when unbounded. */
+function stepProgress(completed: number, total: number): number {
+  return total > 0 ? Math.min(1, completed / total) : 0;
+}
+
+/** Fraction in [0, 1] of a time-bounded ritual; 0 when the total is open. */
+function timeProgress(elapsedMs: number, totalMs: number | null): number {
+  return totalMs !== null && totalMs > 0 ? Math.min(1, elapsedMs / totalMs) : 0;
 }
 
 function getProgress(state: EngineState, config: ModeConfig, elapsedMs: number): number {
-  if (config.mode === 'count_up') return 0;
-  if (config.mode === 'rep_counter') {
-    return config.target_reps > 0 ? Math.min(1, state.repCount / config.target_reps) : 0;
+  switch (config.mode) {
+    case 'count_up':
+      return 0;
+    case 'rep_counter':
+      return stepProgress(state.repCount, config.target_reps);
+    case 'sense_grounding':
+      return stepProgress(state.currentStepIndex, config.prompts.length);
+    case 'tallied_grounding':
+      return stepProgress(state.currentStepIndex, totalSteps(config));
+    default:
+      return timeProgress(elapsedMs, getTotalMs(config));
   }
-  if (config.mode === 'sense_grounding') {
-    const total = config.prompts.length;
-    return total > 0 ? Math.min(1, state.currentStepIndex / total) : 0;
-  }
-  const total = getTotalMs(config);
-  return total !== null && total > 0 ? Math.min(1, elapsedMs / total) : 0;
 }

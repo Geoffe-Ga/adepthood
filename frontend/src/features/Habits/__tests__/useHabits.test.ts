@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { renderHook, act } from '@testing-library/react-native';
+import { renderHook, act, waitFor } from '@testing-library/react-native';
 
 import type { Goal, Habit } from '../Habits.types';
 import { useHabits } from '../hooks/useHabits';
@@ -124,10 +124,11 @@ describe('useHabits', () => {
     expect(typeof result.current.actions.emojiSelect).toBe('function');
   });
 
-  it('exposes UI flags for energy CTA and archive', () => {
+  it('exposes UI flags for energy CTA and archive', async () => {
     const { result } = renderHook(() => useHabits());
 
-    expect(result.current.ui.showEnergyCTA).toBe(true);
+    // showEnergyCTA starts hidden and is revealed after the async storage read.
+    await waitFor(() => expect(result.current.ui.showEnergyCTA).toBe(true));
     expect(result.current.ui.showArchiveMessage).toBe(false);
     expect(typeof result.current.ui.archiveEnergyCTA).toBe('function');
   });

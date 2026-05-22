@@ -19,6 +19,7 @@ export function scheduledCues(config: ModeConfig): readonly Cue[] {
     case 'count_up':
     case 'rep_counter':
     case 'sense_grounding':
+    case 'tallied_grounding':
       return [];
     case 'metronome':
       return cuesForMetronome(config);

@@ -7,6 +7,7 @@ import type {
   MetronomeConfig,
   RepCounterConfig,
   SenseGroundingConfig,
+  TalliedGroundingConfig,
   TarotConfig,
 } from '../types';
 import { CARD_MEDITATION_CARDS_MAX, CARD_MEDITATION_NAME_MAX } from '../types';
@@ -17,6 +18,9 @@ import {
   DURATION_MAX_MINUTES,
   DURATION_MIN_MINUTES,
   PROMPT_LABEL_MAX,
+  TALLIED_CATEGORIES_MAX,
+  TALLIED_LABEL_MAX,
+  TALLIED_TARGET_MAX,
   UNIT_LABEL_MAX,
   validateCountUp,
   validateCustomName,
@@ -27,6 +31,7 @@ import {
   validateRepCounter,
   validateCardMeditation,
   validateSenseGrounding,
+  validateTalliedGrounding,
   validateTarot,
 } from '../validation';
 
@@ -251,6 +256,94 @@ describe('validateSenseGrounding', () => {
         ],
       })[0],
     ).toMatch(/unknown sense/);
+  });
+});
+
+describe('validateTalliedGrounding', () => {
+  const base: TalliedGroundingConfig = {
+    mode: 'tallied_grounding',
+    rounds: 3,
+    categories: [
+      { key: 'squares', label: 'a square', target_count: 3 },
+      { key: 'circles', label: 'a circle', target_count: 3 },
+    ],
+  };
+
+  it('accepts a valid config', () => {
+    expect(validateTalliedGrounding(base)).toEqual([]);
+  });
+
+  it('rejects a round count below 1', () => {
+    expect(validateTalliedGrounding({ ...base, rounds: 0 })[0]).toMatch(/Rounds must be/);
+  });
+
+  it('rejects a non-integer round count', () => {
+    expect(validateTalliedGrounding({ ...base, rounds: 2.5 })[0]).toMatch(/Rounds must be/);
+  });
+
+  it('rejects an empty category list', () => {
+    expect(validateTalliedGrounding({ ...base, categories: [] })[0]).toMatch(/At least one/);
+  });
+
+  it('rejects too many categories', () => {
+    const categories = Array.from({ length: TALLIED_CATEGORIES_MAX + 1 }, (_, i) => ({
+      key: `cat_${i}`,
+      label: `item ${i}`,
+      target_count: 1,
+    }));
+    expect(validateTalliedGrounding({ ...base, categories })[0]).toMatch(/At most/);
+  });
+
+  it('rejects keys that break the slug pattern', () => {
+    expect(
+      validateTalliedGrounding({
+        ...base,
+        categories: [{ key: 'Bad-Key', label: 'a square', target_count: 3 }],
+      })[0],
+    ).toMatch(/key must match/);
+  });
+
+  it('rejects blank labels', () => {
+    expect(
+      validateTalliedGrounding({
+        ...base,
+        categories: [{ key: 'squares', label: '  ', target_count: 3 }],
+      })[0],
+    ).toMatch(/label cannot be empty/);
+  });
+
+  it('rejects oversize labels', () => {
+    expect(
+      validateTalliedGrounding({
+        ...base,
+        categories: [{ key: 'squares', label: 'x'.repeat(TALLIED_LABEL_MAX + 1), target_count: 3 }],
+      })[0],
+    ).toMatch(new RegExp(`≤ ${TALLIED_LABEL_MAX}`));
+  });
+
+  it('rejects a target count outside range', () => {
+    expect(
+      validateTalliedGrounding({
+        ...base,
+        categories: [{ key: 'squares', label: 'a square', target_count: TALLIED_TARGET_MAX + 1 }],
+      })[0],
+    ).toMatch(/target count must be/);
+  });
+
+  it('rejects duplicate category keys', () => {
+    expect(
+      validateTalliedGrounding({
+        ...base,
+        categories: [
+          { key: 'squares', label: 'a square', target_count: 3 },
+          { key: 'squares', label: 'a circle', target_count: 3 },
+        ],
+      }).some((e) => /duplicate key/.test(e)),
+    ).toBe(true);
+  });
+
+  it('dispatches through validateModeConfig', () => {
+    expect(validateModeConfig(base)).toEqual([]);
   });
 });
 

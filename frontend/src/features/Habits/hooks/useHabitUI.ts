@@ -1,5 +1,9 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
+import {
+  loadEnergyScaffoldingArchived,
+  saveEnergyScaffoldingArchived,
+} from '../../../storage/energyScaffoldingStorage';
 import { selectHabitById, useHabitStore } from '../../../store/useHabitStore';
 import type { Habit, HabitScreenMode } from '../Habits.types';
 
@@ -33,8 +37,24 @@ export const useHabitUI = (): HabitUIState => {
   const selectedHabit = useHabitStore(selectHabitById(selectedHabitId)) ?? null;
   const [mode, setMode] = useState<HabitScreenMode>('normal');
   const [emojiHabitIndex, setEmojiHabitIndex] = useState<number | null>(null);
-  const [showEnergyCTA, setShowEnergyCTA] = useState(true);
+  // Start hidden so a previously-archived CTA never flashes before the async
+  // storage read resolves; the effect reveals it only when it isn't archived.
+  const [showEnergyCTA, setShowEnergyCTA] = useState(false);
   const [showArchiveMessage, setShowArchiveMessage] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadEnergyScaffoldingArchived()
+      .then((archived) => {
+        if (!cancelled) setShowEnergyCTA(!archived);
+      })
+      .catch((err: unknown) => {
+        console.warn('[useHabitUI] failed to load energy-CTA archived state', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const setSelectedHabit = useCallback((habit: Habit | null) => {
     setSelectedHabitId(habit?.id ?? null);
@@ -44,6 +64,9 @@ export const useHabitUI = (): HabitUIState => {
     setShowEnergyCTA(false);
     setShowArchiveMessage(true);
     setTimeout(() => setShowArchiveMessage(false), ARCHIVE_MESSAGE_DURATION_MS);
+    saveEnergyScaffoldingArchived(true).catch((err: unknown) => {
+      console.warn('[useHabitUI] failed to persist energy-CTA archived state', err);
+    });
   }, []);
 
   return {
