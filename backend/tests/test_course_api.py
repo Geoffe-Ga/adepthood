@@ -232,18 +232,24 @@ async def test_first_course_access_provisions_stage_progress(
     assert progress.completed_stages == []
 
 
+# A user id with no User row — FK is not enforced on the test SQLite DB, so
+# ensure_user_progress can be exercised directly without a full signup.
+_PROVISIONING_TEST_USER_ID = 4242
+
+
 @pytest.mark.asyncio
 async def test_ensure_user_progress_is_idempotent(db_session: AsyncSession) -> None:
     """ensure_user_progress creates one row and returns it on repeat calls."""
-    user_id = 4242
-    first = await ensure_user_progress(db_session, user_id)
+    first = await ensure_user_progress(db_session, _PROVISIONING_TEST_USER_ID)
     assert first.current_stage == 1
     assert first.completed_stages == []
 
-    second = await ensure_user_progress(db_session, user_id)
+    second = await ensure_user_progress(db_session, _PROVISIONING_TEST_USER_ID)
     assert second.id == first.id
 
-    result = await db_session.execute(select(StageProgress).where(StageProgress.user_id == user_id))
+    result = await db_session.execute(
+        select(StageProgress).where(StageProgress.user_id == _PROVISIONING_TEST_USER_ID)
+    )
     assert len(list(result.scalars().all())) == 1
 
 

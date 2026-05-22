@@ -106,6 +106,9 @@ describe('ChapterReader', () => {
     expect(html).toContain('<article>chapter body</article>');
     // Mobile viewport is set so the WebView renders at native scale.
     expect(html).toMatch(/<meta name="viewport"/);
+    // <base target="_blank"> is web-only; on native it could drop navigations
+    // past the onShouldStartLoadWithRequest guard, so it must not be emitted.
+    expect(html).not.toContain('<base');
   });
 
   it('shows an error and lets the user retry on transient failure', async () => {

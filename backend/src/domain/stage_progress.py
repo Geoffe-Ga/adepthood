@@ -70,21 +70,12 @@ async def get_user_progress_for_update(session: AsyncSession, user_id: int) -> S
 
 
 async def ensure_user_progress(session: AsyncSession, user_id: int) -> StageProgress:
-    """Return the user's :class:`StageProgress`, creating a stage-1 row if absent.
+    """Return the user's :class:`StageProgress`, provisioning a stage-1 row on first access.
 
-    The drip-feed clock — ``StageProgress.stage_started_at`` — starts the
-    first time a user reads course content.  A user who never explicitly
-    advanced a stage had no row at all, so drip-feed gating fell back to
-    a ``-1`` day count and locked every chapter, even ``release_day=0``
-    ones.  Provisioning a ``current_stage=1`` bootstrap row on first
-    access gives :func:`domain.course.compute_days_elapsed` a real start
-    timestamp so day-0 content unlocks immediately.
-
-    ``begin_nested`` wraps the insert in a SAVEPOINT so two concurrent
-    first-access requests race on the ``user_id`` unique constraint
-    without corrupting the outer transaction: the loser catches the
-    ``IntegrityError``, re-reads, and returns the winner's row so both
-    callers observe the same provisioned state.
+    Commits the new row before returning: a concurrent caller that loses the
+    SAVEPOINT race must re-read the winner's committed row, and ``get_session``
+    does not auto-commit. Callers must therefore not hold uncommitted writes
+    across this call. Mirrors ``_create_initial_progress`` in ``stages.py``.
     """
     progress = await get_user_progress(session, user_id)
     if progress is not None:
