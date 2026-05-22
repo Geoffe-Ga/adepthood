@@ -1,4 +1,5 @@
 import type {
+  CardMeditationConfig,
   Cue,
   IntervalBellConfig,
   MeditationTimerConfig,
@@ -6,7 +7,7 @@ import type {
   ModeConfig,
   TarotConfig,
 } from './types';
-import { DEFAULT_TAROT_MINUTES, MS_PER_MINUTE } from './types';
+import { DEFAULT_CARD_MEDITATION_MINUTES, DEFAULT_TAROT_MINUTES, MS_PER_MINUTE } from './types';
 
 // Defensive: at bpm=240 over the max session this would otherwise blow up.
 const MAX_METRONOME_TICKS = 10_000;
@@ -18,6 +19,7 @@ export function scheduledCues(config: ModeConfig): readonly Cue[] {
     case 'count_up':
     case 'rep_counter':
     case 'sense_grounding':
+    case 'tallied_grounding':
       return [];
     case 'metronome':
       return cuesForMetronome(config);
@@ -25,6 +27,8 @@ export function scheduledCues(config: ModeConfig): readonly Cue[] {
       return cuesForIntervalBell(config);
     case 'tarot':
       return cuesForTarot(config);
+    case 'card_meditation':
+      return cuesForCardMeditation(config);
   }
 }
 
@@ -72,6 +76,11 @@ function computeIntervalOffsets(config: IntervalBellConfig, totalMs: number): re
 
 function cuesForTarot(config: TarotConfig): readonly Cue[] {
   const totalMs = (config.per_card_minutes ?? DEFAULT_TAROT_MINUTES) * MS_PER_MINUTE;
+  return [{ atMs: totalMs, kind: 'end_bell' }];
+}
+
+function cuesForCardMeditation(config: CardMeditationConfig): readonly Cue[] {
+  const totalMs = (config.per_card_minutes ?? DEFAULT_CARD_MEDITATION_MINUTES) * MS_PER_MINUTE;
   return [{ atMs: totalMs, kind: 'end_bell' }];
 }
 

@@ -14,6 +14,8 @@ _EXPECTED_MEMBERS: tuple[str, ...] = (
     "tarot",
     "tallied_grounding",
     "mindful_anchor",
+    "card_meditation",
+    "random_interval_bell",
 )
 
 

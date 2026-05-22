@@ -6,18 +6,22 @@ import pytest
 from pydantic import ValidationError
 
 from schemas.practice_mode_config import (
+    CARD_MEDITATION_CARDS_MAX,
     TALLIED_CATEGORIES_MAX,
     TALLIED_ROUNDS_MAX,
     TALLIED_TARGET_MAX,
 )
 from schemas.practice_session_metadata import (
+    MAX_CARD_INDEX,
     MAX_TALLIED_ITEMS,
     MAX_TALLIED_ROUNDS,
+    CardMeditationMetadata,
     CountUpMetadata,
     IntervalBellMetadata,
     MeditationTimerMetadata,
     MetronomeMetadata,
     MindfulAnchorMetadata,
+    RandomIntervalBellMetadata,
     RepCounterMetadata,
     SenseGroundingMetadata,
     SessionMetadataAdapter,
@@ -330,3 +334,233 @@ def test_mindful_anchor_metadata_rejects_invalid_option_key_slug() -> None:
                 duration_seconds=10,
                 met_min_duration=False,
             )
+
+
+# -- card_meditation metadata ----------------------------------------------
+
+
+def test_card_meditation_metadata_round_trip() -> None:
+    payload = SessionMetadataAdapter.validate_python(
+        {
+            "mode": "card_meditation",
+            "deck_id": "rws",
+            "card_drawn_name": "The Fool",
+            "card_drawn_index": 0,
+        }
+    )
+    assert isinstance(payload, CardMeditationMetadata)
+    assert payload.deck_id == "rws"
+    assert payload.card_drawn_name == "The Fool"
+    assert payload.card_drawn_index == 0
+
+
+def test_card_meditation_metadata_index_is_optional() -> None:
+    """Custom decks may shuffle on the client without echoing positions back."""
+    payload = SessionMetadataAdapter.validate_python(
+        {
+            "mode": "card_meditation",
+            "deck_id": "custom",
+            "card_drawn_name": "Mountain",
+        }
+    )
+    assert isinstance(payload, CardMeditationMetadata)
+    assert payload.card_drawn_index is None
+
+
+def test_card_meditation_metadata_rejects_negative_index() -> None:
+    with pytest.raises(ValidationError):
+        CardMeditationMetadata(
+            mode="card_meditation",
+            deck_id="rws",
+            card_drawn_name="The Fool",
+            card_drawn_index=-1,
+        )
+
+
+def test_card_meditation_metadata_rejects_index_past_cap() -> None:
+    """The cards-list cap on the config side bounds the index to 0..MAX_CARD_INDEX.
+
+    Computing the reject value from the config constant keeps this test
+    in sync with any future ceiling bump — the analogue of
+    :func:`test_tallied_grounding_rejects_items_above_ceiling`.
+    """
+    with pytest.raises(ValidationError):
+        CardMeditationMetadata(
+            mode="card_meditation",
+            deck_id="rws",
+            card_drawn_name="The Fool",
+            card_drawn_index=CARD_MEDITATION_CARDS_MAX,
+        )
+
+
+def test_card_meditation_metadata_accepts_index_at_ceiling() -> None:
+    """``MAX_CARD_INDEX`` itself is valid (inclusive bound, off-by-one guard)."""
+    payload = CardMeditationMetadata(
+        mode="card_meditation",
+        deck_id="rws",
+        card_drawn_name="The World",
+        card_drawn_index=MAX_CARD_INDEX,
+    )
+    assert payload.card_drawn_index == MAX_CARD_INDEX
+
+
+def test_card_meditation_metadata_ceiling_matches_config_constant() -> None:
+    """Lock ``MAX_CARD_INDEX`` to the authoring-side ``CARD_MEDITATION_CARDS_MAX``.
+
+    Mirrors :func:`test_tallied_metadata_ceilings_match_config_constants`:
+    the metadata module derives the index ceiling from the config-side
+    cap so a future bump (e.g. raising the cards-list limit) cannot
+    leave the post-session index cap silently stale. This test pins the
+    contract — it fails loudly if the derivation is ever inlined or the
+    underlying constant changes without the metadata module noticing.
+    """
+    assert MAX_CARD_INDEX == CARD_MEDITATION_CARDS_MAX - 1
+
+
+def test_card_meditation_metadata_rejects_empty_card_name() -> None:
+    with pytest.raises(ValidationError):
+        CardMeditationMetadata(
+            mode="card_meditation",
+            deck_id="rws",
+            card_drawn_name="",
+        )
+
+
+def test_card_meditation_metadata_rejects_invalid_deck_slug() -> None:
+    """``deck_id`` mirrors the config-side regex (lowercase snake_case)."""
+    with pytest.raises(ValidationError):
+        CardMeditationMetadata(
+            mode="card_meditation",
+            deck_id="Bad-Deck",
+            card_drawn_name="The Fool",
+        )
+
+
+def test_card_meditation_metadata_does_not_disturb_tarot() -> None:
+    """Adding ``card_meditation`` to the union must not change ``tarot`` dispatch."""
+    payload = SessionMetadataAdapter.validate_python({"mode": "tarot", "card_index": 5})
+    assert type(payload) is TarotMetadata
+
+
+# -- random_interval_bell metadata ------------------------------------------
+
+#: Inclusive ceiling for ``bells_struck`` and ``interval_seconds`` length —
+#: mirrors the private ``_MAX_INTERVALS`` in the metadata module.
+_RANDOM_BELL_MAX = 1_000
+
+
+def test_random_interval_bell_metadata_round_trip() -> None:
+    """One ``interval_seconds`` entry per struck bell (``len == bells_struck``)."""
+    payload = SessionMetadataAdapter.validate_python(
+        {
+            "mode": "random_interval_bell",
+            "bells_struck": 3,
+            "interval_seconds": [42, 88, 17],
+        }
+    )
+    assert isinstance(payload, RandomIntervalBellMetadata)
+    assert payload.bells_struck == 3
+    assert payload.interval_seconds == [42, 88, 17]
+
+
+def test_random_interval_bell_metadata_defaults_to_empty_list() -> None:
+    """A session that struck no recorded gaps still round-trips."""
+    payload = SessionMetadataAdapter.validate_python(
+        {"mode": "random_interval_bell", "bells_struck": 0}
+    )
+    assert isinstance(payload, RandomIntervalBellMetadata)
+    assert payload.interval_seconds == []
+
+
+def test_random_interval_bell_metadata_accepts_empty_interval_list() -> None:
+    """An explicit empty ``interval_seconds`` list is valid."""
+    payload = SessionMetadataAdapter.validate_python(
+        {"mode": "random_interval_bell", "bells_struck": 1, "interval_seconds": []}
+    )
+    assert isinstance(payload, RandomIntervalBellMetadata)
+    assert payload.interval_seconds == []
+
+
+def test_random_interval_bell_metadata_accepts_max_length_list() -> None:
+    """A full-length ``interval_seconds`` list at the ceiling is valid (boundary)."""
+    payload = RandomIntervalBellMetadata(
+        mode="random_interval_bell",
+        bells_struck=_RANDOM_BELL_MAX,
+        interval_seconds=[1] * _RANDOM_BELL_MAX,
+    )
+    assert len(payload.interval_seconds) == _RANDOM_BELL_MAX
+
+
+def test_random_interval_bell_metadata_rejects_overlong_list() -> None:
+    """A list past the ceiling is rejected — the cap bounds the payload."""
+    with pytest.raises(ValidationError):
+        RandomIntervalBellMetadata(
+            mode="random_interval_bell",
+            bells_struck=0,
+            interval_seconds=[1] * (_RANDOM_BELL_MAX + 1),
+        )
+
+
+def test_random_interval_bell_metadata_rejects_negative_bells() -> None:
+    with pytest.raises(ValidationError):
+        RandomIntervalBellMetadata(mode="random_interval_bell", bells_struck=-1)
+
+
+def test_random_interval_bell_metadata_rejects_bells_past_cap() -> None:
+    with pytest.raises(ValidationError):
+        RandomIntervalBellMetadata(mode="random_interval_bell", bells_struck=_RANDOM_BELL_MAX + 1)
+
+
+def test_random_interval_bell_metadata_rejects_nonpositive_interval() -> None:
+    """Each gap is at least one second — a zero or negative gap is impossible."""
+    for bad in (0, -5):
+        with pytest.raises(ValidationError):
+            RandomIntervalBellMetadata(
+                mode="random_interval_bell", bells_struck=1, interval_seconds=[bad]
+            )
+
+
+def test_random_interval_bell_metadata_rejects_more_intervals_than_bells() -> None:
+    """``interval_seconds`` cannot record more gaps than bells that rang.
+
+    Each entry times one struck bell, so a list longer than
+    ``bells_struck`` would mean timing a bell that never rang — the
+    cross-field validator rejects it.
+    """
+    with pytest.raises(ValidationError):
+        RandomIntervalBellMetadata(
+            mode="random_interval_bell", bells_struck=2, interval_seconds=[10, 20, 30]
+        )
+
+
+def test_random_interval_bell_metadata_accepts_intervals_equal_to_bells() -> None:
+    """One entry per struck bell is the inclusive boundary the contract allows."""
+    payload = RandomIntervalBellMetadata(
+        mode="random_interval_bell", bells_struck=3, interval_seconds=[10, 20, 30]
+    )
+    assert len(payload.interval_seconds) == payload.bells_struck == 3
+
+
+def test_random_interval_bell_metadata_accepts_fewer_intervals_than_bells() -> None:
+    """A partial timing log (fewer gaps than bells) is valid."""
+    payload = RandomIntervalBellMetadata(
+        mode="random_interval_bell", bells_struck=5, interval_seconds=[10, 20]
+    )
+    assert payload.bells_struck == 5
+    assert payload.interval_seconds == [10, 20]
+
+
+def test_random_interval_bell_metadata_rejects_extra_fields() -> None:
+    """``extra="forbid"`` catches typos like ``bellsStruck``."""
+    with pytest.raises(ValidationError):
+        SessionMetadataAdapter.validate_python(
+            {"mode": "random_interval_bell", "bells_struck": 1, "bellsStruck": 1}
+        )
+
+
+def test_random_interval_bell_metadata_does_not_disturb_interval_bell() -> None:
+    """Adding ``random_interval_bell`` must not change ``interval_bell`` dispatch."""
+    payload = SessionMetadataAdapter.validate_python(
+        {"mode": "interval_bell", "intervals_struck": 4, "total_intervals": 6}
+    )
+    assert type(payload) is IntervalBellMetadata

@@ -30,7 +30,7 @@ const SYNC_ERROR_TOAST_DURATION_MS = 6000;
 const useLogUnitMutation = (
   showToast: ShowToast,
   tz: string,
-): ((_habitId: number, _amount: number) => void) => {
+): ((_habitId: number, _amount: number, _date?: Date) => void) => {
   const mutation = useOptimisticMutation<LogUnitContext, unknown>({
     apply: (ctx) => habitManager.applyLogUnitContext(ctx),
     commit: (ctx) => habitManager.commitLogUnitContext(ctx),
@@ -52,8 +52,8 @@ const useLogUnitMutation = (
   });
 
   return useCallback(
-    (habitId: number, amount: number) => {
-      const ctx = habitManager.prepareLogUnit(habitId, amount, tz);
+    (habitId: number, amount: number, date?: Date) => {
+      const ctx = habitManager.prepareLogUnit(habitId, amount, tz, date);
       if (!ctx) return;
       // Fire-and-forget: rollback runs inside the hook before the re-throw
       // and has already surfaced the failure to the user via ``showToast``,

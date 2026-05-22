@@ -1,10 +1,12 @@
-"""Long-form ``description`` and ``instructions`` text for the 10 stage presets.
+"""Long-form ``description`` and ``instructions`` text for the catalog presets.
 
 Split from :mod:`seed_practices` so the seeder logic stays small and the
 product-editable copy lives in a flat, diff-friendly data module.
 
-Each entry maps a stage number to a ``(description, instructions)`` tuple.
-Lengths stay under the ``Practice`` model's column caps
+Each entry maps a preset *name* to a ``(description, instructions)`` tuple.
+Keying by name (rather than stage number) lets a single stage carry more
+than one preset — e.g. the stage-1 grounding alternatives. Lengths stay
+under the ``Practice`` model's column caps
 (description ≤ 2000 chars, instructions ≤ 10000 chars).
 """
 
@@ -102,15 +104,41 @@ _S10 = (
 )
 
 
-PRESET_COPY: dict[int, tuple[str, str]] = {
-    1: _S1,
-    2: _S2,
-    3: _S3,
-    4: _S4,
-    5: _S5,
-    6: _S6,
-    7: _S7,
-    8: _S8,
-    9: _S9,
-    10: _S10,
+#: Stage 1 alternative — Touch Grass (mindful_anchor mode).
+_TOUCH_GRASS = (
+    "A single-action grounding practice: stand barefoot on a natural "
+    "surface and let its texture and temperature draw you into the "
+    "present moment.",
+    "Find a patch of grass, soil, sand, or stone where you can safely "
+    "stand barefoot. Take off your shoes. Plant both feet and let your "
+    "weight settle. Notice the texture, the temperature, and the pressure "
+    "where your soles meet the earth. There is nothing to accomplish — "
+    "stay until you feel settled, then mark the practice complete.",
+)
+
+#: Stage 1 alternative — Mindful Eating (mindful_anchor mode).
+_MINDFUL_EATING = (
+    "A single-action mindful-presence practice: eat one small portion of "
+    "a grounding food slowly, giving full attention to every sense.",
+    "Choose one small portion of a grounding food and sit down with it. "
+    "Before the first bite, take in its colour, shape, and aroma. Eat "
+    "slowly: attend to texture, temperature, and flavour, and pause "
+    "between bites to let each one finish. When the portion is gone, sit "
+    "with the aftertaste for a moment before marking the practice complete.",
+)
+
+
+PRESET_COPY: dict[str, tuple[str, str]] = {
+    "5-4-3-2-1 grounding": _S1,
+    "Tarot meditation": _S2,
+    "Belly breathing": _S3,
+    "Metta": _S4,
+    "Wim Hof method": _S5,
+    "Shadow work": _S6,
+    "Blissy meditation": _S7,
+    "Dog Walkin' Shamanism": _S8,
+    "Concentration practice": _S9,
+    "Insight practice": _S10,
+    "Touch Grass": _TOUCH_GRASS,
+    "Mindful Eating": _MINDFUL_EATING,
 }

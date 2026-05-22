@@ -1,4 +1,4 @@
-import { Check, Pencil } from 'lucide-react-native';
+import { Check, ChevronLeft, ChevronRight, Pencil } from 'lucide-react-native';
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Alert,
@@ -24,6 +24,7 @@ import EmojiSelector from 'react-native-emoji-selector';
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
 import { useAuth } from '../../../context/AuthContext';
 import { colors, SPACING, STAGE_COLORS, shadows, touchTarget } from '../../../design/tokens';
+import { addDaysInTZ, dayKeyInTZ, todayInUserTZ } from '../../../utils/dateUtils';
 import { TARGET_UNITS, FREQUENCY_UNITS } from '../constants';
 import styles from '../Habits.styles';
 import type { GoalModalProps, Goal } from '../Habits.types';
@@ -323,14 +324,120 @@ const GoalProgressBar = ({
   </View>
 );
 
+// Layout constants for the log-date stepper.
+const LOG_DATE_NOON_HOUR = 12;
+const LOG_DATE_ICON_SIZE = 20;
+const LOG_DATE_LABEL_FONT_SIZE = 14;
+const LOG_DATE_LABEL_MIN_WIDTH = 116;
+const LOG_DATE_DISABLED_OPACITY = 0.3;
+
+const logDateStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: SPACING.sm,
+  },
+  label: {
+    fontSize: LOG_DATE_LABEL_FONT_SIZE,
+    fontWeight: '600',
+    color: colors.text.primary,
+    minWidth: LOG_DATE_LABEL_MIN_WIDTH,
+    textAlign: 'center',
+  },
+  stepButton: {
+    minWidth: touchTarget.minimum,
+    minHeight: touchTarget.minimum,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepButtonDisabled: {
+    opacity: LOG_DATE_DISABLED_OPACITY,
+  },
+});
+
+/** Shift a date by whole calendar days, anchored at noon to dodge DST skew. */
+const shiftLogDate = (date: Date, deltaDays: number): Date => {
+  const next = new Date(date);
+  next.setHours(LOG_DATE_NOON_HOUR, 0, 0, 0);
+  next.setDate(next.getDate() + deltaDays);
+  return next;
+};
+
+/** Human label for the log date: "Today", "Yesterday", or e.g. "Mon, Jan 5". */
+const formatLogDateLabel = (date: Date, tz: string): string => {
+  const key = dayKeyInTZ(date, tz);
+  const todayKey = todayInUserTZ(tz);
+  if (key === todayKey) return 'Today';
+  if (key === addDaysInTZ(todayKey, -1, tz)) return 'Yesterday';
+  return new Date(`${key}T12:00:00Z`).toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+};
+
+interface LogDateStepperProps {
+  logDate: Date;
+  setLogDate: (_v: Date) => void;
+  tz: string;
+}
+
+/**
+ * Day picker for the log section: step back to log a missed day, forward
+ * to return toward today. The "next" arrow is disabled at today so the
+ * user can never log a completion in the future.
+ */
+const LogDateStepper = ({ logDate, setLogDate, tz }: LogDateStepperProps) => {
+  const atToday = dayKeyInTZ(logDate, tz) === todayInUserTZ(tz);
+  return (
+    <View style={logDateStyles.row} testID="log-date-stepper">
+      <TouchableOpacity
+        testID="log-date-prev"
+        accessibilityRole="button"
+        accessibilityLabel="Log an earlier day"
+        onPress={() => setLogDate(shiftLogDate(logDate, -1))}
+        style={logDateStyles.stepButton}
+      >
+        <ChevronLeft size={LOG_DATE_ICON_SIZE} color={colors.text.secondary} />
+      </TouchableOpacity>
+      <Text testID="log-date-label" style={logDateStyles.label}>
+        {formatLogDateLabel(logDate, tz)}
+      </Text>
+      <TouchableOpacity
+        testID="log-date-next"
+        accessibilityRole="button"
+        accessibilityLabel="Log a later day"
+        accessibilityState={{ disabled: atToday }}
+        disabled={atToday}
+        onPress={() => setLogDate(shiftLogDate(logDate, 1))}
+        style={[logDateStyles.stepButton, atToday && logDateStyles.stepButtonDisabled]}
+      >
+        <ChevronRight size={LOG_DATE_ICON_SIZE} color={colors.text.secondary} />
+      </TouchableOpacity>
+    </View>
+  );
+};
+
 interface LogUnitSectionProps {
   logAmount: string;
   setLogAmount: (_v: string) => void;
+  logDate: Date;
+  setLogDate: (_v: Date) => void;
+  tz: string;
   onLog: () => void;
 }
 
-const LogUnitSection = ({ logAmount, setLogAmount, onLog }: LogUnitSectionProps) => (
+const LogUnitSection = ({
+  logAmount,
+  setLogAmount,
+  logDate,
+  setLogDate,
+  tz,
+  onLog,
+}: LogUnitSectionProps) => (
   <View style={styles.actionButtons} testID="goal-modal-log-unit-section">
+    <LogDateStepper logDate={logDate} setLogDate={setLogDate} tz={tz} />
     <View style={styles.logUnitContainer}>
       <TextInput
         style={styles.logUnitInput}
@@ -347,10 +454,8 @@ const LogUnitSection = ({ logAmount, setLogAmount, onLog }: LogUnitSectionProps)
 
 const TIER_ORDER = ['low', 'clear', 'stretch'] as const;
 
-// Layout constants for the inline goal-target editor. Pulled out per
-// CLAUDE.md ("Introduce magic numbers without named constants" is in the
-// Must Never Do list); design-token equivalents (`SPACING`, `colors`,
-// `BORDER_RADIUS`) are reused for everything that has one.
+// Layout constants for the inline goal-target editor; design-token
+// equivalents (`SPACING`, `colors`, `BORDER_RADIUS`) are reused where one exists.
 const GOAL_INPUT_WIDTH = 64;
 const GOAL_INPUT_VERTICAL_PADDING = 6;
 const GOAL_ROW_VERTICAL_PADDING = 6;
@@ -1130,6 +1235,24 @@ const buildProgressBarProps = (
   onLayout: m.handleBarLayout,
 });
 
+/** Amount + date draft state for the Log Units control. */
+const useLogState = (
+  habit: NonNullable<GoalModalProps['habit']>,
+  onLogUnit: GoalModalProps['onLogUnit'],
+) => {
+  const [logAmount, setLogAmount] = useState('1');
+  const [logDate, setLogDate] = useState<Date>(() => new Date());
+
+  const handleLogUnit = () => {
+    if (!habit.id) return;
+    onLogUnit(habit.id, parseFloat(logAmount) || 1, logDate);
+    setLogAmount('1');
+    setLogDate(new Date());
+  };
+
+  return { logAmount, setLogAmount, logDate, setLogDate, handleLogUnit };
+};
+
 const GoalModalBody = ({
   habit,
   onClose,
@@ -1137,18 +1260,12 @@ const GoalModalBody = ({
   onLogUnit,
   onUpdateHabit,
 }: GoalModalBodyProps) => {
-  const [logAmount, setLogAmount] = useState('1');
   const [showEmojiSelector, setShowEmojiSelector] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const goalGroup = useGoalGroup(habit);
   const m = useGoalMarkers(habit, onUpdateGoal);
   const { userTimezone } = useAuth();
-
-  const handleLogUnit = () => {
-    if (!habit.id) return;
-    onLogUnit(habit.id, parseFloat(logAmount) || 1);
-    setLogAmount('1');
-  };
+  const log = useLogState(habit, onLogUnit);
 
   return (
     <View style={[styles.modalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}>
@@ -1162,13 +1279,21 @@ const GoalModalBody = ({
         isEditing={isEditing}
         onToggleEdit={() => setIsEditing((prev) => !prev)}
       />
+      {/* Progress bar stays visible; the pencil only collapses the editor. */}
+      <GoalProgressBar {...buildProgressBarProps(habit, m, userTimezone)} />
       {isEditing && (
         <View testID="goal-modal-edit-region">
-          <GoalProgressBar {...buildProgressBarProps(habit, m, userTimezone)} />
           <GoalTargetEditor habit={habit} onUpdateGoal={onUpdateGoal} />
         </View>
       )}
-      <LogUnitSection logAmount={logAmount} setLogAmount={setLogAmount} onLog={handleLogUnit} />
+      <LogUnitSection
+        logAmount={log.logAmount}
+        setLogAmount={log.setLogAmount}
+        logDate={log.logDate}
+        setLogDate={log.setLogDate}
+        tz={userTimezone}
+        onLog={log.handleLogUnit}
+      />
     </View>
   );
 };

@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 
 import { scheduledCues } from '../cues';
 import type {
+  CardMeditationConfig,
   IntervalBellConfig,
   MeditationTimerConfig,
   MetronomeConfig,
@@ -126,6 +127,18 @@ describe('scheduledCues — tarot', () => {
   it.each<[string, TarotConfig]>([
     ['explicit per_card_minutes', { mode: 'tarot', deck: 'major_arcana', per_card_minutes: 5 }],
     ['default per_card_minutes', { mode: 'tarot', deck: 'major_arcana' }],
+  ])('emits a single end cue (%s)', (_label, config) => {
+    expect(scheduledCues(config)).toEqual([{ atMs: 5 * MIN, kind: 'end_bell' }]);
+  });
+});
+
+describe('scheduledCues — card_meditation', () => {
+  it.each<[string, CardMeditationConfig]>([
+    [
+      'explicit per_card_minutes',
+      { mode: 'card_meditation', deck_id: 'rws', cards: null, per_card_minutes: 5 },
+    ],
+    ['default per_card_minutes', { mode: 'card_meditation', deck_id: 'rws', cards: null }],
   ])('emits a single end cue (%s)', (_label, config) => {
     expect(scheduledCues(config)).toEqual([{ atMs: 5 * MIN, kind: 'end_bell' }]);
   });

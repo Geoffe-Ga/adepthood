@@ -90,9 +90,6 @@ export const colors = {
 // Stage colors — maps stage name → hex color used across Habits and Map
 // ---------------------------------------------------------------------------
 
-/** Warm gold shown on progress bars when the user has met their clear goal. */
-export const VICTORY_COLOR = '#c9a44c';
-
 export const STAGE_COLORS: Record<string, string> = {
   Beige: '#d8cbb8',
   Purple: '#a093c6',
@@ -118,6 +115,45 @@ export const STAGE_ORDER: readonly string[] = [
   'Ultraviolet',
   'Clear Light',
 ];
+
+/** How far each channel is pushed from the gray point when brightening. */
+const SATURATION_BOOST = 1.7;
+
+const clampChannel = (value: number): number => Math.min(255, Math.max(0, Math.round(value)));
+
+const parseHexRgb = (hex: string): [number, number, number] | null => {
+  const match = /^#([\da-f]{6})$/i.exec(hex);
+  if (!match) return null;
+  const digits = match[1]!;
+  return [
+    Number.parseInt(digits.slice(0, 2), 16),
+    Number.parseInt(digits.slice(2, 4), 16),
+    Number.parseInt(digits.slice(4, 6), 16),
+  ];
+};
+
+const toHexColor = (r: number, g: number, b: number): string =>
+  `#${[r, g, b].map((v) => clampChannel(v).toString(16).padStart(2, '0')).join('')}`;
+
+/**
+ * Return a more vivid shade of a hex color by pushing each channel away
+ * from the color's gray point. Used for the goal-met progress bar so the
+ * victory state is a brighter version of the habit's own stage color
+ * rather than a flat gold. Achromatic inputs (e.g. the white "Clear Light"
+ * stage) have no hue to intensify and are returned unchanged; inputs that
+ * are not 6-digit hex are likewise passed through untouched.
+ */
+export const brightenColor = (hex: string): string => {
+  const rgb = parseHexRgb(hex);
+  if (!rgb) return hex;
+  const [r, g, b] = rgb;
+  const gray = (r + g + b) / 3;
+  return toHexColor(
+    gray + (r - gray) * SATURATION_BOOST,
+    gray + (g - gray) * SATURATION_BOOST,
+    gray + (b - gray) * SATURATION_BOOST,
+  );
+};
 
 /** Colors for the map spiral visualization (indexed by stageNumber - 1). */
 export const MAP_STAGE_COLORS = [

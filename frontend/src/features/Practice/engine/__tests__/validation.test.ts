@@ -1,13 +1,16 @@
 import { describe, expect, it } from '@jest/globals';
 
 import type {
+  CardMeditationConfig,
   IntervalBellConfig,
   MeditationTimerConfig,
   MetronomeConfig,
   RepCounterConfig,
   SenseGroundingConfig,
+  TalliedGroundingConfig,
   TarotConfig,
 } from '../types';
+import { CARD_MEDITATION_CARDS_MAX, CARD_MEDITATION_NAME_MAX } from '../types';
 import {
   BPM_MAX,
   BPM_MIN,
@@ -15,6 +18,9 @@ import {
   DURATION_MAX_MINUTES,
   DURATION_MIN_MINUTES,
   PROMPT_LABEL_MAX,
+  TALLIED_CATEGORIES_MAX,
+  TALLIED_LABEL_MAX,
+  TALLIED_TARGET_MAX,
   UNIT_LABEL_MAX,
   validateCountUp,
   validateCustomName,
@@ -23,7 +29,9 @@ import {
   validateMetronome,
   validateModeConfig,
   validateRepCounter,
+  validateCardMeditation,
   validateSenseGrounding,
+  validateTalliedGrounding,
   validateTarot,
 } from '../validation';
 
@@ -251,6 +259,94 @@ describe('validateSenseGrounding', () => {
   });
 });
 
+describe('validateTalliedGrounding', () => {
+  const base: TalliedGroundingConfig = {
+    mode: 'tallied_grounding',
+    rounds: 3,
+    categories: [
+      { key: 'squares', label: 'a square', target_count: 3 },
+      { key: 'circles', label: 'a circle', target_count: 3 },
+    ],
+  };
+
+  it('accepts a valid config', () => {
+    expect(validateTalliedGrounding(base)).toEqual([]);
+  });
+
+  it('rejects a round count below 1', () => {
+    expect(validateTalliedGrounding({ ...base, rounds: 0 })[0]).toMatch(/Rounds must be/);
+  });
+
+  it('rejects a non-integer round count', () => {
+    expect(validateTalliedGrounding({ ...base, rounds: 2.5 })[0]).toMatch(/Rounds must be/);
+  });
+
+  it('rejects an empty category list', () => {
+    expect(validateTalliedGrounding({ ...base, categories: [] })[0]).toMatch(/At least one/);
+  });
+
+  it('rejects too many categories', () => {
+    const categories = Array.from({ length: TALLIED_CATEGORIES_MAX + 1 }, (_, i) => ({
+      key: `cat_${i}`,
+      label: `item ${i}`,
+      target_count: 1,
+    }));
+    expect(validateTalliedGrounding({ ...base, categories })[0]).toMatch(/At most/);
+  });
+
+  it('rejects keys that break the slug pattern', () => {
+    expect(
+      validateTalliedGrounding({
+        ...base,
+        categories: [{ key: 'Bad-Key', label: 'a square', target_count: 3 }],
+      })[0],
+    ).toMatch(/key must match/);
+  });
+
+  it('rejects blank labels', () => {
+    expect(
+      validateTalliedGrounding({
+        ...base,
+        categories: [{ key: 'squares', label: '  ', target_count: 3 }],
+      })[0],
+    ).toMatch(/label cannot be empty/);
+  });
+
+  it('rejects oversize labels', () => {
+    expect(
+      validateTalliedGrounding({
+        ...base,
+        categories: [{ key: 'squares', label: 'x'.repeat(TALLIED_LABEL_MAX + 1), target_count: 3 }],
+      })[0],
+    ).toMatch(new RegExp(`≤ ${TALLIED_LABEL_MAX}`));
+  });
+
+  it('rejects a target count outside range', () => {
+    expect(
+      validateTalliedGrounding({
+        ...base,
+        categories: [{ key: 'squares', label: 'a square', target_count: TALLIED_TARGET_MAX + 1 }],
+      })[0],
+    ).toMatch(/target count must be/);
+  });
+
+  it('rejects duplicate category keys', () => {
+    expect(
+      validateTalliedGrounding({
+        ...base,
+        categories: [
+          { key: 'squares', label: 'a square', target_count: 3 },
+          { key: 'squares', label: 'a circle', target_count: 3 },
+        ],
+      }).some((e) => /duplicate key/.test(e)),
+    ).toBe(true);
+  });
+
+  it('dispatches through validateModeConfig', () => {
+    expect(validateModeConfig(base)).toEqual([]);
+  });
+});
+
 describe('validateTarot', () => {
   const base: TarotConfig = {
     mode: 'tarot',
@@ -271,6 +367,110 @@ describe('validateTarot', () => {
   it('omits per_card_minutes check when undefined', () => {
     const partial: TarotConfig = { mode: 'tarot', deck: 'major_arcana' };
     expect(validateTarot(partial)).toEqual([]);
+  });
+});
+
+describe('validateCardMeditation', () => {
+  const bundled: CardMeditationConfig = {
+    mode: 'card_meditation',
+    deck_id: 'rws',
+    cards: null,
+    per_card_minutes: 5,
+  };
+
+  it('accepts a valid bundled-deck config', () => {
+    expect(validateCardMeditation(bundled)).toEqual([]);
+  });
+
+  it('rejects per-card minutes outside range', () => {
+    expect(validateCardMeditation({ ...bundled, per_card_minutes: 0 })).toHaveLength(1);
+  });
+
+  it('rejects an invalid deck id', () => {
+    expect(validateCardMeditation({ ...bundled, deck_id: 'Bad Deck' })[0]).toMatch(/deck id/i);
+  });
+
+  it('rejects a custom deck with no cards', () => {
+    const empty: CardMeditationConfig = { mode: 'card_meditation', deck_id: 'custom', cards: [] };
+    expect(validateCardMeditation(empty)[0]).toMatch(/at least one card/i);
+    expect(validateCardMeditation({ ...empty, cards: null })[0]).toMatch(/at least one card/i);
+  });
+
+  it('accepts a custom deck with a valid card', () => {
+    const config: CardMeditationConfig = {
+      mode: 'card_meditation',
+      deck_id: 'custom',
+      cards: [{ name: 'Sunrise', image_asset_key: null, image_uri: null, symbolism: null }],
+    };
+    expect(validateCardMeditation(config)).toEqual([]);
+  });
+
+  it('rejects a custom card with an empty name', () => {
+    const config: CardMeditationConfig = {
+      mode: 'card_meditation',
+      deck_id: 'custom',
+      cards: [{ name: '  ', image_asset_key: null, image_uri: null, symbolism: null }],
+    };
+    expect(validateCardMeditation(config)[0]).toMatch(/name cannot be empty/i);
+  });
+
+  it('rejects a custom card whose photo uri uses a network scheme', () => {
+    const config: CardMeditationConfig = {
+      mode: 'card_meditation',
+      deck_id: 'custom',
+      cards: [
+        { name: 'Web', image_asset_key: null, image_uri: 'https://x/y.png', symbolism: null },
+      ],
+    };
+    expect(validateCardMeditation(config)[0]).toMatch(/web link/i);
+  });
+
+  it('accepts a custom card with a device-file photo uri', () => {
+    const config: CardMeditationConfig = {
+      mode: 'card_meditation',
+      deck_id: 'custom',
+      cards: [
+        { name: 'Photo', image_asset_key: null, image_uri: 'file:///p.jpg', symbolism: null },
+      ],
+    };
+    expect(validateCardMeditation(config)).toEqual([]);
+  });
+
+  it('rejects a custom card that sets two image sources', () => {
+    const config: CardMeditationConfig = {
+      mode: 'card_meditation',
+      deck_id: 'custom',
+      cards: [
+        { name: 'Both', image_asset_key: 'rws/the_fool', image_uri: 'file:///x', symbolism: null },
+      ],
+    };
+    expect(validateCardMeditation(config)[0]).toMatch(/at most one image/i);
+  });
+
+  it('rejects a custom card with an oversize name', () => {
+    const config: CardMeditationConfig = {
+      mode: 'card_meditation',
+      deck_id: 'custom',
+      cards: [
+        {
+          name: 'x'.repeat(CARD_MEDITATION_NAME_MAX + 1),
+          image_asset_key: null,
+          image_uri: null,
+          symbolism: null,
+        },
+      ],
+    };
+    expect(validateCardMeditation(config).some((e) => /≤/.test(e))).toBe(true);
+  });
+
+  it('rejects a custom deck above the card cap', () => {
+    const card = { name: 'c', image_asset_key: null, image_uri: null, symbolism: null };
+    const config: CardMeditationConfig = {
+      mode: 'card_meditation',
+      deck_id: 'custom',
+      cards: Array.from({ length: CARD_MEDITATION_CARDS_MAX + 1 }, () => card),
+    };
+    expect(validateCardMeditation(config).some((e) => /at most/.test(e))).toBe(true);
   });
 });
 
@@ -333,6 +533,13 @@ describe('validateModeConfig dispatch', () => {
         mode: 'tarot',
         deck: 'major_arcana',
         per_card_minutes: 5,
+      }),
+    ).toEqual([]);
+    expect(
+      validateModeConfig({
+        mode: 'card_meditation',
+        deck_id: 'rws',
+        cards: null,
       }),
     ).toEqual([]);
   });

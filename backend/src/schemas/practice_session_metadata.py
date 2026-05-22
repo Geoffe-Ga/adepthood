@@ -15,6 +15,10 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from schemas.practice_mode_config import (
+    CARD_DECK_ID_MAX,
+    CARD_DECK_ID_PATTERN,
+    CARD_MEDITATION_CARDS_MAX,
+    CARD_NAME_MAX,
     OPTION_KEY_MAX,
     OPTION_KEY_PATTERN,
     TALLIED_CATEGORIES_MAX,
@@ -36,6 +40,14 @@ _MAX_INTERVALS = 1_000
 MAX_TALLIED_ROUNDS = TALLIED_ROUNDS_MAX
 MAX_TALLIED_ITEMS = TALLIED_ROUNDS_MAX * TALLIED_CATEGORIES_MAX * TALLIED_TARGET_MAX
 _MAX_ANCHOR_DURATION_SECONDS = 4 * 60 * 60  # 4 hours; well above any plausible mindful act.
+# Index ceiling for a card_meditation deck. Derived from the authoring-
+# side cap so a future bump to ``CARD_MEDITATION_CARDS_MAX`` cannot leave
+# the post-session index ceiling silently stale. The cross-module guard
+# in ``test_card_meditation_metadata_ceiling_matches_config_constant``
+# locks this derivation in case the constant is ever inlined. Re-exported
+# at module scope so the contract test asserts against the same name a
+# caller would import.
+MAX_CARD_INDEX = CARD_MEDITATION_CARDS_MAX - 1
 
 
 class _MetadataBase(BaseModel):
@@ -80,6 +92,41 @@ class IntervalBellMetadata(_MetadataBase):
         """
         if self.intervals_struck > self.total_intervals:
             msg = "intervals_struck cannot exceed total_intervals"
+            raise ValueError(msg)
+        return self
+
+
+class RandomIntervalBellMetadata(_MetadataBase):
+    """How many bells a random-interval session struck, and their spacing.
+
+    ``bells_struck`` is the total count of bells that rang. Each entry of
+    ``interval_seconds`` is the gap, in whole seconds, before one struck
+    bell (since the previous bell, or session start for the first) — so
+    the list carries one entry per bell whose timing the client logged
+    and never holds more entries than ``bells_struck``. The
+    cross-field validator enforces that bound; an entry per bell is the
+    only cardinality the metadata commits to. The list may be empty when
+    a session logs no per-bell timing, and each gap is at least one
+    second (a zero- or negative-length gap is physically impossible).
+    """
+
+    mode: Literal["random_interval_bell"] = "random_interval_bell"
+    bells_struck: int = Field(ge=0, le=_MAX_INTERVALS)
+    interval_seconds: list[Annotated[int, Field(ge=1)]] = Field(
+        default_factory=list, max_length=_MAX_INTERVALS
+    )
+
+    @model_validator(mode="after")
+    def _check_intervals_within_bells(self) -> Self:
+        """Reject more recorded gaps than bells struck.
+
+        Each ``interval_seconds`` entry is the wait before one struck
+        bell, so the list cannot be longer than ``bells_struck`` — that
+        would mean timing a bell that never rang. Mirrors the
+        struck-within-total invariant on :class:`IntervalBellMetadata`.
+        """
+        if len(self.interval_seconds) > self.bells_struck:
+            msg = "interval_seconds cannot hold more entries than bells_struck"
             raise ValueError(msg)
         return self
 
@@ -143,17 +190,35 @@ class MindfulAnchorMetadata(_MetadataBase):
     met_min_duration: bool
 
 
+class CardMeditationMetadata(_MetadataBase):
+    """Which card the user drew (by name and optional index).
+
+    ``card_drawn_index`` is optional because a custom deck may shuffle on
+    the client side without echoing positions back, and a bundled deck
+    may identify the card purely by name. The name is the authoritative
+    field; the index is a convenience for analytics that want to
+    correlate sessions with deck positions.
+    """
+
+    mode: Literal["card_meditation"] = "card_meditation"
+    deck_id: str = Field(min_length=1, max_length=CARD_DECK_ID_MAX, pattern=CARD_DECK_ID_PATTERN)
+    card_drawn_name: str = Field(min_length=1, max_length=CARD_NAME_MAX)
+    card_drawn_index: int | None = Field(default=None, ge=0, le=MAX_CARD_INDEX)
+
+
 #: Discriminated union over all per-mode session metadata payloads.
 SessionMetadata = Annotated[
     MeditationTimerMetadata
     | CountUpMetadata
     | MetronomeMetadata
     | IntervalBellMetadata
+    | RandomIntervalBellMetadata
     | RepCounterMetadata
     | SenseGroundingMetadata
     | TarotMetadata
     | TalliedGroundingMetadata
-    | MindfulAnchorMetadata,
+    | MindfulAnchorMetadata
+    | CardMeditationMetadata,
     Field(discriminator="mode"),
 ]
 

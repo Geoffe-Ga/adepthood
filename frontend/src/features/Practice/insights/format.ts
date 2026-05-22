@@ -55,6 +55,19 @@ export interface ModeSummaryTarot {
   readonly card_name: string;
 }
 
+export interface ModeSummaryCardMeditation {
+  readonly mode: 'card_meditation';
+  readonly deck_id: string;
+  readonly card_name: string;
+}
+
+export interface ModeSummaryTalliedGrounding {
+  readonly mode: 'tallied_grounding';
+  readonly rounds_completed: number;
+  readonly total_rounds: number;
+  readonly items_completed: number;
+}
+
 export type ModeSummaryMetadata =
   | ModeSummaryMeditationTimer
   | ModeSummaryCountUp
@@ -62,7 +75,9 @@ export type ModeSummaryMetadata =
   | ModeSummaryIntervalBell
   | ModeSummaryRepCounter
   | ModeSummarySenseGrounding
-  | ModeSummaryTarot;
+  | ModeSummaryTalliedGrounding
+  | ModeSummaryTarot
+  | ModeSummaryCardMeditation;
 
 export type ModeSummaryKind = ModeSummaryMetadata['mode'];
 
@@ -106,8 +121,16 @@ export function formatModeSummary<M extends ModeSummaryKind>(
       const m = metadata as ModeSummarySenseGrounding;
       return `Grounded through ${m.senses_completed.length} senses`;
     }
+    case 'tallied_grounding': {
+      const m = metadata as ModeSummaryTalliedGrounding;
+      return `${m.items_completed} items across ${m.rounds_completed}/${m.total_rounds} rounds`;
+    }
     case 'tarot': {
       const m = metadata as ModeSummaryTarot;
+      return `${m.card_name} for ${mmss}`;
+    }
+    case 'card_meditation': {
+      const m = metadata as ModeSummaryCardMeditation;
       return `${m.card_name} for ${mmss}`;
     }
     default:

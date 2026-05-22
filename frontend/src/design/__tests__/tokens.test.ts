@@ -6,6 +6,7 @@ import {
   SPACING,
   STAGE_COLORS,
   STAGE_ORDER,
+  brightenColor,
   colors,
   darkColors,
   radius,
@@ -132,6 +133,31 @@ describe('design tokens', () => {
       const colorKeys = Object.keys(STAGE_COLORS).sort();
       const orderKeys = [...STAGE_ORDER].sort();
       expect(orderKeys).toEqual(colorKeys);
+    });
+  });
+
+  describe('brightenColor', () => {
+    it('returns a vivid, on-hue version of a stage color', () => {
+      // Blue #6fa3d3 — each channel pushed away from the gray point.
+      expect(brightenColor('#6fa3d3')).toBe('#4ca4f6');
+    });
+
+    it('leaves an achromatic color (white "Clear Light") unchanged', () => {
+      // White has no hue to intensify.
+      expect(brightenColor('#ffffff')).toBe('#ffffff');
+    });
+
+    it('passes non-6-digit-hex inputs through untouched', () => {
+      expect(brightenColor('#000')).toBe('#000');
+      expect(brightenColor('rebeccapurple')).toBe('rebeccapurple');
+    });
+
+    it('produces a more saturated color than the input', () => {
+      const spread = (hex: string): number => {
+        const channels = [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
+        return Math.max(...channels) - Math.min(...channels);
+      };
+      expect(spread(brightenColor('#6fa3d3'))).toBeGreaterThan(spread('#6fa3d3'));
     });
   });
 

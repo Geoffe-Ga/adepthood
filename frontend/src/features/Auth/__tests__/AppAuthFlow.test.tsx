@@ -71,6 +71,14 @@ jest.mock('@/navigation/BottomTabs', () => {
   const { Text } = require('react-native');
   return () => <Text>BottomTabs</Text>;
 });
+// New for issue #348: RootStack mounts SharePreviewScreen as a sibling
+// route to ``Tabs``. The mocked navigator renders every child component
+// with no props, and the real screen reads ``route.params.token`` --
+// stub it out so the auth-flow tests stay focused on auth gating.
+jest.mock('@/features/Practice/screens/SharePreviewScreen', () => {
+  const { Text } = require('react-native');
+  return () => <Text>SharePreviewScreen</Text>;
+});
 
 import App from '@/App';
 

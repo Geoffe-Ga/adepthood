@@ -13,6 +13,14 @@
     "name": "frontend",
     "newArchEnabled": true,
     "orientation": "portrait",
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Adepthood to access your photos so you can add them as meditation cards."
+        }
+      ]
+    ],
     "slug": "frontend",
     "splash": {
       "backgroundColor": "#ffffff",

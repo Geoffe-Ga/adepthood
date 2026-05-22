@@ -38,24 +38,32 @@ import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 import { InsightCaptureModal } from '@/features/Practice/components/InsightCaptureModal';
 import RitualConfiguratorSheet from '@/features/Practice/configurator/RitualConfiguratorSheet';
+import type { PickedCard } from '@/features/Practice/data/resolveCard';
+import { buildCardMeditationMetadata, pickCard } from '@/features/Practice/data/resolveCard';
 import { cardForDayIndex } from '@/features/Practice/data/tarot';
 import { scheduledCues } from '@/features/Practice/engine/cues';
+import { totalSteps, totalStepsPerRound } from '@/features/Practice/engine/tallied';
 import type {
+  CardMeditationConfig,
   IntervalBellConfig,
   ModeConfig,
   RepCounterConfig,
   RitualControls,
   RitualState,
   SenseGroundingConfig,
+  TalliedGroundingConfig,
+  TarotConfig,
 } from '@/features/Practice/engine/types';
 import { useRitualEngine } from '@/features/Practice/engine/useRitualEngine';
 import type { ModeSummaryKind, ModeSummaryMetadata } from '@/features/Practice/insights/format';
+import CardMeditationView from '@/features/Practice/views/CardMeditationView';
 import CountUpTimerView from '@/features/Practice/views/CountUpTimerView';
 import IntervalBellView from '@/features/Practice/views/IntervalBellView';
 import MeditationTimerView from '@/features/Practice/views/MeditationTimerView';
 import MetronomeView from '@/features/Practice/views/MetronomeView';
 import RepCounterView from '@/features/Practice/views/RepCounterView';
 import SenseGroundingView from '@/features/Practice/views/SenseGroundingView';
+import TalliedGroundingView from '@/features/Practice/views/TalliedGroundingView';
 import TarotMeditationView from '@/features/Practice/views/TarotMeditationView';
 import { useOptimisticMutation } from '@/hooks/useOptimisticMutation';
 
@@ -91,6 +99,8 @@ interface ActiveSession {
   wireMetadata: SessionMetadata;
   summaryMetadata: ModeSummaryMetadata;
   tarotCardIndex: number;
+  /** The card drawn for a `card_meditation` session; `null` for other modes. */
+  cardPick: PickedCard | null;
   completedWindow: { start: Date; end: Date } | null;
   isSaving: boolean;
   saveError: string | null;
@@ -114,6 +124,7 @@ export function ActiveRitualSession(props: ActiveRitualSessionProps): React.JSX.
         state={session.state}
         controls={session.controls}
         tarotCardIndex={session.tarotCardIndex}
+        cardPick={session.cardPick}
         saveError={session.saveError}
       />
       <RitualConfiguratorSheet
@@ -180,13 +191,14 @@ function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
   useKeepAwakeWhileRunning(state.status);
   const window = useCompletionWindow(state.status);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const cardPick = useCardPick(props.effectiveConfig);
   const wireMetadata = useMemo<SessionMetadata>(
-    () => harvestMetadata(props.effectiveConfig, state),
-    [props.effectiveConfig, state],
+    () => harvestMetadata(props.effectiveConfig, state, cardPick),
+    [props.effectiveConfig, state, cardPick],
   );
   const summaryMetadata = useMemo<ModeSummaryMetadata>(
-    () => harvestSummaryMetadata(props.effectiveConfig, state, tarotCardIndex),
-    [props.effectiveConfig, state, tarotCardIndex],
+    () => harvestSummaryMetadata(props.effectiveConfig, state, tarotCardIndex, cardPick),
+    [props.effectiveConfig, state, tarotCardIndex, cardPick],
   );
   const saveMutation = useSaveMutation({
     apply: props.onSessionApply,
@@ -212,12 +224,22 @@ function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
     wireMetadata,
     summaryMetadata,
     tarotCardIndex,
+    cardPick,
     completedWindow: window.completedWindow,
     isSaving: saveMutation.pending,
     saveError,
     submitSession,
     finishAndReset,
   };
+}
+
+/**
+ * Draw the `card_meditation` card once per session. Resolving it here (not
+ * separately in the view and the metadata harvest) guarantees the displayed
+ * card and the recorded card are always the same draw.
+ */
+function useCardPick(config: ModeConfig): PickedCard | null {
+  return useMemo(() => (config.mode === 'card_meditation' ? pickCard(config) : null), [config]);
 }
 
 function useTarotCardIndex(props: ActiveRitualSessionProps): number {
@@ -332,6 +354,7 @@ interface SessionCardProps {
   state: RitualState;
   controls: RitualControls;
   tarotCardIndex: number;
+  cardPick: PickedCard | null;
   saveError: string | null;
 }
 
@@ -367,6 +390,7 @@ function SessionCard(props: SessionCardProps): React.JSX.Element {
         state={props.state}
         controls={props.controls}
         tarotCardIndex={props.tarotCardIndex}
+        cardPick={props.cardPick}
       />
       {props.saveError !== null && (
         <Text style={styles.error} testID="active-practice-save-error">
@@ -382,9 +406,16 @@ interface ModeViewProps {
   state: RitualState;
   controls: RitualControls;
   tarotCardIndex: number;
+  cardPick: PickedCard | null;
 }
 
-function ModeView({ config, state, controls, tarotCardIndex }: ModeViewProps): React.JSX.Element {
+function ModeView({
+  config,
+  state,
+  controls,
+  tarotCardIndex,
+  cardPick,
+}: ModeViewProps): React.JSX.Element {
   switch (config.mode) {
     case 'meditation_timer':
       return <MeditationTimerView state={state} controls={controls} />;
@@ -398,16 +429,49 @@ function ModeView({ config, state, controls, tarotCardIndex }: ModeViewProps): R
       return <RepCounterView config={config} state={state} controls={controls} />;
     case 'sense_grounding':
       return <SenseGroundingView config={config} state={state} controls={controls} />;
+    case 'tallied_grounding':
+      return <TalliedGroundingView config={config} state={state} controls={controls} />;
     case 'tarot':
+    case 'card_meditation':
       return (
-        <TarotMeditationView
+        <CardModeView
+          config={config}
           state={state}
           controls={controls}
-          card={cardForDayIndex(tarotCardIndex)}
-          hideTimer={config.hide_timer_during_meditation ?? false}
+          tarotCardIndex={tarotCardIndex}
+          cardPick={cardPick}
         />
       );
   }
+}
+
+interface CardModeViewProps {
+  config: TarotConfig | CardMeditationConfig;
+  state: RitualState;
+  controls: RitualControls;
+  tarotCardIndex: number;
+  cardPick: PickedCard | null;
+}
+
+/** Renders the two card-based modes; split out to keep `ModeView` simple. */
+function CardModeView({
+  config,
+  state,
+  controls,
+  tarotCardIndex,
+  cardPick,
+}: CardModeViewProps): React.JSX.Element {
+  if (config.mode === 'tarot') {
+    return (
+      <TarotMeditationView
+        state={state}
+        controls={controls}
+        card={cardForDayIndex(tarotCardIndex)}
+        hideTimer={config.hide_timer_during_meditation ?? false}
+      />
+    );
+  }
+  return <CardMeditationView config={config} state={state} controls={controls} picked={cardPick} />;
 }
 
 interface UseSaveMutationParams {
@@ -471,8 +535,14 @@ function parseDayKeyMs(key: string): number | null {
  * `unit_label`, `card_name` from `ModeSummaryMetadata`). The backend
  * validates this discriminator against the resolved practice mode and
  * returns 400 ``mode_metadata_mismatch`` otherwise.
+ *
+ * Exported for unit testing the per-mode harvest branches.
  */
-function harvestMetadata(config: ModeConfig, state: RitualState): SessionMetadata {
+export function harvestMetadata(
+  config: ModeConfig,
+  state: RitualState,
+  cardPick: PickedCard | null,
+): SessionMetadata {
   switch (config.mode) {
     case 'meditation_timer':
       return { mode: 'meditation_timer' };
@@ -486,12 +556,48 @@ function harvestMetadata(config: ModeConfig, state: RitualState): SessionMetadat
       return { mode: 'rep_counter', rep_count: state.repCount };
     case 'sense_grounding':
       return harvestSenseGrounding(config, state);
+    case 'tallied_grounding':
+      return harvestTalliedGrounding(config, state);
     case 'tarot':
       return {
         mode: 'tarot',
         card_index: normalizeTarotIndex(state.currentStepIndex),
       };
+    case 'card_meditation':
+      return cardMeditationWireMetadata(config, cardPick);
   }
+}
+
+/**
+ * Wire metadata for a `card_meditation` session. `cardPick` is resolved
+ * once in `useActiveSession`; the fallback only guards a direct call
+ * without a pre-resolved draw.
+ */
+function cardMeditationWireMetadata(
+  config: CardMeditationConfig,
+  cardPick: PickedCard | null,
+): SessionMetadata {
+  return buildCardMeditationMetadata(config, cardPick ?? pickCard(config));
+}
+
+/**
+ * Tallied-grounding wire metadata. `items_completed` is the linear tap
+ * count clamped to the ritual total; `rounds_completed` is how many full
+ * rounds those taps covered. The summary metadata reuses this shape
+ * verbatim — there are no presentation-only extras.
+ */
+function harvestTalliedGrounding(
+  config: TalliedGroundingConfig,
+  state: RitualState,
+): Extract<SessionMetadata, { mode: 'tallied_grounding' }> {
+  const perRound = totalStepsPerRound(config);
+  const itemsCompleted = Math.min(state.currentStepIndex, totalSteps(config));
+  return {
+    mode: 'tallied_grounding',
+    rounds_completed: perRound > 0 ? Math.floor(itemsCompleted / perRound) : 0,
+    total_rounds: config.rounds,
+    items_completed: itemsCompleted,
+  };
 }
 
 function harvestIntervalBell(config: IntervalBellConfig, state: RitualState): SessionMetadata {
@@ -519,11 +625,14 @@ function normalizeTarotIndex(index: number): number {
  * Presentation-layer metadata for the ritual-12 `InsightCaptureModal`
  * summary. Carries the same fields as the wire `SessionMetadata` plus
  * presentation-only extras (`unit_label`, `card_name`) the formatter needs.
+ *
+ * Exported for unit testing the per-mode harvest branches.
  */
-function harvestSummaryMetadata(
+export function harvestSummaryMetadata(
   config: ModeConfig,
   state: RitualState,
   tarotCardIndex: number,
+  cardPick: PickedCard | null,
 ): ModeSummaryMetadata {
   switch (config.mode) {
     case 'meditation_timer':
@@ -552,9 +661,21 @@ function harvestSummaryMetadata(
       >;
       return { mode: 'sense_grounding', senses_completed: wire.senses_completed };
     }
+    case 'tallied_grounding':
+      // Wire and summary shapes are identical — no presentation-only extras.
+      return harvestTalliedGrounding(config, state);
     case 'tarot': {
       const idx = normalizeTarotIndex(tarotCardIndex);
       return { mode: 'tarot', card_index: idx, card_name: cardForDayIndex(idx).name };
+    }
+    case 'card_meditation': {
+      // Reuse the wire harvest (and its single card draw) rather than drawing
+      // the card a second time — mirrors the `interval_bell` reuse above.
+      const wire = harvestMetadata(config, state, cardPick) as Extract<
+        SessionMetadata,
+        { mode: 'card_meditation' }
+      >;
+      return { mode: 'card_meditation', deck_id: wire.deck_id, card_name: wire.card_drawn_name };
     }
   }
 }

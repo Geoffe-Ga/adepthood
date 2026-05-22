@@ -13,6 +13,7 @@ from .login_attempt import LoginAttempt
 from .password_reset_token import PasswordResetToken
 from .practice import Practice
 from .practice_session import PracticeSession
+from .practice_share_link import PracticeShareLink
 from .prompt_response import PromptResponse
 from .revoked_token import RevokedToken
 from .stage_content import StageContent
@@ -35,6 +36,7 @@ __all__ = [
     "PasswordResetToken",
     "Practice",
     "PracticeSession",
+    "PracticeShareLink",
     "PromptResponse",
     "RevokedToken",
     "StageContent",

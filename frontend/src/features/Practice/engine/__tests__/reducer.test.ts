@@ -11,6 +11,7 @@ import type {
   ModeConfig,
   RepCounterConfig,
   SenseGroundingConfig,
+  TalliedGroundingConfig,
   TarotConfig,
 } from '../types';
 
@@ -207,6 +208,42 @@ describe('ritualReducer — sense_grounding', () => {
   });
 });
 
+describe('ritualReducer — tallied_grounding', () => {
+  const config: TalliedGroundingConfig = {
+    mode: 'tallied_grounding',
+    rounds: 2,
+    categories: [
+      { key: 'squares', label: 'a square', target_count: 2 },
+      { key: 'circles', label: 'a circle', target_count: 1 },
+    ],
+  };
+  // totalStepsPerRound = 3, totalSteps = 6.
+
+  it('TAP advances currentStepIndex and tracks fractional progress', () => {
+    const s = drive(config, [{ type: 'START', now: 0 }, { type: 'TAP' }, { type: 'TAP' }]);
+    expect(s.currentStepIndex).toBe(2);
+    expect(s.progress).toBeCloseTo(2 / 6);
+    expect(s.status).toBe('running');
+  });
+
+  it('auto-completes once every round is tallied', () => {
+    const taps = Array.from({ length: 6 }, (): EngineAction => ({ type: 'TAP' }));
+    const s = drive(config, [{ type: 'START', now: 0 }, ...taps]);
+    expect(s.currentStepIndex).toBe(6);
+    expect(s.progress).toBe(1);
+    expect(s.status).toBe('complete');
+  });
+
+  it('ADVANCE_STEP behaves like TAP', () => {
+    const s = drive(config, [
+      { type: 'START', now: 0 },
+      { type: 'ADVANCE_STEP' },
+      { type: 'ADVANCE_STEP' },
+    ]);
+    expect(s.currentStepIndex).toBe(2);
+  });
+});
+
 describe('ritualReducer — tarot', () => {
   const config: TarotConfig = { mode: 'tarot', deck: 'major_arcana', per_card_minutes: 5 };
 
@@ -241,6 +278,31 @@ describe('ritualReducer — tarot', () => {
   });
 });
 
+describe('ritualReducer — card_meditation', () => {
+  it('completes after per_card_minutes elapse', () => {
+    const config: ModeConfig = {
+      mode: 'card_meditation',
+      deck_id: 'rws',
+      cards: null,
+      per_card_minutes: 3,
+    };
+    let s = drive(config, [{ type: 'START', now: 0 }]);
+    expect(s.status).toBe('running');
+    s = ritualReducer(s, { type: 'TICK', now: 3 * MIN }, config);
+    expect(s.status).toBe('complete');
+    expect(s.cuesStruck).toBe(1);
+  });
+
+  it('defaults per_card_minutes to 5 when omitted', () => {
+    const config: ModeConfig = { mode: 'card_meditation', deck_id: 'rws', cards: null };
+    const s = drive(config, [
+      { type: 'START', now: 0 },
+      { type: 'TICK', now: 5 * MIN },
+    ]);
+    expect(s.status).toBe('complete');
+  });
+});
+
 const allConfigs: readonly [string, ModeConfig][] = [
   ['meditation_timer', { mode: 'meditation_timer', duration_minutes: 10 }],
   ['count_up', { mode: 'count_up' }],
@@ -254,7 +316,19 @@ const allConfigs: readonly [string, ModeConfig][] = [
   ],
   ['rep_counter', { mode: 'rep_counter', target_reps: 5, unit_label: 'reps' }],
   ['sense_grounding', { mode: 'sense_grounding', prompts: [{ sense: 'sight', label: 'a tree' }] }],
+  [
+    'tallied_grounding',
+    {
+      mode: 'tallied_grounding',
+      rounds: 2,
+      categories: [{ key: 'squares', label: 'a square', target_count: 3 }],
+    },
+  ],
   ['tarot', { mode: 'tarot', deck: 'major_arcana', per_card_minutes: 5 }],
+  [
+    'card_meditation',
+    { mode: 'card_meditation', deck_id: 'rws', cards: null, per_card_minutes: 5 },
+  ],
 ];
 
 describe.each(allConfigs)('lifecycle — %s', (_mode, config) => {
