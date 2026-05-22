@@ -324,7 +324,7 @@ const GoalProgressBar = ({
   </View>
 );
 
-// Layout constants for the log-date stepper (CLAUDE.md bans bare magic numbers).
+// Layout constants for the log-date stepper.
 const LOG_DATE_NOON_HOUR = 12;
 const LOG_DATE_ICON_SIZE = 20;
 const LOG_DATE_LABEL_FONT_SIZE = 14;
@@ -454,10 +454,8 @@ const LogUnitSection = ({
 
 const TIER_ORDER = ['low', 'clear', 'stretch'] as const;
 
-// Layout constants for the inline goal-target editor. Pulled out per
-// CLAUDE.md ("Introduce magic numbers without named constants" is in the
-// Must Never Do list); design-token equivalents (`SPACING`, `colors`,
-// `BORDER_RADIUS`) are reused for everything that has one.
+// Layout constants for the inline goal-target editor; design-token
+// equivalents (`SPACING`, `colors`, `BORDER_RADIUS`) are reused where one exists.
 const GOAL_INPUT_WIDTH = 64;
 const GOAL_INPUT_VERTICAL_PADDING = 6;
 const GOAL_ROW_VERTICAL_PADDING = 6;
