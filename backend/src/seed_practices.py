@@ -117,7 +117,11 @@ def _build_preset(
     mode_config: dict[str, Any],
     default_duration_minutes: float,
 ) -> dict[str, Any]:
-    """Compose one preset row, drawing description / instructions from copy."""
+    """Compose one preset row.
+
+    ``name`` must be a key in :data:`PRESET_COPY`; its
+    ``(description, instructions)`` tuple supplies the long-form copy.
+    """
     description, instructions = PRESET_COPY[name]
     return {
         "stage_number": stage_number,
@@ -276,6 +280,15 @@ _stage_numbers = [p["stage_number"] for p in _CANONICAL_PRESETS]
 if len(set(_stage_numbers)) != len(_stage_numbers):
     _dupes = sorted(n for n in _stage_numbers if _stage_numbers.count(n) > 1)
     msg = f"Duplicate stage_number among canonical presets: {_dupes}"
+    raise ValueError(msg)
+
+# Reject duplicate preset names at import time. ``name`` is the PRESET_COPY
+# lookup key, so a collision would silently shadow one preset's copy; it
+# also defeats the partial unique index for two presets sharing a stage.
+_preset_names = [p["name"] for p in _PRESET_PRACTICES]
+if len(set(_preset_names)) != len(_preset_names):
+    _name_dupes = sorted(n for n in _preset_names if _preset_names.count(n) > 1)
+    msg = f"Duplicate preset name in PRESET_PRACTICES: {_name_dupes}"
     raise ValueError(msg)
 
 #: Immutable view of every preset definition (canonical + alternatives).

@@ -24,10 +24,10 @@ from seed_practices import (
 )
 from seed_stages import STAGE_DEFINITIONS
 
-#: Total catalog presets the seeder inserts — one canonical preset per
-#: stage (10) plus the stage-1 grounding alternatives (Touch Grass,
-#: Mindful Eating).
-_EXPECTED_PRESET_COUNT = 12
+#: Total catalog presets the seeder inserts. Derived from the source list
+#: so adding a preset never silently drifts these expectations — mirrors
+#: the dynamic count in ``test_lifespan_seeding.py``.
+_EXPECTED_PRESET_COUNT = len(PRESET_PRACTICES)
 #: Stage number outside the canonical 1..10 range. Used by the
 #: name-collision test to plant a user submission that the seeder must
 #: ignore — the bare ``Practice`` model has no FK or range check on
@@ -290,7 +290,6 @@ def test_canonical_presets_match_stage_total() -> None:
     one; the canonical subset stays 1:1 with the stages.
     """
     assert len(CANONICAL_PRESET_PRACTICES) == len(STAGE_DEFINITIONS)
-    assert len(PRESET_PRACTICES) == _EXPECTED_PRESET_COUNT
     assert len(PRESET_PRACTICES) > len(CANONICAL_PRESET_PRACTICES)
 
 
@@ -378,6 +377,8 @@ def test_alternative_presets_never_shadow_the_canonical_pointer() -> None:
     """
     alternative_names = {"Touch Grass", "Mindful Eating"}
     all_names = {p["name"] for p in PRESET_PRACTICES}
+    canonical_names = {p["name"] for p in CANONICAL_PRESET_PRACTICES}
     assert alternative_names <= all_names
+    assert alternative_names.isdisjoint(canonical_names)
     assert alternative_names.isdisjoint(STAGE_TO_PRESET_NAME.values())
     assert STAGE_TO_PRESET_NAME[1] == "5-4-3-2-1 grounding"
