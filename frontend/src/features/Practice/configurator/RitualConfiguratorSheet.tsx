@@ -14,6 +14,7 @@ import {
 import type { ModeConfig } from '../engine/types';
 import { CUSTOM_NAME_MAX, validateCustomName, validateModeConfig } from '../engine/validation';
 
+import CardMeditationForm from './forms/CardMeditationForm';
 import CountUpForm from './forms/CountUpForm';
 import IntervalBellForm from './forms/IntervalBellForm';
 import MeditationTimerForm from './forms/MeditationTimerForm';
@@ -200,6 +201,8 @@ const ConfiguratorBody = ({ config, onChange }: BodyProps): React.JSX.Element =>
       return <SenseGroundingForm value={config} onChange={onChange} />;
     case 'tarot':
       return <TarotForm value={config} onChange={onChange} />;
+    case 'card_meditation':
+      return <CardMeditationForm value={config} onChange={onChange} />;
     default:
       return <UnknownModeNotice />;
   }

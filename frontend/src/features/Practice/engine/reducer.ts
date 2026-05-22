@@ -1,6 +1,7 @@
 import { scheduledCues } from './cues';
 import { totalSteps } from './tallied';
 import type {
+  CardMeditationConfig,
   EngineAction,
   EngineState,
   ModeConfig,
@@ -9,7 +10,12 @@ import type {
   TalliedGroundingConfig,
   TarotConfig,
 } from './types';
-import { DEFAULT_TAROT_MINUTES, MS_PER_MINUTE, TAROT_DECK_SIZE } from './types';
+import {
+  DEFAULT_CARD_MEDITATION_MINUTES,
+  DEFAULT_TAROT_MINUTES,
+  MS_PER_MINUTE,
+  TAROT_DECK_SIZE,
+} from './types';
 
 export function initialState(config: ModeConfig, startCardIndex = 0): EngineState {
   return {
@@ -201,6 +207,8 @@ export function getTotalMs(config: ModeConfig): number | null {
       return config.timer.duration_minutes * MS_PER_MINUTE;
     case 'tarot':
       return tarotTotalMs(config);
+    case 'card_meditation':
+      return cardMeditationTotalMs(config);
     case 'rep_counter':
       return repCounterTotalMs(config);
   }
@@ -208,6 +216,10 @@ export function getTotalMs(config: ModeConfig): number | null {
 
 function tarotTotalMs(config: TarotConfig): number {
   return (config.per_card_minutes ?? DEFAULT_TAROT_MINUTES) * MS_PER_MINUTE;
+}
+
+function cardMeditationTotalMs(config: CardMeditationConfig): number {
+  return (config.per_card_minutes ?? DEFAULT_CARD_MEDITATION_MINUTES) * MS_PER_MINUTE;
 }
 
 function repCounterTotalMs(config: RepCounterConfig): number | null {
