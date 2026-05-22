@@ -4,6 +4,7 @@ import type {
   CardMeditationConfig,
   EngineAction,
   EngineState,
+  MetronomeConfig,
   ModeConfig,
   RepCounterConfig,
   SenseGroundingConfig,
@@ -194,24 +195,40 @@ function advanceTallied(state: EngineState, config: TalliedGroundingConfig): Eng
   };
 }
 
+/** Total-duration builder for the open-ended modes (no countdown). */
+const unboundedTotalMs = (): number | null => null;
+
+/** Total-duration builder for the plain duration-driven modes. */
+const durationTotalMs = (config: { duration_minutes: number }): number =>
+  config.duration_minutes * MS_PER_MINUTE;
+
+function metronomeTotalMs(config: MetronomeConfig): number {
+  return config.timer.duration_minutes * MS_PER_MINUTE;
+}
+
+/**
+ * Per-mode total-duration builders. The mapped type makes every
+ * `ModeConfig` variant a required key, so a new mode fails to compile
+ * until it is handled here.
+ */
+const TOTAL_MS_BUILDERS: {
+  [K in ModeConfig['mode']]: (config: Extract<ModeConfig, { mode: K }>) => number | null;
+} = {
+  count_up: unboundedTotalMs,
+  sense_grounding: unboundedTotalMs,
+  tallied_grounding: unboundedTotalMs,
+  meditation_timer: durationTotalMs,
+  interval_bell: durationTotalMs,
+  random_interval_bell: durationTotalMs,
+  metronome: metronomeTotalMs,
+  tarot: tarotTotalMs,
+  card_meditation: cardMeditationTotalMs,
+  rep_counter: repCounterTotalMs,
+};
+
 export function getTotalMs(config: ModeConfig): number | null {
-  switch (config.mode) {
-    case 'count_up':
-    case 'sense_grounding':
-    case 'tallied_grounding':
-      return null;
-    case 'meditation_timer':
-    case 'interval_bell':
-      return config.duration_minutes * MS_PER_MINUTE;
-    case 'metronome':
-      return config.timer.duration_minutes * MS_PER_MINUTE;
-    case 'tarot':
-      return tarotTotalMs(config);
-    case 'card_meditation':
-      return cardMeditationTotalMs(config);
-    case 'rep_counter':
-      return repCounterTotalMs(config);
-  }
+  type AnyBuilder = (config: ModeConfig) => number | null;
+  return (TOTAL_MS_BUILDERS[config.mode] as AnyBuilder)(config);
 }
 
 function tarotTotalMs(config: TarotConfig): number {

@@ -19,6 +19,7 @@ import CountUpForm from './forms/CountUpForm';
 import IntervalBellForm from './forms/IntervalBellForm';
 import MeditationTimerForm from './forms/MeditationTimerForm';
 import MetronomeForm from './forms/MetronomeForm';
+import RandomIntervalBellForm from './forms/RandomIntervalBellForm';
 import RepCounterForm from './forms/RepCounterForm';
 import SenseGroundingForm from './forms/SenseGroundingForm';
 import { ErrorList } from './forms/shared';
@@ -195,6 +196,8 @@ const ConfiguratorBody = ({ config, onChange }: BodyProps): React.JSX.Element =>
       return <MetronomeForm value={config} onChange={onChange} />;
     case 'interval_bell':
       return <IntervalBellForm value={config} onChange={onChange} />;
+    case 'random_interval_bell':
+      return <RandomIntervalBellForm value={config} onChange={onChange} />;
     case 'rep_counter':
       return <RepCounterForm value={config} onChange={onChange} />;
     case 'sense_grounding':

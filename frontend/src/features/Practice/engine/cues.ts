@@ -12,24 +12,36 @@ import { DEFAULT_CARD_MEDITATION_MINUTES, DEFAULT_TAROT_MINUTES, MS_PER_MINUTE }
 // Defensive: at bpm=240 over the max session this would otherwise blow up.
 const MAX_METRONOME_TICKS = 10_000;
 
+/**
+ * Cue builder for the modes whose pacing the engine does not drive:
+ * `count_up`, `rep_counter`, `sense_grounding`, `tallied_grounding`, and
+ * `random_interval_bell` (whose offsets are non-deterministic and so are
+ * scheduled client-side in the view).
+ */
+const noCues = (): readonly Cue[] => [];
+
+/**
+ * Per-mode cue builders. The mapped type makes every `ModeConfig` variant
+ * a required key, so a new mode fails to compile until it is handled here.
+ */
+const CUE_BUILDERS: {
+  [K in ModeConfig['mode']]: (config: Extract<ModeConfig, { mode: K }>) => readonly Cue[];
+} = {
+  meditation_timer: cuesForMeditation,
+  count_up: noCues,
+  metronome: cuesForMetronome,
+  interval_bell: cuesForIntervalBell,
+  random_interval_bell: noCues,
+  rep_counter: noCues,
+  sense_grounding: noCues,
+  tallied_grounding: noCues,
+  tarot: cuesForTarot,
+  card_meditation: cuesForCardMeditation,
+};
+
 export function scheduledCues(config: ModeConfig): readonly Cue[] {
-  switch (config.mode) {
-    case 'meditation_timer':
-      return cuesForMeditation(config);
-    case 'count_up':
-    case 'rep_counter':
-    case 'sense_grounding':
-    case 'tallied_grounding':
-      return [];
-    case 'metronome':
-      return cuesForMetronome(config);
-    case 'interval_bell':
-      return cuesForIntervalBell(config);
-    case 'tarot':
-      return cuesForTarot(config);
-    case 'card_meditation':
-      return cuesForCardMeditation(config);
-  }
+  type AnyBuilder = (config: ModeConfig) => readonly Cue[];
+  return (CUE_BUILDERS[config.mode] as AnyBuilder)(config);
 }
 
 function cuesForMeditation(config: MeditationTimerConfig): readonly Cue[] {

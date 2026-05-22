@@ -1637,6 +1637,13 @@ export interface IntervalBellSessionMetadata {
   total_intervals: number;
 }
 
+export interface RandomIntervalBellSessionMetadata {
+  mode: 'random_interval_bell';
+  bells_struck: number;
+  /** Whole-second gap before each struck bell; one entry per bell. */
+  interval_seconds: readonly number[];
+}
+
 export interface RepCounterSessionMetadata {
   mode: 'rep_counter';
   rep_count: number;
@@ -1678,6 +1685,7 @@ export type SessionMetadata =
   | CountUpSessionMetadata
   | MetronomeSessionMetadata
   | IntervalBellSessionMetadata
+  | RandomIntervalBellSessionMetadata
   | RepCounterSessionMetadata
   | SenseGroundingSessionMetadata
   | TalliedGroundingSessionMetadata

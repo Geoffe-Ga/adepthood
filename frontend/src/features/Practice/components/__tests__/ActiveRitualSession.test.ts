@@ -2,11 +2,23 @@ import { describe, expect, it } from '@jest/globals';
 
 import { pickCard } from '../../data/resolveCard';
 import type { PickedCard } from '../../data/resolveCard';
-import type { CardMeditationConfig } from '../../engine/types';
+import type {
+  CardMeditationConfig,
+  RandomIntervalBellConfig,
+  RandomIntervalBellMetadata,
+} from '../../engine/types';
 import { fakeState } from '../../views/__tests__/fixtures';
 import { harvestMetadata, harvestSummaryMetadata } from '../ActiveRitualSession';
 
 const config: CardMeditationConfig = { mode: 'card_meditation', deck_id: 'rws', cards: null };
+
+const randomBellConfig: RandomIntervalBellConfig = {
+  mode: 'random_interval_bell',
+  duration_minutes: 20,
+  min_interval_seconds: 30,
+  max_interval_seconds: 180,
+  bell_tone: 'bowl',
+};
 
 describe('card_meditation metadata harvest', () => {
   it('records the same card in the wire and summary metadata', () => {
@@ -37,5 +49,30 @@ describe('card_meditation metadata harvest', () => {
       card_drawn_name: 'Injected Card',
       card_drawn_index: 7,
     });
+  });
+});
+
+describe('random_interval_bell metadata harvest', () => {
+  it('falls back to an empty schedule when the view reported nothing', () => {
+    const wire = harvestMetadata(randomBellConfig, fakeState(), null, null);
+    expect(wire).toEqual({
+      mode: 'random_interval_bell',
+      bells_struck: 0,
+      interval_seconds: [],
+    });
+    const summary = harvestSummaryMetadata(randomBellConfig, fakeState(), 0, null, null);
+    expect(summary).toEqual({ mode: 'random_interval_bell', bells_struck: 0 });
+  });
+
+  it('threads the view-reported metadata into the wire and summary harvest', () => {
+    const reported: RandomIntervalBellMetadata = {
+      mode: 'random_interval_bell',
+      bells_struck: 4,
+      interval_seconds: [40, 90, 60, 120],
+    };
+    const wire = harvestMetadata(randomBellConfig, fakeState(), null, reported);
+    expect(wire).toEqual(reported);
+    const summary = harvestSummaryMetadata(randomBellConfig, fakeState(), 0, null, reported);
+    expect(summary).toEqual({ mode: 'random_interval_bell', bells_struck: 4 });
   });
 });

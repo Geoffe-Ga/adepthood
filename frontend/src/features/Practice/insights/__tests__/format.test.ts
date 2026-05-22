@@ -13,6 +13,7 @@ describe('formatModeSummary', () => {
       15,
       '3/5 bells over 15:00',
     ],
+    [{ mode: 'random_interval_bell', bells_struck: 6 }, 20, '6 random bells over 20:00'],
     [
       { mode: 'rep_counter', rep_count: 108, unit_label: 'breath cycles' },
       12 + 34 / 60,
