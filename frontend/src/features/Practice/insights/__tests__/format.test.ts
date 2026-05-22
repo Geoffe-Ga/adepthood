@@ -24,6 +24,11 @@ describe('formatModeSummary', () => {
       'Grounded through 3 senses',
     ],
     [{ mode: 'tarot', card_index: 0, card_name: 'The Fool' }, 5, 'The Fool for 05:00'],
+    [
+      { mode: 'tallied_grounding', rounds_completed: 3, total_rounds: 3, items_completed: 27 },
+      6,
+      '27 items across 3/3 rounds',
+    ],
   ])('formats %j (%s min) as %s', (metadata, durationMinutes, expected) => {
     expect(formatModeSummary(metadata.mode, durationMinutes, metadata)).toBe(expected);
   });

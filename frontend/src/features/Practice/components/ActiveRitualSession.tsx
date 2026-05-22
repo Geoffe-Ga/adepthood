@@ -40,6 +40,7 @@ import { InsightCaptureModal } from '@/features/Practice/components/InsightCaptu
 import RitualConfiguratorSheet from '@/features/Practice/configurator/RitualConfiguratorSheet';
 import { cardForDayIndex } from '@/features/Practice/data/tarot';
 import { scheduledCues } from '@/features/Practice/engine/cues';
+import { totalSteps, totalStepsPerRound } from '@/features/Practice/engine/tallied';
 import type {
   IntervalBellConfig,
   ModeConfig,
@@ -47,6 +48,7 @@ import type {
   RitualControls,
   RitualState,
   SenseGroundingConfig,
+  TalliedGroundingConfig,
 } from '@/features/Practice/engine/types';
 import { useRitualEngine } from '@/features/Practice/engine/useRitualEngine';
 import type { ModeSummaryKind, ModeSummaryMetadata } from '@/features/Practice/insights/format';
@@ -56,6 +58,7 @@ import MeditationTimerView from '@/features/Practice/views/MeditationTimerView';
 import MetronomeView from '@/features/Practice/views/MetronomeView';
 import RepCounterView from '@/features/Practice/views/RepCounterView';
 import SenseGroundingView from '@/features/Practice/views/SenseGroundingView';
+import TalliedGroundingView from '@/features/Practice/views/TalliedGroundingView';
 import TarotMeditationView from '@/features/Practice/views/TarotMeditationView';
 import { useOptimisticMutation } from '@/hooks/useOptimisticMutation';
 
@@ -398,6 +401,8 @@ function ModeView({ config, state, controls, tarotCardIndex }: ModeViewProps): R
       return <RepCounterView config={config} state={state} controls={controls} />;
     case 'sense_grounding':
       return <SenseGroundingView config={config} state={state} controls={controls} />;
+    case 'tallied_grounding':
+      return <TalliedGroundingView config={config} state={state} controls={controls} />;
     case 'tarot':
       return (
         <TarotMeditationView
@@ -486,12 +491,34 @@ function harvestMetadata(config: ModeConfig, state: RitualState): SessionMetadat
       return { mode: 'rep_counter', rep_count: state.repCount };
     case 'sense_grounding':
       return harvestSenseGrounding(config, state);
+    case 'tallied_grounding':
+      return harvestTalliedGrounding(config, state);
     case 'tarot':
       return {
         mode: 'tarot',
         card_index: normalizeTarotIndex(state.currentStepIndex),
       };
   }
+}
+
+/**
+ * Tallied-grounding wire metadata. `items_completed` is the linear tap
+ * count clamped to the ritual total; `rounds_completed` is how many full
+ * rounds those taps covered. The summary metadata reuses this shape
+ * verbatim — there are no presentation-only extras.
+ */
+function harvestTalliedGrounding(
+  config: TalliedGroundingConfig,
+  state: RitualState,
+): Extract<SessionMetadata, { mode: 'tallied_grounding' }> {
+  const perRound = totalStepsPerRound(config);
+  const itemsCompleted = Math.min(state.currentStepIndex, totalSteps(config));
+  return {
+    mode: 'tallied_grounding',
+    rounds_completed: perRound > 0 ? Math.floor(itemsCompleted / perRound) : 0,
+    total_rounds: config.rounds,
+    items_completed: itemsCompleted,
+  };
 }
 
 function harvestIntervalBell(config: IntervalBellConfig, state: RitualState): SessionMetadata {
@@ -552,6 +579,9 @@ function harvestSummaryMetadata(
       >;
       return { mode: 'sense_grounding', senses_completed: wire.senses_completed };
     }
+    case 'tallied_grounding':
+      // Wire and summary shapes are identical — no presentation-only extras.
+      return harvestTalliedGrounding(config, state);
     case 'tarot': {
       const idx = normalizeTarotIndex(tarotCardIndex);
       return { mode: 'tarot', card_index: idx, card_name: cardForDayIndex(idx).name };
