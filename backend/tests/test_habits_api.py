@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import timedelta
 from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from domain.dates import today_in_tz
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
+from models.habit import Habit
 
 
 def sample_payload(**overrides: object) -> dict[str, object]:
@@ -338,6 +341,85 @@ async def test_list_habits_includes_goal_completions(async_client: AsyncClient) 
     [habit] = resp.json()
     clear_goal = next(g for g in habit["goals"] if g["tier"] == "clear")
     assert len(clear_goal["completions"]) == 1
+
+
+# Three subtractive tiers (low/clear/stretch) matching the onboarding
+# shape; lifted to module scope so the helper below stays at 3 args and
+# under the project's PLR0913 limit.
+_SUBTRACTIVE_TIERS_FOR_API: tuple[tuple[str, float], ...] = (
+    ("low", 10.0),
+    ("clear", 5.0),
+    ("stretch", 2.0),
+)
+
+
+async def _signup_with_user_id(client: AsyncClient, username: str) -> tuple[dict[str, str], int]:
+    """Variant of ``_signup`` that also returns the user id for DB-direct seeding."""
+    resp = await client.post(
+        "/auth/signup",
+        json={
+            "email": f"{username}@example.com",
+            "password": "secret12345",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    return {"Authorization": f"Bearer {data['token']}"}, data["user_id"]
+
+
+@pytest.mark.asyncio
+async def test_get_habits_reports_subtractive_streak_from_start_date(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``GET /habits`` runs the subtractive streak path end-to-end.
+
+    The check-in path (``POST /goal_completions``) and the list path
+    (``GET /habits``) build the ``SubtractiveContext`` through two
+    separate helpers -- ``_subtractive_context_for_goal`` queries the
+    DB directly, while ``_populate_streak`` reads the eager-loaded
+    ``habit.goals`` relationship.  Per the PR #379 review, only the
+    former was HTTP-covered; this test closes the loop on the second
+    wiring so a regression in ``_subtractive_context`` (e.g. dropping
+    the tier filter, returning ``None`` for a valid habit) flips a red
+    test instead of silently zeroing the streak on the user's tile.
+    """
+    headers, user_id = await _signup_with_user_id(async_client, "abstain_list")
+    today = today_in_tz("UTC")
+    start = today - timedelta(days=3)
+    habit = Habit(
+        name="No sugar",
+        icon="🍬",
+        start_date=start,
+        energy_cost=1,
+        energy_return=2,
+        user_id=user_id,
+    )
+    db_session.add(habit)
+    await db_session.commit()
+    await db_session.refresh(habit)
+    for tier, target in _SUBTRACTIVE_TIERS_FOR_API:
+        db_session.add(
+            Goal(
+                habit_id=habit.id,
+                title=f"{tier} sugar",
+                tier=tier,
+                target=target,
+                target_unit="g",
+                frequency=1.0,
+                frequency_unit="per_day",
+                is_additive=False,
+            )
+        )
+    await db_session.commit()
+
+    resp = await async_client.get("/habits/", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    [body_habit] = resp.json()
+    # 4 days = today + the three prior abstention days since start_date.
+    # If ``_subtractive_context`` regressed to the additive path the
+    # streak would be 0 (no log rows at all -> additive recency gate
+    # zeroes the chain), so this assertion specifically pins polarity.
+    assert body_habit["streak"] == 4
 
 
 @pytest.mark.asyncio

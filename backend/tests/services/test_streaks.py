@@ -14,6 +14,7 @@ from models.habit import Habit
 from models.user import User
 from schemas.milestone import Milestone
 from services.streaks import (
+    SubtractiveContext,
     check_milestones,
     compute_consecutive_streak,
     compute_habit_streak,
@@ -363,3 +364,124 @@ async def test_compute_consecutive_streak_returns_zero_when_chain_is_stale(
     await db_session.commit()
 
     assert await compute_consecutive_streak(db_session, goal.id, user.id, "UTC") == 0
+
+
+# ── Subtractive habits: no-log days count as abstention success ────────────
+
+
+def test_compute_habit_streak_subtractive_with_no_logs_counts_from_start_date() -> None:
+    """A subtractive habit with zero logs accrues a streak day per calendar day.
+
+    User opened the app every day but never had any sugar to log; the
+    habit started 5 days ago, so the streak should be 6 (today + the
+    five days since start).  This is the exact case the bug report
+    pointed at: "It should still mark achieved if it hasn't been logged
+    at all, meaning I have abstained."
+    """
+    today = datetime.now(UTC).date()
+    ctx = SubtractiveContext(clear_threshold=5.0, start_date=today - timedelta(days=5))
+
+    assert compute_habit_streak([], "UTC", ctx) == 6
+
+
+def test_compute_habit_streak_subtractive_breaks_on_transgression() -> None:
+    """Logging above the clear threshold yesterday breaks the streak there.
+
+    Today is still success (no log = 0 sugar), but yesterday's
+    transgression (7 > clear=5) ends the chain — streak = 1.
+    """
+    yesterday = _utc_dt_n_days_ago(1)
+    completions = [GoalCompletion(goal_id=1, user_id=1, completed_units=7.0, timestamp=yesterday)]
+    today_date = datetime.now(UTC).date()
+    ctx = SubtractiveContext(clear_threshold=5.0, start_date=today_date - timedelta(days=10))
+
+    assert compute_habit_streak(completions, "UTC", ctx) == 1
+
+
+def test_compute_habit_streak_subtractive_below_threshold_keeps_streak() -> None:
+    """A small log under the clear threshold still counts as a success day."""
+    completions = [
+        GoalCompletion(
+            goal_id=1,
+            user_id=1,
+            completed_units=2.0,
+            timestamp=_utc_dt_n_days_ago(days_ago),
+        )
+        for days_ago in (0, 1, 2)
+    ]
+    today_date = datetime.now(UTC).date()
+    ctx = SubtractiveContext(clear_threshold=5.0, start_date=today_date - timedelta(days=5))
+
+    # Five days of habit existence, every day below the clear threshold ->
+    # full streak from today back to start_date (6 days inclusive).
+    assert compute_habit_streak(completions, "UTC", ctx) == 6
+
+
+def test_compute_habit_streak_subtractive_at_threshold_is_success() -> None:
+    """A log *equal* to the clear threshold is "just under" — the day still counts.
+
+    The frontend's tier resolver treats ``total <= target`` as success
+    for subtractive goals; the backend streak must agree or the tile's
+    "Achieved Today!" badge and the streak counter diverge on the edge
+    case.
+    """
+    today_dt = _utc_dt_n_days_ago(0)
+    completions = [GoalCompletion(goal_id=1, user_id=1, completed_units=5.0, timestamp=today_dt)]
+    today_date = datetime.now(UTC).date()
+    ctx = SubtractiveContext(clear_threshold=5.0, start_date=today_date)
+
+    assert compute_habit_streak(completions, "UTC", ctx) == 1
+
+
+def test_compute_habit_streak_subtractive_returns_zero_before_start_date() -> None:
+    """A habit that hasn't started yet has no streak to accrue."""
+    today_date = datetime.now(UTC).date()
+    ctx = SubtractiveContext(clear_threshold=5.0, start_date=today_date + timedelta(days=3))
+    assert compute_habit_streak([], "UTC", ctx) == 0
+
+
+@pytest.mark.asyncio
+async def test_compute_consecutive_streak_subtractive_no_logs(
+    db_session: AsyncSession,
+) -> None:
+    """DB path: a subtractive goal with no logs streaks from start_date.
+
+    Mirrors :func:`test_compute_habit_streak_subtractive_with_no_logs_counts_from_start_date`
+    so the in-memory path used by ``GET /habits`` and the per-goal DB
+    path used during check-in report the same number.
+    """
+    user = await _make_user(db_session)
+    assert user.id is not None
+    goal = await _make_goal(db_session, user.id)
+    assert goal.id is not None
+
+    today_date = datetime.now(UTC).date()
+    ctx = SubtractiveContext(clear_threshold=5.0, start_date=today_date - timedelta(days=3))
+    assert await compute_consecutive_streak(db_session, goal.id, user.id, "UTC", ctx) == 4
+
+
+@pytest.mark.asyncio
+async def test_compute_consecutive_streak_subtractive_breaks_on_transgression(
+    db_session: AsyncSession,
+) -> None:
+    """DB path: a single above-threshold log day breaks the abstention chain."""
+    user = await _make_user(db_session)
+    assert user.id is not None
+    goal = await _make_goal(db_session, user.id)
+    assert goal.id is not None
+
+    db_session.add(
+        GoalCompletion(
+            goal_id=goal.id,
+            user_id=user.id,
+            completed_units=10.0,  # well above clear=5
+            timestamp=_utc_dt_n_days_ago(2),
+        ),
+    )
+    await db_session.commit()
+
+    today_date = datetime.now(UTC).date()
+    ctx = SubtractiveContext(clear_threshold=5.0, start_date=today_date - timedelta(days=10))
+    # Today + yesterday are abstention days (streak=2), then day -2 is a
+    # transgression that breaks the chain.
+    assert await compute_consecutive_streak(db_session, goal.id, user.id, "UTC", ctx) == 2

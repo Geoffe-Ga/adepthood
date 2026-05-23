@@ -25,7 +25,7 @@ from schemas.habit import Habit as HabitSchema
 from schemas.habit import HabitCreate, HabitWithGoals
 from schemas.habit_stats import HabitStats
 from schemas.pagination import paginate_query
-from services.streaks import compute_habit_streak
+from services.streaks import SubtractiveContext, compute_habit_streak
 from services.users import get_user_timezone
 
 logger = logging.getLogger(__name__)
@@ -48,10 +48,26 @@ _DEFAULT_GOAL_TIERS: tuple[tuple[str, str, float], ...] = (
 )
 
 
+def _subtractive_context(habit: Habit) -> SubtractiveContext | None:
+    """Return the streak context for a subtractive habit, else ``None``.
+
+    ``None`` selects the additive code path in :func:`compute_habit_streak`.
+    Onboarding writes the three tiers atomically with a shared
+    ``is_additive`` value, so the first subtractive *clear*-tier goal is
+    a sufficient probe; a habit lacking that goal (older test fixtures,
+    partial migrations) falls back to additive logic to avoid
+    mis-counting against a phantom threshold.
+    """
+    clear = next((g for g in habit.goals if g.tier == "clear" and not g.is_additive), None)
+    if clear is None:
+        return None
+    return SubtractiveContext(clear_threshold=clear.target, start_date=habit.start_date)
+
+
 def _populate_streak(habit: Habit, current_user: int, user_timezone: str) -> None:
     """Set ``habit.streak`` from the goal completions loaded in memory."""
     completions = [c for g in habit.goals for c in g.completions if c.user_id == current_user]
-    habit.streak = compute_habit_streak(completions, user_timezone)
+    habit.streak = compute_habit_streak(completions, user_timezone, _subtractive_context(habit))
 
 
 def _filter_completions_to_caller(habit: Habit, current_user: int) -> None:
@@ -269,4 +285,4 @@ async def get_habit_stats(
     habit = await _get_habit_with_completions(habit_id, current_user, session)
     completions = [c for goal in habit.goals for c in goal.completions if c.user_id == current_user]
     user_tz = await get_user_timezone(session, current_user)
-    return compute_habit_stats(completions, user_tz)
+    return compute_habit_stats(completions, user_tz, _subtractive_context(habit))

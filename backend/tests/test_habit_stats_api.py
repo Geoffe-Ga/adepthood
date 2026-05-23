@@ -8,9 +8,12 @@ from http import HTTPStatus
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
+from domain.dates import today_in_tz
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
+from models.habit import Habit
 
 # Named constants for test assertions (avoids magic-number lint warnings)
 DAYS_IN_WEEK = 7
@@ -436,3 +439,107 @@ async def test_stats_current_streak_returns_zero_for_stale_chain(
     # Longest streak is unaffected by the recency gate -- it still
     # reflects the historical 3-day run.
     assert data["longest_streak"] == 3
+
+
+# ── Subtractive habits: stats endpoint mirrors the streak polarity ───────
+
+
+_SUBTRACTIVE_TIERS_STATS: tuple[tuple[str, float], ...] = (
+    ("low", 10.0),
+    ("clear", 5.0),
+    ("stretch", 2.0),
+)
+
+
+async def _seed_subtractive_habit_for_stats(
+    db_session: AsyncSession,
+    user_id: int,
+    start_date_offset_days: int,
+) -> int:
+    """Insert an abstain-style habit with 3 subtractive tier goals; return habit_id."""
+    start = today_in_tz("UTC") - timedelta(days=start_date_offset_days)
+    habit = Habit(
+        name="No sugar",
+        icon="🍬",
+        start_date=start,
+        energy_cost=1,
+        energy_return=2,
+        user_id=user_id,
+    )
+    db_session.add(habit)
+    await db_session.commit()
+    await db_session.refresh(habit)
+    for tier, target in _SUBTRACTIVE_TIERS_STATS:
+        db_session.add(
+            Goal(
+                habit_id=habit.id,
+                title=f"{tier} sugar",
+                tier=tier,
+                target=target,
+                target_unit="g",
+                frequency=1.0,
+                frequency_unit="per_day",
+                is_additive=False,
+            )
+        )
+    await db_session.commit()
+    assert habit.id is not None
+    return habit.id
+
+
+@pytest.mark.asyncio
+async def test_stats_subtractive_no_logs_reports_consistent_current_and_longest(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """PR #379 review blocker: avoid contradictory "Current: N · Longest: 0".
+
+    Pre-fix, ``GET /habits/{id}/stats`` for a habit with zero logs
+    returned ``longest_streak: 0`` (additive path), while a follow-up
+    fix to ``current_streak`` made the same response report a non-zero
+    abstention count.  This test pins that both fields walk the
+    subtractive algorithm now, so the stats overlay shows internally
+    consistent numbers.
+    """
+    headers, user_id = await _signup_with_id(async_client, "abstain_stats")
+    habit_id = await _seed_subtractive_habit_for_stats(db_session, user_id, 5)
+
+    resp = await async_client.get(f"/habits/{habit_id}/stats", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    # Today + 5 prior days = 6 days of abstention, all of which form the
+    # longest run because there are no transgressions.
+    expected = 6
+    assert body["current_streak"] == expected
+    assert body["longest_streak"] == expected
+
+
+@pytest.mark.asyncio
+async def test_stats_subtractive_longest_predates_current_after_transgression(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Longest > current when a past transgression bisects the abstention chain."""
+    headers, user_id = await _signup_with_id(async_client, "abstain_stats_break")
+    habit_id = await _seed_subtractive_habit_for_stats(db_session, user_id, 14)
+    # Inject a transgression two days ago via a goal id resolved from the seeded habit.
+    clear_goal_id = await db_session.scalar(
+        select(Goal.id).where(Goal.habit_id == habit_id, Goal.tier == "clear")
+    )
+    assert clear_goal_id is not None
+    db_session.add(
+        GoalCompletion(
+            goal_id=clear_goal_id,
+            user_id=user_id,
+            completed_units=20.0,  # >> clear=5g
+            timestamp=datetime.now(UTC) - timedelta(days=2),
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.get(f"/habits/{habit_id}/stats", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    # Today + yesterday since the transgression = 2-day current run.
+    assert body["current_streak"] == 2
+    # Pre-transgression window: 12 days (start_date .. day -3 inclusive).
+    expected_longest = 12
+    assert body["longest_streak"] == expected_longest

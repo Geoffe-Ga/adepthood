@@ -7,6 +7,8 @@ import {
   DEFAULT_TIMEZONE,
   dayKeyInTZ,
   streakFromCompletions,
+  subtractiveLongestStreakFromCompletions,
+  subtractiveStreakFromCompletions,
   todayInUserTZ,
 } from '../../utils/dateUtils';
 
@@ -374,16 +376,96 @@ const computeCompletionRate = (sortedDays: Date[], totalUniqueDays: number): num
 };
 
 /**
+ * Subtractive habits (e.g. "abstain from sugar") count *no-log* days as
+ * abstention successes, so the additive helper — which requires a row
+ * per counted day — is wrong for them.  Returns `null` when the habit
+ * is additive or lacks the clear-tier sibling to read the threshold
+ * from, falling back to the additive code path.
+ *
+ * Probes ``tier === 'clear' && !is_additive`` together so a partial
+ * fixture (or future migration that lets per-tier ``is_additive`` drift)
+ * cannot misclassify an additive habit as subtractive.  Mirrors the
+ * backend ``_subtractive_context`` helper in ``routers/habits.py``.
+ */
+const subtractiveStreakInputs = (
+  habit: Habit,
+  tz: string,
+): { clearThreshold: number; startDate: string } | null => {
+  const clearGoal = habit.goals.find((g) => g.tier === 'clear' && !g.is_additive);
+  if (!clearGoal) return null;
+  return {
+    clearThreshold: getGoalTarget(clearGoal),
+    startDate: dayKeyInTZ(habit.start_date, tz),
+  };
+};
+
+/**
  * Wrap the centralized streak helper so this file's call sites keep their
  * existing signature.  The shared helper compares against "today" in the
  * user's TZ so a stale chain that ended a week ago no longer reports a
  * non-zero streak (BUG-FE-HABIT-207).
+ *
+ * For subtractive habits, delegates to the abstention-aware helper so a
+ * habit with no log entries still accrues streak days — the user has
+ * stayed clean since `habit.start_date`.
  */
-const computeCurrentStreak = (completions: ReadonlyArray<Completion>, tz: string): number => {
+const computeCurrentStreak = (
+  habit: Habit,
+  completions: ReadonlyArray<Completion>,
+  tz: string,
+): number => {
+  const subtractive = subtractiveStreakInputs(habit, tz);
+  if (subtractive) {
+    return subtractiveStreakFromCompletions(
+      {
+        completions: completions.map((c) => ({
+          timestamp: c.timestamp,
+          completed_units: c.completed_units,
+        })),
+        clearThreshold: subtractive.clearThreshold,
+        startDate: subtractive.startDate,
+      },
+      tz,
+    );
+  }
   return streakFromCompletions(
     completions.map((c) => c.timestamp),
     tz,
   );
+};
+
+/**
+ * Longest streak across the habit's life — subtractive-aware.
+ *
+ * For additive habits, defers to the existing
+ * :func:`computeLongestStreak` which counts consecutive logged days.
+ * For subtractive habits, walks ``[start_date, today]`` and tracks the
+ * longest no-transgression run; without this the stats overlay shows
+ * a contradictory "Current: 7 · Longest: 0" pair for any habit whose
+ * current streak is non-zero but has no log entries (the
+ * ``computeLongestStreak`` input is empty in that case).
+ */
+const computeLongestStreakFor = (
+  habit: Habit,
+  completions: ReadonlyArray<Completion>,
+  sortedDays: Date[],
+  tz: string,
+): number => {
+  const subtractive = subtractiveStreakInputs(habit, tz);
+  if (subtractive) {
+    return subtractiveLongestStreakFromCompletions(
+      {
+        completions: completions.map((c) => ({
+          timestamp: c.timestamp,
+          completed_units: c.completed_units,
+        })),
+        clearThreshold: subtractive.clearThreshold,
+        startDate: subtractive.startDate,
+      },
+      tz,
+    );
+  }
+  return computeLongestStreak(sortedDays);
 };
 
 const collectCompletionDates = (sortedDays: Date[]): string[] =>
@@ -404,7 +486,16 @@ export const generateStatsForHabit = (
   tz: string = DEFAULT_TIMEZONE,
 ): HabitStatsData => {
   const completions = habit.completions;
-  if (!completions || completions.length === 0) return emptyStats();
+  if (!completions || completions.length === 0) {
+    // Subtractive habits accrue a streak even with zero rows — abstaining
+    // every day since `start_date` is the success case, not the no-data
+    // case — so emptyStats() would zero out an active abstention chain.
+    return {
+      ...emptyStats(),
+      currentStreak: computeCurrentStreak(habit, [], tz),
+      longestStreak: computeLongestStreakFor(habit, [], [], tz),
+    };
+  }
 
   const { unitsByDay, countsByDay, daysWithCompletions } = aggregateByDayOfWeek(completions, tz);
 
@@ -416,8 +507,8 @@ export const generateStatsForHabit = (
     values: unitsByDay,
     completionsByDay: countsByDay,
     dayLabels: DAY_LABELS,
-    longestStreak: computeLongestStreak(sortedDays),
-    currentStreak: computeCurrentStreak(completions, tz),
+    longestStreak: computeLongestStreakFor(habit, completions, sortedDays, tz),
+    currentStreak: computeCurrentStreak(habit, completions, tz),
     totalCompletions: completions.length,
     completionRate: computeCompletionRate(sortedDays, daysWithCompletions.size),
     completionDates: collectCompletionDates(sortedDays),
