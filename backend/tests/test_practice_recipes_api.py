@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Any
 
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.practice import Practice
 from models.practice_recipe import PracticeRecipe, PracticeRecipeStep
+from models.practice_session import PracticeSession
 from models.stage_progress import StageProgress
 
 
@@ -427,6 +429,101 @@ async def test_apply_other_users_practice_forbidden(
         f"/practice-recipes/{recipe_id}/apply-to/{alice_up}", headers=headers_bob
     )
     assert resp.status_code in {HTTPStatus.NOT_FOUND, HTTPStatus.FORBIDDEN}
+
+
+@pytest.mark.asyncio
+async def test_apply_preserves_existing_sessions(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Regression: the apply response must include real session history.
+
+    Returning ``sessions: []`` would clobber any frontend store that
+    merges the response back into local state.  Mirrors the contract
+    `customize_user_practice` returns.
+    """
+    headers, user_id = await _signup(async_client)
+    catalog = await _seed_catalog_practice(
+        db_session,
+        mode="tallied_grounding",
+        mode_config={
+            "mode": "tallied_grounding",
+            "rounds": 1,
+            "categories": [{"key": "red", "label": "Red", "target_count": 1}],
+        },
+    )
+    up_id = await _setup_user_practice(async_client, db_session, headers, user_id, catalog)
+    # Plant a session row directly so we can assert it round-trips.
+    db_session.add(
+        PracticeSession(
+            user_id=user_id,
+            user_practice_id=up_id,
+            duration_minutes=4.5,
+            timestamp=datetime.now(UTC),
+        )
+    )
+    await db_session.commit()
+    create_recipe = await async_client.post(
+        "/practice-recipes/", json=_tallied_recipe_body("apply_sessions"), headers=headers
+    )
+    recipe_id = create_recipe.json()["id"]
+
+    resp = await async_client.post(
+        f"/practice-recipes/{recipe_id}/apply-to/{up_id}", headers=headers
+    )
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    sessions = resp.json()["sessions"]
+    assert len(sessions) == 1
+    assert sessions[0]["duration_minutes"] == 4.5
+
+
+@pytest.mark.asyncio
+async def test_list_batches_step_lookup(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """List endpoint must scale: step lookups are batched, not N+1.
+
+    We seed several recipes and assert that the response carries the
+    steps each one was built with.  The shape check alone would not
+    catch an N+1; this test exists alongside a code review of
+    ``_load_steps_for_recipes`` to keep the batched path discoverable.
+    """
+    headers, _ = await _signup(async_client)
+    # Two system recipes via direct DB insert + two user recipes via the API.
+    for slug in ("sys_one", "sys_two"):
+        recipe = PracticeRecipe(
+            slug=slug,
+            name=slug,
+            description="",
+            owner_user_id=None,
+            mode="tallied_grounding",
+            rounds=1,
+        )
+        db_session.add(recipe)
+        await db_session.commit()
+        await db_session.refresh(recipe)
+        assert recipe.id is not None
+        db_session.add(
+            PracticeRecipeStep(
+                recipe_id=recipe.id,
+                position=0,
+                tag_slug="red",
+                tag_label="Red",
+                prompt_label="x",
+                target_count=1,
+            )
+        )
+    await db_session.commit()
+    for slug in ("u_one", "u_two"):
+        await async_client.post(
+            "/practice-recipes/", json=_tallied_recipe_body(slug), headers=headers
+        )
+
+    resp = await async_client.get("/practice-recipes/", headers=headers)
+    rows = resp.json()
+    by_slug = {r["slug"]: r for r in rows}
+    for slug in ("sys_one", "sys_two", "u_one", "u_two"):
+        assert slug in by_slug, f"missing {slug}"
+        assert len(by_slug[slug]["steps"]) >= 1
 
 
 @pytest.mark.asyncio

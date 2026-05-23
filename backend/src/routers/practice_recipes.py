@@ -24,12 +24,13 @@ attempts return ``403 cannot_modify_system_recipe``.
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.selectable import Select
 from sqlmodel import col, or_, select
 
 from database import get_session
@@ -38,6 +39,7 @@ from domain.practice_resolution import effective_config, effective_name
 from errors import bad_request, conflict, forbidden, not_found
 from models.practice import Practice
 from models.practice_recipe import PracticeRecipe, PracticeRecipeStep
+from models.practice_session import PracticeSession
 from models.user_practice import UserPractice
 from routers.auth import get_current_user
 from schemas.practice import UserPracticeDetail
@@ -56,13 +58,41 @@ router = APIRouter(prefix="/practice-recipes", tags=["practice-recipes"])
 
 
 async def _load_steps(recipe_id: int, session: AsyncSession) -> list[PracticeRecipeStep]:
-    """Fetch a recipe's steps in display order."""
+    """Fetch one recipe's steps in display order.
+
+    Used by single-recipe endpoints (GET / PATCH / apply); the list
+    endpoint uses :func:`_load_steps_for_recipes` instead to avoid an
+    N+1 query as the recipe library grows.
+    """
     result = await session.execute(
         select(PracticeRecipeStep)
         .where(PracticeRecipeStep.recipe_id == recipe_id)
         .order_by(col(PracticeRecipeStep.position))
     )
     return list(result.scalars().all())
+
+
+async def _load_steps_for_recipes(
+    recipe_ids: list[int], session: AsyncSession
+) -> dict[int, list[PracticeRecipeStep]]:
+    """Fetch steps for many recipes in a single query, grouped by recipe id.
+
+    Returns a ``defaultdict``-style mapping so callers can index by
+    recipe id without a key-existence check; recipes with no steps
+    return an empty list.  Ordering inside each list mirrors
+    :func:`_load_steps` (position ascending).
+    """
+    if not recipe_ids:
+        return {}
+    result = await session.execute(
+        select(PracticeRecipeStep)
+        .where(col(PracticeRecipeStep.recipe_id).in_(recipe_ids))
+        .order_by(col(PracticeRecipeStep.recipe_id), col(PracticeRecipeStep.position))
+    )
+    grouped: dict[int, list[PracticeRecipeStep]] = {rid: [] for rid in recipe_ids}
+    for step in result.scalars():
+        grouped[step.recipe_id].append(step)
+    return grouped
 
 
 def _to_out(recipe: PracticeRecipe, steps: list[PracticeRecipeStep]) -> PracticeRecipeOut:
@@ -120,13 +150,13 @@ def _build_step_rows(recipe_id: int, payload_steps: list[Any]) -> list[PracticeR
     ]
 
 
-@router.get("/", response_model=list[PracticeRecipeOut])
-async def list_practice_recipes(
-    user_id: Annotated[int, Depends(get_current_user)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-    mode: Annotated[str | None, Query(description="Filter by recipe mode.")] = None,
-) -> list[PracticeRecipeOut]:
-    """List every recipe visible to the caller, optionally filtered by mode."""
+def _build_recipe_list_query(user_id: int, mode: str | None) -> Select[tuple[PracticeRecipe]]:
+    """Build the `WHERE`-clause query for visible recipes, optionally mode-filtered.
+
+    Extracted so :func:`list_practice_recipes` stays at xenon rank A;
+    the visibility + mode + ordering branches add up to enough
+    complexity that inlining them pushes the endpoint to rank B.
+    """
     query = select(PracticeRecipe).where(
         or_(
             col(PracticeRecipe.owner_user_id).is_(None),
@@ -135,17 +165,38 @@ async def list_practice_recipes(
     )
     if mode is not None:
         query = query.where(PracticeRecipe.mode == mode)
-    query = query.order_by(col(PracticeRecipe.owner_user_id).nulls_first(), PracticeRecipe.name)
-    result = await session.execute(query)
-    recipes = list(result.scalars().all())
-    out: list[PracticeRecipeOut] = []
-    for recipe in recipes:
-        recipe_id = recipe.id
-        if recipe_id is None:
-            continue
-        steps = await _load_steps(recipe_id, session)
-        out.append(_to_out(recipe, steps))
-    return out
+    return query.order_by(col(PracticeRecipe.owner_user_id).nulls_first(), PracticeRecipe.name)
+
+
+async def _hydrate_recipes_with_steps(
+    recipes: list[PracticeRecipe], session: AsyncSession
+) -> list[PracticeRecipeOut]:
+    """Attach each recipe's step list via a single batched lookup.
+
+    ``recipe.id`` is typed ``int | None`` because the SQLModel base
+    permits unflushed rows, but rows loaded from a SELECT always
+    carry their PK -- the ``cast`` reflects that invariant without
+    re-filtering and keeps this helper at xenon rank A.
+    """
+    ids = [cast("int", r.id) for r in recipes]
+    steps_by_recipe = await _load_steps_for_recipes(ids, session)
+    return [_to_out(r, steps_by_recipe.get(cast("int", r.id), [])) for r in recipes]
+
+
+@router.get("/", response_model=list[PracticeRecipeOut])
+async def list_practice_recipes(
+    user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    mode: Annotated[str | None, Query(description="Filter by recipe mode.")] = None,
+) -> list[PracticeRecipeOut]:
+    """List every recipe visible to the caller, optionally filtered by mode.
+
+    Batches the step lookup into a single ``WHERE recipe_id IN (...)``
+    query so the picker, which fires this endpoint every time the
+    sheet opens, scales with library size instead of N+1.
+    """
+    result = await session.execute(_build_recipe_list_query(user_id, mode))
+    return await _hydrate_recipes_with_steps(list(result.scalars().all()), session)
 
 
 @router.post("/", response_model=PracticeRecipeOut, status_code=status.HTTP_201_CREATED)
@@ -210,6 +261,13 @@ async def update_practice_recipe(
     invalidate the step tag mappings.  Steps are wholesale-replaced
     rather than diffed: simpler, and the client always sends the full
     list anyway.
+
+    Concurrency: this endpoint is last-write-wins on the entire step
+    list.  Two clients editing the same recipe in parallel will see
+    the second writer's payload overwrite the first's; optimistic
+    locking is intentionally not added because recipes are personal
+    (single-user) and the conflict surface is therefore vanishingly
+    small.
     """
     recipe = await _load_visible_recipe(recipe_id, user_id, session)
     _require_personal(recipe)
@@ -316,6 +374,16 @@ async def apply_recipe_to_user_practice(
     session.add(user_practice)
     await session.commit()
     await session.refresh(user_practice)
+    # Load real session history so the response matches what GET
+    # ``/user-practices/{id}`` and ``customize_user_practice`` return.
+    # Returning ``sessions: []`` here would clobber any frontend store
+    # that merges the response back into local state.
+    sessions_result = await session.execute(
+        select(PracticeSession)
+        .where(PracticeSession.user_practice_id == user_practice.id)
+        .order_by(col(PracticeSession.timestamp).desc())
+    )
+    sessions = list(sessions_result.scalars().all())
     logger.info(
         "practice_recipe_applied",
         extra={
@@ -334,5 +402,5 @@ async def apply_recipe_to_user_practice(
         "mode_config_override": user_practice.mode_config_override,
         "effective_name": effective_name(practice, user_practice),
         "effective_config": effective_config(practice, user_practice).model_dump(),
-        "sessions": [],
+        "sessions": sessions,
     }
