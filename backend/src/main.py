@@ -239,19 +239,27 @@ install_trace_id_logging()
 
 
 async def _seed_startup_data(session: AsyncSession) -> None:
-    """Run the three idempotent seeders in dependency order.
+    """Run the three idempotent seeders, with isolation and a stages prerequisite.
 
     ``seed_practices`` and ``seed_content`` both read from the seeded
-    ``CourseStage`` rows, so stages must land first. Each seeder is
-    isolated in its own try/except so a failure in one (e.g. a new mode
-    landing in a CHECK constraint before the seed list catches up) does
-    not starve the later, independent seeders — without this, a single
-    ``seed_practices`` blow-up would skip ``seed_content`` and leave the
-    course catalog empty. Successes log the inserted count so a quiet
-    deploy is still verifiable from the boot log.
+    ``CourseStage`` rows, so a ``seed_stages`` failure must short-circuit
+    — otherwise the dependents run against an empty stages table and log
+    a misleading ``seed_complete inserted=0``. ``seed_practices`` and
+    ``seed_content`` are independent of each other, so each is isolated
+    in its own try/except: a failure in one (e.g. a new mode landing in
+    a CHECK constraint before the seed list catches up) must not starve
+    the other. Successes log the inserted count so a quiet deploy is
+    still verifiable from the boot log.
     """
+    try:
+        inserted = await seed_stages(session)
+        logger.info("seed_complete", extra={"seeder": "stages", "inserted": inserted})
+    except Exception:
+        logger.exception("seed_failed", extra={"seeder": "stages"})
+        await session.rollback()
+        return
+
     for name, seeder in (
-        ("stages", seed_stages),
         ("practices", seed_practices),
         ("content", seed_content),
     ):

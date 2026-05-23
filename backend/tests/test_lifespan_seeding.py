@@ -33,6 +33,14 @@ from seed_practices import PRESET_PRACTICES
 #: this test's expectation.
 _EXPECTED_PRACTICE_COUNT = len(PRESET_PRACTICES)
 
+#: ``seed_content`` keeps placeholder rows for stages 2 and 3 (three each)
+#: until those stages get a real ``STAGE_PLANS`` entry.  Asserting on
+#: ``STAGE_PLANS.chapter_count + _PLACEHOLDER_CONTENT_ROWS`` means a
+#: regression that drops the content seeder fails this test, not just a
+#: ``/course`` smoke check; adjust this when ``_PLACEHOLDER_DEFINITIONS``
+#: in ``seed_content.py`` changes.
+_PLACEHOLDER_CONTENT_ROWS = 6
+
 
 @asynccontextmanager
 async def _isolated_factory_patch() -> AsyncGenerator[None, None]:
@@ -62,12 +70,7 @@ async def test_seed_startup_data_inserts_stages_practices_and_content(
 
     assert len(stages) == 10
     assert len(practices) == _EXPECTED_PRACTICE_COUNT
-    # ``seed_content`` seeds the chapters configured for the beige stage
-    # (14 today) plus the 6 placeholder rows that still cover stages 2
-    # and 3.  Asserting the count means a regression that drops the
-    # content seeder from the lifespan fails this test, not just a
-    # /course smoke check.  Adjust this when ``content_config`` changes.
-    expected_content_count = sum(p.chapter_count for p in STAGE_PLANS) + 6
+    expected_content_count = sum(p.chapter_count for p in STAGE_PLANS) + _PLACEHOLDER_CONTENT_ROWS
     assert len(contents) == expected_content_count
 
 
@@ -155,12 +158,50 @@ async def test_seed_startup_data_continues_after_per_seeder_failure(
 
     stages = (await db_session.execute(select(CourseStage))).scalars().all()
     contents = (await db_session.execute(select(StageContent))).scalars().all()
-    expected_content_count = sum(p.chapter_count for p in STAGE_PLANS) + 6
+    expected_content_count = sum(p.chapter_count for p in STAGE_PLANS) + _PLACEHOLDER_CONTENT_ROWS
     assert len(stages) == 10
     assert len(contents) == expected_content_count
 
     failure_logs = [r for r in caplog.records if "seed_failed" in r.getMessage()]
     assert failure_logs, "expected a logged failure for the practices seeder"
+    assert any(getattr(r, "seeder", None) == "practices" for r in failure_logs), (
+        "expected the seed_failed log record to carry extra={'seeder': 'practices'}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_seed_startup_data_skips_dependents_when_stages_fails(
+    db_session: AsyncSession,
+) -> None:
+    """``seed_practices`` and ``seed_content`` both read from ``CourseStage`` rows.
+
+    If ``seed_stages`` fails, running the dependent seeders against an
+    empty stages table would quietly insert nothing and log a misleading
+    ``seed_complete inserted=0`` — masking the real failure.  The seeder
+    must short-circuit instead.
+    """
+    calls: list[str] = []
+
+    async def _boom(_session: AsyncSession) -> int:
+        msg = "stages table missing"
+        raise RuntimeError(msg)
+
+    async def _track_practices(_session: AsyncSession) -> int:
+        calls.append("practices")
+        return 0
+
+    async def _track_content(_session: AsyncSession) -> int:
+        calls.append("content")
+        return 0
+
+    with (
+        patch("main.seed_stages", new=_boom),
+        patch("main.seed_practices", new=_track_practices),
+        patch("main.seed_content", new=_track_content),
+    ):
+        await _seed_startup_data(db_session)
+
+    assert calls == [], f"dependent seeders must not run when stages fails: {calls}"
 
 
 @pytest.mark.asyncio
