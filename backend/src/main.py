@@ -242,21 +242,37 @@ install_trace_id_logging()
 
 
 async def _seed_startup_data(session: AsyncSession) -> None:
-    """Run the three idempotent seeders in dependency order.
+    """Run the three idempotent seeders, with isolation and a stages prerequisite.
 
     ``seed_practices`` and ``seed_content`` both read from the seeded
-    ``CourseStage`` rows, so stages must land first. Each seeder inserts
-    only the rows it would expect to find missing (matched by stable keys
-    like ``stage_number`` or ``(stage_number, name)``), so repeated calls
-    are no-ops once steady state is reached.
+    ``CourseStage`` rows, so a ``seed_stages`` failure must short-circuit
+    — otherwise the dependents run against an empty stages table and log
+    a misleading ``seed_complete inserted=0``. ``seed_practices`` and
+    ``seed_content`` are independent of each other, so each is isolated
+    in its own try/except: a failure in one (e.g. a new mode landing in
+    a CHECK constraint before the seed list catches up) must not starve
+    the other. Successes log the inserted count so a quiet deploy is
+    still verifiable from the boot log.
     """
-    # Each seeder commits its own inserts before returning, so this function
-    # does not need a trailing commit; the dependency-order contract above is
-    # what callers rely on.
-    await seed_stages(session)
-    await seed_practices(session)
-    await seed_practice_recipes(session)
-    await seed_content(session)
+    try:
+        inserted = await seed_stages(session)
+        logger.info("seed_complete", extra={"seeder": "stages", "inserted": inserted})
+    except Exception:
+        logger.exception("seed_failed", extra={"seeder": "stages"})
+        await session.rollback()
+        return
+
+    for name, seeder in (
+        ("practices", seed_practices),
+        ("practice_recipes", seed_practice_recipes),
+        ("content", seed_content),
+    ):
+        try:
+            inserted = await seeder(session)
+            logger.info("seed_complete", extra={"seeder": name, "inserted": inserted})
+        except Exception:
+            logger.exception("seed_failed", extra={"seeder": name})
+            await session.rollback()
 
 
 @asynccontextmanager

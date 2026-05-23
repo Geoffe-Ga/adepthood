@@ -224,6 +224,45 @@ describe('habit progress utilities', () => {
     expect(getProgressBarColor(habit)).toBe(STAGE_COLORS[habit.stage]);
   });
 
+  it('uses the explicit stageColor argument when habit.stage is empty', () => {
+    // Backend defaults habit.stage to "" (see backend/src/models/habit.py).
+    // The tile resolves its color from list position, so getProgressBarColor
+    // must honor that override instead of falling back to black.
+    const habit: Habit = {
+      id: 9,
+      stage: '',
+      name: 'Unstaged',
+      icon: '✨',
+      streak: 0,
+      energy_cost: 0,
+      energy_return: 0,
+      start_date: new Date(),
+      goals: additiveGoals,
+      completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
+    };
+
+    expect(getProgressBarColor(habit, undefined, STAGE_COLORS.Orange)).toBe(STAGE_COLORS.Orange);
+  });
+
+  it('brightens the explicit stageColor when the clear goal is met', () => {
+    const habit: Habit = {
+      id: 10,
+      stage: '',
+      name: 'Unstaged Achiever',
+      icon: '⭐',
+      streak: 0,
+      energy_cost: 0,
+      energy_return: 0,
+      start_date: new Date(),
+      goals: additiveGoals,
+      completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 2 }],
+    };
+
+    expect(getProgressBarColor(habit, undefined, STAGE_COLORS.Orange)).toBe(
+      brightenColor(STAGE_COLORS.Orange!),
+    );
+  });
+
   it('clamps percentage values between 0 and 100', () => {
     expect(clampPercentage(150)).toBe(100);
     expect(clampPercentage(-20)).toBe(0);
