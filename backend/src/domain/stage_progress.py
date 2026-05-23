@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import cast
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -28,6 +29,7 @@ __all__ = [
     "TOTAL_STAGES",
     "AllStagesCompletedError",
     "compute_stage_progress",
+    "ensure_user_progress",
     "get_stage_habit_history",
     "get_stage_practice_history",
     "get_user_progress",
@@ -65,6 +67,32 @@ async def get_user_progress_for_update(session: AsyncSession, user_id: int) -> S
         select(StageProgress).where(StageProgress.user_id == user_id).with_for_update()
     )
     return result.scalars().first()
+
+
+async def ensure_user_progress(session: AsyncSession, user_id: int) -> StageProgress:
+    """Return the user's :class:`StageProgress`, provisioning a stage-1 row on first access.
+
+    Commits the new row before returning: a concurrent caller that loses the
+    SAVEPOINT race must re-read the winner's committed row, and ``get_session``
+    does not auto-commit. Callers must therefore not hold uncommitted writes
+    across this call. Mirrors ``_create_initial_progress`` in ``stages.py``.
+    """
+    progress = await get_user_progress(session, user_id)
+    if progress is not None:
+        return progress
+    progress = StageProgress(user_id=user_id, current_stage=_STAGE_1, completed_stages=[])
+    try:
+        async with session.begin_nested():
+            session.add(progress)
+        await session.commit()
+        await session.refresh(progress)
+    except IntegrityError as exc:
+        existing = await get_user_progress(session, user_id)
+        if existing is None:
+            msg = "StageProgress creation lost the race but the winner's row is missing"
+            raise RuntimeError(msg) from exc
+        return existing
+    return progress
 
 
 def is_stage_unlocked(stage_number: int, progress: StageProgress | None) -> bool:

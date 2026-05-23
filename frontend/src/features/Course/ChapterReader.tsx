@@ -73,13 +73,17 @@ const READER_STYLE_BLOCK = `
     }
   `;
 
-function buildDocument(bodyHtml: string): string {
+function buildDocument(bodyHtml: string, openLinksInNewTab: boolean): string {
+  // <base target="_blank"> is web-only: it routes iframe links to a new tab,
+  // standing in for the native onShouldStartLoadWithRequest guard. On native
+  // WebView it would tag every link target="_blank" and risk a dropped
+  // navigation, so it is omitted there.
+  const baseTag = openLinksInNewTab ? '\n  <base target="_blank" />' : '';
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
-  <base target="_blank" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />${baseTag}
   <style>${READER_STYLE_BLOCK}</style>
 </head>
 <body>${bodyHtml}</body>
@@ -87,25 +91,18 @@ function buildDocument(bodyHtml: string): string {
 }
 
 /**
- * Render the cleaned chapter HTML.  React Native's WebView throws
- * "WebView does not support this platform" when bundled for web, so we
- * branch on ``Platform.OS`` and fall back to an ``<iframe srcdoc>`` —
- * the closest web-native equivalent (isolated document, no script
- * execution unless the sandbox allows it, links honour ``<base
- * target="_blank">`` and open in a new tab).
- *
- * ``sandbox="allow-popups"`` lets external links open in a new tab
- * while blocking scripts, forms, same-origin access, and top-level
- * navigation — matching the ``onShouldStartLoadWithRequest`` guard
- * we use on native.
+ * Render cleaned chapter HTML: an <iframe srcdoc> on web (React Native's
+ * WebView throws there) and a native WebView otherwise. sandbox="allow-popups"
+ * lets external links open in a new tab while blocking scripts, forms, and
+ * same-origin access — the web equivalent of the native navigation guard.
  */
-function renderBody(html: string, title: string): React.ReactElement {
+function renderBody(bodyHtml: string, title: string): React.ReactElement {
   if (Platform.OS === 'web') {
     return (
       <View style={styles.webview}>
         {React.createElement('iframe', {
           'data-testid': 'reader-iframe',
-          srcDoc: html,
+          srcDoc: buildDocument(bodyHtml, true),
           title,
           sandbox: 'allow-popups',
           style: { width: '100%', height: '100%', border: 0 },
@@ -116,7 +113,7 @@ function renderBody(html: string, title: string): React.ReactElement {
   return (
     <WebView
       testID="reader-webview"
-      source={{ html }}
+      source={{ html: buildDocument(bodyHtml, false) }}
       originWhitelist={['*']}
       onShouldStartLoadWithRequest={shouldLoadInWebView}
       style={styles.webview}
@@ -280,10 +277,7 @@ const ChapterReader = ({
         </View>
       )}
       {!loading && error !== null && <ErrorView message={error} onRetry={retry} />}
-      {!loading &&
-        error === null &&
-        body !== null &&
-        renderBody(buildDocument(body.body_html), headerTitle)}
+      {!loading && error === null && body !== null && renderBody(body.body_html, headerTitle)}
       {footer}
     </View>
   );
