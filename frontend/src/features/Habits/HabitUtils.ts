@@ -302,7 +302,6 @@ const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAYS_IN_WEEK = 7;
 
 const emptyStats = (): HabitStatsData => ({
-  dates: DAY_LABELS,
   values: new Array(DAYS_IN_WEEK).fill(0) as number[],
   completionsByDay: new Array(DAYS_IN_WEEK).fill(0) as number[],
   dayLabels: DAY_LABELS,
@@ -333,7 +332,7 @@ const utcDayKey = (d: Date): string => dayKeyInTZ(d, DEFAULT_TIMEZONE);
  */
 const aggregateByDayOfWeek = (completions: Completion[], tz: string) => {
   const unitsByDay = new Array(DAYS_IN_WEEK).fill(0) as number[];
-  const presenceByDay = new Array(DAYS_IN_WEEK).fill(0) as number[];
+  const countsByDay = new Array(DAYS_IN_WEEK).fill(0) as number[];
   const daysWithCompletions = new Set<string>();
 
   for (const c of completions) {
@@ -342,11 +341,11 @@ const aggregateByDayOfWeek = (completions: Completion[], tz: string) => {
     const localDate = new Date(`${localDayKey}T12:00:00Z`);
     const dayIdx = localDate.getUTCDay() % DAYS_IN_WEEK;
     unitsByDay[dayIdx] = unitsByDay[dayIdx]! + c.completed_units;
-    presenceByDay[dayIdx] = 1;
+    countsByDay[dayIdx] = countsByDay[dayIdx]! + 1;
     daysWithCompletions.add(localDayKey);
   }
 
-  return { unitsByDay, presenceByDay, daysWithCompletions };
+  return { unitsByDay, countsByDay, daysWithCompletions };
 };
 
 const computeLongestStreak = (sortedDays: Date[]): number => {
@@ -407,16 +406,15 @@ export const generateStatsForHabit = (
   const completions = habit.completions;
   if (!completions || completions.length === 0) return emptyStats();
 
-  const { unitsByDay, presenceByDay, daysWithCompletions } = aggregateByDayOfWeek(completions, tz);
+  const { unitsByDay, countsByDay, daysWithCompletions } = aggregateByDayOfWeek(completions, tz);
 
   const sortedDays = Array.from(daysWithCompletions)
     .map((s) => new Date(s + 'T00:00:00Z'))
     .sort((a, b) => a.getTime() - b.getTime());
 
   return {
-    dates: DAY_LABELS,
     values: unitsByDay,
-    completionsByDay: presenceByDay,
+    completionsByDay: countsByDay,
     dayLabels: DAY_LABELS,
     longestStreak: computeLongestStreak(sortedDays),
     currentStreak: computeCurrentStreak(completions, tz),
@@ -430,7 +428,6 @@ export const generateStatsForHabit = (
  * Convert an API habit stats response (snake_case) to local HabitStatsData (camelCase).
  */
 export const toLocalHabitStats = (api: ApiHabitStats): HabitStatsData => ({
-  dates: api.day_labels,
   values: api.values,
   completionsByDay: api.completions_by_day,
   dayLabels: api.day_labels,

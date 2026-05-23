@@ -304,6 +304,17 @@ export const darkColors = {
   border: '#2f2f2f',
 } as const;
 
+/** WCAG-AA on the white modal card: #555 = 7.22:1 on #ffffff (AAA normal). */
+export const CHART_AXIS_LABEL_COLOR = '#555555';
+
+export const CHART_STYLE = {
+  backgroundGradientFrom: '#ffffff',
+  backgroundGradientFromOpacity: 0,
+  backgroundGradientTo: '#ffffff',
+  backgroundGradientToOpacity: 0,
+  axisLineOpacity: 0.15,
+} as const;
+
 export const breakpoints = { xs: 0, sm: 360, md: 600, lg: 900, xl: 1200 } as const;
 
 export const elevation = {

@@ -75,7 +75,6 @@ export interface Completion {
 }
 
 export interface HabitStatsData {
-  dates: string[];
   values: number[];
   completionsByDay: number[];
   dayLabels: string[];

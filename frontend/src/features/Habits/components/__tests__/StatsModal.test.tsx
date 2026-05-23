@@ -23,7 +23,6 @@ jest.mock('../../../../api', () => ({
 // Mock HabitUtils to avoid indirect dependency issues
 jest.mock('../../HabitUtils', () => ({
   generateStatsForHabit: jest.fn(() => ({
-    dates: [],
     values: [0, 0, 0, 0, 0, 0, 0],
     completionsByDay: [0, 0, 0, 0, 0, 0, 0],
     dayLabels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
@@ -32,6 +31,16 @@ jest.mock('../../HabitUtils', () => ({
     totalCompletions: 0,
     completionRate: 0,
     completionDates: [],
+  })),
+  toLocalHabitStats: jest.fn((api: Record<string, unknown>) => ({
+    values: api.values,
+    completionsByDay: api.completions_by_day,
+    dayLabels: api.day_labels,
+    longestStreak: api.longest_streak,
+    currentStreak: api.current_streak,
+    totalCompletions: api.total_completions,
+    completionRate: api.completion_rate,
+    completionDates: api.completion_dates,
   })),
 }));
 
@@ -56,7 +65,6 @@ const baseHabit: Habit = {
 };
 
 const localStats: HabitStatsData = {
-  dates: [],
   values: [0, 0, 0, 0, 0, 0, 0],
   completionsByDay: [0, 0, 0, 0, 0, 0, 0],
   dayLabels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
@@ -70,7 +78,7 @@ const localStats: HabitStatsData = {
 const apiResponse = {
   day_labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
   values: [1, 3, 2, 2, 3, 2, 2],
-  completions_by_day: [1, 1, 1, 1, 1, 1, 1],
+  completions_by_day: [1, 2, 1, 2, 3, 1, 5],
   longest_streak: 7,
   current_streak: 3,
   total_completions: 15,
@@ -177,7 +185,7 @@ describe('StatsModal', () => {
 
     // Switch to progress tab
     fireEvent.press(getByText('Progress'));
-    expect(getByText('Progress (Last 7 Days)')).toBeTruthy();
+    expect(getByText('Units by Weekday')).toBeTruthy();
 
     // Switch to by-day tab
     fireEvent.press(getByText('By Day'));

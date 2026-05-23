@@ -1,30 +1,74 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Dimensions, TouchableOpacity, Modal, ScrollView } from 'react-native';
+import { View, Text, useWindowDimensions, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 
 import { habits as habitsApi } from '../../../api';
-import type { ApiHabitStats } from '../../../api';
-import { STAGE_COLORS } from '../../../design/tokens';
+import { CHART_AXIS_LABEL_COLOR, CHART_STYLE, SPACING, STAGE_COLORS } from '../../../design/tokens';
 import styles from '../Habits.styles';
 import type { HabitStatsData, StatsModalProps } from '../Habits.types';
-import { generateStatsForHabit } from '../HabitUtils';
+import { generateStatsForHabit, toLocalHabitStats } from '../HabitUtils';
 
-const CHART_CONFIG = {
-  backgroundGradientFrom: '#1E2923',
-  backgroundGradientTo: '#08130D',
-  color: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
-  strokeWidth: 2,
-  barPercentage: 0.7,
-  useShadowColorFromDataset: false,
-};
-
-const CHART_WIDTH = Dimensions.get('window').width - 40;
-const CHART_HEIGHT = 220;
 const FALLBACK_CHART_COLOR = 'rgba(134, 65, 244, 1)';
 const FALLBACK_CALENDAR_COLOR = '#50cebb';
 
+const MODAL_WIDTH_FRACTION = 0.9;
+const MAX_CHART_WIDTH = 480;
+// Mirrors statsModalContent (SPACING.lg) + statsContainer (SPACING.md) padding
+// in Habits.styles.ts -- keep in sync if those rules change.
+const CHART_CHROME = SPACING.lg * 2 + SPACING.md * 2;
+const CHART_HEIGHT = 220;
+const MIN_LABEL_OPACITY = 0.6;
+
+const useChartWidth = (): number => {
+  const { width } = useWindowDimensions();
+  return Math.min(width * MODAL_WIDTH_FRACTION - CHART_CHROME, MAX_CHART_WIDTH);
+};
+
 const getStageColor = (stage: string, fallback: string): string => STAGE_COLORS[stage] || fallback;
+
+const HEX_TRIPLET = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i;
+
+const parseHexRgb = (hex: string): [number, number, number] | null => {
+  const match = HEX_TRIPLET.exec(hex);
+  if (!match) return null;
+  return [
+    Number.parseInt(match[1]!, 16),
+    Number.parseInt(match[2]!, 16),
+    Number.parseInt(match[3]!, 16),
+  ];
+};
+
+const AXIS_LABEL_RGB = parseHexRgb(CHART_AXIS_LABEL_COLOR);
+const axisLabelColor = (opacity: number): string => {
+  const op = Math.max(opacity, MIN_LABEL_OPACITY);
+  if (!AXIS_LABEL_RGB) return CHART_AXIS_LABEL_COLOR;
+  const [r, g, b] = AXIS_LABEL_RGB;
+  return `rgba(${r}, ${g}, ${b}, ${op})`;
+};
+
+const buildChartConfig = (chartColor: string) => {
+  const rgb = parseHexRgb(chartColor);
+  const colorFn = rgb
+    ? (opacity = 1) => `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${opacity})`
+    : () => chartColor;
+
+  return {
+    ...CHART_STYLE,
+    decimalPlaces: 0,
+    color: colorFn,
+    labelColor: axisLabelColor,
+    propsForBackgroundLines: {
+      stroke: CHART_AXIS_LABEL_COLOR,
+      strokeOpacity: CHART_STYLE.axisLineOpacity,
+      strokeDasharray: '4 6',
+    },
+    propsForLabels: { fontSize: 11 },
+    barPercentage: 0.6,
+    strokeWidth: 2,
+    useShadowColorFromDataset: false,
+  };
+};
 
 const buildMarkedDates = (
   completionDates: string[],
@@ -58,9 +102,9 @@ const TAB_LABELS: Record<string, string> = {
 };
 
 const buildLineData = (stats: HabitStatsData, color: string) => ({
-  labels: stats.dates.slice(-7),
-  datasets: [{ data: stats.values.slice(-7), color: () => color, strokeWidth: 2 }],
-  legend: ['Daily Progress'],
+  labels: stats.dayLabels,
+  datasets: [{ data: stats.values, color: () => color, strokeWidth: 2 }],
+  legend: ['Units logged'],
 });
 
 const buildBarData = (stats: HabitStatsData, color: string) => ({
@@ -140,23 +184,6 @@ const StatsModalHeader = ({
   </View>
 );
 
-/**
- * Convert an API stats response to the local HabitStatsData shape.
- */
-function apiStatsToLocal(api: ApiHabitStats): HabitStatsData {
-  return {
-    dates: api.completion_dates,
-    values: api.values,
-    completionsByDay: api.completions_by_day,
-    dayLabels: api.day_labels,
-    longestStreak: api.longest_streak,
-    currentStreak: api.current_streak,
-    totalCompletions: api.total_completions,
-    completionRate: api.completion_rate,
-    completionDates: api.completion_dates,
-  };
-}
-
 interface StatsContentProps {
   habit: NonNullable<StatsModalProps['habit']>;
   stats: HabitStatsData;
@@ -169,6 +196,8 @@ interface StatsContentProps {
 const StatsContent = (props: StatsContentProps) => {
   const { habit, stats, selectedTab, onSelectTab, onClose, loading } = props;
   const chartColor = getStageColor(habit.stage, FALLBACK_CHART_COLOR);
+  const chartWidth = useChartWidth();
+  const chartConfig = buildChartConfig(chartColor);
 
   return (
     <View style={[styles.statsModalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}>
@@ -182,13 +211,14 @@ const StatsContent = (props: StatsContentProps) => {
         )}
         {selectedTab === 'calendar' && <CalendarTab habit={habit} stats={stats} />}
         {selectedTab === 'progress' && (
-          <ChartTab title="Progress (Last 7 Days)">
+          <ChartTab title="Units by Weekday">
             <LineChart
               data={buildLineData(stats, chartColor)}
-              width={CHART_WIDTH}
+              width={chartWidth}
               height={CHART_HEIGHT}
-              chartConfig={CHART_CONFIG}
+              chartConfig={chartConfig}
               bezier
+              fromZero
               style={styles.chart}
             />
           </ChartTab>
@@ -197,13 +227,14 @@ const StatsContent = (props: StatsContentProps) => {
           <ChartTab title="Completions by Day of Week">
             <BarChart
               data={buildBarData(stats, chartColor)}
-              width={CHART_WIDTH}
+              width={chartWidth}
               height={CHART_HEIGHT}
-              chartConfig={CHART_CONFIG}
+              chartConfig={chartConfig}
               yAxisLabel=""
               yAxisSuffix=""
               style={styles.chart}
               fromZero
+              showValuesOnTopOfBars
             />
           </ChartTab>
         )}
@@ -228,7 +259,7 @@ export const StatsModal = ({ visible, habit, stats: localStats, onClose }: Stats
     habitsApi
       .getStats(habit.id)
       .then((response) => {
-        if (!cancelled) setApiStats(apiStatsToLocal(response));
+        if (!cancelled) setApiStats(toLocalHabitStats(response));
       })
       .catch(() => {
         if (!cancelled) setApiStats(null);

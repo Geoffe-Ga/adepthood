@@ -32,18 +32,18 @@ def _aggregate_by_day(
     completions: list[GoalCompletion],
     user_timezone: str,
 ) -> tuple[list[float], list[int], set[date]]:
-    """Sum units per JS weekday in user-local time; returns dates as ``date`` objects."""
+    """Sum units + count events per JS weekday; returns dates as ``date`` objects."""
     units = [0.0] * _DAYS_IN_WEEK
-    presence = [0] * _DAYS_IN_WEEK
+    counts = [0] * _DAYS_IN_WEEK
     dates: set[date] = set()
     for c in completions:
         moment = c.timestamp if c.timestamp.tzinfo is not None else c.timestamp.replace(tzinfo=UTC)
         local_date = to_user_date(user_timezone, moment)
         js_idx = (local_date.weekday() + 1) % _DAYS_IN_WEEK
         units[js_idx] += c.completed_units
-        presence[js_idx] = 1
+        counts[js_idx] += 1
         dates.add(local_date)
-    return units, presence, dates
+    return units, counts, dates
 
 
 def _longest_streak(sorted_dates: list[date]) -> int:
@@ -93,13 +93,13 @@ def compute_habit_stats(
     if not completions:
         return _empty_stats()
 
-    units, presence, dates = _aggregate_by_day(completions, user_timezone)
+    units, counts, dates = _aggregate_by_day(completions, user_timezone)
     sorted_dates = sorted(dates)
 
     return HabitStats(
         day_labels=list(_DAY_LABELS),
         values=units,
-        completions_by_day=presence,
+        completions_by_day=counts,
         longest_streak=_longest_streak(sorted_dates),
         current_streak=_current_streak(sorted_dates, user_timezone),
         total_completions=len(completions),
