@@ -136,10 +136,17 @@ export function formatModeSummary<M extends ModeSummaryKind>(
   durationMinutes: number,
   metadata: Extract<ModeSummaryMetadata, { mode: M }>,
 ): string {
+  // `SUMMARY_FORMATTERS` is a mapped type over `ModeSummaryKind`, so the
+  // compiler guarantees every mode has a formatter — the runtime branch is
+  // defence in depth against callers that bypass the type system with
+  // `as unknown` casts. `assertNever` keeps the type-level signal: if a new
+  // mode were ever forgotten, the cast site below would fail to compile.
   type AnyFormatter = (metadata: ModeSummaryMetadata, mmss: string) => string;
   const formatter = SUMMARY_FORMATTERS[mode] as AnyFormatter | undefined;
-  if (formatter === undefined) {
-    throw new Error(`formatModeSummary: unhandled mode ${String(mode)}`);
-  }
+  if (formatter === undefined) return assertNever(mode as never);
   return formatter(metadata, clock(durationMinutes));
+}
+
+function assertNever(mode: never): never {
+  throw new Error(`formatModeSummary: unhandled mode ${String(mode)}`);
 }

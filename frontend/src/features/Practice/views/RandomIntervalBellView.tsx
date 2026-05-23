@@ -20,14 +20,13 @@ import type {
   RitualControls,
   RitualState,
 } from '../engine/types';
-import { RANDOM_BELL_MAX_BELLS_CEILING } from '../engine/types';
+import { RANDOM_BELL_MAX_BELLS_CEILING, SECONDS_PER_MINUTE } from '../engine/types';
 
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 
 import { SPACING, colors } from '@/design/tokens';
 
-const SECONDS_PER_MINUTE = 60;
 const MS_PER_SECOND = 1000;
 
 interface Props {
@@ -141,7 +140,10 @@ const RandomIntervalBellView = ({
   audio,
   onMetadataChange,
 }: Props): React.JSX.Element => {
-  const rng = random ?? Math.random;
+  // Stabilise the RNG so a fresh `random` prop identity does not retrigger
+  // the schedule effect mid-session; in production `random` is undefined and
+  // `Math.random` is itself stable.
+  const rng = useMemo(() => random ?? Math.random, [random]);
   const adapter = useBellAudio(audio);
   const schedule = useSessionSchedule(config, state.status, rng);
 

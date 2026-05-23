@@ -250,6 +250,7 @@ export type EngineAction =
   | { type: 'ADVANCE_STEP' };
 
 export const MS_PER_MINUTE = 60_000;
+export const SECONDS_PER_MINUTE = 60;
 export const DEFAULT_TAROT_MINUTES = 5;
 
 /** Lower bound on a random session's min interval; mirrors the backend
