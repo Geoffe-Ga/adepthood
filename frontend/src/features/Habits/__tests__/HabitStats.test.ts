@@ -219,6 +219,12 @@ describe('generateStatsForHabit', () => {
       const stats = generateStatsForHabit(habit, 'UTC');
       // Today + 3 prior days = 4 days of abstention.
       expect(stats.currentStreak).toBe(4);
+      // ``longestStreak`` must agree with ``currentStreak`` here -- with
+      // no transgressions across the whole habit life, the longest run
+      // is the same as the current one.  Pins the regression flagged in
+      // PR #379 review where current was non-zero while longest stayed
+      // 0 from ``emptyStats()`` -- a contradictory display.
+      expect(stats.longestStreak).toBe(4);
     } finally {
       jest.useRealTimers();
     }
@@ -240,6 +246,10 @@ describe('generateStatsForHabit', () => {
       const stats = generateStatsForHabit(habit, 'UTC');
       // Today + yesterday = 2 abstention days; the transgression breaks the chain.
       expect(stats.currentStreak).toBe(2);
+      // Longest abstention run was the 12-day stretch before the
+      // transgression (06-01 .. 06-12) -- longer than the current
+      // 2-day post-transgression run.
+      expect(stats.longestStreak).toBe(12);
     } finally {
       jest.useRealTimers();
     }

@@ -250,3 +250,47 @@ export const subtractiveStreakFromCompletions = (
   }
   return streak;
 };
+
+/**
+ * Longest abstention run for a subtractive habit over its whole life.
+ *
+ * Walks the full ``[startDate, today]`` window in the user's TZ and
+ * tracks the longest consecutive run of days that stayed within the
+ * clear threshold.  Use this for the stats overlay's "longest streak"
+ * field — the additive ``computeLongestStreak`` counts logged days,
+ * which is the inverse of what a subtractive habit cares about and
+ * produces a contradictory display (e.g. "Current: 30 · Longest: 0"
+ * for a 30-day perfect abstention).
+ *
+ * Returns 0 when the habit has not started yet.  Walks ``cursor`` from
+ * ``startDate`` forward to keep the run-tracking obvious; backwards
+ * would produce the same number but the read is noisier.
+ */
+export const subtractiveLongestStreakFromCompletions = (
+  input: SubtractiveStreakInput,
+  tz: string,
+  now: Date = new Date(),
+): number => {
+  const today = dayKeyInTZ(now, tz);
+  if (input.startDate > today) return 0;
+
+  const dayTotals = new Map<string, number>();
+  for (const c of input.completions) {
+    const key = dayKeyInTZ(c.timestamp, tz);
+    dayTotals.set(key, (dayTotals.get(key) ?? 0) + c.completed_units);
+  }
+
+  let longest = 0;
+  let run = 0;
+  let cursor = input.startDate;
+  while (cursor <= today) {
+    if ((dayTotals.get(cursor) ?? 0) > input.clearThreshold) {
+      run = 0;
+    } else {
+      run += 1;
+      if (run > longest) longest = run;
+    }
+    cursor = addDaysInTZ(cursor, 1, tz);
+  }
+  return longest;
+};

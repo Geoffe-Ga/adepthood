@@ -7,6 +7,7 @@ import {
   dayLabel,
   detectDeviceTimezone,
   streakFromCompletions,
+  subtractiveLongestStreakFromCompletions,
   subtractiveStreakFromCompletions,
   todayInUserTZ,
 } from '../dateUtils';
@@ -291,6 +292,73 @@ describe('subtractiveStreakFromCompletions', () => {
         TODAY,
       ),
     ).toBe(1);
+  });
+});
+
+describe('subtractiveLongestStreakFromCompletions', () => {
+  const TODAY = new Date('2026-06-15T18:00:00Z');
+  const TZ = 'America/Los_Angeles';
+
+  it('equals the abstention chain length when nothing has ever been logged', () => {
+    // Habit started 6 days ago (today + 6 prior abstention days = 7).
+    // Current = longest = 7; the bug report case where Current and
+    // Longest disagreed used to display "Current: 7 · Longest: 0".
+    expect(
+      subtractiveLongestStreakFromCompletions(
+        { completions: [], clearThreshold: 5, startDate: '2026-06-09' },
+        TZ,
+        TODAY,
+      ),
+    ).toBe(7);
+  });
+
+  it('picks the longest run between past transgressions, even if shorter than current', () => {
+    // start_date 2026-06-01 (15-day window through 2026-06-15).
+    // Two transgressions: 2026-06-04 (8g > 5) and 2026-06-13 (8g > 5).
+    // Runs: [06-01..06-03] = 3 days, [06-05..06-12] = 8 days,
+    //       [06-14..06-15] = 2 days (current).
+    // Longest = 8, current = 2.
+    expect(
+      subtractiveLongestStreakFromCompletions(
+        {
+          completions: [
+            { timestamp: '2026-06-04T15:00:00Z', completed_units: 8 },
+            { timestamp: '2026-06-13T15:00:00Z', completed_units: 8 },
+          ],
+          clearThreshold: 5,
+          startDate: '2026-06-01',
+        },
+        TZ,
+        TODAY,
+      ),
+    ).toBe(8);
+  });
+
+  it('returns 0 when every day in range is a transgression', () => {
+    expect(
+      subtractiveLongestStreakFromCompletions(
+        {
+          completions: [
+            { timestamp: '2026-06-14T15:00:00Z', completed_units: 99 },
+            { timestamp: '2026-06-15T15:00:00Z', completed_units: 99 },
+          ],
+          clearThreshold: 5,
+          startDate: '2026-06-14',
+        },
+        TZ,
+        TODAY,
+      ),
+    ).toBe(0);
+  });
+
+  it('returns 0 when the habit has not started yet', () => {
+    expect(
+      subtractiveLongestStreakFromCompletions(
+        { completions: [], clearThreshold: 5, startDate: '2026-06-20' },
+        TZ,
+        TODAY,
+      ),
+    ).toBe(0);
   });
 });
 

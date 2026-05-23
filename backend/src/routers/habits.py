@@ -285,4 +285,4 @@ async def get_habit_stats(
     habit = await _get_habit_with_completions(habit_id, current_user, session)
     completions = [c for goal in habit.goals for c in goal.completions if c.user_id == current_user]
     user_tz = await get_user_timezone(session, current_user)
-    return compute_habit_stats(completions, user_tz)
+    return compute_habit_stats(completions, user_tz, _subtractive_context(habit))

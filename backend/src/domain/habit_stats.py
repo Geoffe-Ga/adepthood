@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from domain.dates import to_user_date, today_in_tz
 from schemas.habit_stats import HabitStats
+from services.streaks import SubtractiveContext
 
 if TYPE_CHECKING:
     from models.goal_completion import GoalCompletion
@@ -85,11 +86,115 @@ def _completion_rate(sorted_dates: list[date], user_timezone: str) -> float:
     return len(sorted_dates) / span if span > 0 else 0.0
 
 
+def _subtractive_day_totals(
+    completions: list[GoalCompletion],
+    user_timezone: str,
+) -> dict[date, float]:
+    """Sum completion units per user-local day, including zero-sum days.
+
+    Mirrors :func:`services.streaks._bucket_day_totals` so the abstention
+    walks here line up with the streak helpers; a key with no row at all
+    is reads as 0 (perfect abstention).
+    """
+    day_totals: dict[date, float] = {}
+    for c in completions:
+        moment = c.timestamp if c.timestamp.tzinfo is not None else c.timestamp.replace(tzinfo=UTC)
+        day = to_user_date(user_timezone, moment)
+        day_totals[day] = day_totals.get(day, 0.0) + c.completed_units
+    return day_totals
+
+
+def _subtractive_current_streak(
+    day_totals: dict[date, float],
+    user_timezone: str,
+    ctx: SubtractiveContext,
+) -> int:
+    """Walk backwards from today counting abstention days, bounded by ``start_date``."""
+    today = today_in_tz(user_timezone)
+    if ctx.start_date > today:
+        return 0
+    streak = 0
+    cursor = today
+    while cursor >= ctx.start_date:
+        if day_totals.get(cursor, 0.0) > ctx.clear_threshold:
+            break
+        streak += 1
+        cursor -= timedelta(days=1)
+    return streak
+
+
+def _subtractive_longest_streak(
+    day_totals: dict[date, float],
+    user_timezone: str,
+    ctx: SubtractiveContext,
+) -> int:
+    """Longest no-transgression run across ``[start_date, today]``.
+
+    Without this the API's ``longest_streak`` for a subtractive habit
+    falls through to the additive helper, which sorts logged days --
+    producing 0 for the no-log case and a contradictory display
+    (``current=N, longest=0``) for any user mid-abstention.
+    """
+    today = today_in_tz(user_timezone)
+    if ctx.start_date > today:
+        return 0
+    longest = 0
+    run = 0
+    cursor = ctx.start_date
+    while cursor <= today:
+        if day_totals.get(cursor, 0.0) > ctx.clear_threshold:
+            run = 0
+        else:
+            run += 1
+            longest = max(longest, run)
+        cursor += timedelta(days=1)
+    return longest
+
+
+def _subtractive_stats(
+    completions: list[GoalCompletion],
+    user_timezone: str,
+    ctx: SubtractiveContext,
+) -> HabitStats:
+    """Subtractive variant of :func:`compute_habit_stats`.
+
+    Day-of-week / completion-rate / total-completions stay rooted in
+    the additive bucketing because they describe "what the user logged"
+    -- pre-existing semantics this PR explicitly leaves unchanged.
+    Only the two streak fields flip polarity, which is the visible
+    inconsistency that PR #379 review surfaced.
+    """
+    units, presence, dates = _aggregate_by_day(completions, user_timezone)
+    sorted_dates = sorted(dates)
+    day_totals = _subtractive_day_totals(completions, user_timezone)
+    return HabitStats(
+        day_labels=list(_DAY_LABELS),
+        values=units,
+        completions_by_day=presence,
+        longest_streak=_subtractive_longest_streak(day_totals, user_timezone, ctx),
+        current_streak=_subtractive_current_streak(day_totals, user_timezone, ctx),
+        total_completions=len(completions),
+        completion_rate=_completion_rate(sorted_dates, user_timezone),
+        completion_dates=[d.isoformat() for d in sorted_dates],
+    )
+
+
 def compute_habit_stats(
     completions: list[GoalCompletion],
     user_timezone: str = "UTC",
+    subtractive: SubtractiveContext | None = None,
 ) -> HabitStats:
-    """Aggregate completions into stats using the user's local calendar."""
+    """Aggregate completions into stats using the user's local calendar.
+
+    Pass ``subtractive`` for habits where success is staying *under* a
+    threshold ("abstain from sugar"): the two streak fields then walk
+    backwards/forwards across ``[start_date, today]`` counting absent
+    days as abstention wins rather than data gaps.  Without it the
+    additive path runs, preserving the legacy behavior for every
+    existing caller.
+    """
+    if subtractive is not None:
+        return _subtractive_stats(completions, user_timezone, subtractive)
     if not completions:
         return _empty_stats()
 

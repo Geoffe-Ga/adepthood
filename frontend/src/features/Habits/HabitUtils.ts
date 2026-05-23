@@ -7,6 +7,7 @@ import {
   DEFAULT_TIMEZONE,
   dayKeyInTZ,
   streakFromCompletions,
+  subtractiveLongestStreakFromCompletions,
   subtractiveStreakFromCompletions,
   todayInUserTZ,
 } from '../../utils/dateUtils';
@@ -434,6 +435,40 @@ const computeCurrentStreak = (
   );
 };
 
+/**
+ * Longest streak across the habit's life — subtractive-aware.
+ *
+ * For additive habits, defers to the existing
+ * :func:`computeLongestStreak` which counts consecutive logged days.
+ * For subtractive habits, walks ``[start_date, today]`` and tracks the
+ * longest no-transgression run; without this the stats overlay shows
+ * a contradictory "Current: 7 · Longest: 0" pair for any habit whose
+ * current streak is non-zero but has no log entries (the
+ * ``computeLongestStreak`` input is empty in that case).
+ */
+const computeLongestStreakFor = (
+  habit: Habit,
+  completions: ReadonlyArray<Completion>,
+  sortedDays: Date[],
+  tz: string,
+): number => {
+  const subtractive = subtractiveStreakInputs(habit, tz);
+  if (subtractive) {
+    return subtractiveLongestStreakFromCompletions(
+      {
+        completions: completions.map((c) => ({
+          timestamp: c.timestamp,
+          completed_units: c.completed_units,
+        })),
+        clearThreshold: subtractive.clearThreshold,
+        startDate: subtractive.startDate,
+      },
+      tz,
+    );
+  }
+  return computeLongestStreak(sortedDays);
+};
+
 const collectCompletionDates = (sortedDays: Date[]): string[] =>
   sortedDays.filter((d) => !isNaN(d.getTime())).map((d) => d.toISOString().slice(0, 10));
 
@@ -459,6 +494,7 @@ export const generateStatsForHabit = (
     return {
       ...emptyStats(),
       currentStreak: computeCurrentStreak(habit, [], tz),
+      longestStreak: computeLongestStreakFor(habit, [], [], tz),
     };
   }
 
@@ -473,7 +509,7 @@ export const generateStatsForHabit = (
     values: unitsByDay,
     completionsByDay: presenceByDay,
     dayLabels: DAY_LABELS,
-    longestStreak: computeLongestStreak(sortedDays),
+    longestStreak: computeLongestStreakFor(habit, completions, sortedDays, tz),
     currentStreak: computeCurrentStreak(habit, completions, tz),
     totalCompletions: completions.length,
     completionRate: computeCompletionRate(sortedDays, daysWithCompletions.size),
