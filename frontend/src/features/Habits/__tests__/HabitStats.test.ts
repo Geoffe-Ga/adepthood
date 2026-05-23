@@ -166,44 +166,48 @@ describe('generateStatsForHabit', () => {
     expect(stats.currentStreak).toBe(0);
   });
 
+  // Shared subtractive-habit goal set for the abstention-streak tests below.
+  // Lifted out so a third subtractive test can be added without duplicating
+  // ~30 lines of fixture per case.
+  const subtractiveGoals: Goal[] = [
+    {
+      id: 10,
+      tier: 'low',
+      title: 'low',
+      target: 10,
+      target_unit: 'g',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: false,
+    },
+    {
+      id: 11,
+      tier: 'clear',
+      title: 'clear',
+      target: 5,
+      target_unit: 'g',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: false,
+    },
+    {
+      id: 12,
+      tier: 'stretch',
+      title: 'stretch',
+      target: 2,
+      target_unit: 'g',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: false,
+    },
+  ];
+
   test('subtractive habit accrues currentStreak with no log entries', () => {
     // Bug report case: "abstain from sugar" — if the user never logs
     // anything, every day since `start_date` is a successful abstention
     // day and should be on the streak.
     jest.useFakeTimers().setSystemTime(new Date('2026-06-15T18:00:00Z'));
     try {
-      const subtractiveGoals: Goal[] = [
-        {
-          id: 10,
-          tier: 'low',
-          title: 'low',
-          target: 10,
-          target_unit: 'g',
-          frequency: 1,
-          frequency_unit: 'per_day',
-          is_additive: false,
-        },
-        {
-          id: 11,
-          tier: 'clear',
-          title: 'clear',
-          target: 5,
-          target_unit: 'g',
-          frequency: 1,
-          frequency_unit: 'per_day',
-          is_additive: false,
-        },
-        {
-          id: 12,
-          tier: 'stretch',
-          title: 'stretch',
-          target: 2,
-          target_unit: 'g',
-          frequency: 1,
-          frequency_unit: 'per_day',
-          is_additive: false,
-        },
-      ];
       const habit: Habit = {
         ...baseHabit,
         name: 'No sugar',
@@ -223,38 +227,6 @@ describe('generateStatsForHabit', () => {
   test('subtractive habit streak breaks on a day logged above clear threshold', () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-06-15T18:00:00Z'));
     try {
-      const subtractiveGoals: Goal[] = [
-        {
-          id: 10,
-          tier: 'low',
-          title: 'low',
-          target: 10,
-          target_unit: 'g',
-          frequency: 1,
-          frequency_unit: 'per_day',
-          is_additive: false,
-        },
-        {
-          id: 11,
-          tier: 'clear',
-          title: 'clear',
-          target: 5,
-          target_unit: 'g',
-          frequency: 1,
-          frequency_unit: 'per_day',
-          is_additive: false,
-        },
-        {
-          id: 12,
-          tier: 'stretch',
-          title: 'stretch',
-          target: 2,
-          target_unit: 'g',
-          frequency: 1,
-          frequency_unit: 'per_day',
-          is_additive: false,
-        },
-      ];
       const habit: Habit = {
         ...baseHabit,
         name: 'No sugar',

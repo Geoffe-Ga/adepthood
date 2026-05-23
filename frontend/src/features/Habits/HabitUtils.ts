@@ -381,14 +381,17 @@ const computeCompletionRate = (sortedDays: Date[], totalUniqueDays: number): num
  * per counted day — is wrong for them.  Returns `null` when the habit
  * is additive or lacks the clear-tier sibling to read the threshold
  * from, falling back to the additive code path.
+ *
+ * Probes ``tier === 'clear' && !is_additive`` together so a partial
+ * fixture (or future migration that lets per-tier ``is_additive`` drift)
+ * cannot misclassify an additive habit as subtractive.  Mirrors the
+ * backend ``_subtractive_context`` helper in ``routers/habits.py``.
  */
 const subtractiveStreakInputs = (
   habit: Habit,
   tz: string,
 ): { clearThreshold: number; startDate: string } | null => {
-  const firstGoal = habit.goals[0];
-  if (!firstGoal || firstGoal.is_additive) return null;
-  const clearGoal = habit.goals.find((g) => g.tier === 'clear');
+  const clearGoal = habit.goals.find((g) => g.tier === 'clear' && !g.is_additive);
   if (!clearGoal) return null;
   return {
     clearThreshold: getGoalTarget(clearGoal),

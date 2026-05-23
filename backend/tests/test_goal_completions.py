@@ -599,3 +599,196 @@ async def test_response_streak_matches_db_after_commit(
     assert goal.id is not None
     db_streak = await compute_consecutive_streak(db_session, goal.id, user_id, "UTC")
     assert api_streak == db_streak
+
+
+# ── Subtractive habits: no-log days count as abstention success ──────────
+
+
+# Three tiers matching the onboarding shape: low/clear/stretch with
+# decreasing target values (subtractive = "stay under the target").
+_SUBTRACTIVE_TIERS: tuple[tuple[str, float], ...] = (
+    ("low", 10.0),
+    ("clear", 5.0),
+    ("stretch", 2.0),
+)
+
+
+async def _seed_subtractive_habit(
+    db_session: AsyncSession,
+    user_id: int,
+    start_date: date,
+) -> tuple[Goal, Goal, Goal]:
+    """Create an abstain-style habit with the three-tier subtractive goal set.
+
+    Returns ``(low, clear, stretch)``.  Mirrors the shape onboarding builds
+    so the router's clear-tier lookup is exercised end-to-end — without
+    this fixture the new ``_subtractive_context_for_goal`` DB query was
+    never executed in any test, exactly the gap the PR review flagged.
+    """
+    habit = Habit(
+        name="No sugar",
+        icon="🍬",
+        start_date=start_date,
+        energy_cost=1,
+        energy_return=2,
+        user_id=user_id,
+    )
+    db_session.add(habit)
+    await db_session.commit()
+    await db_session.refresh(habit)
+    goals: list[Goal] = []
+    for tier, target in _SUBTRACTIVE_TIERS:
+        goal = Goal(
+            habit_id=habit.id,
+            title=f"{tier} sugar",
+            tier=tier,
+            target=target,
+            target_unit="g",
+            frequency=1.0,
+            frequency_unit="per_day",
+            is_additive=False,
+        )
+        db_session.add(goal)
+        goals.append(goal)
+    await db_session.commit()
+    for goal in goals:
+        await db_session.refresh(goal)
+    return goals[0], goals[1], goals[2]
+
+
+@pytest.mark.asyncio
+async def test_subtractive_check_in_uses_clear_tier_threshold(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """End-to-end: ``POST /goal_completions`` resolves the clear-tier sibling.
+
+    The router's ``_subtractive_context_for_goal`` issues a live
+    ``session.scalar(select(Goal.target).where(habit_id == ..., tier ==
+    'clear'))`` query.  Unit tests on the streak helpers pass a hand-built
+    context, so the wiring layer — the SELECT, the tier-string match,
+    the SubtractiveContext build — is only covered through this test.
+
+    Posts the check-in against the *stretch* tier (target=2, under
+    clear=5) so today's stored row stays in the abstention range and the
+    test cleanly demonstrates the subtractive walk: zero prior logs +
+    habit started 3 days ago = 4 days of abstention (today + 3 prior).
+
+    If the router silently fell back to additive logic the streak would
+    be 1 (today only), so the assertion specifically pins the polarity.
+    """
+    headers, user_id = await _signup(async_client, "abstain_user")
+    today = today_in_tz("UTC")
+    _low, _clear, stretch = await _seed_subtractive_habit(
+        db_session, user_id, today - timedelta(days=3)
+    )
+    assert stretch.id is not None
+
+    resp = await async_client.post(
+        "/goal_completions/",
+        # Logging at the stretch tier stores `target=2` units, below
+        # clear=5 -> today counts as a successful abstention day.
+        json={"goal_id": stretch.id, "did_complete": True},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    # 4 days = today + the three prior abstention days since start_date.
+    expected_streak = 4
+    assert resp.json()["streak"] == expected_streak
+
+
+@pytest.mark.asyncio
+async def test_subtractive_check_in_falls_back_to_additive_for_additive_habit(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Additive habits do not pick up the subtractive walk by accident.
+
+    Inverse of :func:`test_subtractive_check_in_uses_clear_tier_threshold`:
+    same scenario (habit started 3 days ago, zero prior logs, one log
+    today) on a vanilla additive habit must yield streak=1, proving the
+    polarity branch in ``_subtractive_context_for_goal`` actually
+    distinguishes additive from subtractive.
+    """
+    headers, user_id = await _signup(async_client, "additive_baseline")
+    goal = await _seed_goal(db_session, user_id)
+    assert goal.id is not None
+
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "did_complete": True},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["streak"] == 1
+
+
+@pytest.mark.asyncio
+async def test_subtractive_check_in_breaks_streak_on_transgression(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A pre-existing transgression day caps the abstention chain end-to-end."""
+    headers, user_id = await _signup(async_client, "abstain_user_transgress")
+    today = today_in_tz("UTC")
+    _low, clear, _stretch = await _seed_subtractive_habit(
+        db_session, user_id, today - timedelta(days=10)
+    )
+    assert clear.id is not None
+
+    # Two days ago the user blew past the clear=5 limit; the chain should
+    # only count today + yesterday.
+    db_session.add(
+        GoalCompletion(
+            goal_id=clear.id,
+            user_id=user_id,
+            completed_units=20.0,
+            timestamp=datetime.now(UTC) - timedelta(days=2),
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": clear.id, "did_complete": True},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    expected_streak = 2
+    assert resp.json()["streak"] == expected_streak
+
+
+@pytest.mark.asyncio
+async def test_subtractive_check_in_idempotent_path_preserves_subtractive_streak(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Replays of the same-day log keep the subtractive abstention count.
+
+    Covers the ``_idempotent_already_logged_response`` branch — without
+    threading ``SubtractiveContext`` through both the happy-path and
+    idempotent-replay paths, a retry would fall back to additive logic
+    and return a smaller streak than the first call.
+    """
+    headers, user_id = await _signup(async_client, "abstain_idempotent")
+    today = today_in_tz("UTC")
+    _low, clear, _stretch = await _seed_subtractive_habit(
+        db_session, user_id, today - timedelta(days=4)
+    )
+    assert clear.id is not None
+
+    first = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": clear.id, "did_complete": True},
+        headers=headers,
+    )
+    assert first.status_code == HTTPStatus.OK
+    expected_streak = 5  # today + 4 days back since start_date.
+    assert first.json()["streak"] == expected_streak
+
+    # Same-day retry hits the already-logged-today branch; the streak
+    # must agree with the original response, not the additive fallback.
+    second = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": clear.id, "did_complete": True},
+        headers=headers,
+    )
+    assert second.status_code == HTTPStatus.OK
+    assert second.json()["reason_code"] == "already_logged_today"
+    assert second.json()["streak"] == expected_streak
