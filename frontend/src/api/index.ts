@@ -1803,6 +1803,226 @@ export const userPractices = {
 };
 
 /**
+ * Mirrors the backend `PracticeTagOut` schema (migration `07b8c9d0e1f2`).
+ *
+ * `owner_user_id === null` marks a system tag (read-only); a non-null
+ * value scopes the tag to one user. The personal namespace is
+ * independent of the system one — a user can claim a slug a system
+ * tag already uses.
+ */
+export interface PracticeTag {
+  id: number;
+  slug: string;
+  label: string;
+  owner_user_id: number | null;
+  created_at: string;
+}
+
+export interface PracticeTagCreate {
+  slug: string;
+  label: string;
+}
+
+export interface PracticeTagUpdate {
+  label: string;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function validatePracticeTag(data: unknown): data is PracticeTag {
+  if (!isObject(data)) return false;
+  return (
+    typeof data.id === 'number' &&
+    typeof data.slug === 'string' &&
+    typeof data.label === 'string' &&
+    (data.owner_user_id === null || typeof data.owner_user_id === 'number') &&
+    typeof data.created_at === 'string'
+  );
+}
+
+export const practiceTags = {
+  async list(token?: string): Promise<PracticeTag[]> {
+    const data = await request<unknown>('/practice-tags/', { token });
+    if (!Array.isArray(data) || !data.every(validatePracticeTag)) {
+      throw new Error('Invalid practice-tags response');
+    }
+    return data;
+  },
+  async create(payload: PracticeTagCreate, token?: string): Promise<PracticeTag> {
+    const data = await request<unknown>('/practice-tags/', {
+      method: 'POST',
+      body: payload,
+      token,
+    });
+    if (!validatePracticeTag(data)) throw new Error('Invalid practice-tag response');
+    return data;
+  },
+  async update(tagId: number, payload: PracticeTagUpdate, token?: string): Promise<PracticeTag> {
+    const data = await request<unknown>(`/practice-tags/${tagId}`, {
+      method: 'PATCH',
+      body: payload,
+      token,
+    });
+    if (!validatePracticeTag(data)) throw new Error('Invalid practice-tag response');
+    return data;
+  },
+  remove(tagId: number, token?: string): Promise<void> {
+    return request<void>(`/practice-tags/${tagId}`, { method: 'DELETE', token });
+  },
+};
+
+/**
+ * Mirrors the backend `PracticeRecipeOut` schema. A recipe is a named
+ * ordered collection of steps that materialises into a `mode_config`
+ * payload on apply. `mode` is one of the recipe-capable modes
+ * (`sense_grounding` or `tallied_grounding`).
+ */
+export type RecipeMode = 'sense_grounding' | 'tallied_grounding';
+
+export interface PracticeRecipeStep {
+  position: number;
+  tag_slug: string;
+  tag_label: string;
+  prompt_label: string;
+  target_count: number;
+}
+
+export interface PracticeRecipe {
+  id: number;
+  slug: string;
+  name: string;
+  description: string;
+  owner_user_id: number | null;
+  mode: RecipeMode;
+  rounds: number;
+  created_at: string;
+  steps: PracticeRecipeStep[];
+}
+
+export interface PracticeRecipeStepInput {
+  tag_slug: string;
+  tag_label: string;
+  prompt_label: string;
+  target_count: number;
+}
+
+export interface PracticeRecipeCreate {
+  slug: string;
+  name: string;
+  description?: string;
+  mode: RecipeMode;
+  rounds: number;
+  steps: PracticeRecipeStepInput[];
+}
+
+export interface PracticeRecipeUpdate {
+  name: string;
+  description?: string;
+  rounds: number;
+  steps: PracticeRecipeStepInput[];
+}
+
+function validatePracticeRecipeStep(data: unknown): data is PracticeRecipeStep {
+  if (!isObject(data)) return false;
+  return (
+    typeof data.position === 'number' &&
+    typeof data.tag_slug === 'string' &&
+    typeof data.tag_label === 'string' &&
+    typeof data.prompt_label === 'string' &&
+    typeof data.target_count === 'number'
+  );
+}
+
+function hasRecipeOwnerShape(data: Record<string, unknown>): boolean {
+  return data.owner_user_id === null || typeof data.owner_user_id === 'number';
+}
+
+function hasRecipeModeShape(data: Record<string, unknown>): boolean {
+  return data.mode === 'sense_grounding' || data.mode === 'tallied_grounding';
+}
+
+function hasRecipeStringFields(data: Record<string, unknown>): boolean {
+  return (
+    typeof data.slug === 'string' &&
+    typeof data.name === 'string' &&
+    typeof data.description === 'string' &&
+    typeof data.created_at === 'string'
+  );
+}
+
+function hasRecipeStepsArray(data: Record<string, unknown>): boolean {
+  return Array.isArray(data.steps) && data.steps.every(validatePracticeRecipeStep);
+}
+
+function validatePracticeRecipe(data: unknown): data is PracticeRecipe {
+  if (!isObject(data)) return false;
+  return (
+    typeof data.id === 'number' &&
+    typeof data.rounds === 'number' &&
+    hasRecipeStringFields(data) &&
+    hasRecipeOwnerShape(data) &&
+    hasRecipeModeShape(data) &&
+    hasRecipeStepsArray(data)
+  );
+}
+
+const INVALID_RECIPE_RESPONSE = 'Invalid practice-recipe response';
+
+export const practiceRecipes = {
+  async list(mode?: RecipeMode, token?: string): Promise<PracticeRecipe[]> {
+    const qs = mode ? `?mode=${encodeURIComponent(mode)}` : '';
+    const data = await request<unknown>(`/practice-recipes/${qs}`, { token });
+    if (!Array.isArray(data) || !data.every(validatePracticeRecipe)) {
+      throw new Error('Invalid practice-recipes response');
+    }
+    return data;
+  },
+  async get(recipeId: number, token?: string): Promise<PracticeRecipe> {
+    const data = await request<unknown>(`/practice-recipes/${recipeId}`, { token });
+    if (!validatePracticeRecipe(data)) throw new Error(INVALID_RECIPE_RESPONSE);
+    return data;
+  },
+  async create(payload: PracticeRecipeCreate, token?: string): Promise<PracticeRecipe> {
+    const data = await request<unknown>('/practice-recipes/', {
+      method: 'POST',
+      body: payload,
+      token,
+    });
+    if (!validatePracticeRecipe(data)) throw new Error(INVALID_RECIPE_RESPONSE);
+    return data;
+  },
+  async update(
+    recipeId: number,
+    payload: PracticeRecipeUpdate,
+    token?: string,
+  ): Promise<PracticeRecipe> {
+    const data = await request<unknown>(`/practice-recipes/${recipeId}`, {
+      method: 'PATCH',
+      body: payload,
+      token,
+    });
+    if (!validatePracticeRecipe(data)) throw new Error(INVALID_RECIPE_RESPONSE);
+    return data;
+  },
+  remove(recipeId: number, token?: string): Promise<void> {
+    return request<void>(`/practice-recipes/${recipeId}`, { method: 'DELETE', token });
+  },
+  /**
+   * Materialise the recipe into the target UserPractice's
+   * `mode_config_override`. The backend re-validates against the catalog
+   * mode and rejects cross-mode swaps with `400 mode_mismatch`.
+   */
+  apply(recipeId: number, userPracticeId: number, token?: string): Promise<UserPractice> {
+    return request<UserPractice>(`/practice-recipes/${recipeId}/apply-to/${userPracticeId}`, {
+      method: 'POST',
+      token,
+    });
+  },
+};
+
+/**
  * Server-assembled frequency banner payload. Mirrors the
  * `FrequencyResponse` schema introduced in ritual-05
  * (`backend/src/routers/user_practices.py::GET /user-practices/current/frequency`).
@@ -2123,6 +2343,8 @@ export default {
   course,
   practices,
   practiceShare,
+  practiceRecipes,
+  practiceTags,
   userPractices,
   frequency,
   practiceSessions,

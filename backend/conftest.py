@@ -75,6 +75,17 @@ _SQLITE_ALWAYS_INDEXES: tuple[str, ...] = (
     # user-submitted practices are exempt via the partial ``WHERE`` clause.
     'CREATE UNIQUE INDEX IF NOT EXISTS "ix_practice_preset_stage_lower_name_unique_test" '
     "ON practice (stage_number, lower(trim(name))) WHERE submitted_by_user_id IS NULL",
+    # practice tags: per-namespace slug uniqueness.  Mirrors migration
+    # ``07b8c9d0e1f2``; SQLite supports partial unique indexes natively.
+    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_practicetag_system_slug_test" '
+    "ON practicetag (slug) WHERE owner_user_id IS NULL",
+    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_practicetag_user_slug_test" '
+    "ON practicetag (owner_user_id, slug) WHERE owner_user_id IS NOT NULL",
+    # practice recipes: per-namespace slug uniqueness.  Same migration.
+    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_practicerecipe_system_slug_test" '
+    "ON practicerecipe (slug) WHERE owner_user_id IS NULL",
+    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_practicerecipe_user_slug_test" '
+    "ON practicerecipe (owner_user_id, slug) WHERE owner_user_id IS NOT NULL",
 )
 
 # Concurrency-only indexes: the regular ``db_session`` fixture deliberately
