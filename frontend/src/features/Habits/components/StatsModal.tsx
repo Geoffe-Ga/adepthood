@@ -12,15 +12,13 @@ import { generateStatsForHabit, toLocalHabitStats } from '../HabitUtils';
 const FALLBACK_CHART_COLOR = 'rgba(134, 65, 244, 1)';
 const FALLBACK_CALENDAR_COLOR = '#50cebb';
 
-// Chart sits inside ``statsModalContent`` (90% of window) with
-// ``SPACING.lg`` padding on both sides plus ``statsContainer``'s
-// ``SPACING.md`` inner padding -- subtract the full chrome so the
-// chart never overruns its card. Cap at 480 so on tablets / web the
-// chart stays a readable size rather than stretching edge-to-edge.
 const MODAL_WIDTH_FRACTION = 0.9;
 const MAX_CHART_WIDTH = 480;
+// Mirrors statsModalContent (SPACING.lg) + statsContainer (SPACING.md) padding
+// in Habits.styles.ts -- keep in sync if those rules change.
 const CHART_CHROME = SPACING.lg * 2 + SPACING.md * 2;
 const CHART_HEIGHT = 220;
+const MIN_LABEL_OPACITY = 0.6;
 
 const useChartWidth = (): number => {
   const { width } = useWindowDimensions();
@@ -29,31 +27,48 @@ const useChartWidth = (): number => {
 
 const getStageColor = (stage: string, fallback: string): string => STAGE_COLORS[stage] || fallback;
 
-const buildChartConfig = (chartColor: string) => ({
-  ...CHART_STYLE,
-  decimalPlaces: 0,
-  color: (opacity = 1) => {
-    const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(chartColor);
-    if (!match) return chartColor;
-    const r = Number.parseInt(match[1]!, 16);
-    const g = Number.parseInt(match[2]!, 16);
-    const b = Number.parseInt(match[3]!, 16);
-    return `rgba(${r}, ${g}, ${b}, ${opacity})`;
-  },
-  labelColor: (opacity = 1) => {
-    const op = Math.max(opacity, 0.6);
-    return `rgba(85, 85, 85, ${op})`;
-  },
-  propsForBackgroundLines: {
-    stroke: CHART_AXIS_LABEL_COLOR,
-    strokeOpacity: CHART_STYLE.axisLineOpacity,
-    strokeDasharray: '4 6',
-  },
-  propsForLabels: { fontSize: 11 },
-  barPercentage: 0.6,
-  strokeWidth: 2,
-  useShadowColorFromDataset: false,
-});
+const HEX_TRIPLET = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i;
+
+const parseHexRgb = (hex: string): [number, number, number] | null => {
+  const match = HEX_TRIPLET.exec(hex);
+  if (!match) return null;
+  return [
+    Number.parseInt(match[1]!, 16),
+    Number.parseInt(match[2]!, 16),
+    Number.parseInt(match[3]!, 16),
+  ];
+};
+
+const AXIS_LABEL_RGB = parseHexRgb(CHART_AXIS_LABEL_COLOR);
+const axisLabelColor = (opacity: number): string => {
+  const op = Math.max(opacity, MIN_LABEL_OPACITY);
+  if (!AXIS_LABEL_RGB) return CHART_AXIS_LABEL_COLOR;
+  const [r, g, b] = AXIS_LABEL_RGB;
+  return `rgba(${r}, ${g}, ${b}, ${op})`;
+};
+
+const buildChartConfig = (chartColor: string) => {
+  const rgb = parseHexRgb(chartColor);
+  const colorFn = rgb
+    ? (opacity = 1) => `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${opacity})`
+    : () => chartColor;
+
+  return {
+    ...CHART_STYLE,
+    decimalPlaces: 0,
+    color: colorFn,
+    labelColor: axisLabelColor,
+    propsForBackgroundLines: {
+      stroke: CHART_AXIS_LABEL_COLOR,
+      strokeOpacity: CHART_STYLE.axisLineOpacity,
+      strokeDasharray: '4 6',
+    },
+    propsForLabels: { fontSize: 11 },
+    barPercentage: 0.6,
+    strokeWidth: 2,
+    useShadowColorFromDataset: false,
+  };
+};
 
 const buildMarkedDates = (
   completionDates: string[],

@@ -23,7 +23,6 @@ jest.mock('../../../../api', () => ({
 // Mock HabitUtils to avoid indirect dependency issues
 jest.mock('../../HabitUtils', () => ({
   generateStatsForHabit: jest.fn(() => ({
-    dates: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     values: [0, 0, 0, 0, 0, 0, 0],
     completionsByDay: [0, 0, 0, 0, 0, 0, 0],
     dayLabels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
@@ -34,7 +33,6 @@ jest.mock('../../HabitUtils', () => ({
     completionDates: [],
   })),
   toLocalHabitStats: jest.fn((api: Record<string, unknown>) => ({
-    dates: api.day_labels,
     values: api.values,
     completionsByDay: api.completions_by_day,
     dayLabels: api.day_labels,
@@ -67,7 +65,6 @@ const baseHabit: Habit = {
 };
 
 const localStats: HabitStatsData = {
-  dates: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
   values: [0, 0, 0, 0, 0, 0, 0],
   completionsByDay: [0, 0, 0, 0, 0, 0, 0],
   dayLabels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],

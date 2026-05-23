@@ -292,7 +292,6 @@ const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAYS_IN_WEEK = 7;
 
 const emptyStats = (): HabitStatsData => ({
-  dates: DAY_LABELS,
   values: new Array(DAYS_IN_WEEK).fill(0) as number[],
   completionsByDay: new Array(DAYS_IN_WEEK).fill(0) as number[],
   dayLabels: DAY_LABELS,
@@ -404,7 +403,6 @@ export const generateStatsForHabit = (
     .sort((a, b) => a.getTime() - b.getTime());
 
   return {
-    dates: DAY_LABELS,
     values: unitsByDay,
     completionsByDay: countsByDay,
     dayLabels: DAY_LABELS,
@@ -420,7 +418,6 @@ export const generateStatsForHabit = (
  * Convert an API habit stats response (snake_case) to local HabitStatsData (camelCase).
  */
 export const toLocalHabitStats = (api: ApiHabitStats): HabitStatsData => ({
-  dates: api.day_labels,
   values: api.values,
   completionsByDay: api.completions_by_day,
   dayLabels: api.day_labels,

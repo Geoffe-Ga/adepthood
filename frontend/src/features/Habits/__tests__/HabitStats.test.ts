@@ -197,7 +197,6 @@ describe('toLocalHabitStats', () => {
     };
     const local = toLocalHabitStats(api);
     expect(local.dayLabels).toEqual(api.day_labels);
-    expect(local.dates).toEqual(api.day_labels);
     expect(local.values).toEqual(api.values);
     expect(local.completionsByDay).toEqual(api.completions_by_day);
     expect(local.longestStreak).toBe(3);
