@@ -1,7 +1,7 @@
 """add practice_tag, practice_recipe, practice_recipe_step tables
 
 Revision ID: 07b8c9d0e1f2
-Revises: f6a7b8c9d0e1
+Revises: b6c7d8e9a0b1
 Create Date: 2026-05-23 00:00:00.000000
 
 Adds a user-managed recipe library for tier-one mindfulness practices.
@@ -35,7 +35,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "07b8c9d0e1f2"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "f6a7b8c9d0e1"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "b6c7d8e9a0b1"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

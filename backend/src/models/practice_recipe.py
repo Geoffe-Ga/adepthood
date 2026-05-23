@@ -25,10 +25,15 @@ steps.  For ``sense_grounding`` mode the rounds value is always 1.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import CheckConstraint, Column, DateTime, Index
+from sqlalchemy import CheckConstraint, Column, DateTime, Index, Integer
 from sqlmodel import Field, SQLModel
 
 from domain.practice_modes import PracticeMode
+
+# Bound at module scope so :class:`Index`'s ``*_where`` predicates can
+# resolve the column at table-creation time.  Both Postgres and SQLite
+# accept the same ``IS NULL`` form (mirrors :mod:`models.user_practice`).
+_OWNER_COLUMN = Column("owner_user_id", Integer, nullable=True)
 
 # Bounds mirrored from schemas.practice_mode_config so the DB CHECK
 # constraint and the Pydantic validator agree.  Drift between the two
@@ -71,6 +76,21 @@ class PracticeRecipe(SQLModel, table=True):
         CheckConstraint(
             f"rounds >= {_RECIPE_ROUNDS_MIN} AND rounds <= {_RECIPE_ROUNDS_MAX}",
             name="ck_practicerecipe_rounds_range",
+        ),
+        Index(
+            "ix_practicerecipe_system_slug",
+            "slug",
+            unique=True,
+            postgresql_where=_OWNER_COLUMN.is_(None),
+            sqlite_where=_OWNER_COLUMN.is_(None),
+        ),
+        Index(
+            "ix_practicerecipe_user_slug",
+            "owner_user_id",
+            "slug",
+            unique=True,
+            postgresql_where=_OWNER_COLUMN.is_not(None),
+            sqlite_where=_OWNER_COLUMN.is_not(None),
         ),
     )
 
@@ -131,7 +151,10 @@ class PracticeRecipeStep(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    recipe_id: int = Field(foreign_key="practicerecipe.id", ondelete="CASCADE", index=True)
+    # The composite ``(recipe_id, position)`` unique index above also acts
+    # as the lookup index for ``WHERE recipe_id = ?`` queries (its leftmost
+    # prefix), so we deliberately do NOT mark this FK with ``index=True``.
+    recipe_id: int = Field(foreign_key="practicerecipe.id", ondelete="CASCADE")
     position: int = Field(description="Zero-based ordering within the recipe.")
     tag_slug: str = Field(max_length=64)
     tag_label: str = Field(max_length=255)
