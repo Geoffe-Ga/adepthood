@@ -133,6 +133,37 @@ async def test_lifespan_logs_and_continues_when_seeder_raises(
 
 
 @pytest.mark.asyncio
+async def test_seed_startup_data_continues_after_per_seeder_failure(
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failing seeder must not starve the later, independent seeders.
+
+    Without isolation a ``seed_practices`` blow-up (e.g. a new mode lands
+    in a CHECK constraint before the seed list catches up) would skip
+    ``seed_content`` and leave stage 1 with zero chapter rows — exactly
+    the production symptom that motivated the per-seeder try/except.
+    """
+
+    async def _boom(_session: AsyncSession) -> int:
+        msg = "practice CHECK constraint mismatch"
+        raise RuntimeError(msg)
+
+    caplog.set_level(logging.WARNING, logger="main")
+    with patch("main.seed_practices", new=_boom):
+        await _seed_startup_data(db_session)
+
+    stages = (await db_session.execute(select(CourseStage))).scalars().all()
+    contents = (await db_session.execute(select(StageContent))).scalars().all()
+    expected_content_count = sum(p.chapter_count for p in STAGE_PLANS) + 6
+    assert len(stages) == 10
+    assert len(contents) == expected_content_count
+
+    failure_logs = [r for r in caplog.records if "seed_failed" in r.getMessage()]
+    assert failure_logs, "expected a logged failure for the practices seeder"
+
+
+@pytest.mark.asyncio
 async def test_seed_startup_data_runs_stages_before_practices(
     db_session: AsyncSession,
 ) -> None:

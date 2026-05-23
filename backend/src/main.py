@@ -242,17 +242,25 @@ async def _seed_startup_data(session: AsyncSession) -> None:
     """Run the three idempotent seeders in dependency order.
 
     ``seed_practices`` and ``seed_content`` both read from the seeded
-    ``CourseStage`` rows, so stages must land first. Each seeder inserts
-    only the rows it would expect to find missing (matched by stable keys
-    like ``stage_number`` or ``(stage_number, name)``), so repeated calls
-    are no-ops once steady state is reached.
+    ``CourseStage`` rows, so stages must land first. Each seeder is
+    isolated in its own try/except so a failure in one (e.g. a new mode
+    landing in a CHECK constraint before the seed list catches up) does
+    not starve the later, independent seeders — without this, a single
+    ``seed_practices`` blow-up would skip ``seed_content`` and leave the
+    course catalog empty. Successes log the inserted count so a quiet
+    deploy is still verifiable from the boot log.
     """
-    # Each seeder commits its own inserts before returning, so this function
-    # does not need a trailing commit; the dependency-order contract above is
-    # what callers rely on.
-    await seed_stages(session)
-    await seed_practices(session)
-    await seed_content(session)
+    for name, seeder in (
+        ("stages", seed_stages),
+        ("practices", seed_practices),
+        ("content", seed_content),
+    ):
+        try:
+            inserted = await seeder(session)
+            logger.info("seed_complete", extra={"seeder": name, "inserted": inserted})
+        except Exception:
+            logger.exception("seed_failed", extra={"seeder": name})
+            await session.rollback()
 
 
 @asynccontextmanager
