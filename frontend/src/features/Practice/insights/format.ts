@@ -95,11 +95,7 @@ function clock(durationMinutes: number): string {
 const cardSummary = (metadata: { card_name: string }, mmss: string): string =>
   `${metadata.card_name} for ${mmss}`;
 
-/**
- * Per-mode summary formatters. The mapped type makes every
- * `ModeSummaryKind` a required key, so a new mode fails to compile until
- * it is handled here.
- */
+/** Per-mode summary formatters; the mapped type enforces exhaustive coverage. */
 const SUMMARY_FORMATTERS: {
   [K in ModeSummaryKind]: (
     metadata: Extract<ModeSummaryMetadata, { mode: K }>,
@@ -136,11 +132,7 @@ export function formatModeSummary<M extends ModeSummaryKind>(
   durationMinutes: number,
   metadata: Extract<ModeSummaryMetadata, { mode: M }>,
 ): string {
-  // `SUMMARY_FORMATTERS` is a mapped type over `ModeSummaryKind`, so the
-  // compiler guarantees every mode has a formatter — the runtime branch is
-  // defence in depth against callers that bypass the type system with
-  // `as unknown` casts. `assertNever` keeps the type-level signal: if a new
-  // mode were ever forgotten, the cast site below would fail to compile.
+  // Mapped type proves the lookup is total; the runtime guard catches `as unknown` callers.
   type AnyFormatter = (metadata: ModeSummaryMetadata, mmss: string) => string;
   const formatter = SUMMARY_FORMATTERS[mode] as AnyFormatter | undefined;
   if (formatter === undefined) return assertNever(mode as never);

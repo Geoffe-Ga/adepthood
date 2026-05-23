@@ -45,15 +45,7 @@ export interface IntervalBellConfig {
   bell_tone: IntervalBellTone;
 }
 
-/**
- * Meditation window with bells at random offsets between min/max bounds.
- *
- * Mirrors the backend `RandomIntervalBellConfig`. Unlike
- * {@link IntervalBellConfig}, whose cues are deterministic, the schedule
- * here is generated client-side at session start; the server only
- * validates the bounds and later records what actually happened (see
- * {@link RandomIntervalBellMetadata}).
- */
+/** Meditation window with bells at random offsets in [min, max]; mirrors backend `RandomIntervalBellConfig`. */
 export interface RandomIntervalBellConfig {
   mode: 'random_interval_bell';
   duration_minutes: number;
@@ -164,13 +156,7 @@ export type ModeConfig =
   | TarotConfig
   | CardMeditationConfig;
 
-/**
- * Per-session metadata emitted when a random-interval-bell ritual
- * completes. Mirrors the backend `RandomIntervalBellMetadata`:
- * `interval_seconds` carries the whole-second gap before each struck
- * bell, so it holds exactly one entry per bell and never more than
- * `bells_struck`.
- */
+/** Random-bell session metadata; `interval_seconds[i]` is the gap before struck bell `i`. */
 export interface RandomIntervalBellMetadata {
   mode: 'random_interval_bell';
   bells_struck: number;

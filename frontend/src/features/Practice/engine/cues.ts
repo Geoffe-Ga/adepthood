@@ -12,18 +12,10 @@ import { DEFAULT_CARD_MEDITATION_MINUTES, DEFAULT_TAROT_MINUTES, MS_PER_MINUTE }
 // Defensive: at bpm=240 over the max session this would otherwise blow up.
 const MAX_METRONOME_TICKS = 10_000;
 
-/**
- * Cue builder for the modes whose pacing the engine does not drive:
- * `count_up`, `rep_counter`, `sense_grounding`, `tallied_grounding`, and
- * `random_interval_bell` (whose offsets are non-deterministic and so are
- * scheduled client-side in the view).
- */
+/** Cue builder for modes whose pacing the engine does not drive (open-ended or view-owned). */
 const noCues = (): readonly Cue[] => [];
 
-/**
- * Per-mode cue builders. The mapped type makes every `ModeConfig` variant
- * a required key, so a new mode fails to compile until it is handled here.
- */
+/** Per-mode cue builders; the mapped type enforces exhaustive coverage. */
 const CUE_BUILDERS: {
   [K in ModeConfig['mode']]: (config: Extract<ModeConfig, { mode: K }>) => readonly Cue[];
 } = {

@@ -136,8 +136,8 @@ describe('RandomIntervalBellView — bell scheduling', () => {
   });
 
   it('generates a constant-gap schedule when min === max', () => {
-    // `span = max - min = 0` collapses the uniform draw to `min`, mirroring
-    // the deterministic interval-bell mode. The RNG should never be consulted.
+    // `span = max - min = 0` so each `random() * span` term is zero regardless
+    // of what the RNG returns, collapsing every gap to `min`.
     const rng = jest.fn<() => number>(() => 0.5);
     const h = harness({
       config: { ...baseConfig, min_interval_seconds: 30, max_interval_seconds: 30 },

@@ -195,12 +195,7 @@ interface HarvestedMetadata {
   onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
 }
 
-/**
- * Harvest the wire and summary metadata for the active session. The
- * `random_interval_bell` view lifts its non-deterministic schedule up
- * through `onRandomBellMetadata`; every other mode is derived from engine
- * state alone.
- */
+/** Harvest wire+summary metadata; `random_interval_bell` view lifts its schedule via the setter. */
 function useHarvestedMetadata(
   config: ModeConfig,
   state: RitualState,
@@ -450,8 +445,7 @@ interface ModeViewProps {
 
 function ModeView(props: ModeViewProps): React.JSX.Element {
   const { config, state, controls } = props;
-  // `random_interval_bell` is dispatched separately: its view needs the
-  // metadata callback that the other modes do not.
+  // `random_interval_bell` is dispatched separately: its view takes the metadata callback.
   if (config.mode === 'random_interval_bell') {
     return (
       <RandomIntervalBellView
@@ -616,8 +610,7 @@ export function harvestMetadata(
   cardPick: PickedCard | null,
   randomBellMetadata: RandomIntervalBellMetadata | null = null,
 ): SessionMetadata {
-  // `random_interval_bell` carries view-owned schedule data, so it is
-  // harvested from the lifted metadata rather than the engine state.
+  // `random_interval_bell` schedule is view-owned, so harvest from the lifted metadata.
   if (config.mode === 'random_interval_bell') {
     return (
       randomBellMetadata ?? { mode: 'random_interval_bell', bells_struck: 0, interval_seconds: [] }

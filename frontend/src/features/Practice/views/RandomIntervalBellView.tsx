@@ -1,14 +1,4 @@
-/**
- * Session view for the `random_interval_bell` mode.
- *
- * The bell schedule is non-deterministic, so — unlike `IntervalBellView`,
- * whose cues come from the engine — this view owns it: at session start
- * it pre-computes a list of offsets whose consecutive gaps are uniform in
- * `[min_interval_seconds, max_interval_seconds]` and whose cumulative sum
- * stays inside the duration. It then strikes the bell off the engine's
- * `elapsedMs` clock and lifts the resulting metadata up via
- * `onMetadataChange` so the parent can persist it on save.
- */
+/** Session view for `random_interval_bell`: schedules its own bells (engine cues are empty). */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
@@ -49,11 +39,7 @@ interface Schedule {
   deltas: readonly number[];
 }
 
-/**
- * Build the random bell schedule for a session. Exported (rather than
- * being a module-local helper) so it can be unit-tested directly without
- * spinning up the React view.
- */
+/** Build the random bell schedule for a session; exported for direct unit tests. */
 export function generateSchedule(config: RandomIntervalBellConfig, random: () => number): Schedule {
   const totalSeconds = config.duration_minutes * SECONDS_PER_MINUTE;
   const span = config.max_interval_seconds - config.min_interval_seconds;
@@ -89,9 +75,7 @@ function useSessionSchedule(
 ): Schedule | null {
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   useEffect(() => {
-    // `config` is a dep so a fresh config identity re-runs the effect, but the
-    // `schedule === null` guard means a mid-session config change is a no-op —
-    // the engine contract requires `config` to be stable for the session.
+    // `schedule === null` guard makes a mid-session config change a no-op (engine contract).
     if (status === 'running' && schedule === null) {
       setSchedule(generateSchedule(config, random));
     } else if (status === 'idle' && schedule !== null) {
@@ -148,9 +132,7 @@ const RandomIntervalBellView = ({
   audio,
   onMetadataChange,
 }: Props): React.JSX.Element => {
-  // Stabilise the RNG so a fresh `random` prop identity does not retrigger
-  // the schedule effect mid-session; in production `random` is undefined and
-  // `Math.random` is itself stable.
+  // Stabilise so a fresh `random` prop identity can't retrigger the schedule effect.
   const rng = useMemo(() => random ?? Math.random, [random]);
   const adapter = useBellAudio(audio);
   const schedule = useSessionSchedule(config, state.status, rng);
@@ -204,8 +186,7 @@ function nextBellHint(
   if (status !== 'running' || schedule === null) return null;
   const nextOffset = schedule.offsets[struckCount];
   if (nextOffset === undefined) return null;
-  // Floor at 1s so the hint never flashes "Next bell in ~0s" the instant
-  // before a strike — the bell itself is the better signal at that point.
+  // Floor at 1s so the hint never flashes "~0s" the instant before a strike.
   return Math.max(1, Math.round(nextOffset - elapsedMs / MS_PER_SECOND));
 }
 

@@ -206,11 +206,7 @@ function metronomeTotalMs(config: MetronomeConfig): number {
   return config.timer.duration_minutes * MS_PER_MINUTE;
 }
 
-/**
- * Per-mode total-duration builders. The mapped type makes every
- * `ModeConfig` variant a required key, so a new mode fails to compile
- * until it is handled here.
- */
+/** Per-mode total-duration builders; the mapped type enforces exhaustive coverage. */
 const TOTAL_MS_BUILDERS: {
   [K in ModeConfig['mode']]: (config: Extract<ModeConfig, { mode: K }>) => number | null;
 } = {
