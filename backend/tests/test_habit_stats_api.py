@@ -16,6 +16,8 @@ from models.goal_completion import GoalCompletion
 DAYS_IN_WEEK = 7
 EXPECTED_MONDAY_UNITS = 3.0  # 2.0 + 1.0 from two completions
 EXPECTED_WEDNESDAY_UNITS = 3.0
+EXPECTED_MONDAY_COMPLETIONS = 2  # two completions logged Monday
+EXPECTED_WEDNESDAY_COMPLETIONS = 1
 EXPECTED_COMPLETIONS_3_ENTRIES = 3
 EXPECTED_LONGEST_STREAK_3 = 3
 EXPECTED_COMPLETIONS_5_ENTRIES = 5
@@ -198,10 +200,10 @@ async def test_stats_aggregates_completions_by_day_of_week(
     # Monday=index 1, Wednesday=index 3
     assert data["values"][1] == EXPECTED_MONDAY_UNITS  # 2+1
     assert data["values"][3] == EXPECTED_WEDNESDAY_UNITS
-    # completions_by_day: 1 if any completion that weekday, else 0
-    assert data["completions_by_day"][1] == 1
+    # completions_by_day counts completion events per weekday (Sun..Sat).
+    assert data["completions_by_day"][1] == EXPECTED_MONDAY_COMPLETIONS
     assert data["completions_by_day"][2] == 0
-    assert data["completions_by_day"][3] == 1
+    assert data["completions_by_day"][3] == EXPECTED_WEDNESDAY_COMPLETIONS
 
 
 @pytest.mark.asyncio

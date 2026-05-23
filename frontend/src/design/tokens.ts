@@ -304,6 +304,32 @@ export const darkColors = {
   border: '#2f2f2f',
 } as const;
 
+/**
+ * Chart styling for ``react-native-chart-kit``. The library expects
+ * functions (not static colors) because it bakes the caller-supplied
+ * opacity into stroke / fill / label paints. Keep the surface light to
+ * match the surrounding card and the rest of the Habits UI -- the
+ * dark-green palette the library ships with reads as a foreign panel
+ * when dropped into a white modal.
+ *
+ * ``axisLabel`` is sourced from ``colors.text.secondaryAccessible`` so
+ * tick labels clear WCAG AA on the chart's white background. The chart
+ * lives inside a ``card`` surface (not ``primary``), so the slight
+ * extra contrast vs. plain ``secondary`` keeps the labels readable
+ * without bleeding into the title.
+ */
+export const CHART_AXIS_LABEL_COLOR = '#555555'; // colors.text.secondaryAccessible
+
+export const CHART_STYLE = {
+  /** Background gradient -- transparent so the modal's white card shows through. */
+  backgroundGradientFrom: '#ffffff',
+  backgroundGradientFromOpacity: 0,
+  backgroundGradientTo: '#ffffff',
+  backgroundGradientToOpacity: 0,
+  /** Grid + axis-line color is a low-opacity dark; labels use secondaryAccessible. */
+  axisLineOpacity: 0.15,
+} as const;
+
 export const breakpoints = { xs: 0, sm: 360, md: 600, lg: 900, xl: 1200 } as const;
 
 export const elevation = {

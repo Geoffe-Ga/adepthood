@@ -110,20 +110,21 @@ describe('generateStatsForHabit', () => {
     expect(stats.completionRate).toBeCloseTo(2 / 3, 1);
   });
 
-  test('completionsByDay is 1/0 per day of week', () => {
+  test('completionsByDay counts completion events per day of week', () => {
     const habit: Habit = {
       ...baseHabit,
       completions: [
-        // Monday
+        // Monday — two completions same day
         { id: 'c-1', timestamp: new Date('2024-01-01T08:00:00'), completed_units: 2 },
-        // Wednesday
-        { id: 'c-2', timestamp: new Date('2024-01-03T08:00:00'), completed_units: 3 },
+        { id: 'c-2', timestamp: new Date('2024-01-01T18:00:00'), completed_units: 1 },
+        // Wednesday — single completion
+        { id: 'c-3', timestamp: new Date('2024-01-03T08:00:00'), completed_units: 3 },
       ],
     };
     const stats = generateStatsForHabit(habit);
-    expect(stats.completionsByDay[1]).toBe(1); // Monday
-    expect(stats.completionsByDay[2]).toBe(0); // Tuesday
-    expect(stats.completionsByDay[3]).toBe(1); // Wednesday
+    expect(stats.completionsByDay[1]).toBe(2); // Monday: two events
+    expect(stats.completionsByDay[2]).toBe(0); // Tuesday: none
+    expect(stats.completionsByDay[3]).toBe(1); // Wednesday: one event
   });
 
   test('includes currentStreak counting from today backwards (BUG-FE-HABIT-207)', () => {
