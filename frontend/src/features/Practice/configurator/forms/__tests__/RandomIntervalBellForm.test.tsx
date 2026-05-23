@@ -98,6 +98,16 @@ describe('validateRandomIntervalBell', () => {
     expect(validateRandomIntervalBell({ ...base, max_bells: 50 })).toEqual([]);
   });
 
+  it('accepts equal min and max intervals (collapses to a constant-gap schedule)', () => {
+    expect(
+      validateRandomIntervalBell({
+        ...base,
+        min_interval_seconds: 60,
+        max_interval_seconds: 60,
+      }),
+    ).toEqual([]);
+  });
+
   it('rejects a maximum interval below the minimum', () => {
     const errors = validateRandomIntervalBell({
       ...base,

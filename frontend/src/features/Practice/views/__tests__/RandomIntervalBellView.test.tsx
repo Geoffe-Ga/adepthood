@@ -9,7 +9,7 @@ import type {
   RandomIntervalBellMetadata,
   RitualState,
 } from '../../engine/types';
-import RandomIntervalBellView from '../RandomIntervalBellView';
+import RandomIntervalBellView, { generateSchedule } from '../RandomIntervalBellView';
 
 import { fakeControls, fakeState } from './fixtures';
 
@@ -228,5 +228,52 @@ describe('RandomIntervalBellView — adapter lifecycle', () => {
     const audio: FakeAudio = { play: jest.fn<PlayFn>() };
     const { unmount } = renderView(harness({ audio }));
     expect(() => unmount()).not.toThrow();
+  });
+});
+
+describe('generateSchedule', () => {
+  it('respects an explicit max_bells cap', () => {
+    const schedule = generateSchedule({ ...baseConfig, max_bells: 2 }, () => 0.5);
+    expect(schedule.offsets).toHaveLength(2);
+    expect(schedule.deltas).toHaveLength(2);
+  });
+
+  it('collapses to constant gaps when min === max', () => {
+    const schedule = generateSchedule(
+      { ...baseConfig, min_interval_seconds: 30, max_interval_seconds: 30 },
+      () => 0.5,
+    );
+    expect(schedule.deltas.every((gap) => gap === 30)).toBe(true);
+    expect(schedule.offsets).toEqual([30, 60, 90]);
+  });
+
+  it('returns an empty schedule when the first gap already exceeds the duration', () => {
+    const schedule = generateSchedule(
+      { ...baseConfig, duration_minutes: 0.1, min_interval_seconds: 60, max_interval_seconds: 60 },
+      () => 0.5,
+    );
+    expect(schedule.offsets).toEqual([]);
+    expect(schedule.deltas).toEqual([]);
+  });
+
+  it('produces deltas that are at least 1 second even when the gap rounds toward zero', () => {
+    // A degenerate config with a fractional gap < 0.5 would round to 0; the
+    // `Math.max(1, …)` floor in the implementation guarantees the metadata
+    // never violates the backend's `ge=1` bound on interval_seconds.
+    const schedule = generateSchedule(
+      // Per-field validation rejects this at the form layer, but the runtime
+      // contract is enforced here too. Cast bypasses the type-level guard.
+      {
+        mode: 'random_interval_bell',
+        duration_minutes: 1,
+        min_interval_seconds: 5,
+        max_interval_seconds: 5,
+        bell_tone: 'bowl',
+      },
+      () => 0,
+    );
+    for (const gap of schedule.deltas) {
+      expect(gap).toBeGreaterThanOrEqual(1);
+    }
   });
 });

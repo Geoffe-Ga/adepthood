@@ -107,7 +107,7 @@ interface ActiveSession {
   isSaving: boolean;
   saveError: string | null;
   /** Lifts the random-bell view's live schedule metadata for the harvest. */
-  onRandomBellMetadata: (_metadata: RandomIntervalBellMetadata) => void;
+  onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
   submitSession: (
     _insight: string | null,
     _onSaved?: (_session: PracticeSessionResponse) => void,
@@ -192,7 +192,7 @@ function stringOrNull(insight: string): string | null {
 interface HarvestedMetadata {
   wireMetadata: SessionMetadata;
   summaryMetadata: ModeSummaryMetadata;
-  onRandomBellMetadata: (_metadata: RandomIntervalBellMetadata) => void;
+  onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
 }
 
 /**
@@ -392,7 +392,7 @@ interface SessionCardProps {
   tarotCardIndex: number;
   cardPick: PickedCard | null;
   saveError: string | null;
-  onRandomBellMetadata: (_metadata: RandomIntervalBellMetadata) => void;
+  onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
 }
 
 function SessionCard(props: SessionCardProps): React.JSX.Element {
@@ -445,7 +445,7 @@ interface ModeViewProps {
   controls: RitualControls;
   tarotCardIndex: number;
   cardPick: PickedCard | null;
-  onRandomBellMetadata: (_metadata: RandomIntervalBellMetadata) => void;
+  onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
 }
 
 function ModeView(props: ModeViewProps): React.JSX.Element {

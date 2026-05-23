@@ -49,7 +49,12 @@ interface Schedule {
   deltas: readonly number[];
 }
 
-function generateSchedule(config: RandomIntervalBellConfig, random: () => number): Schedule {
+/**
+ * Build the random bell schedule for a session. Exported (rather than
+ * being a module-local helper) so it can be unit-tested directly without
+ * spinning up the React view.
+ */
+export function generateSchedule(config: RandomIntervalBellConfig, random: () => number): Schedule {
   const totalSeconds = config.duration_minutes * SECONDS_PER_MINUTE;
   const span = config.max_interval_seconds - config.min_interval_seconds;
   const cap = Math.min(
@@ -84,6 +89,9 @@ function useSessionSchedule(
 ): Schedule | null {
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   useEffect(() => {
+    // `config` is a dep so a fresh config identity re-runs the effect, but the
+    // `schedule === null` guard means a mid-session config change is a no-op —
+    // the engine contract requires `config` to be stable for the session.
     if (status === 'running' && schedule === null) {
       setSchedule(generateSchedule(config, random));
     } else if (status === 'idle' && schedule !== null) {
@@ -196,7 +204,9 @@ function nextBellHint(
   if (status !== 'running' || schedule === null) return null;
   const nextOffset = schedule.offsets[struckCount];
   if (nextOffset === undefined) return null;
-  return Math.max(0, Math.round(nextOffset - elapsedMs / MS_PER_SECOND));
+  // Floor at 1s so the hint never flashes "Next bell in ~0s" the instant
+  // before a strike — the bell itself is the better signal at that point.
+  return Math.max(1, Math.round(nextOffset - elapsedMs / MS_PER_SECOND));
 }
 
 const styles = StyleSheet.create({
