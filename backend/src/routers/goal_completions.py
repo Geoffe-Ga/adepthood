@@ -7,11 +7,11 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from database import get_session
 from dependencies.ownership import log_ownership_denied
@@ -152,20 +152,39 @@ async def _subtractive_context_for_goal(
     relationship load), and touching the lazy-loaded relationship in an
     async context raises ``MissingGreenlet``.
 
-    Uses ``scalar_one_or_none`` rather than ``scalar`` so that data
-    drift -- two ``clear``-tier goals sharing a ``habit_id`` after a
-    migration artifact or a future multi-group schema change -- raises
-    ``MultipleResultsFound`` instead of silently picking an arbitrary
-    threshold.  ``(habit_id, tier)`` has no DB-level uniqueness
-    constraint today (PR #379 review), so this guard is the only thing
-    making the assumption visible if it ever breaks.
+    Filters on ``is_additive == False`` to mirror the in-memory
+    ``_subtractive_context`` helper in ``routers/habits.py``: if a
+    mixed-polarity fixture or partial migration ever co-locates an
+    additive clear goal under the same habit, this filter rejects it
+    before it builds a wrong-shape context.
+
+    Uses ``scalar_one_or_none`` rather than ``scalar`` so duplicate
+    ``clear``-tier siblings (no DB-level ``UniqueConstraint`` on
+    ``(habit_id, tier)`` today -- PR #379 review) surface as a
+    ``MultipleResultsFound``, which is re-raised as a stable 500
+    so clients see a predictable error code instead of an opaque
+    server error.
     """
     if posted_goal.is_additive:
         return None
     result = await session.execute(
-        select(Goal.target).where(Goal.habit_id == habit.id, Goal.tier == "clear")
+        select(Goal.target).where(
+            Goal.habit_id == habit.id,
+            Goal.tier == "clear",
+            col(Goal.is_additive).is_(False),
+        )
     )
-    clear_target = result.scalar_one_or_none()
+    try:
+        clear_target = result.scalar_one_or_none()
+    except MultipleResultsFound as exc:
+        logger.exception(
+            "subtractive_check_in_duplicate_clear_goal",
+            extra={"habit_id": habit.id, "user_id": habit.user_id},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="duplicate_clear_tier_goals",
+        ) from exc
     if clear_target is None:
         return None
     return SubtractiveContext(clear_threshold=clear_target, start_date=habit.start_date)

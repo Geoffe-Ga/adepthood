@@ -9,7 +9,6 @@ from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
@@ -799,15 +798,16 @@ async def test_subtractive_check_in_idempotent_path_preserves_subtractive_streak
 async def test_subtractive_check_in_fails_loudly_on_duplicate_clear_tier(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A habit with two ``clear``-tier goals surfaces the data drift.
+    """A habit with two ``clear``-tier goals returns a stable 500.
 
     There is no DB-level ``UniqueConstraint`` on ``(habit_id, tier)``
     (PR #379 review).  If a migration artifact or a future multi-group
     schema change ever puts two ``clear`` goals under one habit,
     ``_subtractive_context_for_goal`` MUST refuse to silently pick one
-    -- which is exactly what the original ``scalar()`` did.  Pins the
-    new ``scalar_one_or_none()`` guard by asserting the request raises
-    instead of returning a 200 with a coin-flipped threshold.
+    -- which is exactly what the original ``scalar()`` did.  The router
+    catches ``MultipleResultsFound`` and re-raises a 500 with detail
+    ``duplicate_clear_tier_goals`` so clients see a predictable code
+    instead of an opaque server error.
     """
     headers, user_id = await _signup(async_client, "abstain_dup_clear")
     today = today_in_tz("UTC")
@@ -832,9 +832,10 @@ async def test_subtractive_check_in_fails_loudly_on_duplicate_clear_tier(
     )
     await db_session.commit()
 
-    with pytest.raises(MultipleResultsFound):
-        await async_client.post(
-            "/goal_completions/",
-            json={"goal_id": clear.id, "did_complete": True},
-            headers=headers,
-        )
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": clear.id, "did_complete": True},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    assert resp.json()["detail"] == "duplicate_clear_tier_goals"
