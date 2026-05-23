@@ -34,10 +34,8 @@ import { type PracticeItem, practices } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 import { MODE_CATEGORIES, type PickableMode } from '@/features/Practice/components/ModePicker';
+import { MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
 import type { RootStackParamList } from '@/navigation/RootStack';
-
-const MIN_STAGE = 1;
-const MAX_STAGE = 10;
 
 type Section = 'presets' | 'drafts' | 'imported';
 
@@ -64,23 +62,27 @@ interface CatalogState {
  * user's current stage when this screen is the catalog tab.
  */
 export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Element {
+  // Destructure each prop the callbacks below depend on so the
+  // ``useCallback`` dependency arrays are stable refs instead of the
+  // ``props`` object (which is a new reference on every render and
+  // would silently invalidate every memoization).
+  const { initialStage, loadPractices, navigateToDetail, navigateToCreate } = props;
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const [stageNumber, setStageNumber] = useState(props.initialStage ?? MIN_STAGE);
+  const [stageNumber, setStageNumber] = useState(initialStage ?? MIN_STAGE);
   const [modeCategory, setModeCategory] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [state, reload] = useCatalog(stageNumber, props);
+  const [state, reload] = useCatalog(stageNumber, loadPractices);
 
   const onDetail = useCallback(
     (id: number) =>
-      props.navigateToDetail
-        ? props.navigateToDetail(id)
+      navigateToDetail
+        ? navigateToDetail(id)
         : navigation.navigate('PracticeDetail', { practiceId: id }),
-    [navigation, props],
+    [navigation, navigateToDetail],
   );
   const onCreate = useCallback(
-    () =>
-      props.navigateToCreate ? props.navigateToCreate() : navigation.navigate('CreatePractice'),
-    [navigation, props],
+    () => (navigateToCreate ? navigateToCreate() : navigation.navigate('CreatePractice')),
+    [navigation, navigateToCreate],
   );
 
   return (
@@ -102,7 +104,10 @@ export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Eleme
   );
 }
 
-function useCatalog(stageNumber: number, props: CatalogProps): [CatalogState, () => void] {
+function useCatalog(
+  stageNumber: number,
+  loadPractices: CatalogProps['loadPractices'],
+): [CatalogState, () => void] {
   const [state, setState] = useState<CatalogState>({
     practices: [],
     loading: true,
@@ -111,8 +116,8 @@ function useCatalog(stageNumber: number, props: CatalogProps): [CatalogState, ()
 
   const runReload = useCallback(async () => {
     try {
-      const list = props.loadPractices
-        ? await props.loadPractices(stageNumber)
+      const list = loadPractices
+        ? await loadPractices(stageNumber)
         : await practices.list({ stageNumber, includeMine: true });
       setState({ practices: list, loading: false, error: null });
     } catch (err) {
@@ -122,7 +127,7 @@ function useCatalog(stageNumber: number, props: CatalogProps): [CatalogState, ()
         error: formatApiError(err, { fallback: 'Could not load the catalog.' }),
       }));
     }
-  }, [stageNumber, props]);
+  }, [stageNumber, loadPractices]);
 
   const reload = useCallback(() => {
     setState((prev) => ({ ...prev, loading: true, error: null }));

@@ -24,15 +24,13 @@ import type { ModeConfig } from '../engine/types';
 import { type PracticeItem, practices, userPractices } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import { MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 export type PracticeDetailScreenProps = NativeStackScreenProps<
   RootStackParamList,
   'PracticeDetail'
 >;
-
-const MIN_STAGE = 1;
-const MAX_STAGE = 10;
 
 interface ScreenState {
   practice: PracticeItem | null;

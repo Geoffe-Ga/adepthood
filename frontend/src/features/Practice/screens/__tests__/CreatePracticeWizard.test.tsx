@@ -226,6 +226,11 @@ describe('CreatePracticeWizard — metadata + submit', () => {
 
     expect(mockPracticesCreate).toHaveBeenCalledTimes(1);
     expect(mockUserPracticesCreate).not.toHaveBeenCalled();
+    // Skip-stage mints the draft under FALLBACK_STAGE (=1); the catalog row
+    // exists but is not active anywhere (no user-practice row). Asserting
+    // the wire value closes the contract gap flagged in the PR review.
+    const payload = mockPracticesCreate.mock.calls[0]?.[0];
+    expect(payload?.stage_number).toBe(1);
   });
 
   it('surfaces an API error when the create call fails', async () => {

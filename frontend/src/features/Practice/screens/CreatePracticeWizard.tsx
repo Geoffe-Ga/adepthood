@@ -48,6 +48,7 @@ import { practices, userPractices } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 import ModePicker, { type PickableMode } from '@/features/Practice/components/ModePicker';
+import { FALLBACK_STAGE, MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 export type CreatePracticeWizardProps = NativeStackScreenProps<
@@ -59,8 +60,6 @@ export const PRACTICE_NAME_MAX = 120;
 export const PRACTICE_DESCRIPTION_MAX = 1_000;
 export const PRACTICE_INSTRUCTIONS_MAX = 2_000;
 const PRACTICE_NAME_MIN = 1;
-const MIN_STAGE = 1;
-const MAX_STAGE = 10;
 
 type WizardStep = 'entry' | 'mode' | 'configure' | 'metadata';
 
@@ -651,8 +650,14 @@ function useSubmitController(
     setBusy(true);
     setApiError(null);
     try {
+      // ``stage_number`` is required on ``POST /practices/`` (catalog rows
+      // are stage-scoped), so a "Skip stage" choice mints the draft under
+      // FALLBACK_STAGE and skips the follow-up ``POST /user-practices``.
+      // The draft is then stored but not active for any stage; the user
+      // can assign it later from the detail screen. See
+      // ``features/Practice/constants.ts`` for the rationale.
       const created = await practices.create({
-        stage_number: state.stageNumber ?? 1,
+        stage_number: state.stageNumber ?? FALLBACK_STAGE,
         name: state.name.trim(),
         description: state.description.trim(),
         instructions: state.instructions.trim(),
