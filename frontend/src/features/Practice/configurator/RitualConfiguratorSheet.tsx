@@ -13,6 +13,7 @@ import {
 
 import type { ModeConfig } from '../engine/types';
 import { CUSTOM_NAME_MAX, validateCustomName, validateModeConfig } from '../engine/validation';
+import RecipePickerModal from '../recipes/RecipePickerModal';
 
 import CardMeditationForm from './forms/CardMeditationForm';
 import CountUpForm from './forms/CountUpForm';
@@ -28,6 +29,9 @@ import TarotForm from './forms/TarotForm';
 import { type UserPractice, type UserPracticeCustomize, userPractices } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+
+/** Modes that have a recipe library backing them; see backend `RECIPE_MODES`. */
+const RECIPE_LIBRARY_MODES = new Set(['sense_grounding', 'tallied_grounding']);
 
 export interface RitualConfiguratorSheetProps {
   visible: boolean;
@@ -49,38 +53,95 @@ export interface RitualConfiguratorSheetProps {
 const RitualConfiguratorSheet = (props: RitualConfiguratorSheetProps): React.JSX.Element => {
   const edit = useEditState(props.initialName, props.initialConfig);
   const state = useSaveState();
+  const [pickerVisible, setPickerVisible] = useState(false);
   const canSave = edit.dirty && edit.errors.length === 0 && !state.submitting;
+  const recipeLibraryAvailable = RECIPE_LIBRARY_MODES.has(edit.config.mode);
   return (
     <Modal visible={props.visible} transparent animationType="slide" onRequestClose={props.onClose}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.overlay}
-        testID="ritual-configurator-overlay"
-      >
-        <View style={styles.sheet} testID="ritual-configurator-sheet">
-          <ConfiguratorHeader
-            name={edit.name}
-            aspect={props.aspect ?? null}
-            onNameChange={edit.setName}
-            onCancel={props.onClose}
-            onSave={() => state.save(props, { name: edit.name, config: edit.config })}
-            canSave={canSave}
-          />
-          <ScrollView style={styles.body} keyboardShouldPersistTaps="handled">
-            <ConfiguratorBody config={edit.config} onChange={edit.setConfig} />
-            <ErrorList errors={edit.errors} />
-            {state.apiError !== null && (
-              <Text style={styles.apiError} testID="ritual-configurator-api-error">
-                {state.apiError}
-              </Text>
-            )}
-            <ResetButton disabled={state.submitting} onPress={() => state.reset(props)} />
-          </ScrollView>
-        </View>
-      </KeyboardAvoidingView>
+      <ConfiguratorSheetBody
+        edit={edit}
+        state={state}
+        canSave={canSave}
+        aspect={props.aspect ?? null}
+        recipeLibraryAvailable={recipeLibraryAvailable}
+        onOpenRecipePicker={() => setPickerVisible(true)}
+        onSave={() => state.save(props, { name: edit.name, config: edit.config })}
+        onCancel={props.onClose}
+        onReset={() => state.reset(props)}
+      />
+      {recipeLibraryAvailable && (
+        <RecipePickerModal
+          visible={pickerVisible}
+          mode={edit.config.mode as 'sense_grounding' | 'tallied_grounding'}
+          userPracticeId={props.userPracticeId}
+          onClose={() => setPickerVisible(false)}
+          onApplied={(updated) => {
+            props.onSaved?.(updated);
+            props.onClose();
+          }}
+        />
+      )}
     </Modal>
   );
 };
+
+interface ConfiguratorSheetBodyProps {
+  edit: EditState;
+  state: SaveState;
+  canSave: boolean;
+  aspect: string | null;
+  recipeLibraryAvailable: boolean;
+  onOpenRecipePicker: () => void;
+  onSave: () => void;
+  onCancel: () => void;
+  onReset: () => void;
+}
+
+const ConfiguratorSheetBody = (props: ConfiguratorSheetBodyProps): React.JSX.Element => (
+  <KeyboardAvoidingView
+    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    style={styles.overlay}
+    testID="ritual-configurator-overlay"
+  >
+    <View style={styles.sheet} testID="ritual-configurator-sheet">
+      <ConfiguratorHeader
+        name={props.edit.name}
+        aspect={props.aspect}
+        onNameChange={props.edit.setName}
+        onCancel={props.onCancel}
+        onSave={props.onSave}
+        canSave={props.canSave}
+      />
+      <ScrollView style={styles.body} keyboardShouldPersistTaps="handled">
+        {props.recipeLibraryAvailable && <RecipeLibraryButton onPress={props.onOpenRecipePicker} />}
+        <ConfiguratorBody config={props.edit.config} onChange={props.edit.setConfig} />
+        <ErrorList errors={props.edit.errors} />
+        {props.state.apiError !== null && (
+          <Text style={styles.apiError} testID="ritual-configurator-api-error">
+            {props.state.apiError}
+          </Text>
+        )}
+        <ResetButton disabled={props.state.submitting} onPress={props.onReset} />
+      </ScrollView>
+    </View>
+  </KeyboardAvoidingView>
+);
+
+interface RecipeLibraryButtonProps {
+  onPress: () => void;
+}
+
+const RecipeLibraryButton = ({ onPress }: RecipeLibraryButtonProps): React.JSX.Element => (
+  <TouchableOpacity
+    accessibilityRole="button"
+    accessibilityLabel="Browse recipe library"
+    onPress={onPress}
+    style={styles.recipeLibraryButton}
+    testID="ritual-configurator-recipe-library"
+  >
+    <Text style={styles.recipeLibraryText}>Browse recipe library →</Text>
+  </TouchableOpacity>
+);
 
 interface EditState {
   name: string;
@@ -346,6 +407,17 @@ const styles = StyleSheet.create({
   },
   resetText: { color: colors.danger, fontSize: 13, fontWeight: '500' },
   unknownText: { color: colors.text.secondaryAccessible, fontSize: 14, lineHeight: 20 },
+  recipeLibraryButton: {
+    marginBottom: SPACING.md,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    backgroundColor: colors.background.card,
+    borderWidth: 1,
+    borderColor: colors.background.accent,
+    alignItems: 'center',
+  },
+  recipeLibraryText: { color: colors.text.primary, fontSize: 14, fontWeight: '600' },
 });
 
 export default RitualConfiguratorSheet;

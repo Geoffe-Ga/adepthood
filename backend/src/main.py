@@ -37,13 +37,16 @@ from routers.goal_groups import router as goal_groups_router
 from routers.goals import router as goals_router
 from routers.habits import router as habits_router
 from routers.journal import router as journal_router
+from routers.practice_recipes import router as practice_recipes_router
 from routers.practice_sessions import router as practice_sessions_router
 from routers.practice_share import router as practice_share_router
+from routers.practice_tags import router as practice_tags_router
 from routers.practices import router as practices_router
 from routers.prompts import router as prompts_router
 from routers.stages import router as stages_router
 from routers.user_practices import router as user_practices_router
 from seed_content import seed_content
+from seed_practice_recipes import seed_practice_recipes
 from seed_practices import seed_practices
 from seed_stages import seed_stages
 
@@ -261,6 +264,7 @@ async def _seed_startup_data(session: AsyncSession) -> None:
 
     for name, seeder in (
         ("practices", seed_practices),
+        ("practice_recipes", seed_practice_recipes),
         ("content", seed_content),
     ):
         try:
@@ -351,6 +355,8 @@ app.include_router(botmason_router)
 app.include_router(course_router)
 app.include_router(practices_router)
 app.include_router(practice_share_router)
+app.include_router(practice_recipes_router)
+app.include_router(practice_tags_router)
 app.include_router(user_practices_router)
 app.include_router(practice_sessions_router)
 app.include_router(habits_router)
