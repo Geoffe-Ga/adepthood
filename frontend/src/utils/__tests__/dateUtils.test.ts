@@ -7,6 +7,7 @@ import {
   dayLabel,
   detectDeviceTimezone,
   streakFromCompletions,
+  subtractiveStreakFromCompletions,
   todayInUserTZ,
 } from '../dateUtils';
 
@@ -199,6 +200,97 @@ describe('streakFromCompletions', () => {
     expect(streakFromCompletions(completed, 'America/Los_Angeles', TODAY_PACIFIC_MORNING)).toBe(2);
     // UTC sees both timestamps on the same day -> streak 1.
     expect(streakFromCompletions(completed, 'UTC', TODAY_PACIFIC_MORNING)).toBe(1);
+  });
+});
+
+describe('subtractiveStreakFromCompletions', () => {
+  // "today" anchored at 18:00 UTC = 11 AM PDT on 2026-06-15 to keep the
+  // tz-bucket comparisons deterministic across CI clock drift.
+  const TODAY = new Date('2026-06-15T18:00:00Z');
+  const TZ = 'America/Los_Angeles';
+
+  it('counts every day since start_date when no logs exist (the bug report case)', () => {
+    // Habit started 4 days ago on 2026-06-11; the user has had nothing to
+    // log since.  That is 5 days of perfect abstention (today inclusive).
+    expect(
+      subtractiveStreakFromCompletions(
+        { completions: [], clearThreshold: 5, startDate: '2026-06-11' },
+        TZ,
+        TODAY,
+      ),
+    ).toBe(5);
+  });
+
+  it('breaks the streak on a day where the user logged above the clear threshold', () => {
+    // Two days ago the user blew past the clear limit; today and yesterday
+    // are still abstention days, so streak = 2.
+    expect(
+      subtractiveStreakFromCompletions(
+        {
+          completions: [{ timestamp: '2026-06-13T17:00:00Z', completed_units: 10 }],
+          clearThreshold: 5,
+          startDate: '2026-06-01',
+        },
+        TZ,
+        TODAY,
+      ),
+    ).toBe(2);
+  });
+
+  it('treats a log equal to the clear threshold as success (boundary)', () => {
+    // total == clear is "just within budget" per the frontend tier
+    // resolver; the streak must agree or the tile and stats diverge.
+    expect(
+      subtractiveStreakFromCompletions(
+        {
+          completions: [{ timestamp: '2026-06-15T17:00:00Z', completed_units: 5 }],
+          clearThreshold: 5,
+          startDate: '2026-06-15',
+        },
+        TZ,
+        TODAY,
+      ),
+    ).toBe(1);
+  });
+
+  it('sums multiple logs in the same day before comparing to the threshold', () => {
+    // 3 + 3 = 6 > clear=5, so today is a transgression and streak = 0.
+    expect(
+      subtractiveStreakFromCompletions(
+        {
+          completions: [
+            { timestamp: '2026-06-15T15:00:00Z', completed_units: 3 },
+            { timestamp: '2026-06-15T22:00:00Z', completed_units: 3 },
+          ],
+          clearThreshold: 5,
+          startDate: '2026-06-01',
+        },
+        TZ,
+        TODAY,
+      ),
+    ).toBe(0);
+  });
+
+  it('returns 0 when the habit has not started yet', () => {
+    expect(
+      subtractiveStreakFromCompletions(
+        { completions: [], clearThreshold: 5, startDate: '2026-06-20' },
+        TZ,
+        TODAY,
+      ),
+    ).toBe(0);
+  });
+
+  it('caps the streak at days since start_date even with no transgressions', () => {
+    // Habit started today; one day of life means streak = 1, not "since
+    // the dawn of time".
+    expect(
+      subtractiveStreakFromCompletions(
+        { completions: [], clearThreshold: 5, startDate: '2026-06-15' },
+        TZ,
+        TODAY,
+      ),
+    ).toBe(1);
   });
 });
 

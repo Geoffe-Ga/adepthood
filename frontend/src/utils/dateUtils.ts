@@ -197,3 +197,56 @@ export const streakFromCompletions = (
   }
   return streak;
 };
+
+export interface SubtractiveStreakInput {
+  /** Completion log entries: timestamp + units logged on that timestamp. */
+  completions: ReadonlyArray<{ timestamp: string | Date; completed_units: number }>;
+  /** The clear-tier goal's target; a day's sum > this value breaks the streak. */
+  clearThreshold: number;
+  /** Habit's start date as `YYYY-MM-DD` in the user's TZ; the walk stops here. */
+  startDate: string;
+}
+
+/**
+ * Compute the streak for a subtractive habit (e.g. "abstain from sugar").
+ *
+ * For subtractive goals, *absence* of a log is the best possible
+ * outcome — it means the user did not slip — so the additive helper's
+ * "every counted day must have a row" model produces the wrong answer.
+ * This helper walks backwards from `now` in the user's TZ:
+ *
+ *   - A day where the user's logged sum stays ≤ ``clearThreshold``
+ *     counts as a streak day (no row at all maps to sum=0 = success).
+ *   - The first day going back where the sum > ``clearThreshold`` is
+ *     a transgression and breaks the chain.
+ *   - The walk stops at ``startDate`` so the streak can never exceed
+ *     the habit's life.
+ *
+ * Mirrors backend ``services.streaks._compute_subtractive_streak``
+ * so the stats overlay and the tile-displayed ``habit.streak`` (which
+ * comes from the backend's ``compute_habit_streak``) agree.
+ */
+export const subtractiveStreakFromCompletions = (
+  input: SubtractiveStreakInput,
+  tz: string,
+  now: Date = new Date(),
+): number => {
+  const today = dayKeyInTZ(now, tz);
+  if (input.startDate > today) return 0;
+
+  const dayTotals = new Map<string, number>();
+  for (const c of input.completions) {
+    const key = dayKeyInTZ(c.timestamp, tz);
+    dayTotals.set(key, (dayTotals.get(key) ?? 0) + c.completed_units);
+  }
+
+  let streak = 0;
+  let cursor = today;
+  while (cursor >= input.startDate) {
+    const total = dayTotals.get(cursor) ?? 0;
+    if (total > input.clearThreshold) break;
+    streak += 1;
+    cursor = addDaysInTZ(cursor, -1, tz);
+  }
+  return streak;
+};

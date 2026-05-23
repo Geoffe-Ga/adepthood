@@ -23,7 +23,12 @@ from models.goal_completion import GoalCompletion
 from models.habit import Habit
 from routers.auth import get_current_user
 from schemas import CheckInResult
-from services.streaks import check_milestones, compute_consecutive_streak, update_streak
+from services.streaks import (
+    SubtractiveContext,
+    check_milestones,
+    compute_consecutive_streak,
+    update_streak,
+)
 from services.users import get_user_timezone
 
 
@@ -41,6 +46,10 @@ class _CheckInJob:
     # Explicit completion time for a backfilled past day; ``None`` lets the
     # ``GoalCompletion`` model default (``datetime.now(UTC)``) stand.
     timestamp: datetime | None
+    # Subtractive-habit context for the streak computation: a no-log day
+    # on an "abstain from sugar" habit is success, not a chain break.
+    # ``None`` selects the additive code path.
+    subtractive: SubtractiveContext | None
 
 
 logger = logging.getLogger(__name__)
@@ -117,14 +126,40 @@ async def _idempotent_already_logged_response(
     goal_id: int,
     user_id: int,
     user_timezone: str,
+    subtractive: SubtractiveContext | None = None,
 ) -> CheckInResult:
     """Build the ``already_logged_today`` response shape used by both fast + race paths."""
-    streak = await compute_consecutive_streak(session, goal_id, user_id, user_timezone)
+    streak = await compute_consecutive_streak(session, goal_id, user_id, user_timezone, subtractive)
     return CheckInResult(
         streak=streak,
         milestones=[],
         reason_code="already_logged_today",
     )
+
+
+async def _subtractive_context_for_goal(
+    session: AsyncSession, habit: Habit, posted_goal: Goal
+) -> SubtractiveContext | None:
+    """Build the subtractive-streak context for the habit, else ``None``.
+
+    The check-in payload identifies a single goal (any tier), but the
+    "transgression" line the user thinks in terms of is always the
+    clear-tier sibling.  ``None`` selects the additive code path so
+    additive habits behave exactly as before.
+
+    Queries the sibling directly rather than walking ``habit.goals``
+    because the habit row is fetched with ``session.get`` (no eager
+    relationship load), and touching the lazy-loaded relationship in an
+    async context raises ``MissingGreenlet``.
+    """
+    if posted_goal.is_additive:
+        return None
+    clear_target = await session.scalar(
+        select(Goal.target).where(Goal.habit_id == habit.id, Goal.tier == "clear")
+    )
+    if clear_target is None:
+        return None
+    return SubtractiveContext(clear_threshold=clear_target, start_date=habit.start_date)
 
 
 def _held_response(current_user: int, goal_id: int, old_streak: int) -> CheckInResult:
@@ -178,7 +213,11 @@ async def _persist_and_build_response(session: AsyncSession, job: _CheckInJob) -
         session.add(completion)
         await session.flush()
         new_streak = await compute_consecutive_streak(
-            session, job.goal_id, job.user_id, job.user_timezone
+            session,
+            job.goal_id,
+            job.user_id,
+            job.user_timezone,
+            job.subtractive,
         )
         _, reason = update_streak(
             job.old_streak,
@@ -211,7 +250,11 @@ async def _try_persist_or_idempotent(session: AsyncSession, job: _CheckInJob) ->
         # raise on a clean-looking happy path.
         await session.rollback()
         return await _idempotent_already_logged_response(
-            session, job.goal_id, job.user_id, job.user_timezone
+            session,
+            job.goal_id,
+            job.user_id,
+            job.user_timezone,
+            job.subtractive,
         )
 
 
@@ -231,16 +274,21 @@ async def create_goal_completion(
     goal, habit, goal_id = await _get_owned_goal_and_habit(session, payload.goal_id, current_user)
     user_tz = await get_user_timezone(session, current_user)
     target_day = _resolve_target_day(payload.completed_on, user_tz)
+    subtractive = await _subtractive_context_for_goal(session, habit, goal)
 
     if await _already_logged_on(session, goal_id, current_user, user_tz, target_day):
-        return await _idempotent_already_logged_response(session, goal_id, current_user, user_tz)
+        return await _idempotent_already_logged_response(
+            session, goal_id, current_user, user_tz, subtractive
+        )
 
     is_scheduled = is_scheduled_on(habit.notification_days, target_day.strftime("%a"))
     # ``old_streak`` is also the held-path response value, so it has to
     # be read before the unscheduled-miss early return; the cheap
     # idempotency check above has already short-circuited duplicate
     # retries so only legitimate fresh requests pay the cost.
-    old_streak = await compute_consecutive_streak(session, goal_id, current_user, user_tz)
+    old_streak = await compute_consecutive_streak(
+        session, goal_id, current_user, user_tz, subtractive
+    )
 
     if not payload.did_complete and not is_scheduled:
         return _held_response(current_user, goal_id, old_streak)
@@ -254,5 +302,6 @@ async def create_goal_completion(
         is_scheduled=is_scheduled,
         old_streak=old_streak,
         timestamp=_completion_timestamp(payload.completed_on, user_tz),
+        subtractive=subtractive,
     )
     return await _try_persist_or_idempotent(session, job)

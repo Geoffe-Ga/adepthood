@@ -18,6 +18,7 @@ silently coerces naive datetimes.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,11 +30,28 @@ from models.goal_completion import GoalCompletion
 from schemas.milestone import Milestone
 
 __all__ = [
+    "SubtractiveContext",
     "check_milestones",
     "compute_consecutive_streak",
     "compute_habit_streak",
     "update_streak",
 ]
+
+
+@dataclass(frozen=True)
+class SubtractiveContext:
+    """Habit-level context required to compute a subtractive streak.
+
+    Bundles the two values a subtractive-habit streak walk needs into a
+    single kwarg so streak functions stay under the project's
+    ``PLR0913`` (max-5-args) bar even after picking up the abstention
+    code path.  ``clear_threshold`` is the day's failure cutoff (sum >
+    threshold = transgression); ``start_date`` is the habit's birth so
+    the walk cannot accrue streak days before the habit existed.
+    """
+
+    clear_threshold: float
+    start_date: date
 
 
 def _to_user_date(ts: datetime | str, user_timezone: str) -> date:
@@ -107,6 +125,7 @@ async def compute_consecutive_streak(
     goal_id: int,
     user_id: int,
     user_timezone: str = "UTC",
+    subtractive: SubtractiveContext | None = None,
 ) -> int:
     """Count consecutive *days* with completed check-ins for a goal.
 
@@ -116,6 +135,13 @@ async def compute_consecutive_streak(
     boundary applies (BUG-STREAK-002); routers should pass
     :func:`services.users.get_user_timezone` so streaks tick over at the
     user's midnight rather than UTC's.
+
+    For subtractive habits, pass ``subtractive`` to flip the success
+    polarity: a day with no log = perfect abstention (success), and the
+    chain only breaks on a day where the user logged above
+    ``subtractive.clear_threshold``.  Omitting ``subtractive`` keeps
+    legacy additive behavior, so callers that don't know the habit's
+    polarity stay safe.
     """
     rows = await session.execute(
         select(GoalCompletion.timestamp, GoalCompletion.completed_units)
@@ -127,6 +153,9 @@ async def compute_consecutive_streak(
     for ts, units in rows:
         day = _to_user_date(ts, user_timezone)
         day_totals[day] = day_totals.get(day, 0.0) + units
+
+    if subtractive is not None:
+        return _compute_subtractive_streak(day_totals, user_timezone, subtractive)
 
     sorted_days = sorted(day_totals, reverse=True)
     # Mirror the frontend's recency gate so a stale chain reports 0 here
@@ -152,9 +181,64 @@ def _completed_user_dates(
     return {_to_user_date(c.timestamp, user_timezone) for c in completions if c.completed_units > 0}
 
 
+def _bucket_day_totals(
+    completions: Sequence[GoalCompletion],
+    user_timezone: str,
+) -> dict[date, float]:
+    """Sum completion units per user-local day, *without* the >0 filter.
+
+    The additive path uses :func:`_completed_user_dates` because absence
+    of a row is the failure signal there.  For subtractive habits the
+    opposite is true (no row = perfect abstention), so the bucketing
+    must keep zero-sum days addressable too.  Returns ``{day: total}``;
+    callers treat ``get(day, 0.0)`` as the canonical "did the user stay
+    under their limit" probe.
+    """
+    day_totals: dict[date, float] = {}
+    for c in completions:
+        day = _to_user_date(c.timestamp, user_timezone)
+        day_totals[day] = day_totals.get(day, 0.0) + c.completed_units
+    return day_totals
+
+
+def _compute_subtractive_streak(
+    day_totals: dict[date, float],
+    user_timezone: str,
+    ctx: SubtractiveContext,
+) -> int:
+    """Count consecutive abstention days for a subtractive habit.
+
+    Walks backwards from today.  A day counts toward the streak when
+    the user's total for that day is at most ``ctx.clear_threshold`` —
+    which is trivially true for a day that has no row at all (no log =
+    didn't slip).  The walk stops when:
+
+    * the user logged *above* the clear threshold on that day
+      (a "transgression" breaks the chain), or
+    * the cursor crosses ``ctx.start_date`` going backwards (you
+      cannot accrue streak before the habit existed).
+
+    Returns 0 when the habit's start_date is in the future relative to
+    the user's "today" — the habit hasn't begun yet, so there is no
+    abstention to count.
+    """
+    today = today_in_tz(user_timezone)
+    if ctx.start_date > today:
+        return 0
+    streak = 0
+    cursor = today
+    while cursor >= ctx.start_date:
+        if day_totals.get(cursor, 0.0) > ctx.clear_threshold:
+            break
+        streak += 1
+        cursor -= timedelta(days=1)
+    return streak
+
+
 def compute_habit_streak(
     completions: Sequence[GoalCompletion],
     user_timezone: str = "UTC",
+    subtractive: SubtractiveContext | None = None,
 ) -> int:
     """Compute current consecutive-day streak from in-memory completions.
 
@@ -164,15 +248,21 @@ def compute_habit_streak(
     show two different streak counts depending on whether it was loaded
     via the in-memory or per-goal path.
 
-    Also enforces the same recency gate the frontend
-    ``streakFromCompletions`` helper uses (BUG-FE-HABIT-207): if the most
-    recent completion is older than yesterday in the user's calendar,
-    the streak is broken and the helper returns 0.  Without the gate the
-    Habits list endpoint would advertise a non-zero "10-day streak 🔥"
-    while the stats overlay (which used the frontend helper) showed 0
-    after a missed day -- exactly the visible discrepancy this gate
-    prevents.
+    For **additive** habits (the default — ``subtractive=None``),
+    enforces the recency gate the frontend ``streakFromCompletions``
+    helper uses (BUG-FE-HABIT-207): if the most recent completion is
+    older than yesterday in the user's calendar, the streak is broken
+    and the helper returns 0.
+
+    For **subtractive** habits (e.g. "abstain from sugar") a day with
+    *no* log is the best possible outcome, so the recency gate would
+    invert the correct behavior.  Pass a :class:`SubtractiveContext`
+    bundling the sibling clear-tier goal's target and the habit's
+    ``start_date`` to walk backwards counting abstention days instead.
     """
+    if subtractive is not None:
+        day_totals = _bucket_day_totals(completions, user_timezone)
+        return _compute_subtractive_streak(day_totals, user_timezone, subtractive)
     dates = _completed_user_dates(completions, user_timezone)
     if not dates:
         return 0
