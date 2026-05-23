@@ -266,9 +266,19 @@ export const getProgressPercentage = (
 /**
  * Progress-bar color for a habit: the stage color while the goal is
  * unmet, and a brighter shade of that same stage color once it is met.
+ *
+ * The tile renders its border from a position-derived color (see
+ * ``HabitsScreen.renderHabitTile``) because ``habit.stage`` defaults to
+ * an empty string on the backend. Callers that already resolved that
+ * tile color should pass it via ``stageColorOverride`` so the bar
+ * matches the border instead of collapsing to the black fallback.
  */
-export const getProgressBarColor = (habit: Habit, tz: string = DEFAULT_TIMEZONE): string => {
-  const stageColor = STAGE_COLORS[habit.stage] ?? '#000';
+export const getProgressBarColor = (
+  habit: Habit,
+  tz: string = DEFAULT_TIMEZONE,
+  stageColorOverride?: string,
+): string => {
+  const stageColor = stageColorOverride ?? STAGE_COLORS[habit.stage] ?? '#000';
   const clearGoal = habit.goals.find((g) => g.tier === 'clear');
 
   if (!clearGoal) return stageColor;

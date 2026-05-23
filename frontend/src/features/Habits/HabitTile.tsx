@@ -465,14 +465,14 @@ const ProgressBar = ({
   );
 };
 
-const useHabitTileData = (habit: Habit, tz: string) => {
+const useHabitTileData = (habit: Habit, tz: string, stageColor: string) => {
   const lowGoal = habit.goals.find((g) => g.tier === 'low');
   const clearGoal = habit.goals.find((g) => g.tier === 'clear');
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');
 
   const { currentGoal, completedAllGoals } = getGoalTier(habit, tz);
   const progressPercentage = clampPercentage(getProgressPercentage(habit, currentGoal, tz));
-  const progressBarColor = getProgressBarColor(habit, tz);
+  const progressBarColor = getProgressBarColor(habit, tz, stageColor);
   const hasCompletedGoal = completedAllGoals || progressPercentage >= 100;
 
   const {
@@ -647,6 +647,7 @@ const UnlockedTile = ({
   const { progressPercentage, progressBarColor, hasCompletedGoal, markers } = useHabitTileData(
     habit,
     tz,
+    stageColor,
   );
 
   const streakText =
