@@ -9,6 +9,7 @@ from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
@@ -792,3 +793,48 @@ async def test_subtractive_check_in_idempotent_path_preserves_subtractive_streak
     assert second.status_code == HTTPStatus.OK
     assert second.json()["reason_code"] == "already_logged_today"
     assert second.json()["streak"] == expected_streak
+
+
+@pytest.mark.asyncio
+async def test_subtractive_check_in_fails_loudly_on_duplicate_clear_tier(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A habit with two ``clear``-tier goals surfaces the data drift.
+
+    There is no DB-level ``UniqueConstraint`` on ``(habit_id, tier)``
+    (PR #379 review).  If a migration artifact or a future multi-group
+    schema change ever puts two ``clear`` goals under one habit,
+    ``_subtractive_context_for_goal`` MUST refuse to silently pick one
+    -- which is exactly what the original ``scalar()`` did.  Pins the
+    new ``scalar_one_or_none()`` guard by asserting the request raises
+    instead of returning a 200 with a coin-flipped threshold.
+    """
+    headers, user_id = await _signup(async_client, "abstain_dup_clear")
+    today = today_in_tz("UTC")
+    _low, clear, _stretch = await _seed_subtractive_habit(
+        db_session, user_id, today - timedelta(days=3)
+    )
+    assert clear.id is not None
+
+    # Inject a second ``clear``-tier goal on the same habit.  Schema
+    # allows this today; the new guard is what catches it.
+    db_session.add(
+        Goal(
+            habit_id=clear.habit_id,
+            title="Duplicate clear sugar",
+            tier="clear",
+            target=999.0,  # absurd target so a silent pick would skew streak hugely
+            target_unit="g",
+            frequency=1.0,
+            frequency_unit="per_day",
+            is_additive=False,
+        )
+    )
+    await db_session.commit()
+
+    with pytest.raises(MultipleResultsFound):
+        await async_client.post(
+            "/goal_completions/",
+            json={"goal_id": clear.id, "did_complete": True},
+            headers=headers,
+        )

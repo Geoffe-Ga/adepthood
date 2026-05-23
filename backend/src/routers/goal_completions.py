@@ -151,12 +151,21 @@ async def _subtractive_context_for_goal(
     because the habit row is fetched with ``session.get`` (no eager
     relationship load), and touching the lazy-loaded relationship in an
     async context raises ``MissingGreenlet``.
+
+    Uses ``scalar_one_or_none`` rather than ``scalar`` so that data
+    drift -- two ``clear``-tier goals sharing a ``habit_id`` after a
+    migration artifact or a future multi-group schema change -- raises
+    ``MultipleResultsFound`` instead of silently picking an arbitrary
+    threshold.  ``(habit_id, tier)`` has no DB-level uniqueness
+    constraint today (PR #379 review), so this guard is the only thing
+    making the assumption visible if it ever breaks.
     """
     if posted_goal.is_additive:
         return None
-    clear_target = await session.scalar(
+    result = await session.execute(
         select(Goal.target).where(Goal.habit_id == habit.id, Goal.tier == "clear")
     )
+    clear_target = result.scalar_one_or_none()
     if clear_target is None:
         return None
     return SubtractiveContext(clear_threshold=clear_target, start_date=habit.start_date)
