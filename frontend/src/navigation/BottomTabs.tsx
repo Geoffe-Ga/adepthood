@@ -7,6 +7,7 @@ import {
   BookOpen,
   Compass,
   Flower2,
+  LayoutGrid,
   NotebookPen,
   Sprout,
   type LucideIcon,
@@ -22,6 +23,7 @@ import HabitsScreen from '../features/Habits/HabitsScreen';
 import JournalScreen from '../features/Journal/JournalScreen';
 import MapScreen from '../features/Map/MapScreen';
 import PracticeScreen from '../features/Practice/PracticeScreen';
+import { PracticeCatalogScreen } from '../features/Practice/screens/PracticeCatalogScreen';
 
 import type { RootStackParamList } from './RootStack';
 
@@ -30,6 +32,7 @@ import { useAuth } from '@/context/AuthContext';
 export type RootTabParamList = {
   Habits: undefined;
   Practice: { stageNumber?: number } | undefined;
+  Catalog: undefined;
   Course: { stageNumber?: number } | undefined;
   Journal:
     | {
@@ -66,6 +69,7 @@ function withBoundary<P extends object>(
 
 const HabitsTab = withBoundary('Habits', HabitsScreen);
 const PracticeTab = withBoundary('Practice', PracticeScreen);
+const CatalogTab = withBoundary('Catalog', PracticeCatalogScreen);
 const CourseTab = withBoundary('Course', CourseScreen);
 const JournalTab = withBoundary('Journal', JournalScreen);
 const MapTab = withBoundary('Map', MapScreen);
@@ -87,6 +91,7 @@ const TAB_CONFIGS: ReadonlyArray<{
 }> = [
   { name: 'Habits', component: HabitsTab, icon: Sprout },
   { name: 'Practice', component: PracticeTab, icon: Flower2 },
+  { name: 'Catalog', component: CatalogTab, icon: LayoutGrid },
   { name: 'Course', component: CourseTab, icon: BookOpen },
   { name: 'Journal', component: JournalTab, icon: NotebookPen },
   { name: 'Map', component: MapTab, icon: Compass },

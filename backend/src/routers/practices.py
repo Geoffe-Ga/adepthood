@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from slowapi.util import get_remote_address
+from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -51,19 +52,34 @@ router = APIRouter(prefix="/practices", tags=["practices"])
 @router.get("/", response_model=None)
 async def list_practices(
     stage_number: int,
-    _current_user: Annotated[int, Depends(get_current_user)],
+    current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     pagination: Annotated[PaginationParams, Depends()],
+    *,
+    include_mine: Annotated[bool, Query(description="Include the caller's own drafts.")] = False,
 ) -> Page[PracticeResponse] | list[PracticeResponse]:
     """List approved practices for a given stage.
 
     BUG-INFRA-012: returns ``Page[PracticeResponse]`` when ``?paginate=true``
     is set; otherwise the legacy bare list is returned for one release while
     the frontend migrates to the envelope.
+
+    ``include_mine`` (custom-practices-07): when ``True``, also include
+    unapproved drafts whose ``submitted_by_user_id`` matches the
+    authenticated user. The default ``False`` preserves the existing
+    "approved only" listing semantics so existing clients see no change;
+    the catalog screen opts in so a user's own drafts appear under
+    "My drafts" without leaking other users' submissions.
     """
+    approved_clause = col(Practice.approved).is_(True)
+    visibility = (
+        or_(approved_clause, col(Practice.submitted_by_user_id) == current_user)
+        if include_mine
+        else approved_clause
+    )
     query = select(Practice).where(
         Practice.stage_number == stage_number,
-        col(Practice.approved).is_(True),
+        visibility,
     )
     items, total = await paginate_query(session, query, pagination)
     serialized = [PracticeResponse.model_validate(p, from_attributes=True) for p in items]
