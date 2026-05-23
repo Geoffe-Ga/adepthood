@@ -1759,17 +1759,61 @@ function validatePracticeItem(item: unknown): item is PracticeItem {
   );
 }
 
+/**
+ * Payload for ``POST /practices/`` (custom-practices-07).
+ *
+ * Mirrors the backend ``PracticeCreate`` schema: ``mode`` and ``mode_config``
+ * are optional only for the legacy ``meditation_timer`` default — every
+ * other mode requires both to be set, and the server returns 422 if they
+ * disagree.
+ */
+export interface PracticeCreatePayload {
+  stage_number: number;
+  name: string;
+  description: string;
+  instructions: string;
+  default_duration_minutes: number;
+  mode?: string;
+  mode_config?: ModeConfig;
+}
+
 export const practices = {
-  async list(stageNumber: number, token?: string): Promise<PracticeItem[]> {
-    const data = await request<PracticeItem[]>(`/practices/?stage_number=${stageNumber}`, {
-      token,
-    });
+  /**
+   * List approved practices for a stage.
+   *
+   * ``includeMine`` opts in to the backend's ``?include_mine=true`` flag
+   * (custom-practices-07), which also returns the authenticated user's
+   * own unapproved drafts so the catalog can render a "My drafts"
+   * section. The default ``false`` preserves the legacy approved-only
+   * behaviour for existing callers (PracticeSwitcherSheet, useActivePractice).
+   *
+   * The numeric overload retains the historic ``practices.list(stage)``
+   * signature so older call sites keep working without a churn pass.
+   */
+  async list(
+    options: { stageNumber: number; includeMine?: boolean } | number,
+    token?: string,
+  ): Promise<PracticeItem[]> {
+    const params = typeof options === 'number' ? { stageNumber: options } : options;
+    const query = new URLSearchParams();
+    query.set('stage_number', String(params.stageNumber));
+    if (params.includeMine === true) query.set('include_mine', 'true');
+    const data = await request<PracticeItem[]>(`/practices/?${query.toString()}`, { token });
     return data.filter(validatePracticeItem);
   },
   async get(practiceId: number, token?: string): Promise<PracticeItem> {
     const data = await request<PracticeItem>(`/practices/${practiceId}`, { token });
     if (!validatePracticeItem(data)) throw new Error('Invalid practice response');
     return data;
+  },
+  /**
+   * Submit a new user-created practice (custom-practices-07).
+   *
+   * Drafts land with ``approved=false``; the catalog filters them into
+   * the "My drafts" section for the submitter alone.
+   */
+  create(payload: PracticeCreatePayload, token?: string): Promise<PracticeItem> {
+    return request<PracticeItem>('/practices/', { method: 'POST', body: payload, token });
   },
 };
 

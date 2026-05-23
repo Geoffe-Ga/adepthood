@@ -79,6 +79,20 @@ jest.mock('@/features/Practice/screens/SharePreviewScreen', () => {
   const { Text } = require('react-native');
   return () => <Text>SharePreviewScreen</Text>;
 });
+// custom-practices-07: RootStack mounts the practice detail screen and
+// the create-practice wizard as siblings to ``Tabs``. Both read
+// ``route.params``, which the navigator stub above does not provide --
+// stub them out so this suite stays focused on auth gating.
+jest.mock('@/features/Practice/screens/PracticeDetailScreen', () => {
+  const { Text } = require('react-native');
+  const Stub = () => <Text>PracticeDetailScreen</Text>;
+  return { PracticeDetailScreen: Stub, default: Stub };
+});
+jest.mock('@/features/Practice/screens/CreatePracticeWizard', () => {
+  const { Text } = require('react-native');
+  const Stub = () => <Text>CreatePracticeWizard</Text>;
+  return { CreatePracticeWizard: Stub, default: Stub };
+});
 
 import App from '@/App';
 

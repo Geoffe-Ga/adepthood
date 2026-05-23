@@ -138,6 +138,78 @@ async def test_list_practices_excludes_unapproved(
 
 
 @pytest.mark.asyncio
+async def test_list_practices_include_mine_returns_own_drafts(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """custom-practices-07: ``?include_mine=true`` adds the caller's drafts."""
+    # Sign up two distinct users; only the caller's drafts should appear.
+    _other_headers, other_user_id = await _signup(async_client, username="other")
+    headers, user_id = await _signup(async_client, username="me")
+    assert user_id != other_user_id
+    own_draft = Practice(
+        stage_number=1,
+        name="My private draft",
+        description="",
+        instructions="",
+        default_duration_minutes=5,
+        submitted_by_user_id=user_id,
+        approved=False,
+        mode="meditation_timer",
+        mode_config=_timer_cfg(5),
+    )
+    other_draft = Practice(
+        stage_number=1,
+        name="Other user's draft",
+        description="",
+        instructions="",
+        default_duration_minutes=5,
+        submitted_by_user_id=other_user_id,
+        approved=False,
+        mode="meditation_timer",
+        mode_config=_timer_cfg(5),
+    )
+    db_session.add(own_draft)
+    db_session.add(other_draft)
+    await db_session.commit()
+
+    resp = await async_client.get(
+        "/practices/",
+        params={"stage_number": 1, "include_mine": "true"},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    names = {p["name"] for p in resp.json()}
+    assert "My private draft" in names
+    assert "Other user's draft" not in names
+
+
+@pytest.mark.asyncio
+async def test_list_practices_default_still_excludes_own_drafts(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Without ``include_mine`` the legacy approved-only behaviour holds."""
+    headers, user_id = await _signup(async_client)
+    db_session.add(
+        Practice(
+            stage_number=1,
+            name="My private draft",
+            description="",
+            instructions="",
+            default_duration_minutes=5,
+            submitted_by_user_id=user_id,
+            approved=False,
+            mode="meditation_timer",
+            mode_config=_timer_cfg(5),
+        ),
+    )
+    await db_session.commit()
+
+    resp = await async_client.get("/practices/", params={"stage_number": 1}, headers=headers)
+    names = {p["name"] for p in resp.json()}
+    assert "My private draft" not in names
+
+
+@pytest.mark.asyncio
 async def test_list_practices_empty_stage(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
