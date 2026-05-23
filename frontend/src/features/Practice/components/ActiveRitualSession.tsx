@@ -47,6 +47,7 @@ import type {
   CardMeditationConfig,
   IntervalBellConfig,
   ModeConfig,
+  RandomIntervalBellMetadata,
   RepCounterConfig,
   RitualControls,
   RitualState,
@@ -61,6 +62,7 @@ import CountUpTimerView from '@/features/Practice/views/CountUpTimerView';
 import IntervalBellView from '@/features/Practice/views/IntervalBellView';
 import MeditationTimerView from '@/features/Practice/views/MeditationTimerView';
 import MetronomeView from '@/features/Practice/views/MetronomeView';
+import RandomIntervalBellView from '@/features/Practice/views/RandomIntervalBellView';
 import RepCounterView from '@/features/Practice/views/RepCounterView';
 import SenseGroundingView from '@/features/Practice/views/SenseGroundingView';
 import TalliedGroundingView from '@/features/Practice/views/TalliedGroundingView';
@@ -104,6 +106,8 @@ interface ActiveSession {
   completedWindow: { start: Date; end: Date } | null;
   isSaving: boolean;
   saveError: string | null;
+  /** Lifts the random-bell view's live schedule metadata for the harvest. */
+  onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
   submitSession: (
     _insight: string | null,
     _onSaved?: (_session: PracticeSessionResponse) => void,
@@ -126,6 +130,7 @@ export function ActiveRitualSession(props: ActiveRitualSessionProps): React.JSX.
         tarotCardIndex={session.tarotCardIndex}
         cardPick={session.cardPick}
         saveError={session.saveError}
+        onRandomBellMetadata={session.onRandomBellMetadata}
       />
       <RitualConfiguratorSheet
         visible={showConfigurator}
@@ -184,6 +189,33 @@ function stringOrNull(insight: string): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+interface HarvestedMetadata {
+  wireMetadata: SessionMetadata;
+  summaryMetadata: ModeSummaryMetadata;
+  onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
+}
+
+/** Harvest wire+summary metadata; `random_interval_bell` view lifts its schedule via the setter. */
+function useHarvestedMetadata(
+  config: ModeConfig,
+  state: RitualState,
+  tarotCardIndex: number,
+  cardPick: PickedCard | null,
+): HarvestedMetadata {
+  const [randomBellMetadata, setRandomBellMetadata] = useState<RandomIntervalBellMetadata | null>(
+    null,
+  );
+  const wireMetadata = useMemo<SessionMetadata>(
+    () => harvestMetadata(config, state, cardPick, randomBellMetadata),
+    [config, state, cardPick, randomBellMetadata],
+  );
+  const summaryMetadata = useMemo<ModeSummaryMetadata>(
+    () => harvestSummaryMetadata(config, state, tarotCardIndex, cardPick, randomBellMetadata),
+    [config, state, tarotCardIndex, cardPick, randomBellMetadata],
+  );
+  return { wireMetadata, summaryMetadata, onRandomBellMetadata: setRandomBellMetadata };
+}
+
 function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
   const tarotCardIndex = useTarotCardIndex(props);
   const engineDeps = useMemo(() => ({ startCardIndex: tarotCardIndex }), [tarotCardIndex]);
@@ -192,13 +224,11 @@ function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
   const window = useCompletionWindow(state.status);
   const [saveError, setSaveError] = useState<string | null>(null);
   const cardPick = useCardPick(props.effectiveConfig);
-  const wireMetadata = useMemo<SessionMetadata>(
-    () => harvestMetadata(props.effectiveConfig, state, cardPick),
-    [props.effectiveConfig, state, cardPick],
-  );
-  const summaryMetadata = useMemo<ModeSummaryMetadata>(
-    () => harvestSummaryMetadata(props.effectiveConfig, state, tarotCardIndex, cardPick),
-    [props.effectiveConfig, state, tarotCardIndex, cardPick],
+  const { wireMetadata, summaryMetadata, onRandomBellMetadata } = useHarvestedMetadata(
+    props.effectiveConfig,
+    state,
+    tarotCardIndex,
+    cardPick,
   );
   const saveMutation = useSaveMutation({
     apply: props.onSessionApply,
@@ -228,6 +258,7 @@ function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
     completedWindow: window.completedWindow,
     isSaving: saveMutation.pending,
     saveError,
+    onRandomBellMetadata,
     submitSession,
     finishAndReset,
   };
@@ -356,6 +387,7 @@ interface SessionCardProps {
   tarotCardIndex: number;
   cardPick: PickedCard | null;
   saveError: string | null;
+  onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
 }
 
 function SessionCard(props: SessionCardProps): React.JSX.Element {
@@ -391,6 +423,7 @@ function SessionCard(props: SessionCardProps): React.JSX.Element {
         controls={props.controls}
         tarotCardIndex={props.tarotCardIndex}
         cardPick={props.cardPick}
+        onRandomBellMetadata={props.onRandomBellMetadata}
       />
       {props.saveError !== null && (
         <Text style={styles.error} testID="active-practice-save-error">
@@ -407,15 +440,48 @@ interface ModeViewProps {
   controls: RitualControls;
   tarotCardIndex: number;
   cardPick: PickedCard | null;
+  onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
 }
 
-function ModeView({
+function ModeView(props: ModeViewProps): React.JSX.Element {
+  const { config, state, controls } = props;
+  // `random_interval_bell` is dispatched separately: its view takes the metadata callback.
+  if (config.mode === 'random_interval_bell') {
+    return (
+      <RandomIntervalBellView
+        config={config}
+        state={state}
+        controls={controls}
+        onMetadataChange={props.onRandomBellMetadata}
+      />
+    );
+  }
+  return (
+    <EngineModeView
+      config={config}
+      state={state}
+      controls={controls}
+      tarotCardIndex={props.tarotCardIndex}
+      cardPick={props.cardPick}
+    />
+  );
+}
+
+interface EngineModeViewProps {
+  config: Exclude<ModeConfig, { mode: 'random_interval_bell' }>;
+  state: RitualState;
+  controls: RitualControls;
+  tarotCardIndex: number;
+  cardPick: PickedCard | null;
+}
+
+function EngineModeView({
   config,
   state,
   controls,
   tarotCardIndex,
   cardPick,
-}: ModeViewProps): React.JSX.Element {
+}: EngineModeViewProps): React.JSX.Element {
   switch (config.mode) {
     case 'meditation_timer':
       return <MeditationTimerView state={state} controls={controls} />;
@@ -542,6 +608,21 @@ export function harvestMetadata(
   config: ModeConfig,
   state: RitualState,
   cardPick: PickedCard | null,
+  randomBellMetadata: RandomIntervalBellMetadata | null = null,
+): SessionMetadata {
+  // `random_interval_bell` schedule is view-owned, so harvest from the lifted metadata.
+  if (config.mode === 'random_interval_bell') {
+    return (
+      randomBellMetadata ?? { mode: 'random_interval_bell', bells_struck: 0, interval_seconds: [] }
+    );
+  }
+  return harvestEngineMetadata(config, state, cardPick);
+}
+
+function harvestEngineMetadata(
+  config: Exclude<ModeConfig, { mode: 'random_interval_bell' }>,
+  state: RitualState,
+  cardPick: PickedCard | null,
 ): SessionMetadata {
   switch (config.mode) {
     case 'meditation_timer':
@@ -630,6 +711,19 @@ function normalizeTarotIndex(index: number): number {
  */
 export function harvestSummaryMetadata(
   config: ModeConfig,
+  state: RitualState,
+  tarotCardIndex: number,
+  cardPick: PickedCard | null,
+  randomBellMetadata: RandomIntervalBellMetadata | null = null,
+): ModeSummaryMetadata {
+  if (config.mode === 'random_interval_bell') {
+    return { mode: 'random_interval_bell', bells_struck: randomBellMetadata?.bells_struck ?? 0 };
+  }
+  return harvestEngineSummary(config, state, tarotCardIndex, cardPick);
+}
+
+function harvestEngineSummary(
+  config: Exclude<ModeConfig, { mode: 'random_interval_bell' }>,
   state: RitualState,
   tarotCardIndex: number,
   cardPick: PickedCard | null,

@@ -38,6 +38,11 @@ export interface ModeSummaryIntervalBell {
   readonly total_intervals: number;
 }
 
+export interface ModeSummaryRandomIntervalBell {
+  readonly mode: 'random_interval_bell';
+  readonly bells_struck: number;
+}
+
 export interface ModeSummaryRepCounter {
   readonly mode: 'rep_counter';
   readonly rep_count: number;
@@ -73,6 +78,7 @@ export type ModeSummaryMetadata =
   | ModeSummaryCountUp
   | ModeSummaryMetronome
   | ModeSummaryIntervalBell
+  | ModeSummaryRandomIntervalBell
   | ModeSummaryRepCounter
   | ModeSummarySenseGrounding
   | ModeSummaryTalliedGrounding
@@ -84,6 +90,33 @@ export type ModeSummaryKind = ModeSummaryMetadata['mode'];
 function clock(durationMinutes: number): string {
   return formatTime(Math.max(0, durationMinutes) * MS_PER_MINUTE);
 }
+
+/** Shared formatter for the two card-based modes (`tarot`, `card_meditation`). */
+const cardSummary = (metadata: { card_name: string }, mmss: string): string =>
+  `${metadata.card_name} for ${mmss}`;
+
+/** Per-mode summary formatters; the mapped type enforces exhaustive coverage. */
+const SUMMARY_FORMATTERS: {
+  [K in ModeSummaryKind]: (
+    metadata: Extract<ModeSummaryMetadata, { mode: K }>,
+    mmss: string,
+  ) => string;
+} = {
+  meditation_timer: (_metadata, mmss) => `${mmss} of stillness`,
+  count_up: (_metadata, mmss) => `${mmss} of open practice`,
+  metronome: (metadata, mmss) => `BPM ${metadata.bpm_used} for ${mmss}`,
+  interval_bell: (metadata, mmss) =>
+    `${metadata.intervals_struck}/${metadata.total_intervals} bells over ${mmss}`,
+  random_interval_bell: (metadata, mmss) => `${metadata.bells_struck} random bells over ${mmss}`,
+  rep_counter: (metadata, mmss) => `${metadata.rep_count} ${metadata.unit_label} in ${mmss}`,
+  sense_grounding: (metadata, _mmss) =>
+    `Grounded through ${metadata.senses_completed.length} senses`,
+  tallied_grounding: (metadata, _mmss) =>
+    `${metadata.items_completed} items across ` +
+    `${metadata.rounds_completed}/${metadata.total_rounds} rounds`,
+  tarot: cardSummary,
+  card_meditation: cardSummary,
+};
 
 /**
  * Render the one-line post-session summary shown above the insight input.
@@ -99,43 +132,11 @@ export function formatModeSummary<M extends ModeSummaryKind>(
   durationMinutes: number,
   metadata: Extract<ModeSummaryMetadata, { mode: M }>,
 ): string {
-  const mmss = clock(durationMinutes);
-  switch (mode) {
-    case 'meditation_timer':
-      return `${mmss} of stillness`;
-    case 'count_up':
-      return `${mmss} of open practice`;
-    case 'metronome': {
-      const m = metadata as ModeSummaryMetronome;
-      return `BPM ${m.bpm_used} for ${mmss}`;
-    }
-    case 'interval_bell': {
-      const m = metadata as ModeSummaryIntervalBell;
-      return `${m.intervals_struck}/${m.total_intervals} bells over ${mmss}`;
-    }
-    case 'rep_counter': {
-      const m = metadata as ModeSummaryRepCounter;
-      return `${m.rep_count} ${m.unit_label} in ${mmss}`;
-    }
-    case 'sense_grounding': {
-      const m = metadata as ModeSummarySenseGrounding;
-      return `Grounded through ${m.senses_completed.length} senses`;
-    }
-    case 'tallied_grounding': {
-      const m = metadata as ModeSummaryTalliedGrounding;
-      return `${m.items_completed} items across ${m.rounds_completed}/${m.total_rounds} rounds`;
-    }
-    case 'tarot': {
-      const m = metadata as ModeSummaryTarot;
-      return `${m.card_name} for ${mmss}`;
-    }
-    case 'card_meditation': {
-      const m = metadata as ModeSummaryCardMeditation;
-      return `${m.card_name} for ${mmss}`;
-    }
-    default:
-      return assertNever(mode);
-  }
+  // Mapped type proves the lookup is total; the runtime guard catches `as unknown` callers.
+  type AnyFormatter = (metadata: ModeSummaryMetadata, mmss: string) => string;
+  const formatter = SUMMARY_FORMATTERS[mode] as AnyFormatter | undefined;
+  if (formatter === undefined) return assertNever(mode as never);
+  return formatter(metadata, clock(durationMinutes));
 }
 
 function assertNever(mode: never): never {

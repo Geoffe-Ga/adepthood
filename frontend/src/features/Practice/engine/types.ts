@@ -45,6 +45,19 @@ export interface IntervalBellConfig {
   bell_tone: IntervalBellTone;
 }
 
+/** Meditation window with bells at random offsets in [min, max]; mirrors backend `RandomIntervalBellConfig`. */
+export interface RandomIntervalBellConfig {
+  mode: 'random_interval_bell';
+  duration_minutes: number;
+  min_interval_seconds: number;
+  max_interval_seconds: number;
+  bell_tone: IntervalBellTone;
+  /** Optional cap on total strikes; unset means "bounded only by duration". */
+  max_bells?: number | null;
+  start_bell?: boolean;
+  end_bell?: boolean;
+}
+
 export interface RepCounterConfig {
   mode: 'rep_counter';
   target_reps: number;
@@ -136,11 +149,19 @@ export type ModeConfig =
   | CountUpConfig
   | MetronomeConfig
   | IntervalBellConfig
+  | RandomIntervalBellConfig
   | RepCounterConfig
   | SenseGroundingConfig
   | TalliedGroundingConfig
   | TarotConfig
   | CardMeditationConfig;
+
+/** Random-bell session metadata; `interval_seconds[i]` is the gap before struck bell `i`. */
+export interface RandomIntervalBellMetadata {
+  mode: 'random_interval_bell';
+  bells_struck: number;
+  interval_seconds: readonly number[];
+}
 
 /**
  * Per-session metadata emitted when a tallied-grounding ritual completes.
@@ -215,7 +236,21 @@ export type EngineAction =
   | { type: 'ADVANCE_STEP' };
 
 export const MS_PER_MINUTE = 60_000;
+export const SECONDS_PER_MINUTE = 60;
 export const DEFAULT_TAROT_MINUTES = 5;
+
+/** Lower bound on a random session's min interval; mirrors the backend
+ * `_RANDOM_BELL_MIN_INTERVAL_FLOOR`. */
+export const RANDOM_BELL_MIN_INTERVAL_FLOOR = 5;
+/** Lower bound on a random session's max interval; mirrors the backend
+ * `_RANDOM_BELL_MAX_INTERVAL_FLOOR`. */
+export const RANDOM_BELL_MAX_INTERVAL_FLOOR = 10;
+/** Upper bound on either random interval, in seconds; mirrors the backend
+ * `_RANDOM_BELL_INTERVAL_CEILING`. */
+export const RANDOM_BELL_INTERVAL_CEILING = 3_600;
+/** Hard cap on bells per random session; mirrors the backend
+ * `_RANDOM_BELL_MAX_BELLS_CEILING` and the metadata `_MAX_INTERVALS` bound. */
+export const RANDOM_BELL_MAX_BELLS_CEILING = 1_000;
 /** 22 cards in a major arcana deck; tarot's cycle wraps modulo this. */
 export const TAROT_DECK_SIZE = 22;
 

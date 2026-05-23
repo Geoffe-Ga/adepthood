@@ -12,6 +12,7 @@ import type {
   MeditationTimerConfig,
   MetronomeConfig,
   ModeConfig,
+  RandomIntervalBellConfig,
   RepCounterConfig,
   SenseGroundingConfig,
   SenseKind,
@@ -27,6 +28,11 @@ import {
   CARD_MEDITATION_CUSTOM_DECK_ID,
   CARD_MEDITATION_NAME_MAX,
   CARD_MEDITATION_SYMBOLISM_MAX,
+  RANDOM_BELL_INTERVAL_CEILING,
+  RANDOM_BELL_MAX_BELLS_CEILING,
+  RANDOM_BELL_MAX_INTERVAL_FLOOR,
+  RANDOM_BELL_MIN_INTERVAL_FLOOR,
+  SECONDS_PER_MINUTE,
 } from './types';
 
 export const BPM_MIN = 20;
@@ -141,6 +147,57 @@ export function validateIntervalBell(config: IntervalBellConfig): string[] {
   } else if (offsets !== null) {
     errors.push(...checkOffsetList(offsets, config.duration_minutes));
   }
+  errors.push(...checkBellTone(config.bell_tone));
+  return errors;
+}
+
+function checkRandomIntervalSecond(value: number, label: string, floor: number): string[] {
+  if (!Number.isInteger(value) || value < floor || value > RANDOM_BELL_INTERVAL_CEILING) {
+    return [
+      `${label} must be a whole number between ${floor} and ${RANDOM_BELL_INTERVAL_CEILING} seconds`,
+    ];
+  }
+  return [];
+}
+
+function checkRandomIntervalBounds(config: RandomIntervalBellConfig): string[] {
+  const errors: string[] = [];
+  if (config.max_interval_seconds < config.min_interval_seconds) {
+    errors.push('Maximum interval must be greater than or equal to the minimum interval');
+  }
+  if (config.min_interval_seconds > config.duration_minutes * SECONDS_PER_MINUTE) {
+    errors.push('Minimum interval must fit within the total duration');
+  }
+  return errors;
+}
+
+function checkMaxBells(maxBells: number | null | undefined): string[] {
+  if (maxBells === undefined || maxBells === null) return [];
+  if (!Number.isInteger(maxBells) || maxBells < 1 || maxBells > RANDOM_BELL_MAX_BELLS_CEILING) {
+    return [`Max bells must be a whole number between 1 and ${RANDOM_BELL_MAX_BELLS_CEILING}`];
+  }
+  return [];
+}
+
+export function validateRandomIntervalBell(config: RandomIntervalBellConfig): string[] {
+  const errors: string[] = [];
+  pushIfOutOfDurationRange(errors, 'Duration', config.duration_minutes);
+  errors.push(
+    ...checkRandomIntervalSecond(
+      config.min_interval_seconds,
+      'Minimum interval',
+      RANDOM_BELL_MIN_INTERVAL_FLOOR,
+    ),
+  );
+  errors.push(
+    ...checkRandomIntervalSecond(
+      config.max_interval_seconds,
+      'Maximum interval',
+      RANDOM_BELL_MAX_INTERVAL_FLOOR,
+    ),
+  );
+  errors.push(...checkRandomIntervalBounds(config));
+  errors.push(...checkMaxBells(config.max_bells));
   errors.push(...checkBellTone(config.bell_tone));
   return errors;
 }
@@ -304,6 +361,7 @@ const VALIDATORS: {
   count_up: validateCountUp,
   metronome: validateMetronome,
   interval_bell: validateIntervalBell,
+  random_interval_bell: validateRandomIntervalBell,
   rep_counter: validateRepCounter,
   sense_grounding: validateSenseGrounding,
   tallied_grounding: validateTalliedGrounding,
