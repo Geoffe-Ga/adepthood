@@ -109,6 +109,33 @@ def _mindful_eating_options() -> list[dict[str, str]]:
     ]
 
 
+#: Round count shared by the stage-1 tallied-grounding alternatives: the
+#: user walks every category three times before the practice completes.
+_GROUNDING_ROUNDS = 3
+
+#: Rainbow colours, in spectrum order, for the Find Colors alternative.
+#: Each name is also its analytics ``key`` — all match the snake-case
+#: ``TalliedCategory.key`` pattern (lowercase letters only).
+_RAINBOW_COLORS = ("red", "orange", "yellow", "green", "blue", "indigo", "violet")
+
+
+def _find_shapes_categories() -> list[dict[str, Any]]:
+    """Three geometric-shape categories, three tallies of each per round."""
+    return [
+        {"key": "squares", "label": "a square", "target_count": 3},
+        {"key": "triangles", "label": "a triangle", "target_count": 3},
+        {"key": "circles", "label": "a circle", "target_count": 3},
+    ]
+
+
+def _find_colors_categories() -> list[dict[str, Any]]:
+    """Seven rainbow-colour categories, one tally of each per round."""
+    return [
+        {"key": color, "label": f"something {color}", "target_count": 1}
+        for color in _RAINBOW_COLORS
+    ]
+
+
 def _build_preset(
     stage_number: int,
     name: str,
@@ -259,6 +286,28 @@ _ALTERNATIVE_PRESETS: list[dict[str, Any]] = [
             "min_duration_seconds": 180,
             "options": _mindful_eating_options(),
             "require_option_choice": True,
+        },
+        default_duration_minutes=5,
+    ),
+    _build_preset(
+        1,
+        "Find Shapes",
+        mode="tallied_grounding",
+        mode_config={
+            "mode": "tallied_grounding",
+            "rounds": _GROUNDING_ROUNDS,
+            "categories": _find_shapes_categories(),
+        },
+        default_duration_minutes=5,
+    ),
+    _build_preset(
+        1,
+        "Find Colors",
+        mode="tallied_grounding",
+        mode_config={
+            "mode": "tallied_grounding",
+            "rounds": _GROUNDING_ROUNDS,
+            "categories": _find_colors_categories(),
         },
         default_duration_minutes=5,
     ),

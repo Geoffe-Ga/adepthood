@@ -15,6 +15,7 @@ from schemas.practice_mode_config import (
     MindfulAnchorConfig,
     ModeConfigAdapter,
     SenseGroundingConfig,
+    TalliedGroundingConfig,
 )
 from seed_practices import (
     CANONICAL_PRESET_PRACTICES,
@@ -267,14 +268,56 @@ async def test_mindful_eating_preset_seeds(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_find_shapes_preset_seeds(db_session: AsyncSession) -> None:
+    """Find Shapes seeds at stage 1 as a three-round, three-shape tally."""
+    row = await _seed_and_fetch(db_session, "Find Shapes")
+
+    assert row.stage_number == 1
+    assert row.mode == "tallied_grounding"
+    assert row.description
+    assert row.instructions
+
+    cfg = TalliedGroundingConfig.model_validate(row.mode_config)
+    assert cfg.rounds == 3
+    assert [c.key for c in cfg.categories] == ["squares", "triangles", "circles"]
+    assert len(cfg.categories) == 3
+    assert all(c.target_count == 3 for c in cfg.categories)
+
+
+@pytest.mark.asyncio
+async def test_find_colors_preset_seeds(db_session: AsyncSession) -> None:
+    """Find Colors seeds at stage 1 with one tally per rainbow colour."""
+    row = await _seed_and_fetch(db_session, "Find Colors")
+
+    assert row.stage_number == 1
+    assert row.mode == "tallied_grounding"
+    assert row.description
+    assert row.instructions
+
+    cfg = TalliedGroundingConfig.model_validate(row.mode_config)
+    assert cfg.rounds == 3
+    assert [c.key for c in cfg.categories] == [
+        "red",
+        "orange",
+        "yellow",
+        "green",
+        "blue",
+        "indigo",
+        "violet",
+    ]
+    assert len(cfg.categories) == 7
+    assert all(c.target_count == 1 for c in cfg.categories)
+
+
+@pytest.mark.asyncio
 async def test_seed_is_idempotent_with_new_presets(db_session: AsyncSession) -> None:
-    """Re-running the seeder leaves exactly one row for each mindful_anchor preset."""
+    """Re-running the seeder leaves exactly one row for each alternative preset."""
     first = await seed_practices(db_session)
     second = await seed_practices(db_session)
     assert first == _EXPECTED_PRESET_COUNT
     assert second == 0
 
-    for name in ("Touch Grass", "Mindful Eating"):
+    for name in ("Touch Grass", "Mindful Eating", "Find Shapes", "Find Colors"):
         result = await db_session.execute(select(Practice).where(Practice.name == name))
         assert len(result.scalars().all()) == 1
 
@@ -369,13 +412,13 @@ def test_stage_to_preset_name_map_matches_canonical_presets() -> None:
 
 
 def test_alternative_presets_never_shadow_the_canonical_pointer() -> None:
-    """Touch Grass / Mindful Eating sit on stage 1 but never become its canonical preset.
+    """Stage-1 alternatives sit on the catalog but never become its canonical preset.
 
     They are seeded into the catalog (so the chooser can offer them) yet
     excluded from ``STAGE_TO_PRESET_NAME`` so the frequency-banner endpoint
     keeps resolving stage 1 to the canonical 5-4-3-2-1 grounding preset.
     """
-    alternative_names = {"Touch Grass", "Mindful Eating"}
+    alternative_names = {"Touch Grass", "Mindful Eating", "Find Shapes", "Find Colors"}
     all_names = {p["name"] for p in PRESET_PRACTICES}
     canonical_names = {p["name"] for p in CANONICAL_PRESET_PRACTICES}
     assert alternative_names <= all_names

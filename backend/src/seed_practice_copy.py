@@ -127,6 +127,26 @@ _MINDFUL_EATING = (
     "with the aftertaste for a moment before marking the practice complete.",
 )
 
+#: Stage 1 alternative — Find Shapes (tallied_grounding mode).
+_FIND_SHAPES = (
+    "A grounding technique that anchors you in the present by hunting "
+    "your surroundings for everyday geometric shapes.",
+    "Look around wherever you are. Each round, find three squares, then "
+    "three triangles, then three circles — pointing to or naming each "
+    "one as you spot it. Finish all three shapes before starting the "
+    "next round. Three rounds in all.",
+)
+
+#: Stage 1 alternative — Find Colors (tallied_grounding mode).
+_FIND_COLORS = (
+    "A grounding technique that anchors you in the present by sweeping "
+    "your surroundings for each colour of the rainbow.",
+    "Look around wherever you are. Each round, find one thing for every "
+    "colour of the rainbow in order — red, orange, yellow, green, blue, "
+    "indigo, violet — naming each as you spot it. Finish the full "
+    "spectrum before starting the next round. Three rounds in all.",
+)
+
 
 PRESET_COPY: dict[str, tuple[str, str]] = {
     "5-4-3-2-1 grounding": _S1,
@@ -141,4 +161,6 @@ PRESET_COPY: dict[str, tuple[str, str]] = {
     "Insight practice": _S10,
     "Touch Grass": _TOUCH_GRASS,
     "Mindful Eating": _MINDFUL_EATING,
+    "Find Shapes": _FIND_SHAPES,
+    "Find Colors": _FIND_COLORS,
 }
