@@ -218,6 +218,30 @@ Two new modes (`random_interval_bell`, `card_meditation`) round out the engine t
 | 06 | [Build `CardMeditationView` + image picker](custom-practices-06-card-meditation-frontend.md) | Frontend | ~350 |
 | 07 | [Catalog browse + Create-custom flow](custom-practices-07-catalog-and-create-flow.md) | Frontend | ~450 |
 
+### Spiral Dynamics practice-preset catalog expansion
+
+Seed ~60 alternative presets across stages 1-8 (BEIGE through TEAL) so each
+Spiral Dynamics frequency band offers a deeper menu of practices alongside
+its canonical stage practice. Pure content: no new modes, no migrations,
+no frontend work. Each sub-issue handles one color/stage and is fully
+independent of the others.
+
+| # | Issue | Stage | New presets | Est. LoC |
+|---|-------|-------|-------------|----------|
+| — | [Epic tracker](practice-presets-epic.md) | — | — | — |
+| 01 | [Seed BEIGE alternatives](practice-presets-01-beige-grounding.md)        | 1 | 7  | ~250 |
+| 02 | [Seed PURPLE alternatives](practice-presets-02-purple-divination.md)     | 2 | 8  | ~275 |
+| 03 | [Seed RED alternatives](practice-presets-03-red-energy.md)               | 3 | 10 | ~325 |
+| 04 | [Seed BLUE alternatives](practice-presets-04-blue-heart.md)              | 4 | 10 | ~325 |
+| 05 | [Seed ORANGE alternatives](practice-presets-05-orange-activation.md)     | 5 | 8  | ~275 |
+| 06 | [Seed GREEN alternatives](practice-presets-06-green-shadow.md)           | 6 | 8  | ~275 |
+| 07 | [Seed TEAL alternatives](practice-presets-07-teal-integration.md)        | 8 | 9  | ~300 |
+
+Stages 7 (YELLOW), 9 (ULTRAVIOLET), and 10 (CLEAR LIGHT) carry no
+alternatives in the source table and are not part of this epic. All seven
+sub-issues are fully independent — they touch the same three files but at
+disjoint locations and can ship in any order or in parallel.
+
 ### Generalize grounding techniques
 
 Add **Find Shapes**, **Find Colors**, **Touch Grass**, and **Mindful
