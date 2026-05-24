@@ -148,6 +148,97 @@ _FIND_COLORS = (
 )
 
 
+# -- Stage 1 BEIGE alternatives — body-grounding / nervous-system regulation -
+
+
+#: Stage 1 alternative — Crystal Charging (meditation_timer mode).
+_CRYSTAL_CHARGING = (
+    "Five minutes of standing outdoors holding a stone or crystal, letting "
+    "the contact between your palms, the object, and the earth bring you "
+    "back to the moment.",
+    "Choose any stone, crystal, or smooth pebble you can hold in one "
+    "cupped palm. Step outside and stand barefoot on grass, soil, sand, "
+    "or stone. Close your fingers gently around the object and notice "
+    "its weight, temperature, and texture. Let your attention travel "
+    "between the object in your hand and the ground under your feet. "
+    "When the bell sounds, lower the stone and open your hands.",
+)
+
+#: Stage 1 alternative — Tense and Release (meditation_timer mode).
+_TENSE_AND_RELEASE = (
+    "A clench-and-release body scan that drains residual tension by "
+    "tightening each muscle group on purpose, then letting it go.",
+    "Sit or lie comfortably. Beginning at the feet, tense the muscles "
+    "there for a slow count of five, then release on the exhale and "
+    "notice the change. Move up the body in turn — calves, thighs, "
+    "glutes, belly, chest, hands, arms, shoulders, face. When the "
+    "halfway bell sounds, you should be reaching the upper body. "
+    "Finish at the crown and rest in the residual softness until the "
+    "closing bell.",
+)
+
+#: Stage 1 alternative — Contact Points (meditation_timer mode).
+_CONTACT_POINTS = (
+    "A five-minute somatic inventory of every point where your body "
+    "meets a surface, from soles to seat to skin against fabric.",
+    "Sit or lie in any comfortable position. Without moving, scan "
+    "slowly for each place your body touches something — chair, floor, "
+    "clothing, the air on your skin. Name each contact silently as you "
+    "find it: 'seat of pants,' 'left heel,' 'right palm.' When you "
+    "reach the end of the inventory, start again. Stay with the survey "
+    "until the closing bell.",
+)
+
+#: Stage 1 alternative — Box Breathing (meditation_timer mode).
+_BOX_BREATHING = (
+    "Five minutes of square-shaped breathing — inhale, hold, exhale, "
+    "hold — to steady the breath and the nervous system.",
+    "Sit upright with your hands resting on your thighs. Inhale through "
+    "the nose for a slow count of four. Hold the breath for four. "
+    "Exhale through the nose for four. Hold the empty lungs for four. "
+    "Continue the pattern, easing back to a softer count if the holds "
+    "feel forced. The halfway bell marks the midpoint.",
+)
+
+#: Stage 1 alternative — Toe Wiggling (meditation_timer mode).
+_TOE_WIGGLING = (
+    "A three-minute foot-attention practice: feel the weight of each "
+    "foot, then wake them up by slowly wiggling each toe in turn.",
+    "Take off your shoes if you can. Sit or stand with both feet flat "
+    "on the floor. Bring attention to the sole of the left foot — the "
+    "heel, the arch, the ball, each toe. Wiggle each toe slowly, one "
+    "at a time, then all together. Repeat on the right foot. When the "
+    "bell sounds, plant both feet and notice the difference.",
+)
+
+#: Stage 1 alternative — Body Scan (meditation_timer mode).
+_BODY_SCAN = (
+    "A five-minute top-down sweep of attention through the body, "
+    "noticing whatever is present at each region without trying to "
+    "change it.",
+    "Sit or lie comfortably and close the eyes. Begin at the toes and "
+    "move attention slowly upward — feet, ankles, calves, knees, "
+    "thighs, hips, belly, chest, hands, arms, shoulders, neck, face, "
+    "crown. At each region, pause for a breath and notice whatever "
+    "sensation is present without trying to change it. The halfway "
+    "bell marks the belly; finish at the crown by the closing bell.",
+)
+
+#: Stage 1 alternative — Progressive Muscle Relaxation (meditation_timer mode).
+_PROGRESSIVE_MUSCLE_RELAXATION = (
+    "Ten minutes of Jacobson's progressive muscle relaxation — "
+    "sequentially tensing and releasing every major muscle group to "
+    "invite deep rest.",
+    "Lie down if you can. Beginning with the feet, tense the muscles "
+    "there hard for five seconds, then release sharply on the exhale "
+    "and rest for ten before moving on. Work through the entire body "
+    "— calves, thighs, glutes, belly, chest, arms, hands, shoulders, "
+    "neck, jaw, face. The halfway bell signals you should be reaching "
+    "the torso. End with a whole-body tense-and-release before the "
+    "closing bell.",
+)
+
+
 PRESET_COPY: dict[str, tuple[str, str]] = {
     "5-4-3-2-1 grounding": _S1,
     "Tarot meditation": _S2,
@@ -163,4 +254,11 @@ PRESET_COPY: dict[str, tuple[str, str]] = {
     "Mindful Eating": _MINDFUL_EATING,
     "Find Shapes": _FIND_SHAPES,
     "Find Colors": _FIND_COLORS,
+    "Crystal Charging": _CRYSTAL_CHARGING,
+    "Tense and Release": _TENSE_AND_RELEASE,
+    "Contact Points": _CONTACT_POINTS,
+    "Box Breathing": _BOX_BREATHING,
+    "Toe Wiggling": _TOE_WIGGLING,
+    "Body Scan": _BODY_SCAN,
+    "Progressive Muscle Relaxation": _PROGRESSIVE_MUSCLE_RELAXATION,
 }

@@ -311,6 +311,56 @@ _ALTERNATIVE_PRESETS: list[dict[str, Any]] = [
         },
         default_duration_minutes=5,
     ),
+    # Stage 1 BEIGE alternatives — body-grounding / nervous-system regulation.
+    _build_preset(
+        1,
+        "Crystal Charging",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(5),
+        default_duration_minutes=5,
+    ),
+    _build_preset(
+        1,
+        "Tense and Release",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(5, halfway_bell=True),
+        default_duration_minutes=5,
+    ),
+    _build_preset(
+        1,
+        "Contact Points",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(5),
+        default_duration_minutes=5,
+    ),
+    _build_preset(
+        1,
+        "Box Breathing",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(5, halfway_bell=True),
+        default_duration_minutes=5,
+    ),
+    _build_preset(
+        1,
+        "Toe Wiggling",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(3),
+        default_duration_minutes=3,
+    ),
+    _build_preset(
+        1,
+        "Body Scan",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(5, halfway_bell=True),
+        default_duration_minutes=5,
+    ),
+    _build_preset(
+        1,
+        "Progressive Muscle Relaxation",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(10, halfway_bell=True),
+        default_duration_minutes=10,
+    ),
 ]
 
 _PRESET_PRACTICES: list[dict[str, Any]] = [*_CANONICAL_PRESETS, *_ALTERNATIVE_PRESETS]

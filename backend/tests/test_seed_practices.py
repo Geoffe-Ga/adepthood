@@ -11,6 +11,7 @@ from sqlmodel import select
 
 from models.practice import Practice
 from schemas.practice_mode_config import (
+    MeditationTimerConfig,
     MetronomeConfig,
     MindfulAnchorConfig,
     ModeConfigAdapter,
@@ -309,6 +310,43 @@ async def test_find_colors_preset_seeds(db_session: AsyncSession) -> None:
     assert all(c.target_count == 1 for c in cfg.categories)
 
 
+#: ``(name, duration_minutes, halfway_bell)`` rows for each stage-1 BEIGE
+#: alternative — drives :func:`test_beige_alternative_preset_seeds`.
+_BEIGE_ALTERNATIVE_SPECS: tuple[tuple[str, float, bool], ...] = (
+    ("Crystal Charging", 5, False),
+    ("Tense and Release", 5, True),
+    ("Contact Points", 5, False),
+    ("Box Breathing", 5, True),
+    ("Toe Wiggling", 3, False),
+    ("Body Scan", 5, True),
+    ("Progressive Muscle Relaxation", 10, True),
+)
+
+
+@pytest.mark.parametrize(("name", "duration_minutes", "halfway_bell"), _BEIGE_ALTERNATIVE_SPECS)
+@pytest.mark.asyncio
+async def test_beige_alternative_preset_seeds(
+    db_session: AsyncSession,
+    name: str,
+    duration_minutes: float,
+    halfway_bell: bool,
+) -> None:
+    """Each BEIGE stage-1 alternative seeds as a meditation_timer with the spec's duration."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == 1
+    assert row.mode == "meditation_timer"
+    assert row.description
+    assert row.instructions
+    assert row.default_duration_minutes == duration_minutes
+
+    cfg = MeditationTimerConfig.model_validate(row.mode_config)
+    assert cfg.duration_minutes == duration_minutes
+    assert cfg.halfway_bell is halfway_bell
+    assert cfg.start_bell is True
+    assert cfg.end_bell is True
+
+
 @pytest.mark.asyncio
 async def test_seed_is_idempotent_with_new_presets(db_session: AsyncSession) -> None:
     """Re-running the seeder leaves exactly one row for each alternative preset."""
@@ -317,7 +355,14 @@ async def test_seed_is_idempotent_with_new_presets(db_session: AsyncSession) -> 
     assert first == _EXPECTED_PRESET_COUNT
     assert second == 0
 
-    for name in ("Touch Grass", "Mindful Eating", "Find Shapes", "Find Colors"):
+    alternative_names = (
+        "Touch Grass",
+        "Mindful Eating",
+        "Find Shapes",
+        "Find Colors",
+        *(name for name, _, _ in _BEIGE_ALTERNATIVE_SPECS),
+    )
+    for name in alternative_names:
         result = await db_session.execute(select(Practice).where(Practice.name == name))
         assert len(result.scalars().all()) == 1
 
