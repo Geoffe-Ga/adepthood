@@ -285,6 +285,10 @@ const SUMMARIZERS: {
   tallied_grounding: (c) => [`${c.rounds} rounds`, `${c.categories.length} categories`],
   tarot: () => ['Major arcana — one card per sit'],
   card_meditation: (c) => [`Deck: ${c.deck_id}`],
+  mindful_anchor: (c) => {
+    const choice = c.options.length === 0 ? 'no chooser' : `${c.options.length} options`;
+    return [`Soft minimum: ${c.min_duration_seconds}s`, choice];
+  },
 };
 
 /**

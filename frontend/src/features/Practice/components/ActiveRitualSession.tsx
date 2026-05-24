@@ -46,6 +46,7 @@ import { totalSteps, totalStepsPerRound } from '@/features/Practice/engine/talli
 import type {
   CardMeditationConfig,
   IntervalBellConfig,
+  MindfulAnchorMetadata,
   ModeConfig,
   RandomIntervalBellMetadata,
   RepCounterConfig,
@@ -62,6 +63,7 @@ import CountUpTimerView from '@/features/Practice/views/CountUpTimerView';
 import IntervalBellView from '@/features/Practice/views/IntervalBellView';
 import MeditationTimerView from '@/features/Practice/views/MeditationTimerView';
 import MetronomeView from '@/features/Practice/views/MetronomeView';
+import MindfulAnchorView from '@/features/Practice/views/MindfulAnchorView';
 import RandomIntervalBellView from '@/features/Practice/views/RandomIntervalBellView';
 import RepCounterView from '@/features/Practice/views/RepCounterView';
 import SenseGroundingView from '@/features/Practice/views/SenseGroundingView';
@@ -103,6 +105,8 @@ interface ActiveSession {
   tarotCardIndex: number;
   /** The card drawn for a `card_meditation` session; `null` for other modes. */
   cardPick: PickedCard | null;
+  /** `mindful_anchor` view hands its save payload up through this. */
+  onMindfulAnchorComplete: (_metadata: MindfulAnchorMetadata) => void;
   completedWindow: { start: Date; end: Date } | null;
   isSaving: boolean;
   saveError: string | null;
@@ -129,6 +133,7 @@ export function ActiveRitualSession(props: ActiveRitualSessionProps): React.JSX.
         controls={session.controls}
         tarotCardIndex={session.tarotCardIndex}
         cardPick={session.cardPick}
+        onMindfulAnchorComplete={session.onMindfulAnchorComplete}
         saveError={session.saveError}
         onRandomBellMetadata={session.onRandomBellMetadata}
       />
@@ -193,9 +198,16 @@ interface HarvestedMetadata {
   wireMetadata: SessionMetadata;
   summaryMetadata: ModeSummaryMetadata;
   onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
+  onMindfulAnchorComplete: (metadata: MindfulAnchorMetadata) => void;
+  /** Clears the lifted mindful-anchor payload after a save completes. */
+  resetMindfulAnchor: () => void;
 }
 
-/** Harvest wire+summary metadata; `random_interval_bell` view lifts its schedule via the setter. */
+/**
+ * Harvest wire+summary metadata. The `random_interval_bell` view lifts its
+ * live schedule via the setter; the `mindful_anchor` view lifts its full
+ * save payload (chosen option + duration + soft-floor flag) the same way.
+ */
 function useHarvestedMetadata(
   config: ModeConfig,
   state: RitualState,
@@ -205,15 +217,23 @@ function useHarvestedMetadata(
   const [randomBellMetadata, setRandomBellMetadata] = useState<RandomIntervalBellMetadata | null>(
     null,
   );
+  const [mindfulAnchorMeta, setMindfulAnchorMeta] = useState<MindfulAnchorMetadata | null>(null);
   const wireMetadata = useMemo<SessionMetadata>(
-    () => harvestMetadata(config, state, cardPick, randomBellMetadata),
-    [config, state, cardPick, randomBellMetadata],
+    () => harvestMetadata(config, state, cardPick, randomBellMetadata, mindfulAnchorMeta),
+    [config, state, cardPick, randomBellMetadata, mindfulAnchorMeta],
   );
   const summaryMetadata = useMemo<ModeSummaryMetadata>(
     () => harvestSummaryMetadata(config, state, tarotCardIndex, cardPick, randomBellMetadata),
     [config, state, tarotCardIndex, cardPick, randomBellMetadata],
   );
-  return { wireMetadata, summaryMetadata, onRandomBellMetadata: setRandomBellMetadata };
+  const resetMindfulAnchor = useCallback(() => setMindfulAnchorMeta(null), []);
+  return {
+    wireMetadata,
+    summaryMetadata,
+    onRandomBellMetadata: setRandomBellMetadata,
+    onMindfulAnchorComplete: setMindfulAnchorMeta,
+    resetMindfulAnchor,
+  };
 }
 
 function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
@@ -224,12 +244,13 @@ function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
   const window = useCompletionWindow(state.status);
   const [saveError, setSaveError] = useState<string | null>(null);
   const cardPick = useCardPick(props.effectiveConfig);
-  const { wireMetadata, summaryMetadata, onRandomBellMetadata } = useHarvestedMetadata(
-    props.effectiveConfig,
-    state,
-    tarotCardIndex,
-    cardPick,
-  );
+  const {
+    wireMetadata,
+    summaryMetadata,
+    onRandomBellMetadata,
+    onMindfulAnchorComplete,
+    resetMindfulAnchor,
+  } = useHarvestedMetadata(props.effectiveConfig, state, tarotCardIndex, cardPick);
   const saveMutation = useSaveMutation({
     apply: props.onSessionApply,
     rollback: props.onSessionRollback,
@@ -239,8 +260,9 @@ function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
   const finishAndReset = useCallback(() => {
     window.reset();
     setSaveError(null);
+    resetMindfulAnchor();
     controls.cancel();
-  }, [window, controls]);
+  }, [window, controls, resetMindfulAnchor]);
   const submitSession = useSubmitSession({
     userPracticeId: props.userPractice.id,
     completedWindow: window.completedWindow,
@@ -255,6 +277,7 @@ function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
     summaryMetadata,
     tarotCardIndex,
     cardPick,
+    onMindfulAnchorComplete,
     completedWindow: window.completedWindow,
     isSaving: saveMutation.pending,
     saveError,
@@ -386,6 +409,7 @@ interface SessionCardProps {
   controls: RitualControls;
   tarotCardIndex: number;
   cardPick: PickedCard | null;
+  onMindfulAnchorComplete: (_metadata: MindfulAnchorMetadata) => void;
   saveError: string | null;
   onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
 }
@@ -424,6 +448,7 @@ function SessionCard(props: SessionCardProps): React.JSX.Element {
         tarotCardIndex={props.tarotCardIndex}
         cardPick={props.cardPick}
         onRandomBellMetadata={props.onRandomBellMetadata}
+        onMindfulAnchorComplete={props.onMindfulAnchorComplete}
       />
       {props.saveError !== null && (
         <Text style={styles.error} testID="active-practice-save-error">
@@ -441,6 +466,7 @@ interface ModeViewProps {
   tarotCardIndex: number;
   cardPick: PickedCard | null;
   onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
+  onMindfulAnchorComplete: (_metadata: MindfulAnchorMetadata) => void;
 }
 
 function ModeView(props: ModeViewProps): React.JSX.Element {
@@ -463,6 +489,7 @@ function ModeView(props: ModeViewProps): React.JSX.Element {
       controls={controls}
       tarotCardIndex={props.tarotCardIndex}
       cardPick={props.cardPick}
+      onMindfulAnchorComplete={props.onMindfulAnchorComplete}
     />
   );
 }
@@ -473,6 +500,7 @@ interface EngineModeViewProps {
   controls: RitualControls;
   tarotCardIndex: number;
   cardPick: PickedCard | null;
+  onMindfulAnchorComplete: (_metadata: MindfulAnchorMetadata) => void;
 }
 
 function EngineModeView({
@@ -481,7 +509,49 @@ function EngineModeView({
   controls,
   tarotCardIndex,
   cardPick,
+  onMindfulAnchorComplete,
 }: EngineModeViewProps): React.JSX.Element {
+  if (config.mode === 'tarot' || config.mode === 'card_meditation') {
+    return (
+      <CardModeView
+        config={config}
+        state={state}
+        controls={controls}
+        tarotCardIndex={tarotCardIndex}
+        cardPick={cardPick}
+      />
+    );
+  }
+  if (config.mode === 'mindful_anchor') {
+    return (
+      <MindfulAnchorView
+        config={config}
+        state={state}
+        controls={controls}
+        onComplete={onMindfulAnchorComplete}
+      />
+    );
+  }
+  return <BasicEngineModeView config={config} state={state} controls={controls} />;
+}
+
+type BasicEngineModeConfig = Exclude<
+  EngineModeViewProps['config'],
+  { mode: 'tarot' | 'card_meditation' | 'mindful_anchor' }
+>;
+
+interface BasicEngineModeViewProps {
+  config: BasicEngineModeConfig;
+  state: RitualState;
+  controls: RitualControls;
+}
+
+/** Plain dispatch for the engine modes that take only `(config, state, controls)`. */
+function BasicEngineModeView({
+  config,
+  state,
+  controls,
+}: BasicEngineModeViewProps): React.JSX.Element {
   switch (config.mode) {
     case 'meditation_timer':
       return <MeditationTimerView state={state} controls={controls} />;
@@ -497,17 +567,6 @@ function EngineModeView({
       return <SenseGroundingView config={config} state={state} controls={controls} />;
     case 'tallied_grounding':
       return <TalliedGroundingView config={config} state={state} controls={controls} />;
-    case 'tarot':
-    case 'card_meditation':
-      return (
-        <CardModeView
-          config={config}
-          state={state}
-          controls={controls}
-          tarotCardIndex={tarotCardIndex}
-          cardPick={cardPick}
-        />
-      );
   }
 }
 
@@ -609,6 +668,7 @@ export function harvestMetadata(
   state: RitualState,
   cardPick: PickedCard | null,
   randomBellMetadata: RandomIntervalBellMetadata | null = null,
+  mindfulAnchorMeta: MindfulAnchorMetadata | null = null,
 ): SessionMetadata {
   // `random_interval_bell` schedule is view-owned, so harvest from the lifted metadata.
   if (config.mode === 'random_interval_bell') {
@@ -616,37 +676,67 @@ export function harvestMetadata(
       randomBellMetadata ?? { mode: 'random_interval_bell', bells_struck: 0, interval_seconds: [] }
     );
   }
-  return harvestEngineMetadata(config, state, cardPick);
+  return harvestEngineMetadata(config, state, cardPick, mindfulAnchorMeta);
 }
 
+type EngineMetadataConfig = Exclude<ModeConfig, { mode: 'random_interval_bell' }>;
+
+/**
+ * Pre-save fallback for the `mindful_anchor` harvest. `wireMetadata` is
+ * recomputed on every render but only consumed once the engine reaches
+ * `complete` — by which point the view has run its `onComplete` callback
+ * and populated `mindfulAnchorMeta`. This object satisfies the return
+ * type for the pre-save renders whose result is never read.
+ */
+const MINDFUL_ANCHOR_PRESAVE_FALLBACK: Extract<SessionMetadata, { mode: 'mindful_anchor' }> = {
+  mode: 'mindful_anchor',
+  chosen_option_key: null,
+  duration_seconds: 0,
+  met_min_duration: false,
+};
+
+/** Per-mode wire-metadata harvesters; the mapped type enforces exhaustive coverage. */
+const ENGINE_METADATA_HARVESTERS: {
+  [K in EngineMetadataConfig['mode']]: (
+    config: Extract<EngineMetadataConfig, { mode: K }>,
+    state: RitualState,
+    cardPick: PickedCard | null,
+    mindfulAnchorMeta: MindfulAnchorMetadata | null,
+  ) => SessionMetadata;
+} = {
+  meditation_timer: () => ({ mode: 'meditation_timer' }),
+  count_up: () => ({ mode: 'count_up' }),
+  metronome: (config) => ({ mode: 'metronome', bpm_used: config.bpm }),
+  interval_bell: harvestIntervalBell,
+  rep_counter: (_config, state) => ({ mode: 'rep_counter', rep_count: state.repCount }),
+  sense_grounding: harvestSenseGrounding,
+  tallied_grounding: harvestTalliedGrounding,
+  tarot: (_config, state) => ({
+    mode: 'tarot',
+    card_index: normalizeTarotIndex(state.currentStepIndex),
+  }),
+  card_meditation: (config, _state, cardPick) => cardMeditationWireMetadata(config, cardPick),
+  mindful_anchor: (_config, _state, _cardPick, meta) => meta ?? MINDFUL_ANCHOR_PRESAVE_FALLBACK,
+};
+
 function harvestEngineMetadata(
-  config: Exclude<ModeConfig, { mode: 'random_interval_bell' }>,
+  config: EngineMetadataConfig,
   state: RitualState,
   cardPick: PickedCard | null,
+  mindfulAnchorMeta: MindfulAnchorMetadata | null,
 ): SessionMetadata {
-  switch (config.mode) {
-    case 'meditation_timer':
-      return { mode: 'meditation_timer' };
-    case 'count_up':
-      return { mode: 'count_up' };
-    case 'metronome':
-      return { mode: 'metronome', bpm_used: config.bpm };
-    case 'interval_bell':
-      return harvestIntervalBell(config, state);
-    case 'rep_counter':
-      return { mode: 'rep_counter', rep_count: state.repCount };
-    case 'sense_grounding':
-      return harvestSenseGrounding(config, state);
-    case 'tallied_grounding':
-      return harvestTalliedGrounding(config, state);
-    case 'tarot':
-      return {
-        mode: 'tarot',
-        card_index: normalizeTarotIndex(state.currentStepIndex),
-      };
-    case 'card_meditation':
-      return cardMeditationWireMetadata(config, cardPick);
-  }
+  type AnyHarvester = (
+    config: EngineMetadataConfig,
+    state: RitualState,
+    cardPick: PickedCard | null,
+    mindfulAnchorMeta: MindfulAnchorMetadata | null,
+  ) => SessionMetadata;
+  return (ENGINE_METADATA_HARVESTERS[config.mode] as AnyHarvester)(
+    config,
+    state,
+    cardPick,
+    mindfulAnchorMeta,
+  );
 }
 
 /**
@@ -722,56 +812,91 @@ export function harvestSummaryMetadata(
   return harvestEngineSummary(config, state, tarotCardIndex, cardPick);
 }
 
+function summarizeIntervalBell(
+  config: IntervalBellConfig,
+  state: RitualState,
+): ModeSummaryMetadata {
+  const wire = harvestIntervalBell(config, state) as Extract<
+    SessionMetadata,
+    { mode: 'interval_bell' }
+  >;
+  return {
+    mode: 'interval_bell',
+    intervals_struck: wire.intervals_struck,
+    total_intervals: wire.total_intervals,
+  };
+}
+
+function summarizeSenseGrounding(
+  config: SenseGroundingConfig,
+  state: RitualState,
+): ModeSummaryMetadata {
+  const wire = harvestSenseGrounding(config, state) as Extract<
+    SessionMetadata,
+    { mode: 'sense_grounding' }
+  >;
+  return { mode: 'sense_grounding', senses_completed: wire.senses_completed };
+}
+
+function summarizeTarot(_state: RitualState, tarotCardIndex: number): ModeSummaryMetadata {
+  const idx = normalizeTarotIndex(tarotCardIndex);
+  return { mode: 'tarot', card_index: idx, card_name: cardForDayIndex(idx).name };
+}
+
+function summarizeCardMeditation(
+  config: CardMeditationConfig,
+  state: RitualState,
+  cardPick: PickedCard | null,
+): ModeSummaryMetadata {
+  // Reuse the wire harvest (and its single card draw) rather than drawing
+  // the card a second time — mirrors the `interval_bell` reuse above.
+  const wire = harvestMetadata(config, state, cardPick) as Extract<
+    SessionMetadata,
+    { mode: 'card_meditation' }
+  >;
+  return { mode: 'card_meditation', deck_id: wire.deck_id, card_name: wire.card_drawn_name };
+}
+
+/** Per-mode summary-metadata harvesters; the mapped type enforces exhaustive coverage. */
+const ENGINE_SUMMARY_HARVESTERS: {
+  [K in EngineMetadataConfig['mode']]: (
+    config: Extract<EngineMetadataConfig, { mode: K }>,
+    state: RitualState,
+    tarotCardIndex: number,
+    cardPick: PickedCard | null,
+  ) => ModeSummaryMetadata;
+} = {
+  meditation_timer: () => ({ mode: 'meditation_timer' }),
+  count_up: () => ({ mode: 'count_up' }),
+  metronome: (config) => ({ mode: 'metronome', bpm_used: config.bpm }),
+  interval_bell: (config, state) => summarizeIntervalBell(config, state),
+  rep_counter: repCounterSummary,
+  sense_grounding: (config, state) => summarizeSenseGrounding(config, state),
+  tallied_grounding: harvestTalliedGrounding,
+  tarot: (_config, state, tarotCardIndex) => summarizeTarot(state, tarotCardIndex),
+  card_meditation: (config, state, _tarotCardIndex, cardPick) =>
+    summarizeCardMeditation(config, state, cardPick),
+  mindful_anchor: () => ({ mode: 'mindful_anchor' }),
+};
+
 function harvestEngineSummary(
-  config: Exclude<ModeConfig, { mode: 'random_interval_bell' }>,
+  config: EngineMetadataConfig,
   state: RitualState,
   tarotCardIndex: number,
   cardPick: PickedCard | null,
 ): ModeSummaryMetadata {
-  switch (config.mode) {
-    case 'meditation_timer':
-      return { mode: 'meditation_timer' };
-    case 'count_up':
-      return { mode: 'count_up' };
-    case 'metronome':
-      return { mode: 'metronome', bpm_used: config.bpm };
-    case 'interval_bell': {
-      const wire = harvestIntervalBell(config, state) as Extract<
-        SessionMetadata,
-        { mode: 'interval_bell' }
-      >;
-      return {
-        mode: 'interval_bell',
-        intervals_struck: wire.intervals_struck,
-        total_intervals: wire.total_intervals,
-      };
-    }
-    case 'rep_counter':
-      return repCounterSummary(config, state);
-    case 'sense_grounding': {
-      const wire = harvestSenseGrounding(config, state) as Extract<
-        SessionMetadata,
-        { mode: 'sense_grounding' }
-      >;
-      return { mode: 'sense_grounding', senses_completed: wire.senses_completed };
-    }
-    case 'tallied_grounding':
-      // Wire and summary shapes are identical — no presentation-only extras.
-      return harvestTalliedGrounding(config, state);
-    case 'tarot': {
-      const idx = normalizeTarotIndex(tarotCardIndex);
-      return { mode: 'tarot', card_index: idx, card_name: cardForDayIndex(idx).name };
-    }
-    case 'card_meditation': {
-      // Reuse the wire harvest (and its single card draw) rather than drawing
-      // the card a second time — mirrors the `interval_bell` reuse above.
-      const wire = harvestMetadata(config, state, cardPick) as Extract<
-        SessionMetadata,
-        { mode: 'card_meditation' }
-      >;
-      return { mode: 'card_meditation', deck_id: wire.deck_id, card_name: wire.card_drawn_name };
-    }
-  }
+  type AnyHarvester = (
+    config: EngineMetadataConfig,
+    state: RitualState,
+    tarotCardIndex: number,
+    cardPick: PickedCard | null,
+  ) => ModeSummaryMetadata;
+  return (ENGINE_SUMMARY_HARVESTERS[config.mode] as AnyHarvester)(
+    config,
+    state,
+    tarotCardIndex,
+    cardPick,
+  );
 }
 
 function repCounterSummary(config: RepCounterConfig, state: RitualState): ModeSummaryMetadata {

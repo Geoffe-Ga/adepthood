@@ -31,6 +31,7 @@ describe('formatModeSummary', () => {
       6,
       '27 items across 3/3 rounds',
     ],
+    [{ mode: 'mindful_anchor' }, 2 + 25 / 60, '02:25 of mindful presence'],
   ])('formats %j (%s min) as %s', (metadata, durationMinutes, expected) => {
     expect(formatModeSummary(metadata.mode, durationMinutes, metadata)).toBe(expected);
   });

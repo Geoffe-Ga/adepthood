@@ -220,6 +220,7 @@ const TOTAL_MS_BUILDERS: {
   tarot: tarotTotalMs,
   card_meditation: cardMeditationTotalMs,
   rep_counter: repCounterTotalMs,
+  mindful_anchor: unboundedTotalMs,
 };
 
 export function getTotalMs(config: ModeConfig): number | null {

@@ -16,6 +16,7 @@ import type {
   IntervalBellConfig,
   MeditationTimerConfig,
   MetronomeConfig,
+  MindfulAnchorConfig,
   ModeConfig,
   RandomIntervalBellConfig,
   RepCounterConfig,
@@ -32,6 +33,8 @@ const DEFAULT_RANDOM_BELL_MAX_SECONDS = 180;
 const DEFAULT_REP_TARGET = 10;
 const DEFAULT_TALLIED_ROUNDS = 3;
 const DEFAULT_TALLIED_TARGET = 3;
+const DEFAULT_MINDFUL_ANCHOR_MIN_SECONDS = 120;
+const SECONDS_PER_MINUTE = 60;
 
 const DEFAULT_SENSE_PROMPTS: SenseGroundingConfig['prompts'] = [
   { sense: 'sight', label: 'something blue' },
@@ -96,6 +99,13 @@ const DEFAULTS: { [K in ModeConfig['mode']]: () => Extract<ModeConfig, { mode: K
     mode: 'card_meditation',
     deck_id: 'rws',
   }),
+  mindful_anchor: (): MindfulAnchorConfig => ({
+    mode: 'mindful_anchor',
+    instruction: "Take a slow, mindful moment with what's in front of you.",
+    min_duration_seconds: DEFAULT_MINDFUL_ANCHOR_MIN_SECONDS,
+    options: [],
+    require_option_choice: false,
+  }),
 };
 
 /**
@@ -124,6 +134,7 @@ const DURATION_HINTS: {
   rep_counter: () => DEFAULT_DURATION_MINUTES,
   sense_grounding: () => DEFAULT_DURATION_MINUTES,
   tallied_grounding: () => DEFAULT_DURATION_MINUTES,
+  mindful_anchor: (c) => c.min_duration_seconds / SECONDS_PER_MINUTE,
 };
 
 /**

@@ -73,6 +73,10 @@ export interface ModeSummaryTalliedGrounding {
   readonly items_completed: number;
 }
 
+export interface ModeSummaryMindfulAnchor {
+  readonly mode: 'mindful_anchor';
+}
+
 export type ModeSummaryMetadata =
   | ModeSummaryMeditationTimer
   | ModeSummaryCountUp
@@ -83,7 +87,8 @@ export type ModeSummaryMetadata =
   | ModeSummarySenseGrounding
   | ModeSummaryTalliedGrounding
   | ModeSummaryTarot
-  | ModeSummaryCardMeditation;
+  | ModeSummaryCardMeditation
+  | ModeSummaryMindfulAnchor;
 
 export type ModeSummaryKind = ModeSummaryMetadata['mode'];
 
@@ -116,6 +121,7 @@ const SUMMARY_FORMATTERS: {
     `${metadata.rounds_completed}/${metadata.total_rounds} rounds`,
   tarot: cardSummary,
   card_meditation: cardSummary,
+  mindful_anchor: (_metadata, mmss) => `${mmss} of mindful presence`,
 };
 
 /**

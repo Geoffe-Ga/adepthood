@@ -1,0 +1,256 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`MindfulAnchorView matches the option-chooser snapshot 1`] = `
+<View
+  style={
+    {
+      "alignItems": "center",
+      "padding": 20,
+    }
+  }
+  testID="mindful-anchor-view"
+>
+  <View
+    style={
+      {
+        "backgroundColor": "#ffffff",
+        "borderRadius": 12,
+        "elevation": 2,
+        "marginBottom": 20,
+        "maxWidth": 340,
+        "padding": 20,
+        "shadowColor": "#000000",
+        "shadowOffset": {
+          "height": 1,
+          "width": 0,
+        },
+        "shadowOpacity": 0.1,
+        "shadowRadius": 2,
+      }
+    }
+    testID="mindful-anchor-instruction"
+  >
+    <Text
+      style={
+        {
+          "color": "#333333",
+          "fontSize": 20,
+          "fontWeight": "500",
+          "lineHeight": 28,
+          "textAlign": "center",
+        }
+      }
+    >
+      Step outside and rest a bare palm on the grass.
+    </Text>
+  </View>
+  <View
+    accessibilityLabel="Choose an anchor"
+    accessibilityRole="radiogroup"
+    style={
+      {
+        "alignSelf": "stretch",
+        "gap": 8,
+        "marginBottom": 20,
+      }
+    }
+    testID="mindful-anchor-options"
+  >
+    <View
+      accessibilityLabel="Grass"
+      accessibilityRole="radio"
+      accessibilityState={
+        {
+          "busy": undefined,
+          "checked": undefined,
+          "disabled": undefined,
+          "expanded": undefined,
+          "selected": false,
+        }
+      }
+      accessibilityValue={
+        {
+          "max": undefined,
+          "min": undefined,
+          "now": undefined,
+          "text": undefined,
+        }
+      }
+      accessible={true}
+      collapsable={false}
+      focusable={true}
+      onBlur={[Function]}
+      onClick={[Function]}
+      onFocus={[Function]}
+      onResponderGrant={[Function]}
+      onResponderMove={[Function]}
+      onResponderRelease={[Function]}
+      onResponderTerminate={[Function]}
+      onResponderTerminationRequest={[Function]}
+      onStartShouldSetResponder={[Function]}
+      style={
+        [
+          {
+            "borderColor": "#ddd",
+            "borderRadius": 12,
+            "borderWidth": 1,
+            "padding": 12,
+          },
+          false,
+        ]
+      }
+      testID="mindful-anchor-option-grass"
+    >
+      <Text
+        style={
+          {
+            "color": "#333333",
+            "fontSize": 16,
+            "fontWeight": "600",
+          }
+        }
+      >
+        Grass
+      </Text>
+      <Text
+        style={
+          {
+            "color": "#555555",
+            "fontSize": 13,
+            "marginTop": 4,
+          }
+        }
+      >
+        A lawn, a field, a verge.
+      </Text>
+    </View>
+    <View
+      accessibilityLabel="Soil"
+      accessibilityRole="radio"
+      accessibilityState={
+        {
+          "busy": undefined,
+          "checked": undefined,
+          "disabled": undefined,
+          "expanded": undefined,
+          "selected": false,
+        }
+      }
+      accessibilityValue={
+        {
+          "max": undefined,
+          "min": undefined,
+          "now": undefined,
+          "text": undefined,
+        }
+      }
+      accessible={true}
+      collapsable={false}
+      focusable={true}
+      onBlur={[Function]}
+      onClick={[Function]}
+      onFocus={[Function]}
+      onResponderGrant={[Function]}
+      onResponderMove={[Function]}
+      onResponderRelease={[Function]}
+      onResponderTerminate={[Function]}
+      onResponderTerminationRequest={[Function]}
+      onStartShouldSetResponder={[Function]}
+      style={
+        [
+          {
+            "borderColor": "#ddd",
+            "borderRadius": 12,
+            "borderWidth": 1,
+            "padding": 12,
+          },
+          false,
+        ]
+      }
+      testID="mindful-anchor-option-soil"
+    >
+      <Text
+        style={
+          {
+            "color": "#333333",
+            "fontSize": 16,
+            "fontWeight": "600",
+          }
+        }
+      >
+        Soil
+      </Text>
+    </View>
+  </View>
+  <View
+    accessibilityLabel="Begin"
+    accessibilityRole="button"
+    accessibilityState={
+      {
+        "busy": undefined,
+        "checked": undefined,
+        "disabled": true,
+        "expanded": undefined,
+        "selected": undefined,
+      }
+    }
+    accessibilityValue={
+      {
+        "max": undefined,
+        "min": undefined,
+        "now": undefined,
+        "text": undefined,
+      }
+    }
+    accessible={true}
+    collapsable={false}
+    focusable={true}
+    onBlur={[Function]}
+    onClick={[Function]}
+    onFocus={[Function]}
+    onResponderGrant={[Function]}
+    onResponderMove={[Function]}
+    onResponderRelease={[Function]}
+    onResponderTerminate={[Function]}
+    onResponderTerminationRequest={[Function]}
+    onStartShouldSetResponder={[Function]}
+    style={
+      [
+        {
+          "alignItems": "center",
+          "backgroundColor": "#1a1910",
+          "borderRadius": 12,
+          "elevation": 2,
+          "marginBottom": 20,
+          "minWidth": 220,
+          "paddingHorizontal": 30,
+          "paddingVertical": 14,
+          "shadowColor": "#000000",
+          "shadowOffset": {
+            "height": 1,
+            "width": 0,
+          },
+          "shadowOpacity": 0.1,
+          "shadowRadius": 2,
+        },
+        {
+          "opacity": 0.5,
+        },
+      ]
+    }
+    testID="mindful-anchor-begin"
+  >
+    <Text
+      style={
+        {
+          "color": "#ffffff",
+          "fontSize": 18,
+          "fontWeight": "600",
+        }
+      }
+    >
+      Begin
+    </Text>
+  </View>
+</View>
+`;

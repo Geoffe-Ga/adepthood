@@ -29,6 +29,7 @@ const CUE_BUILDERS: {
   tallied_grounding: noCues,
   tarot: cuesForTarot,
   card_meditation: cuesForCardMeditation,
+  mindful_anchor: noCues,
 };
 
 export function scheduledCues(config: ModeConfig): readonly Cue[] {
