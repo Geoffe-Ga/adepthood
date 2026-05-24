@@ -274,6 +274,8 @@ async def test_find_shapes_preset_seeds(db_session: AsyncSession) -> None:
 
     assert row.stage_number == 1
     assert row.mode == "tallied_grounding"
+    assert row.description
+    assert row.instructions
 
     cfg = TalliedGroundingConfig.model_validate(row.mode_config)
     assert cfg.rounds == 3
@@ -289,6 +291,8 @@ async def test_find_colors_preset_seeds(db_session: AsyncSession) -> None:
 
     assert row.stage_number == 1
     assert row.mode == "tallied_grounding"
+    assert row.description
+    assert row.instructions
 
     cfg = TalliedGroundingConfig.model_validate(row.mode_config)
     assert cfg.rounds == 3
