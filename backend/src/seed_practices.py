@@ -560,6 +560,63 @@ _ALTERNATIVE_PRESETS: list[dict[str, Any]] = [
         mode_config=_meditation_timer(15, halfway_bell=True),
         default_duration_minutes=15,
     ),
+    # Stage 5 ORANGE alternatives — activation / manifestation.
+    _build_preset(
+        5,
+        "Kapalabhati Skull Shining",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(15, halfway_bell=True),
+        default_duration_minutes=15,
+    ),
+    _build_preset(
+        5,
+        "Middle Pillar",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(20, halfway_bell=True),
+        default_duration_minutes=20,
+    ),
+    _build_preset(
+        5,
+        "Sigil Dhyana",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(20, halfway_bell=True),
+        default_duration_minutes=20,
+    ),
+    _build_preset(
+        5,
+        "Reality Selection Visualization",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(20, halfway_bell=True),
+        default_duration_minutes=20,
+    ),
+    _build_preset(
+        5,
+        "Single Instrument Listening",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(20),
+        default_duration_minutes=20,
+    ),
+    _build_preset(
+        5,
+        "Chanting or Kirtan",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(20),
+        default_duration_minutes=20,
+    ),
+    _build_preset(
+        5,
+        "Breath of Fire + Silence",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(20, halfway_bell=True),
+        default_duration_minutes=20,
+    ),
+    _build_preset(
+        5,
+        "Lion's Breath",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(10),
+        default_duration_minutes=10,
+    ),
 ]
 
 _PRESET_PRACTICES: list[dict[str, Any]] = [*_CANONICAL_PRESETS, *_ALTERNATIVE_PRESETS]

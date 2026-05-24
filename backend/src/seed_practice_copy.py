@@ -588,6 +588,114 @@ _ANCESTRAL_CONNECTION = (
 )
 
 
+# -- Stage 5 ORANGE alternatives — activation / manifestation -----------------
+
+
+#: Stage 5 alternative — Kapalabhati Skull Shining (meditation_timer mode).
+_KAPALABHATI = (
+    "Fifteen minutes of rapid, forceful nasal exhalations — the "
+    "'skull-shining' breath that clears mental fog and sharpens "
+    "alertness.",
+    "Sit upright with the spine tall. Take a normal inhale, then "
+    "make a series of short sharp exhalations through the nose, "
+    "letting the inhales happen passively between them — about two "
+    "exhales per second. Aim for thirty per round, then breathe "
+    "normally for a minute. Ease off and breathe normally if you "
+    "feel lightheaded; resume only when it passes. After the "
+    "halfway bell, do two final rounds and rest in the bright "
+    "stillness until the closing bell.",
+)
+
+#: Stage 5 alternative — Middle Pillar (meditation_timer mode).
+_MIDDLE_PILLAR = (
+    "Twenty minutes of the Golden Dawn 'Middle Pillar' visualization, "
+    "building the energy body along the central axis.",
+    "Sit upright with the eyes closed and feet flat on the floor. "
+    "Visualize a sphere of white light at the crown, then vibrate "
+    "Eheieh silently as it brightens. Draw the light down to a sphere "
+    "at the throat (Yahweh Elohim), the heart (Yahweh Eloah Va-Daath), "
+    "the solar plexus (Shaddai El Chai), and the feet (Adonai Ha-Aretz). "
+    "After the halfway bell, circulate the light from the feet up the "
+    "spine and down the front until the closing bell.",
+)
+
+#: Stage 5 alternative — Sigil Dhyana (meditation_timer mode).
+_SIGIL_DHYANA = (
+    "Twenty minutes of single-pointed meditation on a personal sigil — "
+    "the Chaos-Magick technique of charging a designed glyph by holding "
+    "it in awareness.",
+    "Before starting, draw a simple sigil from a statement of intent "
+    "(cross out repeated letters, weave the rest into a glyph). Sit "
+    "upright with the sigil on a card in front of you. Hold the sigil "
+    "in soft gaze until it begins to flicker or float, then close the "
+    "eyes and keep it in mind's eye. After the halfway bell, let go "
+    "of the sigil and the intent both, resting in empty awareness until "
+    "the closing bell.",
+)
+
+#: Stage 5 alternative — Reality Selection Visualization (meditation_timer mode).
+_REALITY_SELECTION = (
+    "Twenty minutes of Neville Goddard's hypnagogic visualization — "
+    "rehearsing the felt reality of an already-accomplished wish.",
+    "Lie down comfortably with the eyes closed. Choose one scene that "
+    "would imply your wish is already fulfilled — a handshake, a "
+    "thank-you, a quiet moment after. Build the scene with all senses "
+    "and loop it until it feels habitual. After the halfway bell, "
+    "let the scene play on the edge of sleep without forcing wakefulness. "
+    "Return to clear focus by the closing bell.",
+)
+
+#: Stage 5 alternative — Single Instrument Listening (meditation_timer mode).
+_SINGLE_INSTRUMENT_LISTENING = (
+    "Twenty minutes of immersive listening to energizing music while "
+    "tracking a single instrument all the way through.",
+    "Before starting, queue an energizing track or playlist of about "
+    "twenty minutes and pick one instrument — a bassline, a particular "
+    "horn, a hi-hat. Sit upright with the eyes closed and follow only "
+    "that instrument through every passage, even when other lines "
+    "dominate. When attention drifts to another instrument, return "
+    "without comment. Stay with the chosen line until the bell.",
+)
+
+#: Stage 5 alternative — Chanting or Kirtan (meditation_timer mode).
+_CHANTING_OR_KIRTAN = (
+    "Twenty minutes of devotional chanting — repeating a single mantra "
+    "or kirtan call aloud to ride the breath into a unified state.",
+    "Choose one short mantra or kirtan call you know — Om Namah "
+    "Shivaya, Hare Krishna, a Gregorian Kyrie. Sit or stand upright. "
+    "Chant it aloud on each exhale at a tempo you can sustain, "
+    "letting the inhales fall in naturally. Let the volume and pitch "
+    "find their own shape over time. Continue without breaks until "
+    "the bell.",
+)
+
+#: Stage 5 alternative — Breath of Fire + Silence (meditation_timer mode).
+_BREATH_OF_FIRE_SILENCE = (
+    "Twenty minutes of the Kundalini Yoga Breath of Fire followed by "
+    "an equal period of silent integration.",
+    "Sit upright with the spine tall. Take rapid, equal-length inhales "
+    "and exhales through the nose, powered by sharp pumps of the "
+    "navel point — roughly two breaths per second. Ease off and "
+    "breathe normally if you feel lightheaded; resume only when it "
+    "passes. At the halfway bell, stop the breath of fire entirely "
+    "and rest in pure silence, letting the residual energy circulate "
+    "until the closing bell.",
+)
+
+#: Stage 5 alternative — Lion's Breath (meditation_timer mode).
+_LIONS_BREATH = (
+    "Ten minutes of Simhasana — the cathartic 'lion's breath' that "
+    "vents tension through wide eyes, an out-thrust tongue, and a "
+    "loud exhale.",
+    "Sit on the heels or in a chair. Inhale deeply through the nose. "
+    "On the exhale, open the eyes wide, stretch the tongue down "
+    "toward the chin, and exhale audibly with a 'haaa' sound. Pause, "
+    "breathe normally, then repeat — three to five lion's breaths per "
+    "minute. Ease off and breathe normally if you feel lightheaded; "
+    "resume only when it passes. Continue until the bell.",
+)
+
+
 PRESET_COPY: dict[str, tuple[str, str]] = {
     "5-4-3-2-1 grounding": _S1,
     "Tarot meditation": _S2,
@@ -638,4 +746,12 @@ PRESET_COPY: dict[str, tuple[str, str]] = {
     "Heart Imagery": _HEART_IMAGERY,
     "Just Like Me": _JUST_LIKE_ME,
     "Ancestral Connection": _ANCESTRAL_CONNECTION,
+    "Kapalabhati Skull Shining": _KAPALABHATI,
+    "Middle Pillar": _MIDDLE_PILLAR,
+    "Sigil Dhyana": _SIGIL_DHYANA,
+    "Reality Selection Visualization": _REALITY_SELECTION,
+    "Single Instrument Listening": _SINGLE_INSTRUMENT_LISTENING,
+    "Chanting or Kirtan": _CHANTING_OR_KIRTAN,
+    "Breath of Fire + Silence": _BREATH_OF_FIRE_SILENCE,
+    "Lion's Breath": _LIONS_BREATH,
 }
