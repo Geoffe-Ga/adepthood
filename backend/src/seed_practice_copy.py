@@ -463,6 +463,131 @@ _LOVE_TO_PAST_SELVES = (
 )
 
 
+# -- Stage 4 BLUE alternatives — heart / lovingkindness ----------------------
+
+
+#: Stage 4 alternative — Tonglen (meditation_timer mode).
+_TONGLEN = (
+    "Fifteen minutes of the Tibetan giving-and-taking practice: inhale "
+    "another being's pain, exhale ease and warmth toward them.",
+    "Sit upright with the eyes closed. Bring to mind someone who is "
+    "suffering. On each inhale, draw the discomfort of that being into "
+    "your heart as warm dark smoke; on each exhale, send cool clear "
+    "light of ease back toward them. After the halfway bell, widen "
+    "the circle to all beings carrying the same kind of pain. Continue "
+    "the breath rhythm until the closing bell.",
+)
+
+#: Stage 4 alternative — I Am Love Through (meditation_timer mode).
+_I_AM_LOVE_THROUGH = (
+    "Fifteen minutes of Selig's transmission phrase: 'I am Love "
+    "through [name]' — letting love move through you toward a chosen "
+    "other.",
+    "Sit upright and close the eyes. Bring to mind one person you "
+    "care for. Silently repeat the phrase 'I am Love through "
+    "[their name]' on each exhale, letting the word Love be a felt "
+    "current that moves out from your heart toward them. After the "
+    "halfway bell, choose a second person and continue. Stay with "
+    "the transmission until the closing bell.",
+)
+
+#: Stage 4 alternative — Heart Centered Breath (meditation_timer mode).
+_HEART_CENTERED_BREATH = (
+    "Fifteen minutes of breathing as if the breath itself moved through "
+    "the centre of the chest rather than the nose.",
+    "Sit upright with one or both hands resting on the centre of the "
+    "chest. Imagine that you inhale through the heart and exhale "
+    "through the heart, with the nose merely passing the air along. "
+    "Let the breath grow slow and full. After the halfway bell, "
+    "soften the hands and let the heart breathe on its own until the "
+    "closing bell.",
+)
+
+#: Stage 4 alternative — Animist Gratitude (meditation_timer mode).
+_ANIMIST_GRATITUDE = (
+    "Ten minutes of speaking thanks aloud to the local beings — "
+    "trees, birds, weather, land — that share your place.",
+    "Step outside or sit near a window with the eyes open. Choose "
+    "one local being at a time — a tree, a particular bird, the wind, "
+    "the soil under your feet. Speak a sentence of thanks aloud, "
+    "naming what you're grateful for. Move to the next being only "
+    "when the first feels acknowledged. Continue addressing local "
+    "beings until the bell.",
+)
+
+#: Stage 4 alternative — Hug Visualization (meditation_timer mode).
+_HUG_VISUALIZATION = (
+    "Ten minutes of vividly imagining a long, warm embrace with someone you miss.",
+    "Sit comfortably with the eyes closed. Bring to mind one person "
+    "you miss — living or gone. Picture them stepping in close and "
+    "the two of you wrapping into a long, full-body embrace. Notice "
+    "the weight, the temperature, the smell, the silence. Stay in the "
+    "hug as long as it lasts, then begin again. Continue until the "
+    "bell.",
+)
+
+#: Stage 4 alternative — Relational Gratitude (meditation_timer mode).
+_RELATIONAL_GRATITUDE = (
+    "Fifteen minutes of gratitude practice focused on the people in "
+    "your life — naming specifically what each one gives you.",
+    "Sit upright with the eyes closed. Bring to mind one person in "
+    "your life and name silently what they specifically give you — "
+    "humour, patience, presence, a particular kindness. Linger on "
+    "the feeling of receiving it before moving to the next person. "
+    "After the halfway bell, widen the circle to include those who "
+    "have given less knowingly. Continue until the closing bell.",
+)
+
+#: Stage 4 alternative — Blessing Strangers (meditation_timer mode).
+_BLESSING_STRANGERS = (
+    "Ten minutes of silently blessing strangers while people-watching "
+    "in a public space — done with the eyes open.",
+    "Sit in a café, on a park bench, or in any public space with "
+    "people moving past. Keep your eyes open and soft. As each "
+    "stranger crosses your gaze, silently offer one phrase to them "
+    "— 'may you be well,' 'may you be free of pain,' 'may you be "
+    "loved.' Move on as soon as the phrase is given. Continue blessing "
+    "passers-by until the bell.",
+)
+
+#: Stage 4 alternative — Heart Imagery (meditation_timer mode).
+_HEART_IMAGERY = (
+    "Fifteen minutes of meditation on a symbolic heart image — a "
+    "green rose, a spiral, a chalice — letting the image speak.",
+    "Sit upright with the eyes closed. Choose one heart-symbol that "
+    "calls to you — a green rose, a spiral of light, a golden chalice. "
+    "Place the image at the centre of your chest and watch it without "
+    "trying to fix or interpret it. Notice colour, motion, sound, "
+    "scent that arises with it. After the halfway bell, let the image "
+    "soften and broaden. Stay with it until the closing bell.",
+)
+
+#: Stage 4 alternative — Just Like Me (meditation_timer mode).
+_JUST_LIKE_ME = (
+    "Fifteen minutes of repeating the phrase 'just like me, this being "
+    "seeks happiness' toward a widening circle of others.",
+    "Sit upright with the eyes closed. Bring to mind one specific "
+    "being — easy, neutral, then difficult. For each, silently offer "
+    "'just like me, this being seeks happiness; just like me, this "
+    "being wants to be free from suffering.' Let the recognition land "
+    "as a felt sense rather than a thought. After the halfway bell, "
+    "widen to all beings everywhere. Continue until the closing bell.",
+)
+
+#: Stage 4 alternative — Ancestral Connection (meditation_timer mode).
+_ANCESTRAL_CONNECTION = (
+    "Fifteen minutes of reaching backward through the lineage with "
+    "gratitude or lovingkindness toward those who came before.",
+    "Sit upright with the eyes closed. Place attention behind you, "
+    "as if a long line of ancestors stood at your back. Silently "
+    "thank them by name where you know them, and by relation where "
+    "you don't — grandmothers, grandfathers, the unnamed. Offer "
+    "lovingkindness in their direction. After the halfway bell, let "
+    "their presence settle into your back and shoulders, and rest "
+    "in the felt support until the closing bell.",
+)
+
+
 PRESET_COPY: dict[str, tuple[str, str]] = {
     "5-4-3-2-1 grounding": _S1,
     "Tarot meditation": _S2,
@@ -503,4 +628,14 @@ PRESET_COPY: dict[str, tuple[str, str]] = {
     "Warrior Stillness": _WARRIOR_STILLNESS,
     "Red Sphere Visualization": _RED_SPHERE_VISUALIZATION,
     "Love to Past Selves": _LOVE_TO_PAST_SELVES,
+    "Tonglen": _TONGLEN,
+    "I Am Love Through": _I_AM_LOVE_THROUGH,
+    "Heart Centered Breath": _HEART_CENTERED_BREATH,
+    "Animist Gratitude": _ANIMIST_GRATITUDE,
+    "Hug Visualization": _HUG_VISUALIZATION,
+    "Relational Gratitude": _RELATIONAL_GRATITUDE,
+    "Blessing Strangers": _BLESSING_STRANGERS,
+    "Heart Imagery": _HEART_IMAGERY,
+    "Just Like Me": _JUST_LIKE_ME,
+    "Ancestral Connection": _ANCESTRAL_CONNECTION,
 }

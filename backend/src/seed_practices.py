@@ -489,6 +489,77 @@ _ALTERNATIVE_PRESETS: list[dict[str, Any]] = [
         mode_config=_meditation_timer(15, halfway_bell=True),
         default_duration_minutes=15,
     ),
+    # Stage 4 BLUE alternatives — heart / lovingkindness.
+    _build_preset(
+        4,
+        "Tonglen",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(15, halfway_bell=True),
+        default_duration_minutes=15,
+    ),
+    _build_preset(
+        4,
+        "I Am Love Through",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(15, halfway_bell=True),
+        default_duration_minutes=15,
+    ),
+    _build_preset(
+        4,
+        "Heart Centered Breath",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(15, halfway_bell=True),
+        default_duration_minutes=15,
+    ),
+    _build_preset(
+        4,
+        "Animist Gratitude",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(10),
+        default_duration_minutes=10,
+    ),
+    _build_preset(
+        4,
+        "Hug Visualization",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(10),
+        default_duration_minutes=10,
+    ),
+    _build_preset(
+        4,
+        "Relational Gratitude",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(15, halfway_bell=True),
+        default_duration_minutes=15,
+    ),
+    _build_preset(
+        4,
+        "Blessing Strangers",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(10),
+        default_duration_minutes=10,
+    ),
+    _build_preset(
+        4,
+        "Heart Imagery",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(15, halfway_bell=True),
+        default_duration_minutes=15,
+    ),
+    _build_preset(
+        4,
+        "Just Like Me",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(15, halfway_bell=True),
+        default_duration_minutes=15,
+    ),
+    _build_preset(
+        4,
+        "Ancestral Connection",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(15, halfway_bell=True),
+        default_duration_minutes=15,
+    ),
 ]
 
 _PRESET_PRACTICES: list[dict[str, Any]] = [*_CANONICAL_PRESETS, *_ALTERNATIVE_PRESETS]
