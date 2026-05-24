@@ -418,6 +418,77 @@ _ALTERNATIVE_PRESETS: list[dict[str, Any]] = [
         mode_config=_meditation_timer(5),
         default_duration_minutes=5,
     ),
+    # Stage 3 RED alternatives — energy / power.
+    _build_preset(
+        3,
+        "Hand Energy Sensing",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(5),
+        default_duration_minutes=5,
+    ),
+    _build_preset(
+        3,
+        "Windhorse Breathwork",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(10, halfway_bell=True),
+        default_duration_minutes=10,
+    ),
+    _build_preset(
+        3,
+        "Water Charging",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(5),
+        default_duration_minutes=5,
+    ),
+    _build_preset(
+        3,
+        "Mini TED Talk",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(10),
+        default_duration_minutes=10,
+    ),
+    _build_preset(
+        3,
+        "Power Posture",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(10),
+        default_duration_minutes=10,
+    ),
+    _build_preset(
+        3,
+        "Mountain Pose Sit",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(10),
+        default_duration_minutes=10,
+    ),
+    _build_preset(
+        3,
+        "Fire Gazing",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(10, halfway_bell=True),
+        default_duration_minutes=10,
+    ),
+    _build_preset(
+        3,
+        "Warrior Stillness",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(10),
+        default_duration_minutes=10,
+    ),
+    _build_preset(
+        3,
+        "Red Sphere Visualization",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(10, halfway_bell=True),
+        default_duration_minutes=10,
+    ),
+    _build_preset(
+        3,
+        "Love to Past Selves",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(15, halfway_bell=True),
+        default_duration_minutes=15,
+    ),
 ]
 
 _PRESET_PRACTICES: list[dict[str, Any]] = [*_CANONICAL_PRESETS, *_ALTERNATIVE_PRESETS]

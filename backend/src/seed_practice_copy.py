@@ -336,6 +336,133 @@ _TOTEM_MEDITATION = (
 )
 
 
+# -- Stage 3 RED alternatives — energy / power -------------------------------
+
+
+#: Stage 3 alternative — Hand Energy Sensing (meditation_timer mode).
+_HAND_ENERGY_SENSING = (
+    "Five minutes of generating warmth between your palms and tracking "
+    "the field that arises between them.",
+    "Sit upright with your hands free. Rub your palms together briskly "
+    "for thirty seconds until they feel hot. Slowly draw them apart to "
+    "a few inches and notice the sensation between them — pressure, "
+    "tingling, warmth, weight. Play with the gap, moving the hands "
+    "closer and further, and rest your attention on whatever you feel "
+    "between them until the bell.",
+)
+
+#: Stage 3 alternative — Windhorse Breathwork (meditation_timer mode).
+_WINDHORSE_BREATHWORK = (
+    "Ten minutes of vigorous, rhythmic breathing from the Tibetan Bön "
+    "tradition to stoke the inner fire (lung-ta).",
+    "Sit upright on a cushion or chair. Take deep, full breaths through "
+    "the nose, pressing the diaphragm out on the inhale and drawing it "
+    "in on the exhale, at roughly one breath every two seconds. Imagine "
+    "each inhale stoking a small flame at your navel. Ease off and "
+    "breathe normally if you feel lightheaded or dizzy. After the "
+    "halfway bell, return to natural breath and rest in the heat "
+    "you have generated until the closing bell.",
+)
+
+#: Stage 3 alternative — Water Charging (meditation_timer mode).
+_WATER_CHARGING = (
+    "Five minutes of focused intention into a glass of water — adapted "
+    "from Damien Echols's magickal water-charging technique.",
+    "Pour a glass of water and hold it in both hands at chest level. "
+    "Sit upright and close your eyes. Bring a single intention to mind "
+    "— health, focus, courage. Imagine the intention flowing from your "
+    "heart down your arms, through your palms, and into the water as "
+    "a faint coloured light. Continue until the bell, then drink the "
+    "water in slow sips.",
+)
+
+#: Stage 3 alternative — Mini TED Talk (meditation_timer mode).
+_MINI_TED_TALK = (
+    "Ten minutes of speaking aloud, uninterrupted, on something you "
+    "genuinely know well — to anchor your authority in your own voice.",
+    "Stand or sit upright in a private space. Choose one topic you "
+    "have real expertise on — a craft, a book, a story you have told "
+    "before. Speak aloud or sub-vocalize as if presenting to a small "
+    "room, in continuous sentences without notes. If you trail off, "
+    "restart from any point that brings the energy back. Keep speaking "
+    "until the bell.",
+)
+
+#: Stage 3 alternative — Power Posture (meditation_timer mode).
+_POWER_POSTURE = (
+    "Ten minutes of holding an expansive posture — chest open, feet "
+    "planted — paired with steady breath.",
+    "Stand or sit with feet planted shoulder-width apart. Lift the "
+    "crown, drop the shoulders, open the chest, and let the hands "
+    "rest at the hips or on the thighs. Breathe in slowly through the "
+    "nose, out slowly through the nose, with each breath reinforcing "
+    "the posture. Hold the shape — not rigidly, but consciously — "
+    "until the closing bell.",
+)
+
+#: Stage 3 alternative — Mountain Pose Sit (meditation_timer mode).
+_MOUNTAIN_POSE_SIT = (
+    "Ten minutes of seated mountain-pose visualization — embodying "
+    "the immovable as a felt sense in the body.",
+    "Sit cross-legged or in a chair with both feet flat. Imagine "
+    "yourself as a mountain: broad at the base, weighted, unmoved by "
+    "any weather. Silently repeat 'I cannot be moved' on each exhale. "
+    "When thoughts or restlessness arise, let them pass across you "
+    "like clouds rather than push them away. Stay with the mountain "
+    "until the bell.",
+)
+
+#: Stage 3 alternative — Fire Gazing (meditation_timer mode).
+_FIRE_GAZING = (
+    "Ten minutes of soft gaze into a candle flame or hearth fire, "
+    "anchoring attention down into the solar plexus.",
+    "Light a candle or sit safely in front of a fire at eye level. "
+    "Rest your gaze on the flame without straining, blinking only "
+    "when needed. Drop attention from the eyes down into the solar "
+    "plexus, as if the warmth above were also burning there. If your "
+    "eyes water or you feel lightheaded, close them and stay with the "
+    "heat in the belly. The halfway bell is your cue to soften the "
+    "gaze.",
+)
+
+#: Stage 3 alternative — Warrior Stillness (meditation_timer mode).
+_WARRIOR_STILLNESS = (
+    "Ten minutes of holding a single warrior-style posture — without "
+    "movement, without escape — to meet the discomfort that arises.",
+    "Choose one posture you can hold for several minutes — warrior I "
+    "or II, horse stance, low squat, plank. Take the shape with as "
+    "much precision as you can manage. Breathe slowly through the nose "
+    "and meet whatever sensations arise — burn, tremor, fatigue — "
+    "without shifting out. If the posture becomes unsafe, lower out of "
+    "it and resume the same posture from a gentler angle until the bell.",
+)
+
+#: Stage 3 alternative — Red Sphere Visualization (meditation_timer mode).
+_RED_SPHERE_VISUALIZATION = (
+    "Ten minutes of visualizing a pulsing red sphere of light at the "
+    "gut to gather and concentrate vital energy.",
+    "Sit upright with the eyes closed. Place attention at the centre "
+    "of the belly, two finger-widths below the navel. Picture a small "
+    "sphere of warm red light pulsing there with each breath — brighter "
+    "on the inhale, steadier on the exhale. The halfway bell is your "
+    "cue to let the sphere widen until it fills the whole abdomen. "
+    "Hold the image until the closing bell.",
+)
+
+#: Stage 3 alternative — Love to Past Selves (meditation_timer mode).
+_LOVE_TO_PAST_SELVES = (
+    "Fifteen minutes of directing lovingkindness toward yourself at "
+    "progressively younger ages — a self-reparenting practice.",
+    "Sit comfortably with the eyes closed. Begin with your present "
+    "self — silently offer 'may you be safe, may you feel held, may "
+    "you know you are loved.' Then step backward in time: yourself "
+    "at twenty-five, fifteen, ten, five, two, in the womb. Offer the "
+    "same phrases at each age, lingering as long as feels right. "
+    "After the halfway bell, take a few breaths and re-emerge into "
+    "the present, offering the phrases one last time.",
+)
+
+
 PRESET_COPY: dict[str, tuple[str, str]] = {
     "5-4-3-2-1 grounding": _S1,
     "Tarot meditation": _S2,
@@ -366,4 +493,14 @@ PRESET_COPY: dict[str, tuple[str, str]] = {
     "Dream Recollection": _DREAM_RECOLLECTION,
     "Archetypal Mantra": _ARCHETYPAL_MANTRA,
     "Totem Meditation": _TOTEM_MEDITATION,
+    "Hand Energy Sensing": _HAND_ENERGY_SENSING,
+    "Windhorse Breathwork": _WINDHORSE_BREATHWORK,
+    "Water Charging": _WATER_CHARGING,
+    "Mini TED Talk": _MINI_TED_TALK,
+    "Power Posture": _POWER_POSTURE,
+    "Mountain Pose Sit": _MOUNTAIN_POSE_SIT,
+    "Fire Gazing": _FIRE_GAZING,
+    "Warrior Stillness": _WARRIOR_STILLNESS,
+    "Red Sphere Visualization": _RED_SPHERE_VISUALIZATION,
+    "Love to Past Selves": _LOVE_TO_PAST_SELVES,
 }

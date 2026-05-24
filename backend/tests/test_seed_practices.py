@@ -385,6 +385,46 @@ async def test_purple_alternative_preset_seeds(
     assert cfg.end_bell is True
 
 
+#: ``(name, duration_minutes, halfway_bell)`` rows for each stage-3 RED
+#: alternative — drives :func:`test_red_alternative_preset_seeds`.
+_RED_ALTERNATIVE_SPECS: tuple[tuple[str, float, bool], ...] = (
+    ("Hand Energy Sensing", 5, False),
+    ("Windhorse Breathwork", 10, True),
+    ("Water Charging", 5, False),
+    ("Mini TED Talk", 10, False),
+    ("Power Posture", 10, False),
+    ("Mountain Pose Sit", 10, False),
+    ("Fire Gazing", 10, True),
+    ("Warrior Stillness", 10, False),
+    ("Red Sphere Visualization", 10, True),
+    ("Love to Past Selves", 15, True),
+)
+
+
+@pytest.mark.parametrize(("name", "duration_minutes", "halfway_bell"), _RED_ALTERNATIVE_SPECS)
+@pytest.mark.asyncio
+async def test_red_alternative_preset_seeds(
+    db_session: AsyncSession,
+    name: str,
+    duration_minutes: float,
+    halfway_bell: bool,
+) -> None:
+    """Each RED stage-3 alternative seeds as a meditation_timer with the spec's duration."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == 3
+    assert row.mode == "meditation_timer"
+    assert row.description
+    assert row.instructions
+    assert row.default_duration_minutes == duration_minutes
+
+    cfg = MeditationTimerConfig.model_validate(row.mode_config)
+    assert cfg.duration_minutes == duration_minutes
+    assert cfg.halfway_bell is halfway_bell
+    assert cfg.start_bell is True
+    assert cfg.end_bell is True
+
+
 @pytest.mark.asyncio
 async def test_seed_is_idempotent_with_new_presets(db_session: AsyncSession) -> None:
     """Re-running the seeder leaves exactly one row for each alternative preset."""
@@ -400,6 +440,7 @@ async def test_seed_is_idempotent_with_new_presets(db_session: AsyncSession) -> 
         "Find Colors",
         *(name for name, _, _ in _BEIGE_ALTERNATIVE_SPECS),
         *(name for name, _, _ in _PURPLE_ALTERNATIVE_SPECS),
+        *(name for name, _, _ in _RED_ALTERNATIVE_SPECS),
     )
     for name in alternative_names:
         result = await db_session.execute(select(Practice).where(Practice.name == name))
