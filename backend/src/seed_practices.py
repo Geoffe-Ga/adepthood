@@ -361,6 +361,63 @@ _ALTERNATIVE_PRESETS: list[dict[str, Any]] = [
         mode_config=_meditation_timer(10, halfway_bell=True),
         default_duration_minutes=10,
     ),
+    # Stage 2 PURPLE alternatives — divination / symbolic intuition.
+    _build_preset(
+        2,
+        "Traffic Lights",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(5),
+        default_duration_minutes=5,
+    ),
+    _build_preset(
+        2,
+        "I Ching Toss",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(10, halfway_bell=True),
+        default_duration_minutes=10,
+    ),
+    _build_preset(
+        2,
+        "Bibliomancy",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(5),
+        default_duration_minutes=5,
+    ),
+    _build_preset(
+        2,
+        "Synchronicity Sweep",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(5),
+        default_duration_minutes=5,
+    ),
+    _build_preset(
+        2,
+        "Trataka Candle Gazing",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(10, halfway_bell=True),
+        default_duration_minutes=10,
+    ),
+    _build_preset(
+        2,
+        "Dream Recollection",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(10, halfway_bell=True),
+        default_duration_minutes=10,
+    ),
+    _build_preset(
+        2,
+        "Archetypal Mantra",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(10, halfway_bell=True),
+        default_duration_minutes=10,
+    ),
+    _build_preset(
+        2,
+        "Totem Meditation",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(5),
+        default_duration_minutes=5,
+    ),
 ]
 
 _PRESET_PRACTICES: list[dict[str, Any]] = [*_CANONICAL_PRESETS, *_ALTERNATIVE_PRESETS]

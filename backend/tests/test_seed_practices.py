@@ -347,6 +347,44 @@ async def test_beige_alternative_preset_seeds(
     assert cfg.end_bell is True
 
 
+#: ``(name, duration_minutes, halfway_bell)`` rows for each stage-2 PURPLE
+#: alternative — drives :func:`test_purple_alternative_preset_seeds`.
+_PURPLE_ALTERNATIVE_SPECS: tuple[tuple[str, float, bool], ...] = (
+    ("Traffic Lights", 5, False),
+    ("I Ching Toss", 10, True),
+    ("Bibliomancy", 5, False),
+    ("Synchronicity Sweep", 5, False),
+    ("Trataka Candle Gazing", 10, True),
+    ("Dream Recollection", 10, True),
+    ("Archetypal Mantra", 10, True),
+    ("Totem Meditation", 5, False),
+)
+
+
+@pytest.mark.parametrize(("name", "duration_minutes", "halfway_bell"), _PURPLE_ALTERNATIVE_SPECS)
+@pytest.mark.asyncio
+async def test_purple_alternative_preset_seeds(
+    db_session: AsyncSession,
+    name: str,
+    duration_minutes: float,
+    halfway_bell: bool,
+) -> None:
+    """Each PURPLE stage-2 alternative seeds as a meditation_timer with the spec's duration."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == 2
+    assert row.mode == "meditation_timer"
+    assert row.description
+    assert row.instructions
+    assert row.default_duration_minutes == duration_minutes
+
+    cfg = MeditationTimerConfig.model_validate(row.mode_config)
+    assert cfg.duration_minutes == duration_minutes
+    assert cfg.halfway_bell is halfway_bell
+    assert cfg.start_bell is True
+    assert cfg.end_bell is True
+
+
 @pytest.mark.asyncio
 async def test_seed_is_idempotent_with_new_presets(db_session: AsyncSession) -> None:
     """Re-running the seeder leaves exactly one row for each alternative preset."""
@@ -361,6 +399,7 @@ async def test_seed_is_idempotent_with_new_presets(db_session: AsyncSession) -> 
         "Find Shapes",
         "Find Colors",
         *(name for name, _, _ in _BEIGE_ALTERNATIVE_SPECS),
+        *(name for name, _, _ in _PURPLE_ALTERNATIVE_SPECS),
     )
     for name in alternative_names:
         result = await db_session.execute(select(Practice).where(Practice.name == name))

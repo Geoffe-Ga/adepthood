@@ -239,6 +239,103 @@ _PROGRESSIVE_MUSCLE_RELAXATION = (
 )
 
 
+# -- Stage 2 PURPLE alternatives — divination / symbolic intuition -----------
+
+
+#: Stage 2 alternative — Traffic Lights (meditation_timer mode).
+_TRAFFIC_LIGHTS = (
+    "A divinatory micro-practice: read your environment as if every "
+    "traffic light were giving you a yes, no, or wait.",
+    "Sit somewhere with a window onto a road, or close your eyes and "
+    "visualise an intersection. Hold a single question. As each light "
+    "turns — red for no, green for yes, yellow for not yet — read the "
+    "colour as a response. Watch a sequence of three to five lights "
+    "and let the pattern speak. Stay with the question until the bell.",
+)
+
+#: Stage 2 alternative — I Ching Toss (meditation_timer mode).
+_I_CHING_TOSS = (
+    "Ten minutes of toss-and-reflect divination using three coins and a meditative journal.",
+    "Sit upright with three coins cupped in your palms and a notebook "
+    "within reach. Bring a single question to mind. Cast the coins six "
+    "times, recording the heads-or-tails sum each round to build a "
+    "hexagram from the bottom line up. Look up the resulting hexagram "
+    "and let the line readings reach you slowly. The halfway bell is "
+    "your cue to put the book down and journal what the hexagram is "
+    "asking of you.",
+)
+
+#: Stage 2 alternative — Bibliomancy (meditation_timer mode).
+_BIBLIOMANCY = (
+    "Open a book at random and read the first passage that lands as "
+    "a reply to whatever question you bring.",
+    "Pick any book of weight — poetry, scripture, a beloved novel — "
+    "and rest it on your lap. Sit upright, settle the breath, and "
+    "hold a single question in mind. Open the book at random and let "
+    "your gaze fall on a passage without searching. Read it once "
+    "slowly, then sit with the passage's resonance until the bell.",
+)
+
+#: Stage 2 alternative — Synchronicity Sweep (meditation_timer mode).
+_SYNCHRONICITY_SWEEP = (
+    "A five-minute meditative review of the day's coincidences — "
+    "names, numbers, repeated images — to see what pattern is emerging.",
+    "Sit upright and close the eyes. Sweep back through the day and "
+    "gather every coincidence you noticed: a phrase heard twice, a "
+    "number that kept appearing, a face that reminded you of someone. "
+    "Hold each in turn without forcing meaning, then ask what the "
+    "cluster is pointing toward. Stay with the inquiry until the bell.",
+)
+
+#: Stage 2 alternative — Trataka Candle Gazing (meditation_timer mode).
+_TRATAKA = (
+    "Ten minutes of soft, unblinking gaze on a candle flame, letting "
+    "intuitive imagery rise from the inner field.",
+    "Light a candle at eye level, an arm's length away. Sit upright "
+    "and rest your gaze on the flame without straining; blink only "
+    "when you must. After several minutes, close the eyes and watch "
+    "the afterimage settle into the dark. The halfway bell is your "
+    "cue to soften the gaze further or close the eyes if dryness "
+    "sets in.",
+)
+
+#: Stage 2 alternative — Dream Recollection (meditation_timer mode).
+_DREAM_RECOLLECTION = (
+    "Ten minutes of slow, attentive recollection of last night's "
+    "dreams, mapping the symbols that recurred.",
+    "Sit upright with a notebook within reach. Close the eyes and "
+    "travel backward into last night's sleep, surfacing whatever "
+    "images, settings, characters, or moods you can. Write each "
+    "fragment as it arrives without trying to order them. After the "
+    "halfway bell, look across the page for symbols that repeat or "
+    "echo and underline them.",
+)
+
+#: Stage 2 alternative — Archetypal Mantra (meditation_timer mode).
+_ARCHETYPAL_MANTRA = (
+    "Ten minutes of repetition of a single archetypal name — Hekate, "
+    "Lakshmi, Kuan Yin — as a doorway to that quality.",
+    "Choose one archetypal name that calls to you and sit upright "
+    "with your hands resting on your thighs. Repeat the name silently "
+    "on the exhale, letting the figure's quality — wisdom, abundance, "
+    "mercy — settle into the body. The halfway bell is your invitation "
+    "to ask what they would offer or what they would ask of you. "
+    "Return to the name until the closing bell.",
+)
+
+#: Stage 2 alternative — Totem Meditation (meditation_timer mode).
+_TOTEM_MEDITATION = (
+    "Five minutes of attention on a personal totem — an animal, an "
+    "object, a symbol — that has carried meaning across your life.",
+    "Bring to mind a personal totem you have felt connected to — an "
+    "animal, a stone, an inherited object, a recurring symbol. Hold "
+    "it in attention, or in your hands if it is physical. Notice "
+    "every feature you can — colour, shape, texture, the memories "
+    "braided into it. When you feel met by the totem, rest with "
+    "that meeting until the bell.",
+)
+
+
 PRESET_COPY: dict[str, tuple[str, str]] = {
     "5-4-3-2-1 grounding": _S1,
     "Tarot meditation": _S2,
@@ -261,4 +358,12 @@ PRESET_COPY: dict[str, tuple[str, str]] = {
     "Toe Wiggling": _TOE_WIGGLING,
     "Body Scan": _BODY_SCAN,
     "Progressive Muscle Relaxation": _PROGRESSIVE_MUSCLE_RELAXATION,
+    "Traffic Lights": _TRAFFIC_LIGHTS,
+    "I Ching Toss": _I_CHING_TOSS,
+    "Bibliomancy": _BIBLIOMANCY,
+    "Synchronicity Sweep": _SYNCHRONICITY_SWEEP,
+    "Trataka Candle Gazing": _TRATAKA,
+    "Dream Recollection": _DREAM_RECOLLECTION,
+    "Archetypal Mantra": _ARCHETYPAL_MANTRA,
+    "Totem Meditation": _TOTEM_MEDITATION,
 }
