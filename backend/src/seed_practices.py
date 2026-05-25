@@ -482,13 +482,6 @@ _ALTERNATIVE_PRESETS: list[dict[str, Any]] = [
         mode_config=_meditation_timer(10, halfway_bell=True),
         default_duration_minutes=10,
     ),
-    _build_preset(
-        3,
-        "Love to Past Selves",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(15, halfway_bell=True),
-        default_duration_minutes=15,
-    ),
     # Stage 4 BLUE alternatives — heart / lovingkindness.
     _build_preset(
         4,
@@ -556,6 +549,15 @@ _ALTERNATIVE_PRESETS: list[dict[str, Any]] = [
     _build_preset(
         4,
         "Ancestral Connection",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(15, halfway_bell=True),
+        default_duration_minutes=15,
+    ),
+    # Re-homed from stage 3 (source spreadsheet) at PR review request: a
+    # metta sit toward younger selves is heart-band, not energy-band.
+    _build_preset(
+        4,
+        "Love to Past Selves",
         mode="meditation_timer",
         mode_config=_meditation_timer(15, halfway_bell=True),
         default_duration_minutes=15,

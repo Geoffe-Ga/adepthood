@@ -449,19 +449,6 @@ _RED_SPHERE_VISUALIZATION = (
     "Hold the image until the closing bell.",
 )
 
-#: Stage 3 alternative — Love to Past Selves (meditation_timer mode).
-_LOVE_TO_PAST_SELVES = (
-    "Fifteen minutes of directing lovingkindness toward yourself at "
-    "progressively younger ages — a self-reparenting practice.",
-    "Sit comfortably with the eyes closed. Begin with your present "
-    "self — silently offer 'may you be safe, may you feel held, may "
-    "you know you are loved.' Then step backward in time: yourself "
-    "at twenty-five, fifteen, ten, five, two, in the womb. Offer the "
-    "same phrases at each age, lingering as long as feels right. "
-    "After the halfway bell, take a few breaths and re-emerge into "
-    "the present, offering the phrases one last time.",
-)
-
 
 # -- Stage 4 BLUE alternatives — heart / lovingkindness ----------------------
 
@@ -585,6 +572,25 @@ _ANCESTRAL_CONNECTION = (
     "lovingkindness in their direction. After the halfway bell, let "
     "their presence settle into your back and shoulders, and rest "
     "in the felt support until the closing bell.",
+)
+
+#: Stage 4 alternative — Love to Past Selves (meditation_timer mode).
+#:
+#: The source spreadsheet placed this row in the RED column (stage 3), but
+#: its mechanics — metta phrases toward progressively younger selves — are
+#: indistinguishable from the BLUE band's heart practices. Re-homed at the
+#: PR reviewer's request so it sits alongside Tonglen / Metta rather than
+#: warrior-stillness and fire-gazing.
+_LOVE_TO_PAST_SELVES = (
+    "Fifteen minutes of directing lovingkindness toward yourself at "
+    "progressively younger ages — a self-reparenting practice.",
+    "Sit comfortably with the eyes closed. Begin with your present "
+    "self — silently offer 'may you be safe, may you feel held, may "
+    "you know you are loved.' Then step backward in time: yourself "
+    "at twenty-five, fifteen, ten, five, two, in the womb. Offer the "
+    "same phrases at each age, lingering as long as feels right. "
+    "After the halfway bell, take a few breaths and re-emerge into "
+    "the present, offering the phrases one last time.",
 )
 
 

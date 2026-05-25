@@ -397,7 +397,6 @@ _RED_ALTERNATIVE_SPECS: tuple[tuple[str, float, bool], ...] = (
     ("Fire Gazing", 10, True),
     ("Warrior Stillness", 10, False),
     ("Red Sphere Visualization", 10, True),
-    ("Love to Past Selves", 15, True),
 )
 
 
@@ -438,6 +437,8 @@ _BLUE_ALTERNATIVE_SPECS: tuple[tuple[str, float, bool], ...] = (
     ("Heart Imagery", 15, True),
     ("Just Like Me", 15, True),
     ("Ancestral Connection", 15, True),
+    # Re-homed from stage 3 RED at PR review request — see seed_practices.py.
+    ("Love to Past Selves", 15, True),
 )
 
 
