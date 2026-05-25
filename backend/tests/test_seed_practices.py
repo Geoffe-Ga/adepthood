@@ -503,6 +503,68 @@ async def test_orange_alternative_preset_seeds(
     assert cfg.end_bell is True
 
 
+#: ``(name, duration_minutes, halfway_bell)`` rows for each meditation_timer
+#: stage-6 GREEN alternative — drives :func:`test_green_timer_preset_seeds`.
+_GREEN_TIMER_SPECS: tuple[tuple[str, float, bool], ...] = (
+    ("Chair Work", 30, True),
+    ("Wording Through It", 30, True),
+    ("Wilber 3-2-1", 30, True),
+    ("Emotion Transmutation", 30, True),
+    ("Pain Body Meditation", 30, True),
+    ("REACH Inward", 30, True),
+)
+
+#: Open-ended count_up stage-6 GREEN alternatives —
+#: drives :func:`test_green_count_up_preset_seeds`.
+_GREEN_COUNT_UP_NAMES: tuple[str, ...] = (
+    "Letter to the Repressed Self",
+    "Shadow Drawing",
+)
+
+#: All GREEN alternative names — used by the idempotency sweep below.
+_GREEN_ALTERNATIVE_NAMES: tuple[str, ...] = (
+    *(name for name, _, _ in _GREEN_TIMER_SPECS),
+    *_GREEN_COUNT_UP_NAMES,
+)
+
+
+@pytest.mark.parametrize(("name", "duration_minutes", "halfway_bell"), _GREEN_TIMER_SPECS)
+@pytest.mark.asyncio
+async def test_green_timer_preset_seeds(
+    db_session: AsyncSession,
+    name: str,
+    duration_minutes: float,
+    halfway_bell: bool,
+) -> None:
+    """Each timer-mode GREEN stage-6 alternative seeds with the spec's duration."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == 6
+    assert row.mode == "meditation_timer"
+    assert row.description
+    assert row.instructions
+    assert row.default_duration_minutes == duration_minutes
+
+    cfg = MeditationTimerConfig.model_validate(row.mode_config)
+    assert cfg.duration_minutes == duration_minutes
+    assert cfg.halfway_bell is halfway_bell
+    assert cfg.start_bell is True
+    assert cfg.end_bell is True
+
+
+@pytest.mark.parametrize("name", _GREEN_COUNT_UP_NAMES)
+@pytest.mark.asyncio
+async def test_green_count_up_preset_seeds(db_session: AsyncSession, name: str) -> None:
+    """Each open-ended GREEN stage-6 alternative seeds as a count_up preset."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == 6
+    assert row.mode == "count_up"
+    assert row.description
+    assert row.instructions
+    assert row.mode_config["soft_cap_minutes"] is None
+
+
 @pytest.mark.asyncio
 async def test_seed_is_idempotent_with_new_presets(db_session: AsyncSession) -> None:
     """Re-running the seeder leaves exactly one row for each alternative preset."""
@@ -521,6 +583,7 @@ async def test_seed_is_idempotent_with_new_presets(db_session: AsyncSession) -> 
         *(name for name, _, _ in _RED_ALTERNATIVE_SPECS),
         *(name for name, _, _ in _BLUE_ALTERNATIVE_SPECS),
         *(name for name, _, _ in _ORANGE_ALTERNATIVE_SPECS),
+        *_GREEN_ALTERNATIVE_NAMES,
     )
     for name in alternative_names:
         result = await db_session.execute(select(Practice).where(Practice.name == name))

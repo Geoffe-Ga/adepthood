@@ -696,6 +696,117 @@ _LIONS_BREATH = (
 )
 
 
+# -- Stage 6 GREEN alternatives — shadow work --------------------------------
+
+
+#: Stage 6 alternative — Chair Work (meditation_timer mode).
+_CHAIR_WORK = (
+    "Thirty minutes of two-chair dialogue between self and shadow, "
+    "swapping seats every five minutes to give each side a full voice.",
+    "Place two chairs facing each other. Sit in the first as your "
+    "everyday self and address the empty chair as if your shadow "
+    "occupied it. Speak aloud what you want it to know. After five "
+    "minutes, switch chairs and respond as the shadow without "
+    "softening or editing. Continue alternating every five minutes. "
+    "If strong emotion arises, pause to breathe and journal rather "
+    "than push through. The halfway bell marks the midpoint.",
+)
+
+#: Stage 6 alternative — Wording Through It (meditation_timer mode).
+_WORDING_THROUGH_IT = (
+    "Thirty minutes of speaking the shadow content out loud — naming "
+    "what would otherwise stay swallowed.",
+    "Sit alone in a private space. Bring to mind a feeling, memory, "
+    "or pattern you usually hold back. Speak it aloud in plain words, "
+    "one sentence at a time, with pauses between. Do not edit, do "
+    "not perform. If strong emotion arises, pause to breathe and "
+    "journal rather than push through. The halfway bell is your cue "
+    "to widen what you're willing to name.",
+)
+
+#: Stage 6 alternative — Wilber 3-2-1 (meditation_timer mode).
+_WILBER_321 = (
+    "Thirty minutes of Ken Wilber's 3-2-1 shadow practice: face it, talk to it, be it.",
+    "Choose a person or pattern that triggers a strong reaction. "
+    "Face it — describe the triggering presence in third person ('he,' "
+    "'she,' 'it'). Talk to it — address it directly as 'you' and tell "
+    "it what you most need it to hear. Be it — speak as the figure in "
+    "first person 'I,' from inside its perspective. The halfway bell "
+    "is your cue to cycle the three voices again. Pause to breathe "
+    "and journal if strong emotion arises.",
+)
+
+#: Stage 6 alternative — Emotion Transmutation (meditation_timer mode).
+_EMOTION_TRANSMUTATION = (
+    "Thirty minutes of the Tibetan Buddhist practice of meeting a "
+    "difficult emotion directly and transmuting it into its wisdom "
+    "counterpart.",
+    "Sit upright with the eyes closed. Invite a difficult emotion in "
+    "fully — anger, fear, jealousy, grief — and locate where it lives "
+    "in the body. Breathe into the felt sensation without storyline "
+    "and let it intensify rather than push it away. As it ripens, "
+    "notice the wisdom it carries: anger's clarity, fear's "
+    "discernment, jealousy's longing. The halfway bell is your cue "
+    "to rest in the transmuted aspect. Pause and journal if strong "
+    "emotion arises.",
+)
+
+#: Stage 6 alternative — Pain Body Meditation (meditation_timer mode).
+_PAIN_BODY_MEDITATION = (
+    "Thirty minutes of observing the 'pain body' as Eckhart Tolle "
+    "describes it — a distinct presence of accumulated emotional pain "
+    "you can witness rather than identify with.",
+    "Sit upright with the eyes closed. Notice any background mood of "
+    "heaviness, irritability, or sorrow as if it belonged to a "
+    "separate presence sitting beside you. Speak silently to it: 'I "
+    "see you, but you are not me.' Stay watchful without arguing, "
+    "fixing, or feeding the story. The halfway bell is your cue to "
+    "check whether you have slipped back into identification. Pause "
+    "and journal if strong emotion arises.",
+)
+
+#: Stage 6 alternative — Letter to the Repressed Self (count_up mode).
+_LETTER_TO_REPRESSED_SELF = (
+    "An open-ended stream-of-consciousness letter to the part of you "
+    "you most often disown — written without editing.",
+    "Sit somewhere private with a notebook and pen. Address the "
+    "letter to whichever part of yourself you tend to silence — the "
+    "rageful one, the lazy one, the desirous one. Write without "
+    "stopping or rereading until the practice feels complete. The "
+    "timer counts up so you can take as long as the writing asks for. "
+    "Pause to breathe rather than push through if strong emotion "
+    "arises. When you are done, mark the session complete.",
+)
+
+#: Stage 6 alternative — Shadow Drawing (count_up mode).
+_SHADOW_DRAWING = (
+    "An open-ended drawing practice: render the shadow self on paper, "
+    "then sit holding eye contact with what you've drawn.",
+    "Sit at a table with paper and any mark-making tool. Without "
+    "planning, let your hand draw the shadow self — figure, abstract "
+    "shape, scribble, colour. When the drawing feels finished, set "
+    "down the tool and hold steady eye contact with the figure on the "
+    "page. Notice what arises in the body. The timer counts up so you "
+    "can take as long as the practice asks for. Pause to breathe if "
+    "strong emotion arises. Mark the session complete when ready.",
+)
+
+#: Stage 6 alternative — REACH Inward (meditation_timer mode).
+_REACH_INWARD = (
+    "Thirty minutes of the REACH forgiveness practice (Recall, "
+    "Empathize, Altruistic gift, Commit, Hold) — directed inward "
+    "toward yourself.",
+    "Sit upright with the eyes closed. Recall a specific way you "
+    "have hurt yourself or fallen short. Empathize with the part of "
+    "you that acted that way — what fear or need was beneath it? "
+    "Offer that part the altruistic gift of being seen without "
+    "judgement. Commit silently to remembering this seeing. Hold the "
+    "commitment when self-criticism returns. The halfway bell is "
+    "your cue to begin a second cycle. Pause and journal if strong "
+    "emotion arises.",
+)
+
+
 PRESET_COPY: dict[str, tuple[str, str]] = {
     "5-4-3-2-1 grounding": _S1,
     "Tarot meditation": _S2,
@@ -754,4 +865,12 @@ PRESET_COPY: dict[str, tuple[str, str]] = {
     "Chanting or Kirtan": _CHANTING_OR_KIRTAN,
     "Breath of Fire + Silence": _BREATH_OF_FIRE_SILENCE,
     "Lion's Breath": _LIONS_BREATH,
+    "Chair Work": _CHAIR_WORK,
+    "Wording Through It": _WORDING_THROUGH_IT,
+    "Wilber 3-2-1": _WILBER_321,
+    "Emotion Transmutation": _EMOTION_TRANSMUTATION,
+    "Pain Body Meditation": _PAIN_BODY_MEDITATION,
+    "Letter to the Repressed Self": _LETTER_TO_REPRESSED_SELF,
+    "Shadow Drawing": _SHADOW_DRAWING,
+    "REACH Inward": _REACH_INWARD,
 }

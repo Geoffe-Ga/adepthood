@@ -617,6 +617,63 @@ _ALTERNATIVE_PRESETS: list[dict[str, Any]] = [
         mode_config=_meditation_timer(10),
         default_duration_minutes=10,
     ),
+    # Stage 6 GREEN alternatives — shadow work.
+    _build_preset(
+        6,
+        "Chair Work",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(30, halfway_bell=True),
+        default_duration_minutes=30,
+    ),
+    _build_preset(
+        6,
+        "Wording Through It",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(30, halfway_bell=True),
+        default_duration_minutes=30,
+    ),
+    _build_preset(
+        6,
+        "Wilber 3-2-1",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(30, halfway_bell=True),
+        default_duration_minutes=30,
+    ),
+    _build_preset(
+        6,
+        "Emotion Transmutation",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(30, halfway_bell=True),
+        default_duration_minutes=30,
+    ),
+    _build_preset(
+        6,
+        "Pain Body Meditation",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(30, halfway_bell=True),
+        default_duration_minutes=30,
+    ),
+    _build_preset(
+        6,
+        "Letter to the Repressed Self",
+        mode="count_up",
+        mode_config={"mode": "count_up", "soft_cap_minutes": None},
+        default_duration_minutes=_COUNT_UP_NOMINAL_DURATION_MINUTES,
+    ),
+    _build_preset(
+        6,
+        "Shadow Drawing",
+        mode="count_up",
+        mode_config={"mode": "count_up", "soft_cap_minutes": None},
+        default_duration_minutes=_COUNT_UP_NOMINAL_DURATION_MINUTES,
+    ),
+    _build_preset(
+        6,
+        "REACH Inward",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(30, halfway_bell=True),
+        default_duration_minutes=30,
+    ),
 ]
 
 _PRESET_PRACTICES: list[dict[str, Any]] = [*_CANONICAL_PRESETS, *_ALTERNATIVE_PRESETS]
