@@ -11,6 +11,7 @@ from sqlmodel import select
 
 from models.practice import Practice
 from schemas.practice_mode_config import (
+    MeditationTimerConfig,
     MetronomeConfig,
     MindfulAnchorConfig,
     ModeConfigAdapter,
@@ -309,6 +310,325 @@ async def test_find_colors_preset_seeds(db_session: AsyncSession) -> None:
     assert all(c.target_count == 1 for c in cfg.categories)
 
 
+#: ``(name, duration_minutes, halfway_bell)`` rows for each stage-1 BEIGE
+#: alternative — drives :func:`test_beige_alternative_preset_seeds`.
+_BEIGE_ALTERNATIVE_SPECS: tuple[tuple[str, float, bool], ...] = (
+    ("Crystal Charging", 5, False),
+    ("Tense and Release", 5, True),
+    ("Contact Points", 5, False),
+    ("Box Breathing", 5, True),
+    ("Toe Wiggling", 3, False),
+    ("Body Scan", 5, True),
+    ("Progressive Muscle Relaxation", 10, True),
+)
+
+
+@pytest.mark.parametrize(("name", "duration_minutes", "halfway_bell"), _BEIGE_ALTERNATIVE_SPECS)
+@pytest.mark.asyncio
+async def test_beige_alternative_preset_seeds(
+    db_session: AsyncSession,
+    name: str,
+    duration_minutes: float,
+    halfway_bell: bool,
+) -> None:
+    """Each BEIGE stage-1 alternative seeds as a meditation_timer with the spec's duration."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == 1
+    assert row.mode == "meditation_timer"
+    assert row.description
+    assert row.instructions
+    assert row.default_duration_minutes == duration_minutes
+
+    cfg = MeditationTimerConfig.model_validate(row.mode_config)
+    assert cfg.duration_minutes == duration_minutes
+    assert cfg.halfway_bell is halfway_bell
+    assert cfg.start_bell is True
+    assert cfg.end_bell is True
+
+
+#: ``(name, duration_minutes, halfway_bell)`` rows for each stage-2 PURPLE
+#: alternative — drives :func:`test_purple_alternative_preset_seeds`.
+_PURPLE_ALTERNATIVE_SPECS: tuple[tuple[str, float, bool], ...] = (
+    ("Traffic Lights", 5, False),
+    ("I Ching Toss", 10, True),
+    ("Bibliomancy", 5, False),
+    ("Synchronicity Sweep", 5, False),
+    ("Trataka Candle Gazing", 10, True),
+    ("Dream Recollection", 10, True),
+    ("Archetypal Mantra", 10, True),
+    ("Totem Meditation", 5, False),
+)
+
+
+@pytest.mark.parametrize(("name", "duration_minutes", "halfway_bell"), _PURPLE_ALTERNATIVE_SPECS)
+@pytest.mark.asyncio
+async def test_purple_alternative_preset_seeds(
+    db_session: AsyncSession,
+    name: str,
+    duration_minutes: float,
+    halfway_bell: bool,
+) -> None:
+    """Each PURPLE stage-2 alternative seeds as a meditation_timer with the spec's duration."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == 2
+    assert row.mode == "meditation_timer"
+    assert row.description
+    assert row.instructions
+    assert row.default_duration_minutes == duration_minutes
+
+    cfg = MeditationTimerConfig.model_validate(row.mode_config)
+    assert cfg.duration_minutes == duration_minutes
+    assert cfg.halfway_bell is halfway_bell
+    assert cfg.start_bell is True
+    assert cfg.end_bell is True
+
+
+#: ``(name, duration_minutes, halfway_bell)`` rows for each stage-3 RED
+#: alternative — drives :func:`test_red_alternative_preset_seeds`.
+_RED_ALTERNATIVE_SPECS: tuple[tuple[str, float, bool], ...] = (
+    ("Hand Energy Sensing", 5, False),
+    ("Windhorse Breathwork", 10, True),
+    ("Water Charging", 5, False),
+    ("Mini TED Talk", 10, False),
+    ("Power Posture", 10, False),
+    ("Mountain Pose Sit", 10, False),
+    ("Fire Gazing", 10, True),
+    ("Warrior Stillness", 10, False),
+    ("Red Sphere Visualization", 10, True),
+)
+
+
+@pytest.mark.parametrize(("name", "duration_minutes", "halfway_bell"), _RED_ALTERNATIVE_SPECS)
+@pytest.mark.asyncio
+async def test_red_alternative_preset_seeds(
+    db_session: AsyncSession,
+    name: str,
+    duration_minutes: float,
+    halfway_bell: bool,
+) -> None:
+    """Each RED stage-3 alternative seeds as a meditation_timer with the spec's duration."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == 3
+    assert row.mode == "meditation_timer"
+    assert row.description
+    assert row.instructions
+    assert row.default_duration_minutes == duration_minutes
+
+    cfg = MeditationTimerConfig.model_validate(row.mode_config)
+    assert cfg.duration_minutes == duration_minutes
+    assert cfg.halfway_bell is halfway_bell
+    assert cfg.start_bell is True
+    assert cfg.end_bell is True
+
+
+#: ``(name, duration_minutes, halfway_bell)`` rows for each stage-4 BLUE
+#: alternative — drives :func:`test_blue_alternative_preset_seeds`.
+_BLUE_ALTERNATIVE_SPECS: tuple[tuple[str, float, bool], ...] = (
+    ("Tonglen", 15, True),
+    ("I Am Love Through", 15, True),
+    ("Heart Centered Breath", 15, True),
+    ("Animist Gratitude", 10, False),
+    ("Hug Visualization", 10, False),
+    ("Relational Gratitude", 15, True),
+    ("Blessing Strangers", 10, False),
+    ("Heart Imagery", 15, True),
+    ("Just Like Me", 15, True),
+    ("Ancestral Connection", 15, True),
+    # Re-homed from stage 3 RED at PR review request — see seed_practices.py.
+    ("Love to Past Selves", 15, True),
+)
+
+
+@pytest.mark.parametrize(("name", "duration_minutes", "halfway_bell"), _BLUE_ALTERNATIVE_SPECS)
+@pytest.mark.asyncio
+async def test_blue_alternative_preset_seeds(
+    db_session: AsyncSession,
+    name: str,
+    duration_minutes: float,
+    halfway_bell: bool,
+) -> None:
+    """Each BLUE stage-4 alternative seeds as a meditation_timer with the spec's duration."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == 4
+    assert row.mode == "meditation_timer"
+    assert row.description
+    assert row.instructions
+    assert row.default_duration_minutes == duration_minutes
+
+    cfg = MeditationTimerConfig.model_validate(row.mode_config)
+    assert cfg.duration_minutes == duration_minutes
+    assert cfg.halfway_bell is halfway_bell
+    assert cfg.start_bell is True
+    assert cfg.end_bell is True
+
+
+#: ``(name, duration_minutes, halfway_bell)`` rows for each stage-5 ORANGE
+#: alternative — drives :func:`test_orange_alternative_preset_seeds`.
+_ORANGE_ALTERNATIVE_SPECS: tuple[tuple[str, float, bool], ...] = (
+    ("Kapalabhati Skull Shining", 15, True),
+    ("Middle Pillar", 20, True),
+    ("Sigil Dhyana", 20, True),
+    ("Reality Selection Visualization", 20, True),
+    ("Single Instrument Listening", 20, False),
+    ("Chanting or Kirtan", 20, False),
+    ("Breath of Fire + Silence", 20, True),
+    ("Lion's Breath", 10, False),
+)
+
+
+@pytest.mark.parametrize(("name", "duration_minutes", "halfway_bell"), _ORANGE_ALTERNATIVE_SPECS)
+@pytest.mark.asyncio
+async def test_orange_alternative_preset_seeds(
+    db_session: AsyncSession,
+    name: str,
+    duration_minutes: float,
+    halfway_bell: bool,
+) -> None:
+    """Each ORANGE stage-5 alternative seeds as a meditation_timer with the spec's duration."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == 5
+    assert row.mode == "meditation_timer"
+    assert row.description
+    assert row.instructions
+    assert row.default_duration_minutes == duration_minutes
+
+    cfg = MeditationTimerConfig.model_validate(row.mode_config)
+    assert cfg.duration_minutes == duration_minutes
+    assert cfg.halfway_bell is halfway_bell
+    assert cfg.start_bell is True
+    assert cfg.end_bell is True
+
+
+#: ``(name, duration_minutes, halfway_bell)`` rows for each meditation_timer
+#: stage-6 GREEN alternative — drives :func:`test_green_timer_preset_seeds`.
+_GREEN_TIMER_SPECS: tuple[tuple[str, float, bool], ...] = (
+    ("Chair Work", 30, True),
+    ("Wording Through It", 30, True),
+    ("Wilber 3-2-1", 30, True),
+    ("Emotion Transmutation", 30, True),
+    ("Pain Body Meditation", 30, True),
+    ("REACH Inward", 30, True),
+)
+
+#: Open-ended count_up stage-6 GREEN alternatives —
+#: drives :func:`test_green_count_up_preset_seeds`.
+_GREEN_COUNT_UP_NAMES: tuple[str, ...] = (
+    "Letter to the Repressed Self",
+    "Shadow Drawing",
+)
+
+#: All GREEN alternative names — used by the idempotency sweep below.
+_GREEN_ALTERNATIVE_NAMES: tuple[str, ...] = (
+    *(name for name, _, _ in _GREEN_TIMER_SPECS),
+    *_GREEN_COUNT_UP_NAMES,
+)
+
+
+@pytest.mark.parametrize(("name", "duration_minutes", "halfway_bell"), _GREEN_TIMER_SPECS)
+@pytest.mark.asyncio
+async def test_green_timer_preset_seeds(
+    db_session: AsyncSession,
+    name: str,
+    duration_minutes: float,
+    halfway_bell: bool,
+) -> None:
+    """Each timer-mode GREEN stage-6 alternative seeds with the spec's duration."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == 6
+    assert row.mode == "meditation_timer"
+    assert row.description
+    assert row.instructions
+    assert row.default_duration_minutes == duration_minutes
+
+    cfg = MeditationTimerConfig.model_validate(row.mode_config)
+    assert cfg.duration_minutes == duration_minutes
+    assert cfg.halfway_bell is halfway_bell
+    assert cfg.start_bell is True
+    assert cfg.end_bell is True
+
+
+@pytest.mark.parametrize("name", _GREEN_COUNT_UP_NAMES)
+@pytest.mark.asyncio
+async def test_green_count_up_preset_seeds(db_session: AsyncSession, name: str) -> None:
+    """Each open-ended GREEN stage-6 alternative seeds as a count_up preset."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == 6
+    assert row.mode == "count_up"
+    assert row.description
+    assert row.instructions
+    assert row.mode_config["soft_cap_minutes"] is None
+
+
+#: ``(name, duration_minutes, halfway_bell)`` rows for each meditation_timer
+#: stage-8 TEAL alternative — drives :func:`test_teal_timer_preset_seeds`.
+_TEAL_TIMER_SPECS: tuple[tuple[str, float, bool], ...] = (
+    ("Clairaudient Listening", 20, True),
+    ("Active Imagination Dialogue", 30, True),
+    ("Aura Scanning", 15, False),
+    ("Sangha Field Tuning", 15, False),
+    ("Reflective Tarot Draw", 5, False),
+    ("Sacred Pause", 5, False),
+)
+
+#: Open-ended count_up stage-8 TEAL alternatives —
+#: drives :func:`test_teal_count_up_preset_seeds`.
+_TEAL_COUNT_UP_NAMES: tuple[str, ...] = (
+    "Channeling Writing",
+    "Freedom Log",
+    "Hierarchical Re-Feeling",
+)
+
+#: All TEAL alternative names — used by the idempotency sweep below.
+_TEAL_ALTERNATIVE_NAMES: tuple[str, ...] = (
+    *(name for name, _, _ in _TEAL_TIMER_SPECS),
+    *_TEAL_COUNT_UP_NAMES,
+)
+
+
+@pytest.mark.parametrize(("name", "duration_minutes", "halfway_bell"), _TEAL_TIMER_SPECS)
+@pytest.mark.asyncio
+async def test_teal_timer_preset_seeds(
+    db_session: AsyncSession,
+    name: str,
+    duration_minutes: float,
+    halfway_bell: bool,
+) -> None:
+    """Each timer-mode TEAL stage-8 alternative seeds with the spec's duration."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == 8
+    assert row.mode == "meditation_timer"
+    assert row.description
+    assert row.instructions
+    assert row.default_duration_minutes == duration_minutes
+
+    cfg = MeditationTimerConfig.model_validate(row.mode_config)
+    assert cfg.duration_minutes == duration_minutes
+    assert cfg.halfway_bell is halfway_bell
+    assert cfg.start_bell is True
+    assert cfg.end_bell is True
+
+
+@pytest.mark.parametrize("name", _TEAL_COUNT_UP_NAMES)
+@pytest.mark.asyncio
+async def test_teal_count_up_preset_seeds(db_session: AsyncSession, name: str) -> None:
+    """Each open-ended TEAL stage-8 alternative seeds as a count_up preset."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == 8
+    assert row.mode == "count_up"
+    assert row.description
+    assert row.instructions
+    assert row.mode_config["soft_cap_minutes"] is None
+
+
 @pytest.mark.asyncio
 async def test_seed_is_idempotent_with_new_presets(db_session: AsyncSession) -> None:
     """Re-running the seeder leaves exactly one row for each alternative preset."""
@@ -317,7 +637,20 @@ async def test_seed_is_idempotent_with_new_presets(db_session: AsyncSession) -> 
     assert first == _EXPECTED_PRESET_COUNT
     assert second == 0
 
-    for name in ("Touch Grass", "Mindful Eating", "Find Shapes", "Find Colors"):
+    alternative_names = (
+        "Touch Grass",
+        "Mindful Eating",
+        "Find Shapes",
+        "Find Colors",
+        *(name for name, _, _ in _BEIGE_ALTERNATIVE_SPECS),
+        *(name for name, _, _ in _PURPLE_ALTERNATIVE_SPECS),
+        *(name for name, _, _ in _RED_ALTERNATIVE_SPECS),
+        *(name for name, _, _ in _BLUE_ALTERNATIVE_SPECS),
+        *(name for name, _, _ in _ORANGE_ALTERNATIVE_SPECS),
+        *_GREEN_ALTERNATIVE_NAMES,
+        *_TEAL_ALTERNATIVE_NAMES,
+    )
+    for name in alternative_names:
         result = await db_session.execute(select(Practice).where(Practice.name == name))
         assert len(result.scalars().all()) == 1
 
