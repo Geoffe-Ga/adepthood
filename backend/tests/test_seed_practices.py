@@ -565,6 +565,69 @@ async def test_green_count_up_preset_seeds(db_session: AsyncSession, name: str) 
     assert row.mode_config["soft_cap_minutes"] is None
 
 
+#: ``(name, duration_minutes, halfway_bell)`` rows for each meditation_timer
+#: stage-8 TEAL alternative — drives :func:`test_teal_timer_preset_seeds`.
+_TEAL_TIMER_SPECS: tuple[tuple[str, float, bool], ...] = (
+    ("Clairaudient Listening", 20, True),
+    ("Active Imagination Dialogue", 30, True),
+    ("Aura Scanning", 15, False),
+    ("Sangha Field Tuning", 15, False),
+    ("Reflective Tarot Draw", 5, False),
+    ("Sacred Pause", 5, False),
+)
+
+#: Open-ended count_up stage-8 TEAL alternatives —
+#: drives :func:`test_teal_count_up_preset_seeds`.
+_TEAL_COUNT_UP_NAMES: tuple[str, ...] = (
+    "Channeling Writing",
+    "Freedom Log",
+    "Hierarchical Re-Feeling",
+)
+
+#: All TEAL alternative names — used by the idempotency sweep below.
+_TEAL_ALTERNATIVE_NAMES: tuple[str, ...] = (
+    *(name for name, _, _ in _TEAL_TIMER_SPECS),
+    *_TEAL_COUNT_UP_NAMES,
+)
+
+
+@pytest.mark.parametrize(("name", "duration_minutes", "halfway_bell"), _TEAL_TIMER_SPECS)
+@pytest.mark.asyncio
+async def test_teal_timer_preset_seeds(
+    db_session: AsyncSession,
+    name: str,
+    duration_minutes: float,
+    halfway_bell: bool,
+) -> None:
+    """Each timer-mode TEAL stage-8 alternative seeds with the spec's duration."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == 8
+    assert row.mode == "meditation_timer"
+    assert row.description
+    assert row.instructions
+    assert row.default_duration_minutes == duration_minutes
+
+    cfg = MeditationTimerConfig.model_validate(row.mode_config)
+    assert cfg.duration_minutes == duration_minutes
+    assert cfg.halfway_bell is halfway_bell
+    assert cfg.start_bell is True
+    assert cfg.end_bell is True
+
+
+@pytest.mark.parametrize("name", _TEAL_COUNT_UP_NAMES)
+@pytest.mark.asyncio
+async def test_teal_count_up_preset_seeds(db_session: AsyncSession, name: str) -> None:
+    """Each open-ended TEAL stage-8 alternative seeds as a count_up preset."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == 8
+    assert row.mode == "count_up"
+    assert row.description
+    assert row.instructions
+    assert row.mode_config["soft_cap_minutes"] is None
+
+
 @pytest.mark.asyncio
 async def test_seed_is_idempotent_with_new_presets(db_session: AsyncSession) -> None:
     """Re-running the seeder leaves exactly one row for each alternative preset."""
@@ -584,6 +647,7 @@ async def test_seed_is_idempotent_with_new_presets(db_session: AsyncSession) -> 
         *(name for name, _, _ in _BLUE_ALTERNATIVE_SPECS),
         *(name for name, _, _ in _ORANGE_ALTERNATIVE_SPECS),
         *_GREEN_ALTERNATIVE_NAMES,
+        *_TEAL_ALTERNATIVE_NAMES,
     )
     for name in alternative_names:
         result = await db_session.execute(select(Practice).where(Practice.name == name))

@@ -807,6 +807,119 @@ _REACH_INWARD = (
 )
 
 
+# -- Stage 8 TEAL alternatives — integration / shamanic ---------------------
+
+
+#: Stage 8 alternative — Clairaudient Listening (meditation_timer mode).
+_CLAIRAUDIENT_LISTENING = (
+    "Twenty minutes of silent listening for the 'still small voice' "
+    "that speaks underneath ordinary thought.",
+    "Sit upright in a quiet room with the eyes closed. Settle the "
+    "breath until the mind grows quieter. Listen — not for sound, but "
+    "for the subtler voice that surfaces between thoughts. When a "
+    "phrase arrives, hold it gently without analysing. After the "
+    "halfway bell, ask one question silently and listen for whatever "
+    "answers. Stay with the listening until the closing bell.",
+)
+
+#: Stage 8 alternative — Channeling Writing (count_up mode).
+_CHANNELING_WRITING = (
+    "An open-ended channeling-writing practice: write the question "
+    "'What would you have me know?' and transcribe whatever arises.",
+    "Sit with a notebook and pen in a quiet space. At the top of the "
+    "page, write the question 'What would you have me know?' Then "
+    "write whatever comes — without editing, without judging the "
+    "voice or the content. If the page goes blank, write the "
+    "question again and continue. The timer counts up so you can "
+    "take as long as the writing asks for. Mark the session complete "
+    "when the practice feels finished.",
+)
+
+#: Stage 8 alternative — Active Imagination Dialogue (meditation_timer mode).
+_ACTIVE_IMAGINATION = (
+    "Thirty minutes of Jung's Active Imagination — inviting an inner "
+    "figure to appear and dialoguing with it as a distinct other.",
+    "Sit upright with the eyes closed. Invite a figure, animal, or "
+    "aspect of self to appear in mind's eye and let it take its own "
+    "shape. Greet it directly: 'who are you, and what have you come "
+    "to show me?' Listen to its reply without editing. After the "
+    "halfway bell, ask one more question and let the answer settle "
+    "in the body. Thank the figure before the closing bell.",
+)
+
+#: Stage 8 alternative — Aura Scanning (meditation_timer mode).
+_AURA_SCANNING = (
+    "Fifteen minutes of subtle-energy scanning of your own auric "
+    "field — sweeping attention through the layers around the body.",
+    "Sit upright with the eyes closed. Place attention a few inches "
+    "off the skin and slowly sweep up the body from feet to crown, "
+    "noticing any sensation of warmth, density, tingling, or colour. "
+    "Step the attention outward in turn — a hand's width, an arm's "
+    "length, a body's length — scanning each layer the same way. "
+    "Return through the layers in reverse until the closing bell.",
+)
+
+#: Stage 8 alternative — Sangha Field Tuning (meditation_timer mode).
+_SANGHA_FIELD_TUNING = (
+    "Fifteen minutes of tuning into the collective prayer field of a "
+    "community you belong to — sangha, congregation, lineage, scene.",
+    "Sit upright with the eyes closed. Bring to mind a community you "
+    "belong to — a meditation sangha, a faith congregation, a lineage "
+    "of teachers, a creative scene. Sense the felt presence of every "
+    "member holding the same intention you hold. Let your attention "
+    "rest in the shared field rather than in your own seat. Offer "
+    "and receive from the field equally until the closing bell.",
+)
+
+#: Stage 8 alternative — Freedom Log (count_up mode).
+_FREEDOM_LOG = (
+    "An open-ended re-patterning journal practice: list the conditions "
+    "currently constraining you, then re-write each as a freedom.",
+    "Sit with a notebook and pen. Down the left side of a page, list "
+    "the conditions you feel constrained by — habits, obligations, "
+    "fears, identities. On the right side, write each one's freedom "
+    "form — the unconstrained version of the same impulse. The timer "
+    "counts up so you can take as long as the practice asks for. "
+    "Mark the session complete when both columns feel finished.",
+)
+
+#: Stage 8 alternative — Hierarchical Re-Feeling (count_up mode).
+_HIERARCHICAL_RE_FEELING = (
+    "An open-ended journal practice: feel through a recent event "
+    "again at successively deeper levels of meaning.",
+    "Sit with a notebook and pen. Choose a recent event that still "
+    "carries charge. Write it once as fact (what happened). Write it "
+    "again as feeling (what it was like inside). Write it again as "
+    "meaning (what it was about). Write it again as initiation (what "
+    "it was preparing you for). The timer counts up so you can take "
+    "as long as the practice asks for. Mark the session complete "
+    "when ready.",
+)
+
+#: Stage 8 alternative — Reflective Tarot Draw (meditation_timer mode).
+_REFLECTIVE_TAROT_DRAW = (
+    "Five minutes of single-card reflection: draw one tarot card and "
+    "sit with the question 'what was the lesson?'",
+    "Shuffle a tarot deck and draw a single card. Place it in front "
+    "of you face-up. Sit upright and ask silently: 'what was the "
+    "lesson of today, of this event, of this relationship?' Look at "
+    "the image and let an answer arrive without forcing meaning onto "
+    "the suit or number. Rest with the card until the bell.",
+)
+
+#: Stage 8 alternative — Sacred Pause (meditation_timer mode).
+_SACRED_PAUSE = (
+    "Five minutes of Tara Brach's Sacred Pause — stopping completely "
+    "in the middle of life to meet whatever is here.",
+    "Sit upright wherever you are, even mid-activity. Take three slow "
+    "breaths and let the impulse to fix, plan, or move dissolve. "
+    "Notice without naming what is most alive in body, feeling, and "
+    "thought right now. Do nothing about it. When the bell sounds, "
+    "re-enter the day from the same posture but with the pause still "
+    "open underneath it.",
+)
+
+
 PRESET_COPY: dict[str, tuple[str, str]] = {
     "5-4-3-2-1 grounding": _S1,
     "Tarot meditation": _S2,
@@ -873,4 +986,13 @@ PRESET_COPY: dict[str, tuple[str, str]] = {
     "Letter to the Repressed Self": _LETTER_TO_REPRESSED_SELF,
     "Shadow Drawing": _SHADOW_DRAWING,
     "REACH Inward": _REACH_INWARD,
+    "Clairaudient Listening": _CLAIRAUDIENT_LISTENING,
+    "Channeling Writing": _CHANNELING_WRITING,
+    "Active Imagination Dialogue": _ACTIVE_IMAGINATION,
+    "Aura Scanning": _AURA_SCANNING,
+    "Sangha Field Tuning": _SANGHA_FIELD_TUNING,
+    "Freedom Log": _FREEDOM_LOG,
+    "Hierarchical Re-Feeling": _HIERARCHICAL_RE_FEELING,
+    "Reflective Tarot Draw": _REFLECTIVE_TAROT_DRAW,
+    "Sacred Pause": _SACRED_PAUSE,
 }

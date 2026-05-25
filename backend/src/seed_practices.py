@@ -674,6 +674,70 @@ _ALTERNATIVE_PRESETS: list[dict[str, Any]] = [
         mode_config=_meditation_timer(30, halfway_bell=True),
         default_duration_minutes=30,
     ),
+    # Stage 8 TEAL alternatives — integration / shamanic.
+    _build_preset(
+        8,
+        "Clairaudient Listening",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(20, halfway_bell=True),
+        default_duration_minutes=20,
+    ),
+    _build_preset(
+        8,
+        "Channeling Writing",
+        mode="count_up",
+        mode_config={"mode": "count_up", "soft_cap_minutes": None},
+        default_duration_minutes=_COUNT_UP_NOMINAL_DURATION_MINUTES,
+    ),
+    _build_preset(
+        8,
+        "Active Imagination Dialogue",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(30, halfway_bell=True),
+        default_duration_minutes=30,
+    ),
+    _build_preset(
+        8,
+        "Aura Scanning",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(15),
+        default_duration_minutes=15,
+    ),
+    _build_preset(
+        8,
+        "Sangha Field Tuning",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(15),
+        default_duration_minutes=15,
+    ),
+    _build_preset(
+        8,
+        "Freedom Log",
+        mode="count_up",
+        mode_config={"mode": "count_up", "soft_cap_minutes": None},
+        default_duration_minutes=_COUNT_UP_NOMINAL_DURATION_MINUTES,
+    ),
+    _build_preset(
+        8,
+        "Hierarchical Re-Feeling",
+        mode="count_up",
+        mode_config={"mode": "count_up", "soft_cap_minutes": None},
+        default_duration_minutes=_COUNT_UP_NOMINAL_DURATION_MINUTES,
+    ),
+    _build_preset(
+        8,
+        "Reflective Tarot Draw",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(5),
+        default_duration_minutes=5,
+    ),
+    _build_preset(
+        8,
+        "Sacred Pause",
+        mode="meditation_timer",
+        mode_config=_meditation_timer(5),
+        default_duration_minutes=5,
+    ),
 ]
 
 _PRESET_PRACTICES: list[dict[str, Any]] = [*_CANONICAL_PRESETS, *_ALTERNATIVE_PRESETS]
