@@ -93,8 +93,7 @@ export const useHabitActions = (
 
   return useMemo(
     () => ({
-      // Bound so a retry replays queued check-ins against the user's
-      // stored zone, not the API default (#269).
+      // Bound so retries replay queued check-ins against the stored zone (#269).
       loadHabits: () => habitManager.loadHabits(tz),
       updateGoal: habitManager.updateGoal,
       logUnit,

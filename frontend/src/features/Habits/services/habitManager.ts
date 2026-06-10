@@ -505,8 +505,7 @@ const revertOnFailure = (prev: Habit[], fallback: string): ((err: unknown) => vo
 const replayPendingCheckIns = async (tz?: string): Promise<void> => {
   const pending = await loadPendingCheckIns();
   if (pending.length === 0) return;
-  // The stored zone is authoritative for the server's day buckets; the
-  // device zone is the best stand-in when auth hasn't hydrated it yet.
+  // Device zone is the stand-in until auth hydrates the stored zone.
   const zone = tz ?? detectDeviceTimezone();
   const today = todayInUserTZ(zone);
   for (let i = 0; i < pending.length; i += 1) {
@@ -535,7 +534,18 @@ const replayPendingCheckIns = async (tz?: string): Promise<void> => {
 // but not itself a hook. Every method is independently unit-testable.
 // ---------------------------------------------------------------------------
 
+/**
+ * Zone from the most recent tz-carrying ``loadHabits`` call. Internal
+ * re-fetches (``addHabit``, ``onboardingSave``) call ``loadHabits()``
+ * without a zone; remembering the hook-supplied value here keeps their
+ * queued-check-in replays on the user's stored zone instead of silently
+ * falling back to the device's (#414 review).
+ */
+let lastKnownTz: string | undefined;
+
 const loadHabits = async (tz?: string): Promise<void> => {
+  if (tz !== undefined) lastKnownTz = tz;
+  const zone = tz ?? lastKnownTz;
   setLoading(true);
   setError(null);
   const cached = await loadCachedHabits();
@@ -559,7 +569,7 @@ const loadHabits = async (tz?: string): Promise<void> => {
   // ``return``-ed from the first failure with the successful prefix still
   // in the queue, so on the next load every check-in that had already
   // posted would post AGAIN — silent duplication of the user's streak.
-  await replayPendingCheckIns(tz);
+  await replayPendingCheckIns(zone);
 };
 
 export const habitManager = {

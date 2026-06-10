@@ -303,6 +303,26 @@ describe('habitManager', () => {
       });
     });
 
+    it('tz-less internal re-fetches reuse the last known zone (#414 review)', async () => {
+      (loadHabits as jest.Mock).mockResolvedValue([] as never);
+      (habitsApi.list as jest.Mock).mockResolvedValue([] as never);
+      (loadPendingCheckIns as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([
+        // 22:00 UTC is already April 2 in Pacific/Kiritimati (UTC+14),
+        // so the expected day proves the remembered zone is used — the
+        // device-zone fallback (UTC under jest) would say April 1.
+        { goal_id: 9, did_complete: true, timestamp: '2025-04-01T22:00:00Z' },
+      ] as never);
+
+      await habitManager.loadHabits('Pacific/Kiritimati');
+      await habitManager.loadHabits();
+
+      expect(goalCompletionsApi.create).toHaveBeenCalledWith({
+        goal_id: 9,
+        did_complete: true,
+        completed_on: '2025-04-02',
+      });
+    });
+
     it('keeps only the unprocessed suffix when replay fails mid-batch (BUG-FE-HABIT-205)', async () => {
       (loadHabits as jest.Mock).mockResolvedValueOnce([] as never);
       (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never);
