@@ -104,6 +104,18 @@ const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   ...overrides,
 });
 
+/** Server-default goal shape returned by the post-recovery re-fetch (#286 tests). */
+const freshServerGoal = (id: number, title: string, tier: string, target: number) => ({
+  id,
+  title,
+  tier,
+  target,
+  target_unit: 'units',
+  frequency: 1,
+  frequency_unit: 'per_day',
+  is_additive: true,
+});
+
 const resetStore = () => {
   useHabitStore.setState({ habits: [], loading: false, error: null });
 };
@@ -161,16 +173,6 @@ describe('habitManager', () => {
         g.tier === 'clear' ? { ...g, target: 30, target_unit: 'minutes' } : g,
       );
       (loadHabits as jest.Mock).mockResolvedValueOnce([cachedHabit] as never);
-      const freshServerGoal = (id: number, title: string, tier: string, target: number) => ({
-        id,
-        title,
-        tier,
-        target,
-        target_unit: 'units',
-        frequency: 1,
-        frequency_unit: 'per_day',
-        is_additive: true,
-      });
       (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([
         {
           id: 99,
@@ -203,6 +205,57 @@ describe('habitManager', () => {
       const clear = useHabitStore.getState().habits[0]!.goals.find((g) => g.tier === 'clear')!;
       expect(clear.target).toBe(30);
       expect(clear.target_unit).toBe('minutes');
+    });
+
+    it('one failed replay PUT does not abort the remaining goals (#286)', async () => {
+      // Both clear AND stretch carry customizations; the clear PUT fails.
+      // Best-effort-per-goal is the core design choice: stretch must still
+      // replay, and the store must keep the server default for clear only.
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      const cachedHabit = makeHabit({ id: 1, name: 'Pranayama' });
+      cachedHabit.goals = cachedHabit.goals.map((g) => {
+        if (g.tier === 'clear') return { ...g, target: 30, target_unit: 'minutes' };
+        if (g.tier === 'stretch') return { ...g, target: 40, target_unit: 'minutes' };
+        return g;
+      });
+      (loadHabits as jest.Mock).mockResolvedValueOnce([cachedHabit] as never);
+      (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([
+        {
+          id: 99,
+          name: 'Pranayama',
+          icon: cachedHabit.icon,
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          goals: [
+            freshServerGoal(991, 'Low', 'low', 1),
+            freshServerGoal(992, 'Clear', 'clear', 2),
+            freshServerGoal(993, 'Stretch', 'stretch', 3),
+          ],
+        },
+      ] as never);
+      (goalsApi.update as jest.Mock)
+        .mockRejectedValueOnce(new Error('server hiccup') as never)
+        .mockResolvedValueOnce({} as never);
+
+      await habitManager.loadHabits();
+
+      // The clear failure did not abort the stretch replay.
+      expect(goalsApi.update).toHaveBeenCalledTimes(2);
+      const goals = useHabitStore.getState().habits[0]!.goals;
+      const clear = goals.find((g) => g.tier === 'clear')!;
+      const stretch = goals.find((g) => g.tier === 'stretch')!;
+      // Stretch (accepted) shows the customization; clear (rejected) keeps
+      // the server default rather than lying about unsaved state.
+      expect(stretch.target).toBe(40);
+      expect(stretch.target_unit).toBe('minutes');
+      expect(clear.target).toBe(2);
+      expect(clear.target_unit).toBe('units');
+      expect(warnSpy).toHaveBeenCalled();
+      warnSpy.mockRestore();
     });
 
     it('recovers stuck users by pushing cached habits when the server has none', async () => {
