@@ -1,3 +1,10 @@
 * text=auto eol=lf
 *.sh text eol=lf
 *.bat text eol=crlf
+
+# Vendored course content (synced from aptitude-course by scripts/sync_content.py;
+# committed so the deploy image is reproducible and pin bumps are reviewable).
+# The manifest schema/example beside it are first-party and NOT marked vendored.
+backend/content/markdown/** linguist-vendored
+backend/content/manifest.json linguist-vendored
+backend/content/CONTENT_VERSION linguist-vendored
