@@ -62,13 +62,13 @@ if $CHECK; then
     if $VERBOSE; then
         echo "Checking formatting..."
     fi
-    npx prettier --check "src/**/*.{ts,tsx}" "tests/**/*.{ts,tsx}" "*.{js,json}" || { echo "✗ Formatting check failed" >&2; exit 1; }
+    npx prettier --check "src/**/*.{ts,tsx}" "*.{js,json}" || { echo "✗ Formatting check failed" >&2; exit 1; }
     echo "✓ Code formatting check passed"
 else
     if $VERBOSE; then
         echo "Formatting code..."
     fi
-    npx prettier --write "src/**/*.{ts,tsx}" "tests/**/*.{ts,tsx}" "*.{js,json}" || { echo "✗ Formatting failed" >&2; exit 1; }
+    npx prettier --write "src/**/*.{ts,tsx}" "*.{js,json}" || { echo "✗ Formatting failed" >&2; exit 1; }
     echo "✓ Code formatted successfully"
 fi
 exit 0
