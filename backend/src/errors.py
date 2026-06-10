@@ -83,7 +83,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     a header value rather than parse JSON for support escalation.
 
     Reads the request ID from ``request.state.request_id`` (set by
-    :class:`middleware.trace_id.CorrelationIdMiddleware`) because the
+    :class:`observability.CorrelationIdMiddleware`) because the
     contextvar copy has already been reset by the middleware's
     ``finally`` block by the time Starlette dispatches this handler —
     the contextvar is only a fallback for the bare-app test fixtures

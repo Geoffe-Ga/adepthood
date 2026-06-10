@@ -327,6 +327,33 @@ options:
 
 ---
 
+## Wallet Audit Hardening (Post-Deploy)
+
+The `walletaudit` table is the forensic record for every wallet mutation
+(spends, grants, monthly resets). The schema migration deliberately does
+**not** include a role-specific `GRANT`/`REVOKE` — role names differ
+between CI (`aptitude`) and production (`adepthood`) and a hardcoded name
+would break one of them. Apply the append-only lock manually once per
+environment, immediately after the first deploy that creates the table:
+
+```sql
+-- Run as the database owner / superuser, substituting your app role:
+REVOKE UPDATE, DELETE ON walletaudit FROM adepthood;
+```
+
+After this, a compromised application credential can still *insert* audit
+rows (normal operation) but cannot rewrite or erase history. Verify with:
+
+```sql
+SELECT privilege_type
+FROM information_schema.role_table_grants
+WHERE table_name = 'walletaudit' AND grantee = 'adepthood';
+-- Expect INSERT and SELECT only — no UPDATE, no DELETE.
+```
+
+Issue #272 tracks the decision to keep this as a deploy-time recipe rather
+than a migration.
+
 ## Environment Variables Reference
 
 ### Backend

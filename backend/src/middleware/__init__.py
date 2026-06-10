@@ -15,7 +15,12 @@ from __future__ import annotations
 
 from middleware.logging import RequestLoggingMiddleware
 from middleware.security_headers import SecurityHeadersMiddleware
-from middleware.trace_id import CorrelationIdMiddleware
+
+# ``CorrelationIdMiddleware`` lives in :mod:`observability` next to the
+# contextvar and log filter it depends on (issue #272 dropped the
+# logic-free ``middleware/trace_id.py`` re-export module; this package
+# import is the single composition point :mod:`main` and tests use).
+from observability import CorrelationIdMiddleware
 
 __all__ = [
     "CorrelationIdMiddleware",

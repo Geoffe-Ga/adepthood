@@ -61,6 +61,12 @@ fixable = ["ALL"]
 "backend/tests/**/*.py" = ["S101", "S105", "S106", "S107", "PLR2004", "FBT001", "FBT003"]
 "conftest.py" = ["S101"]
 "backend/conftest.py" = ["S101"]
+# Issue #272: ``lifespan`` deliberately lazy-imports ``models`` (one-time
+# SQLModel metadata registration; unused-name F401 is the point) and
+# ``_get_secret_key`` (import-cycle avoidance; PLC0415).  Scoped here so
+# the exception is explicit and discoverable instead of inline noqa.
+"src/main.py" = ["F401", "PLC0415"]
+"backend/src/main.py" = ["F401", "PLC0415"]
 
 [tool.ruff.lint.isort]
 # ``conftest`` lives at backend/conftest.py (outside ``src/``) but is

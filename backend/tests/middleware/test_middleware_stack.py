@@ -25,21 +25,34 @@ from observability import TRACE_ID_HEADER, TraceIdLogFilter
 client = TestClient(app)
 
 
-# Expected outermost → innermost order.  ``app.user_middleware`` is stored
-# outermost-first so this list compares directly against ``[m.cls.__name__
-# for m in app.user_middleware]``.
-EXPECTED_ORDER: list[str] = [
-    "RequestLoggingMiddleware",
-    "CorrelationIdMiddleware",
-    "SecurityHeadersMiddleware",
-    "CORSMiddleware",
-    "SlowAPIMiddleware",
-]
+def test_every_middleware_side_effect_fires_on_one_request(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """BUG-APP-001 behaviour pin: every layer's observable effect on one request.
 
-
-def test_middleware_registered_outer_to_inner() -> None:
-    """BUG-APP-001: stack order is logging -> trace-id -> security -> CORS -> rate-limit."""
-    assert [getattr(m.cls, "__name__", repr(m.cls)) for m in app.user_middleware] == EXPECTED_ORDER
+    Replaces the old ``app.user_middleware`` introspection (issue #272),
+    which coupled the test to a Starlette-internal attribute.  A single
+    ordinary request must simultaneously show each layer did its job —
+    access log (logging, outermost), trace-id echo (correlation),
+    security headers (security), and the CORS expose header (CORS) —
+    which is only possible when every layer wrapped the response.  The
+    preflight tests below pin the relative ordering edge cases.
+    """
+    with caplog.at_level(logging.INFO, logger="adepthood.access"):
+        response = client.get(
+            "/auth/login",
+            headers={TRACE_ID_HEADER: "stack-probe-1", "Origin": "http://localhost:3000"},
+        )
+    # SecurityHeadersMiddleware wrapped the response.
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert "Content-Security-Policy" in response.headers
+    # CorrelationIdMiddleware echoed the inbound trace id.
+    assert response.headers[TRACE_ID_HEADER] == "stack-probe-1"
+    # CORSMiddleware exposed the trace id to cross-origin readers.
+    exposed = response.headers.get("access-control-expose-headers", "")
+    assert TRACE_ID_HEADER.lower() in exposed.lower()
+    # RequestLoggingMiddleware (outermost) emitted the access record.
+    assert any(r.message == "request_completed" for r in caplog.records)
 
 
 def test_preflight_response_carries_security_headers() -> None:

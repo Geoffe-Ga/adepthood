@@ -1,6 +1,6 @@
 """Request-logging middleware — outermost layer of the ASGI stack.
 
-Sits *outside* :class:`middleware.trace_id.CorrelationIdMiddleware` so the
+Sits *outside* :class:`observability.CorrelationIdMiddleware` so the
 log line emitted for every request always carries a ``trace_id`` field
 (the trace-id middleware sets the contextvar before this middleware's
 ``call_next`` returns).  Keeping it outermost means even a panic from

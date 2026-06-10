@@ -24,20 +24,28 @@ records instead of changing this file.
 
 from __future__ import annotations
 
+from typing import TypedDict, Unpack
 
-# ``object`` (not ``Any``) for the kwargs so callers can drop arbitrary
-# context (request_id, user_id, sql query, ...) without us having to
-# enumerate every shape — and so the ``ALL`` ruff config does not reject
-# the signature on ANN401.  Each call site already documents what it
-# passes in its own surrounding code.
-#
-# Security note: callers are responsible for not passing secrets in
-# ``context``.  Today the shim is a no-op so a leaked credential goes
-# nowhere, but the moment the real SDK lands the same call would ship
-# the value to Sentry.  The unhandled-exception handler in
-# :mod:`errors` only forwards request id, path, and method — none of
-# which are sensitive.
-def capture_exception(exc: BaseException, **context: object) -> None:
+
+class SentryContext(TypedDict, total=False):
+    """Closed allow-list of context fields a capture may attach (issue #272).
+
+    The shim used to take ``**context: object``, which type-checked a
+    future call like ``capture_exception(exc, token=bearer)`` — a
+    credential that would ship to Sentry the moment the real DSN lands.
+    Narrowing the kwargs to this TypedDict makes any new field an
+    explicit, reviewed decision: add it here (with a sensitivity check)
+    before a call site can pass it.
+    """
+
+    request_id: str
+    request_path: str
+    request_method: str
+
+
+# Security note: the allow-list above is the guard rail — none of the
+# permitted fields are sensitive, and mypy rejects anything outside it.
+def capture_exception(exc: BaseException, **context: Unpack[SentryContext]) -> None:
     """Record an unhandled exception (no-op until the real SDK ships).
 
     Intentionally does nothing today; the call-site logger has already

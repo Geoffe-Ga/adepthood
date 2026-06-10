@@ -64,8 +64,13 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
             send them to support so we can fix it.
           </Text>
           <Text style={styles.message}>{this.state.error.message}</Text>
-          {this.state.error.stack ? (
-            <Text style={styles.stack}>{this.state.error.stack}</Text>
+          {/* Issue #272: the verbatim JS stack leaks file paths and internal
+              function names — development builds only. Production users get
+              the message plus the copy-to-support guidance above. */}
+          {__DEV__ && this.state.error.stack ? (
+            <Text style={styles.stack} testID="error-boundary-stack">
+              {this.state.error.stack}
+            </Text>
           ) : null}
           <TouchableOpacity
             accessibilityLabel="Try again"

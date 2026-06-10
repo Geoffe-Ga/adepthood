@@ -381,3 +381,60 @@ async def test_reset_monthly_usage_no_audit_when_not_due(db_session: AsyncSessio
 
     rows = await _audit_rows(db_session, user.id)
     assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_reset_audit_balance_before_under_racing_spend_is_within_one(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #272: pin the documented forensic tolerance on ``balance_before``.
+
+    ``reset_monthly_usage_if_due`` snapshots ``monthly_messages_used``
+    *before* its UPDATE, so a spender landing inside that window makes
+    the rollover audit row under-report ``balance_before`` by exactly
+    one — the tolerance the inline comment in :mod:`services.wallet`
+    promises.  The interleave is injected deterministically by wrapping
+    ``get_user_fresh`` so the "concurrent" spend lands between the
+    snapshot read and the reset UPDATE.  If a refactor ever tightens
+    the invariant (snapshot taken atomically with the UPDATE), the
+    equality below fails — update the wallet.py comment and this test
+    together.
+    """
+    seeded_used = 3
+    user = await _make_user(db_session, monthly_used=seeded_used, reset_in_days=-1)
+    assert user.id is not None
+    user_id = user.id
+
+    import services.wallet as wallet_module  # noqa: PLC0415  # Issue #272: patch target
+
+    real_get_user_fresh = wallet_module.get_user_fresh
+
+    async def read_then_lose_race(session: AsyncSession, uid: int) -> User | None:
+        snapshot = await real_get_user_fresh(session, uid)
+        # The racing spender bumps the counter AFTER the snapshot read but
+        # BEFORE the reset UPDATE.  ``synchronize_session=False`` keeps the
+        # in-memory snapshot stale, exactly like a separate transaction.
+        from sqlalchemy import update as sa_update  # noqa: PLC0415  # Issue #272: test-local
+
+        await session.execute(
+            sa_update(User)
+            .where(col(User.id) == uid)
+            .values(monthly_messages_used=seeded_used + 1)
+            .execution_options(synchronize_session=False)
+        )
+        return snapshot
+
+    monkeypatch.setattr(wallet_module, "get_user_fresh", read_then_lose_race)
+
+    await reset_monthly_usage_if_due(db_session, user_id, datetime.now(UTC).replace(tzinfo=None))
+    await db_session.commit()
+
+    rows = await _audit_rows(db_session, user_id)
+    assert len(rows) == 1
+    true_pre_reset = seeded_used + 1
+    under_report = true_pre_reset - int(rows[0].balance_before)
+    assert under_report == 1, "balance_before tolerance changed — sync wallet.py's comment"
+    # The reset itself stays exactly-once regardless of the race.
+    refreshed = await real_get_user_fresh(db_session, user_id)
+    assert refreshed is not None
+    assert refreshed.monthly_messages_used == 0
