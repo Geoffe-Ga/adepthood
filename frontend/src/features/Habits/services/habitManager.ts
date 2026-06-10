@@ -28,6 +28,7 @@ import {
   replacePendingCheckIns,
 } from '../../../storage/habitStorage';
 import { useHabitStore } from '../../../store/useHabitStore';
+import { useProgramStore } from '../../../store/useProgramStore';
 import { dayKeyInTZ, todayInUserTZ } from '../../../utils/dateUtils';
 import { HABIT_DEFAULTS } from '../HabitDefaults';
 import type { AddHabitInput, Goal, Habit, OnboardingHabit } from '../Habits.types';
@@ -285,6 +286,21 @@ const buildAddedHabit = (input: AddHabitInput, existingCount: number): Habit => 
     revealed: true,
     sort_order: existingCount,
   };
+};
+
+/**
+ * Earliest habit start date — the day the program begins. Habit start dates
+ * are laid out by stage position, so index 0 is normally the earliest, but we
+ * take the min defensively in case a caller hands us an unsorted list.
+ */
+const earliestStartDate = (habits: OnboardingHabit[]): Date | null => {
+  let earliest: number | null = null;
+  for (const habit of habits) {
+    const time = new Date(habit.start_date).getTime();
+    if (Number.isNaN(time)) continue;
+    if (earliest === null || time < earliest) earliest = time;
+  }
+  return earliest === null ? null : new Date(earliest);
 };
 
 const syncOnboardingHabits = async (fullHabits: ReturnType<typeof buildOnboardingHabits>) => {
@@ -783,6 +799,13 @@ export const habitManager = {
   onboardingSave: async (newHabits: OnboardingHabit[], showToast?: ShowToast): Promise<void> => {
     const fullHabits = buildOnboardingHabits(newHabits);
     setHabits(fullHabits as Habit[]);
+    // Anchor the universal course calendar to the first habit's start date so
+    // the Map, Practice, Course, Journal and habit-unlock logic all derive the
+    // same stage/week from one source. Without this a freshly-onboarded user
+    // has a null anchor and every screen silently falls back to divergent
+    // server/position values.
+    const anchor = earliestStartDate(newHabits);
+    if (anchor) useProgramStore.getState().setProgramStartDate(anchor);
     showToast?.({
       message: 'Tap a habit tile to edit its goals.',
       icon: '\u{1F449}',

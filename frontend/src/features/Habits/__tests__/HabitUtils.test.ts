@@ -12,6 +12,7 @@ import {
   calculateTodaysProgress,
   getProgressBarColor,
   isGoalAchieved,
+  isHabitLockedToday,
   logHabitUnits,
   calculateHabitStartDate,
   STAGE_DURATIONS_DAYS,
@@ -592,5 +593,59 @@ describe('HabitUtils', () => {
       expect(currentGoal.tier).toBe('low');
       expect(completedAllGoals).toBe(false);
     });
+  });
+});
+
+describe('isHabitLockedToday', () => {
+  const NOW = new Date('2026-04-06T12:00:00Z').getTime();
+  const make = (overrides: Partial<Habit>): Habit =>
+    ({
+      id: 1,
+      name: 'H',
+      icon: '🔒',
+      stage: 'Purple',
+      streak: 0,
+      energy_cost: 0,
+      energy_return: 0,
+      start_date: new Date('2026-04-06T00:00:00Z'),
+      goals: [],
+      completions: [],
+      ...overrides,
+    }) as Habit;
+
+  test('locked when unrevealed and start_date is still in the future', () => {
+    const habit = make({ revealed: false, start_date: new Date('2026-05-01T00:00:00Z') });
+    expect(isHabitLockedToday(habit, NOW)).toBe(true);
+  });
+
+  test('unlocked once the calendar reaches its start_date, even if revealed is stale-false', () => {
+    // The Purple habit: start_date has passed but the server flag was never
+    // flipped. The calendar (start_date <= today) must win so the screen
+    // tracks the same stage the Map/Practice show.
+    const habit = make({ revealed: false, start_date: new Date('2026-04-01T00:00:00Z') });
+    expect(isHabitLockedToday(habit, NOW)).toBe(false);
+  });
+
+  test('unlocked when manually revealed ahead of its start_date', () => {
+    const habit = make({ revealed: true, start_date: new Date('2026-05-01T00:00:00Z') });
+    expect(isHabitLockedToday(habit, NOW)).toBe(false);
+  });
+
+  test('unrevealed (undefined) future habit is treated as unlocked, matching prior contract', () => {
+    const habit = make({ revealed: undefined, start_date: new Date('2026-05-01T00:00:00Z') });
+    expect(isHabitLockedToday(habit, NOW)).toBe(false);
+  });
+
+  test('accepts ISO string start dates (server payloads arrive unparsed)', () => {
+    // The API delivers ``start_date`` as an ISO string before it is mapped to
+    // a Date, so the helper must tolerate both. Cast through ``unknown`` since
+    // the Habit type declares the post-parse ``Date``.
+    const iso = (value: string) => value as unknown as Date;
+    expect(isHabitLockedToday(make({ revealed: false, start_date: iso('2999-01-01') }), NOW)).toBe(
+      true,
+    );
+    expect(isHabitLockedToday(make({ revealed: false, start_date: iso('2000-01-01') }), NOW)).toBe(
+      false,
+    );
   });
 });

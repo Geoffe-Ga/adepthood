@@ -29,7 +29,7 @@ import {
 } from '../../store/useStageStore';
 
 import styles from './Map.styles';
-import { stageService } from './services/stageService';
+import { stageService, isStageUnlocked } from './services/stageService';
 import type { StageData } from './stageData';
 
 const FULL_PROGRESS = 1;
@@ -62,7 +62,7 @@ const ConnectionLines = ({ stages }: { stages: StageData[] }): React.JSX.Element
 );
 
 const getHotspotStyle = (stage: StageData, currentStage: number | null) => {
-  if (!stage.isUnlocked) return styles.hotspotLocked;
+  if (!isStageUnlocked(stage, currentStage)) return styles.hotspotLocked;
   if (stage.stageNumber === currentStage) return styles.hotspotCurrent;
   if (stage.progress >= FULL_PROGRESS) return styles.hotspotCompleted;
   return null;
@@ -99,7 +99,7 @@ const StageHotspots = ({
           accessibilityLabel={`${stage.title} - ${stage.subtitle}`}
           accessibilityRole="button"
         >
-          {!stage.isUnlocked && (
+          {!isStageUnlocked(stage, currentStage) && (
             <View style={styles.lockOverlay}>
               <Text style={styles.lockText}>🔒</Text>
             </View>

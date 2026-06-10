@@ -21,7 +21,12 @@ import StatsModal from './components/StatsModal';
 import styles from './Habits.styles';
 import type { AddHabitInput, Habit, HabitStatsData } from './Habits.types';
 import HabitTile from './HabitTile';
-import { generateStatsForHabit, toLocalHabitStats, calculateMissedDays } from './HabitUtils';
+import {
+  generateStatsForHabit,
+  toLocalHabitStats,
+  calculateMissedDays,
+  isHabitLockedToday,
+} from './HabitUtils';
 import { useHabits } from './hooks/useHabits';
 import { useModalCoordinator } from './hooks/useModalCoordinator';
 import { usePagination } from './hooks/usePagination';
@@ -434,7 +439,12 @@ const useHabitTileRenderer = (
   pageOffset = 0,
 ) => {
   const renderHabitTile = ({ item, index }: { item: Habit; index: number }) => {
-    const isLocked = item.revealed === false;
+    // Lock state follows the universal course calendar: a habit's
+    // ``start_date`` lands on the day the calendar enters its stage, so once
+    // that date passes the tile unlocks even if the server ``revealed`` flag
+    // is stale. This keeps the Habits screen in lockstep with the Map /
+    // Practice / Course stage. ``revealed`` still gates manual early unlock.
+    const isLocked = isHabitLockedToday(item);
     const globalIndex = pageOffset + index;
     // index is page-relative, so each page restarts the Beige → Clear Light gradient.
     const stageColor = STAGE_COLORS[STAGE_ORDER[index % STAGE_ORDER.length]!]!;
