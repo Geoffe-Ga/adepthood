@@ -43,23 +43,32 @@ HABIT_WITH_GOALS_AND_COMPLETIONS: _AbstractLoad = HABIT_WITH_GOALS.selectinload(
 )
 
 
-def habit_with_recent_completions(cutoff: datetime) -> _AbstractLoad:
-    """Habit -> goals -> completions newer than ``cutoff`` (issue #294).
+def habit_with_recent_completions(cutoff: datetime, user_id: int) -> _AbstractLoad:
+    """Habit -> goals -> caller-owned completions newer than ``cutoff``.
 
-    The unbounded ``HABIT_WITH_GOALS_AND_COMPLETIONS`` chain ships an
-    account's entire completion history on every habit GET — linear
-    payload growth over the account's lifetime.  This windowed variant
-    trims the *transport* via a query-time ``.and_()`` predicate; the
-    rows themselves stay in the database and still feed the unwindowed
-    consumers (the stats endpoint's all-time aggregates).  Built per
-    request because ``cutoff`` is relative to now.
+    Two query-time predicates, one loader:
+
+    * ``timestamp >= cutoff`` (issue #294) bounds the transport so habit
+      GET payloads stop growing with account age.  Rows stay in the DB
+      and still feed the unwindowed stats consumers.
+    * ``user_id`` (issue #296) replaces the old in-memory
+      ``_filter_completions_to_caller``, whose collection replacement
+      marked cross-tenant rows for a ``goal_id=NULL`` flush — a
+      data-loss/IntegrityError footgun for any write issued after a GET.
+      Filtering in SQL means the ORM relation is never mutated in Python
+      and misuse is impossible by construction.
+
+    Built per request: ``cutoff`` is relative to now and ``user_id`` is
+    the caller.
     """
     # ``attr-defined``: SQLModel types ``Goal.completions`` statically as
     # ``list[GoalCompletion]``; SQLAlchemy's relationship comparator adds
     # ``.and_`` at runtime — the same class-vs-instance attr quirk the
     # bare ``selectinload`` ignores above paper over (issue #294).
     return selectinload(Habit.goals).selectinload(  # type: ignore[arg-type]
-        Goal.completions.and_(GoalCompletion.timestamp >= cutoff)  # type: ignore[attr-defined]
+        Goal.completions.and_(  # type: ignore[attr-defined]
+            (GoalCompletion.timestamp >= cutoff) & (GoalCompletion.user_id == user_id)
+        )
     )
 
 

@@ -121,12 +121,6 @@ async def _streak_completions_by_habit(
     return by_habit
 
 
-def _filter_completions_to_caller(habit: Habit, current_user: int) -> None:
-    """Drop cross-tenant completions; callers must NOT commit (orphan-delete cascade)."""
-    for goal in habit.goals:
-        goal.completions = [c for c in goal.completions if c.user_id == current_user]
-
-
 def _build_default_goals(habit_id: int, habit_name: str) -> list[Goal]:
     """Three-tier default goals for a newly-created habit."""
     return [
@@ -188,12 +182,12 @@ async def _persist_habit_with_default_goals(session: AsyncSession, habit: Habit)
     return new_id
 
 
-async def _refetch_with_goals(session: AsyncSession, habit_id: int) -> Habit:
+async def _refetch_with_goals(session: AsyncSession, habit_id: int, current_user: int) -> Habit:
     """Re-load a habit with eager goals to avoid greenlet lazy-load errors."""
     statement = (
         select(Habit)
         .where(Habit.id == habit_id)
-        .options(habit_with_recent_completions(_recent_completions_cutoff()))
+        .options(habit_with_recent_completions(_recent_completions_cutoff(), current_user))
         .execution_options(populate_existing=True)
     )
     result = await session.execute(statement)
@@ -218,7 +212,7 @@ async def create_habit(
     await _ensure_unique_name(session, current_user, payload.name)
     habit = Habit(user_id=current_user, **payload.model_dump())
     new_id = await _persist_habit_with_default_goals(session, habit)
-    refreshed = await _refetch_with_goals(session, new_id)
+    refreshed = await _refetch_with_goals(session, new_id, current_user)
     logger.info("habit_created", extra={"user_id": current_user, "habit_id": refreshed.id})
     return refreshed
 
@@ -235,7 +229,7 @@ async def list_habits(
     query = (
         select(Habit)
         .where(Habit.user_id == current_user)
-        .options(habit_with_recent_completions(_recent_completions_cutoff()))
+        .options(habit_with_recent_completions(_recent_completions_cutoff(), current_user))
         # See _get_habit_with_completions: keep the windowed view authoritative
         # even when an unwindowed loader ran earlier on this session.
         .execution_options(populate_existing=True)
@@ -243,8 +237,6 @@ async def list_habits(
     )
     items, total = await paginate_query(session, query, pagination)
     await _populate_streaks_for(session, items, current_user, user_tz)
-    for habit in items:
-        _filter_completions_to_caller(habit, current_user)
     serialized = [HabitWithGoals.model_validate(h, from_attributes=True) for h in items]
     if pagination.paginate:
         return build_page(serialized, total, pagination)
@@ -261,7 +253,6 @@ async def get_habit(
     """Return a single habit (with eager-loaded goals + completions) for the caller."""
     habit = await _get_habit_with_completions(habit_id, current_user, session)
     await _populate_streaks_for(session, [habit], current_user, user_tz)
-    _filter_completions_to_caller(habit, current_user)
     return habit
 
 
@@ -329,7 +320,7 @@ async def _get_habit_with_completions(
     full history for all-time consumers like the stats endpoint.
     """
     loader = (
-        habit_with_recent_completions(_recent_completions_cutoff())
+        habit_with_recent_completions(_recent_completions_cutoff(), current_user)
         if windowed
         else HABIT_WITH_GOALS_AND_COMPLETIONS
     )

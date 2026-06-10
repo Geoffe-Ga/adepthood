@@ -715,3 +715,40 @@ async def test_streak_is_not_clipped_by_the_transport_window(
     collection = await async_client.get("/habits/", headers=headers)
     listed = next(h for h in collection.json() if h["id"] == habit_id)
     assert listed["streak"] == streak_days
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_completions_survive_a_commit_after_get(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Issue #296: the completions filter must be query-time, not in-memory.
+
+    The old ``_filter_completions_to_caller`` replaced the back-populated
+    ORM collection, so any ``commit()`` issued after a habit GET flushed
+    the filtered-out rows' disassociation to disk — a cross-tenant
+    data-loss footgun guarded only by a docstring. With the filter at the
+    query layer the relation is never touched in Python and this commit
+    is a harmless no-op.
+    """
+    headers = await _signup(async_client, "tenantguard")
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    habit_id = create_resp.json()["id"]
+    goal_id = next(g["id"] for g in create_resp.json()["goals"] if g["tier"] == "clear")
+
+    stray = GoalCompletion(goal_id=goal_id, user_id=999_999, completed_units=42.0)
+    db_session.add(stray)
+    await db_session.commit()
+    stray_id = stray.id
+
+    # Both GET paths run the filter; the route shares this session.
+    await async_client.get(f"/habits/{habit_id}", headers=headers)
+    await async_client.get("/habits/", headers=headers)
+
+    # The write a future caller might add after the filter (the footgun).
+    await db_session.commit()
+
+    db_session.expire_all()
+    persisted = await db_session.get(GoalCompletion, stray_id)
+    assert persisted is not None, "cross-tenant completion row was lost by a post-GET commit"
+    assert persisted.goal_id == goal_id
+    assert persisted.user_id == 999_999
