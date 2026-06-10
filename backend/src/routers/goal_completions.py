@@ -15,6 +15,7 @@ from sqlmodel import col, select
 
 from database import get_session
 from dependencies.ownership import log_ownership_denied
+from dependencies.timezone import current_user_timezone
 from domain.dates import day_bounds_in_tz, today_in_tz
 from domain.streaks import is_scheduled_on
 from errors import bad_request, forbidden, not_found
@@ -29,7 +30,6 @@ from services.streaks import (
     compute_consecutive_streak,
     update_streak,
 )
-from services.users import get_user_timezone
 
 
 @dataclass(frozen=True)
@@ -291,6 +291,7 @@ async def create_goal_completion(
     payload: GoalCompletionRequest,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> CheckInResult:
     """Record a check-in and return updated streak and milestones.
 
@@ -300,7 +301,6 @@ async def create_goal_completion(
     expensive streak query so duplicate retries fail fast.
     """
     goal, habit, goal_id = await _get_owned_goal_and_habit(session, payload.goal_id, current_user)
-    user_tz = await get_user_timezone(session, current_user)
     target_day = _resolve_target_day(payload.completed_on, user_tz)
     subtractive = await _subtractive_context_for_goal(session, habit, goal)
 

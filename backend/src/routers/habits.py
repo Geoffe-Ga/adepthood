@@ -13,6 +13,7 @@ from sqlmodel import col, select
 
 from database import get_session
 from dependencies.ownership import log_ownership_denied, require_owned_habit
+from dependencies.timezone import current_user_timezone
 from domain.habit_stats import compute_habit_stats
 from errors import conflict, forbidden, not_found
 from load_options import HABIT_WITH_GOALS_AND_COMPLETIONS
@@ -26,7 +27,6 @@ from schemas.habit import HabitCreate, HabitWithGoals
 from schemas.habit_stats import HabitStats
 from schemas.pagination import paginate_query
 from services.streaks import SubtractiveContext, compute_habit_streak
-from services.users import get_user_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +172,7 @@ async def list_habits(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     pagination: Annotated[PaginationParams, Depends()],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> Page[HabitWithGoals] | list[HabitWithGoals]:
     """Return habits sorted by ``sort_order``; paginated when ``?paginate=true``."""
     # Eager-load goals + completions; dropping this triggers MissingGreenlet downstream.
@@ -182,7 +183,6 @@ async def list_habits(
         .order_by(Habit.sort_order.asc())  # type: ignore[union-attr]
     )
     items, total = await paginate_query(session, query, pagination)
-    user_tz = await get_user_timezone(session, current_user)
     for habit in items:
         _populate_streak(habit, current_user, user_tz)
         _filter_completions_to_caller(habit, current_user)
@@ -197,10 +197,10 @@ async def get_habit(
     habit_id: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> Habit:
     """Return a single habit (with eager-loaded goals + completions) for the caller."""
     habit = await _get_habit_with_completions(habit_id, current_user, session)
-    user_tz = await get_user_timezone(session, current_user)
     _populate_streak(habit, current_user, user_tz)
     _filter_completions_to_caller(habit, current_user)
     return habit
@@ -280,9 +280,9 @@ async def get_habit_stats(
     habit_id: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> HabitStats:
     """Return aggregated statistics for a habit's goal completions."""
     habit = await _get_habit_with_completions(habit_id, current_user, session)
     completions = [c for goal in habit.goals for c in goal.completions if c.user_id == current_user]
-    user_tz = await get_user_timezone(session, current_user)
     return compute_habit_stats(completions, user_tz, _subtractive_context(habit))
