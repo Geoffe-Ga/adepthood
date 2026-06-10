@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import logging
 import pathlib
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from http import HTTPStatus
+from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
+import anthropic
+import openai
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import delete, update
@@ -1960,3 +1964,91 @@ async def test_chat_fresh_in_flight_tombstone_still_409s(
     # Wallet stays untouched -- no LLM call was made.
     balance = await async_client.get("/user/balance", headers=headers)
     assert balance.json()["balance"] == 2
+
+
+# ── Issue #402: live-provider activation ────────────────────────────────
+
+
+class _FakeOpenAIClient:
+    """Stands in for ``openai.AsyncOpenAI`` — records ctor args, returns a completion."""
+
+    last_kwargs: ClassVar[dict[str, object]] = {}
+
+    def __init__(self, **kwargs: object) -> None:
+        type(self).last_kwargs = kwargs
+
+        class _Completions:
+            @staticmethod
+            async def create(**_call: object) -> object:
+                message = type("Msg", (), {"content": "A real OpenAI completion."})()
+                choice = type("Choice", (), {"message": message})()
+                usage = type("Usage", (), {"prompt_tokens": 42, "completion_tokens": 17})()
+                return type("Completion", (), {"choices": [choice], "usage": usage})()
+
+        self.chat = type("Chat", (), {"completions": _Completions()})()
+
+
+class _FakeAnthropicClient:
+    """Stands in for ``anthropic.AsyncAnthropic`` — records ctor args, returns a message."""
+
+    last_kwargs: ClassVar[dict[str, object]] = {}
+
+    def __init__(self, **kwargs: object) -> None:
+        type(self).last_kwargs = kwargs
+
+        class _Messages:
+            @staticmethod
+            async def create(**_call: object) -> object:
+                block = type("Block", (), {"text": "A real Anthropic completion."})()
+                usage = type("Usage", (), {"input_tokens": 33, "output_tokens": 9})()
+                return type("Message", (), {"content": [block], "usage": usage})()
+
+        self.messages = _Messages()
+
+
+@pytest.mark.asyncio
+async def test_generate_response_routes_to_openai_sdk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The openai provider routes through the real SDK import path.
+
+    Model text and non-zero token counts come back (issue #402).
+    """
+    monkeypatch.setattr(openai, "AsyncOpenAI", _FakeOpenAIClient)
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", "sk-server-key")  # pragma: allowlist secret
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+
+    result = await generate_response("Hello", [])
+
+    assert result.text == "A real OpenAI completion."
+    assert result.provider == "openai"
+    assert result.prompt_tokens == 42
+    assert result.completion_tokens == 17
+    assert _FakeOpenAIClient.last_kwargs["api_key"] == "sk-server-key"  # pragma: allowlist secret
+
+
+@pytest.mark.asyncio
+async def test_generate_response_routes_to_anthropic_sdk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same end-to-end proof for the anthropic provider."""
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAnthropicClient)
+    monkeypatch.setenv("BOTMASON_PROVIDER", "anthropic")
+    monkeypatch.setenv("LLM_API_KEY", "sk-ant-server-key")  # pragma: allowlist secret
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+
+    result = await generate_response("Hello", [])
+
+    assert result.text == "A real Anthropic completion."
+    assert result.provider == "anthropic"
+    assert result.prompt_tokens == 33
+    assert result.completion_tokens == 9
+    expected_key = "sk-ant-server-key"  # pragma: allowlist secret
+    assert _FakeAnthropicClient.last_kwargs["api_key"] == expected_key
+
+
+def test_provider_sdks_are_installed_dependencies() -> None:
+    """The SDKs are declared dependencies that import cleanly."""
+    assert importlib.import_module("openai") is not None
+    assert importlib.import_module("anthropic") is not None

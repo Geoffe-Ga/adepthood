@@ -19,3 +19,7 @@ tzdata
 pytest
 pytest-asyncio
 httpx
+# LLM provider SDKs for BotMason (issue #402) — the stub provider stays the
+# default; these activate via BOTMASON_PROVIDER + LLM_API_KEY or a BYOK key.
+openai==2.41.1
+anthropic==0.109.1

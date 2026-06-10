@@ -23,7 +23,7 @@ from sqlmodel import select
 # object itself (so it can wire a session factory at it), not a per-test
 # session yielded from a fixture.
 from conftest import test_engine
-from main import _log_content_status, _seed_startup_data, app, lifespan
+from main import _log_botmason_provider, _log_content_status, _seed_startup_data, app, lifespan
 from models.course_stage import CourseStage
 from models.practice import Practice
 from models.stage_content import StageContent
@@ -280,3 +280,41 @@ def test_content_status_logs_pin_when_content_vendored(
     assert loaded
     assert "c" * 40 in loaded[0]
     assert "chapters=0" in loaded[0]
+
+
+def test_botmason_provider_logged_at_boot(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Issue #402: the active LLM provider is observable at startup."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.setenv("ENV", "development")
+    caplog.set_level(logging.INFO, logger="main")
+    _log_botmason_provider()
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("botmason_provider" in m and "openai" in m for m in messages)
+
+
+def test_stub_in_production_warns_loudly(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Stub in production must be an explicit, visible choice — never silent."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+    monkeypatch.setenv("ENV", "production")
+    caplog.set_level(logging.WARNING, logger="main")
+    _log_botmason_provider()
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("botmason_stub_in_production" in r.getMessage() for r in warnings)
+
+
+def test_stub_in_development_does_not_warn(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+    monkeypatch.setenv("ENV", "development")
+    caplog.set_level(logging.INFO, logger="main")
+    _log_botmason_provider()
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings == []
