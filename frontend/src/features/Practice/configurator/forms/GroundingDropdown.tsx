@@ -1,6 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Text, TouchableOpacity, View } from 'react-native';
 
+import SearchableDropdown, {
+  DropdownEmptyState,
+  DropdownGroupHeader,
+  DropdownOptionRow,
+  dropdownCreateStyles,
+} from '../../components/SearchableDropdown';
 import {
   GROUNDING_CATALOG,
   GROUNDING_GROUPS,
@@ -14,11 +20,6 @@ import { ALLOWED_SENSES } from '../../engine/validation';
 
 import { Chip } from './shared';
 
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
-
-/** Tallest the open results panel grows before it scrolls internally. */
-const PANEL_MAX_HEIGHT = 280;
-
 interface Props {
   index: number;
   value: SensePrompt;
@@ -31,47 +32,40 @@ interface Props {
  *
  * Closed, it shows the prompt's current anchor ("Red", or the raw custom
  * label) plus a sense badge. Open, it offers a search box, the grouped
- * {@link GROUNDING_CATALOG}, and a "create your own" affordance so the
- * library is a starting point rather than a fixed menu. Every choice
- * resolves to one backend {@link SenseKind}, so the stored config shape
- * never changes.
+ * {@link GROUNDING_CATALOG}, and a "create your own" affordance. Every
+ * choice resolves to one backend {@link SenseKind}, so the stored config
+ * shape never changes.
  */
 const GroundingDropdown = ({ index, value, onChange }: Props): React.JSX.Element => {
+  const base = `sense-prompt-${index}`;
   const dd = useGroundingDropdown(value, onChange);
   return (
-    <View testID={`sense-prompt-${index}-thing`}>
-      <Trigger
-        index={index}
-        label={triggerLabel(dd.selected, value)}
-        sense={value.sense}
-        open={dd.open}
-        onPress={dd.toggle}
-      />
-      {dd.open && (
-        <View style={styles.panel} testID={`sense-prompt-${index}-panel`}>
-          <TextInput
-            style={styles.search}
-            value={dd.query}
-            onChangeText={dd.setQuery}
-            placeholder="Search things to notice…"
-            autoCorrect={false}
-            testID={`sense-prompt-${index}-search`}
+    <SearchableDropdown
+      testID={`${base}-thing`}
+      triggerTestID={`${base}-thing-trigger`}
+      panelTestID={`${base}-panel`}
+      searchTestID={`${base}-search`}
+      triggerLabel={triggerLabel(dd.selected, value)}
+      badge={{ text: SENSE_DISPLAY[value.sense], testID: `${base}-sense-badge` }}
+      placeholder="Search things to notice…"
+      open={dd.open}
+      query={dd.query}
+      onToggle={dd.toggle}
+      onQueryChange={dd.setQuery}
+      createSlot={
+        dd.query.trim() !== '' ? (
+          <CreateRow
+            base={base}
+            query={dd.query.trim()}
+            createSense={dd.createSense}
+            onPickSense={dd.setCreateSense}
+            onCreate={dd.createCustom}
           />
-          {dd.query.trim() !== '' && (
-            <CreateRow
-              index={index}
-              query={dd.query.trim()}
-              createSense={dd.createSense}
-              onPickSense={dd.setCreateSense}
-              onCreate={dd.createCustom}
-            />
-          )}
-          <ScrollView style={styles.results} keyboardShouldPersistTaps="handled">
-            <GroupedOptions index={index} results={dd.results} onPick={dd.pickOption} />
-          </ScrollView>
-        </View>
-      )}
-    </View>
+        ) : undefined
+      }
+    >
+      <GroupedOptions base={base} results={dd.results} onPick={dd.pickOption} />
+    </SearchableDropdown>
   );
 };
 
@@ -136,37 +130,8 @@ function triggerLabel(selected: GroundingOption | undefined, value: SensePrompt)
   return 'Choose what to notice';
 }
 
-interface TriggerProps {
-  index: number;
-  label: string;
-  sense: SenseKind;
-  open: boolean;
-  onPress: () => void;
-}
-
-const Trigger = ({ index, label, sense, open, onPress }: TriggerProps): React.JSX.Element => (
-  <TouchableOpacity
-    accessibilityRole="button"
-    accessibilityLabel={`Choose what to notice, currently ${label}`}
-    accessibilityState={{ expanded: open }}
-    onPress={onPress}
-    style={styles.trigger}
-    testID={`sense-prompt-${index}-thing-trigger`}
-  >
-    <Text style={styles.triggerLabel} numberOfLines={1}>
-      {label}
-    </Text>
-    <View style={styles.triggerRight}>
-      <Text style={styles.senseBadge} testID={`sense-prompt-${index}-sense-badge`}>
-        {SENSE_DISPLAY[sense]}
-      </Text>
-      <Text style={styles.caret}>{open ? '▲' : '▼'}</Text>
-    </View>
-  </TouchableOpacity>
-);
-
 interface CreateRowProps {
-  index: number;
+  base: string;
   query: string;
   createSense: SenseKind;
   onPickSense: (sense: SenseKind) => void;
@@ -174,33 +139,33 @@ interface CreateRowProps {
 }
 
 const CreateRow = ({
-  index,
+  base,
   query,
   createSense,
   onPickSense,
   onCreate,
 }: CreateRowProps): React.JSX.Element => (
-  <View style={styles.createSection} testID={`sense-prompt-${index}-create-section`}>
+  <View style={dropdownCreateStyles.section} testID={`${base}-create-section`}>
     <TouchableOpacity
       accessibilityRole="button"
       accessibilityLabel={`Use ${query} as a custom thing to notice`}
       onPress={onCreate}
-      style={styles.createRow}
-      testID={`sense-prompt-${index}-create`}
+      style={dropdownCreateStyles.row}
+      testID={`${base}-create`}
     >
-      <Text style={styles.createText} numberOfLines={1}>
+      <Text style={dropdownCreateStyles.rowText} numberOfLines={1}>
         {`+ Use “${query}”`}
       </Text>
     </TouchableOpacity>
-    <View style={styles.createSenses}>
-      <Text style={styles.createSensesLabel}>Sense</Text>
+    <View style={dropdownCreateStyles.controls}>
+      <Text style={dropdownCreateStyles.controlsLabel}>Sense</Text>
       {ALLOWED_SENSES.map((sense) => (
         <Chip
           key={sense}
           label={SENSE_DISPLAY[sense]}
           active={createSense === sense}
           onPress={() => onPickSense(sense)}
-          testID={`sense-prompt-${index}-create-sense-${sense}`}
+          testID={`${base}-create-sense-${sense}`}
         />
       ))}
     </View>
@@ -208,17 +173,15 @@ const CreateRow = ({
 );
 
 interface GroupedOptionsProps {
-  index: number;
+  base: string;
   results: readonly GroundingOption[];
   onPick: (opt: GroundingOption) => void;
 }
 
-const GroupedOptions = ({ index, results, onPick }: GroupedOptionsProps): React.JSX.Element => {
+const GroupedOptions = ({ base, results, onPick }: GroupedOptionsProps): React.JSX.Element => {
   if (results.length === 0) {
     return (
-      <Text style={styles.empty} testID={`sense-prompt-${index}-empty`}>
-        No matches — create your own above.
-      </Text>
+      <DropdownEmptyState label="No matches — create your own above." testID={`${base}-empty`} />
     );
   }
   return (
@@ -227,10 +190,17 @@ const GroupedOptions = ({ index, results, onPick }: GroupedOptionsProps): React.
         const inGroup = results.filter((opt) => opt.group === group);
         if (inGroup.length === 0) return null;
         return (
-          <View key={group} testID={`sense-prompt-${index}-group-${group}`}>
-            <Text style={styles.groupHeader}>{group}</Text>
+          <View key={group} testID={`${base}-group-${group}`}>
+            <DropdownGroupHeader label={group} />
             {inGroup.map((opt) => (
-              <OptionRow key={opt.id} index={index} option={opt} onPick={() => onPick(opt)} />
+              <DropdownOptionRow
+                key={opt.id}
+                label={opt.label}
+                caption={opt.prompt}
+                onPress={() => onPick(opt)}
+                testID={`${base}-option-${opt.id}`}
+                accessibilityLabel={`${opt.label}, noticed through ${SENSE_DISPLAY[opt.sense]}`}
+              />
             ))}
           </View>
         );
@@ -238,101 +208,5 @@ const GroupedOptions = ({ index, results, onPick }: GroupedOptionsProps): React.
     </>
   );
 };
-
-interface OptionRowProps {
-  index: number;
-  option: GroundingOption;
-  onPick: () => void;
-}
-
-const OptionRow = ({ index, option, onPick }: OptionRowProps): React.JSX.Element => (
-  <TouchableOpacity
-    accessibilityRole="button"
-    accessibilityLabel={`${option.label}, noticed through ${SENSE_DISPLAY[option.sense]}`}
-    onPress={onPick}
-    style={styles.optionRow}
-    testID={`sense-prompt-${index}-option-${option.id}`}
-  >
-    <Text style={styles.optionLabel}>{option.label}</Text>
-    <Text style={styles.optionPrompt} numberOfLines={1}>
-      {option.prompt}
-    </Text>
-  </TouchableOpacity>
-);
-
-const styles = StyleSheet.create({
-  trigger: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: colors.background.accent,
-    borderRadius: BORDER_RADIUS.sm,
-    paddingVertical: SPACING.sm,
-    paddingHorizontal: SPACING.sm,
-    backgroundColor: colors.background.card,
-    gap: SPACING.sm,
-  },
-  triggerLabel: { color: colors.text.primary, fontSize: 14, fontWeight: '500', flexShrink: 1 },
-  triggerRight: { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs },
-  senseBadge: {
-    color: colors.text.secondaryAccessible,
-    fontSize: 12,
-    fontWeight: '600',
-    overflow: 'hidden',
-    backgroundColor: colors.background.accent,
-    borderRadius: BORDER_RADIUS.sm,
-    paddingHorizontal: SPACING.xs,
-    paddingVertical: 2,
-  },
-  caret: { color: colors.text.secondaryAccessible, fontSize: 11 },
-  panel: {
-    marginTop: SPACING.xs,
-    borderWidth: 1,
-    borderColor: colors.background.accent,
-    borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: colors.background.card,
-    padding: SPACING.xs,
-    gap: SPACING.xs,
-  },
-  search: {
-    borderWidth: 1,
-    borderColor: colors.background.accent,
-    borderRadius: BORDER_RADIUS.sm,
-    paddingVertical: SPACING.xs,
-    paddingHorizontal: SPACING.sm,
-    color: colors.text.primary,
-    fontSize: 14,
-    backgroundColor: colors.background.primary,
-  },
-  results: { maxHeight: PANEL_MAX_HEIGHT },
-  groupHeader: {
-    color: colors.text.tertiaryAccessible,
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginTop: SPACING.xs,
-    marginBottom: 2,
-  },
-  optionRow: {
-    paddingVertical: SPACING.xs,
-    paddingHorizontal: SPACING.xs,
-    borderRadius: BORDER_RADIUS.sm,
-  },
-  optionLabel: { color: colors.text.primary, fontSize: 14, fontWeight: '500' },
-  optionPrompt: { color: colors.text.secondaryAccessible, fontSize: 12 },
-  empty: { color: colors.text.secondaryAccessible, fontSize: 13, padding: SPACING.sm },
-  createSection: {
-    backgroundColor: colors.background.accent,
-    borderRadius: BORDER_RADIUS.sm,
-    padding: SPACING.xs,
-    gap: SPACING.xs,
-  },
-  createRow: { paddingVertical: SPACING.xs, paddingHorizontal: SPACING.xs },
-  createText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
-  createSenses: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: SPACING.xs },
-  createSensesLabel: { color: colors.text.secondaryAccessible, fontSize: 12, fontWeight: '600' },
-});
 
 export default GroundingDropdown;

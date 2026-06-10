@@ -1,10 +1,16 @@
 import React, { useMemo, useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Text, TextInput, TouchableOpacity, View } from 'react-native';
+
+import SearchableDropdown, {
+  DropdownEmptyState,
+  DropdownGroupHeader,
+  DropdownOptionRow,
+  dropdownCreateStyles,
+} from '../components/SearchableDropdown';
 
 import { nameToSlug } from './types';
 
 import type { PracticeTag, PracticeTagCreate } from '@/api';
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
 
 export interface TagPickerProps {
   stepIndex: number;
@@ -16,81 +22,197 @@ export interface TagPickerProps {
   onCreateTag: (payload: PracticeTagCreate) => Promise<void>;
 }
 
+const LABEL_MAX = 255;
+const SLUG_MAX = 64;
+
 /**
- * Two-state widget under a recipe step's tag chip row.
+ * Searchable dropdown over a recipe step's tag library.
  *
- * Default state: render every tag in ``tagLibrary`` as a selectable
- * chip plus a "+ New tag" affordance.  When the user taps "+ New tag"
- * the inline create form takes over with two inputs (label + slug)
- * and a Create button that mints a fresh tag and selects it.
- *
- * Slug auto-fills from the label via ``nameToSlug`` so the user
- * never has to think about snake-casing -- they only see it if they
- * want to override the derived value.
+ * Mirrors the configurator's grounding dropdown for a consistent feel:
+ * a collapsed trigger showing the chosen tag, then a search box, the
+ * library split into "Library" (system) and "Yours" (personal) sections,
+ * and an inline "create your own" tag form. Slug auto-fills from the
+ * label via {@link nameToSlug} so the user only sees it to override it.
  */
 const TagPicker = (props: TagPickerProps): React.JSX.Element => {
-  const [creating, setCreating] = useState(false);
-  const sortedTags = useMemo(() => sortTagsForPicker(props.tagLibrary), [props.tagLibrary]);
+  const base = `tag-picker-${props.stepIndex}`;
+  const dd = useTagDropdown(props);
   return (
-    <View style={styles.container} testID={`tag-picker-${props.stepIndex}`}>
-      <View style={styles.chipRow}>
-        {sortedTags.map((tag) => (
-          <TagChip
-            key={`${tag.owner_user_id ?? 'sys'}-${tag.id}`}
-            tag={tag}
-            active={tag.slug === props.selectedSlug}
-            onPress={() => props.onSelect(tag)}
-            testID={`tag-picker-${props.stepIndex}-chip-${tag.slug}`}
+    <SearchableDropdown
+      testID={base}
+      triggerTestID={`${base}-trigger`}
+      panelTestID={`${base}-panel`}
+      searchTestID={`${base}-search`}
+      triggerLabel={dd.triggerLabel}
+      badge={dd.badge}
+      placeholder="Search tags…"
+      open={dd.open}
+      query={dd.query}
+      onToggle={dd.toggle}
+      onQueryChange={dd.setQuery}
+      createSlot={
+        dd.creating ? (
+          <InlineTagCreator
+            base={base}
+            initialLabel={dd.query.trim()}
+            onCreate={dd.create}
+            onCancel={() => dd.setCreating(false)}
           />
-        ))}
-        {!creating && (
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel="Create new tag"
-            onPress={() => setCreating(true)}
-            style={[styles.chip, styles.newTagChip]}
-            testID={`tag-picker-${props.stepIndex}-new`}
-          >
-            <Text style={styles.newTagText}>+ New tag</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-      {creating && (
-        <InlineTagCreator
-          stepIndex={props.stepIndex}
-          onCreate={async (payload) => {
-            await props.onCreateTag(payload);
-            setCreating(false);
-          }}
-          onCancel={() => setCreating(false)}
-        />
-      )}
-    </View>
+        ) : (
+          <NewTagButton base={base} onPress={() => dd.setCreating(true)} />
+        )
+      }
+    >
+      <TagOptions
+        base={base}
+        groups={dd.groups}
+        selectedSlug={props.selectedSlug}
+        onSelect={dd.select}
+      />
+    </SearchableDropdown>
   );
 };
 
-interface TagChipProps {
-  tag: PracticeTag;
-  active: boolean;
-  onPress: () => void;
-  testID: string;
+interface TagGroup {
+  key: string;
+  label: string;
+  tags: PracticeTag[];
 }
 
-const TagChip = ({ tag, active, onPress, testID }: TagChipProps): React.JSX.Element => (
+interface TagDropdownController {
+  open: boolean;
+  query: string;
+  creating: boolean;
+  groups: TagGroup[];
+  triggerLabel: string;
+  badge: { text: string; testID: string } | undefined;
+  toggle: () => void;
+  setQuery: (next: string) => void;
+  setCreating: (next: boolean) => void;
+  select: (tag: PracticeTag) => void;
+  create: (payload: PracticeTagCreate) => Promise<void>;
+}
+
+function useTagDropdown(props: TagPickerProps): TagDropdownController {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [creating, setCreating] = useState(false);
+  const groups = useMemo(() => groupTags(props.tagLibrary, query), [props.tagLibrary, query]);
+  const selected = props.tagLibrary.find((tag) => tag.slug === props.selectedSlug);
+  const reset = (): void => {
+    setOpen(false);
+    setQuery('');
+    setCreating(false);
+  };
+  return {
+    open,
+    query,
+    creating,
+    groups,
+    triggerLabel: triggerLabelFor(selected, props.selectedSlug),
+    badge:
+      selected === undefined
+        ? undefined
+        : {
+            text: selected.owner_user_id === null ? 'System' : 'Custom',
+            testID: `tag-picker-${props.stepIndex}-badge`,
+          },
+    toggle: () => setOpen((prev) => !prev),
+    setQuery,
+    setCreating,
+    select: (tag) => {
+      props.onSelect(tag);
+      reset();
+    },
+    create: async (payload) => {
+      await props.onCreateTag(payload);
+      reset();
+    },
+  };
+}
+
+function triggerLabelFor(selected: PracticeTag | undefined, selectedSlug: string): string {
+  if (selected !== undefined) return selected.label;
+  if (selectedSlug.length > 0) return selectedSlug;
+  return 'Choose a tag';
+}
+
+/** Split the library into system + personal sections, filtered + alphabetised. */
+function groupTags(tagLibrary: PracticeTag[], query: string): TagGroup[] {
+  const needle = query.trim().toLowerCase();
+  const matches = (tag: PracticeTag): boolean =>
+    needle === '' ||
+    tag.label.toLowerCase().includes(needle) ||
+    tag.slug.toLowerCase().includes(needle);
+  const byLabel = (a: PracticeTag, b: PracticeTag): number => a.label.localeCompare(b.label);
+  const system = tagLibrary.filter((t) => t.owner_user_id === null && matches(t)).sort(byLabel);
+  const personal = tagLibrary.filter((t) => t.owner_user_id !== null && matches(t)).sort(byLabel);
+  return [
+    { key: 'library', label: 'Library', tags: system },
+    { key: 'yours', label: 'Yours', tags: personal },
+  ].filter((group) => group.tags.length > 0);
+}
+
+interface TagOptionsProps {
+  base: string;
+  groups: TagGroup[];
+  selectedSlug: string;
+  onSelect: (tag: PracticeTag) => void;
+}
+
+const TagOptions = ({
+  base,
+  groups,
+  selectedSlug,
+  onSelect,
+}: TagOptionsProps): React.JSX.Element => {
+  if (groups.length === 0) {
+    return (
+      <DropdownEmptyState label="No tags match — create one below." testID={`${base}-empty`} />
+    );
+  }
+  return (
+    <>
+      {groups.map((group) => (
+        <View key={group.key} testID={`${base}-group-${group.key}`}>
+          <DropdownGroupHeader label={group.label} />
+          {group.tags.map((tag) => (
+            <DropdownOptionRow
+              key={`${tag.owner_user_id ?? 'sys'}-${tag.id}`}
+              label={tag.label}
+              onPress={() => onSelect(tag)}
+              selected={tag.slug === selectedSlug}
+              testID={`${base}-option-${tag.slug}`}
+              accessibilityLabel={tag.label}
+            />
+          ))}
+        </View>
+      ))}
+    </>
+  );
+};
+
+const NewTagButton = ({
+  base,
+  onPress,
+}: {
+  base: string;
+  onPress: () => void;
+}): React.JSX.Element => (
   <TouchableOpacity
     accessibilityRole="button"
-    accessibilityLabel={tag.label}
-    accessibilityState={{ selected: active }}
+    accessibilityLabel="Create new tag"
     onPress={onPress}
-    style={[styles.chip, active && styles.chipActive]}
-    testID={testID}
+    style={dropdownCreateStyles.row}
+    testID={`${base}-new`}
   >
-    <Text style={[styles.chipText, active && styles.chipTextActive]}>{tag.label}</Text>
+    <Text style={dropdownCreateStyles.rowText}>+ New tag</Text>
   </TouchableOpacity>
 );
 
 interface InlineTagCreatorProps {
-  stepIndex: number;
+  base: string;
+  initialLabel: string;
   onCreate: (payload: PracticeTagCreate) => Promise<void>;
   onCancel: () => void;
 }
@@ -108,9 +230,10 @@ interface CreatorFormState {
 }
 
 function useCreatorFormState(
+  initialLabel: string,
   onCreate: (payload: PracticeTagCreate) => Promise<void>,
 ): CreatorFormState {
-  const [label, setLabel] = useState('');
+  const [label, setLabel] = useState(initialLabel);
   const [slug, setSlug] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -131,34 +254,34 @@ function useCreatorFormState(
 }
 
 const InlineTagCreator = (props: InlineTagCreatorProps): React.JSX.Element => {
-  const form = useCreatorFormState(props.onCreate);
+  const form = useCreatorFormState(props.initialLabel, props.onCreate);
   return (
-    <View style={styles.creator} testID={`tag-picker-${props.stepIndex}-creator`}>
+    <View style={dropdownCreateStyles.section} testID={`${props.base}-creator`}>
       <TextInput
         value={form.label}
         onChangeText={form.setLabel}
-        style={styles.input}
+        style={dropdownCreateStyles.input}
         placeholder="Tag label (what users see)"
-        maxLength={255}
-        testID={`tag-picker-${props.stepIndex}-creator-label`}
+        maxLength={LABEL_MAX}
+        testID={`${props.base}-creator-label`}
       />
       <TextInput
         value={form.slug.length > 0 ? form.slug : form.derivedSlug}
         onChangeText={form.setSlug}
-        style={styles.input}
+        style={dropdownCreateStyles.input}
         placeholder="slug_in_snake_case"
-        maxLength={64}
+        maxLength={SLUG_MAX}
         autoCapitalize="none"
         autoCorrect={false}
-        testID={`tag-picker-${props.stepIndex}-creator-slug`}
+        testID={`${props.base}-creator-slug`}
       />
       {form.error !== null && (
-        <Text style={styles.error} testID={`tag-picker-${props.stepIndex}-creator-error`}>
+        <Text style={dropdownCreateStyles.error} testID={`${props.base}-creator-error`}>
           {form.error}
         </Text>
       )}
       <CreatorActions
-        stepIndex={props.stepIndex}
+        base={props.base}
         canCreate={form.canCreate}
         onCancel={props.onCancel}
         onConfirm={form.submit}
@@ -168,86 +291,34 @@ const InlineTagCreator = (props: InlineTagCreatorProps): React.JSX.Element => {
 };
 
 interface CreatorActionsProps {
-  stepIndex: number;
+  base: string;
   canCreate: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }
 
 const CreatorActions = (props: CreatorActionsProps): React.JSX.Element => (
-  <View style={styles.creatorActions}>
+  <View style={dropdownCreateStyles.controls}>
     <TouchableOpacity
       accessibilityRole="button"
       accessibilityLabel="Cancel new tag"
       onPress={props.onCancel}
-      style={[styles.chip, styles.cancelChip]}
-      testID={`tag-picker-${props.stepIndex}-creator-cancel`}
+      style={dropdownCreateStyles.row}
+      testID={`${props.base}-creator-cancel`}
     >
-      <Text style={styles.chipText}>Cancel</Text>
+      <Text style={dropdownCreateStyles.controlsLabel}>Cancel</Text>
     </TouchableOpacity>
     <TouchableOpacity
       accessibilityRole="button"
       accessibilityLabel="Create tag"
       accessibilityState={{ disabled: !props.canCreate }}
       onPress={props.canCreate ? props.onConfirm : undefined}
-      style={[styles.chip, styles.confirmChip, !props.canCreate && styles.disabled]}
-      testID={`tag-picker-${props.stepIndex}-creator-confirm`}
+      style={dropdownCreateStyles.row}
+      testID={`${props.base}-creator-confirm`}
     >
-      <Text style={styles.confirmText}>Create</Text>
+      <Text style={dropdownCreateStyles.rowText}>Create</Text>
     </TouchableOpacity>
   </View>
 );
-
-function sortTagsForPicker(tags: PracticeTag[]): PracticeTag[] {
-  // System tags first, then personal, alphabetised within each group so
-  // the chip row stays predictable as the library grows.
-  return [...tags].sort((a, b) => {
-    const aSys = a.owner_user_id === null ? 0 : 1;
-    const bSys = b.owner_user_id === null ? 0 : 1;
-    if (aSys !== bSys) return aSys - bSys;
-    return a.label.localeCompare(b.label);
-  });
-}
-
-const styles = StyleSheet.create({
-  container: { gap: SPACING.xs },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs },
-  chip: {
-    paddingVertical: SPACING.xs,
-    paddingHorizontal: SPACING.md,
-    borderRadius: BORDER_RADIUS.xl,
-    borderWidth: 1,
-    borderColor: colors.background.accent,
-    backgroundColor: colors.background.card,
-  },
-  chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  chipText: { color: colors.text.secondaryAccessible, fontSize: 13, fontWeight: '500' },
-  chipTextActive: { color: colors.text.light },
-  newTagChip: { borderStyle: 'dashed' },
-  newTagText: { color: colors.text.primary, fontSize: 13, fontWeight: '500' },
-  creator: {
-    marginTop: SPACING.xs,
-    padding: SPACING.sm,
-    borderRadius: BORDER_RADIUS.md,
-    backgroundColor: colors.background.accent,
-    gap: SPACING.xs,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.background.card,
-    borderRadius: BORDER_RADIUS.sm,
-    paddingVertical: SPACING.xs,
-    paddingHorizontal: SPACING.sm,
-    color: colors.text.primary,
-    fontSize: 13,
-    backgroundColor: colors.background.primary,
-  },
-  creatorActions: { flexDirection: 'row', gap: SPACING.xs, justifyContent: 'flex-end' },
-  cancelChip: { backgroundColor: colors.background.card },
-  confirmChip: { backgroundColor: colors.primary, borderColor: colors.primary },
-  confirmText: { color: colors.text.light, fontSize: 13, fontWeight: '600' },
-  disabled: { opacity: 0.4 },
-  error: { color: colors.danger, fontSize: 12 },
-});
 
 export default TagPicker;
