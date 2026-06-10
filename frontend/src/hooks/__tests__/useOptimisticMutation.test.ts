@@ -116,6 +116,52 @@ describe('useOptimisticMutation', () => {
     expect(result.current.pending).toBe(false);
   });
 
+  it('pending tracks the union of overlapping mutate calls (#271)', async () => {
+    let resolveFirst: (_v: string) => void = () => {};
+    let resolveSecond: (_v: string) => void = () => {};
+    const commit = jest
+      .fn<() => Promise<string>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((r) => {
+            resolveFirst = r;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((r) => {
+            resolveSecond = r;
+          }),
+      );
+
+    const { result } = renderHook(() =>
+      useOptimisticMutation({ apply: jest.fn(), commit, rollback: jest.fn() }),
+    );
+
+    let first: Promise<string> = Promise.resolve('');
+    let second: Promise<string> = Promise.resolve('');
+    await act(async () => {
+      first = result.current.mutate({});
+      second = result.current.mutate({});
+    });
+    expect(result.current.pending).toBe(true);
+
+    // The SECOND call settles while the first is still in flight. A naive
+    // boolean would flip pending to false here and re-enable a Save
+    // button mid-request — the double-tap bug this guard exists to catch.
+    await act(async () => {
+      resolveSecond('second');
+      await second;
+    });
+    expect(result.current.pending).toBe(true);
+
+    await act(async () => {
+      resolveFirst('first');
+      await first;
+    });
+    expect(result.current.pending).toBe(false);
+  });
+
   it('keeps a stable `mutate` reference across re-renders even when callers pass fresh cfg', async () => {
     let renderConfig = {
       apply: jest.fn(),
