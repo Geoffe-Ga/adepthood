@@ -330,26 +330,49 @@ interface PracticeRowProps {
   onPress: () => void;
 }
 
-const PracticeRow = ({ practice, onPress }: PracticeRowProps): React.JSX.Element => (
-  <TouchableOpacity
-    accessibilityRole="button"
-    accessibilityLabel={practice.name}
-    onPress={onPress}
-    style={styles.row}
-    testID={`practice-catalog-row-${practice.id}`}
-  >
-    <Text style={styles.rowName}>{practice.name}</Text>
-    <View style={styles.rowMeta}>
-      <View style={styles.rowBadge}>
-        <Text style={styles.rowBadgeText}>{practice.mode ?? 'meditation_timer'}</Text>
+/**
+ * Friendly presentation (human label + emoji anchor) for every mode,
+ * derived from the single source the wizard already uses. Showing the raw
+ * ``meditation_timer`` identifier reads as a database dump; the icon gives
+ * each row a calm visual anchor and the label is plain English.
+ */
+const MODE_PRESENTATION: Readonly<Record<PickableMode, { label: string; icon: string }>> =
+  Object.fromEntries(
+    MODE_CATEGORIES.flatMap((category) =>
+      category.modes.map((entry) => [entry.mode, { label: entry.label, icon: entry.icon }]),
+    ),
+  ) as Record<PickableMode, { label: string; icon: string }>;
+
+const FALLBACK_PRESENTATION = { label: 'Practice', icon: '🧘' } as const;
+
+const PracticeRow = ({ practice, onPress }: PracticeRowProps): React.JSX.Element => {
+  const mode = (practice.mode ?? 'meditation_timer') as PickableMode;
+  const { label, icon } = MODE_PRESENTATION[mode] ?? FALLBACK_PRESENTATION;
+  const duration = Math.round(practice.default_duration_minutes);
+  const subtitle = `${label} · ${duration} min`;
+  return (
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel={`${practice.name}. ${label}, ${duration} minutes.`}
+      onPress={onPress}
+      style={styles.row}
+      testID={`practice-catalog-row-${practice.id}`}
+    >
+      {/* Decorative anchor; the row's accessibilityLabel already names the
+          mode, and the accessible TouchableOpacity merges children, so the
+          emoji is not separately announced to screen readers. */}
+      <Text style={styles.rowIcon} testID={`practice-catalog-row-${practice.id}-icon`}>
+        {icon}
+      </Text>
+      <View style={styles.rowText}>
+        <Text style={styles.rowName} numberOfLines={1}>
+          {practice.name}
+        </Text>
+        <Text style={styles.rowSubtitle}>{subtitle}</Text>
       </View>
-      <View style={styles.rowBadge}>
-        <Text style={styles.rowBadgeText}>Stage {practice.stage_number}</Text>
-      </View>
-      <Text style={styles.rowDuration}>{Math.round(practice.default_duration_minutes)} min</Text>
-    </View>
-  </TouchableOpacity>
-);
+    </TouchableOpacity>
+  );
+};
 
 function applyFilters(
   items: readonly PracticeItem[],
@@ -479,28 +502,23 @@ const styles = StyleSheet.create({
   },
   emptyText: { color: colors.text.tertiaryAccessible, fontSize: 13 },
   row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
     backgroundColor: colors.background.card,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.md,
     marginBottom: SPACING.sm,
     ...shadows.small,
   },
+  rowIcon: { fontSize: 24, width: 32, textAlign: 'center' },
+  rowText: { flex: 1 },
   rowName: { fontSize: 15, fontWeight: '700', color: colors.text.primary },
-  rowMeta: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: SPACING.xs,
-    marginTop: SPACING.xs,
+  rowSubtitle: {
+    fontSize: 13,
+    color: colors.text.secondaryAccessible,
+    marginTop: 2,
   },
-  rowBadge: {
-    backgroundColor: colors.background.accent,
-    paddingHorizontal: SPACING.xs,
-    paddingVertical: 2,
-    borderRadius: BORDER_RADIUS.sm,
-  },
-  rowBadgeText: { fontSize: 11, color: colors.text.primary, fontWeight: '600' },
-  rowDuration: { fontSize: 12, color: colors.text.secondaryAccessible },
 });
 
 export default PracticeCatalogScreen;
