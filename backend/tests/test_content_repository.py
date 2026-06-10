@@ -233,6 +233,20 @@ def test_list_resources_empty_manifest(tmp_path: Path) -> None:
     assert ContentRepository(root).list_resources() == []
 
 
+def test_resource_missing_description_is_rejected_at_construction(tmp_path: Path) -> None:
+    """A sparse resource entry never reaches ``list_resources()``.
+
+    The schema requires every resource field (slug/title/description/path),
+    so construction fails validation first — direct ``raw[...]`` access in
+    ``list_resources`` cannot KeyError.
+    """
+    sparse = copy.deepcopy(_VALID_MANIFEST)
+    del sparse["site_resources"][0]["description"]
+    root = _write_content_dir(tmp_path / "content", sparse)
+    with pytest.raises(ContentRepositoryError):
+        ContentRepository(root)
+
+
 # ── Singleton trio ──────────────────────────────────────────────────────
 
 

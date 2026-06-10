@@ -64,12 +64,16 @@ class ChapterMeta:
 
 @dataclass(frozen=True)
 class SiteResourceMeta:
-    """One free site resource's manifest metadata (issue #395)."""
+    """One free site resource's manifest metadata (issue #395).
+
+    Deliberately omits the manifest ``path`` — body reads go through
+    :meth:`ContentRepository.read_resource_body`, which resolves the path
+    internally with the traversal guard; no caller needs it raw.
+    """
 
     slug: str
     title: str
     description: str
-    path: str
 
 
 @dataclass(frozen=True)
@@ -219,13 +223,16 @@ class ContentRepository:
         )
 
     def list_resources(self) -> list[SiteResourceMeta]:
-        """Every site resource, in manifest order (the UI display order)."""
+        """Every site resource, in manifest order (the UI display order).
+
+        Direct ``raw[...]`` access is safe: the schema requires every
+        resource field and the manifest was validated at construction.
+        """
         return [
             SiteResourceMeta(
                 slug=raw["slug"],
                 title=raw["title"],
                 description=raw["description"],
-                path=raw["path"],
             )
             for raw in self._resources.values()
         ]
