@@ -50,6 +50,11 @@ from seed_content import seed_content
 from seed_practice_recipes import seed_practice_recipes
 from seed_practices import seed_practices
 from seed_stages import seed_stages
+from services.content_repository import (
+    ContentRepositoryError,
+    content_version_info,
+    get_content_repository,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +281,29 @@ async def _seed_startup_data(session: AsyncSession) -> None:
             await session.rollback()
 
 
+def _log_content_status() -> None:
+    """Report the vendored content state at boot — loud on failure.
+
+    A missing or invalid content directory must never silently degrade to
+    a blank Course screen (issue #397): the error log names the problem
+    and the fix.  On success, the live pin is logged for observability.
+    """
+    try:
+        chapter_count = len(get_content_repository().list_chapters())
+    except ContentRepositoryError:
+        logger.exception(
+            "content_missing_or_invalid — Course screens will be empty "
+            "until a content pin is vendored (see docs/content.md)"
+        )
+        return
+    version = content_version_info() or {}
+    logger.info(
+        "content_loaded sha=%s chapters=%d",
+        version.get("sha", "unknown"),
+        chapter_count,
+    )
+
+
 @asynccontextmanager
 async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown lifecycle for the application."""
@@ -307,6 +335,11 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
                 await _seed_startup_data(session)
         except Exception:
             logger.exception("startup seed failed; continuing without seeded catalog")
+
+    # Issue #397: surface a bad content deploy at boot, not at first
+    # chapter open.  Loud log rather than crash — the app's non-content
+    # features must stay serviceable, mirroring the seeder policy above.
+    _log_content_status()
 
     yield
 
@@ -445,4 +478,7 @@ async def health_check(
     except (TimeoutError, OSError, SQLAlchemyError) as exc:
         logger.exception("health_check_failed")
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
-    return {"status": "healthy", "database": "connected"}
+    # Issue #397: surface the live content pin so dashboards can alert on
+    # an unexpected value after a deploy. "none" = nothing vendored yet.
+    content_version = (content_version_info() or {}).get("sha", "none")
+    return {"status": "healthy", "database": "connected", "content_version": content_version}

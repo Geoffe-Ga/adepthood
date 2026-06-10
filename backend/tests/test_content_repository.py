@@ -20,6 +20,7 @@ from services.content_repository import (
     ContentNotFoundError,
     ContentRepository,
     ContentRepositoryError,
+    content_version_info,
     get_content_repository,
     reset_content_repository_for_tests,
     set_content_repository_for_tests,
@@ -244,6 +245,25 @@ def test_resource_missing_description_is_rejected_at_construction(tmp_path: Path
     root = _write_content_dir(tmp_path / "content", sparse)
     with pytest.raises(ContentRepositoryError):
         ContentRepository(root)
+
+
+def test_content_version_info_parses_stamp(content_dir: Path) -> None:
+    (content_dir / "CONTENT_VERSION").write_text(
+        "sha: " + "a" * 40 + "\nsynced_at: 2026-06-10T00:00:00+00:00\ndigest: sha256:abc\n"
+    )
+    info = content_version_info(content_dir)
+    assert info is not None
+    assert info["sha"] == "a" * 40
+    assert info["digest"] == "sha256:abc"
+
+
+def test_content_version_info_none_when_missing(content_dir: Path) -> None:
+    assert content_version_info(content_dir) is None
+
+
+def test_content_version_info_none_when_malformed(content_dir: Path) -> None:
+    (content_dir / "CONTENT_VERSION").write_text("free-form text\n")
+    assert content_version_info(content_dir) is None
 
 
 # ── Singleton trio ──────────────────────────────────────────────────────

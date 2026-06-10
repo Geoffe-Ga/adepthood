@@ -304,9 +304,39 @@ def test_check_fails_on_tampered_file(content_dir: Path) -> None:
         check(content_dir)
 
 
-def test_check_fails_without_content_version(content_dir: Path) -> None:
+def test_check_bootstrap_passes_without_manifest_or_stamp(content_dir: Path) -> None:
+    """Nothing vendored yet (no manifest, no stamp) — nothing to verify.
+
+    The gate must not block CI before the first content pin lands.
+    """
+    assert check(content_dir) is False
+
+
+def test_check_fails_when_manifest_present_but_unstamped(content_dir: Path) -> None:
+    """A manifest that was never synced (hand-copied) is a hard failure."""
+    (content_dir / "manifest.json").write_text(
+        json.dumps({"schema_version": "1.0.0", "chapters": [], "site_resources": []})
+    )
     with pytest.raises(SyncContentError):
         check(content_dir)
+
+
+def test_check_fails_on_schema_invalid_manifest_even_with_matching_digest(
+    content_dir: Path,
+) -> None:
+    """Digest match alone is not enough — the manifest must satisfy the contract."""
+    (content_dir / "manifest.json").write_text(json.dumps({"schema_version": "1.0.0"}))
+    digest = compute_tree_digest(content_dir)
+    (content_dir / "CONTENT_VERSION").write_text(
+        f"sha: {'b' * 40}\nsynced_at: 2026-06-10T00:00:00+00:00\ndigest: {digest}\n"
+    )
+    with pytest.raises(SyncContentError):
+        check(content_dir)
+
+
+def test_check_returns_true_after_sync(content_dir: Path) -> None:
+    sync(_SHA, content_dir, fetch=_fetch_for(_content_tarball()), sleep=lambda _: None)
+    assert check(content_dir) is True
 
 
 def test_check_fails_on_malformed_content_version(content_dir: Path) -> None:

@@ -47,3 +47,18 @@ async def test_readiness_returns_ready_when_db_up(async_client: AsyncClient) -> 
     body = response.json()
     assert body["status"] == "ready"
     assert body["database"] == "connected"
+
+
+@pytest.mark.asyncio
+async def test_health_reports_content_version(async_client: AsyncClient) -> None:
+    """``/health`` surfaces the vendored CONTENT_VERSION sha (issue #397).
+
+    In the test environment nothing is vendored, so the field reports
+    ``none`` — the point is that the key is always present so dashboards
+    can alert on an unexpected value after a deploy.
+    """
+    response = await async_client.get("/health")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "healthy"
+    assert body["content_version"] == "none"

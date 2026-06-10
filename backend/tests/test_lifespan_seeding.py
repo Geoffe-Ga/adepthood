@@ -8,9 +8,11 @@ the seeders, idempotently, every time the app starts.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -21,12 +23,13 @@ from sqlmodel import select
 # object itself (so it can wire a session factory at it), not a per-test
 # session yielded from a fixture.
 from conftest import test_engine
-from main import _seed_startup_data, app, lifespan
+from main import _log_content_status, _seed_startup_data, app, lifespan
 from models.course_stage import CourseStage
 from models.practice import Practice
 from models.stage_content import StageContent
 from seed_content import desired_content_records
 from seed_practices import PRESET_PRACTICES
+from services.content_repository import reset_content_repository_for_tests
 
 #: Total preset rows the practice seeder inserts — sourced from
 #: ``PRESET_PRACTICES`` so adding a catalog preset doesn't silently drift
@@ -233,3 +236,47 @@ async def test_seed_startup_data_runs_stages_before_practices(
         await _seed_startup_data(db_session)
 
     assert call_log == ["stages", "practices", "content"]
+
+
+def test_content_status_logs_error_when_nothing_vendored(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Issue #397: a content-less deploy is loud at boot, not at first open."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("CONTENT_DIR", str(empty))
+    reset_content_repository_for_tests()
+    caplog.set_level(logging.ERROR, logger="main")
+    try:
+        _log_content_status()
+    finally:
+        reset_content_repository_for_tests()
+    assert any("content_missing_or_invalid" in r.getMessage() for r in caplog.records)
+
+
+def test_content_status_logs_pin_when_content_vendored(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    root = tmp_path / "content"
+    root.mkdir()
+    (root / "manifest.json").write_text(
+        json.dumps({"schema_version": "1.0.0", "chapters": [], "site_resources": []})
+    )
+    (root / "CONTENT_VERSION").write_text(
+        "sha: " + "c" * 40 + "\nsynced_at: 2026-06-10T00:00:00+00:00\ndigest: sha256:x\n"
+    )
+    monkeypatch.setenv("CONTENT_DIR", str(root))
+    reset_content_repository_for_tests()
+    caplog.set_level(logging.INFO, logger="main")
+    try:
+        _log_content_status()
+    finally:
+        reset_content_repository_for_tests()
+    loaded = [r.getMessage() for r in caplog.records if "content_loaded" in r.getMessage()]
+    assert loaded
+    assert "c" * 40 in loaded[0]
+    assert "chapters=0" in loaded[0]

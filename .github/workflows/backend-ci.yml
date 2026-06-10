@@ -203,3 +203,28 @@ jobs:
           # backend-quality job; this step only exercises the
           # pg_advisory_xact_lock branch that SQLite cannot.
           python -m pytest tests/test_pg_advisory_lock.py -q --no-cov
+
+  content-drift:
+    # Issue #397: the vendored backend/content/ must match its pinned
+    # CONTENT_VERSION (no silent drift, no hand edits) and the manifest
+    # must satisfy the frozen schema contract. Bootstrap state (nothing
+    # vendored yet) passes — the gate arms itself with the first pin.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
+
+      - name: Install drift-check deps
+        # The check needs only the sync script's imports, not the app.
+        run: uv pip install --system httpx 'jsonschema>=4.0'
+
+      - name: Verify vendored content matches CONTENT_VERSION
+        working-directory: backend
+        run: python -m scripts.sync_content --check

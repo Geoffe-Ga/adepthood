@@ -101,11 +101,30 @@ manifest ships the stage.
 
 ## CI drift gate
 
-`make sync-content-check` recomputes the vendored tree's digest and
-compares it to `CONTENT_VERSION` without mutating anything — wire-up
-into the build pipeline is tracked in the cms-migration epic (#388,
-issue #397). A tampered or hand-edited `backend/content/` fails the
-check; re-run the sync to fix.
+The `content-drift` job in `.github/workflows/backend-ci.yml` runs
+`python -m scripts.sync_content --check` on every push/PR: it recomputes
+the vendored tree's digest against `CONTENT_VERSION` **and** re-validates
+`manifest.json` against the schema. A tampered or hand-edited
+`backend/content/` fails CI; re-run the sync to fix. The bootstrap state
+(nothing vendored yet) passes — the gate arms itself with the first pin.
+Run it locally with `make sync-content-check`.
+
+## Deploying on Railway
+
+Content is committed, so the Railway flow needs **no content-specific
+build configuration, env vars, or secrets** — the image Railway builds
+from the repo already contains `backend/content/` at the pinned SHA.
+
+Rolling content forward:
+
+1. `make sync-content REF=<new-sha>` locally.
+2. Commit the `backend/content/` diff (CI's `content-drift` job verifies
+   it), merge, and let Railway redeploy from `main`.
+3. Verify the deploy: the boot log prints
+   `content_loaded sha=<sha> chapters=<n>`, and `GET /health` includes
+   `"content_version": "<sha>"`. A bad deploy logs
+   `content_missing_or_invalid` at boot instead of failing silently at
+   the first chapter open.
 
 ## Local development
 
