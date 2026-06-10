@@ -72,6 +72,12 @@ export const deriveCurrentStage = (apiStages: Stage[]): number => {
   return Math.min(Math.max(1, completed + 1), STAGE_COUNT);
 };
 
+/** Unlocked on the map when the server `is_unlocked` flag is set OR the date-derived current stage has reached it, so the padlock matches the Practice/Course stage. */
+export const isStageUnlocked = (
+  stage: Pick<StageData, 'isUnlocked' | 'stageNumber'>,
+  currentStage: number | null,
+): boolean => stage.isUnlocked || (currentStage !== null && stage.stageNumber <= currentStage);
+
 /**
  * Snapshot captured by `prepareAdvanceStage` and consumed by
  * `applyAdvanceStage` / `rollbackAdvanceStage`. Holding the previous

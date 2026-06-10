@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, jest } from '@jest/globals';
 import { act } from '@testing-library/react-native';
 
 import type { Stage } from '../../../../api';
-import { clampProgress } from '../stageService';
+import { clampProgress, isStageUnlocked } from '../stageService';
 
 const mockList = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<Stage[]>>;
 jest.mock('../../../../api', () => ({
@@ -246,6 +246,27 @@ describe('stageService', () => {
       expect(clampProgress(-0.5)).toBe(0);
       expect(clampProgress(1.1)).toBe(1);
       expect(clampProgress(42)).toBe(1);
+    });
+  });
+
+  describe('isStageUnlocked (calendar alignment)', () => {
+    it('honours the server flag when it is set', () => {
+      expect(isStageUnlocked({ isUnlocked: true, stageNumber: 7 }, 1)).toBe(true);
+    });
+
+    it('unlocks stages at or below the date-derived current stage', () => {
+      // Calendar says Purple (stage 2); the server still locks it.
+      expect(isStageUnlocked({ isUnlocked: false, stageNumber: 2 }, 2)).toBe(true);
+      expect(isStageUnlocked({ isUnlocked: false, stageNumber: 1 }, 2)).toBe(true);
+    });
+
+    it('keeps stages above the current stage locked', () => {
+      expect(isStageUnlocked({ isUnlocked: false, stageNumber: 3 }, 2)).toBe(false);
+    });
+
+    it('falls back to the server flag when there is no calendar anchor', () => {
+      expect(isStageUnlocked({ isUnlocked: false, stageNumber: 2 }, null)).toBe(false);
+      expect(isStageUnlocked({ isUnlocked: true, stageNumber: 2 }, null)).toBe(true);
     });
   });
 });

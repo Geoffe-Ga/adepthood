@@ -21,7 +21,12 @@ import StatsModal from './components/StatsModal';
 import styles from './Habits.styles';
 import type { AddHabitInput, Habit, HabitStatsData } from './Habits.types';
 import HabitTile from './HabitTile';
-import { generateStatsForHabit, toLocalHabitStats, calculateMissedDays } from './HabitUtils';
+import {
+  generateStatsForHabit,
+  toLocalHabitStats,
+  calculateMissedDays,
+  isHabitLockedToday,
+} from './HabitUtils';
 import { useHabits } from './hooks/useHabits';
 import { useModalCoordinator } from './hooks/useModalCoordinator';
 import { usePagination } from './hooks/usePagination';
@@ -434,7 +439,8 @@ const useHabitTileRenderer = (
   pageOffset = 0,
 ) => {
   const renderHabitTile = ({ item, index }: { item: Habit; index: number }) => {
-    const isLocked = item.revealed === false;
+    // Calendar-driven: unlocks when the anchored start_date arrives, not on the stale `revealed` flag — keeps Habits in lockstep with Map/Practice/Course.
+    const isLocked = isHabitLockedToday(item);
     const globalIndex = pageOffset + index;
     // index is page-relative, so each page restarts the Beige → Clear Light gradient.
     const stageColor = STAGE_COLORS[STAGE_ORDER[index % STAGE_ORDER.length]!]!;

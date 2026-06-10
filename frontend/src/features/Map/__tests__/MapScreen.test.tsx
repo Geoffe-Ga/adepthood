@@ -24,6 +24,15 @@ jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
+// Control the date-derived current stage without importing the real program
+// store (which trips this suite's brittle Image-effect teardown). MapScreen
+// consumes ``useDerivedCurrentStage`` directly, so mocking it here drives both
+// the "current" highlight and the calendar-based unlock.
+let mockDerivedStage = 1;
+jest.mock('../../../store/useProgramProgression', () => ({
+  useDerivedCurrentStage: (fallback: number) => mockDerivedStage ?? fallback,
+}));
+
 /** Build a realistic StageData for testing (must be prefixed with mock). */
 function mockMakeStage(stageNumber: number) {
   return {
@@ -54,6 +63,10 @@ const mockStages = Array.from({ length: 10 }, (_, i) => mockMakeStage(10 - i));
 const mockLoadStages = jest.fn();
 jest.mock('../services/stageService', () => ({
   stageService: { loadStages: (...args: unknown[]) => mockLoadStages(...args) },
+  isStageUnlocked: (
+    stage: { isUnlocked: boolean; stageNumber: number },
+    currentStage: number | null,
+  ) => stage.isUnlocked || (currentStage !== null && stage.stageNumber <= currentStage),
 }));
 
 const buildMockStageState = () => ({
@@ -86,10 +99,25 @@ jest.mock('../../../store/useStageStore', () => ({
 
 import MapScreen from '../MapScreen';
 
+// react-test-renderer ships no types here, so structurally type just the prop
+// we read instead of reaching for `any`.
+const isLockIcon = (node: { props: { children?: unknown } }): boolean =>
+  node.props.children === '🔒';
+
+const countLockIcons = (tree: ReturnType<typeof create>): number =>
+  tree.root.findAll(isLockIcon).length;
+
+/** Whether the first hotspot of ``stageNumber`` renders a padlock overlay. */
+const hotspotHasLock = (tree: ReturnType<typeof create>, stageNumber: number): boolean => {
+  const hotspot = tree.root.findByProps({ testID: `stage-hotspot-${stageNumber}-0` });
+  return hotspot.findAll(isLockIcon).length > 0;
+};
+
 describe('MapScreen', () => {
   beforeEach(() => {
     mockNavigate.mockClear();
     mockLoadStages.mockClear();
+    mockDerivedStage = 1;
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
 
@@ -197,12 +225,26 @@ describe('MapScreen', () => {
 
   it('shows lock icon on locked stages', () => {
     const tree = create(<MapScreen />);
-    // Stages 3–10 are locked in test data (isUnlocked: stageNumber <= 2)
-    const lockTexts = tree.root.findAll(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (node: any) => typeof node.props.children === 'string' && node.props.children === '🔒',
-    );
+    // Stages 3–10 are locked in test data (isUnlocked: stageNumber <= 2) and
+    // the derived current stage is 1, so the server flags stand.
     // 8 locked stages × 2 hotspots each; findAll may traverse into React internals
-    expect(lockTexts.length).toBeGreaterThanOrEqual(16);
+    expect(countLockIcons(tree)).toBeGreaterThanOrEqual(16);
+  });
+
+  it('unlocks stages up to the date-derived current stage even when the server still locks them', () => {
+    // Calendar has reached stage 5. Stages 3–5 are server-locked
+    // (isUnlocked: stageNumber <= 2) but the calendar overrides, so only
+    // stages 6–10 stay padlocked: 5 stages × 2 hotspots = 10.
+    mockDerivedStage = 5;
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<MapScreen />);
+    });
+    // Stage 4 is server-locked but the calendar (stage 5) has reached it → no
+    // padlock. Stage 8 is beyond the calendar → still padlocked.
+    expect(hotspotHasLock(tree, 4)).toBe(false);
+    expect(hotspotHasLock(tree, 5)).toBe(false);
+    expect(hotspotHasLock(tree, 8)).toBe(true);
+    act(() => tree.unmount());
   });
 });

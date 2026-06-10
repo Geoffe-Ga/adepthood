@@ -53,6 +53,7 @@ import {
   replacePendingCheckIns,
 } from '../../../../storage/habitStorage';
 import { useHabitStore } from '../../../../store/useHabitStore';
+import { useProgramStore } from '../../../../store/useProgramStore';
 import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import type { Goal, Habit, OnboardingHabit } from '../../Habits.types';
 import { habitManager } from '../habitManager';
@@ -789,6 +790,39 @@ describe('habitManager', () => {
       expect(useHabitStore.getState().habits[0]!.goals).toHaveLength(3);
       expect(habitsApi.create).toHaveBeenCalled();
       expect(showToast).toHaveBeenCalled();
+    });
+
+    it('anchors the universal program calendar to the earliest habit start date', async () => {
+      useProgramStore.getState().hydrateProgramStartDate(null);
+      const newHabits: OnboardingHabit[] = [
+        {
+          id: 'b',
+          name: 'Belong',
+          icon: '\u{1F49C}',
+          energy_cost: 1,
+          energy_return: 3,
+          stage: 'Purple',
+          start_date: new Date('2026-01-22'),
+        },
+        {
+          id: 'a',
+          name: 'Survive',
+          icon: '\u{1F9D8}',
+          energy_cost: 1,
+          energy_return: 3,
+          stage: 'Beige',
+          start_date: new Date('2026-01-01'),
+        },
+      ];
+
+      await habitManager.onboardingSave(newHabits, jest.fn());
+
+      const anchor = useProgramStore.getState().programStartDate;
+      // Normalised to local midnight by the store; compare the calendar day.
+      expect(anchor).not.toBeNull();
+      expect(anchor!.getFullYear()).toBe(2026);
+      expect(anchor!.getMonth()).toBe(0);
+      expect(anchor!.getDate()).toBe(1);
     });
 
     it('refreshes habits from the server after sync so local IDs match the wire', async () => {

@@ -593,3 +593,8 @@ export const calculateNetEnergy = (cost: number, returnValue: number): number =>
 export const isEarlyUnlocked = (habit: Habit): boolean => {
   return habit.revealed === true && new Date(habit.start_date).getTime() > Date.now();
 };
+
+/** Locked today iff unrevealed AND its calendar-anchored `start_date` is still in the future; once that date arrives the habit unlocks regardless of a stale `revealed` flag (which only gates manual early-unlock). */
+export const isHabitLockedToday = (habit: Habit, now: number = Date.now()): boolean => {
+  return habit.revealed === false && new Date(habit.start_date).getTime() > now;
+};

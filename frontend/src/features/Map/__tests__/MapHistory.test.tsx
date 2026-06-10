@@ -72,6 +72,10 @@ const mockStages = Array.from({ length: 10 }, (_, i) => mockMakeStage(10 - i));
 const mockLoadStages = jest.fn();
 jest.mock('../services/stageService', () => ({
   stageService: { loadStages: (...args: unknown[]) => mockLoadStages(...args) },
+  isStageUnlocked: (
+    stage: { isUnlocked: boolean; stageNumber: number },
+    currentStage: number | null,
+  ) => stage.isUnlocked || (currentStage !== null && stage.stageNumber <= currentStage),
 }));
 
 const buildMockStageState = () => ({
