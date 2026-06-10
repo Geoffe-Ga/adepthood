@@ -443,34 +443,54 @@ function classifyError(err: unknown): string {
   return 'network_error';
 }
 
-async function sendWithNonStreamingFallback(
-  text: string,
-  tag: JournalTag,
-  optimisticUserId: number | string,
-  botPlaceholderId: number | string,
-  deps: BotSendDeps,
-): Promise<void> {
-  // Used when the runtime fetch cannot expose a streaming body. We still
-  // want the final response to land in the list, so we do a single round
-  // trip and rewrite the placeholder once with the server's answer.
-  try {
-    const result = await botmasonApi.chat({ message: text });
-    deps.actions.replaceOptimistic(
-      botPlaceholderId,
-      buildFinalBotMessage({ ...createBotPlaceholder(), id: botPlaceholderId }, result),
-    );
-    deps.setOfferingBalance(result.remaining_balance);
-    deps.setRemainingMessages(result.remaining_messages);
-  } catch (err) {
-    deps.actions.removeOptimistic(botPlaceholderId);
-    if (isInsufficientOfferingsError(err)) {
-      deps.setOfferingBalance(0);
-      deps.setRemainingMessages(0);
-      await deps.sendFreeform(text, tag, optimisticUserId);
-      return;
-    }
-    deps.actions.markErrored(optimisticUserId, text, tag, classifyError(err));
-  }
+type FallbackSendInput = {
+  text: string;
+  tag: JournalTag;
+  optimisticUserId: number | string;
+  placeholder: ChatMessage;
+};
+
+/**
+ * Non-streaming downgrade (error path 1): used when the runtime fetch
+ * cannot expose a streaming body. A single request/response round trip
+ * rewrites a fresh placeholder with the server's answer. Expressed as a
+ * `useOptimisticMutation` so the placeholder's prepend/remove lifecycle
+ * gets the same rollback guarantee as every other optimistic surface
+ * (issue #270); the caller-level catch handles the 402 freeform
+ * downgrade and the retryable-error marking exactly as before.
+ */
+function useBotFallbackSend(deps: BotSendDeps) {
+  const mutation = useOptimisticMutation<FallbackSendInput, void>({
+    apply: ({ placeholder }) => {
+      deps.actions.prependMessage(placeholder);
+    },
+    commit: async ({ text, placeholder }) => {
+      const result = await botmasonApi.chat({ message: text });
+      deps.actions.replaceOptimistic(placeholder.id, buildFinalBotMessage(placeholder, result));
+      deps.setOfferingBalance(result.remaining_balance);
+      deps.setRemainingMessages(result.remaining_messages);
+    },
+    rollback: ({ placeholder }) => {
+      deps.actions.removeOptimistic(placeholder.id);
+    },
+  });
+
+  return useCallback(
+    async (text: string, tag: JournalTag, optimisticUserId: number | string): Promise<void> => {
+      try {
+        await mutation.mutate({ text, tag, optimisticUserId, placeholder: createBotPlaceholder() });
+      } catch (err) {
+        if (isInsufficientOfferingsError(err)) {
+          deps.setOfferingBalance(0);
+          deps.setRemainingMessages(0);
+          await deps.sendFreeform(text, tag, optimisticUserId);
+          return;
+        }
+        deps.actions.markErrored(optimisticUserId, text, tag, classifyError(err));
+      }
+    },
+    [mutation, deps],
+  );
 }
 
 type StreamOutcome = { completed: boolean; streamError: string | null };
@@ -528,43 +548,62 @@ function isInsufficientOfferingsError(err: unknown): err is ApiError {
   return err instanceof ApiError && err.status === 402 && err.detail === 'insufficient_offerings';
 }
 
-async function handleStreamError(
-  err: unknown,
-  text: string,
-  tag: JournalTag,
-  optimisticUserId: number | string,
-  botPlaceholderId: number | string,
-  deps: BotSendDeps,
-): Promise<void> {
-  deps.actions.removeOptimistic(botPlaceholderId);
-  if (err instanceof StreamingUnsupportedError) {
-    // Runtime cannot read the body progressively — retry via the legacy
-    // request/response endpoint so the user still receives the reply, just
-    // without the typewriter effect.
-    const fallbackPlaceholder = createBotPlaceholder();
-    deps.actions.prependMessage(fallbackPlaceholder);
-    await sendWithNonStreamingFallback(text, tag, optimisticUserId, fallbackPlaceholder.id, deps);
-    return;
+/**
+ * Tags a stream that closed without a ``complete`` event (error path 3:
+ * the server emitted a mid-stream error, or the socket dropped). Thrown
+ * from the stream mutation's `commit` so `useOptimisticMutation` owns the
+ * placeholder rollback, and the typed dispatch below can mark the user
+ * bubble retryable with the provider's detail string.
+ */
+class IncompleteStreamError extends Error {
+  readonly detail: string;
+
+  constructor(detail: string) {
+    super(`stream ended before completion: ${detail}`);
+    this.name = 'IncompleteStreamError';
+    this.detail = detail;
   }
-  if (isInsufficientOfferingsError(err)) {
-    deps.setOfferingBalance(0);
-    deps.setRemainingMessages(0);
-    await deps.sendFreeform(text, tag, optimisticUserId);
-    return;
-  }
-  // BUG-FE-JOURNAL-002: when the bot stream throws synchronously (auth,
-  // DNS, 500) before any chunk arrives the chat service never persists
-  // the user message server-side — so on next reload the user's words
-  // simply vanish. We mark the bubble errored for the in-session retry
-  // UX AND persist the message via the journal endpoint so a reload
-  // recovers it. The persistence is fire-and-forget against a separate
-  // journal row; if the user retries inline (via `_retryText`) and the
-  // bot stream succeeds, the chat service writes its own user_entry —
-  // a single duplicate is the lesser evil compared to silently losing
-  // the user's text. (Server-side dedupe via idempotency key is tracked
-  // in BUG-BM-012's follow-up.)
-  deps.actions.markErrored(optimisticUserId, text, tag, classifyError(err));
-  void persistUserMessageBackground(text, tag);
+}
+
+type BotStreamInput = {
+  text: string;
+  placeholder: ChatMessage;
+  controller: AbortController;
+  onFirstChunk: () => void;
+};
+
+/**
+ * The streaming send as an optimistic mutation (issue #270): `apply`
+ * prepends the bot placeholder, `commit` runs the stream and converts
+ * the closed-early case into a typed throw, and `rollback` removes the
+ * placeholder — unless the stream was aborted by a newer send, in which
+ * case the list is deliberately left alone (legacy semantics: an aborted
+ * stream must not mutate state out from under its successor).
+ */
+function useBotStreamMutation(deps: BotSendDeps) {
+  return useOptimisticMutation<BotStreamInput, StreamOutcome>({
+    apply: ({ placeholder }) => {
+      deps.actions.prependMessage(placeholder);
+    },
+    commit: async ({ text, placeholder, controller, onFirstChunk }) => {
+      const outcome = await runChatStream(
+        text,
+        placeholder.id,
+        onFirstChunk,
+        deps,
+        controller.signal,
+      );
+      if (controller.signal.aborted) return outcome;
+      if (!outcome.completed) {
+        throw new IncompleteStreamError(outcome.streamError ?? 'incomplete_stream');
+      }
+      return outcome;
+    },
+    rollback: ({ placeholder, controller }) => {
+      if (controller.signal.aborted) return;
+      deps.actions.removeOptimistic(placeholder.id);
+    },
+  });
 }
 
 /**
@@ -585,6 +624,50 @@ function persistUserMessageBackground(text: string, tag: JournalTag): Promise<vo
     });
 }
 
+/**
+ * The four-way failure dispatch (issue #270). `useOptimisticMutation`
+ * has already rolled the bot placeholder back by the time this runs,
+ * so each branch only owns its continuation:
+ *   1. StreamingUnsupportedError → non-streaming fallback mutation.
+ *   2. 402 insufficient_offerings → drain wallet, downgrade to freeform.
+ *   3. IncompleteStreamError → mark the user bubble retryable with the
+ *      provider's mid-stream detail.
+ *   4. Sync throw (auth, DNS, 500) → mark retryable AND persist the
+ *      user's words (BUG-FE-JOURNAL-002): the chat service never wrote
+ *      them server-side, so without the fire-and-forget journal write a
+ *      reload would lose the message. A duplicate row on inline retry
+ *      is the lesser evil; server-side dedupe is BUG-BM-012's follow-up.
+ */
+function useStreamFailureDispatch(deps: BotSendDeps) {
+  const fallbackSend = useBotFallbackSend(deps);
+  return useCallback(
+    async (
+      err: unknown,
+      text: string,
+      tag: JournalTag,
+      optimisticUserId: number | string,
+    ): Promise<void> => {
+      if (err instanceof StreamingUnsupportedError) {
+        await fallbackSend(text, tag, optimisticUserId);
+        return;
+      }
+      if (isInsufficientOfferingsError(err)) {
+        deps.setOfferingBalance(0);
+        deps.setRemainingMessages(0);
+        await deps.sendFreeform(text, tag, optimisticUserId);
+        return;
+      }
+      if (err instanceof IncompleteStreamError) {
+        deps.actions.markErrored(optimisticUserId, text, tag, err.detail);
+        return;
+      }
+      deps.actions.markErrored(optimisticUserId, text, tag, classifyError(err));
+      void persistUserMessageBackground(text, tag);
+    },
+    [deps, fallbackSend],
+  );
+}
+
 function useBotSend(deps: BotSendDeps) {
   // ``awaitingBot`` surfaces the "BotMason is thinking..." indicator only
   // while we are waiting for the first token. Once chunks start arriving the
@@ -603,6 +686,9 @@ function useBotSend(deps: BotSendDeps) {
     [],
   );
 
+  const streamMutation = useBotStreamMutation(deps);
+  const dispatchStreamFailure = useStreamFailureDispatch(deps);
+
   const sendWithBot = useCallback(
     async (text: string, tag: JournalTag, optimisticUserId: number | string) => {
       // Cancel any prior in-flight stream so a rapid second send does not
@@ -610,38 +696,22 @@ function useBotSend(deps: BotSendDeps) {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
-      const botPlaceholder = createBotPlaceholder();
-      deps.actions.prependMessage(botPlaceholder);
       setAwaitingBot(true);
       try {
-        const outcome = await runChatStream(
+        await streamMutation.mutate({
           text,
-          botPlaceholder.id,
-          () => setAwaitingBot(false),
-          deps,
-          controller.signal,
-        );
-        if (controller.signal.aborted) return;
-        if (!outcome.completed) {
-          // Stream closed early — either a provider error event arrived or
-          // the socket dropped without a ``complete``. Either way we treat
-          // it as a retryable failure.
-          deps.actions.removeOptimistic(botPlaceholder.id);
-          deps.actions.markErrored(
-            optimisticUserId,
-            text,
-            tag,
-            outcome.streamError ?? 'incomplete_stream',
-          );
-        }
+          placeholder: createBotPlaceholder(),
+          controller,
+          onFirstChunk: () => setAwaitingBot(false),
+        });
       } catch (err) {
         if (controller.signal.aborted) return;
-        await handleStreamError(err, text, tag, optimisticUserId, botPlaceholder.id, deps);
+        await dispatchStreamFailure(err, text, tag, optimisticUserId);
       } finally {
         if (!controller.signal.aborted) setAwaitingBot(false);
       }
     },
-    [deps],
+    [streamMutation, dispatchStreamFailure],
   );
 
   return { awaitingBot, sendWithBot };
