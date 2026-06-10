@@ -64,6 +64,13 @@ interface AuthContextValue {
    * default fallback so consumers never see a `null`-typed value.
    */
   userTimezone: string;
+  /**
+   * Push a server-confirmed IANA zone into ``userTimezone`` (issue #261).
+   * Call this ONLY with the zone echoed back by ``PUT /users/me/timezone``
+   * so the context never drifts from what the backend has on record —
+   * client-side guesses belong in the request, not here.
+   */
+  setUserTimezone: (_timezone: string) => void;
   login: LoginOrSignup;
   signup: LoginOrSignup;
   logout: () => Promise<void>;
@@ -449,7 +456,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isLoading = authStatus === 'loading';
 
   const value = useMemo(
-    () => ({ token, authStatus, isLoading, userTimezone, ...actions }),
+    () => ({ token, authStatus, isLoading, userTimezone, setUserTimezone, ...actions }),
     [token, authStatus, isLoading, userTimezone, actions],
   );
 

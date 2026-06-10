@@ -8,10 +8,12 @@ import {
   loginAuthResponseSchema,
   pageSchema,
   passwordResetAcceptedSchema,
+  timezoneReadSchema,
   unknownRecord,
   type Page,
   type PasswordResetAcceptedT,
   type Tier,
+  type TimezoneReadT,
 } from './schemas';
 import type { components, paths } from './types';
 
@@ -2500,6 +2502,32 @@ export const auth = {
   },
 };
 
+/** Inbound payload for ``PUT /users/me/timezone`` (issue #261). */
+export interface TimezoneUpdatePayload {
+  timezone: string;
+}
+
+// User profile client
+export const users = {
+  /**
+   * Update the authenticated caller's IANA timezone (issue #261).
+   *
+   * The server applies the same trust-boundary rules as signup: an
+   * unknown or oversized name is rejected with 422 and blank input
+   * coerces to ``"UTC"``.  On success the caller should push the echoed
+   * zone into ``AuthContext.setUserTimezone`` so user-local helpers
+   * (Habit stats, streaks, weekday charts) pick it up immediately.
+   */
+  updateMyTimezone(payload: TimezoneUpdatePayload, token?: string): Promise<TimezoneReadT> {
+    return request<TimezoneReadT>('/users/me/timezone', {
+      method: 'PUT',
+      body: payload,
+      token,
+      schema: timezoneReadSchema,
+    });
+  },
+};
+
 // Energy plan client
 export const energy = {
   createPlan(body: EnergyPlanRequest, idempotencyKey?: string): Promise<EnergyPlanResponse> {
@@ -2529,6 +2557,7 @@ export default {
   frequency,
   practiceSessions,
   auth,
+  users,
   energy,
   setTokenGetter,
   setOnUnauthorized,

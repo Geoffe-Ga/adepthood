@@ -105,6 +105,17 @@ export type AuthResponseT = z.infer<typeof authResponseSchema>;
 export type LoginAuthResponseT = z.infer<typeof loginAuthResponseSchema>;
 
 /**
+ * Response for ``PUT /users/me/timezone`` (issue #261): the IANA zone the
+ * server now has on record for the caller.  Validated at the boundary so a
+ * malformed body can never corrupt ``userTimezone`` in the AuthContext.
+ */
+export const timezoneReadSchema = z.object({
+  timezone: z.string(),
+});
+
+export type TimezoneReadT = z.infer<typeof timezoneReadSchema>;
+
+/**
  * Response for ``POST /auth/password-reset/request``.  Always 202 with
  * the same body shape regardless of whether the email is registered --
  * the message is the SPEC R4 anti-enumeration constant.
