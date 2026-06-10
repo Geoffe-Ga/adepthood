@@ -15,12 +15,24 @@ service → router).
 from __future__ import annotations
 
 import hashlib
+import logging
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from models.chat_spend import ChatSpend
+
+logger = logging.getLogger(__name__)
+
+# How long an in-flight tombstone (``result_json IS NULL``) may live before
+# a colliding retry evicts it (issue #320).  Without eviction, a server
+# crash between the tombstone insert and ``update_idem_result`` strands the
+# row forever and every retry with the same key 409s permanently.  LLM
+# calls can legitimately run 30+ seconds; 15 minutes sits far above any
+# provider's p99 so a genuinely-running request is never evicted.
+IN_FLIGHT_TTL = timedelta(minutes=15)
 
 
 def hash_idem_key(user_id: int, raw_key: str) -> str:
@@ -83,12 +95,67 @@ async def insert_idem_tombstone(
     savepoint removes the footgun.
     """
     hashed = hash_idem_key(user_id, raw_key)
-    try:
-        async with session.begin_nested():
-            session.add(ChatSpend(user_id=user_id, idem_key=hashed))
-            await session.flush()
-    except IntegrityError:
+    for attempt in (0, 1):
+        try:
+            async with session.begin_nested():
+                session.add(ChatSpend(user_id=user_id, idem_key=hashed))
+                await session.flush()
+        except IntegrityError:
+            # Issue #320: a collision against a crash-stranded tombstone
+            # (NULL result, older than the TTL) self-heals — evict it and
+            # retry the insert ONCE.  If two retries race here, both may
+            # evict but the UNIQUE constraint still serialises the
+            # re-insert: one wins, the other lands back in this branch on
+            # its second attempt and returns False (409).
+            if attempt == 0 and await _evict_expired_tombstone(session, user_id, hashed):
+                continue
+            return False
+        return True
+    return False
+
+
+def _tombstone_age(row: ChatSpend) -> timedelta:
+    """Age of a tombstone, dialect-safe.
+
+    SQLite returns ``created_at`` naive while Postgres returns it aware;
+    both store UTC, so normalising to naive UTC makes the subtraction
+    valid on either dialect (see issue #412 for the broader class).
+    """
+    created = row.created_at.replace(tzinfo=None) if row.created_at.tzinfo else row.created_at
+    return datetime.now(UTC).replace(tzinfo=None) - created
+
+
+async def _evict_expired_tombstone(session: AsyncSession, user_id: int, hashed: str) -> bool:
+    """Delete a crash-stranded in-flight tombstone; True when one was evicted.
+
+    Only rows with ``result_json IS NULL`` (never finalised) AND older
+    than :data:`IN_FLIGHT_TTL` qualify — a completed row replays its
+    cached body via :func:`check_idempotency`, and a fresh in-flight row
+    keeps its 409 dedup contract.
+    """
+    result = await session.execute(
+        select(ChatSpend).where(
+            ChatSpend.user_id == user_id,
+            col(ChatSpend.idem_key) == hashed,
+        )
+    )
+    row = result.scalars().first()
+    if row is None or row.result_json is not None:
         return False
+    age = _tombstone_age(row)
+    if age < IN_FLIGHT_TTL:
+        return False
+    await session.delete(row)
+    await session.flush()
+    # Support correlation: "user reports stuck retry" ↔ "row N evicted at T".
+    logger.info(
+        "chat_spend_tombstone_evicted",
+        extra={
+            "user_id": user_id,
+            "chat_spend_id": row.id,
+            "age_seconds": int(age.total_seconds()),
+        },
+    )
     return True
 
 

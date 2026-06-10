@@ -1875,24 +1875,65 @@ async def test_stream_idempotency_key_different_keys_charge_independently(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("zero_monthly_cap")
-async def test_chat_stuck_in_flight_tombstone_returns_409_until_cleared(
+async def test_chat_stuck_tombstone_recovers_after_ttl(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """Pin the current behaviour of a tombstone whose ``result_json`` stayed NULL.
+    """Issue #320: a crash-stranded tombstone self-heals after the TTL.
 
-    Reviewer-flagged scenario: if the server crashes between
-    ``insert_idem_tombstone`` and ``update_idem_result`` (or rolls back the
-    whole transaction after the tombstone was committed in another flow),
-    the row sits forever with ``result_json = NULL``.  Today every retry
-    with the same key hits the UNIQUE constraint at the tombstone insert
-    and gets 409.  This test pins that behaviour so a future cleanup job
-    (tracked separately) has a regression target — the test will need to
-    flip to assert eventual recovery once the cleanup ships.
+    If the server crashes between ``insert_idem_tombstone`` and
+    ``update_idem_result``, the row sits with ``result_json = NULL``.  A
+    retry with the same key (which a sane mobile client reuses — the whole
+    point of idempotency) used to 409 forever.  Now an in-flight tombstone
+    older than the TTL is evicted on the next collision and the retry
+    proceeds to a real, fresh response.
+    """
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
 
-    We simulate the crash by directly inserting a NULL-``result_json``
-    ``ChatSpend`` row (matching what a half-completed request would have
-    left behind), then verify the subsequent retry returns 409.
+    from models.chat_spend import ChatSpend  # noqa: PLC0415
+    from services.chat_idempotency import IN_FLIGHT_TTL, hash_idem_key  # noqa: PLC0415
+
+    headers = await _signup(async_client)
+    await _add_balance(db_session, amount=2)
+
+    user_row = (await db_session.execute(select(User))).scalars().first()
+    assert user_row is not None
+    assert user_row.id is not None
+
+    # Plant a crash-stranded tombstone whose age exceeds the TTL.
+    stuck_key = "crash-key-001"
+    stale_created = datetime.now(UTC).replace(tzinfo=None) - IN_FLIGHT_TTL - timedelta(minutes=1)
+    db_session.add(
+        ChatSpend(
+            user_id=user_row.id,
+            idem_key=hash_idem_key(user_row.id, stuck_key),
+            created_at=stale_created,
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.post(
+        "/journal/chat",
+        json={"message": "retry after crash"},
+        headers={**headers, "Idempotency-Key": stuck_key},
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    assert resp.json()["response"]
+
+    # Exactly one charge: the recovered retry spends once.
+    balance = await async_client.get("/user/balance", headers=headers)
+    assert balance.json()["balance"] == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_fresh_in_flight_tombstone_still_409s(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Issue #320 guard: a genuinely in-flight request (under TTL) stays 409.
+
+    The TTL eviction must not create false positives — a concurrent retry
+    while the original LLM call is still running keeps the dedup contract.
     """
     from models.chat_spend import ChatSpend  # noqa: PLC0415
     from services.chat_idempotency import hash_idem_key  # noqa: PLC0415
@@ -1900,21 +1941,18 @@ async def test_chat_stuck_in_flight_tombstone_returns_409_until_cleared(
     headers = await _signup(async_client)
     await _add_balance(db_session, amount=2)
 
-    # Find the user_id from the auth token's sub.
     user_row = (await db_session.execute(select(User))).scalars().first()
     assert user_row is not None
     assert user_row.id is not None
 
-    # Plant a stuck-in-flight tombstone with NULL result_json.
-    stuck_key = "crash-key-001"
-    db_session.add(ChatSpend(user_id=user_row.id, idem_key=hash_idem_key(user_row.id, stuck_key)))
+    fresh_key = "in-flight-key-001"
+    db_session.add(ChatSpend(user_id=user_row.id, idem_key=hash_idem_key(user_row.id, fresh_key)))
     await db_session.commit()
 
-    # A retry with the same key collides on UNIQUE → 409 (NOT a re-charge).
     resp = await async_client.post(
         "/journal/chat",
-        json={"message": "retry after crash"},
-        headers={**headers, "Idempotency-Key": stuck_key},
+        json={"message": "concurrent retry"},
+        headers={**headers, "Idempotency-Key": fresh_key},
     )
     assert resp.status_code == HTTPStatus.CONFLICT
     assert resp.json()["detail"] == "idempotency_key_in_flight"
