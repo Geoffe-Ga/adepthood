@@ -40,7 +40,7 @@ function makeItem(overrides: Partial<ContentItem> = {}): ContentItem {
     title: 'Test Article',
     content_type: 'chapter',
     release_day: 0,
-    url: 'https://aptitude.guru/course/beige-1',
+    url: 'content://beige-1',
     is_locked: false,
     is_read: false,
     ...overrides,

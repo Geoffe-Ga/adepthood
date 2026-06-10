@@ -1,20 +1,20 @@
 """Declarative content config: manifest-driven chapter records.
 
 Stage-locked chapters are no longer hardcoded here (the old
-``STAGE_PLANS`` covered stage 1 only and built Squarespace URLs).  They
+``STAGE_PLANS`` covered stage 1 only and built remote CMS URLs).  They
 now come from the vendored content manifest via
 :class:`services.content_repository.ContentRepository` — every stage the
 manifest ships, with ``title``/``content_type``/``release_day`` taken
 verbatim and a **local content reference** (``content://<chapter-id>``)
-written where the Squarespace URL used to go.  The stage-numbering
+written where the remote CMS URL used to go.  The stage-numbering
 reconciliation from ADR 0001 applies: manifest ``stage`` N maps onto the
 app's ``CourseStage.stage_number`` N, identity for 1..10.
 
 The ``StageContent.url`` column is deliberately *repurposed* (not
 renamed) to hold the ``content://`` reference — no Alembic migration is
 needed, existing read-completion rows keep their foreign keys, and the
-column rename can ride the final cutover issue once the Squarespace
-reader is deleted.  See issue #392.
+column rename can ride the final cutover issue now that the legacy CMS
+reader is deleted (#396).  See issue #392.
 
 Site resources (philosophy, about, …) moved out of this module in issue
 #395: the manifest's ``site_resources[]`` is their source of truth and

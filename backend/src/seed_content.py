@@ -3,7 +3,7 @@
 Chapters are reconciled from ``manifest.json`` for **every stage the
 manifest ships** (issue #392): title, content type, and release day come
 from the manifest verbatim, and the ``url`` column carries a local
-``content://<chapter-id>`` reference instead of a Squarespace URL.
+``content://<chapter-id>`` reference instead of a remote CMS URL.
 Stages the manifest does not cover yet keep their historic placeholder
 rows so the rest of the app has something to render; the moment a stage
 appears in the manifest its placeholders stop seeding (suppression is
@@ -132,8 +132,8 @@ async def _load_existing_keys(
     """Index existing ``StageContent`` rows by ``(course_stage_id, title)``.
 
     Title is the natural key today (no slug column).  Using a dict — not a
-    set — lets us update fields on a row whose URL has drifted from the
-    config (e.g. when chapter URLs are renamed on Squarespace) without
+    set — lets us update fields on a row whose reference has drifted from
+    the manifest (e.g. a chapter id renamed upstream) without
     re-inserting.
     """
     result = await session.execute(select(StageContent))

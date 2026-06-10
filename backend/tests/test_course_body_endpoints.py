@@ -6,10 +6,10 @@ Covers:
 * ``GET /course/site-resources/{slug}/body`` — read a configured resource
 
 Bodies come from the vendored content directory via
-:class:`ContentRepository`; a manifest-backed temp directory replaces the
-old Squarespace stub.  **Gating parity is the point of this file**: the
-locked / unreleased / missing 404-mask tests (BUG-COURSE-004) carry over
-from the Squarespace era unchanged in intent.
+:class:`ContentRepository`, stubbed with a manifest-backed temp
+directory.  **Gating parity is the point of this file**: the locked /
+unreleased / missing 404-mask tests (BUG-COURSE-004) carry over from the
+remote-CMS era unchanged in intent.
 """
 
 from __future__ import annotations

@@ -1,11 +1,10 @@
-"""Local-file content repository — the git-content replacement for Squarespace.
+"""Local-file content repository for the git-content pipeline.
 
 Issue #390 (epic #388): loads the vendored ``backend/content/manifest.json``
 once, validates it against the frozen contract from issue #389
 (``manifest.schema.json``, ADR 0001), and serves chapter metadata plus raw
-Markdown bodies from disk.  Mirrors :mod:`services.squarespace`'s public
-surface — lazy singleton plus ``*_for_tests`` setters — so the router swap
-(a later issue) is a seam replacement, not a redesign.
+Markdown bodies from disk.  Exposes a lazy singleton plus ``*_for_tests``
+setters so tests can swap the instance without touching privates.
 
 Read-only by design: this service never writes to the content directory.
 """
@@ -251,8 +250,7 @@ class ContentRepository:
 
 
 # Mutable container so the instance can be replaced without ``global``
-# (and therefore without a ruff PLW0603 suppression) — the same pattern
-# as :mod:`services.squarespace`.
+# (and therefore without a ruff PLW0603 suppression).
 _state: dict[str, ContentRepository | None] = {"repository": None}
 
 
@@ -273,7 +271,7 @@ def set_content_repository_for_tests(repository: ContentRepository | None) -> No
     """Replace (or clear) the process-wide repository.
 
     Public on purpose — keeps the test contract on the module's public
-    API, mirroring ``set_squarespace_client_for_tests``.
+    API instead of a private attribute.
     """
     _state["repository"] = repository
 
