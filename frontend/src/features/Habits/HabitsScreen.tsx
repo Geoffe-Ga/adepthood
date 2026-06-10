@@ -227,6 +227,7 @@ const HabitDataModals = ({
       habit={selectedHabit}
       onClose={() => modals.close('goal')}
       onUpdateGoal={actions.updateGoal}
+      onUpdateGoalUnits={actions.updateGoalUnits}
       onLogUnit={actions.logUnit}
       onUpdateHabit={actions.updateHabit}
     />

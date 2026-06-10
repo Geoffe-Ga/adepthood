@@ -74,3 +74,21 @@ class GoalUpdate(BaseModel):
     frequency_unit: str = Field(min_length=1, max_length=50)
     is_additive: bool = True
     goal_group_id: int | None = None
+
+
+class GoalUnitsUpdate(BaseModel):
+    """Payload for ``PUT /habits/{habit_id}/goals/units`` (issue #289).
+
+    The GoalUnitEditor edits the unit fields once for the user but they
+    apply to every tier goal; updating them through three separate
+    ``PUT /goals/{id}`` calls left a partial-failure window with tiers on
+    mismatched units server-side.  This batch payload carries exactly the
+    shared fields so the router can update all of a habit's goals inside
+    one transaction.  Bounds mirror :class:`GoalUpdate`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_unit: str = Field(min_length=1, max_length=50)
+    frequency: float = Field(gt=0)
+    frequency_unit: str = Field(min_length=1, max_length=50)

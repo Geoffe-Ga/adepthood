@@ -15,7 +15,12 @@ import {
   goalCompletions as goalCompletionsApi,
   goals as goalsApi,
 } from '../../../api';
-import type { CheckInResult, GoalUpdatePayload, HabitCreatePayload } from '../../../api';
+import type {
+  CheckInResult,
+  GoalUnitsPayload,
+  GoalUpdatePayload,
+  HabitCreatePayload,
+} from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
 import { flattenGoalCompletions } from '../../../api/flattenGoalCompletions';
 import type { ToastConfig } from '../../../components/Toast';
@@ -686,6 +691,43 @@ export const habitManager = {
         revertOnFailure(
           prev,
           "We couldn't save that goal change. Your local copy was restored — check your connection and try again.",
+        ),
+      );
+  },
+
+  /**
+   * Atomically update the shared unit fields across every tier goal of a
+   * habit (issue #289). One optimistic apply, one batch PUT, one rollback
+   * closure — replaces the GoalUnitEditor's three-call fan-out whose
+   * partial failure split tiers between old and new units server-side.
+   */
+  updateGoalUnits: (
+    habitId: number,
+    changes: Partial<Pick<Goal, 'target_unit' | 'frequency' | 'frequency_unit'>>,
+  ): void => {
+    const prev = getHabits();
+    const habit = prev.find((h) => h.id === habitId);
+    const reference = habit?.goals[0];
+    if (!habit || !reference) return;
+    const next = prev.map((h) =>
+      h.id === habitId ? { ...h, goals: h.goals.map((g) => ({ ...g, ...changes })) } : h,
+    );
+    setHabits(next);
+    void persistHabits(next);
+    // Synthetic ids (pre-sync onboarding state) stay local-only — the
+    // same contract as ``updateGoal``.
+    if (!habit.goals.every((g) => g.id)) return;
+    const payload: GoalUnitsPayload = {
+      target_unit: changes.target_unit ?? reference.target_unit,
+      frequency: changes.frequency ?? reference.frequency,
+      frequency_unit: changes.frequency_unit ?? reference.frequency_unit,
+    };
+    habitsApi
+      .updateGoalUnits(habitId, payload)
+      .catch(
+        revertOnFailure(
+          prev,
+          "We couldn't update those goal units on the server. Your changes were rolled back — check your connection and try again.",
         ),
       );
   },

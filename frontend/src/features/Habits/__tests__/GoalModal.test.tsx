@@ -74,6 +74,7 @@ describe('GoalModal hook order', () => {
         habit={null}
         onClose={() => {}}
         onUpdateGoal={() => {}}
+        onUpdateGoalUnits={() => {}}
         onLogUnit={() => {}}
         onUpdateHabit={() => {}}
       />,
@@ -87,6 +88,7 @@ describe('GoalModal hook order', () => {
             habit={sampleHabit}
             onClose={() => {}}
             onUpdateGoal={() => {}}
+            onUpdateGoalUnits={() => {}}
             onLogUnit={() => {}}
             onUpdateHabit={() => {}}
           />,
@@ -104,6 +106,7 @@ describe('GoalModal progress', () => {
         habit={sampleHabit}
         onClose={() => {}}
         onUpdateGoal={() => {}}
+        onUpdateGoalUnits={() => {}}
         onLogUnit={() => {}}
         onUpdateHabit={() => {}}
       />,
@@ -122,6 +125,7 @@ describe('GoalModal progress', () => {
           habit={updatedHabit}
           onClose={() => {}}
           onUpdateGoal={() => {}}
+          onUpdateGoalUnits={() => {}}
           onLogUnit={() => {}}
           onUpdateHabit={() => {}}
         />,
@@ -141,6 +145,7 @@ describe('GoalModal tooltips', () => {
         habit={sampleHabit}
         onClose={() => {}}
         onUpdateGoal={() => {}}
+        onUpdateGoalUnits={() => {}}
         onLogUnit={() => {}}
         onUpdateHabit={() => {}}
       />,
@@ -168,6 +173,7 @@ describe('GoalModal target editor', () => {
         habit={sampleHabit}
         onClose={() => {}}
         onUpdateGoal={() => {}}
+        onUpdateGoalUnits={() => {}}
         onLogUnit={() => {}}
         onUpdateHabit={() => {}}
       />,
@@ -187,6 +193,7 @@ describe('GoalModal target editor', () => {
         habit={sampleHabit}
         onClose={() => {}}
         onUpdateGoal={() => {}}
+        onUpdateGoalUnits={() => {}}
         onLogUnit={() => {}}
         onUpdateHabit={() => {}}
       />,
@@ -209,6 +216,7 @@ describe('GoalModal target editor', () => {
         habit={sampleHabit}
         onClose={() => {}}
         onUpdateGoal={onUpdateGoal}
+        onUpdateGoalUnits={() => {}}
         onLogUnit={() => {}}
         onUpdateHabit={() => {}}
       />,
@@ -236,6 +244,33 @@ describe('GoalModal target editor', () => {
     expect(() => testRenderer.root.findByProps({ testID: 'goal-target-input-clear' })).toThrow();
   });
 
+  it('commits unit edits as ONE consolidated call, not a per-tier fan-out (#289)', () => {
+    const onUpdateGoal = jest.fn();
+    const onUpdateGoalUnits = jest.fn();
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={() => {}}
+        onUpdateGoal={onUpdateGoal}
+        onUpdateGoalUnits={onUpdateGoalUnits}
+        onLogUnit={() => {}}
+        onUpdateHabit={() => {}}
+      />,
+    );
+    expandEditRegion(testRenderer);
+
+    renderer.act(() => {
+      testRenderer.root.findByProps({ testID: 'goal-target-unit-hours' }).props.onPress();
+    });
+
+    // The atomic batch endpoint replaces the three-PUT fan-out whose
+    // partial failure left tiers with mismatched units server-side.
+    expect(onUpdateGoalUnits).toHaveBeenCalledTimes(1);
+    expect(onUpdateGoalUnits).toHaveBeenCalledWith(sampleHabit.id, { target_unit: 'hours' });
+    expect(onUpdateGoal).not.toHaveBeenCalled();
+  });
+
   it('does not duplicate onUpdateGoal when both onEndEditing and onBlur could fire', () => {
     // React Native fires ``onEndEditing`` + ``onBlur`` back-to-back for a
     // single keyboard-dismissal action (the Done key, then the resulting
@@ -253,6 +288,7 @@ describe('GoalModal target editor', () => {
         habit={sampleHabit}
         onClose={() => {}}
         onUpdateGoal={onUpdateGoal}
+        onUpdateGoalUnits={() => {}}
         onLogUnit={() => {}}
         onUpdateHabit={() => {}}
       />,
@@ -280,6 +316,7 @@ describe('GoalModal target editor', () => {
         habit={sampleHabit}
         onClose={() => {}}
         onUpdateGoal={onUpdateGoal}
+        onUpdateGoalUnits={() => {}}
         onLogUnit={() => {}}
         onUpdateHabit={() => {}}
       />,
@@ -305,6 +342,7 @@ describe('GoalModal target editor', () => {
         habit={sampleHabit}
         onClose={() => {}}
         onUpdateGoal={onUpdateGoal}
+        onUpdateGoalUnits={() => {}}
         onLogUnit={() => {}}
         onUpdateHabit={() => {}}
       />,
@@ -335,6 +373,7 @@ describe('GoalModal backdrop close', () => {
         habit={sampleHabit}
         onClose={onClose}
         onUpdateGoal={() => {}}
+        onUpdateGoalUnits={() => {}}
         onLogUnit={() => {}}
         onUpdateHabit={() => {}}
       />,
@@ -356,6 +395,7 @@ describe('GoalModal backdrop close', () => {
         habit={sampleHabit}
         onClose={onClose}
         onUpdateGoal={() => {}}
+        onUpdateGoalUnits={() => {}}
         onLogUnit={() => {}}
         onUpdateHabit={() => {}}
       />,
@@ -387,6 +427,7 @@ describe('GoalModal edit toggle', () => {
         habit={sampleHabit}
         onClose={() => {}}
         onUpdateGoal={() => {}}
+        onUpdateGoalUnits={() => {}}
         onLogUnit={() => {}}
         onUpdateHabit={() => {}}
       />,
@@ -409,6 +450,7 @@ describe('GoalModal edit toggle', () => {
         habit={sampleHabit}
         onClose={() => {}}
         onUpdateGoal={() => {}}
+        onUpdateGoalUnits={() => {}}
         onLogUnit={() => {}}
         onUpdateHabit={() => {}}
       />,
@@ -429,6 +471,7 @@ describe('GoalModal edit toggle', () => {
         habit={sampleHabit}
         onClose={() => {}}
         onUpdateGoal={() => {}}
+        onUpdateGoalUnits={() => {}}
         onLogUnit={() => {}}
         onUpdateHabit={() => {}}
       />,

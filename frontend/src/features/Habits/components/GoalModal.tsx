@@ -771,7 +771,7 @@ interface GoalUnitEditorProps {
    */
   goals: NonEmptyGoals;
   habitId: number;
-  onUpdateGoal: GoalModalProps['onUpdateGoal'];
+  onUpdateGoalUnits: GoalModalProps['onUpdateGoalUnits'];
 }
 
 interface FrequencyInputProps {
@@ -794,24 +794,22 @@ const FrequencyInput = ({ draft, setDraft, onEnd }: FrequencyInputProps) => (
 
 /**
  * Edits ``target_unit`` / ``frequency`` / ``frequency_unit`` for a habit's
- * goals. The fields are shared across tiers (``normalizeGoalUnits``
- * propagates a single edit to all three), so the editor surfaces them once
- * — but ``onUpdateGoal`` only PUTs the goal whose id is sent, so a commit
- * fans out one update per tier. Without the fan-out, the ``clear`` and
- * ``stretch`` rows would stay on their old units server-side even though
- * the local store displays them as normalized.
+ * goals. The fields are shared across tiers, so the editor surfaces them
+ * once and commits through ``onUpdateGoalUnits`` — a single atomic batch
+ * update that moves every tier together (#289).
  */
-const GoalUnitEditor = ({ goals, habitId, onUpdateGoal }: GoalUnitEditorProps) => {
+const GoalUnitEditor = ({ goals, habitId, onUpdateGoalUnits }: GoalUnitEditorProps) => {
   const reference = goals[0];
   const [freqDraft, setFreqDraft] = useState(String(reference.frequency));
   useEffect(() => {
     setFreqDraft(String(reference.frequency));
   }, [reference.frequency]);
 
+  // Issue #289: ONE consolidated call — the backend updates every tier
+  // inside a single transaction, so a failure can never strand tiers on
+  // mismatched units the way the old per-tier fan-out could.
   const commit = (changes: Partial<Pick<Goal, 'target_unit' | 'frequency' | 'frequency_unit'>>) => {
-    for (const goal of goals) {
-      onUpdateGoal(habitId, { ...goal, ...changes });
-    }
+    onUpdateGoalUnits(habitId, changes);
   };
 
   const handleFreqEnd = () => {
@@ -909,6 +907,7 @@ const buildDirectionChangePayloads = (goals: readonly Goal[], newIsAdditive: boo
 interface GoalTargetEditorProps {
   habit: NonNullable<GoalModalProps['habit']>;
   onUpdateGoal: GoalModalProps['onUpdateGoal'];
+  onUpdateGoalUnits: GoalModalProps['onUpdateGoalUnits'];
 }
 
 /**
@@ -918,7 +917,7 @@ interface GoalTargetEditorProps {
  * triggered reliably under thumb input — closing the "no way to edit habit
  * goals on mobile" gap.
  */
-const GoalTargetEditor = ({ habit, onUpdateGoal }: GoalTargetEditorProps) => {
+const GoalTargetEditor = ({ habit, onUpdateGoal, onUpdateGoalUnits }: GoalTargetEditorProps) => {
   // ``== null`` (not ``!habit.id``) so a hypothetical future habit with id 0
   // still surfaces the editor — falsy-zero is a real concern even if the
   // current backend autoincrements from 1.
@@ -949,7 +948,11 @@ const GoalTargetEditor = ({ habit, onUpdateGoal }: GoalTargetEditorProps) => {
           onCommit={(target) => onUpdateGoal(habitId, { ...goal, target })}
         />
       ))}
-      <GoalUnitEditor goals={nonEmptyGoals} habitId={habitId} onUpdateGoal={onUpdateGoal} />
+      <GoalUnitEditor
+        goals={nonEmptyGoals}
+        habitId={habitId}
+        onUpdateGoalUnits={onUpdateGoalUnits}
+      />
     </View>
   );
 };
@@ -1194,6 +1197,7 @@ interface GoalModalBodyProps {
   habit: NonNullable<GoalModalProps['habit']>;
   onClose: () => void;
   onUpdateGoal: GoalModalProps['onUpdateGoal'];
+  onUpdateGoalUnits: GoalModalProps['onUpdateGoalUnits'];
   onLogUnit: GoalModalProps['onLogUnit'];
   onUpdateHabit: GoalModalProps['onUpdateHabit'];
 }
@@ -1257,6 +1261,7 @@ const GoalModalBody = ({
   habit,
   onClose,
   onUpdateGoal,
+  onUpdateGoalUnits,
   onLogUnit,
   onUpdateHabit,
 }: GoalModalBodyProps) => {
@@ -1283,7 +1288,11 @@ const GoalModalBody = ({
       <GoalProgressBar {...buildProgressBarProps(habit, m, userTimezone)} />
       {isEditing && (
         <View testID="goal-modal-edit-region">
-          <GoalTargetEditor habit={habit} onUpdateGoal={onUpdateGoal} />
+          <GoalTargetEditor
+            habit={habit}
+            onUpdateGoal={onUpdateGoal}
+            onUpdateGoalUnits={onUpdateGoalUnits}
+          />
         </View>
       )}
       <LogUnitSection
@@ -1303,6 +1312,7 @@ export const GoalModal = ({
   habit,
   onClose,
   onUpdateGoal,
+  onUpdateGoalUnits,
   onLogUnit,
   onUpdateHabit,
 }: GoalModalProps) => {
@@ -1323,6 +1333,7 @@ export const GoalModal = ({
           habit={habit}
           onClose={onClose}
           onUpdateGoal={onUpdateGoal}
+          onUpdateGoalUnits={onUpdateGoalUnits}
           onLogUnit={onLogUnit}
           onUpdateHabit={onUpdateHabit}
         />

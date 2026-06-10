@@ -120,6 +120,7 @@ export const useHabitActions = (
       // Bound so retries replay queued check-ins against the stored zone (#269).
       loadHabits: () => habitManager.loadHabits(tz),
       updateGoal: habitManager.updateGoal,
+      updateGoalUnits: habitManager.updateGoalUnits,
       logUnit,
       updateHabit: habitManager.updateHabit,
       deleteHabit: habitManager.deleteHabit,
