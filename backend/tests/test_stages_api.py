@@ -11,6 +11,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
+from domain.constants import TOTAL_STAGES
 from models.course_stage import CourseStage
 from models.practice import Practice
 from models.practice_session import PracticeSession
@@ -492,24 +493,31 @@ async def test_update_progress_advances_from_current_stage_only(
 async def test_advance_returns_409_when_all_stages_completed(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Advancing past the final stage must 409 instead of re-issuing 36.
+    """Advancing past the final stage must 409 instead of re-issuing it.
 
     When the user already has ``completed_stages`` covering the full
     curriculum, ``next_stage_for`` has no hole to fill and
     ``raise conflict('all_stages_completed')`` stops the request before it
-    writes nonsense state.
+    writes nonsense state.  (Issue #386 corrected ``TOTAL_STAGES`` from 36
+    — a week/stage conflation — to the seeded curriculum's 10; this test
+    now exercises the true boundary.)
     """
     headers, user_id = await _signup(async_client, "finished")
     # Canonical "current_stage == N implies completed_stages == {1..N-1}" shape.
-    # The router simulates marking current_stage=36 complete on a candidate,
-    # so candidate_completed becomes {1..36}; next_stage_for has no hole and 409s.
-    progress = StageProgress(user_id=user_id, current_stage=36, completed_stages=list(range(1, 36)))
+    # The router simulates marking the final stage complete on a candidate,
+    # so candidate_completed covers the whole curriculum; next_stage_for has
+    # no hole and 409s.
+    progress = StageProgress(
+        user_id=user_id,
+        current_stage=TOTAL_STAGES,
+        completed_stages=list(range(1, TOTAL_STAGES)),
+    )
     db_session.add(progress)
     await db_session.commit()
 
     resp = await async_client.put(
         "/stages/progress",
-        json={"current_stage": 36},
+        json={"current_stage": TOTAL_STAGES},
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.CONFLICT

@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
+from domain.program_calendar import calendar_week, resolve_program_anchor
+from domain.stage_progress import get_user_progress
 from domain.weekly_prompts import TOTAL_WEEKS, get_prompt_for_week
 from errors import conflict, forbidden, not_found, unprocessable
 from models.journal_entry import JournalEntry, JournalTag
@@ -32,22 +34,29 @@ router = APIRouter(prefix="/prompts", tags=["prompts"])
 
 
 async def _get_user_week(session: AsyncSession, user_id: int) -> int:
-    """Derive the user's current week from the count of completed prompts.
+    """The user's current week: completion-derived OR calendar, whichever leads.
 
-    Switching from ``max(week_number) + 1`` to ``count(responses) + 1``
-    closes the skip-ahead vector where a single POST to
-    ``/prompts/36/respond`` would set ``max = 36`` and advance the user
-    past every intermediate week.  Because the submit endpoint now rejects
-    any ``week_number > user_week`` (see :func:`_check_week_unlocked`),
-    the count only ever equals the number of contiguously completed weeks,
-    so ``count + 1`` is the first unfinished week.  The result is clamped
-    to ``[1, TOTAL_WEEKS]``.
+    Completion model: ``count(responses) + 1`` — the count only ever
+    equals the number of contiguously completed weeks (the submit
+    endpoint rejects ``week_number > user_week``), so ``count + 1`` is
+    the first unfinished week and a single POST cannot skip ahead.
+
+    Calendar model (issue #386): ``calendar_week(program anchor)`` — the
+    same date-derived schedule the frontend renders, so a user eight days
+    into the program can read week 2 without having answered week 1.
+
+    ``max`` of the two: time opens weeks, completions can run ahead of a
+    backdated anchor, and both are server-computed so neither adds a
+    skip-ahead vector.  Clamped to ``[1, TOTAL_WEEKS]``.
     """
     result = await session.execute(
         select(func.count()).select_from(PromptResponse).where(PromptResponse.user_id == user_id)
     )
     completed = int(result.scalar() or 0)
-    return int(max(1, min(completed + 1, TOTAL_WEEKS)))
+    completion_week = completed + 1
+    progress = await get_user_progress(session, user_id)
+    time_week = calendar_week(resolve_program_anchor(progress)) if progress else 1
+    return int(max(1, min(max(completion_week, time_week), TOTAL_WEEKS)))
 
 
 async def _check_week_unlocked(session: AsyncSession, user_id: int, week_number: int) -> None:

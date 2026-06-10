@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import cast
 
 from sqlalchemy import func
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.constants import TOTAL_STAGES
+from domain.program_calendar import calendar_stage, resolve_program_anchor
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
 from models.goal import Goal
@@ -95,19 +97,29 @@ async def ensure_user_progress(session: AsyncSession, user_id: int) -> StageProg
     return progress
 
 
-def is_stage_unlocked(stage_number: int, progress: StageProgress | None) -> bool:
-    """Return True iff ``N <= current_stage`` (or N is stage 1).
+def is_stage_unlocked(
+    stage_number: int, progress: StageProgress | None, now: datetime | None = None
+) -> bool:
+    """Return True iff the stage is open by advancement OR by the calendar.
 
-    Relies on the invariant that ``current_stage`` is only advanced via
-    the validated router path (advance must equal ``current + 1``); a
-    direct DB write that bumps ``current_stage`` would unlock prior
-    stages without their prerequisites being completed.
+    Advancement: ``N <= current_stage``, which only moves via the
+    validated router path (advance must equal ``current + 1``).
+    Calendar (issue #386): ``N <= calendar_stage(anchor)``, the same
+    date-derived schedule the frontend renders, so the server never 403s
+    a stage the user can see is open.  ``max`` of the two means time can
+    OPEN stages but never revoke advancement-granted access — and the
+    calendar itself is server-computed, so a client cannot skip ahead of
+    the schedule.
     """
     if stage_number == _STAGE_1:
         return True
     if progress is None:
         return False
-    return stage_number <= progress.current_stage
+    unlocked_through = max(
+        progress.current_stage,
+        calendar_stage(resolve_program_anchor(progress), now),
+    )
+    return stage_number <= unlocked_through
 
 
 def next_stage_for(progress: StageProgress | None) -> int:

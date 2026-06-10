@@ -22,5 +22,15 @@ class StageProgress(SQLModel, table=True):
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
+    # Program-wide start anchor (issue #386): the single date every
+    # stage/week calendar derivation keys off, mirroring the frontend's
+    # ``programStartDate``.  Nullable for legacy rows; the migration
+    # backfills from the earliest habit start date (else
+    # ``stage_started_at``), and ``resolve_program_anchor`` falls back at
+    # read time for anything the backfill missed.
+    program_started_at: datetime | None = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
     user_id: int = Field(foreign_key="user.id", unique=True, ondelete="CASCADE")
     user: "User" = Relationship(back_populates="stage_progress")

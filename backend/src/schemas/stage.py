@@ -28,6 +28,23 @@ class StageResponse(BaseModel):
     progress: float = 0.0
 
 
+class ProgramCalendarResponse(BaseModel):
+    """The server's date-derived program calendar (issue #386).
+
+    Exposes the anchor and both gating views so the frontend can drop its
+    client-only fallback if desired: ``calendar_stage``/``calendar_week``
+    are derived from ``program_started_at`` against the shared
+    ``STAGE_DURATIONS_DAYS`` schedule; ``current_stage`` is the
+    advancement-chain value.  Effective unlock is the max of the two —
+    the same reconciliation the gating endpoints apply.
+    """
+
+    program_started_at: datetime | None
+    calendar_stage: int
+    calendar_week: int
+    current_stage: int
+
+
 class StageProgressResponse(BaseModel):
     """Detailed progress breakdown for a single stage."""
 
