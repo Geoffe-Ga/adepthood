@@ -1428,3 +1428,40 @@ async def test_existing_token_rejected_after_user_soft_deleted(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+def test_login_locks_bounded_under_distinct_email_flood() -> None:
+    """Issue #273: the per-email lock cache must not grow without bound.
+
+    An adversary cycling unique synthesized emails across enough source
+    IPs to dodge per-IP rate limits used to grow the old ``defaultdict``
+    by one ``asyncio.Lock`` per address for the life of the worker.  The
+    bounded cache caps residency regardless of distinct-key volume.
+    """
+    from routers.auth import _LOGIN_LOCKS_MAX, _login_lock_for, _login_locks  # noqa: PLC0415
+
+    _login_locks.clear()
+    try:
+        for i in range(100_000):
+            _login_lock_for(f"flood-{i}@example.com")
+        assert len(_login_locks) <= _LOGIN_LOCKS_MAX
+    finally:
+        _login_locks.clear()
+
+
+def test_login_lock_identity_stable_for_same_email() -> None:
+    """Issue #273: repeated lookups for one email return the SAME lock object.
+
+    The per-email serialization guarantee (BUG-AUTH-007) depends on every
+    concurrent coroutine for an email awaiting one shared lock; a cache
+    that handed out fresh locks per call would silently void it.
+    """
+    from routers.auth import _login_lock_for, _login_locks  # noqa: PLC0415
+
+    _login_locks.clear()
+    try:
+        first = _login_lock_for("same@example.com")
+        second = _login_lock_for("same@example.com")
+        assert first is second
+    finally:
+        _login_locks.clear()

@@ -7,7 +7,6 @@ import hashlib
 import logging
 import os
 import secrets
-from collections import defaultdict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -15,6 +14,7 @@ from typing import Annotated
 
 import bcrypt
 import jwt
+from cachetools import TTLCache
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import text
@@ -386,11 +386,38 @@ async def _is_account_locked(session: AsyncSession, email: str) -> bool:
 # attempt-record sequence so two concurrent failed attempts inside the same
 # worker cannot both pass the check at the threshold-1 boundary
 # (BUG-AUTH-007). For multi-worker deployments the matching PostgreSQL
-# advisory lock below closes the cross-process race.  The dict is unbounded
-# in principle but each entry is a bare ``asyncio.Lock`` (a few hundred
-# bytes) and the email keys are already gated by per-route rate limits, so
-# memory growth is naturally capped at the legitimate-user fan-out.
-_login_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+# advisory lock below closes the cross-process race.
+#
+# Issue #273: a TTL+LRU cache, not a defaultdict — an adversary cycling
+# unique synthesized emails across enough source IPs to dodge per-IP rate
+# limits could otherwise grow the dict by one Lock per address for the
+# life of the worker.  Eviction is safe: a lock is held only for a single
+# sub-second login flow, and a fresh lock after eviction reopens no race
+# because the cross-worker ``pg_advisory_xact_lock`` layer is independent
+# of this in-process one.
+_LOGIN_LOCKS_MAX = 10_000
+# Matches ``LOCKOUT_DURATION`` so a hot email's lock survives the whole
+# window it is serializing.
+_LOGIN_LOCKS_TTL_SECONDS = LOCKOUT_DURATION.total_seconds()
+
+_login_locks: TTLCache[str, asyncio.Lock] = TTLCache(
+    maxsize=_LOGIN_LOCKS_MAX, ttl=_LOGIN_LOCKS_TTL_SECONDS
+)
+
+
+def _login_lock_for(email: str) -> asyncio.Lock:
+    """Get-or-create the serialization lock for ``email``.
+
+    Safe without its own guard: coroutines on one event loop cannot
+    interleave between the ``get`` miss and the store, so two concurrent
+    callers for the same email always share one lock instance.
+    """
+    lock = _login_locks.get(email)
+    if lock is None:
+        lock = asyncio.Lock()
+        _login_locks[email] = lock
+    return lock
+
 
 # 8-byte advisory-lock key derived from a SHA-256 of the normalized email.
 # Pinned to int8 because pg_advisory_xact_lock(bigint) is the single-arg
@@ -432,7 +459,7 @@ async def _serialize_login(session: AsyncSession, email: str) -> AsyncIterator[N
     back at the end of the request — no manual ``pg_advisory_unlock``
     needed.
     """
-    async with _login_locks[email]:
+    async with _login_lock_for(email):
         await _acquire_email_lock_pg(session, email)
         yield
 
