@@ -6,6 +6,9 @@ mypy
 pre-commit
 pytest
 pytest-cov
+# JSON Schema validation for the content manifest contract (issue #389).
+jsonschema>=4.0
+types-jsonschema>=4.0
 radon>=6.0
 ruff
 vulture>=2.13

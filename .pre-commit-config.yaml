@@ -49,7 +49,7 @@ repos:
         files: ^backend/
         exclude: ^backend/migrations/
         args: ["--config-file=backend/pyproject.toml"]
-        additional_dependencies: ["types-cachetools", "types-requests", "types-beautifulsoup4", "beautifulsoup4", "pydantic", "sqlmodel", "fastapi", "starlette", "pytest", "pytest-asyncio", "httpx", "aiosqlite", "PyJWT", "bcrypt", "slowapi", "limits", "alembic"]
+        additional_dependencies: ["types-jsonschema", "types-cachetools", "types-requests", "types-beautifulsoup4", "beautifulsoup4", "pydantic", "sqlmodel", "fastapi", "starlette", "pytest", "pytest-asyncio", "httpx", "aiosqlite", "PyJWT", "bcrypt", "slowapi", "limits", "alembic"]
 
   - repo: https://github.com/PyCQA/isort
     rev: 6.0.1
