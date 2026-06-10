@@ -38,7 +38,7 @@ export interface OptimisticMutationConfig<TInput, TResult> {
 export interface OptimisticMutation<TInput, TResult> {
   /** Run apply → commit → rollback. Re-throws on failure after rolling back. */
   mutate: (_input: TInput) => Promise<TResult>;
-  /** True while a `commit` is in flight. */
+  /** True while ANY `commit` is in flight — overlapping calls included (#271). */
   pending: boolean;
 }
 
@@ -55,12 +55,16 @@ export function useOptimisticMutation<TInput, TResult>(
   const cfgRef = useRef(cfg);
   cfgRef.current = cfg;
 
-  const [pending, setPending] = useState(false);
+  // Issue #271: a counter, not a boolean. With overlapping `mutate` calls
+  // (user double-taps a Save button), a boolean's `finally` from the
+  // first-settled call would report idle while the other commit is still
+  // in flight — re-enabling UI mid-request. `pending` is the union.
+  const [inFlight, setInFlight] = useState(0);
 
   const mutate = useCallback(async (input: TInput): Promise<TResult> => {
     const c = cfgRef.current;
     c.apply(input);
-    setPending(true);
+    setInFlight((n) => n + 1);
     try {
       const result = await c.commit(input);
       c.onSuccess?.(input, result);
@@ -72,9 +76,9 @@ export function useOptimisticMutation<TInput, TResult>(
       // `max-quality-no-shortcuts`: the hook never swallows failures.
       throw err;
     } finally {
-      setPending(false);
+      setInFlight((n) => n - 1);
     }
   }, []);
 
-  return { mutate, pending };
+  return { mutate, pending: inFlight > 0 };
 }
