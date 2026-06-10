@@ -11,21 +11,28 @@ jest.mock('@/observability/sentry', () => ({
 
 // React Navigation's ``useNavigation`` is mocked so the test does not need
 // a real ``NavigationContainer``.  ``addListener`` returns the unsubscribe
-// callback the boundary stores during ``componentDidMount``.
+// callback the boundary stores during ``componentDidMount``.  A second
+// listener array stands in for a replacement navigator (deep-link reset)
+// so the #272 re-subscribe test can prove the old subscription is released.
 const focusListeners: Array<() => void> = [];
+const mockSecondNavigatorListeners: Array<() => void> = [];
+const mockNavigatorState = { useSecond: false };
 
 jest.mock('@react-navigation/native', () => ({
-  useNavigation: () => ({
-    addListener: (event: string, handler: () => void) => {
-      if (event === 'focus') {
-        focusListeners.push(handler);
-      }
-      return () => {
-        const index = focusListeners.indexOf(handler);
-        if (index !== -1) focusListeners.splice(index, 1);
-      };
-    },
-  }),
+  useNavigation: () => {
+    const target = mockNavigatorState.useSecond ? mockSecondNavigatorListeners : focusListeners;
+    return {
+      addListener: (event: string, handler: () => void) => {
+        if (event === 'focus') {
+          target.push(handler);
+        }
+        return () => {
+          const index = target.indexOf(handler);
+          if (index !== -1) target.splice(index, 1);
+        };
+      },
+    };
+  },
 }));
 
 const { reportException } = jest.requireMock('@/observability/sentry') as {
@@ -42,6 +49,8 @@ describe('FeatureErrorBoundary', () => {
   beforeEach(() => {
     reportException.mockClear();
     focusListeners.length = 0;
+    mockSecondNavigatorListeners.length = 0;
+    mockNavigatorState.useSecond = false;
     errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   });
 
@@ -97,6 +106,42 @@ describe('FeatureErrorBoundary', () => {
 
     expect(queryByTestId('feature-error-course')).toBeNull();
     expect(getByText('recovered')).toBeTruthy();
+  });
+
+  it('re-subscribes when the navigator identity changes post-mount (#272)', () => {
+    let shouldThrow = true;
+    function MaybeBoom(): React.JSX.Element {
+      if (shouldThrow) throw new Error('deep-link crash');
+      return <Text>after reset</Text>;
+    }
+
+    const { rerender, getByTestId, getByText, queryByTestId } = render(
+      <FeatureErrorBoundary name="Map">
+        <MaybeBoom />
+      </FeatureErrorBoundary>,
+    );
+    expect(getByTestId('feature-error-map')).toBeTruthy();
+    expect(focusListeners).toHaveLength(1);
+
+    // A deep-link reset replaces the navigator object identity.
+    mockNavigatorState.useSecond = true;
+    rerender(
+      <FeatureErrorBoundary name="Map">
+        <MaybeBoom />
+      </FeatureErrorBoundary>,
+    );
+
+    // The stale subscription on the OLD navigator was released…
+    expect(focusListeners).toHaveLength(0);
+    expect(mockSecondNavigatorListeners).toHaveLength(1);
+
+    // …and focus events from the NEW navigator still clear the crash.
+    shouldThrow = false;
+    act(() => {
+      mockSecondNavigatorListeners[0]?.();
+    });
+    expect(queryByTestId('feature-error-map')).toBeNull();
+    expect(getByText('after reset')).toBeTruthy();
   });
 
   it('exposes a Try again button as a manual retry path', () => {

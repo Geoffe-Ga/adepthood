@@ -56,6 +56,35 @@ describe('ErrorBoundary', () => {
     expect(call[1].react.componentStack).toEqual(expect.any(String));
   });
 
+  it('renders the JS stack only in development builds (#272)', () => {
+    // In a production bundle the verbatim stack leaks file paths and
+    // internal function names to whoever holds the device; only the
+    // message should render there.
+    const devGlobal = globalThis as unknown as { __DEV__: boolean };
+    const original = devGlobal.__DEV__;
+    try {
+      devGlobal.__DEV__ = false;
+      const prod = render(
+        <ErrorBoundary>
+          <Boom />
+        </ErrorBoundary>,
+      );
+      expect(prod.queryByTestId('error-boundary-stack')).toBeNull();
+      expect(prod.getByText('boom!')).toBeTruthy();
+      prod.unmount();
+
+      devGlobal.__DEV__ = true;
+      const dev = render(
+        <ErrorBoundary>
+          <Boom />
+        </ErrorBoundary>,
+      );
+      expect(dev.getByTestId('error-boundary-stack')).toBeTruthy();
+    } finally {
+      devGlobal.__DEV__ = original;
+    }
+  });
+
   it('exposes a Try again button that resets the error state', () => {
     let shouldThrow = true;
     function MaybeBoom(): React.JSX.Element {

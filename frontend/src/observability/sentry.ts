@@ -22,13 +22,18 @@
 /**
  * Structured context attached to a Sentry capture.
  *
- * Mirrors Sentry's ``contexts`` argument shape: a top-level dictionary
- * keyed by a context name (``"react"``, ``"app"``, …) whose value is a
- * key-value object specific to that context.  Keeping the type loose
- * means a caller can attach a ``componentStack``, the active route
- * name, or the user id without us prescribing every field.
+ * Mirrors Sentry's ``contexts`` argument shape, but as a **closed union**
+ * of exactly the fields the error boundaries pass today (issue #272).
+ * The previous ``Record<string, Record<string, unknown>>`` type-checked
+ * any payload — including a future ``{ auth: { token } }`` that would
+ * ship a credential to Sentry the moment the real DSN lands.  Adding a
+ * field here is an explicit, reviewed decision: extend the interface
+ * (with a sensitivity check) before a call site can pass it.
  */
-export type ReportContexts = Record<string, Record<string, unknown>>;
+export interface ReportContexts {
+  react?: { componentStack: string };
+  errorBoundary?: { boundary: string; name?: string };
+}
 
 /**
  * Forward an unhandled exception to the observability backend.

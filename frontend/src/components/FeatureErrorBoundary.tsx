@@ -64,6 +64,17 @@ class FeatureErrorBoundaryClass extends React.Component<
     this.unsubscribe = this.props.onFocus(this.handleReset);
   }
 
+  componentDidUpdate(prevProps: FeatureErrorBoundaryInnerProps): void {
+    // Issue #272: a deep-link reset can replace the navigator object
+    // identity post-mount, leaving our stored unsubscribe pointed at the
+    // OLD navigator — focus events from the new one would never clear a
+    // crashed surface. Re-subscribe whenever the injected hook changes.
+    if (prevProps.onFocus !== this.props.onFocus) {
+      this.unsubscribe?.();
+      this.unsubscribe = this.props.onFocus(this.handleReset);
+    }
+  }
+
   componentWillUnmount(): void {
     this.unsubscribe?.();
     this.unsubscribe = null;

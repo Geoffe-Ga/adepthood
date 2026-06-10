@@ -351,6 +351,47 @@ describe('botmason.chatStream', () => {
     }
   });
 
+  test.each([
+    ['session_expired', 'unauthorized', true],
+    ['invalid_token', 'invalid_token', true],
+    ['not_authenticated', 'unauthorized', false],
+  ])(
+    'a 401 SSE preamble fires onUnauthorized with %s (#272)',
+    async (reason: string, detail: string, hadToken: boolean) => {
+      // The classifier (classifyUnauthorizedDetail / reasonForUnauthorized)
+      // is unit-tested in unauthorizedReason.test.ts; this closes the loop
+      // for the STREAMING endpoint's pre-frame 401, which reuses the same
+      // refresh-then-classify path as the request/response client.
+      setTokenGetter(hadToken ? () => 'jwt' : () => null);
+      const onUnauthorized = jest.fn();
+      setOnUnauthorized(onUnauthorized);
+      try {
+        // Every fetch (SSE preamble, then /auth/refresh when a token
+        // exists) answers 401 with the case's detail string.
+        mockFetch.mockImplementation(() =>
+          Promise.resolve({
+            ok: false,
+            status: 401,
+            json: () => Promise.resolve({ detail }),
+          }),
+        );
+
+        await botmason
+          .chatStream(
+            { message: 'hi' },
+            { onChunk: jest.fn(), onComplete: jest.fn(), onStreamError: jest.fn() },
+          )
+          .catch(() => {
+            /* the rejected stream is asserted elsewhere; reason is the subject here */
+          });
+
+        expect(onUnauthorized).toHaveBeenCalledWith(reason);
+      } finally {
+        setOnUnauthorized(null);
+      }
+    },
+  );
+
   test('BUG-API-002: refresh failure surfaces ApiError without re-querying the stream', async () => {
     // 401 on the SSE endpoint, then 401 on /auth/refresh too.
     // PR #297 review: assert the thrown ``error.detail`` carries the
