@@ -453,16 +453,102 @@ const fetchFromApi = async (hasCachedData: boolean): Promise<FetchResult> => {
 const recoverStuckHabits = async (cached: Habit[]): Promise<void> => {
   for (const habit of cached) {
     try {
-      // ``POST /habits/`` seeds default goal targets (1/2/3 units / per day)
-      // — any custom targets in the cache are lost on the re-fetch. Tracked
-      // in #286; for now the previous "every log 404s" state is strictly
-      // worse than reverted defaults.
+      // ``POST /habits/`` seeds default goal targets; the caller re-fetches
+      // and then replays cached customizations via
+      // ``replayCachedGoalTargets`` (#286).
       await habitsApi.create(toApiPayload(habit));
     } catch (err) {
       // Best-effort; partial recovery is still better than the stuck state.
       // Surface to console so Sentry / CI can flag chronic recovery failures.
       console.warn('recoverStuckHabits: failed to re-push', habit.name, err);
     }
+  }
+};
+
+/** True when the cached goal carries values the freshly-seeded one lacks. */
+const goalNeedsReplay = (cached: Goal, fresh: Goal): boolean =>
+  cached.target !== fresh.target ||
+  cached.target_unit !== fresh.target_unit ||
+  cached.frequency !== fresh.frequency ||
+  cached.frequency_unit !== fresh.frequency_unit ||
+  cached.is_additive !== fresh.is_additive;
+
+/** PUT one cached customization onto its freshly-seeded server goal. */
+const replayOneGoal = async (cached: Goal, freshGoalId: number, title: string): Promise<void> => {
+  await goalsApi.update(freshGoalId, {
+    title,
+    tier: cached.tier,
+    target: cached.target,
+    target_unit: cached.target_unit,
+    frequency: cached.frequency,
+    frequency_unit: cached.frequency_unit,
+    is_additive: cached.is_additive,
+  });
+};
+
+/** Copy cached values onto each fresh goal whose tier the server accepted. */
+const mergeReplayedGoals = (
+  habit: Habit,
+  cachedHabit: Habit,
+  replayedTiers: Set<string>,
+): Habit => ({
+  ...habit,
+  goals: habit.goals.map((fg) => {
+    if (!replayedTiers.has(fg.tier)) return fg;
+    const cg = cachedHabit.goals.find((g) => g.tier === fg.tier);
+    if (!cg) return fg;
+    return {
+      ...fg,
+      target: cg.target,
+      target_unit: cg.target_unit,
+      frequency: cg.frequency,
+      frequency_unit: cg.frequency_unit,
+      is_additive: cg.is_additive,
+    };
+  }),
+});
+
+/** Replay one habit's customized goals; returns the tiers the server accepted. */
+const replayHabitGoals = async (cachedHabit: Habit, freshHabit: Habit): Promise<Set<string>> => {
+  const replayedTiers = new Set<string>();
+  for (const cachedGoal of cachedHabit.goals) {
+    const freshGoal = freshHabit.goals.find((g) => g.tier === cachedGoal.tier);
+    if (!freshGoal?.id || !goalNeedsReplay(cachedGoal, freshGoal)) continue;
+    try {
+      await replayOneGoal(cachedGoal, freshGoal.id, freshGoal.title);
+      replayedTiers.add(cachedGoal.tier);
+    } catch (err) {
+      console.warn('replayCachedGoalTargets: failed for', cachedHabit.name, cachedGoal.tier, err);
+    }
+  }
+  return replayedTiers;
+};
+
+/**
+ * Replay cached goal customizations onto freshly-recovered habits (#286).
+ *
+ * Stuck-user recovery re-creates habits server-side with default goal
+ * targets (1/2/3 units per day), silently discarding anything the user
+ * customized before the stuck state began.  Tiers are stable across the
+ * cache and the server's ``_build_default_goals`` seeding, so each cached
+ * goal maps to its fresh counterpart by (habit name, tier).  Best-effort
+ * per goal: one failed PUT must not abort the rest of the replay; the
+ * store is merged once per habit with only the tiers the server accepted.
+ * Decisions read from the immutable ``fresh`` snapshot — deliberately NOT
+ * ``applyGoalUpdate``, whose tier normalization mutates sibling goals in
+ * place and would cascade phantom replays.
+ */
+const replayCachedGoalTargets = async (cached: Habit[], fresh: Habit[]): Promise<void> => {
+  for (const cachedHabit of cached) {
+    const freshHabit = fresh.find((h) => h.name === cachedHabit.name);
+    if (!freshHabit?.id) continue;
+    const replayedTiers = await replayHabitGoals(cachedHabit, freshHabit);
+    if (replayedTiers.size === 0) continue;
+    const next = getHabits().map((h) =>
+      h.id === freshHabit.id ? mergeReplayedGoals(h, cachedHabit, replayedTiers) : h,
+    );
+    setHabits(next);
+    void persistHabits(next);
   }
 };
 
@@ -559,7 +645,12 @@ const loadHabits = async (tz?: string): Promise<void> => {
   // Push the cache back, then re-fetch so the store gets the server's ids.
   if (result.kind === 'ok' && result.count === 0 && hasCachedData) {
     await recoverStuckHabits(cached!);
-    await fetchFromApi(true);
+    const refetch = await fetchFromApi(true);
+    // #286: the recovery push seeded default goal targets — replay any
+    // cached customizations onto the fresh server goals.
+    if (refetch.kind === 'ok') {
+      await replayCachedGoalTargets(cached!, getHabits());
+    }
   }
   setLoading(false);
 

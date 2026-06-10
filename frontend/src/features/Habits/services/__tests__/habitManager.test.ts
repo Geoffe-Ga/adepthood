@@ -153,6 +153,58 @@ describe('habitManager', () => {
       expect(stored[0]!.name).toBe('My Habit');
     });
 
+    it('replays cached goal customizations after stuck-user recovery (#286)', async () => {
+      // The cached clear goal carries a user customization (30 minutes)
+      // that never reached the server before the stuck state began.
+      const cachedHabit = makeHabit({ id: 1, name: 'Pranayama' });
+      cachedHabit.goals = cachedHabit.goals.map((g) =>
+        g.tier === 'clear' ? { ...g, target: 30, target_unit: 'minutes' } : g,
+      );
+      (loadHabits as jest.Mock).mockResolvedValueOnce([cachedHabit] as never);
+      const freshServerGoal = (id: number, title: string, tier: string, target: number) => ({
+        id,
+        title,
+        tier,
+        target,
+        target_unit: 'units',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: true,
+      });
+      (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([
+        {
+          id: 99,
+          name: 'Pranayama',
+          icon: cachedHabit.icon,
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          goals: [
+            freshServerGoal(991, 'Low', 'low', 1),
+            freshServerGoal(992, 'Clear', 'clear', 2),
+            freshServerGoal(993, 'Stretch', 'stretch', 3),
+          ],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      // Only the customized goal is replayed — defaults that already match
+      // the server are not re-PUT.
+      expect(goalsApi.update).toHaveBeenCalledTimes(1);
+      expect(goalsApi.update).toHaveBeenCalledWith(
+        992,
+        expect.objectContaining({ tier: 'clear', target: 30, target_unit: 'minutes' }),
+      );
+      // And the user sees their customization immediately, not the default.
+      const clear = useHabitStore.getState().habits[0]!.goals.find((g) => g.tier === 'clear')!;
+      expect(clear.target).toBe(30);
+      expect(clear.target_unit).toBe('minutes');
+    });
+
     it('recovers stuck users by pushing cached habits when the server has none', async () => {
       // Stuck-user state: the user's original onboarding sync silently
       // failed long ago (e.g. against the broken pre-#280 schema), so the
