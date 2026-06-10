@@ -36,6 +36,9 @@ _SUPPORTED_SCHEMA_MAJOR = 1
 # chapter enum (chapter|essay|prompt|video) — deliberately distinct.
 _RESOURCE_CONTENT_TYPE: Final[str] = "resource"
 
+#: Audit-trail stamp written by ``scripts/sync_content.py`` (issue #391).
+_CONTENT_VERSION_FILE: Final[str] = "CONTENT_VERSION"
+
 
 class ContentRepositoryError(Exception):
     """The content directory or manifest is missing, invalid, or unsafe."""
@@ -88,6 +91,35 @@ def _content_dir_from_env() -> Path:
     """Resolve the content root from ``CONTENT_DIR`` (default: backend/content)."""
     override = os.getenv("CONTENT_DIR")
     return Path(override) if override else _DEFAULT_CONTENT_DIR
+
+
+def _parse_stamp_entries(text: str) -> dict[str, str]:
+    """Parse ``key: value`` lines from a ``CONTENT_VERSION`` stamp."""
+    entries: dict[str, str] = {}
+    for line in text.splitlines():
+        # partition stops at the FIRST ": ", so "digest: sha256:..." survives.
+        key, separator, value = line.partition(": ")
+        if separator and key:
+            entries[key] = value
+    return entries
+
+
+def content_version_info(content_dir: Path | None = None) -> dict[str, str] | None:
+    """Parse the vendored ``CONTENT_VERSION`` stamp, or ``None`` if absent.
+
+    Observability helper (issue #397): boot logging and ``/health`` report
+    which content pin is live.  Tolerant by design — a missing or
+    malformed stamp returns ``None`` rather than raising, because the
+    caller is a probe, not a gate (the CI drift check in
+    ``scripts/sync_content.py`` is the gate).
+    """
+    path = (content_dir or _content_dir_from_env()) / _CONTENT_VERSION_FILE
+    try:
+        text = path.read_text()
+    except OSError:
+        return None
+    entries = _parse_stamp_entries(text)
+    return entries if "sha" in entries else None
 
 
 def _load_json(path: Path, description: str) -> dict[str, Any]:

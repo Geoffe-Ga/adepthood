@@ -207,15 +207,19 @@ def _stage_published_surface(source_root: Path, staging: Path, content_dir: Path
             shutil.copy(preserved, staging / name)
 
 
-def _validate_staged_manifest(staging: Path) -> None:
-    """Validate the staged manifest against the staged copy of the schema."""
-    schema_path = staging / "manifest.schema.json"
+def _validate_manifest_file(directory: Path) -> None:
+    """Validate ``directory``'s manifest against the schema beside it.
+
+    Used on the staging tree during a sync and on the live tree by
+    ``--check`` — the contract must hold in both places.
+    """
+    schema_path = directory / "manifest.schema.json"
     if not schema_path.is_file():
         msg = "manifest.schema.json is missing — cannot validate the vendored manifest"
         raise SyncContentError(msg)
     schema: Any = json.loads(schema_path.read_text())
     try:
-        manifest: Any = json.loads((staging / "manifest.json").read_text())
+        manifest: Any = json.loads((directory / "manifest.json").read_text())
     except json.JSONDecodeError as exc:
         msg = f"vendored manifest.json is not valid JSON: {exc}"
         raise SyncContentError(msg) from exc
@@ -264,7 +268,7 @@ def sync(
         staging = workspace_path / "staging"
         staging.mkdir()
         _stage_published_surface(source_root, staging, target)
-        _validate_staged_manifest(staging)
+        _validate_manifest_file(staging)
         digest = compute_tree_digest(staging)
         synced_at = datetime.now(UTC).isoformat()
         version_text = f"sha: {sha}\nsynced_at: {synced_at}\ndigest: {digest}\n"
@@ -273,13 +277,28 @@ def sync(
     return sha
 
 
-def check(content_dir: Path | None = None) -> None:
+def check(content_dir: Path | None = None) -> bool:
     """Verify ``content_dir`` matches its ``CONTENT_VERSION`` (CI drift gate).
 
-    Read-only: recomputes the tree digest and compares it to the recorded
-    one. Raises :class:`SyncContentError` on drift or a missing stamp.
+    Read-only. Returns ``True`` when vendored content was verified and
+    ``False`` in the bootstrap state (no manifest and no stamp — nothing
+    vendored yet, so there is nothing to gate; CI must stay green before
+    the first content pin lands). Everything else raises
+    :class:`SyncContentError`: a manifest without a stamp (hand-copied,
+    never synced), a digest mismatch (tampering/drift), or a manifest
+    that no longer satisfies the schema contract.
     """
     target = (content_dir or _DEFAULT_CONTENT_DIR).resolve()
+    manifest_exists = (target / "manifest.json").is_file()
+    stamp_exists = (target / CONTENT_VERSION_FILE).is_file()
+    if not manifest_exists and not stamp_exists:
+        return False
+    if manifest_exists and not stamp_exists:
+        msg = (
+            f"{target} has a manifest.json but no {CONTENT_VERSION_FILE} — "
+            "content must be vendored via scripts/sync_content.py, not copied by hand"
+        )
+        raise SyncContentError(msg)
     version = read_content_version(target)
     actual = compute_tree_digest(target)
     if actual != version["digest"]:
@@ -288,6 +307,8 @@ def check(content_dir: Path | None = None) -> None:
             f"match CONTENT_VERSION ({version['digest']}) — re-run the sync"
         )
         raise SyncContentError(msg)
+    _validate_manifest_file(target)
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -312,8 +333,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.check:
-            check(args.content_dir)
-            sys.stdout.write("content is in sync with CONTENT_VERSION\n")
+            if check(args.content_dir):
+                sys.stdout.write("content is in sync with CONTENT_VERSION\n")
+            else:
+                sys.stdout.write("no content vendored yet — nothing to check\n")
         else:
             sha = sync(args.ref, args.content_dir)
             sys.stdout.write(f"vendored {CONTENT_REPO}@{sha} into {args.content_dir}\n")
