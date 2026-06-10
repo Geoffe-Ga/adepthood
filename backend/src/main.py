@@ -50,6 +50,7 @@ from seed_content import seed_content
 from seed_practice_recipes import seed_practice_recipes
 from seed_practices import seed_practices
 from seed_stages import seed_stages
+from services.botmason import get_provider
 from services.content_repository import (
     ContentRepositoryError,
     content_version_info,
@@ -281,6 +282,23 @@ async def _seed_startup_data(session: AsyncSession) -> None:
             await session.rollback()
 
 
+def _log_botmason_provider() -> None:
+    """Report the active LLM provider at boot (issue #402).
+
+    Stub-in-production must be an explicit, visible choice — a deploy that
+    forgot ``BOTMASON_PROVIDER``/``LLM_API_KEY`` would otherwise silently
+    serve canned chat responses to real users.
+    """
+    provider = get_provider()
+    logger.info("botmason_provider provider=%s", provider)
+    if provider == "stub" and os.getenv("ENV", "development") == "production":
+        logger.warning(
+            "botmason_stub_in_production: BOTMASON_PROVIDER is 'stub' — real "
+            "users will get canned responses. Set BOTMASON_PROVIDER and "
+            "LLM_API_KEY (see backend/.env.example) if this is unintentional."
+        )
+
+
 def _log_content_status() -> None:
     """Report the vendored content state at boot — loud on failure.
 
@@ -340,6 +358,8 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # chapter open.  Loud log rather than crash — the app's non-content
     # features must stay serviceable, mirroring the seeder policy above.
     _log_content_status()
+    # Issue #402: make the active LLM provider observable at startup.
+    _log_botmason_provider()
 
     yield
 
