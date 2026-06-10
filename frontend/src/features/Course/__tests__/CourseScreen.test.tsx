@@ -89,13 +89,13 @@ const mockSiteResources = (jest.fn() as any).mockResolvedValue([
     slug: 'philosophy',
     title: 'Philosophy',
     description: '',
-    url: 'https://aptitude.guru/philosophy',
+    url: 'content://philosophy',
   },
   {
     slug: 'about',
     title: 'About',
     description: '',
-    url: 'https://aptitude.guru/about',
+    url: 'content://about',
   },
 ]);
 const mockContentBody = (jest.fn() as any).mockResolvedValue({

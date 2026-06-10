@@ -1,11 +1,10 @@
 """Unit tests for the local-file ContentRepository (issue #390).
 
-The repository is the seam that replaces ``SquarespaceClient``: it loads
+The repository is the app's only content source: it loads
 ``manifest.json`` once, validates it against the frozen contract from
 issue #389, and serves chapter metadata plus raw Markdown bodies from the
 vendored content directory.  These tests cover the full public surface —
-including the traversal guard that stands in for the old client's
-``_validate_url`` SSRF protection.
+including the path-traversal guard on every body read.
 """
 
 from __future__ import annotations

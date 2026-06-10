@@ -122,7 +122,7 @@ describe('ChapterReader', () => {
     await findByText(/retried body/);
   });
 
-  it('never renders Squarespace-era error copy', async () => {
+  it('never renders legacy CMS error copy', async () => {
     mockContentBody.mockRejectedValueOnce({ detail: 'cms_auth_failed' });
     const { findByTestId, queryByText } = render(
       <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,

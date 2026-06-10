@@ -17,4 +17,3 @@ sqlmodel
 types-requests
 types-ujson
 types-orjson
-types-beautifulsoup4

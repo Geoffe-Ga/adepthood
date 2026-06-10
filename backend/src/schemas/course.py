@@ -46,7 +46,7 @@ class ContentCompletionResponse(OwnedResourcePublic):
 class ContentBodyResponse(BaseModel):
     """Raw Markdown body + metadata for native in-app rendering.
 
-    Issue #393 replaced the Squarespace proxy fields: ``body_html`` and
+    Issue #393 replaced the legacy CMS proxy fields: ``body_html`` and
     the "Open original" ``url`` are gone; ``body_markdown`` is vendored
     Markdown served verbatim from local content (no server-side
     rendering), and ``content_type`` lets the reader pick a layout.  The

@@ -210,11 +210,10 @@ async def test_journal_list_rate_limit_returns_429(async_client: AsyncClient) ->
 async def test_content_body_rate_limit_returns_429(async_client: AsyncClient) -> None:
     """GET /course/content/{id}/body returns 429 after 30 requests/minute.
 
-    The endpoint proxies to Squarespace on a cache miss; without the
-    decorator a single authenticated user can sustain expensive upstream
-    fetches against the configured CMS.  The handler returns 404 here
-    (no seeded content) but the limit fires before the handler on
-    request 31, regardless of response code.
+    The endpoint reads local content now, but the cap stays as
+    defense-in-depth.  The handler returns 404 here (no seeded content)
+    but the limit fires before the handler on request 31, regardless of
+    response code.
     """
     headers = await _signup(async_client)
 

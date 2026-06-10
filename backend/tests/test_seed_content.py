@@ -3,7 +3,7 @@
 ``StageContent`` rows are now reconciled from the vendored content
 manifest via :class:`ContentRepository` — not from the deleted
 ``STAGE_PLANS`` hardcode. Chapters carry a local ``content://<id>``
-reference instead of a Squarespace URL; placeholder rows survive only
+reference instead of a remote CMS URL; placeholder rows survive only
 for stages the manifest does not cover yet.
 """
 
@@ -188,7 +188,7 @@ async def test_seeded_rows_carry_local_refs_not_urls(
     db_session: AsyncSession,
     install_manifest: Callable[[dict[str, Any]], None],
 ) -> None:
-    """Manifest chapters land with content:// references; no Squarespace URLs."""
+    """Manifest chapters land with content:// references; no remote URLs."""
     install_manifest(_MANIFEST)
     await _seed_stages(db_session, count=4)
     await seed_content(db_session)
