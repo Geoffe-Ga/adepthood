@@ -2,9 +2,10 @@
 /* global describe, test, expect, beforeEach, jest */
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
-import { Alert } from 'react-native';
+import { Alert, Linking } from 'react-native';
 
 import ApiKeySettingsScreen, { validateUserApiKey } from '../ApiKeySettingsScreen';
+import { BYOK_PROVIDERS, providerForKey } from '../byokProviders';
 
 import { useApiKey } from '@/context/ApiKeyContext';
 
@@ -56,6 +57,49 @@ describe('validateUserApiKey', () => {
 
   test('rejects a key that is too long', () => {
     expect(validateUserApiKey(`sk-${'x'.repeat(300)}`)?.code).toBe('too_long');
+  });
+});
+
+describe('byokProviders', () => {
+  test('detects each supported provider from its key prefix', () => {
+    expect(providerForKey(VALID_KEY)?.id).toBe('openai');
+    expect(providerForKey(`sk-ant-${'x'.repeat(60)}`)?.id).toBe('anthropic');
+  });
+
+  test('returns null for an unrecognized key', () => {
+    expect(providerForKey('definitely-not-real-enough')).toBeNull();
+  });
+
+  test('every provider carries a key-page url and a hint', () => {
+    expect(BYOK_PROVIDERS.length).toBeGreaterThanOrEqual(2);
+    for (const provider of BYOK_PROVIDERS) {
+      expect(provider.keyPageUrl).toMatch(/^https:\/\//);
+      expect(provider.hint).toContain(provider.keyPrefix);
+    }
+  });
+});
+
+describe('provider deep links and detection', () => {
+  test('renders a "Get your API key" link per provider opening its key page', async () => {
+    const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true as never);
+    setApiKeyState({});
+    const { getByTestId } = render(<ApiKeySettingsScreen />);
+    for (const provider of BYOK_PROVIDERS) {
+      fireEvent.press(getByTestId(`get-key-link-${provider.id}`));
+      expect(openURL).toHaveBeenLastCalledWith(provider.keyPageUrl);
+    }
+    expect(openURL).toHaveBeenCalledTimes(BYOK_PROVIDERS.length);
+  });
+
+  test('shows the detected provider while typing a recognizable key', () => {
+    setApiKeyState({});
+    const { getByTestId, queryByTestId } = render(<ApiKeySettingsScreen />);
+    fireEvent.changeText(getByTestId('api-key-input'), `sk-ant-${'x'.repeat(60)}`);
+    expect(getByTestId('detected-provider').props.children.join('')).toContain('Anthropic');
+    fireEvent.changeText(getByTestId('api-key-input'), VALID_KEY);
+    expect(getByTestId('detected-provider').props.children.join('')).toContain('OpenAI');
+    fireEvent.changeText(getByTestId('api-key-input'), 'garbage');
+    expect(queryByTestId('detected-provider')).toBeNull();
   });
 });
 
