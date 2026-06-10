@@ -1,5 +1,8 @@
 # Only used by pip-audit hook in CI; adjust based on your actual deps.
 cachetools
+# Validates backend/content/manifest.json against the frozen contract at
+# startup (issues #389/#390); >=4.0 for JSON Schema draft 2020-12.
+jsonschema>=4.0
 fastapi
 uvicorn
 pydantic

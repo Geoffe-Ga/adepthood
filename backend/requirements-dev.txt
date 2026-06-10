@@ -6,8 +6,7 @@ mypy
 pre-commit
 pytest
 pytest-cov
-# JSON Schema validation for the content manifest contract (issue #389).
-jsonschema>=4.0
+# Type stubs for the runtime jsonschema dependency (issues #389/#390).
 types-jsonschema>=4.0
 radon>=6.0
 ruff
