@@ -1597,11 +1597,11 @@ export interface ContentCompletion {
   completed_at: string;
 }
 
-/** Cleaned Squarespace HTML body returned by the in-app content endpoints. */
+/** Raw Markdown body + metadata returned by the in-app content endpoints. */
 export interface ContentBody {
-  url: string;
   title: string;
-  body_html: string;
+  content_type: string;
+  body_markdown: string;
 }
 
 /** One entry in the always-available "Site Resources" list. */

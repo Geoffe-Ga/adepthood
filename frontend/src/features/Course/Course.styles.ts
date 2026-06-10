@@ -266,25 +266,26 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  // WebView body
-  webview: {
+  // Native Markdown reader body
+  readerScroll: {
     flex: 1,
     backgroundColor: colors.background.primary,
+    paddingHorizontal: SPACING.lg,
   },
-  webviewError: {
+  readerError: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: SPACING.xl,
   },
-  webviewErrorTitle: {
+  readerErrorTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: colors.text.primary,
     marginBottom: SPACING.sm,
     textAlign: 'center',
   },
-  webviewErrorSubtitle: {
+  readerErrorSubtitle: {
     fontSize: 14,
     color: colors.text.secondary,
     marginBottom: SPACING.md,
@@ -338,3 +339,87 @@ const styles = StyleSheet.create({
 });
 
 export default styles;
+
+/**
+ * Styles consumed by ``react-native-markdown-display`` — keys follow the
+ * library's rule names, values are plain RN styles built from design
+ * tokens (no hardcoded colors/sizes).  ``contentImage`` and the reader
+ * chrome above are ours, referenced from the custom image rule.
+ */
+export const markdownStyles = StyleSheet.create({
+  body: {
+    fontSize: 17,
+    lineHeight: 26,
+    color: colors.text.primary,
+    paddingTop: SPACING.md,
+  },
+  heading1: {
+    fontSize: 26,
+    fontWeight: '700',
+    color: colors.text.primary,
+    marginTop: SPACING.md,
+    marginBottom: SPACING.sm,
+  },
+  heading2: {
+    fontSize: 21,
+    fontWeight: '600',
+    color: colors.text.primary,
+    marginTop: SPACING.md,
+    marginBottom: SPACING.sm,
+  },
+  heading3: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text.primary,
+    marginTop: SPACING.sm,
+    marginBottom: SPACING.xs,
+  },
+  paragraph: {
+    marginTop: SPACING.xs,
+    marginBottom: SPACING.sm,
+  },
+  blockquote: {
+    backgroundColor: colors.background.accent,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.secondary,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs,
+    marginVertical: SPACING.sm,
+    fontStyle: 'italic',
+  },
+  code_inline: {
+    backgroundColor: colors.background.accent,
+    borderRadius: radius.sm,
+    paddingHorizontal: SPACING.xs,
+  },
+  code_block: {
+    backgroundColor: colors.background.accent,
+    borderRadius: radius.md,
+    padding: SPACING.md,
+  },
+  fence: {
+    backgroundColor: colors.background.accent,
+    borderRadius: radius.md,
+    padding: SPACING.md,
+  },
+  link: {
+    color: colors.secondary,
+    textDecorationLine: 'underline',
+  },
+  bullet_list: {
+    marginVertical: SPACING.xs,
+  },
+  ordered_list: {
+    marginVertical: SPACING.xs,
+  },
+  hr: {
+    backgroundColor: colors.border,
+    marginVertical: SPACING.md,
+  },
+  contentImage: {
+    width: '100%',
+    height: 220,
+    marginVertical: SPACING.sm,
+    borderRadius: radius.md,
+  },
+});

@@ -43,6 +43,7 @@ module.exports = {
       'unimodules|' +
       'sentry-expo|' +
       'native-base|' +
+      'react-native-markdown-display|' +
       'uuid' +
       ')/)',
   ],

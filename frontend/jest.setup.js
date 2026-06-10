@@ -29,28 +29,3 @@ jest.mock('react-native-reanimated', () => {
     );
   }
 });
-
-// ``react-native-webview`` ships native code that Jest cannot bundle.
-// Returning a thin stub that captures props lets tests assert what HTML
-// would have been rendered without spinning up an actual WebView.
-jest.mock('react-native-webview', () => {
-  const React = require('react');
-  const { View } = require('react-native');
-  return {
-    __esModule: true,
-    WebView: (props) =>
-      React.createElement(View, {
-        testID: props.testID ?? 'webview',
-        accessibilityLabel: props.accessibilityLabel,
-        'data-source-html': props.source?.html,
-        'data-source-uri': props.source?.uri,
-      }),
-    default: (props) =>
-      React.createElement(View, {
-        testID: props.testID ?? 'webview',
-        accessibilityLabel: props.accessibilityLabel,
-        'data-source-html': props.source?.html,
-        'data-source-uri': props.source?.uri,
-      }),
-  };
-});
