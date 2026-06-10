@@ -134,6 +134,42 @@ describe('PracticeCatalogScreen — sections', () => {
   });
 });
 
+describe('PracticeCatalogScreen — row presentation', () => {
+  it('renders the friendly mode label and duration, never the raw snake_case mode', async () => {
+    const { view } = renderScreen();
+    await waitForLoad();
+    expect(view.getByText('Meditation timer · 10 min')).toBeTruthy();
+    expect(view.getByText('Random interval bell · 20 min')).toBeTruthy();
+    expect(view.queryByText('meditation_timer')).toBeNull();
+    expect(view.queryByText('random_interval_bell')).toBeNull();
+  });
+
+  it('does not repeat the already-selected stage as a per-row badge', async () => {
+    const { view } = renderScreen();
+    await waitForLoad();
+    // The only "Stage 1" text on screen is the active filter chip, not a
+    // redundant badge stamped onto every row.
+    expect(view.getAllByText('Stage 1')).toHaveLength(1);
+  });
+
+  it('gives each row the mode-specific emoji as a leading visual anchor', async () => {
+    const { view } = renderScreen();
+    await waitForLoad();
+    expect(view.getByTestId('practice-catalog-row-1-icon').props.children).toBe('⏳');
+  });
+
+  it('falls back to a generic label and icon when the mode is unrecognised', async () => {
+    const unknown: PracticeItem = {
+      ...presetA,
+      mode: 'totally_new_server_mode' as PracticeItem['mode'],
+    };
+    const { view } = renderScreen({ loadPractices: jest.fn(async () => [unknown]) });
+    await waitForLoad();
+    expect(view.getByText('Practice · 10 min')).toBeTruthy();
+    expect(view.getByTestId('practice-catalog-row-1-icon').props.children).toBe('🧘');
+  });
+});
+
 describe('PracticeCatalogScreen — filters', () => {
   it('filters by name with the search bar', async () => {
     const { view } = renderScreen();
