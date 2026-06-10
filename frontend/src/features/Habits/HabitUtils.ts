@@ -152,7 +152,13 @@ export const getGoalTarget = (goal: Goal): number => {
   return goal.target;
 };
 
-/** All-time sum across all completions (BUG-FE-HABIT-301); display paths use `calculateTodaysProgress`. */
+/**
+ * Sum across every cached completion (BUG-FE-HABIT-301); display paths use
+ * `calculateTodaysProgress`. Since issue #294 the server embeds only a
+ * rolling 90-day window of completions, so this is a rolling-window sum,
+ * not an all-time one: rows older than the window age out of the cache on
+ * the next fresh load and stop contributing to the bar.
+ */
 export const calculateHabitProgress = (habit: Habit): number => {
   if (!habit.completions || habit.completions.length === 0) {
     return 0;

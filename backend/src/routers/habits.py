@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response, status
@@ -16,7 +17,7 @@ from dependencies.ownership import log_ownership_denied, require_owned_habit
 from dependencies.timezone import current_user_timezone
 from domain.habit_stats import compute_habit_stats
 from errors import conflict, forbidden, not_found
-from load_options import HABIT_WITH_GOALS_AND_COMPLETIONS
+from load_options import HABIT_WITH_GOALS_AND_COMPLETIONS, habit_with_recent_completions
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
@@ -36,6 +37,20 @@ router = APIRouter(prefix="/habits", tags=["habits"])
 
 # Per-user cap on habit rows; surfaces as 409 ``habit_quota_exceeded``.
 _MAX_HABITS_PER_USER = 100
+
+# Rolling transport window for embedded completions (issue #294).  90 days
+# matches the longest stage window in the APTITUDE program; rows older than
+# this stay in the DB (and in the stats endpoint's all-time aggregates) but
+# are trimmed from the habit GETs so payloads stop growing with account age.
+# Streaks are NOT bounded by this window — ``_populate_streaks_for`` reads
+# the full history via its own slim query.
+_COMPLETIONS_WINDOW_DAYS = 90
+
+
+def _recent_completions_cutoff() -> datetime:
+    """The oldest completion timestamp the habit GETs will embed."""
+    return datetime.now(UTC) - timedelta(days=_COMPLETIONS_WINDOW_DAYS)
+
 
 # Default goals seeded for every newly-created habit. Three tiers (low / clear
 # / stretch) so the habits feature is functional from the moment a habit
@@ -66,10 +81,44 @@ def _subtractive_context(habit: Habit) -> SubtractiveContext | None:
     return SubtractiveContext(clear_threshold=clear.target, start_date=habit.start_date)
 
 
-def _populate_streak(habit: Habit, current_user: int, user_timezone: str) -> None:
-    """Set ``habit.streak`` from the goal completions loaded in memory."""
-    completions = [c for g in habit.goals for c in g.completions if c.user_id == current_user]
+def _populate_streak(habit: Habit, completions: list[GoalCompletion], user_timezone: str) -> None:
+    """Set ``habit.streak`` from the FULL completion history (issue #294).
+
+    Deliberately not computed from the embedded (transport-windowed)
+    rows: the streak is the program's primary motivational KPI, and a
+    chain longer than the window would silently clip. Callers fetch the
+    history via :func:`_streak_completions_by_habit` — server-side only,
+    so the response payload stays bounded.
+    """
     habit.streak = compute_habit_streak(completions, user_timezone, _subtractive_context(habit))
+
+
+async def _populate_streaks_for(
+    session: AsyncSession, habits: list[Habit], current_user: int, user_tz: str
+) -> None:
+    """Set streaks for a page of habits from ONE full-history query (issue #294)."""
+    history = await _streak_completions_by_habit(
+        session, [h.id for h in habits if h.id is not None], current_user
+    )
+    for habit in habits:
+        _populate_streak(habit, history.get(habit.id or -1, []), user_tz)
+
+
+async def _streak_completions_by_habit(
+    session: AsyncSession, habit_ids: list[int], user_id: int
+) -> dict[int, list[GoalCompletion]]:
+    """Full-history completions grouped by habit, for streak math only."""
+    if not habit_ids:
+        return {}
+    result = await session.execute(
+        select(Goal.habit_id, GoalCompletion)
+        .join(Goal, col(GoalCompletion.goal_id) == col(Goal.id))
+        .where(col(Goal.habit_id).in_(habit_ids), GoalCompletion.user_id == user_id)
+    )
+    by_habit: dict[int, list[GoalCompletion]] = {habit_id: [] for habit_id in habit_ids}
+    for habit_id, completion in result.all():
+        by_habit[habit_id].append(completion)
+    return by_habit
 
 
 def _filter_completions_to_caller(habit: Habit, current_user: int) -> None:
@@ -141,7 +190,12 @@ async def _persist_habit_with_default_goals(session: AsyncSession, habit: Habit)
 
 async def _refetch_with_goals(session: AsyncSession, habit_id: int) -> Habit:
     """Re-load a habit with eager goals to avoid greenlet lazy-load errors."""
-    statement = select(Habit).where(Habit.id == habit_id).options(HABIT_WITH_GOALS_AND_COMPLETIONS)
+    statement = (
+        select(Habit)
+        .where(Habit.id == habit_id)
+        .options(habit_with_recent_completions(_recent_completions_cutoff()))
+        .execution_options(populate_existing=True)
+    )
     result = await session.execute(statement)
     refreshed = result.scalars().one_or_none()
     if refreshed is None:
@@ -181,12 +235,15 @@ async def list_habits(
     query = (
         select(Habit)
         .where(Habit.user_id == current_user)
-        .options(HABIT_WITH_GOALS_AND_COMPLETIONS)
+        .options(habit_with_recent_completions(_recent_completions_cutoff()))
+        # See _get_habit_with_completions: keep the windowed view authoritative
+        # even when an unwindowed loader ran earlier on this session.
+        .execution_options(populate_existing=True)
         .order_by(Habit.sort_order.asc())  # type: ignore[union-attr]
     )
     items, total = await paginate_query(session, query, pagination)
+    await _populate_streaks_for(session, items, current_user, user_tz)
     for habit in items:
-        _populate_streak(habit, current_user, user_tz)
         _filter_completions_to_caller(habit, current_user)
     serialized = [HabitWithGoals.model_validate(h, from_attributes=True) for h in items]
     if pagination.paginate:
@@ -203,7 +260,7 @@ async def get_habit(
 ) -> Habit:
     """Return a single habit (with eager-loaded goals + completions) for the caller."""
     habit = await _get_habit_with_completions(habit_id, current_user, session)
-    _populate_streak(habit, current_user, user_tz)
+    await _populate_streaks_for(session, [habit], current_user, user_tz)
     _filter_completions_to_caller(habit, current_user)
     return habit
 
@@ -263,10 +320,30 @@ async def delete_habit(
 
 
 async def _get_habit_with_completions(
-    habit_id: int, current_user: int, session: AsyncSession
+    habit_id: int, current_user: int, session: AsyncSession, *, windowed: bool = True
 ) -> Habit:
-    """Eager-load a habit with goals + completions enforcing the 404 / 403 split."""
-    statement = select(Habit).where(Habit.id == habit_id).options(HABIT_WITH_GOALS_AND_COMPLETIONS)
+    """Eager-load a habit with goals + completions enforcing the 404 / 403 split.
+
+    ``windowed=True`` (the habit GETs) trims embedded completions to the
+    rolling transport window (issue #294); ``windowed=False`` keeps the
+    full history for all-time consumers like the stats endpoint.
+    """
+    loader = (
+        habit_with_recent_completions(_recent_completions_cutoff())
+        if windowed
+        else HABIT_WITH_GOALS_AND_COMPLETIONS
+    )
+    # ``populate_existing``: the windowed and full loaders disagree about
+    # what ``goal.completions`` holds, and SQLAlchemy will not re-populate
+    # an already-loaded collection on the same session.  Without this, the
+    # first loader to run would silently win for every later call sharing
+    # the session (issue #294).
+    statement = (
+        select(Habit)
+        .where(Habit.id == habit_id)
+        .options(loader)
+        .execution_options(populate_existing=True)
+    )
     result = await session.execute(statement)
     habit = result.scalars().first()
     if habit is None:
@@ -318,6 +395,7 @@ async def get_habit_stats(
     user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> HabitStats:
     """Return aggregated statistics for a habit's goal completions."""
-    habit = await _get_habit_with_completions(habit_id, current_user, session)
+    # All-time aggregates: deliberately NOT windowed (issue #294).
+    habit = await _get_habit_with_completions(habit_id, current_user, session, windowed=False)
     completions = [c for goal in habit.goals for c in goal.completions if c.user_id == current_user]
     return compute_habit_stats(completions, user_tz, _subtractive_context(habit))

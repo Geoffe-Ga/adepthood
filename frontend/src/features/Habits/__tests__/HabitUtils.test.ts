@@ -282,6 +282,43 @@ describe('HabitUtils', () => {
     expect(habit.streak).toBe(2);
   });
 
+  test('calculateHabitProgress sums exactly the cached window (#294)', () => {
+    // Issue #294 resolution: the server embeds a rolling 90-day window,
+    // so the bar shows the rolling-window sum. This pins the accumulator
+    // as window-agnostic — it sums whatever completions are present, and
+    // rows the server trimmed simply stop contributing after a fresh
+    // load replaces the cache.
+    const goals: Goal[] = [
+      {
+        id: 1,
+        title: 'Clear',
+        tier: 'clear',
+        target: 100,
+        target_unit: 'units',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: true,
+      },
+    ];
+    const windowed: Habit = {
+      ...baseHabit,
+      goals,
+      streak: 0,
+      completions: [
+        { id: 'a', timestamp: new Date('2026-05-01T08:00:00'), completed_units: 5 },
+        { id: 'b', timestamp: new Date('2026-06-01T08:00:00'), completed_units: 2 },
+      ],
+    };
+    expect(calculateHabitProgress(windowed)).toBe(7);
+
+    // A fresh windowed load that dropped the older row: the bar follows.
+    const trimmed: Habit = {
+      ...windowed,
+      completions: [{ id: 'b', timestamp: new Date('2026-06-01T08:00:00'), completed_units: 2 }],
+    };
+    expect(calculateHabitProgress(trimmed)).toBe(2);
+  });
+
   test('logHabitUnits supports subtractive habits', () => {
     const goals: Goal[] = [
       {
