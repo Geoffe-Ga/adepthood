@@ -93,7 +93,9 @@ export const useHabitActions = (
 
   return useMemo(
     () => ({
-      loadHabits: habitManager.loadHabits,
+      // Bound so a retry replays queued check-ins against the user's
+      // stored zone, not the API default (#269).
+      loadHabits: () => habitManager.loadHabits(tz),
       updateGoal: habitManager.updateGoal,
       logUnit,
       updateHabit: habitManager.updateHabit,
@@ -109,6 +111,6 @@ export const useHabitActions = (
       lockUnstartedHabits: habitManager.lockUnstartedHabits,
       unlockHabit: habitManager.unlockHabit,
     }),
-    [logUnit, iconPress, emojiSelect, onboardingSave],
+    [logUnit, iconPress, emojiSelect, onboardingSave, tz],
   );
 };

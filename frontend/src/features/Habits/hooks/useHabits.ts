@@ -10,10 +10,14 @@ import { useHabitActions } from './useHabitActions';
 import { registerForPushNotificationsAsync, reconcileNotifications } from './useHabitNotifications';
 import { useHabitUI } from './useHabitUI';
 
-const useBootstrapHabits = (): void => {
+const useBootstrapHabits = (userTimezone: string): void => {
+  // Re-runs when the auth context hydrates the user's stored zone (e.g.
+  // UTC → America/Los_Angeles after a cold-start refresh): day buckets
+  // and queued-check-in replay days both depend on it, so a re-fetch on
+  // zone change is the correct behavior, not an accident (#269).
   useEffect(() => {
-    void habitManager.loadHabits();
-  }, []);
+    void habitManager.loadHabits(userTimezone);
+  }, [userTimezone]);
   useEffect(() => {
     void registerForPushNotificationsAsync();
     void reconcileNotifications();
@@ -35,7 +39,7 @@ export const useHabits = (): UseHabitsReturn => {
   const { showToast } = useToast();
   const { userTimezone } = useAuth();
   const ui = useHabitUI();
-  useBootstrapHabits();
+  useBootstrapHabits(userTimezone);
   const actions = useHabitActions(ui, showToast, userTimezone);
 
   return {
