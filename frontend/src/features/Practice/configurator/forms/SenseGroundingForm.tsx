@@ -1,10 +1,11 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import type { SenseGroundingConfig, SenseKind, SensePrompt } from '../../engine/types';
-import { ALLOWED_SENSES, PROMPT_LABEL_MAX } from '../../engine/validation';
+import type { SenseGroundingConfig, SensePrompt } from '../../engine/types';
+import { PROMPT_LABEL_MAX } from '../../engine/validation';
 
-import { Chip, TextField } from './shared';
+import GroundingDropdown from './GroundingDropdown';
+import { TextField } from './shared';
 
 import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
 
@@ -77,17 +78,7 @@ const PromptRow = ({
   onRemove,
 }: PromptRowProps): React.JSX.Element => (
   <View style={localStyles.promptCard} testID={`sense-prompt-${index}`}>
-    <View style={localStyles.senseRow}>
-      {ALLOWED_SENSES.map((sense) => (
-        <Chip
-          key={sense}
-          label={sense}
-          active={prompt.sense === sense}
-          onPress={() => onChange({ sense: sense satisfies SenseKind })}
-          testID={`sense-prompt-${index}-${sense}`}
-        />
-      ))}
-    </View>
+    <GroundingDropdown index={index} value={prompt} onChange={onChange} />
     <TextField
       value={prompt.label}
       onChange={(label) => onChange({ label })}
@@ -146,7 +137,6 @@ const localStyles = StyleSheet.create({
     marginBottom: SPACING.sm,
     gap: SPACING.xs,
   },
-  senseRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs },
   actionsRow: { flexDirection: 'row', gap: SPACING.xs, marginTop: SPACING.xs },
   smallButton: {
     paddingVertical: SPACING.xs,

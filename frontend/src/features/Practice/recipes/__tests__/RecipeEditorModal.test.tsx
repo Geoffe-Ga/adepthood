@@ -143,9 +143,11 @@ describe('RecipeEditorModal', () => {
     const utils = mountEditor();
     await waitFor(() => expect(utils.getByTestId('recipe-editor-step-0')).toBeTruthy());
     fireEvent.press(utils.getByTestId('recipe-editor-add-step'));
-    // Select 'red' on both steps via the tag picker chip
-    await waitFor(() => expect(utils.getByTestId('tag-picker-0-chip-red')).toBeTruthy());
-    fireEvent.press(utils.getByTestId('tag-picker-1-chip-red'));
+    // Select 'red' on step 1 via the tag dropdown (step 0 already holds 'red')
+    await waitFor(() => expect(utils.getByTestId('tag-picker-1-trigger')).toBeTruthy());
+    fireEvent.press(utils.getByTestId('tag-picker-1-trigger'));
+    await waitFor(() => expect(utils.getByTestId('tag-picker-1-option-red')).toBeTruthy());
+    fireEvent.press(utils.getByTestId('tag-picker-1-option-red'));
     // Need a prompt for step 1 to clear the prompt error
     fireEvent.changeText(utils.getByTestId('recipe-editor-step-1-prompt'), 'Find red again');
     await waitFor(() => expect(utils.getByTestId('recipe-editor-errors')).toBeTruthy());

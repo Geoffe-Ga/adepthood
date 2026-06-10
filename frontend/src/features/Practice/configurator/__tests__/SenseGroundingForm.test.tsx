@@ -32,10 +32,13 @@ describe('SenseGroundingForm', () => {
     });
   });
 
-  it('changes the sense for a prompt', () => {
+  it('changes the sense via the searchable dropdown, preserving a custom label', () => {
     const onChange = jest.fn();
     const { getByTestId } = render(<SenseGroundingForm value={base} onChange={onChange} />);
-    fireEvent.press(getByTestId('sense-prompt-0-smell'));
+    // Custom label ("5 things you can see") is not a catalogue prompt, so
+    // picking a new anchor only swaps the sense and keeps the wording.
+    fireEvent.press(getByTestId('sense-prompt-0-thing-trigger'));
+    fireEvent.press(getByTestId('sense-prompt-0-option-sense_smell'));
     expect(onChange).toHaveBeenCalledWith({
       mode: 'sense_grounding',
       prompts: [
@@ -43,6 +46,21 @@ describe('SenseGroundingForm', () => {
         base.prompts[1],
         base.prompts[2],
       ],
+    });
+  });
+
+  it('seeds the label when picking an anchor for a still-default prompt', () => {
+    const onChange = jest.fn();
+    const seeded: SenseGroundingConfig = {
+      mode: 'sense_grounding',
+      prompts: [{ sense: 'sight', label: '' }],
+    };
+    const { getByTestId } = render(<SenseGroundingForm value={seeded} onChange={onChange} />);
+    fireEvent.press(getByTestId('sense-prompt-0-thing-trigger'));
+    fireEvent.press(getByTestId('sense-prompt-0-option-colour_red'));
+    expect(onChange).toHaveBeenCalledWith({
+      mode: 'sense_grounding',
+      prompts: [{ sense: 'sight', label: 'something red' }],
     });
   });
 
