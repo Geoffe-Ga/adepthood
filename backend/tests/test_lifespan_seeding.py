@@ -21,11 +21,11 @@ from sqlmodel import select
 # object itself (so it can wire a session factory at it), not a per-test
 # session yielded from a fixture.
 from conftest import test_engine
-from content_config import STAGE_PLANS
 from main import _seed_startup_data, app, lifespan
 from models.course_stage import CourseStage
 from models.practice import Practice
 from models.stage_content import StageContent
+from seed_content import desired_content_records
 from seed_practices import PRESET_PRACTICES
 
 #: Total preset rows the practice seeder inserts — sourced from
@@ -33,13 +33,16 @@ from seed_practices import PRESET_PRACTICES
 #: this test's expectation.
 _EXPECTED_PRACTICE_COUNT = len(PRESET_PRACTICES)
 
-#: ``seed_content`` keeps placeholder rows for stages 2 and 3 (three each)
-#: until those stages get a real ``STAGE_PLANS`` entry.  Asserting on
-#: ``STAGE_PLANS.chapter_count + _PLACEHOLDER_CONTENT_ROWS`` means a
-#: regression that drops the content seeder fails this test, not just a
-#: ``/course`` smoke check; adjust this when ``_PLACEHOLDER_DEFINITIONS``
-#: in ``seed_content.py`` changes.
-_PLACEHOLDER_CONTENT_ROWS = 6
+
+def _expected_content_count() -> int:
+    """Rows the content seeder should produce in this environment.
+
+    Sourced from ``desired_content_records()`` — manifest chapters (none
+    in the test environment until a content pin is vendored) plus the
+    placeholder rows for stages the manifest does not cover.  Computed at
+    call time because the manifest is runtime data.
+    """
+    return len(desired_content_records())
 
 
 @asynccontextmanager
@@ -70,8 +73,8 @@ async def test_seed_startup_data_inserts_stages_practices_and_content(
 
     assert len(stages) == 10
     assert len(practices) == _EXPECTED_PRACTICE_COUNT
-    expected_content_count = sum(p.chapter_count for p in STAGE_PLANS) + _PLACEHOLDER_CONTENT_ROWS
-    assert len(contents) == expected_content_count
+    assert len(contents) == _expected_content_count()
+    assert len(contents) > 0, "content seeder must produce rows even without a manifest"
 
 
 @pytest.mark.asyncio
@@ -158,9 +161,8 @@ async def test_seed_startup_data_continues_after_per_seeder_failure(
 
     stages = (await db_session.execute(select(CourseStage))).scalars().all()
     contents = (await db_session.execute(select(StageContent))).scalars().all()
-    expected_content_count = sum(p.chapter_count for p in STAGE_PLANS) + _PLACEHOLDER_CONTENT_ROWS
     assert len(stages) == 10
-    assert len(contents) == expected_content_count
+    assert len(contents) == _expected_content_count()
 
     failure_logs = [r for r in caplog.records if "seed_failed" in r.getMessage()]
     assert failure_logs, "expected a logged failure for the practices seeder"

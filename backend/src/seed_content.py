@@ -1,14 +1,19 @@
-"""Seed StageContent rows from the declarative content config.
+"""Seed StageContent rows from the vendored content manifest.
 
-Stage 1 (Beige) is fully driven by ``content_config.STAGE_PLANS`` — its
-chapters reflect the live Squarespace site.  Stages 2 and 3 retain their
-historic placeholder rows so the rest of the app keeps something to render
-until those courses ship; once a stage is added to ``STAGE_PLANS`` the
-placeholders are reconciled against the plan (see :func:`seed_content`).
+Chapters are reconciled from ``manifest.json`` for **every stage the
+manifest ships** (issue #392): title, content type, and release day come
+from the manifest verbatim, and the ``url`` column carries a local
+``content://<chapter-id>`` reference instead of a Squarespace URL.
+Stages the manifest does not cover yet keep their historic placeholder
+rows so the rest of the app has something to render; the moment a stage
+appears in the manifest its placeholders stop seeding (suppression is
+decided at seed time because the manifest is runtime data).
 
-Editing rules live in ``backend/src/content_config.py`` and the editor
-guide in ``docs/content.md``.  Do not hand-edit URLs in this file — go
-update the config instead.
+Reconciliation is idempotent and never destructive: rows update in place
+when their fields drift, and nothing is ever deleted — rows referenced
+by ``ContentCompletion`` stay put.
+
+Editing happens in the content repo; see ``docs/content.md``.
 """
 
 from __future__ import annotations
@@ -16,13 +21,14 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from content_config import STAGE_PLANS, ChapterRecord, all_chapter_records
+from content_config import ChapterRecord, all_chapter_records
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
 
-# Placeholder rows for stages that don't yet have a Squarespace plan.
-# Once a stage is added to ``STAGE_PLANS`` (see content_config.py) its
-# entry here should be removed in the same commit.
+# Placeholder rows for stages the content manifest does not cover yet.
+# Once the manifest ships a stage, its placeholders are suppressed
+# automatically at seed time; remove the entries here once that stage's
+# content is live.
 _PLACEHOLDER_DEFINITIONS: list[dict[str, str | int]] = [
     # Stage 2 — Magick
     {
@@ -70,10 +76,6 @@ _PLACEHOLDER_DEFINITIONS: list[dict[str, str | int]] = [
     },
 ]
 
-#: Stage numbers that have a real Squarespace plan and should NOT receive
-#: placeholder rows even if some are listed historically.
-_PLANNED_STAGES: frozenset[int] = frozenset(plan.stage_number for plan in STAGE_PLANS)
-
 # BUG-SEED-001 (preserved): a duplicate (stage_number, release_day) on a
 # placeholder row would scramble drip-feed ordering.  Configured chapters
 # may legitimately share a release_day with a placeholder of a different
@@ -84,27 +86,14 @@ if len(set(_placeholder_pairs)) != len(_placeholder_pairs):
     _err = f"Duplicate (stage_number, release_day) in placeholders: {_dupes}"
     raise ValueError(_err)
 
-# Match the import-time validation philosophy from ``content_config.py``:
-# if a stage has been added to ``STAGE_PLANS`` but its placeholder rows
-# are still in this file, fail loudly at boot rather than seeding both
-# the planned chapters AND the stale placeholders side-by-side.
-_overlapping_stages = {int(d["stage_number"]) for d in _PLACEHOLDER_DEFINITIONS} & _PLANNED_STAGES
-if _overlapping_stages:
-    _err = (
-        "Stage(s) "
-        f"{sorted(_overlapping_stages)} have entries in both "
-        "STAGE_PLANS (content_config.py) and _PLACEHOLDER_DEFINITIONS — "
-        "remove the placeholders so the seeder isn't reconciling against a "
-        "stale source of truth."
-    )
-    raise ValueError(_err)
 
-
-def _placeholder_records() -> list[ChapterRecord]:
+def _placeholder_records(covered_stages: frozenset[int]) -> list[ChapterRecord]:
     """Convert placeholder dicts into ``ChapterRecord``.
 
-    Lets the seeder iterate a single uniform list regardless of whether the
-    record came from the declarative config or the legacy placeholder block.
+    ``covered_stages`` — stage numbers present in the content manifest —
+    suppresses placeholders for stages whose real content has shipped.
+    The old import-time overlap check is gone because the manifest is
+    runtime data; suppression replaces fail-loudly.
     """
     return [
         ChapterRecord(
@@ -115,18 +104,20 @@ def _placeholder_records() -> list[ChapterRecord]:
             url=str(d["url"]),
         )
         for d in _PLACEHOLDER_DEFINITIONS
-        if int(d["stage_number"]) not in _PLANNED_STAGES
+        if int(d["stage_number"]) not in covered_stages
     ]
 
 
 def desired_content_records() -> list[ChapterRecord]:
     """Return the full set of records that should exist after seeding.
 
-    Order is (configured chapters first, then placeholders) — callers that
-    need a stable ordering can ``sorted(...)`` on the fields they care
-    about.
+    Order is (manifest chapters first, then surviving placeholders) —
+    callers that need a stable ordering can ``sorted(...)`` on the fields
+    they care about.
     """
-    return [*all_chapter_records(), *_placeholder_records()]
+    manifest_records = all_chapter_records()
+    covered = frozenset(record.stage_number for record in manifest_records)
+    return [*manifest_records, *_placeholder_records(covered)]
 
 
 async def _load_stage_map(session: AsyncSession) -> dict[int, int]:

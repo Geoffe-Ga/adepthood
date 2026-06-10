@@ -1,14 +1,20 @@
-# Editing Squarespace-Backed Course Content
+# Editing Course Content
 
-The Adepthood app pulls every course page from the password-protected
-Squarespace site at <https://aptitude.guru>.  This doc covers everything
-you need to know to add, remove, or rearrange that content.
+Stage-locked chapter metadata is driven by the **vendored content
+manifest** (`backend/content/manifest.json`, synced from the
+[`aptitude-course`](https://github.com/Geoffe-Ga/aptitude-course) repo —
+see ADR 0001 in `docs/adr/`).  Chapter *bodies* are still fetched from
+the password-protected Squarespace site until the body-endpoint rewrite
+lands; the Squarespace sections below remain operative until then.
 
 ## Where things live
 
 | What | File |
 | ---- | ---- |
-| Stage chapter plans (Beige, Purple, …) and site resource links | `backend/src/content_config.py` |
+| Vendored chapter metadata (all 10 stages) | `backend/content/manifest.json` (synced; do not hand-edit) |
+| Manifest contract + reader | `backend/content/manifest.schema.json`, `backend/src/services/content_repository.py` |
+| Sync command (pin bumps) | `backend/scripts/sync_content.py` / `make sync-content REF=<sha>` |
+| Manifest → seeder bridge and site resource links | `backend/src/content_config.py` |
 | Site password env var | `backend/.env` (`SQUARESPACE_SITE_PASSWORD=...`) |
 | Database seeder that materialises chapters into `StageContent` rows | `backend/src/seed_content.py` |
 | HTTP client that fetches and cleans Squarespace HTML | `backend/src/services/squarespace.py` |
@@ -18,60 +24,37 @@ you need to know to add, remove, or rearrange that content.
 
 ## How releases are timed
 
-Each stage runs for `PLAN_DURATION_DAYS = 21` calendar days (see
-`backend/src/domain/energy.py`).  Inside that window:
+Each chapter's `release_day` comes straight from the manifest (set via
+YAML frontmatter in the content repo): day `N` means the chapter drips
+open `N` days after the user starts the stage, with `0` unlocking
+immediately.  Days at the end of a stage with no new chapter are a
+catch-up window by design.
 
-* Chapter `n` (1-indexed) of a stage unlocks on `release_day = n - 1`.
-* If a stage ships fewer chapters than 21, the remaining days are a
-  catch-up window with no new reading.
-* The "daily" pattern is currently the only one supported.  Adding a
-  pattern (`weekly`, `front_loaded`, …) means extending
-  `build_chapter_release_days()` in `content_config.py`.
+## Adding, reordering, renaming, or removing chapters
 
-Today the Beige stage ships 14 chapters → days 0–13 unlock one new
-chapter each, days 14–20 are catch-up.
+All of it happens in the **content repo**, not here:
 
-## Adding chapters to a new stage
+1. Edit the Markdown/frontmatter in `aptitude-course` and merge; the
+   content repo regenerates `manifest.json`.
+2. Vendor the new pin: `make sync-content REF=<sha>` and commit the
+   `backend/content/` diff.
+3. Deploy.  The startup seeder reconciles `StageContent` rows from the
+   manifest for every stage it ships: new chapters insert, changed
+   fields (title-matched within a stage) update in place, and rows that
+   were marked read stay marked read.
 
-1. Publish the Squarespace pages.  Use the slug pattern that
-   `content_config.py` expects: `https://aptitude.guru/course/{slug}-{n}`
-   where `{n}` runs from 1.
-2. Append a `StageContentPlan` entry to `STAGE_PLANS`:
+The seeder never deletes rows (deletion would silently lose
+`ContentCompletion` references).  A chapter dropped from the manifest
+simply stops being referenced; if you actually want the row gone, write
+a one-off migration.
 
-   ```python
-   STAGE_PLANS: Final[list[StageContentPlan]] = [
-       StageContentPlan(stage_number=1, slug="beige",  chapter_count=14),
-       # New →
-       StageContentPlan(stage_number=2, slug="purple", chapter_count=10),
-   ]
-   ```
+Stages the manifest does not cover yet keep placeholder rows (defined in
+`seed_content.py`); they are suppressed automatically once the manifest
+ships that stage.
 
-3. Open `backend/src/seed_content.py` and drop the stage's placeholder
-   rows from `_PLACEHOLDER_DEFINITIONS` if any are still listed there —
-   the seeder already skips stages that have a plan, so leaving them
-   only wastes lines.
-4. Restart the backend.  The startup seeder will create one
-   `StageContent` row per chapter; subsequent boots are idempotent.
-
-## Reordering or renaming chapters
-
-Two paths, depending on what changed:
-
-* **Renamed the page on Squarespace, slug unchanged** — no action.
-  We always hit the same URL.
-* **Slug changed** — update `chapter_count` (or the `slug` field on
-  the plan).  Restart the backend.  The seeder's reconciliation step
-  updates the URL on existing rows in place; rows that were marked read
-  stay marked read.
-
-## Removing chapters
-
-Lower `chapter_count` in the relevant plan.  The seeder doesn't delete
-the now-orphaned `StageContent` row by itself (deletion would silently
-lose `ContentCompletion` rows referencing it).  If you actually want
-the row gone, write a one-off migration; otherwise the row simply
-stops appearing in the chapter list once `chapter_count` is below its
-index.
+`StageContent.url` holds a local `content://<chapter-id>` reference for
+manifest-driven rows — not a fetchable URL.  The body endpoint maps it
+back to the vendored Markdown (cms-migration epic #388).
 
 ## Adding a "From Aptitude Guru" link
 
