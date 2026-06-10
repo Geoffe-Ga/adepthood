@@ -303,7 +303,7 @@ describe('habitManager', () => {
       });
     });
 
-    it('tz-less internal re-fetches reuse the last known zone (#414 review)', async () => {
+    it('tz-less internal re-fetches reuse the last known zone (#269)', async () => {
       (loadHabits as jest.Mock).mockResolvedValue([] as never);
       (habitsApi.list as jest.Mock).mockResolvedValue([] as never);
       (loadPendingCheckIns as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([

@@ -11,7 +11,9 @@ import { registerForPushNotificationsAsync, reconcileNotifications } from './use
 import { useHabitUI } from './useHabitUI';
 
 const useBootstrapHabits = (userTimezone: string): void => {
-  // Day buckets depend on the zone, so re-fetching when auth hydrates it is correct (#269).
+  // Runs twice on cold start (UTC default, then the auth-hydrated zone).
+  // The second fetch is intentional, not a bug: day buckets and queued
+  // check-in replay days both depend on the zone (#269).
   useEffect(() => {
     void habitManager.loadHabits(userTimezone);
   }, [userTimezone]);
