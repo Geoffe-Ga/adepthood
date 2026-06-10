@@ -2052,3 +2052,59 @@ def test_provider_sdks_are_installed_dependencies() -> None:
     """The SDKs are declared dependencies that import cleanly."""
     assert importlib.import_module("openai") is not None
     assert importlib.import_module("anthropic") is not None
+
+
+# ── Issue #404: declarative provider registry ───────────────────────────
+
+
+def test_registry_specs_are_internally_consistent() -> None:
+    """Every provider entry is complete and self-consistent.
+
+    Default model on its own allowlist; entrypoints resolve to real
+    module callables; a non-empty key prefix.
+    """
+    assert set(botmason_mod.PROVIDER_REGISTRY) >= {"openai", "anthropic"}
+    for name, spec in botmason_mod.PROVIDER_REGISTRY.items():
+        assert spec.default_model in spec.allowed_models, name
+        assert callable(getattr(botmason_mod, spec.call_name)), name
+        assert callable(getattr(botmason_mod, spec.stream_name)), name
+        assert spec.key_prefix, name
+
+
+def test_registry_key_prefixes_are_unambiguous() -> None:
+    """A synthetic key built from each provider's prefix routes ONLY to it."""
+    for name, spec in botmason_mod.PROVIDER_REGISTRY.items():
+        synthetic = f"{spec.key_prefix}{'x' * 40}"
+        assert provider_for_api_key(synthetic) == name
+
+
+@pytest.mark.asyncio
+async def test_disallowed_model_rejected_before_any_network_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model outside the allowlist fails fast — the SDK client is never built."""
+    constructed: list[bool] = []
+
+    class _Tripwire:
+        def __init__(self, **_kwargs: object) -> None:
+            constructed.append(True)
+
+    monkeypatch.setattr(openai, "AsyncOpenAI", _Tripwire)
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", "sk-server-key")  # pragma: allowlist secret
+    monkeypatch.setenv("LLM_MODEL", "gpt-4o-most-expensive")
+
+    with pytest.raises(RuntimeError, match="allowlist"):
+        await generate_response("Hello", [])
+    assert constructed == []
+
+
+@pytest.mark.asyncio
+async def test_allowed_model_passes_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(openai, "AsyncOpenAI", _FakeOpenAIClient)
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", "sk-server-key")  # pragma: allowlist secret
+    monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+
+    result = await generate_response("Hello", [])
+    assert result.provider == "openai"

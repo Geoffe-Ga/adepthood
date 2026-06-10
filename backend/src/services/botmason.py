@@ -48,29 +48,40 @@ LLM_API_KEY_MAX_LENGTH = 256
 
 # Provider-specific key prefixes. Anthropic keys share the ``sk-`` prefix with
 # OpenAI, so their check is the more specific ``sk-ant-``.
-_OPENAI_KEY_PREFIX = "sk-"
-_ANTHROPIC_KEY_PREFIX = "sk-ant-"
 
 # Identifier the stub provider reports as its "model" in usage logs.  Kept as a
 # module constant so callers can branch on it without magic strings.
 STUB_MODEL_NAME = "stub"
 
-# Centralised default models so the choice lives in one place (BUG-JOURNAL-011).
-# ``LLM_MODEL`` env var overrides at runtime — but only to a value listed
-# in :data:`_ALLOWED_MODELS` for the active provider (BUG-BM-001).
-DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
-DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
 
-# Closed allowlist per provider (BUG-BM-001).  Without this gate, an
-# operator who set ``LLM_MODEL=gpt-4o-most-expensive`` (or, worse,
-# accidentally pointed an Anthropic key at an OpenAI model name)
-# would silently route traffic through an unintended billing tier or
-# break in cryptic ways at provider call time.  The set is small on
-# purpose: every addition is a deliberate audit decision (and any
-# new model needs an entry in :mod:`services.llm_pricing` so cost
-# estimation does not silently fall back to ``$0``).
-#
-# Anthropic IDs intentionally mix two formats per Anthropic's naming:
+@dataclass(frozen=True)
+class ProviderSpec:
+    """Declarative definition of one LLM provider (issue #404).
+
+    Adding a provider is ONE entry in :data:`PROVIDER_REGISTRY` — key
+    rule, default model, model allowlist, and entrypoints — plus pricing
+    rows in :mod:`services.llm_pricing` for its models.  Key routing,
+    format validation, model gating, and call/stream dispatch all read
+    from the registry, so nothing else needs touching.
+
+    ``call_name``/``stream_name`` are module attribute *names*, resolved
+    at call time, so tests can keep monkeypatching ``_call_openai`` etc.
+    on the module — storing the function objects here would freeze the
+    originals and silently bypass those patches.
+    """
+
+    #: Required key prefix; more-specific prefixes other providers own.
+    key_prefix: str
+    disallowed_prefixes: tuple[str, ...]
+    #: Used when ``LLM_MODEL`` is unset (BUG-JOURNAL-011).
+    default_model: str
+    #: Closed allowlist (BUG-BM-001) — every addition is an audit decision.
+    allowed_models: frozenset[str]
+    call_name: str
+    stream_name: str
+
+
+# Anthropic model IDs intentionally mix two formats per Anthropic's naming:
 #
 #   * ``claude-{family}-{major}-{minor}`` (e.g. ``claude-opus-4-7``,
 #     ``claude-sonnet-4-6``) -- a *floating alias* that always points at
@@ -83,19 +94,34 @@ DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
 #
 # Both forms are valid Anthropic endpoints; they are NOT duplicates --
 # an operator deliberately chooses pin-vs-alias by setting ``LLM_MODEL``.
-# Each pin/alias is listed only when there is a matching pricing row in
-# :mod:`services.llm_pricing` so cost estimation stays accurate.
-_ALLOWED_MODELS: dict[str, frozenset[str]] = {
-    "openai": frozenset({"gpt-4o-mini", "gpt-4o", "gpt-4-turbo"}),
-    "anthropic": frozenset(
-        {
-            # Date-pinned (reproducible) builds:
-            "claude-sonnet-4-20250514",
-            "claude-haiku-4-5-20251001",
-            # Floating aliases (track latest minor):
-            "claude-opus-4-7",
-            "claude-sonnet-4-6",
-        }
+# Key-prefix note: Anthropic keys carry the more specific ``sk-ant-``
+# prefix, so OpenAI disallows it to prevent provider cross-wiring; keep
+# the frontend mirror (``frontend/.../byokProviders.ts``) in sync.
+PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
+    "openai": ProviderSpec(
+        key_prefix="sk-",
+        disallowed_prefixes=("sk-ant-",),
+        default_model="gpt-4o-mini",
+        allowed_models=frozenset({"gpt-4o-mini", "gpt-4o", "gpt-4-turbo"}),
+        call_name="_call_openai",
+        stream_name="_stream_openai",
+    ),
+    "anthropic": ProviderSpec(
+        key_prefix="sk-ant-",
+        disallowed_prefixes=(),
+        default_model="claude-sonnet-4-20250514",
+        allowed_models=frozenset(
+            {
+                # Date-pinned (reproducible) builds:
+                "claude-sonnet-4-20250514",
+                "claude-haiku-4-5-20251001",
+                # Floating aliases (track latest minor):
+                "claude-opus-4-7",
+                "claude-sonnet-4-6",
+            }
+        ),
+        call_name="_call_anthropic",
+        stream_name="_stream_anthropic",
     ),
 }
 
@@ -147,17 +173,14 @@ def get_provider() -> str:
 
 def provider_requires_api_key(provider: str | None = None) -> bool:
     """Return True when the selected provider needs an API key to function."""
-    return (provider or get_provider()) in {"openai", "anthropic"}
+    return (provider or get_provider()) in PROVIDER_REGISTRY
 
 
-# Prefix rules per provider — a dict keeps ``validate_llm_api_key_format``
-# branch-free so xenon's complexity budget stays at rank A.
+# Prefix rules derived from the registry — a dict keeps
+# ``validate_llm_api_key_format`` branch-free so xenon's complexity budget
+# stays at rank A.
 _PROVIDER_KEY_RULES: dict[str, tuple[str, tuple[str, ...]]] = {
-    # provider -> (required_prefix, disallowed_more_specific_prefixes)
-    # OpenAI keys start with ``sk-``; Anthropic keys also do, so disallow the
-    # more specific ``sk-ant-`` prefix to prevent provider cross-wiring.
-    "openai": (_OPENAI_KEY_PREFIX, (_ANTHROPIC_KEY_PREFIX,)),
-    "anthropic": (_ANTHROPIC_KEY_PREFIX, ()),
+    name: (spec.key_prefix, spec.disallowed_prefixes) for name, spec in PROVIDER_REGISTRY.items()
 }
 
 
@@ -420,32 +443,35 @@ def _build_messages(
 
 
 def _provider_default_model(provider: str) -> str:
-    """Return the built-in default model for ``provider``."""
-    if provider == "anthropic":
-        return DEFAULT_ANTHROPIC_MODEL
-    return DEFAULT_OPENAI_MODEL
+    """Return the built-in default model for ``provider``.
+
+    Unknown providers fall back to the OpenAI default — they never reach a
+    real provider, so the value is only a placeholder for logging.
+    """
+    spec = PROVIDER_REGISTRY.get(provider)
+    return spec.default_model if spec else PROVIDER_REGISTRY["openai"].default_model
 
 
 def _get_model(provider: str) -> str:
     """Return the validated model ID for ``provider`` (BUG-BM-001).
 
-    Resolves to ``LLM_MODEL`` env var when set; otherwise the per-provider
-    default.  Either way the chosen value MUST appear in the provider's
-    entry in :data:`_ALLOWED_MODELS` -- a misconfigured env var fails
-    fast at request time rather than silently routing traffic through
-    an unvetted model (and an unknown cost row).  Unknown providers
+    Resolves to ``LLM_MODEL`` env var when set; otherwise the provider's
+    registry default.  Either way the chosen value MUST appear in the
+    provider's ``allowed_models`` -- a misconfigured env var fails fast
+    at request time rather than silently routing traffic through an
+    unvetted model (and an unknown cost row).  Unknown providers
     (including ``"stub"``) bypass the check: they never hit a real
     provider so model selection is moot.
     """
     requested = os.getenv("LLM_MODEL") or _provider_default_model(provider)
-    allowed = _ALLOWED_MODELS.get(provider)
-    if allowed is None:
+    spec = PROVIDER_REGISTRY.get(provider)
+    if spec is None:
         return requested
-    if requested not in allowed:
+    if requested not in spec.allowed_models:
         msg = (
             f"LLM_MODEL={requested!r} is not on the {provider} allowlist; "
-            "add it to services.botmason._ALLOWED_MODELS only after a pricing "
-            "row exists in services.llm_pricing."
+            "add it to the PROVIDER_REGISTRY entry in services.botmason only "
+            "after a pricing row exists in services.llm_pricing."
         )
         raise RuntimeError(msg)
     return requested
@@ -560,10 +586,16 @@ async def generate_response(
     resolved_prompt = system_prompt or get_system_prompt()
     provider = _provider_for_request(api_key)
 
-    if provider == "openai":
-        return await _call_openai(user_message, conversation_history, resolved_prompt, api_key)
-    if provider == "anthropic":
-        return await _call_anthropic(user_message, conversation_history, resolved_prompt, api_key)
+    spec = PROVIDER_REGISTRY.get(provider)
+    if spec is not None:
+        # Resolve by name at call time so test monkeypatches on the module
+        # attribute (e.g. ``patch.object(botmason, "_call_openai", ...)``)
+        # keep working — the registry never freezes the function objects.
+        caller = globals()[spec.call_name]
+        result: LLMResponse = await caller(
+            user_message, conversation_history, resolved_prompt, api_key
+        )
+        return result
     # Default: stub provider for development and testing
     return _stub_response(user_message)
 
@@ -651,12 +683,14 @@ async def _call_openai(
     api_key: str | None = None,
 ) -> LLMResponse:
     """Call the OpenAI chat completions API with timeout and retry."""
+    # Model validation precedes key resolution and client construction so a
+    # disallowed model fails fast with zero provider side effects (#404).
+    model = _get_model("openai")
     key = _resolve_api_key(api_key)
     openai_mod = _import_optional("openai", "OpenAI")
 
     client = openai_mod.AsyncOpenAI(api_key=key, timeout=_LLM_TIMEOUT_SECONDS)
     messages = _build_messages(user_message, conversation_history, system_prompt)
-    model = _get_model("openai")
     max_tokens = _dynamic_max_tokens(conversation_history)
 
     async def _do_call() -> object:
@@ -684,6 +718,8 @@ async def _call_anthropic(
     api_key: str | None = None,
 ) -> LLMResponse:
     """Call the Anthropic messages API with timeout and retry."""
+    # Model validation first — same zero-side-effect guarantee as OpenAI.
+    model = _get_model("anthropic")
     key = _resolve_api_key(api_key)
     anthropic_mod = _import_optional("anthropic", "Anthropic")
 
@@ -696,7 +732,6 @@ async def _call_anthropic(
         conversation_history,
         system_prompt,
     )
-    model = _get_model("anthropic")
     max_tokens = _dynamic_max_tokens(conversation_history)
 
     async def _do_call() -> object:
@@ -746,15 +781,16 @@ def _select_provider_streamer(
 ) -> _ProviderStreamer | None:
     """Return the provider-specific streaming coroutine, or ``None`` for stub.
 
-    Table-driven dispatch keeps ``generate_response_stream`` at cyclomatic
-    rank A while still allowing tests to monkey-patch the stub / openai /
-    anthropic variants independently.
+    Registry-driven dispatch keeps ``generate_response_stream`` at
+    cyclomatic rank A.  The streamer is resolved from the module by name
+    at call time so tests can monkey-patch the stub / openai / anthropic
+    variants independently.
     """
-    table: dict[str, _ProviderStreamer] = {
-        "openai": _stream_openai,
-        "anthropic": _stream_anthropic,
-    }
-    return table.get(provider)
+    spec = PROVIDER_REGISTRY.get(provider)
+    if spec is None:
+        return None
+    streamer: _ProviderStreamer = globals()[spec.stream_name]
+    return streamer
 
 
 async def generate_response_stream(
