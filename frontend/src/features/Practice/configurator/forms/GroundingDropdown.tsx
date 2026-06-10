@@ -39,13 +39,15 @@ interface Props {
 const GroundingDropdown = ({ index, value, onChange }: Props): React.JSX.Element => {
   const base = `sense-prompt-${index}`;
   const dd = useGroundingDropdown(value, onChange);
+  const label = triggerLabel(dd.selected, value);
   return (
     <SearchableDropdown
       testID={`${base}-thing`}
       triggerTestID={`${base}-thing-trigger`}
       panelTestID={`${base}-panel`}
       searchTestID={`${base}-search`}
-      triggerLabel={triggerLabel(dd.selected, value)}
+      triggerLabel={label}
+      triggerAccessibilityLabel={`Choose what to notice, currently ${label}`}
       badge={{ text: SENSE_DISPLAY[value.sense], testID: `${base}-sense-badge` }}
       placeholder="Search things to notice…"
       searchAccessibilityLabel="Search things to notice"

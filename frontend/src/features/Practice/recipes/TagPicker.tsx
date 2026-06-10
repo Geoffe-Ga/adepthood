@@ -44,6 +44,7 @@ const TagPicker = (props: TagPickerProps): React.JSX.Element => {
       panelTestID={`${base}-panel`}
       searchTestID={`${base}-search`}
       triggerLabel={dd.triggerLabel}
+      triggerAccessibilityLabel={`Choose a tag, currently ${dd.triggerLabel}`}
       badge={dd.badge}
       placeholder="Search tags…"
       searchAccessibilityLabel="Search tags"

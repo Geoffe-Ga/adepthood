@@ -50,6 +50,17 @@ describe('SearchableDropdown', () => {
     expect(getByTestId('dd-badge')).toHaveTextContent('Sight');
   });
 
+  it('defaults the trigger accessibility label and lets a consumer override it', () => {
+    const def = renderShell();
+    expect(def.getByTestId('dd-trigger').props.accessibilityLabel).toBe(
+      'Choose an option, currently Pick one',
+    );
+    const custom = renderShell({ triggerAccessibilityLabel: 'Choose a tag, currently Red' });
+    expect(custom.getByTestId('dd-trigger').props.accessibilityLabel).toBe(
+      'Choose a tag, currently Red',
+    );
+  });
+
   it('fires onToggle when the trigger is pressed', () => {
     const onToggle = jest.fn();
     const { getByTestId } = renderShell({ onToggle });

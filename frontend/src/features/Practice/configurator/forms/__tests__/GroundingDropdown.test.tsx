@@ -23,6 +23,16 @@ describe('GroundingDropdown', () => {
     expect(getByTestId('sense-prompt-0-sense-badge')).toHaveTextContent('Sight');
   });
 
+  it('shows a placeholder trigger label when the prompt is empty and uncatalogued', () => {
+    const { getByText, getByTestId } = render(
+      <GroundingDropdown index={0} value={{ sense: 'sight', label: '' }} onChange={jest.fn()} />,
+    );
+    expect(getByText('Choose what to notice')).toBeTruthy();
+    expect(getByTestId('sense-prompt-0-thing-trigger').props.accessibilityLabel).toBe(
+      'Choose what to notice, currently Choose what to notice',
+    );
+  });
+
   it('is collapsed until the trigger is pressed', () => {
     const { queryByTestId, getByTestId } = render(
       <GroundingDropdown index={0} value={prompt} onChange={jest.fn()} />,

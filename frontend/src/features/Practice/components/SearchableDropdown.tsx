@@ -20,6 +20,8 @@ export interface SearchableDropdownProps {
   searchTestID: string;
   /** Text shown on the collapsed trigger — the current selection. */
   triggerLabel: string;
+  /** Screen-reader phrasing for the trigger; defaults to a generic string. */
+  triggerAccessibilityLabel?: string;
   badge?: DropdownBadge;
   placeholder: string;
   /** Stable label for the search field; placeholders aren't read reliably. */
@@ -46,6 +48,7 @@ const SearchableDropdown = (props: SearchableDropdownProps): React.JSX.Element =
     <Trigger
       testID={props.triggerTestID}
       label={props.triggerLabel}
+      accessibilityLabel={props.triggerAccessibilityLabel}
       badge={props.badge}
       open={props.open}
       onPress={props.onToggle}
@@ -73,15 +76,23 @@ const SearchableDropdown = (props: SearchableDropdownProps): React.JSX.Element =
 interface TriggerProps {
   testID: string;
   label: string;
+  accessibilityLabel?: string;
   badge?: DropdownBadge;
   open: boolean;
   onPress: () => void;
 }
 
-const Trigger = ({ testID, label, badge, open, onPress }: TriggerProps): React.JSX.Element => (
+const Trigger = ({
+  testID,
+  label,
+  accessibilityLabel,
+  badge,
+  open,
+  onPress,
+}: TriggerProps): React.JSX.Element => (
   <TouchableOpacity
     accessibilityRole="button"
-    accessibilityLabel={`Choose an option, currently ${label}`}
+    accessibilityLabel={accessibilityLabel ?? `Choose an option, currently ${label}`}
     accessibilityState={{ expanded: open }}
     onPress={onPress}
     style={styles.trigger}
