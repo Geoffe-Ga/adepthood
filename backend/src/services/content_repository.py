@@ -94,6 +94,40 @@ def _load_json(path: Path, description: str) -> dict[str, Any]:
     return data
 
 
+def _index_chapters(raw_chapters: list[dict[str, Any]]) -> dict[str, ChapterMeta]:
+    """Index chapters by id, rejecting duplicates (the schema cannot)."""
+    chapters: dict[str, ChapterMeta] = {}
+    for raw in raw_chapters:
+        meta = ChapterMeta(
+            id=raw["id"],
+            stage=raw["stage"],
+            chapter=raw["chapter"],
+            slug=raw["slug"],
+            title=raw["title"],
+            content_type=raw["content_type"],
+            release_day=raw["release_day"],
+            order=raw["order"],
+            path=raw["path"],
+            summary=raw.get("summary"),
+        )
+        if meta.id in chapters:
+            msg = f"duplicate chapter id in manifest: {meta.id!r}"
+            raise ContentRepositoryError(msg)
+        chapters[meta.id] = meta
+    return chapters
+
+
+def _index_resources(raw_resources: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Index site resources by slug, rejecting duplicates (the schema cannot)."""
+    resources: dict[str, dict[str, Any]] = {}
+    for resource in raw_resources:
+        if resource["slug"] in resources:
+            msg = f"duplicate site resource slug in manifest: {resource['slug']!r}"
+            raise ContentRepositoryError(msg)
+        resources[resource["slug"]] = resource
+    return resources
+
+
 class ContentRepository:
     """Parse-once reader over the vendored content directory.
 
@@ -106,27 +140,8 @@ class ContentRepository:
         """Load and validate the manifest under ``content_dir`` (or CONTENT_DIR)."""
         self._content_dir = (content_dir or _content_dir_from_env()).resolve()
         manifest = self._load_and_validate_manifest()
-        self._chapters: dict[str, ChapterMeta] = {}
-        for raw in manifest["chapters"]:
-            meta = ChapterMeta(
-                id=raw["id"],
-                stage=raw["stage"],
-                chapter=raw["chapter"],
-                slug=raw["slug"],
-                title=raw["title"],
-                content_type=raw["content_type"],
-                release_day=raw["release_day"],
-                order=raw["order"],
-                path=raw["path"],
-                summary=raw.get("summary"),
-            )
-            if meta.id in self._chapters:
-                msg = f"duplicate chapter id in manifest: {meta.id!r}"
-                raise ContentRepositoryError(msg)
-            self._chapters[meta.id] = meta
-        self._resources: dict[str, dict[str, Any]] = {
-            r["slug"]: r for r in manifest["site_resources"]
-        }
+        self._chapters = _index_chapters(manifest["chapters"])
+        self._resources = _index_resources(manifest["site_resources"])
 
     def _load_and_validate_manifest(self) -> dict[str, Any]:
         """Load ``manifest.json`` and enforce the issue #389 contract."""
@@ -172,7 +187,13 @@ class ContentRepository:
         )
 
     def get_chapter(self, content_id: str) -> ChapterMeta | None:
-        """The chapter with ``content_id``, or ``None`` when unknown."""
+        """The chapter with ``content_id``, or ``None`` when unknown.
+
+        Optional lookup — returns ``None`` rather than raising, unlike
+        :meth:`read_body`, which treats an unknown id as
+        :class:`ContentNotFoundError` because fetching a body implies the
+        caller expects it to exist.
+        """
         return self._chapters.get(content_id)
 
     def read_body(self, content_id: str) -> ContentBody:

@@ -141,6 +141,15 @@ def test_duplicate_chapter_id_raises_repository_error(tmp_path: Path) -> None:
         ContentRepository(root)
 
 
+def test_duplicate_resource_slug_raises_repository_error(tmp_path: Path) -> None:
+    """Duplicate slugs must fail loudly, consistent with chapter ids."""
+    doubled = copy.deepcopy(_VALID_MANIFEST)
+    doubled["site_resources"].append(dict(doubled["site_resources"][0]))
+    root = _write_content_dir(tmp_path / "content", doubled)
+    with pytest.raises(ContentRepositoryError):
+        ContentRepository(root)
+
+
 def test_missing_markdown_for_known_resource_raises_repository_error(
     content_dir: Path,
 ) -> None:
