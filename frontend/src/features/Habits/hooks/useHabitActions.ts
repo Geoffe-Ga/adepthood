@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 
+import { ApiError } from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
 import { colors } from '../../../design/tokens';
 import { useOptimisticMutation } from '../../../hooks/useOptimisticMutation';
@@ -13,6 +14,15 @@ const SYNC_ERROR_ICON = '\u{26A0}\u{FE0F}';
 
 /** Show the rejection long enough to read on a phone before auto-dismiss. */
 const SYNC_ERROR_TOAST_DURATION_MS = 6000;
+
+/**
+ * The stale-synthetic-ID symptom (issue #282): onboarding's POSTs landed
+ * but the trailing ``loadHabits`` refresh failed, so the store still
+ * holds goal ids the server has never issued — every check-in 404s with
+ * ``goal_not_found`` until the ids are resynced.
+ */
+const isStaleGoalIdError = (err: unknown): boolean =>
+  err instanceof ApiError && err.status === 404 && err.detail === 'goal_not_found';
 
 /**
  * Wire `habitManager.{prepare,apply,commit,rollback}LogUnitContext` into
@@ -36,6 +46,20 @@ const useLogUnitMutation = (
     commit: (ctx) => habitManager.commitLogUnitContext(ctx),
     rollback: (ctx, err) => {
       habitManager.rollbackLogUnitContext(ctx);
+      if (isStaleGoalIdError(err)) {
+        // Issue #282 recovery path: re-fetch the server's authoritative
+        // ids in the background so the user's NEXT tap succeeds, instead
+        // of leaving them stuck until an app restart.
+        void habitManager.loadHabits(tz);
+        showToast({
+          message:
+            'Your habits were out of sync with the server — we just refreshed them. Tap to log that unit again.',
+          icon: SYNC_ERROR_ICON,
+          color: colors.danger,
+          duration: SYNC_ERROR_TOAST_DURATION_MS,
+        });
+        return;
+      }
       showToast({
         message: formatApiError(err, {
           fallback:

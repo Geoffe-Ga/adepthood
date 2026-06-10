@@ -9,20 +9,33 @@ import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react-native';
 import React from 'react';
 
-jest.mock('../../../../api', () => ({
-  habits: {
-    list: jest.fn(() => Promise.resolve([])),
-    create: jest.fn(() => Promise.resolve({})),
-    update: jest.fn(() => Promise.resolve({})),
-    delete: jest.fn(() => Promise.resolve({})),
-  },
-  goalCompletions: {
-    create: jest.fn(() => Promise.resolve({ streak: 1, milestones: [], reason_code: 'ok' })),
-  },
-  goals: {
-    update: jest.fn(() => Promise.resolve({})),
-  },
-}));
+jest.mock('../../../../api', () => {
+  class MockApiError extends Error {
+    status: number;
+    detail: string;
+    constructor(status: number, detail: string) {
+      super(`Request failed with status ${status}: ${detail}`);
+      this.name = 'ApiError';
+      this.status = status;
+      this.detail = detail;
+    }
+  }
+  return {
+    ApiError: MockApiError,
+    habits: {
+      list: jest.fn(() => Promise.resolve([])),
+      create: jest.fn(() => Promise.resolve({})),
+      update: jest.fn(() => Promise.resolve({})),
+      delete: jest.fn(() => Promise.resolve({})),
+    },
+    goalCompletions: {
+      create: jest.fn(() => Promise.resolve({ streak: 1, milestones: [], reason_code: 'ok' })),
+    },
+    goals: {
+      update: jest.fn(() => Promise.resolve({})),
+    },
+  };
+});
 
 jest.mock('../../../../storage/habitStorage', () => ({
   saveHabits: jest.fn(() => Promise.resolve(undefined)),
@@ -47,7 +60,11 @@ jest.mock('react-native', () => ({
   StyleSheet: { create: (s: Record<string, unknown>) => s },
 }));
 
-import { goalCompletions as goalCompletionsApi, habits as habitsApi } from '../../../../api';
+import {
+  ApiError as MockApiError,
+  goalCompletions as goalCompletionsApi,
+  habits as habitsApi,
+} from '../../../../api';
 import { saveHabits } from '../../../../storage/habitStorage';
 import { useHabitStore } from '../../../../store/useHabitStore';
 import type { Habit } from '../../Habits.types';
@@ -151,6 +168,46 @@ describe('useHabitActions.logUnit', () => {
     expect(showToast.mock.calls[0]?.[0]).toMatchObject({
       message: expect.stringMatching(/Low Goal achieved/i) as unknown,
     });
+  });
+
+  it('auto-resyncs habits when a check-in 404s with goal_not_found (#282)', async () => {
+    // The stale-synthetic-ID symptom: onboarding POSTs succeeded but the
+    // trailing GET failed, so the store still holds synthetic goal ids
+    // the server has never heard of.
+    useHabitStore.setState({ habits: [makeHabit()] });
+    (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
+      Promise.reject(new MockApiError(404, 'goal_not_found')),
+    );
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // One background refresh re-fetches the server's authoritative ids…
+    expect(habitsApi.list).toHaveBeenCalledTimes(1);
+    // …and the toast tells the user to simply tap again.
+    expect(showToast.mock.calls.at(-1)?.[0]).toMatchObject({
+      message: expect.stringMatching(/refreshed/i) as unknown,
+    });
+  });
+
+  it('does NOT resync habits on unrelated check-in failures (#282)', async () => {
+    useHabitStore.setState({ habits: [makeHabit()] });
+    (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
+      Promise.reject(new Error('network down')),
+    );
+    const { result } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(habitsApi.list).not.toHaveBeenCalled();
   });
 
   it('rolls BOTH store AND disk back when the API rejects (BUG-FE-HABIT-001)', async () => {
