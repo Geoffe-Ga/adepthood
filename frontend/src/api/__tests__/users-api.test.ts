@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import { users, ApiError, ApiValidationError } from '../index';
+import { users, setTokenGetter, ApiError, ApiValidationError } from '../index';
 
 // Mock global fetch
 const mockFetch = jest.fn() as jest.Mock;
@@ -34,6 +34,22 @@ describe('users API client', () => {
     expect(JSON.parse(init.body)).toEqual({ timezone: 'America/Los_Angeles' });
     expect(init.headers).toMatchObject({ Authorization: 'Bearer test-token' });
     expect(result).toEqual({ timezone: 'America/Los_Angeles' });
+  });
+
+  test('users.updateMyTimezone authenticates via the global token getter when no token is passed', async () => {
+    // The production path: TimezoneSettingsScreen calls without an explicit
+    // token and relies on the AuthContext-installed getter.
+    setTokenGetter(() => 'getter-token');
+    try {
+      mockFetch.mockReturnValueOnce(jsonResponse({ timezone: 'America/Los_Angeles' }));
+
+      await users.updateMyTimezone({ timezone: 'America/Los_Angeles' });
+
+      const [, init] = mockFetch.mock.calls[0];
+      expect(init.headers).toMatchObject({ Authorization: 'Bearer getter-token' });
+    } finally {
+      setTokenGetter(null);
+    }
   });
 
   test('users.updateMyTimezone surfaces a 422 as ApiError with the server status', async () => {

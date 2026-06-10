@@ -94,6 +94,16 @@ describe('TimezoneSettingsScreen', () => {
     expect(getByTestId('timezone-input').props.value).toBe('Pacific/Auckland');
   });
 
+  test('the Back link calls navigation.goBack', () => {
+    setAuthState('Europe/Paris');
+    const goBack = jest.fn();
+    const { getByText } = render(<TimezoneSettingsScreen navigation={{ goBack }} />);
+
+    fireEvent.press(getByText('Back'));
+
+    expect(goBack).toHaveBeenCalledTimes(1);
+  });
+
   test('a blank zone never reaches the API', () => {
     setAuthState('Europe/Paris');
     const { getByTestId } = render(<TimezoneSettingsScreen />);

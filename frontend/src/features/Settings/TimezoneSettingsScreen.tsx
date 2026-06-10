@@ -18,6 +18,10 @@ import { detectDeviceTimezone } from '@/utils/dateUtils';
 
 const EXAMPLE_ZONE = 'America/Los_Angeles';
 
+// Visual parity with ApiKeySettingsScreen's primary button, whose padding is
+// also SPACING.md nudged up to balance the larger label font.
+const SAVE_BUTTON_PADDING = SPACING.md + 2;
+
 const EMPTY_ZONE_MESSAGE =
   `Enter a time zone name like "${EXAMPLE_ZONE}", ` +
   'or tap "Use device time zone" to detect it for you.';
@@ -226,18 +230,22 @@ export default function TimezoneSettingsScreen({ navigation }: Props = {}): Reac
   const state = useTimezoneScreenState(userTimezone);
   const handleSave = useSaveTimezoneHandler(state, setUserTimezone);
 
+  // Depend on the stable useState setters, not ``state`` itself — the hook
+  // returns a fresh object every render, so a ``[state]`` dependency would
+  // silently defeat the memoization.
+  const { setDraft, setError } = state;
   const onChangeDraft = useCallback(
     (value: string) => {
-      state.setDraft(value);
-      state.setError(null);
+      setDraft(value);
+      setError(null);
     },
-    [state],
+    [setDraft, setError],
   );
 
   const onUseDeviceZone = useCallback(() => {
-    state.setDraft(detectDeviceTimezone());
-    state.setError(null);
-  }, [state]);
+    setDraft(detectDeviceTimezone());
+    setError(null);
+  }, [setDraft, setError]);
 
   const onBack = useMemo(
     () => (navigation?.goBack ? () => navigation.goBack?.() : undefined),
@@ -313,7 +321,7 @@ const styles = StyleSheet.create({
   success: { color: colors.successText, marginBottom: SPACING.md },
   primaryButton: {
     borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.md + 2,
+    padding: SAVE_BUTTON_PADDING,
     alignItems: 'center',
     backgroundColor: colors.primary,
     marginTop: SPACING.xs,

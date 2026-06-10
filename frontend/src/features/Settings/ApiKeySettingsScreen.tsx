@@ -12,6 +12,7 @@ import {
 
 import { useApiKey } from '@/context/ApiKeyContext';
 import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
+import type { RootStackParamList } from '@/navigation/RootStack';
 
 /**
  * BYOK ("Bring Your Own Key") settings for BotMason chat.
@@ -63,8 +64,13 @@ function maskKey(key: string): string {
 interface Props {
   navigation?: {
     goBack?: () => void;
-    /** Stack navigate — used by the "Time zone" settings entry (issue #261). */
-    navigate?: (_screen: 'TimezoneSettings') => void;
+    /**
+     * Stack navigate — used by the "Time zone" settings entry (issue #261).
+     * Typed against the whole param list (not a single literal) so future
+     * entries from this screen don't require a Props change; duck-typed
+     * rather than ``NavigationProp`` so tests can pass a bare ``jest.fn()``.
+     */
+    navigate?: (_screen: keyof RootStackParamList) => void;
   };
 }
 
