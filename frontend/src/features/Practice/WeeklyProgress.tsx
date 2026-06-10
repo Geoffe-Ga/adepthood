@@ -5,37 +5,63 @@ import { colors, SPACING, BORDER_RADIUS } from '@/design/tokens';
 
 const WEEKLY_TARGET = 4;
 
+/** Fixed segment indices so each completed session fills one visible block. */
+const SEGMENTS = Array.from({ length: WEEKLY_TARGET }, (_, i) => i);
+
 interface WeeklyProgressProps {
   count: number;
 }
 
+/**
+ * Build the helper line under the segmented bar. The copy spells out what the
+ * blocks mean so "0/4" is never left to interpretation — it counts completed
+ * practice sessions toward a weekly goal of four.
+ */
+function helperText(completed: number): string {
+  if (completed >= WEEKLY_TARGET) return 'Weekly goal reached — nicely done.';
+  const remaining = WEEKLY_TARGET - completed;
+  if (completed === 0) {
+    return `Complete ${WEEKLY_TARGET} practices this week to reach your goal.`;
+  }
+  const sessionWord = remaining === 1 ? 'practice' : 'practices';
+  return `${remaining} more ${sessionWord} to reach your weekly goal.`;
+}
+
 const WeeklyProgress: React.FC<WeeklyProgressProps> = ({ count }) => {
-  const progress = Math.min(count / WEEKLY_TARGET, 1);
+  const completed = Math.max(0, Math.min(count, WEEKLY_TARGET));
   const isComplete = count >= WEEKLY_TARGET;
 
   return (
     <View style={styles.container} testID="weekly-progress">
       <View style={styles.labelRow}>
-        <Text style={styles.label}>This Week</Text>
+        <Text style={styles.label}>Practices this week</Text>
         <Text style={[styles.count, isComplete && styles.countComplete]} testID="week-count-text">
-          {count}/{WEEKLY_TARGET}
+          {count} of {WEEKLY_TARGET}
         </Text>
       </View>
-      <View style={styles.barBackground}>
-        <View
-          style={[
-            styles.barFill,
-            { width: `${progress * 100}%` },
-            isComplete && styles.barComplete,
-          ]}
-          testID="progress-bar-fill"
-        />
+      <View style={styles.segmentRow} testID="progress-bar-fill">
+        {SEGMENTS.map((index) => {
+          const filled = index < completed;
+          return (
+            <View
+              key={index}
+              testID={`weekly-segment-${index}`}
+              accessibilityLabel={filled ? 'completed practice' : 'remaining practice'}
+              style={[
+                styles.segment,
+                filled && styles.segmentFilled,
+                filled && isComplete && styles.segmentComplete,
+              ]}
+            />
+          );
+        })}
       </View>
-      {isComplete && (
-        <Text style={styles.completeText} testID="weekly-complete-message">
-          Weekly target reached!
-        </Text>
-      )}
+      <Text
+        style={[styles.helper, isComplete && styles.helperComplete]}
+        testID={isComplete ? 'weekly-complete-message' : 'weekly-helper'}
+      >
+        {helperText(count)}
+      </Text>
     </View>
   );
 };
@@ -49,12 +75,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: SPACING.xs,
+    marginBottom: SPACING.sm,
   },
   label: {
     fontSize: 14,
     color: colors.text.secondary,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   count: {
     fontSize: 16,
@@ -64,26 +90,30 @@ const styles = StyleSheet.create({
   countComplete: {
     color: colors.success,
   },
-  barBackground: {
-    height: 8,
+  segmentRow: {
+    flexDirection: 'row',
+    gap: SPACING.xs,
+  },
+  segment: {
+    flex: 1,
+    height: 10,
     backgroundColor: colors.background.accent,
     borderRadius: BORDER_RADIUS.circle,
-    overflow: 'hidden',
   },
-  barFill: {
-    height: '100%',
+  segmentFilled: {
     backgroundColor: colors.primary,
-    borderRadius: BORDER_RADIUS.circle,
   },
-  barComplete: {
+  segmentComplete: {
     backgroundColor: colors.success,
   },
-  completeText: {
+  helper: {
     fontSize: 13,
+    color: colors.text.secondary,
+    marginTop: SPACING.sm,
+  },
+  helperComplete: {
     color: colors.success,
     fontWeight: '500',
-    marginTop: SPACING.xs,
-    textAlign: 'center',
   },
 });
 
