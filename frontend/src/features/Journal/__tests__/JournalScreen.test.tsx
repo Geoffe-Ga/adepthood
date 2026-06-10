@@ -873,6 +873,74 @@ describe('JournalScreen', () => {
     expect(mockBotmasonChatStream).toHaveBeenCalledTimes(2);
   });
 
+  it('double-tapping Retry while a retry is still streaming never duplicates list keys (#270)', async () => {
+    // First attempt: provider error → retry button appears.
+    mockBotmasonChatStream.mockImplementationOnce(
+      async (_payload: unknown, callbacks: StreamCallbacks) => {
+        callbacks.onStreamError({ status: 502, detail: 'llm_provider_error' });
+      },
+    );
+    // Subsequent attempts: each registers its callbacks and stays open, so
+    // the second tap genuinely races a live stream from the first.
+    let latestComplete: ((_r: unknown) => void) | null = null;
+    mockBotmasonChatStream.mockImplementation(
+      async (_payload: unknown, callbacks: StreamCallbacks) => {
+        await new Promise<void>((resolve) => {
+          latestComplete = (result: unknown) => {
+            callbacks.onComplete(result);
+            resolve();
+          };
+        });
+      },
+    );
+
+    const errorSpy = jest.spyOn(console, 'error');
+    const { getByTestId, getByText, queryAllByText } = renderJournal();
+    await waitFor(() => {
+      expect(getByText('My first reflection.')).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.changeText(getByTestId('chat-input'), 'Race message');
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('send-button'));
+    });
+    await waitFor(() => {
+      expect(getByTestId('message-retry')).toBeTruthy();
+    });
+
+    // The race: two Retry presses before the first retry's stream settles.
+    await act(async () => {
+      const retry = getByTestId('message-retry');
+      fireEvent.press(retry);
+      fireEvent.press(retry);
+    });
+
+    // Finish whichever stream survived the abort race.
+    await act(async () => {
+      latestComplete?.({
+        response: 'Survived the race.',
+        remaining_balance: 4,
+        remaining_messages: 48,
+        monthly_reset_date: '2026-05-01T00:00:00Z',
+        bot_entry_id: 654,
+      });
+    });
+
+    await waitFor(() => {
+      expect(getByText('Survived the race.')).toBeTruthy();
+    });
+    // Exactly one user bubble survived the double-tap.
+    expect(queryAllByText('Race message')).toHaveLength(1);
+    // And React never saw two list children with the same key.
+    const keyWarnings = errorSpy.mock.calls
+      .flat()
+      .filter((arg) => typeof arg === 'string' && /same key/i.test(arg));
+    expect(keyWarnings).toHaveLength(0);
+    errorSpy.mockRestore();
+  });
+
   it('falls back to non-streaming chat when StreamingUnsupportedError is thrown', async () => {
     mockBotmasonChatStream.mockImplementationOnce(async () => {
       throw new MockStreamingUnsupportedError();
