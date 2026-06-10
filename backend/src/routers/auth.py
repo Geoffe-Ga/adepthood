@@ -12,7 +12,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import bcrypt
 import jwt
@@ -24,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
+from domain.timezone import normalize_timezone
 from errors import bad_request
 from models.login_attempt import LoginAttempt
 from models.password_reset_token import PasswordResetToken
@@ -186,37 +186,6 @@ class AuthRequest(BaseModel):
         return value
 
 
-# Cap matches ``User.timezone`` column width.  IANA names are at most 33
-# chars today (``America/Argentina/ComodRivadavia``); 64 leaves headroom.
-_MAX_TIMEZONE_LENGTH = 64
-
-
-def _coerce_timezone_input(value: object) -> str | None:
-    """Normalise inbound ``timezone`` field values to ``str | None``.
-
-    Returns ``None`` for inputs that should fall back to the column
-    default (missing, non-string, empty / whitespace-only).  Anything
-    else is returned trimmed for downstream validation.  Split out so
-    the ``_validate_timezone`` validator stays at xenon rank A.
-    """
-    if value is None or not isinstance(value, str):
-        return None
-    candidate = value.strip()
-    return candidate or None
-
-
-def _check_timezone_resolves(candidate: str) -> None:
-    """Raise ``ValueError`` if ``candidate`` is too long or unknown to ``zoneinfo``."""
-    if len(candidate) > _MAX_TIMEZONE_LENGTH:
-        msg = f"timezone must be {_MAX_TIMEZONE_LENGTH} chars or fewer"
-        raise ValueError(msg)
-    try:
-        ZoneInfo(candidate)
-    except (ZoneInfoNotFoundError, ValueError) as exc:
-        msg = f"unknown IANA timezone: {candidate!r}"
-        raise ValueError(msg) from exc
-
-
 class SignupRequest(AuthRequest):
     """Signup payload — email + password + optional IANA ``timezone``.
 
@@ -240,11 +209,7 @@ class SignupRequest(AuthRequest):
     @classmethod
     def _validate_timezone(cls, value: object) -> str:
         """Reject malformed IANA strings before they reach the DB."""
-        candidate = _coerce_timezone_input(value)
-        if candidate is None:
-            return DEFAULT_USER_TIMEZONE
-        _check_timezone_resolves(candidate)
-        return candidate
+        return normalize_timezone(value, DEFAULT_USER_TIMEZONE)
 
 
 class AuthResponse(BaseModel):

@@ -45,6 +45,7 @@ from routers.practices import router as practices_router
 from routers.prompts import router as prompts_router
 from routers.stages import router as stages_router
 from routers.user_practices import router as user_practices_router
+from routers.users import router as users_router
 from seed_content import seed_content
 from seed_practice_recipes import seed_practice_recipes
 from seed_practices import seed_practices
@@ -367,6 +368,7 @@ app.include_router(goal_completion_router)
 app.include_router(goal_groups_router)
 app.include_router(goals_router)
 app.include_router(stages_router)
+app.include_router(users_router)
 
 
 # BUG-APP-004: separate liveness from readiness so the orchestrator can
