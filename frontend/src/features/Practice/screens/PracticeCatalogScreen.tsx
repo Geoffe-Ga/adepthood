@@ -330,12 +330,7 @@ interface PracticeRowProps {
   onPress: () => void;
 }
 
-/**
- * Friendly presentation (human label + emoji anchor) for every mode,
- * derived from the single source the wizard already uses. Showing the raw
- * ``meditation_timer`` identifier reads as a database dump; the icon gives
- * each row a calm visual anchor and the label is plain English.
- */
+// Derived from MODE_CATEGORIES so adding a mode propagates here automatically.
 const MODE_PRESENTATION: Readonly<Record<PickableMode, { label: string; icon: string }>> =
   Object.fromEntries(
     MODE_CATEGORIES.flatMap((category) =>
@@ -358,9 +353,7 @@ const PracticeRow = ({ practice, onPress }: PracticeRowProps): React.JSX.Element
       style={styles.row}
       testID={`practice-catalog-row-${practice.id}`}
     >
-      {/* Decorative anchor; the row's accessibilityLabel already names the
-          mode, and the accessible TouchableOpacity merges children, so the
-          emoji is not separately announced to screen readers. */}
+      {/* Decorative; TouchableOpacity merges children, so screen readers use accessibilityLabel. */}
       <Text style={styles.rowIcon} testID={`practice-catalog-row-${practice.id}-icon`}>
         {icon}
       </Text>

@@ -152,10 +152,21 @@ describe('PracticeCatalogScreen — row presentation', () => {
     expect(view.getAllByText('Stage 1')).toHaveLength(1);
   });
 
-  it('gives each row a leading mode icon as a visual anchor', async () => {
+  it('gives each row the mode-specific emoji as a leading visual anchor', async () => {
     const { view } = renderScreen();
     await waitForLoad();
-    expect(view.getByTestId('practice-catalog-row-1-icon')).toBeTruthy();
+    expect(view.getByTestId('practice-catalog-row-1-icon').props.children).toBe('⏳');
+  });
+
+  it('falls back to a generic label and icon when the mode is unrecognised', async () => {
+    const unknown: PracticeItem = {
+      ...presetA,
+      mode: 'totally_new_server_mode' as PracticeItem['mode'],
+    };
+    const { view } = renderScreen({ loadPractices: jest.fn(async () => [unknown]) });
+    await waitForLoad();
+    expect(view.getByText('Practice · 10 min')).toBeTruthy();
+    expect(view.getByTestId('practice-catalog-row-1-icon').props.children).toBe('🧘');
   });
 });
 
