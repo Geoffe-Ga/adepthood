@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from content_config import CONTENT_REF_SCHEME, SITE_RESOURCES, find_resource
+from content_config import CONTENT_REF_SCHEME, content_ref
 from database import get_session
 from domain.course import compute_days_elapsed, filter_content_for_user, next_unlock_day
 from domain.stage_progress import ensure_user_progress, get_user_progress, is_stage_unlocked
@@ -511,20 +511,29 @@ async def get_content_body(
 async def list_site_resources(
     _current_user: Annotated[int, Depends(get_current_user)],
 ) -> list[SiteResourceResponse]:
-    """Return the configured site-wide resource links.
+    """Return the site-wide resource links from the content manifest.
 
     These pages (philosophy, about, …) are not stage-gated, but we still
     require authentication so the list is not crawlable by anyone with
-    the URL.  Editing this list happens in ``content_config.py``.
+    the URL.  The manifest's ``site_resources[]`` is the source of truth
+    (issue #395); without a usable manifest — the bootstrap state before
+    the first content pin — the list is simply empty.  ``url`` is kept
+    for response-surface stability and carries the local content
+    reference, not a fetchable address.
     """
+    try:
+        resources = get_content_repository().list_resources()
+    except ContentRepositoryError as exc:
+        logger.warning("No usable content manifest; no site resources: %s", exc)
+        return []
     return [
         SiteResourceResponse(
             slug=resource.slug,
             title=resource.title,
             description=resource.description,
-            url=resource.url,
+            url=content_ref(resource.slug),
         )
-        for resource in SITE_RESOURCES
+        for resource in resources
     ]
 
 
@@ -535,13 +544,9 @@ async def get_site_resource_body(
     slug: str,
     _current_user: Annotated[int, Depends(get_current_user)],
 ) -> ContentBodyResponse:
-    """Return raw Markdown for a configured site resource.
+    """Return raw Markdown for a manifest-listed site resource.
 
-    ``find_resource`` keeps the config list as the gate on which slugs
-    exist; the body itself comes from the vendored content.  A configured
-    slug the manifest has not shipped yet 404s like any other miss.
+    The manifest is the gate on which slugs exist — an unknown slug is a
+    plain 404 via the repository's ``ContentNotFoundError``.
     """
-    resource = find_resource(slug)
-    if resource is None:
-        raise not_found("resource")
     return _read_local_body(lambda: get_content_repository().read_resource_body(slug), slug)

@@ -219,6 +219,20 @@ def test_missing_markdown_for_known_id_raises_repository_error(content_dir: Path
         repo.read_body("beige-1")
 
 
+def test_list_resources_in_manifest_order(content_dir: Path) -> None:
+    repo = ContentRepository(content_dir)
+    resources = repo.list_resources()
+    assert [r.slug for r in resources] == ["getting-started"]
+    assert resources[0].title == "Getting Started"
+    assert resources[0].description == "Orientation guide."
+
+
+def test_list_resources_empty_manifest(tmp_path: Path) -> None:
+    manifest: dict[str, Any] = {"schema_version": "1.0.0", "chapters": [], "site_resources": []}
+    root = _write_content_dir(tmp_path / "content", manifest)
+    assert ContentRepository(root).list_resources() == []
+
+
 # ── Singleton trio ──────────────────────────────────────────────────────
 
 

@@ -1,4 +1,4 @@
-"""Declarative content config: manifest-driven chapters + site resources.
+"""Declarative content config: manifest-driven chapter records.
 
 Stage-locked chapters are no longer hardcoded here (the old
 ``STAGE_PLANS`` covered stage 1 only and built Squarespace URLs).  They
@@ -16,8 +16,9 @@ needed, existing read-completion rows keep their foreign keys, and the
 column rename can ride the final cutover issue once the Squarespace
 reader is deleted.  See issue #392.
 
-Site resources (philosophy, about, …) are still declared here and still
-point at the public site; they migrate in a later cms-migration issue.
+Site resources (philosophy, about, …) moved out of this module in issue
+#395: the manifest's ``site_resources[]`` is their source of truth and
+the course router reads them straight from the repository.
 
 See ``docs/content.md`` for the editor's guide.
 """
@@ -32,9 +33,6 @@ from services.content_repository import ContentRepositoryError, get_content_repo
 
 logger = logging.getLogger(__name__)
 
-#: Public-facing site root. Used to build site-resource URLs (only).
-SITE_BASE_URL: Final[str] = "https://aptitude.guru"
-
 #: Scheme for local content references stored in ``StageContent.url``.
 CONTENT_REF_SCHEME: Final[str] = "content"
 
@@ -47,60 +45,6 @@ def content_ref(chapter_id: str) -> str:
     nothing downstream should treat it as a fetchable URL.
     """
     return f"{CONTENT_REF_SCHEME}://{chapter_id}"
-
-
-@dataclass(frozen=True)
-class SiteResource:
-    """A non-stage-locked link surfaced on the Course screen.
-
-    Use this for evergreen pages (philosophy, about, FAQ) that the adept
-    should be able to reach from inside the app at any point in the
-    program.  These are not tracked for read-completion.
-    """
-
-    slug: str
-    title: str
-    description: str = ""
-    path: str = ""
-
-    @property
-    def url(self) -> str:
-        """Absolute public URL on the live site."""
-        suffix = self.path or f"/{self.slug}"
-        return f"{SITE_BASE_URL}{suffix}"
-
-
-# --------------------------------------------------------------------------- #
-# Always-available site resources                                             #
-# --------------------------------------------------------------------------- #
-
-#: Pages that are not stage-gated. Order here is the order shown in the UI.
-SITE_RESOURCES: Final[list[SiteResource]] = [
-    SiteResource(
-        slug="liminal-creep",
-        title="Who Benefits?",
-        description="Why the program exists.",
-        path="/philosophy/liminal-creep",
-    ),
-    SiteResource(
-        slug="archetypal-wavelength",
-        title="Archetypal Wavelength Intro",
-        description="The shape of human development.",
-        path="/philosophy/archetypal-wavelength",
-    ),
-    SiteResource(
-        slug="aptitude-stages",
-        title="APTITUDE Stages",
-        description="The 36-week stage map.",
-        path="/philosophy/aptitude-stages",
-    ),
-    SiteResource(
-        slug="about",
-        title="APTITUDE Intro",
-        description="What Adepthood is and who it's for.",
-        path="/about",
-    ),
-]
 
 
 # --------------------------------------------------------------------------- #
@@ -147,40 +91,10 @@ def all_chapter_records() -> list[ChapterRecord]:
     ]
 
 
-def find_resource(slug: str) -> SiteResource | None:
-    """Look up a ``SiteResource`` by its slug, or ``None`` if not configured."""
-    for resource in SITE_RESOURCES:
-        if resource.slug == slug:
-            return resource
-    return None
-
-
-# --------------------------------------------------------------------------- #
-# Import-time validation — fail fast on bad config rather than at request time #
-# --------------------------------------------------------------------------- #
-
-
-def _validate_site_resources(resources: list[SiteResource]) -> None:
-    """Reject duplicate site-resource slugs at import time."""
-    slugs_seen: set[str] = set()
-    for resource in resources:
-        if resource.slug in slugs_seen:
-            msg = f"Duplicate slug in SITE_RESOURCES: {resource.slug!r}"
-            raise ValueError(msg)
-        slugs_seen.add(resource.slug)
-
-
-_validate_site_resources(SITE_RESOURCES)
-
-
 # Public surface — keep ``__all__`` small to make intent obvious.
 __all__ = [
     "CONTENT_REF_SCHEME",
-    "SITE_BASE_URL",
-    "SITE_RESOURCES",
     "ChapterRecord",
-    "SiteResource",
     "all_chapter_records",
     "content_ref",
-    "find_resource",
 ]

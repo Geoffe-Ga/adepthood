@@ -63,6 +63,16 @@ class ChapterMeta:
 
 
 @dataclass(frozen=True)
+class SiteResourceMeta:
+    """One free site resource's manifest metadata (issue #395)."""
+
+    slug: str
+    title: str
+    description: str
+    path: str
+
+
+@dataclass(frozen=True)
 class ContentBody:
     """A rendered-ready body: raw Markdown plus the metadata the UI shows."""
 
@@ -207,6 +217,18 @@ class ContentRepository:
             title=meta.title,
             content_type=meta.content_type,
         )
+
+    def list_resources(self) -> list[SiteResourceMeta]:
+        """Every site resource, in manifest order (the UI display order)."""
+        return [
+            SiteResourceMeta(
+                slug=raw["slug"],
+                title=raw["title"],
+                description=raw["description"],
+                path=raw["path"],
+            )
+            for raw in self._resources.values()
+        ]
 
     def read_resource_body(self, slug: str) -> ContentBody:
         """Raw Markdown + title for a free site resource, by slug."""

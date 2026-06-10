@@ -25,7 +25,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from content_config import SITE_RESOURCES, content_ref
+from content_config import content_ref
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
@@ -337,18 +337,36 @@ async def test_site_resources_requires_auth(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_site_resources_lists_configured_entries(async_client: AsyncClient) -> None:
+@pytest.mark.usefixtures("content_dir")
+async def test_site_resources_lists_manifest_entries(async_client: AsyncClient) -> None:
+    """The list comes from the manifest, in manifest order, auth required."""
     headers = await _signup(async_client, "lister")
     resp = await async_client.get("/course/site-resources", headers=headers)
     assert resp.status_code == HTTPStatus.OK
     payload = resp.json()
-    assert len(payload) == len(SITE_RESOURCES)
-    by_slug = {r["slug"]: r for r in payload}
-    for configured in SITE_RESOURCES:
-        assert configured.slug in by_slug
-        entry = by_slug[configured.slug]
-        assert entry["title"] == configured.title
-        assert entry["url"] == configured.url
+    assert [r["slug"] for r in payload] == ["about", "aptitude-stages"]
+    assert payload[0]["title"] == "About Adepthood"
+    assert payload[0]["description"] == "What this is."
+    # ``url`` is kept for surface stability; it now carries the local ref.
+    assert payload[0]["url"] == content_ref("about")
+
+
+@pytest.mark.asyncio
+async def test_site_resources_empty_without_manifest(
+    async_client: AsyncClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bootstrap state — no vendored manifest — degrades to an empty list."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("CONTENT_DIR", str(empty))
+    reset_content_repository_for_tests()
+    try:
+        headers = await _signup(async_client, "bootstrap")
+        resp = await async_client.get("/course/site-resources", headers=headers)
+        assert resp.status_code == HTTPStatus.OK
+        assert resp.json() == []
+    finally:
+        reset_content_repository_for_tests()
 
 
 @pytest.mark.asyncio
@@ -369,18 +387,6 @@ async def test_site_resource_body_unknown_slug_returns_404(async_client: AsyncCl
     resp = await async_client.get(
         "/course/site-resources/this-does-not-exist/body", headers=headers
     )
-    assert resp.status_code == HTTPStatus.NOT_FOUND
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("content_dir")
-async def test_site_resource_body_404_when_configured_but_not_in_manifest(
-    async_client: AsyncClient,
-) -> None:
-    """A configured slug the manifest hasn't shipped yet 404s like any miss."""
-    headers = await _signup(async_client, "premanifest")
-    # 'liminal-creep' is in SITE_RESOURCES but not in the test manifest.
-    resp = await async_client.get("/course/site-resources/liminal-creep/body", headers=headers)
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
