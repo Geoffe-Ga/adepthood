@@ -55,6 +55,15 @@ def upgrade() -> None:
     )
 
 
+    # Issue #386 guard: TOTAL_STAGES was corrected from 36 (a week/stage
+    # conflation) to the seeded curriculum's 10.  Any row that advanced
+    # into the phantom range under the old bound is clamped to the real
+    # final stage so reads, gating, and the tightened schema validation
+    # all agree.  (``completed_stages`` may retain phantom entries — they
+    # are cosmetic and never gate anything.)
+    op.execute(sa.text("UPDATE stageprogress SET current_stage = 10 WHERE current_stage > 10"))
+
+
 def downgrade() -> None:
     """Drop the anchor column; gating reverts to advancement/completion only."""
     op.drop_column("stageprogress", "program_started_at")

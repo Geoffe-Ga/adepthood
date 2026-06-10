@@ -155,3 +155,11 @@ async def test_program_calendar_endpoint_day_zero_shape_without_progress(
     assert body["calendar_stage"] == 1
     assert body["calendar_week"] == 1
     assert body["current_stage"] == 1
+
+
+def test_is_stage_unlocked_accepts_an_explicit_now() -> None:
+    """PR #432 review: deterministic clock injection, matching the calendar API."""
+    progress = _progress_at(0, current_stage=1)
+    later = datetime.now(UTC) + timedelta(days=22)
+    assert is_stage_unlocked(2, progress, now=later) is True
+    assert is_stage_unlocked(3, progress, now=later) is False

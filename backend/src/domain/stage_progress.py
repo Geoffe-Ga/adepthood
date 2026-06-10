@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import cast
 
 from sqlalchemy import func
@@ -96,7 +97,9 @@ async def ensure_user_progress(session: AsyncSession, user_id: int) -> StageProg
     return progress
 
 
-def is_stage_unlocked(stage_number: int, progress: StageProgress | None) -> bool:
+def is_stage_unlocked(
+    stage_number: int, progress: StageProgress | None, now: datetime | None = None
+) -> bool:
     """Return True iff the stage is open by advancement OR by the calendar.
 
     Advancement: ``N <= current_stage``, which only moves via the
@@ -114,7 +117,7 @@ def is_stage_unlocked(stage_number: int, progress: StageProgress | None) -> bool
         return False
     unlocked_through = max(
         progress.current_stage,
-        calendar_stage(resolve_program_anchor(progress)),
+        calendar_stage(resolve_program_anchor(progress), now),
     )
     return stage_number <= unlocked_through
 
