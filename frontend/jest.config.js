@@ -1,8 +1,4 @@
-// Issue #406: pin the suite to UTC so date math is hermetic — several tests
-// compute "today"/"yesterday" from the real clock, and without this a dev
-// machine in a negative-UTC-offset timezone fails what CI (UTC) passes.
-// Node latches TZ at first Date use; this file loads before any test code,
-// so the assignment is reliable on POSIX (mac/linux dev machines + CI).
+// Pin timezone so date-math tests are hermetic; Node latches TZ at first Date use.
 process.env.TZ = 'UTC';
 
 /** @type {import('jest').Config} */
