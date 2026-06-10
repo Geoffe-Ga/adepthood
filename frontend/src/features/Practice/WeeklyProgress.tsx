@@ -12,11 +12,7 @@ interface WeeklyProgressProps {
   count: number;
 }
 
-/**
- * Build the helper line under the segmented bar. The copy spells out what the
- * blocks mean so "0/4" is never left to interpretation — it counts completed
- * practice sessions toward a weekly goal of four.
- */
+/** Helper line spelling out that the segments count practice sessions toward a weekly goal. */
 function helperText(completed: number): string {
   if (completed >= WEEKLY_TARGET) return 'Weekly goal reached — nicely done.';
   const remaining = WEEKLY_TARGET - completed;
@@ -29,7 +25,7 @@ function helperText(completed: number): string {
 
 const WeeklyProgress: React.FC<WeeklyProgressProps> = ({ count }) => {
   const completed = Math.max(0, Math.min(count, WEEKLY_TARGET));
-  const isComplete = count >= WEEKLY_TARGET;
+  const isComplete = completed >= WEEKLY_TARGET;
 
   return (
     <View style={styles.container} testID="weekly-progress">
@@ -60,7 +56,7 @@ const WeeklyProgress: React.FC<WeeklyProgressProps> = ({ count }) => {
         style={[styles.helper, isComplete && styles.helperComplete]}
         testID={isComplete ? 'weekly-complete-message' : 'weekly-helper'}
       >
-        {helperText(count)}
+        {helperText(completed)}
       </Text>
     </View>
   );

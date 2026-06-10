@@ -51,10 +51,7 @@ const SenseGroundingView = ({ config, state, controls, onSave }: Props): React.J
   const currentIdx = Math.min(state.currentStepIndex, total - 1);
   const activePrompt = config.prompts[currentIdx];
   const isComplete = state.status === 'complete' || state.currentStepIndex >= total;
-  // A session is "in progress" once started (running or paused) and not yet
-  // complete. Only then do we surface the per-sense instruction and the
-  // advance button — before Start we show a single primer + "Begin grounding"
-  // so the user isn't faced with a dead, greyed-out "Mark <sense> done".
+  // Show the advance button only once started; idle shows a primer instead of a dead button.
   const inProgress = (state.status === 'running' || state.status === 'paused') && !isComplete;
   return (
     <View style={styles.container} testID="sense-grounding-view">
