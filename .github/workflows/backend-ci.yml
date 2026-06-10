@@ -190,3 +190,16 @@ jobs:
           # any operations — i.e. if a model was added/modified without a
           # matching migration.
           alembic check
+
+      - name: Postgres advisory-lock regression (issue #274)
+        working-directory: backend
+        env:
+          # Reuses this job's Postgres 16 service — the only CI job with a
+          # live Postgres. The live-lock tests in this file skip everywhere
+          # the variable is unset (local SQLite-only runs, other CI jobs).
+          TEST_POSTGRES_URL: postgresql+asyncpg://aptitude:aptitude@localhost:5432/aptitude  # pragma: allowlist secret
+        run: |
+          # --no-cov: the repo-wide 90% coverage gate belongs to the
+          # backend-quality job; this step only exercises the
+          # pg_advisory_xact_lock branch that SQLite cannot.
+          python -m pytest tests/test_pg_advisory_lock.py -q --no-cov
