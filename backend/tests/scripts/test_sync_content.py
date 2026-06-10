@@ -60,7 +60,7 @@ def _make_tarball(files: dict[str, str], root: str = f"aptitude-course-{_SHA}") 
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
         for rel_path, text in files.items():
             data = text.encode()
-            info = tarfile.TarInfo(name=f"{root}/{rel_path}")
+            info = tarfile.TarInfo(name=f"{root}/{rel_path}" if root else rel_path)
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
     return buffer.getvalue()
@@ -125,6 +125,14 @@ def test_resolve_ref_resolves_branch_via_api() -> None:
 def test_resolve_ref_rejects_malformed_api_payload() -> None:
     def fake_fetch(_url: str) -> bytes:
         return json.dumps({"nope": True}).encode()
+
+    with pytest.raises(SyncContentError):
+        resolve_ref("main", fetch=fake_fetch)
+
+
+def test_resolve_ref_rejects_malformed_sha_value() -> None:
+    def fake_fetch(_url: str) -> bytes:
+        return json.dumps({"sha": "not-a-sha"}).encode()
 
     with pytest.raises(SyncContentError):
         resolve_ref("main", fetch=fake_fetch)
@@ -227,6 +235,60 @@ def test_sync_aborts_on_tarball_missing_manifest(content_dir: Path) -> None:
         sync(_SHA, content_dir, fetch=_fetch_for(tarball), sleep=lambda _: None)
 
 
+def test_sync_aborts_on_corrupt_tarball(content_dir: Path) -> None:
+    with pytest.raises(SyncContentError):
+        sync(_SHA, content_dir, fetch=_fetch_for(b"not a tarball"), sleep=lambda _: None)
+
+
+def test_sync_aborts_on_multi_root_tarball(content_dir: Path) -> None:
+    """A codeload archive always has exactly one root; anything else is bogus."""
+    tarball = _make_tarball(
+        {"root-a/manifest.json": "{}", "root-b/manifest.json": "{}"},
+        root="",
+    )
+    with pytest.raises(SyncContentError):
+        sync(_SHA, content_dir, fetch=_fetch_for(tarball), sleep=lambda _: None)
+
+
+def test_sync_aborts_on_non_json_manifest_in_tarball(content_dir: Path) -> None:
+    tarball = _make_tarball({"manifest.json": "{not json"})
+    with pytest.raises(SyncContentError):
+        sync(_SHA, content_dir, fetch=_fetch_for(tarball), sleep=lambda _: None)
+
+
+def test_sync_aborts_without_local_schema(tmp_path: Path) -> None:
+    """No preserved manifest.schema.json → the sync cannot validate, so abort."""
+    bare = tmp_path / "content"
+    bare.mkdir()
+    with pytest.raises(SyncContentError):
+        sync(_SHA, bare, fetch=_fetch_for(_content_tarball()), sleep=lambda _: None)
+
+
+def test_sync_handles_markdownless_manifest_and_missing_example(tmp_path: Path) -> None:
+    """Only the schema is required; markdown/ and the example file are optional."""
+    target = tmp_path / "content"
+    target.mkdir()
+    shutil.copy(_SCHEMA_SRC, target / "manifest.schema.json")
+    manifest = {"schema_version": "1.0.0", "chapters": [], "site_resources": []}
+    tarball = _make_tarball({"manifest.json": json.dumps(manifest)})
+
+    sha = sync(_SHA, target, fetch=_fetch_for(tarball), sleep=lambda _: None)
+
+    assert sha == _SHA
+    assert not (target / "markdown").exists()
+    assert not (target / "manifest.example.json").exists()
+
+
+def test_sync_cleans_leftover_old_dir_from_crashed_swap(content_dir: Path) -> None:
+    leftover = content_dir.with_name(content_dir.name + ".old")
+    leftover.mkdir()
+    (leftover / "junk.md").write_text("crashed swap remnant")
+
+    sync(_SHA, content_dir, fetch=_fetch_for(_content_tarball()), sleep=lambda _: None)
+
+    assert not leftover.exists()
+
+
 # ── check ───────────────────────────────────────────────────────────────
 
 
@@ -247,6 +309,12 @@ def test_check_fails_without_content_version(content_dir: Path) -> None:
         check(content_dir)
 
 
+def test_check_fails_on_malformed_content_version(content_dir: Path) -> None:
+    (content_dir / "CONTENT_VERSION").write_text("free-form text with no entries\n")
+    with pytest.raises(SyncContentError):
+        check(content_dir)
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────
 
 
@@ -259,6 +327,28 @@ def test_cli_sync_then_check(content_dir: Path, monkeypatch: pytest.MonkeyPatch)
 
     (content_dir / "manifest.json").write_text("{}")
     assert main(["--check", "--content-dir", str(content_dir)]) == 1
+
+
+def test_cli_warns_when_ref_is_mutable(
+    content_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A branch ref still syncs, but the unpinned-build footgun is surfaced."""
+    monkeypatch.setattr(sync_content_module, "_http_get_bytes", _fetch_for(_content_tarball()))
+    monkeypatch.setattr(sync_content_module, "_sleep", lambda _: None)
+
+    assert main(["--ref", "main", "--content-dir", str(content_dir)]) == 0
+    captured = capsys.readouterr()
+    assert "mutable" in captured.err
+    assert _SHA in captured.err
+
+
+def test_resolve_ref_normalises_uppercase_sha() -> None:
+    def explode(url: str) -> bytes:
+        raise AssertionError(f"unexpected network call: {url}")
+
+    assert resolve_ref(_SHA.upper(), fetch=explode) == _SHA
 
 
 def test_cli_reports_sync_failure(content_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:

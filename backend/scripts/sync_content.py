@@ -63,11 +63,10 @@ PRESERVED_FILES = ("manifest.schema.json", "manifest.example.json")
 #: The audit-trail file recording what is vendored.
 CONTENT_VERSION_FILE = "CONTENT_VERSION"
 
-#: Backoff schedule per repo git conventions: 4 attempts, 2s/4s/8s/16s.
-#: (The 16s slot is reached only if a 5th attempt existed; with 4 attempts
-#: the sleeps actually taken are 2/4/8.)
-RETRY_DELAYS_SECONDS = (2, 4, 8, 16)
-MAX_ATTEMPTS = 4
+#: Backoff sleeps between attempts, per repo git conventions: 4 attempts
+#: total, so 3 sleeps (2s/4s/8s) — there is no sleep after the final failure.
+RETRY_DELAYS_SECONDS = (2, 4, 8)
+MAX_ATTEMPTS = len(RETRY_DELAYS_SECONDS) + 1
 
 _DEFAULT_CONTENT_DIR = Path(__file__).resolve().parents[1] / "content"
 _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -80,14 +79,14 @@ class SyncContentError(Exception):
     """The sync or drift check failed; the target directory is untouched."""
 
 
-def _http_get_bytes(url: str) -> bytes:
+def _http_get_bytes(url: str) -> bytes:  # pragma: no cover — thin httpx wrapper
     """Fetch ``url`` and return the response body (module-level for mocking)."""
     response = httpx.get(url, follow_redirects=True, timeout=30)
     response.raise_for_status()
     return response.content
 
 
-def _sleep(seconds: float) -> None:
+def _sleep(seconds: float) -> None:  # pragma: no cover — thin time.sleep wrapper
     """Module-level sleep indirection so tests can run without waiting."""
     time.sleep(seconds)
 
@@ -114,11 +113,12 @@ def resolve_ref(
 ) -> str:
     """Resolve a branch/tag/short ref to a full commit SHA.
 
-    A 40-hex ref is already a pin and passes through without touching the
-    network; anything else is resolved via the GitHub commits API.
+    A 40-hex ref is already a pin and passes through (lowercased to the
+    canonical form) without touching the network; anything else is resolved
+    via the GitHub commits API.
     """
-    if _FULL_SHA_RE.fullmatch(ref):
-        return ref
+    if _FULL_SHA_RE.fullmatch(ref.lower()):
+        return ref.lower()
     url = f"https://api.github.com/repos/{CONTENT_REPO}/commits/{ref}"
     body = _fetch_with_retry(url, fetch=fetch or _http_get_bytes, sleep=sleep or _sleep)
     try:
@@ -165,6 +165,8 @@ def read_content_version(content_dir: Path) -> dict[str, str]:
         raise SyncContentError(msg) from exc
     entries: dict[str, str] = {}
     for line in text.splitlines():
+        # partition stops at the FIRST ": ", so values containing colons
+        # (e.g. "digest: sha256:abc...") survive intact.
         key, separator, value = line.partition(": ")
         if separator and key:
             entries[key] = value
@@ -249,6 +251,8 @@ def sync(
     passed schema validation — a failure at any step leaves it untouched.
     """
     target = (content_dir or _DEFAULT_CONTENT_DIR).resolve()
+    # Surface a missing parent as our error, not a confusing tempfile one.
+    target.parent.mkdir(parents=True, exist_ok=True)
     fetch_impl = fetch or _http_get_bytes
     sleep_impl = sleep or _sleep
     sha = resolve_ref(ref, fetch=fetch_impl, sleep=sleep_impl)
@@ -313,6 +317,11 @@ def main(argv: list[str] | None = None) -> int:
         else:
             sha = sync(args.ref, args.content_dir)
             sys.stdout.write(f"vendored {CONTENT_REPO}@{sha} into {args.content_dir}\n")
+            if args.ref.lower() != sha:
+                sys.stderr.write(
+                    f"note: --ref {args.ref!r} is mutable and resolved to {sha} — "
+                    "pin that SHA for a reproducible build\n"
+                )
     except SyncContentError as exc:
         sys.stderr.write(f"{exc}\n")
         return 1
