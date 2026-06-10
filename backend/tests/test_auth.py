@@ -16,10 +16,13 @@ from sqlmodel import select
 from models.login_attempt import LoginAttempt
 from models.user import User
 from routers.auth import (
+    _LOGIN_LOCKS_MAX,
     _SECRET_PLACEHOLDER,
     LOCKOUT_DURATION,
     MAX_FAILED_ATTEMPTS,
     _get_secret_key,
+    _login_lock_for,
+    _login_locks,
 )
 
 SIGNUP_URL = "/auth/signup"
@@ -1438,8 +1441,6 @@ def test_login_locks_bounded_under_distinct_email_flood() -> None:
     by one ``asyncio.Lock`` per address for the life of the worker.  The
     bounded cache caps residency regardless of distinct-key volume.
     """
-    from routers.auth import _LOGIN_LOCKS_MAX, _login_lock_for, _login_locks  # noqa: PLC0415
-
     _login_locks.clear()
     try:
         for i in range(100_000):
@@ -1456,8 +1457,6 @@ def test_login_lock_identity_stable_for_same_email() -> None:
     concurrent coroutine for an email awaiting one shared lock; a cache
     that handed out fresh locks per call would silently void it.
     """
-    from routers.auth import _login_lock_for, _login_locks  # noqa: PLC0415
-
     _login_locks.clear()
     try:
         first = _login_lock_for("same@example.com")
