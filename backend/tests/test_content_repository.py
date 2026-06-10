@@ -219,6 +219,34 @@ def test_missing_markdown_for_known_id_raises_repository_error(content_dir: Path
         repo.read_body("beige-1")
 
 
+def test_list_resources_in_manifest_order(content_dir: Path) -> None:
+    repo = ContentRepository(content_dir)
+    resources = repo.list_resources()
+    assert [r.slug for r in resources] == ["getting-started"]
+    assert resources[0].title == "Getting Started"
+    assert resources[0].description == "Orientation guide."
+
+
+def test_list_resources_empty_manifest(tmp_path: Path) -> None:
+    manifest: dict[str, Any] = {"schema_version": "1.0.0", "chapters": [], "site_resources": []}
+    root = _write_content_dir(tmp_path / "content", manifest)
+    assert ContentRepository(root).list_resources() == []
+
+
+def test_resource_missing_description_is_rejected_at_construction(tmp_path: Path) -> None:
+    """A sparse resource entry never reaches ``list_resources()``.
+
+    The schema requires every resource field (slug/title/description/path),
+    so construction fails validation first — direct ``raw[...]`` access in
+    ``list_resources`` cannot KeyError.
+    """
+    sparse = copy.deepcopy(_VALID_MANIFEST)
+    del sparse["site_resources"][0]["description"]
+    root = _write_content_dir(tmp_path / "content", sparse)
+    with pytest.raises(ContentRepositoryError):
+        ContentRepository(root)
+
+
 # ── Singleton trio ──────────────────────────────────────────────────────
 
 

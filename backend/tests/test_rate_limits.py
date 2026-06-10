@@ -17,7 +17,6 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
-from content_config import SITE_RESOURCES
 from models.user import User
 from rate_limit import DEFAULT_RATE_LIMIT
 
@@ -235,7 +234,7 @@ async def test_content_body_rate_limit_returns_429(async_client: AsyncClient) ->
 async def test_site_resource_body_rate_limit_returns_429(async_client: AsyncClient) -> None:
     """GET /course/site-resources/{slug}/body returns 429 after 30 requests/minute."""
     headers = await _signup(async_client)
-    slug = SITE_RESOURCES[0].slug
+    slug = "about"  # any slug works — the limiter fires before the handler
 
     for _ in range(30):
         await async_client.get(f"/course/site-resources/{slug}/body", headers=headers)
