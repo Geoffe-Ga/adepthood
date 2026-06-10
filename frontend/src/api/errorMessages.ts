@@ -78,6 +78,17 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   already_responded: "You've already answered this week's prompt. A new one unlocks each week.",
   practice_not_approved:
     "That practice isn't available for selection yet. Pick one of the approved options for this stage.",
+  // --- Practice selection (BUG-PRACTICE-012) ---------------------------
+  // ``stage_locked`` (403) and ``stage_number_mismatch`` (400) used to
+  // fall through to the generic per-status copy ("You don't have access"
+  // / "That didn't go through"), which hid *why* assigning a practice
+  // failed. Name the cause and the way forward instead.
+  stage_locked:
+    "You haven't unlocked this stage yet. Finish the earlier stages first — this practice will be waiting when you get there.",
+  stage_number_mismatch:
+    'This practice belongs to a different stage. Open it from that stage to use it.',
+  active_practice_exists_for_stage:
+    'Another change to this stage just went through. Pull down to refresh, then try switching again.',
   habits_must_not_be_empty:
     'Add at least one habit before generating an energy plan. You can add habits from the Habits tab.',
 

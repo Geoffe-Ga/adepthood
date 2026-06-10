@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -78,21 +79,65 @@ async def _check_stage_eligibility(
         raise forbidden("stage_locked")
 
 
+async def _free_stage_slot(
+    session: AsyncSession,
+    current_user: int,
+    payload: UserPracticeCreate,
+    today: date,
+) -> UserPractice | None:
+    """Ready the stage's single open slot for a new selection.
+
+    Returns the existing open row **only** when it already points at the
+    requested practice -- the caller short-circuits on that to keep
+    re-selecting the current pick an idempotent no-op (no new row, no
+    ``start_date`` reset). In every other case it returns ``None`` after
+    closing any open row, so the caller can safely insert the new one.
+
+    The close is flushed before returning so the ``UPDATE`` lands ahead
+    of the caller's ``INSERT``; otherwise the unit of work could order
+    the insert first, momentarily leave two open rows for the stage, and
+    trip ``ix_user_practice_active_stage`` on a replacement that should
+    have succeeded.
+    """
+    existing = await _load_active_user_practice(session, current_user, payload.stage_number)
+    if existing is None:
+        return None
+    if existing.practice_id == payload.practice_id:
+        return existing
+    existing.end_date = today
+    session.add(existing)
+    await session.flush()
+    return None
+
+
 @router.post("/", response_model=UserPracticeResponse, status_code=status.HTTP_201_CREATED)
 async def create_user_practice(
     payload: UserPracticeCreate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> UserPractice:
-    """Select a practice for a stage, creating a UserPractice record.
+    """Select (or replace) the active practice for a stage.
 
-    The ``ix_user_practice_active_stage`` partial unique index enforces
-    "at most one open ``UserPractice`` per ``(user, stage)``" at the
-    database level (BUG-PRACTICE-005).  The earlier application-level
-    pre-check raced: two concurrent calls could both pass the existence
-    check and both insert.  We now rely on the constraint and surface
-    the loser as 409 ``active_practice_exists_for_stage`` so the client
-    gets a single deterministic response code regardless of timing.
+    This is the "Replace this practice" / "Use for stage" write. The
+    ``ix_user_practice_active_stage`` partial unique index enforces "at
+    most one open ``UserPractice`` per ``(user, stage)``" at the DB
+    level (BUG-PRACTICE-005) -- which means a bare insert *fails* when
+    the user already has an active pick for the stage. That is the
+    common case (switching away from the seeded default), so we close
+    the prior open row before inserting the new one rather than 409ing
+    the user out of ever switching (BUG-PRACTICE-012).
+
+    Concurrency is still safe: the close + insert happen in one
+    transaction, and the partial unique index remains the single source
+    of truth. If two replacements race, the index lets exactly one new
+    open row land and the loser rolls back to 409
+    ``active_practice_exists_for_stage`` -- now a transient "try again",
+    not a permanent wall.
+
+    Re-selecting the practice that is *already* active is a no-op: the
+    existing row is returned untouched so an accidental double-tap can't
+    reset ``start_date`` (the user-facing "I started this" label) or the
+    streak math that hangs off it.
     """
     practice = await _resolve_practice(session, payload.practice_id)
     await _check_stage_eligibility(session, current_user, practice, payload.stage_number)
@@ -103,21 +148,26 @@ async def create_user_practice(
     # signing up at 11:00 PM Pacific used to see "started tomorrow"
     # because UTC had already rolled over.
     user_tz = await get_user_timezone(session, current_user)
+    today = today_in_tz(user_tz)
+
+    already_active = await _free_stage_slot(session, current_user, payload, today)
+    if already_active is not None:
+        return already_active
+
     user_practice = UserPractice(
         user_id=current_user,
         practice_id=payload.practice_id,
         stage_number=payload.stage_number,
-        start_date=today_in_tz(user_tz),
+        start_date=today,
     )
     session.add(user_practice)
     try:
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        # The partial unique index fired because an open row already
-        # exists for ``(current_user, stage_number)``.  Return 409 so
-        # the client treats this as a state conflict, not a transient
-        # bad request.
+        # Lost a concurrent replacement race: another request already
+        # closed the prior row and opened its own. Surface 409 so the
+        # client retries against fresh state instead of double-inserting.
         raise conflict("active_practice_exists_for_stage") from exc
     await session.refresh(user_practice)
     logger.info(

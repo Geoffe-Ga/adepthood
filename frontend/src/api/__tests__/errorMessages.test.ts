@@ -41,6 +41,9 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'cannot_go_backwards',
       'already_responded',
       'practice_not_approved',
+      'stage_locked',
+      'stage_number_mismatch',
+      'active_practice_exists_for_stage',
       'habits_must_not_be_empty',
       // wallet
       'payment_required',
@@ -79,6 +82,24 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
     for (const message of Object.values(USER_FACING_ERROR_MESSAGES)) {
       expect(message).toMatch(/[.!?]$/);
     }
+  });
+});
+
+describe('practice-selection codes (BUG-PRACTICE-012)', () => {
+  it('maps stage_locked to actionable copy instead of the generic 403 wall', () => {
+    const err = new ApiError(403, 'stage_locked');
+    const msg = formatApiError(err);
+    expect(msg).toMatch(/unlock(ed)? this stage/i);
+    expect(msg).not.toMatch(/don't have access/i);
+  });
+
+  it('maps stage_number_mismatch to stage-specific guidance', () => {
+    expect(messageForCode('stage_number_mismatch')).toMatch(/different stage/i);
+  });
+
+  it('maps the transient replace conflict to a retry prompt', () => {
+    const err = new ApiError(409, 'active_practice_exists_for_stage');
+    expect(formatApiError(err)).toMatch(/try (switching )?again/i);
   });
 });
 

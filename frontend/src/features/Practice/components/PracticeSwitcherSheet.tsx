@@ -3,9 +3,9 @@
  * practice for the current stage so the user can replace their active
  * one without leaving the screen.
  *
- * - Selection writes via `userPractices.create`; the backend's partial
- *   unique index closes the prior `UserPractice` so the catalog stays
- *   "one active row per stage".
+ * - Selection writes via `userPractices.create`; the backend closes the
+ *   prior open `UserPractice` for the stage and opens the new one in a
+ *   single transaction, so the catalog stays "one active row per stage".
  * - "Submit my own" delegates to the existing practice-submission
  *   flow. The handler is injected so this component stays decoupled
  *   from the navigator wiring (and from whether the submission screen
@@ -24,6 +24,7 @@ import {
 } from 'react-native';
 
 import { practices, userPractices, type PracticeItem, type UserPractice } from '@/api';
+import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 
 export interface PracticeSwitcherSheetProps {
@@ -144,8 +145,12 @@ function useSelect(
         if (!mountedRef.current) return;
         onReplaced(created);
         onClose();
-      } catch {
-        if (mountedRef.current) setWriteError(REPLACE_FAILED_MSG);
+      } catch (err) {
+        // Surface the specific cause (stage locked, transient conflict,
+        // …) via the shared error map; fall back to the generic
+        // connection copy only when the failure is unrecognised.
+        if (mountedRef.current)
+          setWriteError(formatApiError(err, { fallback: REPLACE_FAILED_MSG }));
       } finally {
         if (mountedRef.current) setSubmittingId(null);
       }
