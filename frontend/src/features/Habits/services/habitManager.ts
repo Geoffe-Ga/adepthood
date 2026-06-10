@@ -29,7 +29,7 @@ import {
 } from '../../../storage/habitStorage';
 import { useHabitStore } from '../../../store/useHabitStore';
 import { useProgramStore } from '../../../store/useProgramStore';
-import { dayKeyInTZ, todayInUserTZ } from '../../../utils/dateUtils';
+import { dayKeyInTZ, detectDeviceTimezone, todayInUserTZ } from '../../../utils/dateUtils';
 import { HABIT_DEFAULTS } from '../HabitDefaults';
 import type { AddHabitInput, Goal, Habit, OnboardingHabit } from '../Habits.types';
 import { getGoalTier, getGoalTarget, calculateTodaysProgress, logHabitUnits } from '../HabitUtils';
@@ -494,20 +494,28 @@ const revertOnFailure = (prev: Habit[], fallback: string): ((err: unknown) => vo
 /**
  * Replay pending check-ins captured by an earlier offline session. On
  * partial failure, the suffix that didn't post is rewritten back to
- * disk so we don't double-post on the next replay. NOTE: the API does
- * not yet accept a client-supplied timestamp; queued check-ins replay
- * with the server's wall-clock time. See the follow-up issue tracking
- * BUG-FE-HABIT-205's timestamp-forwarding requirement.
+ * disk so we don't double-post on the next replay.
+ *
+ * Each queued timestamp is forwarded as ``completed_on`` (the user-local
+ * calendar day) so a check-in queued offline on Monday lands on Monday's
+ * streak bucket, not on the wall-clock day the device reconnects (#269,
+ * BUG-FE-HABIT-205). Same-day replays omit the field so the server
+ * stamps real wall-clock time — the online path's genuine-backfill rule.
  */
-const replayPendingCheckIns = async (): Promise<void> => {
+const replayPendingCheckIns = async (tz?: string): Promise<void> => {
   const pending = await loadPendingCheckIns();
   if (pending.length === 0) return;
+  // Device zone is the stand-in until auth hydrates the stored zone.
+  const zone = tz ?? detectDeviceTimezone();
+  const today = todayInUserTZ(zone);
   for (let i = 0; i < pending.length; i += 1) {
     const checkIn = pending[i]!;
+    const dayKey = dayKeyInTZ(checkIn.timestamp, zone);
     try {
       await goalCompletionsApi.create({
         goal_id: checkIn.goal_id,
         did_complete: checkIn.did_complete,
+        completed_on: dayKey !== today ? dayKey : undefined,
       });
     } catch {
       // Still offline (or the server rejected this one). Persist only
@@ -526,7 +534,18 @@ const replayPendingCheckIns = async (): Promise<void> => {
 // but not itself a hook. Every method is independently unit-testable.
 // ---------------------------------------------------------------------------
 
-const loadHabits = async (): Promise<void> => {
+/**
+ * Zone from the most recent tz-carrying ``loadHabits`` call. Internal
+ * re-fetches (``addHabit``, ``onboardingSave``) call ``loadHabits()``
+ * without a zone; remembering the hook-supplied value here keeps their
+ * queued-check-in replays on the user's stored zone instead of silently
+ * falling back to the device's (#414 review).
+ */
+let lastKnownTz: string | undefined;
+
+const loadHabits = async (tz?: string): Promise<void> => {
+  if (tz !== undefined) lastKnownTz = tz;
+  const zone = tz ?? lastKnownTz;
   setLoading(true);
   setError(null);
   const cached = await loadCachedHabits();
@@ -550,7 +569,7 @@ const loadHabits = async (): Promise<void> => {
   // ``return``-ed from the first failure with the successful prefix still
   // in the queue, so on the next load every check-in that had already
   // posted would post AGAIN — silent duplication of the user's streak.
-  await replayPendingCheckIns();
+  await replayPendingCheckIns(zone);
 };
 
 export const habitManager = {

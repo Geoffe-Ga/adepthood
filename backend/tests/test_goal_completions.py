@@ -461,17 +461,24 @@ async def test_completion_request_rejects_unknown_fields(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("days_back", [1, 3])
 async def test_backfill_past_date_records_completion(
-    async_client: AsyncClient, db_session: AsyncSession
+    async_client: AsyncClient, db_session: AsyncSession, days_back: int
 ) -> None:
-    """``completed_on`` logs a check-in against a past calendar day."""
+    """``completed_on`` logs a check-in against that past calendar day.
+
+    The 3-days-back case pins issue #269's offline-replay contract: a
+    check-in queued offline on day T and replayed on T+3 must land on T's
+    calendar day in the user's recorded timezone, not on the wall-clock
+    day the device reconnected.
+    """
     headers, user_id = await _signup(async_client, "backfiller")
     goal = await _seed_goal(db_session, user_id)
-    yesterday = today_in_tz("UTC") - timedelta(days=1)
+    target_day = today_in_tz("UTC") - timedelta(days=days_back)
 
     resp = await async_client.post(
         "/goal_completions/",
-        json={"goal_id": goal.id, "completed_on": yesterday.isoformat()},
+        json={"goal_id": goal.id, "completed_on": target_day.isoformat()},
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.OK
@@ -482,7 +489,7 @@ async def test_backfill_past_date_records_completion(
     )
     completions = list(result.scalars().all())
     assert len(completions) == 1
-    assert completions[0].timestamp.date() == yesterday
+    assert completions[0].timestamp.date() == target_day
 
 
 @pytest.mark.asyncio

@@ -10,10 +10,13 @@ import { useHabitActions } from './useHabitActions';
 import { registerForPushNotificationsAsync, reconcileNotifications } from './useHabitNotifications';
 import { useHabitUI } from './useHabitUI';
 
-const useBootstrapHabits = (): void => {
+const useBootstrapHabits = (userTimezone: string): void => {
+  // Runs twice on cold start (UTC default, then the auth-hydrated zone).
+  // The second fetch is intentional, not a bug: day buckets and queued
+  // check-in replay days both depend on the zone (#269).
   useEffect(() => {
-    void habitManager.loadHabits();
-  }, []);
+    void habitManager.loadHabits(userTimezone);
+  }, [userTimezone]);
   useEffect(() => {
     void registerForPushNotificationsAsync();
     void reconcileNotifications();
@@ -35,7 +38,7 @@ export const useHabits = (): UseHabitsReturn => {
   const { showToast } = useToast();
   const { userTimezone } = useAuth();
   const ui = useHabitUI();
-  useBootstrapHabits();
+  useBootstrapHabits(userTimezone);
   const actions = useHabitActions(ui, showToast, userTimezone);
 
   return {

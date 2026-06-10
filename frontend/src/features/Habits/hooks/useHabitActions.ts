@@ -93,7 +93,8 @@ export const useHabitActions = (
 
   return useMemo(
     () => ({
-      loadHabits: habitManager.loadHabits,
+      // Bound so retries replay queued check-ins against the stored zone (#269).
+      loadHabits: () => habitManager.loadHabits(tz),
       updateGoal: habitManager.updateGoal,
       logUnit,
       updateHabit: habitManager.updateHabit,
@@ -109,6 +110,6 @@ export const useHabitActions = (
       lockUnstartedHabits: habitManager.lockUnstartedHabits,
       unlockHabit: habitManager.unlockHabit,
     }),
-    [logUnit, iconPress, emojiSelect, onboardingSave],
+    [logUnit, iconPress, emojiSelect, onboardingSave, tz],
   );
 };
