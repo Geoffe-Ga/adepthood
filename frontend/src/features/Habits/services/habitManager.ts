@@ -525,18 +525,12 @@ const replayHabitGoals = async (cachedHabit: Habit, freshHabit: Habit): Promise<
 };
 
 /**
- * Replay cached goal customizations onto freshly-recovered habits (#286).
- *
- * Stuck-user recovery re-creates habits server-side with default goal
- * targets (1/2/3 units per day), silently discarding anything the user
- * customized before the stuck state began.  Tiers are stable across the
- * cache and the server's ``_build_default_goals`` seeding, so each cached
- * goal maps to its fresh counterpart by (habit name, tier).  Best-effort
- * per goal: one failed PUT must not abort the rest of the replay; the
- * store is merged once per habit with only the tiers the server accepted.
- * Decisions read from the immutable ``fresh`` snapshot — deliberately NOT
- * ``applyGoalUpdate``, whose tier normalization mutates sibling goals in
- * place and would cascade phantom replays.
+ * Replay cached goal customizations onto freshly-recovered habits (#286),
+ * matched by (habit name, tier). Best-effort per goal; the store merges
+ * only server-accepted tiers. Reads the immutable ``fresh`` snapshot —
+ * deliberately NOT ``applyGoalUpdate``, whose in-place tier normalization
+ * would cascade phantom replays. Known field gaps: goal_group_id (#425)
+ * and days_of_week (#426, blocked on GoalUpdate schema support).
  */
 const replayCachedGoalTargets = async (cached: Habit[], fresh: Habit[]): Promise<void> => {
   for (const cachedHabit of cached) {
