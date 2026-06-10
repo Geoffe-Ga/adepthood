@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   ScrollView,
   StyleSheet,
   Text,
@@ -9,6 +10,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+
+import { BYOK_PROVIDERS, providerForKey } from './byokProviders';
 
 import { useApiKey } from '@/context/ApiKeyContext';
 import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
@@ -24,12 +27,14 @@ import type { RootStackParamList } from '@/navigation/RootStack';
  * toggles only show the value locally in this screen.
  */
 
-const OPENAI_PREFIX = 'sk-';
-const ANTHROPIC_PREFIX = 'sk-ant-';
 const MAX_KEY_LENGTH = 256;
 const MIN_KEY_LENGTH = 10;
 const PLACEHOLDER_KEY = 'sk-... or sk-ant-...';
 const MASK_VISIBLE_CHARS = 4;
+
+// Built from the provider map so the error copy can never drift from the
+// supported set: e.g. `"sk-" (OpenAI) or "sk-ant-" (Anthropic)`.
+const _PREFIX_SUMMARY = BYOK_PROVIDERS.map((p) => `"${p.keyPrefix}" (${p.label})`).join(' or ');
 
 interface KeyValidationError {
   code: 'empty' | 'too_short' | 'too_long' | 'bad_prefix';
@@ -47,10 +52,10 @@ export function validateUserApiKey(raw: string): KeyValidationError | null {
   if (key.length > MAX_KEY_LENGTH) {
     return { code: 'too_long', message: 'This key is longer than any real API key.' };
   }
-  if (!key.startsWith(OPENAI_PREFIX) && !key.startsWith(ANTHROPIC_PREFIX)) {
+  if (providerForKey(key) === null) {
     return {
       code: 'bad_prefix',
-      message: `API keys start with "${OPENAI_PREFIX}" (OpenAI) or "${ANTHROPIC_PREFIX}" (Anthropic).`,
+      message: `API keys start with ${_PREFIX_SUMMARY}.`,
     };
   }
   return null;
@@ -191,8 +196,8 @@ const ScreenIntro = ({ apiKey }: { apiKey: string | null }): React.JSX.Element =
   <>
     <Text style={styles.title}>BotMason API Key</Text>
     <Text style={styles.body}>
-      Bring your own OpenAI or Anthropic API key. It is stored only on this device and sent with
-      every BotMason request via the X-LLM-API-Key header. We never upload it to our servers.
+      Bring your own API key from a supported provider. It is stored only on this device and sent
+      with every BotMason request via the X-LLM-API-Key header. We never upload it to our servers.
     </Text>
     {!apiKey && (
       <Text style={styles.hint} testID="no-key-hint">
@@ -201,6 +206,38 @@ const ScreenIntro = ({ apiKey }: { apiKey: string | null }): React.JSX.Element =
     )}
   </>
 );
+
+const ProviderDirectory = (): React.JSX.Element => (
+  <View style={styles.providerSection} testID="provider-directory">
+    <Text style={styles.inputLabel}>Supported providers</Text>
+    {BYOK_PROVIDERS.map((provider) => (
+      <View key={provider.id} style={styles.providerRow}>
+        <View style={styles.providerInfo}>
+          <Text style={styles.providerName}>{provider.label}</Text>
+          <Text style={styles.providerHint}>{provider.hint}</Text>
+        </View>
+        <TouchableOpacity
+          onPress={() => void Linking.openURL(provider.keyPageUrl)}
+          testID={`get-key-link-${provider.id}`}
+          accessibilityLabel={`Get your ${provider.label} API key`}
+          accessibilityRole="link"
+        >
+          <Text style={styles.link}>Get your API key</Text>
+        </TouchableOpacity>
+      </View>
+    ))}
+  </View>
+);
+
+const DetectedProvider = ({ draft }: { draft: string }): React.JSX.Element | null => {
+  const provider = providerForKey(draft.trim());
+  if (!provider) return null;
+  return (
+    <Text style={styles.detected} testID="detected-provider">
+      {provider.label} key detected — it will be saved on this device only.
+    </Text>
+  );
+};
 
 const ScreenFooter = ({
   submitting,
@@ -265,6 +302,7 @@ const ScreenBody = ({
 }: ScreenBodyProps): React.JSX.Element => (
   <>
     <ScreenIntro apiKey={apiKey} />
+    <ProviderDirectory />
     {apiKey && (
       <StoredKeyCard apiKey={apiKey} disabled={submitting} onRequestRemove={onRequestRemove} />
     )}
@@ -275,6 +313,7 @@ const ScreenBody = ({
       onChangeText={onChangeDraft}
       onToggleReveal={onToggleReveal}
     />
+    <DetectedProvider draft={draft} />
     <FeedbackBanner error={error} status={status} />
     <ScreenFooter
       submitting={submitting}
@@ -492,4 +531,17 @@ const styles = StyleSheet.create({
   destructiveButtonText: { color: colors.destructive.text, fontWeight: '600' },
   linkRow: { marginTop: SPACING.xl, alignItems: 'center' },
   link: { color: colors.primary, fontWeight: '600' },
+  providerSection: { marginBottom: SPACING.xl },
+  providerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: SPACING.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  providerInfo: { flex: 1, paddingRight: SPACING.md },
+  providerName: { fontSize: 15, fontWeight: '600', color: colors.text.primary },
+  providerHint: { fontSize: 13, color: colors.text.secondaryAccessible, marginTop: 2 },
+  detected: { color: colors.successText, marginBottom: SPACING.md, fontSize: 13 },
 });
