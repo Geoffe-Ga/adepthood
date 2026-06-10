@@ -8,6 +8,7 @@ import {
   loginAuthResponseSchema,
   pageSchema,
   passwordResetAcceptedSchema,
+  unknownRecord,
   type Page,
   type PasswordResetAcceptedT,
   type Tier,
@@ -898,6 +899,39 @@ export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
 const habitWithGoalsArraySchema = z.array(habitWithGoalsSchema);
 const habitPageSchema = pageSchema(habitWithGoalsSchema);
 
+/**
+ * Standard ``limit`` / ``offset`` knobs every ``listPaginated`` helper accepts.
+ * Both default to the server's values (limit 50, offset 0) when omitted.
+ */
+export interface PaginationParams {
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * ``Page`` envelope validator for endpoints that do not yet have a strict
+ * per-item Zod schema (BUG-INFRA-012-018). The envelope itself — ``items`` is
+ * an array, ``total`` / ``limit`` / ``offset`` are non-negative ints,
+ * ``has_more`` is a boolean — is validated; items are checked only as objects
+ * and narrowed to their TypeScript type by the caller's cast. Strict item
+ * schemas (cf. ``habitPageSchema``) replace this as they are written.
+ */
+const loosePageSchema = pageSchema(unknownRecord);
+
+/**
+ * Build the query string shared by every ``listPaginated`` helper: always opt
+ * into the ``Page`` envelope (``paginate=true``), append any endpoint-specific
+ * filters (e.g. ``stage_number``), then ``limit`` / ``offset`` only when the
+ * caller supplies them — mirroring ``habits.listPaginated`` above.
+ */
+function pageQuery(extra: Record<string, string | number>, params: PaginationParams): string {
+  const query = new URLSearchParams({ paginate: 'true' });
+  for (const [key, value] of Object.entries(extra)) query.set(key, String(value));
+  if (params.limit != null) query.set('limit', String(params.limit));
+  if (params.offset != null) query.set('offset', String(params.offset));
+  return query.toString();
+}
+
 // Collection-level habit URLs use a trailing slash to match the FastAPI route
 // (`prefix="/habits"` + `@router.{get,post}("/")`). Without the slash, every
 // request hit a 307 redirect — a wasted round-trip in the happy path and an
@@ -1017,6 +1051,17 @@ export const goals = {
 export const goalGroups = {
   list(token?: string): Promise<ApiGoalGroup[]> {
     return request<ApiGoalGroup[]>('/goal-groups/', { token });
+  },
+  /**
+   * Paginated goal-groups list (BUG-INFRA-015). Opts into the ``Page``
+   * envelope; prefer this over the bare-list variant when ``total`` /
+   * ``has_more`` are needed for a "load more" control.
+   */
+  listPaginated(params: PaginationParams = {}, token?: string): Promise<Page<ApiGoalGroup>> {
+    return request<Page<ApiGoalGroup>>(`/goal-groups/?${pageQuery({}, params)}`, {
+      token,
+      schema: loosePageSchema as unknown as z.ZodType<Page<ApiGoalGroup>>,
+    });
   },
   get(groupId: number, token?: string): Promise<ApiGoalGroup> {
     return request<ApiGoalGroup>(`/goal-groups/${groupId}`, { token });
@@ -1485,6 +1530,16 @@ export const stages = {
   list(token?: string): Promise<Stage[]> {
     return request<Stage[]>('/stages', { token });
   },
+  /**
+   * Paginated stages list (BUG-INFRA-016). Opts into the ``Page`` envelope.
+   * Note the route has no trailing slash (``/stages``), matching the backend.
+   */
+  listPaginated(params: PaginationParams = {}, token?: string): Promise<Page<Stage>> {
+    return request<Page<Stage>>(`/stages?${pageQuery({}, params)}`, {
+      token,
+      schema: loosePageSchema as unknown as z.ZodType<Page<Stage>>,
+    });
+  },
   get(stageNumber: number, token?: string): Promise<Stage> {
     return request<Stage>(`/stages/${stageNumber}`, { token });
   },
@@ -1539,6 +1594,26 @@ export interface SiteResource {
 export const course = {
   stageContent(stageNumber: number, token?: string): Promise<ContentItem[]> {
     return request<ContentItem[]>(`/course/stages/${stageNumber}/content`, { token });
+  },
+  /**
+   * Paginated stage content (BUG-INFRA-018). Opts into the ``Page`` envelope.
+   *
+   * Caveat: pagination is applied *after* drip-feed filtering, so ``total``
+   * reflects only the items the user can currently see — it grows as content
+   * unlocks over time, without new database rows being added.
+   */
+  stageContentPaginated(
+    stageNumber: number,
+    params: PaginationParams = {},
+    token?: string,
+  ): Promise<Page<ContentItem>> {
+    return request<Page<ContentItem>>(
+      `/course/stages/${stageNumber}/content?${pageQuery({}, params)}`,
+      {
+        token,
+        schema: loosePageSchema as unknown as z.ZodType<Page<ContentItem>>,
+      },
+    );
   },
   markRead(contentId: number, token?: string): Promise<ContentCompletion> {
     return request<ContentCompletion>(`/course/content/${contentId}/mark-read`, {
@@ -1815,6 +1890,24 @@ export const practices = {
     const data = await request<PracticeItem[]>(`/practices/?${query.toString()}`, { token });
     return data.filter(validatePracticeItem);
   },
+  /**
+   * Paginated practices list for a stage (BUG-INFRA-012). Opts into the
+   * ``Page`` envelope; ``stage_number`` is required (the backend route filters
+   * by stage). Prefer this over ``list`` when ``total`` / ``has_more`` matter.
+   */
+  listPaginated(
+    params: { stageNumber: number } & PaginationParams,
+    token?: string,
+  ): Promise<Page<PracticeItem>> {
+    const { stageNumber, ...page } = params;
+    return request<Page<PracticeItem>>(
+      `/practices/?${pageQuery({ stage_number: stageNumber }, page)}`,
+      {
+        token,
+        schema: loosePageSchema as unknown as z.ZodType<Page<PracticeItem>>,
+      },
+    );
+  },
   async get(practiceId: number, token?: string): Promise<PracticeItem> {
     const data = await request<PracticeItem>(`/practices/${practiceId}`, { token });
     if (!validatePracticeItem(data)) throw new Error('Invalid practice response');
@@ -1837,6 +1930,17 @@ export const userPractices = {
   },
   list(token?: string): Promise<UserPractice[]> {
     return request<UserPractice[]>('/user-practices/', { token });
+  },
+  /**
+   * Paginated user-practices list (BUG-INFRA-017). Opts into the ``Page``
+   * envelope; prefer this over the bare-list variant when ``total`` /
+   * ``has_more`` are needed.
+   */
+  listPaginated(params: PaginationParams = {}, token?: string): Promise<Page<UserPractice>> {
+    return request<Page<UserPractice>>(`/user-practices/?${pageQuery({}, params)}`, {
+      token,
+      schema: loosePageSchema as unknown as z.ZodType<Page<UserPractice>>,
+    });
   },
   /**
    * PATCH the per-user overrides (custom name + mode_config_override).
@@ -2149,6 +2253,24 @@ export const practiceSessions = {
       body: payload,
       token,
     });
+  },
+  /**
+   * Paginated session history for one user-practice (BUG-INFRA-014). Opts into
+   * the ``Page`` envelope; ``userPracticeId`` is required (the backend route
+   * scopes sessions to a single user-practice).
+   */
+  listPaginated(
+    params: { userPracticeId: number } & PaginationParams,
+    token?: string,
+  ): Promise<Page<PracticeSessionResponse>> {
+    const { userPracticeId, ...page } = params;
+    return request<Page<PracticeSessionResponse>>(
+      `/practice-sessions/?${pageQuery({ user_practice_id: userPracticeId }, page)}`,
+      {
+        token,
+        schema: loosePageSchema as unknown as z.ZodType<Page<PracticeSessionResponse>>,
+      },
+    );
   },
   weekCount(token?: string): Promise<WeekCountResponse> {
     return request<WeekCountResponse>('/practice-sessions/week-count', { token });
