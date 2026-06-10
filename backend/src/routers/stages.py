@@ -13,6 +13,7 @@ from sqlmodel import col, select
 
 from database import get_session
 from domain.constants import TOTAL_STAGES
+from domain.program_calendar import calendar_stage, calendar_week, resolve_program_anchor
 from domain.stage_progress import (
     compute_stage_progress,
     get_stage_habit_history,
@@ -29,6 +30,7 @@ from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
 from schemas.pagination import paginate_query
 from schemas.stage import (
+    ProgramCalendarResponse,
     StageHistoryResponse,
     StageProgressRecord,
     StageProgressResponse,
@@ -98,6 +100,30 @@ async def list_stages(
     if pagination.paginate:
         return build_page(responses, total, pagination)
     return responses
+
+
+@router.get("/program-calendar", response_model=ProgramCalendarResponse)
+async def get_program_calendar(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ProgramCalendarResponse:
+    """The server's view of the date-derived program calendar (issue #386).
+
+    Registered ABOVE ``/{stage_number}`` so the static path wins route
+    matching.  A user with no progress row yet sees the day-zero shape.
+    """
+    progress = await get_user_progress(session, current_user)
+    if progress is None:
+        return ProgramCalendarResponse(
+            program_started_at=None, calendar_stage=1, calendar_week=1, current_stage=1
+        )
+    anchor = resolve_program_anchor(progress)
+    return ProgramCalendarResponse(
+        program_started_at=anchor,
+        calendar_stage=calendar_stage(anchor),
+        calendar_week=calendar_week(anchor),
+        current_stage=progress.current_stage,
+    )
 
 
 @router.get("/{stage_number}", response_model=StageResponse)
