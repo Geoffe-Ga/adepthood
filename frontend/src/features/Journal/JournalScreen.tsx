@@ -937,18 +937,13 @@ function useJournalInit(
   loadPrompt: () => Promise<void>,
   loadUsage: () => Promise<void>,
 ) {
-  // Mount-only: the weekly prompt and wallet are independent of list
-  // filters.  Bundling them with the message loader re-fetched
-  // ``/prompts/current`` on every filter tap, letting the banner's week
-  // drift from the global program week (issue #400).  ``loadPrompt`` and
-  // ``loadUsage`` are stable []-dep useCallbacks, so this runs once.
+  // Mount-only (stable []-dep callbacks): bundling these with loadMessages re-fetched the prompt on every filter tap.
   useEffect(() => {
     void loadPrompt();
     void loadUsage();
   }, [loadPrompt, loadUsage]);
 
-  // Filter-driven: ``loadMessages`` is rebuilt when searchQuery/activeTag
-  // change, so this effect re-runs to reload the list — and ONLY the list.
+  // Filter-driven: loadMessages rebuilds on activeTag/searchQuery changes — reload the list and ONLY the list.
   useEffect(() => {
     const init = async () => {
       setLoading(true);

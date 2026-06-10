@@ -195,10 +195,8 @@ describe('JournalScreen', () => {
   });
 
   it('shows loading spinner initially', () => {
-    // Don't resolve the API calls immediately
+    // Only the unresolved message list gates the spinner — prompt/usage are side data.
     mockJournalList.mockReturnValue(new Promise(() => {}));
-    mockPromptsCurrent.mockReturnValue(new Promise(() => {}));
-    mockBotmasonGetUsage.mockReturnValue(new Promise(() => {}));
 
     const { getByTestId } = renderJournal();
     expect(getByTestId('journal-loading')).toBeTruthy();
