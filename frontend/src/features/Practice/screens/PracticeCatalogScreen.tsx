@@ -118,7 +118,7 @@ function useCatalog(
     try {
       const list = loadPractices
         ? await loadPractices(stageNumber)
-        : await practices.list({ stageNumber, includeMine: true });
+        : await practices.listAll({ stageNumber, includeMine: true });
       setState({ practices: list, loading: false, error: null });
     } catch (err) {
       setState((prev) => ({

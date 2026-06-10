@@ -39,7 +39,7 @@ function useStagesLoader() {
     const init = async () => {
       setLoading(true);
       try {
-        const stagesList = await stagesApi.list();
+        const stagesList = await stagesApi.listAll();
         setAllStages(stagesList);
         if (routeStageNumber === null) {
           // Master date wins when the user has picked an anchor; otherwise
@@ -73,7 +73,7 @@ function useStageContent(selectedStage: number, stagesLoaded: boolean) {
     setLoadingContent(true);
     try {
       const [contentResult, progressResult] = await Promise.all([
-        courseApi.stageContent(selectedStage),
+        courseApi.stageContentAll(selectedStage),
         courseApi.stageProgress(selectedStage),
       ]);
       setContent(contentResult);

@@ -68,7 +68,7 @@ const mockPracticesList = jest.fn() as jest.MockedFunction<
 
 jest.mock('@/api', () => ({
   practices: {
-    list: (...args: unknown[]) =>
+    listAll: (...args: unknown[]) =>
       (mockPracticesList as unknown as (...a: unknown[]) => Promise<PracticeItem[]>)(...args),
   },
 }));

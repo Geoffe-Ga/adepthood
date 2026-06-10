@@ -38,7 +38,7 @@ const buildApiHabits = (count: number) =>
 
 jest.mock('../../../api', () => ({
   habits: {
-    list: jest.fn() as any,
+    listAll: jest.fn() as any,
     create: jest.fn() as any,
     update: jest.fn() as any,
     delete: jest.fn() as any,
@@ -92,7 +92,7 @@ const { habits: habitsApi } = require('../../../api');
 const HabitsScreen = require('../HabitsScreen').default;
 
 const renderScreen = async (apiHabits: ReturnType<typeof buildApiHabits>) => {
-  habitsApi.list.mockResolvedValue(apiHabits);
+  habitsApi.listAll.mockResolvedValue(apiHabits);
   jest
     .spyOn(require('react-native'), 'useWindowDimensions')
     .mockReturnValue({ width: 400, height: 800, scale: 1, fontScale: 1 });

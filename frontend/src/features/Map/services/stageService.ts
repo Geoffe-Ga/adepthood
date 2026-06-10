@@ -100,7 +100,7 @@ export const stageService = {
     store.setLoading(true);
     store.setError(null);
     try {
-      const apiStages = await stagesApi.list(token);
+      const apiStages = await stagesApi.listAll(token);
       // Sort descending by stage_number (10 at top, 1 at bottom) to match
       // the background artwork.
       const sorted = [...apiStages].sort((a, b) => b.stage_number - a.stage_number);
@@ -158,7 +158,7 @@ export const stageService = {
     store.setLoading(true);
     store.setError(null);
     try {
-      const apiStages = await stagesApi.list(token);
+      const apiStages = await stagesApi.listAll(token);
       const sorted = [...apiStages].sort((a, b) => b.stage_number - a.stage_number);
       useStageStore.getState().setStages(sorted.map(toStageData));
       useStageStore.getState().setCurrentStage(deriveCurrentStage(apiStages));

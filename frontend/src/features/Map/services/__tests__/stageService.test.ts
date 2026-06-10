@@ -6,7 +6,7 @@ import { clampProgress, isStageUnlocked } from '../stageService';
 
 const mockList = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<Stage[]>>;
 jest.mock('../../../../api', () => ({
-  stages: { list: (...args: [string?]) => mockList(...args) },
+  stages: { listAll: (...args: [string?]) => mockList(...args) },
 }));
 
 /** Build a fake API Stage response. */

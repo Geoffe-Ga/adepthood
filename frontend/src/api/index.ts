@@ -934,6 +934,29 @@ function pageQuery(extra: Record<string, string | number>, params: PaginationPar
   return query.toString();
 }
 
+/**
+ * Drain every page of a ``listPaginated``-style helper into one flat array.
+ *
+ * The screen-adoption path for the ``Page`` envelope (issue #408): every
+ * list in the app is small today, so screens keep their whole-list render
+ * while the wire contract moves to the envelope. A screen that later needs
+ * true incremental loading calls its ``listPaginated`` helper directly with
+ * offsets instead. The empty-page guard stops a buggy server from looping
+ * forever on ``has_more: true``.
+ */
+export async function fetchAllPages<T>(
+  fetchPage: (_params: PaginationParams) => Promise<Page<T>>,
+): Promise<T[]> {
+  const items: T[] = [];
+  let offset = 0;
+  for (;;) {
+    const result = await fetchPage({ offset });
+    items.push(...result.items);
+    if (!result.has_more || result.items.length === 0) return items;
+    offset += result.items.length;
+  }
+}
+
 // Collection-level habit URLs use a trailing slash to match the FastAPI route
 // (`prefix="/habits"` + `@router.{get,post}("/")`). Without the slash, every
 // request hit a 307 redirect — a wasted round-trip in the happy path and an
@@ -965,6 +988,10 @@ export const habits = {
       token,
       schema: habitPageSchema as unknown as z.ZodType<Page<ApiHabitWithGoals>>,
     });
+  },
+  /** Whole habits list via the ``Page`` envelope (issue #408). */
+  listAll(token?: string): Promise<ApiHabitWithGoals[]> {
+    return fetchAllPages((params) => habits.listPaginated(params, token));
   },
   get(habitId: number, token?: string): Promise<ApiHabitWithGoals> {
     return request<ApiHabitWithGoals>(`/habits/${habitId}`, {
@@ -1561,6 +1588,10 @@ export const stages = {
       schema: loosePageSchema as unknown as z.ZodType<Page<Stage>>,
     });
   },
+  /** Whole stages list via the ``Page`` envelope (issue #408). */
+  listAll(token?: string): Promise<Stage[]> {
+    return fetchAllPages((params) => stages.listPaginated(params, token));
+  },
   get(stageNumber: number, token?: string): Promise<Stage> {
     return request<Stage>(`/stages/${stageNumber}`, { token });
   },
@@ -1635,6 +1666,10 @@ export const course = {
         schema: loosePageSchema as unknown as z.ZodType<Page<ContentItem>>,
       },
     );
+  },
+  /** Whole stage-content list via the ``Page`` envelope (issue #408). */
+  stageContentAll(stageNumber: number, token?: string): Promise<ContentItem[]> {
+    return fetchAllPages((params) => course.stageContentPaginated(stageNumber, params, token));
   },
   markRead(contentId: number, token?: string): Promise<ContentCompletion> {
     return request<ContentCompletion>(`/course/content/${contentId}/mark-read`, {
@@ -1917,17 +1952,31 @@ export const practices = {
    * by stage). Prefer this over ``list`` when ``total`` / ``has_more`` matter.
    */
   listPaginated(
-    params: { stageNumber: number } & PaginationParams,
+    params: { stageNumber: number; includeMine?: boolean } & PaginationParams,
     token?: string,
   ): Promise<Page<PracticeItem>> {
-    const { stageNumber, ...page } = params;
-    return request<Page<PracticeItem>>(
-      `/practices/?${pageQuery({ stage_number: stageNumber }, page)}`,
-      {
-        token,
-        schema: loosePageSchema as unknown as z.ZodType<Page<PracticeItem>>,
-      },
+    const { stageNumber, includeMine, ...page } = params;
+    const extra: Record<string, string | number> = { stage_number: stageNumber };
+    if (includeMine === true) extra.include_mine = 'true';
+    return request<Page<PracticeItem>>(`/practices/?${pageQuery(extra, page)}`, {
+      token,
+      schema: loosePageSchema as unknown as z.ZodType<Page<PracticeItem>>,
+    });
+  },
+  /**
+   * Whole practices list via the ``Page`` envelope (issue #408). Applies the
+   * same ``validatePracticeItem`` filter as the bare ``list`` so malformed
+   * rows never reach a screen.
+   */
+  async listAll(
+    options: { stageNumber: number; includeMine?: boolean } | number,
+    token?: string,
+  ): Promise<PracticeItem[]> {
+    const params = typeof options === 'number' ? { stageNumber: options } : options;
+    const items = await fetchAllPages((pageParams) =>
+      practices.listPaginated({ ...params, ...pageParams }, token),
     );
+    return items.filter(validatePracticeItem);
   },
   async get(practiceId: number, token?: string): Promise<PracticeItem> {
     const data = await request<PracticeItem>(`/practices/${practiceId}`, { token });

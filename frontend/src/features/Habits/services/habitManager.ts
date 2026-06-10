@@ -444,7 +444,7 @@ type FetchResult = { kind: 'ok'; count: number } | { kind: 'error' };
 
 const fetchFromApi = async (hasCachedData: boolean): Promise<FetchResult> => {
   try {
-    const apiHabits = await habitsApi.list();
+    const apiHabits = await habitsApi.listAll();
     await handleApiSuccess(apiHabits, hasCachedData);
     setError(null);
     return { kind: 'ok', count: apiHabits.length };
