@@ -22,6 +22,8 @@ export interface SearchableDropdownProps {
   triggerLabel: string;
   badge?: DropdownBadge;
   placeholder: string;
+  /** Stable label for the search field; placeholders aren't read reliably. */
+  searchAccessibilityLabel: string;
   open: boolean;
   query: string;
   onToggle: () => void;
@@ -55,6 +57,7 @@ const SearchableDropdown = (props: SearchableDropdownProps): React.JSX.Element =
           value={props.query}
           onChangeText={props.onQueryChange}
           placeholder={props.placeholder}
+          accessibilityLabel={props.searchAccessibilityLabel}
           autoCorrect={false}
           testID={props.searchTestID}
         />
@@ -100,7 +103,9 @@ const Trigger = ({ testID, label, badge, open, onPress }: TriggerProps): React.J
 
 /** Uppercase section header inside the results list. */
 export const DropdownGroupHeader = ({ label }: { label: string }): React.JSX.Element => (
-  <Text style={styles.groupHeader}>{label}</Text>
+  <Text accessibilityRole="header" style={styles.groupHeader}>
+    {label}
+  </Text>
 );
 
 export interface DropdownOptionRowProps {
@@ -227,6 +232,8 @@ export const dropdownCreateStyles = StyleSheet.create({
   },
   row: { paddingVertical: SPACING.xs, paddingHorizontal: SPACING.xs },
   rowText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
+  /** Dim an action that is present but not yet actionable (e.g. empty form). */
+  disabled: { opacity: 0.4 },
   controls: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: SPACING.xs },
   controlsLabel: { color: colors.text.secondaryAccessible, fontSize: 12, fontWeight: '600' },
   input: {

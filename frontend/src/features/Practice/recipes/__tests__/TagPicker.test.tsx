@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import TagPicker from '../TagPicker';
 
@@ -93,6 +94,16 @@ describe('TagPicker', () => {
     fireEvent.press(utils.getByTestId('tag-picker-0-new'));
     fireEvent.press(utils.getByTestId('tag-picker-0-creator-cancel'));
     expect(utils.queryByTestId('tag-picker-0-creator')).toBeNull();
+  });
+
+  it('visibly dims the Create button while the form is incomplete', () => {
+    const utils = renderPicker();
+    fireEvent.press(utils.getByTestId('tag-picker-0-trigger'));
+    fireEvent.press(utils.getByTestId('tag-picker-0-new'));
+    // Empty label → not creatable → the Create button is dimmed so the
+    // user sees why a tap does nothing (regressed when chips were removed).
+    const confirm = utils.getByTestId('tag-picker-0-creator-confirm');
+    expect(StyleSheet.flatten(confirm.props.style).opacity).toBe(0.4);
   });
 
   it('groups personal tags under "Yours" and badges them Custom', () => {

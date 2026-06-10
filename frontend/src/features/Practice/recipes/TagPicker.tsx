@@ -46,6 +46,7 @@ const TagPicker = (props: TagPickerProps): React.JSX.Element => {
       triggerLabel={dd.triggerLabel}
       badge={dd.badge}
       placeholder="Search tags…"
+      searchAccessibilityLabel="Search tags"
       open={dd.open}
       query={dd.query}
       onToggle={dd.toggle}
@@ -313,7 +314,7 @@ const CreatorActions = (props: CreatorActionsProps): React.JSX.Element => (
       accessibilityLabel="Create tag"
       accessibilityState={{ disabled: !props.canCreate }}
       onPress={props.canCreate ? props.onConfirm : undefined}
-      style={dropdownCreateStyles.row}
+      style={[dropdownCreateStyles.row, !props.canCreate && dropdownCreateStyles.disabled]}
       testID={`${props.base}-creator-confirm`}
     >
       <Text style={dropdownCreateStyles.rowText}>Create</Text>

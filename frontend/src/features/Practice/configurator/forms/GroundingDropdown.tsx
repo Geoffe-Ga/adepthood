@@ -48,6 +48,7 @@ const GroundingDropdown = ({ index, value, onChange }: Props): React.JSX.Element
       triggerLabel={triggerLabel(dd.selected, value)}
       badge={{ text: SENSE_DISPLAY[value.sense], testID: `${base}-sense-badge` }}
       placeholder="Search things to notice…"
+      searchAccessibilityLabel="Search things to notice"
       open={dd.open}
       query={dd.query}
       onToggle={dd.toggle}
@@ -94,6 +95,9 @@ function useGroundingDropdown(
   const close = (): void => {
     setOpen(false);
     setQuery('');
+    // Re-anchor the create-row sense to the prompt's current sense so a
+    // reopen never shows a stale pick from an abandoned create attempt.
+    setCreateSense(value.sense);
   };
   const pickOption = (opt: GroundingOption): void => {
     onChange({ sense: opt.sense, ...(labelIsDefault(value.label) ? { label: opt.prompt } : {}) });
@@ -126,8 +130,8 @@ function labelIsDefault(label: string): boolean {
 
 function triggerLabel(selected: GroundingOption | undefined, value: SensePrompt): string {
   if (selected !== undefined) return selected.label;
-  if (value.label.trim() !== '') return value.label.trim();
-  return 'Choose what to notice';
+  const trimmed = value.label.trim();
+  return trimmed !== '' ? trimmed : 'Choose what to notice';
 }
 
 interface CreateRowProps {

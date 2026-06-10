@@ -68,6 +68,15 @@ describe('GroundingDropdown', () => {
     expect(getByTestId('sense-prompt-0-create-section')).toBeTruthy();
   });
 
+  it('defaults the create-row sense to the prompt’s current sense', () => {
+    // The prompt is on "hearing"; creating a custom anchor without touching
+    // the sense chips must inherit that sense, not fall back to a constant.
+    const { getByTestId, onChange } = open({ sense: 'hearing', label: 'a faraway sound' });
+    fireEvent.changeText(getByTestId('sense-prompt-0-search'), 'a ticking clock');
+    fireEvent.press(getByTestId('sense-prompt-0-create'));
+    expect(onChange).toHaveBeenCalledWith({ sense: 'hearing', label: 'a ticking clock' });
+  });
+
   it('keeps a user-edited custom label when only swapping the sense', () => {
     const custom: SensePrompt = { sense: 'sight', label: 'Name 5 things you can see' };
     const { getByTestId, onChange } = open(custom);

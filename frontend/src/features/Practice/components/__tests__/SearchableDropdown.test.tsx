@@ -19,6 +19,7 @@ function renderShell(
       searchTestID="dd-search"
       triggerLabel="Pick one"
       placeholder="Search…"
+      searchAccessibilityLabel="Search options"
       open={false}
       query=""
       onToggle={jest.fn()}
@@ -67,6 +68,11 @@ describe('SearchableDropdown', () => {
     expect(getByTestId('dd-option-a')).toBeTruthy();
     fireEvent.changeText(getByTestId('dd-search'), 'abc');
     expect(onQueryChange).toHaveBeenCalledWith('abc');
+  });
+
+  it('labels the search field for screen readers', () => {
+    const { getByTestId } = renderShell({ open: true, searchAccessibilityLabel: 'Search tags' });
+    expect(getByTestId('dd-search').props.accessibilityLabel).toBe('Search tags');
   });
 
   it('exposes an empty-state helper with a handle', () => {
