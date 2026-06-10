@@ -15,6 +15,7 @@ from sqlmodel import col, func, select
 
 from database import get_session
 from dependencies.ownership import require_owned_user_practice
+from dependencies.timezone import current_user_timezone
 from domain.practice_insights import build_insights
 from domain.practice_resolution import effective_config
 from errors import bad_request, forbidden, not_found
@@ -31,7 +32,6 @@ from schemas.practice import (
 )
 from schemas.practice_mode_config import MindfulAnchorConfig
 from schemas.practice_session_metadata import MindfulAnchorMetadata
-from services.users import get_user_timezone
 
 # Window for the insights SQL fetch.  Slightly larger than the 8-week rollup
 # (~56 days) so a session logged late in the oldest bucket still lands in
@@ -391,6 +391,7 @@ async def get_insights(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     response: Response,
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> PracticeInsightsResponse:
     """Return the mode-aware analytics rollup for the authenticated user.
 
@@ -407,7 +408,6 @@ async def get_insights(
     # still has the right cache key when ``Vary: Authorization`` is set,
     # so one user's rollup cannot leak to another sharing the proxy.
     response.headers["Vary"] = "Authorization"
-    user_tz = await get_user_timezone(session, current_user)
     cutoff = datetime.now(UTC) - timedelta(days=_INSIGHTS_LOOKBACK_DAYS)
     rows = (
         (
@@ -458,6 +458,7 @@ def _start_of_week_utc(tz_name: str) -> datetime:
 async def week_count(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> dict[str, int]:
     """Return the number of sessions the authenticated user completed this week.
 
@@ -465,7 +466,6 @@ async def week_count(
     ``timezone`` field (``User.timezone``) so a user in ``America/Los_Angeles``
     sees their Monday-through-Sunday window, not the UTC equivalent.
     """
-    user_tz = await get_user_timezone(session, current_user)
     start_of_week = _start_of_week_utc(user_tz)
     statement = select(func.count()).where(
         PracticeSession.user_id == current_user,

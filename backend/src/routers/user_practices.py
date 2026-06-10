@@ -14,6 +14,7 @@ from sqlmodel import col, select
 
 from database import get_session
 from dependencies.ownership import require_owned_user_practice
+from dependencies.timezone import current_user_timezone
 from domain.dates import today_in_tz
 from domain.practice_resolution import effective_config, effective_name
 from domain.stage_progress import get_user_progress, is_stage_unlocked
@@ -35,7 +36,6 @@ from schemas.practice import (
 from schemas.practice_mode_config import ModeConfigAdapter
 from seed_practices import STAGE_TO_PRESET_NAME
 from seed_stages import STAGE_DEFINITIONS
-from services.users import get_user_timezone
 
 # Stage 1 is always the curriculum's entry point — users without a
 # ``StageProgress`` row see the stage-1 banner because they have not yet
@@ -115,6 +115,7 @@ async def create_user_practice(
     payload: UserPracticeCreate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> UserPractice:
     """Select (or replace) the active practice for a stage.
 
@@ -147,7 +148,6 @@ async def create_user_practice(
     # uses the user's calendar, not server UTC.  A user in Pacific
     # signing up at 11:00 PM Pacific used to see "started tomorrow"
     # because UTC had already rolled over.
-    user_tz = await get_user_timezone(session, current_user)
     today = today_in_tz(user_tz)
 
     already_active = await _free_stage_slot(session, current_user, payload, today)
