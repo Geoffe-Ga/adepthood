@@ -1,18 +1,17 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, Platform, Text, TouchableOpacity, View } from 'react-native';
-import { WebView } from 'react-native-webview';
-import type { ShouldStartLoadRequest } from 'react-native-webview/lib/WebViewTypes';
+import { ActivityIndicator, Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import Markdown from 'react-native-markdown-display';
 
 import { course as courseApi, type ContentBody } from '../../api';
-import { colors } from '../../design/tokens';
+import { colors, SPACING } from '../../design/tokens';
 
-import styles from './Course.styles';
+import styles, { markdownStyles } from './Course.styles';
 
 /**
  * Source descriptor for the reader.  ``kind`` decides which backend
  * endpoint we hit; everything else is plumbing.  Keeping this a tagged
  * union (rather than two separate components) lets us share the loading,
- * error, and HTML-wrapping logic between chapter and site-resource reads.
+ * error, and empty states between chapter and site-resource reads.
  */
 export type ChapterReaderSource =
   | { kind: 'content'; id: number }
@@ -20,7 +19,7 @@ export type ChapterReaderSource =
 
 interface ChapterReaderProps {
   source: ChapterReaderSource;
-  /** Title shown in the header until the live ``title`` from the CMS arrives. */
+  /** Title shown in the header until the live ``title`` from the manifest arrives. */
   fallbackTitle: string;
   /** Render no footer — used for site resources, which aren't tracked. */
   footer?: React.ReactNode;
@@ -28,99 +27,43 @@ interface ChapterReaderProps {
 }
 
 /**
- * Wrap the backend's article HTML in a complete document with mobile-
- * sane typography.  Keeping this client-side means we don't pay for a
- * second backend round-trip just to render the same chrome on every
- * chapter.
+ * Only absolute web links leave the app (via the renderer's default
+ * ``Linking.openURL``).  Relative paths in vendored Markdown point inside
+ * the content repo — nothing the OS can open — so taps on them are
+ * swallowed rather than thrown at the system as broken URLs.
  */
-const READER_STYLE_BLOCK = `
-    :root { color-scheme: light dark; }
-    html, body { margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 17px;
-      line-height: 1.55;
-      color: #1a1910;
-      background: #fffaf0;
-      padding: 18px 18px 56px;
-    }
-    h1, h2, h3 { line-height: 1.25; }
-    h1 { font-size: 1.6rem; margin-top: 0.4em; }
-    h2 { font-size: 1.3rem; }
-    h3 { font-size: 1.1rem; }
-    p { margin: 0.9em 0; }
-    img, video, iframe { max-width: 100%; height: auto; border-radius: 8px; }
-    blockquote {
-      margin: 1em 0;
-      padding: 0 1em;
-      border-left: 3px solid #b8a373;
-      color: #413d2f;
-      font-style: italic;
-    }
-    a { color: #6f4e1f; }
-    pre, code {
-      background: #f0e6d2;
-      border-radius: 6px;
-      padding: 0.1em 0.4em;
-      font-size: 0.92em;
-    }
-    pre { padding: 12px; overflow-x: auto; }
-    @media (prefers-color-scheme: dark) {
-      body { color: #f0e6d2; background: #1a1910; }
-      pre, code { background: #2a2a2a; color: #f0e6d2; }
-      blockquote { color: #c4c2b8; border-left-color: #8a7a52; }
-      a { color: #d4b878; }
-    }
-  `;
-
-function buildDocument(bodyHtml: string, openLinksInNewTab: boolean): string {
-  // <base target="_blank"> is web-only: it routes iframe links to a new tab,
-  // standing in for the native onShouldStartLoadWithRequest guard. On native
-  // WebView it would tag every link target="_blank" and risk a dropped
-  // navigation, so it is omitted there.
-  const baseTag = openLinksInNewTab ? '\n  <base target="_blank" />' : '';
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />${baseTag}
-  <style>${READER_STYLE_BLOCK}</style>
-</head>
-<body>${bodyHtml}</body>
-</html>`;
+function handleLinkPress(url: string): boolean {
+  return url.startsWith('https://') || url.startsWith('http://');
 }
 
 /**
- * Render cleaned chapter HTML: an <iframe srcdoc> on web (React Native's
- * WebView throws there) and a native WebView otherwise. sandbox="allow-popups"
- * lets external links open in a new tab while blocking scripts, forms, and
- * same-origin access — the web equivalent of the native navigation guard.
+ * Markdown render rules: drop images whose source is not an absolute web
+ * URL.  Vendored chapters may reference repo-relative assets
+ * (``assets/diagram.png``); until the media-serving decision in the
+ * content epic lands, those cannot resolve on-device, and rendering a
+ * broken image placeholder is worse than rendering nothing.  This also
+ * doubles as the defensive rendering limit the issue asks for — no
+ * arbitrary URI schemes reach the native image loader.
  */
-function renderBody(bodyHtml: string, title: string): React.ReactElement {
-  if (Platform.OS === 'web') {
+const markdownRules = {
+  image: (node: { key?: string; attributes?: { src?: string; alt?: string } }): React.ReactNode => {
+    const src = node.attributes?.src ?? '';
+    if (!handleLinkPress(src)) {
+      return null;
+    }
+    // RN's Image with bounded sizing instead of the library's FitImage
+    // (which fetches dimensions eagerly and is flaky under jest).
     return (
-      <View style={styles.webview}>
-        {React.createElement('iframe', {
-          'data-testid': 'reader-iframe',
-          srcDoc: buildDocument(bodyHtml, true),
-          title,
-          sandbox: 'allow-popups',
-          style: { width: '100%', height: '100%', border: 0 },
-        })}
-      </View>
+      <Image
+        key={node.key}
+        source={{ uri: src }}
+        accessibilityLabel={node.attributes?.alt ?? 'Chapter image'}
+        style={markdownStyles.contentImage}
+        resizeMode="contain"
+      />
     );
-  }
-  return (
-    <WebView
-      testID="reader-webview"
-      source={{ html: buildDocument(bodyHtml, false) }}
-      originWhitelist={['*']}
-      onShouldStartLoadWithRequest={shouldLoadInWebView}
-      style={styles.webview}
-      accessibilityLabel={title}
-    />
-  );
-}
+  },
+};
 
 interface HeaderProps {
   title: string;
@@ -150,9 +93,9 @@ interface ErrorViewProps {
 }
 
 const ErrorView = ({ message, onRetry }: ErrorViewProps): React.JSX.Element => (
-  <View style={styles.webviewError} testID="reader-error">
-    <Text style={styles.webviewErrorTitle}>This page couldn’t load right now</Text>
-    <Text style={styles.webviewErrorSubtitle}>{message}</Text>
+  <View style={styles.readerError} testID="reader-error">
+    <Text style={styles.readerErrorTitle}>This page couldn’t load right now</Text>
+    <Text style={styles.readerErrorSubtitle}>{message}</Text>
     <TouchableOpacity
       onPress={onRetry}
       style={styles.retryButton}
@@ -165,46 +108,17 @@ const ErrorView = ({ message, onRetry }: ErrorViewProps): React.JSX.Element => (
   </View>
 );
 
-const CMS_AUTH_DETAIL = 'cms_auth_failed';
-const CMS_UNAVAILABLE_DETAIL = 'cms_unavailable';
+const EmptyView = (): React.JSX.Element => (
+  <View style={styles.readerError} testID="reader-empty">
+    <Text style={styles.readerErrorTitle}>Nothing here yet</Text>
+    <Text style={styles.readerErrorSubtitle}>
+      This chapter hasn’t been written yet. Check back soon.
+    </Text>
+  </View>
+);
 
-/**
- * URL scheme prefixes that we let the WebView load in-frame.  The WebView's
- * ``source={{ html }}`` boots at ``about:blank``; ``data:`` is used by some
- * RN platforms while wiring the document.  Everything else (links inside
- * a chapter, embedded forms, etc.) is handed off to the system browser via
- * ``Linking.openURL`` so the user is never silently navigated away inside
- * the in-app reader.  This is the mitigation for the broad
- * ``originWhitelist={['*']}`` we still pass — required for the inline HTML
- * to render at all on web/iOS, but dangerous on its own without this guard.
- */
-const _IN_FRAME_URL_PREFIXES = ['about:', 'data:', 'file:'] as const;
-
-function shouldLoadInWebView(request: ShouldStartLoadRequest): boolean {
-  const { url } = request;
-  if (_IN_FRAME_URL_PREFIXES.some((prefix) => url.startsWith(prefix))) {
-    return true;
-  }
-  // Hand the navigation to the OS — the system browser can authenticate
-  // the user against Squarespace separately if the link points back to
-  // the site, and external links open as the user expects.
-  void Linking.openURL(url).catch((err) => {
-    console.warn('Failed to open URL from chapter:', err);
-  });
-  return false;
-}
-
-function describeError(err: unknown): string {
-  if (err && typeof err === 'object' && 'detail' in err) {
-    const detail = (err as { detail: unknown }).detail;
-    if (detail === CMS_AUTH_DETAIL) {
-      return 'The course site password is not set on the server. Reach out so we can fix it.';
-    }
-    if (detail === CMS_UNAVAILABLE_DETAIL) {
-      return 'The course site is temporarily unreachable. Please try again in a moment.';
-    }
-  }
-  return 'Something went wrong reaching the course site. Please try again.';
+function describeError(): string {
+  return 'This chapter couldn’t load right now. Please try again.';
 }
 
 function useContentBody(source: ChapterReaderSource): {
@@ -245,9 +159,9 @@ function useContentBody(source: ChapterReaderSource): {
         if (!isMountedRef.current) return;
         setBody(result);
       })
-      .catch((err: unknown) => {
+      .catch(() => {
         if (!isMountedRef.current) return;
-        setError(describeError(err));
+        setError(describeError());
       })
       .finally(() => {
         if (!isMountedRef.current) return;
@@ -257,6 +171,23 @@ function useContentBody(source: ChapterReaderSource): {
 
   const retry = useCallback(() => setRefreshKey((n) => n + 1), []);
   return { body, loading, error, retry };
+}
+
+function renderBody(body: ContentBody): React.ReactElement {
+  if (body.body_markdown.trim() === '') {
+    return <EmptyView />;
+  }
+  return (
+    <ScrollView
+      style={styles.readerScroll}
+      contentContainerStyle={{ paddingBottom: SPACING.xxl }}
+      testID="reader-markdown"
+    >
+      <Markdown style={markdownStyles} rules={markdownRules} onLinkPress={handleLinkPress}>
+        {body.body_markdown}
+      </Markdown>
+    </ScrollView>
+  );
 }
 
 const ChapterReader = ({
@@ -277,7 +208,7 @@ const ChapterReader = ({
         </View>
       )}
       {!loading && error !== null && <ErrorView message={error} onRetry={retry} />}
-      {!loading && error === null && body !== null && renderBody(body.body_html, headerTitle)}
+      {!loading && error === null && body !== null && renderBody(body)}
       {footer}
     </View>
   );

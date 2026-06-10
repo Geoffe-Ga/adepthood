@@ -99,14 +99,14 @@ const mockSiteResources = (jest.fn() as any).mockResolvedValue([
   },
 ]);
 const mockContentBody = (jest.fn() as any).mockResolvedValue({
-  url: 'https://aptitude.guru/course/beige-1',
   title: 'Chapter One',
-  body_html: '<article>x</article>',
+  content_type: 'chapter',
+  body_markdown: 'x\n',
 });
 const mockSiteResourceBody = (jest.fn() as any).mockResolvedValue({
-  url: 'https://aptitude.guru/philosophy',
   title: 'Philosophy',
-  body_html: '<article>philosophy</article>',
+  content_type: 'resource',
+  body_markdown: 'philosophy\n',
 });
 
 jest.mock('../../../api', () => ({

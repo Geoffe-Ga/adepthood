@@ -24,15 +24,15 @@ const { course: courseApi } = jest.requireMock('../../../api') as {
 const { contentBody: mockContentBody, siteResourceBody: mockSiteResourceBody } = courseApi;
 
 const HAPPY_CHAPTER = {
-  url: 'https://aptitude.guru/course/beige-1',
   title: 'Chapter One',
-  body_html: '<article>chapter body</article>',
+  content_type: 'chapter',
+  body_markdown: '# Chapter One\n\nchapter body with **emphasis**.\n',
 };
 
 const HAPPY_RESOURCE = {
-  url: 'https://aptitude.guru/philosophy',
   title: 'Philosophy',
-  body_html: '<article>philosophy body</article>',
+  content_type: 'resource',
+  body_markdown: '# Philosophy\n\nphilosophy body.\n',
 };
 
 describe('ChapterReader', () => {
@@ -44,7 +44,7 @@ describe('ChapterReader', () => {
 
   it('renders the fallback title until the live one arrives', async () => {
     const onBack = jest.fn();
-    const { getByText, findByText } = render(
+    const { getByText, findAllByText } = render(
       <ChapterReader
         source={{ kind: 'content', id: 7 }}
         fallbackTitle="Loading…"
@@ -52,7 +52,8 @@ describe('ChapterReader', () => {
       />,
     );
     expect(getByText('Loading…')).toBeTruthy();
-    await findByText('Chapter One');
+    // Header title + the markdown H1 both render the live title.
+    await findAllByText('Chapter One');
   });
 
   it('routes content sources to course.contentBody', async () => {
@@ -96,41 +97,51 @@ describe('ChapterReader', () => {
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
-  it('wraps the cleaned HTML in a styled document', async () => {
-    const { findByTestId } = render(
+  it('renders the Markdown body natively — no WebView, no iframe', async () => {
+    const { findByTestId, findByText, queryByTestId } = render(
       <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
     );
-    const webview = await findByTestId('reader-webview');
-    const html = String(webview.props['data-source-html']);
-    expect(html).toMatch(/^<!doctype html>/i);
-    expect(html).toContain('<article>chapter body</article>');
-    // Mobile viewport is set so the WebView renders at native scale.
-    expect(html).toMatch(/<meta name="viewport"/);
-    // <base target="_blank"> is web-only; on native it could drop navigations
-    // past the onShouldStartLoadWithRequest guard, so it must not be emitted.
-    expect(html).not.toContain('<base');
+    await findByTestId('reader-markdown');
+    // The markdown text content is rendered as native Text nodes.
+    await findByText(/chapter body with/);
+    expect(queryByTestId('reader-webview')).toBeNull();
+    expect(queryByTestId('reader-iframe')).toBeNull();
   });
 
-  it('shows an error and lets the user retry on transient failure', async () => {
-    mockContentBody.mockRejectedValueOnce({ detail: 'cms_unavailable' }).mockResolvedValueOnce({
-      url: 'https://aptitude.guru/course/beige-1',
+  it('shows a generic error and lets the user retry on failure', async () => {
+    mockContentBody.mockRejectedValueOnce({ detail: 'anything' }).mockResolvedValueOnce({
       title: 'After retry',
-      body_html: '<article>retried</article>',
+      content_type: 'chapter',
+      body_markdown: 'retried body\n',
     });
     const { findByTestId, findByText } = render(
       <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
     );
-    await findByText(/temporarily unreachable/i);
+    await findByText(/please try again/i);
     fireEvent.press(await findByTestId('reader-retry-button'));
-    const webview = await findByTestId('reader-webview');
-    expect(String(webview.props['data-source-html'])).toContain('retried');
+    await findByText(/retried body/);
   });
 
-  it('shows the server-config message when the CMS auth detail comes back', async () => {
+  it('never renders Squarespace-era error copy', async () => {
     mockContentBody.mockRejectedValueOnce({ detail: 'cms_auth_failed' });
-    const { findByText } = render(
+    const { findByTestId, queryByText } = render(
       <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
     );
-    await findByText(/site password is not set/i);
+    await findByTestId('reader-error');
+    expect(queryByText(/site password/i)).toBeNull();
+    expect(queryByText(/course site/i)).toBeNull();
+  });
+
+  it('shows a friendly empty state for a blank body', async () => {
+    mockContentBody.mockResolvedValueOnce({
+      title: 'Empty Chapter',
+      content_type: 'chapter',
+      body_markdown: '   \n',
+    });
+    const { findByTestId, findByText } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    await findByTestId('reader-empty');
+    await findByText(/hasn’t been written yet/i);
   });
 });

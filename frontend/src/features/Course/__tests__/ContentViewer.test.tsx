@@ -22,9 +22,9 @@ const { course: courseApi } = jest.requireMock('../../../api') as {
 };
 
 const HAPPY_BODY = {
-  url: 'https://aptitude.guru/course/beige-1',
   title: 'Chapter One',
-  body_html: '<article><h1>Chapter One</h1><p>Hi.</p></article>',
+  content_type: 'chapter',
+  body_markdown: '# Chapter One\n\nHi.\n',
 };
 
 const HAPPY_COMPLETION = {
@@ -61,11 +61,11 @@ describe('ContentViewer', () => {
 
   it('renders the content title initially, then swaps to the live title', async () => {
     const item = makeItem({ title: 'Loading Title' });
-    const { getByText, findByText } = render(
+    const { getByText, findAllByText } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
     );
     expect(getByText('Loading Title')).toBeTruthy();
-    await findByText('Chapter One');
+    await findAllByText('Chapter One');
   });
 
   it('fetches the content body via the API', async () => {
@@ -76,15 +76,13 @@ describe('ContentViewer', () => {
     });
   });
 
-  it('renders the cleaned HTML inside a WebView', async () => {
+  it('renders the body as native Markdown', async () => {
     const item = makeItem();
-    const { findByTestId } = render(
+    const { findByTestId, findByText } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
     );
-    const webview = await findByTestId('reader-webview');
-    const html = String(webview.props['data-source-html']);
-    expect(html).toContain('<article>');
-    expect(html).toContain('Chapter One');
+    await findByTestId('reader-markdown');
+    await findByText('Hi.');
   });
 
   it('calls onBack when back button is pressed', async () => {
@@ -93,17 +91,17 @@ describe('ContentViewer', () => {
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
     );
     // Wait until the load settles so we don't hit "state update on unmounted".
-    await findByTestId('reader-webview');
+    await findByTestId('reader-markdown');
     fireEvent.press(getByTestId('reader-back-button'));
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
   it('marks content as read when the button is pressed', async () => {
     const item = makeItem();
-    const { getByTestId, getByText, findByText } = render(
+    const { getByTestId, getByText, findAllByText } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
     );
-    await findByText('Chapter One');
+    await findAllByText('Chapter One');
     expect(getByText('Mark as Read')).toBeTruthy();
 
     await act(async () => {
@@ -122,7 +120,7 @@ describe('ContentViewer', () => {
     const { getByText, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
     );
-    await findByTestId('reader-webview');
+    await findByTestId('reader-markdown');
     expect(getByText('✓ Read')).toBeTruthy();
   });
 
@@ -131,7 +129,7 @@ describe('ContentViewer', () => {
     const { getByTestId, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
     );
-    await findByTestId('reader-webview');
+    await findByTestId('reader-markdown');
     fireEvent.press(getByTestId('mark-read-button'));
     expect(courseApi.markRead).not.toHaveBeenCalled();
   });
@@ -142,7 +140,7 @@ describe('ContentViewer', () => {
     const { getByTestId, getByText, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} onReflect={onReflect} />,
     );
-    await findByTestId('reader-webview');
+    await findByTestId('reader-markdown');
     expect(getByTestId('reflect-button')).toBeTruthy();
     expect(getByText('Reflect in Journal')).toBeTruthy();
   });
@@ -153,7 +151,7 @@ describe('ContentViewer', () => {
     const { getByTestId, queryByTestId, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} onReflect={onReflect} />,
     );
-    await findByTestId('reader-webview');
+    await findByTestId('reader-markdown');
     expect(queryByTestId('reflect-button')).toBeNull();
 
     await act(async () => {
@@ -171,7 +169,7 @@ describe('ContentViewer', () => {
     const { getByTestId, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} onReflect={onReflect} />,
     );
-    await findByTestId('reader-webview');
+    await findByTestId('reader-markdown');
     fireEvent.press(getByTestId('reflect-button'));
     expect(onReflect).toHaveBeenCalledTimes(1);
   });
@@ -181,35 +179,25 @@ describe('ContentViewer', () => {
     const { queryByTestId, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
     );
-    await findByTestId('reader-webview');
+    await findByTestId('reader-markdown');
     expect(queryByTestId('reflect-button')).toBeNull();
   });
 
   it('surfaces a retry UI when the content body fails to load', async () => {
-    courseApi.contentBody.mockRejectedValueOnce({ detail: 'cms_unavailable' });
+    courseApi.contentBody.mockRejectedValueOnce({ detail: 'content_unavailable' });
     const item = makeItem();
-    const { findByTestId, getByText } = render(
+    const { findByTestId, getByText, findByText } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
     );
     await findByTestId('reader-error');
-    expect(getByText(/temporarily unreachable/i)).toBeTruthy();
+    expect(getByText(/please try again/i)).toBeTruthy();
 
     courseApi.contentBody.mockResolvedValueOnce({
-      url: 'https://aptitude.guru/course/beige-1',
       title: 'Chapter One',
-      body_html: '<article>retry worked</article>',
+      content_type: 'chapter',
+      body_markdown: 'retry worked\n',
     });
     fireEvent.press(await findByTestId('reader-retry-button'));
-    const webview = await findByTestId('reader-webview');
-    expect(String(webview.props['data-source-html'])).toContain('retry worked');
-  });
-
-  it('shows a server-config message when the CMS auth detail comes back', async () => {
-    courseApi.contentBody.mockRejectedValueOnce({ detail: 'cms_auth_failed' });
-    const item = makeItem();
-    const { findByText } = render(
-      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
-    );
-    await findByText(/site password is not set/i);
+    await findByText(/retry worked/);
   });
 });
