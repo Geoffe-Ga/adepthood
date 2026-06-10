@@ -426,6 +426,21 @@ def _login_lock_for(email: str) -> asyncio.Lock:
 _ADVISORY_LOCK_KEY_BYTES = 8
 
 
+def _advisory_lock_key(email: str) -> int:
+    """Derive the int8 advisory-lock key for ``email``.
+
+    First 8 bytes of the SHA-256 digest, packed big-endian SIGNED so the
+    result always fits ``pg_advisory_xact_lock(bigint)``.  Extracted from
+    ``_acquire_email_lock_pg`` so the packing is pinned by unit tests
+    (issue #274): truncating to a different width or packing unsigned
+    would either break the int8 range or silently change every lock key,
+    and both now fail the derivation tests instead of surfacing as a
+    production Postgres error.
+    """
+    digest = hashlib.sha256(email.encode("utf-8")).digest()[:_ADVISORY_LOCK_KEY_BYTES]
+    return int.from_bytes(digest, "big", signed=True)
+
+
 async def _acquire_email_lock_pg(session: AsyncSession, email: str) -> None:
     """Take a transaction-scoped advisory lock on ``email`` (PostgreSQL only).
 
@@ -443,9 +458,9 @@ async def _acquire_email_lock_pg(session: AsyncSession, email: str) -> None:
     bind = session.get_bind()
     if bind.dialect.name != "postgresql":
         return
-    digest = hashlib.sha256(email.encode("utf-8")).digest()[:_ADVISORY_LOCK_KEY_BYTES]
-    key = int.from_bytes(digest, "big", signed=True)
-    await session.execute(text("SELECT pg_advisory_xact_lock(:k)").bindparams(k=key))
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:k)").bindparams(k=_advisory_lock_key(email))
+    )
 
 
 @asynccontextmanager
