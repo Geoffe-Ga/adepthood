@@ -93,8 +93,6 @@ export interface ActiveRitualSessionProps {
   onUserPracticeUpdated: (_next: UserPractice) => void;
   /** Open the journal-reflection composer (parent owns the navigator). */
   onWriteReflection: (_args: { session: PracticeSessionResponse; insight: string | null }) => void;
-  /** Open the practice switcher from the card header. */
-  onSwitchPractice: () => void;
 }
 
 interface ActiveSession {
@@ -127,7 +125,6 @@ export function ActiveRitualSession(props: ActiveRitualSessionProps): React.JSX.
       <SessionCard
         effectiveName={props.effectiveName}
         onConfigure={() => setShowConfigurator(true)}
-        onSwitch={props.onSwitchPractice}
         config={props.effectiveConfig}
         state={session.state}
         controls={session.controls}
@@ -403,7 +400,6 @@ function useSubmitSession({
 interface SessionCardProps {
   effectiveName: string;
   onConfigure: () => void;
-  onSwitch: () => void;
   config: ModeConfig;
   state: RitualState;
   controls: RitualControls;
@@ -432,15 +428,6 @@ function SessionCard(props: SessionCardProps): React.JSX.Element {
       <Text style={styles.name} testID="active-practice-name">
         {props.effectiveName}
       </Text>
-      <TouchableOpacity
-        accessibilityRole="button"
-        accessibilityLabel="Replace this practice"
-        onPress={props.onSwitch}
-        style={styles.switchLink}
-        testID="active-practice-switch"
-      >
-        <Text style={styles.switchText}>Tap the banner above to replace</Text>
-      </TouchableOpacity>
       <ModeView
         config={props.config}
         state={props.state}
@@ -939,10 +926,8 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
     color: colors.text.primary,
-    marginBottom: SPACING.xs,
+    marginBottom: SPACING.md,
   },
-  switchLink: { alignSelf: 'flex-start', paddingVertical: SPACING.xs, marginBottom: SPACING.md },
-  switchText: { fontSize: 12, color: colors.text.tertiary, fontStyle: 'italic' },
   error: {
     color: colors.danger,
     fontSize: 14,

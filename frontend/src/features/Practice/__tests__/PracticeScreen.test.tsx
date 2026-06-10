@@ -443,7 +443,7 @@ describe('PracticeScreen', () => {
     await waitFor(() => {
       expect(getByTestId('ritual-start')).toBeTruthy();
     });
-    expect(getByText(/2\s*\/\s*\d+/)).toBeTruthy();
+    expect(getByText(/2 of \d+/)).toBeTruthy();
     await act(async () => {
       fireEvent.press(getByTestId('ritual-start'));
     });
@@ -460,7 +460,7 @@ describe('PracticeScreen', () => {
       expect(getByTestId('active-practice-save-error')).toBeTruthy();
       expect(getByText(/We couldn't save your practice session/)).toBeTruthy();
     });
-    expect(getByText(/2\s*\/\s*\d+/)).toBeTruthy();
+    expect(getByText(/2 of \d+/)).toBeTruthy();
     expect(mockInsights).toHaveBeenCalledTimes(1);
     expect(mockWeekCount).not.toHaveBeenCalled();
     jest.useRealTimers();
@@ -506,7 +506,7 @@ describe('PracticeScreen', () => {
       expect(mockInsights).toHaveBeenCalledTimes(2);
     });
     await waitFor(() => {
-      expect(getByText(/7\s*\/\s*\d+/)).toBeTruthy();
+      expect(getByText(/7 of \d+/)).toBeTruthy();
     });
     jest.useRealTimers();
   });
@@ -584,7 +584,7 @@ describe('PracticeScreen', () => {
     const { getByTestId, getByText } = render(<PracticeScreen />);
     await waitFor(() => {
       expect(getByTestId('weekly-progress')).toBeTruthy();
-      expect(getByText(/5\s*\/\s*\d+/)).toBeTruthy();
+      expect(getByText(/5 of \d+/)).toBeTruthy();
     });
     expect(mockInsights).toHaveBeenCalled();
     expect(mockWeekCount).not.toHaveBeenCalled();
@@ -596,7 +596,7 @@ describe('PracticeScreen', () => {
     mockWeekCount.mockResolvedValueOnce({ count: 9 });
     const { getByText } = render(<PracticeScreen />);
     await waitFor(() => {
-      expect(getByText(/9\s*\/\s*\d+/)).toBeTruthy();
+      expect(getByText(/9 of \d+/)).toBeTruthy();
     });
     expect(mockWeekCount).toHaveBeenCalled();
   });

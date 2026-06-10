@@ -70,7 +70,6 @@ const PracticeScreen = (): React.JSX.Element => {
         active={active}
         weekly={weekly}
         userTimezone={userTimezone}
-        onSwitchPractice={() => setShowSwitcher(true)}
         onWriteReflection={handleWriteReflection}
       />
       <WeeklyProgress count={weekly.count} />
@@ -145,7 +144,6 @@ interface PracticeBodyProps {
   active: ActivePracticeHook;
   weekly: WeeklyProgressHook;
   userTimezone: string;
-  onSwitchPractice: () => void;
   onWriteReflection: (_args: { session: PracticeSessionResponse; insight: string | null }) => void;
 }
 
@@ -153,7 +151,6 @@ const PracticeBody = ({
   active,
   weekly,
   userTimezone,
-  onSwitchPractice,
   onWriteReflection,
 }: PracticeBodyProps): React.JSX.Element => {
   if (active.activeUserPractice && active.practice && active.effectiveConfig) {
@@ -169,7 +166,6 @@ const PracticeBody = ({
         onSessionCommitted={() => void weekly.refresh()}
         onUserPracticeUpdated={active.updateActivePractice}
         onWriteReflection={onWriteReflection}
-        onSwitchPractice={onSwitchPractice}
       />
     );
   }

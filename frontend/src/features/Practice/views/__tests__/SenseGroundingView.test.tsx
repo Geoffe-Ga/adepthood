@@ -32,15 +32,19 @@ describe('SenseGroundingView', () => {
     expect(getByText(/5 things you can/)).toBeTruthy();
   });
 
-  it('shows the active prompt label for the current step', () => {
-    const { getByTestId } = render(
+  it('updates the header count to the current sense as steps advance', () => {
+    const { getByText, queryByTestId } = render(
       <SenseGroundingView
         config={config}
         state={fakeState({ status: 'running', currentStepIndex: 2 })}
         controls={fakeControls()}
       />,
     );
-    expect(getByTestId('sense-grounding-prompt').props.children).toBe('Three things you can hear');
+    // The derived "3 things you can HEAR" header is the single instruction —
+    // the old duplicate per-prompt label line has been removed.
+    expect(getByText(/3 things you can/)).toBeTruthy();
+    expect(getByText('HEAR')).toBeTruthy();
+    expect(queryByTestId('sense-grounding-prompt')).toBeNull();
   });
 
   it('labels the primary button "Mark <sense> done" per step', () => {
@@ -71,15 +75,20 @@ describe('SenseGroundingView', () => {
     expect(controls.tap).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the Start control while idle and forwards controls.start', () => {
+  it('shows a primer and the Start control while idle, with no advance button', () => {
     const controls = fakeControls();
-    const { getByTestId } = render(
+    const { getByTestId, queryByTestId } = render(
       <SenseGroundingView
         config={config}
         state={fakeState({ status: 'idle', currentStepIndex: 0 })}
         controls={controls}
       />,
     );
+    // Before Start: a single primer + "Begin grounding". No dead, greyed-out
+    // "Mark <sense> done" button and no per-sense count line.
+    expect(getByTestId('sense-grounding-intro')).toBeTruthy();
+    expect(queryByTestId('sense-grounding-advance')).toBeNull();
+    expect(queryByTestId('sense-grounding-count')).toBeNull();
     fireEvent.press(getByTestId('ritual-start'));
     expect(controls.start).toHaveBeenCalledTimes(1);
   });

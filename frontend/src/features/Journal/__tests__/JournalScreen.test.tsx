@@ -4,6 +4,9 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 
 import type { JournalMessage, PromptDetail } from '../../../api';
 
+// Heavy screen to mount; the default 5s test timeout trips on slower CI runners (passes ~2.5s locally).
+jest.setTimeout(15000);
+
 const sampleMessages: JournalMessage[] = [
   {
     id: 2,

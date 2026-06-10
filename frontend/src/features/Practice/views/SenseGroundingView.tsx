@@ -51,19 +51,50 @@ const SenseGroundingView = ({ config, state, controls, onSave }: Props): React.J
   const currentIdx = Math.min(state.currentStepIndex, total - 1);
   const activePrompt = config.prompts[currentIdx];
   const isComplete = state.status === 'complete' || state.currentStepIndex >= total;
-  const canAdvance = state.status === 'running' && !isComplete;
+  // Show the advance button only once started; idle shows a primer instead of a dead button.
+  const inProgress = (state.status === 'running' || state.status === 'paused') && !isComplete;
   return (
     <View style={styles.container} testID="sense-grounding-view">
-      <SenseHeader prompt={isComplete ? null : activePrompt} />
-      {isComplete ? (
-        <CompleteCard onSave={onSave} />
-      ) : (
-        activePrompt && (
-          <ActivePrompt prompt={activePrompt} canAdvance={canAdvance} onTap={controls.tap} />
-        )
-      )}
+      <SenseHeader prompt={inProgress ? activePrompt : null} />
+      <SenseBody
+        isComplete={isComplete}
+        inProgress={inProgress}
+        prompt={activePrompt}
+        canAdvance={state.status === 'running' && !isComplete}
+        onTap={controls.tap}
+        onSave={onSave}
+      />
       <RitualControlsBar status={state.status} controls={controls} startLabel="Begin grounding" />
     </View>
+  );
+};
+
+interface SenseBodyProps {
+  isComplete: boolean;
+  inProgress: boolean;
+  prompt: SensePrompt | undefined;
+  canAdvance: boolean;
+  onTap: () => void;
+  onSave?: () => void;
+}
+
+/** The middle of the card: completion summary, live prompt, or idle primer. */
+const SenseBody = ({
+  isComplete,
+  inProgress,
+  prompt,
+  canAdvance,
+  onTap,
+  onSave,
+}: SenseBodyProps): React.JSX.Element => {
+  if (isComplete) return <CompleteCard onSave={onSave} />;
+  if (inProgress && prompt) {
+    return <AdvanceButton sense={prompt.sense} canAdvance={canAdvance} onTap={onTap} />;
+  }
+  return (
+    <Text style={styles.intro} testID="sense-grounding-intro">
+      Move through your five senses, one at a time, to settle into the present moment.
+    </Text>
   );
 };
 
@@ -106,29 +137,24 @@ const CompleteCard = ({ onSave }: { onSave?: () => void }): React.JSX.Element =>
   </View>
 );
 
-interface ActivePromptProps {
-  prompt: SensePrompt;
+interface AdvanceButtonProps {
+  sense: SenseKind;
   canAdvance: boolean;
   onTap: () => void;
 }
 
-const ActivePrompt = ({ prompt, canAdvance, onTap }: ActivePromptProps): React.JSX.Element => (
-  <>
-    <Text style={styles.prompt} testID="sense-grounding-prompt">
-      {prompt.label}
-    </Text>
-    <Pressable
-      style={[styles.advance, !canAdvance && styles.advanceDisabled]}
-      onPress={canAdvance ? onTap : undefined}
-      disabled={!canAdvance}
-      testID="sense-grounding-advance"
-      accessibilityRole="button"
-      accessibilityLabel={`Mark ${prompt.sense} done`}
-      accessibilityState={{ disabled: !canAdvance }}
-    >
-      <Text style={styles.advanceText}>{`Mark ${prompt.sense} done`}</Text>
-    </Pressable>
-  </>
+const AdvanceButton = ({ sense, canAdvance, onTap }: AdvanceButtonProps): React.JSX.Element => (
+  <Pressable
+    style={[styles.advance, !canAdvance && styles.advanceDisabled]}
+    onPress={canAdvance ? onTap : undefined}
+    disabled={!canAdvance}
+    testID="sense-grounding-advance"
+    accessibilityRole="button"
+    accessibilityLabel={`Mark ${sense} done`}
+    accessibilityState={{ disabled: !canAdvance }}
+  >
+    <Text style={styles.advanceText}>{`Mark ${sense} done`}</Text>
+  </Pressable>
 );
 
 const styles = StyleSheet.create({
@@ -150,13 +176,13 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     color: colors.text.primary,
   },
-  prompt: {
-    fontSize: 20,
-    fontWeight: '500',
-    color: colors.text.primary,
+  intro: {
+    fontSize: 16,
+    color: colors.text.secondaryAccessible,
     textAlign: 'center',
     marginBottom: SPACING.xxl,
     paddingHorizontal: SPACING.lg,
+    lineHeight: 24,
   },
   advance: {
     backgroundColor: colors.primary,
