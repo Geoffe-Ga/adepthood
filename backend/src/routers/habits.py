@@ -42,8 +42,8 @@ _MAX_HABITS_PER_USER = 100
 # matches the longest stage window in the APTITUDE program; rows older than
 # this stay in the DB (and in the stats endpoint's all-time aggregates) but
 # are trimmed from the habit GETs so payloads stop growing with account age.
-# NOTE: streaks rendered by ``_populate_streak`` are computed from the
-# embedded rows, so a streak can display at most this many days.
+# Streaks are NOT bounded by this window — ``_populate_streaks_for`` reads
+# the full history via its own slim query.
 _COMPLETIONS_WINDOW_DAYS = 90
 
 
