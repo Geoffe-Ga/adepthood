@@ -937,14 +937,21 @@ function useJournalInit(
   loadPrompt: () => Promise<void>,
   loadUsage: () => Promise<void>,
 ) {
+  // Mount-only (stable []-dep callbacks): bundling these with loadMessages re-fetched the prompt on every filter tap.
+  useEffect(() => {
+    void loadPrompt();
+    void loadUsage();
+  }, [loadPrompt, loadUsage]);
+
+  // Filter-driven: loadMessages rebuilds on activeTag/searchQuery changes — reload the list and ONLY the list.
   useEffect(() => {
     const init = async () => {
       setLoading(true);
-      await Promise.all([loadMessages(0), loadPrompt(), loadUsage()]);
+      await loadMessages(0);
       setLoading(false);
     };
     void init();
-  }, [loadMessages, loadPrompt, loadUsage, setLoading]);
+  }, [loadMessages, setLoading]);
 }
 
 // --- Hook: prompt responding ---
