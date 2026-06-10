@@ -279,8 +279,13 @@ async def _seed_startup_data(session: AsyncSession) -> None:
 @asynccontextmanager
 async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown lifecycle for the application."""
-    import models  # noqa: F401, PLC0415
-    from routers.auth import _get_secret_key  # noqa: PLC0415
+    # Deliberate lazy imports: ``models`` registers every SQLModel table
+    # with the metadata exactly once at startup (the unused name is the
+    # point), and ``_get_secret_key`` would import-cycle at module load.
+    # The F401/PLC0415 exceptions are scoped per-file in pyproject.toml
+    # (issue #272) instead of inline noqa comments.
+    import models
+    from routers.auth import _get_secret_key
 
     # BUG-AUTH-011: validate ``SECRET_KEY`` once at startup so a misconfigured
     # deployment fails the orchestrator's health probe immediately rather than
