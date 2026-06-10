@@ -83,6 +83,16 @@ describe('ApiKeySettingsScreen', () => {
     expect(getByText(/••••/)).toBeTruthy();
   });
 
+  test('navigates to the Time zone settings from the footer entry', () => {
+    setApiKeyState({});
+    const navigate = jest.fn();
+    const { getByTestId } = render(<ApiKeySettingsScreen navigation={{ navigate }} />);
+
+    fireEvent.press(getByTestId('open-timezone-settings'));
+
+    expect(navigate).toHaveBeenCalledWith('TimezoneSettings');
+  });
+
   test('rejects a malformed key and does not persist it', async () => {
     const state = setApiKeyState({});
     const { getByTestId, findByTestId } = render(<ApiKeySettingsScreen />);

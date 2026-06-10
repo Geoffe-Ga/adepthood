@@ -61,7 +61,11 @@ function maskKey(key: string): string {
 }
 
 interface Props {
-  navigation?: { goBack?: () => void };
+  navigation?: {
+    goBack?: () => void;
+    /** Stack navigate — used by the "Time zone" settings entry (issue #261). */
+    navigate?: (_screen: 'TimezoneSettings') => void;
+  };
 }
 
 interface StoredKeyCardProps {
@@ -174,6 +178,7 @@ interface ScreenBodyProps {
   onRequestRemove: () => void;
   onSave: () => void;
   onBack?: () => void;
+  onOpenTimezone?: () => void;
 }
 
 const ScreenIntro = ({ apiKey }: { apiKey: string | null }): React.JSX.Element => (
@@ -195,10 +200,12 @@ const ScreenFooter = ({
   submitting,
   onSave,
   onBack,
+  onOpenTimezone,
 }: {
   submitting: boolean;
   onSave: () => void;
   onBack?: () => void;
+  onOpenTimezone?: () => void;
 }): React.JSX.Element => (
   <>
     <TouchableOpacity
@@ -212,6 +219,17 @@ const ScreenFooter = ({
     >
       <Text style={styles.primaryButtonText}>{submitting ? 'Saving…' : 'Save key'}</Text>
     </TouchableOpacity>
+    {onOpenTimezone && (
+      <TouchableOpacity
+        onPress={onOpenTimezone}
+        style={styles.linkRow}
+        testID="open-timezone-settings"
+        accessibilityLabel="Time zone settings"
+        accessibilityRole="link"
+      >
+        <Text style={styles.link}>Time zone settings</Text>
+      </TouchableOpacity>
+    )}
     {onBack && (
       <TouchableOpacity
         onPress={onBack}
@@ -237,6 +255,7 @@ const ScreenBody = ({
   onRequestRemove,
   onSave,
   onBack,
+  onOpenTimezone,
 }: ScreenBodyProps): React.JSX.Element => (
   <>
     <ScreenIntro apiKey={apiKey} />
@@ -251,7 +270,12 @@ const ScreenBody = ({
       onToggleReveal={onToggleReveal}
     />
     <FeedbackBanner error={error} status={status} />
-    <ScreenFooter submitting={submitting} onSave={onSave} onBack={onBack} />
+    <ScreenFooter
+      submitting={submitting}
+      onSave={onSave}
+      onBack={onBack}
+      onOpenTimezone={onOpenTimezone}
+    />
   </>
 );
 
@@ -353,6 +377,10 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
     () => (navigation?.goBack ? () => navigation.goBack?.() : undefined),
     [navigation],
   );
+  const onOpenTimezone = useMemo(
+    () => (navigation?.navigate ? () => navigation.navigate?.('TimezoneSettings') : undefined),
+    [navigation],
+  );
 
   if (isLoading) {
     return (
@@ -376,6 +404,7 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
         onRequestRemove={handleRequestRemove}
         onSave={handleSave}
         onBack={onBack}
+        onOpenTimezone={onOpenTimezone}
       />
     </ScrollView>
   );
