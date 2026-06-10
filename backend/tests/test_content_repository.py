@@ -10,6 +10,7 @@ including the traversal guard that stands in for the old client's
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -79,7 +80,7 @@ def _write_content_dir(root: Path, manifest: dict[str, Any]) -> Path:
 
 @pytest.fixture
 def content_dir(tmp_path: Path) -> Path:
-    return _write_content_dir(tmp_path / "content", json.loads(json.dumps(_VALID_MANIFEST)))
+    return _write_content_dir(tmp_path / "content", copy.deepcopy(_VALID_MANIFEST))
 
 
 # ── Happy path ──────────────────────────────────────────────────────────
@@ -131,6 +132,24 @@ def test_unknown_resource_slug_raises_not_found(content_dir: Path) -> None:
         repo.read_resource_body("missing-slug")
 
 
+def test_duplicate_chapter_id_raises_repository_error(tmp_path: Path) -> None:
+    """A duplicate id passes the schema but must not silently drop a chapter."""
+    doubled = copy.deepcopy(_VALID_MANIFEST)
+    doubled["chapters"][1]["id"] = doubled["chapters"][0]["id"]
+    root = _write_content_dir(tmp_path / "content", doubled)
+    with pytest.raises(ContentRepositoryError):
+        ContentRepository(root)
+
+
+def test_missing_markdown_for_known_resource_raises_repository_error(
+    content_dir: Path,
+) -> None:
+    (content_dir / "markdown/site/getting-started.md").unlink()
+    repo = ContentRepository(content_dir)
+    with pytest.raises(ContentRepositoryError):
+        repo.read_resource_body("getting-started")
+
+
 def test_malformed_json_manifest_raises_repository_error(tmp_path: Path) -> None:
     root = tmp_path / "content"
     root.mkdir()
@@ -154,7 +173,7 @@ def test_missing_manifest_raises_repository_error(tmp_path: Path) -> None:
 
 
 def test_invalid_manifest_raises_repository_error(tmp_path: Path) -> None:
-    broken = json.loads(json.dumps(_VALID_MANIFEST))
+    broken = copy.deepcopy(_VALID_MANIFEST)
     broken["chapters"][0].pop("title")
     root = _write_content_dir(tmp_path / "content", broken)
     with pytest.raises(ContentRepositoryError):
@@ -163,7 +182,7 @@ def test_invalid_manifest_raises_repository_error(tmp_path: Path) -> None:
 
 def test_wrong_major_schema_version_is_rejected(tmp_path: Path) -> None:
     """ADR 0001 change control: readers reject a different major version."""
-    future = json.loads(json.dumps(_VALID_MANIFEST))
+    future = copy.deepcopy(_VALID_MANIFEST)
     future["schema_version"] = "2.0.0"
     root = _write_content_dir(tmp_path / "content", future)
     with pytest.raises(ContentRepositoryError):
@@ -172,7 +191,7 @@ def test_wrong_major_schema_version_is_rejected(tmp_path: Path) -> None:
 
 def test_path_traversal_is_rejected(tmp_path: Path) -> None:
     """The LFI guard analogous to the old client's _validate_url."""
-    evil = json.loads(json.dumps(_VALID_MANIFEST))
+    evil = copy.deepcopy(_VALID_MANIFEST)
     evil["chapters"][0]["path"] = "../../etc/passwd"
     root = _write_content_dir(tmp_path / "content", evil)
     # The escape target genuinely exists, so only the guard stops the read.

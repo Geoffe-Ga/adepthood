@@ -16,7 +16,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
@@ -32,6 +32,10 @@ _DEFAULT_CONTENT_DIR = Path(__file__).resolve().parents[2] / "content"
 # Major version of the manifest contract this reader understands.  ADR 0001
 # change control: reject manifests whose major version differs.
 _SUPPORTED_SCHEMA_MAJOR = 1
+
+# Site resources are not chapters, so they get a content_type outside the
+# chapter enum (chapter|essay|prompt|video) — deliberately distinct.
+_RESOURCE_CONTENT_TYPE: Final[str] = "resource"
 
 
 class ContentRepositoryError(Exception):
@@ -116,6 +120,9 @@ class ContentRepository:
                 path=raw["path"],
                 summary=raw.get("summary"),
             )
+            if meta.id in self._chapters:
+                msg = f"duplicate chapter id in manifest: {meta.id!r}"
+                raise ContentRepositoryError(msg)
             self._chapters[meta.id] = meta
         self._resources: dict[str, dict[str, Any]] = {
             r["slug"]: r for r in manifest["site_resources"]
@@ -158,8 +165,11 @@ class ContentRepository:
             raise ContentRepositoryError(msg) from exc
 
     def list_chapters(self) -> list[ChapterMeta]:
-        """Every chapter, ordered by (stage, order, chapter)."""
-        return sorted(self._chapters.values(), key=lambda c: (c.stage, c.order, c.chapter))
+        """Every chapter, ordered by (stage, order, chapter, id)."""
+        return sorted(
+            self._chapters.values(),
+            key=lambda c: (c.stage, c.order, c.chapter, c.id),
+        )
 
     def get_chapter(self, content_id: str) -> ChapterMeta | None:
         """The chapter with ``content_id``, or ``None`` when unknown."""
@@ -186,7 +196,7 @@ class ContentRepository:
         return ContentBody(
             body=self._read_markdown(resource["path"]),
             title=resource["title"],
-            content_type="resource",
+            content_type=_RESOURCE_CONTENT_TYPE,
         )
 
 
