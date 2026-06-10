@@ -978,6 +978,18 @@ export const habits = {
   update(habitId: number, payload: HabitCreatePayload, token?: string): Promise<ApiHabit> {
     return request<ApiHabit>(`/habits/${habitId}`, { method: 'PUT', body: payload, token });
   },
+  /**
+   * Atomically update the shared unit fields on every goal of the habit
+   * (issue #289). Replaces the per-tier ``goals.update`` fan-out whose
+   * partial failure left tiers with mismatched units server-side.
+   */
+  updateGoalUnits(habitId: number, payload: GoalUnitsPayload, token?: string): Promise<ApiGoal[]> {
+    return request<ApiGoal[]>(`/habits/${habitId}/goals/units`, {
+      method: 'PUT',
+      body: payload,
+      token,
+    });
+  },
   delete(habitId: number, token?: string): Promise<void> {
     return request<void>(`/habits/${habitId}`, { method: 'DELETE', token });
   },
@@ -1031,6 +1043,13 @@ export const goalCompletions = {
 // Goal write payload — fields the editor exposes. ``habit_id`` is omitted
 // because a goal is bound to its parent habit for life and the server's
 // ``GoalUpdate`` schema rejects any attempt to forge it.
+/** Shared unit fields for the atomic all-tiers update (issue #289). */
+export interface GoalUnitsPayload {
+  target_unit: string;
+  frequency: number;
+  frequency_unit: string;
+}
+
 export interface GoalUpdatePayload {
   title: string;
   description?: string | null;

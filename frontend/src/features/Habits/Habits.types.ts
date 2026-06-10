@@ -101,6 +101,11 @@ export interface GoalModalProps {
   habit: Habit | null;
   onClose: () => void;
   onUpdateGoal: (_habitId: number, _updatedGoal: Goal) => void;
+  /** Atomic all-tiers unit update — one batch PUT, one rollback (#289). */
+  onUpdateGoalUnits: (
+    _habitId: number,
+    _changes: Partial<Pick<Goal, 'target_unit' | 'frequency' | 'frequency_unit'>>,
+  ) => void;
   /** ``date`` backfills a past day; omit to log against today. */
   onLogUnit: (_habitId: number, _amount: number, _date?: Date) => void;
   onUpdateHabit: (_updatedHabit: Habit) => void;
@@ -178,6 +183,10 @@ export interface AddHabitInput {
 export interface HabitsActions {
   loadHabits: () => Promise<void>;
   updateGoal: (_habitId: number, _updatedGoal: Goal) => void;
+  updateGoalUnits: (
+    _habitId: number,
+    _changes: Partial<Pick<Goal, 'target_unit' | 'frequency' | 'frequency_unit'>>,
+  ) => void;
   /** ``date`` backfills a past day; omit to log against today. */
   logUnit: (_habitId: number, _amount: number, _date?: Date) => void;
   updateHabit: (_updatedHabit: Habit) => void;

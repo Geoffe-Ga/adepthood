@@ -7,6 +7,7 @@ jest.mock('../../../../api', () => ({
     update: jest.fn(() => Promise.resolve({})),
     delete: jest.fn(() => Promise.resolve({})),
     getStats: jest.fn(() => Promise.resolve({})),
+    updateGoalUnits: jest.fn(() => Promise.resolve([])),
   },
   goalCompletions: {
     create: jest.fn(() => Promise.resolve({})),
@@ -450,6 +451,43 @@ describe('habitManager', () => {
         { goal_id: 2, did_complete: true, timestamp: '2025-04-02T00:00:00Z' },
         { goal_id: 3, did_complete: true, timestamp: '2025-04-03T00:00:00Z' },
       ]);
+    });
+  });
+
+  describe('updateGoalUnits', () => {
+    it('applies unit changes to every tier optimistically and PUTs once (#289)', () => {
+      useHabitStore.setState({ habits: [makeHabit()] });
+
+      habitManager.updateGoalUnits(1, { target_unit: 'hours' });
+
+      const goals = useHabitStore.getState().habits[0]!.goals;
+      expect(goals.every((g) => g.target_unit === 'hours')).toBe(true);
+      // ONE consolidated batch call — the atomic replacement for the
+      // three-PUT fan-out whose partial failure split tiers server-side.
+      expect(habitsApi.updateGoalUnits).toHaveBeenCalledTimes(1);
+      expect(habitsApi.updateGoalUnits).toHaveBeenCalledWith(1, {
+        target_unit: 'hours',
+        frequency: 1,
+        frequency_unit: 'per_day',
+      });
+      expect(saveHabits).toHaveBeenCalled();
+    });
+
+    it('rolls every tier back when the batch PUT rejects (#289)', async () => {
+      useHabitStore.setState({ habits: [makeHabit()] });
+      (
+        (habitsApi as unknown as { updateGoalUnits: jest.Mock }).updateGoalUnits as jest.Mock
+      ).mockRejectedValueOnce(new Error('boom') as never);
+
+      habitManager.updateGoalUnits(1, { target_unit: 'hours' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const goals = useHabitStore.getState().habits[0]!.goals;
+      // The single rollback restores the ORIGINAL units on every tier —
+      // no mismatched split between local and server state.
+      expect(goals.every((g) => g.target_unit === 'units')).toBe(true);
+      const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
+      expect(Alert.alert).toHaveBeenCalled();
     });
   });
 

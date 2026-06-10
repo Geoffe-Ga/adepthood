@@ -22,6 +22,8 @@ from models.goal_completion import GoalCompletion
 from models.habit import Habit
 from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
+from schemas.goal import Goal as GoalSchema
+from schemas.goal import GoalUnitsUpdate
 from schemas.habit import Habit as HabitSchema
 from schemas.habit import HabitCreate, HabitWithGoals
 from schemas.habit_stats import HabitStats
@@ -273,6 +275,39 @@ async def _get_habit_with_completions(
         log_ownership_denied("habit", habit_id, current_user)
         raise forbidden("forbidden")
     return habit
+
+
+@router.put("/{habit_id}/goals/units", response_model=list[GoalSchema])
+async def update_goal_units(
+    payload: GoalUnitsUpdate,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    habit: Annotated[Habit, Depends(require_owned_habit)],
+) -> list[Goal]:
+    """Update the shared unit fields on every goal of the habit atomically.
+
+    Issue #289: the GoalUnitEditor previously fanned out one
+    ``PUT /goals/{id}`` per tier, so a mid-sequence failure left tiers
+    with mismatched units server-side.  A single transaction here makes
+    the all-tiers invariant atomic: either every goal moves to the new
+    unit fields or none do.  Tier identity and per-tier targets are
+    deliberately untouched.
+    """
+    result = await session.execute(select(Goal).where(Goal.habit_id == habit.id))
+    goals = list(result.scalars().all())
+    for goal in goals:
+        goal.target_unit = payload.target_unit
+        goal.frequency = payload.frequency
+        goal.frequency_unit = payload.frequency_unit
+        session.add(goal)
+    await session.commit()
+    for goal in goals:
+        await session.refresh(goal)
+    logger.info(
+        "goal_units_updated",
+        extra={"user_id": current_user, "habit_id": habit.id, "goal_count": len(goals)},
+    )
+    return goals
 
 
 @router.get("/{habit_id}/stats", response_model=HabitStats)

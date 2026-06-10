@@ -59,6 +59,7 @@ const renderModal = (
     habit,
     onClose: jest.fn(),
     onUpdateGoal: jest.fn(),
+    onUpdateGoalUnits: jest.fn(),
     onLogUnit: jest.fn(),
     onUpdateHabit: jest.fn(),
     ...overrides,
@@ -172,66 +173,46 @@ describe('GoalModal unit + frequency editor', () => {
     jest.clearAllMocks();
   });
 
-  it('fans out a target_unit change to ALL three tier goals', () => {
-    // Invariant: a unit edit must PUT every tier so the backend rows
-    // stay in lockstep with the locally-normalized state. ``onUpdateGoal``
-    // updates only the goal whose id is sent, so committing on the
-    // reference (low) tier alone leaves clear/stretch stale server-side.
+  it('commits a target_unit change as ONE atomic batch call (#289)', () => {
+    // Invariant: a unit edit moves every tier together. The old per-tier
+    // ``onUpdateGoal`` fan-out left tiers on mismatched units server-side
+    // when a mid-sequence PUT failed; the batch endpoint updates all the
+    // habit's goals inside a single transaction.
     const { getByTestId, props } = renderModal();
     fireEvent.press(getByTestId('goal-target-unit-minutes'));
 
-    expect(props.onUpdateGoal).toHaveBeenCalledTimes(3);
-    expect(props.onUpdateGoal).toHaveBeenNthCalledWith(
-      1,
-      42,
-      expect.objectContaining({ tier: 'low', target_unit: 'minutes' }),
-    );
-    expect(props.onUpdateGoal).toHaveBeenNthCalledWith(
-      2,
-      42,
-      expect.objectContaining({ tier: 'clear', target_unit: 'minutes' }),
-    );
-    expect(props.onUpdateGoal).toHaveBeenNthCalledWith(
-      3,
-      42,
-      expect.objectContaining({ tier: 'stretch', target_unit: 'minutes' }),
-    );
+    expect(props.onUpdateGoalUnits).toHaveBeenCalledTimes(1);
+    expect(props.onUpdateGoalUnits).toHaveBeenCalledWith(42, { target_unit: 'minutes' });
+    expect(props.onUpdateGoal).not.toHaveBeenCalled();
   });
 
-  it('fans out a frequency_unit change to ALL three tier goals', () => {
+  it('commits a frequency_unit change as ONE atomic batch call (#289)', () => {
     const { getByTestId, props } = renderModal();
     fireEvent.press(getByTestId('goal-frequency-unit-per_week'));
 
-    expect(props.onUpdateGoal).toHaveBeenCalledTimes(3);
-    for (const tier of ['low', 'clear', 'stretch'] as const) {
-      expect(props.onUpdateGoal).toHaveBeenCalledWith(
-        42,
-        expect.objectContaining({ tier, frequency_unit: 'per_week' }),
-      );
-    }
+    expect(props.onUpdateGoalUnits).toHaveBeenCalledTimes(1);
+    expect(props.onUpdateGoalUnits).toHaveBeenCalledWith(42, { frequency_unit: 'per_week' });
+    expect(props.onUpdateGoal).not.toHaveBeenCalled();
   });
 
-  it('commits a numeric frequency change on blur', () => {
+  it('commits a numeric frequency change on blur as ONE atomic batch call (#289)', () => {
     const { getByTestId, props } = renderModal();
     const input = getByTestId('goal-frequency-input');
     fireEvent.changeText(input, '3');
     fireEvent(input, 'endEditing');
 
-    expect(props.onUpdateGoal).toHaveBeenCalledTimes(3);
-    for (const tier of ['low', 'clear', 'stretch'] as const) {
-      expect(props.onUpdateGoal).toHaveBeenCalledWith(
-        42,
-        expect.objectContaining({ tier, frequency: 3 }),
-      );
-    }
+    expect(props.onUpdateGoalUnits).toHaveBeenCalledTimes(1);
+    expect(props.onUpdateGoalUnits).toHaveBeenCalledWith(42, { frequency: 3 });
+    expect(props.onUpdateGoal).not.toHaveBeenCalled();
   });
 
-  it('drops a non-finite frequency without firing onUpdateGoal', () => {
+  it('drops a non-finite frequency without firing any update', () => {
     const { getByTestId, props } = renderModal();
     const input = getByTestId('goal-frequency-input');
     fireEvent.changeText(input, 'abc');
     fireEvent(input, 'endEditing');
     expect(props.onUpdateGoal).not.toHaveBeenCalled();
+    expect(props.onUpdateGoalUnits).not.toHaveBeenCalled();
   });
 
   it('drops a zero or negative frequency (positivity invariant)', () => {
