@@ -5,7 +5,11 @@
   "description": "Frozen contract between the aptitude-course content repo (which generates this manifest from per-file YAML frontmatter) and the adepthood backend (which vendors and reads it). Changing this schema post-merge requires a schema_version bump and a note in docs/adr/0001-git-content-pipeline.md (issue #389).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "chapters", "site_resources"],
+  "required": [
+    "schema_version",
+    "chapters",
+    "site_resources"
+  ],
   "properties": {
     "schema_version": {
       "description": "Semver of this contract. Readers must reject manifests with a different major version.",
@@ -14,19 +18,33 @@
     },
     "chapters": {
       "type": "array",
-      "items": { "$ref": "#/$defs/chapter" }
+      "items": {
+        "$ref": "#/$defs/chapter"
+      }
     },
     "site_resources": {
       "description": "Free site resources, mirroring the legacy SITE_RESOURCES table.",
       "type": "array",
-      "items": { "$ref": "#/$defs/site_resource" }
+      "items": {
+        "$ref": "#/$defs/site_resource"
+      }
     }
   },
   "$defs": {
     "chapter": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "stage", "chapter", "slug", "title", "content_type", "release_day", "order", "path"],
+      "required": [
+        "id",
+        "stage",
+        "chapter",
+        "slug",
+        "title",
+        "content_type",
+        "release_day",
+        "order",
+        "path"
+      ],
       "properties": {
         "id": {
           "description": "Stable identifier, e.g. 'beige-1'. Never reused or renumbered.",
@@ -34,7 +52,7 @@
           "minLength": 1
         },
         "stage": {
-          "description": "Curriculum stage 1..10 — identical numbering in both repos (see the ADR's stage-numbering reconciliation).",
+          "description": "Curriculum stage 1..10 \u2014 identical numbering in both repos (see the ADR's stage-numbering reconciliation).",
           "type": "integer",
           "minimum": 1,
           "maximum": 10
@@ -44,11 +62,22 @@
           "type": "integer",
           "minimum": 1
         },
-        "slug": { "type": "string", "minLength": 1 },
-        "title": { "type": "string", "minLength": 1 },
+        "slug": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
         "content_type": {
           "type": "string",
-          "enum": ["chapter", "essay", "prompt", "video"]
+          "enum": [
+            "chapter",
+            "essay",
+            "prompt",
+            "video"
+          ]
         },
         "release_day": {
           "description": "Days after the stage start when this item drips open (0 = immediately).",
@@ -56,7 +85,7 @@
           "minimum": 0
         },
         "order": {
-          "description": "Display order within the stage.",
+          "description": "Display order within the stage (ascending). Distinct from 'chapter': 'order' may interleave essays/prompts/videos between chapters; ties are resolved by 'chapter' then 'id'.",
           "type": "integer",
           "minimum": 0
         },
@@ -65,22 +94,44 @@
           "type": "string",
           "minLength": 1
         },
-        "summary": { "type": "string" },
+        "summary": {
+          "type": "string"
+        },
         "media": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
     "site_resource": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["slug", "title", "description", "path"],
+      "required": [
+        "slug",
+        "title",
+        "description",
+        "path"
+      ],
       "properties": {
-        "slug": { "type": "string", "minLength": 1 },
-        "title": { "type": "string", "minLength": 1 },
-        "description": { "type": "string" },
-        "path": { "type": "string", "minLength": 1 }
+        "slug": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable blurb. Deliberately allowed to be empty (unlike title/slug) \u2014 a resource may not need one."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     }
   }

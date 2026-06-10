@@ -75,6 +75,11 @@ def test_example_covers_the_contract_surface(example: dict[str, Any]) -> None:
         ),
         pytest.param(lambda m: m["chapters"][0].update(release_day=-1), id="negative release_day"),
         pytest.param(lambda m: m.update(surprise_field=True), id="unknown top-level field"),
+        pytest.param(lambda m: m["site_resources"][0].pop("slug"), id="site resource missing slug"),
+        pytest.param(
+            lambda m: m["site_resources"][0].update(extra=True),
+            id="site resource unknown field",
+        ),
     ],
 )
 def test_schema_rejects_malformed_manifests(
