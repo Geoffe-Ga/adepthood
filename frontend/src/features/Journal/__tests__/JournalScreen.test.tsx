@@ -222,6 +222,33 @@ describe('JournalScreen', () => {
     });
   });
 
+  it('keeps the weekly prompt untouched when filter tabs change (issue #400)', async () => {
+    const { getByTestId, getByText } = renderJournal();
+    await waitFor(() => {
+      expect(getByTestId('weekly-prompt-banner')).toBeTruthy();
+    });
+    expect(getByText('Week 3 Reflection')).toBeTruthy();
+    const promptFetchesAfterInit = mockPromptsCurrent.mock.calls.length;
+
+    // Pretend the server would now report a different week — if filtering
+    // re-fetched the prompt, the banner would advance.
+    mockPromptsCurrent.mockResolvedValue({ ...samplePrompt, week_number: 9 });
+
+    fireEvent.press(getByTestId('tag-chip-stage_reflection'));
+    await waitFor(() => {
+      expect(mockJournalList).toHaveBeenCalledWith(
+        expect.objectContaining({ tag: 'stage_reflection' }),
+      );
+    });
+    fireEvent.press(getByTestId('tag-chip-all'));
+    await waitFor(() => {
+      expect(getByText('Week 3 Reflection')).toBeTruthy();
+    });
+
+    // Filtering filters the list ONLY — no extra /prompts/current calls.
+    expect(mockPromptsCurrent.mock.calls.length).toBe(promptFetchesAfterInit);
+  });
+
   it('hides weekly prompt banner when prompt is already responded', async () => {
     mockPromptsCurrent.mockResolvedValue({ ...samplePrompt, has_responded: true });
 
