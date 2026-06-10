@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.0.0",
+  "chapters": [
+    {
+      "id": "beige-1",
+      "stage": 1,
+      "chapter": 1,
+      "slug": "survival",
+      "title": "Survival",
+      "content_type": "chapter",
+      "release_day": 0,
+      "order": 1,
+      "path": "markdown/01-beige/01-survival.md"
+    },
+    {
+      "id": "beige-2",
+      "stage": 1,
+      "chapter": 2,
+      "slug": "breath-as-anchor",
+      "title": "Breath as Anchor",
+      "content_type": "essay",
+      "release_day": 2,
+      "order": 2,
+      "path": "markdown/01-beige/02-breath.md"
+    },
+    {
+      "id": "beige-3",
+      "stage": 1,
+      "chapter": 3,
+      "slug": "tomorrow-prompt",
+      "title": "Tomorrow Prompt",
+      "content_type": "prompt",
+      "release_day": 3,
+      "order": 3,
+      "path": "markdown/01-beige/03-tomorrow.md"
+    },
+    {
+      "id": "beige-4",
+      "stage": 1,
+      "chapter": 4,
+      "slug": "late-chapter",
+      "title": "Late Chapter",
+      "content_type": "chapter",
+      "release_day": 9,
+      "order": 4,
+      "path": "markdown/01-beige/04-late.md"
+    },
+    {
+      "id": "purple-1",
+      "stage": 2,
+      "chapter": 1,
+      "slug": "tribal-rhythm",
+      "title": "Tribal Rhythm",
+      "content_type": "chapter",
+      "release_day": 0,
+      "order": 1,
+      "path": "markdown/02-purple/01-tribal.md"
+    }
+  ],
+  "site_resources": [
+    {
+      "slug": "getting-started",
+      "title": "Getting Started",
+      "description": "Orientation for new adepts.",
+      "path": "markdown/site/getting-started.md"
+    }
+  ]
+}
