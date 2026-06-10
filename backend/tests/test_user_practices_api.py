@@ -298,19 +298,19 @@ async def test_get_other_users_practice_forbidden(
 
 
 @pytest.mark.asyncio
-async def test_second_active_selection_for_same_stage_returns_409(
+async def test_second_active_selection_replaces_prior(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Selecting a second active practice for the same stage must 409.
+    """Selecting a second practice for a stage replaces the first (BUG-PRACTICE-012).
 
-    The partial unique index on ``userpractice (user_id, stage_number)
-    WHERE end_date IS NULL`` enforces the rule at the DB level; the
-    router's ``IntegrityError → 409 active_practice_exists_for_stage``
-    handler maps it to a deterministic response so the client cannot
-    win the race silently and end up with two open rows for the same
-    stage (BUG-PRACTICE-005).
+    This is the "Replace this practice" / "Use for stage" flow. A
+    sequential second pick must succeed, close the prior open row
+    (``end_date`` set), and leave exactly one open row for the stage so
+    the partial unique index invariant still holds. The earlier
+    behaviour 409'd here, which made switching away from the seeded
+    default impossible from the UI.
     """
-    headers, _ = await _signup(async_client, "doublepick")
+    headers, user_id = await _signup(async_client, "doublepick")
     p1 = await _seed_practice(db_session, name="First")
     p2 = await _seed_practice(db_session, name="Second")
 
@@ -326,8 +326,67 @@ async def test_second_active_selection_for_same_stage_returns_409(
         json={"practice_id": p2.id, "stage_number": 1},
         headers=headers,
     )
-    assert second.status_code == HTTPStatus.CONFLICT
-    assert second.json()["detail"] == "active_practice_exists_for_stage"
+    assert second.status_code == HTTPStatus.CREATED
+    assert second.json()["practice_id"] == p2.id
+    assert second.json()["end_date"] is None
+
+    # Exactly one open row, and it is the replacement; the prior pick is closed.
+    rows = (
+        (
+            await db_session.execute(
+                select(UserPractice).where(
+                    UserPractice.user_id == user_id,
+                    UserPractice.stage_number == 1,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    open_rows = [r for r in rows if r.end_date is None]
+    assert len(open_rows) == 1
+    assert open_rows[0].practice_id == p2.id
+    closed = [r for r in rows if r.end_date is not None]
+    assert [r.practice_id for r in closed] == [p1.id]
+
+
+@pytest.mark.asyncio
+async def test_reselecting_active_practice_is_noop(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Re-picking the already-active practice keeps the original row (BUG-PRACTICE-012).
+
+    An accidental double-tap on the current selection must not open a
+    fresh row or reset ``start_date`` -- the user-facing "I started
+    this" label and the streak math that depends on it would otherwise
+    silently reset.
+    """
+    headers, user_id = await _signup(async_client, "reselect")
+    practice = await _seed_practice(db_session, name="Only")
+
+    first = await async_client.post(
+        "/user-practices/",
+        json={"practice_id": practice.id, "stage_number": 1},
+        headers=headers,
+    )
+    assert first.status_code == HTTPStatus.CREATED
+    first_id = first.json()["id"]
+
+    again = await async_client.post(
+        "/user-practices/",
+        json={"practice_id": practice.id, "stage_number": 1},
+        headers=headers,
+    )
+    assert again.status_code == HTTPStatus.CREATED
+    assert again.json()["id"] == first_id
+    assert again.json()["start_date"] == first.json()["start_date"]
+
+    rows = (
+        (await db_session.execute(select(UserPractice).where(UserPractice.user_id == user_id)))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
 
 
 _CONCURRENT_PICK_FANOUT = 5
@@ -341,10 +400,19 @@ async def test_concurrent_picks_for_same_stage_yield_one_open_row(
 ) -> None:
     """Five simultaneous selections for the same stage land exactly one open row.
 
-    The partial unique index closes the BUG-PRACTICE-005 race; without
-    it, both halves of the SELECT-then-INSERT pre-check could see "no
-    open row" and both insert.  The constraint catches all but one and
-    those losers surface as 409 ``active_practice_exists_for_stage``.
+    The partial unique index closes the BUG-PRACTICE-005 race: without
+    it, concurrent SELECT-then-INSERT calls could each see "no open row"
+    and both insert. The constraint guarantees the durable invariant
+    asserted here -- exactly one open row -- regardless of timing.
+
+    With the replace semantics (BUG-PRACTICE-012) the *response* mix is
+    no longer "one 201, rest 409". Because every request targets the
+    same practice, a request that observes the just-committed row treats
+    re-selecting it as an idempotent no-op (201), while a request that
+    raced ahead of that commit and lost the insert surfaces 409. Both
+    are acceptable; what must never happen is a second *open* row or an
+    unhandled 500. So we assert the durable invariant plus "every
+    response is 201 or 409, and at least one succeeded".
     """
     signup_resp = await concurrent_async_client.post(
         "/auth/signup",
@@ -391,8 +459,10 @@ async def test_concurrent_picks_for_same_stage_yield_one_open_row(
     status_codes = [r.status_code for r in responses]
     successes = status_codes.count(HTTPStatus.CREATED)
     conflicts = status_codes.count(HTTPStatus.CONFLICT)
-    assert successes == 1, f"expected exactly one CREATED, got {successes}: {status_codes}"
-    assert successes + conflicts == _CONCURRENT_PICK_FANOUT, status_codes
+    assert successes >= 1, f"expected at least one CREATED, got: {status_codes}"
+    assert successes + conflicts == _CONCURRENT_PICK_FANOUT, (
+        f"every response must be 201 or 409, got: {status_codes}"
+    )
 
     async with concurrent_session_factory() as session:
         result = await session.execute(

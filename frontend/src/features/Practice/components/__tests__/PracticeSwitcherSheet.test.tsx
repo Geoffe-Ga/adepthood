@@ -205,6 +205,19 @@ describe('PracticeSwitcherSheet', () => {
     expect(onReplaced).not.toHaveBeenCalled();
   });
 
+  it('surfaces the specific backend reason (e.g. stage_locked) over the generic fallback', async () => {
+    mockPracticesList.mockResolvedValue(samplePractices);
+    // Reject with an ApiError-shaped object so formatApiError maps the
+    // ``detail`` code to its user-facing copy instead of the generic
+    // "check your connection" fallback.
+    mockUserPracticesCreate.mockRejectedValueOnce({ status: 403, detail: 'stage_locked' });
+    const { findByTestId, getByText } = renderSheet({ currentPracticeId: 1 });
+    const row = await findByTestId('practice-switcher-row-2');
+    fireEvent.press(row);
+    await findByTestId('practice-switcher-error');
+    expect(getByText(/unlock(ed)? this stage/i)).toBeTruthy();
+  });
+
   it('the close affordance fires onClose', async () => {
     mockPracticesList.mockResolvedValue(samplePractices);
     const onClose = jest.fn();
