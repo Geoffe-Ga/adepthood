@@ -1,3 +1,6 @@
+// Pin timezone so date-math tests are hermetic; Node latches TZ at first Date use.
+process.env.TZ = 'UTC';
+
 /** @type {import('jest').Config} */
 module.exports = {
   // Use the react-native preset to avoid requiring Expo-specific tooling
