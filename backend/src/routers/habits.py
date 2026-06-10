@@ -81,10 +81,33 @@ def _subtractive_context(habit: Habit) -> SubtractiveContext | None:
     return SubtractiveContext(clear_threshold=clear.target, start_date=habit.start_date)
 
 
-def _populate_streak(habit: Habit, current_user: int, user_timezone: str) -> None:
-    """Set ``habit.streak`` from the goal completions loaded in memory."""
-    completions = [c for g in habit.goals for c in g.completions if c.user_id == current_user]
+def _populate_streak(habit: Habit, completions: list[GoalCompletion], user_timezone: str) -> None:
+    """Set ``habit.streak`` from the FULL completion history (issue #294).
+
+    Deliberately not computed from the embedded (transport-windowed)
+    rows: the streak is the program's primary motivational KPI, and a
+    chain longer than the window would silently clip. Callers fetch the
+    history via :func:`_streak_completions_by_habit` — server-side only,
+    so the response payload stays bounded.
+    """
     habit.streak = compute_habit_streak(completions, user_timezone, _subtractive_context(habit))
+
+
+async def _streak_completions_by_habit(
+    session: AsyncSession, habit_ids: list[int], user_id: int
+) -> dict[int, list[GoalCompletion]]:
+    """Full-history completions grouped by habit, for streak math only."""
+    if not habit_ids:
+        return {}
+    result = await session.execute(
+        select(Goal.habit_id, GoalCompletion)
+        .join(Goal, col(GoalCompletion.goal_id) == col(Goal.id))
+        .where(col(Goal.habit_id).in_(habit_ids), GoalCompletion.user_id == user_id)
+    )
+    by_habit: dict[int, list[GoalCompletion]] = {habit_id: [] for habit_id in habit_ids}
+    for habit_id, completion in result.all():
+        by_habit[habit_id].append(completion)
+    return by_habit
 
 
 def _filter_completions_to_caller(habit: Habit, current_user: int) -> None:
@@ -160,6 +183,7 @@ async def _refetch_with_goals(session: AsyncSession, habit_id: int) -> Habit:
         select(Habit)
         .where(Habit.id == habit_id)
         .options(habit_with_recent_completions(_recent_completions_cutoff()))
+        .execution_options(populate_existing=True)
     )
     result = await session.execute(statement)
     refreshed = result.scalars().one_or_none()
@@ -207,8 +231,11 @@ async def list_habits(
         .order_by(Habit.sort_order.asc())  # type: ignore[union-attr]
     )
     items, total = await paginate_query(session, query, pagination)
+    streak_history = await _streak_completions_by_habit(
+        session, [h.id for h in items if h.id is not None], current_user
+    )
     for habit in items:
-        _populate_streak(habit, current_user, user_tz)
+        _populate_streak(habit, streak_history.get(habit.id or -1, []), user_tz)
         _filter_completions_to_caller(habit, current_user)
     serialized = [HabitWithGoals.model_validate(h, from_attributes=True) for h in items]
     if pagination.paginate:
@@ -225,7 +252,8 @@ async def get_habit(
 ) -> Habit:
     """Return a single habit (with eager-loaded goals + completions) for the caller."""
     habit = await _get_habit_with_completions(habit_id, current_user, session)
-    _populate_streak(habit, current_user, user_tz)
+    streak_history = await _streak_completions_by_habit(session, [habit_id], current_user)
+    _populate_streak(habit, streak_history.get(habit_id, []), user_tz)
     _filter_completions_to_caller(habit, current_user)
     return habit
 

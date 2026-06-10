@@ -665,14 +665,53 @@ async def test_habit_endpoints_window_embedded_completions(
 
     detail = await async_client.get(f"/habits/{habit_id}", headers=headers)
     detail_goal = next(g for g in detail.json()["goals"] if g["id"] == goal_id)
-    assert [c["completed_units"] for c in detail_goal["completions"]] == [2.0]
+    assert sorted(c["completed_units"] for c in detail_goal["completions"]) == [2.0]
 
     collection = await async_client.get("/habits/", headers=headers)
     coll_goal = next(g for h in collection.json() for g in h["goals"] if g["id"] == goal_id)
-    assert [c["completed_units"] for c in coll_goal["completions"]] == [2.0]
+    assert sorted(c["completed_units"] for c in coll_goal["completions"]) == [2.0]
 
     # The stats endpoint deliberately keeps the FULL history — windowing
     # it would silently change all-time aggregates.
     stats = await async_client.get(f"/habits/{habit_id}/stats", headers=headers)
     assert stats.status_code == HTTPStatus.OK
     assert stats.json()["total_completions"] == 2
+
+
+@pytest.mark.asyncio
+async def test_streak_is_not_clipped_by_the_transport_window(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Issue #294 review blocker: streaks must survive the 90-day window.
+
+    The embedded completions are transport-trimmed, but the streak — the
+    program's primary motivational KPI — is computed server-side from the
+    full history via a slim secondary query, so a 100-day chain renders
+    as 100, not 90.
+    """
+    headers = await _signup(async_client, "longstreak")
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    habit_id = create_resp.json()["id"]
+    goal_id = next(g["id"] for g in create_resp.json()["goals"] if g["tier"] == "clear")
+    habit_row = await db_session.get(Habit, habit_id)
+    assert habit_row is not None
+
+    streak_days = 100
+    now_naive = datetime.now(UTC).replace(tzinfo=None)
+    db_session.add_all(
+        GoalCompletion(
+            goal_id=goal_id,
+            user_id=habit_row.user_id,
+            completed_units=1.0,
+            timestamp=now_naive - timedelta(days=days_back, hours=1),
+        )
+        for days_back in range(streak_days)
+    )
+    await db_session.commit()
+
+    detail = await async_client.get(f"/habits/{habit_id}", headers=headers)
+    assert detail.json()["streak"] == streak_days
+
+    collection = await async_client.get("/habits/", headers=headers)
+    listed = next(h for h in collection.json() if h["id"] == habit_id)
+    assert listed["streak"] == streak_days
