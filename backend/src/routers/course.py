@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -10,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from content_config import SITE_RESOURCES, find_resource
+from content_config import CONTENT_REF_SCHEME, SITE_RESOURCES, find_resource
 from database import get_session
 from domain.course import compute_days_elapsed, filter_content_for_user, next_unlock_day
 from domain.stage_progress import ensure_user_progress, get_user_progress, is_stage_unlocked
@@ -28,16 +29,16 @@ from schemas.course import (
     CourseProgressResponse,
     SiteResourceResponse,
 )
-from services.squarespace import (
-    SquarespaceAuthError,
-    SquarespaceFetchError,
-    get_squarespace_client,
+from services.content_repository import (
+    ContentBody,
+    ContentNotFoundError,
+    ContentRepositoryError,
+    get_content_repository,
 )
 
-# CMS proxy endpoints fan out to Squarespace + BeautifulSoup on a cache
-# miss, so they are an order of magnitude more expensive than the rest of
-# this router.  Capping below the 60/minute global default keeps a single
-# authenticated user from sustaining upstream load on aptitude.guru.
+# Body endpoints read Markdown off local disk now, but the cap stays as
+# defense-in-depth (it is cheap, and it kept a single authenticated user
+# from hammering the old CMS proxy — no reason to hand back the headroom).
 _CMS_PROXY_RATE_LIMIT = "30/minute"
 
 logger = logging.getLogger(__name__)
@@ -397,41 +398,41 @@ async def get_course_progress(
 
 
 # --------------------------------------------------------------------------- #
-# In-app Squarespace rendering                                                 #
+# In-app local-content rendering                                               #
 # --------------------------------------------------------------------------- #
 
 
-_CMS_ERROR_DETAIL = "cms_unavailable"
-_CMS_AUTH_ERROR_DETAIL = "cms_auth_failed"
+_CONTENT_UNAVAILABLE_DETAIL = "content_unavailable"
+
+#: ``StageContent.url`` prefix for manifest-driven rows (see content_config).
+_CONTENT_REF_PREFIX = f"{CONTENT_REF_SCHEME}://"
 
 
-async def _fetch_squarespace_body(url: str) -> ContentBodyResponse:
-    """Fetch + clean a Squarespace URL, mapping errors to HTTPExceptions.
+def _read_local_body(read: Callable[[], ContentBody], reference: str) -> ContentBodyResponse:
+    """Run a ContentRepository read, mapping errors to HTTPExceptions.
 
-    Auth misconfiguration becomes a 503 (the server, not the caller, is
-    misconfigured) and surfaces a distinct detail token so the frontend
-    can render a "Set the site password" admin nudge in dev without
-    leaking which env var is missing in prod.
+    An unknown id/slug keeps the 404 mask (``content_not_found`` — the
+    caller cannot distinguish "never existed" from "not for you").  Any
+    other repository failure means the vendored content is broken — a
+    manifest-listed file is missing or the manifest itself is unreadable
+    — which is a server bug surfaced as ``502 content_unavailable``.
+    There is no auth failure mode: local files need no credentials, so
+    ``cms_auth_failed`` is gone.
     """
-    client = get_squarespace_client()
     try:
-        fetched = await client.fetch(url)
-    except SquarespaceAuthError as exc:
-        logger.exception("squarespace_auth_failed", extra={"url": url})
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_CMS_AUTH_ERROR_DETAIL,
-        ) from exc
-    except SquarespaceFetchError as exc:
-        logger.warning("squarespace_fetch_failed: %s", exc, extra={"url": url})
+        body = read()
+    except ContentNotFoundError:
+        raise not_found("content") from None
+    except ContentRepositoryError as exc:
+        logger.exception("content_read_failed", extra={"reference": reference})
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=_CMS_ERROR_DETAIL,
+            detail=_CONTENT_UNAVAILABLE_DETAIL,
         ) from exc
     return ContentBodyResponse(
-        url=fetched.url,
-        title=fetched.title,
-        body_html=fetched.body_html,
+        title=body.title,
+        content_type=body.content_type,
+        body_markdown=body.body,
     )
 
 
@@ -465,23 +466,26 @@ async def _check_released_for_user(
         raise not_found("content")
 
 
-async def _resolve_released_content_url(
+async def _resolve_released_content_ref(
     session: AsyncSession, user_id: int, content_id: int
 ) -> str:
-    """Gate on stage-unlock + release_day, return the source URL.
+    """Gate on stage-unlock + release_day, return the local chapter id.
 
     Mirrors the 404-mask used by sibling endpoints (BUG-COURSE-004):
-    locked, unreleased, missing-URL, and nonexistent rows all surface
-    as ``content_not_found`` so ``content_id`` is not an enumeration
-    oracle.
+    locked, unreleased, missing-reference, and nonexistent rows all
+    surface as ``content_not_found`` so ``content_id`` is not an
+    enumeration oracle.  Rows without a ``content://`` reference
+    (legacy/placeholder rows) have no local body and fall under the same
+    mask.
     """
     item, stage = await _load_content_with_stage(session, content_id)
     if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number):
         raise not_found("content")
     await _check_released_for_user(session, user_id, stage.stage_number, item.release_day)
-    if not item.url:
+    reference = item.url or ""
+    if not reference.startswith(_CONTENT_REF_PREFIX):
         raise not_found("content")
-    return item.url
+    return reference.removeprefix(_CONTENT_REF_PREFIX)
 
 
 @router.get("/content/{content_id}/body", response_model=ContentBodyResponse)
@@ -492,15 +496,15 @@ async def get_content_body(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ContentBodyResponse:
-    """Return cleaned Squarespace HTML for a content item.
+    """Return raw Markdown for a content item from the vendored content.
 
     Mirrors :func:`get_content_item` for gating — a locked or non-existent
     content row both return ``content_not_found`` (BUG-COURSE-004) so the
     URL cannot be used as an enumeration oracle.  The drip-feed unlock
-    check is applied here too: locked-day content never escapes the CMS.
+    check is applied here too: locked-day content never escapes.
     """
-    url = await _resolve_released_content_url(session, current_user, content_id)
-    return await _fetch_squarespace_body(url)
+    chapter_id = await _resolve_released_content_ref(session, current_user, content_id)
+    return _read_local_body(lambda: get_content_repository().read_body(chapter_id), chapter_id)
 
 
 @router.get("/site-resources", response_model=list[SiteResourceResponse])
@@ -531,8 +535,13 @@ async def get_site_resource_body(
     slug: str,
     _current_user: Annotated[int, Depends(get_current_user)],
 ) -> ContentBodyResponse:
-    """Return cleaned Squarespace HTML for a configured site resource."""
+    """Return raw Markdown for a configured site resource.
+
+    ``find_resource`` keeps the config list as the gate on which slugs
+    exist; the body itself comes from the vendored content.  A configured
+    slug the manifest has not shipped yet 404s like any other miss.
+    """
     resource = find_resource(slug)
     if resource is None:
         raise not_found("resource")
-    return await _fetch_squarespace_body(resource.url)
+    return _read_local_body(lambda: get_content_repository().read_resource_body(slug), slug)

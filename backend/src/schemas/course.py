@@ -44,18 +44,20 @@ class ContentCompletionResponse(OwnedResourcePublic):
 
 
 class ContentBodyResponse(BaseModel):
-    """Cleaned Squarespace HTML for in-app rendering.
+    """Raw Markdown body + metadata for native in-app rendering.
 
-    ``url`` is the canonical Squarespace URL of the source page so the
-    frontend can offer "Open original" as a fallback.  ``title`` is the
-    article title parsed out of the page; the client should prefer it
-    over the ``ContentItemResponse.title`` field, which is what the
-    backend seeded.
+    Issue #393 replaced the Squarespace proxy fields: ``body_html`` and
+    the "Open original" ``url`` are gone; ``body_markdown`` is vendored
+    Markdown served verbatim from local content (no server-side
+    rendering), and ``content_type`` lets the reader pick a layout.  The
+    frontend Markdown renderer lands in the follow-up issue (#394).
+    ``title`` comes from the manifest; the client should prefer it over
+    ``ContentItemResponse.title``, which is what the backend seeded.
     """
 
-    url: str
     title: str
-    body_html: str
+    content_type: str
+    body_markdown: str
 
 
 class SiteResourceResponse(BaseModel):
