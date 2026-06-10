@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0.0",
+  "chapters": [
+    {
+      "id": "beige-1",
+      "stage": 1,
+      "chapter": 1,
+      "slug": "survival",
+      "title": "Survival",
+      "content_type": "chapter",
+      "release_day": 0,
+      "order": 1,
+      "path": "markdown/01-beige/01-survival.md",
+      "summary": "Active yes-and-ness: the body's first intelligence."
+    },
+    {
+      "id": "beige-2",
+      "stage": 1,
+      "chapter": 2,
+      "slug": "breath-as-anchor",
+      "title": "Breath as Anchor",
+      "content_type": "essay",
+      "release_day": 3,
+      "order": 2,
+      "path": "markdown/01-beige/02-breath-as-anchor.md",
+      "media": ["markdown/01-beige/assets/breath-diagram.png"]
+    }
+  ],
+  "site_resources": [
+    {
+      "slug": "getting-started",
+      "title": "Getting Started",
+      "description": "Orientation guide for new practitioners.",
+      "path": "markdown/site/getting-started.md"
+    }
+  ]
+}
