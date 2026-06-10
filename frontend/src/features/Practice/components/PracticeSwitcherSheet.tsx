@@ -98,7 +98,7 @@ function useLoadList(
     setIsLoading(true);
     setLoadError(null);
     try {
-      const list = await practices.list(stageNumber);
+      const list = await practices.listAll(stageNumber);
       if (mountedRef.current) setItems(list);
     } catch {
       if (mountedRef.current) setLoadError(LOAD_FAILED_MSG);

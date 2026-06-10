@@ -23,7 +23,7 @@ jest.mock('../../../../api', () => {
   return {
     ApiError: MockApiError,
     habits: {
-      list: jest.fn(() => Promise.resolve([])),
+      listAll: jest.fn(() => Promise.resolve([])),
       create: jest.fn(() => Promise.resolve({})),
       update: jest.fn(() => Promise.resolve({})),
       delete: jest.fn(() => Promise.resolve({})),
@@ -187,7 +187,7 @@ describe('useHabitActions.logUnit', () => {
     });
 
     // One background refresh re-fetches the server's authoritative ids…
-    expect(habitsApi.list).toHaveBeenCalledTimes(1);
+    expect(habitsApi.listAll).toHaveBeenCalledTimes(1);
     // …and the toast tells the user to simply tap again.
     expect(showToast.mock.calls.at(-1)?.[0]).toMatchObject({
       message: expect.stringMatching(/refreshed/i) as unknown,
@@ -207,7 +207,7 @@ describe('useHabitActions.logUnit', () => {
       await Promise.resolve();
     });
 
-    expect(habitsApi.list).not.toHaveBeenCalled();
+    expect(habitsApi.listAll).not.toHaveBeenCalled();
   });
 
   it('rolls BOTH store AND disk back when the API rejects (BUG-FE-HABIT-001)', async () => {

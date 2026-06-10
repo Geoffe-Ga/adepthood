@@ -93,7 +93,7 @@ function useRefreshAction(
     setState((prev) => ({ ...prev, isLoading: true, error: null }));
     try {
       const [practiceList, userPracticeList] = await Promise.all([
-        practices.list(stageNumber),
+        practices.listAll(stageNumber),
         userPractices.list(),
       ]);
       if (!mountedRef.current) return;

@@ -59,7 +59,7 @@ const mockFrequency = (jest.fn() as any).mockResolvedValue(sampleFrequency);
 
 jest.mock('../../../api', () => ({
   practices: {
-    list: (...args: unknown[]) => mockPracticesList(...args),
+    listAll: (...args: unknown[]) => mockPracticesList(...args),
     get: jest.fn() as any,
   },
   userPractices: {

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 jest.mock('../../../../api', () => ({
   habits: {
-    list: jest.fn(() => Promise.resolve([])),
+    listAll: jest.fn(() => Promise.resolve([])),
     create: jest.fn(() => Promise.resolve({})),
     update: jest.fn(() => Promise.resolve({})),
     delete: jest.fn(() => Promise.resolve({})),
@@ -130,7 +130,7 @@ describe('habitManager', () => {
   describe('loadHabits', () => {
     it('replaces state with fallback habits when API returns empty and no cache', async () => {
       (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
-      (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
 
       await habitManager.loadHabits();
 
@@ -143,7 +143,7 @@ describe('habitManager', () => {
       const userBuilt: Habit[] = [makeHabit({ id: 1, name: 'My Habit' })];
       useHabitStore.setState({ habits: userBuilt });
       (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
-      (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
 
       await habitManager.loadHabits();
 
@@ -157,7 +157,7 @@ describe('habitManager', () => {
       const userBuilt: Habit[] = [makeHabit({ id: 1, name: 'My Habit' })];
       useHabitStore.setState({ habits: userBuilt });
       (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
-      (habitsApi.list as jest.Mock).mockRejectedValueOnce(new Error('boom') as never);
+      (habitsApi.listAll as jest.Mock).mockRejectedValueOnce(new Error('boom') as never);
 
       await habitManager.loadHabits();
 
@@ -174,7 +174,7 @@ describe('habitManager', () => {
         g.tier === 'clear' ? { ...g, target: 30, target_unit: 'minutes' } : g,
       );
       (loadHabits as jest.Mock).mockResolvedValueOnce([cachedHabit] as never);
-      (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([
         {
           id: 99,
           name: 'Pranayama',
@@ -220,7 +220,7 @@ describe('habitManager', () => {
         return g;
       });
       (loadHabits as jest.Mock).mockResolvedValueOnce([cachedHabit] as never);
-      (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([
         {
           id: 99,
           name: 'Pranayama',
@@ -269,7 +269,7 @@ describe('habitManager', () => {
       (loadHabits as jest.Mock).mockResolvedValueOnce([cachedHabit] as never);
       // First GET: empty (stuck state). Second GET (after recovery push):
       // the habit re-appears with its newly-assigned server id.
-      (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([
         {
           id: 99,
           name: 'Pranayama',
@@ -299,7 +299,7 @@ describe('habitManager', () => {
       // the recovery push — that would create duplicates server-side.
       const cachedHabit = makeHabit({ id: 1, name: 'Pranayama' });
       (loadHabits as jest.Mock).mockResolvedValueOnce([cachedHabit] as never);
-      (habitsApi.list as jest.Mock).mockResolvedValueOnce([
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([
         {
           id: 99,
           name: 'Pranayama',
@@ -322,7 +322,7 @@ describe('habitManager', () => {
     it('uses cached habits when available and then replaces with API data', async () => {
       const cached: Habit[] = [makeHabit({ id: 99, name: 'Cached' })];
       (loadHabits as jest.Mock).mockResolvedValueOnce(cached as never);
-      (habitsApi.list as jest.Mock).mockResolvedValueOnce([
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([
         {
           id: 2,
           name: 'From API',
@@ -348,7 +348,7 @@ describe('habitManager', () => {
 
     it('records an error message when the API fails and no cache exists', async () => {
       (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
-      (habitsApi.list as jest.Mock).mockRejectedValueOnce(new Error('boom') as never);
+      (habitsApi.listAll as jest.Mock).mockRejectedValueOnce(new Error('boom') as never);
 
       await habitManager.loadHabits();
 
@@ -360,7 +360,7 @@ describe('habitManager', () => {
 
     it('replays the full queue and clears it when every check-in posts', async () => {
       (loadHabits as jest.Mock).mockResolvedValueOnce([] as never);
-      (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
       (loadPendingCheckIns as jest.Mock).mockResolvedValueOnce([
         { goal_id: 1, did_complete: true, timestamp: '2025-04-01T00:00:00Z' },
         { goal_id: 2, did_complete: true, timestamp: '2025-04-02T00:00:00Z' },
@@ -375,7 +375,7 @@ describe('habitManager', () => {
 
     it('forwards a queued past-day timestamp as completed_on (#269, BUG-FE-HABIT-205)', async () => {
       (loadHabits as jest.Mock).mockResolvedValueOnce([] as never);
-      (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
       (loadPendingCheckIns as jest.Mock).mockResolvedValueOnce([
         { goal_id: 1, did_complete: true, timestamp: '2025-04-01T12:00:00Z' },
       ] as never);
@@ -393,7 +393,7 @@ describe('habitManager', () => {
 
     it('omits completed_on when the queued check-in is from today', async () => {
       (loadHabits as jest.Mock).mockResolvedValueOnce([] as never);
-      (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
       (loadPendingCheckIns as jest.Mock).mockResolvedValueOnce([
         { goal_id: 1, did_complete: true, timestamp: new Date().toISOString() },
       ] as never);
@@ -411,7 +411,7 @@ describe('habitManager', () => {
 
     it('tz-less internal re-fetches reuse the last known zone (#269)', async () => {
       (loadHabits as jest.Mock).mockResolvedValue([] as never);
-      (habitsApi.list as jest.Mock).mockResolvedValue([] as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValue([] as never);
       (loadPendingCheckIns as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([
         // 22:00 UTC is already April 2 in Pacific/Kiritimati (UTC+14),
         // so the expected day proves the remembered zone is used — the
@@ -431,7 +431,7 @@ describe('habitManager', () => {
 
     it('keeps only the unprocessed suffix when replay fails mid-batch (BUG-FE-HABIT-205)', async () => {
       (loadHabits as jest.Mock).mockResolvedValueOnce([] as never);
-      (habitsApi.list as jest.Mock).mockResolvedValueOnce([] as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
       (loadPendingCheckIns as jest.Mock).mockResolvedValueOnce([
         { goal_id: 1, did_complete: true, timestamp: '2025-04-01T00:00:00Z' },
         { goal_id: 2, did_complete: true, timestamp: '2025-04-02T00:00:00Z' },
@@ -680,7 +680,7 @@ describe('habitManager', () => {
         start_date: '2026-05-10',
         milestone_notifications: false,
       };
-      (habitsApi.list as jest.Mock).mockImplementationOnce(() => Promise.resolve([serverHabit]));
+      (habitsApi.listAll as jest.Mock).mockImplementationOnce(() => Promise.resolve([serverHabit]));
 
       await habitManager.addHabit({
         name: 'Brand New',
@@ -1040,7 +1040,7 @@ describe('habitManager', () => {
       ];
       // Server returns the habit with a real autoincrement id (47), real
       // goal ids (101/102/103), and the same name we POSTed.
-      (habitsApi.list as jest.Mock).mockResolvedValueOnce([
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([
         {
           id: 47,
           name: 'Meditate',

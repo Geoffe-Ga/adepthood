@@ -111,10 +111,10 @@ const mockSiteResourceBody = (jest.fn() as any).mockResolvedValue({
 
 jest.mock('../../../api', () => ({
   stages: {
-    list: (...args: unknown[]) => mockStagesList(...args),
+    listAll: (...args: unknown[]) => mockStagesList(...args),
   },
   course: {
-    stageContent: (...args: unknown[]) => mockStageContent(...args),
+    stageContentAll: (...args: unknown[]) => mockStageContent(...args),
     stageProgress: (...args: unknown[]) => mockStageProgress(...args),
     markRead: (...args: unknown[]) => mockMarkRead(...args),
     contentBody: (...args: unknown[]) => mockContentBody(...args),
