@@ -19,12 +19,18 @@ Usage::
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.strategy_options import _AbstractLoad
 
 from models.goal import Goal
+from models.goal_completion import GoalCompletion
 from models.goal_group import GoalGroup
 from models.habit import Habit
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 # Habit -> goals (no completions).  Use when the response only exposes goal
 # scalars (e.g. ``GET /habits``).
@@ -35,6 +41,27 @@ HABIT_WITH_GOALS: _AbstractLoad = selectinload(Habit.goals)  # type: ignore[arg-
 HABIT_WITH_GOALS_AND_COMPLETIONS: _AbstractLoad = HABIT_WITH_GOALS.selectinload(
     Goal.completions  # type: ignore[arg-type]
 )
+
+
+def habit_with_recent_completions(cutoff: datetime) -> _AbstractLoad:
+    """Habit -> goals -> completions newer than ``cutoff`` (issue #294).
+
+    The unbounded ``HABIT_WITH_GOALS_AND_COMPLETIONS`` chain ships an
+    account's entire completion history on every habit GET — linear
+    payload growth over the account's lifetime.  This windowed variant
+    trims the *transport* via a query-time ``.and_()`` predicate; the
+    rows themselves stay in the database and still feed the unwindowed
+    consumers (the stats endpoint's all-time aggregates).  Built per
+    request because ``cutoff`` is relative to now.
+    """
+    # ``attr-defined``: SQLModel types ``Goal.completions`` statically as
+    # ``list[GoalCompletion]``; SQLAlchemy's relationship comparator adds
+    # ``.and_`` at runtime — the same class-vs-instance attr quirk the
+    # bare ``selectinload`` ignores above paper over (issue #294).
+    return selectinload(Habit.goals).selectinload(  # type: ignore[arg-type]
+        Goal.completions.and_(GoalCompletion.timestamp >= cutoff)  # type: ignore[attr-defined]
+    )
+
 
 # GoalGroup -> goals.  Use when serializing GoalGroupResponse, which embeds
 # the group's goals.
