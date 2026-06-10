@@ -93,6 +93,17 @@ def _populate_streak(habit: Habit, completions: list[GoalCompletion], user_timez
     habit.streak = compute_habit_streak(completions, user_timezone, _subtractive_context(habit))
 
 
+async def _populate_streaks_for(
+    session: AsyncSession, habits: list[Habit], current_user: int, user_tz: str
+) -> None:
+    """Set streaks for a page of habits from ONE full-history query (issue #294)."""
+    history = await _streak_completions_by_habit(
+        session, [h.id for h in habits if h.id is not None], current_user
+    )
+    for habit in habits:
+        _populate_streak(habit, history.get(habit.id or -1, []), user_tz)
+
+
 async def _streak_completions_by_habit(
     session: AsyncSession, habit_ids: list[int], user_id: int
 ) -> dict[int, list[GoalCompletion]]:
@@ -231,11 +242,8 @@ async def list_habits(
         .order_by(Habit.sort_order.asc())  # type: ignore[union-attr]
     )
     items, total = await paginate_query(session, query, pagination)
-    streak_history = await _streak_completions_by_habit(
-        session, [h.id for h in items if h.id is not None], current_user
-    )
+    await _populate_streaks_for(session, items, current_user, user_tz)
     for habit in items:
-        _populate_streak(habit, streak_history.get(habit.id or -1, []), user_tz)
         _filter_completions_to_caller(habit, current_user)
     serialized = [HabitWithGoals.model_validate(h, from_attributes=True) for h in items]
     if pagination.paginate:
@@ -252,8 +260,7 @@ async def get_habit(
 ) -> Habit:
     """Return a single habit (with eager-loaded goals + completions) for the caller."""
     habit = await _get_habit_with_completions(habit_id, current_user, session)
-    streak_history = await _streak_completions_by_habit(session, [habit_id], current_user)
-    _populate_streak(habit, streak_history.get(habit_id, []), user_tz)
+    await _populate_streaks_for(session, [habit], current_user, user_tz)
     _filter_completions_to_caller(habit, current_user)
     return habit
 
