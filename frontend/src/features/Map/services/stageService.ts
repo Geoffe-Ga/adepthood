@@ -72,16 +72,7 @@ export const deriveCurrentStage = (apiStages: Stage[]): number => {
   return Math.min(Math.max(1, completed + 1), STAGE_COUNT);
 };
 
-/**
- * Whether a stage reads as unlocked on the map.
- *
- * Unlocked when the server's ``is_unlocked`` flag is set *or* when the
- * date-driven course calendar (``programStage``) has already reached it. The
- * map must honour the same derived current stage the Practice and Course
- * screens use, so a user whose calendar says "Purple" never sees the Purple
- * stage padlocked while practising it. Stages at or below ``currentStage``
- * are, by the chain-validation invariant, all reachable.
- */
+/** Unlocked on the map when the server `is_unlocked` flag is set OR the date-derived current stage has reached it, so the padlock matches the Practice/Course stage. */
 export const isStageUnlocked = (
   stage: Pick<StageData, 'isUnlocked' | 'stageNumber'>,
   currentStage: number | null,

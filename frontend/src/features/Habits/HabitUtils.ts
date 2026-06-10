@@ -594,19 +594,7 @@ export const isEarlyUnlocked = (habit: Habit): boolean => {
   return habit.revealed === true && new Date(habit.start_date).getTime() > Date.now();
 };
 
-/**
- * Whether a habit tile should render locked *today*, on the universal
- * course calendar.
- *
- * A habit's ``start_date`` is derived from the master program anchor
- * (``programStartDate``) via :func:`calculateHabitStartDate`, so it falls
- * exactly on the day the calendar enters that habit's stage. The lock must
- * therefore track the calendar: once ``start_date`` has arrived the habit
- * is active — regardless of a stale server ``revealed`` flag — so the
- * Habits screen agrees with the Map / Practice / Course stage. The
- * ``revealed`` flag still drives *manual* early unlock for habits whose
- * start date is in the future (see :func:`isEarlyUnlocked`).
- */
+/** Locked today iff unrevealed AND its calendar-anchored `start_date` is still in the future; once that date arrives the habit unlocks regardless of a stale `revealed` flag (which only gates manual early-unlock). */
 export const isHabitLockedToday = (habit: Habit, now: number = Date.now()): boolean => {
   return habit.revealed === false && new Date(habit.start_date).getTime() > now;
 };

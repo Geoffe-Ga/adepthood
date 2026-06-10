@@ -439,11 +439,7 @@ const useHabitTileRenderer = (
   pageOffset = 0,
 ) => {
   const renderHabitTile = ({ item, index }: { item: Habit; index: number }) => {
-    // Lock state follows the universal course calendar: a habit's
-    // ``start_date`` lands on the day the calendar enters its stage, so once
-    // that date passes the tile unlocks even if the server ``revealed`` flag
-    // is stale. This keeps the Habits screen in lockstep with the Map /
-    // Practice / Course stage. ``revealed`` still gates manual early unlock.
+    // Calendar-driven: unlocks when the anchored start_date arrives, not on the stale `revealed` flag — keeps Habits in lockstep with Map/Practice/Course.
     const isLocked = isHabitLockedToday(item);
     const globalIndex = pageOffset + index;
     // index is page-relative, so each page restarts the Beige → Clear Light gradient.

@@ -99,21 +99,18 @@ jest.mock('../../../store/useStageStore', () => ({
 
 import MapScreen from '../MapScreen';
 
+// react-test-renderer ships no types here, so structurally type just the prop
+// we read instead of reaching for `any`.
+const isLockIcon = (node: { props: { children?: unknown } }): boolean =>
+  node.props.children === '🔒';
+
 const countLockIcons = (tree: ReturnType<typeof create>): number =>
-  tree.root.findAll(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (node: any) => typeof node.props.children === 'string' && node.props.children === '🔒',
-  ).length;
+  tree.root.findAll(isLockIcon).length;
 
 /** Whether the first hotspot of ``stageNumber`` renders a padlock overlay. */
 const hotspotHasLock = (tree: ReturnType<typeof create>, stageNumber: number): boolean => {
   const hotspot = tree.root.findByProps({ testID: `stage-hotspot-${stageNumber}-0` });
-  return (
-    hotspot.findAll(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (node: any) => typeof node.props.children === 'string' && node.props.children === '🔒',
-    ).length > 0
-  );
+  return hotspot.findAll(isLockIcon).length > 0;
 };
 
 describe('MapScreen', () => {

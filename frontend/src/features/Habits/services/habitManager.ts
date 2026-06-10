@@ -288,11 +288,7 @@ const buildAddedHabit = (input: AddHabitInput, existingCount: number): Habit => 
   };
 };
 
-/**
- * Earliest habit start date — the day the program begins. Habit start dates
- * are laid out by stage position, so index 0 is normally the earliest, but we
- * take the min defensively in case a caller hands us an unsorted list.
- */
+/** Earliest habit start date (the program start); takes the min, not index 0, in case the list is unsorted. */
 const earliestStartDate = (habits: OnboardingHabit[]): Date | null => {
   let earliest: number | null = null;
   for (const habit of habits) {
