@@ -286,6 +286,44 @@ describe('habitManager', () => {
       expect(clear.goal_group_id ?? null).toBeNull();
     });
 
+    it('replays goal fields even when the goal-group list is unavailable (#425)', async () => {
+      const cachedHabit = makeHabit({ id: 1, name: 'Pranayama' });
+      cachedHabit.goals = cachedHabit.goals.map((g) =>
+        g.tier === 'clear' ? { ...g, target: 30, goal_group_id: 5 } : g,
+      );
+      (loadHabits as jest.Mock).mockResolvedValueOnce([cachedHabit] as never);
+      (goalGroupsApi.list as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([
+        {
+          id: 99,
+          name: 'Pranayama',
+          icon: cachedHabit.icon,
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          goals: [
+            freshServerGoal(991, 'Low', 'low', 1),
+            freshServerGoal(992, 'Clear', 'clear', 2),
+            freshServerGoal(993, 'Stretch', 'stretch', 3),
+          ],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      // The target customization still replays; the unverifiable
+      // association is dropped rather than failing the recovery.
+      expect(goalsApi.update).toHaveBeenCalledWith(
+        992,
+        expect.objectContaining({ target: 30, goal_group_id: null }),
+      );
+      const clear = useHabitStore.getState().habits[0]!.goals.find((g) => g.tier === 'clear')!;
+      expect(clear.target).toBe(30);
+    });
+
     it('one failed replay PUT does not abort the remaining goals (#286)', async () => {
       // Both clear AND stretch carry customizations; the clear PUT fails.
       // Best-effort-per-goal is the core design choice: stretch must still
