@@ -23,6 +23,7 @@ def test_goal_schema_round_trip() -> None:
         "frequency_unit": "per_day",
         "is_additive": True,
         "goal_group_id": None,
+        "days_of_week": None,
     }
 
     schema_goal = GoalSchema.model_validate(record)

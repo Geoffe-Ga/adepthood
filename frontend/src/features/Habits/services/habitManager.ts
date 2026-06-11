@@ -118,6 +118,7 @@ const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.list>>): Ha
       frequency_unit: g.frequency_unit,
       is_additive: g.is_additive,
       goal_group_id: g.goal_group_id ?? null,
+      days_of_week: g.days_of_week ?? undefined,
     })),
     // Shared with ``toLocalHabit`` -- single-source dedupe + Date rehydration.
     completions: flattenGoalCompletions(h.goals ?? []),
@@ -471,6 +472,13 @@ const recoverStuckHabits = async (cached: Habit[]): Promise<void> => {
   }
 };
 
+/** Order-sensitive equality with null/undefined/empty treated as "every day". */
+const sameDaysOfWeek = (a: string[] | undefined, b: string[] | undefined): boolean => {
+  const left = a ?? [];
+  const right = b ?? [];
+  return left.length === right.length && left.every((day, i) => day === right[i]);
+};
+
 /**
  * The cached group association, kept only if that group still exists
  * server-side — recovery may have outlived the groups the id pointed at,
@@ -499,7 +507,8 @@ const goalNeedsReplay = (cached: Goal, fresh: Goal, validGroupIds: Set<number>):
   cached.frequency !== fresh.frequency ||
   cached.frequency_unit !== fresh.frequency_unit ||
   cached.is_additive !== fresh.is_additive ||
-  sanitizedGroupId(cached, validGroupIds) !== (fresh.goal_group_id ?? null);
+  sanitizedGroupId(cached, validGroupIds) !== (fresh.goal_group_id ?? null) ||
+  !sameDaysOfWeek(cached.days_of_week, fresh.days_of_week);
 
 /** PUT one cached customization onto its freshly-seeded server goal. */
 const replayOneGoal = async (
@@ -516,8 +525,9 @@ const replayOneGoal = async (
     frequency: cached.frequency,
     frequency_unit: cached.frequency_unit,
     is_additive: cached.is_additive,
-    // Full-replace PUT: omitting this wiped any surviving association.
+    // Full-replace PUT: omitting these would wipe surviving values.
     goal_group_id: sanitizedGroupId(cached, validGroupIds),
+    days_of_week: cached.days_of_week ?? null,
   });
 };
 
@@ -542,6 +552,7 @@ const mergeReplayedGoals = (
       is_additive: cg.is_additive,
       // Mirror what the PUT actually sent, not the raw cached value.
       goal_group_id: sanitizedGroupId(cg, validGroupIds),
+      days_of_week: cg.days_of_week,
     };
   }),
 });
@@ -572,8 +583,7 @@ const replayHabitGoals = async (
  * only server-accepted tiers. Reads the immutable ``fresh`` snapshot —
  * deliberately NOT ``applyGoalUpdate``, whose in-place tier normalization
  * would cascade phantom replays. Goal-group associations replay only when
- * the group still exists server-side. Known field gap: days_of_week
- * (#426, blocked on GoalUpdate schema support).
+ * the group still exists server-side; days_of_week replays verbatim.
  */
 const replayCachedGoalTargets = async (cached: Habit[], fresh: Habit[]): Promise<void> => {
   const validGroupIds = await fetchServerGroupIds();
@@ -725,6 +735,7 @@ export const habitManager = {
       frequency_unit: updatedGoal.frequency_unit,
       is_additive: updatedGoal.is_additive,
       goal_group_id: updatedGoal.goal_group_id ?? null,
+      days_of_week: updatedGoal.days_of_week ?? null,
     };
     goalsApi
       .update(updatedGoal.id, payload)

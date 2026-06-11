@@ -212,6 +212,41 @@ describe('habitManager', () => {
       expect(clear.target_unit).toBe('minutes');
     });
 
+    it('replays days_of_week customizations after recovery (#426)', async () => {
+      const cachedHabit = makeHabit({ id: 1, name: 'Pranayama' });
+      cachedHabit.goals = cachedHabit.goals.map((g) =>
+        g.tier === 'clear' ? { ...g, days_of_week: ['Mon', 'Wed'] } : g,
+      );
+      (loadHabits as jest.Mock).mockResolvedValueOnce([cachedHabit] as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([
+        {
+          id: 99,
+          name: 'Pranayama',
+          icon: cachedHabit.icon,
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          goals: [
+            freshServerGoal(991, 'Low', 'low', 1),
+            freshServerGoal(992, 'Clear', 'clear', 2),
+            freshServerGoal(993, 'Stretch', 'stretch', 3),
+          ],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      expect(goalsApi.update).toHaveBeenCalledWith(
+        992,
+        expect.objectContaining({ days_of_week: ['Mon', 'Wed'] }),
+      );
+      const clear = useHabitStore.getState().habits[0]!.goals.find((g) => g.tier === 'clear')!;
+      expect(clear.days_of_week).toEqual(['Mon', 'Wed']);
+    });
+
     it('restores a surviving goal-group association during replay (#425)', async () => {
       const cachedHabit = makeHabit({ id: 1, name: 'Pranayama' });
       cachedHabit.goals = cachedHabit.goals.map((g) =>
