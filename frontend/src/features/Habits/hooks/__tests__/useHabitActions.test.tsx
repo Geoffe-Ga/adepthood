@@ -20,8 +20,15 @@ jest.mock('../../../../api', () => {
       this.detail = detail;
     }
   }
+  class MockApiValidationError extends Error {
+    constructor() {
+      super('validation failed');
+      this.name = 'ApiValidationError';
+    }
+  }
   return {
     ApiError: MockApiError,
+    ApiValidationError: MockApiValidationError,
     habits: {
       listAll: jest.fn(() => Promise.resolve([])),
       create: jest.fn(() => Promise.resolve({})),
@@ -42,6 +49,7 @@ jest.mock('../../../../storage/habitStorage', () => ({
   loadHabits: jest.fn(() => Promise.resolve(null)),
   loadPendingCheckIns: jest.fn(() => Promise.resolve([])),
   clearPendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
+  savePendingCheckIn: jest.fn(() => Promise.resolve(undefined)),
 }));
 
 jest.mock('../../hooks/useHabitNotifications', () => ({
@@ -65,7 +73,7 @@ import {
   goalCompletions as goalCompletionsApi,
   habits as habitsApi,
 } from '../../../../api';
-import { saveHabits } from '../../../../storage/habitStorage';
+import { saveHabits, savePendingCheckIn } from '../../../../storage/habitStorage';
 import { useHabitStore } from '../../../../store/useHabitStore';
 import type { Habit } from '../../Habits.types';
 import { useHabitActions } from '../useHabitActions';
@@ -216,7 +224,9 @@ describe('useHabitActions.logUnit', () => {
     useHabitStore.setState({ habits: initial });
 
     (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
-      Promise.reject(new Error('network down')),
+      Promise.reject(
+        new (MockApiError as unknown as new (s: number, d: string) => Error)(422, 'nope'),
+      ),
     );
 
     const { result, showToast } = renderActions();
@@ -262,6 +272,69 @@ describe('useHabitActions.logUnit', () => {
     expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(0);
     expect(goalCompletionsApi.create).not.toHaveBeenCalled();
     expect(showToast).not.toHaveBeenCalled();
+  });
+});
+
+describe('useHabitActions.logUnit offline queueing (issue #415)', () => {
+  it('queues the check-in and keeps the optimistic state on a network error', async () => {
+    useHabitStore.setState({ habits: [makeHabit()] });
+    (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
+      Promise.reject(new TypeError('fetch failed')),
+    );
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(savePendingCheckIn).toHaveBeenCalledWith(
+      expect.objectContaining({ goal_id: 11, did_complete: true, completed_on: undefined }),
+    );
+    // Optimistic state survives — the tap is queued, not thrown away.
+    expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(1);
+    const messages = (showToast as jest.Mock).mock.calls.map(
+      (c) => (c[0] as { message: string }).message,
+    );
+    expect(messages.some((m) => /sync when you reconnect/i.test(m))).toBe(true);
+  });
+
+  it('forwards the backfill day when a backdated log goes offline', async () => {
+    useHabitStore.setState({ habits: [makeHabit()] });
+    (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
+      Promise.reject(new TypeError('fetch failed')),
+    );
+    const { result } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1, new Date('2025-06-01T12:00:00Z'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(savePendingCheckIn).toHaveBeenCalledWith(
+      expect.objectContaining({ goal_id: 11, completed_on: '2025-06-01' }),
+    );
+  });
+
+  it('does NOT queue on a server rejection — reverts instead', async () => {
+    useHabitStore.setState({ habits: [makeHabit()] });
+    (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
+      Promise.reject(
+        new (MockApiError as unknown as new (s: number, d: string) => Error)(422, 'nope'),
+      ),
+    );
+    const { result } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(savePendingCheckIn).not.toHaveBeenCalled();
+    expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(0);
   });
 });
 
