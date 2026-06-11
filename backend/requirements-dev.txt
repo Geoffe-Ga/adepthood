@@ -14,6 +14,7 @@ vulture>=2.13
 xenon>=0.9
 pydantic
 sqlmodel
+types-cachetools
 types-requests
 types-ujson
 types-orjson

@@ -118,7 +118,7 @@ async def test_update_timezone_requires_auth(async_client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_update_timezone_is_scoped_to_caller(async_client: AsyncClient) -> None:
     alice_headers, _ = await _signup(async_client, username="alice", timezone="Europe/Paris")
-    bob_headers, _ = await _signup(async_client, username="bob", timezone="Asia/Tokyo")
+    _bob_headers, _ = await _signup(async_client, username="bob", timezone="Asia/Tokyo")
 
     resp = await async_client.put(
         "/users/me/timezone",

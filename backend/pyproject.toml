@@ -10,7 +10,10 @@ known_first_party = ["src", "tests"]
 src_paths = ["src", "tests"]
 
 [tool.ruff]
-src = ["backend/src"]
+# Both spellings so first-party detection works from the repo root
+# (pre-commit) AND from backend/ (scripts/backend/*.sh); ruff ignores
+# entries that do not exist for the current cwd.
+src = ["backend/src", "src"]
 line-length = 100
 target-version = "py312"
 extend-exclude = ["migrations", ".venv", "venv", "build", "dist"]
@@ -93,7 +96,8 @@ show_error_codes = true
 pretty = true
 explicit_package_bases = true
 plugins = ["pydantic.mypy"]
-mypy_path = ["backend/src", "backend"]
+# Same dual spelling as [tool.ruff] src — valid from repo root and backend/.
+mypy_path = ["backend/src", "backend", "src", "."]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
