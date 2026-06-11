@@ -11,6 +11,8 @@ export interface PendingCheckIn {
   goal_id: number;
   did_complete: boolean;
   timestamp: string;
+  /** Explicit backfill day for a backdated log; replay forwards it verbatim. */
+  completed_on?: string;
 }
 
 /**

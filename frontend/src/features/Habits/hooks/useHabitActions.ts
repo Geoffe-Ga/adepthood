@@ -1,9 +1,10 @@
 import { useCallback, useMemo } from 'react';
 
-import { ApiError } from '../../../api';
+import { ApiError, ApiValidationError } from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
 import { colors } from '../../../design/tokens';
 import { useOptimisticMutation } from '../../../hooks/useOptimisticMutation';
+import { savePendingCheckIn } from '../../../storage/habitStorage';
 import type { HabitsActions, OnboardingHabit } from '../Habits.types';
 import { habitManager, type LogUnitContext, type ShowToast } from '../services/habitManager';
 
@@ -14,6 +15,18 @@ const SYNC_ERROR_ICON = '\u{26A0}\u{FE0F}';
 
 /** Show the rejection long enough to read on a phone before auto-dismiss. */
 const SYNC_ERROR_TOAST_DURATION_MS = 6000;
+
+/** Toast icon for an offline check-in that was queued for later sync. */
+const OFFLINE_QUEUED_ICON = '\u{1F4F6}';
+
+/**
+ * The server spoke (an HTTP status or a response that failed validation) —
+ * the request is not retryable as-is, so the optimistic update must revert.
+ * Anything else (fetch TypeError, DNS failure, airplane mode) is a network
+ * problem the pending-check-in queue exists for.
+ */
+const isServerResponse = (err: unknown): boolean =>
+  err instanceof ApiError || err instanceof ApiValidationError;
 
 /**
  * The stale-synthetic-ID symptom (issue #282): onboarding's POSTs landed
@@ -37,6 +50,55 @@ const isStaleGoalIdError = (err: unknown): boolean =>
  * with no error visible. The ToastProvider renders identically across
  * native and web, so the rejection now always reaches the user.
  */
+const handleLogUnitFailure = (
+  ctx: LogUnitContext,
+  err: unknown,
+  showToast: ShowToast,
+  tz: string,
+): void => {
+  if (!isServerResponse(err) && ctx.currentGoal.id != null) {
+    // Offline: keep the optimistic state and queue the check-in for
+    // the next loadHabits replay instead of throwing the tap away.
+    void savePendingCheckIn({
+      goal_id: ctx.currentGoal.id,
+      did_complete: true,
+      timestamp: new Date().toISOString(),
+      completed_on: ctx.completedOn,
+    });
+    showToast({
+      message: "You're offline — check-in saved on this device. It will sync when you reconnect.",
+      icon: OFFLINE_QUEUED_ICON,
+      color: colors.secondary,
+      duration: SYNC_ERROR_TOAST_DURATION_MS,
+    });
+    return;
+  }
+  habitManager.rollbackLogUnitContext(ctx);
+  if (isStaleGoalIdError(err)) {
+    // Issue #282 recovery path: re-fetch the server's authoritative
+    // ids in the background so the user's NEXT tap succeeds, instead
+    // of leaving them stuck until an app restart.
+    void habitManager.loadHabits(tz);
+    showToast({
+      message:
+        'Your habits were out of sync with the server — we just refreshed them. Tap to log that unit again.',
+      icon: SYNC_ERROR_ICON,
+      color: colors.danger,
+      duration: SYNC_ERROR_TOAST_DURATION_MS,
+    });
+    return;
+  }
+  showToast({
+    message: formatApiError(err, {
+      fallback:
+        "We couldn't save that check-in. Your local copy was restored — check your connection and tap to log again.",
+    }),
+    icon: SYNC_ERROR_ICON,
+    color: colors.danger,
+    duration: SYNC_ERROR_TOAST_DURATION_MS,
+  });
+};
+
 const useLogUnitMutation = (
   showToast: ShowToast,
   tz: string,
@@ -44,32 +106,7 @@ const useLogUnitMutation = (
   const mutation = useOptimisticMutation<LogUnitContext, unknown>({
     apply: (ctx) => habitManager.applyLogUnitContext(ctx),
     commit: (ctx) => habitManager.commitLogUnitContext(ctx),
-    rollback: (ctx, err) => {
-      habitManager.rollbackLogUnitContext(ctx);
-      if (isStaleGoalIdError(err)) {
-        // Issue #282 recovery path: re-fetch the server's authoritative
-        // ids in the background so the user's NEXT tap succeeds, instead
-        // of leaving them stuck until an app restart.
-        void habitManager.loadHabits(tz);
-        showToast({
-          message:
-            'Your habits were out of sync with the server — we just refreshed them. Tap to log that unit again.',
-          icon: SYNC_ERROR_ICON,
-          color: colors.danger,
-          duration: SYNC_ERROR_TOAST_DURATION_MS,
-        });
-        return;
-      }
-      showToast({
-        message: formatApiError(err, {
-          fallback:
-            "We couldn't save that check-in. Your local copy was restored — check your connection and tap to log again.",
-        }),
-        icon: SYNC_ERROR_ICON,
-        color: colors.danger,
-        duration: SYNC_ERROR_TOAST_DURATION_MS,
-      });
-    },
+    rollback: (ctx, err) => handleLogUnitFailure(ctx, err, showToast, tz),
     onSuccess: (ctx) => {
       showToast(habitManager.buildLogUnitToast(ctx));
     },

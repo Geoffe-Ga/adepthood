@@ -600,7 +600,9 @@ const replayPendingCheckIns = async (tz?: string): Promise<void> => {
       await goalCompletionsApi.create({
         goal_id: checkIn.goal_id,
         did_complete: checkIn.did_complete,
-        completed_on: dayKey !== today ? dayKey : undefined,
+        // An explicit backfill day (queued by a backdated offline log)
+        // wins; otherwise derive it from the queue timestamp.
+        completed_on: checkIn.completed_on ?? (dayKey !== today ? dayKey : undefined),
       });
     } catch {
       // Still offline (or the server rejected this one). Persist only
