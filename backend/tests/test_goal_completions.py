@@ -138,6 +138,48 @@ async def test_same_day_completion_is_idempotent(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tz", ["America/Los_Angeles", "Pacific/Auckland"])
+async def test_same_day_completion_is_idempotent_for_non_utc_user(
+    async_client: AsyncClient, db_session: AsyncSession, tz: str
+) -> None:
+    """Issue #412: duplicate detection must hold for non-UTC users on SQLite.
+
+    ``day_bounds_in_tz`` used to return bounds pinned to the user's zone;
+    SQLite compares DateTime(timezone=True) values lexically and ignores
+    the offset suffix, so the in-day window query silently missed the
+    first completion and the streak double-counted.
+    """
+    resp = await async_client.post(
+        "/auth/signup",
+        json={
+            "email": f"tzdup-{tz.split('/')[-1].lower()}@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+            "timezone": tz,
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+    headers = {"Authorization": f"Bearer {resp.json()['token']}"}
+    goal = await _seed_goal(db_session, resp.json()["user_id"])
+
+    resp1 = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "did_complete": True},
+        headers=headers,
+    )
+    assert resp1.json()["reason_code"] == "streak_incremented"
+
+    resp2 = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "did_complete": True},
+        headers=headers,
+    )
+    assert resp2.status_code == HTTPStatus.OK
+    data = resp2.json()
+    assert data["reason_code"] == "already_logged_today"
+    assert data["streak"] == 1
+
+
+@pytest.mark.asyncio
 async def test_consecutive_day_completions_build_streak(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:

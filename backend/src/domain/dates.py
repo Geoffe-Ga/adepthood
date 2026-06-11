@@ -17,7 +17,7 @@ never produce a naive datetime.
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Protocol, runtime_checkable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -104,22 +104,26 @@ def day_bounds_in_tz(
     user_or_tz: _HasTimezone | str | None,
     day: date,
 ) -> tuple[datetime, datetime]:
-    """Return ``[start, end)`` UTC-aware bounds for ``day`` in the user's TZ.
+    """Return ``[start, end)`` UTC-normalized bounds for ``day`` in the user's TZ.
 
-    The returned datetimes are timezone-aware and pinned to the user's
-    zone — but because Postgres ``timestamptz`` columns are stored as
-    UTC under the hood, comparing against these values in a SQL ``WHERE``
-    clause works without further conversion.  ``end`` is the start of
-    the *next* day so range queries stay half-open: ``WHERE col >= start
-    AND col < end`` correctly groups all timestamps that fall inside the
-    user's local calendar day, including the edge case where the local
-    day spans a DST jump (``end - start`` may be 23 or 25 hours, never
-    24 in DST-active zones).
+    Boundaries are computed at local midnight in the user's zone and then
+    converted to UTC (issue #412).  Postgres ``timestamptz`` compares
+    instants, so either representation works there — but SQLite stores
+    ``DateTime(timezone=True)`` as ISO strings and compares **lexically**,
+    ignoring the offset suffix, so bounds pinned to a non-UTC zone
+    mis-ordered against the UTC-rendered stored values.  Normalizing both
+    bounds to UTC makes every rendered string share the ``+00:00`` offset,
+    so the lexical comparison is also the chronological one.  ``end`` is
+    the start of the *next* day so range queries stay half-open: ``WHERE
+    col >= start AND col < end`` correctly groups all timestamps that
+    fall inside the user's local calendar day, including the edge case
+    where the local day spans a DST jump (``end - start`` may be 23 or
+    25 hours, never 24 in DST-active zones).
     """
     zone = _resolve_zone(user_or_tz)
     start = datetime.combine(day, time.min, tzinfo=zone)
     end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=zone)
-    return start, end
+    return start.astimezone(UTC), end.astimezone(UTC)
 
 
 def to_user_date(
