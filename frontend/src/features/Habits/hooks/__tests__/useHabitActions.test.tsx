@@ -70,6 +70,7 @@ jest.mock('react-native', () => ({
 
 import {
   ApiError as MockApiError,
+  ApiValidationError as MockApiValidationError,
   goalCompletions as goalCompletionsApi,
   habits as habitsApi,
 } from '../../../../api';
@@ -205,7 +206,9 @@ describe('useHabitActions.logUnit', () => {
   it('does NOT resync habits on unrelated check-in failures (#282)', async () => {
     useHabitStore.setState({ habits: [makeHabit()] });
     (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
-      Promise.reject(new Error('network down')),
+      Promise.reject(
+        new (MockApiError as unknown as new (s: number, d: string) => Error)(500, 'internal_error'),
+      ),
     );
     const { result } = renderActions();
 
@@ -316,6 +319,23 @@ describe('useHabitActions.logUnit offline queueing (issue #415)', () => {
     expect(savePendingCheckIn).toHaveBeenCalledWith(
       expect.objectContaining({ goal_id: 11, completed_on: '2025-06-01' }),
     );
+  });
+
+  it('does NOT queue on ApiValidationError — reverts instead', async () => {
+    useHabitStore.setState({ habits: [makeHabit()] });
+    (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
+      Promise.reject(new (MockApiValidationError as unknown as new () => Error)()),
+    );
+    const { result } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(savePendingCheckIn).not.toHaveBeenCalled();
+    expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(0);
   });
 
   it('does NOT queue on a server rejection — reverts instead', async () => {

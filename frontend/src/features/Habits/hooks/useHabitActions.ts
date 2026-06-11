@@ -23,7 +23,7 @@ const OFFLINE_QUEUED_ICON = '\u{1F4F6}';
  * The server spoke (an HTTP status or a response that failed validation) —
  * the request is not retryable as-is, so the optimistic update must revert.
  * Anything else (fetch TypeError, DNS failure, airplane mode) is a network
- * problem the pending-check-in queue exists for (issue #415).
+ * problem the pending-check-in queue exists for.
  */
 const isServerResponse = (err: unknown): boolean =>
   err instanceof ApiError || err instanceof ApiValidationError;
