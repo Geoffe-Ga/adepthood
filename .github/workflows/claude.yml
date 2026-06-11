@@ -37,6 +37,10 @@ jobs:
       pull-requests: read
       issues: read
       actions: read
+      # OIDC token for the claude action's auth exchange — without it every
+      # mention-triggered run fails with "Could not fetch an OIDC token".
+      # Mirrors claude-code-review.yml.
+      id-token: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
