@@ -168,6 +168,82 @@ async def test_update_goal_persists_target_unit_frequency_and_is_additive(
 
 
 @pytest.mark.asyncio
+async def test_update_goal_persists_days_of_week(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Issue #426: the weekly cadence round-trips through PUT and the response."""
+    headers, user_id = await _signup(async_client)
+    goal = await _seed_goal(db_session, user_id)
+
+    resp = await async_client.put(
+        f"/goals/{goal.id}",
+        json=_update_payload(days_of_week=["Mon", "Wed", "Fri"]),
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["days_of_week"] == ["Mon", "Wed", "Fri"]
+
+
+@pytest.mark.asyncio
+async def test_update_goal_normalises_weekday_case(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers, user_id = await _signup(async_client)
+    goal = await _seed_goal(db_session, user_id)
+
+    resp = await async_client.put(
+        f"/goals/{goal.id}",
+        json=_update_payload(days_of_week=["mon", "FRI"]),
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["days_of_week"] == ["Mon", "Fri"]
+
+
+@pytest.mark.asyncio
+async def test_update_goal_rejects_invalid_weekday(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers, user_id = await _signup(async_client)
+    goal = await _seed_goal(db_session, user_id)
+
+    resp = await async_client.put(
+        f"/goals/{goal.id}",
+        json=_update_payload(days_of_week=["Monday"]),
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_update_goal_omitting_days_of_week_clears_it(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Full-replace PUT semantics: an omitted optional field reverts to None.
+
+    Pins the documented GoalUpdate contract so frontend callers know they
+    must resend days_of_week (all call sites now do).
+    """
+    headers, user_id = await _signup(async_client)
+    goal = await _seed_goal(db_session, user_id)
+
+    first = await async_client.put(
+        f"/goals/{goal.id}",
+        json=_update_payload(days_of_week=["Tue"]),
+        headers=headers,
+    )
+    assert first.json()["days_of_week"] == ["Tue"]
+
+    second = await async_client.put(
+        f"/goals/{goal.id}",
+        json=_update_payload(),
+        headers=headers,
+    )
+    assert second.status_code == HTTPStatus.OK
+    assert second.json()["days_of_week"] is None
+
+
+@pytest.mark.asyncio
 async def test_update_goal_rejects_forged_habit_id(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:

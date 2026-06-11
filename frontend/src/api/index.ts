@@ -766,6 +766,8 @@ export interface ApiGoal {
   frequency_unit: string;
   is_additive: boolean;
   goal_group_id?: number | null;
+  /** Weekly cadence ("Mon".."Sun"); null/absent means every day. */
+  days_of_week?: string[] | null;
   /** Optional for back-compat with API builds that don't yet embed completions. */
   completions?: ApiGoalCompletion[];
 }
@@ -1087,6 +1089,7 @@ export interface GoalUpdatePayload {
   frequency_unit: string;
   is_additive: boolean;
   goal_group_id?: number | null;
+  days_of_week?: string[] | null;
 }
 
 export const goals = {

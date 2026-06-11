@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from domain.streaks import WEEKDAY_ABBREVIATIONS
 from models.goal import GoalTier
+
+# Canonical-case lookup: "mon" -> "Mon", mirroring date.strftime("%a").
+_CANONICAL_WEEKDAY: dict[str, str] = {day.lower(): day for day in WEEKDAY_ABBREVIATIONS}
 
 
 class GoalCompletionPublic(BaseModel):
@@ -35,6 +39,7 @@ class Goal(BaseModel):
     frequency_unit: str
     is_additive: bool = True
     goal_group_id: int | None = None
+    days_of_week: list[str] | None = None
 
 
 class GoalWithCompletions(Goal):
@@ -74,6 +79,23 @@ class GoalUpdate(BaseModel):
     frequency_unit: str = Field(min_length=1, max_length=50)
     is_additive: bool = True
     goal_group_id: int | None = None
+    #: Weekly cadence, e.g. ["Mon", "Wed"]; None means every day.
+    days_of_week: list[str] | None = None
+
+    @field_validator("days_of_week")
+    @classmethod
+    def _validate_days_of_week(cls, value: list[str] | None) -> list[str] | None:
+        """Normalise entries to canonical "Mon".."Sun"; reject anything else."""
+        if value is None:
+            return None
+        normalised: list[str] = []
+        for day in value:
+            canonical = _CANONICAL_WEEKDAY.get(day.lower())
+            if canonical is None:
+                msg = f"days_of_week entries must be one of {WEEKDAY_ABBREVIATIONS}; got {day!r}"
+                raise ValueError(msg)
+            normalised.append(canonical)
+        return normalised
 
 
 class GoalUnitsUpdate(BaseModel):
