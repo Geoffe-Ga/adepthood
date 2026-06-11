@@ -191,11 +191,36 @@ Recommended execution order by priority:
   phase-7-10 (CI) — developer experience
 ```
 
+## Phase 8 — Post-Drain Hardening (Medium)
+Platform debt, decomposition, and deferred follow-ups collected after the 2026-06-10/11 autonomous backlog drain (issues #261–#429, PRs #410–#455). See [phase-8-epic.md](phase-8-epic.md) for the audit findings.
+
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| 01 | [API module split — core domains](phase-8-01-api-module-split-core.md) | Frontend | ~350 |
+| 02 | [API module split — remainder + barrel](phase-8-02-api-module-split-remainder.md) | Frontend | ~350 |
+| 03 | [Decompose GoalModal](phase-8-03-goal-modal-decomposition.md) | Frontend | ~300 |
+| 04 | [Page envelope — finish deferred screens](phase-8-04-page-envelope-completion.md) | Frontend | ~150 |
+| 05 | [Make paginate=true the backend default](phase-8-05-paginate-default-backend.md) | Backend | ~250 |
+| 06 | [Offline check-in polish](phase-8-06-offline-checkin-polish.md) | Frontend | ~175 |
+| 07 | [BotMason streaming unit tests](phase-8-07-botmason-stream-tests.md) | Backend | ~225 |
+| 08 | [Serve chapter media assets](phase-8-08-content-asset-serving.md) | Full-stack | ~275 |
+| 09 | [Theme context + dark-mode pilot](phase-8-09-theme-context-dark-pilot.md) | Frontend | ~300 |
+| 10 | [Toolchain version parity](phase-8-10-toolchain-version-parity.md) | Tooling | ~100 |
+| 11 | [Jest hygiene: resetMocks + jsdom opt-in](phase-8-11-jest-hygiene-resetmocks-jsdom.md) | Frontend | ~200 |
+
+Dependency graph (Phase 8):
+
+```
+phase-8-01 (api split core) ──→ phase-8-02 (api split remainder + barrel)
+phase-8-04 (envelope completion) ──→ phase-8-05 (paginate default flip)
+phase-8-03, 06, 07, 08, 09, 10, 11 — independent, parallelizable
+```
+
 ## Total Estimated Scope
 
-- **~65 issues** across 7 phases
-- Phases 1–5 complete, Phase 6 (Gumroad monetization) and Phase 7 (cleanup) are active
-- Phase 7 is all pure refactoring — no behavior changes, can run in parallel with Phase 6
+- **~76 issues** across 8 phases
+- Phases 1–7 complete (the 2026-06 autonomous drain finished phases 6–7 plus the cms-migration and BotMason epics)
+- Phase 8 is hardening + deferred follow-ups; issues 03/06–11 are independent and can run in parallel
 
 ## Feature Epics (outside the numbered phases)
 
