@@ -473,3 +473,87 @@ async def test_concurrent_picks_for_same_stage_yield_one_open_row(
         )
         open_rows = list(result.scalars().all())
     assert len(open_rows) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_concurrent_switch_to_different_practices_yields_one_open_row(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Two simultaneous switches to DIFFERENT practices keep one open slot.
+
+    Companion to the same-practice race above (issue #422, filed from the
+    PR #409 verdict): here the requests target two different practices in
+    the same stage slot, so the idempotent re-select path never applies.
+    The partial unique index (``ix_user_practice_active_stage``) plus
+    ``_free_stage_slot``'s close-before-insert must leave exactly one
+    open row; the race loser gets the documented 409
+    ``active_practice_exists_for_stage`` — never a 500, never a second
+    open row.
+    """
+    signup_resp = await concurrent_async_client.post(
+        "/auth/signup",
+        json={
+            "email": "raceswitch@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    headers = {"Authorization": f"Bearer {signup_resp.json()['token']}"}
+    user_id = signup_resp.json()["user_id"]
+
+    practice_ids: list[int] = []
+    async with concurrent_session_factory() as session:
+        for name in ("RaceSwitchA", "RaceSwitchB"):
+            practice = Practice(
+                stage_number=1,
+                name=name,
+                description="x",
+                instructions="y",
+                default_duration_minutes=5,
+                approved=True,
+                mode="meditation_timer",
+                mode_config={
+                    "mode": "meditation_timer",
+                    "duration_minutes": 5,
+                    "start_bell": True,
+                    "halfway_bell": False,
+                    "end_bell": True,
+                },
+            )
+            session.add(practice)
+            await session.commit()
+            await session.refresh(practice)
+            assert practice.id is not None
+            practice_ids.append(practice.id)
+
+    responses = await asyncio.gather(
+        *[
+            concurrent_async_client.post(
+                "/user-practices/",
+                json={"practice_id": practice_id, "stage_number": 1},
+                headers=headers,
+            )
+            for practice_id in practice_ids
+        ]
+    )
+
+    status_codes = sorted(r.status_code for r in responses)
+    assert status_codes[0] == HTTPStatus.CREATED, f"expected a winner, got: {status_codes}"
+    assert all(code in {HTTPStatus.CREATED, HTTPStatus.CONFLICT} for code in status_codes), (
+        f"every response must be 201 or 409, got: {status_codes}"
+    )
+    for response in responses:
+        if response.status_code == HTTPStatus.CONFLICT:
+            assert response.json()["detail"] == "active_practice_exists_for_stage"
+
+    async with concurrent_session_factory() as session:
+        result = await session.execute(
+            select(UserPractice).where(
+                UserPractice.user_id == user_id,
+                UserPractice.stage_number == 1,
+                UserPractice.end_date.is_(None),  # type: ignore[union-attr]
+            )
+        )
+        open_rows = list(result.scalars().all())
+    assert len(open_rows) == 1
