@@ -13,6 +13,7 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   habits as habitsApi,
   goalCompletions as goalCompletionsApi,
+  goalGroups as goalGroupsApi,
   goals as goalsApi,
 } from '../../../api';
 import type {
@@ -470,16 +471,43 @@ const recoverStuckHabits = async (cached: Habit[]): Promise<void> => {
   }
 };
 
+/**
+ * The cached group association, kept only if that group still exists
+ * server-side — recovery may have outlived the groups the id pointed at,
+ * and PUTting a dead id would fail the whole goal replay.
+ */
+const sanitizedGroupId = (cached: Goal, validGroupIds: Set<number>): number | null =>
+  cached.goal_group_id != null && validGroupIds.has(cached.goal_group_id)
+    ? cached.goal_group_id
+    : null;
+
+/** Server-side goal-group ids, for validating cached associations. */
+const fetchServerGroupIds = async (): Promise<Set<number>> => {
+  try {
+    const groups = await goalGroupsApi.list();
+    return new Set(groups.map((g) => g.id));
+  } catch {
+    // Best-effort: with no list, replay proceeds without associations.
+    return new Set();
+  }
+};
+
 /** True when the cached goal carries values the freshly-seeded one lacks. */
-const goalNeedsReplay = (cached: Goal, fresh: Goal): boolean =>
+const goalNeedsReplay = (cached: Goal, fresh: Goal, validGroupIds: Set<number>): boolean =>
   cached.target !== fresh.target ||
   cached.target_unit !== fresh.target_unit ||
   cached.frequency !== fresh.frequency ||
   cached.frequency_unit !== fresh.frequency_unit ||
-  cached.is_additive !== fresh.is_additive;
+  cached.is_additive !== fresh.is_additive ||
+  sanitizedGroupId(cached, validGroupIds) !== (fresh.goal_group_id ?? null);
 
 /** PUT one cached customization onto its freshly-seeded server goal. */
-const replayOneGoal = async (cached: Goal, freshGoalId: number, title: string): Promise<void> => {
+const replayOneGoal = async (
+  cached: Goal,
+  freshGoalId: number,
+  title: string,
+  validGroupIds: Set<number>,
+): Promise<void> => {
   await goalsApi.update(freshGoalId, {
     title,
     tier: cached.tier,
@@ -488,6 +516,8 @@ const replayOneGoal = async (cached: Goal, freshGoalId: number, title: string): 
     frequency: cached.frequency,
     frequency_unit: cached.frequency_unit,
     is_additive: cached.is_additive,
+    // Full-replace PUT: omitting this wiped any surviving association.
+    goal_group_id: sanitizedGroupId(cached, validGroupIds),
   });
 };
 
@@ -496,6 +526,7 @@ const mergeReplayedGoals = (
   habit: Habit,
   cachedHabit: Habit,
   replayedTiers: Set<string>,
+  validGroupIds: Set<number>,
 ): Habit => ({
   ...habit,
   goals: habit.goals.map((fg) => {
@@ -509,18 +540,24 @@ const mergeReplayedGoals = (
       frequency: cg.frequency,
       frequency_unit: cg.frequency_unit,
       is_additive: cg.is_additive,
+      // Mirror what the PUT actually sent, not the raw cached value.
+      goal_group_id: sanitizedGroupId(cg, validGroupIds),
     };
   }),
 });
 
 /** Replay one habit's customized goals; returns the tiers the server accepted. */
-const replayHabitGoals = async (cachedHabit: Habit, freshHabit: Habit): Promise<Set<string>> => {
+const replayHabitGoals = async (
+  cachedHabit: Habit,
+  freshHabit: Habit,
+  validGroupIds: Set<number>,
+): Promise<Set<string>> => {
   const replayedTiers = new Set<string>();
   for (const cachedGoal of cachedHabit.goals) {
     const freshGoal = freshHabit.goals.find((g) => g.tier === cachedGoal.tier);
-    if (!freshGoal?.id || !goalNeedsReplay(cachedGoal, freshGoal)) continue;
+    if (!freshGoal?.id || !goalNeedsReplay(cachedGoal, freshGoal, validGroupIds)) continue;
     try {
-      await replayOneGoal(cachedGoal, freshGoal.id, freshGoal.title);
+      await replayOneGoal(cachedGoal, freshGoal.id, freshGoal.title, validGroupIds);
       replayedTiers.add(cachedGoal.tier);
     } catch (err) {
       console.warn('replayCachedGoalTargets: failed for', cachedHabit.name, cachedGoal.tier, err);
@@ -534,17 +571,19 @@ const replayHabitGoals = async (cachedHabit: Habit, freshHabit: Habit): Promise<
  * matched by (habit name, tier). Best-effort per goal; the store merges
  * only server-accepted tiers. Reads the immutable ``fresh`` snapshot —
  * deliberately NOT ``applyGoalUpdate``, whose in-place tier normalization
- * would cascade phantom replays. Known field gaps: goal_group_id (#425)
- * and days_of_week (#426, blocked on GoalUpdate schema support).
+ * would cascade phantom replays. Goal-group associations replay only when
+ * the group still exists server-side. Known field gap: days_of_week
+ * (#426, blocked on GoalUpdate schema support).
  */
 const replayCachedGoalTargets = async (cached: Habit[], fresh: Habit[]): Promise<void> => {
+  const validGroupIds = await fetchServerGroupIds();
   for (const cachedHabit of cached) {
     const freshHabit = fresh.find((h) => h.name === cachedHabit.name);
     if (!freshHabit?.id) continue;
-    const replayedTiers = await replayHabitGoals(cachedHabit, freshHabit);
+    const replayedTiers = await replayHabitGoals(cachedHabit, freshHabit, validGroupIds);
     if (replayedTiers.size === 0) continue;
     const next = getHabits().map((h) =>
-      h.id === freshHabit.id ? mergeReplayedGoals(h, cachedHabit, replayedTiers) : h,
+      h.id === freshHabit.id ? mergeReplayedGoals(h, cachedHabit, replayedTiers, validGroupIds) : h,
     );
     setHabits(next);
     void persistHabits(next);
