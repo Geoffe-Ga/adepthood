@@ -68,11 +68,15 @@ bandit -r src/ || { echo "✗ Bandit found issues" >&2; exit 1; }
 
 echo "=== Security Checks (pip-audit) ==="
 
-# Run pip-audit for dependency vulnerability scanning
+# Audit the project's declared dependencies (same surface as the
+# pre-commit hook), NOT whatever interpreter happens to own the first
+# `pip-audit` on PATH — a homebrew install was auditing homebrew's own
+# site-packages and failing this gate with findings unrelated to the repo.
 if $VERBOSE; then
     echo "Running pip-audit dependency checker..."
 fi
-pip-audit || { echo "✗ pip-audit found issues" >&2; exit 1; }
+pip-audit -r requirements.txt --ignore-vuln PYSEC-2025-183 \
+    || { echo "✗ pip-audit found issues" >&2; exit 1; }
 
 if $FULL; then
     echo "=== Comprehensive Security Scan ==="

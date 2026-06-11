@@ -152,7 +152,7 @@ async def test_same_day_completion_is_idempotent_for_non_utc_user(
     resp = await async_client.post(
         "/auth/signup",
         json={
-            "email": f"tzdup-{tz.split('/')[-1].lower()}@example.com",
+            "email": f"tzdup-{tz.rsplit('/', maxsplit=1)[-1].lower()}@example.com",
             "password": "securepassword123",  # pragma: allowlist secret
             "timezone": tz,
         },
