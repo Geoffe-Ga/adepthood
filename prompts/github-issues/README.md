@@ -191,10 +191,157 @@ Recommended execution order by priority:
   phase-7-10 (CI) — developer experience
 ```
 
+## Audit Remediation Epics (2026-06-24)
+
+Generated from the full-stack audit in
+[`2026-06-24_ADEPTHOOD_FULL_AUDIT.md`](2026-06-24_ADEPTHOOD_FULL_AUDIT.md). Every
+issue traces to a finding row in that report. The codebase is mature and
+disciplined; these epics close the *remaining* real gaps — concentrated in
+event-loop/query performance, list virtualization, a data-loss schema-drift bug,
+a few honest-but-hollow capabilities, and CI/docs truth. Issue sizing follows the
+audit mandate: hard cap **700 LoC** net per issue, target ~250–350.
+
+**Land order (cross-epic):** `audit-testq-01` (un-flake the streak test → real
+green baseline) is the prerequisite for everything; then the Critical rows
+(`audit-render-01`, `audit-contracts-01`, `audit-async-01`, `audit-destub-01`,
+`audit-ci-01`), then High, then Medium/Low.
+
+### audit-async — Backend Async Correctness & Query Performance
+[Epic](audit-async-epic.md) · `backend`, `performance`, priority-critical
+
+| # | Issue | Scope | Est. LoC | Priority |
+|---|-------|-------|----------|----------|
+| 01 | [bcrypt → asyncio.to_thread](audit-async-01-bcrypt-to-thread.md) | Backend | ~120 | Critical |
+| 02 | [GoalCompletion composite index](audit-async-02-goalcompletion-index.md) | Backend | ~90 | High |
+| 03 | [JournalEntry composite index](audit-async-03-journalentry-index.md) | Backend | ~90 | High |
+| 04 | [Batch stages N+1 loop](audit-async-04-stages-n-plus-1.md) | Backend | ~200 | High |
+| 05 | [Remove write from goal_groups GET](audit-async-05-goalgroups-get-no-write.md) | Backend | ~120 | Medium |
+| 06 | [Dedup streak queries on check-in](audit-async-06-streak-query-dedup.md) | Backend | ~120 | Medium |
+| 07 | [Narrow broad excepts](audit-async-07-narrow-broad-except.md) | Backend | ~80 | Medium |
+| 08 | [CORS allow_credentials=False](audit-async-08-cors-credentials.md) | Backend | ~40 | Medium |
+
+### audit-paginate — Pagination & Response Contracts
+[Epic](audit-paginate-epic.md) · `backend`, `performance`, priority-high
+
+| # | Issue | Scope | Est. LoC | Priority |
+|---|-------|-------|----------|----------|
+| 01 | [Paginate practice_tags](audit-paginate-01-practice-tags.md) | Backend | ~140 | High |
+| 02 | [Paginate practice_recipes](audit-paginate-02-practice-recipes.md) | Backend | ~170 | High |
+| 03 | [Cap embedded sessions[]](audit-paginate-03-embedded-sessions.md) | Backend | ~260 | High |
+| 04 | [Bound admin lists](audit-paginate-04-admin-lists.md) | Backend | ~220 | High |
+| 05 | [Typed response contracts](audit-paginate-05-typed-contracts.md) | Backend | ~200 | Medium |
+| 06 | [DB-backed session idempotency](audit-paginate-06-db-idempotency.md) | Backend | ~340 | High |
+
+### audit-render — Frontend Render Cost & List Virtualization
+[Epic](audit-render-epic.md) · `frontend`, `performance`, priority-high
+
+| # | Issue | Scope | Est. LoC | Priority |
+|---|-------|-------|----------|----------|
+| 01 | [Fix lucide-react native import](audit-render-01-lucide-native-import.md) | Frontend | ~60 | Critical |
+| 02 | [Memoize HabitTile + renderer](audit-render-02-memoize-habittile.md) | Frontend | ~180 | High |
+| 03 | [Memoize MessageBubble](audit-render-03-memoize-messagebubble.md) | Frontend | ~80 | High |
+| 04 | [Dedup stats fetch](audit-render-04-dedup-stats-fetch.md) | Frontend | ~120 | High |
+| 05 | [Virtualize Practice catalog](audit-render-05-virtualize-catalog.md) | Frontend | ~250 | High |
+| 06 | [Virtualize PracticeSelector](audit-render-06-virtualize-selector.md) | Frontend | ~180 | High |
+| 07 | [Habits FlatList config](audit-render-07-habits-flatlist-config.md) | Frontend | ~150 | Medium |
+| 08 | [Stable form keys](audit-render-08-stable-form-keys.md) | Frontend | ~150 | Medium |
+| 09 | [Inline-literal cleanup](audit-render-09-inline-literal-cleanup.md) | Frontend | ~120 | Low |
+
+### audit-destub — De-Stub: Make Aspirational Features Real
+[Epic](audit-destub-epic.md) · `full-stack`, priority-high
+
+| # | Issue | Scope | Est. LoC | Priority |
+|---|-------|-------|----------|----------|
+| 01 | [Real tarot artwork + resolver](audit-destub-01-tarot-artwork.md) | Frontend | ~400 | Critical |
+| 02 | [Wire wizard preset CTA](audit-destub-02-wizard-preset-cta.md) | Frontend | ~120 | High |
+| 03 | [Server-side energy costs (authz)](audit-destub-03-energy-server-costs.md) | Backend | ~180 | High |
+| 04 | [Persist energy plans](audit-destub-04-persist-energy-plans.md) | Backend | ~300 | High |
+| 05 | [Resolve journal encryption flag](audit-destub-05-journal-encryption-flag.md) | Backend | ~80 | High |
+| 06 | [Reconcile botmason pricing](audit-destub-06-botmason-pricing-reconcile.md) | Backend | ~120 | High |
+| 07 | [Stage % includes course](audit-destub-07-stage-progress-course.md) | Backend | ~120 | Medium |
+| 08 | [BotMason non-stream error mapping](audit-destub-08-botmason-error-mapping.md) | Backend | ~120 | Medium |
+| 09 | [Build remaining configurator forms](audit-destub-09-practice-configurator-forms.md) | Frontend | ~350 | Medium |
+
+### audit-contracts — Data-Layer Contracts & Schema Drift
+[Epic](audit-contracts-epic.md) · `frontend`, priority-high
+
+| # | Issue | Scope | Est. LoC | Priority |
+|---|-------|-------|----------|----------|
+| 01 | [Restore days_of_week in goalSchema](audit-contracts-01-goal-days-of-week.md) | Frontend | ~120 | Critical |
+| 02 | [Nullable prompt total](audit-contracts-02-prompt-total-nullable.md) | Frontend | ~80 | High |
+| 03 | [Validate journal/prompts lists](audit-contracts-03-validate-list-responses.md) | Frontend | ~200 | High |
+| 04 | [Per-item Page schemas](audit-contracts-04-per-item-page-schemas.md) | Frontend | ~650 | Medium |
+| 05 | [Token-refresh hardening](audit-contracts-05-token-refresh-hardening.md) | Frontend | ~180 | Medium |
+| 06 | [Zod practice validators](audit-contracts-06-zod-practice-validators.md) | Frontend | ~250 | Medium |
+| 07 | [Regenerate/remove stale OpenAPI types](audit-contracts-07-regenerate-openapi-types.md) | Frontend | ~120 | Medium |
+
+### audit-ux — UX States, Accessibility & Error Copy
+[Epic](audit-ux-epic.md) · `frontend`, priority-high
+
+| # | Issue | Scope | Est. LoC | Priority |
+|---|-------|-------|----------|----------|
+| 01 | [Habits chrome accessibility](audit-ux-01-habits-a11y.md) | Frontend | ~150 | High |
+| 02 | [Practice safe-area handling](audit-ux-02-practice-safe-area.md) | Frontend | ~150 | High |
+| 03 | [Map retry on failure](audit-ux-03-map-retry.md) | Frontend | ~150 | High |
+| 04 | [Course error + retry states](audit-ux-04-course-error-states.md) | Frontend | ~180 | Medium |
+| 05 | [Gate FeatureErrorBoundary message](audit-ux-05-errorboundary-dev-gate.md) | Frontend | ~60 | Medium |
+| 06 | [Toast safe-area insets](audit-ux-06-toast-safe-area.md) | Frontend | ~80 | Medium |
+| 07 | [Habits empty state](audit-ux-07-habits-empty-state.md) | Frontend | ~120 | Medium |
+| 08 | [Auth screens polish](audit-ux-08-auth-polish.md) | Frontend | ~250 | Low |
+
+### audit-ci — CI, Infra & Docs Truth
+[Epic](audit-ci-epic.md) · `ci`, priority-high
+
+| # | Issue | Scope | Est. LoC | Priority |
+|---|-------|-------|----------|----------|
+| 01 | [SHA-pin Claude workflows](audit-ci-01-sha-pin-claude-workflows.md) | CI | ~40 | Critical |
+| 02 | [DEPLOYMENT.md Alembic truth](audit-ci-02-deployment-alembic-truth.md) | CI | ~80 | High |
+| 03 | [Fix dead iteration-trigger](audit-ci-03-fix-iteration-trigger.md) | CI | ~20 | High |
+| 04 | [Branch-coverage gate fail-loud](audit-ci-04-branch-coverage-gate.md) | CI | ~30 | High |
+| 05 | [Backend CI dep caching](audit-ci-05-backend-ci-caching.md) | CI | ~60 | Medium |
+| 06 | [Docs truth pass](audit-ci-06-docs-truth-pass.md) | CI | ~80 | Medium |
+| 07 | [Frontend CVE triage](audit-ci-07-frontend-cve-triage.md) | CI | ~80 | Medium |
+
+### audit-testq — Test Quality & Green Baseline
+[Epic](audit-testq-epic.md) · `backend`, priority-critical
+
+| # | Issue | Scope | Est. LoC | Priority |
+|---|-------|-------|----------|----------|
+| 01 | [Un-flake time-coupled streak test](audit-testq-01-unflake-streak-test.md) | Backend | ~120 | Critical |
+| 02 | [Real model schema tests](audit-testq-02-real-model-tests.md) | Backend | ~250 | High |
+| 03 | [Cover botmason streaming](audit-testq-03-cover-botmason-streaming.md) | Backend | ~200 | High |
+| 04 | [Replace hollow snapshot](audit-testq-04-fix-hollow-snapshot.md) | Frontend | ~60 | Medium |
+
+### Dependency Graph (Audit Remediation)
+
+```
+audit-testq-01 (green baseline)  ── prerequisite for ALL remediation work
+  │
+  ├─ Critical tier (parallel after baseline):
+  │    audit-render-01 (lucide native import)
+  │    audit-contracts-01 (days_of_week data loss)
+  │    audit-async-01 (bcrypt off the loop)
+  │    audit-destub-01 (tarot artwork)
+  │    audit-ci-01 (SHA-pin workflows)
+  │
+  ├─ audit-async-02/03 (indexes) ─ independent, parallel
+  ├─ audit-paginate-06 (DB idempotency) → reuses chat_idempotency pattern
+  ├─ audit-destub-03 (server energy costs) → audit-destub-04 (persist plans)
+  ├─ audit-contracts-04 (per-item schemas) → audit-contracts-06 (zod validators)
+  └─ everything else is independent within its epic; take serially in the loop.
+
+Most epics are internally parallelizable; the autonomous loop takes them
+serially in priority order. No cross-epic cycles.
+```
+
 ## Total Estimated Scope
 
-- **~65 issues** across 7 phases
-- Phases 1–5 complete, Phase 6 (Gumroad monetization) and Phase 7 (cleanup) are active
+- **Original roadmap: ~65 issues** across 7 phases (Phases 1–5 complete; Phase 6
+  Gumroad monetization and Phase 7 cleanup active) plus the feature epics below.
+- **Audit remediation (2026-06-24): 58 issues** across 8 new epics
+  (`audit-async` 8, `audit-paginate` 6, `audit-render` 9, `audit-destub` 9,
+  `audit-contracts` 7, `audit-ux` 8, `audit-ci` 7, `audit-testq` 4),
+  ~9,600 LoC, every issue ≤700 LoC. See the audit report for the evidence base.
 - Phase 7 is all pure refactoring — no behavior changes, can run in parallel with Phase 6
 
 ## Feature Epics (outside the numbered phases)
