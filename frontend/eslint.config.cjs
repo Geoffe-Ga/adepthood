@@ -85,6 +85,22 @@ module.exports = tseslint.config(
       'sonarjs/prefer-single-boolean-return': 'error',
       'sonarjs/no-redundant-jump': 'error',
 
+      // Ban the DOM/web lucide package: its icons return SVG DOM nodes that
+      // React Native cannot mount, so they render nothing or crash on device
+      // (audit §5.2). `lucide-react-native` exposes the same icon names/props.
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'lucide-react',
+              message:
+                "Import icons from 'lucide-react-native', not 'lucide-react' (DOM-only; crashes on native — audit §5.2).",
+            },
+          ],
+        },
+      ],
+
       // TS hygiene
       '@typescript-eslint/consistent-type-imports': 'error',
       '@typescript-eslint/no-explicit-any': 'warn',

@@ -1,6 +1,15 @@
 // HabitsScreen.tsx
 
-import { BarChart2, Check, Lock, MoreHorizontal, Pencil, Plus, Unlock, Zap } from 'lucide-react';
+import {
+  BarChart2,
+  Check,
+  Lock,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Unlock,
+  Zap,
+} from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, TouchableOpacity, View, Modal } from 'react-native';
 import EmojiSelector from 'react-native-emoji-selector';
