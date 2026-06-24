@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from domain import dates as dates_module
 from domain.dates import to_user_date
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
@@ -176,7 +178,34 @@ async def test_compute_consecutive_streak_returns_zero_for_new_goal(
 
 # ── BUG-STREAK-002: streak counted in user TZ, not server UTC ──────────────
 
+# A fixed "now" one evening after the BUG-STREAK-002 completions.  The streak
+# service walks backwards from ``today_in_tz(...)`` (which funnels through
+# ``domain.dates.now_in_tz``), so a test with hardcoded completion dates only
+# passes while the *real* system clock sits within a day of those dates.
+# Freezing the single clock seam makes such a test deterministic on any date.
+_FROZEN_NOW = datetime(2026, 6, 15, 20, 0, tzinfo=UTC)
 
+
+@pytest.fixture
+def frozen_streak_clock(monkeypatch: pytest.MonkeyPatch) -> datetime:
+    """Pin ``domain.dates.now_in_tz`` to :data:`_FROZEN_NOW` for the test.
+
+    ``today_in_tz`` resolves ``now_in_tz`` from the ``domain.dates`` module
+    globals at call time, so replacing that one attribute freezes the clock for
+    every streak helper without touching their call sites.  The fake mirrors the
+    real signature (returns a tz-aware instant in the requested zone); the streak
+    tests only ever pass IANA strings, so a string-or-UTC resolver is sufficient.
+    """
+
+    def _fake_now_in_tz(user_or_tz: object) -> datetime:
+        zone = user_or_tz if isinstance(user_or_tz, str) else "UTC"
+        return _FROZEN_NOW.astimezone(ZoneInfo(zone))
+
+    monkeypatch.setattr(dates_module, "now_in_tz", _fake_now_in_tz)
+    return _FROZEN_NOW
+
+
+@pytest.mark.usefixtures("frozen_streak_clock")
 @pytest.mark.asyncio
 async def test_streak_uses_user_timezone_across_utc_midnight(
     db_session: AsyncSession,
@@ -232,6 +261,7 @@ async def test_streak_uses_user_timezone_across_utc_midnight(
     )
 
 
+@pytest.mark.usefixtures("frozen_streak_clock")
 @pytest.mark.asyncio
 async def test_streak_buckets_to_different_dates_pago_pago_vs_kiritimati(
     db_session: AsyncSession,
