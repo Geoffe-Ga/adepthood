@@ -60,7 +60,7 @@ async def _create_user(
 ) -> User:
     user = User(
         email=email,
-        password_hash=_hash_password(_PASSWORD),
+        password_hash=await _hash_password(_PASSWORD),
         is_active=is_active,
         deleted_at=datetime.now(UTC) if deleted else None,
     )
@@ -745,10 +745,11 @@ async def test_token_issued_in_same_second_as_reset_is_rejected(
     assert response.status_code == 401
 
 
-def test_hash_reset_token_roundtrips() -> None:
+@pytest.mark.asyncio
+async def test_hash_reset_token_roundtrips() -> None:
     """``_hash_reset_token`` produces a digest verifiable by bcrypt.checkpw."""
     plain = "abc" * 11
-    digest = _hash_reset_token(plain)
+    digest = await _hash_reset_token(plain)
     assert bcrypt.checkpw(plain.encode(), digest.encode())
 
 
