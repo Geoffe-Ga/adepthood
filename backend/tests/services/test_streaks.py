@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import domain.dates as dates_module
 from domain.dates import to_user_date
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
@@ -20,6 +22,54 @@ from services.streaks import (
     compute_habit_streak,
     update_streak,
 )
+
+# ── Frozen clock for date-coupled tests (§5.4 un-flake) ────────────────────
+#
+# ``compute_consecutive_streak`` walks backwards from ``today_in_tz(...)``,
+# whose single wall-clock seam is ``now_in_tz`` inside ``domain.dates``
+# (``today_in_tz`` resolves ``now_in_tz`` through the module namespace, so
+# patching the latter freezes both for every caller).  Tests that pin
+# completions to absolute calendar dates otherwise go red once the real
+# "today" drifts past the one-day recency grace window; freezing that seam
+# keeps those completions perpetually "current" regardless of system date.
+
+# 18:00 UTC on 2026-06-15 = 11:00 PDT the same day, and 23:00 PDT the day
+# before for the 06:00-UTC point — the exact instant the timezone-divergence
+# tests below reason about, so both completions stay inside the grace window.
+_FROZEN_NOW = datetime(2026, 6, 15, 18, 0, tzinfo=UTC)
+
+
+def _zone_for(user_or_tz: object) -> ZoneInfo:
+    """Resolve an IANA zone from a tz string / user-like object, UTC on failure.
+
+    A self-contained mirror of ``domain.dates``' private resolver so the
+    frozen-clock stand-in stays faithful without reaching into module
+    internals; unknown or missing zones fall back to UTC just as the real
+    helper does.
+    """
+    candidate = user_or_tz if isinstance(user_or_tz, str) else getattr(user_or_tz, "timezone", None)
+    try:
+        return ZoneInfo(candidate) if candidate else ZoneInfo("UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def _frozen_now_in_tz(user_or_tz: object = None) -> datetime:
+    """Stand-in for ``domain.dates.now_in_tz`` pinned to :data:`_FROZEN_NOW`."""
+    return _FROZEN_NOW.astimezone(_zone_for(user_or_tz))
+
+
+@pytest.fixture
+def frozen_clock(monkeypatch: pytest.MonkeyPatch) -> datetime:
+    """Pin ``domain.dates``' wall clock to :data:`_FROZEN_NOW`.
+
+    ``now_in_tz`` is the single clock seam the streak service reads:
+    ``today_in_tz`` calls it through the module namespace, so patching it
+    here freezes the recency gate for every caller without touching
+    scattered call sites.  Returns the frozen instant for assertions.
+    """
+    monkeypatch.setattr(dates_module, "now_in_tz", _frozen_now_in_tz)
+    return _FROZEN_NOW
 
 
 async def _make_goal(session: AsyncSession, user_id: int) -> Goal:
@@ -178,6 +228,7 @@ async def test_compute_consecutive_streak_returns_zero_for_new_goal(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("frozen_clock")
 async def test_streak_uses_user_timezone_across_utc_midnight(
     db_session: AsyncSession,
 ) -> None:
@@ -233,6 +284,7 @@ async def test_streak_uses_user_timezone_across_utc_midnight(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("frozen_clock")
 async def test_streak_buckets_to_different_dates_pago_pago_vs_kiritimati(
     db_session: AsyncSession,
 ) -> None:
