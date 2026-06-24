@@ -31,6 +31,8 @@ from database import get_session
 from errors import conflict, forbidden, not_found
 from models.practice_tag import PracticeTag
 from routers.auth import get_current_user
+from schemas import Page, PaginationParams, build_page
+from schemas.pagination import paginate_query
 from schemas.practice_tag import PracticeTagCreate, PracticeTagOut, PracticeTagUpdate
 
 logger = logging.getLogger(__name__)
@@ -61,13 +63,18 @@ def _require_personal(tag: PracticeTag) -> None:
         raise forbidden("cannot_modify_system_tag")
 
 
-@router.get("/", response_model=list[PracticeTagOut])
+@router.get("/", response_model=None)
 async def list_practice_tags(
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-) -> list[PracticeTag]:
-    """List every tag the caller can see (system + own), label-sorted."""
-    result = await session.execute(
+    pagination: Annotated[PaginationParams, Depends()],
+) -> Page[PracticeTagOut] | list[PracticeTagOut]:
+    """List every tag the caller can see (system + own); paginated on ``?paginate=true``.
+
+    Ordering stays system-first then label so the bare-list contract is
+    unchanged; pagination slices that ordered set (issue #465).
+    """
+    query = (
         select(PracticeTag)
         .where(
             or_(
@@ -77,7 +84,11 @@ async def list_practice_tags(
         )
         .order_by(col(PracticeTag.owner_user_id).nulls_first(), PracticeTag.label)
     )
-    return list(result.scalars().all())
+    items, total = await paginate_query(session, query, pagination)
+    serialized = [PracticeTagOut.model_validate(tag, from_attributes=True) for tag in items]
+    if pagination.paginate:
+        return build_page(serialized, total, pagination)
+    return serialized
 
 
 @router.post("/", response_model=PracticeTagOut, status_code=status.HTTP_201_CREATED)

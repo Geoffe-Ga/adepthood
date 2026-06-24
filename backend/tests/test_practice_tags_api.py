@@ -193,3 +193,137 @@ async def test_delete_system_tag_403(async_client: AsyncClient, db_session: Asyn
 async def test_unauthenticated_rejected(async_client: AsyncClient) -> None:
     resp = await async_client.get("/practice-tags/")
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+# ── Pagination (issue #465) ────────────────────────────────────────────────
+
+_DEFAULT_PAGE_SIZE = 50  # mirror schemas.pagination.DEFAULT_PAGE_SIZE
+
+
+async def _seed_system_tags(db_session: AsyncSession, count: int) -> None:
+    """Seed ``count`` system tags with deterministically label-ordered rows."""
+    for i in range(count):
+        db_session.add(PracticeTag(slug=f"sys_{i:02d}", label=f"Sys {i:02d}", owner_user_id=None))
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_list_bare_path_returns_plain_list(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Omitting ?paginate=true returns the historical bare-list shape + order."""
+    await _seed_system_tags(db_session, 3)
+    headers = await _signup(async_client)
+
+    resp = await async_client.get("/practice-tags/", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert isinstance(body, list)
+    labels = [row["label"] for row in body]
+    assert labels == sorted(labels)
+
+
+@pytest.mark.asyncio
+async def test_list_paginated_returns_envelope(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """?paginate=true returns the Page envelope with the default limit."""
+    await _seed_system_tags(db_session, 3)
+    headers = await _signup(async_client)
+
+    resp = await async_client.get("/practice-tags/?paginate=true", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert set(body) == {"items", "total", "limit", "offset", "has_more"}
+    assert body["limit"] == _DEFAULT_PAGE_SIZE
+    assert body["offset"] == 0
+    assert body["total"] == 3
+    assert body["has_more"] is False
+    assert len(body["items"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_list_pagination_limit_offset_and_has_more(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The limit slices the page, offset skips, and total/has_more cover the set."""
+    await _seed_system_tags(db_session, 5)
+    headers = await _signup(async_client)
+
+    first = await async_client.get(
+        "/practice-tags/?paginate=true&limit=2&offset=0", headers=headers
+    )
+    page1 = first.json()
+    assert page1["total"] == 5
+    assert page1["limit"] == 2
+    assert page1["offset"] == 0
+    assert page1["has_more"] is True
+    assert len(page1["items"]) == 2
+
+    second = await async_client.get(
+        "/practice-tags/?paginate=true&limit=2&offset=2", headers=headers
+    )
+    page2 = second.json()
+    assert page2["offset"] == 2
+    assert page2["has_more"] is True
+    assert len(page2["items"]) == 2
+
+    page1_slugs = {row["slug"] for row in page1["items"]}
+    page2_slugs = {row["slug"] for row in page2["items"]}
+    assert page1_slugs.isdisjoint(page2_slugs)
+    combined = [row["label"] for row in page1["items"] + page2["items"]]
+    assert combined == sorted(combined)
+
+
+@pytest.mark.asyncio
+async def test_list_pagination_last_page_has_no_more(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The final slice reports has_more=false even with a partial page."""
+    await _seed_system_tags(db_session, 5)
+    headers = await _signup(async_client)
+
+    resp = await async_client.get("/practice-tags/?paginate=true&limit=2&offset=4", headers=headers)
+
+    body = resp.json()
+    assert body["total"] == 5
+    assert body["offset"] == 4
+    assert body["has_more"] is False
+    assert len(body["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_pagination_preserves_system_first_ordering(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """System tags (owner None) sort before personal tags through pagination."""
+    await _seed_system_tags(db_session, 2)
+    headers = await _signup(async_client)
+    # "AAA personal" sorts before the system labels by label alone, so seeing
+    # it last proves the system-first (nulls_first) ordering is authoritative.
+    await async_client.post(
+        "/practice-tags/",
+        json={"slug": "aaa_personal", "label": "AAA personal"},
+        headers=headers,
+    )
+
+    resp = await async_client.get("/practice-tags/?paginate=true", headers=headers)
+
+    items = resp.json()["items"]
+    owners = [row["owner_user_id"] for row in items]
+    personal_index = next(i for i, owner in enumerate(owners) if owner is not None)
+    assert all(owner is None for owner in owners[:personal_index])
+    assert items[-1]["slug"] == "aaa_personal"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", [0, 201])
+async def test_list_pagination_rejects_out_of_range_limit(
+    async_client: AsyncClient, limit: int
+) -> None:
+    """The limit bounds are enforced by the shared PaginationParams validators."""
+    headers = await _signup(async_client)
+    resp = await async_client.get(f"/practice-tags/?paginate=true&limit={limit}", headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
