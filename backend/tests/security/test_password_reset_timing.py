@@ -59,7 +59,7 @@ async def _seed_user(db_session: AsyncSession, email: str) -> None:
     db_session.add(
         User(
             email=email,
-            password_hash=_hash_password(_PASSWORD),
+            password_hash=await _hash_password(_PASSWORD),
             created_at=datetime.now(UTC),
         )
     )

@@ -228,7 +228,7 @@ class AuthResponse(BaseModel):
     timezone: str = DEFAULT_USER_TIMEZONE
 
 
-def _hash_password(password: str) -> str:
+async def _hash_password(password: str) -> str:
     """Hash ``password`` with bcrypt-12 after enforcing the 72-byte input cap.
 
     bcrypt silently truncates input at 72 bytes (BUG-AUTH-004), so a
@@ -248,12 +248,17 @@ def _hash_password(password: str) -> str:
     if len(encoded) > _BCRYPT_MAX_PASSWORD_BYTES:
         msg = f"password exceeds bcrypt's {_BCRYPT_MAX_PASSWORD_BYTES}-byte limit"
         raise ValueError(msg)
-    hashed: bytes = bcrypt.hashpw(encoded, bcrypt.gensalt(rounds=12))
+    # bcrypt-12 is ~250 ms of CPU; run it in a worker thread so it does not
+    # block the event loop and serialize concurrent auth requests (§5.3).
+    hashed: bytes = await asyncio.to_thread(bcrypt.hashpw, encoded, bcrypt.gensalt(rounds=12))
     return hashed.decode("utf-8")
 
 
-def _verify_password(password: str, password_hash: str) -> bool:
-    return bool(bcrypt.checkpw(password.encode(), password_hash.encode("utf-8")))
+async def _verify_password(password: str, password_hash: str) -> bool:
+    """Constant-time bcrypt compare, offloaded to a worker thread (§5.3)."""
+    return bool(
+        await asyncio.to_thread(bcrypt.checkpw, password.encode(), password_hash.encode("utf-8"))
+    )
 
 
 def _new_jti() -> str:
@@ -505,7 +510,7 @@ async def signup(
     # response and we never store a row that bcrypt has silently
     # truncated (BUG-AUTH-004).
     try:
-        password_hash = _hash_password(payload.password)
+        password_hash = await _hash_password(payload.password)
     except ValueError as exc:
         raise bad_request("password_too_long") from exc
     user = User(
@@ -586,7 +591,7 @@ async def _verify_login_or_raise(
     result = await session.execute(select(User).where(User.email == payload.email))
     user = result.scalars().first()
 
-    if user is None or not _verify_password(payload.password, user.password_hash):
+    if user is None or not await _verify_password(payload.password, user.password_hash):
         await _record_attempt(session, payload.email, ip_address, success=False)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials")
 
@@ -908,7 +913,7 @@ async def refresh_token(
 # ---------------------------------------------------------------------------
 
 
-def _hash_reset_token(plaintext: str) -> str:
+async def _hash_reset_token(plaintext: str) -> str:
     """Bcrypt-digest a reset-token plaintext at the cheap-cost (10) setting.
 
     These tokens are 256-bit randoms, not human input -- the cost-12
@@ -917,29 +922,34 @@ def _hash_reset_token(plaintext: str) -> str:
     constant-time miss-path computation in ``request`` stays in the
     SPEC R4 timing window.
     """
-    digest: bytes = bcrypt.hashpw(
+    digest: bytes = await asyncio.to_thread(
+        bcrypt.hashpw,
         plaintext.encode("utf-8"),
         bcrypt.gensalt(rounds=_PASSWORD_RESET_BCRYPT_ROUNDS),
     )
     return digest.decode("utf-8")
 
 
-def _verify_reset_token(plaintext: str, token_hash: str) -> bool:
-    """Constant-time bcrypt compare for reset-token verification."""
-    return bool(bcrypt.checkpw(plaintext.encode("utf-8"), token_hash.encode("utf-8")))
+async def _verify_reset_token(plaintext: str, token_hash: str) -> bool:
+    """Constant-time bcrypt compare for reset-token verification (offloaded)."""
+    return bool(
+        await asyncio.to_thread(
+            bcrypt.checkpw, plaintext.encode("utf-8"), token_hash.encode("utf-8")
+        )
+    )
 
 
-def _consume_dummy_bcrypt() -> None:
+async def _consume_dummy_bcrypt() -> None:
     """Spend the cost-10 reset-token verify budget on the request miss path.
 
     Mirrors the hit path's ``_verify_reset_token`` cost so the request
     endpoint cannot be timing-distinguished by an attacker scraping
     every email in a leak corpus (SPEC R4).
     """
-    bcrypt.checkpw(_DUMMY_BCRYPT_PASSWORD, _DUMMY_BCRYPT_HASH)
+    await asyncio.to_thread(bcrypt.checkpw, _DUMMY_BCRYPT_PASSWORD, _DUMMY_BCRYPT_HASH)
 
 
-def _consume_dummy_password_verify() -> None:
+async def _consume_dummy_password_verify() -> None:
     """Spend the cost-12 user-password verify budget on the confirm-miss path.
 
     Mirrors ``_verify_password(new_password, user.password_hash)`` cost
@@ -949,7 +959,7 @@ def _consume_dummy_password_verify() -> None:
     ``bcrypt.gensalt(rounds=12)``) so the masking dummy must also be
     cost-12 -- the cost-10 one is too fast.
     """
-    bcrypt.checkpw(_DUMMY_BCRYPT_PASSWORD, _DUMMY_PASSWORD_VERIFY_HASH)
+    await asyncio.to_thread(bcrypt.checkpw, _DUMMY_BCRYPT_PASSWORD, _DUMMY_PASSWORD_VERIFY_HASH)
 
 
 def _build_reset_email(to_address: str, plaintext_token: str) -> EmailMessagePayload:
@@ -1092,7 +1102,7 @@ async def _mint_and_persist_reset_token(
     row = PasswordResetToken(
         user_id=user.id,
         lookup_key=_make_lookup_key(plaintext),
-        token_hash=_hash_reset_token(plaintext),
+        token_hash=await _hash_reset_token(plaintext),
         requested_ip=_get_client_ip(request),
         requested_user_agent=user_agent,
         expires_at=datetime.now(UTC) + _PASSWORD_RESET_TTL,
@@ -1211,7 +1221,7 @@ async def request_password_reset(
         # operators chasing a missing SMTP delivery for an email that
         # was never sent.  The constant-time bcrypt below preserves
         # SPEC R4 timing parity.
-        _consume_dummy_bcrypt()
+        await _consume_dummy_bcrypt()
         return PasswordResetAccepted(message=_RESET_REQUEST_GENERIC_MESSAGE)
     plaintext = await _mint_and_persist_reset_token(session, user, request)
     await _send_reset_email_safely(sender, payload.email, plaintext)
@@ -1247,7 +1257,7 @@ async def _select_active_token_only(
     # re-requests a reset.  No security loss; cleaner than a for loop
     # that almost never iterates.
     row = result.scalars().first()
-    if row is None or not _verify_reset_token(plaintext, row.token_hash):
+    if row is None or not await _verify_reset_token(plaintext, row.token_hash):
         return None
     return row
 
@@ -1305,9 +1315,9 @@ async def _select_active_token_for_email(
     return token_row, user_row
 
 
-def _reject_if_password_reuse(user: User, new_password: str) -> None:
+async def _reject_if_password_reuse(user: User, new_password: str) -> None:
     """Reject reuse of the current password (SPEC R10)."""
-    if _verify_password(new_password, user.password_hash):
+    if await _verify_password(new_password, user.password_hash):
         raise bad_request("password_unchanged")
 
 
@@ -1383,17 +1393,17 @@ async def confirm_password_reset(
         # cannot be timing-distinguished.  The user's stored hash is
         # cost-12 so the dummy must match that cost; the cost-10
         # ``_consume_dummy_bcrypt`` is too fast to mask the verify.
-        _consume_dummy_password_verify()
+        await _consume_dummy_password_verify()
         _log_reset_event("confirm_rejected", "", request)
         raise bad_request("invalid_or_expired_token")
     token_row, user = found
-    _reject_if_password_reuse(user, payload.new_password)
+    await _reject_if_password_reuse(user, payload.new_password)
     # Hash the new password only AFTER the token is validated -- bcrypt
     # is the most expensive operation in this handler (~250 ms cost-12),
     # so deferring saves the cost on the (expected-common) invalid-token
     # path.
     try:
-        new_password_hash = _hash_password(payload.new_password)
+        new_password_hash = await _hash_password(payload.new_password)
     except ValueError as exc:
         raise bad_request("password_too_long") from exc
     await _apply_reset_to_user(session, user, token_row, new_password_hash)
