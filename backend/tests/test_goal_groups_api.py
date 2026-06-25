@@ -9,6 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.goal import Goal
+from routers.goal_groups import seed_goal_group_templates
 
 SEED_TEMPLATE_COUNT = 3
 GOAL_TIER_COUNT = 3
@@ -35,9 +36,14 @@ async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str
 
 @pytest.mark.asyncio
 async def test_list_goal_groups_includes_shared_templates(
-    async_client: AsyncClient,
+    async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Listing goal groups returns shared templates even with no user groups."""
+    """Listing goal groups returns shared templates even with no user groups.
+
+    Templates are provisioned at startup; tests don't run the lifespan hook, so
+    seed them explicitly here (the read path no longer seeds).
+    """
+    await seed_goal_group_templates(db_session)
     headers = await _signup(async_client)
     resp = await async_client.get("/goal-groups/", headers=headers)
 
@@ -434,15 +440,16 @@ async def test_goal_group_response_includes_goals(
 
 @pytest.mark.asyncio
 async def test_seed_templates_are_idempotent(
-    async_client: AsyncClient,
+    async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Calling list twice does not duplicate seed templates."""
+    """Running the seeder twice does not duplicate templates; the second run inserts 0."""
+    first = await seed_goal_group_templates(db_session)
+    second = await seed_goal_group_templates(db_session)
+
+    assert first == SEED_TEMPLATE_COUNT
+    assert second == 0
+
     headers = await _signup(async_client)
-
-    resp1 = await async_client.get("/goal-groups/", headers=headers)
-    count1 = len([g for g in resp1.json() if g["shared_template"]])
-
-    resp2 = await async_client.get("/goal-groups/", headers=headers)
-    count2 = len([g for g in resp2.json() if g["shared_template"]])
-
-    assert count1 == count2
+    resp = await async_client.get("/goal-groups/", headers=headers)
+    templates = [g for g in resp.json() if g["shared_template"]]
+    assert len(templates) == SEED_TEMPLATE_COUNT

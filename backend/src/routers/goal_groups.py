@@ -45,20 +45,28 @@ SEED_TEMPLATES: list[dict[str, object]] = [
 ]
 
 
-async def ensure_seed_templates(session: AsyncSession) -> None:
-    """Create built-in shared templates if they don't already exist."""
+async def seed_goal_group_templates(session: AsyncSession) -> int:
+    """Create the built-in shared templates if missing; return the count inserted.
+
+    Idempotent (keyed on template name), so it is safe to run repeatedly. Runs
+    at app startup rather than on the read path, so ``list_goal_groups`` performs
+    no write while users still get the defaults.
+    """
     result = await session.execute(
         select(GoalGroup).where(
             GoalGroup.shared_template == True,  # noqa: E712
             GoalGroup.source == "built-in",
         )
     )
-    existing = result.scalars().all()
-    existing_names = {t.name for t in existing}
+    existing_names = {t.name for t in result.scalars().all()}
+    inserted = 0
     for template in SEED_TEMPLATES:
         if template["name"] not in existing_names:
             session.add(GoalGroup(shared_template=True, user_id=None, **template))
-    await session.commit()
+            inserted += 1
+    if inserted:
+        await session.commit()
+    return inserted
 
 
 @router.get("/", response_model=None)
@@ -72,8 +80,10 @@ async def list_goal_groups(
     BUG-INFRA-015: returns ``Page[GoalGroupResponse]`` when ``?paginate=true``
     is set; otherwise the legacy bare list is returned for one release while
     the frontend migrates to the envelope.
+
+    Seed templates are provisioned at app startup (``seed_goal_group_templates``
+    in the lifespan hook), so this read path performs no INSERT/commit.
     """
-    await ensure_seed_templates(session)
     query = (
         select(GoalGroup)
         .where(
