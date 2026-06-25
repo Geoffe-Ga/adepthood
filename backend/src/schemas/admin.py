@@ -76,6 +76,11 @@ class UsageStatsResponse(BaseModel):
     total_estimated_cost_usd: Decimal
     per_user: list[UserUsageBreakdown]
     per_model: list[ModelUsageBreakdown]
+    # Populated only under ``?paginate=true``: ``per_user`` is then a bounded
+    # page and these describe the full breakdown. ``None`` on the bare path so
+    # the legacy response shape is unchanged.
+    per_user_total: int | None = None
+    per_user_has_more: bool | None = None
 
     @field_serializer("total_estimated_cost_usd")
     def _serialize_total(self, value: Decimal) -> str:
@@ -103,6 +108,28 @@ class StageProgressGapsResponse(BaseModel):
 
     rows: list[StageProgressGap]
     total: int
+
+
+class StageProgressGapsPage(BaseModel):
+    """A page of gaps found within a *bounded scan* of ``stageprogress`` rows.
+
+    Deliberately NOT the shared ``Page`` envelope: the gap test runs in Python
+    after the SELECT, so this endpoint pages over *scanned rows*, not gaps. The
+    field names signal that so a caller can't mistake it for "page X of Y gaps":
+
+    - ``items`` — the gaps found in the current window (``len(items) <= limit``,
+      often far fewer, and may legitimately be ``0`` for a page of clean rows).
+    - ``scanned_total`` — ``COUNT(*)`` of the base ``stageprogress`` table, i.e.
+      total rows to scan, NOT the number of gaps.
+    - ``has_more_rows`` — whether more rows remain to scan (not more gaps); a
+      "load more" caller should drive off this and keep paging until it clears.
+    """
+
+    items: list[StageProgressGap]
+    scanned_total: int
+    limit: int
+    offset: int
+    has_more_rows: bool
 
 
 class StageProgressRepairResult(BaseModel):
