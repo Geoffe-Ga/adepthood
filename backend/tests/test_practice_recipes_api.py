@@ -14,6 +14,7 @@ from models.practice import Practice
 from models.practice_recipe import PracticeRecipe, PracticeRecipeStep
 from models.practice_session import PracticeSession
 from models.stage_progress import StageProgress
+from schemas import DEFAULT_PAGE_SIZE
 
 
 async def _signup(client: AsyncClient, username: str = "owner") -> tuple[dict[str, str], int]:
@@ -534,8 +535,6 @@ async def test_unauthenticated_rejected(async_client: AsyncClient) -> None:
 
 # -- Pagination (issue #470) ------------------------------------------------
 
-_DEFAULT_PAGE_SIZE = 50  # mirror schemas.pagination.DEFAULT_PAGE_SIZE
-
 
 async def _seed_system_recipes(db_session: AsyncSession, count: int) -> None:
     """Seed ``count`` system recipes (each with one step), name-ordered."""
@@ -578,7 +577,28 @@ async def test_list_bare_path_returns_plain_list_with_steps(
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
     assert isinstance(body, list)
+    assert len(body) == 3
     assert all(len(recipe["steps"]) >= 1 for recipe in body)
+
+
+@pytest.mark.asyncio
+async def test_list_bare_path_is_capped_at_default_page_size(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The bare list is intentionally capped at DEFAULT_PAGE_SIZE (no unbounded list).
+
+    Even without ?paginate=true the endpoint funnels through paginate_query, so a
+    library larger than one page returns at most DEFAULT_PAGE_SIZE rows — the
+    audit's "no unbounded list" guarantee. Documented here so a future change to
+    paginate_query can't silently restore the unbounded behaviour.
+    """
+    await _seed_system_recipes(db_session, DEFAULT_PAGE_SIZE + 1)
+    headers, _ = await _signup(async_client)
+
+    resp = await async_client.get("/practice-recipes/", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert len(resp.json()) == DEFAULT_PAGE_SIZE
 
 
 @pytest.mark.asyncio
@@ -594,7 +614,7 @@ async def test_list_paginated_returns_envelope_with_steps(
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
     assert set(body) == {"items", "total", "limit", "offset", "has_more"}
-    assert body["limit"] == _DEFAULT_PAGE_SIZE
+    assert body["limit"] == DEFAULT_PAGE_SIZE
     assert body["offset"] == 0
     assert body["total"] == 3
     assert body["has_more"] is False
