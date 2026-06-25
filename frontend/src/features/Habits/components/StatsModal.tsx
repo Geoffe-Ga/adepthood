@@ -1,13 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, useWindowDimensions, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 
-import { habits as habitsApi } from '../../../api';
 import { CHART_AXIS_LABEL_COLOR, CHART_STYLE, SPACING, STAGE_COLORS } from '../../../design/tokens';
 import styles from '../Habits.styles';
 import type { HabitStatsData, StatsModalProps } from '../Habits.types';
-import { generateStatsForHabit, toLocalHabitStats } from '../HabitUtils';
+import { generateStatsForHabit } from '../HabitUtils';
 
 const FALLBACK_CHART_COLOR = 'rgba(134, 65, 244, 1)';
 const FALLBACK_CALENDAR_COLOR = '#50cebb';
@@ -243,39 +242,16 @@ const StatsContent = (props: StatsContentProps) => {
   );
 };
 
-export const StatsModal = ({ visible, habit, stats: localStats, onClose }: StatsModalProps) => {
+export const StatsModal = ({ visible, habit, stats: hookStats, onClose }: StatsModalProps) => {
   const [selectedTab, setSelectedTab] = useState('calendar');
-  const [apiStats, setApiStats] = useState<HabitStatsData | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!visible || !habit) {
-      setApiStats(null);
-      return;
-    }
-
-    let cancelled = false;
-    setLoading(true);
-    habitsApi
-      .getStats(habit.id)
-      .then((response) => {
-        if (!cancelled) setApiStats(toLocalHabitStats(response));
-      })
-      .catch(() => {
-        if (!cancelled) setApiStats(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [visible, habit]);
 
   if (!habit) return null;
 
-  const stats = apiStats ?? localStats ?? generateStatsForHabit(habit);
+  // Stats are owned by ``useHabitStats`` (one fetch per open); the modal only
+  // consumes the result. While the open fetch is in flight ``hookStats`` is
+  // null, so we render the local fallback under a loading indicator.
+  const loading = visible && hookStats == null;
+  const stats = hookStats ?? generateStatsForHabit(habit);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
