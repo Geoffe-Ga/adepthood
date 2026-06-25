@@ -299,6 +299,11 @@ async def compute_stage_progress_batch(
     values identical to calling :func:`compute_stage_progress` per stage —
     eliminating the N+1 on ``list_stages`` (issue #473). Returns ``{}`` for an
     empty ``stage_numbers``.
+
+    The helpers deliberately ``GROUP BY`` the user's whole dataset with no
+    ``IN (stage_numbers)`` filter: the curriculum is ≤36 stages, so the group
+    set is tiny and one grouped scan beats a parameterised per-stage filter
+    here. ``stage_numbers`` only selects which groups land in the result.
     """
     if not stage_numbers:
         return {}
