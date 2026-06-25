@@ -75,17 +75,6 @@ const localStats: HabitStatsData = {
   completionDates: [],
 };
 
-const apiResponse = {
-  day_labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
-  values: [1, 3, 2, 2, 3, 2, 2],
-  completions_by_day: [1, 2, 1, 2, 3, 1, 5],
-  longest_streak: 7,
-  current_streak: 3,
-  total_completions: 15,
-  completion_rate: 0.75,
-  completion_dates: ['2024-01-01', '2024-01-02', '2024-01-03'],
-};
-
 describe('StatsModal', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -98,59 +87,41 @@ describe('StatsModal', () => {
     expect(toJSON()).toBeNull();
   });
 
-  it('fetches stats from API when opened', async () => {
-    (mockGetStats as any).mockResolvedValueOnce(apiResponse);
-
-    const { getByText } = render(
-      <StatsModal visible={true} habit={baseHabit} stats={localStats} onClose={jest.fn() as any} />,
-    );
-
-    // Should show loading state
-    expect(getByText('Loading stats...')).toBeTruthy();
-
-    await waitFor(() => {
-      expect(mockGetStats).toHaveBeenCalledWith(42);
-    });
-
-    // After API response, should show API stats
-    await waitFor(() => {
-      expect(getByText('7 days')).toBeTruthy(); // longest streak
-      expect(getByText('3 days')).toBeTruthy(); // current streak
-      expect(getByText('75%')).toBeTruthy(); // completion rate
-      expect(getByText('15')).toBeTruthy(); // total completions
-    });
-  });
-
-  it('falls back to local stats when API fails', async () => {
-    (mockGetStats as any).mockRejectedValueOnce(new Error('Network error'));
-
-    const fallbackStats: HabitStatsData = {
+  it('renders the stats provided by the owner without fetching itself', () => {
+    // The fetch is owned by useHabitStats (dedup); the modal only consumes the
+    // result, so it must never call the API.
+    const ownerStats: HabitStatsData = {
       ...localStats,
-      longestStreak: 2,
-      currentStreak: 1,
-      totalCompletions: 4,
-      completionRate: 0.5,
+      values: [1, 3, 2, 2, 3, 2, 2],
+      completionsByDay: [1, 2, 1, 2, 3, 1, 5],
+      longestStreak: 7,
+      currentStreak: 3,
+      totalCompletions: 15,
+      completionRate: 0.75,
+      completionDates: ['2024-01-01', '2024-01-02', '2024-01-03'],
     };
 
     const { getByText } = render(
-      <StatsModal
-        visible={true}
-        habit={baseHabit}
-        stats={fallbackStats}
-        onClose={jest.fn() as any}
-      />,
+      <StatsModal visible={true} habit={baseHabit} stats={ownerStats} onClose={jest.fn() as any} />,
     );
 
-    await waitFor(() => {
-      expect(getByText('2 days')).toBeTruthy(); // longest streak from local
-      expect(getByText('4')).toBeTruthy(); // total completions from local
-      expect(getByText('50%')).toBeTruthy(); // completion rate from local
-    });
+    expect(getByText('7 days')).toBeTruthy(); // longest streak
+    expect(getByText('3 days')).toBeTruthy(); // current streak
+    expect(getByText('75%')).toBeTruthy(); // completion rate
+    expect(getByText('15')).toBeTruthy(); // total completions
+    expect(mockGetStats).not.toHaveBeenCalled();
+  });
+
+  it('shows the loading state until the owner provides stats', () => {
+    const { getByText } = render(
+      <StatsModal visible={true} habit={baseHabit} stats={null} onClose={jest.fn() as any} />,
+    );
+
+    expect(getByText('Loading stats...')).toBeTruthy();
+    expect(mockGetStats).not.toHaveBeenCalled();
   });
 
   it('displays habit name and icon in header', async () => {
-    (mockGetStats as any).mockResolvedValueOnce(apiResponse);
-
     const { getByText } = render(
       <StatsModal visible={true} habit={baseHabit} stats={localStats} onClose={jest.fn() as any} />,
     );
@@ -160,7 +131,6 @@ describe('StatsModal', () => {
   });
 
   it('calls onClose when close button is pressed', async () => {
-    (mockGetStats as any).mockResolvedValueOnce(apiResponse);
     const onClose = jest.fn() as any;
 
     const { getByText } = render(
@@ -172,8 +142,6 @@ describe('StatsModal', () => {
   });
 
   it('switches between tabs', async () => {
-    (mockGetStats as any).mockResolvedValueOnce(apiResponse);
-
     const { getByText } = render(
       <StatsModal visible={true} habit={baseHabit} stats={localStats} onClose={jest.fn() as any} />,
     );
