@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import React, { useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import type { ListRenderItem } from 'react-native';
 import {
   ActivityIndicator,
@@ -91,6 +91,17 @@ const PracticeList = ({
     [selectedPracticeId, onSelect],
   );
 
+  // Stable header element so the FlatList doesn't re-diff it every render.
+  const header = useMemo(
+    () => (
+      <View>
+        {ListHeaderComponent}
+        <Text style={styles.heading}>Choose a Practice</Text>
+      </View>
+    ),
+    [ListHeaderComponent],
+  );
+
   return (
     <FlatList
       style={styles.list}
@@ -98,12 +109,7 @@ const PracticeList = ({
       data={practices}
       keyExtractor={keyExtractor}
       renderItem={renderItem}
-      ListHeaderComponent={
-        <View>
-          {ListHeaderComponent}
-          <Text style={styles.heading}>Choose a Practice</Text>
-        </View>
-      }
+      ListHeaderComponent={header}
       ListFooterComponent={ListFooterComponent}
       testID="practice-selector"
     />

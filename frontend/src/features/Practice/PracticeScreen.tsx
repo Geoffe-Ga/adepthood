@@ -17,7 +17,7 @@
  * The screen itself stays under ~250 LoC by keeping all state inside the
  * extracted hooks and the inner session component.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   ScrollView,
@@ -46,23 +46,34 @@ import { selectCurrentStage, useStageStore } from '@/store/useStageStore';
 type ActivePracticeHook = ReturnType<typeof useActivePractice>;
 type WeeklyProgressHook = ReturnType<typeof useWeeklyProgress>;
 
+/**
+ * Owns the switcher-visibility state and returns the banner + switcher as
+ * memoized elements (stable references unless their inputs change), so passing
+ * ``banner`` as a FlatList ``ListHeaderComponent`` doesn't re-diff every render.
+ */
 function usePracticeChrome(
   stageNumber: number,
   currentPracticeId: number | null,
   onReplaced: (_next: UserPractice) => void,
 ): { banner: React.JSX.Element; switcher: React.JSX.Element } {
   const [showSwitcher, setShowSwitcher] = useState(false);
-  const banner = (
-    <FrequencyBanner stageNumber={stageNumber} onSwitch={() => setShowSwitcher(true)} />
+  const open = useCallback(() => setShowSwitcher(true), []);
+  const close = useCallback(() => setShowSwitcher(false), []);
+  const banner = useMemo(
+    () => <FrequencyBanner stageNumber={stageNumber} onSwitch={open} />,
+    [stageNumber, open],
   );
-  const switcher = (
-    <PracticeSwitcherSheet
-      visible={showSwitcher}
-      stageNumber={stageNumber}
-      currentPracticeId={currentPracticeId}
-      onClose={() => setShowSwitcher(false)}
-      onReplaced={onReplaced}
-    />
+  const switcher = useMemo(
+    () => (
+      <PracticeSwitcherSheet
+        visible={showSwitcher}
+        stageNumber={stageNumber}
+        currentPracticeId={currentPracticeId}
+        onClose={close}
+        onReplaced={onReplaced}
+      />
+    ),
+    [showSwitcher, stageNumber, currentPracticeId, close, onReplaced],
   );
   return { banner, switcher };
 }
@@ -126,8 +137,6 @@ interface ActiveSessionViewProps {
   switcher: React.JSX.Element;
 }
 
-// The selection branch lets the windowed PracticeSelector own the scroll: a
-// vertical FlatList nested in a vertical ScrollView stops virtualizing.
 const ActiveSessionView = ({
   userPractice,
   practiceName,
@@ -171,27 +180,35 @@ interface SelectionViewProps {
   switcher: React.JSX.Element;
 }
 
+// The selection branch lets the windowed PracticeSelector own the scroll: a
+// vertical FlatList nested in a vertical ScrollView stops virtualizing.
 const SelectionView = ({
   active,
   weekly,
   currentPracticeId,
   banner,
   switcher,
-}: SelectionViewProps): React.JSX.Element => (
-  <View style={styles.screen} testID="practice-screen">
-    <View style={styles.screen} testID="selection-view">
-      <PracticeSelector
-        practices={active.availablePractices}
-        selectedPracticeId={currentPracticeId}
-        onSelect={(id) => void active.selectPractice(id)}
-        isLoading={false}
-        ListHeaderComponent={banner}
-        ListFooterComponent={<WeeklyProgress count={weekly.count} />}
-      />
+}: SelectionViewProps): React.JSX.Element => {
+  // ``selectPractice`` is already stable (useCallback in the hook); wrap it once
+  // so PracticeCard's React.memo isn't defeated by a fresh arrow each render.
+  const { selectPractice } = active;
+  const handleSelect = useCallback((id: number) => void selectPractice(id), [selectPractice]);
+  return (
+    <View style={styles.screen} testID="practice-screen">
+      <View style={styles.fill} testID="selection-view">
+        <PracticeSelector
+          practices={active.availablePractices}
+          selectedPracticeId={currentPracticeId}
+          onSelect={handleSelect}
+          isLoading={false}
+          ListHeaderComponent={banner}
+          ListFooterComponent={<WeeklyProgress count={weekly.count} />}
+        />
+      </View>
+      {switcher}
     </View>
-    {switcher}
-  </View>
-);
+  );
+};
 
 function useResolvedStageNumber(): number {
   const route = useAppRoute<'Practice'>();
@@ -276,6 +293,7 @@ const ErrorView = ({
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background.primary },
+  fill: { flex: 1 },
   scrollContent: { padding: SPACING.md, paddingBottom: SPACING.xxl },
   centered: {
     flex: 1,
