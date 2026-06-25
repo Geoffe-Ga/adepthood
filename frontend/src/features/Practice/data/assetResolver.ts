@@ -1,23 +1,32 @@
-// Resolves a card asset_key (e.g. "rws/the_fool") to a Metro-bundled image; null for text-only/unknown keys.
+// Resolves a card asset_key (e.g. "rws/the_fool") to a Metro-bundled image.
+//
+// Lookup order (issue #467):
+//   1. RWS_IMAGES — the real, per-card bundled artwork. Returned for every
+//      shipped key (the 22 Major Arcana today; Minor Arcana via the follow-up).
+//   2. PLACEHOLDER — for a *known* RWS card whose art has not been bundled yet,
+//      so the full 78-key space resolves to something renderable.
+//   3. null — for an unknown key or a text-only card (asset_key === null).
 
 import type { ImageSourcePropType } from 'react-native';
 
 import { RWS_CARDS } from './decks/rws';
+import { RWS_IMAGES } from './decks/rwsImages';
 
-// Single static require() satisfies Metro and gives us one symbol to
-// reuse 78 times below. Replace per-card with real artwork over time.
+// Documented fallback for a known-but-unshipped card. A single static
+// require() is all Metro needs; it is never returned for a shipped key.
 const PLACEHOLDER = require('../../../../assets/cards/_placeholder.png') as ImageSourcePropType;
 
-function buildRwsImageMap(): ReadonlyMap<string, ImageSourcePropType> {
-  // ``RwsCardMeta`` guarantees ``asset_key`` is a string — no narrowing needed.
-  return new Map(RWS_CARDS.map((card) => [card.asset_key, PLACEHOLDER]));
-}
-
-const CARD_IMAGES: ReadonlyMap<string, ImageSourcePropType> = buildRwsImageMap();
+// Every asset_key the RWS deck defines (all 78), so we can tell a known card
+// awaiting art (→ placeholder) from a genuinely unknown key (→ null).
+const KNOWN_RWS_KEYS: ReadonlySet<string> = new Set(RWS_CARDS.map((card) => card.asset_key));
 
 export function resolveCardImage(asset_key: string | null): ImageSourcePropType | null {
   if (asset_key === null) {
     return null;
   }
-  return CARD_IMAGES.get(asset_key) ?? null;
+  const shipped = RWS_IMAGES[asset_key];
+  if (shipped !== undefined) {
+    return shipped;
+  }
+  return KNOWN_RWS_KEYS.has(asset_key) ? PLACEHOLDER : null;
 }
