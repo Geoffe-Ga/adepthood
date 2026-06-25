@@ -144,7 +144,7 @@ export function CreatePracticeWizard(props: CreatePracticeWizardProps): React.JS
           goTo={goTo}
           setMode={setMode}
           submit={submit}
-          onCancel={() => props.navigation.goBack()}
+          onPickPreset={() => props.navigation.navigate('Tabs', { screen: 'Catalog' })}
         />
       </ScrollView>
     </KeyboardAvoidingView>
@@ -175,13 +175,16 @@ interface StepViewProps {
   goTo: (step: WizardStep) => void;
   setMode: (mode: PickableMode) => void;
   submit: SubmitController;
-  onCancel: () => void;
+  /** Opens the Practice catalog (preset picker); a chosen preset copies into a fresh wizard via route prefill (issue #472). */
+  onPickPreset: () => void;
 }
 
 const StepView = (props: StepViewProps): React.JSX.Element => {
   switch (props.state.step) {
     case 'entry':
-      return <EntryStep onPickPreset={props.onCancel} onStartScratch={() => props.goTo('mode')} />;
+      return (
+        <EntryStep onPickPreset={props.onPickPreset} onStartScratch={() => props.goTo('mode')} />
+      );
     case 'mode':
       return (
         <ModeStep
