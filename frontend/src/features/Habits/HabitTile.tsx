@@ -686,7 +686,7 @@ const UnlockedTile = ({
   );
 };
 
-export const HabitTile = ({
+const HabitTileComponent = ({
   habit,
   locked,
   onOpenGoals,
@@ -695,6 +695,7 @@ export const HabitTile = ({
   onUnlockHabit,
   tz = DEFAULT_TIMEZONE,
   stageColor,
+  globalIndex = 0,
 }: HabitTileProps) => {
   const { scale, gridGutter, tileMinHeight } = useTileLayout();
   const color = stageColor ?? STAGE_COLORS[habit.stage] ?? '#000';
@@ -712,16 +713,24 @@ export const HabitTile = ({
     );
   }
 
+  // Bind the stable parent handlers to this tile's habit/index. These wrappers
+  // are recreated only when the tile actually re-renders (below the memo
+  // boundary), so they never defeat React.memo on unchanged rows.
   return (
     <UnlockedTile
       habit={habit}
       stageColor={color}
-      onOpenGoals={onOpenGoals}
-      onLongPress={onLongPress}
-      onIconPress={onIconPress}
+      onOpenGoals={onOpenGoals ? () => onOpenGoals(habit) : undefined}
+      onLongPress={onLongPress ? () => onLongPress(habit) : undefined}
+      onIconPress={onIconPress ? () => onIconPress(globalIndex) : undefined}
       tz={tz}
     />
   );
 };
+
+// Memoized so a state change elsewhere (logging a unit, opening a modal) does
+// not re-render every visible row — only rows whose props actually changed
+// (issue #468). Relies on the parent passing stable handler references.
+export const HabitTile = React.memo(HabitTileComponent);
 
 export default HabitTile;

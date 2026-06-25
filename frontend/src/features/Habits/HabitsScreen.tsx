@@ -81,14 +81,14 @@ const ModeBar = ({ mode, onExit }: { mode: string; onExit: () => void }) => (
 
 const openModalForMode = (
   mode: string,
-  modals: ReturnType<typeof useModalCoordinator>,
+  open: ReturnType<typeof useModalCoordinator>['open'],
   actions: ReturnType<typeof useHabits>['actions'],
   itemId: number,
 ) => {
-  if (mode === 'stats') modals.open('stats');
-  else if (mode === 'edit') modals.open('settings');
+  if (mode === 'stats') open('stats');
+  else if (mode === 'edit') open('settings');
   else if (mode === 'quickLog') actions.logUnit(itemId, 1);
-  else modals.open('goal');
+  else open('goal');
 };
 
 interface OverflowMenuProps {
@@ -440,6 +440,44 @@ const EnergyFooter = ({
   </>
 );
 
+interface TileHandlers {
+  handleOpenGoals: (_item: Habit) => void;
+  handleLongPress: (_item: Habit) => void;
+  handleIconPress: (_index: number) => void;
+}
+
+// Stable per-tile handlers: the tile binds these to its own habit/index, so
+// unchanged rows keep identical prop references and React.memo skips them.
+const useTileHandlers = (
+  mode: string,
+  open: ReturnType<typeof useModalCoordinator>['open'],
+  actions: ReturnType<typeof useHabits>['actions'],
+  setSelectedHabit: (_h: Habit) => void,
+): TileHandlers => {
+  const handleOpenGoals = useCallback(
+    (item: Habit) => {
+      setSelectedHabit(item);
+      openModalForMode(mode, open, actions, item.id!);
+    },
+    [mode, open, actions, setSelectedHabit],
+  );
+  const handleLongPress = useCallback(
+    (item: Habit) => {
+      setSelectedHabit(item);
+      open('settings');
+    },
+    [open, setSelectedHabit],
+  );
+  const handleIconPress = useCallback(
+    (globalIndex: number) => {
+      actions.iconPress(globalIndex);
+      open('emojiPicker');
+    },
+    [actions, open],
+  );
+  return { handleOpenGoals, handleLongPress, handleIconPress };
+};
+
 const useHabitTileRenderer = (
   mode: string,
   modals: ReturnType<typeof useModalCoordinator>,
@@ -448,46 +486,36 @@ const useHabitTileRenderer = (
   tz: string,
   pageOffset = 0,
 ) => {
-  const renderHabitTile = ({ item, index }: { item: Habit; index: number }) => {
-    // Calendar-driven: unlocks when the anchored start_date arrives, not on the stale `revealed` flag — keeps Habits in lockstep with Map/Practice/Course.
-    const isLocked = isHabitLockedToday(item);
-    const globalIndex = pageOffset + index;
-    // index is page-relative, so each page restarts the Beige → Clear Light gradient.
-    const stageColor = STAGE_COLORS[STAGE_ORDER[index % STAGE_ORDER.length]!]!;
-    return (
-      <HabitTile
-        habit={item}
-        locked={isLocked}
-        stageColor={stageColor}
-        onOpenGoals={
-          isLocked
-            ? undefined
-            : () => {
-                setSelectedHabit(item);
-                openModalForMode(mode, modals, actions, item.id!);
-              }
-        }
-        onLongPress={
-          isLocked
-            ? undefined
-            : () => {
-                setSelectedHabit(item);
-                modals.open('settings');
-              }
-        }
-        onIconPress={
-          isLocked
-            ? undefined
-            : () => {
-                actions.iconPress(globalIndex);
-                modals.open('emojiPicker');
-              }
-        }
-        onUnlockHabit={actions.unlockHabit}
-        tz={tz}
-      />
-    );
-  };
+  const { handleOpenGoals, handleLongPress, handleIconPress } = useTileHandlers(
+    mode,
+    modals.open,
+    actions,
+    setSelectedHabit,
+  );
+  const { unlockHabit } = actions;
+  const renderHabitTile = useCallback(
+    ({ item, index }: { item: Habit; index: number }) => {
+      // Calendar-driven: unlocks when the anchored start_date arrives, not on the stale `revealed` flag — keeps Habits in lockstep with Map/Practice/Course.
+      const isLocked = isHabitLockedToday(item);
+      const globalIndex = pageOffset + index;
+      // index is page-relative, so each page restarts the Beige → Clear Light gradient.
+      const stageColor = STAGE_COLORS[STAGE_ORDER[index % STAGE_ORDER.length]!]!;
+      return (
+        <HabitTile
+          habit={item}
+          locked={isLocked}
+          stageColor={stageColor}
+          globalIndex={globalIndex}
+          onOpenGoals={handleOpenGoals}
+          onLongPress={handleLongPress}
+          onIconPress={handleIconPress}
+          onUnlockHabit={unlockHabit}
+          tz={tz}
+        />
+      );
+    },
+    [pageOffset, tz, handleOpenGoals, handleLongPress, handleIconPress, unlockHabit],
+  );
   return renderHabitTile;
 };
 

@@ -127,9 +127,13 @@ export interface EditableGoalProps {
 export interface HabitTileProps {
   habit: Habit;
   locked?: boolean;
-  onOpenGoals?: () => void;
-  onLongPress?: () => void;
-  onIconPress?: () => void;
+  // Handlers take the tile's own habit / index so the parent can pass stable
+  // (useCallback) references shared across all rows; the tile binds them to its
+  // habit internally. This keeps React.memo effective — a single-habit update
+  // re-renders only that row (issue #468).
+  onOpenGoals?: (_habit: Habit) => void;
+  onLongPress?: (_habit: Habit) => void;
+  onIconPress?: (_index: number) => void;
   onUnlockHabit?: (_habitId: number) => void;
   /**
    * IANA timezone used to bucket completions into the user's calendar day
@@ -139,6 +143,8 @@ export interface HabitTileProps {
   tz?: string;
   /** Border/accent color; falls back to ``STAGE_COLORS[habit.stage]`` when omitted. */
   stageColor?: string;
+  /** Global (page-offset) index passed to ``onIconPress``; defaults to 0. */
+  globalIndex?: number;
 }
 
 export interface HabitSettingsModalProps {
