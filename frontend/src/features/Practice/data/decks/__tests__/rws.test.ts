@@ -75,18 +75,22 @@ describe('RWS_CARDS', () => {
 });
 
 describe('resolveCardImage', () => {
-  it('returns the bundled placeholder for every defined RWS card', () => {
+  it('resolves a renderable image for every defined RWS card', () => {
+    // Full 78-key coverage: real art for shipped keys, placeholder otherwise.
     for (const card of RWS_CARDS) {
       expect(resolveCardImage(card.asset_key)).not.toBeNull();
     }
   });
 
-  it('returns the same image module for every RWS card (single placeholder)', () => {
-    const first = resolveCardImage(RWS_CARDS[0]?.asset_key ?? null);
-    expect(first).not.toBeNull();
-    for (const card of RWS_CARDS) {
-      expect(resolveCardImage(card.asset_key)).toBe(first);
-    }
+  it('returns distinct, real artwork for the shipped Major Arcana (issue #467)', () => {
+    // Regression guard: the old resolver mapped every key to one shared
+    // placeholder. Shipped keys must now each resolve to their own image.
+    const shipped = RWS_CARDS.map((card) => card.asset_key)
+      .map((key) => resolveCardImage(key))
+      .filter((image): image is NonNullable<typeof image> => image !== null);
+    const distinct = new Set(shipped);
+    // At least the 22 Major Arcana resolve to distinct references.
+    expect(distinct.size).toBeGreaterThanOrEqual(22);
   });
 
   it('returns null for a null asset_key (text-only card)', () => {
