@@ -42,6 +42,8 @@ from models.practice_recipe import PracticeRecipe, PracticeRecipeStep
 from models.practice_session import PracticeSession
 from models.user_practice import UserPractice
 from routers.auth import get_current_user
+from schemas import Page, PaginationParams, build_page
+from schemas.pagination import paginate_query
 from schemas.practice import UserPracticeDetail
 from schemas.practice_mode_config import ModeConfigAdapter
 from schemas.practice_recipe import (
@@ -183,20 +185,28 @@ async def _hydrate_recipes_with_steps(
     return [_to_out(r, steps_by_recipe.get(cast("int", r.id), [])) for r in recipes]
 
 
-@router.get("/", response_model=list[PracticeRecipeOut])
+@router.get("/", response_model=None)
 async def list_practice_recipes(
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    pagination: Annotated[PaginationParams, Depends()],
     mode: Annotated[str | None, Query(description="Filter by recipe mode.")] = None,
-) -> list[PracticeRecipeOut]:
-    """List every recipe visible to the caller, optionally filtered by mode.
+) -> Page[PracticeRecipeOut] | list[PracticeRecipeOut]:
+    """List recipes visible to the caller; paginated on ``?paginate=true``.
 
     Batches the step lookup into a single ``WHERE recipe_id IN (...)``
-    query so the picker, which fires this endpoint every time the
-    sheet opens, scales with library size instead of N+1.
+    query so the picker, which fires this endpoint every time the sheet
+    opens, scales with library size instead of N+1.  Pagination slices the
+    recipe rows (and the ``mode`` filter feeds the count) *before*
+    hydration, so the step lookup stays bounded to the current page
+    (issue #470).
     """
-    result = await session.execute(_build_recipe_list_query(user_id, mode))
-    return await _hydrate_recipes_with_steps(list(result.scalars().all()), session)
+    query = _build_recipe_list_query(user_id, mode)
+    recipes, total = await paginate_query(session, query, pagination)
+    hydrated = await _hydrate_recipes_with_steps(recipes, session)
+    if pagination.paginate:
+        return build_page(hydrated, total, pagination)
+    return hydrated
 
 
 @router.post("/", response_model=PracticeRecipeOut, status_code=status.HTTP_201_CREATED)
