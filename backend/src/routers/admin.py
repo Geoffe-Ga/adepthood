@@ -120,7 +120,7 @@ async def get_usage_stats(
     * ``per_user`` — one row per user who has consumed any tokens
     * ``per_model`` — one row per distinct ``(provider, model)`` pair
 
-    ``per_user`` grows one row per token-using user (audit §5.3). Pass
+    ``per_user`` grows one row per token-using user (unbounded). Pass
     ``?paginate=true`` to bound it to a page (highest-cost-first preserved);
     ``per_user_total`` / ``per_user_has_more`` then describe the full set.
     ``totals`` and ``per_model`` (bounded by distinct-model count) are unchanged.
@@ -208,7 +208,10 @@ def _gaps_from_rows(rows: list[StageProgress]) -> list[StageProgressGap]:
     return [gap for row in rows if (gap := _detect_gap(row)) is not None]
 
 
-@router.get("/stage-progress/gaps", response_model=None)
+@router.get(
+    "/stage-progress/gaps",
+    response_model=Page[StageProgressGap] | StageProgressGapsResponse,
+)
 async def list_stage_progress_gaps(
     session: Annotated[AsyncSession, Depends(get_session)],
     _admin: Annotated[User, Depends(require_admin)],
@@ -221,12 +224,17 @@ async def list_stage_progress_gaps(
     :func:`repair_stage_progress` to rewrite a single row explicitly.
 
     The gap filter is applied per row *after* the SELECT, so the page is
-    "gaps found within a page of scanned rows" (audit §5.3): under
-    ``?paginate=true`` only ``limit`` ``StageProgress`` rows are materialised —
-    not the whole table — and ``Page.total`` is the ``COUNT(*)`` of the base
-    table (scanned-row count), so ``has_more`` reflects unscanned rows, not
-    remaining gaps. The bare path keeps the full-scan ``StageProgressGapsResponse``
-    shape for backward compatibility.
+    "gaps found within a page of scanned rows": under ``?paginate=true`` only
+    ``limit`` ``StageProgress`` rows are materialised — not the whole table.
+
+    .. warning::
+
+       ``total`` means different things on the two paths and must not be
+       compared across them. On the bare path ``StageProgressGapsResponse.total``
+       is the number of gap rows *found*; under ``?paginate=true``
+       ``Page.total`` is the ``COUNT(*)`` of the base ``StageProgress`` table
+       (rows *scanned*), so ``has_more`` reflects unscanned rows, not remaining
+       gaps. The bare path keeps the full-scan shape for backward compatibility.
     """
     # Order by user_id so OFFSET/LIMIT paging is stable across requests.
     base_query = select(StageProgress).order_by(col(StageProgress.user_id))

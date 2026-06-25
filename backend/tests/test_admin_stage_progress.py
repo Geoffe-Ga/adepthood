@@ -191,6 +191,8 @@ async def test_gaps_paginated_returns_page_envelope(
     assert body["limit"] == 2
     assert body["offset"] == 0
     # total is the COUNT(*) of the base StageProgress table (scanned-row count).
+    # Load-bearing: == 3 proves signup/_signup_admin do NOT create a
+    # StageProgress row (only the three seeded users have one).
     assert body["total"] == 3
     assert body["has_more"] is True
     # Only a page of rows was scanned → at most ``limit`` gap items, in user order.
