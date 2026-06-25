@@ -156,12 +156,13 @@ async def _persist(
             existing = await _load_persisted_plan(session, user_id, idempotency_key)
             if existing is not None:
                 return existing
-        # Index violation with no readable winner (e.g. the row vanished between
-        # rollback and re-read): surface it rather than masking a real conflict.
-        logger.exception(
-            "energy_plan_persist_conflict_unresolved",
-            extra={"user_id": user_id, "has_idempotency_key": idempotency_key is not None},
-        )
+            # Keyed conflict with no readable winner (e.g. the row vanished
+            # between rollback and re-read): surface it, don't mask a real race.
+            logger.exception("energy_plan_persist_conflict_unresolved", extra={"user_id": user_id})
+        else:
+            # Unkeyed insert can't hit the partial unique index, so this is a
+            # different constraint failure (e.g. a user_id FK violation).
+            logger.exception("energy_plan_persist_failed", extra={"user_id": user_id})
         raise
     return response
 
@@ -185,4 +186,6 @@ async def get_or_create_persisted_plan(
         if existing is not None:
             return existing
     response = await asyncio.to_thread(build_energy_response, habits, start_date)
+    # NOTE: unkeyed requests are not deduplicated and accumulate one row each;
+    # bounding that growth (retention/cleanup) is tracked as a separate follow-up.
     return await _persist(session, user_id, idempotency_key, response)

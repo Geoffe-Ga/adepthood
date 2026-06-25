@@ -96,6 +96,7 @@ async def test_keyed_retry_returns_stored_plan_ignoring_new_inputs(
 
 @pytest.mark.asyncio
 async def test_distinct_keys_produce_distinct_rows(db_session: AsyncSession) -> None:
+    """Two different keys for one user persist two independent plan rows."""
     uid = await _make_user(db_session, "distinct@example.com")
     await get_or_create_persisted_plan(db_session, uid, _habits(), _START, "a")
     await get_or_create_persisted_plan(db_session, uid, _habits(), _START, "b")
