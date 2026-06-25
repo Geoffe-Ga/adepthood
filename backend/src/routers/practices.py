@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from slowapi.util import get_remote_address
 from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +40,10 @@ def _per_user_rate_limit_key(request: Request) -> str:
     """
     try:
         return f"user:{extract_user_id_from_authorization(request.headers.get('authorization'))}"
-    except Exception:  # noqa: BLE001 — fall through to IP for any decode failure
+    except HTTPException:
+        # Malformed / missing token (the only thing the decode raises) → fall
+        # back to the IP key. A non-HTTP error is a programmer bug and must
+        # propagate rather than be silently masked as an anonymous request.
         return get_remote_address(request)
 
 
