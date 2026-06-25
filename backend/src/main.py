@@ -34,6 +34,7 @@ from routers.course import router as course_router
 from routers.energy import router as energy_router
 from routers.goal_completions import router as goal_completion_router
 from routers.goal_groups import router as goal_groups_router
+from routers.goal_groups import seed_goal_group_templates
 from routers.goals import router as goals_router
 from routers.habits import router as habits_router
 from routers.journal import router as journal_router
@@ -273,6 +274,7 @@ async def _seed_startup_data(session: AsyncSession) -> None:
         ("practices", seed_practices),
         ("practice_recipes", seed_practice_recipes),
         ("content", seed_content),
+        ("goal_group_templates", seed_goal_group_templates),
     ):
         try:
             inserted = await seeder(session)
