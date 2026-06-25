@@ -16,6 +16,7 @@ from domain.constants import TOTAL_STAGES
 from domain.program_calendar import calendar_stage, calendar_week, resolve_program_anchor
 from domain.stage_progress import (
     compute_stage_progress,
+    compute_stage_progress_batch,
     get_stage_habit_history,
     get_stage_practice_history,
     get_user_progress,
@@ -43,18 +44,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/stages", tags=["stages"])
 
 
-async def _build_stage_response(
+def _build_stage_response(
     stage: CourseStage,
-    session: AsyncSession,
-    user_id: int,
-    progress: StageProgress | None,
+    stage_progress: float,
+    *,
+    unlocked: bool,
 ) -> StageResponse:
-    """Assemble a :class:`StageResponse` with the current user's progress overlay."""
-    unlocked = is_stage_unlocked(stage.stage_number, progress)
-    stage_progress = 0.0
-    if unlocked:
-        data = await compute_stage_progress(session, user_id, stage.stage_number)
-        stage_progress = data["overall_progress"]
+    """Assemble a :class:`StageResponse` from a precomputed progress value.
+
+    Progress is computed in one batched pass by the caller (issue #473) rather
+    than per stage, so this stays a pure, query-free assembler.
+    """
     return StageResponse(
         id=stage.id,
         title=stage.title,
@@ -95,7 +95,19 @@ async def list_stages(
     stages, total = await paginate_query(session, query, pagination)
     progress = await get_user_progress(session, current_user)
 
-    responses = [await _build_stage_response(s, session, current_user, progress) for s in stages]
+    unlocked = {s.stage_number: is_stage_unlocked(s.stage_number, progress) for s in stages}
+    # Batch all per-stage progress in 3 grouped queries instead of N-by-M (issue #473).
+    batch = await compute_stage_progress_batch(
+        session, current_user, [n for n, ok in unlocked.items() if ok]
+    )
+    responses = [
+        _build_stage_response(
+            s,
+            float(batch[s.stage_number]["overall_progress"]) if unlocked[s.stage_number] else 0.0,
+            unlocked=unlocked[s.stage_number],
+        )
+        for s in stages
+    ]
 
     if pagination.paginate:
         return build_page(responses, total, pagination)
