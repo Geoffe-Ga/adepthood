@@ -100,7 +100,11 @@ interface MessageBubbleProps {
   onRetry?: () => void;
 }
 
-const MessageBubble = ({ message, errorLabel, onRetry }: MessageBubbleProps): React.JSX.Element => {
+const MessageBubbleComponent = ({
+  message,
+  errorLabel,
+  onRetry,
+}: MessageBubbleProps): React.JSX.Element => {
   const isUser = message.sender === 'user';
   const tagLabel = TAG_LABELS[message.tag];
   const showCursor = message._streaming === true;
@@ -129,5 +133,39 @@ const MessageBubble = ({ message, errorLabel, onRetry }: MessageBubbleProps): Re
     </View>
   );
 };
+
+/**
+ * Custom equality for {@link MessageBubble}'s {@link React.memo}.
+ *
+ * The Journal conversation is a long inverted FlatList; without memoization
+ * every bubble re-renders whenever the list does (new message, streaming
+ * chunk, unrelated state). We compare exactly the fields the bubble renders
+ * so an unchanged bubble bails out (audit §5.2).
+ *
+ * ``onRetry`` is intentionally excluded: the list rebuilds it per render as a
+ * closure bound to the same message, so comparing its identity would defeat
+ * the memo without any behavioural difference — ``_errored`` already captures
+ * whether the retry affordance shows.
+ */
+export function messageBubblePropsAreEqual(
+  prev: MessageBubbleProps,
+  next: MessageBubbleProps,
+): boolean {
+  const a = prev.message;
+  const b = next.message;
+  return (
+    a.id === b.id &&
+    a.sender === b.sender &&
+    a.tag === b.tag &&
+    a.message === b.message &&
+    a.timestamp === b.timestamp &&
+    a.practice_session_id === b.practice_session_id &&
+    a._streaming === b._streaming &&
+    a._errored === b._errored &&
+    prev.errorLabel === next.errorLabel
+  );
+}
+
+const MessageBubble = React.memo(MessageBubbleComponent, messageBubblePropsAreEqual);
 
 export default MessageBubble;
