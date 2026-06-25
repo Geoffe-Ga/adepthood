@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import date
 from typing import Annotated, Any, cast
 
@@ -24,7 +25,7 @@ from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.user_practice import UserPractice
 from routers.auth import get_current_user
-from schemas import Page, PaginationParams, build_page
+from schemas import MAX_PAGE_SIZE, Page, PaginationParams, build_page
 from schemas.frequency import FrequencyResponse, render_banner_text
 from schemas.pagination import paginate_query
 from schemas.practice import (
@@ -507,21 +508,65 @@ async def get_current_frequency(
     return await _frequency_from_preset(session, course_stage, stage_number)
 
 
+# Cap on inline practice-session history embedded in a single user-practice
+# response. Older sessions stay reachable via the paginated list_sessions
+# endpoint (issue #474); the cap is applied in SQL (LIMIT), never by slicing a
+# full fetch, so a long history never materialises in one response.
+EMBEDDED_SESSIONS_DEFAULT_LIMIT = 50
+
+
+@dataclass
+class EmbeddedSessionsParams:
+    """Query params bounding the embedded ``sessions[]`` (issue #474).
+
+    Defaults keep the embed at the cap; clients can page within it (or fetch
+    older sessions through the standalone ``list_sessions`` endpoint).
+    """
+
+    sessions_limit: int = Query(default=EMBEDDED_SESSIONS_DEFAULT_LIMIT, ge=1, le=MAX_PAGE_SIZE)
+    sessions_offset: int = Query(default=0, ge=0)
+
+
+async def load_recent_sessions(
+    session: AsyncSession,
+    user_practice_id: int,
+    params: EmbeddedSessionsParams,
+) -> tuple[list[PracticeSession], int, bool]:
+    """Newest-first slice of a practice's sessions, capped in SQL (issue #474).
+
+    Returns ``(sessions, total, has_more)``. The ``LIMIT`` is applied in the
+    query, so a long history never materialises in one response; ``has_more``
+    tells the client older sessions exist behind ``list_sessions``.
+    """
+    query = (
+        select(PracticeSession)
+        .where(PracticeSession.user_practice_id == user_practice_id)
+        .order_by(col(PracticeSession.timestamp).desc())
+    )
+    page_params = PaginationParams(
+        limit=params.sessions_limit, offset=params.sessions_offset, paginate=True
+    )
+    sessions, total = await paginate_query(session, query, page_params)
+    has_more = (params.sessions_offset + params.sessions_limit) < total
+    return sessions, total, has_more
+
+
 @router.get("/{user_practice_id}", response_model=UserPracticeDetail)
 async def get_user_practice(
     session: Annotated[AsyncSession, Depends(get_session)],
     user_practice: Annotated[UserPractice, Depends(require_owned_user_practice)],
+    embed: Annotated[EmbeddedSessionsParams, Depends()],
 ) -> dict[str, Any]:
-    """Get a single user-practice with its session history.
+    """Get a single user-practice with its (capped) recent session history.
 
-    Ownership via ``require_owned_user_practice`` (404 → 403 split).
+    Ownership via ``require_owned_user_practice`` (404 → 403 split). The
+    embedded ``sessions[]`` is bounded to ``EMBEDDED_SESSIONS_DEFAULT_LIMIT``
+    newest-first sessions; ``sessions_total`` / ``sessions_has_more`` report
+    whether older sessions remain (fetch them via ``list_sessions``). Issue #474.
     """
-    sessions_result = await session.execute(
-        select(PracticeSession)
-        .where(PracticeSession.user_practice_id == user_practice.id)
-        .order_by(col(PracticeSession.timestamp).desc())
+    sessions, total, has_more = await load_recent_sessions(
+        session, cast("int", user_practice.id), embed
     )
-    sessions = list(sessions_result.scalars().all())
     name, cfg = await _resolve_effective_fields(session, user_practice)
 
     return {
@@ -529,6 +574,8 @@ async def get_user_practice(
         "effective_name": name,
         "effective_config": cfg,
         "sessions": sessions,
+        "sessions_total": total,
+        "sessions_has_more": has_more,
     }
 
 
@@ -563,6 +610,7 @@ async def customize_user_practice(
     payload: UserPracticeCustomize,
     session: Annotated[AsyncSession, Depends(get_session)],
     user_practice: Annotated[UserPractice, Depends(require_owned_user_practice)],
+    embed: Annotated[EmbeddedSessionsParams, Depends()],
 ) -> dict[str, Any]:
     """Per-user override of name + mode_config.
 
@@ -587,12 +635,9 @@ async def customize_user_practice(
     name = effective_name(practice, user_practice)
     cfg = effective_config(practice, user_practice).model_dump()
 
-    sessions_result = await session.execute(
-        select(PracticeSession)
-        .where(PracticeSession.user_practice_id == user_practice.id)
-        .order_by(col(PracticeSession.timestamp).desc())
+    sessions, total, has_more = await load_recent_sessions(
+        session, cast("int", user_practice.id), embed
     )
-    sessions = list(sessions_result.scalars().all())
     logger.info(
         "user_practice_customized",
         extra={
@@ -606,4 +651,6 @@ async def customize_user_practice(
         "effective_name": name,
         "effective_config": cfg,
         "sessions": sessions,
+        "sessions_total": total,
+        "sessions_has_more": has_more,
     }
