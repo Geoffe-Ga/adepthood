@@ -20,8 +20,12 @@ MAX_HABITS_PER_PLAN = 100
 class Habit(BaseModel):
     id: int = Field(gt=0)
     name: str = Field(min_length=1, max_length=HABIT_NAME_MAX_LENGTH)
-    energy_cost: int = Field(ge=ENERGY_VALUE_MIN, le=ENERGY_VALUE_MAX)
-    energy_return: int = Field(ge=ENERGY_VALUE_MIN, le=ENERGY_VALUE_MAX)
+    # energy_cost / energy_return are loaded server-side from the caller's own
+    # Habit rows (BUG-PRACTICE-010); any client-sent values are ignored. They
+    # stay optional + bounded so existing clients that still send them validate,
+    # but the planner never trusts them.
+    energy_cost: int | None = Field(default=None, ge=ENERGY_VALUE_MIN, le=ENERGY_VALUE_MAX)
+    energy_return: int | None = Field(default=None, ge=ENERGY_VALUE_MIN, le=ENERGY_VALUE_MAX)
 
 
 class EnergyPlanItem(BaseModel):
