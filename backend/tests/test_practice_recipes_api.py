@@ -14,6 +14,7 @@ from models.practice import Practice
 from models.practice_recipe import PracticeRecipe, PracticeRecipeStep
 from models.practice_session import PracticeSession
 from models.stage_progress import StageProgress
+from schemas import DEFAULT_PAGE_SIZE
 
 
 async def _signup(client: AsyncClient, username: str = "owner") -> tuple[dict[str, str], int]:
@@ -530,3 +531,158 @@ async def test_list_batches_step_lookup(
 async def test_unauthenticated_rejected(async_client: AsyncClient) -> None:
     resp = await async_client.get("/practice-recipes/")
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+# -- Pagination (issue #470) ------------------------------------------------
+
+
+async def _seed_system_recipes(db_session: AsyncSession, count: int) -> None:
+    """Seed ``count`` system recipes (each with one step), name-ordered."""
+    for i in range(count):
+        recipe = PracticeRecipe(
+            slug=f"sys_{i:02d}",
+            name=f"System {i:02d}",
+            description="",
+            owner_user_id=None,
+            mode="tallied_grounding",
+            rounds=1,
+        )
+        db_session.add(recipe)
+        await db_session.commit()
+        await db_session.refresh(recipe)
+        assert recipe.id is not None
+        db_session.add(
+            PracticeRecipeStep(
+                recipe_id=recipe.id,
+                position=0,
+                tag_slug="red",
+                tag_label="Red",
+                prompt_label="Find red",
+                target_count=1,
+            )
+        )
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_list_bare_path_returns_plain_list_with_steps(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Omitting ?paginate=true returns the historical bare list (with steps)."""
+    await _seed_system_recipes(db_session, 3)
+    headers, _ = await _signup(async_client)
+
+    resp = await async_client.get("/practice-recipes/", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert isinstance(body, list)
+    assert len(body) == 3
+    assert all(len(recipe["steps"]) >= 1 for recipe in body)
+
+
+@pytest.mark.asyncio
+async def test_list_bare_path_is_capped_at_default_page_size(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The bare list is intentionally capped at DEFAULT_PAGE_SIZE (no unbounded list).
+
+    Even without ?paginate=true the endpoint funnels through paginate_query, so a
+    library larger than one page returns at most DEFAULT_PAGE_SIZE rows — the
+    audit's "no unbounded list" guarantee. Documented here so a future change to
+    paginate_query can't silently restore the unbounded behaviour.
+    """
+    await _seed_system_recipes(db_session, DEFAULT_PAGE_SIZE + 1)
+    headers, _ = await _signup(async_client)
+
+    resp = await async_client.get("/practice-recipes/", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert len(resp.json()) == DEFAULT_PAGE_SIZE
+
+
+@pytest.mark.asyncio
+async def test_list_paginated_returns_envelope_with_steps(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """?paginate=true returns the Page envelope; the slice is still hydrated."""
+    await _seed_system_recipes(db_session, 3)
+    headers, _ = await _signup(async_client)
+
+    resp = await async_client.get("/practice-recipes/?paginate=true", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert set(body) == {"items", "total", "limit", "offset", "has_more"}
+    assert body["limit"] == DEFAULT_PAGE_SIZE
+    assert body["offset"] == 0
+    assert body["total"] == 3
+    assert body["has_more"] is False
+    assert len(body["items"]) == 3
+    assert all(len(recipe["steps"]) >= 1 for recipe in body["items"])
+
+
+@pytest.mark.asyncio
+async def test_list_pagination_limit_offset_and_has_more(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The limit slices, offset skips, and total/has_more cover the full set."""
+    await _seed_system_recipes(db_session, 5)
+    headers, _ = await _signup(async_client)
+
+    first = await async_client.get(
+        "/practice-recipes/?paginate=true&limit=2&offset=0", headers=headers
+    )
+    page1 = first.json()
+    assert page1["total"] == 5
+    assert page1["limit"] == 2
+    assert page1["has_more"] is True
+    assert len(page1["items"]) == 2
+
+    last = await async_client.get(
+        "/practice-recipes/?paginate=true&limit=2&offset=4", headers=headers
+    )
+    page3 = last.json()
+    assert page3["offset"] == 4
+    assert page3["has_more"] is False
+    assert len(page3["items"]) == 1
+    assert {r["slug"] for r in page1["items"]}.isdisjoint({r["slug"] for r in page3["items"]})
+
+
+@pytest.mark.asyncio
+async def test_list_pagination_composes_with_mode_filter(async_client: AsyncClient) -> None:
+    """The mode filter feeds the count + slice, not the whole library."""
+    headers, _ = await _signup(async_client)
+    await async_client.post(
+        "/practice-recipes/", json=_sense_recipe_body("sense_a"), headers=headers
+    )
+    await async_client.post(
+        "/practice-recipes/", json=_sense_recipe_body("sense_b"), headers=headers
+    )
+    await async_client.post(
+        "/practice-recipes/", json=_tallied_recipe_body("tallied_a"), headers=headers
+    )
+
+    resp = await async_client.get(
+        "/practice-recipes/?paginate=true&mode=sense_grounding&limit=1", headers=headers
+    )
+
+    body = resp.json()
+    # Only the two sense recipes are counted — the tallied one is excluded.
+    assert body["total"] == 2
+    assert body["has_more"] is True
+    assert len(body["items"]) == 1
+    assert body["items"][0]["mode"] == "sense_grounding"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", [0, 201])
+async def test_list_pagination_rejects_out_of_range_limit(
+    async_client: AsyncClient, limit: int
+) -> None:
+    """The limit bounds are enforced by the shared PaginationParams validators."""
+    headers, _ = await _signup(async_client)
+    resp = await async_client.get(
+        f"/practice-recipes/?paginate=true&limit={limit}", headers=headers
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
