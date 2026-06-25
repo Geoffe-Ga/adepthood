@@ -177,7 +177,7 @@ async def test_gaps_flags_over_credited_future_stages(
 async def test_gaps_paginated_returns_page_envelope(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """``?paginate=true`` returns a Page envelope keyed on the scanned-row count."""
+    """``?paginate=true`` returns a StageProgressGapsPage keyed on scanned rows."""
     _admin_id, headers = await _signup_admin(async_client, db_session)
     ids = sorted([await _make_user(db_session, f"gap{i}@example.com") for i in range(3)])
     for uid in ids:
@@ -190,11 +190,11 @@ async def test_gaps_paginated_returns_page_envelope(
     body = resp.json()
     assert body["limit"] == 2
     assert body["offset"] == 0
-    # total is the COUNT(*) of the base StageProgress table (scanned-row count).
+    # scanned_total is the COUNT(*) of the base StageProgress table.
     # Load-bearing: == 3 proves signup/_signup_admin do NOT create a
     # StageProgress row (only the three seeded users have one).
-    assert body["total"] == 3
-    assert body["has_more"] is True
+    assert body["scanned_total"] == 3
+    assert body["has_more_rows"] is True
     # Only a page of rows was scanned → at most ``limit`` gap items, in user order.
     assert [item["user_id"] for item in body["items"]] == ids[:2]
 
@@ -213,8 +213,8 @@ async def test_gaps_paginated_offset_skips_and_clears_has_more(
         "/admin/stage-progress/gaps?paginate=true&limit=2&offset=2", headers=headers
     )
     body = resp.json()
-    assert body["total"] == 3
-    assert body["has_more"] is False
+    assert body["scanned_total"] == 3
+    assert body["has_more_rows"] is False
     assert [item["user_id"] for item in body["items"]] == ids[2:]
 
 
@@ -233,8 +233,8 @@ async def test_gaps_paginate_does_not_materialise_whole_table(
     )
     body = resp.json()
     assert len(body["items"]) == 1  # only one row materialised, not all five
-    assert body["total"] == 5
-    assert body["has_more"] is True
+    assert body["scanned_total"] == 5
+    assert body["has_more_rows"] is True
 
 
 @pytest.mark.asyncio
@@ -252,6 +252,60 @@ async def test_gaps_bare_path_unchanged(
     assert set(body.keys()) == {"rows", "total"}
     assert body["total"] == 3
     assert len(body["rows"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_gaps_paginate_scanned_total_diverges_from_items(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """When a scanned page contains clean rows, ``scanned_total`` != ``len(items)``.
+
+    This is the documented foot-gun made observable: the page scans 3 rows but
+    only 2 are gaps, so ``scanned_total`` (3) must not equal the gap count (2).
+    """
+    _admin_id, headers = await _signup_admin(async_client, db_session)
+    ids = sorted([await _make_user(db_session, f"mix{i}@example.com") for i in range(3)])
+    # First two are gaps; the third is contiguous (clean) — still a scanned row.
+    await _seed_progress(db_session, user_id=ids[0], current_stage=4, completed_stages=[1, 3])
+    await _seed_progress(db_session, user_id=ids[1], current_stage=4, completed_stages=[1, 3])
+    await _seed_progress(db_session, user_id=ids[2], current_stage=3, completed_stages=[1, 2])
+
+    resp = await async_client.get(
+        "/admin/stage-progress/gaps?paginate=true&limit=3", headers=headers
+    )
+    body = resp.json()
+    assert body["scanned_total"] == 3
+    assert len(body["items"]) == 2  # the clean row is scanned but not a gap
+    assert body["scanned_total"] != len(body["items"])
+
+
+@pytest.mark.asyncio
+async def test_gaps_paginate_empty_table(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``?paginate=true`` on an empty table → no items, zero scanned, no more rows."""
+    _admin_id, headers = await _signup_admin(async_client, db_session)
+    resp = await async_client.get("/admin/stage-progress/gaps?paginate=true", headers=headers)
+    body = resp.json()
+    assert body["items"] == []
+    assert body["scanned_total"] == 0
+    assert body["has_more_rows"] is False
+
+
+@pytest.mark.asyncio
+async def test_gaps_paginate_rejects_out_of_range_limit(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``limit`` above MAX_PAGE_SIZE (or below 1) is rejected by PaginationParams."""
+    _admin_id, headers = await _signup_admin(async_client, db_session)
+    too_big = await async_client.get(
+        "/admin/stage-progress/gaps?paginate=true&limit=201", headers=headers
+    )
+    assert too_big.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    too_small = await async_client.get(
+        "/admin/stage-progress/gaps?paginate=true&limit=0", headers=headers
+    )
+    assert too_small.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 # ── Repair ───────────────────────────────────────────────────────────────

@@ -21,16 +21,17 @@ from errors import not_found
 from models.llm_usage_log import LLMUsageLog
 from models.stage_progress import StageProgress
 from models.user import User
-from schemas import Page, PaginationParams, build_page
+from schemas import PaginationParams
 from schemas.admin import (
     ModelUsageBreakdown,
     StageProgressGap,
+    StageProgressGapsPage,
     StageProgressGapsResponse,
     StageProgressRepairResult,
     UsageStatsResponse,
     UserUsageBreakdown,
 )
-from schemas.pagination import paginate_query
+from schemas.pagination import count_query_total, paginate_query
 
 # SQL ``SUM(NUMERIC)`` returns ``Decimal`` on Postgres but ``int`` (or
 # ``float``) on SQLite for an empty group.  Coerce defensively to keep
@@ -87,8 +88,7 @@ async def _fetch_per_user(
     total: int | None = None
     has_more: bool | None = None
     if pagination.paginate:
-        count_query = select(func.count()).select_from(query.order_by(None).subquery())
-        total = int((await session.execute(count_query)).scalar() or 0)
+        total = await count_query_total(session, query)
         has_more = (pagination.offset + pagination.limit) < total
         query = query.offset(pagination.offset).limit(pagination.limit)
     rows = (await session.execute(query)).all()
@@ -210,37 +210,40 @@ def _gaps_from_rows(rows: list[StageProgress]) -> list[StageProgressGap]:
 
 @router.get(
     "/stage-progress/gaps",
-    response_model=Page[StageProgressGap] | StageProgressGapsResponse,
+    response_model=StageProgressGapsPage | StageProgressGapsResponse,
 )
 async def list_stage_progress_gaps(
     session: Annotated[AsyncSession, Depends(get_session)],
     _admin: Annotated[User, Depends(require_admin)],
     pagination: Annotated[PaginationParams, Depends()],
-) -> Page[StageProgressGap] | StageProgressGapsResponse:
+) -> StageProgressGapsPage | StageProgressGapsResponse:
     """Return ``stageprogress`` rows whose completed set is non-contiguous.
 
     Read-only: mirrors the audit migration's logging so operators can inspect
     flagged rows on a live database without trawling alembic logs.  Pair with
     :func:`repair_stage_progress` to rewrite a single row explicitly.
 
-    The gap filter is applied per row *after* the SELECT, so the page is
-    "gaps found within a page of scanned rows": under ``?paginate=true`` only
-    ``limit`` ``StageProgress`` rows are materialised — not the whole table.
-
-    .. warning::
-
-       ``total`` means different things on the two paths and must not be
-       compared across them. On the bare path ``StageProgressGapsResponse.total``
-       is the number of gap rows *found*; under ``?paginate=true``
-       ``Page.total`` is the ``COUNT(*)`` of the base ``StageProgress`` table
-       (rows *scanned*), so ``has_more`` reflects unscanned rows, not remaining
-       gaps. The bare path keeps the full-scan shape for backward compatibility.
+    The gap filter is applied per row *after* the SELECT, so under
+    ``?paginate=true`` only ``limit`` ``StageProgress`` rows are materialised —
+    not the whole table. That path returns a :class:`StageProgressGapsPage`
+    whose fields (``scanned_total`` / ``has_more_rows``) name the row-scan
+    semantics explicitly, so a caller never mistakes them for a gap count. The
+    bare path keeps the full-scan :class:`StageProgressGapsResponse` shape
+    (``total`` = gaps found) for backward compatibility.
     """
     # Order by user_id so OFFSET/LIMIT paging is stable across requests.
     base_query = select(StageProgress).order_by(col(StageProgress.user_id))
     if pagination.paginate:
-        rows, total = await paginate_query(session, base_query, pagination)
-        return build_page(_gaps_from_rows(rows), total, pagination)
+        # ``paginate_query``'s total is the COUNT(*) of the base table — exactly
+        # the scanned-row count this page reports (no second COUNT needed).
+        rows, scanned_total = await paginate_query(session, base_query, pagination)
+        return StageProgressGapsPage(
+            items=_gaps_from_rows(rows),
+            scanned_total=scanned_total,
+            limit=pagination.limit,
+            offset=pagination.offset,
+            has_more_rows=(pagination.offset + pagination.limit) < scanned_total,
+        )
     all_rows = list((await session.execute(base_query)).scalars().all())
     gaps = _gaps_from_rows(all_rows)
     return StageProgressGapsResponse(rows=gaps, total=len(gaps))

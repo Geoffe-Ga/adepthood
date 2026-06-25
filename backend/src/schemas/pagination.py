@@ -79,6 +79,18 @@ def build_page(items: list[T], total: int, params: PaginationParams) -> Page[T]:
     )
 
 
+async def count_query_total(session: AsyncSession, query: Select[Any]) -> int:
+    """Return ``COUNT(*)`` over ``query`` with its ``ORDER BY`` stripped.
+
+    Shared by :func:`paginate_query` and any endpoint paginating a
+    multi-column / ``GROUP BY`` query (which can't use ``paginate_query``
+    because it calls ``.scalars()``).  Dropping the ``ORDER BY`` before
+    wrapping in a subquery avoids a sort the count never uses.
+    """
+    count_query = select(func.count()).select_from(query.order_by(None).subquery())
+    return int((await session.execute(count_query)).scalar() or 0)
+
+
 async def paginate_query(
     session: AsyncSession,
     query: Select[Any],
@@ -93,10 +105,9 @@ async def paginate_query(
     issue separate ``IN`` queries that aren't affected by the outer
     ``OFFSET`` / ``LIMIT``.
     """
-    count_query = select(func.count()).select_from(query.order_by(None).subquery())
-    total = (await session.execute(count_query)).scalar() or 0
+    total = await count_query_total(session, query)
 
     paged_query = query.offset(params.offset).limit(params.limit)
     result = await session.execute(paged_query)
     items = list(result.scalars().all())
-    return items, int(total)
+    return items, total
