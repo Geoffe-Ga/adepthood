@@ -336,3 +336,76 @@ async def test_admin_endpoint_rejects_deleted_admin(
     # before the downstream admin lookup runs.
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
     assert resp.json()["detail"] == "unauthorized"
+
+
+# ── per_user pagination ─────────────────────────────────────────────────────
+
+
+async def _seed_user_with_cost(db_session: AsyncSession, email: str, cost: Decimal) -> int:
+    """Create a user + one usage log at ``cost``; return the user id."""
+    user_id, journal_id = await _seed_user_and_journal_entry(db_session, email)
+    await _seed_usage_log(
+        db_session,
+        user_id=user_id,
+        journal_entry_id=journal_id,
+        spec=_UsageLogSpec(estimated_cost_usd=cost),
+    )
+    return user_id
+
+
+@pytest.mark.asyncio
+async def test_usage_stats_per_user_paginated(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``?paginate=true`` bounds per_user to a page, highest-cost-first, with totals set."""
+    headers = await _signup_admin(async_client, db_session)
+    top = await _seed_user_with_cost(db_session, "top@example.com", Decimal("3.00"))
+    mid = await _seed_user_with_cost(db_session, "mid@example.com", Decimal("2.00"))
+    await _seed_user_with_cost(db_session, "lowp@example.com", Decimal("1.00"))
+    await db_session.commit()
+
+    resp = await async_client.get("/admin/usage-stats?paginate=true&limit=2", headers=headers)
+    data = resp.json()
+    assert [u["user_id"] for u in data["per_user"]] == [top, mid]
+    assert data["per_user_total"] == 3
+    assert data["per_user_has_more"] is True
+    # totals + per_model are untouched by per_user pagination.
+    assert data["total_calls"] == 3
+    assert len(data["per_model"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_usage_stats_per_user_offset_skips_and_clears_has_more(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A later page returns the remaining (lowest-cost) users and clears has_more."""
+    headers = await _signup_admin(async_client, db_session)
+    await _seed_user_with_cost(db_session, "a@example.com", Decimal("3.00"))
+    await _seed_user_with_cost(db_session, "b@example.com", Decimal("2.00"))
+    low = await _seed_user_with_cost(db_session, "c@example.com", Decimal("1.00"))
+    await db_session.commit()
+
+    resp = await async_client.get(
+        "/admin/usage-stats?paginate=true&limit=2&offset=2", headers=headers
+    )
+    data = resp.json()
+    assert [u["user_id"] for u in data["per_user"]] == [low]
+    assert data["per_user_total"] == 3
+    assert data["per_user_has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_usage_stats_bare_path_omits_pagination_fields(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Without ``?paginate=true`` per_user is the full list and the totals are None."""
+    headers = await _signup_admin(async_client, db_session)
+    for i in range(3):
+        await _seed_user_with_cost(db_session, f"bare{i}@example.com", Decimal("1.00"))
+    await db_session.commit()
+
+    resp = await async_client.get("/admin/usage-stats", headers=headers)
+    data = resp.json()
+    assert len(data["per_user"]) == 3
+    assert data["per_user_total"] is None
+    assert data["per_user_has_more"] is None

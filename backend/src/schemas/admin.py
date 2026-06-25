@@ -76,6 +76,11 @@ class UsageStatsResponse(BaseModel):
     total_estimated_cost_usd: Decimal
     per_user: list[UserUsageBreakdown]
     per_model: list[ModelUsageBreakdown]
+    # Populated only under ``?paginate=true`` (audit §5.3): ``per_user`` is then
+    # a bounded page and these describe the full breakdown. ``None`` on the bare
+    # path so the legacy response shape is unchanged.
+    per_user_total: int | None = None
+    per_user_has_more: bool | None = None
 
     @field_serializer("total_estimated_cost_usd")
     def _serialize_total(self, value: Decimal) -> str:
