@@ -1,4 +1,4 @@
-"""Unit tests for :mod:`services.energy`: cache, response building, trusted-cost resolution."""
+"""Unit tests for :mod:`services.energy`: response building, persistence, resolution."""
 
 from __future__ import annotations
 
@@ -6,19 +6,20 @@ from datetime import date
 from http import HTTPStatus
 
 import pytest
-from cachetools import TTLCache
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from domain.energy import Habit as DomainHabit
+from models.energy_plan import EnergyPlan as EnergyPlanRecord
 from models.habit import Habit
+from models.user import User
 from schemas import EnergyPlanRequest
 from services.energy import (
-    CACHE_MAX_ENTRIES,
-    CACHE_TTL_SECONDS,
+    _persist,
     build_energy_response,
-    get_or_generate_plan,
-    idempotency_cache,
+    get_or_create_persisted_plan,
     resolve_trusted_habits,
 )
 
@@ -30,11 +31,21 @@ def _habits() -> list[DomainHabit]:
     return [DomainHabit(id=1, name="Run", energy_cost=1, energy_return=3)]
 
 
-def test_idempotency_cache_is_ttl_bounded() -> None:
-    """The module-level cache should be a TTLCache with the documented limits."""
-    assert isinstance(idempotency_cache, TTLCache)
-    assert idempotency_cache.maxsize == CACHE_MAX_ENTRIES
-    assert idempotency_cache.ttl == CACHE_TTL_SECONDS
+async def _count_plans(session: AsyncSession, user_id: int) -> int:
+    rows = await session.execute(
+        select(EnergyPlanRecord).where(EnergyPlanRecord.user_id == user_id)
+    )
+    return len(rows.scalars().all())
+
+
+async def _make_user(session: AsyncSession, email: str) -> int:
+    """Insert a real User row so FK constraints (EnergyPlan/Habit → user) hold."""
+    user = User(email=email, password_hash="x")  # pragma: allowlist secret
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    assert user.id is not None
+    return user.id
 
 
 def test_build_energy_response_returns_21_day_plan() -> None:
@@ -50,26 +61,106 @@ def test_build_energy_response_raises_400_on_empty_habits() -> None:
     assert excinfo.value.detail == "habits_must_not_be_empty"
 
 
-def test_get_or_generate_plan_without_key_skips_cache(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No idempotency key means no cache write — subsequent calls recompute."""
-    fresh_cache: TTLCache[str, object] = TTLCache(maxsize=100, ttl=60)
-    monkeypatch.setattr("services.energy.idempotency_cache", fresh_cache)
-
-    get_or_generate_plan(_habits(), _START, idempotency_key=None)
-    assert len(fresh_cache) == 0
+# ── Durable plan persistence (audit-destub) ─────────────────────────────────
 
 
-def test_get_or_generate_plan_returns_cached_response_for_same_key(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fresh_cache: TTLCache[str, object] = TTLCache(maxsize=100, ttl=60)
-    monkeypatch.setattr("services.energy.idempotency_cache", fresh_cache)
+@pytest.mark.asyncio
+async def test_keyed_retry_replays_the_persisted_plan(db_session: AsyncSession) -> None:
+    """Two keyed calls write one row and return an identical plan (cross-restart).
 
-    first = get_or_generate_plan(_habits(), _START, idempotency_key="k")
-    second = get_or_generate_plan(_habits(), _START, idempotency_key="k")
+    There is no in-memory cache anymore — the only shared state is the DB row,
+    so the second call's match proves the read-through, i.e. the behaviour a
+    fresh process / other worker would also see.
+    """
+    uid = await _make_user(db_session, "keyed@example.com")
+    first = await get_or_create_persisted_plan(db_session, uid, _habits(), _START, "k1")
+    second = await get_or_create_persisted_plan(db_session, uid, _habits(), _START, "k1")
 
     assert first == second
-    assert len(fresh_cache) == 1
+    assert await _count_plans(db_session, uid) == 1  # one row despite two calls
+
+
+@pytest.mark.asyncio
+async def test_keyed_retry_returns_stored_plan_ignoring_new_inputs(
+    db_session: AsyncSession,
+) -> None:
+    """A retry with the same key replays the stored plan, never regenerating."""
+    uid = await _make_user(db_session, "inv@example.com")
+    first = await get_or_create_persisted_plan(db_session, uid, _habits(), _START, "k")
+    # Same key, different habits + start_date: the stored plan must win.
+    other = [DomainHabit(id=2, name="Read", energy_cost=2, energy_return=9)]
+    second = await get_or_create_persisted_plan(db_session, uid, other, date(2030, 1, 1), "k")
+
+    assert second == first
+
+
+@pytest.mark.asyncio
+async def test_distinct_keys_produce_distinct_rows(db_session: AsyncSession) -> None:
+    """Two different keys for one user persist two independent plan rows."""
+    uid = await _make_user(db_session, "distinct@example.com")
+    await get_or_create_persisted_plan(db_session, uid, _habits(), _START, "a")
+    await get_or_create_persisted_plan(db_session, uid, _habits(), _START, "b")
+    assert await _count_plans(db_session, uid) == 2
+
+
+@pytest.mark.asyncio
+async def test_same_key_different_users_are_isolated(db_session: AsyncSession) -> None:
+    """The partial UNIQUE index is per (user, key), so users don't collide."""
+    uid1 = await _make_user(db_session, "iso1@example.com")
+    uid2 = await _make_user(db_session, "iso2@example.com")
+    await get_or_create_persisted_plan(db_session, uid1, _habits(), _START, "shared")
+    await get_or_create_persisted_plan(db_session, uid2, _habits(), _START, "shared")
+    assert await _count_plans(db_session, uid1) == 1
+    assert await _count_plans(db_session, uid2) == 1
+
+
+@pytest.mark.asyncio
+async def test_unkeyed_request_writes_a_row_each_call(db_session: AsyncSession) -> None:
+    """Unkeyed requests are not deduplicated — each generated plan is recorded."""
+    uid = await _make_user(db_session, "unkeyed@example.com")
+    await get_or_create_persisted_plan(db_session, uid, _habits(), _START, None)
+    await get_or_create_persisted_plan(db_session, uid, _habits(), _START, None)
+    assert await _count_plans(db_session, uid) == 2
+
+
+@pytest.mark.asyncio
+async def test_persist_integrity_race_returns_stored_winner(db_session: AsyncSession) -> None:
+    """A duplicate-key insert (concurrent winner exists) rolls back to the stored row.
+
+    Exercises ``_persist``'s ``IntegrityError`` fallback directly: a row for
+    ``(1, "race")`` already exists, so inserting another for the same key hits
+    the partial UNIQUE index — the fallback must re-read and return the winner,
+    not the losing response, leaving exactly one row.
+    """
+    uid = await _make_user(db_session, "race@example.com")
+    winner = await get_or_create_persisted_plan(db_session, uid, _habits(), _START, "race")
+    loser = build_energy_response(
+        [DomainHabit(id=9, name="X", energy_cost=2, energy_return=9)], date(2030, 1, 1)
+    )
+
+    result = await _persist(db_session, uid, "race", loser)
+
+    assert result == winner
+    assert result != loser
+    assert await _count_plans(db_session, uid) == 1
+
+
+@pytest.mark.asyncio
+async def test_persist_reraises_when_winner_not_readable(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the conflict has no readable winner after rollback, the error surfaces."""
+    uid = await _make_user(db_session, "race2@example.com")
+    await get_or_create_persisted_plan(db_session, uid, _habits(), _START, "race2")
+
+    async def _missing(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("services.energy._load_persisted_plan", _missing)
+    loser = build_energy_response(_habits(), _START)
+
+    with pytest.raises(IntegrityError):
+        await _persist(db_session, uid, "race2", loser)
 
 
 # ── Server-side trusted-cost resolution (BUG-PRACTICE-010) ──────────────────
@@ -110,7 +201,7 @@ def _request(
 @pytest.mark.asyncio
 async def test_resolve_ignores_forged_client_costs(db_session: AsyncSession) -> None:
     """Forged client costs are ignored; the resolved habit carries the stored costs."""
-    user_id = 1
+    user_id = await _make_user(db_session, "forge@example.com")
     habit_id = await _make_habit(db_session, user_id, energy_cost=2, energy_return=9)
     payload = _request(habit_id, cost=1000, ret=0)  # client forges wildly different costs
 
@@ -124,7 +215,7 @@ async def test_resolve_ignores_forged_client_costs(db_session: AsyncSession) -> 
 @pytest.mark.asyncio
 async def test_resolve_works_when_costs_omitted(db_session: AsyncSession) -> None:
     """A payload omitting costs still resolves to the stored values."""
-    user_id = 1
+    user_id = await _make_user(db_session, "omit@example.com")
     habit_id = await _make_habit(db_session, user_id, energy_cost=4, energy_return=7)
 
     resolved = await resolve_trusted_habits(db_session, user_id, _request(habit_id))
@@ -136,7 +227,8 @@ async def test_resolve_works_when_costs_omitted(db_session: AsyncSession) -> Non
 @pytest.mark.asyncio
 async def test_resolve_rejects_habit_owned_by_another_user(db_session: AsyncSession) -> None:
     """A habit owned by someone else returns 403, not a plan."""
-    owner_id, attacker_id = 1, 2
+    owner_id = await _make_user(db_session, "owner@example.com")
+    attacker_id = await _make_user(db_session, "attacker@example.com")
     habit_id = await _make_habit(db_session, owner_id, energy_cost=2, energy_return=3)
 
     with pytest.raises(HTTPException) as excinfo:
