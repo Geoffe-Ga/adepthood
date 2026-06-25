@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
+from fastapi import HTTPException
+
 from errors import bad_request, payment_required
 from security import sanitize_user_text
 
@@ -142,6 +144,19 @@ _INJECTION_PATTERNS = re.compile(
     r"|(?:system:\s)"
     r"|(?:###\s*(?:system|instruction))"
 )
+
+
+class LLMProviderError(RuntimeError):
+    """A provider/config failure that callers should degrade gracefully on.
+
+    Raised by :func:`generate_response` / :func:`generate_response_stream` for
+    any provider, network, SDK, or LLM-config failure — giving the chat layer a
+    single, SDK-agnostic type to catch (it never needs to know which provider
+    SDK is installed). Subclasses ``RuntimeError`` for back-compat, but the chat
+    layer catches *this* type specifically so an unrelated internal
+    ``RuntimeError`` (a genuine bug) still propagates instead of being masked as
+    provider degradation.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -583,11 +598,17 @@ async def generate_response(
     Returns an :class:`LLMResponse` carrying both the generated text and the
     token counts needed to log usage downstream.
     """
-    resolved_prompt = system_prompt or get_system_prompt()
-    provider = _provider_for_request(api_key)
+    # Any provider/config/SDK failure is normalised to LLMProviderError so the
+    # chat layer can catch one SDK-agnostic type; HTTPException (BYOK key / quota
+    # errors) is a client error and passes through unchanged.
+    try:
+        resolved_prompt = system_prompt or get_system_prompt()
+        provider = _provider_for_request(api_key)
 
-    spec = PROVIDER_REGISTRY.get(provider)
-    if spec is not None:
+        spec = PROVIDER_REGISTRY.get(provider)
+        if spec is None:
+            # Default: stub provider for development and testing.
+            return _stub_response(user_message)
         # Resolve by name at call time so test monkeypatches on the module
         # attribute (e.g. ``patch.object(botmason, "_call_openai", ...)``)
         # keep working — the registry never freezes the function objects.
@@ -595,9 +616,11 @@ async def generate_response(
         result: LLMResponse = await caller(
             user_message, conversation_history, resolved_prompt, api_key
         )
-        return result
-    # Default: stub provider for development and testing
-    return _stub_response(user_message)
+    except (HTTPException, LLMProviderError):
+        raise
+    except Exception as exc:
+        raise LLMProviderError(str(exc)) from exc
+    return result
 
 
 def _stub_response(user_message: str) -> LLMResponse:
@@ -793,6 +816,27 @@ def _select_provider_streamer(
     return streamer
 
 
+async def _iter_provider_stream(
+    user_message: str,
+    conversation_history: list[dict[str, str]],
+    system_prompt: str | None,
+    api_key: str | None,
+) -> AsyncIterator[StreamChunk]:
+    """Yield chunks from the resolved provider streamer (or the stub).
+
+    Split out so :func:`generate_response_stream` is just the error-normalising
+    shell, keeping each function under xenon's A-rank complexity cap.
+    """
+    resolved_prompt = system_prompt or get_system_prompt()
+    streamer = _select_provider_streamer(_provider_for_request(api_key))
+    if streamer is None:
+        async for item in _stream_stub(user_message):
+            yield item
+        return
+    async for item in streamer(user_message, conversation_history, resolved_prompt, api_key):
+        yield item
+
+
 async def generate_response_stream(
     user_message: str,
     conversation_history: list[dict[str, str]],
@@ -810,14 +854,18 @@ async def generate_response_stream(
     provider by prefix, so a BYOK key streams from a real model even when
     ``BOTMASON_PROVIDER`` is the default ``stub``.
     """
-    resolved_prompt = system_prompt or get_system_prompt()
-    streamer = _select_provider_streamer(_provider_for_request(api_key))
-    if streamer is None:
-        async for item in _stream_stub(user_message):
+    # Same contract as ``generate_response``: provider/SDK failures (including
+    # ones raised mid-stream after chunks have been yielded) surface as
+    # LLMProviderError; HTTPException passes through unchanged.
+    try:
+        async for item in _iter_provider_stream(
+            user_message, conversation_history, system_prompt, api_key
+        ):
             yield item
-        return
-    async for item in streamer(user_message, conversation_history, resolved_prompt, api_key):
-        yield item
+    except (HTTPException, LLMProviderError):
+        raise
+    except Exception as exc:
+        raise LLMProviderError(str(exc)) from exc
 
 
 # Word boundary delimiter used to chunk the stub response so the client

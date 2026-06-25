@@ -39,13 +39,14 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
 from schemas.botmason import ChatResponse
 from services import botmason as _botmason
 from services import chat_idempotency
-from services.botmason import LLMResponse, generate_response
+from services.botmason import LLMProviderError, LLMResponse, generate_response
 from services.journal import (
     load_recent_conversation,
     persist_bot_reply,
@@ -103,15 +104,18 @@ async def handle_chat_request(
 
     try:
         llm_response = await generate_response(message, history, api_key=api_key)
-    except Exception:
-        # BUG-BM-013: LLM call failed after wallet deduction — rollback the
-        # uncommitted transaction so the user is not charged.  The deduction
-        # is staged (UPDATE issued) but not yet committed; a rollback reverses
-        # it in a single round-trip without a compensating credit INSERT.
+    except LLMProviderError:
+        # BUG-BM-013: the LLM provider call failed after the wallet deduction —
+        # roll back the uncommitted transaction so the user is not charged. The
+        # deduction is staged (UPDATE issued) but not yet committed; a rollback
+        # reverses it in one round-trip without a compensating credit INSERT.
+        # Only provider failures (``LLMProviderError``) are handled here: any
+        # other error (a programmer bug) propagates so it surfaces instead of
+        # being masked, and ``get_session`` still rolls back on the way out.
         logger.exception("LLM call failed for user_id=%s; rolling back wallet deduction", user_id)
         try:
             await session.rollback()
-        except Exception:
+        except SQLAlchemyError:
             logger.exception("Rollback failed for user_id=%s", user_id)
         raise
 
@@ -360,7 +364,11 @@ async def stream_bot_response(
         await _rollback_quietly(session, user_id, "cancelled")
         raise  # Re-raise so Starlette can close the connection cleanly.
 
-    except Exception:
+    except LLMProviderError:
+        # The provider call failed (config/network/SDK error, normalised to
+        # LLMProviderError by ``services.botmason``): degrade to a 502 SSE event.
+        # Any other exception is a programmer bug and propagates so it is not
+        # masked as a benign provider failure.
         logger.exception("Stream provider error for user_id=%s", user_id)
         await _rollback_quietly(session, user_id, "provider_error")
         yield sse_event("error", {"status": 502, "detail": "llm_provider_error"})
