@@ -82,12 +82,12 @@ const ModeBar = ({ mode, onExit }: { mode: string; onExit: () => void }) => (
 const openModalForMode = (
   mode: string,
   open: ReturnType<typeof useModalCoordinator>['open'],
-  actions: ReturnType<typeof useHabits>['actions'],
+  logUnit: ReturnType<typeof useHabits>['actions']['logUnit'],
   itemId: number,
 ) => {
   if (mode === 'stats') open('stats');
   else if (mode === 'edit') open('settings');
-  else if (mode === 'quickLog') actions.logUnit(itemId, 1);
+  else if (mode === 'quickLog') logUnit(itemId, 1);
   else open('goal');
 };
 
@@ -454,12 +454,16 @@ const useTileHandlers = (
   actions: ReturnType<typeof useHabits>['actions'],
   setSelectedHabit: (_h: Habit) => void,
 ): TileHandlers => {
+  // Depend on the specific stable function refs, not the whole ``actions``
+  // object, so the memo optimization holds even if ``actions`` were ever
+  // rebuilt per render (issue #468 review).
+  const { iconPress, logUnit } = actions;
   const handleOpenGoals = useCallback(
     (item: Habit) => {
       setSelectedHabit(item);
-      openModalForMode(mode, open, actions, item.id!);
+      openModalForMode(mode, open, logUnit, item.id!);
     },
-    [mode, open, actions, setSelectedHabit],
+    [mode, open, logUnit, setSelectedHabit],
   );
   const handleLongPress = useCallback(
     (item: Habit) => {
@@ -470,10 +474,10 @@ const useTileHandlers = (
   );
   const handleIconPress = useCallback(
     (globalIndex: number) => {
-      actions.iconPress(globalIndex);
+      iconPress(globalIndex);
       open('emojiPicker');
     },
-    [actions, open],
+    [iconPress, open],
   );
   return { handleOpenGoals, handleLongPress, handleIconPress };
 };

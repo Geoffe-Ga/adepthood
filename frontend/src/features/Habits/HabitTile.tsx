@@ -700,6 +700,10 @@ const HabitTileComponent = ({
   const { scale, gridGutter, tileMinHeight } = useTileLayout();
   const color = stageColor ?? STAGE_COLORS[habit.stage] ?? '#000';
 
+  // Handlers are always provided (so they stay stable for React.memo), but
+  // LockedTile deliberately does NOT expose onOpenGoals/onLongPress/onIconPress
+  // in its UI — its only interaction is the unlock dialog. So those handlers
+  // are never invoked for a locked row; the rendercount test pins this.
   if (locked) {
     return (
       <LockedTile
