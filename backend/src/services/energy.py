@@ -1,43 +1,33 @@
-"""Energy-plan generation service with idempotency caching.
+"""Energy-plan generation service with durable, cross-worker persistence.
 
-The router layer is a thin HTTP adapter: it accepts a request, resolves the
-caller's trusted habit costs server-side via :func:`resolve_trusted_habits`,
-then hands those to :func:`get_or_generate_plan` and returns the response. The
-idempotency cache lives here (not in the router) so background regeneration
-jobs, admin tools, and tests can share the same de-duplication semantics
-without reaching into route handlers.
+The router layer is a thin HTTP adapter: it resolves the caller's trusted habit
+costs server-side via :func:`resolve_trusted_habits`, then hands those to
+:func:`get_or_create_persisted_plan`, which generates the plan (CPU-bound work
+off-loaded to a thread) and stores it in the ``energyplan`` table. A keyed
+retry returns the stored plan verbatim — across process restarts and workers —
+instead of regenerating (the per-process ``TTLCache`` this replaces could not).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import asdict
 from datetime import date
 
-from cachetools import TTLCache
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.energy import Habit as DomainHabit
 from domain.energy import generate_plan
 from errors import forbidden, not_found
+from models.energy_plan import EnergyPlan as EnergyPlanRecord
 from models.habit import Habit
 from schemas import EnergyPlan, EnergyPlanRequest, EnergyPlanResponse
 
 logger = logging.getLogger(__name__)
-
-# Idempotency cache prevents duplicate plan generation within the same session.
-# - ``CACHE_MAX_ENTRIES = 1000`` supports ~1000 concurrent users before LRU
-#   eviction starts.
-# - ``CACHE_TTL_SECONDS = 3600`` (1 hour) matches ``_TOKEN_TTL`` in ``auth.py``
-#   so cached plans expire alongside the JWT that initiated them.
-CACHE_MAX_ENTRIES = 1000
-CACHE_TTL_SECONDS = 3600
-
-idempotency_cache: TTLCache[str, EnergyPlanResponse] = TTLCache(
-    maxsize=CACHE_MAX_ENTRIES, ttl=CACHE_TTL_SECONDS
-)
 
 
 async def _load_owned_habits(
@@ -119,22 +109,74 @@ def build_energy_response(habits: list[DomainHabit], start_date: date) -> Energy
     return response
 
 
-def get_or_generate_plan(
-    habits: list[DomainHabit], start_date: date, idempotency_key: str | None
+def _row_to_response(row: EnergyPlanRecord) -> EnergyPlanResponse:
+    """Rebuild the response from a stored row (reverse of :func:`_persist`)."""
+    return EnergyPlanResponse(
+        plan=EnergyPlan.model_validate_json(row.plan_json),
+        reason_code=row.reason_code,
+    )
+
+
+async def _load_persisted_plan(
+    session: AsyncSession, user_id: int, idempotency_key: str
+) -> EnergyPlanResponse | None:
+    """Return the stored plan for ``(user_id, idempotency_key)`` if one exists."""
+    result = await session.execute(
+        select(EnergyPlanRecord).where(
+            EnergyPlanRecord.user_id == user_id,
+            EnergyPlanRecord.idempotency_key == idempotency_key,
+        )
+    )
+    row = result.scalars().first()
+    return _row_to_response(row) if row is not None else None
+
+
+async def _persist(
+    session: AsyncSession, user_id: int, idempotency_key: str | None, response: EnergyPlanResponse
 ) -> EnergyPlanResponse:
-    """Return a cached plan for ``idempotency_key`` or compute and cache a new one.
+    """Store ``response`` and return it; on a keyed race, return the stored row.
 
-    Callers that do not pass a key always get a freshly-generated plan and
-    nothing is cached.  When a key is supplied the cached response is used
-    verbatim — including the ``reason_code`` — so clients retrying a failed
-    request never see a different outcome for the same request ID.
+    Unkeyed requests (``idempotency_key is None``) each get their own row — the
+    partial UNIQUE index only constrains non-NULL keys. A concurrent insert for
+    the same ``(user_id, key)`` raises ``IntegrityError``; we roll back and read
+    the winner's row so both callers see the same plan.
     """
-    if idempotency_key and idempotency_key in idempotency_cache:
-        return idempotency_cache[idempotency_key]
-
-    response = build_energy_response(habits, start_date)
-
-    if idempotency_key:
-        idempotency_cache[idempotency_key] = response
-
+    row = EnergyPlanRecord(
+        user_id=user_id,
+        idempotency_key=idempotency_key,
+        plan_json=response.plan.model_dump_json(),
+        reason_code=response.reason_code,
+    )
+    session.add(row)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        if idempotency_key is not None:
+            existing = await _load_persisted_plan(session, user_id, idempotency_key)
+            if existing is not None:
+                return existing
+        raise
     return response
+
+
+async def get_or_create_persisted_plan(
+    session: AsyncSession,
+    user_id: int,
+    habits: list[DomainHabit],
+    start_date: date,
+    idempotency_key: str | None,
+) -> EnergyPlanResponse:
+    """Return the caller's stored plan for ``idempotency_key`` or generate + store one.
+
+    A keyed request first reads the persisted ``EnergyPlan`` row; on a hit it is
+    replayed verbatim (cross-restart / cross-worker). On a miss — or for an
+    unkeyed request — the plan is generated (CPU-bound work off-loaded via
+    :func:`asyncio.to_thread` per BUG-INFRA-009) and persisted before returning.
+    """
+    if idempotency_key is not None:
+        existing = await _load_persisted_plan(session, user_id, idempotency_key)
+        if existing is not None:
+            return existing
+    response = await asyncio.to_thread(build_energy_response, habits, start_date)
+    return await _persist(session, user_id, idempotency_key, response)

@@ -12,15 +12,12 @@ import itertools
 from datetime import date
 from http import HTTPStatus
 from typing import Any
-from unittest.mock import patch
 
 import pytest
-from cachetools import TTLCache
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.habit import Habit
-from services import energy as energy_service
 
 # Per-user habit names are unique (ix_habit_user_lower_name_unique_test); a
 # global counter keeps every seeded habit's name distinct within a test.
@@ -174,23 +171,22 @@ async def test_idempotency_returns_cached_response(
 async def test_different_idempotency_keys_produce_independent_results(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Different idempotency keys are cached independently."""
+    """Different idempotency keys persist independent plans."""
     auth, user_id = await _auth_headers(async_client, "diffidem")
     id_a = await _seed_habit(db_session, user_id, cost=1, ret=2, name="A")
     id_b = await _seed_habit(db_session, user_id, cost=5, ret=1, name="B")
-    with patch.object(energy_service, "idempotency_cache", TTLCache(maxsize=1000, ttl=3600)):
-        resp_a = await async_client.post(
-            "/v1/energy/plan",
-            json=_plan_request([id_a]),
-            headers={**auth, "X-Idempotency-Key": "key-a"},
-        )
-        resp_b = await async_client.post(
-            "/v1/energy/plan",
-            json=_plan_request([id_b]),
-            headers={**auth, "X-Idempotency-Key": "key-b"},
-        )
+    resp_a = await async_client.post(
+        "/v1/energy/plan",
+        json=_plan_request([id_a]),
+        headers={**auth, "X-Idempotency-Key": "key-a"},
+    )
+    resp_b = await async_client.post(
+        "/v1/energy/plan",
+        json=_plan_request([id_b]),
+        headers={**auth, "X-Idempotency-Key": "key-b"},
+    )
 
-        assert resp_a.json()["plan"]["net_energy"] != resp_b.json()["plan"]["net_energy"]
+    assert resp_a.json()["plan"]["net_energy"] != resp_b.json()["plan"]["net_energy"]
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Annotated
 
@@ -12,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_session
 from routers.auth import get_current_user
 from schemas import EnergyPlanRequest, EnergyPlanResponse
-from services.energy import get_or_generate_plan, resolve_trusted_habits
+from services.energy import get_or_create_persisted_plan, resolve_trusted_habits
 
 logger = logging.getLogger(__name__)
 
@@ -39,13 +38,14 @@ async def create_plan(
     closes the remainder of BUG-PRACTICE-010 — the plan can no longer be
     steered by forged client values.
 
-    BUG-INFRA-009: ``generate_plan`` performs CPU-bound scheduling work, so it
-    is offloaded via :func:`asyncio.to_thread`; the (async) habit lookup runs
-    on the event loop first, then the CPU work runs off-loop.
+    The generated plan is persisted to the ``energyplan`` table keyed by
+    ``(current_user, X-Idempotency-Key)``, so a keyed retry replays the stored
+    plan across restarts and workers. ``generate_plan`` is CPU-bound and runs
+    off the event loop (BUG-INFRA-009); see ``get_or_create_persisted_plan``.
     """
     trusted = await resolve_trusted_habits(session, current_user, payload)
-    response = await asyncio.to_thread(
-        get_or_generate_plan, trusted, payload.start_date, x_idempotency_key
+    response = await get_or_create_persisted_plan(
+        session, current_user, trusted, payload.start_date, x_idempotency_key
     )
     logger.info(
         "energy_plan_created",

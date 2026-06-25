@@ -3,6 +3,7 @@
 from .chat_spend import ChatSpend
 from .content_completion import ContentCompletion
 from .course_stage import CourseStage
+from .energy_plan import EnergyPlan
 from .goal import Goal
 from .goal_completion import GoalCompletion
 from .goal_group import GoalGroup
@@ -28,6 +29,7 @@ __all__ = [
     "ChatSpend",
     "ContentCompletion",
     "CourseStage",
+    "EnergyPlan",
     "Goal",
     "GoalCompletion",
     "GoalGroup",

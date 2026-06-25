@@ -1,8 +1,9 @@
-"""Unit-ish tests for the energy plan TTL cache and idempotency helpers.
+"""Tests for the energy plan endpoint's persistence and concurrency behaviour.
 
-Endpoint coverage (auth, validation, plan generation) lives in
-``test_energy_integration.py``.  The blocking-event-loop test stays here
-because it monkeypatches the service.
+Auth/validation/plan-generation coverage lives in ``test_energy_integration.py``
+and the service-level persistence tests in ``tests/services/test_energy.py``;
+this file covers HTTP-layer idempotency and the BUG-INFRA-009 offload, both of
+which monkeypatch the service.
 """
 
 from __future__ import annotations
@@ -15,16 +16,17 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from cachetools import TTLCache
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from domain.energy import Habit as DomainHabit
 from main import app
+from models.energy_plan import EnergyPlan as EnergyPlanRecord
 from models.habit import Habit
 from routers import energy as energy_router
+from schemas import EnergyPlanResponse
 from services import energy
-from services.energy import idempotency_cache
 
 
 def sample_payload() -> dict[str, Any]:
@@ -75,67 +77,62 @@ async def _seed_habit(db_session: AsyncSession, user_id: int) -> int:
     return habit.id
 
 
-def test_idempotency_cache_is_ttl_bounded() -> None:
-    """The idempotency cache should be a TTLCache with bounded size."""
-    assert isinstance(idempotency_cache, TTLCache)
-    assert idempotency_cache.maxsize == 1000
-    assert idempotency_cache.ttl == 3600
-
-
-def test_idempotency_cache_evicts_when_full() -> None:
-    """When the cache is full, new entries should evict old ones."""
-    small_cache: TTLCache[str, str] = TTLCache(maxsize=2, ttl=3600)
-    small_cache["a"] = "val_a"
-    small_cache["b"] = "val_b"
-    small_cache["c"] = "val_c"
-    assert "a" not in small_cache
-    assert "c" in small_cache
-
-
 @pytest.mark.asyncio
-async def test_idempotency_miss_after_cache_clear(
+async def test_keyed_requests_replay_identical_persisted_plan(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """After clearing the cache, duplicate keys should recompute."""
+    """Two POSTs with the same X-Idempotency-Key return one plan, one stored row."""
     headers, user_id = await _signup(async_client)
     habit_id = await _seed_habit(db_session, user_id)
     payload = _plan_request([habit_id])
-    with patch.object(energy, "idempotency_cache", TTLCache(maxsize=1000, ttl=3600)):
-        idem_headers = {**headers, "X-Idempotency-Key": "unique-clear-test"}
-        res1 = await async_client.post("/v1/energy/plan", json=payload, headers=idem_headers)
-        energy.idempotency_cache.clear()
-        res2 = await async_client.post("/v1/energy/plan", json=payload, headers=idem_headers)
-        assert res1.status_code == HTTPStatus.OK
-        assert res2.status_code == HTTPStatus.OK
+    idem_headers = {**headers, "X-Idempotency-Key": "k-http"}
+
+    res1 = await async_client.post("/v1/energy/plan", json=payload, headers=idem_headers)
+    res2 = await async_client.post("/v1/energy/plan", json=payload, headers=idem_headers)
+
+    assert res1.status_code == HTTPStatus.OK
+    assert res2.status_code == HTTPStatus.OK
+    assert res1.json() == res2.json()
+    rows = await db_session.execute(
+        select(EnergyPlanRecord).where(EnergyPlanRecord.user_id == user_id)
+    )
+    assert len(rows.scalars().all()) == 1  # deduplicated, not regenerated
 
 
 @pytest.mark.asyncio
 async def test_create_plan_does_not_block_event_loop(async_client: AsyncClient) -> None:
     """BUG-INFRA-009: slow plan generation must not starve concurrent requests.
 
-    We replace ``get_or_generate_plan`` with a sync sleep that would block
-    the event loop for 300ms if executed inline.  With ``asyncio.to_thread``
-    the main loop is free during the sleep, so two concurrent requests
-    complete in ~300ms total — not ~600ms serialised.
+    Replace ``build_energy_response`` (the CPU-bound step) with a sync sleep
+    that would block the loop for 300ms if run inline; ``get_or_create_persisted_plan``
+    runs it via ``asyncio.to_thread``, so two concurrent requests overlap and
+    finish in ~300ms, not ~600ms. ``_persist`` is stubbed to a no-op and the
+    habit lookup is stubbed so the test isolates the offload from the DB.
     """
     headers, _ = await _signup(async_client)
     sleep_seconds = 0.3
     one_habit = [DomainHabit(id=1, name="Run", energy_cost=2, energy_return=5)]
+    real_response = energy.build_energy_response(one_habit, date(2024, 1, 1))
 
     async def _stub_resolve(_session: Any, _user_id: Any, _payload: Any) -> list[DomainHabit]:  # noqa: ANN401
         return one_habit
 
-    def _slow_plan(_habits: Any, _start: Any, _key: Any) -> Any:  # noqa: ANN401
+    def _slow_build(_habits: Any, _start: Any) -> EnergyPlanResponse:  # noqa: ANN401
         time.sleep(sleep_seconds)
-        return energy.build_energy_response(one_habit, date(2024, 1, 1))
+        return real_response
 
-    # Patch the names the router bound, and stub the (async) habit lookup so the
-    # test isolates the CPU-offload behaviour from the DB. The blocking-event-loop
-    # assertion needs a real ASGI client; the async_client dependency overrides
-    # stay active for the duration.
+    async def _noop_persist(
+        _session: Any,  # noqa: ANN401
+        _user_id: Any,  # noqa: ANN401
+        _key: Any,  # noqa: ANN401
+        response: EnergyPlanResponse,
+    ) -> EnergyPlanResponse:
+        return response
+
     with (
         patch.object(energy_router, "resolve_trusted_habits", _stub_resolve),
-        patch.object(energy_router, "get_or_generate_plan", _slow_plan),
+        patch.object(energy, "build_energy_response", _slow_build),
+        patch.object(energy, "_persist", _noop_persist),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
