@@ -263,3 +263,24 @@ describe('PracticeCatalogScreen — defaults wiring', () => {
     expect(view.getByTestId('practice-catalog-row-1')).toBeTruthy();
   });
 });
+
+describe('PracticeCatalogScreen — virtualization parity', () => {
+  it('renders every section + row through the windowed list and still navigates on press', async () => {
+    const { view, navigateToDetail } = renderScreen();
+    await waitForLoad();
+
+    // All three section headers render (the empty Imported section keeps its footer).
+    expect(view.getByTestId('practice-catalog-section-presets')).toBeTruthy();
+    expect(view.getByTestId('practice-catalog-section-drafts')).toBeTruthy();
+    expect(view.getByTestId('practice-catalog-section-imported-empty')).toBeTruthy();
+
+    // Rows from different sections all appear in the same windowed pass...
+    expect(view.getByTestId('practice-catalog-row-1')).toBeTruthy();
+    expect(view.getByTestId('practice-catalog-row-2')).toBeTruthy();
+    expect(view.getByTestId('practice-catalog-row-9')).toBeTruthy();
+
+    // ...and pressing a row still navigates (behavior unchanged by virtualization).
+    fireEvent.press(view.getByTestId('practice-catalog-row-9'));
+    expect(navigateToDetail).toHaveBeenCalledWith(9);
+  });
+});

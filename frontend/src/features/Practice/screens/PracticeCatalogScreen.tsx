@@ -19,10 +19,10 @@
 
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  ScrollView,
+  SectionList,
   StyleSheet,
   Text,
   TextInput,
@@ -73,6 +73,58 @@ export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Eleme
   const [query, setQuery] = useState('');
   const [state, reload] = useCatalog(stageNumber, loadPractices);
 
+  const { onDetail, onCreate } = useCatalogNavigation(
+    navigation,
+    navigateToDetail,
+    navigateToCreate,
+  );
+
+  // Virtualized: bucket the filtered catalog into the three sections and let
+  // SectionList window the rows. Stable render callbacks keep rows from
+  // re-rendering on unrelated state (search keystrokes, chip toggles).
+  const sections = useMemo(
+    () => buildSections(state.practices, query, modeCategory),
+    [state.practices, query, modeCategory],
+  );
+  const renderItem = useCallback(
+    ({ item }: { item: PracticeItem }) => <PracticeRow practice={item} onDetail={onDetail} />,
+    [onDetail],
+  );
+
+  return (
+    <View style={styles.screen}>
+      <SectionList<PracticeItem, CatalogSection>
+        testID="practice-catalog-screen"
+        sections={state.loading || state.error !== null ? [] : sections}
+        keyExtractor={catalogKeyExtractor}
+        renderItem={renderItem}
+        renderSectionHeader={renderSectionHeader}
+        renderSectionFooter={renderSectionFooter}
+        ListHeaderComponent={
+          <CatalogHeader
+            query={query}
+            onQueryChange={setQuery}
+            stageNumber={stageNumber}
+            onStage={setStageNumber}
+            modeCategory={modeCategory}
+            onMode={setModeCategory}
+            onCreate={onCreate}
+          />
+        }
+        ListFooterComponent={<CatalogStatus state={state} onRetry={reload} />}
+        contentContainerStyle={styles.body}
+        keyboardShouldPersistTaps="handled"
+        stickySectionHeadersEnabled={false}
+      />
+    </View>
+  );
+}
+
+function useCatalogNavigation(
+  navigation: NativeStackNavigationProp<RootStackParamList>,
+  navigateToDetail: CatalogProps['navigateToDetail'],
+  navigateToCreate: CatalogProps['navigateToCreate'],
+): { onDetail: (id: number) => void; onCreate: () => void } {
   const onDetail = useCallback(
     (id: number) =>
       navigateToDetail
@@ -84,25 +136,97 @@ export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Eleme
     () => (navigateToCreate ? navigateToCreate() : navigation.navigate('CreatePractice')),
     [navigation, navigateToCreate],
   );
-
-  return (
-    <View style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.body} testID="practice-catalog-screen">
-        <Header onCreate={onCreate} />
-        <SearchBar value={query} onChange={setQuery} />
-        <StageChips selected={stageNumber} onSelect={setStageNumber} />
-        <ModeChips selected={modeCategory} onSelect={setModeCategory} />
-        <CatalogBody
-          state={state}
-          query={query}
-          modeCategory={modeCategory}
-          onDetail={onDetail}
-          onRetry={reload}
-        />
-      </ScrollView>
-    </View>
-  );
+  return { onDetail, onCreate };
 }
+
+interface CatalogSection {
+  section: Section;
+  title: string;
+  data: readonly PracticeItem[];
+}
+
+const catalogKeyExtractor = (item: PracticeItem): string => `practice-${item.id}`;
+
+const renderSectionHeader = ({ section }: { section: CatalogSection }): React.JSX.Element => (
+  <View style={styles.section} testID={`practice-catalog-section-${section.section}`}>
+    <Text style={styles.sectionTitle}>{section.title}</Text>
+  </View>
+);
+
+const renderSectionFooter = ({ section }: { section: CatalogSection }): React.JSX.Element | null =>
+  section.data.length === 0 ? (
+    <Text style={styles.emptyText} testID={`practice-catalog-section-${section.section}-empty`}>
+      Nothing here yet.
+    </Text>
+  ) : null;
+
+/** Build the three catalog sections (always present, even when empty). */
+function buildSections(
+  items: readonly PracticeItem[],
+  query: string,
+  modeCategory: string | null,
+): CatalogSection[] {
+  const buckets = bucketSections(applyFilters(items, query, modeCategory));
+  return [
+    { section: 'presets', title: 'Presets', data: buckets.presets },
+    { section: 'drafts', title: 'My drafts', data: buckets.drafts },
+    { section: 'imported', title: 'Imported', data: buckets.imported },
+  ];
+}
+
+interface CatalogHeaderProps {
+  query: string;
+  onQueryChange: (next: string) => void;
+  stageNumber: number;
+  onStage: (stage: number) => void;
+  modeCategory: string | null;
+  onMode: (category: string | null) => void;
+  onCreate: () => void;
+}
+
+/** Non-scrolling-away header for the SectionList (kept as an element so the
+ * search TextInput keeps focus across re-renders). */
+const CatalogHeader = (props: CatalogHeaderProps): React.JSX.Element => (
+  <View>
+    <Header onCreate={props.onCreate} />
+    <SearchBar value={props.query} onChange={props.onQueryChange} />
+    <StageChips selected={props.stageNumber} onSelect={props.onStage} />
+    <ModeChips selected={props.modeCategory} onSelect={props.onMode} />
+  </View>
+);
+
+interface CatalogStatusProps {
+  state: CatalogState;
+  onRetry: () => void;
+}
+
+/** Loading spinner / error block rendered below the header while the list is empty. */
+const CatalogStatus = ({ state, onRetry }: CatalogStatusProps): React.JSX.Element | null => {
+  if (state.loading) {
+    return (
+      <View style={styles.loadingBlock} testID="practice-catalog-loading">
+        <ActivityIndicator color={colors.primary} />
+      </View>
+    );
+  }
+  if (state.error !== null) {
+    return (
+      <View style={styles.errorBlock} testID="practice-catalog-error">
+        <Text style={styles.errorText}>{state.error}</Text>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Retry"
+          onPress={onRetry}
+          style={styles.retryButton}
+          testID="practice-catalog-retry"
+        >
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+  return null;
+};
 
 function useCatalog(
   stageNumber: number,
@@ -247,87 +371,9 @@ const FilterChip = ({ label, selected, onPress, testID }: FilterChipProps): Reac
   </TouchableOpacity>
 );
 
-interface CatalogBodyProps {
-  state: CatalogState;
-  query: string;
-  modeCategory: string | null;
-  onDetail: (id: number) => void;
-  onRetry: () => void;
-}
-
-const CatalogBody = (props: CatalogBodyProps): React.JSX.Element => {
-  if (props.state.loading) {
-    return (
-      <View style={styles.loadingBlock} testID="practice-catalog-loading">
-        <ActivityIndicator color={colors.primary} />
-      </View>
-    );
-  }
-  if (props.state.error !== null) {
-    return (
-      <View style={styles.errorBlock} testID="practice-catalog-error">
-        <Text style={styles.errorText}>{props.state.error}</Text>
-        <TouchableOpacity
-          accessibilityRole="button"
-          accessibilityLabel="Retry"
-          onPress={props.onRetry}
-          style={styles.retryButton}
-          testID="practice-catalog-retry"
-        >
-          <Text style={styles.retryButtonText}>Retry</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-  const filtered = applyFilters(props.state.practices, props.query, props.modeCategory);
-  const sections = bucketSections(filtered);
-  return (
-    <View testID="practice-catalog-sections">
-      <SectionView
-        title="Presets"
-        section="presets"
-        items={sections.presets}
-        onDetail={props.onDetail}
-      />
-      <SectionView
-        title="My drafts"
-        section="drafts"
-        items={sections.drafts}
-        onDetail={props.onDetail}
-      />
-      <SectionView
-        title="Imported"
-        section="imported"
-        items={sections.imported}
-        onDetail={props.onDetail}
-      />
-    </View>
-  );
-};
-
-interface SectionViewProps {
-  title: string;
-  section: Section;
-  items: readonly PracticeItem[];
-  onDetail: (id: number) => void;
-}
-
-const SectionView = ({ title, section, items, onDetail }: SectionViewProps): React.JSX.Element => (
-  <View style={styles.section} testID={`practice-catalog-section-${section}`}>
-    <Text style={styles.sectionTitle}>{title}</Text>
-    {items.length === 0 ? (
-      <Text style={styles.emptyText} testID={`practice-catalog-section-${section}-empty`}>
-        Nothing here yet.
-      </Text>
-    ) : (
-      items.map((p) => <PracticeRow key={p.id} practice={p} onPress={() => onDetail(p.id)} />)
-    )}
-  </View>
-);
-
 interface PracticeRowProps {
   practice: PracticeItem;
-  onPress: () => void;
+  onDetail: (id: number) => void;
 }
 
 // Derived from MODE_CATEGORIES so adding a mode propagates here automatically.
@@ -340,7 +386,7 @@ const MODE_PRESENTATION: Readonly<Record<PickableMode, { label: string; icon: st
 
 const FALLBACK_PRESENTATION = { label: 'Practice', icon: '🧘' } as const;
 
-const PracticeRow = ({ practice, onPress }: PracticeRowProps): React.JSX.Element => {
+const PracticeRowComponent = ({ practice, onDetail }: PracticeRowProps): React.JSX.Element => {
   const mode = (practice.mode ?? 'meditation_timer') as PickableMode;
   const { label, icon } = MODE_PRESENTATION[mode] ?? FALLBACK_PRESENTATION;
   const duration = Math.round(practice.default_duration_minutes);
@@ -349,7 +395,7 @@ const PracticeRow = ({ practice, onPress }: PracticeRowProps): React.JSX.Element
     <TouchableOpacity
       accessibilityRole="button"
       accessibilityLabel={`${practice.name}. ${label}, ${duration} minutes.`}
-      onPress={onPress}
+      onPress={() => onDetail(practice.id)}
       style={styles.row}
       testID={`practice-catalog-row-${practice.id}`}
     >
@@ -366,6 +412,10 @@ const PracticeRow = ({ practice, onPress }: PracticeRowProps): React.JSX.Element
     </TouchableOpacity>
   );
 };
+
+// Memoized so SectionList windowing + a stable ``onDetail`` keep unchanged rows
+// from re-rendering on search keystrokes or chip toggles.
+const PracticeRow = React.memo(PracticeRowComponent);
 
 function applyFilters(
   items: readonly PracticeItem[],
