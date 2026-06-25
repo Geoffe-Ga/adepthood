@@ -116,11 +116,15 @@ describe('CreatePracticeWizard — step navigation', () => {
     expect(view.getByTestId('mode-picker')).toBeTruthy();
   });
 
-  it('start-from-preset routes the user back to the catalog via goBack', () => {
+  it('start-from-preset opens the catalog picker and never dismisses the wizard', () => {
+    // Issue #472: the CTA used to be wired to onCancel (goBack), silently
+    // closing the recommended on-ramp. It must open the Practice catalog
+    // (preset picker) instead, where a chosen preset copies into the wizard.
     const nav = makeNav();
     const { view } = renderScreen({}, nav);
     fireEvent.press(view.getByTestId('create-practice-from-preset'));
-    expect(nav.goBack).toHaveBeenCalled();
+    expect(nav.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Catalog' });
+    expect(nav.goBack).not.toHaveBeenCalled();
   });
 
   it('back from the mode picker returns to the entry step', () => {
