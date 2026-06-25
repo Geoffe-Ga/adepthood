@@ -46,7 +46,7 @@ from starlette.requests import Request
 from schemas.botmason import ChatResponse
 from services import botmason as _botmason
 from services import chat_idempotency
-from services.botmason import LLMResponse, generate_response
+from services.botmason import LLMProviderError, LLMResponse, generate_response
 from services.journal import (
     load_recent_conversation,
     persist_bot_reply,
@@ -104,14 +104,14 @@ async def handle_chat_request(
 
     try:
         llm_response = await generate_response(message, history, api_key=api_key)
-    except RuntimeError:
+    except LLMProviderError:
         # BUG-BM-013: the LLM provider call failed after the wallet deduction —
         # roll back the uncommitted transaction so the user is not charged. The
         # deduction is staged (UPDATE issued) but not yet committed; a rollback
         # reverses it in one round-trip without a compensating credit INSERT.
-        # Only the provider's ``RuntimeError`` is handled here: any other error
-        # (a programmer bug) propagates so it surfaces instead of being masked,
-        # and ``get_session`` still rolls back the transaction on the way out.
+        # Only provider failures (``LLMProviderError``) are handled here: any
+        # other error (a programmer bug) propagates so it surfaces instead of
+        # being masked, and ``get_session`` still rolls back on the way out.
         logger.exception("LLM call failed for user_id=%s; rolling back wallet deduction", user_id)
         try:
             await session.rollback()
@@ -364,9 +364,9 @@ async def stream_bot_response(
         await _rollback_quietly(session, user_id, "cancelled")
         raise  # Re-raise so Starlette can close the connection cleanly.
 
-    except RuntimeError:
-        # The provider call raised (config/network failure surfaces as
-        # RuntimeError from ``services.botmason``): degrade to a 502 SSE event.
+    except LLMProviderError:
+        # The provider call failed (config/network/SDK error, normalised to
+        # LLMProviderError by ``services.botmason``): degrade to a 502 SSE event.
         # Any other exception is a programmer bug and propagates so it is not
         # masked as a benign provider failure.
         logger.exception("Stream provider error for user_id=%s", user_id)

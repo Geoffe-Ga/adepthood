@@ -1510,7 +1510,7 @@ async def test_stream_provider_error_emits_error_event_and_rolls_back(
         if False:  # pragma: no cover - unreachable, marks this as an async generator
             yield "", None
         msg = "upstream_boom"
-        raise RuntimeError(msg)
+        raise botmason_mod.LLMProviderError(msg)
 
     with patch.object(botmason_mod, "generate_response_stream", _boom):
         resp = await async_client.post(
@@ -1634,7 +1634,7 @@ async def test_stream_provider_error_issues_refund(
         if False:  # pragma: no cover
             yield "", None
         msg = "provider_error"
-        raise RuntimeError(msg)
+        raise botmason_mod.LLMProviderError(msg)
 
     with patch.object(botmason_mod, "generate_response_stream", _boom):
         resp = await async_client.post(
