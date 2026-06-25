@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
+from models.energy_plan import IDEM_KEY_MAX_LENGTH
 from routers.auth import get_current_user
 from schemas import EnergyPlanRequest, EnergyPlanResponse
 from services.energy import get_or_create_persisted_plan, resolve_trusted_habits
@@ -23,7 +24,7 @@ async def create_plan(
     payload: EnergyPlanRequest,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    x_idempotency_key: Annotated[str | None, Header()] = None,
+    x_idempotency_key: Annotated[str | None, Header(max_length=IDEM_KEY_MAX_LENGTH)] = None,
 ) -> EnergyPlanResponse:
     """Create an energy plan from the caller's own habits.
 

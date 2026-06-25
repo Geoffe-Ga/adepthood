@@ -156,3 +156,18 @@ async def test_energy_plan_requires_auth(async_client: AsyncClient) -> None:
     """BUG-PRACTICE-010: an unauthenticated POST must be rejected at the gate."""
     resp = await async_client.post("/v1/energy/plan", json=sample_payload())
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_over_long_idempotency_key_rejected(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An X-Idempotency-Key longer than the column width 422s, not a DB error."""
+    headers, user_id = await _signup(async_client)
+    habit_id = await _seed_habit(db_session, user_id)
+    resp = await async_client.post(
+        "/v1/energy/plan",
+        json=_plan_request([habit_id]),
+        headers={**headers, "X-Idempotency-Key": "x" * 256},
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY

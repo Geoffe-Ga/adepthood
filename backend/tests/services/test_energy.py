@@ -7,6 +7,7 @@ from http import HTTPStatus
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -15,6 +16,7 @@ from models.energy_plan import EnergyPlan as EnergyPlanRecord
 from models.habit import Habit
 from schemas import EnergyPlanRequest
 from services.energy import (
+    _persist,
     build_energy_response,
     get_or_create_persisted_plan,
     resolve_trusted_habits,
@@ -101,6 +103,44 @@ async def test_unkeyed_request_writes_a_row_each_call(db_session: AsyncSession) 
     await get_or_create_persisted_plan(db_session, 1, _habits(), _START, None)
     await get_or_create_persisted_plan(db_session, 1, _habits(), _START, None)
     assert await _count_plans(db_session, 1) == 2
+
+
+@pytest.mark.asyncio
+async def test_persist_integrity_race_returns_stored_winner(db_session: AsyncSession) -> None:
+    """A duplicate-key insert (concurrent winner exists) rolls back to the stored row.
+
+    Exercises ``_persist``'s ``IntegrityError`` fallback directly: a row for
+    ``(1, "race")`` already exists, so inserting another for the same key hits
+    the partial UNIQUE index — the fallback must re-read and return the winner,
+    not the losing response, leaving exactly one row.
+    """
+    winner = await get_or_create_persisted_plan(db_session, 1, _habits(), _START, "race")
+    loser = build_energy_response(
+        [DomainHabit(id=9, name="X", energy_cost=2, energy_return=9)], date(2030, 1, 1)
+    )
+
+    result = await _persist(db_session, 1, "race", loser)
+
+    assert result == winner
+    assert result != loser
+    assert await _count_plans(db_session, 1) == 1
+
+
+@pytest.mark.asyncio
+async def test_persist_reraises_when_winner_not_readable(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the conflict has no readable winner after rollback, the error surfaces."""
+    await get_or_create_persisted_plan(db_session, 1, _habits(), _START, "race2")
+
+    async def _missing(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("services.energy._load_persisted_plan", _missing)
+    loser = build_energy_response(_habits(), _START)
+
+    with pytest.raises(IntegrityError):
+        await _persist(db_session, 1, "race2", loser)
 
 
 # ── Server-side trusted-cost resolution (BUG-PRACTICE-010) ──────────────────

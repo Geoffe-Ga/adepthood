@@ -156,6 +156,12 @@ async def _persist(
             existing = await _load_persisted_plan(session, user_id, idempotency_key)
             if existing is not None:
                 return existing
+        # Index violation with no readable winner (e.g. the row vanished between
+        # rollback and re-read): surface it rather than masking a real conflict.
+        logger.exception(
+            "energy_plan_persist_conflict_unresolved",
+            extra={"user_id": user_id, "has_idempotency_key": idempotency_key is not None},
+        )
         raise
     return response
 

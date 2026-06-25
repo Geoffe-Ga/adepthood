@@ -18,8 +18,10 @@ from sqlalchemy import Column, DateTime, Index, String, Text
 from sqlmodel import Field, SQLModel
 
 # Client-supplied idempotency keys are short opaque tokens; 255 leaves ample
-# headroom while keeping the partial-unique index narrow.
-_IDEM_KEY_WIDTH = 255
+# headroom while keeping the partial-unique index narrow. Public so the router
+# can reject an over-long ``X-Idempotency-Key`` with a clean 422 instead of a
+# native DB error.
+IDEM_KEY_MAX_LENGTH = 255
 # Reason codes are bounded enum-like strings (e.g. ``generated_21_day_plan``).
 _REASON_CODE_WIDTH = 64
 
@@ -27,7 +29,7 @@ _REASON_CODE_WIDTH = 64
 # (mirrors the ``_OWNER_COLUMN`` pattern in ``practice_recipe``). It matches
 # the real ``idempotency_key`` column by name at DDL-compile time and is never
 # attached to the table itself.
-_IDEM_KEY_COLUMN = Column("idempotency_key", String(_IDEM_KEY_WIDTH), nullable=True)
+_IDEM_KEY_COLUMN = Column("idempotency_key", String(IDEM_KEY_MAX_LENGTH), nullable=True)
 
 
 class EnergyPlan(SQLModel, table=True):
@@ -57,7 +59,7 @@ class EnergyPlan(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id", index=True, ondelete="CASCADE")
     idempotency_key: str | None = Field(
         default=None,
-        sa_column=Column(String(_IDEM_KEY_WIDTH), nullable=True),
+        sa_column=Column(String(IDEM_KEY_MAX_LENGTH), nullable=True),
     )
     # Serialized ``schemas.energy.EnergyPlan`` (JSON string). ``Text`` (not
     # ``String``) so the model matches the migration's ``sa.Text()`` exactly and
