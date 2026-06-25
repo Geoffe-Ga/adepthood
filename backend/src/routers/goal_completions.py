@@ -25,9 +25,12 @@ from models.habit import Habit
 from routers.auth import get_current_user
 from schemas import CheckInResult
 from services.streaks import (
+    PendingCompletion,
+    StreakScope,
     SubtractiveContext,
     check_milestones,
     compute_consecutive_streak,
+    compute_streak_before_and_after,
     update_streak,
 )
 
@@ -43,6 +46,7 @@ class _CheckInJob:
     did_complete: bool
     is_scheduled: bool
     old_streak: int
+    new_streak: int
     # Explicit completion time for a backfilled past day; ``None`` lets the
     # ``GoalCompletion`` model default (``datetime.now(UTC)``) stand.
     timestamp: datetime | None
@@ -229,7 +233,7 @@ def _completion_timestamp(completed_on: date | None, user_timezone: str) -> date
 
 
 async def _persist_and_build_response(session: AsyncSession, job: _CheckInJob) -> CheckInResult:
-    """Persist + read streak/milestones inside one savepoint; reads streak post-flush."""
+    """Persist the completion and build a CheckInResult; streak values arrive pre-computed."""
     completion = GoalCompletion(
         goal_id=job.goal_id,
         user_id=job.user_id,
@@ -240,30 +244,25 @@ async def _persist_and_build_response(session: AsyncSession, job: _CheckInJob) -
     async with session.begin_nested():
         session.add(completion)
         await session.flush()
-        new_streak = await compute_consecutive_streak(
-            session,
-            job.goal_id,
-            job.user_id,
-            job.user_timezone,
-            job.subtractive,
-        )
-        _, reason = update_streak(
-            job.old_streak,
-            did_check_in=job.did_complete,
-            is_scheduled_today=job.is_scheduled,
-        )
-        milestones = check_milestones(new_streak, _DEFAULT_THRESHOLDS, job.old_streak)
     await session.commit()
+    # ``new_streak`` was computed alongside ``old_streak`` from one history read
+    # (issue dedup); these are pure derivations, no DB recompute.
+    _, reason = update_streak(
+        job.old_streak,
+        did_check_in=job.did_complete,
+        is_scheduled_today=job.is_scheduled,
+    )
+    milestones = check_milestones(job.new_streak, _DEFAULT_THRESHOLDS, job.old_streak)
     logger.info(
         "goal_completion_recorded",
         extra={
             "user_id": job.user_id,
             "goal_id": job.goal_id,
             "did_complete": job.did_complete,
-            "streak": new_streak,
+            "streak": job.new_streak,
         },
     )
-    return CheckInResult(streak=new_streak, milestones=milestones, reason_code=reason)
+    return CheckInResult(streak=job.new_streak, milestones=milestones, reason_code=reason)
 
 
 async def _try_persist_or_idempotent(session: AsyncSession, job: _CheckInJob) -> CheckInResult:
@@ -310,16 +309,24 @@ async def create_goal_completion(
         )
 
     is_scheduled = is_scheduled_on(habit.notification_days, target_day.strftime("%a"))
-    # ``old_streak`` is also the held-path response value, so it has to
-    # be read before the unscheduled-miss early return; the cheap
-    # idempotency check above has already short-circuited duplicate
-    # retries so only legitimate fresh requests pay the cost.
-    old_streak = await compute_consecutive_streak(
-        session, goal_id, current_user, user_tz, subtractive
-    )
 
+    # Unscheduled miss holds the current streak without inserting — only the
+    # pre-insert streak is needed, so compute it once here.
     if not payload.did_complete and not is_scheduled:
+        old_streak = await compute_consecutive_streak(
+            session, goal_id, current_user, user_tz, subtractive
+        )
         return _held_response(current_user, goal_id, old_streak)
+
+    # Persist path: derive the pre- and post-insert streak from ONE history
+    # read instead of recomputing on each branch (the day is fresh — the
+    # idempotency check above ruled out an existing log for it).
+    pending_units = goal.target if payload.did_complete else 0.0
+    old_streak, new_streak = await compute_streak_before_and_after(
+        session,
+        StreakScope(goal_id, current_user, user_tz, subtractive),
+        PendingCompletion(target_day, pending_units),
+    )
 
     job = _CheckInJob(
         goal_id=goal_id,
@@ -329,6 +336,7 @@ async def create_goal_completion(
         did_complete=payload.did_complete,
         is_scheduled=is_scheduled,
         old_streak=old_streak,
+        new_streak=new_streak,
         timestamp=_completion_timestamp(payload.completed_on, user_tz),
         subtractive=subtractive,
     )

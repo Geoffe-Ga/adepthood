@@ -30,10 +30,13 @@ from models.goal_completion import GoalCompletion
 from schemas.milestone import Milestone
 
 __all__ = [
+    "PendingCompletion",
+    "StreakScope",
     "SubtractiveContext",
     "check_milestones",
     "compute_consecutive_streak",
     "compute_habit_streak",
+    "compute_streak_before_and_after",
     "update_streak",
 ]
 
@@ -143,17 +146,32 @@ async def compute_consecutive_streak(
     legacy additive behavior, so callers that don't know the habit's
     polarity stay safe.
     """
+    day_totals = await _fetch_day_totals(session, goal_id, user_id, user_timezone)
+    return _streak_from_day_totals(day_totals, user_timezone, subtractive)
+
+
+async def _fetch_day_totals(
+    session: AsyncSession, goal_id: int, user_id: int, user_timezone: str
+) -> dict[date, float]:
+    """Sum a goal's completion units per user-local calendar day (one query)."""
     rows = await session.execute(
         select(GoalCompletion.timestamp, GoalCompletion.completed_units)
         .where(GoalCompletion.goal_id == goal_id, GoalCompletion.user_id == user_id)
         .order_by(col(GoalCompletion.timestamp).desc())
     )
-
     day_totals: dict[date, float] = {}
     for ts, units in rows:
         day = _to_user_date(ts, user_timezone)
         day_totals[day] = day_totals.get(day, 0.0) + units
+    return day_totals
 
+
+def _streak_from_day_totals(
+    day_totals: dict[date, float],
+    user_timezone: str,
+    subtractive: SubtractiveContext | None,
+) -> int:
+    """Count the consecutive-day streak from pre-bucketed day totals."""
     if subtractive is not None:
         return _compute_subtractive_streak(day_totals, user_timezone, subtractive)
 
@@ -167,6 +185,44 @@ async def compute_consecutive_streak(
         return 0
     day_ok = {d: day_totals[d] > 0 for d in sorted_days}
     return _count_consecutive_days(sorted_days, day_ok)
+
+
+@dataclass(frozen=True)
+class StreakScope:
+    """The goal + calendar + polarity that fully specify a streak computation."""
+
+    goal_id: int
+    user_id: int
+    user_timezone: str
+    subtractive: SubtractiveContext | None
+
+
+@dataclass(frozen=True)
+class PendingCompletion:
+    """A not-yet-persisted completion to fold into the post-insert streak."""
+
+    day: date
+    units: float
+
+
+async def compute_streak_before_and_after(
+    session: AsyncSession,
+    scope: StreakScope,
+    pending: PendingCompletion,
+) -> tuple[int, int]:
+    """Return ``(streak_before, streak_after)`` from a single history read.
+
+    Lets the check-in path obtain the pre- and post-insert streak without
+    computing the streak twice. ``pending`` is folded into the day buckets
+    exactly as the about-to-be-inserted ``GoalCompletion`` would be, so
+    ``streak_after`` matches recomputing after the insert.
+    """
+    day_totals = await _fetch_day_totals(session, scope.goal_id, scope.user_id, scope.user_timezone)
+    before = _streak_from_day_totals(day_totals, scope.user_timezone, scope.subtractive)
+    after_totals = dict(day_totals)
+    after_totals[pending.day] = after_totals.get(pending.day, 0.0) + pending.units
+    after = _streak_from_day_totals(after_totals, scope.user_timezone, scope.subtractive)
+    return before, after
 
 
 def _completed_user_dates(
