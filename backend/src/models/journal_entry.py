@@ -50,9 +50,16 @@ class JournalEntry(SQLModel, table=True):
     """
 
     # ``ix_journalentry_deleted_at`` is created by migration ``a0b1c2d3e4f5``
-    # (BUG-JOURNAL-007).  Declared here so the model and the migration agree
-    # — ``alembic check`` otherwise reports the index as drift and fails CI.
-    __table_args__ = (Index("ix_journalentry_deleted_at", "deleted_at"),)
+    # (BUG-JOURNAL-007).  ``ix_journalentry_user_sender_deleted`` is created by
+    # migration ``e3f4a5b6c7d8`` (issue #469): ``load_recent_conversation``
+    # filters on ``(user_id, sender, deleted_at)`` and orders by ``id DESC``, so
+    # this composite index covers that hot chat read.  Both are declared here so
+    # the model and migrations agree — ``alembic check`` otherwise reports the
+    # indexes as drift and fails CI.
+    __table_args__ = (
+        Index("ix_journalentry_deleted_at", "deleted_at"),
+        Index("ix_journalentry_user_sender_deleted", "user_id", "sender", "deleted_at"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     timestamp: datetime = Field(
