@@ -217,7 +217,12 @@ class UserPracticeDetail(OwnedResourcePublic):
     mode_config_override: dict[str, Any] | None = None
     effective_name: str | None = None
     effective_config: ModeConfig | None = None
+    # ``sessions`` is the newest-first *capped* embed (issue #474). The page
+    # metadata below tells the client whether older sessions remain, reachable
+    # via the paginated ``list_sessions`` endpoint.
     sessions: list[PracticeSessionSummary]
+    sessions_total: int = 0
+    sessions_has_more: bool = False
 
 
 class UserPracticeCustomize(BaseModel):

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import Any
 
@@ -472,9 +472,58 @@ async def test_apply_preserves_existing_sessions(
         f"/practice-recipes/{recipe_id}/apply-to/{up_id}", headers=headers
     )
     assert resp.status_code == HTTPStatus.OK, resp.text
-    sessions = resp.json()["sessions"]
+    body = resp.json()
+    sessions = body["sessions"]
     assert len(sessions) == 1
     assert sessions[0]["duration_minutes"] == 4.5
+    # Backward compatible: under the cap, total/has_more report the full set.
+    assert body["sessions_total"] == 1
+    assert body["sessions_has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_apply_caps_embedded_sessions(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The apply response embeds at most the capped, newest-first sessions (issue #474)."""
+    headers, user_id = await _signup(async_client)
+    catalog = await _seed_catalog_practice(
+        db_session,
+        mode="tallied_grounding",
+        mode_config={
+            "mode": "tallied_grounding",
+            "rounds": 1,
+            "categories": [{"key": "red", "label": "Red", "target_count": 1}],
+        },
+    )
+    up_id = await _setup_user_practice(async_client, db_session, headers, user_id, catalog)
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    for i in range(5):
+        db_session.add(
+            PracticeSession(
+                user_id=user_id,
+                user_practice_id=up_id,
+                duration_minutes=4.5,
+                timestamp=base + timedelta(minutes=i),
+            )
+        )
+    await db_session.commit()
+    create_recipe = await async_client.post(
+        "/practice-recipes/", json=_tallied_recipe_body("apply_capped"), headers=headers
+    )
+    recipe_id = create_recipe.json()["id"]
+
+    resp = await async_client.post(
+        f"/practice-recipes/{recipe_id}/apply-to/{up_id}?sessions_limit=2", headers=headers
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body = resp.json()
+    assert len(body["sessions"]) == 2
+    assert body["sessions_total"] == 5
+    assert body["sessions_has_more"] is True
+    timestamps = [s["timestamp"] for s in body["sessions"]]
+    assert timestamps == sorted(timestamps, reverse=True)
 
 
 @pytest.mark.asyncio

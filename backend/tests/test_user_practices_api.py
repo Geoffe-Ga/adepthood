@@ -12,8 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
 from models.practice import Practice
+from models.practice_session import PracticeSession
 from models.stage_progress import StageProgress
 from models.user_practice import UserPractice
+from routers.user_practices import EMBEDDED_SESSIONS_DEFAULT_LIMIT
 
 _EXPECTED_SELECTION_COUNT = 2
 _SESSION_DURATION = 10.0
@@ -266,6 +268,85 @@ async def test_get_user_practice_with_sessions(
     assert data["id"] == up_id
     assert len(data["sessions"]) == 1
     assert data["sessions"][0]["duration_minutes"] == _SESSION_DURATION
+    # Backward compatible: a user under the cap sees full history + metadata.
+    assert data["sessions_total"] == 1
+    assert data["sessions_has_more"] is False
+
+
+async def _create_owned_user_practice(
+    async_client: AsyncClient, db_session: AsyncSession, headers: dict[str, str]
+) -> int:
+    """Create a user-practice via the API and return its id."""
+    practice = await _seed_practice(db_session)
+    resp = await async_client.post(
+        "/user-practices/",
+        json={"practice_id": practice.id, "stage_number": 1},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CREATED, resp.text
+    return int(resp.json()["id"])
+
+
+async def _seed_sessions(db_session: AsyncSession, user_id: int, up_id: int, count: int) -> None:
+    """Seed ``count`` sessions with strictly ascending timestamps (newest last)."""
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    for i in range(count):
+        db_session.add(
+            PracticeSession(
+                user_id=user_id,
+                user_practice_id=up_id,
+                duration_minutes=_SESSION_DURATION,
+                timestamp=base + timedelta(minutes=i),
+            )
+        )
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_get_user_practice_caps_embedded_sessions(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A history larger than the cap embeds only the newest-first cap (issue #474)."""
+    headers, user_id = await _signup(async_client)
+    up_id = await _create_owned_user_practice(async_client, db_session, headers)
+    await _seed_sessions(db_session, user_id, up_id, EMBEDDED_SESSIONS_DEFAULT_LIMIT + 5)
+
+    resp = await async_client.get(f"/user-practices/{up_id}", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert len(data["sessions"]) == EMBEDDED_SESSIONS_DEFAULT_LIMIT
+    assert data["sessions_total"] == EMBEDDED_SESSIONS_DEFAULT_LIMIT + 5
+    assert data["sessions_has_more"] is True
+    timestamps = [s["timestamp"] for s in data["sessions"]]
+    assert timestamps == sorted(timestamps, reverse=True)
+
+
+@pytest.mark.asyncio
+async def test_get_user_practice_sessions_paging(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """sessions_limit/offset page the embed; older sessions are reachable, newest-first."""
+    headers, user_id = await _signup(async_client)
+    up_id = await _create_owned_user_practice(async_client, db_session, headers)
+    await _seed_sessions(db_session, user_id, up_id, 5)
+
+    first = await async_client.get(
+        f"/user-practices/{up_id}?sessions_limit=2&sessions_offset=0", headers=headers
+    )
+    page1 = first.json()
+    assert len(page1["sessions"]) == 2
+    assert page1["sessions_total"] == 5
+    assert page1["sessions_has_more"] is True
+
+    second = await async_client.get(
+        f"/user-practices/{up_id}?sessions_limit=2&sessions_offset=2", headers=headers
+    )
+    page2 = second.json()
+    assert len(page2["sessions"]) == 2
+    assert {s["id"] for s in page1["sessions"]}.isdisjoint({s["id"] for s in page2["sessions"]})
+    combined = [s["timestamp"] for s in page1["sessions"] + page2["sessions"]]
+    assert combined == sorted(combined, reverse=True)
 
 
 @pytest.mark.asyncio

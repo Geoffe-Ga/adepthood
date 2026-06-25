@@ -39,9 +39,9 @@ from domain.practice_resolution import effective_config, effective_name
 from errors import bad_request, conflict, forbidden, not_found
 from models.practice import Practice
 from models.practice_recipe import PracticeRecipe, PracticeRecipeStep
-from models.practice_session import PracticeSession
 from models.user_practice import UserPractice
 from routers.auth import get_current_user
+from routers.user_practices import EmbeddedSessionsParams, load_recent_sessions
 from schemas import Page, PaginationParams, build_page
 from schemas.pagination import paginate_query
 from schemas.practice import UserPracticeDetail
@@ -359,6 +359,7 @@ async def apply_recipe_to_user_practice(
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_practice: Annotated[UserPractice, Depends(require_owned_user_practice)],
+    embed: Annotated[EmbeddedSessionsParams, Depends()],
 ) -> dict[str, Any]:
     """Materialise a recipe and store it as the UserPractice's override.
 
@@ -384,16 +385,13 @@ async def apply_recipe_to_user_practice(
     session.add(user_practice)
     await session.commit()
     await session.refresh(user_practice)
-    # Load real session history so the response matches what GET
-    # ``/user-practices/{id}`` and ``customize_user_practice`` return.
-    # Returning ``sessions: []`` here would clobber any frontend store
-    # that merges the response back into local state.
-    sessions_result = await session.execute(
-        select(PracticeSession)
-        .where(PracticeSession.user_practice_id == user_practice.id)
-        .order_by(col(PracticeSession.timestamp).desc())
+    # Load the capped recent session history so the response matches what GET
+    # ``/user-practices/{id}`` and ``customize_user_practice`` return (the
+    # frontend store merges it back, so it must stay present — but bounded,
+    # issue #474). Older sessions remain reachable via ``list_sessions``.
+    sessions, sessions_total, sessions_has_more = await load_recent_sessions(
+        session, cast("int", user_practice.id), embed
     )
-    sessions = list(sessions_result.scalars().all())
     logger.info(
         "practice_recipe_applied",
         extra={
@@ -413,4 +411,6 @@ async def apply_recipe_to_user_practice(
         "effective_name": effective_name(practice, user_practice),
         "effective_config": effective_config(practice, user_practice).model_dump(),
         "sessions": sessions,
+        "sessions_total": sessions_total,
+        "sessions_has_more": sessions_has_more,
     }

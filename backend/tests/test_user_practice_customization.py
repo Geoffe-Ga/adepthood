@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
@@ -9,6 +10,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.practice import Practice
+from models.practice_session import PracticeSession
 from models.stage_progress import StageProgress
 from models.user_practice import UserPractice
 
@@ -491,3 +493,39 @@ async def test_list_user_practices_populates_effective_fields(
     assert item["effective_config"] is not None
     assert item["effective_config"]["mode"] == "meditation_timer"
     assert item["effective_config"]["duration_minutes"] == 10
+
+
+@pytest.mark.asyncio
+async def test_customize_caps_embedded_sessions(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The customize response embeds at most the capped, newest-first sessions (issue #474)."""
+    headers, user_id = await _signup(async_client)
+    practice = await _seed_practice(db_session)
+    up_id = await _create_user_practice(async_client, db_session, headers, user_id, practice)
+
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    for i in range(5):
+        db_session.add(
+            PracticeSession(
+                user_id=user_id,
+                user_practice_id=up_id,
+                duration_minutes=10.0,
+                timestamp=base + timedelta(minutes=i),
+            )
+        )
+    await db_session.commit()
+
+    resp = await async_client.patch(
+        f"/user-practices/{up_id}/customize?sessions_limit=2",
+        json={"custom_name": "Capped"},
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    data = resp.json()
+    assert len(data["sessions"]) == 2
+    assert data["sessions_total"] == 5
+    assert data["sessions_has_more"] is True
+    timestamps = [s["timestamp"] for s in data["sessions"]]
+    assert timestamps == sorted(timestamps, reverse=True)
