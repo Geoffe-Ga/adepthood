@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import cast
 
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -31,6 +31,7 @@ __all__ = [
     "TOTAL_STAGES",
     "AllStagesCompletedError",
     "compute_stage_progress",
+    "compute_stage_progress_batch",
     "ensure_user_progress",
     "get_stage_habit_history",
     "get_stage_practice_history",
@@ -211,6 +212,109 @@ async def compute_stage_progress(
         "practice_sessions_completed": practice_count,
         "course_items_completed": course_items,
         "overall_progress": round(overall, 2),
+    }
+
+
+async def _batch_habit_metrics(session: AsyncSession, user_id: int) -> dict[str, tuple[int, int]]:
+    """Per-stage ``(total_habits, active_habits)`` for a user in one query.
+
+    ``active_habits`` counts habits with ≥1 of the user's completions; an
+    outer join keeps habits with no goals/completions in the total. Keyed by
+    the habit's ``stage`` string (habits store stage as text).
+    """
+    result = await session.execute(
+        select(
+            Habit.stage,
+            func.count(func.distinct(Habit.id)).label("total"),
+            func.count(func.distinct(case((col(GoalCompletion.id).isnot(None), Habit.id)))).label(
+                "active"
+            ),
+        )
+        .select_from(Habit)
+        .outerjoin(Goal, col(Goal.habit_id) == col(Habit.id))
+        .outerjoin(
+            GoalCompletion,
+            (col(GoalCompletion.goal_id) == col(Goal.id))
+            & (col(GoalCompletion.user_id) == user_id),
+        )
+        .where(Habit.user_id == user_id)
+        .group_by(col(Habit.stage))
+    )
+    return {row.stage: (row.total, row.active) for row in result.all()}
+
+
+async def _batch_practice_counts(session: AsyncSession, user_id: int) -> dict[int, int]:
+    """Per-stage practice-session counts for a user in one query (keyed by stage number)."""
+    result = await session.execute(
+        select(UserPractice.stage_number, func.count(col(PracticeSession.id)))
+        .select_from(PracticeSession)
+        .join(UserPractice, col(PracticeSession.user_practice_id) == col(UserPractice.id))
+        .where(PracticeSession.user_id == user_id)
+        .group_by(col(UserPractice.stage_number))
+    )
+    return {row[0]: row[1] for row in result.all()}
+
+
+async def _batch_course_counts(session: AsyncSession, user_id: int) -> dict[int, int]:
+    """Per-stage completed-content counts for a user in one query (keyed by stage number)."""
+    result = await session.execute(
+        select(CourseStage.stage_number, func.count(col(ContentCompletion.id)))
+        .select_from(ContentCompletion)
+        .join(StageContent, col(ContentCompletion.content_id) == col(StageContent.id))
+        .join(CourseStage, col(StageContent.course_stage_id) == col(CourseStage.id))
+        .where(ContentCompletion.user_id == user_id)
+        .group_by(col(CourseStage.stage_number))
+    )
+    return {row[0]: row[1] for row in result.all()}
+
+
+def _assemble_stage_progress(
+    stage_number: int,
+    habit_metrics: dict[str, tuple[int, int]],
+    practice_counts: dict[int, int],
+    course_counts: dict[int, int],
+) -> dict[str, float | int]:
+    """Build one stage's progress dict from the batched lookups (parity with the loop)."""
+    total, active = habit_metrics.get(str(stage_number), (0, 0))
+    habits_progress = min(active / total, 1.0) if total > 0 else 0.0
+    practice_count = practice_counts.get(stage_number, 0)
+    overall = (habits_progress + (1.0 if practice_count > 0 else 0.0)) / 2
+    return {
+        "habits_progress": round(habits_progress, 2),
+        "practice_sessions_completed": practice_count,
+        "course_items_completed": course_counts.get(stage_number, 0),
+        "overall_progress": round(overall, 2),
+    }
+
+
+async def compute_stage_progress_batch(
+    session: AsyncSession,
+    user_id: int,
+    stage_numbers: list[int],
+) -> dict[int, dict[str, float | int]]:
+    """Batched equivalent of :func:`compute_stage_progress` for many stages.
+
+    Issues exactly three grouped queries (habits, practice sessions, course
+    items) regardless of stage count, then assembles a per-stage mapping with
+    values identical to calling :func:`compute_stage_progress` per stage —
+    eliminating the N+1 on ``list_stages`` (issue #473). Returns ``{}`` for an
+    empty ``stage_numbers``.
+
+    The helpers deliberately ``GROUP BY`` the user's whole dataset with no
+    ``IN (stage_numbers)`` filter: the curriculum is ≤36 stages, so the group
+    set is tiny and one grouped scan beats a parameterised per-stage filter
+    here. ``stage_numbers`` only selects which groups land in the result.
+    """
+    if not stage_numbers:
+        return {}
+    habit_metrics = await _batch_habit_metrics(session, user_id)
+    practice_counts = await _batch_practice_counts(session, user_id)
+    course_counts = await _batch_course_counts(session, user_id)
+    return {
+        stage_number: _assemble_stage_progress(
+            stage_number, habit_metrics, practice_counts, course_counts
+        )
+        for stage_number in stage_numbers
     }
 
 

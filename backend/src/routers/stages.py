@@ -16,6 +16,7 @@ from domain.constants import TOTAL_STAGES
 from domain.program_calendar import calendar_stage, calendar_week, resolve_program_anchor
 from domain.stage_progress import (
     compute_stage_progress,
+    compute_stage_progress_batch,
     get_stage_habit_history,
     get_stage_practice_history,
     get_user_progress,
@@ -43,18 +44,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/stages", tags=["stages"])
 
 
-async def _build_stage_response(
+def _build_stage_response(
     stage: CourseStage,
-    session: AsyncSession,
-    user_id: int,
-    progress: StageProgress | None,
+    stage_progress: float,
+    *,
+    unlocked: bool,
 ) -> StageResponse:
-    """Assemble a :class:`StageResponse` with the current user's progress overlay."""
-    unlocked = is_stage_unlocked(stage.stage_number, progress)
-    stage_progress = 0.0
-    if unlocked:
-        data = await compute_stage_progress(session, user_id, stage.stage_number)
-        stage_progress = data["overall_progress"]
+    """Assemble a :class:`StageResponse` from a precomputed progress value.
+
+    Progress is computed in one batched pass by the caller (issue #473) rather
+    than per stage, so this stays a pure, query-free assembler.
+    """
     return StageResponse(
         id=stage.id,
         title=stage.title,
@@ -73,6 +73,35 @@ async def _build_stage_response(
     )
 
 
+def _overlay_stage(
+    stage: CourseStage,
+    unlocked: dict[int, bool],
+    batch: dict[int, dict[str, float | int]],
+) -> StageResponse:
+    """Assemble one stage response, reading its progress from the batch (0.0 if locked)."""
+    is_open = unlocked[stage.stage_number]
+    value = batch[stage.stage_number]["overall_progress"] if is_open else 0.0
+    return _build_stage_response(stage, value, unlocked=is_open)
+
+
+async def _stage_responses_with_progress(
+    session: AsyncSession,
+    user_id: int,
+    stages: list[CourseStage],
+) -> list[StageResponse]:
+    """Overlay batched progress onto a page of stages (issue #473).
+
+    Computes unlock state once, batches progress for the unlocked stages in
+    three grouped queries, then assembles a response per stage. Locked stages
+    report ``0.0`` without entering the batch.
+    """
+    progress = await get_user_progress(session, user_id)
+    unlocked = {s.stage_number: is_stage_unlocked(s.stage_number, progress) for s in stages}
+    unlocked_numbers = [n for n, ok in unlocked.items() if ok]
+    batch = await compute_stage_progress_batch(session, user_id, unlocked_numbers)
+    return [_overlay_stage(s, unlocked, batch) for s in stages]
+
+
 @router.get("", response_model=None)
 async def list_stages(
     current_user: Annotated[int, Depends(get_current_user)],
@@ -82,10 +111,11 @@ async def list_stages(
     """List all stages with per-user progress overlay.
 
     Each stage's ``progress`` field is populated from
-    ``compute_stage_progress`` so the frontend can render progress bars
-    without a follow-up call. This accepts an N+M round-trip (one query
-    per metric per stage) since N=10 stages is small and caching would
-    add complexity disproportionate to the benefit.
+    ``compute_stage_progress_batch`` — three grouped queries for the whole
+    list regardless of stage count — so the frontend can render progress bars
+    without a follow-up call and the endpoint no longer scales N-by-M with
+    course length (issue #473). Only unlocked stages feed the batch; locked
+    stages report ``0.0`` progress as before.
 
     BUG-INFRA-016: returns ``Page[StageResponse]`` when ``?paginate=true``
     is set; otherwise the legacy bare list is returned for one release while
@@ -93,9 +123,7 @@ async def list_stages(
     """
     query = select(CourseStage).order_by(col(CourseStage.stage_number).asc())
     stages, total = await paginate_query(session, query, pagination)
-    progress = await get_user_progress(session, current_user)
-
-    responses = [await _build_stage_response(s, session, current_user, progress) for s in stages]
+    responses = await _stage_responses_with_progress(session, current_user, stages)
 
     if pagination.paginate:
         return build_page(responses, total, pagination)
