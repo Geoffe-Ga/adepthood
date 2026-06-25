@@ -135,17 +135,14 @@ const MessageBubbleComponent = ({
 };
 
 /**
- * Custom equality for {@link MessageBubble}'s {@link React.memo}.
+ * Custom equality for {@link MessageBubble}'s {@link React.memo}: compare only
+ * the fields the bubble renders so an unchanged bubble bails out (audit §5.2).
  *
- * The Journal conversation is a long inverted FlatList; without memoization
- * every bubble re-renders whenever the list does (new message, streaming
- * chunk, unrelated state). We compare exactly the fields the bubble renders
- * so an unchanged bubble bails out (audit §5.2).
- *
- * ``onRetry`` is intentionally excluded: the list rebuilds it per render as a
- * closure bound to the same message, so comparing its identity would defeat
- * the memo without any behavioural difference — ``_errored`` already captures
- * whether the retry affordance shows.
+ * ``onRetry`` is excluded because the list rebuilds it per render bound to the
+ * same message. That is safe only while ``_retryText`` / ``_retryTag`` are
+ * immutable once ``_errored`` is set (they are written on error and cleared on
+ * success, never mutated in place); if that ever changes, the retained closure
+ * could capture stale retry values.
  */
 export function messageBubblePropsAreEqual(
   prev: MessageBubbleProps,

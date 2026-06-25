@@ -1,11 +1,8 @@
-// Render-isolation guard for issue #471. MessageBubble is a hookless leaf in a
-// long inverted FlatList, so the deterministic proof that "unchanged bubbles do
-// not re-render" is its React.memo comparator: React skips re-rendering a memo
-// component exactly when the comparator returns true. We assert the memo wiring,
-// exhaustively check the comparator's bail/re-render decisions, and simulate a
-// single-message append to show every existing bubble bails (zero re-renders).
+// Render-isolation guard (issue #471): React.memo skips a memo component's
+// render exactly when its comparator returns true, so the comparator is the
+// deterministic render-decision for this hookless bubble.
 import { describe, expect, it } from '@jest/globals';
-import { render } from '@testing-library/react-native';
+import { render, screen } from '@testing-library/react-native';
 import React from 'react';
 
 import type { JournalTag } from '../../../api';
@@ -36,6 +33,8 @@ function propsFor(message: ChatMessage, overrides: Partial<BubbleProps> = {}): B
 
 describe('MessageBubble is memoized', () => {
   it('wraps the component in React.memo with the custom comparator', () => {
+    // Intentional coupling to React's memo object shape ($$typeof + compare):
+    // the only way to assert the wiring without a flaky render-count harness.
     const memoized = MessageBubble as unknown as { compare: unknown; $$typeof: symbol };
     expect(memoized.compare).toBe(messageBubblePropsAreEqual);
     expect(memoized.$$typeof).toBe(Symbol.for('react.memo'));
@@ -44,6 +43,16 @@ describe('MessageBubble is memoized', () => {
   it('renders its message content (visual output unchanged)', () => {
     const { getByText } = render(<MessageBubble message={makeMessage(1, { message: 'hello' })} />);
     expect(getByText('hello')).toBeTruthy();
+  });
+
+  it('re-renders with new content when a compared field changes', () => {
+    const { rerender } = render(<MessageBubble message={makeMessage(1, { message: 'first' })} />);
+    expect(screen.getByText('first')).toBeTruthy();
+
+    rerender(<MessageBubble message={makeMessage(1, { message: 'second' })} />);
+
+    expect(screen.getByText('second')).toBeTruthy();
+    expect(screen.queryByText('first')).toBeNull();
   });
 });
 
@@ -78,6 +87,18 @@ describe('messageBubblePropsAreEqual', () => {
     const a = propsFor(message, { errorLabel: 'Network error' });
     const b = propsFor(message, { errorLabel: 'Timed out' });
     expect(messageBubblePropsAreEqual(a, b)).toBe(false);
+  });
+
+  it.each([
+    ['_errorDetail', makeMessage(1, { _errored: true, _errorDetail: 'changed detail' })],
+    ['_retryText', makeMessage(1, { _retryText: 'changed retry text' })],
+    ['_retryTag', makeMessage(1, { _retryTag: 'reflection' as JournalTag })],
+  ])('ignores non-rendered metadata field %s (stays bailed)', (_label, changed) => {
+    // The bubble never reads these directly (errorLabel carries the displayed
+    // error text), so changing one alone must not force a re-render. Guards
+    // against someone adding one to the comparator and over-rendering.
+    const base = makeMessage(1, _label === '_errorDetail' ? { _errored: true } : {});
+    expect(messageBubblePropsAreEqual(propsFor(base), propsFor(changed))).toBe(true);
   });
 
   it('appending one message re-renders zero existing bubbles', () => {
