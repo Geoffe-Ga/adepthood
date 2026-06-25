@@ -100,7 +100,11 @@ interface MessageBubbleProps {
   onRetry?: () => void;
 }
 
-const MessageBubble = ({ message, errorLabel, onRetry }: MessageBubbleProps): React.JSX.Element => {
+const MessageBubbleComponent = ({
+  message,
+  errorLabel,
+  onRetry,
+}: MessageBubbleProps): React.JSX.Element => {
   const isUser = message.sender === 'user';
   const tagLabel = TAG_LABELS[message.tag];
   const showCursor = message._streaming === true;
@@ -129,5 +133,36 @@ const MessageBubble = ({ message, errorLabel, onRetry }: MessageBubbleProps): Re
     </View>
   );
 };
+
+/**
+ * Custom equality for {@link MessageBubble}'s {@link React.memo}: compare only
+ * the fields the bubble renders so an unchanged bubble bails out (audit §5.2).
+ *
+ * ``onRetry`` is excluded because the list rebuilds it per render bound to the
+ * same message. That is safe only while ``_retryText`` / ``_retryTag`` are
+ * immutable once ``_errored`` is set (they are written on error and cleared on
+ * success, never mutated in place); if that ever changes, the retained closure
+ * could capture stale retry values.
+ */
+export function messageBubblePropsAreEqual(
+  prev: MessageBubbleProps,
+  next: MessageBubbleProps,
+): boolean {
+  const a = prev.message;
+  const b = next.message;
+  return (
+    a.id === b.id &&
+    a.sender === b.sender &&
+    a.tag === b.tag &&
+    a.message === b.message &&
+    a.timestamp === b.timestamp &&
+    a.practice_session_id === b.practice_session_id &&
+    a._streaming === b._streaming &&
+    a._errored === b._errored &&
+    prev.errorLabel === next.errorLabel
+  );
+}
+
+const MessageBubble = React.memo(MessageBubbleComponent, messageBubblePropsAreEqual);
 
 export default MessageBubble;
