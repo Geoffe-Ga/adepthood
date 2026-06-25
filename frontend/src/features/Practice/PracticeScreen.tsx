@@ -46,43 +46,152 @@ import { selectCurrentStage, useStageStore } from '@/store/useStageStore';
 type ActivePracticeHook = ReturnType<typeof useActivePractice>;
 type WeeklyProgressHook = ReturnType<typeof useWeeklyProgress>;
 
+function usePracticeChrome(
+  stageNumber: number,
+  currentPracticeId: number | null,
+  onReplaced: (_next: UserPractice) => void,
+): { banner: React.JSX.Element; switcher: React.JSX.Element } {
+  const [showSwitcher, setShowSwitcher] = useState(false);
+  const banner = (
+    <FrequencyBanner stageNumber={stageNumber} onSwitch={() => setShowSwitcher(true)} />
+  );
+  const switcher = (
+    <PracticeSwitcherSheet
+      visible={showSwitcher}
+      stageNumber={stageNumber}
+      currentPracticeId={currentPracticeId}
+      onClose={() => setShowSwitcher(false)}
+      onReplaced={onReplaced}
+    />
+  );
+  return { banner, switcher };
+}
+
 const PracticeScreen = (): React.JSX.Element => {
   const stageNumber = useResolvedStageNumber();
   const { userTimezone } = useAuth();
   const active = useActivePractice(stageNumber);
   const weekly = useWeeklyProgress();
-  const [showSwitcher, setShowSwitcher] = useState(false);
   const handleSwitcherReplaced = useSwitcherReplaced(active.updateActivePractice, weekly.refresh);
   const handleWriteReflection = useWriteReflection(active.effectiveName, active.practice);
+  const currentPracticeId = active.activeUserPractice?.practice_id ?? null;
+  const { banner, switcher } = usePracticeChrome(
+    stageNumber,
+    currentPracticeId,
+    handleSwitcherReplaced,
+  );
 
   if (active.isLoading) return <LoadingView />;
   if (active.error && !active.activeUserPractice) {
     return <ErrorView error={active.error} onRetry={active.refresh} />;
   }
-  return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={styles.scrollContent}
-      testID="practice-screen"
-    >
-      <FrequencyBanner stageNumber={stageNumber} onSwitch={() => setShowSwitcher(true)} />
-      <PracticeBody
-        active={active}
-        weekly={weekly}
+  if (active.activeUserPractice && active.practice && active.effectiveConfig) {
+    return (
+      <ActiveSessionView
+        userPractice={active.activeUserPractice}
+        practiceName={active.practice.name}
+        effectiveName={active.effectiveName}
+        effectiveConfig={active.effectiveConfig}
         userTimezone={userTimezone}
+        weekly={weekly}
+        onUserPracticeUpdated={active.updateActivePractice}
         onWriteReflection={handleWriteReflection}
+        banner={banner}
+        switcher={switcher}
       />
-      <WeeklyProgress count={weekly.count} />
-      <PracticeSwitcherSheet
-        visible={showSwitcher}
-        stageNumber={stageNumber}
-        currentPracticeId={active.activeUserPractice?.practice_id ?? null}
-        onClose={() => setShowSwitcher(false)}
-        onReplaced={handleSwitcherReplaced}
-      />
-    </ScrollView>
+    );
+  }
+
+  return (
+    <SelectionView
+      active={active}
+      weekly={weekly}
+      currentPracticeId={currentPracticeId}
+      banner={banner}
+      switcher={switcher}
+    />
   );
 };
+
+interface ActiveSessionViewProps {
+  userPractice: NonNullable<ActivePracticeHook['activeUserPractice']>;
+  practiceName: string;
+  effectiveName: string | null;
+  effectiveConfig: NonNullable<ActivePracticeHook['effectiveConfig']>;
+  userTimezone: string;
+  weekly: WeeklyProgressHook;
+  onUserPracticeUpdated: ActivePracticeHook['updateActivePractice'];
+  onWriteReflection: (_args: { session: PracticeSessionResponse; insight: string | null }) => void;
+  banner: React.JSX.Element;
+  switcher: React.JSX.Element;
+}
+
+// The selection branch lets the windowed PracticeSelector own the scroll: a
+// vertical FlatList nested in a vertical ScrollView stops virtualizing.
+const ActiveSessionView = ({
+  userPractice,
+  practiceName,
+  effectiveName,
+  effectiveConfig,
+  userTimezone,
+  weekly,
+  onUserPracticeUpdated,
+  onWriteReflection,
+  banner,
+  switcher,
+}: ActiveSessionViewProps): React.JSX.Element => (
+  <ScrollView
+    style={styles.screen}
+    contentContainerStyle={styles.scrollContent}
+    testID="practice-screen"
+  >
+    {banner}
+    <ActiveRitualSession
+      key={`practice-${userPractice.id}`}
+      userPractice={userPractice}
+      effectiveName={effectiveName ?? practiceName}
+      effectiveConfig={effectiveConfig}
+      userTimezone={userTimezone}
+      onSessionApply={weekly.increment}
+      onSessionRollback={weekly.decrement}
+      onSessionCommitted={() => void weekly.refresh()}
+      onUserPracticeUpdated={onUserPracticeUpdated}
+      onWriteReflection={onWriteReflection}
+    />
+    <WeeklyProgress count={weekly.count} />
+    {switcher}
+  </ScrollView>
+);
+
+interface SelectionViewProps {
+  active: ActivePracticeHook;
+  weekly: WeeklyProgressHook;
+  currentPracticeId: number | null;
+  banner: React.JSX.Element;
+  switcher: React.JSX.Element;
+}
+
+const SelectionView = ({
+  active,
+  weekly,
+  currentPracticeId,
+  banner,
+  switcher,
+}: SelectionViewProps): React.JSX.Element => (
+  <View style={styles.screen} testID="practice-screen">
+    <View style={styles.screen} testID="selection-view">
+      <PracticeSelector
+        practices={active.availablePractices}
+        selectedPracticeId={currentPracticeId}
+        onSelect={(id) => void active.selectPractice(id)}
+        isLoading={false}
+        ListHeaderComponent={banner}
+        ListFooterComponent={<WeeklyProgress count={weekly.count} />}
+      />
+    </View>
+    {switcher}
+  </View>
+);
 
 function useResolvedStageNumber(): number {
   const route = useAppRoute<'Practice'>();
@@ -139,47 +248,6 @@ function useWriteReflection(
     [effectiveName, practice, navigation],
   );
 }
-
-interface PracticeBodyProps {
-  active: ActivePracticeHook;
-  weekly: WeeklyProgressHook;
-  userTimezone: string;
-  onWriteReflection: (_args: { session: PracticeSessionResponse; insight: string | null }) => void;
-}
-
-const PracticeBody = ({
-  active,
-  weekly,
-  userTimezone,
-  onWriteReflection,
-}: PracticeBodyProps): React.JSX.Element => {
-  if (active.activeUserPractice && active.practice && active.effectiveConfig) {
-    return (
-      <ActiveRitualSession
-        key={`practice-${active.activeUserPractice.id}`}
-        userPractice={active.activeUserPractice}
-        effectiveName={active.effectiveName ?? active.practice.name}
-        effectiveConfig={active.effectiveConfig}
-        userTimezone={userTimezone}
-        onSessionApply={weekly.increment}
-        onSessionRollback={weekly.decrement}
-        onSessionCommitted={() => void weekly.refresh()}
-        onUserPracticeUpdated={active.updateActivePractice}
-        onWriteReflection={onWriteReflection}
-      />
-    );
-  }
-  return (
-    <View testID="selection-view">
-      <PracticeSelector
-        practices={active.availablePractices}
-        selectedPracticeId={active.activeUserPractice?.practice_id ?? null}
-        onSelect={(id) => void active.selectPractice(id)}
-        isLoading={false}
-      />
-    </View>
-  );
-};
 
 const LoadingView = (): React.JSX.Element => (
   <View style={styles.centered} testID="practice-loading">

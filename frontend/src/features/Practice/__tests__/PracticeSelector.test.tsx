@@ -130,4 +130,24 @@ describe('PracticeSelector', () => {
     );
     expect(getByText('Choose a Practice')).toBeTruthy();
   });
+
+  it('virtualizes the list in input order and still fires onSelect by id', () => {
+    // Parity for the FlatList conversion: same cards, same order, same callback.
+    const { getAllByTestId, getByTestId } = render(
+      <PracticeSelector
+        practices={samplePractices}
+        selectedPracticeId={null}
+        onSelect={mockOnSelect}
+        isLoading={false}
+      />,
+    );
+
+    const cardIds = getAllByTestId(/^practice-card-/).map(
+      (node: { props: { testID: string } }) => node.props.testID,
+    );
+    expect(cardIds).toEqual(['practice-card-1', 'practice-card-2']);
+
+    fireEvent.press(getByTestId('select-practice-2'));
+    expect(mockOnSelect).toHaveBeenCalledWith(2);
+  });
 });

@@ -1,5 +1,14 @@
-import React from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import type { ReactElement } from 'react';
+import React, { useCallback } from 'react';
+import type { ListRenderItem } from 'react-native';
+import {
+  ActivityIndicator,
+  FlatList,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
 import type { PracticeItem } from '@/api';
 import { colors, SPACING, BORDER_RADIUS, shadows } from '@/design/tokens';
@@ -10,6 +19,10 @@ interface PracticeSelectorProps {
   onSelect: (_id: number) => void;
   isLoading: boolean;
   isLocked?: boolean;
+  /** Rendered above the built-in heading when the selector owns the scroll. */
+  ListHeaderComponent?: ReactElement | null;
+  /** Rendered below the windowed list (e.g. the weekly-progress bar). */
+  ListFooterComponent?: ReactElement | null;
 }
 
 interface PracticeCardProps {
@@ -18,9 +31,12 @@ interface PracticeCardProps {
   onSelect: (_id: number) => void;
 }
 
-const PracticeCard = ({ practice, isSelected, onSelect }: PracticeCardProps): React.JSX.Element => (
+const PracticeCardComponent = ({
+  practice,
+  isSelected,
+  onSelect,
+}: PracticeCardProps): React.JSX.Element => (
   <View
-    key={practice.id}
     style={[styles.card, isSelected && styles.cardSelected]}
     testID={`practice-card-${practice.id}`}
   >
@@ -46,12 +62,62 @@ const PracticeCard = ({ practice, isSelected, onSelect }: PracticeCardProps): Re
   </View>
 );
 
+// Memoized so windowed rows don't re-render when an unrelated row's selection
+// changes — only the (de)selected rows see a new ``isSelected``.
+const PracticeCard = React.memo(PracticeCardComponent);
+
+const keyExtractor = (practice: PracticeItem): string => String(practice.id);
+
+type PracticeListProps = Pick<
+  PracticeSelectorProps,
+  'practices' | 'selectedPracticeId' | 'onSelect' | 'ListHeaderComponent' | 'ListFooterComponent'
+>;
+
+const PracticeList = ({
+  practices,
+  selectedPracticeId,
+  onSelect,
+  ListHeaderComponent,
+  ListFooterComponent,
+}: PracticeListProps): React.JSX.Element => {
+  const renderItem = useCallback<ListRenderItem<PracticeItem>>(
+    ({ item }) => (
+      <PracticeCard
+        practice={item}
+        isSelected={item.id === selectedPracticeId}
+        onSelect={onSelect}
+      />
+    ),
+    [selectedPracticeId, onSelect],
+  );
+
+  return (
+    <FlatList
+      style={styles.list}
+      contentContainerStyle={styles.container}
+      data={practices}
+      keyExtractor={keyExtractor}
+      renderItem={renderItem}
+      ListHeaderComponent={
+        <View>
+          {ListHeaderComponent}
+          <Text style={styles.heading}>Choose a Practice</Text>
+        </View>
+      }
+      ListFooterComponent={ListFooterComponent}
+      testID="practice-selector"
+    />
+  );
+};
+
 const PracticeSelector: React.FC<PracticeSelectorProps> = ({
   practices,
   selectedPracticeId,
   onSelect,
   isLoading,
   isLocked = false,
+  ListHeaderComponent,
+  ListFooterComponent,
 }) => {
   if (isLoading) {
     return (
@@ -80,21 +146,20 @@ const PracticeSelector: React.FC<PracticeSelectorProps> = ({
   }
 
   return (
-    <View style={styles.container} testID="practice-selector">
-      <Text style={styles.heading}>Choose a Practice</Text>
-      {practices.map((practice) => (
-        <PracticeCard
-          key={practice.id}
-          practice={practice}
-          isSelected={practice.id === selectedPracticeId}
-          onSelect={onSelect}
-        />
-      ))}
-    </View>
+    <PracticeList
+      practices={practices}
+      selectedPracticeId={selectedPracticeId}
+      onSelect={onSelect}
+      ListHeaderComponent={ListHeaderComponent}
+      ListFooterComponent={ListFooterComponent}
+    />
   );
 };
 
 const styles = StyleSheet.create({
+  list: {
+    flex: 1,
+  },
   container: {
     padding: SPACING.lg,
   },
