@@ -25,7 +25,7 @@ from main import app
 from models.energy_plan import EnergyPlan as EnergyPlanRecord
 from models.habit import Habit
 from routers import energy as energy_router
-from schemas import EnergyPlanResponse
+from schemas import EnergyPlanRequest, EnergyPlanResponse
 from services import energy
 
 
@@ -114,17 +114,19 @@ async def test_create_plan_does_not_block_event_loop(async_client: AsyncClient) 
     one_habit = [DomainHabit(id=1, name="Run", energy_cost=2, energy_return=5)]
     real_response = energy.build_energy_response(one_habit, date(2024, 1, 1))
 
-    async def _stub_resolve(_session: Any, _user_id: Any, _payload: Any) -> list[DomainHabit]:  # noqa: ANN401
+    async def _stub_resolve(
+        _session: AsyncSession, _user_id: int, _payload: EnergyPlanRequest
+    ) -> list[DomainHabit]:
         return one_habit
 
-    def _slow_build(_habits: Any, _start: Any) -> EnergyPlanResponse:  # noqa: ANN401
+    def _slow_build(_habits: list[DomainHabit], _start: date) -> EnergyPlanResponse:
         time.sleep(sleep_seconds)
         return real_response
 
     async def _noop_persist(
-        _session: Any,  # noqa: ANN401
-        _user_id: Any,  # noqa: ANN401
-        _key: Any,  # noqa: ANN401
+        _session: AsyncSession,
+        _user_id: int,
+        _key: str | None,
         response: EnergyPlanResponse,
     ) -> EnergyPlanResponse:
         return response
