@@ -21,7 +21,7 @@ from domain.dates import today_in_tz
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
-from services.streaks import SubtractiveContext
+from services.streaks import PendingCompletion, StreakScope, SubtractiveContext
 
 
 def _noon(day: date) -> datetime:
@@ -79,33 +79,48 @@ async def _seed_completion(db_session: AsyncSession, goal: Goal, user_id: int, d
     await db_session.commit()
 
 
-def _spy_streak_calls(monkeypatch: pytest.MonkeyPatch) -> list[int]:
-    """Patch the router's ``compute_consecutive_streak`` to count invocations."""
-    counter = [0]
-    real = gc_module.compute_consecutive_streak
+def _spy_streak_calls(monkeypatch: pytest.MonkeyPatch) -> tuple[list[int], list[int]]:
+    """Count BOTH streak entry points so a regression on either path is caught.
 
-    async def _counting(
+    Returns ``(consecutive_calls, before_after_calls)``. The persist path uses
+    ``compute_streak_before_and_after``; the held/idempotent paths use
+    ``compute_consecutive_streak``. Spying only one would let a double-call on
+    the other slip through.
+    """
+    consecutive = [0]
+    before_after = [0]
+    real_consecutive = gc_module.compute_consecutive_streak
+    real_before_after = gc_module.compute_streak_before_and_after
+
+    async def _count_consecutive(
         session: AsyncSession,
         goal_id: int,
         user_id: int,
         user_timezone: str = "UTC",
         subtractive: SubtractiveContext | None = None,
     ) -> int:
-        counter[0] += 1
-        return await real(session, goal_id, user_id, user_timezone, subtractive)
+        consecutive[0] += 1
+        return await real_consecutive(session, goal_id, user_id, user_timezone, subtractive)
 
-    monkeypatch.setattr(gc_module, "compute_consecutive_streak", _counting)
-    return counter
+    async def _count_before_after(
+        session: AsyncSession, scope: StreakScope, pending: PendingCompletion
+    ) -> tuple[int, int]:
+        before_after[0] += 1
+        return await real_before_after(session, scope, pending)
+
+    monkeypatch.setattr(gc_module, "compute_consecutive_streak", _count_consecutive)
+    monkeypatch.setattr(gc_module, "compute_streak_before_and_after", _count_before_after)
+    return consecutive, before_after
 
 
 @pytest.mark.asyncio
 async def test_checkin_computes_streak_at_most_once(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A fresh check-in invokes compute_consecutive_streak at most once."""
+    """A fresh check-in computes the streak exactly once (one combined read)."""
     headers, user_id = await _signup(async_client)
     goal = await _seed_goal(db_session, user_id)
-    calls = _spy_streak_calls(monkeypatch)
+    consecutive, before_after = _spy_streak_calls(monkeypatch)
 
     resp = await async_client.post(
         "/goal_completions/", json={"goal_id": goal.id, "did_complete": True}, headers=headers
@@ -113,27 +128,31 @@ async def test_checkin_computes_streak_at_most_once(
 
     assert resp.status_code == HTTPStatus.OK
     assert resp.json()["streak"] == 1  # work still happened
-    assert calls[0] <= 1
+    # Persist path: one combined read, no separate consecutive recompute.
+    assert before_after[0] == 1
+    assert consecutive[0] == 0
 
 
 @pytest.mark.asyncio
 async def test_idempotent_checkin_computes_streak_at_most_once(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A duplicate same-day check-in also computes the streak at most once."""
+    """A duplicate same-day check-in short-circuits with a single streak read."""
     headers, user_id = await _signup(async_client)
     goal = await _seed_goal(db_session, user_id)
     await async_client.post(
         "/goal_completions/", json={"goal_id": goal.id, "did_complete": True}, headers=headers
     )
 
-    calls = _spy_streak_calls(monkeypatch)
+    consecutive, before_after = _spy_streak_calls(monkeypatch)
     resp = await async_client.post(
         "/goal_completions/", json={"goal_id": goal.id, "did_complete": True}, headers=headers
     )
 
     assert resp.status_code == HTTPStatus.OK
-    assert calls[0] <= 1
+    # Idempotent path: one consecutive read, no persist-path combined read.
+    assert consecutive[0] == 1
+    assert before_after[0] == 0
 
 
 @pytest.mark.asyncio

@@ -46,8 +46,6 @@ class _CheckInJob:
     did_complete: bool
     is_scheduled: bool
     old_streak: int
-    # Post-insert streak, computed alongside ``old_streak`` from one history
-    # read (no second recompute on the persist path).
     new_streak: int
     # Explicit completion time for a backfilled past day; ``None`` lets the
     # ``GoalCompletion`` model default (``datetime.now(UTC)``) stand.
@@ -235,7 +233,7 @@ def _completion_timestamp(completed_on: date | None, user_timezone: str) -> date
 
 
 async def _persist_and_build_response(session: AsyncSession, job: _CheckInJob) -> CheckInResult:
-    """Persist + read streak/milestones inside one savepoint; reads streak post-flush."""
+    """Persist the completion and build a CheckInResult; streak values arrive pre-computed."""
     completion = GoalCompletion(
         goal_id=job.goal_id,
         user_id=job.user_id,
