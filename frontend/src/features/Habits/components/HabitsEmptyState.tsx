@@ -8,11 +8,7 @@ interface HabitsEmptyStateProps {
   onAdd?: () => void;
 }
 
-/**
- * First-run fallback for the Habits screen (audit-ux-07). A zero-habit user
- * previously saw a blank surface below the top bar; this guides them to add
- * their first habit instead. Mirrors the Journal feature's empty-state shape.
- */
+/** First-run fallback guiding a zero-habit user to add their first (audit-ux-07). */
 export const HabitsEmptyState = ({ onAdd }: HabitsEmptyStateProps): React.JSX.Element => (
   <View style={styles.container} testID="habits-empty-state">
     <Text style={styles.icon}>{'+'}</Text>
@@ -44,21 +40,21 @@ const styles = StyleSheet.create({
   },
   icon: {
     fontSize: 40,
-    color: colors.text.light,
+    color: colors.text.primary,
     marginBottom: spacing(1.5),
   },
   title: {
     fontSize: 18,
     fontWeight: '600',
-    color: colors.text.light,
+    color: colors.text.primary,
     textAlign: 'center',
     marginBottom: spacing(1),
   },
   subtitle: {
     fontSize: 14,
-    // Muted body text via the semantic text token (not the overlay palette).
-    color: colors.text.light,
-    opacity: 0.7,
+    // text.secondary on the light Habits canvas (#f8f8f8) meets WCAG AA; the
+    // CTA text below stays text.light on the dark colors.secondary button.
+    color: colors.text.secondary,
     textAlign: 'center',
     lineHeight: 20,
   },
