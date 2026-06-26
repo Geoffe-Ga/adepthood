@@ -307,6 +307,21 @@ describe('PracticeScreen', () => {
     });
   });
 
+  it('applies safe-area insets to the active-session surface', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => {
+      expect(getByTestId('active-practice-card')).toBeTruthy();
+    });
+    // Top inset constrains the wrapper viewport (so content can't scroll behind
+    // the notch); bottom inset rides the ScrollView's contentContainerStyle.
+    expect(getByTestId('practice-screen-safe-area')).toHaveStyle({ paddingTop: 47 });
+    const scroll = getByTestId('practice-screen');
+    expect(scroll.props.contentContainerStyle).toEqual(
+      expect.arrayContaining([expect.objectContaining({ paddingBottom: 34 })]),
+    );
+  });
+
   it('opens the configurator sheet when the gear is pressed', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId } = render(<PracticeScreen />);

@@ -152,30 +152,32 @@ const ActiveSessionView = ({
 }: ActiveSessionViewProps): React.JSX.Element => {
   const insets = useSafeAreaInsets();
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={[
-        styles.scrollContent,
-        { paddingTop: insets.top, paddingBottom: insets.bottom },
-      ]}
-      testID="practice-screen"
-    >
-      {banner}
-      <ActiveRitualSession
-        key={`practice-${userPractice.id}`}
-        userPractice={userPractice}
-        effectiveName={effectiveName ?? practiceName}
-        effectiveConfig={effectiveConfig}
-        userTimezone={userTimezone}
-        onSessionApply={weekly.increment}
-        onSessionRollback={weekly.decrement}
-        onSessionCommitted={() => void weekly.refresh()}
-        onUserPracticeUpdated={onUserPracticeUpdated}
-        onWriteReflection={onWriteReflection}
-      />
-      <WeeklyProgress count={weekly.count} />
-      {switcher}
-    </ScrollView>
+    // paddingTop lives on the wrapper so the ScrollView's *viewport* starts
+    // below the notch (content can't scroll up behind it); paddingBottom rides
+    // contentContainerStyle so the scroll content clears the home indicator.
+    <View style={[styles.screen, { paddingTop: insets.top }]} testID="practice-screen-safe-area">
+      <ScrollView
+        style={styles.fill}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom }]}
+        testID="practice-screen"
+      >
+        {banner}
+        <ActiveRitualSession
+          key={`practice-${userPractice.id}`}
+          userPractice={userPractice}
+          effectiveName={effectiveName ?? practiceName}
+          effectiveConfig={effectiveConfig}
+          userTimezone={userTimezone}
+          onSessionApply={weekly.increment}
+          onSessionRollback={weekly.decrement}
+          onSessionCommitted={() => void weekly.refresh()}
+          onUserPracticeUpdated={onUserPracticeUpdated}
+          onWriteReflection={onWriteReflection}
+        />
+        <WeeklyProgress count={weekly.count} />
+        {switcher}
+      </ScrollView>
+    </View>
   );
 };
 
