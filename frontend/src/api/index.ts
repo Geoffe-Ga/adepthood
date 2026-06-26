@@ -1982,19 +1982,19 @@ export const practices = {
     });
   },
   /**
-   * Whole practices list via the ``Page`` envelope (issue #408). Applies the
-   * same ``validatePracticeItem`` filter as the bare ``list`` so malformed
-   * rows never reach a screen.
+   * Whole practices list via the ``Page`` envelope (issue #408). Items are
+   * validated per ``practiceItemSchema`` inside ``listPaginated``, so a
+   * malformed row rejects the page (``fetchAllPages`` propagates the
+   * ``ApiValidationError``) rather than being silently dropped.
    */
   async listAll(
     options: { stageNumber: number; includeMine?: boolean } | number,
     token?: string,
   ): Promise<PracticeItem[]> {
     const params = typeof options === 'number' ? { stageNumber: options } : options;
-    const items = await fetchAllPages((pageParams) =>
+    return fetchAllPages((pageParams) =>
       practices.listPaginated({ ...params, ...pageParams }, token),
     );
-    return items.filter(validatePracticeItem);
   },
   async get(practiceId: number, token?: string): Promise<PracticeItem> {
     const data = await request<PracticeItem>(`/practices/${practiceId}`, { token });

@@ -324,9 +324,9 @@ describe('per-item paginated schemas', () => {
 
   it('practiceItemSchema accepts valid (mode_config optional) and rejects drift', () => {
     expect(practiceItemSchema.parse(practiceItem).submitted_by_user_id).toBeNull();
-    expect(
+    expect(() =>
       practiceItemSchema.parse({ ...practiceItem, mode: 'meditation_timer', mode_config: {} }),
-    );
+    ).not.toThrow();
     expect(() =>
       practiceItemSchema.parse({ ...practiceItem, default_duration_minutes: '10' }),
     ).toThrow();
@@ -344,7 +344,9 @@ describe('per-item paginated schemas', () => {
 
   it('userPracticeSchema accepts valid (optional overrides) and rejects drift', () => {
     expect(userPracticeSchema.parse(userPractice).end_date).toBeNull();
-    expect(userPracticeSchema.parse({ ...userPractice, effective_name: 'My Breath' }));
+    expect(() =>
+      userPracticeSchema.parse({ ...userPractice, effective_name: 'My Breath' }),
+    ).not.toThrow();
     expect(() => userPracticeSchema.parse({ ...userPractice, start_date: undefined })).toThrow();
   });
 
