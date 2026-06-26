@@ -33,8 +33,11 @@ const IntervalBellView = ({ config, state, controls }: Props): React.JSX.Element
         testID="interval-bell-offsets"
       >
         {cues.map((cue, idx) => (
+          // Read-only derived schedule (no reorder/delete of editable rows), so
+          // it rebuilds wholesale on config change — but key by the cue's
+          // intrinsic identity (kind + offset) rather than the array index.
           <OffsetRow
-            key={`${cue.kind}-${cue.atMs}-${idx}`}
+            key={`${cue.kind}-${cue.atMs}`}
             atMs={cue.atMs}
             kind={cue.kind}
             struck={idx < state.cuesStruck}

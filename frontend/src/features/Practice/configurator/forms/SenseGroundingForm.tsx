@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { SenseGroundingConfig, SensePrompt } from '../../engine/types';
@@ -14,7 +14,30 @@ interface Props {
   onChange: (next: SenseGroundingConfig) => void;
 }
 
-const SenseGroundingForm = ({ value, onChange }: Props): React.JSX.Element => {
+// Monotonic source of per-row keys. Prompts have no persistable id (the backend
+// config schema is `extra="forbid"`), so row identity is tracked transiently
+// here and kept in lockstep with add/remove/move — keying by array index would
+// remap a row's instance state (open dropdown, focus) onto the wrong row on a
+// reorder or non-tail delete.
+let nextPromptKey = 0;
+
+interface PromptRowsApi {
+  keys: string[];
+  setPrompt: (_index: number, _patch: Partial<SensePrompt>) => void;
+  move: (_index: number, _direction: -1 | 1) => void;
+  remove: (_index: number) => void;
+  append: () => void;
+}
+
+/** Owns the prompt list + its transient stable row keys (kept in lockstep). */
+function usePromptRows(
+  value: SenseGroundingConfig,
+  onChange: (next: SenseGroundingConfig) => void,
+): PromptRowsApi {
+  const keysRef = useRef<string[] | null>(null);
+  keysRef.current ??= value.prompts.map(() => `prompt-${(nextPromptKey += 1)}`);
+  const keys = keysRef.current;
+
   const setPrompt = (index: number, patch: Partial<SensePrompt>) => {
     const next = value.prompts.map((prompt, i) => (i === index ? { ...prompt, ...patch } : prompt));
     onChange({ ...value, prompts: next });
@@ -27,18 +50,30 @@ const SenseGroundingForm = ({ value, onChange }: Props): React.JSX.Element => {
     const next = value.prompts.slice();
     next[index] = swapWith;
     next[target] = current;
+    // Swap the keys alongside the rows so each stable id follows its prompt.
+    const nextKeys = keys.slice();
+    [nextKeys[index], nextKeys[target]] = [keys[target]!, keys[index]!];
+    keysRef.current = nextKeys;
     onChange({ ...value, prompts: next });
   };
   const remove = (index: number) => {
+    keysRef.current = keys.filter((_, i) => i !== index);
     onChange({ ...value, prompts: value.prompts.filter((_, i) => i !== index) });
   };
-  const append = () =>
+  const append = () => {
+    keysRef.current = [...keys, `prompt-${(nextPromptKey += 1)}`];
     onChange({ ...value, prompts: [...value.prompts, { sense: 'sight', label: '' }] });
+  };
+  return { keys, setPrompt, move, remove, append };
+}
+
+const SenseGroundingForm = ({ value, onChange }: Props): React.JSX.Element => {
+  const { keys, setPrompt, move, remove, append } = usePromptRows(value, onChange);
   return (
     <View testID="sense-grounding-form">
       {value.prompts.map((prompt, index) => (
         <PromptRow
-          key={index}
+          key={keys[index] ?? `prompt-fallback-${index}`}
           prompt={prompt}
           index={index}
           last={index === value.prompts.length - 1}
