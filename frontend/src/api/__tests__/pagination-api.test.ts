@@ -265,3 +265,24 @@ describe('fetchAllPages + listAll helpers (issue #408 — screen adoption)', () 
     await expect(practices.listAll({ stageNumber: 3 })).rejects.toThrow(ApiValidationError);
   });
 });
+
+describe('practices.list (bare array, audit-contracts-06)', () => {
+  test('round-trips every valid row intact', async () => {
+    const rows = [validPractice({ id: 1 }), validPractice({ id: 2 })];
+    mockFetch.mockReturnValueOnce(jsonResponse(rows));
+    const result = await practices.list({ stageNumber: 3 });
+    expect(result).toEqual(rows);
+  });
+
+  test('raises ApiValidationError on a drifted row instead of dropping it', async () => {
+    // A renamed field used to make the row silently fail the typeof guard and
+    // vanish from the catalog; it must now surface as a validation error.
+    const drifted = {
+      ...validPractice({ id: 2 }),
+      default_duration_minutes: undefined,
+      duration: 5,
+    };
+    mockFetch.mockReturnValueOnce(jsonResponse([validPractice({ id: 1 }), drifted]));
+    await expect(practices.list({ stageNumber: 3 })).rejects.toThrow(ApiValidationError);
+  });
+});

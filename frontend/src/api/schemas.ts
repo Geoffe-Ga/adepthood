@@ -297,6 +297,28 @@ export const practiceItemSchema = z.object({
   mode_config: z.record(z.unknown()).optional(),
 });
 
+/** One step of a practice recipe (mirrors ``PracticeRecipeStep``). */
+export const practiceRecipeStepSchema = z.object({
+  position: z.number().int(),
+  tag_slug: z.string(),
+  tag_label: z.string(),
+  prompt_label: z.string(),
+  target_count: z.number(),
+});
+
+/** A practice recipe (mirrors ``PracticeRecipe``). */
+export const practiceRecipeSchema = z.object({
+  id: z.number().int(),
+  slug: z.string(),
+  name: z.string(),
+  description: z.string(),
+  owner_user_id: z.number().int().nullable(),
+  mode: z.enum(['sense_grounding', 'tallied_grounding']),
+  rounds: z.number(),
+  created_at: z.string(),
+  steps: z.array(practiceRecipeStepSchema),
+});
+
 /** A user's selected practice (mirrors ``UserPractice``). */
 export const userPracticeSchema = z.object({
   id: z.number().int(),

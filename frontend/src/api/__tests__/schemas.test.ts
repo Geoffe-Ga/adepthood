@@ -7,6 +7,7 @@ import {
   habitWithGoalsSchema,
   journalListResponseSchema,
   practiceItemSchema,
+  practiceRecipeSchema,
   practiceSessionResponseSchema,
   promptListResponseSchema,
   stageSchema,
@@ -365,5 +366,40 @@ describe('per-item paginated schemas', () => {
     expect(() =>
       practiceSessionResponseSchema.parse({ ...session, user_practice_id: undefined }),
     ).toThrow();
+  });
+});
+
+describe('practiceRecipeSchema (audit-contracts-06)', () => {
+  const recipe = {
+    id: 7,
+    slug: 'find_the_rainbow',
+    name: 'Find the Rainbow',
+    description: '',
+    owner_user_id: null,
+    mode: 'tallied_grounding',
+    rounds: 3,
+    created_at: '2026-05-23T00:00:00Z',
+    steps: [
+      { position: 0, tag_slug: 'red', tag_label: 'Red', prompt_label: 'Find red', target_count: 1 },
+    ],
+  };
+
+  it('accepts a valid recipe (nullable owner, enum mode, nested steps)', () => {
+    const parsed = practiceRecipeSchema.parse(recipe);
+    expect(parsed.owner_user_id).toBeNull();
+    expect(parsed.steps[0]?.tag_slug).toBe('red');
+  });
+
+  it('rejects an unknown mode value', () => {
+    expect(() => practiceRecipeSchema.parse({ ...recipe, mode: 'mystery_mode' })).toThrow();
+  });
+
+  it('rejects a drifted step (renamed target_count)', () => {
+    const steps = [{ ...recipe.steps[0], target_count: undefined, targetCount: 1 }];
+    expect(() => practiceRecipeSchema.parse({ ...recipe, steps })).toThrow();
+  });
+
+  it('rejects a missing required field', () => {
+    expect(() => practiceRecipeSchema.parse({ ...recipe, slug: undefined })).toThrow();
   });
 });
