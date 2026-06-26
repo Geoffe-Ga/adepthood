@@ -268,62 +268,58 @@ domains you add for the frontend.
 
 ## Database Migrations (Alembic)
 
-### Current status
+### Setup (already in place)
 
-Alembic is **not yet configured**. The `migrations/` directory exists but is
-empty. The Dockerfile is already set up to run `alembic upgrade head` on
-deploy — once you create `alembic.ini`, migrations will run automatically.
+Alembic is fully configured — there is nothing to initialise:
 
-### Initial setup
+- `backend/alembic.ini` is committed.
+- `backend/migrations/versions/` holds the migration history (the live schema is
+  the sum of these revisions).
+- `backend/migrations/env.py` reads `DATABASE_URL` from the environment and
+  normalises the scheme via `normalize_database_url` (`backend/src/database.py`):
+  a `postgres://` or `postgresql://` URL is rewritten to the
+  `postgresql+asyncpg://` form SQLAlchemy's async engine requires. There is no
+  hardcoded URL in `alembic.ini`.
 
-```bash
-source .venv/bin/activate
-cd backend
+> **Do not** re-initialise Alembic from scratch, hand-edit a fresh `env.py`, or
+> bolt on an auto-`create_all` startup hook. The tree is already wired, and
+> auto-creating tables at startup would bypass the migration history and the CI
+> drift gate below.
 
-# Initialize Alembic
-pip install alembic   # Already in requirements.txt
-alembic init migrations
-
-# Edit alembic.ini: set sqlalchemy.url to empty string (we'll use env.py)
-# Edit migrations/env.py: import your models and configure the async engine
-```
-
-In `migrations/env.py`, you'll want to:
-1. Import your SQLModel metadata (`from models import *`)
-2. Read `DATABASE_URL` from the environment
-3. Use the async engine for migrations
-
-### Creating migrations
+### Creating a migration
 
 ```bash
 cd backend
 source ../.venv/bin/activate
-alembic revision --autogenerate -m "initial schema"
+alembic revision --autogenerate -m "<describe the change>"
 ```
 
-### Running migrations manually against Railway
+Review the generated file in `migrations/versions/` (autogenerate is a starting
+point, not a guarantee), then apply it locally:
 
 ```bash
-railway run alembic upgrade head
+alembic upgrade head
 ```
 
-### On deploy
+### Applying migrations
 
-The Dockerfile CMD checks for `alembic.ini`:
-```bash
-if [ -f alembic.ini ]; then python -m alembic upgrade head; fi
-```
-Once you commit `alembic.ini` and your migration files, they run automatically
-on every deploy.
+- **On deploy:** the Dockerfile `CMD` runs `python -m alembic upgrade head`
+  before starting uvicorn, so every deploy applies any pending migrations
+  automatically.
+- **Manually against Railway:** `railway run alembic upgrade head`.
 
-### Before Alembic is set up
+### CI safety net
 
-Without Alembic, tables are **not** auto-created in production. You have two
-options:
-1. Set up Alembic (recommended)
-2. Add a startup event in `main.py` that calls
-   `SQLModel.metadata.create_all()` — quick and dirty, not recommended for
-   production
+The `migration-drift` job in `.github/workflows/backend-ci.yml` gates every push:
+
+- runs `alembic upgrade head` against a real Postgres service, then a
+  downgrade → re-upgrade **round-trip through both parents of a merge head**
+  (so a broken `downgrade()` fails CI);
+- runs `alembic check`, which fails if a model changed without a matching
+  migration (model ↔ migration drift).
+
+Because of this gate, never hand-edit an applied migration or add a model
+without generating its migration — CI will reject it.
 
 ---
 
