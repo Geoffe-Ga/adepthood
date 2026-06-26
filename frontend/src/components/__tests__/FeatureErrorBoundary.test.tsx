@@ -171,6 +171,7 @@ describe('FeatureErrorBoundary — raw message gating (audit-ux-05)', () => {
   beforeEach(() => {
     reportException.mockClear();
     focusListeners.length = 0;
+    mockSecondNavigatorListeners.length = 0;
     mockNavigatorState.useSecond = false;
     errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   });
