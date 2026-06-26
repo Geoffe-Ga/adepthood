@@ -22,6 +22,7 @@ import useResponsive from '../../design/useResponsive';
 
 import AddHabitModal from './components/AddHabitModal';
 import GoalModal from './components/GoalModal';
+import { HabitsEmptyState } from './components/HabitsEmptyState';
 import HabitSettingsModal from './components/HabitSettingsModal';
 import MissedDaysModal from './components/MissedDaysModal';
 import OnboardingModal from './components/OnboardingModal';
@@ -651,10 +652,11 @@ interface HabitsContentProps {
   gridGutter: number;
   renderItem: (_info: { item: Habit; index: number }) => React.ReactElement;
   onRetry: () => void;
+  onAddHabit: () => void;
   pagination: PaginationBarProps | null;
 }
 
-const HabitsContent = ({
+export const HabitsContent = ({
   habits,
   loading,
   error,
@@ -662,33 +664,40 @@ const HabitsContent = ({
   gridGutter,
   renderItem,
   onRetry,
+  onAddHabit,
   pagination,
-}: HabitsContentProps) => (
-  <>
-    {error && <ErrorBanner error={error} onRetry={onRetry} />}
-    {loading ? (
-      <LoadingSpinner />
-    ) : (
-      <>
-        <HabitList
-          habits={habits}
-          columns={columns}
-          gridGutter={gridGutter}
-          renderItem={renderItem}
-        />
-        {pagination && (
-          <PaginationBar
-            page={pagination.page}
-            pageCount={pagination.pageCount}
-            onPrev={pagination.onPrev}
-            onNext={pagination.onNext}
-            scale={pagination.scale}
+}: HabitsContentProps) => {
+  // First-run cohort: a zero-habit user gets guidance, not a blank surface
+  // (audit-ux-07). Suppressed while loading (spinner wins) and when an error
+  // banner owns the surface — the error branch below is unchanged.
+  const showEmpty = !loading && !error && habits.length === 0;
+  return (
+    <>
+      {error && <ErrorBanner error={error} onRetry={onRetry} />}
+      {loading && <LoadingSpinner />}
+      {showEmpty && <HabitsEmptyState onAdd={onAddHabit} />}
+      {!loading && !showEmpty && (
+        <>
+          <HabitList
+            habits={habits}
+            columns={columns}
+            gridGutter={gridGutter}
+            renderItem={renderItem}
           />
-        )}
-      </>
-    )}
-  </>
-);
+          {pagination && (
+            <PaginationBar
+              page={pagination.page}
+              pageCount={pagination.pageCount}
+              onPrev={pagination.onPrev}
+              onNext={pagination.onNext}
+              scale={pagination.scale}
+            />
+          )}
+        </>
+      )}
+    </>
+  );
+};
 
 const useHabitsScreenState = () => {
   const habitsReturn = useHabits();
@@ -780,6 +789,7 @@ const HabitsScreen = () => {
         gridGutter={gridGutter}
         renderItem={state.renderHabitTile}
         onRetry={() => void actions.loadHabits()}
+        onAddHabit={() => modals.open('addHabit')}
         pagination={paginationProps}
       />
       <EnergyFooter
