@@ -1,5 +1,5 @@
 /* eslint-env jest */
-/* global describe, test, expect, beforeEach, jest */
+/* global describe, test, expect, beforeEach, afterEach, jest */
 import {
   habits,
   auth,
@@ -150,5 +150,66 @@ describe('retry-after-refresh on 401', () => {
 
     // Only the original call — no refresh attempt
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('in-flight dedupe + timeout (audit-contracts-05)', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('coalesces concurrent 401s into a single network refresh', async () => {
+    const newJwt = fixtureJwt('shared');
+    let refreshCalls = 0;
+    let refreshed = false;
+    // Branch on URL so both concurrent /habits requests 401 before either
+    // refresh completes, then succeed once the shared refresh has run.
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/auth/refresh')) {
+        refreshCalls += 1;
+        refreshed = true;
+        return jsonResponse({ token: newJwt, user_id: 1 });
+      }
+      return refreshed ? jsonResponse([]) : jsonResponse({ detail: 'unauthorized' }, 401);
+    });
+
+    const [first, second] = await Promise.all([habits.list(), habits.list()]);
+
+    // Two concurrent 401s, but exactly one refresh hit the network.
+    expect(refreshCalls).toBe(1);
+    expect(first).toEqual([]);
+    expect(second).toEqual([]);
+
+    // The in-flight promise cleared on settle: a later refresh still fires.
+    refreshed = false;
+    refreshCalls = 0;
+    await habits.list();
+    expect(refreshCalls).toBe(1);
+  });
+
+  test('a refresh that times out resolves gracefully (onUnauthorized, no throw)', async () => {
+    jest.useFakeTimers();
+    mockFetch.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes('/auth/refresh')) {
+        // Never resolves on its own; rejects when fetchWithTimeout's clock wins.
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        });
+      }
+      return jsonResponse({ detail: 'unauthorized' }, 401);
+    });
+
+    const promise = habits.list();
+    promise.catch(() => {});
+    await jest.runAllTimersAsync();
+
+    // The timed-out refresh becomes a refresh failure (no uncaught throw): the
+    // original 401 surfaces as ApiError and the unauthorized handler fires.
+    await expect(promise).rejects.toThrow(ApiError);
+    expect(mockOnUnauthorized).toHaveBeenCalled();
   });
 });

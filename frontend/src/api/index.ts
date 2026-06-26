@@ -410,25 +410,31 @@ async function parseResponse<T>(res: Response, path = '', schema?: z.ZodType<T>)
   return data as T;
 }
 
-/**
- * Try to refresh the current token. Returns the new token on success, or
- * null if the refresh itself fails (e.g. the token is fully expired).
- *
- * Returns ``null`` immediately when the session has no token at all so
- * an anonymous request that hit a protected endpoint (BUG-API-018) does
- * NOT issue a doomed POST to /auth/refresh that would 401 again.  The
- * caller distinguishes "no token" from "refresh failed" via the second
- * tuple element.
- */
-async function attemptTokenRefresh(): Promise<{ token: string | null; hadToken: boolean }> {
-  const currentToken = tokenGetter?.();
-  if (!currentToken) return { token: null, hadToken: false };
+/** Outcome of a refresh attempt; ``hadToken`` separates "no session" from "refresh failed". */
+type RefreshResult = { token: string | null; hadToken: boolean };
 
+/**
+ * Shared in-flight refresh (audit-contracts-05). When several requests 401 at
+ * once — the common cold-start / expired-token case — each used to call
+ * ``attemptTokenRefresh`` independently, firing a storm of concurrent refreshes
+ * against the same token. We now keep a single promise so N concurrent callers
+ * await exactly one network refresh; it is cleared on settle so a later,
+ * genuine refresh still fires.
+ */
+let inFlightRefresh: Promise<RefreshResult> | null = null;
+
+async function performTokenRefresh(currentToken: string): Promise<RefreshResult> {
   try {
-    const refreshRes = await fetch(`${API_BASE_URL}/auth/refresh`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${currentToken}` },
-    });
+    // Route through ``fetchWithTimeout`` so a hung refresh aborts instead of
+    // pinning the 401-retry loop; the ApiTimeoutError it throws on the clock
+    // winning is caught below and surfaced as a refresh failure.
+    const refreshRes = await fetchWithTimeout(
+      `${API_BASE_URL}/auth/refresh`,
+      { method: 'POST', headers: { Authorization: `Bearer ${currentToken}` } },
+      FETCH_TIMEOUT_MS,
+      undefined,
+      '/auth/refresh',
+    );
     if (!refreshRes.ok) return { token: null, hadToken: true };
     const raw: unknown = await refreshRes.json();
     // BUG-API-007 / BUG-API-017: the prior cast (``as AuthResponse``)
@@ -458,6 +464,28 @@ async function attemptTokenRefresh(): Promise<{ token: string | null; hadToken: 
   } catch {
     return { token: null, hadToken: true };
   }
+}
+
+/**
+ * Try to refresh the current token. Returns the new token on success, or
+ * null if the refresh itself fails (e.g. the token is fully expired).
+ *
+ * Returns ``null`` immediately when the session has no token at all so
+ * an anonymous request that hit a protected endpoint (BUG-API-018) does
+ * NOT issue a doomed POST to /auth/refresh that would 401 again.  The
+ * caller distinguishes "no token" from "refresh failed" via the second
+ * tuple element.
+ */
+async function attemptTokenRefresh(): Promise<RefreshResult> {
+  const currentToken = tokenGetter?.();
+  if (!currentToken) return { token: null, hadToken: false };
+
+  // Coalesce concurrent 401s onto a single refresh; clear on settle.
+  if (inFlightRefresh) return inFlightRefresh;
+  inFlightRefresh = performTokenRefresh(currentToken).finally(() => {
+    inFlightRefresh = null;
+  });
+  return inFlightRefresh;
 }
 
 /**
