@@ -24,7 +24,7 @@ Run all quality checks in sequence.
 
 Runs:
   1. Linting (Ruff)
-  2. Formatting (Black + isort)
+  2. Formatting (ruff format)
   3. Type checking (MyPy)
   4. Security checks (Bandit + Safety)
   5. Complexity analysis (Radon)
