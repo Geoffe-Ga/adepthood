@@ -1,13 +1,18 @@
 import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+
+import { authStyles } from './auth.styles';
+import { canonicalizeEmail } from './canonicalizeEmail';
 
 import { formatApiError } from '@/api/errorMessages';
 import { useAuth } from '@/context/AuthContext';
@@ -42,7 +47,7 @@ function ReauthActions({
         accessibilityLabel="Sign back in"
         accessibilityRole="button"
         accessibilityState={{ disabled: submitting, busy: submitting }}
-        style={styles.primaryButton}
+        style={localStyles.primaryButton}
         onPress={onSubmit}
         disabled={submitting}
         testID="reauth-submit"
@@ -50,7 +55,7 @@ function ReauthActions({
         {submitting ? (
           <ActivityIndicator color={colors.text.light} />
         ) : (
-          <Text style={styles.primaryButtonText}>Sign in</Text>
+          <Text style={authStyles.buttonText}>Sign in</Text>
         )}
       </TouchableOpacity>
       <TouchableOpacity
@@ -61,7 +66,7 @@ function ReauthActions({
         disabled={submitting}
         testID="reauth-dismiss"
       >
-        <Text style={styles.secondaryLink}>Sign out instead</Text>
+        <Text style={localStyles.secondaryLink}>Sign out instead</Text>
       </TouchableOpacity>
     </>
   );
@@ -71,14 +76,14 @@ function ReauthForm(props: ReauthFormProps): React.JSX.Element {
   const { email, password, error, submitting } = props;
   const { onEmailChange, onPasswordChange, onSubmit, onDismiss } = props;
   return (
-    <View style={styles.card}>
-      <Text style={styles.title}>Sign back in</Text>
-      <Text style={styles.subtitle}>
+    <View style={localStyles.card}>
+      <Text style={localStyles.title}>Sign back in</Text>
+      <Text style={localStyles.subtitle}>
         Your session expired. Enter your credentials to keep going where you left off.
       </Text>
       <TextInput
         accessibilityLabel="Email"
-        style={styles.input}
+        style={authStyles.input}
         placeholder="Email"
         value={email}
         onChangeText={onEmailChange}
@@ -88,14 +93,14 @@ function ReauthForm(props: ReauthFormProps): React.JSX.Element {
       />
       <TextInput
         accessibilityLabel="Password"
-        style={styles.input}
+        style={authStyles.input}
         placeholder="Password"
         value={password}
         onChangeText={onPasswordChange}
         secureTextEntry
         testID="reauth-password"
       />
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {error ? <Text style={authStyles.error}>{error}</Text> : null}
       <ReauthActions submitting={submitting} onSubmit={onSubmit} onDismiss={onDismiss} />
     </View>
   );
@@ -118,7 +123,7 @@ export function ReauthSheet(): React.JSX.Element {
     setError(null);
     setSubmitting(true);
     try {
-      await login(email.trim(), password);
+      await login(canonicalizeEmail(email), password);
     } catch (err: unknown) {
       setError(formatApiError(err, { fallback: REAUTH_FALLBACK }));
     } finally {
@@ -138,7 +143,11 @@ export function ReauthSheet(): React.JSX.Element {
       onRequestClose={handleDismiss}
       testID="reauth-sheet"
     >
-      <View style={styles.backdrop}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={localStyles.backdrop}
+        testID="reauth-keyboard-avoiding"
+      >
         <ReauthForm
           email={email}
           password={password}
@@ -149,12 +158,14 @@ export function ReauthSheet(): React.JSX.Element {
           onSubmit={handleSubmit}
           onDismiss={handleDismiss}
         />
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
-const styles = StyleSheet.create({
+// Sheet-specific styling (overlay backdrop + compact left-aligned card header);
+// the shared input/error/buttonText come from authStyles.
+const localStyles = StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
@@ -177,27 +188,13 @@ const styles = StyleSheet.create({
     color: colors.text.secondary,
     marginBottom: SPACING.lg,
   },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.md,
-    marginBottom: SPACING.md,
-    fontSize: 16,
-  },
-  error: {
-    color: colors.danger,
-    marginBottom: SPACING.md,
-    textAlign: 'center',
-  },
   primaryButton: {
     backgroundColor: colors.primary,
     borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.md + 2,
+    padding: SPACING.buttonV,
     alignItems: 'center',
     marginBottom: SPACING.md,
   },
-  primaryButtonText: { color: colors.text.light, fontSize: 16, fontWeight: '600' },
   secondaryLink: {
     textAlign: 'center',
     color: colors.text.secondary,

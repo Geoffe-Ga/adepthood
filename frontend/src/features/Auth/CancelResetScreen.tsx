@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity } from 'react-native';
+
+import { authStyles as styles } from './auth.styles';
+import { AuthScreenContainer } from './AuthScreenContainer';
 
 import { auth as authApi } from '@/api';
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
+import { SPACING, colors } from '@/design/tokens';
 
 const MIN_TOKEN_LENGTH = 32;
 
@@ -25,9 +28,9 @@ interface TerminalViewProps {
 
 function TerminalView({ title, body, onBackToLogin }: TerminalViewProps): React.JSX.Element {
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>{title}</Text>
-      <Text style={styles.subtitle}>{body}</Text>
+    <AuthScreenContainer testID="cancel-reset">
+      <Text style={localStyles.title}>{title}</Text>
+      <Text style={localStyles.subtitle}>{body}</Text>
       <TouchableOpacity
         accessibilityLabel="Back to log in"
         accessibilityRole="button"
@@ -37,16 +40,16 @@ function TerminalView({ title, body, onBackToLogin }: TerminalViewProps): React.
       >
         <Text style={styles.buttonText}>Back to Log In</Text>
       </TouchableOpacity>
-    </View>
+    </AuthScreenContainer>
   );
 }
 
 function PendingView(): React.JSX.Element {
   return (
-    <View style={styles.container} testID="cancel-reset-pending">
-      <ActivityIndicator size="large" />
-      <Text style={styles.subtitle}>Cancelling that reset request...</Text>
-    </View>
+    <AuthScreenContainer testID="cancel-reset">
+      <ActivityIndicator size="large" testID="cancel-reset-pending" />
+      <Text style={localStyles.subtitle}>Cancelling that reset request...</Text>
+    </AuthScreenContainer>
   );
 }
 
@@ -100,13 +103,9 @@ export default function CancelResetScreen({ navigation, route }: Props) {
   return <TerminalView title={copy.title} body={copy.body} onBackToLogin={onBackToLogin} />;
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: SPACING.xl,
-    backgroundColor: colors.background.card,
-  },
+// Confirmation-screen typography (smaller title than the form screens); the
+// container/button/buttonText come from the shared authStyles.
+const localStyles = StyleSheet.create({
   title: { fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: SPACING.md },
   subtitle: {
     fontSize: 15,
@@ -114,12 +113,4 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: SPACING.xl,
   },
-  button: {
-    backgroundColor: colors.primary,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.buttonV,
-    alignItems: 'center',
-    marginBottom: SPACING.lg,
-  },
-  buttonText: { color: colors.text.light, fontSize: 16, fontWeight: '600' },
 });

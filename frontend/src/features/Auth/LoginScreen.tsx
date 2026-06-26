@@ -1,16 +1,15 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Text, TextInput, TouchableOpacity } from 'react-native';
+
+import { authStyles as styles } from './auth.styles';
+import { AuthScreenContainer } from './AuthScreenContainer';
+import { canonicalizeEmail } from './canonicalizeEmail';
 
 import { formatApiError } from '@/api/errorMessages';
 import { useAuth } from '@/context/AuthContext';
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
 
 const LOGIN_FALLBACK =
   "We couldn't sign you in. Check your connection, then try again in a moment.";
-
-// Cap the form width so fields don't stretch edge-to-edge on laptop/desktop
-// browsers; on phones the screen is narrower than this so it has no effect.
-const FORM_MAX_WIDTH = 480;
 
 interface Props {
   navigation: { navigate: (_screen: string) => void };
@@ -115,7 +114,7 @@ export default function LoginScreen({ navigation }: Props) {
       // BUG-FE-AUTH-015: lowercase the email client-side so the backend
       // receives the canonical form and a "Foo@bar.com" / "foo@bar.com"
       // login pair can't end up looking like two distinct accounts.
-      await login(email.trim().toLowerCase(), password);
+      await login(canonicalizeEmail(email), password);
     } catch (err: unknown) {
       // BUG-FRONTEND-INFRA-016: ``formatApiError`` returns a dedicated
       // timeout message when the new AbortController fires.
@@ -126,63 +125,21 @@ export default function LoginScreen({ navigation }: Props) {
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.form}>
-        <Text style={styles.title}>Adepthood</Text>
-        <LoginFields
-          email={email}
-          setEmail={setEmail}
-          password={password}
-          setPassword={setPassword}
-        />
-        {error && <Text style={styles.error}>{error}</Text>}
-        <LoginActions
-          submitting={submitting}
-          onLogin={handleLogin}
-          onNavigateSignup={() => navigation.navigate('Signup')}
-          onNavigateForgot={() => navigation.navigate('ForgotPassword')}
-        />
-      </View>
-    </View>
+    <AuthScreenContainer testID="login">
+      <Text style={styles.title}>Adepthood</Text>
+      <LoginFields
+        email={email}
+        setEmail={setEmail}
+        password={password}
+        setPassword={setPassword}
+      />
+      {error && <Text style={styles.error}>{error}</Text>}
+      <LoginActions
+        submitting={submitting}
+        onLogin={handleLogin}
+        onNavigateSignup={() => navigation.navigate('Signup')}
+        onNavigateForgot={() => navigation.navigate('ForgotPassword')}
+      />
+    </AuthScreenContainer>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: SPACING.xl,
-    backgroundColor: colors.background.card,
-  },
-  form: {
-    width: '100%',
-    maxWidth: FORM_MAX_WIDTH,
-    alignSelf: 'center',
-  },
-  title: { fontSize: 28, fontWeight: 'bold', textAlign: 'center', marginBottom: SPACING.xxl },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.md,
-    marginBottom: SPACING.md,
-    fontSize: 16,
-  },
-  error: { color: colors.danger, marginBottom: SPACING.md, textAlign: 'center' },
-  button: {
-    backgroundColor: colors.primary,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.md + 2,
-    alignItems: 'center',
-    marginBottom: SPACING.lg,
-  },
-  buttonText: { color: colors.text.light, fontSize: 16, fontWeight: '600' },
-  link: { textAlign: 'center', color: colors.text.secondary },
-  linkBold: { color: colors.primary, fontWeight: '600' },
-  forgotLink: {
-    textAlign: 'center',
-    color: colors.primary,
-    fontWeight: '500',
-    marginBottom: SPACING.md,
-  },
-});
