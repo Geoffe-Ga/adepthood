@@ -98,16 +98,21 @@ async def paginate_query(
 ) -> tuple[list[Any], int]:
     """Apply ``offset`` / ``limit`` to ``query`` and return ``(items, total)``.
 
-    Performs two database round-trips: a ``SELECT COUNT(*)`` over the
-    pre-pagination query (to populate ``Page.total`` for "page X of Y"
-    displays) and the actual paged ``SELECT``.  Eager-loaded relationships
-    declared on ``query`` via ``selectinload`` continue to work because they
-    issue separate ``IN`` queries that aren't affected by the outer
-    ``OFFSET`` / ``LIMIT``.
+    The paged ``SELECT`` always runs. The ``SELECT COUNT(*)`` that populates
+    ``Page.total`` only runs on the envelope path (``params.paginate`` true):
+    the bare-list path discards ``total``, so issuing the count there was a
+    wasted round-trip on every non-paginated request (e.g. a picker open).
+    On the bare path ``total`` is reported as ``len(items)`` and the caller
+    ignores it. Eager-loaded relationships declared via ``selectinload``
+    continue to work — they issue separate ``IN`` queries unaffected by the
+    outer ``OFFSET`` / ``LIMIT``.
     """
-    total = await count_query_total(session, query)
-
     paged_query = query.offset(params.offset).limit(params.limit)
     result = await session.execute(paged_query)
     items = list(result.scalars().all())
+
+    if not params.paginate:
+        return items, len(items)
+
+    total = await count_query_total(session, query)
     return items, total
