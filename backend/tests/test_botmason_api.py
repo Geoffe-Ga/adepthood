@@ -23,8 +23,10 @@ from sqlmodel import col, select
 import services.botmason as botmason_mod
 from models.user import User
 from routers.botmason import LLM_API_KEY_HEADER
+from services import chat_stream
 from services.botmason import (
     LLM_API_KEY_MAX_LENGTH,
+    LLMProviderError,
     LLMResponse,
     generate_response,
     get_system_prompt,
@@ -306,6 +308,37 @@ async def test_chat_success(
     assert len(data["response"]) > 0
     assert data["remaining_balance"] == 4
     assert data["bot_entry_id"] is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_chat_provider_error_returns_502_without_charge(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provider failure (bad key / busy / upstream down) maps to 502, not 500.
+
+    Mirrors the streaming path's ``llm_provider_error`` mapping, and the staged
+    wallet deduction is rolled back so a failed turn never charges the user.
+    """
+    headers = await _signup(async_client)
+    await _add_balance(db_session, amount=5)
+
+    async def _raise(*_args: object, **_kwargs: object) -> LLMResponse:
+        raise LLMProviderError("provider 503 unavailable")
+
+    monkeypatch.setattr(chat_stream, "generate_response", _raise)
+
+    resp = await async_client.post(
+        "/journal/chat", json={"message": "Hello BotMason"}, headers=headers
+    )
+    assert resp.status_code == HTTPStatus.BAD_GATEWAY
+    assert resp.json()["detail"] == "llm_provider_error"
+
+    # The deduction was staged but rolled back on the provider failure.
+    balance = await async_client.get("/user/balance", headers=headers)
+    assert balance.json()["balance"] == 5
 
 
 @pytest.mark.asyncio

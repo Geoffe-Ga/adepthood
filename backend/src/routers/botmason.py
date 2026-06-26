@@ -40,7 +40,7 @@ from schemas.botmason import (
 )
 from services import chat_idempotency
 from services import wallet as wallet_service
-from services.botmason import resolve_chat_api_key
+from services.botmason import LLMProviderError, resolve_chat_api_key
 from services.chat_stream import PreflightedRequest, handle_chat_request, stream_bot_response
 from services.usage import get_monthly_cap
 from services.wallet import preflight_deduction, require_user_fresh, reset_monthly_usage_if_due
@@ -149,6 +149,13 @@ async def _handle_chat_with_idem_409(
         if idempotency_key is not None:
             raise HTTPException(status_code=409, detail="idempotency_key_in_flight") from exc
         raise
+    except LLMProviderError as exc:
+        # The provider call (BYOK key invalid, rate-limited, upstream down/timeout)
+        # failed. ``handle_chat_request`` already rolled back the staged wallet
+        # deduction, so no charge persists. Map to 502 ``llm_provider_error`` —
+        # mirroring the streaming path (``chat_stream``) so BYOK clients handle
+        # both paths uniformly — instead of letting it surface as an opaque 500.
+        raise HTTPException(status_code=502, detail="llm_provider_error") from exc
 
 
 @router.post(
