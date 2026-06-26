@@ -43,9 +43,58 @@ function page(items: unknown[], over: Record<string, unknown> = {}) {
   };
 }
 
+// Valid item builders — the paginated endpoints now validate items per their
+// Zod schema (issue audit-contracts-04), so list fixtures must be well-formed.
+const validStage = (over: Record<string, unknown> = {}) => ({
+  id: 1,
+  title: 'Beige',
+  subtitle: 'Survival',
+  stage_number: 1,
+  overview_url: 'https://example.com',
+  category: 'foundation',
+  aspect: 'body',
+  spiral_dynamics_color: 'Beige',
+  growing_up_stage: 'Archaic',
+  divine_gender_polarity: 'neutral',
+  relationship_to_free_will: 'reactive',
+  free_will_description: 'Instinctual survival',
+  is_unlocked: true,
+  progress: 0,
+  ...over,
+});
+const validPractice = (over: Record<string, unknown> = {}) => ({
+  id: 1,
+  stage_number: 3,
+  name: 'Box Breath',
+  description: 'desc',
+  instructions: 'inst',
+  default_duration_minutes: 5,
+  submitted_by_user_id: null,
+  approved: true,
+  ...over,
+});
+const validUserPractice = (over: Record<string, unknown> = {}) => ({
+  id: 1,
+  user_id: 1,
+  practice_id: 2,
+  stage_number: 1,
+  start_date: '2026-01-01',
+  end_date: null,
+  ...over,
+});
+const validSession = (over: Record<string, unknown> = {}) => ({
+  id: 9,
+  user_id: 1,
+  user_practice_id: 5,
+  duration_minutes: 10,
+  timestamp: '2026-03-01T10:30:00Z',
+  reflection: null,
+  ...over,
+});
+
 describe('paginated list endpoints (issue #221 — Page envelope)', () => {
   test('practices.listPaginated opts into the envelope and forwards stage_number', async () => {
-    const envelope = page([{ id: 1, stage_number: 3, name: 'Box Breath' }]);
+    const envelope = page([validPractice()]);
     mockFetch.mockReturnValueOnce(jsonResponse(envelope));
 
     const result = await practices.listPaginated({ stageNumber: 3 }, 'tok');
@@ -67,7 +116,7 @@ describe('paginated list endpoints (issue #221 — Page envelope)', () => {
   });
 
   test('practiceSessions.listPaginated forwards user_practice_id', async () => {
-    const envelope = page([{ id: 9, user_practice_id: 5 }]);
+    const envelope = page([validSession()]);
     mockFetch.mockReturnValueOnce(jsonResponse(envelope));
 
     const result = await practiceSessions.listPaginated({ userPracticeId: 5 }, 'tok');
@@ -87,7 +136,7 @@ describe('paginated list endpoints (issue #221 — Page envelope)', () => {
   });
 
   test('stages.listPaginated hits /stages (no trailing slash) with the envelope flag', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse(page([{ stage_number: 1, name: 'Beige' }])));
+    mockFetch.mockReturnValueOnce(jsonResponse(page([validStage()])));
 
     await stages.listPaginated({}, 'tok');
 
@@ -96,7 +145,7 @@ describe('paginated list endpoints (issue #221 — Page envelope)', () => {
   });
 
   test('userPractices.listPaginated hits /user-practices/ with the envelope flag', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse(page([{ id: 1, practice_id: 2 }])));
+    mockFetch.mockReturnValueOnce(jsonResponse(page([validUserPractice()])));
 
     await userPractices.listPaginated({ offset: 0 }, 'tok');
 
@@ -161,12 +210,13 @@ describe('fetchAllPages + listAll helpers (issue #408 — screen adoption)', () 
   });
 
   test('stages.listAll drains the paginated endpoint into a flat list', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse(page([{ id: 1, stage_number: 1 }], { total: 1 })));
+    const stage = validStage({ id: 1, stage_number: 1 });
+    mockFetch.mockReturnValueOnce(jsonResponse(page([stage], { total: 1 })));
     const result = await stages.listAll('tok');
     const [url, init] = mockFetch.mock.calls[0];
     expect(url).toContain('/stages?paginate=true');
     expect(init.headers).toMatchObject({ Authorization: 'Bearer tok' });
-    expect(result).toEqual([{ id: 1, stage_number: 1 }]);
+    expect(result).toEqual([stage]);
   });
 
   test('habits.listAll aggregates multiple pages', async () => {
@@ -197,14 +247,21 @@ describe('fetchAllPages + listAll helpers (issue #408 — screen adoption)', () 
     expect(result).toEqual([{ id: 7, title: 'Survival' }]);
   });
 
-  test('practices.listAll forwards include_mine and filters invalid items', async () => {
-    const valid = { id: 1, stage_number: 3, name: 'Box Breath', default_duration_minutes: 5 };
-    mockFetch.mockReturnValueOnce(jsonResponse(page([valid, { bogus: true }])));
+  test('practices.listAll forwards include_mine and returns validated items', async () => {
+    const valid = validPractice();
+    mockFetch.mockReturnValueOnce(jsonResponse(page([valid])));
     const result = await practices.listAll({ stageNumber: 3, includeMine: true });
     const [url] = mockFetch.mock.calls[0];
     expect(url).toContain('stage_number=3');
     expect(url).toContain('include_mine=true');
     expect(url).toContain('paginate=true');
     expect(result).toEqual([valid]);
+  });
+
+  test('practices.listAll rejects a page with a malformed item (drift fails loud)', async () => {
+    // Per-item validation now lives in the Page schema, so a bad row rejects the
+    // whole page rather than being silently filtered (audit-contracts-04).
+    mockFetch.mockReturnValueOnce(jsonResponse(page([validPractice(), { bogus: true }])));
+    await expect(practices.listAll({ stageNumber: 3 })).rejects.toThrow(ApiValidationError);
   });
 });
