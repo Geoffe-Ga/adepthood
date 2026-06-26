@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
@@ -34,32 +34,38 @@ function useStagesLoader() {
   const [allStages, setAllStages] = useState<Stage[]>([]);
   const [selectedStage, setSelectedStage] = useState(routeStageNumber ?? DEFAULT_STAGE_NUMBER);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
-  useEffect(() => {
-    const init = async () => {
-      setLoading(true);
-      try {
-        const stagesList = await stagesApi.listAll();
-        setAllStages(stagesList);
-        if (routeStageNumber === null) {
-          // Master date wins when the user has picked an anchor; otherwise
-          // fall back to the server-owned, count-based progression
-          // (``completed_count + 1``) — "max unlocked" would visually
-          // reward skip-ahead attempts whenever ``is_unlocked`` ran
-          // ahead of completion.
-          const dateDerived = programStage(programAnchor);
-          setSelectedStage(dateDerived ?? deriveCurrentStage(stagesList));
-        }
-      } catch (err) {
-        console.error('Failed to load stages:', err);
-      } finally {
-        setLoading(false);
+  const init = useCallback(async () => {
+    setLoading(true);
+    setError(false);
+    try {
+      const stagesList = await stagesApi.listAll();
+      setAllStages(stagesList);
+      if (routeStageNumber === null) {
+        // Master date wins when the user has picked an anchor; otherwise
+        // fall back to the server-owned, count-based progression
+        // (``completed_count + 1``) — "max unlocked" would visually
+        // reward skip-ahead attempts whenever ``is_unlocked`` ran
+        // ahead of completion.
+        const dateDerived = programStage(programAnchor);
+        setSelectedStage(dateDerived ?? deriveCurrentStage(stagesList));
       }
-    };
-    void init();
+    } catch (err) {
+      // Track failure explicitly so the screen can show error+retry instead of
+      // an empty course (audit-ux-04).
+      console.error('Failed to load stages:', err);
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, [routeStageNumber, programAnchor]);
 
-  return { allStages, selectedStage, setSelectedStage, loading };
+  useEffect(() => {
+    void init();
+  }, [init]);
+
+  return { allStages, selectedStage, setSelectedStage, loading, error, retry: init };
 }
 
 // --- Hook: load content for selected stage ---
@@ -68,9 +74,11 @@ function useStageContent(selectedStage: number, stagesLoaded: boolean) {
   const [content, setContent] = useState<ContentItem[]>([]);
   const [progress, setProgress] = useState<CourseProgress | null>(null);
   const [loadingContent, setLoadingContent] = useState(false);
+  const [error, setError] = useState(false);
 
   const refreshContent = useCallback(async () => {
     setLoadingContent(true);
+    setError(false);
     try {
       const [contentResult, progressResult] = await Promise.all([
         courseApi.stageContentAll(selectedStage),
@@ -79,9 +87,12 @@ function useStageContent(selectedStage: number, stagesLoaded: boolean) {
       setContent(contentResult);
       setProgress(progressResult);
     } catch (err) {
+      // A failed fetch is distinct from a genuinely empty stage: flag it so the
+      // screen shows error+retry rather than "No Content Yet" (audit-ux-04).
       console.error('Failed to load stage content:', err);
       setContent([]);
       setProgress(null);
+      setError(true);
     } finally {
       setLoadingContent(false);
     }
@@ -96,7 +107,7 @@ function useStageContent(selectedStage: number, stagesLoaded: boolean) {
     void refreshContent();
   }, [refreshContent]);
 
-  return { content, progress, loadingContent, handleMarkRead };
+  return { content, progress, loadingContent, handleMarkRead, error, retry: refreshContent };
 }
 
 // --- Sub-components ---
@@ -119,9 +130,19 @@ const StageMetadata = ({ stage }: { stage: Stage }): React.JSX.Element => (
 interface ProgressBarProps {
   progress: CourseProgress | null;
   spiralColor: string | undefined;
+  error?: boolean;
 }
 
-const CourseProgressBar = ({ progress, spiralColor }: ProgressBarProps): React.JSX.Element => {
+const progressLabel = (progress: CourseProgress | null, error: boolean): string => {
+  if (error) return 'Progress unavailable';
+  return progress ? `${progress.read_items}/${progress.total_items} completed` : 'Loading...';
+};
+
+const CourseProgressBar = ({
+  progress,
+  spiralColor,
+  error = false,
+}: ProgressBarProps): React.JSX.Element => {
   const progressPercent = progress ? progress.progress_percent : 0;
   const barColor = spiralColor ? STAGE_COLORS[spiralColor] ?? colors.neutral : colors.neutral;
 
@@ -136,9 +157,7 @@ const CourseProgressBar = ({ progress, spiralColor }: ProgressBarProps): React.J
           ]}
         />
       </View>
-      <Text style={styles.progressBarLabel}>
-        {progress ? `${progress.read_items}/${progress.total_items} completed` : 'Loading...'}
-      </Text>
+      <Text style={styles.progressBarLabel}>{progressLabel(progress, error)}</Text>
     </View>
   );
 };
@@ -153,6 +172,25 @@ const CourseEmptyState = (): React.JSX.Element => (
   </View>
 );
 
+const CourseErrorState = ({ onRetry }: { onRetry: () => void }): React.JSX.Element => (
+  <View style={styles.emptyContainer} testID="course-error">
+    <Text style={styles.emptyIcon}>{'⚠️'}</Text>
+    <Text style={styles.emptyTitle}>Couldn&apos;t load the course</Text>
+    <Text style={styles.emptySubtitle}>
+      Something went wrong loading this stage. Check your connection and try again.
+    </Text>
+    <TouchableOpacity
+      onPress={onRetry}
+      accessibilityRole="button"
+      accessibilityLabel="Try again"
+      style={styles.retryButton}
+      testID="course-retry"
+    >
+      <Text style={styles.retryText}>Try again</Text>
+    </TouchableOpacity>
+  </View>
+);
+
 const CourseLoadingState = (): React.JSX.Element => (
   <SafeAreaView style={styles.container}>
     <View style={styles.loadingContainer}>
@@ -164,13 +202,17 @@ const CourseLoadingState = (): React.JSX.Element => (
 interface ContentAreaProps {
   content: ContentItem[];
   loadingContent: boolean;
+  error: boolean;
   onContentPress: (_item: ContentItem) => void;
+  onRetry: () => void;
 }
 
 const ContentArea = ({
   content,
   loadingContent,
+  error,
   onContentPress,
+  onRetry,
 }: ContentAreaProps): React.JSX.Element => {
   const renderContentItem = useCallback(
     ({ item }: { item: ContentItem }) => <ContentCard item={item} onPress={onContentPress} />,
@@ -188,6 +230,11 @@ const ContentArea = ({
         <ActivityIndicator testID="content-loading" size="small" />
       </View>
     );
+  }
+
+  // A failed content fetch shows error+retry, distinct from the empty state.
+  if (error) {
+    return <CourseErrorState onRetry={onRetry} />;
   }
 
   return (
@@ -273,7 +320,7 @@ function renderOverlay(
 }
 
 const CourseScreen = (): React.JSX.Element => {
-  const { allStages, selectedStage, setSelectedStage, loading } = useStagesLoader();
+  const { allStages, selectedStage, setSelectedStage, loading, error, retry } = useStagesLoader();
   const stageContent = useStageContent(selectedStage, allStages.length > 0);
   const viewer = useCourseViewer(selectedStage);
 
@@ -290,6 +337,15 @@ const CourseScreen = (): React.JSX.Element => {
 
   if (loading) return <CourseLoadingState />;
 
+  // Stage-list fetch failed: show error+retry, not an empty course.
+  if (error) {
+    return (
+      <SafeAreaView style={styles.container} edges={['bottom']}>
+        <CourseErrorState onRetry={retry} />
+      </SafeAreaView>
+    );
+  }
+
   const selectedStageData = allStages.find((s) => s.stage_number === selectedStage);
 
   return (
@@ -304,11 +360,14 @@ const CourseScreen = (): React.JSX.Element => {
       <CourseProgressBar
         progress={stageContent.progress}
         spiralColor={selectedStageData?.spiral_dynamics_color}
+        error={stageContent.error}
       />
       <ContentArea
         content={stageContent.content}
         loadingContent={stageContent.loadingContent}
+        error={stageContent.error}
         onContentPress={viewer.handleContentPress}
+        onRetry={stageContent.retry}
       />
     </SafeAreaView>
   );
