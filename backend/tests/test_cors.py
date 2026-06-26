@@ -210,8 +210,13 @@ def test_cross_origin_get_allowed() -> None:
     assert response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
 
 
-def test_cross_origin_post_with_credentials() -> None:
-    """POST requests with credentials include CORS headers even when auth fails."""
+def test_cross_origin_post_omits_credentials_header() -> None:
+    """Cross-origin POSTs get the origin header but NOT allow-credentials.
+
+    The API is cookieless (Bearer-token auth), so credentials mode is disabled
+    (audit §5.3): the browser can still read the response (ACAO present) but the
+    response never advertises ``Access-Control-Allow-Credentials: true``.
+    """
     headers = {"Origin": ALLOWED_ORIGIN}
     ended = datetime.now(UTC)
     started = ended - timedelta(minutes=10)
@@ -220,18 +225,16 @@ def test_cross_origin_post_with_credentials() -> None:
         "started_at": started.isoformat(),
         "ended_at": ended.isoformat(),
     }
-    cookies = {"session": "abc"}
     response = client.post(
         "/practice-sessions/",
         json=payload,
         headers=headers,
-        cookies=cookies,
     )
-    # The endpoint requires Bearer auth, so we get 401, but CORS headers
+    # The endpoint requires Bearer auth, so we get 401, but the ACAO header
     # must still be present so the browser can read the response.
     assert response.status_code == HTTPStatus.UNAUTHORIZED
     assert response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
-    assert response.headers.get("access-control-allow-credentials") == "true"
+    assert response.headers.get("access-control-allow-credentials") != "true"
 
 
 def test_forbidden_origin_no_cors_headers() -> None:

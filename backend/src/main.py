@@ -400,7 +400,10 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True,
+    # The API authenticates with ``Authorization: Bearer`` tokens and sets no
+    # cookies, so credentials mode is unnecessary; disabling it shrinks the CORS
+    # attack surface and avoids the ``*``-origin restriction (audit §5.3).
+    allow_credentials=False,
     allow_methods=ALLOWED_METHODS,
     allow_headers=ALLOWED_HEADERS,
     expose_headers=EXPOSED_HEADERS,
