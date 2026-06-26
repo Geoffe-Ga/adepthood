@@ -369,7 +369,7 @@ export const EnergyCTA = ({ onOpen, onArchive }: { onOpen: () => void; onArchive
       style={styles.energyScaffoldingButton}
       onPress={onOpen}
       accessibilityRole="button"
-      accessibilityLabel="Set up energy scaffolding"
+      accessibilityLabel="Perform Energy Scaffolding"
     >
       <Text style={styles.energyScaffoldingButtonText}>Perform Energy Scaffolding</Text>
     </TouchableOpacity>
@@ -377,7 +377,7 @@ export const EnergyCTA = ({ onOpen, onArchive }: { onOpen: () => void; onArchive
       testID="archive-energy-cta"
       onPress={onArchive}
       accessibilityRole="button"
-      accessibilityLabel="Dismiss energy scaffolding prompt"
+      accessibilityLabel="Archive This energy scaffolding prompt"
       style={styles.archiveEnergyButton}
     >
       <Text>Archive This</Text>

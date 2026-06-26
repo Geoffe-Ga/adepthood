@@ -27,7 +27,7 @@ jest.mock('../components/StatsModal', () => ({ __esModule: true, default: () => 
 
 import { EnergyCTA, ModeBar, OverflowMenu, PaginationBar } from '../HabitsScreen';
 
-const noop = (): void => {};
+const noop = (..._args: unknown[]): void => {};
 
 afterEach(() => {
   jest.clearAllMocks();
@@ -80,6 +80,11 @@ describe('HabitsScreen chrome accessibility', () => {
       expect(exit.props.accessibilityRole).toBe('button');
       expect(exit.props.accessibilityLabel).toBe('Exit Stats Mode');
     });
+
+    it('falls back to the raw mode when it is not in the label map', () => {
+      const { getByLabelText } = render(<ModeBar mode="unknownmode" onExit={noop} />);
+      expect(getByLabelText('Exit unknownmode')).toBeTruthy();
+    });
   });
 
   describe('PaginationBar', () => {
@@ -114,10 +119,11 @@ describe('HabitsScreen chrome accessibility', () => {
       const onArchive = jest.fn();
       const { getByLabelText } = render(<EnergyCTA onOpen={onOpen} onArchive={onArchive} />);
 
-      fireEvent.press(getByLabelText('Set up energy scaffolding'));
+      // Labels contain the visible button text (WCAG 2.5.3 Label-in-Name).
+      fireEvent.press(getByLabelText('Perform Energy Scaffolding'));
       expect(onOpen).toHaveBeenCalledTimes(1);
 
-      fireEvent.press(getByLabelText('Dismiss energy scaffolding prompt'));
+      fireEvent.press(getByLabelText('Archive This energy scaffolding prompt'));
       expect(onArchive).toHaveBeenCalledTimes(1);
     });
   });
