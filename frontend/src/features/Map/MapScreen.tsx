@@ -271,10 +271,14 @@ const HistoryContent = ({ history }: { history: StageHistoryResponse }): React.J
 
 const HistoryBody = ({
   loading,
+  error,
   history,
+  onRetry,
 }: {
   loading: boolean;
+  error: boolean;
   history: StageHistoryResponse | null;
+  onRetry: () => void;
 }): React.JSX.Element | null => {
   const hasContent =
     history !== null && (history.practices.length > 0 || history.habits.length > 0);
@@ -283,6 +287,24 @@ const HistoryBody = ({
     return (
       <View style={styles.historyLoading} testID="history-loading">
         <ActivityIndicator size="small" color="#fff" />
+      </View>
+    );
+  }
+  // A failed fetch is distinct from a genuinely empty stage: show an error +
+  // retry instead of the "begin this stage" empty copy.
+  if (error) {
+    return (
+      <View style={styles.historyError} testID="history-error">
+        <Text style={styles.historyErrorText}>Couldn&apos;t load your journey for this stage.</Text>
+        <TouchableOpacity
+          onPress={onRetry}
+          accessibilityRole="button"
+          accessibilityLabel="Try again"
+          style={styles.historyRetry}
+          testID="history-retry"
+        >
+          <Text style={styles.historyRetryText}>Try again</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -308,16 +330,27 @@ const StageHistorySection = ({
   const [expanded, setExpanded] = useState(false);
   const [history, setHistory] = useState<StageHistoryResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
 
-  useEffect(() => {
-    if (!expanded || !isUnlocked || history !== null) return;
+  const loadHistory = useCallback(() => {
     setLoading(true);
+    setError(false);
     stagesApi
       .history(stageNumber)
+      // Track failure explicitly so a rejected fetch is separable from a
+      // resolved-but-empty history (which keeps its "begin this stage" copy).
       .then(setHistory)
-      .catch(() => setHistory(null))
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, [expanded, stageNumber, isUnlocked, history]);
+  }, [stageNumber]);
+
+  useEffect(() => {
+    // Auto-fetch once on expand. The ``error`` guard means a failed fetch is
+    // NOT silently re-attempted on collapse→re-expand — the user retries
+    // explicitly via the error state's "Try again" (which clears ``error``).
+    if (!expanded || !isUnlocked || history !== null || error || loading) return;
+    loadHistory();
+  }, [expanded, isUnlocked, history, error, loading, loadHistory]);
 
   if (!isUnlocked) return null;
 
@@ -331,7 +364,9 @@ const StageHistorySection = ({
         <Text style={styles.historyTitle}>Your Journey</Text>
         <Text style={styles.historyToggle}>{expanded ? '▲' : '▼'}</Text>
       </TouchableOpacity>
-      {expanded && <HistoryBody loading={loading} history={history} />}
+      {expanded && (
+        <HistoryBody loading={loading} error={error} history={history} onRetry={loadHistory} />
+      )}
     </View>
   );
 };
@@ -392,6 +427,26 @@ const MapLoading = (): React.JSX.Element => (
 const MapError = ({ message }: { message: string }): React.JSX.Element => (
   <View style={styles.centered} testID="map-error">
     <Text style={styles.errorText}>{message}</Text>
+  </View>
+);
+
+// Non-blocking banner for a refresh that failed while cached stages are shown,
+// so a stale map no longer hides the failure (the cold-start MapError covers
+// the no-stages case). Retry re-runs the same loader.
+const MapRefreshErrorBanner = ({ onRetry }: { onRetry: () => void }): React.JSX.Element => (
+  <View style={styles.refreshBanner} testID="map-refresh-error">
+    <Text style={styles.refreshBannerText}>
+      Couldn&apos;t refresh the map. Showing your last saved progress.
+    </Text>
+    <TouchableOpacity
+      onPress={onRetry}
+      accessibilityRole="button"
+      accessibilityLabel="Try again"
+      style={styles.refreshRetry}
+      testID="map-refresh-retry"
+    >
+      <Text style={styles.refreshRetryText}>Try again</Text>
+    </TouchableOpacity>
   </View>
 );
 
@@ -456,6 +511,8 @@ const MapScreen = (): React.JSX.Element => {
     }
   }, [stages.length, loading]);
 
+  const handleRefresh = useCallback(() => void stageService.loadStages(), []);
+
   const handleNavigate = useCallback(
     (screen: 'Practice' | 'Course' | 'Journal', stage: StageData) => {
       if (navigatingRef.current) return;
@@ -484,6 +541,7 @@ const MapScreen = (): React.JSX.Element => {
   return (
     <View style={styles.container}>
       <MapBackground stages={stages} currentStage={currentStage} onSelectStage={setActiveStage} />
+      {error && stages.length > 0 && <MapRefreshErrorBanner onRetry={handleRefresh} />}
       <StageDetailModal
         activeStage={activeStage}
         onClose={handleCloseModal}
