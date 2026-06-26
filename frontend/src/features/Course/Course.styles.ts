@@ -292,6 +292,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   retryButton: {
+    marginTop: SPACING.md,
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.lg,
     borderRadius: radius.md,
