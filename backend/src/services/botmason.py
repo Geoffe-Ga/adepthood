@@ -892,7 +892,7 @@ async def _stream_stub(user_message: str) -> AsyncIterator[StreamChunk]:
             yield chunk, None
 
 
-def _first_choice_delta_content(event: object) -> object:  # pragma: no cover
+def _first_choice_delta_content(event: object) -> object:
     """Return the ``event.choices[0].delta.content`` attribute or ``None``.
 
     Split out so ``_extract_openai_delta_text`` (and transitively
@@ -904,7 +904,7 @@ def _first_choice_delta_content(event: object) -> object:  # pragma: no cover
     return getattr(delta, "content", None)
 
 
-def _extract_openai_delta_text(event: object) -> str | None:  # pragma: no cover
+def _extract_openai_delta_text(event: object) -> str | None:
     """Return the non-empty delta text from an OpenAI stream event, or ``None``."""
     text = _first_choice_delta_content(event)
     if isinstance(text, str) and text:
@@ -912,7 +912,7 @@ def _extract_openai_delta_text(event: object) -> str | None:  # pragma: no cover
     return None
 
 
-async def _stream_openai(  # pragma: no cover - exercised via live integration
+async def _stream_openai(
     user_message: str,
     conversation_history: list[dict[str, str]],
     system_prompt: str,
@@ -961,7 +961,7 @@ async def _stream_openai(  # pragma: no cover - exercised via live integration
     )
 
 
-async def _stream_anthropic(  # pragma: no cover - exercised via live integration
+async def _stream_anthropic(
     user_message: str,
     conversation_history: list[dict[str, str]],
     system_prompt: str,
