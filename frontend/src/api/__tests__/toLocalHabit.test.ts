@@ -61,6 +61,15 @@ describe('toLocalHabit', () => {
     expect(local.goals[0]!.id).toBe(100);
   });
 
+  test('carries a goal days_of_week through to the local mapping', () => {
+    const withDays: ApiHabitWithGoals = {
+      ...apiHabit,
+      goals: [{ ...apiHabit.goals[0]!, days_of_week: ['Mon', 'Wed'] }],
+    };
+    const local = toLocalHabit(withDays);
+    expect(local.goals[0]!.days_of_week).toEqual(['Mon', 'Wed']);
+  });
+
   test('maps notification fields', () => {
     const local = toLocalHabit(apiHabit);
     expect(local.notificationTimes).toEqual(['08:00']);

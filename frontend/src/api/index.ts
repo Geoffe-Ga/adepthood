@@ -889,6 +889,7 @@ export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
       frequency_unit: g.frequency_unit,
       is_additive: g.is_additive,
       goal_group_id: g.goal_group_id ?? null,
+      days_of_week: g.days_of_week ?? undefined,
     })),
     completions: flattenGoalCompletions(apiHabit.goals),
     notificationTimes: apiHabit.notification_times ?? undefined,

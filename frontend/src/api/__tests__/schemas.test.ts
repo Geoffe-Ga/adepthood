@@ -117,6 +117,29 @@ describe('goalSchema embedded completions', () => {
   });
 });
 
+describe('goalSchema days_of_week (schema-drift regression)', () => {
+  it('preserves days_of_week instead of stripping it', () => {
+    // Zod strips unknown keys; without the field declared, a weekly-cadence
+    // goal lost its schedule on every refetch.
+    const parsed = goalSchema.parse({ ...baseGoal, days_of_week: ['Mon', 'Wed'] });
+    expect(parsed.days_of_week).toEqual(['Mon', 'Wed']);
+  });
+
+  it('accepts null, undefined, and absent days_of_week (API back-compat)', () => {
+    expect(goalSchema.parse({ ...baseGoal, days_of_week: null }).days_of_week).toBeNull();
+    expect(goalSchema.parse({ ...baseGoal, days_of_week: undefined }).days_of_week).toBeUndefined();
+    expect(goalSchema.parse(baseGoal).days_of_week).toBeUndefined();
+  });
+
+  it('carries days_of_week through habitWithGoalsSchema', () => {
+    const parsed = habitWithGoalsSchema.parse({
+      ...baseHabit,
+      goals: [{ ...baseGoal, days_of_week: ['Tue'] }],
+    });
+    expect(parsed.goals[0]?.days_of_week).toEqual(['Tue']);
+  });
+});
+
 describe('habitSchema start_date validation', () => {
   it('accepts a valid YYYY-MM-DD date', () => {
     expect(() => habitSchema.parse(baseHabit)).not.toThrow();
