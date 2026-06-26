@@ -258,6 +258,74 @@ export const journalListResponseSchema = z.object({
 export type JournalListResponseSchemaT = z.infer<typeof journalListResponseSchema>;
 
 // ---------------------------------------------------------------------------
+// Per-item schemas for paginated endpoints (replacing loosePageSchema casts).
+// The deep ``mode_config`` / ``mode_metadata`` payloads are validated
+// server-side as discriminated unions, so they are accepted here as opaque
+// records — the goal is item-level field/type drift detection, not re-deriving
+// the whole ModeConfig union on the client.
+// ---------------------------------------------------------------------------
+
+/** A course stage row (mirrors the backend ``Stage`` response). */
+export const stageSchema = z.object({
+  id: z.number().int(),
+  title: z.string(),
+  subtitle: z.string(),
+  stage_number: z.number().int(),
+  overview_url: z.string(),
+  category: z.string(),
+  aspect: z.string(),
+  spiral_dynamics_color: z.string(),
+  growing_up_stage: z.string(),
+  divine_gender_polarity: z.string(),
+  relationship_to_free_will: z.string(),
+  free_will_description: z.string(),
+  is_unlocked: z.boolean(),
+  progress: z.number(),
+});
+
+/** A catalog practice (mirrors ``PracticeItem``); exported for reuse (issue 06). */
+export const practiceItemSchema = z.object({
+  id: z.number().int(),
+  stage_number: z.number().int(),
+  name: z.string(),
+  description: z.string(),
+  instructions: z.string(),
+  default_duration_minutes: z.number(),
+  submitted_by_user_id: z.number().int().nullable(),
+  approved: z.boolean(),
+  mode: z.string().optional(),
+  mode_config: z.record(z.unknown()).optional(),
+});
+
+/** A user's selected practice (mirrors ``UserPractice``). */
+export const userPracticeSchema = z.object({
+  id: z.number().int(),
+  user_id: z.number().int(),
+  practice_id: z.number().int(),
+  stage_number: z.number().int(),
+  start_date: isoDate,
+  end_date: isoDate.nullable(),
+  custom_name: z.string().nullish(),
+  mode_config_override: z.record(z.unknown()).nullish(),
+  effective_name: z.string().nullish(),
+  effective_config: z.record(z.unknown()).nullish(),
+});
+
+/** A logged practice session (mirrors ``PracticeSessionResponse``). */
+export const practiceSessionResponseSchema = z.object({
+  id: z.number().int(),
+  user_id: z.number().int(),
+  user_practice_id: z.number().int(),
+  duration_minutes: z.number(),
+  timestamp: isoDateTime,
+  reflection: z.string().nullable(),
+  mode: z.string().optional(),
+  mode_metadata: z.record(z.unknown()).nullish(),
+  completed: z.boolean().optional(),
+  insight: z.string().nullish(),
+});
+
+// ---------------------------------------------------------------------------
 // Lenient schemas for legacy endpoints (gradually tightened)
 // ---------------------------------------------------------------------------
 

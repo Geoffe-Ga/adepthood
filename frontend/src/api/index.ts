@@ -9,9 +9,13 @@ import {
   loginAuthResponseSchema,
   pageSchema,
   passwordResetAcceptedSchema,
+  practiceItemSchema,
+  practiceSessionResponseSchema,
   promptListResponseSchema,
+  stageSchema,
   timezoneReadSchema,
   unknownRecord,
+  userPracticeSchema,
   type Page,
   type PasswordResetAcceptedT,
   type Tier,
@@ -1599,7 +1603,7 @@ export const stages = {
   listPaginated(params: PaginationParams = {}, token?: string): Promise<Page<Stage>> {
     return request<Page<Stage>>(`/stages?${pageQuery({}, params)}`, {
       token,
-      schema: loosePageSchema as unknown as z.ZodType<Page<Stage>>,
+      schema: pageSchema(stageSchema),
     });
   },
   /** Whole stages list via the ``Page`` envelope (issue #408). */
@@ -1974,23 +1978,23 @@ export const practices = {
     if (includeMine === true) extra.include_mine = 'true';
     return request<Page<PracticeItem>>(`/practices/?${pageQuery(extra, page)}`, {
       token,
-      schema: loosePageSchema as unknown as z.ZodType<Page<PracticeItem>>,
+      schema: pageSchema(practiceItemSchema) as unknown as z.ZodType<Page<PracticeItem>>,
     });
   },
   /**
-   * Whole practices list via the ``Page`` envelope (issue #408). Applies the
-   * same ``validatePracticeItem`` filter as the bare ``list`` so malformed
-   * rows never reach a screen.
+   * Whole practices list via the ``Page`` envelope (issue #408). Items are
+   * validated per ``practiceItemSchema`` inside ``listPaginated``, so a
+   * malformed row rejects the page (``fetchAllPages`` propagates the
+   * ``ApiValidationError``) rather than being silently dropped.
    */
   async listAll(
     options: { stageNumber: number; includeMine?: boolean } | number,
     token?: string,
   ): Promise<PracticeItem[]> {
     const params = typeof options === 'number' ? { stageNumber: options } : options;
-    const items = await fetchAllPages((pageParams) =>
+    return fetchAllPages((pageParams) =>
       practices.listPaginated({ ...params, ...pageParams }, token),
     );
-    return items.filter(validatePracticeItem);
   },
   async get(practiceId: number, token?: string): Promise<PracticeItem> {
     const data = await request<PracticeItem>(`/practices/${practiceId}`, { token });
@@ -2023,7 +2027,7 @@ export const userPractices = {
   listPaginated(params: PaginationParams = {}, token?: string): Promise<Page<UserPractice>> {
     return request<Page<UserPractice>>(`/user-practices/?${pageQuery({}, params)}`, {
       token,
-      schema: loosePageSchema as unknown as z.ZodType<Page<UserPractice>>,
+      schema: pageSchema(userPracticeSchema) as unknown as z.ZodType<Page<UserPractice>>,
     });
   },
   /**
@@ -2352,7 +2356,9 @@ export const practiceSessions = {
       `/practice-sessions/?${pageQuery({ user_practice_id: userPracticeId }, page)}`,
       {
         token,
-        schema: loosePageSchema as unknown as z.ZodType<Page<PracticeSessionResponse>>,
+        schema: pageSchema(practiceSessionResponseSchema) as unknown as z.ZodType<
+          Page<PracticeSessionResponse>
+        >,
       },
     );
   },

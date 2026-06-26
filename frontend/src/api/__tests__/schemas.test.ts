@@ -6,7 +6,11 @@ import {
   habitSchema,
   habitWithGoalsSchema,
   journalListResponseSchema,
+  practiceItemSchema,
+  practiceSessionResponseSchema,
   promptListResponseSchema,
+  stageSchema,
+  userPracticeSchema,
 } from '../schemas';
 
 const baseGoal = {
@@ -279,6 +283,87 @@ describe('journalListResponseSchema validation', () => {
         total: 1,
         has_more: false,
       }),
+    ).toThrow();
+  });
+});
+
+describe('per-item paginated schemas', () => {
+  const stage = {
+    id: 1,
+    title: 'Beige',
+    subtitle: 'Survival',
+    stage_number: 1,
+    overview_url: 'https://example.com',
+    category: 'foundation',
+    aspect: 'body',
+    spiral_dynamics_color: 'Beige',
+    growing_up_stage: 'Archaic',
+    divine_gender_polarity: 'neutral',
+    relationship_to_free_will: 'reactive',
+    free_will_description: 'Instinctual',
+    is_unlocked: true,
+    progress: 0.5,
+  };
+
+  it('stageSchema accepts a valid stage and rejects a type-flipped field', () => {
+    expect(stageSchema.parse(stage).stage_number).toBe(1);
+    expect(() => stageSchema.parse({ ...stage, stage_number: '1' })).toThrow();
+    expect(() => stageSchema.parse({ ...stage, is_unlocked: undefined })).toThrow();
+  });
+
+  const practiceItem = {
+    id: 7,
+    stage_number: 2,
+    name: 'Breath',
+    description: 'desc',
+    instructions: 'inst',
+    default_duration_minutes: 10,
+    submitted_by_user_id: null,
+    approved: true,
+  };
+
+  it('practiceItemSchema accepts valid (mode_config optional) and rejects drift', () => {
+    expect(practiceItemSchema.parse(practiceItem).submitted_by_user_id).toBeNull();
+    expect(() =>
+      practiceItemSchema.parse({ ...practiceItem, mode: 'meditation_timer', mode_config: {} }),
+    ).not.toThrow();
+    expect(() =>
+      practiceItemSchema.parse({ ...practiceItem, default_duration_minutes: '10' }),
+    ).toThrow();
+    expect(() => practiceItemSchema.parse({ ...practiceItem, name: undefined })).toThrow();
+  });
+
+  const userPractice = {
+    id: 3,
+    user_id: 1,
+    practice_id: 7,
+    stage_number: 2,
+    start_date: '2026-01-01',
+    end_date: null,
+  };
+
+  it('userPracticeSchema accepts valid (optional overrides) and rejects drift', () => {
+    expect(userPracticeSchema.parse(userPractice).end_date).toBeNull();
+    expect(() =>
+      userPracticeSchema.parse({ ...userPractice, effective_name: 'My Breath' }),
+    ).not.toThrow();
+    expect(() => userPracticeSchema.parse({ ...userPractice, start_date: undefined })).toThrow();
+  });
+
+  const session = {
+    id: 9,
+    user_id: 1,
+    user_practice_id: 3,
+    duration_minutes: 10,
+    timestamp: '2026-03-01T10:30:00Z',
+    reflection: null,
+  };
+
+  it('practiceSessionResponseSchema accepts valid and rejects a non-ISO timestamp', () => {
+    expect(practiceSessionResponseSchema.parse(session).reflection).toBeNull();
+    expect(() => practiceSessionResponseSchema.parse({ ...session, timestamp: 'oops' })).toThrow();
+    expect(() =>
+      practiceSessionResponseSchema.parse({ ...session, user_practice_id: undefined }),
     ).toThrow();
   });
 });
