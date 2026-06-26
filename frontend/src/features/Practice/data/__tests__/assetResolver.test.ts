@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import type { ImageSourcePropType } from 'react-native';
 
 import { resolveCardImage } from '../assetResolver';
@@ -43,10 +43,24 @@ describe('resolveCardImage — fallbacks', () => {
     expect(resolveCardImage('some/other_deck_key')).toBeNull();
   });
 
-  it('returns the documented placeholder for a known-but-unshipped key', () => {
-    const unshipped = RWS_CARDS.find((card) => !(card.asset_key in RWS_IMAGES));
-    expect(unshipped).toBeDefined();
-    expect(resolveCardImage(unshipped!.asset_key)).toBe(PLACEHOLDER);
+  it('ships artwork for every card in the deck — no card falls back to placeholder', () => {
+    // The full 78-card deck now ships real artwork, so no RWS_CARDS entry
+    // should be missing from RWS_IMAGES.
+    const unshipped = RWS_CARDS.filter((card) => !(card.asset_key in RWS_IMAGES));
+    expect(unshipped).toEqual([]);
+  });
+
+  it('returns the documented placeholder for a known card whose art is not bundled', () => {
+    // Defensive fallback: a key the deck declares but RWS_IMAGES omits resolves
+    // to the placeholder rather than null. Every real card now ships artwork,
+    // so exercise the branch with the resolver mocked to an empty image map.
+    jest.isolateModules(() => {
+      jest.doMock('../decks/rwsImages', () => ({ RWS_IMAGES: {} }));
+      const { resolveCardImage: resolve } = require('../assetResolver');
+      // isolateModules loads a fresh placeholder require, so compare by value.
+      expect(resolve(RWS_CARDS[0]!.asset_key)).toStrictEqual(PLACEHOLDER);
+    });
+    jest.dontMock('../decks/rwsImages');
   });
 
   it('covers the full 78-key RWS space (shipped image or placeholder, never null)', () => {

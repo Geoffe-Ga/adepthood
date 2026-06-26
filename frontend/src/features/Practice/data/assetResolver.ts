@@ -1,10 +1,11 @@
 // Resolves a card asset_key (e.g. "rws/the_fool") to a Metro-bundled image.
 //
-// Lookup order (issue #467):
+// Lookup order:
 //   1. RWS_IMAGES — the real, per-card bundled artwork. Returned for every
-//      shipped key (the 22 Major Arcana today; Minor Arcana via the follow-up).
-//   2. PLACEHOLDER — for a *known* RWS card whose art has not been bundled yet,
-//      so the full 78-key space resolves to something renderable.
+//      shipped key (all 78 cards: 22 Major Arcana + 56 Minor Arcana).
+//   2. PLACEHOLDER — defensive fallback for a *known* RWS card whose art is
+//      somehow absent, so the full 78-key space resolves to something
+//      renderable.
 //   3. null — for an unknown key or a text-only card (asset_key === null).
 
 import type { ImageSourcePropType } from 'react-native';
