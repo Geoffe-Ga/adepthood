@@ -29,6 +29,7 @@ from schemas.practice import (
     PracticeInsightsResponse,
     PracticeSessionCreate,
     PracticeSessionResponse,
+    WeekCountResponse,
 )
 from schemas.practice_mode_config import MindfulAnchorConfig
 from schemas.practice_session_metadata import MindfulAnchorMetadata
@@ -454,12 +455,12 @@ def _start_of_week_utc(tz_name: str) -> datetime:
     return local_midnight.astimezone(UTC)
 
 
-@router.get("/week-count")
+@router.get("/week-count", response_model=WeekCountResponse)
 async def week_count(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
-) -> dict[str, int]:
+) -> WeekCountResponse:
     """Return the number of sessions the authenticated user completed this week.
 
     BUG-PRACTICE-009: the week boundary is derived from the user's stored
@@ -473,4 +474,4 @@ async def week_count(
     )
     result = await session.execute(statement)
     count = result.scalar_one()
-    return {"count": count}
+    return WeekCountResponse(count=count)

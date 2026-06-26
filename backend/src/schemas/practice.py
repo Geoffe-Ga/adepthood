@@ -348,6 +348,18 @@ class PracticeSessionResponse(OwnedResourcePublic):
     insight: str | None = None
 
 
+class WeekCountResponse(BaseModel):
+    """Typed contract for ``GET /practice-sessions/week-count``.
+
+    ``extra="forbid"`` so a stray key (a drifting hand-built dict) is rejected
+    rather than silently passed through — the wire shape stays exactly ``{count}``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    count: int
+
+
 class PracticeSessionWeeklyCount(BaseModel):
     """One bucket of the rolling weekly-count series for the insights endpoint."""
 

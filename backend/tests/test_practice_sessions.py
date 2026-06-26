@@ -9,13 +9,16 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import AsyncClient
+from pydantic import ValidationError
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
+from main import app
 from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.user import User
+from schemas.practice import WeekCountResponse
 
 _DEFAULT_DURATION = 5.0
 _EXPECTED_SESSION_COUNT = 2
@@ -373,6 +376,23 @@ async def test_week_count_counts_current_week(
     resp = await async_client.get("/practice-sessions/week-count", headers=headers)
     assert resp.status_code == HTTPStatus.OK
     assert resp.json()["count"] == _EXPECTED_SESSION_COUNT
+
+
+@pytest.mark.asyncio
+async def test_week_count_typed_contract_and_openapi(async_client: AsyncClient) -> None:
+    """week-count is typed: shape stays {count}, a stray key is rejected, schema in OpenAPI."""
+    headers, _ = await _signup(async_client)
+    resp = await async_client.get("/practice-sessions/week-count", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+
+    body = resp.json()
+    assert set(body) == {"count"}  # wire shape unchanged
+    assert WeekCountResponse.model_validate(body).count == 0
+    # ``extra="forbid"`` rejects a drifting extra key.
+    with pytest.raises(ValidationError):
+        WeekCountResponse.model_validate({"count": 0, "stray": 1})
+    # The typed contract is exposed in OpenAPI (it wasn't, as a raw dict).
+    assert "WeekCountResponse" in app.openapi()["components"]["schemas"]
 
 
 @pytest.mark.asyncio

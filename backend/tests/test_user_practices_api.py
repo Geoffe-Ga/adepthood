@@ -16,6 +16,7 @@ from models.practice_session import PracticeSession
 from models.stage_progress import StageProgress
 from models.user_practice import UserPractice
 from routers.user_practices import EMBEDDED_SESSIONS_DEFAULT_LIMIT
+from schemas.practice import UserPracticeDetail
 
 _EXPECTED_SELECTION_COUNT = 2
 _SESSION_DURATION = 10.0
@@ -271,6 +272,9 @@ async def test_get_user_practice_with_sessions(
     # Backward compatible: a user under the cap sees full history + metadata.
     assert data["sessions_total"] == 1
     assert data["sessions_has_more"] is False
+    # Contract: the response keys are exactly UserPracticeDetail's fields, so a
+    # schema rename flows through the shared builder instead of drifting.
+    assert set(data) == set(UserPracticeDetail.model_fields)
 
 
 async def _create_owned_user_practice(

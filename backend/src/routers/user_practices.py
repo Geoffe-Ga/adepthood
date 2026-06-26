@@ -29,6 +29,7 @@ from schemas import MAX_PAGE_SIZE, Page, PaginationParams, build_page
 from schemas.frequency import FrequencyResponse, render_banner_text
 from schemas.pagination import paginate_query
 from schemas.practice import (
+    PracticeSessionSummary,
     UserPracticeCreate,
     UserPracticeCustomize,
     UserPracticeDetail,
@@ -307,6 +308,37 @@ def _user_practice_payload(user_practice: UserPractice) -> dict[str, Any]:
     }
 
 
+def build_user_practice_detail(
+    user_practice: UserPractice,
+    *,
+    effective_name: str | None,
+    effective_config: dict[str, Any] | None,
+    sessions_page: tuple[list[PracticeSession], int, bool],
+) -> UserPracticeDetail:
+    """Build the typed ``UserPracticeDetail`` from stored + resolved fields.
+
+    The single source of the response's key list — GET-one, customize, and
+    apply-recipe all build the model through here, so a field rename on
+    ``UserPracticeDetail`` flows to every endpoint without per-site edits.
+    ``sessions_page`` is the ``load_recent_sessions`` tuple ``(rows, total,
+    has_more)``; ``effective_config`` dicts and ``PracticeSession`` rows are
+    coerced by the model's validators / ``from_attributes``.
+    """
+    sessions, sessions_total, sessions_has_more = sessions_page
+    # Direct construction doesn't apply ``from_attributes`` to the nested ORM
+    # rows, so coerce them to the summary schema first; the rest are plain
+    # values / dicts the model validates inline.
+    summaries = [PracticeSessionSummary.model_validate(s, from_attributes=True) for s in sessions]
+    return UserPracticeDetail(
+        **_user_practice_payload(user_practice),
+        effective_name=effective_name,
+        effective_config=effective_config,
+        sessions=summaries,
+        sessions_total=sessions_total,
+        sessions_has_more=sessions_has_more,
+    )
+
+
 async def _load_course_stage(session: AsyncSession, stage_number: int) -> CourseStage:
     """Fetch the ``CourseStage`` for a stage number or raise 404.
 
@@ -556,7 +588,7 @@ async def get_user_practice(
     session: Annotated[AsyncSession, Depends(get_session)],
     user_practice: Annotated[UserPractice, Depends(require_owned_user_practice)],
     embed: Annotated[EmbeddedSessionsParams, Depends()],
-) -> dict[str, Any]:
+) -> UserPracticeDetail:
     """Get a single user-practice with its (capped) recent session history.
 
     Ownership via ``require_owned_user_practice`` (404 → 403 split). The
@@ -564,19 +596,15 @@ async def get_user_practice(
     newest-first sessions; ``sessions_total`` / ``sessions_has_more`` report
     whether older sessions remain (fetch them via ``list_sessions``). Issue #474.
     """
-    sessions, total, has_more = await load_recent_sessions(
-        session, cast("int", user_practice.id), embed
-    )
+    sessions_page = await load_recent_sessions(session, cast("int", user_practice.id), embed)
     name, cfg = await _resolve_effective_fields(session, user_practice)
 
-    return {
-        **_user_practice_payload(user_practice),
-        "effective_name": name,
-        "effective_config": cfg,
-        "sessions": sessions,
-        "sessions_total": total,
-        "sessions_has_more": has_more,
-    }
+    return build_user_practice_detail(
+        user_practice,
+        effective_name=name,
+        effective_config=cfg,
+        sessions_page=sessions_page,
+    )
 
 
 def _validate_override_against_catalog(override: dict[str, Any] | None, practice: Practice) -> None:
@@ -611,7 +639,7 @@ async def customize_user_practice(
     session: Annotated[AsyncSession, Depends(get_session)],
     user_practice: Annotated[UserPractice, Depends(require_owned_user_practice)],
     embed: Annotated[EmbeddedSessionsParams, Depends()],
-) -> dict[str, Any]:
+) -> UserPracticeDetail:
     """Per-user override of name + mode_config.
 
     Both fields are nullable; passing ``None`` clears the override and
@@ -635,9 +663,7 @@ async def customize_user_practice(
     name = effective_name(practice, user_practice)
     cfg = effective_config(practice, user_practice).model_dump()
 
-    sessions, total, has_more = await load_recent_sessions(
-        session, cast("int", user_practice.id), embed
-    )
+    sessions_page = await load_recent_sessions(session, cast("int", user_practice.id), embed)
     logger.info(
         "user_practice_customized",
         extra={
@@ -646,11 +672,9 @@ async def customize_user_practice(
             "fields_changed": sorted(fields_set),
         },
     )
-    return {
-        **_user_practice_payload(user_practice),
-        "effective_name": name,
-        "effective_config": cfg,
-        "sessions": sessions,
-        "sessions_total": total,
-        "sessions_has_more": has_more,
-    }
+    return build_user_practice_detail(
+        user_practice,
+        effective_name=name,
+        effective_config=cfg,
+        sessions_page=sessions_page,
+    )
