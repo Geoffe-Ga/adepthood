@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Text, TextInput, TouchableOpacity, View } from 'react-native';
+
+import { authStyles as styles } from './auth.styles';
+import { AuthScreenContainer } from './AuthScreenContainer';
+import { canonicalizeEmail } from './canonicalizeEmail';
 
 import { auth as authApi } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
 
 const FORGOT_FALLBACK =
   "We couldn't reach the server. Check your connection, then try again in a moment.";
@@ -105,7 +108,7 @@ export default function ForgotPasswordScreen({ navigation }: Props) {
     setError(null);
     setSubmitting(true);
     try {
-      await authApi.requestPasswordReset({ email: email.trim().toLowerCase() });
+      await authApi.requestPasswordReset({ email: canonicalizeEmail(email) });
       setSubmitted(true);
     } catch (err: unknown) {
       setError(formatApiError(err, { fallback: FORGOT_FALLBACK }));
@@ -116,15 +119,15 @@ export default function ForgotPasswordScreen({ navigation }: Props) {
 
   if (submitted) {
     return (
-      <View style={styles.container}>
+      <AuthScreenContainer testID="forgot-password">
         <Text style={styles.title}>Forgot Password</Text>
         <SuccessNotice onBackToLogin={() => navigation.navigate('Login')} />
-      </View>
+      </AuthScreenContainer>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <AuthScreenContainer testID="forgot-password">
       <Text style={styles.title}>Forgot Password</Text>
       <Text style={styles.subtitle}>
         Enter your account email and we&apos;ll send a link to set a new password.
@@ -136,53 +139,6 @@ export default function ForgotPasswordScreen({ navigation }: Props) {
         onSubmit={handleSubmit}
         onBackToLogin={() => navigation.navigate('Login')}
       />
-    </View>
+    </AuthScreenContainer>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: SPACING.xl,
-    backgroundColor: colors.background.card,
-  },
-  title: { fontSize: 28, fontWeight: 'bold', textAlign: 'center', marginBottom: SPACING.lg },
-  subtitle: {
-    fontSize: 14,
-    color: colors.text.secondary,
-    textAlign: 'center',
-    marginBottom: SPACING.xl,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.md,
-    marginBottom: SPACING.md,
-    fontSize: 16,
-  },
-  error: { color: colors.danger, marginBottom: SPACING.md, textAlign: 'center' },
-  button: {
-    backgroundColor: colors.primary,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.buttonV,
-    alignItems: 'center',
-    marginBottom: SPACING.lg,
-  },
-  buttonText: { color: colors.text.light, fontSize: 16, fontWeight: '600' },
-  link: { textAlign: 'center', color: colors.text.secondary },
-  linkBold: { color: colors.primary, fontWeight: '600' },
-  successTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    textAlign: 'center',
-    marginBottom: SPACING.md,
-  },
-  successBody: {
-    fontSize: 15,
-    color: colors.text.secondary,
-    textAlign: 'center',
-    marginBottom: SPACING.xl,
-  },
-});

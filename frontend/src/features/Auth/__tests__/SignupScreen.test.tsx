@@ -123,6 +123,29 @@ describe('SignupScreen', () => {
     });
   });
 
+  it('lowercases the email before submitting (audit-ux-08)', async () => {
+    // Previously signup submitted email.trim() only, so a "Foo@Bar.com" signup
+    // and a "foo@bar.com" login looked like two accounts client-side.
+    mockSignup.mockResolvedValue(undefined);
+    const { getByPlaceholderText, getByText } = render(
+      <SignupScreen navigation={mockNavigation} />,
+    );
+
+    fireEvent.changeText(getByPlaceholderText('Email'), '  Foo@Bar.COM ');
+    fireEvent.changeText(getByPlaceholderText('Password'), 'password123');
+    fireEvent.changeText(getByPlaceholderText('Confirm Password'), 'password123');
+    fireEvent.press(getByText('Sign Up'));
+
+    await waitFor(() => {
+      expect(mockSignup).toHaveBeenCalledWith('foo@bar.com', 'password123');
+    });
+  });
+
+  it('renders inside a KeyboardAvoidingView so the keyboard never covers submit', () => {
+    const { getByTestId } = render(<SignupScreen navigation={mockNavigation} />);
+    expect(getByTestId('signup-keyboard-avoiding')).toBeTruthy();
+  });
+
   it('has a link to navigate to login', () => {
     const { getByText } = render(<SignupScreen navigation={mockNavigation} />);
 

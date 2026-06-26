@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Text, TextInput, TouchableOpacity } from 'react-native';
+
+import { authStyles as styles } from './auth.styles';
+import { AuthScreenContainer } from './AuthScreenContainer';
 
 import { formatApiError } from '@/api/errorMessages';
 import { useAuth } from '@/context/AuthContext';
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
 
 const RESET_FALLBACK =
   "We couldn't apply that reset. The link may have expired -- request a new one and try again.";
@@ -95,7 +97,7 @@ function ResetActions({
 
 function MissingTokenView({ onRequestNew }: { onRequestNew: () => void }): React.JSX.Element {
   return (
-    <View style={styles.container}>
+    <AuthScreenContainer testID="reset-password">
       <Text style={styles.title}>Reset Link Invalid</Text>
       <Text style={styles.subtitle}>
         That link is missing or malformed. Request a fresh one to continue.
@@ -109,7 +111,7 @@ function MissingTokenView({ onRequestNew }: { onRequestNew: () => void }): React
       >
         <Text style={styles.buttonText}>Request New Link</Text>
       </TouchableOpacity>
-    </View>
+    </AuthScreenContainer>
   );
 }
 
@@ -158,7 +160,7 @@ export default function ResetPasswordScreen({ navigation, route }: Props) {
   };
 
   return (
-    <View style={styles.container}>
+    <AuthScreenContainer testID="reset-password">
       <Text style={styles.title}>Set New Password</Text>
       <Text style={styles.subtitle}>Pick a new password (at least 8 characters).</Text>
       <ResetFields
@@ -173,41 +175,6 @@ export default function ResetPasswordScreen({ navigation, route }: Props) {
         onSubmit={handleSubmit}
         onBackToLogin={() => navigation.navigate('Login')}
       />
-    </View>
+    </AuthScreenContainer>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: SPACING.xl,
-    backgroundColor: colors.background.card,
-  },
-  title: { fontSize: 28, fontWeight: 'bold', textAlign: 'center', marginBottom: SPACING.lg },
-  subtitle: {
-    fontSize: 14,
-    color: colors.text.secondary,
-    textAlign: 'center',
-    marginBottom: SPACING.xl,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.md,
-    marginBottom: SPACING.md,
-    fontSize: 16,
-  },
-  error: { color: colors.danger, marginBottom: SPACING.md, textAlign: 'center' },
-  button: {
-    backgroundColor: colors.primary,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.buttonV,
-    alignItems: 'center',
-    marginBottom: SPACING.lg,
-  },
-  buttonText: { color: colors.text.light, fontSize: 16, fontWeight: '600' },
-  link: { textAlign: 'center', color: colors.text.secondary },
-  linkBold: { color: colors.primary, fontWeight: '600' },
-});
