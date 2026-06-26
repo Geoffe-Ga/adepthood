@@ -36,10 +36,12 @@ import CountUpForm from '../configurator/forms/CountUpForm';
 import IntervalBellForm from '../configurator/forms/IntervalBellForm';
 import MeditationTimerForm from '../configurator/forms/MeditationTimerForm';
 import MetronomeForm from '../configurator/forms/MetronomeForm';
+import MindfulAnchorForm from '../configurator/forms/MindfulAnchorForm';
 import RandomIntervalBellForm from '../configurator/forms/RandomIntervalBellForm';
 import RepCounterForm from '../configurator/forms/RepCounterForm';
 import SenseGroundingForm from '../configurator/forms/SenseGroundingForm';
 import { ErrorList } from '../configurator/forms/shared';
+import TalliedGroundingForm from '../configurator/forms/TalliedGroundingForm';
 import TarotForm from '../configurator/forms/TarotForm';
 import type { ModeConfig } from '../engine/types';
 import { validateModeConfig } from '../engine/validation';
@@ -152,9 +154,8 @@ export function CreatePracticeWizard(props: CreatePracticeWizardProps): React.JS
 }
 
 function transitionMode(prev: WizardState, mode: PickableMode): WizardState {
-  if (!isSupportedMode(mode)) {
-    return { ...prev, mode, config: null, step: 'configure' };
-  }
+  // Every pickable mode has a default config + form, so there is no
+  // "unsupported" branch — build the config and advance.
   const config = defaultConfigFor(mode);
   return {
     ...prev,
@@ -163,10 +164,6 @@ function transitionMode(prev: WizardState, mode: PickableMode): WizardState {
     duration: prev.duration === 0 ? suggestedDurationFor(config) : prev.duration,
     step: 'configure',
   };
-}
-
-function isSupportedMode(mode: PickableMode): mode is ModeConfig['mode'] {
-  return mode !== 'mindful_anchor';
 }
 
 interface StepViewProps {
@@ -297,7 +294,9 @@ const ConfigureStep = (props: ConfigureStepProps): React.JSX.Element => {
   if (mode === null) {
     return <NoticeView testID="create-practice-configure-empty" message="Pick a mode first." />;
   }
-  if (config === null || !isSupportedMode(mode)) {
+  if (config === null) {
+    // Defensive: defaultConfigFor covers every mode, so this is unreachable in
+    // practice — it guards against a future mode added without a default.
     return (
       <View testID="create-practice-step-configure">
         <NoticeView
@@ -351,13 +350,14 @@ const MODE_FORMS: FormTable = {
   sense_grounding: SenseGroundingForm,
   tarot: TarotForm,
   card_meditation: CardMeditationForm,
-  // ``tallied_grounding`` ships a runtime engine + view but no configurator
-  // form yet — the wizard saves the smart defaults verbatim until the
-  // dedicated form lands in a follow-up.
-  tallied_grounding: null,
-  // ``mindful_anchor`` ships a runtime engine + view but no configurator
-  // form yet — same deferral pattern as ``tallied_grounding``.
-  mindful_anchor: null,
+  tallied_grounding: TalliedGroundingForm,
+  mindful_anchor: MindfulAnchorForm,
+};
+
+/** Title-case a mode key for user-facing copy (e.g. ``mindful_anchor`` → "Mindful anchor"). */
+const humanizeMode = (mode: string): string => {
+  const spaced = mode.replace(/_/g, ' ');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 };
 
 const ConfiguratorBody = ({ config, onChange }: ConfiguratorBodyProps): React.JSX.Element => {
@@ -367,10 +367,12 @@ const ConfiguratorBody = ({ config, onChange }: ConfiguratorBodyProps): React.JS
   }>;
   const Form = MODE_FORMS[config.mode] as AnyForm | null;
   if (Form === null) {
+    // Defensive: every current mode has a form, but if a future mode maps to
+    // null the notice must name *that* mode, not a hardcoded one.
     return (
       <NoticeView
-        testID="create-practice-configure-tallied"
-        message="Tallied grounding will ship with a configurator soon. The defaults below will be saved as-is."
+        testID="create-practice-configure-fallback"
+        message={`${humanizeMode(config.mode)} will ship with a configurator soon. The defaults below will be saved as-is.`}
       />
     );
   }

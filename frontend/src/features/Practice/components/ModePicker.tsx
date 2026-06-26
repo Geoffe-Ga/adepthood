@@ -18,12 +18,12 @@ import type { ModeConfig } from '../engine/types';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 
 /**
- * Discriminator union for every mode shown in the picker. ``mindful_anchor``
- * has no frontend type yet (the runtime engine + form land in a follow-up),
- * so it is added inline here so the picker still surfaces it under
- * Grounding — selecting it routes to a "Coming soon" notice in the wizard.
+ * Discriminator union for every mode shown in the picker. Every mode now has a
+ * frontend config type and a configurator form, so this is exactly the
+ * ``ModeConfig`` mode set — the picker surfaces them all and the wizard renders
+ * each one's form.
  */
-export type PickableMode = ModeConfig['mode'] | 'mindful_anchor';
+export type PickableMode = ModeConfig['mode'];
 
 const NEW_MODES = new Set<PickableMode>([
   'tallied_grounding',
