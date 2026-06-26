@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-env jest */
 // audit-ux-04: a failed stage-list / content fetch must show error+retry, not
 // masquerade as an empty course or a permanent "Loading..." progress bar.
@@ -43,9 +42,9 @@ const sampleProgress: CourseProgress = {
   next_unlock_day: null,
 };
 
-const mockStagesList = jest.fn() as any;
-const mockStageContent = jest.fn() as any;
-const mockStageProgress = jest.fn() as any;
+const mockStagesList = jest.fn<(...a: unknown[]) => Promise<Stage[]>>();
+const mockStageContent = jest.fn<(...a: unknown[]) => Promise<ContentItem[]>>();
+const mockStageProgress = jest.fn<(...a: unknown[]) => Promise<CourseProgress>>();
 
 jest.mock('../../../api', () => ({
   stages: { listAll: (...a: unknown[]) => mockStagesList(...a) },
@@ -54,7 +53,7 @@ jest.mock('../../../api', () => ({
     stageProgress: (...a: unknown[]) => mockStageProgress(...a),
     markRead: jest.fn(),
     contentBody: jest.fn(),
-    siteResources: (jest.fn() as any).mockResolvedValue([]),
+    siteResources: () => Promise.resolve([]),
     siteResourceBody: jest.fn(),
   },
 }));
@@ -117,6 +116,17 @@ describe('CourseScreen error + retry states', () => {
     await waitFor(() => expect(view.getByTestId('content-list')).toBeTruthy());
     expect(view.queryByTestId('course-error')).toBeNull();
     expect(mockStageContent).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the error state when retry also fails', async () => {
+    mockStagesList.mockRejectedValue(new Error('persistent'));
+    const view = render(<CourseScreen />);
+    await waitFor(() => expect(view.getByTestId('course-error')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(view.getByTestId('course-retry'));
+    });
+    await waitFor(() => expect(view.getByTestId('course-error')).toBeTruthy());
+    expect(mockStagesList).toHaveBeenCalledTimes(2);
   });
 
   it('still shows "No Content Yet" for a genuinely empty stage', async () => {
