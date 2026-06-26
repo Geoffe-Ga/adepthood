@@ -13,9 +13,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import asdict
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
+from typing import Any, cast
 
 from fastapi import HTTPException, status
+from sqlalchemy import CursorResult, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -186,6 +188,37 @@ async def get_or_create_persisted_plan(
         if existing is not None:
             return existing
     response = await asyncio.to_thread(build_energy_response, habits, start_date)
-    # NOTE: unkeyed requests are not deduplicated and accumulate one row each;
-    # bounding that growth (retention/cleanup) is tracked as a separate follow-up.
+    # Unkeyed requests are not deduplicated and accumulate one row each; their
+    # growth is bounded by ``delete_expired_energy_plans`` (run periodically).
     return await _persist(session, user_id, idempotency_key, response)
+
+
+# Durable plans replaced the old 1-hour TTLCache, so rows now persist without a
+# TTL. A cleanup pass deletes rows older than this window — generous enough to
+# preserve idempotent replays for keyed retries, while bounding the table that
+# unkeyed (daily-plan) requests would otherwise grow unbounded.
+ENERGY_PLAN_RETENTION_DAYS = 30
+
+
+async def delete_expired_energy_plans(
+    session: AsyncSession,
+    *,
+    older_than_days: int = ENERGY_PLAN_RETENTION_DAYS,
+) -> int:
+    """Delete persisted energy plans older than ``older_than_days`` and commit.
+
+    Returns the number of rows removed. Intended to be invoked periodically
+    (cron / scheduled job) to bound the ``energyplan`` table's growth from
+    unkeyed requests, which the partial UNIQUE index does not deduplicate.
+    """
+    cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
+    # ``execute`` is typed ``Result``; a DELETE yields a ``CursorResult`` whose
+    # ``rowcount`` is the number of rows removed.
+    result = cast(
+        "CursorResult[Any]",
+        await session.execute(
+            delete(EnergyPlanRecord).where(col(EnergyPlanRecord.created_at) < cutoff),
+        ),
+    )
+    await session.commit()
+    return int(result.rowcount or 0)
