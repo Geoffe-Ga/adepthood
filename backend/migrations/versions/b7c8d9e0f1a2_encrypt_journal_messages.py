@@ -20,7 +20,10 @@ from collections.abc import Callable, Sequence
 import sqlalchemy as sa
 from alembic import op
 
-from services.journal_encryption import decrypt, encrypt
+# NOTE: ``services.journal_encryption`` is imported lazily inside upgrade/
+# downgrade — not at module top. ``src`` is only on sys.path when env.py has run
+# (during a real migration), whereas tools that merely *load* the revision file
+# (e.g. resolve_prev_revision) would hit ModuleNotFoundError on a top-level import.
 
 # revision identifiers, used by Alembic.
 revision: str = "b7c8d9e0f1a2"  # pragma: allowlist secret
@@ -62,10 +65,14 @@ def _transform_rows(transform: Callable[[str], str]) -> None:
 
 
 def upgrade() -> None:
+    from services.journal_encryption import encrypt
+
     _retype_message(to_text=True)
     _transform_rows(encrypt)
 
 
 def downgrade() -> None:
+    from services.journal_encryption import decrypt
+
     _transform_rows(decrypt)
     _retype_message(to_text=False)
