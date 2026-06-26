@@ -54,7 +54,12 @@ interface MenuItemProps {
 }
 
 const MenuItem = ({ icon, label, onPress, scale }: MenuItemProps) => (
-  <TouchableOpacity onPress={onPress} style={{ paddingVertical: spacing(0.5, scale) }}>
+  <TouchableOpacity
+    onPress={onPress}
+    accessibilityRole="button"
+    accessibilityLabel={label}
+    style={{ paddingVertical: spacing(0.5, scale) }}
+  >
     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
       {icon}
       <Text>{label}</Text>
@@ -68,12 +73,18 @@ const MODE_LABELS: Record<string, string> = {
   quickLog: 'Quick Log Mode',
 };
 
-const ModeBar = ({ mode, onExit }: { mode: string; onExit: () => void }) => (
+export const ModeBar = ({ mode, onExit }: { mode: string; onExit: () => void }) => (
   <View style={styles.energyScaffoldingContainer}>
     <View style={styles.energyScaffoldingButton}>
       <Text style={styles.energyScaffoldingButtonText}>{MODE_LABELS[mode] ?? mode}</Text>
     </View>
-    <TouchableOpacity testID="exit-mode" onPress={onExit} style={styles.archiveEnergyButton}>
+    <TouchableOpacity
+      testID="exit-mode"
+      onPress={onExit}
+      accessibilityRole="button"
+      accessibilityLabel={`Exit ${MODE_LABELS[mode] ?? mode}`}
+      style={styles.archiveEnergyButton}
+    >
       <Text>Exit</Text>
     </TouchableOpacity>
   </View>
@@ -155,7 +166,7 @@ const OverflowMenuList = ({
   );
 };
 
-const OverflowMenu = ({
+export const OverflowMenu = ({
   scale,
   menuVisible,
   onToggle,
@@ -176,6 +187,9 @@ const OverflowMenu = ({
       <TouchableOpacity
         testID="overflow-menu-toggle"
         onPress={onToggle}
+        accessibilityRole="button"
+        accessibilityLabel="Habit options menu"
+        accessibilityState={{ expanded: menuVisible }}
         style={{ padding: spacing(1, scale) }}
       >
         <MoreHorizontal size={spacing(3, scale)} />
@@ -349,14 +363,21 @@ const LoadingSpinner = () => (
   </View>
 );
 
-const EnergyCTA = ({ onOpen, onArchive }: { onOpen: () => void; onArchive: () => void }) => (
+export const EnergyCTA = ({ onOpen, onArchive }: { onOpen: () => void; onArchive: () => void }) => (
   <View style={styles.energyScaffoldingContainer}>
-    <TouchableOpacity style={styles.energyScaffoldingButton} onPress={onOpen}>
+    <TouchableOpacity
+      style={styles.energyScaffoldingButton}
+      onPress={onOpen}
+      accessibilityRole="button"
+      accessibilityLabel="Set up energy scaffolding"
+    >
       <Text style={styles.energyScaffoldingButtonText}>Perform Energy Scaffolding</Text>
     </TouchableOpacity>
     <TouchableOpacity
       testID="archive-energy-cta"
       onPress={onArchive}
+      accessibilityRole="button"
+      accessibilityLabel="Dismiss energy scaffolding prompt"
       style={styles.archiveEnergyButton}
     >
       <Text>Archive This</Text>
@@ -418,7 +439,7 @@ interface PaginationBarProps {
   scale: number;
 }
 
-const PaginationBar = ({ page, pageCount, onPrev, onNext, scale }: PaginationBarProps) => {
+export const PaginationBar = ({ page, pageCount, onPrev, onNext, scale }: PaginationBarProps) => {
   const canPrev = page > 0;
   const canNext = page < pageCount - 1;
   const textSize = { fontSize: spacing(1.75, scale) };
@@ -428,6 +449,9 @@ const PaginationBar = ({ page, pageCount, onPrev, onNext, scale }: PaginationBar
         testID="pagination-prev"
         onPress={onPrev}
         disabled={!canPrev}
+        accessibilityRole="button"
+        accessibilityLabel="Previous page"
+        accessibilityState={{ disabled: !canPrev }}
         style={[styles.paginationButton, !canPrev && styles.disabledButton]}
       >
         <Text style={[styles.paginationButtonText, textSize]}>Prev</Text>
@@ -439,6 +463,9 @@ const PaginationBar = ({ page, pageCount, onPrev, onNext, scale }: PaginationBar
         testID="pagination-next"
         onPress={onNext}
         disabled={!canNext}
+        accessibilityRole="button"
+        accessibilityLabel="Next page"
+        accessibilityState={{ disabled: !canNext }}
         style={[styles.paginationButton, !canNext && styles.disabledButton]}
       >
         <Text style={[styles.paginationButtonText, textSize]}>Next</Text>
