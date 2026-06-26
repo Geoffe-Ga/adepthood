@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import { colors, radius, spacing } from '../../../design/tokens';
+import { colors, radius, spacing, touchTarget } from '../../../design/tokens';
 
 interface HabitsEmptyStateProps {
   /** When provided, renders an "Add a habit" CTA wired to the add-habit modal. */
@@ -52,8 +52,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 14,
-    // text.secondary on the light Habits canvas (#f8f8f8) meets WCAG AA; the
-    // CTA text below stays text.light on the dark colors.secondary button.
+    // AA on #f8f8f8 (5.41:1); CTA text.light sits on the dark secondary button.
     color: colors.text.secondary,
     textAlign: 'center',
     lineHeight: 20,
@@ -64,6 +63,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing(3),
     borderRadius: radius.md,
     backgroundColor: colors.secondary,
+    minHeight: touchTarget.minimum,
+    justifyContent: 'center',
   },
   ctaText: {
     fontSize: 15,
