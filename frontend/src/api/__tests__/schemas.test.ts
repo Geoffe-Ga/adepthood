@@ -271,4 +271,14 @@ describe('journalListResponseSchema validation', () => {
       }),
     ).toThrow();
   });
+
+  it('rejects a non-ISO timestamp (same contract as other timestamp columns)', () => {
+    expect(() =>
+      journalListResponseSchema.parse({
+        items: [{ ...message, timestamp: 'not-a-date' }],
+        total: 1,
+        has_more: false,
+      }),
+    ).toThrow();
+  });
 });

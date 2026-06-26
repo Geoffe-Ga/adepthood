@@ -240,7 +240,9 @@ export const journalMessageSchema = z.object({
   id: z.number().int(),
   message: z.string(),
   sender: z.enum(['user', 'bot']),
-  timestamp: z.string(),
+  // Same ISO-8601 contract as every other timestamp column (goal completions
+  // etc.) — bare z.string() would silently accept "not-a-date".
+  timestamp: isoDateTime,
   tag: journalTagSchema,
   practice_session_id: z.number().int().nullable(),
   user_practice_id: z.number().int().nullable(),
