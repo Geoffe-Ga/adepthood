@@ -36,10 +36,12 @@ import CountUpForm from '../configurator/forms/CountUpForm';
 import IntervalBellForm from '../configurator/forms/IntervalBellForm';
 import MeditationTimerForm from '../configurator/forms/MeditationTimerForm';
 import MetronomeForm from '../configurator/forms/MetronomeForm';
+import MindfulAnchorForm from '../configurator/forms/MindfulAnchorForm';
 import RandomIntervalBellForm from '../configurator/forms/RandomIntervalBellForm';
 import RepCounterForm from '../configurator/forms/RepCounterForm';
 import SenseGroundingForm from '../configurator/forms/SenseGroundingForm';
 import { ErrorList } from '../configurator/forms/shared';
+import TalliedGroundingForm from '../configurator/forms/TalliedGroundingForm';
 import TarotForm from '../configurator/forms/TarotForm';
 import type { ModeConfig } from '../engine/types';
 import { validateModeConfig } from '../engine/validation';
@@ -166,7 +168,10 @@ function transitionMode(prev: WizardState, mode: PickableMode): WizardState {
 }
 
 function isSupportedMode(mode: PickableMode): mode is ModeConfig['mode'] {
-  return mode !== 'mindful_anchor';
+  // Every wizard-pickable mode now has a default config + configurator form
+  // (mindful_anchor and tallied_grounding were the last holdouts). The guard
+  // remains as the type narrowing site + a defensive seam for any future mode.
+  return true;
 }
 
 interface StepViewProps {
@@ -351,13 +356,14 @@ const MODE_FORMS: FormTable = {
   sense_grounding: SenseGroundingForm,
   tarot: TarotForm,
   card_meditation: CardMeditationForm,
-  // ``tallied_grounding`` ships a runtime engine + view but no configurator
-  // form yet — the wizard saves the smart defaults verbatim until the
-  // dedicated form lands in a follow-up.
-  tallied_grounding: null,
-  // ``mindful_anchor`` ships a runtime engine + view but no configurator
-  // form yet — same deferral pattern as ``tallied_grounding``.
-  mindful_anchor: null,
+  tallied_grounding: TalliedGroundingForm,
+  mindful_anchor: MindfulAnchorForm,
+};
+
+/** Title-case a mode key for user-facing copy (e.g. ``mindful_anchor`` → "Mindful anchor"). */
+const humanizeMode = (mode: string): string => {
+  const spaced = mode.replace(/_/g, ' ');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 };
 
 const ConfiguratorBody = ({ config, onChange }: ConfiguratorBodyProps): React.JSX.Element => {
@@ -367,10 +373,12 @@ const ConfiguratorBody = ({ config, onChange }: ConfiguratorBodyProps): React.JS
   }>;
   const Form = MODE_FORMS[config.mode] as AnyForm | null;
   if (Form === null) {
+    // Defensive: every current mode has a form, but if a future mode maps to
+    // null the notice must name *that* mode, not a hardcoded one.
     return (
       <NoticeView
-        testID="create-practice-configure-tallied"
-        message="Tallied grounding will ship with a configurator soon. The defaults below will be saved as-is."
+        testID="create-practice-configure-fallback"
+        message={`${humanizeMode(config.mode)} will ship with a configurator soon. The defaults below will be saved as-is.`}
       />
     );
   }

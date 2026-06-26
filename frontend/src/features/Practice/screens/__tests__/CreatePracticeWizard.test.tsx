@@ -152,18 +152,21 @@ describe('CreatePracticeWizard — mode → configure dispatch', () => {
     expect(view.getByTestId('meditation-timer-form')).toBeTruthy();
   });
 
-  it('shows a coming-soon notice for mindful_anchor', () => {
+  it('renders the configurator form for mindful_anchor', () => {
     const { view } = renderScreen();
     fireEvent.press(view.getByTestId('create-practice-from-scratch'));
     fireEvent.press(view.getByTestId('mode-picker-mode-mindful_anchor'));
-    expect(view.getByTestId('create-practice-configure-unsupported')).toBeTruthy();
+    expect(view.getByTestId('mindful-anchor-form')).toBeTruthy();
+    expect(view.queryByTestId('create-practice-configure-unsupported')).toBeNull();
+    expect(view.queryByTestId('create-practice-configure-fallback')).toBeNull();
   });
 
-  it('renders a defaults-only notice for tallied_grounding', () => {
+  it('renders the configurator form for tallied_grounding', () => {
     const { view } = renderScreen();
     fireEvent.press(view.getByTestId('create-practice-from-scratch'));
     fireEvent.press(view.getByTestId('mode-picker-mode-tallied_grounding'));
-    expect(view.getByTestId('create-practice-configure-tallied')).toBeTruthy();
+    expect(view.getByTestId('tallied-grounding-form')).toBeTruthy();
+    expect(view.queryByTestId('create-practice-configure-fallback')).toBeNull();
   });
 });
 
