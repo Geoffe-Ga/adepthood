@@ -1,8 +1,9 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { render, fireEvent } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
-import { colors as COLORS } from '../../../../design/tokens';
+import { BORDER_RADIUS, SPACING, colors as COLORS } from '../../../../design/tokens';
 
 const OnboardingModal = require('../OnboardingModal').default;
 
@@ -47,7 +48,13 @@ describe('OnboardingModal cost step', () => {
   it('renders compact habit tiles', () => {
     const { getByTestId } = setupToCostStep();
     const tile = getByTestId('energy-tile-0');
-    expect(tile.props.style).toMatchSnapshot();
+    // "Compact" = the tight design-token spacing/shape, asserted by named value
+    // (mirrors the value-asserting slider test below) rather than a snapshot blob.
+    const style = StyleSheet.flatten(tile.props.style);
+    expect(style.padding).toBe(SPACING.sm);
+    expect(style.marginBottom).toBe(SPACING.sm);
+    expect(style.borderRadius).toBe(BORDER_RADIUS.md);
+    expect(style.backgroundColor).toBe(COLORS.background.primary);
   });
 
   it('applies mystical slider styling', () => {
