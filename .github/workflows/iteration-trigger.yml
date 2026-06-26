@@ -13,7 +13,9 @@ name: Iteration Trigger
 
 on:
   workflow_run:
-    workflows: ["CI"]
+    # Must match the upstream workflows' ``name:`` exactly; the previous value
+    # matched no workflow in this repo, so the trigger never fired.
+    workflows: ["Backend CI", "Frontend CI"]
     types: [completed]
 
 permissions:
