@@ -105,7 +105,12 @@ class FeatureErrorBoundaryClass extends React.Component<
         <Text style={styles.body}>
           Something went wrong while loading this section. The rest of the app is still usable.
         </Text>
-        <Text style={styles.message}>{this.state.error.message}</Text>
+        {/* Dev-only: a thrown error's message can carry internal detail (paths,
+            library internals). Unlike the top-level ErrorBoundary — which shows
+            the message in every build alongside a "copy to support" prompt — this
+            inline recovery card has no such affordance, so a production user has
+            no safe channel for the raw text. Hide it here. (audit-ux-05) */}
+        {__DEV__ && <Text style={styles.message}>{this.state.error.message}</Text>}
         <TouchableOpacity
           accessibilityLabel={`Retry loading ${name}`}
           accessibilityRole="button"

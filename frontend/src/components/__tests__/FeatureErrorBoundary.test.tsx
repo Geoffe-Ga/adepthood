@@ -162,3 +162,51 @@ describe('FeatureErrorBoundary', () => {
     expect(getByText('recovered manually')).toBeTruthy();
   });
 });
+
+describe('FeatureErrorBoundary — raw message gating (audit-ux-05)', () => {
+  const devGlobal = global as { __DEV__?: boolean };
+  const originalDev = devGlobal.__DEV__;
+  let errorSpy: ReturnType<typeof jest.spyOn>;
+
+  beforeEach(() => {
+    reportException.mockClear();
+    focusListeners.length = 0;
+    mockSecondNavigatorListeners.length = 0;
+    mockNavigatorState.useSecond = false;
+    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    devGlobal.__DEV__ = originalDev;
+    errorSpy.mockRestore();
+  });
+
+  function SecretBoom(): React.JSX.Element {
+    throw new Error('secret-internal-detail');
+  }
+
+  it('hides the raw error message in production builds (__DEV__ false)', () => {
+    devGlobal.__DEV__ = false;
+    const { queryByText, getByText } = render(
+      <FeatureErrorBoundary name="Habits">
+        <SecretBoom />
+      </FeatureErrorBoundary>,
+    );
+    // The internal detail must never reach a production user…
+    expect(queryByText('secret-internal-detail')).toBeNull();
+    // …but the friendly explanation and retry control still render.
+    expect(getByText(/hit a snag/)).toBeTruthy();
+    expect(getByText('Try again')).toBeTruthy();
+  });
+
+  it('shows the raw error message in dev builds (__DEV__ true)', () => {
+    devGlobal.__DEV__ = true;
+    const { getByText } = render(
+      <FeatureErrorBoundary name="Habits">
+        <SecretBoom />
+      </FeatureErrorBoundary>,
+    );
+    expect(getByText('secret-internal-detail')).toBeTruthy();
+    expect(getByText(/hit a snag/)).toBeTruthy();
+  });
+});
