@@ -206,6 +206,28 @@ export type HabitSchemaT = z.infer<typeof habitSchema>;
 export type HabitWithGoalsSchemaT = z.infer<typeof habitWithGoalsSchema>;
 export type GoalSchemaT = z.infer<typeof goalSchema>;
 
+/** One weekly prompt + the user's response state (mirrors backend ``PromptDetail``). */
+export const promptDetailSchema = z.object({
+  week_number: z.number().int(),
+  question: z.string(),
+  has_responded: z.boolean(),
+  response: z.string().nullable(),
+  timestamp: z.string().nullable(),
+});
+
+/**
+ * Paginated prompt history. ``total`` is ``int | None`` on the backend — it is
+ * ``null`` when the count was not requested — so the schema (and the consumer
+ * type) must accept ``null`` rather than coerce it to ``NaN`` in arithmetic.
+ */
+export const promptListResponseSchema = z.object({
+  items: z.array(promptDetailSchema),
+  total: z.number().int().nullable(),
+  has_more: z.boolean(),
+});
+
+export type PromptListResponseSchemaT = z.infer<typeof promptListResponseSchema>;
+
 // ---------------------------------------------------------------------------
 // Lenient schemas for legacy endpoints (gradually tightened)
 // ---------------------------------------------------------------------------

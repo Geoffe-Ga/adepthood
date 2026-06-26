@@ -8,6 +8,7 @@ import {
   loginAuthResponseSchema,
   pageSchema,
   passwordResetAcceptedSchema,
+  promptListResponseSchema,
   timezoneReadSchema,
   unknownRecord,
   type Page,
@@ -1505,7 +1506,9 @@ export interface PromptDetail {
 
 export interface PromptListResponse {
   items: PromptDetail[];
-  total: number;
+  // ``int | None`` on the backend — null when the count was not requested.
+  // Consumers must guard (e.g. ``total ?? items.length``) before arithmetic.
+  total: number | null;
   has_more: boolean;
 }
 
@@ -1528,7 +1531,10 @@ export const prompts = {
     if (params.limit != null) query.set('limit', String(params.limit));
     if (params.offset != null) query.set('offset', String(params.offset));
     const qs = query.toString();
-    return request<PromptListResponse>(`/prompts/history${qs ? `?${qs}` : ''}`, { token });
+    return request<PromptListResponse>(`/prompts/history${qs ? `?${qs}` : ''}`, {
+      token,
+      schema: promptListResponseSchema as unknown as z.ZodType<PromptListResponse>,
+    });
   },
 };
 
