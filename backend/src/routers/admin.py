@@ -17,12 +17,13 @@ from sqlmodel import col
 
 from database import get_session
 from dependencies.auth import require_admin
-from errors import not_found
+from errors import bad_request, not_found
 from models.llm_usage_log import LLMUsageLog
 from models.stage_progress import StageProgress
 from models.user import User
 from schemas import PaginationParams
 from schemas.admin import (
+    EnergyPlanCleanupResult,
     ModelUsageBreakdown,
     StageProgressGap,
     StageProgressGapsPage,
@@ -32,6 +33,7 @@ from schemas.admin import (
     UserUsageBreakdown,
 )
 from schemas.pagination import count_query_total, paginate_query
+from services.energy import ENERGY_PLAN_RETENTION_DAYS, delete_expired_energy_plans
 
 # SQL ``SUM(NUMERIC)`` returns ``Decimal`` on Postgres but ``int`` (or
 # ``float``) on SQLite for an empty group.  Coerce defensively to keep
@@ -300,3 +302,26 @@ async def repair_stage_progress(
         stages_added=stages_added,
         stages_removed=stages_removed,
     )
+
+
+@router.post("/maintenance/energy-plans", response_model=EnergyPlanCleanupResult)
+async def cleanup_energy_plans(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    admin: Annotated[User, Depends(require_admin)],
+    older_than_days: int = ENERGY_PLAN_RETENTION_DAYS,
+) -> EnergyPlanCleanupResult:
+    """Delete persisted energy plans older than ``older_than_days``.
+
+    The integration point for the retention sweep: durable ``energyplan`` rows
+    have no TTL, and unkeyed requests are not deduplicated, so the table grows
+    unbounded without this. Safe to call from a cron via an admin token.
+    """
+    try:
+        deleted = await delete_expired_energy_plans(session, older_than_days=older_than_days)
+    except ValueError as exc:
+        raise bad_request(str(exc)) from exc
+    logger.info(
+        "energyplan_cleanup",
+        extra={"admin_id": admin.id, "deleted": deleted, "older_than_days": older_than_days},
+    )
+    return EnergyPlanCleanupResult(deleted=deleted, older_than_days=older_than_days)

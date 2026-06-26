@@ -13,9 +13,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import asdict
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
+from typing import Any, cast
 
 from fastapi import HTTPException, status
+from sqlalchemy import CursorResult, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -28,6 +30,10 @@ from models.habit import Habit
 from schemas import EnergyPlan, EnergyPlanRequest, EnergyPlanResponse
 
 logger = logging.getLogger(__name__)
+
+# Retention window for persisted plans (durable rows replaced the old 1-hour
+# TTLCache); the cleanup deletes rows older than this. See delete_expired_energy_plans.
+ENERGY_PLAN_RETENTION_DAYS = 30
 
 
 async def _load_owned_habits(
@@ -186,6 +192,41 @@ async def get_or_create_persisted_plan(
         if existing is not None:
             return existing
     response = await asyncio.to_thread(build_energy_response, habits, start_date)
-    # NOTE: unkeyed requests are not deduplicated and accumulate one row each;
-    # bounding that growth (retention/cleanup) is tracked as a separate follow-up.
+    # Unkeyed requests are not deduplicated and accumulate one row each; their
+    # growth is bounded by ``delete_expired_energy_plans`` (run periodically).
     return await _persist(session, user_id, idempotency_key, response)
+
+
+async def delete_expired_energy_plans(
+    session: AsyncSession,
+    *,
+    older_than_days: int = ENERGY_PLAN_RETENTION_DAYS,
+) -> int:
+    """Delete persisted energy plans older than ``older_than_days`` and commit.
+
+    Returns the number of rows removed. Intended to be invoked via the admin
+    maintenance endpoint (or a cron hitting it) to bound the ``energyplan``
+    table's growth from unkeyed requests, which the partial UNIQUE index does
+    not deduplicate. ``older_than_days`` must be positive — ``<= 0`` would set
+    the cutoff at/after "now" and delete every row.
+    """
+    if older_than_days <= 0:
+        msg = "older_than_days must be positive"
+        raise ValueError(msg)
+    cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
+    # ``execute`` is typed ``Result``; a DELETE yields a ``CursorResult`` whose
+    # ``rowcount`` is the number of rows removed.
+    result = cast(
+        "CursorResult[Any]",
+        await session.execute(
+            delete(EnergyPlanRecord).where(col(EnergyPlanRecord.created_at) < cutoff),
+        ),
+    )
+    await session.commit()
+    deleted = int(result.rowcount)
+    if deleted < 0:
+        # The driver doesn't report rowcount; surface it rather than silently
+        # claiming zero deletions.
+        logger.warning("energyplan cleanup ran but the driver did not report a row count")
+        return 0
+    return deleted
