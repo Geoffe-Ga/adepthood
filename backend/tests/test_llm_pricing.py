@@ -13,6 +13,7 @@ from decimal import Decimal
 
 import pytest
 
+from services.botmason import PROVIDER_REGISTRY
 from services.llm_pricing import (
     MODEL_PRICING,
     ModelPricing,
@@ -123,3 +124,27 @@ class TestModelPricingTable:
         )
         with pytest.raises(AttributeError):
             pricing.input_usd_per_million = Decimal("99.0")  # type: ignore[misc]
+
+
+class TestAllowlistPricingReconciliation:
+    """Every allowlisted BotMason model must have a pricing row.
+
+    The provider allowlist and the pricing table drifted apart: allowlisted
+    models with no MODEL_PRICING row logged cost as None, blinding the per-model
+    admin cost view. This guard fails if a future allowlist entry is unpriced.
+    """
+
+    def test_every_allowlisted_model_is_priced(self) -> None:
+        unpriced = sorted(
+            model
+            for spec in PROVIDER_REGISTRY.values()
+            for model in spec.allowed_models
+            if get_model_pricing(model) is None
+        )
+        assert unpriced == [], f"allowlisted models missing a price: {unpriced}"
+
+    def test_allowlisted_models_estimate_a_real_cost(self) -> None:
+        """A reachable allowlisted model never estimates cost as None."""
+        for spec in PROVIDER_REGISTRY.values():
+            for model in spec.allowed_models:
+                assert estimate_cost_usd(model, 1000, 1000) is not None
