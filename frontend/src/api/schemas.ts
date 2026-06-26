@@ -162,6 +162,11 @@ export const goalSchema = z.object({
   frequency_unit: z.string(),
   is_additive: z.boolean(),
   goal_group_id: z.number().int().nullish(),
+  // Weekly cadence (e.g. ["Mon", "Wed"]). Zod strips unknown keys, so without
+  // this the backend's days_of_week was deleted on every validated response,
+  // silently dropping a goal's schedule on each refetch. `.nullish()` matches
+  // the backend's `list[str] | None` and tolerates older API builds.
+  days_of_week: z.array(z.string()).nullish(),
   completions: z.array(goalCompletionSchema).optional(),
 });
 
