@@ -64,6 +64,19 @@ describe('SenseGroundingForm stable row keys', () => {
     expect(queryByTestId('sense-prompt-1-panel')).toBeTruthy();
     expect(queryByTestId('sense-prompt-0-panel')).toBeNull();
   });
+
+  it('assigns an appended row a fresh stable key that survives a later delete', () => {
+    const { getByTestId, queryByTestId } = render(<SenseHarness initial={senseConfig()} />);
+    // Append a 4th row, then open its dropdown.
+    fireEvent.press(getByTestId('sense-grounding-add'));
+    fireEvent.press(getByTestId('sense-prompt-3-thing-trigger'));
+    expect(queryByTestId('sense-prompt-3-panel')).toBeTruthy();
+
+    // Delete the first row; the appended row shifts to index 2, and its open
+    // dropdown follows — proving append handed out a fresh, stable key.
+    fireEvent.press(getByTestId('sense-prompt-0-remove'));
+    expect(queryByTestId('sense-prompt-2-panel')).toBeTruthy();
+  });
 });
 
 describe('CardMeditationForm stable row keys', () => {
