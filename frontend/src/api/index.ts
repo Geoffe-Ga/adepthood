@@ -22,17 +22,33 @@ import {
   type Tier,
   type TimezoneReadT,
 } from './schemas';
-import type { components, paths } from './types';
 
 import { API_BASE_URL } from '@/config';
 import type { Habit as LocalHabit } from '@/features/Habits/Habits.types';
 import type { ModeConfig } from '@/features/Practice/engine/types';
 
-// Re-export OpenAPI types for convenience
-export type EnergyPlanRequest =
-  paths['/v1/energy/plan']['post']['requestBody']['content']['application/json'];
-export type EnergyPlanResponse =
-  paths['/v1/energy/plan']['post']['responses']['200']['content']['application/json'];
+// Hand-written energy-plan contract (audit-contracts-07). Previously derived
+// from the stale openapi-typescript ``types.ts`` (frozen-by-comment, never
+// regenerated); these mirror the live ``/v1/energy/plan`` shapes.
+export interface EnergyPlanItem {
+  habit_id: number;
+  date: string;
+}
+
+export interface EnergyPlan {
+  items: EnergyPlanItem[];
+  net_energy: number;
+}
+
+export interface EnergyPlanRequest {
+  habits: Pick<ApiHabit, 'id' | 'name' | 'energy_cost' | 'energy_return'>[];
+  start_date: string;
+}
+
+export interface EnergyPlanResponse {
+  plan: EnergyPlan;
+  reason_code: string;
+}
 
 export type { Page } from './schemas';
 
@@ -857,9 +873,6 @@ export interface ApiHabitStats {
   completion_rate: number;
   completion_dates: string[];
 }
-
-/** @deprecated Use ApiHabit instead — this only includes the OpenAPI subset. */
-export type Habit = components['schemas']['Habit'];
 
 export interface HabitCreatePayload {
   name: string;
@@ -2258,9 +2271,9 @@ export const practiceRecipes = {
  * renders it verbatim, never assembling the copy from the structured
  * fields. The structured fields are still exposed for chips and tests.
  *
- * TODO(ritual-05): once #310 (frequency-copy endpoint) merges, drop this
- * inline shape in favour of the OpenAPI-generated `components['schemas']
- * ['FrequencyResponse']` reference for end-to-end type alignment.
+ * TODO(ritual-05): once #310 (frequency-copy endpoint) merges, align this
+ * hand-written shape with the backend response (e.g. via a shared Zod schema)
+ * for end-to-end type safety.
  */
 export interface FrequencyResponse {
   stage_number: number;
