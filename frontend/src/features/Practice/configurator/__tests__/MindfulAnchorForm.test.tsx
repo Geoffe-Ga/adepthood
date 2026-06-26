@@ -66,4 +66,29 @@ describe('MindfulAnchorForm', () => {
     fireEvent.press(getByTestId('anchor-option-0-remove'));
     expect(onChange).toHaveBeenCalledWith({ ...base, options: [] });
   });
+
+  it('renders with no options and still offers the add button', () => {
+    const onChange = jest.fn();
+    const empty: MindfulAnchorConfig = { ...base, options: [] };
+    const { getByTestId, queryByTestId } = render(
+      <MindfulAnchorForm value={empty} onChange={onChange} />,
+    );
+    expect(getByTestId('mindful-anchor-form')).toBeTruthy();
+    expect(getByTestId('anchor-add-option')).toBeTruthy();
+    expect(queryByTestId('anchor-option-0')).toBeNull();
+  });
+
+  it('keeps the surviving option after a non-tail delete (stable keys)', () => {
+    const two: MindfulAnchorConfig = {
+      ...base,
+      options: [
+        { key: 'o1', label: 'Bare feet' },
+        { key: 'o2', label: 'Socks' },
+      ],
+    };
+    const onChange = jest.fn();
+    const { getByTestId } = render(<MindfulAnchorForm value={two} onChange={onChange} />);
+    fireEvent.press(getByTestId('anchor-option-0-remove'));
+    expect(onChange).toHaveBeenCalledWith({ ...base, options: [{ key: 'o2', label: 'Socks' }] });
+  });
 });

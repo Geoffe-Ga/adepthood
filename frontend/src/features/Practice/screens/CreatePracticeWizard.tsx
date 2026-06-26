@@ -154,9 +154,8 @@ export function CreatePracticeWizard(props: CreatePracticeWizardProps): React.JS
 }
 
 function transitionMode(prev: WizardState, mode: PickableMode): WizardState {
-  if (!isSupportedMode(mode)) {
-    return { ...prev, mode, config: null, step: 'configure' };
-  }
+  // Every pickable mode has a default config + form, so there is no
+  // "unsupported" branch — build the config and advance.
   const config = defaultConfigFor(mode);
   return {
     ...prev,
@@ -165,13 +164,6 @@ function transitionMode(prev: WizardState, mode: PickableMode): WizardState {
     duration: prev.duration === 0 ? suggestedDurationFor(config) : prev.duration,
     step: 'configure',
   };
-}
-
-function isSupportedMode(mode: PickableMode): mode is ModeConfig['mode'] {
-  // Every wizard-pickable mode now has a default config + configurator form
-  // (mindful_anchor and tallied_grounding were the last holdouts). The guard
-  // remains as the type narrowing site + a defensive seam for any future mode.
-  return true;
 }
 
 interface StepViewProps {
@@ -302,7 +294,9 @@ const ConfigureStep = (props: ConfigureStepProps): React.JSX.Element => {
   if (mode === null) {
     return <NoticeView testID="create-practice-configure-empty" message="Pick a mode first." />;
   }
-  if (config === null || !isSupportedMode(mode)) {
+  if (config === null) {
+    // Defensive: defaultConfigFor covers every mode, so this is unreachable in
+    // practice — it guards against a future mode added without a default.
     return (
       <View testID="create-practice-step-configure">
         <NoticeView

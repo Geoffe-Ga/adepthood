@@ -56,4 +56,44 @@ describe('TalliedGroundingForm', () => {
     fireEvent.press(getByTestId('tallied-category-0-remove'));
     expect(onChange).toHaveBeenCalledWith({ ...base, categories: [] });
   });
+
+  it('decrements rounds and target count via the minus steppers', () => {
+    const onChange = jest.fn();
+    const { getByTestId } = render(<TalliedGroundingForm value={base} onChange={onChange} />);
+    fireEvent.press(getByTestId('tallied-rounds-minus'));
+    expect(onChange).toHaveBeenCalledWith({ ...base, rounds: 1 });
+    fireEvent.press(getByTestId('tallied-category-0-count-minus'));
+    expect(onChange).toHaveBeenCalledWith({
+      ...base,
+      categories: [{ key: 'c1', label: 'Red things', target_count: 2 }],
+    });
+  });
+
+  it('renders with no categories and still offers the add button', () => {
+    const onChange = jest.fn();
+    const empty: TalliedGroundingConfig = { ...base, categories: [] };
+    const { getByTestId, queryByTestId } = render(
+      <TalliedGroundingForm value={empty} onChange={onChange} />,
+    );
+    expect(getByTestId('tallied-grounding-form')).toBeTruthy();
+    expect(getByTestId('tallied-add-category')).toBeTruthy();
+    expect(queryByTestId('tallied-category-0')).toBeNull();
+  });
+
+  it('keeps the surviving category after a non-tail delete (stable keys)', () => {
+    const two: TalliedGroundingConfig = {
+      ...base,
+      categories: [
+        { key: 'c1', label: 'Red things', target_count: 3 },
+        { key: 'c2', label: 'Round things', target_count: 5 },
+      ],
+    };
+    const onChange = jest.fn();
+    const { getByTestId } = render(<TalliedGroundingForm value={two} onChange={onChange} />);
+    fireEvent.press(getByTestId('tallied-category-0-remove'));
+    expect(onChange).toHaveBeenCalledWith({
+      ...base,
+      categories: [{ key: 'c2', label: 'Round things', target_count: 5 }],
+    });
+  });
 });
