@@ -15,7 +15,7 @@ interface HabitsEmptyStateProps {
  */
 export const HabitsEmptyState = ({ onAdd }: HabitsEmptyStateProps): React.JSX.Element => (
   <View style={styles.container} testID="habits-empty-state">
-    <Text style={styles.icon}>{'🌱'}</Text>
+    <Text style={styles.icon}>{'+'}</Text>
     <Text style={styles.title}>No habits yet</Text>
     <Text style={styles.subtitle}>
       Add your first habit to start building momentum. Small, daily actions compound.
@@ -44,6 +44,7 @@ const styles = StyleSheet.create({
   },
   icon: {
     fontSize: 40,
+    color: colors.text.light,
     marginBottom: spacing(1.5),
   },
   title: {
@@ -55,7 +56,9 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 14,
-    color: colors.mystical.transparentLight,
+    // Muted body text via the semantic text token (not the overlay palette).
+    color: colors.text.light,
+    opacity: 0.7,
     textAlign: 'center',
     lineHeight: 20,
   },

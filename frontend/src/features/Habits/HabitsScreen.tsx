@@ -667,15 +667,14 @@ export const HabitsContent = ({
   onAddHabit,
   pagination,
 }: HabitsContentProps) => {
-  // First-run cohort: a zero-habit user gets guidance, not a blank surface
-  // (audit-ux-07). Suppressed while loading (spinner wins) and when an error
-  // banner owns the surface — the error branch below is unchanged.
+  // First-run guidance; suppressed during loading/error (audit-ux-07).
   const showEmpty = !loading && !error && habits.length === 0;
   return (
     <>
       {error && <ErrorBanner error={error} onRetry={onRetry} />}
       {loading && <LoadingSpinner />}
       {showEmpty && <HabitsEmptyState onAdd={onAddHabit} />}
+      {/* List co-renders under the error banner (unchanged); only loading/empty replace it. */}
       {!loading && !showEmpty && (
         <>
           <HabitList
