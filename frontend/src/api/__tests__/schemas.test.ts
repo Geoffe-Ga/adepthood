@@ -1,6 +1,12 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-import { goalCompletionSchema, goalSchema, habitSchema, habitWithGoalsSchema } from '../schemas';
+import {
+  goalCompletionSchema,
+  goalSchema,
+  habitSchema,
+  habitWithGoalsSchema,
+  promptListResponseSchema,
+} from '../schemas';
 
 const baseGoal = {
   id: 1,
@@ -180,6 +186,34 @@ describe('habitWithGoalsSchema end-to-end', () => {
           },
         ],
       }),
+    ).toThrow();
+  });
+});
+
+describe('promptListResponseSchema total nullability', () => {
+  const item = {
+    week_number: 1,
+    question: 'How did this week feel?',
+    has_responded: true,
+    response: 'Steady.',
+    timestamp: '2026-05-09T22:31:22Z',
+  };
+
+  it('accepts a null total (count not requested) and keeps it null', () => {
+    const parsed = promptListResponseSchema.parse({ items: [item], total: null, has_more: false });
+    expect(parsed.total).toBeNull();
+    // The fallback a consumer must use never produces NaN.
+    expect(parsed.total ?? parsed.items.length).toBe(1);
+  });
+
+  it('accepts an integer total', () => {
+    const parsed = promptListResponseSchema.parse({ items: [item], total: 42, has_more: true });
+    expect(parsed.total).toBe(42);
+  });
+
+  it('rejects a non-integer total', () => {
+    expect(() =>
+      promptListResponseSchema.parse({ items: [item], total: 1.5, has_more: false }),
     ).toThrow();
   });
 });
