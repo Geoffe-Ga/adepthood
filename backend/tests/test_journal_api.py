@@ -5,7 +5,10 @@ from __future__ import annotations
 from http import HTTPStatus
 
 import pytest
+from cryptography.fernet import Fernet
 from httpx import AsyncClient
+
+from services import journal_encryption
 
 
 def _message_payload(**overrides: object) -> dict[str, object]:
@@ -516,3 +519,29 @@ async def test_user_id_not_in_journal_response(async_client: AsyncClient) -> Non
     list_resp = await async_client.get("/journal/", headers=headers)
     for item in list_resp.json()["items"]:
         assert "user_id" not in item
+
+
+@pytest.mark.asyncio
+async def test_search_rejected_when_encryption_enabled(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With encryption on, keyword search 422s instead of silently returning nothing.
+
+    The message column holds Fernet ciphertext, so an ILIKE substring match can
+    never hit; the endpoint rejects search explicitly (audit-destub-05b).
+    """
+    monkeypatch.setenv("JOURNAL_ENCRYPTION_KEYS", Fernet.generate_key().decode())
+    journal_encryption.reset_cache()
+    try:
+        headers = await _signup(async_client, "searcher")
+        await async_client.post(
+            "/journal/", json=_message_payload(message="encrypted guitar note"), headers=headers
+        )
+        resp = await async_client.get("/journal/?search=guitar", headers=headers)
+        assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+        # A non-search list still works (and round-trips decrypted content).
+        ok = await async_client.get("/journal/", headers=headers)
+        assert ok.status_code == HTTPStatus.OK
+        assert ok.json()["items"][0]["message"] == "encrypted guitar note"
+    finally:
+        journal_encryption.reset_cache()

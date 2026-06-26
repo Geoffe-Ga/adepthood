@@ -10,6 +10,10 @@ Honesty over a hollow flag (audit-destub-05): key presence *is* the switch.
 With no key configured the column stays plaintext (explicitly disabled). A
 configured-but-invalid key, or ciphertext encountered with no key to decrypt
 it, raises rather than silently degrading to plaintext.
+
+The key registry is cached, so a ``JOURNAL_ENCRYPTION_KEYS`` change requires a
+process restart to take effect (rotation is a deploy-time operation); tests call
+``reset_cache`` to pick up a new value within a run.
 """
 
 from __future__ import annotations
@@ -49,7 +53,11 @@ def _registry() -> MultiFernet | None:
 
 
 def is_enabled() -> bool:
-    """Whether journal encryption is active (a valid key is configured)."""
+    """Whether journal encryption is active (a valid key is configured).
+
+    Raises ``JournalEncryptionError`` if a key is configured but invalid (the
+    fail-fast path), so callers never treat a misconfiguration as "disabled".
+    """
     return _registry() is not None
 
 

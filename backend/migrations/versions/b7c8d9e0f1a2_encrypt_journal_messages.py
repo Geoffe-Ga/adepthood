@@ -50,7 +50,9 @@ def _transform_rows(transform: Callable[[str], str]) -> None:
     """Apply ``transform`` (encrypt | decrypt) to every row's ``message``.
 
     A no-op when no key is configured: the encrypt/decrypt helpers pass plaintext
-    through unchanged, so un-keyed environments only get the type change.
+    through unchanged, so un-keyed environments only get the type change. O(n)
+    row-by-row: it reads all rows then issues one UPDATE per changed row, holding
+    the connection for the sweep — acceptable for a one-off journal migration.
     """
     bind = op.get_bind()
     rows = bind.execute(sa.select(_journal.c.id, _journal.c.message)).fetchall()
