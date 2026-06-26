@@ -97,6 +97,36 @@ const TAB_CONFIGS: ReadonlyArray<{
   { name: 'Map', component: MapTab, icon: Compass },
 ];
 
+interface TabHeaderRightProps {
+  onSettings: () => void;
+  onLogout: () => void;
+}
+
+/** Header actions (settings + logout), hoisted to a stable component so it is
+ * not redefined on every ``BottomTabs`` render. */
+const TabHeaderRight = ({ onSettings, onLogout }: TabHeaderRightProps): React.JSX.Element => (
+  <View style={styles.headerRight}>
+    <TouchableOpacity
+      onPress={onSettings}
+      style={styles.headerButton}
+      accessibilityLabel="Open settings"
+      accessibilityRole="button"
+      testID="open-settings-button"
+    >
+      <Text style={styles.headerButtonText}>⚙︎</Text>
+    </TouchableOpacity>
+    <TouchableOpacity
+      onPress={onLogout}
+      style={styles.headerButton}
+      accessibilityLabel="Log out"
+      accessibilityRole="button"
+      testID="logout-button"
+    >
+      <Text style={styles.headerButtonText}>Logout</Text>
+    </TouchableOpacity>
+  </View>
+);
+
 /**
  * Application-wide bottom tab navigation.
  * Each tab corresponds to a major feature area.
@@ -109,34 +139,18 @@ const BottomTabs = (): React.JSX.Element => {
     navigation.navigate('ApiKeySettings');
   }, [navigation]);
 
+  const renderHeaderRight = React.useCallback(
+    () => <TabHeaderRight onSettings={openSettings} onLogout={logout} />,
+    [openSettings, logout],
+  );
+
   return (
     <Tab.Navigator
       initialRouteName="Habits"
       screenOptions={{
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.text.tertiaryAccessible,
-        headerRight: () => (
-          <View style={styles.headerRight}>
-            <TouchableOpacity
-              onPress={openSettings}
-              style={styles.headerButton}
-              accessibilityLabel="Open settings"
-              accessibilityRole="button"
-              testID="open-settings-button"
-            >
-              <Text style={styles.headerButtonText}>⚙︎</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={logout}
-              style={styles.headerButton}
-              accessibilityLabel="Log out"
-              accessibilityRole="button"
-              testID="logout-button"
-            >
-              <Text style={styles.headerButtonText}>Logout</Text>
-            </TouchableOpacity>
-          </View>
-        ),
+        headerRight: renderHeaderRight,
       }}
     >
       {TAB_CONFIGS.map(({ name, component, icon }) => (

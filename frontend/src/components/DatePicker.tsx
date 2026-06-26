@@ -212,23 +212,31 @@ const QuickDateButtons: React.FC<QuickDateButtonsProps> = ({
   minDate,
   maxDate,
   disabledDate,
-}) => (
-  <View style={ROW_STYLE}>
-    {QUICK_OPTIONS.map((option, idx) => (
-      <QuickButton
-        key={option.label}
-        candidate={option.factory()}
-        label={option.label}
-        a11yLabel={option.a11yLabel}
-        style={idx === 0 ? undefined : QUICK_BUTTON_STYLE}
-        onSelectDate={onSelectDate}
-        minDate={minDate}
-        maxDate={maxDate}
-        disabledDate={disabledDate}
-      />
-    ))}
-  </View>
-);
+}) => {
+  // Build the candidate dates once per mount instead of allocating a fresh
+  // Date for every option on every render.
+  const options = React.useMemo(
+    () => QUICK_OPTIONS.map((option) => ({ ...option, candidate: option.factory() })),
+    [],
+  );
+  return (
+    <View style={ROW_STYLE}>
+      {options.map((option, idx) => (
+        <QuickButton
+          key={option.label}
+          candidate={option.candidate}
+          label={option.label}
+          a11yLabel={option.a11yLabel}
+          style={idx === 0 ? undefined : QUICK_BUTTON_STYLE}
+          onSelectDate={onSelectDate}
+          minDate={minDate}
+          maxDate={maxDate}
+          disabledDate={disabledDate}
+        />
+      ))}
+    </View>
+  );
+};
 
 const useCommitDate = (
   onChange: (_value: string) => void,

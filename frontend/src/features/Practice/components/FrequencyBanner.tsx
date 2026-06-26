@@ -68,7 +68,9 @@ interface BannerContentProps {
 }
 
 function BannerContent({ data, swatch, onSwitch }: BannerContentProps) {
-  const textStyle = { color: swatch.text };
+  // Memoised so the three child <Text> rows below receive a stable style
+  // reference across renders instead of a fresh object each time.
+  const textStyle = React.useMemo(() => ({ color: swatch.text }), [swatch.text]);
   return (
     <TouchableOpacity
       accessibilityRole="button"

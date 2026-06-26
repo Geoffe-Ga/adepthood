@@ -110,4 +110,27 @@ describe('StageSelector', () => {
     const pill = getByTestId('stage-pill-3');
     expect(pill.props.accessibilityState).toEqual({ selected: false, disabled: true });
   });
+
+  it('resolves per-stage state by stage_number regardless of array order', () => {
+    // The O(1) keyed-Map lookup must key on stage_number, not array position —
+    // so a shuffled API response still highlights/locks the correct pills.
+    const shuffled: Stage[] = [sampleStages[2]!, sampleStages[0]!, sampleStages[1]!];
+    const { getByTestId } = render(
+      <StageSelector stages={shuffled} selectedStage={2} onSelectStage={onSelectStage} />,
+    );
+
+    // Stage 1 completed (progress 1.0), stage 2 selected+unlocked, stage 3 locked.
+    expect(getByTestId('stage-pill-1').props.accessibilityState).toEqual({
+      selected: false,
+      disabled: false,
+    });
+    expect(getByTestId('stage-pill-2').props.accessibilityState).toEqual({
+      selected: true,
+      disabled: false,
+    });
+    expect(getByTestId('stage-pill-3').props.accessibilityState).toEqual({
+      selected: false,
+      disabled: true,
+    });
+  });
 });
