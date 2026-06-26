@@ -1,12 +1,14 @@
-/* eslint-env jest */
 // audit-ux-01: the Habits screen chrome (overflow menu, mode bar, pagination,
 // energy CTA) must expose accessibilityRole/Label/State so screen-reader users
 // can identify and operate the controls.
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
 // HabitsScreen pulls these in at import time; stub them so the module loads.
+// The modal stubs use the explicit default-export form (the modals are default
+// exports) to match the sibling chrome tests. Factories are inlined because
+// jest hoists jest.mock above module scope, so they cannot reference outer vars.
 jest.mock('expo-notifications', () => ({
   getPermissionsAsync: jest.fn(() => Promise.resolve({ status: 'granted' })),
   requestPermissionsAsync: jest.fn(),
@@ -15,17 +17,21 @@ jest.mock('expo-notifications', () => ({
   getExpoPushTokenAsync: jest.fn(() => Promise.resolve({ data: 'token' })),
 }));
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
-jest.mock('../components/AddHabitModal', () => () => null);
-jest.mock('../components/GoalModal', () => () => null);
-jest.mock('../components/HabitSettingsModal', () => () => null);
-jest.mock('../components/MissedDaysModal', () => () => null);
-jest.mock('../components/OnboardingModal', () => () => null);
-jest.mock('../components/ReorderHabitsModal', () => () => null);
-jest.mock('../components/StatsModal', () => () => null);
+jest.mock('../components/AddHabitModal', () => ({ __esModule: true, default: () => null }));
+jest.mock('../components/GoalModal', () => ({ __esModule: true, default: () => null }));
+jest.mock('../components/HabitSettingsModal', () => ({ __esModule: true, default: () => null }));
+jest.mock('../components/MissedDaysModal', () => ({ __esModule: true, default: () => null }));
+jest.mock('../components/OnboardingModal', () => ({ __esModule: true, default: () => null }));
+jest.mock('../components/ReorderHabitsModal', () => ({ __esModule: true, default: () => null }));
+jest.mock('../components/StatsModal', () => ({ __esModule: true, default: () => null }));
 
 import { EnergyCTA, ModeBar, OverflowMenu, PaginationBar } from '../HabitsScreen';
 
 const noop = (): void => {};
+
+afterEach(() => {
+  jest.clearAllMocks();
+});
 
 describe('HabitsScreen chrome accessibility', () => {
   describe('OverflowMenu', () => {
@@ -60,6 +66,11 @@ describe('HabitsScreen chrome accessibility', () => {
       // The reveal toggle reflects the current allRevealed state in its label.
       expect(getByRole('button', { name: 'Reveal All Habits' })).toBeTruthy();
     });
+
+    it('switches the reveal-toggle label when all habits are revealed', () => {
+      const { getByRole } = render(<OverflowMenu {...baseProps} menuVisible allRevealed />);
+      expect(getByRole('button', { name: 'Lock Unstarted Habits' })).toBeTruthy();
+    });
   });
 
   describe('ModeBar', () => {
@@ -86,6 +97,14 @@ describe('HabitsScreen chrome accessibility', () => {
       );
       expect(getByLabelText('Previous page').props.accessibilityState).toEqual({ disabled: false });
       expect(getByLabelText('Next page').props.accessibilityState).toEqual({ disabled: true });
+    });
+
+    it('enables both controls on a middle page', () => {
+      const { getByLabelText } = render(
+        <PaginationBar page={1} pageCount={3} onPrev={noop} onNext={noop} scale={1} />,
+      );
+      expect(getByLabelText('Previous page').props.accessibilityState).toEqual({ disabled: false });
+      expect(getByLabelText('Next page').props.accessibilityState).toEqual({ disabled: false });
     });
   });
 
