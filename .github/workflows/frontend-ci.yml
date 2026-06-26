@@ -30,6 +30,13 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      # Regression gate (audit-ci-07): fail if any high/critical advisory is
+      # reintroduced. The 41 moderate advisories (Expo SDK 52 toolchain) are
+      # below this threshold and tracked for the SDK upgrade.
+      - name: Security audit (high+)
+        working-directory: frontend
+        run: npm audit --audit-level=high
+
       - name: Lint
         working-directory: frontend
         run: npx eslint . --max-warnings=0
