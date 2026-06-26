@@ -132,10 +132,15 @@ def next_stage_for(progress: StageProgress | None) -> int:
     return progress.current_stage + 1
 
 
-async def _compute_habits_progress(session: AsyncSession, user_id: int, stage_number: int) -> float:
-    """Compute ratio of habits with ≥1 completion to total habits for a stage.
+async def _compute_habits_progress(
+    session: AsyncSession, user_id: int, stage_number: int
+) -> tuple[float, bool]:
+    """Return ``(progress, present)`` for the stage's habit component.
 
-    Returns 0.0 when the user has no habits for this stage.
+    ``progress`` is the ratio of habits with ≥1 completion to total habits;
+    ``present`` is whether the stage has any habits at all. A stage with no
+    habits reports ``(0.0, False)`` so it is excluded from the overall average
+    rather than dragging it down as a 0% component.
     """
     stage_str = str(stage_number)
     # Count total habits for this stage
@@ -146,7 +151,7 @@ async def _compute_habits_progress(session: AsyncSession, user_id: int, stage_nu
     )
     total_habits: int = total_result.scalar() or 0
     if total_habits == 0:
-        return 0.0
+        return 0.0, False
 
     # Count habits that have at least one GoalCompletion (via Goal)
     active_result = await session.execute(
@@ -161,7 +166,7 @@ async def _compute_habits_progress(session: AsyncSession, user_id: int, stage_nu
         .where(Habit.user_id == user_id, Habit.stage == stage_str)
     )
     active_habits: int = active_result.scalar() or 0
-    return min(active_habits / total_habits, 1.0)
+    return min(active_habits / total_habits, 1.0), True
 
 
 async def _compute_course_items_completed(
@@ -179,6 +184,49 @@ async def _compute_course_items_completed(
         )
     )
     return result.scalar() or 0
+
+
+async def _compute_course_items_total(session: AsyncSession, stage_number: int) -> int:
+    """Count the content items that exist for a stage (the course denominator).
+
+    Stage content is global (not per-user), so this is the total a user's
+    completed count is measured against to derive a ``[0, 1]`` fraction.
+    """
+    result = await session.execute(
+        select(func.count())
+        .select_from(StageContent)
+        .join(CourseStage, col(StageContent.course_stage_id) == col(CourseStage.id))
+        .where(CourseStage.stage_number == stage_number)
+    )
+    return result.scalar() or 0
+
+
+async def _count_user_practices(session: AsyncSession, user_id: int, stage_number: int) -> int:
+    """Count the user's selected practices for a stage (the practice presence signal).
+
+    Used to decide whether the practice component is part of the stage at all —
+    a stage the user has selected practices for counts practice in the overall
+    average (as 0% until they log a session), whereas a stage with none excludes
+    it entirely rather than reporting a permanent 0.
+    """
+    result = await session.execute(
+        select(func.count())
+        .select_from(UserPractice)
+        .where(UserPractice.user_id == user_id, UserPractice.stage_number == stage_number)
+    )
+    return result.scalar() or 0
+
+
+def _average_present(components: list[tuple[float, bool]]) -> float:
+    """Average the ``value`` of every present component, or ``0.0`` if none are.
+
+    The overall stage percentage is the mean of the components that actually
+    have data for the stage (habits, practice, course) — so the divisor adapts
+    instead of always being a hardcoded 2, and a stage with a single component
+    reports that component's progress directly.
+    """
+    present = [value for value, is_present in components if is_present]
+    return sum(present) / len(present) if present else 0.0
 
 
 async def compute_stage_progress(
@@ -199,13 +247,21 @@ async def compute_stage_progress(
     )
     practice_count: int = ps_result.scalar() or 0
 
-    habits_progress = await _compute_habits_progress(session, user_id, stage_number)
+    habits_progress, habits_present = await _compute_habits_progress(session, user_id, stage_number)
+    practice_present = await _count_user_practices(session, user_id, stage_number) > 0
     course_items = await _compute_course_items_completed(session, user_id, stage_number)
+    course_total = await _compute_course_items_total(session, stage_number)
 
-    # Overall progress: simple average of available metrics
-    total = habits_progress + (1.0 if practice_count > 0 else 0.0)
-    divisor = 2
-    overall = total / divisor if divisor > 0 else 0.0
+    # Overall = mean of the components that have data; course completion now
+    # moves the headline number, and the divisor adapts to what's present.
+    course_progress = min(course_items / course_total, 1.0) if course_total else 0.0
+    overall = _average_present(
+        [
+            (habits_progress, habits_present),
+            (1.0 if practice_count > 0 else 0.0, practice_present),
+            (course_progress, course_total > 0),
+        ]
+    )
 
     return {
         "habits_progress": round(habits_progress, 2),
@@ -243,46 +299,82 @@ async def _batch_habit_metrics(session: AsyncSession, user_id: int) -> dict[str,
     return {row.stage: (row.total, row.active) for row in result.all()}
 
 
-async def _batch_practice_counts(session: AsyncSession, user_id: int) -> dict[int, int]:
-    """Per-stage practice-session counts for a user in one query (keyed by stage number)."""
+async def _batch_practice_metrics(
+    session: AsyncSession, user_id: int
+) -> dict[int, tuple[int, int]]:
+    """Per-stage ``(selected_practices, sessions)`` for a user in one query.
+
+    Based on ``UserPractice`` (outer-joined to sessions) so the practice
+    component's *presence* is "the user selected a practice for this stage",
+    independent of whether any session was logged — matching the per-stage
+    :func:`_count_user_practices` presence signal.
+    """
     result = await session.execute(
-        select(UserPractice.stage_number, func.count(col(PracticeSession.id)))
-        .select_from(PracticeSession)
-        .join(UserPractice, col(PracticeSession.user_practice_id) == col(UserPractice.id))
-        .where(PracticeSession.user_id == user_id)
+        select(
+            UserPractice.stage_number,
+            func.count(func.distinct(UserPractice.id)).label("selected"),
+            func.count(col(PracticeSession.id)).label("sessions"),
+        )
+        .select_from(UserPractice)
+        .outerjoin(
+            PracticeSession,
+            (col(PracticeSession.user_practice_id) == col(UserPractice.id))
+            & (col(PracticeSession.user_id) == user_id),
+        )
+        .where(UserPractice.user_id == user_id)
         .group_by(col(UserPractice.stage_number))
     )
-    return {row[0]: row[1] for row in result.all()}
+    return {row.stage_number: (row.selected, row.sessions) for row in result.all()}
 
 
-async def _batch_course_counts(session: AsyncSession, user_id: int) -> dict[int, int]:
-    """Per-stage completed-content counts for a user in one query (keyed by stage number)."""
+async def _batch_course_metrics(session: AsyncSession, user_id: int) -> dict[int, tuple[int, int]]:
+    """Per-stage ``(total_items, completed_items)`` for a user in one query.
+
+    Based on ``StageContent`` (outer-joined to the user's completions) so the
+    course component carries both its denominator (presence) and the user's
+    completed count for the ``[0, 1]`` fraction folded into overall progress.
+    """
     result = await session.execute(
-        select(CourseStage.stage_number, func.count(col(ContentCompletion.id)))
-        .select_from(ContentCompletion)
-        .join(StageContent, col(ContentCompletion.content_id) == col(StageContent.id))
+        select(
+            CourseStage.stage_number,
+            func.count(func.distinct(StageContent.id)).label("total"),
+            func.count(func.distinct(ContentCompletion.id)).label("completed"),
+        )
+        .select_from(StageContent)
         .join(CourseStage, col(StageContent.course_stage_id) == col(CourseStage.id))
-        .where(ContentCompletion.user_id == user_id)
+        .outerjoin(
+            ContentCompletion,
+            (col(ContentCompletion.content_id) == col(StageContent.id))
+            & (col(ContentCompletion.user_id) == user_id),
+        )
         .group_by(col(CourseStage.stage_number))
     )
-    return {row[0]: row[1] for row in result.all()}
+    return {row.stage_number: (row.total, row.completed) for row in result.all()}
 
 
 def _assemble_stage_progress(
     stage_number: int,
     habit_metrics: dict[str, tuple[int, int]],
-    practice_counts: dict[int, int],
-    course_counts: dict[int, int],
+    practice_metrics: dict[int, tuple[int, int]],
+    course_metrics: dict[int, tuple[int, int]],
 ) -> dict[str, float | int]:
     """Build one stage's progress dict from the batched lookups (parity with the loop)."""
-    total, active = habit_metrics.get(str(stage_number), (0, 0))
-    habits_progress = min(active / total, 1.0) if total > 0 else 0.0
-    practice_count = practice_counts.get(stage_number, 0)
-    overall = (habits_progress + (1.0 if practice_count > 0 else 0.0)) / 2
+    total_habits, active_habits = habit_metrics.get(str(stage_number), (0, 0))
+    habits_progress = min(active_habits / total_habits, 1.0) if total_habits > 0 else 0.0
+    selected, sessions = practice_metrics.get(stage_number, (0, 0))
+    total_course, completed_course = course_metrics.get(stage_number, (0, 0))
+    course_progress = min(completed_course / total_course, 1.0) if total_course > 0 else 0.0
+    overall = _average_present(
+        [
+            (habits_progress, total_habits > 0),
+            (1.0 if sessions > 0 else 0.0, selected > 0),
+            (course_progress, total_course > 0),
+        ]
+    )
     return {
         "habits_progress": round(habits_progress, 2),
-        "practice_sessions_completed": practice_count,
-        "course_items_completed": course_counts.get(stage_number, 0),
+        "practice_sessions_completed": sessions,
+        "course_items_completed": completed_course,
         "overall_progress": round(overall, 2),
     }
 
@@ -308,11 +400,11 @@ async def compute_stage_progress_batch(
     if not stage_numbers:
         return {}
     habit_metrics = await _batch_habit_metrics(session, user_id)
-    practice_counts = await _batch_practice_counts(session, user_id)
-    course_counts = await _batch_course_counts(session, user_id)
+    practice_metrics = await _batch_practice_metrics(session, user_id)
+    course_metrics = await _batch_course_metrics(session, user_id)
     return {
         stage_number: _assemble_stage_progress(
-            stage_number, habit_metrics, practice_counts, course_counts
+            stage_number, habit_metrics, practice_metrics, course_metrics
         )
         for stage_number in stage_numbers
     }

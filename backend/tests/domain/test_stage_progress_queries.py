@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Iterator
 from contextlib import contextmanager
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 import pytest_asyncio
@@ -25,10 +25,16 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlmodel import SQLModel
 
-from domain.stage_progress import get_stage_habit_history
+from domain.stage_progress import compute_stage_progress, get_stage_habit_history
+from models.content_completion import ContentCompletion
+from models.course_stage import CourseStage
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
+from models.practice import Practice
+from models.practice_session import PracticeSession
+from models.stage_content import StageContent
+from models.user_practice import UserPractice
 
 # Aggregation should be O(1) queries irrespective of habit/goal count.
 _MAX_QUERIES_FOR_HABIT_HISTORY = 2
@@ -289,3 +295,181 @@ async def test_habit_history_is_empty_when_user_has_no_habits(
     assert result == []
     # Only the habits SELECT should have been issued; no follow-up join.
     assert len(queries) == 1
+
+
+# -- audit-destub-07: compute_stage_progress overall calc -------------------
+
+_STAGE = 1
+_USER = 1
+
+
+async def _seed_habits(
+    session: AsyncSession, user_id: int, stage: int, *, total: int, active: int
+) -> None:
+    """Seed ``total`` habits for a stage, ``active`` of which have a completion."""
+    habits = [
+        Habit(
+            name=f"H{i}",
+            icon="⭐",
+            start_date=date(2026, 1, 1),
+            energy_cost=1,
+            energy_return=1,
+            user_id=user_id,
+            stage=str(stage),
+            streak=0,
+        )
+        for i in range(total)
+    ]
+    session.add_all(habits)
+    await session.commit()
+    for h in habits:
+        await session.refresh(h)
+    for i, h in enumerate(habits):
+        goal = Goal(
+            habit_id=h.id,
+            title="g",
+            tier="t",
+            target=10,
+            target_unit="reps",
+            frequency=1,
+            frequency_unit="per_day",
+        )
+        session.add(goal)
+        await session.commit()
+        await session.refresh(goal)
+        if i < active:
+            session.add(GoalCompletion(goal_id=goal.id, user_id=user_id, completed_units=10))
+            await session.commit()
+
+
+async def _seed_course(
+    session: AsyncSession, user_id: int, stage: int, *, total: int, completed: int
+) -> None:
+    """Seed ``total`` content items for a stage, ``completed`` marked done by the user."""
+    course_stage = CourseStage(
+        title="t",
+        subtitle="s",
+        stage_number=stage,
+        overview_url="u",
+        category="c",
+        aspect="a",
+        spiral_dynamics_color="beige",
+        growing_up_stage="g",
+        divine_gender_polarity="p",
+        relationship_to_free_will="r",
+        free_will_description="d",
+    )
+    session.add(course_stage)
+    await session.commit()
+    await session.refresh(course_stage)
+    contents = [
+        StageContent(
+            course_stage_id=course_stage.id,
+            title=f"c{i}",
+            content_type="essay",
+            release_day=i,
+            url="u",
+        )
+        for i in range(total)
+    ]
+    session.add_all(contents)
+    await session.commit()
+    for c in contents:
+        await session.refresh(c)
+    for i in range(completed):
+        session.add(ContentCompletion(user_id=user_id, content_id=contents[i].id))
+    await session.commit()
+
+
+async def _seed_practice(
+    session: AsyncSession, user_id: int, stage: int, *, logged_session: bool
+) -> None:
+    """Seed a selected practice for a stage, optionally with a logged session."""
+    practice = Practice(
+        stage_number=stage,
+        name="P",
+        description="d",
+        instructions="i",
+        default_duration_minutes=5.0,
+        approved=True,
+    )
+    session.add(practice)
+    await session.commit()
+    await session.refresh(practice)
+    user_practice = UserPractice(
+        user_id=user_id, practice_id=practice.id, stage_number=stage, start_date=date(2026, 1, 1)
+    )
+    session.add(user_practice)
+    await session.commit()
+    await session.refresh(user_practice)
+    if logged_session:
+        session.add(
+            PracticeSession(
+                user_id=user_id,
+                user_practice_id=user_practice.id,
+                duration_minutes=5.0,
+                timestamp=datetime(2026, 1, 2, tzinfo=UTC),
+            )
+        )
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_overall_progress_is_zero_when_no_component_has_data(
+    isolated_session: tuple[AsyncSession, AsyncEngine],
+) -> None:
+    """A stage with no habits, practices, or course content reports 0.0 (no ZeroDivision)."""
+    session, _ = isolated_session
+    result = await compute_stage_progress(session, _USER, _STAGE)
+    assert result["overall_progress"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_overall_progress_reflects_course_completion_alone(
+    isolated_session: tuple[AsyncSession, AsyncEngine],
+) -> None:
+    """Course-only stage: completion moves the headline number, divisor is 1."""
+    session, _ = isolated_session
+    await _seed_course(session, _USER, _STAGE, total=4, completed=2)
+    result = await compute_stage_progress(session, _USER, _STAGE)
+    # 2/4 course, no other component → overall == course fraction (divisor 1).
+    assert result["course_items_completed"] == 2
+    assert result["overall_progress"] == 0.5
+
+
+@pytest.mark.asyncio
+async def test_overall_progress_uses_single_component_directly(
+    isolated_session: tuple[AsyncSession, AsyncEngine],
+) -> None:
+    """Habits-only stage reports the habit fraction directly (divisor adapts to 1)."""
+    session, _ = isolated_session
+    await _seed_habits(session, _USER, _STAGE, total=2, active=1)
+    result = await compute_stage_progress(session, _USER, _STAGE)
+    assert result["habits_progress"] == 0.5
+    assert result["overall_progress"] == 0.5
+
+
+@pytest.mark.asyncio
+async def test_overall_progress_averages_all_present_components(
+    isolated_session: tuple[AsyncSession, AsyncEngine],
+) -> None:
+    """All three present → mean of habits (0.5), practice (1.0), course (0.5) = 0.67."""
+    session, _ = isolated_session
+    await _seed_habits(session, _USER, _STAGE, total=2, active=1)
+    await _seed_practice(session, _USER, _STAGE, logged_session=True)
+    await _seed_course(session, _USER, _STAGE, total=4, completed=2)
+    result = await compute_stage_progress(session, _USER, _STAGE)
+    assert result["overall_progress"] == round((0.5 + 1.0 + 0.5) / 3, 2)
+
+
+@pytest.mark.asyncio
+async def test_present_but_incomplete_practice_drags_the_average(
+    isolated_session: tuple[AsyncSession, AsyncEngine],
+) -> None:
+    """A selected-but-unlogged practice counts as a present 0% component, not excluded."""
+    session, _ = isolated_session
+    await _seed_habits(session, _USER, _STAGE, total=1, active=1)  # habits 1.0
+    await _seed_practice(session, _USER, _STAGE, logged_session=False)  # practice 0.0, present
+    result = await compute_stage_progress(session, _USER, _STAGE)
+    assert result["practice_sessions_completed"] == 0
+    assert result["overall_progress"] == 0.5  # (1.0 + 0.0) / 2
