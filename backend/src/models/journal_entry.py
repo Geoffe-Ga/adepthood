@@ -5,13 +5,10 @@ from typing import TYPE_CHECKING
 from sqlalchemy import Column, DateTime, Index
 from sqlmodel import Field, Relationship, SQLModel
 
+from services.journal_encryption import EncryptedString
+
 if TYPE_CHECKING:
     from .user import User
-
-# NOTE: ``message`` is stored as PLAINTEXT. Column-level encryption at rest is
-# not implemented — the previous ``ENCRYPTION_AT_REST_ENABLED`` flag advertised
-# a guarantee the code never delivered, so it was removed. Real Fernet
-# encryption (key rotation via KMS, row migration) is tracked in #219.
 
 
 class JournalTag(enum.StrEnum):
@@ -62,7 +59,10 @@ class JournalEntry(SQLModel, table=True):
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
-    message: str = Field(max_length=10_000)
+    # Encrypted at rest via EncryptedString (audit-destub-05b). Input length is
+    # capped upstream (request schema + sanitizer), so no Field max_length here —
+    # the column is Text to fit the ciphertext (which exceeds the plaintext).
+    message: str = Field(sa_column=Column(EncryptedString(), nullable=False))
     sender: str = Field(max_length=10)  # 'user' or 'bot'
     user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
     tag: str = Field(default=JournalTag.FREEFORM, max_length=50)
