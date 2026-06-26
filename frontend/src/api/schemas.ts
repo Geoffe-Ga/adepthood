@@ -228,6 +228,35 @@ export const promptListResponseSchema = z.object({
 
 export type PromptListResponseSchemaT = z.infer<typeof promptListResponseSchema>;
 
+export const journalTagSchema = z.enum([
+  'freeform',
+  'stage_reflection',
+  'practice_note',
+  'habit_note',
+]);
+
+/** One journal message (mirrors the backend ``JournalMessage`` response). */
+export const journalMessageSchema = z.object({
+  id: z.number().int(),
+  message: z.string(),
+  sender: z.enum(['user', 'bot']),
+  // Same ISO-8601 contract as every other timestamp column (goal completions
+  // etc.) — bare z.string() would silently accept "not-a-date".
+  timestamp: isoDateTime,
+  tag: journalTagSchema,
+  practice_session_id: z.number().int().nullable(),
+  user_practice_id: z.number().int().nullable(),
+});
+
+/** Journal list envelope: ``{ items, total, has_more }`` (bespoke, not ``Page``). */
+export const journalListResponseSchema = z.object({
+  items: z.array(journalMessageSchema),
+  total: z.number().int(),
+  has_more: z.boolean(),
+});
+
+export type JournalListResponseSchemaT = z.infer<typeof journalListResponseSchema>;
+
 // ---------------------------------------------------------------------------
 // Lenient schemas for legacy endpoints (gradually tightened)
 // ---------------------------------------------------------------------------

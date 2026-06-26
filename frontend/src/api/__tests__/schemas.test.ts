@@ -5,6 +5,7 @@ import {
   goalSchema,
   habitSchema,
   habitWithGoalsSchema,
+  journalListResponseSchema,
   promptListResponseSchema,
 } from '../schemas';
 
@@ -214,6 +215,70 @@ describe('promptListResponseSchema total nullability', () => {
   it('rejects a non-integer total', () => {
     expect(() =>
       promptListResponseSchema.parse({ items: [item], total: 1.5, has_more: false }),
+    ).toThrow();
+  });
+
+  it('rejects a non-array items envelope', () => {
+    expect(() =>
+      promptListResponseSchema.parse({ items: 'nope', total: null, has_more: false }),
+    ).toThrow();
+  });
+
+  it('rejects an envelope missing has_more', () => {
+    expect(() => promptListResponseSchema.parse({ items: [], total: null })).toThrow();
+  });
+});
+
+describe('journalListResponseSchema validation', () => {
+  const message = {
+    id: 1,
+    message: 'A quiet morning.',
+    sender: 'user',
+    timestamp: '2026-05-09T22:31:22Z',
+    tag: 'freeform',
+    practice_session_id: null,
+    user_practice_id: null,
+  };
+
+  it('round-trips a well-formed envelope with nullable links intact', () => {
+    const parsed = journalListResponseSchema.parse({
+      items: [message, { ...message, id: 2, sender: 'bot', practice_session_id: 7 }],
+      total: 2,
+      has_more: false,
+    });
+    expect(parsed.items).toHaveLength(2);
+    expect(parsed.items[0]?.practice_session_id).toBeNull();
+    expect(parsed.items[1]?.practice_session_id).toBe(7);
+    expect(parsed.total).toBe(2);
+  });
+
+  it('rejects a non-array items envelope', () => {
+    expect(() =>
+      journalListResponseSchema.parse({ items: null, total: 0, has_more: false }),
+    ).toThrow();
+  });
+
+  it('rejects an envelope missing has_more', () => {
+    expect(() => journalListResponseSchema.parse({ items: [message], total: 1 })).toThrow();
+  });
+
+  it('rejects an unknown sender', () => {
+    expect(() =>
+      journalListResponseSchema.parse({
+        items: [{ ...message, sender: 'system' }],
+        total: 1,
+        has_more: false,
+      }),
+    ).toThrow();
+  });
+
+  it('rejects a non-ISO timestamp (same contract as other timestamp columns)', () => {
+    expect(() =>
+      journalListResponseSchema.parse({
+        items: [{ ...message, timestamp: 'not-a-date' }],
+        total: 1,
+        has_more: false,
+      }),
     ).toThrow();
   });
 });

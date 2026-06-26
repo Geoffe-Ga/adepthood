@@ -5,6 +5,7 @@ import {
   authResponseSchema,
   habitWithGoalsSchema,
   isTier,
+  journalListResponseSchema,
   loginAuthResponseSchema,
   pageSchema,
   passwordResetAcceptedSchema,
@@ -1178,7 +1179,10 @@ export const journal = {
     if (params.limit != null) query.set('limit', String(params.limit));
     if (params.offset != null) query.set('offset', String(params.offset));
     const qs = query.toString();
-    return request<JournalListResponse>(`/journal${qs ? `?${qs}` : ''}`, { token });
+    return request<JournalListResponse>(`/journal${qs ? `?${qs}` : ''}`, {
+      token,
+      schema: journalListResponseSchema as unknown as z.ZodType<JournalListResponse>,
+    });
   },
   get(entryId: number, token?: string): Promise<JournalMessage> {
     return request<JournalMessage>(`/journal/${entryId}`, { token });
