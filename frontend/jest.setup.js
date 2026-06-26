@@ -29,3 +29,23 @@ jest.mock('react-native-reanimated', () => {
     );
   }
 });
+
+jest.mock('react-native-safe-area-context', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+  const defaultInsets = { top: 0, bottom: 0, left: 0, right: 0 };
+  const defaultFrame = { x: 0, y: 0, width: 390, height: 844 };
+  const SafeAreaInsetsContext = React.createContext(null);
+  const SafeAreaFrameContext = React.createContext(defaultFrame);
+  const SafeAreaProvider = ({ children }) => React.createElement(React.Fragment, null, children);
+  const SafeAreaView = ({ children, ...props }) => React.createElement(View, props, children);
+  return {
+    SafeAreaInsetsContext,
+    SafeAreaFrameContext,
+    initialWindowMetrics: { insets: defaultInsets, frame: defaultFrame },
+    useSafeAreaInsets: () => React.useContext(SafeAreaInsetsContext) ?? defaultInsets,
+    useSafeAreaFrame: () => React.useContext(SafeAreaFrameContext) ?? defaultFrame,
+    SafeAreaProvider,
+    SafeAreaView,
+  };
+});

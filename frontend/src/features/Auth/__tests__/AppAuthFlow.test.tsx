@@ -29,6 +29,8 @@ jest.mock('@/context/AuthContext', () => ({
 jest.mock('react-native-safe-area-context', () => ({
   SafeAreaProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SafeAreaView: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  // ToastProvider (rendered inside App) reads the top inset.
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
 // Mock navigators to simple pass-through components.  ``useNavigation``

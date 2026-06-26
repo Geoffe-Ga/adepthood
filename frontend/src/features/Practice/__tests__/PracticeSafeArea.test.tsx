@@ -9,6 +9,10 @@ import { render } from '@testing-library/react-native';
 import React from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+// This suite deliberately exercises the REAL provider → useSafeAreaInsets chain,
+// so opt out of the global jest.setup safe-area mock for this file only.
+jest.unmock('react-native-safe-area-context');
+
 import type { PracticeItem, UserPractice } from '@/api';
 
 const mockPracticesCreate = jest.fn();
