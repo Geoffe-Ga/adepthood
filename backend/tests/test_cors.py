@@ -118,8 +118,8 @@ def test_dev_env_warns_when_prod_domain_set(caplog: pytest.LogCaptureFixture) ->
 
 
 def test_credentials_with_wildcard_origin_raises() -> None:
-    """BUG-INFRA-005: ``*`` plus credentials must fail closed at startup."""
-    with pytest.raises(RuntimeError, match="allow_credentials"):
+    """BUG-INFRA-005: a wildcard origin must fail closed at startup."""
+    with pytest.raises(RuntimeError, match="explicit origins"):
         _assert_credentials_safe(["*"])
 
 
@@ -234,7 +234,8 @@ def test_cross_origin_post_omits_credentials_header() -> None:
     # must still be present so the browser can read the response.
     assert response.status_code == HTTPStatus.UNAUTHORIZED
     assert response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
-    assert response.headers.get("access-control-allow-credentials") != "true"
+    # Header omitted entirely (credentials mode off), not set to any value.
+    assert response.headers.get("access-control-allow-credentials") is None
 
 
 def test_forbidden_origin_no_cors_headers() -> None:

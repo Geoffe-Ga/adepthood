@@ -45,7 +45,8 @@ def test_preflight_omits_allow_credentials() -> None:
         },
     )
     assert response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
-    assert response.headers.get("access-control-allow-credentials") != "true"
+    # Header omitted entirely (credentials mode off), not set to any value.
+    assert response.headers.get("access-control-allow-credentials") is None
 
 
 @pytest.mark.asyncio
@@ -63,5 +64,7 @@ async def test_bearer_request_from_allowed_origin_succeeds(async_client: AsyncCl
         headers={"Authorization": f"Bearer {token}", "Origin": ALLOWED_ORIGIN},
     )
     assert resp.status_code == HTTPStatus.OK
+    # CORS headers are still emitted for the authenticated cross-origin response.
+    assert resp.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
     # Auth rode entirely on the Bearer header — no Set-Cookie / cookie reliance.
     assert "set-cookie" not in {k.lower() for k in resp.headers}
