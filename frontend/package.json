@@ -83,6 +83,8 @@
   "version": "1.0.0",
   "overrides": {
     "@xmldom/xmldom": "0.8.13",
-    "tar": "7.5.17"
+    "tar": "7.5.17",
+    "markdown-it": "14.2.0",
+    "linkify-it": "5.0.1"
   }
 }
