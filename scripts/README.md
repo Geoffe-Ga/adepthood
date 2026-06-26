@@ -13,7 +13,7 @@ scripts/
 │   ├── check-all.sh   # Run lint + format + typecheck + security + complexity + tests
 │   ├── fix-all.sh     # Auto-fix linting and formatting
 │   ├── lint.sh        # ruff
-│   ├── format.sh      # black + isort
+│   ├── format.sh      # ruff format (import order via ruff)
 │   ├── typecheck.sh   # mypy
 │   ├── test.sh        # pytest (--unit / --integration / --e2e / --all)
 │   ├── coverage.sh    # pytest with coverage (≥90%)
