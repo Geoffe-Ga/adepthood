@@ -205,18 +205,18 @@ def get_cors_origins(env: str | None = None) -> list[str]:
 
 
 def _assert_credentials_safe(origins: list[str]) -> None:
-    """Reject ``*`` in the CORS allow-list when credentials are enabled.
+    """Reject ``*`` in the CORS allow-list; require explicit origins.
 
-    BUG-INFRA-005: ``Access-Control-Allow-Origin: *`` plus
-    ``Access-Control-Allow-Credentials: true`` is forbidden by the CORS
-    spec and silently ignored by browsers.  Failing closed at startup
-    surfaces the misconfiguration immediately instead of letting a
-    misbehaving prod env appear to be working.
+    Originally guarded the spec-forbidden ``Access-Control-Allow-Origin: *`` +
+    ``Access-Control-Allow-Credentials: true`` combo (BUG-INFRA-005). Credentials
+    mode is now off, but a wildcard origin is still rejected as defense-in-depth:
+    explicit origins keep fine-grained CORS control regardless of credentials.
+    Failing closed at startup surfaces the misconfiguration immediately.
     """
     if "*" in origins:
         raise RuntimeError(
-            "CORS allow-list contains '*' but allow_credentials=True. "
-            "Browsers will reject the response — pick explicit origins instead."
+            "CORS allow-list contains '*'. Use explicit origins — a wildcard "
+            "origin disables fine-grained CORS control regardless of credentials mode."
         )
 
 
@@ -400,7 +400,10 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True,
+    # The API authenticates with ``Authorization: Bearer`` tokens and sets no
+    # cookies, so credentials mode is unnecessary; disabling it shrinks the CORS
+    # attack surface and avoids the ``*``-origin restriction (audit §5.3).
+    allow_credentials=False,
     allow_methods=ALLOWED_METHODS,
     allow_headers=ALLOWED_HEADERS,
     expose_headers=EXPOSED_HEADERS,
