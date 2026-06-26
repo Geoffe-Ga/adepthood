@@ -29,6 +29,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { defaultConfigFor, suggestedDurationFor } from '../configurator/defaults';
 import CardMeditationForm from '../configurator/forms/CardMeditationForm';
@@ -132,24 +133,32 @@ export function CreatePracticeWizard(props: CreatePracticeWizardProps): React.JS
   const submit = useSubmitController(props, state);
   const goTo = (next: WizardStep) => setState((prev) => ({ ...prev, step: next }));
   const setMode = (mode: PickableMode) => setState((prev) => transitionMode(prev, mode));
+  const insets = useSafeAreaInsets();
+  // Insets live on an outer View (not the KeyboardAvoidingView, which owns its
+  // own bottom padding from the keyboard height); the KAV composes inside it.
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={styles.screen}
+    <View
+      style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
       testID="create-practice-wizard"
     >
-      <StepIndicator step={state.step} />
-      <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
-        <StepView
-          state={state}
-          setState={setState}
-          goTo={goTo}
-          setMode={setMode}
-          submit={submit}
-          onPickPreset={() => props.navigation.navigate('Tabs', { screen: 'Catalog' })}
-        />
-      </ScrollView>
-    </KeyboardAvoidingView>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.screen}
+        testID="create-practice-keyboard-avoider"
+      >
+        <StepIndicator step={state.step} />
+        <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+          <StepView
+            state={state}
+            setState={setState}
+            goTo={goTo}
+            setMode={setMode}
+            submit={submit}
+            onPickPreset={() => props.navigation.navigate('Tabs', { screen: 'Catalog' })}
+          />
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 

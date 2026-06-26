@@ -29,6 +29,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { type PracticeItem, practices } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
@@ -90,9 +91,11 @@ export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Eleme
     ({ item }: { item: PracticeItem }) => <PracticeRow practice={item} onDetail={onDetail} />,
     [onDetail],
   );
+  const insets = useSafeAreaInsets();
+  const containerStyle = [styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }];
 
   return (
-    <View style={styles.screen}>
+    <View style={containerStyle} testID="practice-catalog-safe-area">
       <SectionList<PracticeItem, CatalogSection>
         testID="practice-catalog-screen"
         sections={state.loading || state.error !== null ? [] : sections}

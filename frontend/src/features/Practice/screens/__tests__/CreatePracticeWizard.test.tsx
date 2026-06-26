@@ -6,6 +6,19 @@ import React from 'react';
 import type { PracticeItem, UserPractice } from '@/api';
 import type { ModeConfig } from '@/features/Practice/engine/types';
 
+// The wizard reads useSafeAreaInsets; stub it with non-zero insets (no
+// SafeAreaProvider in tests) so the safe-area padding is observable.
+jest.mock('react-native-safe-area-context', () => {
+  const ReactMod = require('react');
+  const passthrough = ({ children }: { children: unknown }) =>
+    ReactMod.createElement(ReactMod.Fragment, null, children);
+  return {
+    SafeAreaProvider: passthrough,
+    SafeAreaView: passthrough,
+    useSafeAreaInsets: () => ({ top: 47, bottom: 34, left: 0, right: 0 }),
+  };
+});
+
 const createdPractice: PracticeItem = {
   id: 501,
   stage_number: 4,
@@ -107,6 +120,14 @@ describe('CreatePracticeWizard — step navigation', () => {
     expect(view.getByTestId('create-practice-step-entry')).toBeTruthy();
     expect(view.getByTestId('create-practice-from-preset')).toBeTruthy();
     expect(view.getByTestId('create-practice-from-scratch')).toBeTruthy();
+  });
+
+  it('applies safe-area insets to the wizard container', () => {
+    const { view } = renderScreen();
+    expect(view.getByTestId('create-practice-wizard')).toHaveStyle({
+      paddingTop: 47,
+      paddingBottom: 34,
+    });
   });
 
   it('start-from-scratch advances to the mode picker', () => {
