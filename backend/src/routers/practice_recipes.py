@@ -41,7 +41,11 @@ from models.practice import Practice
 from models.practice_recipe import PracticeRecipe, PracticeRecipeStep
 from models.user_practice import UserPractice
 from routers.auth import get_current_user
-from routers.user_practices import EmbeddedSessionsParams, load_recent_sessions
+from routers.user_practices import (
+    EmbeddedSessionsParams,
+    build_user_practice_detail,
+    load_recent_sessions,
+)
 from schemas import Page, PaginationParams, build_page
 from schemas.pagination import paginate_query
 from schemas.practice import UserPracticeDetail
@@ -360,7 +364,7 @@ async def apply_recipe_to_user_practice(
     session: Annotated[AsyncSession, Depends(get_session)],
     user_practice: Annotated[UserPractice, Depends(require_owned_user_practice)],
     embed: Annotated[EmbeddedSessionsParams, Depends()],
-) -> dict[str, Any]:
+) -> UserPracticeDetail:
     """Materialise a recipe and store it as the UserPractice's override.
 
     Re-uses ``require_owned_user_practice`` (the same dependency the
@@ -389,9 +393,7 @@ async def apply_recipe_to_user_practice(
     # ``/user-practices/{id}`` and ``customize_user_practice`` return (the
     # frontend store merges it back, so it must stay present — but bounded,
     # issue #474). Older sessions remain reachable via ``list_sessions``.
-    sessions, sessions_total, sessions_has_more = await load_recent_sessions(
-        session, cast("int", user_practice.id), embed
-    )
+    sessions_page = await load_recent_sessions(session, cast("int", user_practice.id), embed)
     logger.info(
         "practice_recipe_applied",
         extra={
@@ -400,17 +402,9 @@ async def apply_recipe_to_user_practice(
             "user_id": user_id,
         },
     )
-    return {
-        "id": user_practice.id,
-        "practice_id": user_practice.practice_id,
-        "stage_number": user_practice.stage_number,
-        "start_date": user_practice.start_date,
-        "end_date": user_practice.end_date,
-        "custom_name": user_practice.custom_name,
-        "mode_config_override": user_practice.mode_config_override,
-        "effective_name": effective_name(practice, user_practice),
-        "effective_config": effective_config(practice, user_practice).model_dump(),
-        "sessions": sessions,
-        "sessions_total": sessions_total,
-        "sessions_has_more": sessions_has_more,
-    }
+    return build_user_practice_detail(
+        user_practice,
+        effective_name=effective_name(practice, user_practice),
+        effective_config=effective_config(practice, user_practice).model_dump(),
+        sessions_page=sessions_page,
+    )
