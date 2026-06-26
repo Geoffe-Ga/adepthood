@@ -148,3 +148,10 @@ class StageProgressRepairResult(BaseModel):
     completed_stages: list[int]
     stages_added: list[int]
     stages_removed: list[int]
+
+
+class EnergyPlanCleanupResult(BaseModel):
+    """Outcome of an energy-plan retention sweep: rows deleted + the window used."""
+
+    deleted: int
+    older_than_days: int

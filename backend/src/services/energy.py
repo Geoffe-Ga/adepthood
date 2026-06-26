@@ -31,6 +31,10 @@ from schemas import EnergyPlan, EnergyPlanRequest, EnergyPlanResponse
 
 logger = logging.getLogger(__name__)
 
+# Retention window for persisted plans (durable rows replaced the old 1-hour
+# TTLCache); the cleanup deletes rows older than this. See delete_expired_energy_plans.
+ENERGY_PLAN_RETENTION_DAYS = 30
+
 
 async def _load_owned_habits(
     session: AsyncSession, user_id: int, requested_ids: list[int]
@@ -193,13 +197,6 @@ async def get_or_create_persisted_plan(
     return await _persist(session, user_id, idempotency_key, response)
 
 
-# Durable plans replaced the old 1-hour TTLCache, so rows now persist without a
-# TTL. A cleanup pass deletes rows older than this window — generous enough to
-# preserve idempotent replays for keyed retries, while bounding the table that
-# unkeyed (daily-plan) requests would otherwise grow unbounded.
-ENERGY_PLAN_RETENTION_DAYS = 30
-
-
 async def delete_expired_energy_plans(
     session: AsyncSession,
     *,
@@ -207,10 +204,15 @@ async def delete_expired_energy_plans(
 ) -> int:
     """Delete persisted energy plans older than ``older_than_days`` and commit.
 
-    Returns the number of rows removed. Intended to be invoked periodically
-    (cron / scheduled job) to bound the ``energyplan`` table's growth from
-    unkeyed requests, which the partial UNIQUE index does not deduplicate.
+    Returns the number of rows removed. Intended to be invoked via the admin
+    maintenance endpoint (or a cron hitting it) to bound the ``energyplan``
+    table's growth from unkeyed requests, which the partial UNIQUE index does
+    not deduplicate. ``older_than_days`` must be positive — ``<= 0`` would set
+    the cutoff at/after "now" and delete every row.
     """
+    if older_than_days <= 0:
+        msg = "older_than_days must be positive"
+        raise ValueError(msg)
     cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
     # ``execute`` is typed ``Result``; a DELETE yields a ``CursorResult`` whose
     # ``rowcount`` is the number of rows removed.
@@ -221,4 +223,10 @@ async def delete_expired_energy_plans(
         ),
     )
     await session.commit()
-    return int(result.rowcount or 0)
+    deleted = int(result.rowcount)
+    if deleted < 0:
+        # The driver doesn't report rowcount; surface it rather than silently
+        # claiming zero deletions.
+        logger.warning("energyplan cleanup ran but the driver did not report a row count")
+        return 0
+    return deleted
