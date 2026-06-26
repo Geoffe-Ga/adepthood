@@ -345,6 +345,9 @@ const StageHistorySection = ({
   }, [stageNumber]);
 
   useEffect(() => {
+    // Auto-fetch once on expand. The ``error`` guard means a failed fetch is
+    // NOT silently re-attempted on collapse→re-expand — the user retries
+    // explicitly via the error state's "Try again" (which clears ``error``).
     if (!expanded || !isUnlocked || history !== null || error || loading) return;
     loadHistory();
   }, [expanded, isUnlocked, history, error, loading, loadHistory]);
@@ -430,13 +433,13 @@ const MapError = ({ message }: { message: string }): React.JSX.Element => (
 // Non-blocking banner for a refresh that failed while cached stages are shown,
 // so a stale map no longer hides the failure (the cold-start MapError covers
 // the no-stages case). Retry re-runs the same loader.
-const MapRefreshErrorBanner = (): React.JSX.Element => (
+const MapRefreshErrorBanner = ({ onRetry }: { onRetry: () => void }): React.JSX.Element => (
   <View style={styles.refreshBanner} testID="map-refresh-error">
     <Text style={styles.refreshBannerText}>
       Couldn&apos;t refresh the map. Showing your last saved progress.
     </Text>
     <TouchableOpacity
-      onPress={() => void stageService.loadStages()}
+      onPress={onRetry}
       accessibilityRole="button"
       accessibilityLabel="Try again"
       style={styles.refreshRetry}
@@ -508,6 +511,8 @@ const MapScreen = (): React.JSX.Element => {
     }
   }, [stages.length, loading]);
 
+  const handleRefresh = useCallback(() => void stageService.loadStages(), []);
+
   const handleNavigate = useCallback(
     (screen: 'Practice' | 'Course' | 'Journal', stage: StageData) => {
       if (navigatingRef.current) return;
@@ -536,7 +541,7 @@ const MapScreen = (): React.JSX.Element => {
   return (
     <View style={styles.container}>
       <MapBackground stages={stages} currentStage={currentStage} onSelectStage={setActiveStage} />
-      {error && stages.length > 0 && <MapRefreshErrorBanner />}
+      {error && stages.length > 0 && <MapRefreshErrorBanner onRetry={handleRefresh} />}
       <StageDetailModal
         activeStage={activeStage}
         onClose={handleCloseModal}
