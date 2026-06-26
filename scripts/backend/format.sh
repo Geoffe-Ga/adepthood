@@ -72,7 +72,7 @@ else
     MODE=""
 fi
 
-# Run ruff format (plus isort-via-ruff for import order)
+# Run ruff format (style/whitespace only; import sorting is a lint-time `I` rule)
 if $VERBOSE; then
     echo "Running ruff format..."
 fi

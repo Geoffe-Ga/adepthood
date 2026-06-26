@@ -3,7 +3,7 @@
 To set up the full development environment, run:
 
 ```bash
-bash /scripts/dev-setup.sh
+bash scripts/dev-setup.sh
 ```
 
 Agents working on this project must abide by the following operating principles:

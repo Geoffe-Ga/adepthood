@@ -36,8 +36,8 @@ Run the development setup script to install shared tooling:
 bash scripts/dev-setup.sh
 ```
  **Prerequisites** (Handled by Setup Script)
-- Node.js (v18+)
-- Python (3.10+)
+- Node.js (v20 — see `frontend/.nvmrc`)
+- Python (3.11+ — CI runs 3.11, 3.12, 3.13)
 - PostgreSQL
 
 ### Frontend

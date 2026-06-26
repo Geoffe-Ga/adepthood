@@ -157,6 +157,7 @@ container, with `SECRET_KEY` and `DATABASE_URL` already set):
 ```python
 from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlmodel import select
 from database import engine
 from models.user import User
 from routers.auth import _hash_password

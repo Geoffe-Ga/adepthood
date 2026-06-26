@@ -19,7 +19,7 @@ adepthood/
     src/
       main.py              # FastAPI app, CORS, router mounting
       database.py          # Async engine, session factory, get_session
-      models/              # 14 SQLModel ORM classes
+      models/              # 26 SQLModel ORM classes
       routers/             # Route handlers (auth, habits, practices, etc.)
       schemas/             # Pydantic request/response DTOs
       domain/              # Business logic (energy, streaks, goals, stages)
