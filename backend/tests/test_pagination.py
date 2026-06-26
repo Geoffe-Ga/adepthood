@@ -13,10 +13,12 @@ from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.practice import Practice
 from schemas import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Page, PaginationParams, build_page
+from schemas import pagination as pag_mod
 
 _SEED_COUNT_SMALL = 3
 _SEED_COUNT_LARGE = 5
@@ -162,3 +164,37 @@ def test_page_schema_round_trip() -> None:
     restored = Page[dict[str, int]].model_validate_json(page.model_dump_json())
     assert restored.items == page.items
     assert restored.total == _ROUND_TRIP_COUNT
+
+
+@pytest.mark.asyncio
+async def test_paginate_query_skips_count_on_bare_path(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bare path issues no COUNT(*); the envelope path counts exactly once."""
+    await _seed(db_session, count=_SEED_COUNT_SMALL)
+    calls = {"n": 0}
+    real_count = pag_mod.count_query_total
+
+    async def _spy(session: AsyncSession, query: object) -> int:
+        calls["n"] += 1
+        return await real_count(session, query)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(pag_mod, "count_query_total", _spy)
+    query = select(Practice)
+
+    # Bare path: no COUNT(*); total is reported as len(items) and ignored upstream.
+    items, total = await pag_mod.paginate_query(
+        db_session, query, PaginationParams(limit=10, offset=0, paginate=False)
+    )
+    assert calls["n"] == 0
+    assert len(items) == _SEED_COUNT_SMALL
+    assert total == _SEED_COUNT_SMALL
+
+    # Envelope path: exactly one COUNT(*), accurate total despite the slice.
+    items_page, total_page = await pag_mod.paginate_query(
+        db_session, query, PaginationParams(limit=_SLICE_LIMIT, offset=0, paginate=True)
+    )
+    assert calls["n"] == 1
+    assert total_page == _SEED_COUNT_SMALL
+    assert len(items_page) == _SLICE_LIMIT
