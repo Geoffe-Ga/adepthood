@@ -26,6 +26,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import PracticeSelector from './PracticeSelector';
 import WeeklyProgress from './WeeklyProgress';
@@ -148,29 +149,35 @@ const ActiveSessionView = ({
   onWriteReflection,
   banner,
   switcher,
-}: ActiveSessionViewProps): React.JSX.Element => (
-  <ScrollView
-    style={styles.screen}
-    contentContainerStyle={styles.scrollContent}
-    testID="practice-screen"
-  >
-    {banner}
-    <ActiveRitualSession
-      key={`practice-${userPractice.id}`}
-      userPractice={userPractice}
-      effectiveName={effectiveName ?? practiceName}
-      effectiveConfig={effectiveConfig}
-      userTimezone={userTimezone}
-      onSessionApply={weekly.increment}
-      onSessionRollback={weekly.decrement}
-      onSessionCommitted={() => void weekly.refresh()}
-      onUserPracticeUpdated={onUserPracticeUpdated}
-      onWriteReflection={onWriteReflection}
-    />
-    <WeeklyProgress count={weekly.count} />
-    {switcher}
-  </ScrollView>
-);
+}: ActiveSessionViewProps): React.JSX.Element => {
+  const insets = useSafeAreaInsets();
+  return (
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={[
+        styles.scrollContent,
+        { paddingTop: insets.top, paddingBottom: insets.bottom },
+      ]}
+      testID="practice-screen"
+    >
+      {banner}
+      <ActiveRitualSession
+        key={`practice-${userPractice.id}`}
+        userPractice={userPractice}
+        effectiveName={effectiveName ?? practiceName}
+        effectiveConfig={effectiveConfig}
+        userTimezone={userTimezone}
+        onSessionApply={weekly.increment}
+        onSessionRollback={weekly.decrement}
+        onSessionCommitted={() => void weekly.refresh()}
+        onUserPracticeUpdated={onUserPracticeUpdated}
+        onWriteReflection={onWriteReflection}
+      />
+      <WeeklyProgress count={weekly.count} />
+      {switcher}
+    </ScrollView>
+  );
+};
 
 interface SelectionViewProps {
   active: ActivePracticeHook;
@@ -192,9 +199,13 @@ const SelectionView = ({
   // ``selectPractice`` is already stable (useCallback in the hook); wrap it once
   // so PracticeCard's React.memo isn't defeated by a fresh arrow each render.
   const { selectPractice } = active;
+  const insets = useSafeAreaInsets();
   const handleSelect = useCallback((id: number) => void selectPractice(id), [selectPractice]);
   return (
-    <View style={styles.screen} testID="practice-screen">
+    <View
+      style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+      testID="practice-screen"
+    >
       <View style={styles.fill} testID="selection-view">
         <PracticeSelector
           practices={active.availablePractices}
@@ -266,11 +277,17 @@ function useWriteReflection(
   );
 }
 
-const LoadingView = (): React.JSX.Element => (
-  <View style={styles.centered} testID="practice-loading">
-    <ActivityIndicator size="large" color={colors.primary} />
-  </View>
-);
+const LoadingView = (): React.JSX.Element => {
+  const insets = useSafeAreaInsets();
+  return (
+    <View
+      style={[styles.centered, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+      testID="practice-loading"
+    >
+      <ActivityIndicator size="large" color={colors.primary} />
+    </View>
+  );
+};
 
 const ErrorView = ({
   error,
@@ -278,18 +295,24 @@ const ErrorView = ({
 }: {
   error: string;
   onRetry: () => Promise<void> | void;
-}): React.JSX.Element => (
-  <View style={styles.centered} testID="practice-error">
-    <Text style={styles.errorText}>{error}</Text>
-    <TouchableOpacity
-      style={styles.retryButton}
-      onPress={() => void onRetry()}
-      testID="retry-button"
+}): React.JSX.Element => {
+  const insets = useSafeAreaInsets();
+  return (
+    <View
+      style={[styles.centered, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+      testID="practice-error"
     >
-      <Text style={styles.retryButtonText}>Retry</Text>
-    </TouchableOpacity>
-  </View>
-);
+      <Text style={styles.errorText}>{error}</Text>
+      <TouchableOpacity
+        style={styles.retryButton}
+        onPress={() => void onRetry()}
+        testID="retry-button"
+      >
+        <Text style={styles.retryButtonText}>Retry</Text>
+      </TouchableOpacity>
+    </View>
+  );
+};
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background.primary },

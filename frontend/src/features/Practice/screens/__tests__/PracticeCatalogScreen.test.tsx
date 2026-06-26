@@ -5,6 +5,19 @@ import React from 'react';
 
 import type { PracticeItem } from '@/api';
 
+// The catalog reads useSafeAreaInsets; stub it with non-zero insets (no
+// SafeAreaProvider in tests) so the safe-area padding is observable.
+jest.mock('react-native-safe-area-context', () => {
+  const ReactMod = require('react');
+  const passthrough = ({ children }: { children: unknown }) =>
+    ReactMod.createElement(ReactMod.Fragment, null, children);
+  return {
+    SafeAreaProvider: passthrough,
+    SafeAreaView: passthrough,
+    useSafeAreaInsets: () => ({ top: 47, bottom: 34, left: 0, right: 0 }),
+  };
+});
+
 const presetA: PracticeItem = {
   id: 1,
   stage_number: 1,
@@ -111,6 +124,15 @@ describe('PracticeCatalogScreen — sections', () => {
     expect(drafts).toBeTruthy();
     expect(view.getByTestId('practice-catalog-row-1')).toBeTruthy();
     expect(view.getByTestId('practice-catalog-row-9')).toBeTruthy();
+  });
+
+  it('applies safe-area insets to the catalog container', async () => {
+    const { view } = renderScreen();
+    await waitForLoad();
+    expect(view.getByTestId('practice-catalog-safe-area')).toHaveStyle({
+      paddingTop: 47,
+      paddingBottom: 34,
+    });
   });
 
   it('renders an empty Imported section because no share-token signal exists yet', async () => {

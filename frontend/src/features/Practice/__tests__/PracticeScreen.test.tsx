@@ -4,6 +4,19 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 
 import type { FrequencyResponse, PracticeItem, UserPractice } from '../../../api';
 
+// PracticeScreen reads useSafeAreaInsets; stub it with non-zero insets (no
+// SafeAreaProvider in tests) so the safe-area padding is observable.
+jest.mock('react-native-safe-area-context', () => {
+  const ReactMod = require('react');
+  const passthrough = ({ children }: { children: unknown }) =>
+    ReactMod.createElement(ReactMod.Fragment, null, children);
+  return {
+    SafeAreaProvider: passthrough,
+    SafeAreaView: passthrough,
+    useSafeAreaInsets: () => ({ top: 47, bottom: 34, left: 0, right: 0 }),
+  };
+});
+
 const samplePractice = (overrides: Partial<PracticeItem> = {}): PracticeItem => ({
   id: 1,
   stage_number: 1,
@@ -245,6 +258,8 @@ describe('PracticeScreen', () => {
     mockFrequency.mockReturnValue(new Promise(() => {}));
     const { getByTestId } = render(<PracticeScreen />);
     expect(getByTestId('practice-loading')).toBeTruthy();
+    // Loading state respects device insets too.
+    expect(getByTestId('practice-loading')).toHaveStyle({ paddingTop: 47, paddingBottom: 34 });
     await act(async () => {
       await Promise.resolve();
     });
@@ -257,6 +272,8 @@ describe('PracticeScreen', () => {
       expect(getByText('Breath Awareness')).toBeTruthy();
       expect(getByTestId('weekly-progress')).toBeTruthy();
     });
+    // The selection surface applies top/bottom safe-area insets.
+    expect(getByTestId('practice-screen')).toHaveStyle({ paddingTop: 47, paddingBottom: 34 });
   });
 
   it('shows error state when the load fails', async () => {
@@ -266,6 +283,7 @@ describe('PracticeScreen', () => {
       expect(getByTestId('practice-error')).toBeTruthy();
       expect(getByText(/couldn't load your practices/i)).toBeTruthy();
     });
+    expect(getByTestId('practice-error')).toHaveStyle({ paddingTop: 47, paddingBottom: 34 });
   });
 
   it('selects a practice via the selector', async () => {
