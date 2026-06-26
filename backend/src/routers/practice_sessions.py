@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Header, Response, status
@@ -18,7 +16,7 @@ from dependencies.ownership import require_owned_user_practice
 from dependencies.timezone import current_user_timezone
 from domain.practice_insights import build_insights
 from domain.practice_resolution import effective_config
-from errors import bad_request, forbidden, not_found
+from errors import bad_request, conflict, forbidden, not_found
 from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.user_practice import UserPractice
@@ -33,6 +31,7 @@ from schemas.practice import (
 )
 from schemas.practice_mode_config import MindfulAnchorConfig
 from schemas.practice_session_metadata import MindfulAnchorMetadata
+from services.practice_session_idempotency import record_session, recorded_session_id
 
 # Window for the insights SQL fetch.  Slightly larger than the 8-week rollup
 # (~56 days) so a session logged late in the oldest bucket still lands in
@@ -168,82 +167,42 @@ async def _resolve_practice_with_mode(
     return practice
 
 
-def _idempotency_cache_key(user_id: int, raw_key: str) -> str:
-    """Return a stable, opaque hash for ``(user_id, raw_key)`` idempotency storage.
+async def _load_session(session: AsyncSession, session_id: int) -> PracticeSession:
+    """Load the recorded idempotent ``PracticeSession`` by id.
 
-    The raw header value may be up to 256 chars of client-controlled text.
-    Hashing it with SHA-256 (a) keeps the cache key bounded, (b) prevents
-    a crafted key from escaping the per-user namespace via a collision
-    across users, and (c) means the raw client token is never stored or
-    logged -- same reasoning as the rate-limit key in ``practices.py``.
-    The ``user:`` prefix keeps the key space disjoint from the raw hash
-    space in any future backing store (Redis, DB column, …).
+    The spend row is FK-tied to the session with ``ondelete=CASCADE``, so a
+    recorded id always resolves to a live row; a miss is an unreachable
+    inconsistency surfaced as 404 rather than silently returning ``None``.
     """
-    digest = hashlib.sha256(f"{user_id}:{raw_key}".encode()).hexdigest()
-    return f"user:{digest}"
+    result = await session.execute(select(PracticeSession).where(PracticeSession.id == session_id))
+    row = result.scalars().first()
+    if row is None:
+        raise not_found("practice_session")
+    return row
 
 
-# Module-level in-process idempotency store.  Maps ``cache_key → session_id``
-# for the lifetime of the process.  This is sufficient for a single-worker
-# deployment; a multi-worker production deployment should replace this with a
-# shared backing store (Redis, DB table) at the same interface.
-# The store is intentionally not bounded -- sessions are small ints so memory
-# growth is negligible for realistic request rates.
-_IDEMPOTENCY_STORE: dict[str, int] = {}
-
-# Per-cache-key locks that serialise the check-then-insert critical section
-# inside ``create_session`` so two concurrent requests with the same
-# ``(user_id, Idempotency-Key)`` cannot both pass the lookup, both insert a
-# fresh row, and both call ``_remember_idempotent_session``.  Without these,
-# the late writer overwrites the early writer's ``session_id`` and the second
-# response no longer matches the first — breaking the idempotency guarantee.
-# The lookup of the lock itself is guarded by a coarser ``_IDEMPOTENCY_LOCKS_GUARD``
-# so the per-key Lock object is initialised exactly once even under contention.
-_IDEMPOTENCY_LOCKS: dict[str, asyncio.Lock] = {}
-_IDEMPOTENCY_LOCKS_GUARD = asyncio.Lock()
-
-
-async def _acquire_idem_lock(cache_key: str) -> asyncio.Lock:
-    """Return the ``asyncio.Lock`` for ``cache_key``, creating it if needed.
-
-    The double-check pattern under ``_IDEMPOTENCY_LOCKS_GUARD`` keeps the
-    lazy initialisation atomic — two concurrent first-time requests cannot
-    each create their own Lock and then race past each other holding
-    different lock objects.
-    """
-    async with _IDEMPOTENCY_LOCKS_GUARD:
-        lock = _IDEMPOTENCY_LOCKS.get(cache_key)
-        if lock is None:
-            lock = asyncio.Lock()
-            _IDEMPOTENCY_LOCKS[cache_key] = lock
-        return lock
-
-
-async def _lookup_idempotent_session(
+async def _insert_with_idempotency(
     session: AsyncSession,
     user_id: int,
     idempotency_key: str,
-) -> PracticeSession | None:
-    """Return the cached ``PracticeSession`` row for an idempotency key, if any.
+    practice_session: PracticeSession,
+) -> PracticeSession:
+    """Record the spend row for the just-staged session, resolving a lost race.
 
-    Split out of ``create_session`` to keep the route handler under
-    xenon's A-rank complexity cap.  Returns ``None`` when no cached
-    session id is known OR when the cached id no longer resolves (the
-    row was deleted between requests, in which case the next POST is
-    treated as a fresh log).
+    Flushes to assign the session id, then records the ``(user_id, key)`` spend.
+    On a duplicate-key collision (another worker recorded this key first) the
+    staged session is rolled back and the winner's recorded session is returned
+    — so concurrent same-key requests yield one session, serialised by the DB
+    UNIQUE constraint rather than a process-local lock.
     """
-    cache_key = _idempotency_cache_key(user_id, idempotency_key)
-    existing_id = _IDEMPOTENCY_STORE.get(cache_key)
-    if existing_id is None:
-        return None
-    result = await session.execute(select(PracticeSession).where(PracticeSession.id == existing_id))
-    return result.scalars().first()
-
-
-def _remember_idempotent_session(user_id: int, idempotency_key: str, session_id: int) -> None:
-    """Persist the ``(user_id, idempotency_key) → session_id`` mapping for future replays."""
-    cache_key = _idempotency_cache_key(user_id, idempotency_key)
-    _IDEMPOTENCY_STORE[cache_key] = session_id
+    await session.flush()
+    if await record_session(session, user_id, idempotency_key, cast("int", practice_session.id)):
+        return practice_session
+    await session.rollback()
+    winner_id = await recorded_session_id(session, user_id, idempotency_key)
+    if winner_id is None:
+        raise conflict("idempotency_in_flight")
+    return await _load_session(session, winner_id)
 
 
 def _build_practice_session(
@@ -280,17 +239,16 @@ async def _perform_create_session(
 ) -> PracticeSession:
     """Lookup-or-insert the practice session under the optional idempotency key.
 
-    Extracted from ``create_session`` so the caller can wrap the entire
-    critical section in a per-key ``asyncio.Lock`` (BUG-PRACTICE-007
-    follow-up): the lookup, the DB insert, and the ``_remember_…`` write
-    must all execute as one atomic unit so two concurrent requests with
-    the same key cannot both miss the cache, both insert, and both
-    remember — clobbering each other's ``session_id`` mapping.
+    The dedup is DB-backed (``services.practice_session_idempotency``): a replay
+    returns the recorded session, and a first write records a spend row in the
+    same transaction. The ``UNIQUE(user_id, idem_key)`` constraint serialises
+    concurrent same-key requests across workers, so no process-local lock is
+    needed (BUG-PRACTICE-007, made durable + cross-worker).
     """
     if idempotency_key is not None:
-        cached = await _lookup_idempotent_session(session, current_user, idempotency_key)
-        if cached is not None:
-            return cached
+        cached_id = await recorded_session_id(session, current_user, idempotency_key)
+        if cached_id is not None:
+            return await _load_session(session, cached_id)
 
     user_practice = await _resolve_user_practice_for_session(
         session, payload.user_practice_id, current_user
@@ -301,11 +259,16 @@ async def _perform_create_session(
         user_id=current_user, payload=payload, practice=practice
     )
     session.add(practice_session)
+
+    if idempotency_key is not None:
+        outcome = await _insert_with_idempotency(
+            session, current_user, idempotency_key, practice_session
+        )
+        if outcome is not practice_session:
+            return outcome  # lost the race; our insert was rolled back
+
     await session.commit()
     await session.refresh(practice_session)
-
-    if idempotency_key is not None and practice_session.id is not None:
-        _remember_idempotent_session(current_user, idempotency_key, practice_session.id)
 
     logger.info(
         "practice_session_logged",
@@ -341,17 +304,13 @@ async def create_session(
 
     Accepts an optional ``Idempotency-Key`` header (BUG-PRACTICE-007): if a
     key is present and a session was already created under the same
-    ``(user_id, key)`` pair, the cached session row is returned without
-    creating a duplicate.  The check-then-insert critical section runs
-    under a per-key ``asyncio.Lock`` so concurrent same-key requests on
-    one worker can never both produce a row.
+    ``(user_id, key)`` pair, the recorded session row is returned without
+    creating a duplicate.  The dedup is backed by the ``practicesessionspend``
+    table (``UNIQUE(user_id, idem_key)``), so it holds across process restarts
+    and workers — the database serialises the check-then-insert race, no
+    process-local lock required.
     """
-    if idempotency_key is None:
-        return await _perform_create_session(payload, current_user, session, None)
-    cache_key = _idempotency_cache_key(current_user, idempotency_key)
-    lock = await _acquire_idem_lock(cache_key)
-    async with lock:
-        return await _perform_create_session(payload, current_user, session, idempotency_key)
+    return await _perform_create_session(payload, current_user, session, idempotency_key)
 
 
 @router.get("/", response_model=None)

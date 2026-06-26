@@ -15,6 +15,7 @@ from .password_reset_token import PasswordResetToken
 from .practice import Practice
 from .practice_recipe import PracticeRecipe, PracticeRecipeStep
 from .practice_session import PracticeSession
+from .practice_session_idempotency import PracticeSessionSpend
 from .practice_share_link import PracticeShareLink
 from .practice_tag import PracticeTag
 from .prompt_response import PromptResponse
@@ -42,6 +43,7 @@ __all__ = [
     "PracticeRecipe",
     "PracticeRecipeStep",
     "PracticeSession",
+    "PracticeSessionSpend",
     "PracticeShareLink",
     "PracticeTag",
     "PromptResponse",
