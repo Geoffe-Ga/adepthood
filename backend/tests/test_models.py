@@ -24,6 +24,7 @@ from sqlmodel import SQLModel
 from models import (
     ChatSpend,
     ContentCompletion,
+    CourseStage,
     EnergyPlan,
     Goal,
     GoalCompletion,
@@ -31,6 +32,7 @@ from models import (
     Habit,
     JournalEntry,
     LLMUsageLog,
+    LoginAttempt,
     PasswordResetToken,
     Practice,
     PracticeRecipe,
@@ -40,6 +42,7 @@ from models import (
     PracticeShareLink,
     PracticeTag,
     PromptResponse,
+    RevokedToken,
     StageContent,
     StageProgress,
     User,
@@ -72,6 +75,9 @@ EXPECTED_TABLES: dict[type, str] = {
     WalletAudit: "walletaudit",
     LLMUsageLog: "llmusagelog",
     PasswordResetToken: "passwordresettoken",  # pragma: allowlist secret
+    CourseStage: "coursestage",
+    LoginAttempt: "loginattempt",
+    RevokedToken: "revokedtoken",  # pragma: allowlist secret
 }
 
 # (Model, column, target_table, expected_ondelete) — ``None`` means no ondelete.
@@ -93,6 +99,7 @@ FOREIGN_KEYS: list[tuple[type, str, str, str | None]] = [
     (UserPractice, "user_id", "user", "CASCADE"),
     (UserPractice, "practice_id", "practice", None),
     (PracticeShareLink, "practice_id", "practice", "CASCADE"),
+    (PracticeShareLink, "created_by_user_id", "user", "SET NULL"),
     (PracticeTag, "owner_user_id", "user", "CASCADE"),
     (PracticeRecipe, "owner_user_id", "user", "CASCADE"),
     (PracticeRecipeStep, "recipe_id", "practicerecipe", "CASCADE"),
@@ -201,14 +208,19 @@ def test_string_column_max_lengths() -> None:
     assert _max_length(Practice, "name") == 255
     assert _max_length(User, "email") == 254
     assert _max_length(PracticeShareLink, "token") == 64
+    assert _max_length(RevokedToken, "jti") == 64
 
 
-def test_goal_completion_timestamp_is_tz_aware_non_null() -> None:
-    """GoalCompletion.timestamp is a non-null timezone-aware DateTime."""
-    column = _table(GoalCompletion).columns["timestamp"]
-    assert isinstance(column.type, DateTime)
-    assert column.type.timezone is True
-    assert column.nullable is False
+@pytest.mark.parametrize(
+    ("model", "column"),
+    [(GoalCompletion, "timestamp"), (RevokedToken, "expires_at")],
+)
+def test_datetime_columns_are_tz_aware_non_null(model: type[SQLModel], column: str) -> None:
+    """Timestamp columns are non-null timezone-aware DateTimes."""
+    col = _table(model).columns[column]
+    assert isinstance(col.type, DateTime)
+    assert col.type.timezone is True
+    assert col.nullable is False
 
 
 def test_key_columns_are_non_null() -> None:
