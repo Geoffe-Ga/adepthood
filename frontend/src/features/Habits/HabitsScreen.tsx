@@ -29,7 +29,7 @@ import ReorderHabitsModal from './components/ReorderHabitsModal';
 import StatsModal from './components/StatsModal';
 import styles from './Habits.styles';
 import type { AddHabitInput, Habit, HabitStatsData } from './Habits.types';
-import HabitTile from './HabitTile';
+import HabitTile, { useTileLayout } from './HabitTile';
 import {
   generateStatsForHabit,
   toLocalHabitStats,
@@ -224,6 +224,16 @@ interface HabitModalsProps {
   onAddHabit: (_input: AddHabitInput) => Promise<void>;
 }
 
+/**
+ * Missed-days for the modal, gated on modal-open. ``calculateMissedDays`` scans
+ * every completion, so it must not run on the (frequent) closed-modal renders —
+ * the modal is hidden unless ``open`` is set. Extracted so the gate is unit-testable.
+ */
+export const missedDaysFor = (
+  open: boolean,
+  habit: Habit | null,
+): ReturnType<typeof calculateMissedDays> => (open && habit ? calculateMissedDays(habit) : []);
+
 const HabitDataModals = ({
   modals,
   selectedHabit,
@@ -249,7 +259,7 @@ const HabitDataModals = ({
     <MissedDaysModal
       visible={modals.missedDays}
       habit={selectedHabit}
-      missedDays={selectedHabit ? calculateMissedDays(selectedHabit) : []}
+      missedDays={missedDaysFor(modals.missedDays, selectedHabit)}
       onClose={() => modals.close('missedDays')}
       onBackfill={actions.backfillMissedDays}
       onNewStartDate={actions.setNewStartDate}
@@ -361,21 +371,44 @@ interface HabitListProps {
   renderItem: (_info: { item: Habit; index: number }) => React.ReactElement;
 }
 
-const HabitList = ({ habits, columns, gridGutter, renderItem }: HabitListProps) => (
-  <FlatList
-    key={`cols-${columns}`}
-    testID="habits-list"
-    data={habits}
-    keyExtractor={(item) => item.id?.toString() ?? item.name}
-    renderItem={renderItem}
-    numColumns={columns}
-    columnWrapperStyle={columns > 1 ? { gap: gridGutter } : undefined}
-    contentContainerStyle={[
-      styles.habitsGrid,
-      { padding: gridGutter / 2, paddingBottom: gridGutter / 2 },
-    ]}
-  />
-);
+export const HabitList = ({ habits, columns, gridGutter, renderItem }: HabitListProps) => {
+  // Fixed row pitch = tile min-height + its top/bottom margins (gridGutter/2
+  // each). Supplying getItemLayout lets the list skip async measurement and
+  // restore scroll synchronously. Derived from the same useTileLayout the tiles
+  // size themselves with, so there are no magic numbers and the two can't drift.
+  const { tileMinHeight } = useTileLayout();
+  const rowHeight = tileMinHeight + gridGutter;
+  const getItemLayout = useCallback(
+    (_data: ArrayLike<Habit> | null | undefined, index: number) => ({
+      length: rowHeight,
+      offset: rowHeight * Math.floor(index / columns),
+      index,
+    }),
+    [rowHeight, columns],
+  );
+  return (
+    <FlatList
+      // ``key`` on numColumns is required, not incidental: RN's FlatList throws
+      // an invariant ("Changing numColumns on the fly is not supported") when
+      // numColumns changes on a live instance (FlatList.js), so a column flip
+      // (portrait↔landscape) must remount. It only changes on that flip — not
+      // on every render — and this grid is paginated to fit the viewport, so
+      // there is no in-page scroll position to preserve.
+      key={`cols-${columns}`}
+      testID="habits-list"
+      data={habits}
+      keyExtractor={(item) => item.id?.toString() ?? item.name}
+      renderItem={renderItem}
+      numColumns={columns}
+      getItemLayout={getItemLayout}
+      columnWrapperStyle={columns > 1 ? { gap: gridGutter } : undefined}
+      contentContainerStyle={[
+        styles.habitsGrid,
+        { padding: gridGutter / 2, paddingBottom: gridGutter / 2 },
+      ]}
+    />
+  );
+};
 
 interface PaginationBarProps {
   page: number;

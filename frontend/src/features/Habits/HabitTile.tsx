@@ -273,7 +273,7 @@ const TOTAL_HABITS = 10;
 /** Tile border thickness so the aptitude/stage color reads clearly at a glance. */
 export const TILE_BORDER_WIDTH = 3;
 
-const useTileLayout = () => {
+export const useTileLayout = () => {
   const { width, height, columns, scale, gridGutter } = useResponsive();
   const rows = columns === 2 ? TOTAL_HABITS / columns : TOTAL_HABITS;
   const tileMinHeight = height / rows - 2 * spacing(1, scale) - gridGutter;
