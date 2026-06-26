@@ -8,8 +8,16 @@ import React, {
   useState,
 } from 'react';
 import { StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Toast, { type ToastConfig } from './Toast';
+
+/**
+ * Gap below the safe-area top inset so the toast clears the status bar / notch
+ * on every device. Replaces a hardcoded ``top: 60`` that clipped the message on
+ * phones reporting a larger top inset (audit-ux-06).
+ */
+export const TOAST_TOP_OFFSET = 8;
 
 interface ToastContextValue {
   showToast: (config: ToastConfig) => void;
@@ -84,6 +92,8 @@ function useToastQueue(): ToastQueue {
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const { showToast, handleDismiss, currentToast } = useToastQueue();
+  const insets = useSafeAreaInsets();
+  const overlayTop = insets.top + TOAST_TOP_OFFSET;
 
   // BUG-FRONTEND-INFRA-004: a fresh ``{ showToast }`` on every render would
   // force every consumer of ``useToast`` to re-render too. ``showToast`` is
@@ -94,7 +104,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={contextValue}>
       {children}
-      <View style={styles.overlay} pointerEvents="none" testID="toast-overlay">
+      <View
+        style={[styles.overlay, { top: overlayTop }]}
+        pointerEvents="none"
+        testID="toast-overlay"
+      >
         {currentToast ? <Toast {...currentToast} onDismiss={handleDismiss} /> : null}
       </View>
     </ToastContext.Provider>
@@ -114,8 +128,8 @@ export function useToast(): ToastContextValue {
 
 const styles = StyleSheet.create({
   overlay: {
+    // ``top`` is applied inline from the safe-area inset (audit-ux-06).
     position: 'absolute',
-    top: 60,
     left: 0,
     right: 0,
     zIndex: 9999,

@@ -9,6 +9,10 @@ import renderer from 'react-test-renderer';
 
 import App from '../src/App';
 
+// This suite renders the real App (real navigation stack), which needs the real
+// safe-area exports; opt out of the global jest.setup mock for this file only.
+jest.unmock('react-native-safe-area-context');
+
 jest.mock('expo-notifications', () => ({
   getPermissionsAsync: (jest.fn() as any).mockResolvedValue({ status: 'granted' }),
   requestPermissionsAsync: jest.fn() as any,

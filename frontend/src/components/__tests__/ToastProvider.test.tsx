@@ -11,9 +11,17 @@
  */
 import { act, render } from '@testing-library/react-native';
 import React from 'react';
-import { Text } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
 
-import { ToastProvider, useToast } from '../ToastProvider';
+import { ToastProvider, TOAST_TOP_OFFSET, useToast } from '../ToastProvider';
+
+// Mutable so each test drives the safe-area top inset the provider reads.
+// Mocking the hook also keeps the real package's native module out of the
+// test (it throws under Jest).
+let mockInsets = { top: 0, bottom: 0, left: 0, right: 0 };
+jest.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => mockInsets,
+}));
 
 function Trigger({ messages }: { messages: string[] }) {
   const { showToast } = useToast();
@@ -26,6 +34,7 @@ function Trigger({ messages }: { messages: string[] }) {
 }
 
 beforeEach(() => {
+  mockInsets = { top: 0, bottom: 0, left: 0, right: 0 };
   jest.useFakeTimers();
 });
 
@@ -76,5 +85,34 @@ describe('ToastProvider', () => {
     // timer ID, but a strict-greater-than ensures the cleanup ran.
     expect(clearSpy.mock.calls.length).toBeGreaterThan(beforeUnmountClears);
     clearSpy.mockRestore();
+  });
+});
+
+describe('ToastProvider — safe-area top inset (audit-ux-06)', () => {
+  function overlayTop(screen: ReturnType<typeof render>): number {
+    const overlay = screen.getByTestId('toast-overlay');
+    return StyleSheet.flatten(overlay.props.style).top;
+  }
+
+  test('positions the overlay below a large top inset', () => {
+    mockInsets = { top: 59, bottom: 0, left: 0, right: 0 };
+    const screen = render(
+      <ToastProvider>
+        <Trigger messages={['celebrate']} />
+      </ToastProvider>,
+    );
+    expect(overlayTop(screen)).toBe(59 + TOAST_TOP_OFFSET);
+    expect(screen.getByText('celebrate')).toBeTruthy();
+  });
+
+  test('falls back to the bare offset when the top inset is zero', () => {
+    mockInsets = { top: 0, bottom: 0, left: 0, right: 0 };
+    const screen = render(
+      <ToastProvider>
+        <Trigger messages={['hi']} />
+      </ToastProvider>,
+    );
+    expect(overlayTop(screen)).toBe(TOAST_TOP_OFFSET);
+    expect(screen.getByText('hi')).toBeTruthy();
   });
 });
