@@ -104,6 +104,20 @@ describe('practiceRecipes.create', () => {
     expect(JSON.parse(init.body).slug).toBe('my_recipe');
     expect(out).toEqual(recipeFixture);
   });
+
+  test('raises ApiValidationError on a drifted create response', async () => {
+    const drifted = { ...recipeFixture, slug: undefined, identifier: 'x' };
+    mockFetch.mockReturnValueOnce(jsonResponse(drifted, 201));
+    await expect(
+      practiceRecipes.create({
+        slug: 'x',
+        name: 'X',
+        mode: 'tallied_grounding',
+        rounds: 1,
+        steps: [],
+      }),
+    ).rejects.toThrow(ApiValidationError);
+  });
 });
 
 describe('practiceRecipes.update', () => {
@@ -117,6 +131,14 @@ describe('practiceRecipes.update', () => {
     const [url, init] = mockFetch.mock.calls[0];
     expect(url).toBe('http://test/practice-recipes/7');
     expect(init.method).toBe('PATCH');
+  });
+
+  test('raises ApiValidationError on a drifted update response', async () => {
+    const drifted = { ...recipeFixture, rounds: undefined, roundCount: 2 };
+    mockFetch.mockReturnValueOnce(jsonResponse(drifted));
+    await expect(practiceRecipes.update(7, { name: 'X', rounds: 1, steps: [] })).rejects.toThrow(
+      ApiValidationError,
+    );
   });
 });
 
