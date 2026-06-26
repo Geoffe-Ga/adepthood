@@ -11,8 +11,8 @@ import pytest
 from httpx import AsyncClient
 from pydantic import ValidationError
 from sqlalchemy import update
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlmodel import col, select
 
 from main import app
 from models.practice import Practice
@@ -1114,6 +1114,40 @@ async def test_duplicate_idempotency_key_returns_same_session(
 
 
 @pytest.mark.asyncio
+async def test_idempotency_survives_simulated_process_restart(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The dedup is durable: a replay after dropping in-memory state still echoes the row.
+
+    The old in-process dict lost its mapping on restart, so a retry after a deploy
+    or crash created a duplicate. With the DB-backed store, expunging the ORM
+    identity map (a stand-in for a fresh process with empty caches) and replaying
+    the key still resolves the recorded session — no second row.
+    """
+    headers, _ = await _signup(async_client)
+    up_id = await _create_user_practice(async_client, db_session, headers)
+    idem_headers = {**headers, "Idempotency-Key": "restart-key-001"}
+
+    resp1 = await async_client.post(
+        "/practice-sessions/", json=_session_payload(up_id), headers=idem_headers
+    )
+    assert resp1.status_code == HTTPStatus.CREATED
+    first_id = resp1.json()["id"]
+
+    # Simulate a process restart: nothing is cached in memory anymore.
+    db_session.expunge_all()
+
+    resp2 = await async_client.post(
+        "/practice-sessions/", json=_session_payload(up_id), headers=idem_headers
+    )
+    assert resp2.status_code in (HTTPStatus.OK, HTTPStatus.CREATED)
+    assert resp2.json()["id"] == first_id
+
+    wk = await async_client.get("/practice-sessions/week-count", headers=headers)
+    assert wk.json()["count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_different_idempotency_keys_create_separate_sessions(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -1155,38 +1189,69 @@ async def test_no_idempotency_key_still_works(
 
 @pytest.mark.asyncio
 async def test_concurrent_idempotency_key_creates_one_session(
-    async_client: AsyncClient, db_session: AsyncSession
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Address-feedback regression: TOCTOU race on the in-process store.
+    """The DB UNIQUE(user_id, idem_key) — not a process lock — serialises the race.
 
-    Without a per-key lock, two coroutines that race through the
-    ``_lookup_idempotent_session`` check before either reaches
-    ``_remember_idempotent_session`` would both pass the cache check, both
-    INSERT a fresh ``PracticeSession`` row, and both update the dict —
-    leaving two rows in the DB and the dict mapping the late writer's
-    session id (or even an orphan).
-
-    With the lock, the second coroutine waits for the first to finish the
-    DB write + dict update, then sees the cached id and returns the same
-    row.  Exactly one session must land in the DB.
+    Runs against the file-backed concurrent DB where each request gets its OWN
+    session (the real multi-worker shape, which a process-local lock cannot
+    cover). Several same-key requests race through the check-then-insert; the
+    constraint guarantees the durable invariant — exactly one PracticeSession,
+    every successful response describing that one row. A request that lost the
+    insert and re-read the winner replays it (2xx); one that raced ahead of the
+    winner's commit may surface 409 — both are fine, what must never happen is a
+    duplicate session or an unhandled 500.
     """
-    headers, _ = await _signup(async_client)
-    up_id = await _create_user_practice(async_client, db_session, headers)
-    idem_headers = {**headers, "Idempotency-Key": "race-key-001"}
-    body = _session_payload(up_id)
+    _password = "securepassword123"  # pragma: allowlist secret
+    signup = await concurrent_async_client.post(
+        "/auth/signup",
+        json={"email": "race@example.com", "password": _password},
+    )
+    headers = {"Authorization": f"Bearer {signup.json()['token']}"}
 
-    resp_a, resp_b = await asyncio.gather(
-        async_client.post("/practice-sessions/", json=body, headers=idem_headers),
-        async_client.post("/practice-sessions/", json=body, headers=idem_headers),
+    async with concurrent_session_factory() as session:
+        practice = Practice(
+            stage_number=1,
+            name="Race",
+            description="x",
+            instructions="y",
+            default_duration_minutes=5,
+            approved=True,
+        )
+        session.add(practice)
+        await session.commit()
+        await session.refresh(practice)
+        practice_id = practice.id
+
+    up = await concurrent_async_client.post(
+        "/user-practices/",
+        json={"practice_id": practice_id, "stage_number": 1},
+        headers=headers,
+    )
+    assert up.status_code == HTTPStatus.CREATED
+    body = _session_payload(up.json()["id"])
+    idem_headers = {**headers, "Idempotency-Key": "race-key-001"}
+
+    responses = await asyncio.gather(
+        *[
+            concurrent_async_client.post("/practice-sessions/", json=body, headers=idem_headers)
+            for _ in range(4)
+        ]
     )
 
-    assert resp_a.status_code in (HTTPStatus.OK, HTTPStatus.CREATED)
-    assert resp_b.status_code in (HTTPStatus.OK, HTTPStatus.CREATED)
-    # Both responses describe the SAME row -- no duplicate created.
-    assert resp_a.json()["id"] == resp_b.json()["id"]
+    codes = [r.status_code for r in responses]
+    successes = [r for r in responses if r.status_code in (HTTPStatus.OK, HTTPStatus.CREATED)]
+    conflicts = [c for c in codes if c == HTTPStatus.CONFLICT]
+    assert len(successes) >= 1, f"expected at least one success, got {codes}"
+    assert len(successes) + len(conflicts) == len(responses), f"every response 2xx or 409: {codes}"
+    # Every successful response describes the SAME row — idempotent replay.
+    assert len({r.json()["id"] for r in successes}) == 1
 
-    wk = await async_client.get("/practice-sessions/week-count", headers=headers)
-    assert wk.json()["count"] == 1
+    # Durable invariant: exactly one PracticeSession landed in the DB.
+    async with concurrent_session_factory() as session:
+        rows = (await session.execute(select(PracticeSession))).scalars().all()
+    assert len(rows) == 1
 
 
 # -- BUG-PRACTICE-009: week_count uses user's local timezone ----------------
