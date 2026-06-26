@@ -10,6 +10,7 @@ import {
   pageSchema,
   passwordResetAcceptedSchema,
   practiceItemSchema,
+  practiceRecipeSchema,
   practiceSessionResponseSchema,
   promptListResponseSchema,
   stageSchema,
@@ -1939,17 +1940,6 @@ export interface PracticeInsightsResponse {
   last_insight: string | null;
 }
 
-function validatePracticeItem(item: unknown): item is PracticeItem {
-  if (typeof item !== 'object' || item === null) return false;
-  const p = item as Record<string, unknown>;
-  return (
-    typeof p.id === 'number' &&
-    typeof p.name === 'string' &&
-    typeof p.stage_number === 'number' &&
-    typeof p.default_duration_minutes === 'number'
-  );
-}
-
 /**
  * Payload for ``POST /practices/`` (custom-practices-07).
  *
@@ -1989,8 +1979,12 @@ export const practices = {
     const query = new URLSearchParams();
     query.set('stage_number', String(params.stageNumber));
     if (params.includeMine === true) query.set('include_mine', 'true');
-    const data = await request<PracticeItem[]>(`/practices/?${query.toString()}`, { token });
-    return data.filter(validatePracticeItem);
+    // Parse the array (don't filter): a drifted row now raises
+    // ApiValidationError instead of silently vanishing from the catalog.
+    return request<PracticeItem[]>(`/practices/?${query.toString()}`, {
+      token,
+      schema: z.array(practiceItemSchema) as unknown as z.ZodType<PracticeItem[]>,
+    });
   },
   /**
    * Paginated practices list for a stage (BUG-INFRA-012). Opts into the
@@ -2024,10 +2018,11 @@ export const practices = {
       practices.listPaginated({ ...params, ...pageParams }, token),
     );
   },
-  async get(practiceId: number, token?: string): Promise<PracticeItem> {
-    const data = await request<PracticeItem>(`/practices/${practiceId}`, { token });
-    if (!validatePracticeItem(data)) throw new Error('Invalid practice response');
-    return data;
+  get(practiceId: number, token?: string): Promise<PracticeItem> {
+    return request<PracticeItem>(`/practices/${practiceId}`, {
+      token,
+      schema: practiceItemSchema as unknown as z.ZodType<PracticeItem>,
+    });
   },
   /**
    * Submit a new user-created practice (custom-practices-07).
@@ -2202,87 +2197,41 @@ export interface PracticeRecipeUpdate {
   steps: PracticeRecipeStepInput[];
 }
 
-function validatePracticeRecipeStep(data: unknown): data is PracticeRecipeStep {
-  if (!isObject(data)) return false;
-  return (
-    typeof data.position === 'number' &&
-    typeof data.tag_slug === 'string' &&
-    typeof data.tag_label === 'string' &&
-    typeof data.prompt_label === 'string' &&
-    typeof data.target_count === 'number'
-  );
-}
-
-function hasRecipeOwnerShape(data: Record<string, unknown>): boolean {
-  return data.owner_user_id === null || typeof data.owner_user_id === 'number';
-}
-
-function hasRecipeModeShape(data: Record<string, unknown>): boolean {
-  return data.mode === 'sense_grounding' || data.mode === 'tallied_grounding';
-}
-
-function hasRecipeStringFields(data: Record<string, unknown>): boolean {
-  return (
-    typeof data.slug === 'string' &&
-    typeof data.name === 'string' &&
-    typeof data.description === 'string' &&
-    typeof data.created_at === 'string'
-  );
-}
-
-function hasRecipeStepsArray(data: Record<string, unknown>): boolean {
-  return Array.isArray(data.steps) && data.steps.every(validatePracticeRecipeStep);
-}
-
-function validatePracticeRecipe(data: unknown): data is PracticeRecipe {
-  if (!isObject(data)) return false;
-  return (
-    typeof data.id === 'number' &&
-    typeof data.rounds === 'number' &&
-    hasRecipeStringFields(data) &&
-    hasRecipeOwnerShape(data) &&
-    hasRecipeModeShape(data) &&
-    hasRecipeStepsArray(data)
-  );
-}
-
-const INVALID_RECIPE_RESPONSE = 'Invalid practice-recipe response';
+// PracticeRecipe responses are validated via ``practiceRecipeSchema`` so a
+// drifted field raises ApiValidationError instead of being silently rejected
+// with an opaque Error (audit-contracts-06).
+const recipeSchema = practiceRecipeSchema as unknown as z.ZodType<PracticeRecipe>;
+const recipeArraySchema = z.array(practiceRecipeSchema) as unknown as z.ZodType<PracticeRecipe[]>;
 
 export const practiceRecipes = {
-  async list(mode?: RecipeMode, token?: string): Promise<PracticeRecipe[]> {
+  list(mode?: RecipeMode, token?: string): Promise<PracticeRecipe[]> {
     const qs = mode ? `?mode=${encodeURIComponent(mode)}` : '';
-    const data = await request<unknown>(`/practice-recipes/${qs}`, { token });
-    if (!Array.isArray(data) || !data.every(validatePracticeRecipe)) {
-      throw new Error('Invalid practice-recipes response');
-    }
-    return data;
+    return request<PracticeRecipe[]>(`/practice-recipes/${qs}`, {
+      token,
+      schema: recipeArraySchema,
+    });
   },
-  async get(recipeId: number, token?: string): Promise<PracticeRecipe> {
-    const data = await request<unknown>(`/practice-recipes/${recipeId}`, { token });
-    if (!validatePracticeRecipe(data)) throw new Error(INVALID_RECIPE_RESPONSE);
-    return data;
+  get(recipeId: number, token?: string): Promise<PracticeRecipe> {
+    return request<PracticeRecipe>(`/practice-recipes/${recipeId}`, {
+      token,
+      schema: recipeSchema,
+    });
   },
-  async create(payload: PracticeRecipeCreate, token?: string): Promise<PracticeRecipe> {
-    const data = await request<unknown>('/practice-recipes/', {
+  create(payload: PracticeRecipeCreate, token?: string): Promise<PracticeRecipe> {
+    return request<PracticeRecipe>('/practice-recipes/', {
       method: 'POST',
       body: payload,
       token,
+      schema: recipeSchema,
     });
-    if (!validatePracticeRecipe(data)) throw new Error(INVALID_RECIPE_RESPONSE);
-    return data;
   },
-  async update(
-    recipeId: number,
-    payload: PracticeRecipeUpdate,
-    token?: string,
-  ): Promise<PracticeRecipe> {
-    const data = await request<unknown>(`/practice-recipes/${recipeId}`, {
+  update(recipeId: number, payload: PracticeRecipeUpdate, token?: string): Promise<PracticeRecipe> {
+    return request<PracticeRecipe>(`/practice-recipes/${recipeId}`, {
       method: 'PATCH',
       body: payload,
       token,
+      schema: recipeSchema,
     });
-    if (!validatePracticeRecipe(data)) throw new Error(INVALID_RECIPE_RESPONSE);
-    return data;
   },
   remove(recipeId: number, token?: string): Promise<void> {
     return request<void>(`/practice-recipes/${recipeId}`, { method: 'DELETE', token });

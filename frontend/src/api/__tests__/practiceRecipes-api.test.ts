@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import { practiceRecipes, practiceTags } from '../index';
+import { ApiValidationError, practiceRecipes, practiceTags } from '../index';
 
 const mockFetch = jest.fn() as jest.Mock;
 global.fetch = mockFetch;
@@ -56,9 +56,28 @@ describe('practiceRecipes.list', () => {
     expect(url).toBe('http://test/practice-recipes/?mode=tallied_grounding');
   });
 
-  test('rejects payload with missing fields', async () => {
+  test('raises ApiValidationError on a payload with missing fields', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse([{ slug: 'incomplete' }]));
-    await expect(practiceRecipes.list()).rejects.toThrow('Invalid practice-recipes response');
+    await expect(practiceRecipes.list()).rejects.toThrow(ApiValidationError);
+  });
+
+  test('raises ApiValidationError on a drifted row (renamed step field) — not a dropped row', async () => {
+    const drifted = {
+      ...recipeFixture,
+      steps: [{ ...recipeFixture.steps[0], target_count: undefined, targetCount: 1 }],
+    };
+    mockFetch.mockReturnValueOnce(jsonResponse([recipeFixture, drifted]));
+    // Zod parses the whole array: the bad row makes the response invalid rather
+    // than silently shortening the list to the one valid recipe.
+    await expect(practiceRecipes.list()).rejects.toThrow(ApiValidationError);
+  });
+});
+
+describe('practiceRecipes.get drift', () => {
+  test('raises ApiValidationError when a required field is renamed', async () => {
+    const drifted = { ...recipeFixture, owner_user_id: undefined, ownerUserId: null };
+    mockFetch.mockReturnValueOnce(jsonResponse(drifted));
+    await expect(practiceRecipes.get(7)).rejects.toThrow(ApiValidationError);
   });
 });
 
@@ -85,6 +104,20 @@ describe('practiceRecipes.create', () => {
     expect(JSON.parse(init.body).slug).toBe('my_recipe');
     expect(out).toEqual(recipeFixture);
   });
+
+  test('raises ApiValidationError on a drifted create response', async () => {
+    const drifted = { ...recipeFixture, slug: undefined, identifier: 'x' };
+    mockFetch.mockReturnValueOnce(jsonResponse(drifted, 201));
+    await expect(
+      practiceRecipes.create({
+        slug: 'x',
+        name: 'X',
+        mode: 'tallied_grounding',
+        rounds: 1,
+        steps: [],
+      }),
+    ).rejects.toThrow(ApiValidationError);
+  });
 });
 
 describe('practiceRecipes.update', () => {
@@ -98,6 +131,14 @@ describe('practiceRecipes.update', () => {
     const [url, init] = mockFetch.mock.calls[0];
     expect(url).toBe('http://test/practice-recipes/7');
     expect(init.method).toBe('PATCH');
+  });
+
+  test('raises ApiValidationError on a drifted update response', async () => {
+    const drifted = { ...recipeFixture, rounds: undefined, roundCount: 2 };
+    mockFetch.mockReturnValueOnce(jsonResponse(drifted));
+    await expect(practiceRecipes.update(7, { name: 'X', rounds: 1, steps: [] })).rejects.toThrow(
+      ApiValidationError,
+    );
   });
 });
 
