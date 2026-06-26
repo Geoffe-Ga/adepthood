@@ -59,9 +59,15 @@ jobs:
           # Verify branch coverage meets the threshold by parsing coverage.xml.
           # Threshold starts at 80% (current baseline ~82%); tighten as test
           # coverage improves, especially in services/botmason.py (70%).
-          pytest --cov=src --cov-report=xml --cov-branch -q --no-header 2>/dev/null || true
+          # Error suppression removed: a pytest crash (collection/import/plugin
+          # error) must fail this step, not let the parser read a stale or
+          # partial coverage.xml from a prior run.
+          pytest --cov=src --cov-report=xml --cov-branch -q --no-header
           python3 -c "
-          import sys, xml.etree.ElementTree as ET
+          import os, sys, xml.etree.ElementTree as ET
+          if not os.path.exists('coverage.xml'):
+              print('::error::coverage.xml not found — pytest produced no report')
+              sys.exit(1)
           tree = ET.parse('coverage.xml')
           rate = float(tree.getroot().attrib['branch-rate']) * 100
           threshold = 80
