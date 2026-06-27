@@ -15,10 +15,12 @@ import SearchBar from './SearchBar';
 
 import { journal } from '@/api';
 import type { JournalMessage } from '@/api';
+import { formatApiError } from '@/api/errorMessages';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 const PAGE_SIZE = 20;
 const SEARCH_MIN_LENGTH = 3;
+const SEARCH_MAX_LENGTH = 64; // mirrors the backend JOURNAL_SEARCH_MAX_LENGTH guard
 const EXCERPT_MAX = 140;
 
 type ShelfNavigation = NativeStackNavigationProp<RootStackParamList>;
@@ -42,10 +44,18 @@ function searchParam(query: string): string | undefined {
 interface ShelfState {
   items: JournalMessage[];
   loading: boolean;
+  error: string | null;
   query: string;
   hasMore: boolean;
   onSearch: (_query: string) => void;
   loadMore: () => void;
+}
+
+/** Out-of-range queries are dropped before hitting the API (avoids a 422). */
+function isSearchable(next: string): boolean {
+  return (
+    next.length === 0 || (next.length >= SEARCH_MIN_LENGTH && next.length <= SEARCH_MAX_LENGTH)
+  );
 }
 
 /** Loads the shelf with offset paging + debounced search (via SearchBar). */
@@ -54,15 +64,19 @@ function useShelf(): ShelfState {
   const [query, setQuery] = useState('');
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (search: string | undefined, offset: number) => {
     setLoading(true);
+    setError(null);
     try {
       const page = await journal.list({ search, limit: PAGE_SIZE, offset });
       setItems((prev) => (offset === 0 ? page.items : [...prev, ...page.items]));
       setHasMore(page.has_more);
-    } catch {
-      // A failed load leaves the current shelf in place; the user can retry.
+    } catch (err) {
+      // Surface the failure so a cold-start network error isn't mistaken for an
+      // empty shelf; the current items (if any) stay in place for retry.
+      setError(formatApiError(err));
     } finally {
       setLoading(false);
     }
@@ -74,8 +88,8 @@ function useShelf(): ShelfState {
 
   const onSearch = useCallback(
     (next: string) => {
-      // 1-2 chars: hold the current view rather than 422 on the backend guard.
-      if (next.length > 0 && next.length < SEARCH_MIN_LENGTH) return;
+      // 1-2 chars (or >64) hold the current view rather than 422 on the guard.
+      if (!isSearchable(next)) return;
       setQuery(next);
       void load(searchParam(next), 0);
     },
@@ -86,7 +100,7 @@ function useShelf(): ShelfState {
     if (hasMore && !loading) void load(searchParam(query), items.length);
   }, [hasMore, loading, load, query, items.length]);
 
-  return { items, loading, query, hasMore, onSearch, loadMore };
+  return { items, loading, error, query, hasMore, onSearch, loadMore };
 }
 
 function PageCard({
@@ -134,9 +148,30 @@ function ShelfHeader({ onSearch, onNew }: { onSearch: (_q: string) => void; onNe
   );
 }
 
+/** Empty-list state: nothing while loading, the load error, else the empty copy. */
+function ShelfEmpty({ loading, error }: { loading: boolean; error: string | null }) {
+  if (loading) return null;
+  if (error != null) {
+    return (
+      <View style={styles.emptyWrap}>
+        <Text style={styles.emptyError} testID="journal-shelf-error">
+          {error}
+        </Text>
+      </View>
+    );
+  }
+  return (
+    <View style={styles.emptyWrap}>
+      <Text style={styles.emptyText} testID="journal-shelf-empty">
+        Your shelf is empty — start a page.
+      </Text>
+    </View>
+  );
+}
+
 function JournalShelfScreen(): React.JSX.Element {
   const navigation = useNavigation<ShelfNavigation>();
-  const { items, loading, hasMore, onSearch, loadMore } = useShelf();
+  const { items, loading, error, hasMore, onSearch, loadMore } = useShelf();
 
   const openEntry = useCallback(
     (entryId: number) => navigation.navigate('JournalEntry', { entryId }),
@@ -152,15 +187,7 @@ function JournalShelfScreen(): React.JSX.Element {
         keyExtractor={(item) => String(item.id)}
         renderItem={({ item }) => <PageCard entry={item} onOpen={openEntry} />}
         ListHeaderComponent={<ShelfHeader onSearch={onSearch} onNew={newEntry} />}
-        ListEmptyComponent={
-          loading ? null : (
-            <View style={styles.emptyWrap}>
-              <Text style={styles.emptyText} testID="journal-shelf-empty">
-                Your shelf is empty — start a page.
-              </Text>
-            </View>
-          )
-        }
+        ListEmptyComponent={<ShelfEmpty loading={loading} error={error} />}
         onEndReached={hasMore ? loadMore : undefined}
         onEndReachedThreshold={0.4}
         contentContainerStyle={styles.listContent}

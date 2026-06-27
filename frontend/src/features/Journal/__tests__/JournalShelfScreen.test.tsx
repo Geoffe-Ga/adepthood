@@ -108,6 +108,23 @@ describe('JournalShelfScreen', () => {
     );
   });
 
+  it('does not search when the query exceeds the 64-char maximum', async () => {
+    mockList.mockResolvedValue(page([entry(1)]));
+    const { findByTestId, getByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-shelf-card-1');
+    mockList.mockClear();
+
+    fireEvent.changeText(getByTestId('shelf-search'), 'x'.repeat(65)); // > 64: no call
+    expect(mockList).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a load error instead of the empty state on a cold-start failure', async () => {
+    mockList.mockRejectedValue(new Error('network down'));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    expect(await findByTestId('journal-shelf-error')).toBeTruthy();
+    expect(queryByTestId('journal-shelf-empty')).toBeNull();
+  });
+
   it('appends the next page when more are available', async () => {
     mockList.mockResolvedValueOnce(page([entry(1), entry(2)], true));
     const { findByTestId, getByTestId } = render(<JournalShelfScreen />);

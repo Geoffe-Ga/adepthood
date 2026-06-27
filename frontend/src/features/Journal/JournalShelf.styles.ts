@@ -68,6 +68,11 @@ const styles = StyleSheet.create({
     color: colors.paper.inkSoft,
     textAlign: 'center',
   },
+  emptyError: {
+    ...editorialType.body,
+    color: colors.danger,
+    textAlign: 'center',
+  },
 });
 
 export default styles;
