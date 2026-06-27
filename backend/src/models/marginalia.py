@@ -39,6 +39,18 @@ class MarginaliaStatus(enum.StrEnum):
     STALE = "stale"
 
 
+def _kind_check() -> CheckConstraint:
+    """CHECK derived from ``MarginaliaKind`` so the DB set can't drift from the enum."""
+    quoted = ", ".join(f"'{k.value}'" for k in MarginaliaKind)
+    return CheckConstraint(f"kind IN ({quoted})", name="ck_marginalia_kind_valid")
+
+
+def _status_check() -> CheckConstraint:
+    """CHECK derived from ``MarginaliaStatus`` so the DB set can't drift from the enum."""
+    quoted = ", ".join(f"'{s.value}'" for s in MarginaliaStatus)
+    return CheckConstraint(f"status IN ({quoted})", name="ck_marginalia_status_valid")
+
+
 class Marginalia(SQLModel, table=True):
     """A single anchored margin note on a journal entry.
 
@@ -56,14 +68,8 @@ class Marginalia(SQLModel, table=True):
         # Index the denormalized owner FK so "all marginalia for a user" is a
         # range scan, not a full-table scan (the reason the column exists).
         Index("ix_marginalia_user_id", "user_id"),
-        CheckConstraint(
-            "kind IN ('theme', 'connection', 'symbol')",
-            name="ck_marginalia_kind_valid",
-        ),
-        CheckConstraint(
-            "status IN ('active', 'stale')",
-            name="ck_marginalia_status_valid",
-        ),
+        _kind_check(),
+        _status_check(),
         CheckConstraint("anchor_start >= 0", name="ck_marginalia_anchor_start_nonneg"),
         CheckConstraint("anchor_end > anchor_start", name="ck_marginalia_anchor_span_positive"),
         # essay and its generated-at timestamp are set together or not at all.
@@ -80,8 +86,8 @@ class Marginalia(SQLModel, table=True):
     # entry's owner; enforcing that invariant is tracked for the endpoint layer.
     user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
     kind: str = Field(max_length=20)
-    anchor_start: int
-    anchor_end: int
+    anchor_start: int = Field(ge=0)
+    anchor_end: int = Field(ge=1)  # DB CHECK also enforces anchor_end > anchor_start
     anchor_text: str = Field(max_length=_ANCHOR_TEXT_MAX)
     note: str = Field(max_length=_NOTE_MAX)
     essay: str | None = Field(default=None, max_length=_ESSAY_MAX)

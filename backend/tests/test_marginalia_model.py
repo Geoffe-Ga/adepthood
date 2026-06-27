@@ -139,6 +139,16 @@ async def test_invalid_kind_is_rejected(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_negative_anchor_start_is_rejected(db_session: AsyncSession) -> None:
+    """anchor_start must be non-negative (CHECK constraint)."""
+    user_id = await _user(db_session)
+    entry_id = await _entry(db_session, user_id)
+    db_session.add(_marginalia(entry_id, user_id, anchor_start=-1, anchor_end=4))
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
 async def test_inverted_anchor_span_is_rejected(db_session: AsyncSession) -> None:
     """anchor_end must be greater than anchor_start (CHECK constraint)."""
     user_id = await _user(db_session)
