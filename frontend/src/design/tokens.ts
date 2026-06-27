@@ -67,6 +67,16 @@ export const colors = {
     default: '#dad9d4',
   },
 
+  // Goal-tier star markers are tier-agnostic greyscale: a darkish-grey outline
+  // while the tier is unmet, then a greyscale gradient fill with a white border
+  // glow once the tier is achieved.
+  starMarker: {
+    outline: '#555555', // darkish-grey outline (unmet) — AAA on #f8f8f8
+    gradientFrom: '#9c9c9c', // light end of the met greyscale fill
+    gradientTo: '#3a3a3a', // dark end of the met greyscale fill
+    glow: '#ffffff', // white border glow on the met star
+  },
+
   // Surface variants for destructive + success banners. ``danger`` above is
   // the button-fill swatch; these are the softer banner/card treatments.
   destructive: {

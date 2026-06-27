@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 
 import { TierStar } from '../../components/TierStar';
-import { STAGE_COLORS, spacing } from '../../design/tokens';
+import { colors, STAGE_COLORS, spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 import { DEFAULT_TIMEZONE } from '../../utils/dateUtils';
 
@@ -22,6 +22,7 @@ import {
   getMarkerPositions,
   getProgressBarColor,
   getTierColor,
+  isGoalAchieved,
   isEarlyUnlocked,
   calculateTodaysProgress,
 } from './HabitUtils';
@@ -112,6 +113,7 @@ const GoalMarker = ({
 }: GoalMarkerProps) => {
   const clamped = clampPercentage(markerPosition);
   const starSize = markerStarSize(scale);
+  const met = isGoalAchieved(goal, habit, tz);
   return (
     <View
       style={{
@@ -133,7 +135,7 @@ const GoalMarker = ({
         onMouseEnter={() => setTooltip(tier)}
         onMouseLeave={() => setTooltip(null)}
       >
-        <TierStar tier={tier} color={getTierColor(tier)} size={starSize} />
+        <TierStar tier={tier} met={met} size={starSize} />
       </TouchableOpacity>
     </View>
   );
@@ -159,12 +161,40 @@ const getStreakStyle = (hasCompleted: boolean, stageColor: string, scale: number
       }
     : {};
 
+// Softened from default black to a darkish grey so the habit name reads
+// calmer / less abrasive against the tile.
+const HABIT_TEXT_COLOR = colors.text.secondaryAccessible;
+
 const nameStyle = (scale: number) => ({
   flex: 1 as const,
   fontSize: spacing(2, scale),
   fontWeight: '700' as const,
   textTransform: 'uppercase' as const,
+  color: HABIT_TEXT_COLOR,
 });
+
+const StreakText = ({
+  streakText,
+  streakStyle,
+  scale,
+}: {
+  streakText: string;
+  streakStyle: object;
+  scale: number;
+}) => (
+  <Text
+    style={[
+      {
+        fontSize: spacing(1.5, scale),
+        textTransform: 'uppercase' as const,
+        color: HABIT_TEXT_COLOR,
+      },
+      streakStyle,
+    ]}
+  >
+    {streakText}
+  </Text>
+);
 
 const HeaderRow = ({
   name,
@@ -179,9 +209,7 @@ const HeaderRow = ({
 }) => (
   <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
     <Text style={nameStyle(scale)}>{name}</Text>
-    <Text style={[{ fontSize: spacing(1.5, scale), textTransform: 'uppercase' }, streakStyle]}>
-      {streakText}
-    </Text>
+    <StreakText streakText={streakText} streakStyle={streakStyle} scale={scale} />
   </View>
 );
 
@@ -207,9 +235,7 @@ const HabitHeader = ({
           <Text style={{ fontSize: spacing(3, scale) }}>{habit.icon}</Text>
         </TouchableOpacity>
         <Text style={nameStyle(scale)}>{habit.name}</Text>
-        <Text style={[{ fontSize: spacing(1.5, scale), textTransform: 'uppercase' }, streakStyle]}>
-          {streakText}
-        </Text>
+        <StreakText streakText={streakText} streakStyle={streakStyle} scale={scale} />
       </View>
     );
   }

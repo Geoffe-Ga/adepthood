@@ -43,6 +43,7 @@ import {
   clampPercentage,
   getTierColor,
   getGoalTarget,
+  isGoalAchieved,
   calculateTodaysProgress,
 } from '../HabitUtils';
 
@@ -120,6 +121,7 @@ interface GoalMarkerItemProps {
   tier: 'low' | 'clear' | 'stretch';
   position: number;
   zIndex: number;
+  met: boolean;
   tooltip: 'low' | 'clear' | 'stretch' | null;
   setTooltip: (_v: 'low' | 'clear' | 'stretch' | null) => void;
   panHandlers?: GestureResponderHandlers;
@@ -130,6 +132,7 @@ const GoalMarkerItem = ({
   tier,
   position,
   zIndex,
+  met,
   tooltip,
   setTooltip,
   panHandlers,
@@ -156,7 +159,7 @@ const GoalMarkerItem = ({
           <Text style={tooltipTextStyle}>{formatGoalTooltip(goal)}</Text>
         </View>
       )}
-      <TierStar tier={tier} color={getTierColor(tier)} size={starSize} />
+      <TierStar tier={tier} met={met} size={starSize} />
     </Wrapper>
   );
 };
@@ -170,6 +173,9 @@ interface GoalProgressBarProps {
   lowMarker: number;
   clearMarker: number;
   stretchMarker: number;
+  lowMet: boolean;
+  clearMet: boolean;
+  stretchMet: boolean;
   tooltip: 'low' | 'clear' | 'stretch' | null;
   setTooltip: (_v: 'low' | 'clear' | 'stretch' | null) => void;
   lowPanHandlers: GestureResponderHandlers;
@@ -203,59 +209,66 @@ interface GoalMarkersRowProps {
   lowMarker: number;
   clearMarker: number;
   stretchMarker: number;
+  lowMet: boolean;
+  clearMet: boolean;
+  stretchMet: boolean;
   tooltip: 'low' | 'clear' | 'stretch' | null;
   setTooltip: (_v: 'low' | 'clear' | 'stretch' | null) => void;
   lowPanHandlers: GestureResponderHandlers;
   clearPanHandlers: GestureResponderHandlers;
 }
 
-const GoalMarkersRow = ({
-  lowGoal,
-  clearGoal,
-  stretchGoal,
-  lowMarker,
-  clearMarker,
-  stretchMarker,
-  tooltip,
-  setTooltip,
-  lowPanHandlers,
-  clearPanHandlers,
-}: GoalMarkersRowProps) => (
-  <>
-    {lowGoal && (
-      <GoalMarkerItem
-        goal={lowGoal}
-        tier="low"
-        position={lowMarker}
-        zIndex={1}
-        tooltip={tooltip}
-        setTooltip={setTooltip}
-        panHandlers={lowPanHandlers}
-      />
-    )}
-    {clearGoal && (
-      <GoalMarkerItem
-        goal={clearGoal}
-        tier="clear"
-        position={clearMarker}
-        zIndex={2}
-        tooltip={tooltip}
-        setTooltip={setTooltip}
-        panHandlers={clearPanHandlers}
-      />
-    )}
-    {stretchGoal && (
-      <GoalMarkerItem
-        goal={stretchGoal}
-        tier="stretch"
-        position={stretchMarker}
-        zIndex={3}
-        tooltip={tooltip}
-        setTooltip={setTooltip}
-      />
-    )}
-  </>
-);
+interface MarkerEntry {
+  tier: 'low' | 'clear' | 'stretch';
+  goal: Goal | undefined;
+  position: number;
+  zIndex: number;
+  met: boolean;
+  panHandlers?: GestureResponderHandlers;
+}
+
+const buildMarkerEntries = (p: GoalMarkersRowProps): MarkerEntry[] => [
+  {
+    tier: 'low',
+    goal: p.lowGoal,
+    position: p.lowMarker,
+    zIndex: 1,
+    met: p.lowMet,
+    panHandlers: p.lowPanHandlers,
+  },
+  {
+    tier: 'clear',
+    goal: p.clearGoal,
+    position: p.clearMarker,
+    zIndex: 2,
+    met: p.clearMet,
+    panHandlers: p.clearPanHandlers,
+  },
+  { tier: 'stretch', goal: p.stretchGoal, position: p.stretchMarker, zIndex: 3, met: p.stretchMet },
+];
+
+const GoalMarkersRow = (props: GoalMarkersRowProps) => {
+  const { tooltip, setTooltip } = props;
+  return (
+    <>
+      {buildMarkerEntries(props).map((it) =>
+        it.goal ? (
+          <GoalMarkerItem
+            key={it.tier}
+            goal={it.goal}
+            tier={it.tier}
+            position={it.position}
+            zIndex={it.zIndex}
+            met={it.met}
+            tooltip={tooltip}
+            setTooltip={setTooltip}
+            panHandlers={it.panHandlers}
+          />
+        ) : null,
+      )}
+    </>
+  );
+};
 
 const GoalProgressBar = ({
   progressPercentage,
@@ -266,6 +279,9 @@ const GoalProgressBar = ({
   lowMarker,
   clearMarker,
   stretchMarker,
+  lowMet,
+  clearMet,
+  stretchMet,
   tooltip,
   setTooltip,
   lowPanHandlers,
@@ -282,6 +298,9 @@ const GoalProgressBar = ({
         lowMarker={lowMarker}
         clearMarker={clearMarker}
         stretchMarker={stretchMarker}
+        lowMet={lowMet}
+        clearMet={clearMet}
+        stretchMet={stretchMet}
         tooltip={tooltip}
         setTooltip={setTooltip}
         lowPanHandlers={lowPanHandlers}
@@ -1186,6 +1205,9 @@ const buildProgressBarProps = (
   lowMarker: m.lowMarker,
   clearMarker: m.clearMarker,
   stretchMarker: m.stretchMarker,
+  lowMet: m.lowGoal ? isGoalAchieved(m.lowGoal, habit, tz) : false,
+  clearMet: m.clearGoal ? isGoalAchieved(m.clearGoal, habit, tz) : false,
+  stretchMet: m.stretchGoal ? isGoalAchieved(m.stretchGoal, habit, tz) : false,
   tooltip: m.tooltip,
   setTooltip: m.setTooltip,
   lowPanHandlers: m.lowPan.panHandlers,
