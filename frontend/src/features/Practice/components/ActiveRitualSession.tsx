@@ -414,7 +414,8 @@ function SessionCard(props: SessionCardProps): React.JSX.Element {
   return (
     <View style={styles.card} testID="active-practice-card">
       <View style={styles.cardHeader}>
-        <Text style={styles.label}>Your Practice</Text>
+        {/* practice-redesign-02: the redundant "Your Practice" label is gone;
+            the practice name below stands on its own. */}
         <TouchableOpacity
           accessibilityRole="button"
           accessibilityLabel="Configure practice"
@@ -907,13 +908,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: SPACING.xs,
-  },
-  label: {
-    fontSize: 13,
-    color: colors.text.tertiary,
-    fontWeight: '500',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
   gearButton: {
     minWidth: 44,

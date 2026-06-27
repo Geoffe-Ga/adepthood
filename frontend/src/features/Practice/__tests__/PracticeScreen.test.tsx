@@ -378,18 +378,16 @@ describe('PracticeScreen', () => {
     }
   });
 
-  it('opens the practice switcher when the banner is tapped', async () => {
+  it('shows the frequency chip (display-only) on the active screen', async () => {
+    // practice-redesign-02: the chip replaced the tappable banner; it no longer
+    // opens the switcher (the explicit "Change practice" button is #598).
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
-    const { getByTestId } = render(<PracticeScreen />);
+    const { getByTestId, queryByTestId } = render(<PracticeScreen />);
     await waitFor(() => {
       expect(getByTestId('frequency-banner-content')).toBeTruthy();
     });
-    await act(async () => {
-      fireEvent.press(getByTestId('frequency-banner-content'));
-    });
-    await waitFor(() => {
-      expect(getByTestId('practice-switcher-sheet')).toBeTruthy();
-    });
+    expect(getByTestId('frequency-banner-content').props.accessibilityRole).toBe('text');
+    expect(queryByTestId('practice-switcher-sheet')).toBeNull();
   });
 
   describe.each(modeFixtures)('mode dispatch — $label', ({ practice, mountTestId }) => {

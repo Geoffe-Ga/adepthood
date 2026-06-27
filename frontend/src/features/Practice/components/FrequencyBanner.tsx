@@ -1,12 +1,12 @@
 /**
- * `FrequencyBanner` — display-only banner that sits above the active
- * Practice. Shows the user's current spiral-dynamics colour, aspect of
- * wholeness, and the server-formatted banner copy (verbatim — the client
- * never assembles the string itself; that's the whole point of
- * ritual-05's `GET /user-practices/current/frequency`).
+ * `FrequencyBanner` — display-only chip above the active Practice. Shows the
+ * user's current spiral-dynamics colour (a swatch dot) and aspect of wholeness,
+ * sourced from ritual-05's `GET /user-practices/current/frequency`.
  *
- * Tap target opens the practice switcher (parent owns the sheet's
- * visibility).
+ * practice-redesign-02: collapsed from the old paragraph banner into a slim
+ * pill. It is NOT the switch control any more (the verbose copy + disguised
+ * "tap to replace" affordance were the screen's biggest source of clutter); the
+ * explicit "Change practice" button arrives in practice-redesign-03.
  */
 import React from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -16,6 +16,9 @@ import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 import { swatchFor, type ColorSwatch } from '@/features/Practice/data/colorPalette';
 import { useFrequency } from '@/features/Practice/hooks/useFrequency';
 
+/** Diameter of the colour swatch dot in the chip. */
+const SWATCH_DOT_SIZE = 14;
+
 export interface FrequencyBannerProps {
   /**
    * Pre-fetched payload. When provided, takes precedence over the hook —
@@ -24,14 +27,11 @@ export interface FrequencyBannerProps {
    */
   data?: FrequencyResponse;
   /**
-   * Pin the banner to a specific stage. When omitted the server picks
-   * the stage from the user's stored progress; passing the same stage
-   * the practice card resolves keeps the banner and the card in
-   * lockstep on every render.
+   * Pin the chip to a specific stage. When omitted the server picks the stage
+   * from the user's stored progress; passing the same stage the practice card
+   * resolves keeps the chip and the card in lockstep on every render.
    */
   stageNumber?: number | null;
-  /** Called when the banner body is tapped — open the switcher sheet. */
-  onSwitch: () => void;
 }
 
 function BannerSkeleton() {
@@ -61,45 +61,29 @@ function BannerError({ onRetry }: { onRetry: () => Promise<void> }) {
   );
 }
 
-interface BannerContentProps {
-  data: FrequencyResponse;
-  swatch: ColorSwatch;
-  onSwitch: () => void;
-}
-
-function BannerContent({ data, swatch, onSwitch }: BannerContentProps) {
-  // Memoised so the three child <Text> rows below receive a stable style
-  // reference across renders instead of a fresh object each time.
-  const textStyle = React.useMemo(() => ({ color: swatch.text }), [swatch.text]);
+function FrequencyChip({ data, swatch }: { data: FrequencyResponse; swatch: ColorSwatch }) {
   return (
-    <TouchableOpacity
-      accessibilityRole="button"
-      accessibilityLabel={data.banner_text}
-      accessibilityHint="Tap to switch your current practice"
-      activeOpacity={0.85}
-      onPress={onSwitch}
-      style={[styles.content, { backgroundColor: swatch.bg }]}
+    <View
+      style={styles.chip}
+      accessibilityRole="text"
+      accessibilityLabel={`${data.color} frequency · ${data.aspect}`}
       testID="frequency-banner-content"
     >
-      <View style={styles.headerRow}>
-        <View style={[styles.aspectChip, { borderColor: swatch.text }]}>
-          <Text style={[styles.aspectChipText, textStyle]} testID="frequency-banner-aspect">
-            {data.aspect}
-          </Text>
-        </View>
-        <Text style={[styles.colorLabel, textStyle]} testID="frequency-banner-color">
-          {data.color}
-        </Text>
-      </View>
-      <Text style={[styles.bannerText, textStyle]} testID="frequency-banner-text">
-        {data.banner_text}
+      <View
+        style={[styles.swatchDot, { backgroundColor: swatch.bg }]}
+        testID="frequency-chip-dot"
+      />
+      <Text style={styles.colorLabel} testID="frequency-banner-color">
+        {data.color}
       </Text>
-      <Text style={[styles.switchHint, textStyle]}>Tap to replace this practice</Text>
-    </TouchableOpacity>
+      <Text style={styles.aspectText} testID="frequency-banner-aspect">
+        {data.aspect}
+      </Text>
+    </View>
   );
 }
 
-export function FrequencyBanner({ data: injected, stageNumber, onSwitch }: FrequencyBannerProps) {
+export function FrequencyBanner({ data: injected, stageNumber }: FrequencyBannerProps) {
   const hook = useFrequency(stageNumber);
   // Injected data wins for storybook / tests; otherwise consume the hook.
   const data = injected ?? hook.data;
@@ -109,7 +93,7 @@ export function FrequencyBanner({ data: injected, stageNumber, onSwitch }: Frequ
   if (isLoading && !data) return <BannerSkeleton />;
   if (error && !data) return <BannerError onRetry={hook.refetch} />;
   if (!data) return null;
-  return <BannerContent data={data} swatch={swatchFor(data.color)} onSwitch={onSwitch} />;
+  return <FrequencyChip data={data} swatch={swatchFor(data.color)} />;
 }
 
 const styles = StyleSheet.create({
@@ -152,43 +136,34 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 14,
   },
-  content: {
-    borderRadius: BORDER_RADIUS.lg,
-    padding: SPACING.lg,
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.sm,
+    borderRadius: BORDER_RADIUS.circle,
+    backgroundColor: colors.background.card,
     marginBottom: SPACING.md,
     ...shadows.small,
   },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: SPACING.sm,
-  },
-  aspectChip: {
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: 2,
+  swatchDot: {
+    width: SWATCH_DOT_SIZE,
+    height: SWATCH_DOT_SIZE,
     borderRadius: BORDER_RADIUS.circle,
-    borderWidth: 1,
     marginRight: SPACING.sm,
-  },
-  aspectChipText: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.5,
   },
   colorLabel: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+    color: colors.text.primary,
+    marginRight: SPACING.sm,
   },
-  bannerText: {
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  switchHint: {
-    marginTop: SPACING.sm,
+  aspectText: {
     fontSize: 12,
-    fontStyle: 'italic',
-    opacity: 0.8,
+    fontWeight: '600',
+    color: colors.text.secondary,
   },
 });

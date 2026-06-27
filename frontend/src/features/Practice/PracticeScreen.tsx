@@ -19,7 +19,7 @@
  */
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import {
   ActivityIndicator,
   ScrollView,
@@ -33,13 +33,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import PracticeSelector from './PracticeSelector';
 import WeeklyProgress from './WeeklyProgress';
 
-import type { PracticeSessionResponse, UserPractice } from '@/api';
+import type { PracticeSessionResponse } from '@/api';
 import { useAuth } from '@/context/AuthContext';
 import { BORDER_RADIUS, SPACING, colors, touchTarget } from '@/design/tokens';
 import { stageService } from '@/features/Map/services/stageService';
 import ActiveRitualSession from '@/features/Practice/components/ActiveRitualSession';
 import { FrequencyBanner } from '@/features/Practice/components/FrequencyBanner';
-import { PracticeSwitcherSheet } from '@/features/Practice/components/PracticeSwitcherSheet';
 import { useActivePractice } from '@/features/Practice/hooks/useActivePractice';
 import { useWeeklyProgress } from '@/features/Practice/hooks/useWeeklyProgress';
 import { useAppNavigation, useAppRoute } from '@/navigation/hooks';
@@ -51,35 +50,18 @@ type ActivePracticeHook = ReturnType<typeof useActivePractice>;
 type WeeklyProgressHook = ReturnType<typeof useWeeklyProgress>;
 
 /**
- * Owns the switcher-visibility state and returns the banner + switcher as
- * memoized elements (stable references unless their inputs change), so passing
- * ``banner`` as a FlatList ``ListHeaderComponent`` doesn't re-diff every render.
+ * Returns the frequency chip as a memoized element (stable reference unless the
+ * stage changes), so passing it as a FlatList ``ListHeaderComponent`` doesn't
+ * re-diff every render.
+ *
+ * practice-redesign-02: the chip is display-only now — it no longer opens the
+ * practice switcher. The explicit "Change practice" button (and the switcher's
+ * re-wiring) lands in practice-redesign-03; ``PracticeSwitcherSheet`` is kept
+ * until practice-redesign-04.
  */
-function usePracticeChrome(
-  stageNumber: number,
-  currentPracticeId: number | null,
-  onReplaced: (_next: UserPractice) => void,
-): { banner: React.JSX.Element; switcher: React.JSX.Element } {
-  const [showSwitcher, setShowSwitcher] = useState(false);
-  const open = useCallback(() => setShowSwitcher(true), []);
-  const close = useCallback(() => setShowSwitcher(false), []);
-  const banner = useMemo(
-    () => <FrequencyBanner stageNumber={stageNumber} onSwitch={open} />,
-    [stageNumber, open],
-  );
-  const switcher = useMemo(
-    () => (
-      <PracticeSwitcherSheet
-        visible={showSwitcher}
-        stageNumber={stageNumber}
-        currentPracticeId={currentPracticeId}
-        onClose={close}
-        onReplaced={onReplaced}
-      />
-    ),
-    [showSwitcher, stageNumber, currentPracticeId, close, onReplaced],
-  );
-  return { banner, switcher };
+function usePracticeChrome(stageNumber: number): { banner: React.JSX.Element } {
+  const banner = useMemo(() => <FrequencyBanner stageNumber={stageNumber} />, [stageNumber]);
+  return { banner };
 }
 
 const PracticeScreen = (): React.JSX.Element => {
@@ -87,14 +69,9 @@ const PracticeScreen = (): React.JSX.Element => {
   const { userTimezone } = useAuth();
   const active = useActivePractice(stageNumber);
   const weekly = useWeeklyProgress();
-  const handleSwitcherReplaced = useSwitcherReplaced(active.updateActivePractice, weekly.refresh);
   const handleWriteReflection = useWriteReflection(active.effectiveName, active.practice);
   const currentPracticeId = active.activeUserPractice?.practice_id ?? null;
-  const { banner, switcher } = usePracticeChrome(
-    stageNumber,
-    currentPracticeId,
-    handleSwitcherReplaced,
-  );
+  const { banner } = usePracticeChrome(stageNumber);
 
   if (active.isLoading) return <LoadingView />;
   if (active.error && !active.activeUserPractice) {
@@ -112,7 +89,6 @@ const PracticeScreen = (): React.JSX.Element => {
         onUserPracticeUpdated={active.updateActivePractice}
         onWriteReflection={handleWriteReflection}
         banner={banner}
-        switcher={switcher}
         stageNumber={stageNumber}
       />
     );
@@ -124,7 +100,6 @@ const PracticeScreen = (): React.JSX.Element => {
       weekly={weekly}
       currentPracticeId={currentPracticeId}
       banner={banner}
-      switcher={switcher}
       stageNumber={stageNumber}
     />
   );
@@ -163,7 +138,6 @@ interface ActiveSessionViewProps {
   onUserPracticeUpdated: ActivePracticeHook['updateActivePractice'];
   onWriteReflection: (_args: { session: PracticeSessionResponse; insight: string | null }) => void;
   banner: React.JSX.Element;
-  switcher: React.JSX.Element;
   stageNumber: number;
 }
 
@@ -177,7 +151,6 @@ const ActiveSessionView = ({
   onUserPracticeUpdated,
   onWriteReflection,
   banner,
-  switcher,
   stageNumber,
 }: ActiveSessionViewProps): React.JSX.Element => {
   const insets = useSafeAreaInsets();
@@ -209,7 +182,6 @@ const ActiveSessionView = ({
           onWriteReflection={onWriteReflection}
         />
         <WeeklyProgress count={weekly.count} />
-        {switcher}
       </ScrollView>
     </View>
   );
@@ -220,7 +192,6 @@ interface SelectionViewProps {
   weekly: WeeklyProgressHook;
   currentPracticeId: number | null;
   banner: React.JSX.Element;
-  switcher: React.JSX.Element;
   stageNumber: number;
 }
 
@@ -231,7 +202,6 @@ const SelectionView = ({
   weekly,
   currentPracticeId,
   banner,
-  switcher,
   stageNumber,
 }: SelectionViewProps): React.JSX.Element => {
   // ``selectPractice`` is already stable (useCallback in the hook); wrap it once
@@ -264,7 +234,6 @@ const SelectionView = ({
           ListFooterComponent={<WeeklyProgress count={weekly.count} />}
         />
       </View>
-      {switcher}
     </View>
   );
 };
@@ -282,22 +251,6 @@ function useResolvedStageNumber(): number {
     if (storeStages.length === 0) void stageService.loadStages();
   }, [storeStages.length]);
   return route.params?.stageNumber ?? derivedCurrentStage;
-}
-
-function useSwitcherReplaced(
-  updateActivePractice: ActivePracticeHook['updateActivePractice'],
-  refreshWeekly: WeeklyProgressHook['refresh'],
-): (_next: UserPractice) => void {
-  // Take stable function references (not the whole hook bag); the parent
-  // hook objects are new on every render, so depending on them would
-  // re-create the callback each pass.
-  return useCallback(
-    (next: UserPractice) => {
-      updateActivePractice(next);
-      void refreshWeekly();
-    },
-    [updateActivePractice, refreshWeekly],
-  );
 }
 
 function useWriteReflection(
