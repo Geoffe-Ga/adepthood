@@ -211,8 +211,28 @@ describe('practiceTags', () => {
     expect(init.method).toBe('DELETE');
   });
 
-  test('list rejects invalid payload', async () => {
+  test('list raises ApiValidationError on an invalid payload', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse([{ slug: 'no-id' }]));
-    await expect(practiceTags.list()).rejects.toThrow('Invalid practice-tags response');
+    await expect(practiceTags.list()).rejects.toThrow(ApiValidationError);
+  });
+
+  test('list raises ApiValidationError on a drifted row (renamed owner field)', async () => {
+    const drifted = { ...tagFixture, owner_user_id: undefined, ownerUserId: null };
+    mockFetch.mockReturnValueOnce(jsonResponse([tagFixture, drifted]));
+    await expect(practiceTags.list()).rejects.toThrow(ApiValidationError);
+  });
+
+  test('create raises ApiValidationError on a drifted response', async () => {
+    const drifted = { ...tagFixture, label: undefined, displayLabel: 'Red' };
+    mockFetch.mockReturnValueOnce(jsonResponse(drifted, 201));
+    await expect(practiceTags.create({ slug: 'red', label: 'Red' })).rejects.toThrow(
+      ApiValidationError,
+    );
+  });
+
+  test('update raises ApiValidationError on a drifted response', async () => {
+    const drifted = { ...tagFixture, created_at: undefined, createdAt: '2026-05-23T00:00:00Z' };
+    mockFetch.mockReturnValueOnce(jsonResponse(drifted));
+    await expect(practiceTags.update(3, { label: 'Crimson' })).rejects.toThrow(ApiValidationError);
   });
 });
