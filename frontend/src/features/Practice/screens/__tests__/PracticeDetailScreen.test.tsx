@@ -129,6 +129,21 @@ describe('PracticeDetailScreen — Use for stage', () => {
     mockUserPracticesCreate.mockReset();
   });
 
+  it('sets the practice active for the current stage in one tap (no picker)', async () => {
+    mockPracticesGet.mockResolvedValueOnce(samplePractice);
+    mockUserPracticesCreate.mockResolvedValueOnce(assignedUserPractice);
+    const { view } = renderScreen();
+    await waitForLoad();
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+      await flushPromises();
+    });
+    // Store default current stage is 1; no stage picker is opened.
+    expect(mockUserPracticesCreate).toHaveBeenCalledWith({ practice_id: 77, stage_number: 1 });
+    expect(view.queryByTestId('practice-detail-stage-picker')).toBeNull();
+    expect(view.getByTestId('practice-detail-assigned-banner')).toBeTruthy();
+  });
+
   it('opens the stage picker and writes via userPractices.create on pick', async () => {
     mockPracticesGet.mockResolvedValueOnce(samplePractice);
     mockUserPracticesCreate.mockResolvedValueOnce(assignedUserPractice);

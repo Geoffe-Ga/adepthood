@@ -102,13 +102,18 @@ const PracticeScreen = (): React.JSX.Element => {
   );
 };
 
+interface CatalogButtonProps {
+  stageNumber: number;
+  label: string;
+  testID: string;
+}
+
 /**
- * Discoverable entry point to the (now pushed) practice catalog, seeded with the
- * user's resolved stage. Rendered on the Practice screen in both the active and
- * selection states so the catalog stays reachable after it left the bottom nav
- * (practice-redesign-01).
+ * Button-shaped entry point to the (pushed) practice catalog, seeded with the
+ * user's resolved stage. Used as "Change practice" in the active state and
+ * "Browse all practices" in the selection state — both open the same catalog.
  */
-const BrowseAllPracticesButton = ({ stageNumber }: { stageNumber: number }): React.JSX.Element => {
+const CatalogButton = ({ stageNumber, label, testID }: CatalogButtonProps): React.JSX.Element => {
   // Catalog is a pushed RootStack screen (not a tab), so navigate with the
   // stack-typed navigation rather than the tab-scoped useAppNavigation.
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -117,10 +122,10 @@ const BrowseAllPracticesButton = ({ stageNumber }: { stageNumber: number }): Rea
       style={styles.browseCatalog}
       onPress={() => navigation.navigate('Catalog', { stageNumber })}
       accessibilityRole="button"
-      accessibilityLabel="Browse all practices"
-      testID="browse-catalog-button"
+      accessibilityLabel={label}
+      testID={testID}
     >
-      <Text style={styles.browseCatalogText}>Browse all practices</Text>
+      <Text style={styles.browseCatalogText}>{label}</Text>
     </TouchableOpacity>
   );
 };
@@ -162,10 +167,13 @@ const ActiveSessionView = ({
         testID="practice-screen"
       >
         {banner}
-        {/* Above the session by design: the catalog must be reachable from the
-            active state too (practice-redesign-01). It sits in the scroll header,
-            not over the timer, so it doesn't intercept mid-session taps. */}
-        <BrowseAllPracticesButton stageNumber={stageNumber} />
+        {/* The primary switch affordance, in the scroll header (not over the
+            timer, so it doesn't intercept mid-session taps). */}
+        <CatalogButton
+          stageNumber={stageNumber}
+          label="Change practice"
+          testID="change-practice-button"
+        />
         <ActiveRitualSession
           key={`practice-${userPractice.id}`}
           userPractice={userPractice}
@@ -211,7 +219,11 @@ const SelectionView = ({
     () => (
       <>
         {banner}
-        <BrowseAllPracticesButton stageNumber={stageNumber} />
+        <CatalogButton
+          stageNumber={stageNumber}
+          label="Browse all practices"
+          testID="browse-catalog-button"
+        />
       </>
     ),
     [banner, stageNumber],

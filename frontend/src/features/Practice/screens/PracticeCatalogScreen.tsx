@@ -22,6 +22,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   SectionList,
   StyleSheet,
   Text,
@@ -31,9 +32,9 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { type PracticeItem, practices } from '@/api';
+import { type PracticeItem, practices, userPractices } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
-import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, colors, shadows, touchTarget } from '@/design/tokens';
 import { MODE_CATEGORIES, type PickableMode } from '@/features/Practice/components/ModePicker';
 import { MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -49,6 +50,8 @@ interface CatalogProps {
   navigateToDetail?: (practiceId: number) => void;
   /** Override for tests; otherwise opens ``CreatePractice``. */
   navigateToCreate?: () => void;
+  /** Override for tests; otherwise sets the active practice via the API. */
+  setActive?: (practiceId: number, stageNumber: number) => Promise<void>;
 }
 
 interface CatalogState {
@@ -65,7 +68,7 @@ interface CatalogState {
 export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Element {
   // Destructure so the useCallback deps below are stable field refs, not the
   // ``props`` object (a fresh ref each render that would defeat memoization).
-  const { initialStage, loadPractices, navigateToDetail, navigateToCreate } = props;
+  const { initialStage, loadPractices, navigateToDetail, navigateToCreate, setActive } = props;
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const seededStage = useSeededStage(initialStage);
   const [stageNumber, setStageNumber] = useState(seededStage);
@@ -78,8 +81,9 @@ export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Eleme
     navigateToDetail,
     navigateToCreate,
   );
+  const onUse = useCatalogSetActive(stageNumber, navigation, setActive);
 
-  const { sections, renderItem } = useCatalogList(state, query, modeCategory, onDetail);
+  const { sections, renderItem } = useCatalogList(state, query, modeCategory, onDetail, onUse);
   const insets = useSafeAreaInsets();
   const containerStyle = [styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }];
 
@@ -129,16 +133,45 @@ function useCatalogList(
   query: string,
   modeCategory: string | null,
   onDetail: (id: number) => void,
+  onUse: (id: number) => void,
 ): { sections: CatalogSection[]; renderItem: (info: { item: PracticeItem }) => React.JSX.Element } {
   const sections = useMemo(
     () => buildSections(state.practices, query, modeCategory),
     [state.practices, query, modeCategory],
   );
   const renderItem = useCallback(
-    ({ item }: { item: PracticeItem }) => <PracticeRow practice={item} onDetail={onDetail} />,
-    [onDetail],
+    ({ item }: { item: PracticeItem }) => (
+      <PracticeRow practice={item} onDetail={onDetail} onUse={onUse} />
+    ),
+    [onDetail, onUse],
   );
   return { sections, renderItem };
+}
+
+/** One-tap "use this practice" — set it active for the catalog's current stage,
+ * then return to the Practice screen. Errors surface in an alert. */
+function useCatalogSetActive(
+  stageNumber: number,
+  navigation: NativeStackNavigationProp<RootStackParamList>,
+  override: CatalogProps['setActive'],
+): (id: number) => void {
+  return useCallback(
+    (id: number) => {
+      void (async () => {
+        try {
+          if (override) {
+            await override(id, stageNumber);
+          } else {
+            await userPractices.create({ practice_id: id, stage_number: stageNumber });
+          }
+          navigation.goBack();
+        } catch (err) {
+          Alert.alert('Could not set practice', formatApiError(err, { fallback: 'Try again.' }));
+        }
+      })();
+    },
+    [stageNumber, navigation, override],
+  );
 }
 
 function useCatalogNavigation(
@@ -395,6 +428,7 @@ const FilterChip = ({ label, selected, onPress, testID }: FilterChipProps): Reac
 interface PracticeRowProps {
   practice: PracticeItem;
   onDetail: (id: number) => void;
+  onUse: (id: number) => void;
 }
 
 // Derived from MODE_CATEGORIES so adding a mode propagates here automatically.
@@ -407,30 +441,45 @@ const MODE_PRESENTATION: Readonly<Record<PickableMode, { label: string; icon: st
 
 const FALLBACK_PRESENTATION = { label: 'Practice', icon: '🧘' } as const;
 
-const PracticeRowComponent = ({ practice, onDetail }: PracticeRowProps): React.JSX.Element => {
+const PracticeRowComponent = ({
+  practice,
+  onDetail,
+  onUse,
+}: PracticeRowProps): React.JSX.Element => {
   const mode = (practice.mode ?? 'meditation_timer') as PickableMode;
   const { label, icon } = MODE_PRESENTATION[mode] ?? FALLBACK_PRESENTATION;
   const duration = Math.round(practice.default_duration_minutes);
   const subtitle = `${label} · ${duration} min`;
   return (
-    <TouchableOpacity
-      accessibilityRole="button"
-      accessibilityLabel={`${practice.name}. ${label}, ${duration} minutes.`}
-      onPress={() => onDetail(practice.id)}
-      style={styles.row}
-      testID={`practice-catalog-row-${practice.id}`}
-    >
-      {/* Decorative; TouchableOpacity merges children, so screen readers use accessibilityLabel. */}
-      <Text style={styles.rowIcon} testID={`practice-catalog-row-${practice.id}-icon`}>
-        {icon}
-      </Text>
-      <View style={styles.rowText}>
-        <Text style={styles.rowName} numberOfLines={1}>
-          {practice.name}
+    <View style={styles.rowContainer} testID={`practice-catalog-row-${practice.id}-container`}>
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={`${practice.name}. ${label}, ${duration} minutes.`}
+        onPress={() => onDetail(practice.id)}
+        style={styles.row}
+        testID={`practice-catalog-row-${practice.id}`}
+      >
+        {/* Decorative; TouchableOpacity merges children, so screen readers use accessibilityLabel. */}
+        <Text style={styles.rowIcon} testID={`practice-catalog-row-${practice.id}-icon`}>
+          {icon}
         </Text>
-        <Text style={styles.rowSubtitle}>{subtitle}</Text>
-      </View>
-    </TouchableOpacity>
+        <View style={styles.rowText}>
+          <Text style={styles.rowName} numberOfLines={1}>
+            {practice.name}
+          </Text>
+          <Text style={styles.rowSubtitle}>{subtitle}</Text>
+        </View>
+      </TouchableOpacity>
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={`Use ${practice.name}`}
+        onPress={() => onUse(practice.id)}
+        style={styles.rowUse}
+        testID={`practice-catalog-row-${practice.id}-use`}
+      >
+        <Text style={styles.rowUseText}>Use</Text>
+      </TouchableOpacity>
+    </View>
   );
 };
 
@@ -565,16 +614,33 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.sm,
   },
   emptyText: { color: colors.text.tertiaryAccessible, fontSize: 13 },
+  rowContainer: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: SPACING.sm,
+    marginBottom: SPACING.sm,
+  },
   row: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACING.md,
     backgroundColor: colors.background.card,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.md,
-    marginBottom: SPACING.sm,
     ...shadows.small,
   },
+  rowUse: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.md,
+    minWidth: touchTarget.minimum,
+    minHeight: touchTarget.minimum,
+    backgroundColor: colors.primary,
+    borderRadius: BORDER_RADIUS.lg,
+    ...shadows.small,
+  },
+  rowUseText: { color: colors.text.light, fontWeight: '700', fontSize: 14 },
   rowIcon: { fontSize: 24, width: 32, textAlign: 'center' },
   rowText: { flex: 1 },
   rowName: { fontSize: 15, fontWeight: '700', color: colors.text.primary },
