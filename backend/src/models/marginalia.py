@@ -52,6 +52,9 @@ class Marginalia(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     journal_entry_id: int = Field(foreign_key="journalentry.id", ondelete="CASCADE")
+    # Denormalized owner FK (in addition to the owner reachable via the entry) so
+    # "all marginalia for a user" reads need no JOIN. Writers must set it to the
+    # entry's owner; enforcing that invariant is tracked for the endpoint layer.
     user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
     kind: str = Field(max_length=20)
     anchor_start: int

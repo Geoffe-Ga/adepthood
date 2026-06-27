@@ -104,6 +104,25 @@ async def test_parent_delete_cascades(db_session: AsyncSession) -> None:
     assert remaining == 0
 
 
+@pytest.mark.asyncio
+async def test_updated_at_advances_on_mutate(db_session: AsyncSession) -> None:
+    """updated_at advances when the row is flushed after a mutation (onupdate)."""
+    user_id = await _user(db_session)
+    entry_id = await _entry(db_session, user_id)
+    row = _marginalia(entry_id, user_id)
+    db_session.add(row)
+    await db_session.commit()
+    # Refresh so ``original`` is the stored value (SQLite returns naive datetimes,
+    # so capturing the in-memory tz-aware value would make the comparison invalid).
+    await db_session.refresh(row)
+    original = row.updated_at
+
+    row.note = "Revised note."
+    await db_session.commit()
+    await db_session.refresh(row)
+    assert row.updated_at > original
+
+
 def test_enum_values() -> None:
     """The enum value sets match the contract."""
     assert {k.value for k in MarginaliaKind} == {"theme", "connection", "symbol"}
