@@ -8,7 +8,7 @@
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import styles from './JournalEntry.styles';
@@ -24,7 +24,7 @@ export const AUTOSAVE_DELAY_MS = 1500;
 /** Below this width the margin column stacks under the writing column. */
 const NARROW_BREAKPOINT = 600;
 
-type SaveState = 'idle' | 'typing' | 'saving' | 'saved';
+type SaveState = 'idle' | 'typing' | 'saving' | 'saved' | 'error';
 
 /** Context handed to the pluggable margin slot (and exposed for the Resonance CTA). */
 export interface JournalMarginContext {
@@ -42,6 +42,7 @@ export type JournalEntryScreenProps = NativeStackScreenProps<RootStackParamList,
 function savedHintLabel(state: SaveState): string {
   if (state === 'saving') return 'Saving…';
   if (state === 'saved') return 'Saved';
+  if (state === 'error') return "Couldn't save — keep writing, we'll retry";
   return ' ';
 }
 
@@ -113,7 +114,8 @@ function useDebouncedSave(routeEntryId: number | null, delayMs: number) {
       await writeEntry(entryIdRef, title, body);
       setSaveState('saved');
     } catch {
-      setSaveState('idle');
+      // Surface a distinct error state so the hint isn't mistaken for "untouched".
+      setSaveState('error');
     }
   }, []);
 
@@ -133,29 +135,79 @@ function useDebouncedSave(routeEntryId: number | null, delayMs: number) {
 function useJournalAutosave(routeEntryId: number | null, delayMs: number): AutosaveApi {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  // Refs mirror the latest text so the change handlers can stay referentially
+  // stable (each save needs the *other* field's current value).
+  const titleRef = useRef('');
+  const bodyRef = useRef('');
   const { saveState, save } = useDebouncedSave(routeEntryId, delayMs);
 
   useEntryLoadEffect(
     routeEntryId,
     useCallback((entry: JournalMessage) => {
-      setTitle(entry.title ?? '');
-      setBody(entry.message);
+      titleRef.current = entry.title ?? '';
+      bodyRef.current = entry.message;
+      setTitle(titleRef.current);
+      setBody(bodyRef.current);
     }, []),
   );
 
-  return {
-    title,
-    body,
-    saveState,
-    onChangeTitle: (next) => {
+  const onChangeTitle = useCallback(
+    (next: string) => {
+      titleRef.current = next;
       setTitle(next);
-      save(next, body);
+      save(next, bodyRef.current);
     },
-    onChangeBody: (next) => {
+    [save],
+  );
+  const onChangeBody = useCallback(
+    (next: string) => {
+      bodyRef.current = next;
       setBody(next);
-      save(title, next);
+      save(titleRef.current, next);
     },
-  };
+    [save],
+  );
+
+  return { title, body, saveState, onChangeTitle, onChangeBody };
+}
+
+/** The scrollable writing column (title + growing body + save hint). */
+function WritingColumn({ title, body, saveState, onChangeTitle, onChangeBody }: AutosaveApi) {
+  return (
+    <ScrollView
+      style={styles.writingColumn}
+      contentContainerStyle={styles.writingColumnContent}
+      keyboardShouldPersistTaps="handled"
+    >
+      <TextInput
+        style={styles.titleInput}
+        value={title}
+        onChangeText={onChangeTitle}
+        placeholder="Title"
+        placeholderTextColor={colors.paper.inkSoft}
+        accessibilityLabel="Entry title"
+        testID="journal-title-input"
+      />
+      <View style={styles.hairline} />
+      <TextInput
+        style={styles.bodyInput}
+        value={body}
+        onChangeText={onChangeBody}
+        placeholder="Begin writing…"
+        placeholderTextColor={colors.paper.inkSoft}
+        multiline
+        // The outer ScrollView owns scrolling so the field grows freely and long
+        // entries stay reachable (iOS multiline TextInput won't scroll its own
+        // content inside a flex parent).
+        scrollEnabled={false}
+        accessibilityLabel="Entry body"
+        testID="journal-body-input"
+      />
+      <Text style={styles.savedHint} testID="journal-save-hint">
+        {savedHintLabel(saveState)}
+      </Text>
+    </ScrollView>
+  );
 }
 
 function JournalEntryScreen({
@@ -163,46 +215,19 @@ function JournalEntryScreen({
   renderMargin,
   autosaveDelayMs = AUTOSAVE_DELAY_MS,
 }: JournalEntryScreenProps): React.JSX.Element {
-  const { title, body, saveState, onChangeTitle, onChangeBody } = useJournalAutosave(
-    route.params?.entryId ?? null,
-    autosaveDelayMs,
-  );
+  const autosave = useJournalAutosave(route.params?.entryId ?? null, autosaveDelayMs);
   const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
-  const isIdle = saveState !== 'typing' && saveState !== 'saving';
+  const isIdle = autosave.saveState !== 'typing' && autosave.saveState !== 'saving';
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={[styles.page, narrow && styles.pageNarrow]}>
-        <View style={styles.writingColumn}>
-          <TextInput
-            style={styles.titleInput}
-            value={title}
-            onChangeText={onChangeTitle}
-            placeholder="Title"
-            placeholderTextColor={colors.paper.inkSoft}
-            accessibilityLabel="Entry title"
-            testID="journal-title-input"
-          />
-          <View style={styles.hairline} />
-          <TextInput
-            style={styles.bodyInput}
-            value={body}
-            onChangeText={onChangeBody}
-            placeholder="Begin writing…"
-            placeholderTextColor={colors.paper.inkSoft}
-            multiline
-            accessibilityLabel="Entry body"
-            testID="journal-body-input"
-          />
-          <Text style={styles.savedHint} testID="journal-save-hint">
-            {savedHintLabel(saveState)}
-          </Text>
-        </View>
+        <WritingColumn {...autosave} />
         <View
           style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
           testID="journal-margin-column"
         >
-          {renderMargin?.({ body, isIdle })}
+          {renderMargin?.({ body: autosave.body, isIdle })}
         </View>
       </View>
     </SafeAreaView>

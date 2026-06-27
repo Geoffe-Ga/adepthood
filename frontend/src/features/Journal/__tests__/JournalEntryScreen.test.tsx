@@ -108,6 +108,21 @@ describe('JournalEntryScreen', () => {
     }
   });
 
+  it('shows a distinct error hint when a save fails', async () => {
+    mockCreate.mockRejectedValue(new Error('network'));
+    jest.useFakeTimers();
+    try {
+      const { getByTestId } = renderScreen(undefined, { autosaveDelayMs: 100 });
+      fireEvent.changeText(getByTestId('journal-body-input'), 'A thought.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(getByTestId('journal-save-hint').props.children).toMatch(/save/i);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('does not persist an empty draft', async () => {
     jest.useFakeTimers();
     try {

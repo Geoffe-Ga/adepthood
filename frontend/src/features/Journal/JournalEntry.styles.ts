@@ -28,6 +28,10 @@ const styles = StyleSheet.create({
   },
   writingColumn: {
     flex: 1,
+  },
+  /** ScrollView content: grows to fill, so an empty page is still tappable. */
+  writingColumnContent: {
+    flexGrow: 1,
     paddingVertical: spacing(3),
   },
   marginColumn: {
