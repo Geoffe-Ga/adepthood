@@ -11,6 +11,7 @@ from .habit import Habit
 from .journal_entry import JournalEntry
 from .llm_usage_log import LLMUsageLog
 from .login_attempt import LoginAttempt
+from .marginalia import Marginalia
 from .password_reset_token import PasswordResetToken
 from .practice import Practice
 from .practice_recipe import PracticeRecipe, PracticeRecipeStep
@@ -38,6 +39,7 @@ __all__ = [
     "JournalEntry",
     "LLMUsageLog",
     "LoginAttempt",
+    "Marginalia",
     "PasswordResetToken",
     "Practice",
     "PracticeRecipe",

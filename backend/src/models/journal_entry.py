@@ -8,6 +8,7 @@ from sqlmodel import Field, Relationship, SQLModel
 from services.journal_encryption import EncryptedString
 
 if TYPE_CHECKING:
+    from .marginalia import Marginalia
     from .user import User
 
 
@@ -26,6 +27,17 @@ class JournalTag(enum.StrEnum):
     # distinct tag so stage-scoped aggregates (filtered by
     # ``STAGE_REFLECTION``) do not double-count them.
     WEEKLY_PROMPT = "weekly_prompt"
+
+
+class EntryStatus(enum.StrEnum):
+    """Lifecycle of a long-form journal entry: still being written vs committed.
+
+    The backing column lands in a follow-up; defined here so the resonance
+    feature can import a single source of truth for the value set.
+    """
+
+    DRAFT = "draft"
+    FINISHED = "finished"
 
 
 class JournalEntry(SQLModel, table=True):
@@ -76,3 +88,7 @@ class JournalEntry(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
     user: "User" = Relationship(back_populates="journals")
+    marginalia: list["Marginalia"] = Relationship(
+        back_populates="entry",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
