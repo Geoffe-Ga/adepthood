@@ -450,11 +450,16 @@ const PracticeRowComponent = ({
   const mode = (practice.mode ?? 'meditation_timer') as PickableMode;
   const { label, icon } = MODE_PRESENTATION[mode] ?? FALLBACK_PRESENTATION;
   const subtitle = `${label} · ${formatDuration(practice.default_duration_minutes)}`;
+  // Spoken label avoids the visual "·" separator and spells out "minutes"
+  // (abbreviations + glyphs read poorly under VoiceOver/TalkBack).
+  const a11yLabel = `${practice.name}. ${label}, ${Math.round(
+    practice.default_duration_minutes,
+  )} minutes.`;
   return (
     <View style={styles.rowContainer} testID={`practice-catalog-row-${practice.id}-container`}>
       <TouchableOpacity
         accessibilityRole="button"
-        accessibilityLabel={`${practice.name}. ${subtitle}.`}
+        accessibilityLabel={a11yLabel}
         onPress={() => onDetail(practice.id)}
         style={styles.row}
         testID={`practice-catalog-row-${practice.id}`}
