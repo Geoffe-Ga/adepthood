@@ -20,6 +20,7 @@ from security import TextTooLongError, sanitize_user_text
 VALID_KINDS = frozenset({"theme", "connection", "symbol"})
 ANCHOR_TEXT_MAX = 280
 NOTE_MAX = 600
+ESSAY_MAX = 10_000
 _DEFAULT_MAX_NOTES = 5
 # Bound the prompt cost: at most this many prior entries, each truncated, so a
 # caller passing a long history can't blow up the context window / token bill.
@@ -176,3 +177,35 @@ async def generate_marginalia(
         if len(anchored) >= max_notes:
             break
     return anchored
+
+
+def _build_essay_prompt(body: str, anchor_text: str, kind: str, note: str) -> str:
+    """Build the prompt expanding one margin note into a short letter-like essay."""
+    return (
+        "You are writing a short, warm letter to the person whose journal this is, "
+        f"expanding on a margin note you left. Stay grounded in the passage you "
+        f"anchored to; speak in second person; never refer to yourself as an AI.\n\n"
+        f"Margin note kind: {kind}\n"
+        f"Your margin note: {note}\n"
+        f"The passage it anchors to:\n<passage>\n{anchor_text}\n</passage>\n\n"
+        f"The full entry for context:\n<entry>\n{body}\n</entry>\n\n"
+        "Write a few warm paragraphs. Plain prose only, no headings or JSON."
+    )
+
+
+def _sanitize_essay(text: str) -> str:
+    """Sanitize + cap an essay to ESSAY_MAX, truncating rather than raising."""
+    truncated = text[:ESSAY_MAX]
+    try:
+        return sanitize_user_text(truncated, max_len=ESSAY_MAX)
+    except TextTooLongError:
+        # NFC expansion pushed it back over the cap; trim with headroom.
+        return sanitize_user_text(truncated[: ESSAY_MAX // 2], max_len=ESSAY_MAX)
+
+
+async def generate_essay(
+    *, llm: ResonanceLLM, body: str, anchor_text: str, kind: str, note: str
+) -> str:
+    """Ask ``llm`` to expand a margin note into a sanitized, length-capped essay."""
+    raw = await llm.complete(_build_essay_prompt(body, anchor_text, kind, note))
+    return _sanitize_essay(raw)
