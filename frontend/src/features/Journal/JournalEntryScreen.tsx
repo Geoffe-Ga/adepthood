@@ -8,9 +8,17 @@
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import {
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import EditConfirmDialog from './EditConfirmDialog';
 import GetResonanceButton, { shouldShowResonance } from './GetResonanceButton';
 import HighlightedBody from './HighlightedBody';
 import styles from './JournalEntry.styles';
@@ -19,7 +27,7 @@ import ResonanceEssayModal from './ResonanceEssayModal';
 import { useResonance } from './useResonance';
 
 import { journal } from '@/api';
-import type { JournalMessage, Marginalia } from '@/api';
+import type { EntryStatus, JournalMessage, Marginalia } from '@/api';
 import { colors } from '@/design/tokens';
 import { useIdle } from '@/hooks/useIdle';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -73,6 +81,8 @@ async function writeEntry(
 interface AutosaveApi {
   title: string;
   body: string;
+  status: EntryStatus;
+  setStatus: (_status: EntryStatus) => void;
   saveState: SaveState;
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
@@ -103,10 +113,15 @@ function useEntryLoadEffect(
 }
 
 /** Debounced create-then-update draft saver; tracks the save state. */
-function useDebouncedSave(routeEntryId: number | null, delayMs: number) {
+function useDebouncedSave(routeEntryId: number | null, delayMs: number, onSaved?: () => void) {
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const entryIdRef = useRef<number | null>(routeEntryId);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Ref so a non-memoised callback doesn't churn the save callbacks below.
+  const onSavedRef = useRef(onSaved);
+  useEffect(() => {
+    onSavedRef.current = onSaved;
+  }, [onSaved]);
 
   useEffect(
     () => () => {
@@ -121,6 +136,7 @@ function useDebouncedSave(routeEntryId: number | null, delayMs: number) {
     try {
       await writeEntry(entryIdRef, title, body);
       setSaveState('saved');
+      onSavedRef.current?.();
     } catch {
       // Surface a distinct error state so the hint isn't mistaken for "untouched".
       setSaveState('error');
@@ -151,14 +167,19 @@ function useDebouncedSave(routeEntryId: number | null, delayMs: number) {
 }
 
 /** Owns the entry's text + debounced draft autosave (create-then-update). */
-function useJournalAutosave(routeEntryId: number | null, delayMs: number): AutosaveApi {
+function useJournalAutosave(
+  routeEntryId: number | null,
+  delayMs: number,
+  onSaved?: () => void,
+): AutosaveApi {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const [status, setStatus] = useState<EntryStatus>('draft');
   // Refs mirror the latest text so the change handlers can stay referentially
   // stable (each save needs the *other* field's current value).
   const titleRef = useRef('');
   const bodyRef = useRef('');
-  const { saveState, save, flush } = useDebouncedSave(routeEntryId, delayMs);
+  const { saveState, save, flush } = useDebouncedSave(routeEntryId, delayMs, onSaved);
 
   useEntryLoadEffect(
     routeEntryId,
@@ -167,6 +188,7 @@ function useJournalAutosave(routeEntryId: number | null, delayMs: number): Autos
       bodyRef.current = entry.message;
       setTitle(titleRef.current);
       setBody(bodyRef.current);
+      setStatus(entry.status ?? 'draft');
     }, []),
   );
 
@@ -189,7 +211,16 @@ function useJournalAutosave(routeEntryId: number | null, delayMs: number): Autos
 
   const flushNow = useCallback(() => flush(titleRef.current, bodyRef.current), [flush]);
 
-  return { title, body, saveState, onChangeTitle, onChangeBody, flush: flushNow };
+  return {
+    title,
+    body,
+    status,
+    setStatus,
+    saveState,
+    onChangeTitle,
+    onChangeBody,
+    flush: flushNow,
+  };
 }
 
 interface WritingColumnProps {
@@ -198,6 +229,21 @@ interface WritingColumnProps {
   saveState: SaveState;
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
+  onFinish?: () => void;
+}
+
+/** Quiet control to mark a draft finished. */
+function FinishControl({ onFinish }: { onFinish: () => void }) {
+  return (
+    <TouchableOpacity
+      onPress={onFinish}
+      accessibilityRole="button"
+      accessibilityLabel="Mark this entry finished"
+      testID="journal-finish-button"
+    >
+      <Text style={styles.controlLink}>Finish</Text>
+    </TouchableOpacity>
+  );
 }
 
 /** The scrollable writing column (title + growing body + save hint). */
@@ -207,6 +253,7 @@ function WritingColumn({
   saveState,
   onChangeTitle,
   onChangeBody,
+  onFinish,
 }: WritingColumnProps) {
   return (
     <ScrollView
@@ -241,6 +288,7 @@ function WritingColumn({
       <Text style={styles.savedHint} testID="journal-save-hint">
         {savedHintLabel(saveState)}
       </Text>
+      {onFinish ? <FinishControl onFinish={onFinish} /> : null}
     </ScrollView>
   );
 }
@@ -263,17 +311,19 @@ function ResonanceMargin({ count, error }: { count: number; error: string | null
   );
 }
 
-/** Read-mode body: the title + the highlighted passage tree (shown once notes exist). */
+/** Read-mode body: the title + the highlighted passage tree + an Edit affordance. */
 function ReadColumn({
   title,
   body,
   notes,
   onOpen,
+  onEdit,
 }: {
   title: string;
   body: string;
   notes: Marginalia[];
   onOpen: (_note: Marginalia) => void;
+  onEdit: () => void;
 }) {
   return (
     <ScrollView
@@ -284,6 +334,14 @@ function ReadColumn({
       {title ? <Text style={styles.titleInput}>{title}</Text> : null}
       <View style={styles.hairline} />
       <HighlightedBody body={body} notes={notes} onOpen={onOpen} />
+      <TouchableOpacity
+        onPress={onEdit}
+        accessibilityRole="button"
+        accessibilityLabel="Edit this entry"
+        testID="journal-edit-button"
+      >
+        <Text style={styles.controlLink}>Edit</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -308,18 +366,14 @@ function MarginNoteList({
   );
 }
 
-/** Compose the autosave + idle + resonance hooks into the screen's view-model. */
-function useJournalEntryController(routeEntryId: number | null, autosaveDelayMs: number) {
-  const autosave = useJournalAutosave(routeEntryId, autosaveDelayMs);
-  const { isIdle, bump } = useIdle();
-  const resonance = useResonance({ routeEntryId, flush: autosave.flush });
-  const { onChangeTitle, onChangeBody } = autosave;
-  const { updateNote } = resonance;
+type ScreenNavigation = JournalEntryScreenProps['navigation'];
+
+/** The essay-modal open/close state + essay caching. */
+function useEssayModal(updateNote: (_note: Marginalia) => void) {
   const [openNote, setOpenNote] = useState<Marginalia | null>(null);
   const onOpenNote = useCallback((note: Marginalia) => setOpenNote(note), []);
   const onCloseNote = useCallback(() => setOpenNote(null), []);
-  // Cache the freshly-loaded essay back onto the note (instant re-open) and keep
-  // the open modal showing the updated note.
+  // Cache the freshly-loaded essay back onto the note and keep the modal current.
   const onEssayLoaded = useCallback(
     (updated: Marginalia) => {
       updateNote(updated);
@@ -327,7 +381,91 @@ function useJournalEntryController(routeEntryId: number | null, autosaveDelayMs:
     },
     [updateNote],
   );
+  return { openNote, onOpenNote, onCloseNote, onEssayLoaded };
+}
 
+interface EditGateArgs {
+  status: EntryStatus;
+  setStatus: (_status: EntryStatus) => void;
+  flush: () => Promise<number | null>;
+  body: string;
+  navigation: ScreenNavigation;
+  onConfirmEdit: () => void;
+}
+
+/** The deliberate edit gate for finished entries + the draft "Finish" action. */
+function useEditGate({ status, setStatus, flush, body, navigation, onConfirmEdit }: EditGateArgs) {
+  const [editing, setEditing] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  // A finished entry is read-only until the user deliberately chooses to edit.
+  const editMode = editing || status !== 'finished';
+
+  const requestEdit = useCallback(() => setConfirmOpen(true), []);
+  const cancelEdit = useCallback(() => setConfirmOpen(false), []);
+  const confirmEdit = useCallback(() => {
+    setConfirmOpen(false);
+    setEditing(true);
+    onConfirmEdit();
+  }, [onConfirmEdit]);
+  const startNew = useCallback(() => {
+    setConfirmOpen(false);
+    navigation.push('JournalEntry');
+  }, [navigation]);
+  const markFinished = useCallback(async () => {
+    const id = await flush();
+    if (id == null) return;
+    await journal.update(id, { status: 'finished' });
+    setStatus('finished');
+    setEditing(false);
+  }, [flush, setStatus]);
+
+  const canFinish = status === 'draft' && body.trim().length > 0;
+  return {
+    editMode,
+    confirmOpen,
+    requestEdit,
+    cancelEdit,
+    confirmEdit,
+    startNew,
+    markFinished,
+    canFinish,
+  };
+}
+
+/** Compose the autosave + idle + resonance hooks into the screen's view-model. */
+function useJournalEntryController(
+  routeEntryId: number | null,
+  autosaveDelayMs: number,
+  navigation: ScreenNavigation,
+) {
+  const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const pendingRefreshRef = useRef(false);
+  // After the first save following an edit, re-read the (re-anchored/staled) notes.
+  const handleSaved = useCallback(() => {
+    if (!pendingRefreshRef.current) return;
+    pendingRefreshRef.current = false;
+    void refreshRef.current();
+  }, []);
+  const onConfirmEdit = useCallback(() => {
+    pendingRefreshRef.current = true;
+  }, []);
+
+  const autosave = useJournalAutosave(routeEntryId, autosaveDelayMs, handleSaved);
+  const { isIdle, bump } = useIdle();
+  const resonance = useResonance({ routeEntryId, flush: autosave.flush });
+  refreshRef.current = resonance.refresh;
+
+  const modal = useEssayModal(resonance.updateNote);
+  const editGate = useEditGate({
+    status: autosave.status,
+    setStatus: autosave.setStatus,
+    flush: autosave.flush,
+    body: autosave.body,
+    navigation,
+    onConfirmEdit,
+  });
+
+  const { onChangeTitle, onChangeBody } = autosave;
   const handleTitle = useCallback(
     (t: string) => {
       bump();
@@ -345,18 +483,7 @@ function useJournalEntryController(routeEntryId: number | null, autosaveDelayMs:
   const hasContent = autosave.body.trim().length > 0;
   const visible = shouldShowResonance({ isIdle, hasContent, isLoading: resonance.loading });
 
-  return {
-    autosave,
-    resonance,
-    isIdle,
-    visible,
-    handleTitle,
-    handleBody,
-    onOpenNote,
-    openNote,
-    onCloseNote,
-    onEssayLoaded,
-  };
+  return { autosave, resonance, isIdle, visible, handleTitle, handleBody, modal, editGate };
 }
 
 type Controller = ReturnType<typeof useJournalEntryController>;
@@ -373,23 +500,31 @@ function JournalPage({
   const { title, body, saveState } = ctl.autosave;
   const notes = ctl.resonance.marginalia;
   const hasNotes = notes.length > 0;
+  const { editMode, canFinish, markFinished, requestEdit } = ctl.editGate;
 
   let marginContent: React.ReactNode;
   if (renderMargin) marginContent = renderMargin({ body, isIdle: ctl.isIdle });
-  else if (hasNotes) marginContent = <MarginNoteList notes={notes} onOpen={ctl.onOpenNote} />;
+  else if (hasNotes) marginContent = <MarginNoteList notes={notes} onOpen={ctl.modal.onOpenNote} />;
   else marginContent = <ResonanceMargin count={0} error={ctl.resonance.error} />;
 
   return (
     <View style={[styles.page, narrow && styles.pageNarrow]}>
-      {hasNotes ? (
-        <ReadColumn title={title} body={body} notes={notes} onOpen={ctl.onOpenNote} />
-      ) : (
+      {editMode ? (
         <WritingColumn
           title={title}
           body={body}
           saveState={saveState}
           onChangeTitle={ctl.handleTitle}
           onChangeBody={ctl.handleBody}
+          onFinish={canFinish ? markFinished : undefined}
+        />
+      ) : (
+        <ReadColumn
+          title={title}
+          body={body}
+          notes={notes}
+          onOpen={ctl.modal.onOpenNote}
+          onEdit={requestEdit}
         />
       )}
       <View
@@ -404,10 +539,12 @@ function JournalPage({
 
 function JournalEntryScreen({
   route,
+  navigation,
   renderMargin,
   autosaveDelayMs = AUTOSAVE_DELAY_MS,
 }: JournalEntryScreenProps): React.JSX.Element {
-  const ctl = useJournalEntryController(route.params?.entryId ?? null, autosaveDelayMs);
+  const ctl = useJournalEntryController(route.params?.entryId ?? null, autosaveDelayMs, navigation);
+  const { editGate, modal } = ctl;
   return (
     <SafeAreaView style={styles.safeArea}>
       <JournalPage ctl={ctl} renderMargin={renderMargin} />
@@ -417,9 +554,15 @@ function JournalEntryScreen({
         onPress={ctl.resonance.requestResonance}
       />
       <ResonanceEssayModal
-        note={ctl.openNote}
-        onClose={ctl.onCloseNote}
-        onEssayLoaded={ctl.onEssayLoaded}
+        note={modal.openNote}
+        onClose={modal.onCloseNote}
+        onEssayLoaded={modal.onEssayLoaded}
+      />
+      <EditConfirmDialog
+        visible={editGate.confirmOpen}
+        onEdit={editGate.confirmEdit}
+        onStartNew={editGate.startNew}
+        onCancel={editGate.cancelEdit}
       />
     </SafeAreaView>
   );

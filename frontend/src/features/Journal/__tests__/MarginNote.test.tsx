@@ -49,6 +49,14 @@ describe('MarginNote', () => {
       ? Object.assign({}, ...card.props.style)
       : card.props.style;
     expect(flattened.opacity).toBeLessThan(1);
-    expect(getByText(/Anchor moved/)).toBeTruthy();
+    expect(getByText(/The passage this noted has changed/)).toBeTruthy();
+  });
+
+  it('a stale note is still openable', () => {
+    const onOpen = jest.fn();
+    const n = note({ id: 13, status: 'stale' });
+    const { getByTestId } = render(<MarginNote note={n} onOpen={onOpen} />);
+    fireEvent.press(getByTestId('margin-note-13'));
+    expect(onOpen).toHaveBeenCalledWith(n);
   });
 });
