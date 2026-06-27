@@ -192,6 +192,9 @@ const ActiveSessionView = ({
         testID="practice-screen"
       >
         {banner}
+        {/* Above the session by design: the catalog must be reachable from the
+            active state too (practice-redesign-01). It sits in the scroll header,
+            not over the timer, so it doesn't intercept mid-session taps. */}
         <BrowseAllPracticesButton stageNumber={stageNumber} />
         <ActiveRitualSession
           key={`practice-${userPractice.id}`}

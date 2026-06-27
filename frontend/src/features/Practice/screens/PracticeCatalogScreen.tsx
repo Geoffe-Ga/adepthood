@@ -63,13 +63,12 @@ interface CatalogState {
  * user's current stage when this screen is the catalog tab.
  */
 export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Element {
-  // Destructure each prop the callbacks below depend on so the
-  // ``useCallback`` dependency arrays are stable refs instead of the
-  // ``props`` object (which is a new reference on every render and
-  // would silently invalidate every memoization).
+  // Destructure so the useCallback deps below are stable field refs, not the
+  // ``props`` object (a fresh ref each render that would defeat memoization).
   const { initialStage, loadPractices, navigateToDetail, navigateToCreate } = props;
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const [stageNumber, setStageNumber] = useState(useSeededStage(initialStage));
+  const seededStage = useSeededStage(initialStage);
+  const [stageNumber, setStageNumber] = useState(seededStage);
   const [modeCategory, setModeCategory] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [state, reload] = useCatalog(stageNumber, loadPractices);
@@ -80,17 +79,7 @@ export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Eleme
     navigateToCreate,
   );
 
-  // Virtualized: bucket the filtered catalog into the three sections and let
-  // SectionList window the rows. Stable render callbacks keep rows from
-  // re-rendering on unrelated state (search keystrokes, chip toggles).
-  const sections = useMemo(
-    () => buildSections(state.practices, query, modeCategory),
-    [state.practices, query, modeCategory],
-  );
-  const renderItem = useCallback(
-    ({ item }: { item: PracticeItem }) => <PracticeRow practice={item} onDetail={onDetail} />,
-    [onDetail],
-  );
+  const { sections, renderItem } = useCatalogList(state, query, modeCategory, onDetail);
   const insets = useSafeAreaInsets();
   const containerStyle = [styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }];
 
@@ -124,10 +113,32 @@ export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Eleme
 }
 
 /** Seed the stage chip: an explicit prop (tests) wins, else the ``Catalog``
- * route param when pushed from the Practice screen, else the first stage. */
+ * route param when pushed from the Practice screen, else the first stage.
+ *
+ * Always calls ``useRoute`` (hooks can't be conditional), so a render outside a
+ * navigator must mock it — the prop path alone does not skip the hook. */
 function useSeededStage(initialStage: number | undefined): number {
   const route = useRoute<RouteProp<RootStackParamList, 'Catalog'>>();
   return initialStage ?? route.params?.stageNumber ?? MIN_STAGE;
+}
+
+/** Memoized SectionList inputs: the bucketed sections + a stable row renderer
+ * (kept stable so search keystrokes / chip toggles don't re-render every row). */
+function useCatalogList(
+  state: CatalogState,
+  query: string,
+  modeCategory: string | null,
+  onDetail: (id: number) => void,
+): { sections: CatalogSection[]; renderItem: (info: { item: PracticeItem }) => React.JSX.Element } {
+  const sections = useMemo(
+    () => buildSections(state.practices, query, modeCategory),
+    [state.practices, query, modeCategory],
+  );
+  const renderItem = useCallback(
+    ({ item }: { item: PracticeItem }) => <PracticeRow practice={item} onDetail={onDetail} />,
+    [onDetail],
+  );
+  return { sections, renderItem };
 }
 
 function useCatalogNavigation(

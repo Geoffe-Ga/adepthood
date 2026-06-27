@@ -323,6 +323,15 @@ describe('PracticeScreen', () => {
     });
   });
 
+  it('browse-all-practices opens the Catalog from the active-session state too', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+
+    fireEvent.press(getByTestId('browse-catalog-button'));
+    expect(mockRootNavigate).toHaveBeenCalledWith('Catalog', { stageNumber: expect.any(Number) });
+  });
+
   it('applies safe-area insets to the active-session surface', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId } = render(<PracticeScreen />);
