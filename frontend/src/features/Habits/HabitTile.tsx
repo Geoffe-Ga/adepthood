@@ -34,18 +34,14 @@ const TIER_LABELS: Record<TierType, string> = {
   stretch: 'Stretch Goal',
 };
 
-const MARKER_SIZE = 12;
-
-const computeTranslateX = (pct: number): number => {
-  if (pct === 0) return 0;
-  return pct === 100 ? -MARKER_SIZE : -MARKER_SIZE / 2;
-};
-
 /** Center an element of arbitrary width over its position, clamped at the bar edges. */
 const computeCenteredTranslateX = (pct: number, width: number): number => {
   if (pct === 0) return 0;
   return pct === 100 ? -width : -width / 2;
 };
+
+/** Marker star size: a touch larger than the bar so it reads as a sitting marker. */
+const markerStarSize = (scale: number): number => spacing(2, scale);
 
 const formatGoalTooltip = (goal: Goal, habit: Habit, tz: string): string => {
   const label = TIER_LABELS[goal.tier];
@@ -115,13 +111,14 @@ const GoalMarker = ({
   tz,
 }: GoalMarkerProps) => {
   const clamped = clampPercentage(markerPosition);
+  const starSize = markerStarSize(scale);
   return (
     <View
       style={{
         position: 'absolute',
         left: `${clamped}%`,
-        top: -6 + barHeight / 2,
-        transform: [{ translateX: computeTranslateX(clamped) }],
+        top: (barHeight - starSize) / 2,
+        transform: [{ translateX: computeCenteredTranslateX(clamped, starSize) }],
         zIndex,
         alignItems: 'center',
       }}
@@ -135,40 +132,9 @@ const GoalMarker = ({
         onPressOut={() => setTooltip(null)}
         onMouseEnter={() => setTooltip(tier)}
         onMouseLeave={() => setTooltip(null)}
-        style={{
-          width: 12,
-          height: 12,
-          borderRadius: 6,
-          backgroundColor: '#fffdf7',
-          borderWidth: 2,
-          borderColor: getTierColor(tier),
-        }}
-      />
-    </View>
-  );
-};
-
-interface GoalLabelProps {
-  tier: TierType;
-  markerPosition: number;
-  zIndex: number;
-  scale: number;
-}
-
-const GoalLabel = ({ tier, markerPosition, zIndex, scale }: GoalLabelProps) => {
-  const clamped = clampPercentage(markerPosition);
-  const starSize = spacing(2, scale);
-  return (
-    <View
-      testID={`label-${tier}`}
-      style={{
-        position: 'absolute',
-        left: `${clamped}%`,
-        transform: [{ translateX: computeCenteredTranslateX(clamped, starSize) }],
-        zIndex,
-      }}
-    >
-      <TierStar tier={tier} color={getTierColor(tier)} size={starSize} />
+      >
+        <TierStar tier={tier} color={getTierColor(tier)} size={starSize} />
+      </TouchableOpacity>
     </View>
   );
 };
@@ -342,22 +308,6 @@ const MarkerList = ({
   </>
 );
 
-const LabelList = ({ markers, scale }: { markers: GoalMarkerEntry[]; scale: number }) => (
-  <>
-    {markers
-      .filter((m) => m.visible)
-      .map((m) => (
-        <GoalLabel
-          key={m.tier}
-          tier={m.tier}
-          markerPosition={m.markerPosition}
-          zIndex={m.zIndex}
-          scale={scale}
-        />
-      ))}
-  </>
-);
-
 const COLOR_TRANSITION_MS = 400;
 
 const useColorTransition = (color: string) => {
@@ -457,9 +407,6 @@ const ProgressBar = ({
           setTooltip={setTooltip}
           tz={tz}
         />
-      </View>
-      <View style={{ position: 'relative', marginTop: spacing(0.5, scale) }}>
-        <LabelList markers={markers} scale={scale} />
       </View>
     </View>
   );
