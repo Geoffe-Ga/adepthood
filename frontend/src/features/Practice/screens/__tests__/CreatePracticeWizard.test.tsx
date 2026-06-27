@@ -211,6 +211,15 @@ describe('CreatePracticeWizard — metadata + submit', () => {
     expect(submit.props.accessibilityState?.disabled).toBe(true);
   });
 
+  it('shows a formatted suggested-duration hint on the metadata step', () => {
+    const { view } = renderScreen();
+    fireEvent.press(view.getByTestId('create-practice-from-scratch'));
+    fireEvent.press(view.getByTestId('mode-picker-mode-random_interval_bell'));
+    fireEvent.press(view.getByTestId('create-practice-configure-next'));
+    expect(view.getByTestId('create-practice-duration-suggested')).toBeTruthy();
+    expect(view.getByText(/Suggested:/)).toBeTruthy();
+  });
+
   it('submits practice + user-practice when a stage is selected', async () => {
     mockPracticesCreate.mockResolvedValueOnce(createdPractice);
     mockUserPracticesCreate.mockResolvedValueOnce(createdUserPractice);

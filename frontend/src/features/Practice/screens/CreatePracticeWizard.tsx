@@ -567,7 +567,6 @@ interface EntryCardProps {
   onPress: () => void;
 }
 
-/** Equal-weight entry option: a calm card with a one-line subtitle. */
 const EntryCard = ({ title, subtitle, testID, onPress }: EntryCardProps): React.JSX.Element => (
   <TouchableOpacity
     accessibilityRole="button"
