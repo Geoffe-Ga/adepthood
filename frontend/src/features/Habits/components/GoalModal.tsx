@@ -22,6 +22,7 @@ import type {
 import EmojiSelector from 'react-native-emoji-selector';
 
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
+import { TierStar } from '../../../components/TierStar';
 import { useAuth } from '../../../context/AuthContext';
 import { colors, SPACING, STAGE_COLORS, shadows, touchTarget } from '../../../design/tokens';
 import { addDaysInTZ, dayKeyInTZ, todayInUserTZ } from '../../../utils/dateUtils';
@@ -59,21 +60,24 @@ const circleStyle = (color: string): ViewStyle => ({
   borderColor: color,
 });
 
-const labelContainerStyle = (leftPct: number, z: number): ViewStyle => ({
-  position: 'absolute',
-  left: `${clampPercentage(leftPct)}%` as DimensionValue,
-  transform: [
-    {
-      translateX: clampPercentage(leftPct) === 0 ? 0 : clampPercentage(leftPct) === 100 ? -12 : -6,
-    },
-  ],
-  zIndex: z,
-  backgroundColor: '#fffdf7',
-  paddingHorizontal: 2,
-  borderRadius: 2,
-});
+/** Size of the unlabeled tier star shown beneath the goal progress bar. */
+const TIER_STAR_SIZE = 14;
 
-const labelTextStyle = (color: string): TextStyle => ({ fontSize: 10, color });
+/** Center a star of TIER_STAR_SIZE over its position, clamped at the bar edges. */
+const centeredTranslateX = (clamped: number): number => {
+  if (clamped === 0) return 0;
+  return clamped === 100 ? -TIER_STAR_SIZE : -TIER_STAR_SIZE / 2;
+};
+
+const labelContainerStyle = (leftPct: number, z: number): ViewStyle => {
+  const clamped = clampPercentage(leftPct);
+  return {
+    position: 'absolute',
+    left: `${clamped}%` as DimensionValue,
+    transform: [{ translateX: centeredTranslateX(clamped) }],
+    zIndex: z,
+  };
+};
 
 const tooltipStyle = (color: string): ViewStyle => ({
   position: 'absolute',
@@ -99,8 +103,6 @@ const TIER_LABELS: Record<string, string> = {
   clear: 'Clear Goal',
   stretch: 'Stretch Goal',
 };
-
-const TIER_ABBREVS: Record<string, string> = { low: 'LG', clear: 'CG', stretch: 'SG' };
 
 const formatGoalTooltip = (g: Goal | undefined): string => {
   if (!g) return '';
@@ -280,8 +282,12 @@ const GoalLabelRow = ({
 }) => (
   <View style={{ position: 'relative', marginTop: 4 }}>
     {GOAL_LABEL_TIERS.filter((t) => goalsByTier[t.tier]).map((t) => (
-      <View key={t.tier} style={labelContainerStyle(markerPositions[t.tier]!, t.zIndex)}>
-        <Text style={labelTextStyle(getTierColor(t.tier))}>{TIER_ABBREVS[t.tier]}</Text>
+      <View
+        key={t.tier}
+        testID={`modal-label-${t.tier}`}
+        style={labelContainerStyle(markerPositions[t.tier]!, t.zIndex)}
+      >
+        <TierStar tier={t.tier} color={getTierColor(t.tier)} size={TIER_STAR_SIZE} />
       </View>
     ))}
   </View>

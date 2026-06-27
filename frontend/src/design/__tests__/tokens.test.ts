@@ -57,9 +57,12 @@ describe('design tokens', () => {
     });
 
     it('exports tier colors for goal display', () => {
-      expect(colors.tier.low).toBe('#bc845d');
-      expect(colors.tier.clear).toBe('#807f66');
-      expect(colors.tier.stretch).toBe('#b0ae91');
+      // "Candle & Ink" warm-literary arc: brass → terracotta → garnet,
+      // deepening toward the more ambitious tier. Low brass darkened to
+      // #b08d40 to clear WCAG 2.1 SC 1.4.11 (3:1) for the star outline.
+      expect(colors.tier.low).toBe('#b08d40');
+      expect(colors.tier.clear).toBe('#be6e46');
+      expect(colors.tier.stretch).toBe('#8c3b2e');
       expect(colors.tier.default).toBe('#dad9d4');
     });
 
