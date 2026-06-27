@@ -6,6 +6,11 @@ from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, select
+
+from models.journal_entry import JournalEntry
+from models.user import User
 
 
 async def _signup(client: AsyncClient, username: str = "patcher") -> dict[str, str]:
@@ -98,15 +103,22 @@ async def test_patch_soft_deleted_entry_is_404(async_client: AsyncClient) -> Non
 
 
 @pytest.mark.asyncio
-async def test_patch_bot_entry_is_404(async_client: AsyncClient) -> None:
+async def test_patch_bot_entry_is_404(async_client: AsyncClient, db_session: AsyncSession) -> None:
     """A bot-authored entry shares the user's id but isn't user-editable (404)."""
     headers = await _signup(async_client, "botpatch")
-    resp = await async_client.post(
-        "/journal/bot-response", json={"message": "AI says hi"}, headers=headers
+    user = (
+        (await db_session.execute(select(User).where(col(User.email) == "botpatch@example.com")))
+        .scalars()
+        .one()
     )
-    entry_id = resp.json()["id"]
+    assert user.id is not None
+    bot_entry = JournalEntry(sender="bot", user_id=user.id, message="AI says hi")
+    db_session.add(bot_entry)
+    await db_session.commit()
+    await db_session.refresh(bot_entry)
+
     patch = await async_client.patch(
-        f"/journal/{entry_id}", json={"title": "tampered"}, headers=headers
+        f"/journal/{bot_entry.id}", json={"title": "tampered"}, headers=headers
     )
     assert patch.status_code == HTTPStatus.NOT_FOUND
 

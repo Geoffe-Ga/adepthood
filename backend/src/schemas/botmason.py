@@ -1,4 +1,4 @@
-"""BotMason AI chat request/response schemas."""
+"""BotMason wallet / usage schemas."""
 
 from __future__ import annotations
 
@@ -6,34 +6,10 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-CHAT_MESSAGE_MAX_LENGTH = 5_000
-
 # Bound credit grants so a single call can neither zero-out the ledger nor
 # mint billion-credit wallets.  One million is far above any legitimate gift.
 BALANCE_ADD_MIN = 1
 BALANCE_ADD_MAX = 1_000_000
-
-
-class ChatRequest(BaseModel):
-    """Payload for sending a message to BotMason."""
-
-    message: str = Field(min_length=1, max_length=CHAT_MESSAGE_MAX_LENGTH)
-
-
-class ChatResponse(BaseModel):
-    """Response from BotMason including the bot's reply and remaining wallet state.
-
-    ``remaining_balance`` reports purchased/gifted credits; ``remaining_messages``
-    reports the free allocation left in the current calendar month.  Clients
-    should prefer ``remaining_messages`` for headline UI and fall back to
-    ``remaining_balance`` only once the free tier is exhausted.
-    """
-
-    response: str
-    remaining_balance: int
-    remaining_messages: int
-    monthly_reset_date: datetime
-    bot_entry_id: int
 
 
 class BalanceResponse(BaseModel):

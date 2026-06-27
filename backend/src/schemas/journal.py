@@ -25,20 +25,6 @@ class JournalMessageCreate(BaseModel):
     user_practice_id: int | None = None
 
 
-class JournalBotMessageCreate(BaseModel):
-    """Payload for storing a BotMason response (internal use).
-
-    ``user_id`` is intentionally absent — it is sourced from
-    ``Depends(get_current_user)`` server-side to prevent cross-user injection
-    (BUG-JOURNAL-002).
-    """
-
-    message: str = Field(min_length=1, max_length=JOURNAL_MESSAGE_MAX_LENGTH)
-    tag: JournalTag = JournalTag.FREEFORM
-    practice_session_id: int | None = None
-    user_practice_id: int | None = None
-
-
 class JournalEntryUpdate(BaseModel):
     """Partial update for a journal entry (PATCH).
 

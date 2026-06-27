@@ -73,7 +73,7 @@ class JournalEntry(SQLModel, table=True):
     # Encrypted at rest via EncryptedString (audit-destub-05b). No Field
     # max_length here (it can't coexist with sa_column, and ciphertext exceeds
     # the plaintext so the column is Text): the 10k input cap is enforced at the
-    # write boundary by JournalMessageCreate / JournalBotMessageCreate
+    # write boundary by JournalMessageCreate
     # (max_length=JOURNAL_MESSAGE_MAX_LENGTH) plus the router's sanitizer.
     message: str = Field(sa_column=Column(EncryptedString(), nullable=False))
     # Long-form page metadata: an optional title and a draft/finished lifecycle.
