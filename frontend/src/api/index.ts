@@ -1183,6 +1183,8 @@ export interface JournalMessageCreate {
   user_practice_id?: number | null;
 }
 
+export type EntryStatus = 'draft' | 'finished';
+
 export interface JournalMessage {
   id: number;
   message: string;
@@ -1191,6 +1193,47 @@ export interface JournalMessage {
   tag: JournalTag;
   practice_session_id: number | null;
   user_practice_id: number | null;
+  /** Editorial document fields (journal-resonance). */
+  title?: string | null;
+  status?: EntryStatus;
+  updated_at?: string;
+}
+
+/** PATCH body for editing an entry — only the provided fields are sent. */
+export interface JournalEntryUpdate {
+  message?: string;
+  title?: string | null;
+  status?: EntryStatus;
+  tag?: JournalTag;
+}
+
+export type MarginaliaKind = 'theme' | 'connection' | 'symbol';
+export type MarginaliaStatus = 'active' | 'stale';
+
+export interface Marginalia {
+  id: number;
+  journal_entry_id: number;
+  kind: MarginaliaKind;
+  anchor_start: number;
+  anchor_end: number;
+  anchor_text: string;
+  note: string;
+  essay: string | null;
+  essay_generated_at: string | null;
+  status: MarginaliaStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ResonanceResponse {
+  marginalia: Marginalia[];
+  remaining_messages: number;
+  remaining_balance: number;
+  monthly_reset_date: string;
+}
+
+export interface MarginaliaListResponse {
+  items: Marginalia[];
 }
 
 export interface JournalListResponse {
@@ -1232,8 +1275,51 @@ export const journal = {
       token,
     });
   },
+  /**
+   * Edit an entry. Only the fields present on ``patch`` are sent (``JSON`` drops
+   * ``undefined``), so callers can update the title without touching the body.
+   */
+  update(entryId: number, patch: JournalEntryUpdate, token?: string): Promise<JournalMessage> {
+    return request<JournalMessage>(`/journal/${entryId}`, {
+      method: 'PATCH',
+      body: patch,
+      token,
+    });
+  },
   delete(entryId: number, token?: string): Promise<void> {
     return request<void>(`/journal/${entryId}`, { method: 'DELETE', token });
+  },
+};
+
+/** Optional bring-your-own-key header for the resonance LLM endpoints. */
+const byokHeaders = (apiKey?: string): Record<string, string> | undefined =>
+  apiKey ? { [LLM_API_KEY_HEADER]: apiKey } : undefined;
+
+/**
+ * Resonance + marginalia client (journal-resonance). ``generate`` and ``essay``
+ * call the LLM (and may surface ``402 insufficient_offerings`` /
+ * ``502 llm_provider_error`` as an ``ApiError``); ``list`` is a plain read.
+ */
+export const resonance = {
+  /** Run a resonance pass over an entry: persists + returns notes and balances. */
+  generate(entryId: number, token?: string, apiKey?: string): Promise<ResonanceResponse> {
+    return request<ResonanceResponse>(`/journal/${entryId}/resonance`, {
+      method: 'POST',
+      token,
+      headers: byokHeaders(apiKey),
+    });
+  },
+  /** List an entry's margin notes (ordered by anchor position). */
+  list(entryId: number, token?: string): Promise<MarginaliaListResponse> {
+    return request<MarginaliaListResponse>(`/journal/${entryId}/marginalia`, { token });
+  },
+  /** Lazily generate (and cache) the long-form essay for one margin note. */
+  essay(marginaliaId: number, token?: string, apiKey?: string): Promise<Marginalia> {
+    return request<Marginalia>(`/journal/marginalia/${marginaliaId}/essay`, {
+      method: 'POST',
+      token,
+      headers: byokHeaders(apiKey),
+    });
   },
 };
 

@@ -60,6 +60,8 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   habit_not_found: `We couldn't find that habit — it may have been deleted. ${PULL_TO_REFRESH}`,
   journal_entry_not_found:
     "We couldn't find that journal entry. It may have been deleted from another device.",
+  marginalia_not_found:
+    "We couldn't find that margin note. It may have been removed when the entry changed.",
   goal_not_found: `We couldn't find that goal. ${PULL_TO_REFRESH}`,
   goal_group_not_found: `We couldn't find that goal group. ${PULL_TO_REFRESH}`,
   prompt_not_found:
