@@ -28,6 +28,8 @@ export interface UseResonanceResult {
   error: string | null;
   remaining: number | null;
   requestResonance: () => Promise<void>;
+  /** Merge an updated note (e.g. one that just gained a cached essay) by id. */
+  updateNote: (_note: Marginalia) => void;
 }
 
 /** Union of two note lists, keyed by id (incoming wins on conflict). */
@@ -83,5 +85,9 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
     }
   }, [flush]);
 
-  return { marginalia, loading, error, remaining, requestResonance };
+  const updateNote = useCallback((updated: Marginalia) => {
+    setMarginalia((prev) => mergeById(prev, [updated]));
+  }, []);
+
+  return { marginalia, loading, error, remaining, requestResonance, updateNote };
 }

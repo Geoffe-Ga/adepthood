@@ -15,6 +15,7 @@ import GetResonanceButton, { shouldShowResonance } from './GetResonanceButton';
 import HighlightedBody from './HighlightedBody';
 import styles from './JournalEntry.styles';
 import MarginNote from './MarginNote';
+import ResonanceEssayModal from './ResonanceEssayModal';
 import { useResonance } from './useResonance';
 
 import { journal } from '@/api';
@@ -313,10 +314,19 @@ function useJournalEntryController(routeEntryId: number | null, autosaveDelayMs:
   const { isIdle, bump } = useIdle();
   const resonance = useResonance({ routeEntryId, flush: autosave.flush });
   const { onChangeTitle, onChangeBody } = autosave;
-  // Selected note is consumed by the essay modal in a later issue; here we only
-  // need to record the open intent so the highlight/note taps have a sink.
-  const [, setSelectedNote] = useState<Marginalia | null>(null);
-  const onOpenNote = useCallback((note: Marginalia) => setSelectedNote(note), []);
+  const { updateNote } = resonance;
+  const [openNote, setOpenNote] = useState<Marginalia | null>(null);
+  const onOpenNote = useCallback((note: Marginalia) => setOpenNote(note), []);
+  const onCloseNote = useCallback(() => setOpenNote(null), []);
+  // Cache the freshly-loaded essay back onto the note (instant re-open) and keep
+  // the open modal showing the updated note.
+  const onEssayLoaded = useCallback(
+    (updated: Marginalia) => {
+      updateNote(updated);
+      setOpenNote(updated);
+    },
+    [updateNote],
+  );
 
   const handleTitle = useCallback(
     (t: string) => {
@@ -335,7 +345,61 @@ function useJournalEntryController(routeEntryId: number | null, autosaveDelayMs:
   const hasContent = autosave.body.trim().length > 0;
   const visible = shouldShowResonance({ isIdle, hasContent, isLoading: resonance.loading });
 
-  return { autosave, resonance, isIdle, visible, handleTitle, handleBody, onOpenNote };
+  return {
+    autosave,
+    resonance,
+    isIdle,
+    visible,
+    handleTitle,
+    handleBody,
+    onOpenNote,
+    openNote,
+    onCloseNote,
+    onEssayLoaded,
+  };
+}
+
+type Controller = ReturnType<typeof useJournalEntryController>;
+
+/** The two-column page: the body (edit or read) + the margin. */
+function JournalPage({
+  ctl,
+  renderMargin,
+}: {
+  ctl: Controller;
+  renderMargin?: JournalEntryScreenProps['renderMargin'];
+}) {
+  const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
+  const { title, body, saveState } = ctl.autosave;
+  const notes = ctl.resonance.marginalia;
+  const hasNotes = notes.length > 0;
+
+  let marginContent: React.ReactNode;
+  if (renderMargin) marginContent = renderMargin({ body, isIdle: ctl.isIdle });
+  else if (hasNotes) marginContent = <MarginNoteList notes={notes} onOpen={ctl.onOpenNote} />;
+  else marginContent = <ResonanceMargin count={0} error={ctl.resonance.error} />;
+
+  return (
+    <View style={[styles.page, narrow && styles.pageNarrow]}>
+      {hasNotes ? (
+        <ReadColumn title={title} body={body} notes={notes} onOpen={ctl.onOpenNote} />
+      ) : (
+        <WritingColumn
+          title={title}
+          body={body}
+          saveState={saveState}
+          onChangeTitle={ctl.handleTitle}
+          onChangeBody={ctl.handleBody}
+        />
+      )}
+      <View
+        style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
+        testID="journal-margin-column"
+      >
+        {marginContent}
+      </View>
+    </View>
+  );
 }
 
 function JournalEntryScreen({
@@ -343,45 +407,19 @@ function JournalEntryScreen({
   renderMargin,
   autosaveDelayMs = AUTOSAVE_DELAY_MS,
 }: JournalEntryScreenProps): React.JSX.Element {
-  const { autosave, resonance, isIdle, visible, handleTitle, handleBody, onOpenNote } =
-    useJournalEntryController(route.params?.entryId ?? null, autosaveDelayMs);
-  const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
-  const { title, body, saveState } = autosave;
-  const notes = resonance.marginalia;
-  // Once notes exist the body switches to a highlighted read view; the
-  // deliberate edit-vs-read toggle lands in a later issue.
-  const hasNotes = notes.length > 0;
-
-  let marginContent: React.ReactNode;
-  if (renderMargin) marginContent = renderMargin({ body, isIdle });
-  else if (hasNotes) marginContent = <MarginNoteList notes={notes} onOpen={onOpenNote} />;
-  else marginContent = <ResonanceMargin count={0} error={resonance.error} />;
-
+  const ctl = useJournalEntryController(route.params?.entryId ?? null, autosaveDelayMs);
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={[styles.page, narrow && styles.pageNarrow]}>
-        {hasNotes ? (
-          <ReadColumn title={title} body={body} notes={notes} onOpen={onOpenNote} />
-        ) : (
-          <WritingColumn
-            title={title}
-            body={body}
-            saveState={saveState}
-            onChangeTitle={handleTitle}
-            onChangeBody={handleBody}
-          />
-        )}
-        <View
-          style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
-          testID="journal-margin-column"
-        >
-          {marginContent}
-        </View>
-      </View>
+      <JournalPage ctl={ctl} renderMargin={renderMargin} />
       <GetResonanceButton
-        visible={visible}
-        loading={resonance.loading}
-        onPress={resonance.requestResonance}
+        visible={ctl.visible}
+        loading={ctl.resonance.loading}
+        onPress={ctl.resonance.requestResonance}
+      />
+      <ResonanceEssayModal
+        note={ctl.openNote}
+        onClose={ctl.onCloseNote}
+        onEssayLoaded={ctl.onEssayLoaded}
       />
     </SafeAreaView>
   );
