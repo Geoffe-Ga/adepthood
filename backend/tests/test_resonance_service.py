@@ -8,7 +8,7 @@ import pytest
 
 from domain import resonance
 from domain.resonance import generate_marginalia
-from models.marginalia import MarginaliaKind
+from models.marginalia import Marginalia, MarginaliaKind
 
 _BODY = (
     "Today I walked by the river and felt the old fear rise again. "
@@ -36,6 +36,26 @@ def _notes_json(*notes: dict[str, str]) -> str:
 def test_valid_kinds_match_the_model_enum() -> None:
     """The domain's local kind set must not drift from MarginaliaKind."""
     assert {k.value for k in MarginaliaKind} == resonance.VALID_KINDS
+
+
+def test_size_constants_match_the_model_columns() -> None:
+    """The domain's anchor/note caps must match the actual DB column lengths."""
+    columns = Marginalia.__table__.columns  # type: ignore[attr-defined]
+    assert columns["anchor_text"].type.length == resonance.ANCHOR_TEXT_MAX
+    assert columns["note"].type.length == resonance.NOTE_MAX
+
+
+@pytest.mark.asyncio
+async def test_prior_entries_are_capped_in_the_prompt() -> None:
+    """At most MAX_PRIOR_ENTRIES prior entries reach the prompt, each truncated."""
+    llm = FakeLLM(_notes_json())
+    priors = [f"PRIOR_{i}_" + ("x" * 5000) for i in range(10)]
+    await generate_marginalia(_BODY, llm=llm, prior_entries=priors)
+    assert llm.prompt is not None
+    included = sum(f"PRIOR_{i}_" in llm.prompt for i in range(10))
+    assert included == resonance.MAX_PRIOR_ENTRIES
+    # Each included entry is truncated to the per-entry budget.
+    assert ("x" * 5000) not in llm.prompt
 
 
 @pytest.mark.asyncio

@@ -18,9 +18,13 @@ from security import TextTooLongError, sanitize_user_text
 # Kept as literals (not imported from models.marginalia) so the domain stays
 # free of DB imports; ``test_resonance_service`` guards this against enum drift.
 VALID_KINDS = frozenset({"theme", "connection", "symbol"})
-_ANCHOR_TEXT_MAX = 280
-_NOTE_MAX = 600
+ANCHOR_TEXT_MAX = 280
+NOTE_MAX = 600
 _DEFAULT_MAX_NOTES = 5
+# Bound the prompt cost: at most this many prior entries, each truncated, so a
+# caller passing a long history can't blow up the context window / token bill.
+MAX_PRIOR_ENTRIES = 5
+_PRIOR_ENTRY_CHARS = 1000
 
 
 @dataclass(frozen=True)
@@ -55,7 +59,8 @@ def build_prompt(
     """Build the structured prompt asking for up to ``max_notes`` margin notes."""
     prior_block = ""
     if prior_entries:
-        joined = "\n---\n".join(prior_entries)
+        capped = [entry[:_PRIOR_ENTRY_CHARS] for entry in prior_entries[:MAX_PRIOR_ENTRIES]]
+        joined = "\n---\n".join(capped)
         prior_block = (
             "\n\nEarlier entries (context for 'connection' notes only):\n"
             f"<prior>\n{joined}\n</prior>"
@@ -67,7 +72,7 @@ def build_prompt(
         "For each note:\n"
         '- "kind" is one of: theme, connection, symbol.\n'
         '- "quote" is a VERBATIM substring copied exactly from the entry '
-        f"(<= {_ANCHOR_TEXT_MAX} characters), never paraphrased.\n"
+        f"(<= {ANCHOR_TEXT_MAX} characters), never paraphrased.\n"
         '- "note" is 1-2 warm, second-person sentences spoken to the writer. '
         'Never refer to yourself or say "as an AI".\n'
         "- Use 'connection' only when linking to an earlier entry.\n\n"
@@ -99,7 +104,7 @@ def _parse_drafts(raw: str) -> list[MarginaliaDraft]:
 def _sanitize_note(note: str) -> str | None:
     """Sanitize a note; return None if it can't fit the column after sanitizing."""
     try:
-        cleaned = sanitize_user_text(note, max_len=_NOTE_MAX)
+        cleaned = sanitize_user_text(note, max_len=NOTE_MAX)
     except TextTooLongError:
         return None
     return cleaned or None
@@ -107,7 +112,7 @@ def _sanitize_note(note: str) -> str | None:
 
 def _anchor(body: str, draft: MarginaliaDraft) -> MarginaliaAnchored | None:
     """Resolve a draft to a span, or None if it can't anchor / validate."""
-    if draft.kind not in VALID_KINDS or not draft.quote or len(draft.quote) > _ANCHOR_TEXT_MAX:
+    if draft.kind not in VALID_KINDS or not draft.quote or len(draft.quote) > ANCHOR_TEXT_MAX:
         return None
     start = body.find(draft.quote)
     if start == -1:
