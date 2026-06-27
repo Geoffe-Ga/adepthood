@@ -1,8 +1,8 @@
 # Epic: Practice frontend redesign — minimalist, intentional, uncluttered
 
 **Labels:** `epic`, `enhancement`, `frontend`, `ritual-practice`
-**Scope:** Frontend-only overhaul of the Practice feature's information architecture, navigation, affordances, copy, and visual density. No backend changes.
-**Estimated total LoC:** ~1,525 (net lower — several components are deleted)
+**Scope:** Frontend-only, **end-to-end** overhaul of every Practice surface — information architecture, navigation, affordances, copy, visual density, the create wizard, the recipe-library modals, and the (currently dead) share flow. No backend changes.
+**Estimated total LoC:** ~2,225 (net lower — several components are deleted)
 
 ## Role
 
@@ -50,11 +50,12 @@ These were chosen up front so every sub-issue pulls in the same direction:
 2. **Slim the frequency banner to a chip.** Replace the paragraph
    `FrequencyBanner` with a compact colour/aspect pill. The longer
    spiral-dynamics copy moves out of the always-on flow.
-3. **Core IA + polish scope.** This epic fixes navigation, the choose/switch
-   flow, the edit-affordance confusion, clutter, and copy, plus a minimalist
-   visual pass. The `CreatePracticeWizard`, the recipe-library modals, and the
-   (currently dead) `ShareSheet` are touched **only** where they intersect the
-   navigation and copy changes — not redesigned.
+3. **End-to-end scope.** This epic fixes navigation, the choose/switch flow, the
+   edit-affordance confusion, clutter, and copy, plus a minimalist visual pass —
+   **and** carries the minimalist sweep through every remaining Practice surface:
+   the `CreatePracticeWizard` (08), the recipe-library modals (09), and the
+   currently-dead `ShareSheet` (10, wired into the detail screen or removed).
+   No Practice surface is left untouched.
 
 ## Context — what exists today
 
@@ -80,6 +81,9 @@ These were chosen up front so every sub-issue pulls in the same direction:
 | 05 | [Disentangle the edit / adjust / duplicate affordances](practice-redesign-05-clarify-edit-affordances.md) | Frontend | ~150 |
 | 06 | [De-duplicate and tighten Practice copy](practice-redesign-06-dedupe-tighten-copy.md) | Frontend | ~200 |
 | 07 | [Minimalist visual pass on the Practice surfaces](practice-redesign-07-minimalist-visual-pass.md) | Frontend | ~200 |
+| 08 | [Minimalist redesign of the Create Practice wizard](practice-redesign-08-wizard-minimalist-redesign.md) | Frontend | ~250 |
+| 09 | [Minimalist redesign of the recipe-library modals](practice-redesign-09-recipe-modals-redesign.md) | Frontend | ~250 |
+| 10 | [Make sharing real — wire the ShareSheet into the detail screen](practice-redesign-10-wire-share-into-detail.md) | Frontend | ~200 |
 
 ## Dependency graph
 
@@ -88,8 +92,10 @@ These were chosen up front so every sub-issue pulls in the same direction:
    └─ 02 slim-frequency-chip
         └─ 03 change-practice-via-catalog
              └─ 04 retire-selector-switcher
-                  ├─ 06 dedupe-tighten-copy ──┐
-05 clarify-edit-affordances (after 02, 03) ───┴─ 07 minimalist-visual-pass (last)
+                  └─ 06 dedupe-tighten-copy ──┐
+05 clarify-edit-affordances (after 02, 03) ───┴─ 07 minimalist-visual-pass ──┬─ 08 wizard-redesign
+                                                                             ├─ 09 recipe-modals-redesign
+                                                                             └─ 10 wire-share-into-detail
 ```
 
 Build order for the Ralph picker (ascending issue number = dependency order):
@@ -104,6 +110,8 @@ leaves the app working; later issues assume the earlier ones have merged.
 - [ ] "Switch", "Adjust", and "Duplicate & edit" are visibly distinct and correctly labelled.
 - [ ] `PracticeSelector` and `PracticeSwitcherSheet` are deleted (or fully unused and removed).
 - [ ] Duration is formatted by one shared helper everywhere it appears.
+- [ ] The create wizard and recipe-library modals share the redesigned visual language.
+- [ ] Sharing is either a real, discoverable flow from the detail screen or the dead `ShareSheet` is removed — no dead Practice code remains.
 - [ ] `npm test`, `npx tsc --noEmit`, and `npm run lint` are green on every sub-issue PR.
 - [ ] Jest coverage threshold unchanged (≥90%); no `// @ts-ignore` / `// eslint-disable`.
 

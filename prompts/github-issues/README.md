@@ -205,12 +205,14 @@ independently.
 
 ### Practice frontend redesign (minimalist IA)
 
-Frontend-only overhaul of the Practice feature. Moves the catalog off the
-bottom nav and surfaces it deliberately from the Practice screen; collapses the
-three overlapping choose-surfaces (`PracticeSelector`, `PracticeSwitcherSheet`,
-catalog) into one; disentangles the confusing Switch / Adjust / Duplicate
-affordances; de-duplicates and tightens copy; and applies a minimalist visual
-pass. No backend, engine, view, or configurator-form changes. Build in ascending
+Frontend-only, **end-to-end** overhaul of the Practice feature. Moves the catalog
+off the bottom nav and surfaces it deliberately from the Practice screen;
+collapses the three overlapping choose-surfaces (`PracticeSelector`,
+`PracticeSwitcherSheet`, catalog) into one; disentangles the confusing
+Switch / Adjust / Duplicate affordances; de-duplicates and tightens copy;
+applies a minimalist visual pass; and carries that sweep through every remaining
+surface — the create wizard, the recipe-library modals, and the dead share flow.
+No backend, engine, view, or configurator-form changes. Build in ascending
 order — each sub-issue assumes the earlier ones merged.
 
 | # | Issue | Scope | Est. LoC |
@@ -223,6 +225,9 @@ order — each sub-issue assumes the earlier ones merged.
 | 05 | [Disentangle edit / adjust / duplicate affordances](practice-redesign-05-clarify-edit-affordances.md) | Frontend | ~150 |
 | 06 | [De-duplicate and tighten Practice copy](practice-redesign-06-dedupe-tighten-copy.md) | Frontend | ~200 |
 | 07 | [Minimalist visual pass on the Practice surfaces](practice-redesign-07-minimalist-visual-pass.md) | Frontend | ~200 |
+| 08 | [Minimalist redesign of the Create Practice wizard](practice-redesign-08-wizard-minimalist-redesign.md) | Frontend | ~250 |
+| 09 | [Minimalist redesign of the recipe-library modals](practice-redesign-09-recipe-modals-redesign.md) | Frontend | ~250 |
+| 10 | [Wire the ShareSheet into the detail screen](practice-redesign-10-wire-share-into-detail.md) | Frontend | ~200 |
 
 Dependency graph:
 
@@ -232,7 +237,9 @@ Dependency graph:
         └─ 03 change-practice-via-catalog
              └─ 04 retire-selector-switcher
                   └─ 06 dedupe-tighten-copy ──┐
-05 clarify-edit-affordances (after 02, 03) ───┴─ 07 minimalist-visual-pass
+05 clarify-edit-affordances (after 02, 03) ───┴─ 07 minimalist-visual-pass ──┬─ 08 wizard-redesign
+                                                                             ├─ 09 recipe-modals-redesign
+                                                                             └─ 10 wire-share-into-detail
 ```
 
 ### Customizable practices, catalog browse, and share links
