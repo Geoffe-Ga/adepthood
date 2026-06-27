@@ -24,6 +24,7 @@ import type { ModeConfig } from '../engine/types';
 import { type PracticeItem, practices, userPractices } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import ShareSheet from '@/features/Practice/components/ShareSheet';
 import { MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -63,6 +64,56 @@ function initialState(): ScreenState {
  * ``userPractices.create``; "Customize a copy" replays the wizard with
  * this practice's mode_config pre-filled.
  */
+/** The loaded detail view (practice guaranteed non-null); owns the share sheet. */
+function LoadedDetail({
+  props,
+  state,
+  practice,
+  currentStage,
+}: {
+  props: PracticeDetailScreenProps;
+  state: PracticeDetailHook;
+  practice: PracticeItem;
+  currentStage: number;
+}): React.JSX.Element {
+  const [shareOpen, setShareOpen] = useState(false);
+  return (
+    <ScrollView contentContainerStyle={styles.body} testID="practice-detail-screen">
+      <DetailHeader practice={practice} />
+      <DetailBody practice={practice} />
+      {state.actionError !== null && (
+        <Text style={styles.errorText} testID="practice-detail-action-error">
+          {state.actionError}
+        </Text>
+      )}
+      {state.assignedStage !== null && (
+        <View style={styles.banner} testID="practice-detail-assigned-banner">
+          <Text style={styles.bannerText}>Set as your stage {state.assignedStage} practice.</Text>
+        </View>
+      )}
+      <ActionRow
+        practice={practice}
+        onUseForCurrentStage={() => void state.assign(currentStage)}
+        onUseForStage={state.openPicker}
+        onCustomizeCopy={() => navigateToCopy(props, practice)}
+        onShare={() => setShareOpen(true)}
+      />
+      {state.pickerOpen && (
+        <StagePicker
+          assigning={state.assigning}
+          onPick={state.assign}
+          onClose={state.closePicker}
+        />
+      )}
+      <ShareSheet
+        visible={shareOpen}
+        practiceId={practice.id}
+        onClose={() => setShareOpen(false)}
+      />
+    </ScrollView>
+  );
+}
+
 export function PracticeDetailScreen(props: PracticeDetailScreenProps): React.JSX.Element {
   const { practiceId } = props.route.params;
   const state = usePracticeDetail(practiceId);
@@ -80,33 +131,12 @@ export function PracticeDetailScreen(props: PracticeDetailScreenProps): React.JS
     );
   }
   return (
-    <ScrollView contentContainerStyle={styles.body} testID="practice-detail-screen">
-      <DetailHeader practice={state.practice} />
-      <DetailBody practice={state.practice} />
-      {state.actionError !== null && (
-        <Text style={styles.errorText} testID="practice-detail-action-error">
-          {state.actionError}
-        </Text>
-      )}
-      {state.assignedStage !== null && (
-        <View style={styles.banner} testID="practice-detail-assigned-banner">
-          <Text style={styles.bannerText}>Set as your stage {state.assignedStage} practice.</Text>
-        </View>
-      )}
-      <ActionRow
-        practice={state.practice}
-        onUseForCurrentStage={() => void state.assign(currentStage)}
-        onUseForStage={state.openPicker}
-        onCustomizeCopy={() => navigateToCopy(props, state.practice!)}
-      />
-      {state.pickerOpen && (
-        <StagePicker
-          assigning={state.assigning}
-          onPick={state.assign}
-          onClose={state.closePicker}
-        />
-      )}
-    </ScrollView>
+    <LoadedDetail
+      props={props}
+      state={state}
+      practice={state.practice}
+      currentStage={currentStage}
+    />
   );
 }
 
@@ -313,6 +343,7 @@ interface ActionRowProps {
   onUseForCurrentStage: () => void;
   onUseForStage: () => void;
   onCustomizeCopy: () => void;
+  onShare: () => void;
 }
 
 const ActionRow = ({
@@ -320,6 +351,7 @@ const ActionRow = ({
   onUseForCurrentStage,
   onUseForStage,
   onCustomizeCopy,
+  onShare,
 }: ActionRowProps): React.JSX.Element => (
   // ``Edit`` / ``Delete`` are owner-only per the issue spec, but the
   // ``GET /practices/{id}`` response intentionally drops the submitter id
@@ -347,6 +379,12 @@ const ActionRow = ({
       testID="practice-detail-customize-copy"
       accessibilityLabel="Duplicate this practice into a new, editable copy"
       disabled={practice.mode_config === undefined}
+    />
+    <ActionButton
+      label="Share"
+      onPress={onShare}
+      testID="practice-detail-share"
+      accessibilityLabel="Share this practice with a link"
     />
   </View>
 );
