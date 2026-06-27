@@ -52,6 +52,7 @@ import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 import ModePicker, { type PickableMode } from '@/features/Practice/components/ModePicker';
 import { FALLBACK_STAGE, MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
+import { formatDuration } from '@/features/Practice/utils/formatDuration';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 export type CreatePracticeWizardProps = NativeStackScreenProps<
@@ -242,8 +243,16 @@ const StepIndicator = ({ step }: StepIndicatorProps): React.JSX.Element => {
       style={styles.indicator}
       testID="create-practice-step-indicator"
     >
+      <View style={styles.progressTrack}>
+        {STEP_ORDER.map((s, i) => (
+          <View
+            key={s}
+            style={[styles.progressSegment, i <= index && styles.progressSegmentFilled]}
+          />
+        ))}
+      </View>
       <Text style={styles.indicatorStep}>
-        {index + 1} / {STEP_ORDER.length}
+        Step {index + 1} of {STEP_ORDER.length}
       </Text>
       <Text style={styles.indicatorTitle}>{STEP_TITLES[step]}</Text>
     </View>
@@ -257,16 +266,15 @@ interface EntryStepProps {
 
 const EntryStep = ({ onPickPreset, onStartScratch }: EntryStepProps): React.JSX.Element => (
   <View testID="create-practice-step-entry">
-    <Text style={styles.bodyLead}>Start from a preset and tweak it, or build from scratch.</Text>
-    <PrimaryCard
+    <EntryCard
       title="Start from a preset"
-      subtitle="Browse the catalog and customize a copy."
+      subtitle="Customize a copy from the catalog."
       testID="create-practice-from-preset"
       onPress={onPickPreset}
     />
-    <SecondaryCard
+    <EntryCard
       title="Start from scratch"
-      subtitle="Pick a mode, configure it, name it."
+      subtitle="Pick a mode and configure it."
       testID="create-practice-from-scratch"
       onPress={onStartScratch}
     />
@@ -281,7 +289,7 @@ interface ModeStepProps {
 
 const ModeStep = ({ mode, onSelect, onBack }: ModeStepProps): React.JSX.Element => (
   <View testID="create-practice-step-mode">
-    <Text style={styles.bodyLead}>11 modes, grouped by intent. Tap one to configure it.</Text>
+    <Text style={styles.bodyLead}>Grouped by intent — tap one to configure.</Text>
     <ModePicker selectedMode={mode} onSelect={onSelect} />
     <BackButton onPress={onBack} />
   </View>
@@ -323,7 +331,7 @@ const ConfigureStep = (props: ConfigureStepProps): React.JSX.Element => {
       <NavRow
         onBack={props.onBack}
         onNext={props.onNext}
-        nextLabel="Next: name + save"
+        nextLabel="Next"
         nextDisabled={!canProceed}
         nextTestID="create-practice-configure-next"
       />
@@ -465,19 +473,25 @@ const InstructionsField = ({ state, setState }: MetadataFieldProps): React.JSX.E
   </FieldLabel>
 );
 
-const DurationField = ({ state, setState }: MetadataFieldProps): React.JSX.Element => (
-  <FieldLabel label="Default duration (minutes)">
-    <TextInput
-      accessibilityLabel="Default duration in minutes"
-      value={state.duration === 0 ? '' : String(state.duration)}
-      onChangeText={(raw) => setState((prev) => ({ ...prev, duration: parseDuration(raw) }))}
-      keyboardType="number-pad"
-      placeholder={state.config ? String(suggestedDurationFor(state.config)) : '10'}
-      style={styles.input}
-      testID="create-practice-duration"
-    />
-  </FieldLabel>
-);
+const DurationField = ({ state, setState }: MetadataFieldProps): React.JSX.Element => {
+  const suggested = state.config ? suggestedDurationFor(state.config) : 10;
+  return (
+    <FieldLabel label="Default duration (minutes)">
+      <TextInput
+        accessibilityLabel="Default duration in minutes"
+        value={state.duration === 0 ? '' : String(state.duration)}
+        onChangeText={(raw) => setState((prev) => ({ ...prev, duration: parseDuration(raw) }))}
+        keyboardType="number-pad"
+        placeholder={String(suggested)}
+        style={styles.input}
+        testID="create-practice-duration"
+      />
+      <Text style={styles.fieldHelp} testID="create-practice-duration-suggested">
+        Suggested: {formatDuration(suggested)}
+      </Text>
+    </FieldLabel>
+  );
+};
 
 function parseDuration(raw: string): number {
   if (raw.length === 0) return 0;
@@ -492,9 +506,7 @@ const StageField = ({ state, setState }: MetadataFieldProps): React.JSX.Element 
   return (
     <View style={styles.field} testID="create-practice-stage-field">
       <Text style={styles.fieldLabel}>Assign to a stage (optional)</Text>
-      <Text style={styles.fieldHelp}>
-        Pick a stage to make this your active practice for it right after saving.
-      </Text>
+      <Text style={styles.fieldHelp}>Makes this your active practice for that stage.</Text>
       <View style={styles.stageRow}>
         <StageChip
           label="Skip"
@@ -548,32 +560,14 @@ const FieldLabel = ({ label, children }: FieldLabelProps): React.JSX.Element => 
   </View>
 );
 
-interface PrimaryCardProps {
+interface EntryCardProps {
   title: string;
   subtitle: string;
   testID: string;
   onPress: () => void;
 }
 
-const PrimaryCard = ({ title, subtitle, testID, onPress }: PrimaryCardProps): React.JSX.Element => (
-  <TouchableOpacity
-    accessibilityRole="button"
-    accessibilityLabel={title}
-    onPress={onPress}
-    style={[styles.entryCard, styles.entryCardPrimary]}
-    testID={testID}
-  >
-    <Text style={[styles.entryCardTitle, styles.entryCardTitleLight]}>{title}</Text>
-    <Text style={[styles.entryCardSubtitle, styles.entryCardSubtitleLight]}>{subtitle}</Text>
-  </TouchableOpacity>
-);
-
-const SecondaryCard = ({
-  title,
-  subtitle,
-  testID,
-  onPress,
-}: PrimaryCardProps): React.JSX.Element => (
+const EntryCard = ({ title, subtitle, testID, onPress }: EntryCardProps): React.JSX.Element => (
   <TouchableOpacity
     accessibilityRole="button"
     accessibilityLabel={title}
@@ -723,6 +717,14 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
     backgroundColor: colors.background.card,
   },
+  progressTrack: { flexDirection: 'row', gap: SPACING.xs, marginBottom: SPACING.sm },
+  progressSegment: {
+    flex: 1,
+    height: 3,
+    borderRadius: BORDER_RADIUS.sm,
+    backgroundColor: colors.border,
+  },
+  progressSegmentFilled: { backgroundColor: colors.primary },
   indicatorStep: {
     fontSize: 12,
     color: colors.text.secondaryAccessible,
@@ -741,15 +743,12 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.md,
     ...shadows.small,
   },
-  entryCardPrimary: { backgroundColor: colors.primary },
   entryCardTitle: { fontSize: 16, fontWeight: '700', color: colors.text.primary },
-  entryCardTitleLight: { color: colors.text.light },
   entryCardSubtitle: {
     fontSize: 13,
     color: colors.text.secondaryAccessible,
     marginTop: SPACING.xs,
   },
-  entryCardSubtitleLight: { color: colors.text.light, opacity: 0.85 },
   field: { marginBottom: SPACING.md },
   fieldLabel: {
     fontSize: 13,
