@@ -13,8 +13,8 @@
  *     `mode_config_override ?? practice.mode_config`).
  *   - Expose `selectPractice` which writes via `userPractices.create`.
  *   - Expose `updateActivePractice` so a customise/replace mutation in a
- *     child component (e.g. `RitualConfiguratorSheet`, `PracticeSwitcherSheet`)
- *     can refresh the active row without forcing a full `refresh()`.
+ *     child component (e.g. `RitualConfiguratorSheet`) can refresh the active
+ *     row without forcing a full `refresh()`.
  *
  * Returns `effectiveConfig: null` when the user has no active practice yet —
  * `PracticeScreen` switches on this to render the selector instead of the

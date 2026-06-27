@@ -1975,7 +1975,7 @@ export const practices = {
    * (custom-practices-07), which also returns the authenticated user's
    * own unapproved drafts so the catalog can render a "My drafts"
    * section. The default ``false`` preserves the legacy approved-only
-   * behaviour for existing callers (PracticeSwitcherSheet, useActivePractice).
+   * behaviour for existing callers (e.g. useActivePractice).
    *
    * The numeric overload retains the historic ``practices.list(stage)``
    * signature so older call sites keep working without a churn pass.
