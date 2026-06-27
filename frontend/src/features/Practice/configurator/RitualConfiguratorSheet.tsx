@@ -377,7 +377,7 @@ const styles = StyleSheet.create({
     paddingTop: SPACING.lg,
     paddingBottom: SPACING.md,
     borderBottomWidth: 1,
-    borderBottomColor: colors.background.accent,
+    borderBottomColor: colors.separator,
     gap: SPACING.sm,
   },
   headerTitle: { fontSize: 18, fontWeight: '700', color: colors.text.primary },
@@ -390,7 +390,7 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     paddingVertical: SPACING.xs,
     borderBottomWidth: 1,
-    borderBottomColor: colors.background.accent,
+    borderBottomColor: colors.separator,
   },
   aspectChip: {
     paddingHorizontal: SPACING.sm,

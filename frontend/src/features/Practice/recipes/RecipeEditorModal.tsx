@@ -709,7 +709,7 @@ const styles = StyleSheet.create({
     paddingTop: SPACING.lg,
     paddingBottom: SPACING.sm,
     borderBottomWidth: 1,
-    borderBottomColor: colors.background.accent,
+    borderBottomColor: colors.separator,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',

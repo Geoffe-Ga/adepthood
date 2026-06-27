@@ -89,6 +89,10 @@ export const colors = {
   successText: '#2e7d32',
 
   border: '#ddd',
+  // Hairline separator between stacked rows/sections. Same value as
+  // ``background.accent`` (which it replaced as a divider colour) — a clearer
+  // name so a ``borderBottomColor`` reads as a divider, not a reused background.
+  separator: '#f0f0f0',
 
   /**
    * Bevel palette for recessed (sunken) controls. React Native has no
