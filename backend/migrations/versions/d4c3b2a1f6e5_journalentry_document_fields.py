@@ -34,7 +34,9 @@ def upgrade() -> None:
     # Existing rows predate the draft workflow, so they are finished pages; their
     # last-edit time is best approximated by the original timestamp.
     op.execute("UPDATE journalentry SET status = 'finished' WHERE status IS NULL")
-    op.execute("UPDATE journalentry SET updated_at = timestamp WHERE updated_at IS NULL")
+    # ``"timestamp"`` is quoted to read unambiguously as the column (not the SQL
+    # type keyword / CURRENT_TIMESTAMP).
+    op.execute('UPDATE journalentry SET updated_at = "timestamp" WHERE updated_at IS NULL')
     with op.batch_alter_table("journalentry") as batch:
         batch.alter_column("status", existing_type=sa.String(length=20), nullable=False)
         batch.alter_column("updated_at", existing_type=sa.DateTime(timezone=True), nullable=False)

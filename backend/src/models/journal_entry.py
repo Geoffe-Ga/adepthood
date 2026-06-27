@@ -30,10 +30,9 @@ class JournalTag(enum.StrEnum):
 
 
 class EntryStatus(enum.StrEnum):
-    """Lifecycle of a long-form journal entry: still being written vs committed.
+    """Lifecycle of a long-form journal entry, backing ``JournalEntry.status``.
 
-    The backing column lands in a follow-up; defined here so the resonance
-    feature can import a single source of truth for the value set.
+    ``draft`` while being written; ``finished`` once committed.
     """
 
     DRAFT = "draft"
