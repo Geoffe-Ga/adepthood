@@ -35,7 +35,7 @@ import type {
 } from '@/api';
 import { practiceSessions } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
-import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import { SPACING, colors } from '@/design/tokens';
 import { InsightCaptureModal } from '@/features/Practice/components/InsightCaptureModal';
 import RitualConfiguratorSheet from '@/features/Practice/configurator/RitualConfiguratorSheet';
 import type { PickedCard } from '@/features/Practice/data/resolveCard';
@@ -895,12 +895,13 @@ function repCounterSummary(config: RepCounterConfig, state: RitualState): ModeSu
 }
 
 const styles = StyleSheet.create({
+  // Flat surface: the session sits directly on the screen's padded scroll, with
+  // a hairline divider instead of a nested shadowed card-in-a-frame.
   card: {
-    margin: SPACING.lg,
-    backgroundColor: colors.background.card,
-    borderRadius: BORDER_RADIUS.lg,
-    padding: SPACING.lg,
-    ...shadows.medium,
+    paddingBottom: SPACING.lg,
+    marginBottom: SPACING.lg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.background.accent,
   },
   cardHeader: {
     flexDirection: 'row',
