@@ -14,7 +14,7 @@ from sqlmodel import col, select
 
 from database import get_session
 from dependencies.ownership import require_owned_journal_entry
-from domain.resonance import MarginaliaAnchored, generate_marginalia
+from domain.resonance import MarginaliaAnchored, generate_essay, generate_marginalia
 from errors import not_found, unprocessable
 from models.journal_entry import JournalEntry, JournalTag
 from models.marginalia import Marginalia, MarginaliaStatus
@@ -402,6 +402,69 @@ async def list_marginalia(
     return MarginaliaListResponse(
         items=[MarginaliaResponse.model_validate(r, from_attributes=True) for r in rows]
     )
+
+
+# Economy seam: essay expansion is free by default. A future pricing pass would
+# charge here (and gate generation on capacity) — kept as a single named knob so
+# the policy lives in one place rather than scattered through the handler.
+ESSAY_PRICE_UNITS = 0
+
+
+async def _load_user_marginalia(
+    session: AsyncSession, marginalia_id: int, user_id: int
+) -> Marginalia | None:
+    """Load the caller's own marginalia row by id (denormalized user_id scope)."""
+    result = await session.execute(
+        select(Marginalia).where(
+            Marginalia.id == marginalia_id,
+            Marginalia.user_id == user_id,
+        )
+    )
+    return result.scalars().first()
+
+
+@router.post("/marginalia/{marginalia_id}/essay", response_model=MarginaliaResponse)
+@limiter.limit("10/minute")
+async def expand_marginalia_essay(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    marginalia_id: int,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    x_llm_api_key: Annotated[str | None, Header(alias="X-LLM-API-Key")] = None,
+) -> Marginalia:
+    """Lazily generate (and cache) a longer essay expanding one margin note.
+
+    Idempotent: once ``essay`` is set the cached value is returned without another
+    LLM call. Ownership is enforced via the marginalia's own ``user_id`` (404
+    otherwise). Essay generation is free by default (see ``ESSAY_PRICE_UNITS``).
+    """
+    note = await _load_user_marginalia(session, marginalia_id, current_user)
+    if note is None:
+        raise not_found("marginalia")
+    if note.essay is not None:
+        return note
+    entry = await _load_user_entry(session, note.journal_entry_id, current_user)
+    if entry is None:  # pragma: no cover — marginalia FK guarantees the parent
+        raise not_found("journal_entry")
+    llm = BotmasonResonanceLLM(resolve_chat_api_key(x_llm_api_key))
+    try:
+        essay = await generate_essay(
+            llm=llm,
+            body=entry.message,
+            anchor_text=note.anchor_text,
+            kind=note.kind,
+            note=note.note,
+        )
+    except LLMProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="llm_provider_error"
+        ) from exc
+    note.essay = essay
+    note.essay_generated_at = datetime.now(UTC)
+    await session.commit()
+    await session.refresh(note)
+    logger.info("marginalia_essay_generated", extra={"user_id": current_user, "id": marginalia_id})
+    return note
 
 
 @router.delete("/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
