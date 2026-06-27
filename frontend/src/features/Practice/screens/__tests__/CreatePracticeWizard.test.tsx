@@ -115,12 +115,16 @@ describe('CreatePracticeWizard — step navigation', () => {
     mockUserPracticesCreate.mockReset();
   });
 
-  it('opens on the entry step with two start options and a one-line lead', () => {
+  it('opens on the entry step with two equal-weight start options', () => {
     const { view } = renderScreen();
     expect(view.getByTestId('create-practice-step-entry')).toBeTruthy();
     expect(view.getByTestId('create-practice-from-preset')).toBeTruthy();
     expect(view.getByTestId('create-practice-from-scratch')).toBeTruthy();
-    expect(view.getByText('Start from a preset and tweak it, or build from scratch.')).toBeTruthy();
+    // Each option is a one-line card (no paragraph lead).
+    expect(view.getByText('Customize a copy from the catalog.')).toBeTruthy();
+    expect(view.getByText('Pick a mode and configure it.')).toBeTruthy();
+    // Quiet step chrome: a "Step N of M" caption replaces the dense "1 / 4".
+    expect(view.getByText('Step 1 of 4')).toBeTruthy();
   });
 
   it('applies safe-area insets to the wizard container', () => {
