@@ -9,6 +9,7 @@ import {
   habitWithGoalsSchema,
   journalListResponseSchema,
   practiceItemSchema,
+  practiceTagSchema,
   practiceRecipeSchema,
   practiceSessionResponseSchema,
   promptListResponseSchema,
@@ -446,5 +447,22 @@ describe('apiGoalGroupSchema + contentItemSchema (audit-contracts-08)', () => {
     expect(contentItemSchema.parse(content).url).toBeNull();
     expect(() => contentItemSchema.parse({ ...content, is_locked: undefined })).toThrow();
     expect(() => contentItemSchema.parse({ ...content, release_day: '0' })).toThrow();
+  });
+});
+
+describe('practiceTagSchema (audit-contracts-09)', () => {
+  const tag = {
+    id: 3,
+    slug: 'red',
+    label: 'Red',
+    owner_user_id: null,
+    created_at: '2026-05-23T00:00:00Z',
+  };
+
+  it('accepts a valid tag (nullable owner) and rejects drift', () => {
+    expect(practiceTagSchema.parse(tag).owner_user_id).toBeNull();
+    expect(practiceTagSchema.parse({ ...tag, owner_user_id: 9 }).owner_user_id).toBe(9);
+    expect(() => practiceTagSchema.parse({ ...tag, slug: undefined })).toThrow();
+    expect(() => practiceTagSchema.parse({ ...tag, id: '3' })).toThrow();
   });
 });

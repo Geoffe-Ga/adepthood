@@ -14,6 +14,7 @@ import {
   practiceItemSchema,
   practiceRecipeSchema,
   practiceSessionResponseSchema,
+  practiceTagSchema,
   promptListResponseSchema,
   stageSchema,
   timezoneReadSchema,
@@ -2104,46 +2105,30 @@ export interface PracticeTagUpdate {
   label: string;
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function validatePracticeTag(data: unknown): data is PracticeTag {
-  if (!isObject(data)) return false;
-  return (
-    typeof data.id === 'number' &&
-    typeof data.slug === 'string' &&
-    typeof data.label === 'string' &&
-    (data.owner_user_id === null || typeof data.owner_user_id === 'number') &&
-    typeof data.created_at === 'string'
-  );
-}
+// PracticeTag responses validate via practiceTagSchema so a drifted field raises
+// ApiValidationError instead of a generic Error (audit-contracts-09).
+const tagSchema = practiceTagSchema as unknown as z.ZodType<PracticeTag>;
+const tagArraySchema = z.array(practiceTagSchema) as unknown as z.ZodType<PracticeTag[]>;
 
 export const practiceTags = {
-  async list(token?: string): Promise<PracticeTag[]> {
-    const data = await request<unknown>('/practice-tags/', { token });
-    if (!Array.isArray(data) || !data.every(validatePracticeTag)) {
-      throw new Error('Invalid practice-tags response');
-    }
-    return data;
+  list(token?: string): Promise<PracticeTag[]> {
+    return request<PracticeTag[]>('/practice-tags/', { token, schema: tagArraySchema });
   },
-  async create(payload: PracticeTagCreate, token?: string): Promise<PracticeTag> {
-    const data = await request<unknown>('/practice-tags/', {
+  create(payload: PracticeTagCreate, token?: string): Promise<PracticeTag> {
+    return request<PracticeTag>('/practice-tags/', {
       method: 'POST',
       body: payload,
       token,
+      schema: tagSchema,
     });
-    if (!validatePracticeTag(data)) throw new Error('Invalid practice-tag response');
-    return data;
   },
-  async update(tagId: number, payload: PracticeTagUpdate, token?: string): Promise<PracticeTag> {
-    const data = await request<unknown>(`/practice-tags/${tagId}`, {
+  update(tagId: number, payload: PracticeTagUpdate, token?: string): Promise<PracticeTag> {
+    return request<PracticeTag>(`/practice-tags/${tagId}`, {
       method: 'PATCH',
       body: payload,
       token,
+      schema: tagSchema,
     });
-    if (!validatePracticeTag(data)) throw new Error('Invalid practice-tag response');
-    return data;
   },
   remove(tagId: number, token?: string): Promise<void> {
     return request<void>(`/practice-tags/${tagId}`, { method: 'DELETE', token });

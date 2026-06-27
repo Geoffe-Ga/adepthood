@@ -347,6 +347,15 @@ export const practiceSessionResponseSchema = z.object({
   insight: z.string().nullish(),
 });
 
+/** A practice tag (mirrors ``PracticeTag``; audit-contracts-09). */
+export const practiceTagSchema = z.object({
+  id: z.number().int(),
+  slug: z.string(),
+  label: z.string(),
+  owner_user_id: z.number().int().nullable(),
+  created_at: z.string(),
+});
+
 /** A goal group with its embedded goals (mirrors ``ApiGoalGroup``; audit-contracts-08). */
 export const apiGoalGroupSchema = z.object({
   id: z.number().int(),
