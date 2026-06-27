@@ -11,11 +11,14 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import GetResonanceButton, { shouldShowResonance } from './GetResonanceButton';
 import styles from './JournalEntry.styles';
+import { useResonance } from './useResonance';
 
 import { journal } from '@/api';
 import type { JournalMessage } from '@/api';
 import { colors } from '@/design/tokens';
+import { useIdle } from '@/hooks/useIdle';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 /** Default idle delay before an edit is persisted. */
@@ -70,6 +73,8 @@ interface AutosaveApi {
   saveState: SaveState;
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
+  /** Persist the latest text immediately and resolve to the entry id (or null). */
+  flush: () => Promise<number | null>;
 }
 
 /** Load an existing entry once (by route id) and hand it to ``apply``. */
@@ -128,7 +133,18 @@ function useDebouncedSave(routeEntryId: number | null, delayMs: number) {
     [run, delayMs],
   );
 
-  return { saveState, save };
+  // Cancel any pending debounce and persist now; resolves to the entry id so a
+  // caller (e.g. resonance) can act on the just-saved entry.
+  const flush = useCallback(
+    async (title: string, body: string): Promise<number | null> => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      if (body.trim()) await run(title, body);
+      return entryIdRef.current;
+    },
+    [run],
+  );
+
+  return { saveState, save, flush };
 }
 
 /** Owns the entry's text + debounced draft autosave (create-then-update). */
@@ -139,7 +155,7 @@ function useJournalAutosave(routeEntryId: number | null, delayMs: number): Autos
   // stable (each save needs the *other* field's current value).
   const titleRef = useRef('');
   const bodyRef = useRef('');
-  const { saveState, save } = useDebouncedSave(routeEntryId, delayMs);
+  const { saveState, save, flush } = useDebouncedSave(routeEntryId, delayMs);
 
   useEntryLoadEffect(
     routeEntryId,
@@ -168,11 +184,27 @@ function useJournalAutosave(routeEntryId: number | null, delayMs: number): Autos
     [save],
   );
 
-  return { title, body, saveState, onChangeTitle, onChangeBody };
+  const flushNow = useCallback(() => flush(titleRef.current, bodyRef.current), [flush]);
+
+  return { title, body, saveState, onChangeTitle, onChangeBody, flush: flushNow };
+}
+
+interface WritingColumnProps {
+  title: string;
+  body: string;
+  saveState: SaveState;
+  onChangeTitle: (_next: string) => void;
+  onChangeBody: (_next: string) => void;
 }
 
 /** The scrollable writing column (title + growing body + save hint). */
-function WritingColumn({ title, body, saveState, onChangeTitle, onChangeBody }: AutosaveApi) {
+function WritingColumn({
+  title,
+  body,
+  saveState,
+  onChangeTitle,
+  onChangeBody,
+}: WritingColumnProps) {
   return (
     <ScrollView
       style={styles.writingColumn}
@@ -210,26 +242,85 @@ function WritingColumn({ title, body, saveState, onChangeTitle, onChangeBody }: 
   );
 }
 
+/** Quiet placeholder margin content until the notes UI lands (#617). */
+function ResonanceMargin({ count, error }: { count: number; error: string | null }) {
+  return (
+    <>
+      <Text style={styles.marginCount} testID="journal-margin-count">
+        {count === 1 ? '1 note in the margin' : `${count} notes in the margin`}
+      </Text>
+      {error ? (
+        <Text style={styles.marginError} testID="journal-resonance-error">
+          {error}
+        </Text>
+      ) : null}
+    </>
+  );
+}
+
+/** Compose the autosave + idle + resonance hooks into the screen's view-model. */
+function useJournalEntryController(routeEntryId: number | null, autosaveDelayMs: number) {
+  const autosave = useJournalAutosave(routeEntryId, autosaveDelayMs);
+  const { isIdle, bump } = useIdle();
+  const resonance = useResonance({ routeEntryId, flush: autosave.flush });
+  const { onChangeTitle, onChangeBody } = autosave;
+
+  const handleTitle = useCallback(
+    (t: string) => {
+      bump();
+      onChangeTitle(t);
+    },
+    [bump, onChangeTitle],
+  );
+  const handleBody = useCallback(
+    (t: string) => {
+      bump();
+      onChangeBody(t);
+    },
+    [bump, onChangeBody],
+  );
+  const hasContent = autosave.body.trim().length > 0;
+  const visible = shouldShowResonance({ isIdle, hasContent, isLoading: resonance.loading });
+
+  return { autosave, resonance, isIdle, visible, handleTitle, handleBody };
+}
+
 function JournalEntryScreen({
   route,
   renderMargin,
   autosaveDelayMs = AUTOSAVE_DELAY_MS,
 }: JournalEntryScreenProps): React.JSX.Element {
-  const autosave = useJournalAutosave(route.params?.entryId ?? null, autosaveDelayMs);
+  const { autosave, resonance, isIdle, visible, handleTitle, handleBody } =
+    useJournalEntryController(route.params?.entryId ?? null, autosaveDelayMs);
   const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
-  const isIdle = autosave.saveState !== 'typing' && autosave.saveState !== 'saving';
+  const { title, body, saveState } = autosave;
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={[styles.page, narrow && styles.pageNarrow]}>
-        <WritingColumn {...autosave} />
+        <WritingColumn
+          title={title}
+          body={body}
+          saveState={saveState}
+          onChangeTitle={handleTitle}
+          onChangeBody={handleBody}
+        />
         <View
           style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
           testID="journal-margin-column"
         >
-          {renderMargin?.({ body: autosave.body, isIdle })}
+          {renderMargin ? (
+            renderMargin({ body, isIdle })
+          ) : (
+            <ResonanceMargin count={resonance.marginalia.length} error={resonance.error} />
+          )}
         </View>
       </View>
+      <GetResonanceButton
+        visible={visible}
+        loading={resonance.loading}
+        onPress={resonance.requestResonance}
+      />
     </SafeAreaView>
   );
 }

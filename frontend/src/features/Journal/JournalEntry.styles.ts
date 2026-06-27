@@ -66,6 +66,15 @@ const styles = StyleSheet.create({
     color: colors.paper.inkSoft,
     paddingTop: spacing(1),
   },
+  marginCount: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+  },
+  marginError: {
+    ...editorialType.caption,
+    color: colors.danger,
+    paddingTop: spacing(1),
+  },
 });
 
 export default styles;
