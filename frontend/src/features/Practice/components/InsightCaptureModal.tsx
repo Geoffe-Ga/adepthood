@@ -8,8 +8,7 @@
  *     dismiss.
  *   - **Save & journal with BotMason** (when ``onJournal`` is wired): POST
  *     then hand off to the Journal tab with ``practiceSessionId`` so
- *     BotMason has context. Hidden when the parent does not wire the
- *     handler (precedent: `PracticeSwitcherSheet.onSubmitOwn`).
+ *     BotMason has context. Hidden when the parent does not wire the handler.
  *   - **Skip**: POST the session row *without* an insight. Analytics still
  *     need the row; only the free-text field is omitted.
  *

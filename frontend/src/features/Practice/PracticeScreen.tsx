@@ -12,10 +12,12 @@
  *   - `ActiveRitualSession` owns the engine, mode dispatch, configurator
  *     sheet, and the ritual-12 insight capture modal when a practice is
  *     active.
- *   - `PracticeSwitcherSheet` (ritual-10) handles practice replacement.
  *
- * The screen itself stays under ~250 LoC by keeping all state inside the
- * extracted hooks and the inner session component.
+ * When no practice is set for the stage the screen shows a minimal empty state
+ * whose only action opens the catalog (the single place to choose/switch).
+ *
+ * The screen itself stays small by keeping all state inside the extracted hooks
+ * and the inner session component.
  */
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -30,7 +32,6 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import PracticeSelector from './PracticeSelector';
 import WeeklyProgress from './WeeklyProgress';
 
 import type { PracticeSessionResponse } from '@/api';
@@ -51,10 +52,8 @@ type WeeklyProgressHook = ReturnType<typeof useWeeklyProgress>;
 
 /**
  * Returns the frequency chip as a memoized element (stable reference unless the
- * stage changes), so passing it as a FlatList ``ListHeaderComponent`` doesn't
- * re-diff every render. The chip is display-only; the explicit "Change practice"
- * button and switcher wiring are deferred to a follow-up, and
- * ``PracticeSwitcherSheet`` is retained until then.
+ * stage changes). The chip is display-only — switching practices is the
+ * explicit "Change practice" button, which routes through the catalog.
  */
 function usePracticeChrome(stageNumber: number): { banner: React.JSX.Element } {
   const banner = useMemo(() => <FrequencyBanner stageNumber={stageNumber} />, [stageNumber]);
@@ -67,7 +66,6 @@ const PracticeScreen = (): React.JSX.Element => {
   const active = useActivePractice(stageNumber);
   const weekly = useWeeklyProgress();
   const handleWriteReflection = useWriteReflection(active.effectiveName, active.practice);
-  const currentPracticeId = active.activeUserPractice?.practice_id ?? null;
   const { banner } = usePracticeChrome(stageNumber);
 
   if (active.isLoading) return <LoadingView />;
@@ -91,15 +89,7 @@ const PracticeScreen = (): React.JSX.Element => {
     );
   }
 
-  return (
-    <SelectionView
-      active={active}
-      weekly={weekly}
-      currentPracticeId={currentPracticeId}
-      banner={banner}
-      stageNumber={stageNumber}
-    />
-  );
+  return <EmptyStateView stageNumber={stageNumber} />;
 };
 
 interface CatalogButtonProps {
@@ -192,57 +182,25 @@ const ActiveSessionView = ({
   );
 };
 
-interface SelectionViewProps {
-  active: ActivePracticeHook;
-  weekly: WeeklyProgressHook;
-  currentPracticeId: number | null;
-  banner: React.JSX.Element;
+interface EmptyStateViewProps {
   stageNumber: number;
 }
 
-// The selection branch lets the windowed PracticeSelector own the scroll: a
-// vertical FlatList nested in a vertical ScrollView stops virtualizing.
-const SelectionView = ({
-  active,
-  weekly,
-  currentPracticeId,
-  banner,
-  stageNumber,
-}: SelectionViewProps): React.JSX.Element => {
-  // ``selectPractice`` is already stable (useCallback in the hook); wrap it once
-  // so PracticeCard's React.memo isn't defeated by a fresh arrow each render.
-  const { selectPractice } = active;
+// Calm empty state when no practice is set for the stage: the catalog is the
+// single place to choose one, so this is just a prompt + one CTA into it.
+const EmptyStateView = ({ stageNumber }: EmptyStateViewProps): React.JSX.Element => {
   const insets = useSafeAreaInsets();
-  const handleSelect = useCallback((id: number) => void selectPractice(id), [selectPractice]);
-  // Memoized so SectionList doesn't re-reconcile its header on unrelated renders.
-  const listHeader = useMemo(
-    () => (
-      <>
-        {banner}
-        <CatalogButton
-          stageNumber={stageNumber}
-          label="Browse all practices"
-          testID="browse-catalog-button"
-        />
-      </>
-    ),
-    [banner, stageNumber],
-  );
   return (
     <View
-      style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
-      testID="practice-screen"
+      style={[styles.empty, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+      testID="practice-empty-state"
     >
-      <View style={styles.fill} testID="selection-view">
-        <PracticeSelector
-          practices={active.availablePractices}
-          selectedPracticeId={currentPracticeId}
-          onSelect={handleSelect}
-          isLoading={false}
-          ListHeaderComponent={listHeader}
-          ListFooterComponent={<WeeklyProgress count={weekly.count} />}
-        />
-      </View>
+      <Text style={styles.emptyText}>No practice set for this stage yet.</Text>
+      <CatalogButton
+        stageNumber={stageNumber}
+        label="Browse practices"
+        testID="browse-catalog-button"
+      />
     </View>
   );
 };
@@ -334,6 +292,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: SPACING.xxl,
     backgroundColor: colors.background.primary,
+  },
+  empty: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: SPACING.lg,
+    padding: SPACING.xxl,
+    backgroundColor: colors.background.primary,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: colors.text.secondary,
+    textAlign: 'center',
   },
   errorText: {
     color: colors.danger,

@@ -273,20 +273,20 @@ describe('PracticeScreen', () => {
     });
   });
 
-  it('renders selector + weekly progress when the user has no active practice', async () => {
+  it('renders the minimal empty state when the user has no active practice', async () => {
     const { getByTestId, getByText } = render(<PracticeScreen />);
     await waitFor(() => {
-      expect(getByTestId('selection-view')).toBeTruthy();
-      expect(getByText('Breath Awareness')).toBeTruthy();
-      expect(getByTestId('weekly-progress')).toBeTruthy();
+      expect(getByTestId('practice-empty-state')).toBeTruthy();
+      expect(getByText('No practice set for this stage yet.')).toBeTruthy();
+      expect(getByTestId('browse-catalog-button')).toBeTruthy();
     });
-    // The selection surface applies top/bottom safe-area insets.
-    expect(getByTestId('practice-screen')).toHaveStyle({ paddingTop: 47, paddingBottom: 34 });
+    // The empty surface applies top/bottom safe-area insets.
+    expect(getByTestId('practice-empty-state')).toHaveStyle({ paddingTop: 47, paddingBottom: 34 });
   });
 
-  it('browse-all-practices navigates to the pushed Catalog screen with the stage', async () => {
+  it('empty-state "Browse practices" opens the Catalog with the current stage', async () => {
     const { getByTestId } = render(<PracticeScreen />);
-    await waitFor(() => expect(getByTestId('selection-view')).toBeTruthy());
+    await waitFor(() => expect(getByTestId('practice-empty-state')).toBeTruthy());
 
     fireEvent.press(getByTestId('browse-catalog-button'));
     expect(mockRootNavigate).toHaveBeenCalledWith('Catalog', { stageNumber: 1 });
@@ -300,17 +300,6 @@ describe('PracticeScreen', () => {
       expect(getByText(/couldn't load your practices/i)).toBeTruthy();
     });
     expect(getByTestId('practice-error')).toHaveStyle({ paddingTop: 47, paddingBottom: 34 });
-  });
-
-  it('selects a practice via the selector', async () => {
-    const { getByTestId, getByText } = render(<PracticeScreen />);
-    await waitFor(() => {
-      expect(getByText('Breath Awareness')).toBeTruthy();
-    });
-    await act(async () => {
-      fireEvent.press(getByTestId('select-practice-1'));
-    });
-    expect(mockUserPracticesCreate).toHaveBeenCalledWith({ practice_id: 1, stage_number: 1 });
   });
 
   it('renders the active practice card with configure gear when a practice is selected', async () => {
@@ -367,10 +356,11 @@ describe('PracticeScreen', () => {
     // frequency endpoint keeps the banner colour in lockstep with the
     // practice card.
     mockRouteParams.stageNumber = 2;
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice({ stage_number: 2 })]);
     try {
       const { getByTestId } = render(<PracticeScreen />);
       await waitFor(() => {
-        expect(getByTestId('selection-view')).toBeTruthy();
+        expect(getByTestId('active-practice-card')).toBeTruthy();
       });
       expect(mockFrequency).toHaveBeenCalledWith(2);
     } finally {
