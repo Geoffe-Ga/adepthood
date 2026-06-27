@@ -326,6 +326,9 @@ const ActionRow = ({
   // "Customize a copy" covers the in-app equivalent until the backend
   // adds an owner hint.
   <View style={styles.actionRow}>
+    {/* "Use for current stage" is the common one-tap path; "Use for stage…"
+        keeps the explicit 1–10 picker for assigning to a different stage. The
+        current stage overlaps one picker option by design. */}
     <ActionButton
       label="Use for current stage"
       onPress={onUseForCurrentStage}

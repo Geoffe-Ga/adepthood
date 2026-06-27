@@ -1,7 +1,8 @@
 /* eslint-env jest */
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
+import { Alert } from 'react-native';
 
 import type { PracticeItem } from '@/api';
 
@@ -74,7 +75,10 @@ jest.mock('@react-navigation/native', () => ({
   useRoute: () => mockRoute,
 }));
 
-const mockNavigation = { navigate: jest.fn() as jest.Mock<(...args: unknown[]) => void> };
+const mockNavigation = {
+  navigate: jest.fn() as jest.Mock<(...args: unknown[]) => void>,
+  goBack: jest.fn() as jest.Mock<() => void>,
+};
 const mockRoute: { params?: { stageNumber?: number } } = { params: undefined };
 
 const mockPracticesList = jest.fn() as jest.MockedFunction<
@@ -251,6 +255,7 @@ describe('PracticeCatalogScreen — defaults wiring', () => {
   beforeEach(() => {
     mockPracticesList.mockReset();
     mockNavigation.navigate.mockReset();
+    mockNavigation.goBack.mockReset();
     mockRoute.params = undefined;
   });
 
@@ -277,7 +282,7 @@ describe('PracticeCatalogScreen — defaults wiring', () => {
     expect(mockPracticesList).toHaveBeenCalledWith({ stageNumber: 6, includeMine: true });
   });
 
-  it('sets the practice active for the seeded stage when "Use" is tapped', async () => {
+  it('sets the practice active for the seeded stage when "Use" is tapped, then goes back', async () => {
     const setActive = jest.fn(async () => undefined) as jest.MockedFunction<
       (id: number, stage: number) => Promise<void>
     >;
@@ -286,6 +291,21 @@ describe('PracticeCatalogScreen — defaults wiring', () => {
     await waitForLoad();
     fireEvent.press(view.getByTestId('practice-catalog-row-1-use'));
     expect(setActive).toHaveBeenCalledWith(1, 2);
+    await waitFor(() => expect(mockNavigation.goBack).toHaveBeenCalledTimes(1));
+  });
+
+  it('alerts and stays put when setting the practice active fails', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const setActive = jest.fn(async () => {
+      throw new Error('boom');
+    }) as jest.MockedFunction<(id: number, stage: number) => Promise<void>>;
+    mockPracticesList.mockResolvedValueOnce([presetA]);
+    const view = render(<PracticeCatalogScreen initialStage={2} setActive={setActive} />);
+    await waitForLoad();
+    fireEvent.press(view.getByTestId('practice-catalog-row-1-use'));
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1));
+    expect(mockNavigation.goBack).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
   });
 
   it('navigates to PracticeDetail when a row is tapped without an override', async () => {
