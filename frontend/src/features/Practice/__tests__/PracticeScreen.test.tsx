@@ -310,8 +310,6 @@ describe('PracticeScreen', () => {
       expect(getByTestId('active-practice-configure')).toBeTruthy();
       expect(getByTestId('meditation-timer-view')).toBeTruthy();
     });
-    // The settings control reads "Adjust" (per-user override), distinct from
-    // the "Change practice" switch CTA.
     expect(getByText('Adjust')).toBeTruthy();
     expect(getByTestId('active-practice-configure').props.accessibilityLabel).toBe(
       "Adjust this practice's settings",
