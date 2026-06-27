@@ -14,19 +14,21 @@ from sqlmodel import col, select
 
 from database import get_session
 from dependencies.ownership import require_owned_journal_entry
-from errors import unprocessable
+from errors import not_found, unprocessable
 from models.journal_entry import JournalEntry, JournalTag
 from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.journal import (
     JOURNAL_MESSAGE_MAX_LENGTH,
     JournalBotMessageCreate,
+    JournalEntryUpdate,
     JournalListResponse,
     JournalMessageCreate,
     JournalMessageResponse,
 )
 from security import TextTooLongError, sanitize_user_text
 from services import journal_encryption
+from services.marginalia import reanchor_entry_marginalia
 
 
 def _sanitize_message(message: str) -> str:
@@ -215,6 +217,55 @@ async def get_journal_entry(
     Ownership is verified by ``require_owned_journal_entry``: 404 when the
     row does not exist, 403 when it exists but belongs to another user.
     """
+    return entry
+
+
+async def _apply_entry_update(
+    entry: JournalEntry, payload: JournalEntryUpdate, session: AsyncSession
+) -> None:
+    """Apply the provided fields to ``entry``, re-anchoring marginalia on a body edit."""
+    if payload.message is not None:
+        old_message = entry.message
+        new_message = _sanitize_message(payload.message)
+        if new_message != old_message:
+            entry.message = new_message
+            await reanchor_entry_marginalia(entry, old_message, new_message, session)
+    if payload.title is not None:
+        entry.title = payload.title
+    if payload.status is not None:
+        entry.status = payload.status
+    entry.updated_at = datetime.now(UTC)
+
+
+@router.patch("/{entry_id}", response_model=JournalMessageResponse)
+async def update_journal_entry(
+    entry_id: int,
+    payload: JournalEntryUpdate,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> JournalEntry:
+    """Patch ``message`` / ``title`` / ``status`` on the caller's own entry.
+
+    Scoped to the caller's non-deleted rows: a missing id, a soft-deleted row, or
+    another user's entry all resolve to 404 (enumeration-safe). Editing the body
+    re-sanitizes it and invokes the marginalia re-anchor seam; ``updated_at`` is
+    refreshed.
+    """
+    result = await session.execute(
+        select(JournalEntry).where(
+            JournalEntry.id == entry_id,
+            JournalEntry.user_id == current_user,
+            col(JournalEntry.deleted_at).is_(None),
+        )
+    )
+    entry = result.scalars().first()
+    if entry is None:
+        raise not_found("journal_entry")
+    await _apply_entry_update(entry, payload, session)
+    session.add(entry)
+    await session.commit()
+    await session.refresh(entry)
+    logger.info("journal_entry_updated", extra={"user_id": current_user, "entry_id": entry_id})
     return entry
 
 
