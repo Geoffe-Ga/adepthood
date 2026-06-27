@@ -246,6 +246,11 @@ export const journalMessageSchema = z.object({
   tag: journalTagSchema,
   practice_session_id: z.number().int().nullable(),
   user_practice_id: z.number().int().nullable(),
+  // Editorial document fields (journal-resonance). Optional so fixtures /
+  // responses predating the columns still validate.
+  title: z.string().nullable().optional(),
+  status: z.enum(['draft', 'finished']).optional(),
+  updated_at: isoDateTime.optional(),
 });
 
 /** Journal list envelope: ``{ items, total, has_more }`` (bespoke, not ``Page``). */
