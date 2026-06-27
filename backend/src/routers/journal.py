@@ -108,17 +108,52 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _build_filter_conditions(filters: _ListFilters) -> list[ColumnElement[bool]]:
-    """Build SQLAlchemy where-clauses from the filter parameters."""
+def _non_search_conditions(filters: _ListFilters) -> list[ColumnElement[bool]]:
+    """Tag / practice-session filters that work as plain column equality."""
     conditions: list[ColumnElement[bool]] = []
-    if filters.search is not None:
-        escaped = _escape_like(filters.search)
-        conditions.append(col(JournalEntry.message).ilike(f"%{escaped}%", escape="\\"))
     if filters.tag is not None:
         conditions.append(col(JournalEntry.tag) == filters.tag.value)
     if filters.practice_session_id is not None:
         conditions.append(col(JournalEntry.practice_session_id) == filters.practice_session_id)
     return conditions
+
+
+def _build_filter_conditions(filters: _ListFilters) -> list[ColumnElement[bool]]:
+    """All where-clauses, including a SQL ILIKE keyword search (plaintext path)."""
+    conditions = _non_search_conditions(filters)
+    if filters.search is not None:
+        escaped = _escape_like(filters.search)
+        conditions.append(col(JournalEntry.message).ilike(f"%{escaped}%", escape="\\"))
+    return conditions
+
+
+async def _encrypted_search_page(
+    session: AsyncSession, user_id: int, filters: _ListFilters
+) -> JournalListResponse:
+    """Keyword search when messages are encrypted at rest (audit-destub-05c).
+
+    Ciphertext can't be ILIKE'd, so the non-search filters run in SQL and the
+    substring match is applied in Python after the ORM transparently decrypts.
+    Scoped to one user's own (non-deleted) entries, so the corpus is small.
+    """
+    query = (
+        select(JournalEntry)
+        .where(
+            JournalEntry.user_id == user_id,
+            col(JournalEntry.deleted_at).is_(None),
+            *_non_search_conditions(filters),
+        )
+        .order_by(col(JournalEntry.id).desc())
+    )
+    rows = list((await session.execute(query)).scalars().all())
+    needle = (filters.search or "").lower()
+    matched = [row for row in rows if needle in row.message.lower()]
+    page = matched[filters.offset : filters.offset + filters.limit]
+    return JournalListResponse(
+        items=[JournalMessageResponse.model_validate(e, from_attributes=True) for e in page],
+        total=len(matched),
+        has_more=(filters.offset + filters.limit) < len(matched),
+    )
 
 
 @router.get("/", response_model=JournalListResponse)
@@ -134,12 +169,11 @@ async def list_journal_entries(
     BUG-JOURNAL-007: soft-deleted entries (``deleted_at IS NOT NULL``) are
     excluded so the list surface never resurfaces deleted content.
     """
-    # Keyword search ILIKEs the message column; with encryption on, the stored
-    # value is Fernet ciphertext, so substring search cannot work. Reject it
-    # explicitly rather than silently returning nothing (audit-destub-05b);
-    # encrypted search is tracked as follow-up feature work.
+    # Keyword search ILIKEs the message column, which is Fernet ciphertext when
+    # encryption is on — so route encrypted search through a decrypt-then-filter
+    # path in Python (audit-destub-05c) instead of the SQL ILIKE.
     if filters.search is not None and journal_encryption.is_enabled():
-        raise unprocessable("search_unavailable_with_encryption")
+        return await _encrypted_search_page(session, current_user, filters)
     conditions = _build_filter_conditions(filters)
     query = select(JournalEntry).where(
         JournalEntry.user_id == current_user,

@@ -539,22 +539,45 @@ def _encryption_key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_encryption_key")
-async def test_search_rejected_when_encryption_enabled(async_client: AsyncClient) -> None:
-    """With encryption on, keyword search 422s instead of silently returning nothing.
+async def test_search_works_with_encryption_via_decrypt_then_filter(
+    async_client: AsyncClient,
+) -> None:
+    """With encryption on, keyword search decrypts then substring-filters in Python.
 
-    The message column holds Fernet ciphertext, so an ILIKE substring match can
-    never hit; the endpoint rejects search explicitly (audit-destub-05b).
+    Ciphertext can't be ILIKE'd, so the endpoint matches on the decrypted text
+    (audit-destub-05c) — case-insensitively — instead of returning nothing.
     """
     headers = await _signup(async_client, "searcher")
-    await async_client.post(
-        "/journal/", json=_message_payload(message="encrypted guitar note"), headers=headers
-    )
+    for msg in ("encrypted Guitar note", "meditation log", "guitar scales"):
+        await async_client.post("/journal/", json=_message_payload(message=msg), headers=headers)
+
     resp = await async_client.get("/journal/?search=guitar", headers=headers)
-    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    # A non-search list still works (and round-trips decrypted content).
-    ok = await async_client.get("/journal/", headers=headers)
-    assert ok.status_code == HTTPStatus.OK
-    assert ok.json()["items"][0]["message"] == "encrypted guitar note"
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["total"] == 2  # case-insensitive: "Guitar" + "guitar"
+    messages = {item["message"] for item in body["items"]}
+    assert messages == {"encrypted Guitar note", "guitar scales"}
+
+    # A non-matching search returns an empty page (not an error).
+    none = await async_client.get("/journal/?search=zzzznomatch", headers=headers)
+    assert none.status_code == HTTPStatus.OK
+    assert none.json()["total"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_encryption_key")
+async def test_encrypted_search_paginates(async_client: AsyncClient) -> None:
+    """Encrypted-search pagination (Python-side) reports total + has_more correctly."""
+    headers = await _signup(async_client, "pager")
+    for i in range(3):
+        await async_client.post(
+            "/journal/", json=_message_payload(message=f"yoga session {i}"), headers=headers
+        )
+    resp = await async_client.get("/journal/?search=yoga&limit=2&offset=0", headers=headers)
+    data = resp.json()
+    assert data["total"] == 3
+    assert len(data["items"]) == 2
+    assert data["has_more"] is True
 
 
 @pytest.mark.asyncio
