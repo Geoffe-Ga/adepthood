@@ -358,14 +358,15 @@ const RecipeRow = (props: RecipeRowProps): React.JSX.Element => {
   return (
     <View style={styles.card} testID={`recipe-row-${props.recipe.id}`}>
       <RecipeRowHeader recipe={props.recipe} isSystem={isSystem} summary={stepSummary} />
-      <View style={styles.rowActions}>
-        <RowButton
-          label="Use this"
-          variant="primary"
-          disabled={props.disableActions}
-          onPress={props.onApply}
-          testID={`recipe-row-${props.recipe.id}-apply`}
-        />
+      <RowButton
+        label="Use this"
+        variant="primary"
+        block
+        disabled={props.disableActions}
+        onPress={props.onApply}
+        testID={`recipe-row-${props.recipe.id}-apply`}
+      />
+      <View style={styles.secondaryActions}>
         <RecipeRowMutationButtons
           recipeId={props.recipe.id}
           isSystem={isSystem}
@@ -416,6 +417,7 @@ const RecipeRowMutationButtons = (props: RecipeRowMutationButtonsProps): React.J
     return (
       <RowButton
         label="Edit a copy"
+        variant="quiet"
         disabled={props.disableActions}
         onPress={props.onFork}
         testID={`recipe-row-${props.recipeId}-fork`}
@@ -426,13 +428,14 @@ const RecipeRowMutationButtons = (props: RecipeRowMutationButtonsProps): React.J
     <>
       <RowButton
         label="Edit"
+        variant="quiet"
         disabled={props.disableActions}
         onPress={props.onEdit}
         testID={`recipe-row-${props.recipeId}-edit`}
       />
       <RowButton
         label="Delete"
-        variant="danger"
+        variant="quietDanger"
         disabled={props.disableActions}
         onPress={props.onDelete}
         testID={`recipe-row-${props.recipeId}-delete`}
@@ -441,9 +444,13 @@ const RecipeRowMutationButtons = (props: RecipeRowMutationButtonsProps): React.J
   );
 };
 
+type RowButtonVariant = 'primary' | 'default' | 'quiet' | 'quietDanger';
+
 interface RowButtonProps {
   label: string;
-  variant?: 'primary' | 'danger' | 'default';
+  variant?: RowButtonVariant;
+  /** Stretch to fill the row — used for the primary "Use this" action. */
+  block?: boolean;
   disabled: boolean;
   onPress: () => void;
   testID: string;
@@ -452,28 +459,33 @@ interface RowButtonProps {
 const RowButton = ({
   label,
   variant = 'default',
+  block = false,
   disabled,
   onPress,
   testID,
 }: RowButtonProps): React.JSX.Element => {
-  const variantStyle =
-    variant === 'primary'
-      ? styles.primaryButton
-      : variant === 'danger'
-        ? styles.dangerButton
-        : styles.defaultButton;
-  const variantText =
-    variant === 'primary' || variant === 'danger' ? styles.lightText : styles.defaultText;
+  const bg = {
+    primary: styles.primaryButton,
+    default: styles.defaultButton,
+    quiet: styles.quietButton,
+    quietDanger: styles.quietButton,
+  }[variant];
+  const text = {
+    primary: styles.lightText,
+    default: styles.defaultText,
+    quiet: styles.quietText,
+    quietDanger: styles.quietDangerText,
+  }[variant];
   return (
     <TouchableOpacity
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled }}
       onPress={disabled ? undefined : onPress}
-      style={[styles.smallButton, variantStyle, disabled && styles.disabled]}
+      style={[styles.smallButton, bg, block && styles.blockButton, disabled && styles.disabled]}
       testID={testID}
     >
-      <Text style={[styles.smallButtonText, variantText]}>{label}</Text>
+      <Text style={[styles.smallButtonText, text]}>{label}</Text>
     </TouchableOpacity>
   );
 };
@@ -591,20 +603,28 @@ const styles = StyleSheet.create({
   systemBadgeText: { fontSize: 11, color: colors.text.secondaryAccessible, fontWeight: '500' },
   description: { color: colors.text.secondaryAccessible, fontSize: 13, lineHeight: 18 },
   summary: { color: colors.text.secondaryAccessible, fontSize: 12, fontStyle: 'italic' },
-  rowActions: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs, marginTop: SPACING.xs },
+  // One primary "Use this" per row; the rest are quiet text-links beneath it.
+  secondaryActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACING.md,
+    marginTop: SPACING.xs,
+  },
   smallButton: {
-    paddingVertical: SPACING.xs,
+    minHeight: 44,
     paddingHorizontal: SPACING.sm,
     borderRadius: BORDER_RADIUS.sm,
-    minHeight: 32,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  defaultButton: { backgroundColor: colors.background.accent },
-  primaryButton: { backgroundColor: colors.primary },
-  dangerButton: { backgroundColor: colors.danger },
+  blockButton: { alignSelf: 'stretch', marginTop: SPACING.xs },
+  defaultButton: { backgroundColor: colors.background.accent, paddingHorizontal: SPACING.md },
+  primaryButton: { backgroundColor: colors.primary, paddingHorizontal: SPACING.md },
+  quietButton: { backgroundColor: 'transparent', paddingHorizontal: 0 },
   defaultText: { color: colors.text.primary, fontSize: 13, fontWeight: '500' },
-  lightText: { color: colors.text.light, fontSize: 13, fontWeight: '600' },
+  lightText: { color: colors.text.light, fontSize: 14, fontWeight: '600' },
+  quietText: { color: colors.text.secondaryAccessible, fontSize: 13, fontWeight: '500' },
+  quietDangerText: { color: colors.danger, fontSize: 13, fontWeight: '500' },
   smallButtonText: {},
   disabled: { opacity: 0.4 },
 });

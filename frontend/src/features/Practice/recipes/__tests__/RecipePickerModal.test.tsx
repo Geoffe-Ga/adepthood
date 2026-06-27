@@ -101,6 +101,21 @@ describe('RecipePickerModal', () => {
     expect(utils.queryByTestId('recipe-row-2-fork')).toBeNull();
   });
 
+  it('keeps an accessible role + label on the primary and secondary row actions', async () => {
+    const utils = mountPicker();
+    await waitFor(() => expect(utils.getByTestId('recipe-row-2')).toBeTruthy());
+    for (const [testID, label] of [
+      ['recipe-row-2-apply', 'Use this'],
+      ['recipe-row-2-edit', 'Edit'],
+      ['recipe-row-2-delete', 'Delete'],
+      ['recipe-row-1-fork', 'Edit a copy'],
+    ] as const) {
+      const node = utils.getByTestId(testID);
+      expect(node.props.accessibilityRole).toBe('button');
+      expect(node.props.accessibilityLabel).toBe(label);
+    }
+  });
+
   it('applies a recipe and closes the picker', async () => {
     const utils = mountPicker();
     await waitFor(() => expect(utils.getByTestId('recipe-row-1')).toBeTruthy());

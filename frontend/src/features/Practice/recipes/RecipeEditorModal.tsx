@@ -773,23 +773,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  actionsRow: { flexDirection: 'row', gap: SPACING.xs, marginTop: SPACING.xs },
-  smallButton: {
-    paddingVertical: SPACING.xs,
-    paddingHorizontal: SPACING.sm,
-    borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: colors.background.accent,
-    minHeight: 32,
+  // Reorder + remove are de-emphasised quiet controls, right-aligned, so the
+  // step content reads first; "+ Add step" is the one prominent add affordance.
+  actionsRow: {
+    flexDirection: 'row',
+    gap: SPACING.md,
+    marginTop: SPACING.xs,
+    justifyContent: 'flex-end',
   },
-  smallButtonText: { color: colors.text.primary, fontSize: 13, fontWeight: '500' },
-  addButton: {
-    paddingVertical: SPACING.sm,
-    borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: colors.background.accent,
+  smallButton: {
+    minHeight: 44,
+    paddingHorizontal: SPACING.xs,
+    backgroundColor: 'transparent',
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  smallButtonText: { color: colors.text.secondaryAccessible, fontSize: 13, fontWeight: '500' },
+  addButton: {
+    minHeight: 44,
+    paddingVertical: SPACING.sm,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginTop: SPACING.sm,
   },
-  addButtonText: { color: colors.text.primary, fontWeight: '600', fontSize: 14 },
+  addButtonText: { color: colors.primary, fontWeight: '600', fontSize: 14 },
   errors: {
     backgroundColor: colors.background.card,
     borderLeftColor: colors.danger,
