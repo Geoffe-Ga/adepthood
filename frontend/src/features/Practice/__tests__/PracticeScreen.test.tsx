@@ -289,7 +289,7 @@ describe('PracticeScreen', () => {
     await waitFor(() => expect(getByTestId('selection-view')).toBeTruthy());
 
     fireEvent.press(getByTestId('browse-catalog-button'));
-    expect(mockRootNavigate).toHaveBeenCalledWith('Catalog', { stageNumber: expect.any(Number) });
+    expect(mockRootNavigate).toHaveBeenCalledWith('Catalog', { stageNumber: 1 });
   });
 
   it('shows error state when the load fails', async () => {
@@ -329,7 +329,7 @@ describe('PracticeScreen', () => {
     await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
 
     fireEvent.press(getByTestId('browse-catalog-button'));
-    expect(mockRootNavigate).toHaveBeenCalledWith('Catalog', { stageNumber: expect.any(Number) });
+    expect(mockRootNavigate).toHaveBeenCalledWith('Catalog', { stageNumber: 1 });
   });
 
   it('applies safe-area insets to the active-session surface', async () => {

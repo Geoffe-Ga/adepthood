@@ -239,11 +239,15 @@ const SelectionView = ({
   const { selectPractice } = active;
   const insets = useSafeAreaInsets();
   const handleSelect = useCallback((id: number) => void selectPractice(id), [selectPractice]);
-  const listHeader = (
-    <>
-      {banner}
-      <BrowseAllPracticesButton stageNumber={stageNumber} />
-    </>
+  // Memoized so SectionList doesn't re-reconcile its header on unrelated renders.
+  const listHeader = useMemo(
+    () => (
+      <>
+        {banner}
+        <BrowseAllPracticesButton stageNumber={stageNumber} />
+      </>
+    ),
+    [banner, stageNumber],
   );
   return (
     <View
@@ -394,7 +398,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: touchTarget.minimum,
   },
-  browseCatalogText: { color: colors.primary, fontWeight: '600', fontSize: 15 },
+  // fontSize 16 mirrors retryButtonText above (the app has no static type token;
+  // typography() is viewport-responsive) so the two buttons stay visually aligned.
+  browseCatalogText: { color: colors.primary, fontWeight: '600', fontSize: 16 },
 });
 
 export default PracticeScreen;
