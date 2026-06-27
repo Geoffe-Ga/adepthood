@@ -302,14 +302,20 @@ describe('PracticeScreen', () => {
     expect(getByTestId('practice-error')).toHaveStyle({ paddingTop: 47, paddingBottom: 34 });
   });
 
-  it('renders the active practice card with configure gear when a practice is selected', async () => {
+  it('renders the active practice card with an "Adjust" control when a practice is selected', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
-    const { getByTestId } = render(<PracticeScreen />);
+    const { getByTestId, getByText } = render(<PracticeScreen />);
     await waitFor(() => {
       expect(getByTestId('active-practice-card')).toBeTruthy();
       expect(getByTestId('active-practice-configure')).toBeTruthy();
       expect(getByTestId('meditation-timer-view')).toBeTruthy();
     });
+    // The settings control reads "Adjust" (per-user override), distinct from
+    // the "Change practice" switch CTA.
+    expect(getByText('Adjust')).toBeTruthy();
+    expect(getByTestId('active-practice-configure').props.accessibilityLabel).toBe(
+      "Adjust this practice's settings",
+    );
   });
 
   it('change-practice opens the Catalog seeded to the current stage', async () => {

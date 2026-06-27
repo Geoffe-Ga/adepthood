@@ -185,6 +185,19 @@ const ResetButton = ({ disabled, onPress }: ResetButtonProps): React.JSX.Element
   </TouchableOpacity>
 );
 
+/** States plainly that the configurator edits the user's own copy, not the
+ * shared practice — disambiguates "Adjust" from "Duplicate & edit"/"Change". */
+const ConfiguratorTitle = (): React.JSX.Element => (
+  <>
+    <Text style={styles.headerTitle} testID="ritual-configurator-title">
+      Adjust your practice
+    </Text>
+    <Text style={styles.headerSubtitle} testID="ritual-configurator-subtitle">
+      Changes apply only to your copy — the shared practice is unchanged.
+    </Text>
+  </>
+);
+
 interface HeaderProps {
   name: string;
   aspect: string | null;
@@ -203,6 +216,7 @@ const ConfiguratorHeader = ({
   canSave,
 }: HeaderProps): React.JSX.Element => (
   <View style={styles.header}>
+    <ConfiguratorTitle />
     <View style={styles.nameRow}>
       <TextInput
         style={styles.nameInput}
@@ -366,6 +380,8 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.background.accent,
     gap: SPACING.sm,
   },
+  headerTitle: { fontSize: 18, fontWeight: '700', color: colors.text.primary },
+  headerSubtitle: { fontSize: 13, color: colors.text.secondary },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
   nameInput: {
     flex: 1,
