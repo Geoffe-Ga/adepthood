@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from models.journal_entry import EntryStatus, JournalTag
 
@@ -36,6 +37,25 @@ class JournalBotMessageCreate(BaseModel):
     tag: JournalTag = JournalTag.FREEFORM
     practice_session_id: int | None = None
     user_practice_id: int | None = None
+
+
+class JournalEntryUpdate(BaseModel):
+    """Partial update for a journal entry (PATCH).
+
+    Every field is optional; an empty payload is rejected (422) so a no-op PATCH
+    can't silently bump ``updated_at``. ``message`` is re-sanitized server-side.
+    """
+
+    message: str | None = Field(default=None, min_length=1, max_length=JOURNAL_MESSAGE_MAX_LENGTH)
+    title: str | None = Field(default=None, max_length=200)
+    status: EntryStatus | None = None
+
+    @model_validator(mode="after")
+    def _require_at_least_one_field(self) -> Self:
+        if self.message is None and self.title is None and self.status is None:
+            msg = "at least one field must be provided"
+            raise ValueError(msg)
+        return self
 
 
 class JournalMessageResponse(BaseModel):
