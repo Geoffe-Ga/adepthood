@@ -257,10 +257,7 @@ interface EntryStepProps {
 
 const EntryStep = ({ onPickPreset, onStartScratch }: EntryStepProps): React.JSX.Element => (
   <View testID="create-practice-step-entry">
-    <Text style={styles.bodyLead}>
-      Most adepts find it fastest to copy a preset and tweak it. Start from scratch when no preset
-      is close to what you have in mind.
-    </Text>
+    <Text style={styles.bodyLead}>Start from a preset and tweak it, or build from scratch.</Text>
     <PrimaryCard
       title="Start from a preset"
       subtitle="Browse the catalog and customize a copy."
@@ -320,10 +317,7 @@ const ConfigureStep = (props: ConfigureStepProps): React.JSX.Element => {
   const canProceed = errors.length === 0;
   return (
     <View testID="create-practice-step-configure">
-      <Text style={styles.bodyLead}>
-        Smart defaults are already filled in. Tweak anything that doesn&apos;t fit, or jump ahead to
-        naming.
-      </Text>
+      <Text style={styles.bodyLead}>Defaults are filled in — tweak or continue.</Text>
       <ConfiguratorBody config={config} onChange={props.onChange} />
       <ErrorList errors={errors} />
       <NavRow

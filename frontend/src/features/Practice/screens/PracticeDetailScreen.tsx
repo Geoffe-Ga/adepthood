@@ -25,6 +25,7 @@ import { type PracticeItem, practices, userPractices } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 import { MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
+import { formatDuration } from '@/features/Practice/utils/formatDuration';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { selectCurrentStage, useStageStore } from '@/store/useStageStore';
 
@@ -206,7 +207,7 @@ const DetailHeader = ({ practice }: DetailHeaderProps): React.JSX.Element => (
       <BadgeChip label={practice.mode ?? 'meditation_timer'} testID="practice-detail-mode-badge" />
       <BadgeChip label={`Stage ${practice.stage_number}`} testID="practice-detail-stage-badge" />
       <BadgeChip
-        label={`${Math.round(practice.default_duration_minutes)} min`}
+        label={formatDuration(practice.default_duration_minutes)}
         testID="practice-detail-duration-badge"
       />
     </View>
