@@ -268,3 +268,59 @@ Dependency graph:
 02 mindful-anchor-mode ───┬── 04 mindful-anchor-presets
                           └── 06 mindful-anchor-view-frontend
 ```
+
+### Journal Resonance — write-in journal with AI marginalia
+
+Replace the BotMason **chat** journal with a long-form **page you write in**.
+When the user pauses, a friendly **"Get Resonance"** button invites the AI to
+read the entry and leave **margin notes** (theme / connection / symbol) pinned to
+spans of the writing; tapping a note opens a **hovering essay** above the page.
+Editing a finished entry is deliberate (confirm dialog), after which notes
+re-anchor or are marked stale. Weekly prompts, search, and practice/stage context
+links carry over; the user's old tags are subsumed by the AI's marginalia kinds.
+
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| — | [Epic tracker](journal-resonance/journal-resonance-epic.md) | — | — |
+| 01 | [Marginalia model + migration](journal-resonance/journal-resonance-01-marginalia-model.md) | Backend | ~225 |
+| 02 | [JournalEntry document fields](journal-resonance/journal-resonance-02-entry-document-fields.md) | Backend | ~175 |
+| 03 | [`PATCH /journal/{id}` edit endpoint](journal-resonance/journal-resonance-03-patch-entry-endpoint.md) | Backend | ~175 |
+| 04 | [Resonance generation service](journal-resonance/journal-resonance-04-resonance-service.md) | Backend | ~275 |
+| 05 | [Resonance + marginalia endpoints](journal-resonance/journal-resonance-05-resonance-endpoints.md) | Backend | ~250 |
+| 06 | [Essay expansion endpoint](journal-resonance/journal-resonance-06-essay-endpoint.md) | Backend | ~175 |
+| 07 | [Re-anchor marginalia on edit](journal-resonance/journal-resonance-07-reanchor-on-edit.md) | Backend | ~200 |
+| 08 | [Remove BotMason chat endpoints](journal-resonance/journal-resonance-08-remove-chat-endpoints.md) | Backend | ~-200 |
+| 09 | [Editorial design tokens + typography](journal-resonance/journal-resonance-09-editorial-tokens.md) | Frontend | ~150 |
+| 10 | [API client: entry/resonance/marginalia/essay](journal-resonance/journal-resonance-10-api-client.md) | Frontend | ~200 |
+| 11 | [Long-form writing surface](journal-resonance/journal-resonance-11-writing-surface.md) | Frontend | ~300 |
+| 12 | [Get Resonance button + useIdle](journal-resonance/journal-resonance-12-get-resonance-button.md) | Frontend | ~200 |
+| 13 | [Wire the resonance request flow](journal-resonance/journal-resonance-13-wire-resonance.md) | Frontend | ~225 |
+| 14 | [Margin notes + inline highlighting](journal-resonance/journal-resonance-14-margin-notes.md) | Frontend | ~275 |
+| 15 | [Hovering resonance essay modal](journal-resonance/journal-resonance-15-essay-modal.md) | Frontend | ~225 |
+| 16 | [Edit-confirm dialog + stale notes](journal-resonance/journal-resonance-16-edit-confirm-stale.md) | Frontend | ~200 |
+| 17 | [Journal shelf + search restyle](journal-resonance/journal-resonance-17-shelf-and-search.md) | Frontend | ~275 |
+| 18 | [Weekly prompt page + context links](journal-resonance/journal-resonance-18-weekly-prompt-context-links.md) | Frontend | ~225 |
+| 19 | [Remove chat UI + dead client code](journal-resonance/journal-resonance-19-remove-chat-ui.md) | Frontend | ~-300 |
+| 20 | [Resonance economy & essay pricing](journal-resonance/journal-resonance-20-resonance-economy.md) (deferred, `blocked`) | Full-stack | ~150 |
+
+Dependency graph:
+
+```
+Backend
+  01 marginalia-model ──┬── 04 resonance-service ──┬── 05 resonance-endpoints ── 08 remove-chat-endpoints
+                        │                          └── 06 essay-endpoint
+                        └── 07 reanchor-on-edit
+  02 entry-document ──┬── 03 patch-entry-endpoint ── 07 reanchor-on-edit
+                      └── 05 resonance-endpoints
+
+Frontend
+  09 editorial-tokens ─┬── 11 writing-surface ─┬── 13 wire-resonance ── 19 remove-chat-ui
+                       │                        ├── 14 margin-notes ──┬── 15 essay-modal
+                       │                        │                     └── 16 edit-confirm-stale
+                       │                        └── 18 weekly-prompt-context-links
+                       ├── 12 get-resonance-button ── 13 wire-resonance
+                       └── 17 shelf-and-search ── 18 weekly-prompt-context-links
+  10 api-client ── (11, 13, 15, 17)
+
+20 resonance-economy is deferred (blocked on a pricing decision).
+```
