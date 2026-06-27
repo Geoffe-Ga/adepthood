@@ -35,6 +35,11 @@ describe('design tokens', () => {
       expect(colors.background.accent).toBe('#f0f0f0');
     });
 
+    it('exposes a separator token matching the legacy divider value (no visual change)', () => {
+      expect(colors.separator).toBe('#f0f0f0');
+      expect(colors.separator).toBe(colors.background.accent);
+    });
+
     it('exports text shades', () => {
       expect(colors.text.primary).toBe('#333333');
       expect(colors.text.secondary).toBe('#666666');

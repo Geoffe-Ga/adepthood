@@ -901,7 +901,7 @@ const styles = StyleSheet.create({
     paddingBottom: SPACING.lg,
     marginBottom: SPACING.lg,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.background.accent,
+    borderBottomColor: colors.separator,
   },
   cardHeader: {
     flexDirection: 'row',
