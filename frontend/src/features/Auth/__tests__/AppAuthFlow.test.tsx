@@ -103,6 +103,13 @@ jest.mock('@/features/Practice/screens/PracticeCatalogScreen', () => {
   const Stub = () => <Text>PracticeCatalogScreen</Text>;
   return { PracticeCatalogScreen: Stub, default: Stub };
 });
+// journal-resonance-11: RootStack now mounts JournalEntryScreen as a pushed
+// route that reads ``route.params`` -- stub it for the same reason as above.
+jest.mock('@/features/Journal/JournalEntryScreen', () => {
+  const { Text } = require('react-native');
+  const Stub = () => <Text>JournalEntryScreen</Text>;
+  return { __esModule: true, default: Stub };
+});
 
 import App from '@/App';
 

@@ -2,6 +2,7 @@ import type { NavigatorScreenParams } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import React from 'react';
 
+import JournalEntryScreen from '../features/Journal/JournalEntryScreen';
 import { CreatePracticeWizard } from '../features/Practice/screens/CreatePracticeWizard';
 import { PracticeCatalogScreen } from '../features/Practice/screens/PracticeCatalogScreen';
 import { PracticeDetailScreen } from '../features/Practice/screens/PracticeDetailScreen';
@@ -43,6 +44,7 @@ export type RootStackParamList = {
   PracticeDetail: { practiceId: number };
   CreatePractice: { prefill?: CreatePracticePrefill } | undefined;
   Catalog: { stageNumber?: number } | undefined;
+  JournalEntry: { entryId?: number } | undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -79,6 +81,11 @@ const RootStack = (): React.JSX.Element => (
       name="Catalog"
       component={PracticeCatalogScreen}
       options={{ title: 'Practices' }}
+    />
+    <Stack.Screen
+      name="JournalEntry"
+      component={JournalEntryScreen}
+      options={{ title: 'Journal' }}
     />
   </Stack.Navigator>
 );
