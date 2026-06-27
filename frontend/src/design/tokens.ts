@@ -438,3 +438,12 @@ export const editorialType = {
     fontWeight: '400' as const,
   },
 } as const;
+
+// ---------------------------------------------------------------------------
+// UI typography — non-editorial chrome (buttons, chips) in the system stack
+// ---------------------------------------------------------------------------
+
+/** Typography for interactive chrome, so button/label sizing lives in tokens. */
+export const uiType = {
+  button: { fontSize: 16, fontWeight: '600' as const },
+} as const;

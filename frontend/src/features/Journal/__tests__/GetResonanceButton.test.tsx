@@ -36,6 +36,14 @@ describe('GetResonanceButton', () => {
     expect(getByTestId('get-resonance-button').props.accessibilityState.busy).toBe(true);
   });
 
+  it('does not fire onPress when disabled', () => {
+    const onPress = jest.fn();
+    const { getByTestId } = render(<GetResonanceButton visible disabled onPress={onPress} />);
+    fireEvent.press(getByTestId('get-resonance-button'));
+    expect(onPress).not.toHaveBeenCalled();
+    expect(getByTestId('get-resonance-button').props.accessibilityState.disabled).toBe(true);
+  });
+
   it('is inert (hidden from a11y, not pressable) when not visible', () => {
     const onPress = jest.fn();
     const { queryByTestId } = render(<GetResonanceButton visible={false} onPress={onPress} />);

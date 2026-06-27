@@ -6,7 +6,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, Text, TouchableOpacity } from 'react-native';
 
-import { BORDER_RADIUS, SPACING, colors, shadows, touchTarget } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, colors, shadows, touchTarget, uiType } from '@/design/tokens';
 
 /** Pure visibility rule, extracted so it can be unit-tested without rendering. */
 export interface ResonanceVisibilityInput {
@@ -104,8 +104,7 @@ const styles = StyleSheet.create({
   },
   label: {
     color: colors.text.light,
-    fontSize: 16,
-    fontWeight: '600',
+    ...uiType.button,
   },
 });
 
