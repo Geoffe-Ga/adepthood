@@ -95,6 +95,14 @@ jest.mock('@/features/Practice/screens/CreatePracticeWizard', () => {
   const Stub = () => <Text>CreatePracticeWizard</Text>;
   return { CreatePracticeWizard: Stub, default: Stub };
 });
+// practice-redesign-01: RootStack now mounts the catalog as a pushed sibling
+// route. It reads ``route.params`` (useRoute), which the navigator stub does
+// not provide -- stub it out so this suite stays focused on auth gating.
+jest.mock('@/features/Practice/screens/PracticeCatalogScreen', () => {
+  const { Text } = require('react-native');
+  const Stub = () => <Text>PracticeCatalogScreen</Text>;
+  return { PracticeCatalogScreen: Stub, default: Stub };
+});
 
 import App from '@/App';
 

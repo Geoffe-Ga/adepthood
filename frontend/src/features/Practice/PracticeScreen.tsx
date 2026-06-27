@@ -17,6 +17,8 @@
  * The screen itself stays under ~250 LoC by keeping all state inside the
  * extracted hooks and the inner session component.
  */
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -33,7 +35,7 @@ import WeeklyProgress from './WeeklyProgress';
 
 import type { PracticeSessionResponse, UserPractice } from '@/api';
 import { useAuth } from '@/context/AuthContext';
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, colors, touchTarget } from '@/design/tokens';
 import { stageService } from '@/features/Map/services/stageService';
 import ActiveRitualSession from '@/features/Practice/components/ActiveRitualSession';
 import { FrequencyBanner } from '@/features/Practice/components/FrequencyBanner';
@@ -41,6 +43,7 @@ import { PracticeSwitcherSheet } from '@/features/Practice/components/PracticeSw
 import { useActivePractice } from '@/features/Practice/hooks/useActivePractice';
 import { useWeeklyProgress } from '@/features/Practice/hooks/useWeeklyProgress';
 import { useAppNavigation, useAppRoute } from '@/navigation/hooks';
+import type { RootStackParamList } from '@/navigation/RootStack';
 import { useDerivedCurrentStage } from '@/store/useProgramProgression';
 import { selectCurrentStage, useStageStore } from '@/store/useStageStore';
 
@@ -110,6 +113,7 @@ const PracticeScreen = (): React.JSX.Element => {
         onWriteReflection={handleWriteReflection}
         banner={banner}
         switcher={switcher}
+        stageNumber={stageNumber}
       />
     );
   }
@@ -121,7 +125,31 @@ const PracticeScreen = (): React.JSX.Element => {
       currentPracticeId={currentPracticeId}
       banner={banner}
       switcher={switcher}
+      stageNumber={stageNumber}
     />
+  );
+};
+
+/**
+ * Discoverable entry point to the (now pushed) practice catalog, seeded with the
+ * user's resolved stage. Rendered on the Practice screen in both the active and
+ * selection states so the catalog stays reachable after it left the bottom nav
+ * (practice-redesign-01).
+ */
+const BrowseAllPracticesButton = ({ stageNumber }: { stageNumber: number }): React.JSX.Element => {
+  // Catalog is a pushed RootStack screen (not a tab), so navigate with the
+  // stack-typed navigation rather than the tab-scoped useAppNavigation.
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  return (
+    <TouchableOpacity
+      style={styles.browseCatalog}
+      onPress={() => navigation.navigate('Catalog', { stageNumber })}
+      accessibilityRole="button"
+      accessibilityLabel="Browse all practices"
+      testID="browse-catalog-button"
+    >
+      <Text style={styles.browseCatalogText}>Browse all practices</Text>
+    </TouchableOpacity>
   );
 };
 
@@ -136,6 +164,7 @@ interface ActiveSessionViewProps {
   onWriteReflection: (_args: { session: PracticeSessionResponse; insight: string | null }) => void;
   banner: React.JSX.Element;
   switcher: React.JSX.Element;
+  stageNumber: number;
 }
 
 const ActiveSessionView = ({
@@ -149,6 +178,7 @@ const ActiveSessionView = ({
   onWriteReflection,
   banner,
   switcher,
+  stageNumber,
 }: ActiveSessionViewProps): React.JSX.Element => {
   const insets = useSafeAreaInsets();
   return (
@@ -162,6 +192,7 @@ const ActiveSessionView = ({
         testID="practice-screen"
       >
         {banner}
+        <BrowseAllPracticesButton stageNumber={stageNumber} />
         <ActiveRitualSession
           key={`practice-${userPractice.id}`}
           userPractice={userPractice}
@@ -187,6 +218,7 @@ interface SelectionViewProps {
   currentPracticeId: number | null;
   banner: React.JSX.Element;
   switcher: React.JSX.Element;
+  stageNumber: number;
 }
 
 // The selection branch lets the windowed PracticeSelector own the scroll: a
@@ -197,12 +229,19 @@ const SelectionView = ({
   currentPracticeId,
   banner,
   switcher,
+  stageNumber,
 }: SelectionViewProps): React.JSX.Element => {
   // ``selectPractice`` is already stable (useCallback in the hook); wrap it once
   // so PracticeCard's React.memo isn't defeated by a fresh arrow each render.
   const { selectPractice } = active;
   const insets = useSafeAreaInsets();
   const handleSelect = useCallback((id: number) => void selectPractice(id), [selectPractice]);
+  const listHeader = (
+    <>
+      {banner}
+      <BrowseAllPracticesButton stageNumber={stageNumber} />
+    </>
+  );
   return (
     <View
       style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
@@ -214,7 +253,7 @@ const SelectionView = ({
           selectedPracticeId={currentPracticeId}
           onSelect={handleSelect}
           isLoading={false}
-          ListHeaderComponent={banner}
+          ListHeaderComponent={listHeader}
           ListFooterComponent={<WeeklyProgress count={weekly.count} />}
         />
       </View>
@@ -340,6 +379,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.xl,
   },
   retryButtonText: { color: colors.text.light, fontWeight: '600' },
+  browseCatalog: {
+    marginHorizontal: SPACING.md,
+    marginBottom: SPACING.md,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.lg,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: touchTarget.minimum,
+  },
+  browseCatalogText: { color: colors.primary, fontWeight: '600', fontSize: 15 },
 });
 
 export default PracticeScreen;

@@ -71,9 +71,11 @@ const myDraft: PracticeItem = {
 
 jest.mock('@react-navigation/native', () => ({
   useNavigation: () => mockNavigation,
+  useRoute: () => mockRoute,
 }));
 
 const mockNavigation = { navigate: jest.fn() as jest.Mock<(...args: unknown[]) => void> };
+const mockRoute: { params?: { stageNumber?: number } } = { params: undefined };
 
 const mockPracticesList = jest.fn() as jest.MockedFunction<
   (opts: { stageNumber: number; includeMine?: boolean }) => Promise<PracticeItem[]>

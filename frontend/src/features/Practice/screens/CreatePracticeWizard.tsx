@@ -154,7 +154,7 @@ export function CreatePracticeWizard(props: CreatePracticeWizardProps): React.JS
             goTo={goTo}
             setMode={setMode}
             submit={submit}
-            onPickPreset={() => props.navigation.navigate('Tabs', { screen: 'Catalog' })}
+            onPickPreset={() => props.navigation.navigate('Catalog')}
           />
         </ScrollView>
       </KeyboardAvoidingView>

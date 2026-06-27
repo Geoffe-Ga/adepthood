@@ -17,7 +17,7 @@
  * navigation rather than an optional filter.
  */
 
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -69,7 +69,7 @@ export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Eleme
   // would silently invalidate every memoization).
   const { initialStage, loadPractices, navigateToDetail, navigateToCreate } = props;
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const [stageNumber, setStageNumber] = useState(initialStage ?? MIN_STAGE);
+  const [stageNumber, setStageNumber] = useState(useSeededStage(initialStage));
   const [modeCategory, setModeCategory] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [state, reload] = useCatalog(stageNumber, loadPractices);
@@ -121,6 +121,13 @@ export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Eleme
       />
     </View>
   );
+}
+
+/** Seed the stage chip: an explicit prop (tests) wins, else the ``Catalog``
+ * route param when pushed from the Practice screen, else the first stage. */
+function useSeededStage(initialStage: number | undefined): number {
+  const route = useRoute<RouteProp<RootStackParamList, 'Catalog'>>();
+  return initialStage ?? route.params?.stageNumber ?? MIN_STAGE;
 }
 
 function useCatalogNavigation(
