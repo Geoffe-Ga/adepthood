@@ -449,12 +449,11 @@ const PracticeRowComponent = ({
 }: PracticeRowProps): React.JSX.Element => {
   const mode = (practice.mode ?? 'meditation_timer') as PickableMode;
   const { label, icon } = MODE_PRESENTATION[mode] ?? FALLBACK_PRESENTATION;
-  const subtitle = `${label} · ${formatDuration(practice.default_duration_minutes)}`;
+  const rounded = Math.round(practice.default_duration_minutes);
+  const subtitle = `${label} · ${formatDuration(rounded)}`;
   // Spoken label avoids the visual "·" separator and spells out "minutes"
   // (abbreviations + glyphs read poorly under VoiceOver/TalkBack).
-  const a11yLabel = `${practice.name}. ${label}, ${Math.round(
-    practice.default_duration_minutes,
-  )} minutes.`;
+  const a11yLabel = `${practice.name}. ${label}, ${rounded} minutes.`;
   return (
     <View style={styles.rowContainer} testID={`practice-catalog-row-${practice.id}-container`}>
       <TouchableOpacity
