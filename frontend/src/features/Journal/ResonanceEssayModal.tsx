@@ -5,7 +5,7 @@
  * ``onEssayLoaded`` so re-opening is instant. A warm editorial reading card, not
  * a chat reply.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -35,6 +35,9 @@ export interface ResonanceEssayModalProps {
   onEssayLoaded?: (_note: Marginalia) => void;
 }
 
+/** Stable no-op so the card's press-capture doesn't allocate a fn per render. */
+const NOOP = (): void => {};
+
 interface EssayState {
   essay: string | null;
   loading: boolean;
@@ -51,10 +54,17 @@ function useEssay(
   const [state, setState] = useState<EssayState>({ essay: null, loading: false, error: null });
   const [attempt, setAttempt] = useState(0);
   const retry = useCallback(() => setAttempt((a) => a + 1), []);
+  // Hold the callback in a ref so a non-memoised caller can't retrigger fetches:
+  // the fetch effect depends only on the note + retry attempt.
+  const onLoadedRef = useRef(onEssayLoaded);
+  useEffect(() => {
+    onLoadedRef.current = onEssayLoaded;
+  }, [onEssayLoaded]);
 
   useEffect(() => {
     if (note == null) return undefined;
-    if (note.essay != null) {
+    if (note.essay) {
+      // Treat a blank essay the same as missing (don't render an empty body).
       setState({ essay: note.essay, loading: false, error: null });
       return undefined;
     }
@@ -65,7 +75,7 @@ function useEssay(
       .then((updated) => {
         if (!active) return;
         setState({ essay: updated.essay, loading: false, error: null });
-        onEssayLoaded?.(updated);
+        onLoadedRef.current?.(updated);
       })
       .catch((err: unknown) => {
         if (active) setState({ essay: null, loading: false, error: formatApiError(err) });
@@ -73,7 +83,7 @@ function useEssay(
     return () => {
       active = false;
     };
-  }, [note, attempt, onEssayLoaded]);
+  }, [note, attempt]);
 
   return { ...state, retry };
 }
@@ -119,8 +129,8 @@ function ResonanceEssayModal({
         testID="essay-scrim"
         accessibilityLabel="Dismiss essay"
       >
-        {/* Stop taps on the card from dismissing. */}
-        <Pressable style={styles.card} onPress={() => {}}>
+        {/* Capture taps on the card so they don't bubble to the dismiss scrim. */}
+        <Pressable style={styles.card} onPress={NOOP}>
           <View style={styles.header}>
             <Text style={[styles.kind, { color: note ? colors.marginalia[note.kind] : undefined }]}>
               {note?.kind}
