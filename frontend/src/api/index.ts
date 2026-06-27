@@ -1752,7 +1752,11 @@ export interface PracticeItem {
   description: string;
   instructions: string;
   default_duration_minutes: number;
-  submitted_by_user_id: number | null;
+  // Absent on the wire — the backend ``PracticeResponse`` omits it to avoid
+  // leaking who proposed a draft (BUG-PRACTICE-001 / BUG-SCHEMA-010). Optional
+  // here so callers don't assume a value the server never sends; see
+  // ``practiceItemSchema`` in ``schemas.ts``.
+  submitted_by_user_id?: number | null;
   approved: boolean;
   /** ritual-01: discriminator for ``mode_config``. Older fixtures may omit. */
   mode?: string;
