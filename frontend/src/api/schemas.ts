@@ -347,6 +347,29 @@ export const practiceSessionResponseSchema = z.object({
   insight: z.string().nullish(),
 });
 
+/** A goal group with its embedded goals (mirrors ``ApiGoalGroup``; audit-contracts-08). */
+export const apiGoalGroupSchema = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  icon: z.string().nullish(),
+  description: z.string().nullish(),
+  user_id: z.number().int().nullish(),
+  shared_template: z.boolean(),
+  source: z.string().nullish(),
+  goals: z.array(goalSchema),
+});
+
+/** A course-content item (mirrors ``ContentItem``; audit-contracts-08). */
+export const contentItemSchema = z.object({
+  id: z.number().int(),
+  title: z.string(),
+  content_type: z.string(),
+  release_day: z.number().int(),
+  url: z.string().nullable(),
+  is_locked: z.boolean(),
+  is_read: z.boolean(),
+});
+
 // ---------------------------------------------------------------------------
 // Lenient schemas for legacy endpoints (gradually tightened)
 // ---------------------------------------------------------------------------

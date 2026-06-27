@@ -91,6 +91,27 @@ const validSession = (over: Record<string, unknown> = {}) => ({
   reflection: null,
   ...over,
 });
+const validGoalGroup = (over: Record<string, unknown> = {}) => ({
+  id: 1,
+  name: 'Morning',
+  icon: null,
+  description: null,
+  user_id: null,
+  shared_template: true,
+  source: null,
+  goals: [],
+  ...over,
+});
+const validContentItem = (over: Record<string, unknown> = {}) => ({
+  id: 1,
+  title: 'Intro',
+  content_type: 'essay',
+  release_day: 0,
+  url: null,
+  is_locked: false,
+  is_read: false,
+  ...over,
+});
 
 describe('paginated list endpoints (issue #221 — Page envelope)', () => {
   test('practices.listPaginated opts into the envelope and forwards stage_number', async () => {
@@ -127,7 +148,7 @@ describe('paginated list endpoints (issue #221 — Page envelope)', () => {
   });
 
   test('goalGroups.listPaginated hits /goal-groups/ with the envelope flag', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse(page([{ id: 1, name: 'Morning' }])));
+    mockFetch.mockReturnValueOnce(jsonResponse(page([validGoalGroup()])));
 
     await goalGroups.listPaginated({ limit: 10 }, 'tok');
 
@@ -154,7 +175,7 @@ describe('paginated list endpoints (issue #221 — Page envelope)', () => {
   });
 
   test('course.stageContentPaginated targets the stage content path with the envelope flag', async () => {
-    const envelope = page([{ id: 1, title: 'Intro', release_day: 0 }], {
+    const envelope = page([validContentItem()], {
       total: 3,
       has_more: true,
     });
@@ -240,11 +261,12 @@ describe('fetchAllPages + listAll helpers (issue #408 — screen adoption)', () 
   });
 
   test('course.stageContentAll drains the stage content envelope', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse(page([{ id: 7, title: 'Survival' }])));
+    const item = validContentItem({ id: 7, title: 'Survival' });
+    mockFetch.mockReturnValueOnce(jsonResponse(page([item])));
     const result = await course.stageContentAll(1, 'tok');
     const [url] = mockFetch.mock.calls[0];
     expect(url).toContain('/course/stages/1/content?paginate=true');
-    expect(result).toEqual([{ id: 7, title: 'Survival' }]);
+    expect(result).toEqual([item]);
   });
 
   test('practices.listAll forwards include_mine and returns validated items', async () => {
