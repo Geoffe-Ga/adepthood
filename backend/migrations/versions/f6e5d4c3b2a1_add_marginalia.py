@@ -42,6 +42,16 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["journal_entry_id"], ["journalentry.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["user_id"], ["user.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
+        sa.CheckConstraint(
+            "kind IN ('theme', 'connection', 'symbol')",
+            name="ck_marginalia_kind_valid",
+        ),
+        sa.CheckConstraint(
+            "status IN ('active', 'stale')",
+            name="ck_marginalia_status_valid",
+        ),
+        sa.CheckConstraint("anchor_start >= 0", name="ck_marginalia_anchor_start_nonneg"),
+        sa.CheckConstraint("anchor_end > anchor_start", name="ck_marginalia_anchor_span_positive"),
     )
     op.create_index("ix_marginalia_journal_entry_id", "marginalia", ["journal_entry_id"])
 

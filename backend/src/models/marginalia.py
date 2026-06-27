@@ -9,7 +9,7 @@ import enum
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Column, DateTime, Index
+from sqlalchemy import CheckConstraint, Column, DateTime, Index
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -47,8 +47,23 @@ class Marginalia(SQLModel, table=True):
     later edits (and can be marked ``stale`` when it no longer matches).
     """
 
-    # The hot read is "all marginalia for an entry", so index the FK.
-    __table_args__ = (Index("ix_marginalia_journal_entry_id", "journal_entry_id"),)
+    # The hot read is "all marginalia for an entry", so index the FK. The CHECK
+    # constraints keep enum-valued columns and anchor bounds honest at the DB
+    # level (matching the Practice.mode / PracticeRecipeStep.position precedents),
+    # so a non-ORM writer can't persist an invalid kind/status or inverted span.
+    __table_args__ = (
+        Index("ix_marginalia_journal_entry_id", "journal_entry_id"),
+        CheckConstraint(
+            "kind IN ('theme', 'connection', 'symbol')",
+            name="ck_marginalia_kind_valid",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'stale')",
+            name="ck_marginalia_status_valid",
+        ),
+        CheckConstraint("anchor_start >= 0", name="ck_marginalia_anchor_start_nonneg"),
+        CheckConstraint("anchor_end > anchor_start", name="ck_marginalia_anchor_span_positive"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     journal_entry_id: int = Field(foreign_key="journalentry.id", ondelete="CASCADE")

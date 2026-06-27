@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.journal_entry import EntryStatus, JournalEntry
@@ -121,6 +122,26 @@ async def test_updated_at_advances_on_mutate(db_session: AsyncSession) -> None:
     await db_session.commit()
     await db_session.refresh(row)
     assert row.updated_at > original
+
+
+@pytest.mark.asyncio
+async def test_invalid_kind_is_rejected(db_session: AsyncSession) -> None:
+    """A kind outside the enum set violates the CHECK constraint."""
+    user_id = await _user(db_session)
+    entry_id = await _entry(db_session, user_id)
+    db_session.add(_marginalia(entry_id, user_id, kind="bogus"))
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_inverted_anchor_span_is_rejected(db_session: AsyncSession) -> None:
+    """anchor_end must be greater than anchor_start (CHECK constraint)."""
+    user_id = await _user(db_session)
+    entry_id = await _entry(db_session, user_id)
+    db_session.add(_marginalia(entry_id, user_id, anchor_start=5, anchor_end=3))
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
 
 
 def test_enum_values() -> None:
