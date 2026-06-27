@@ -52,11 +52,17 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint("anchor_start >= 0", name="ck_marginalia_anchor_start_nonneg"),
         sa.CheckConstraint("anchor_end > anchor_start", name="ck_marginalia_anchor_span_positive"),
+        sa.CheckConstraint(
+            "(essay IS NULL) = (essay_generated_at IS NULL)",
+            name="ck_marginalia_essay_timestamp_paired",
+        ),
     )
     op.create_index("ix_marginalia_journal_entry_id", "marginalia", ["journal_entry_id"])
+    op.create_index("ix_marginalia_user_id", "marginalia", ["user_id"])
 
 
 def downgrade() -> None:
-    """Drop the ``marginalia`` table and its index."""
+    """Drop the ``marginalia`` table and its indexes."""
+    op.drop_index("ix_marginalia_user_id", table_name="marginalia")
     op.drop_index("ix_marginalia_journal_entry_id", table_name="marginalia")
     op.drop_table("marginalia")

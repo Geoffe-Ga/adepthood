@@ -53,6 +53,9 @@ class Marginalia(SQLModel, table=True):
     # so a non-ORM writer can't persist an invalid kind/status or inverted span.
     __table_args__ = (
         Index("ix_marginalia_journal_entry_id", "journal_entry_id"),
+        # Index the denormalized owner FK so "all marginalia for a user" is a
+        # range scan, not a full-table scan (the reason the column exists).
+        Index("ix_marginalia_user_id", "user_id"),
         CheckConstraint(
             "kind IN ('theme', 'connection', 'symbol')",
             name="ck_marginalia_kind_valid",
@@ -63,6 +66,11 @@ class Marginalia(SQLModel, table=True):
         ),
         CheckConstraint("anchor_start >= 0", name="ck_marginalia_anchor_start_nonneg"),
         CheckConstraint("anchor_end > anchor_start", name="ck_marginalia_anchor_span_positive"),
+        # essay and its generated-at timestamp are set together or not at all.
+        CheckConstraint(
+            "(essay IS NULL) = (essay_generated_at IS NULL)",
+            name="ck_marginalia_essay_timestamp_paired",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)

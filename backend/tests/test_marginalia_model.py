@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -71,6 +73,7 @@ async def test_kind_and_status_round_trip(db_session: AsyncSession) -> None:
             kind=MarginaliaKind.CONNECTION,
             status=MarginaliaStatus.STALE,
             essay="A longer expansion.",
+            essay_generated_at=datetime.now(UTC),
         ),
     )
     await db_session.commit()
@@ -79,6 +82,7 @@ async def test_kind_and_status_round_trip(db_session: AsyncSession) -> None:
     assert row.kind == MarginaliaKind.CONNECTION
     assert row.status == MarginaliaStatus.STALE
     assert row.essay == "A longer expansion."
+    assert row.essay_generated_at is not None
 
 
 @pytest.mark.asyncio
@@ -140,6 +144,16 @@ async def test_inverted_anchor_span_is_rejected(db_session: AsyncSession) -> Non
     user_id = await _user(db_session)
     entry_id = await _entry(db_session, user_id)
     db_session.add(_marginalia(entry_id, user_id, anchor_start=5, anchor_end=3))
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_essay_without_timestamp_is_rejected(db_session: AsyncSession) -> None:
+    """Essay and essay_generated_at must be set together (paired CHECK)."""
+    user_id = await _user(db_session)
+    entry_id = await _entry(db_session, user_id)
+    db_session.add(_marginalia(entry_id, user_id, essay="Orphan essay, no timestamp."))
     with pytest.raises(IntegrityError):
         await db_session.commit()
 
