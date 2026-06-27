@@ -84,6 +84,30 @@ describe('JournalEntryScreen', () => {
     }
   });
 
+  it('updates (not creates again) on the second save after the initial create', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId } = renderScreen(undefined, { autosaveDelayMs: 100 });
+      fireEvent.changeText(getByTestId('journal-body-input'), 'First save.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+
+      fireEvent.changeText(getByTestId('journal-body-input'), 'Second save.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockCreate).toHaveBeenCalledTimes(1); // create not repeated
+      expect(mockUpdate).toHaveBeenCalledWith(
+        42,
+        expect.objectContaining({ message: 'Second save.' }),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('does not persist an empty draft', async () => {
     jest.useFakeTimers();
     try {
