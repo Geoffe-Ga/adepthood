@@ -156,3 +156,17 @@ async def test_list_marginalia_is_ordered_and_hides_user_id(
     starts = [i["anchor_start"] for i in items]
     assert starts == sorted(starts)
     assert all("user_id" not in i for i in items)
+
+
+@pytest.mark.asyncio
+async def test_list_marginalia_other_users_entry_is_404(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Listing marginalia on another user's entry is 404 (ownership-scoped)."""
+    _fake_llm(monkeypatch, {"kind": "theme", "quote": "I walked by the river", "note": "n"})
+    alice = await _signup(async_client, "alice_l")
+    bob = await _signup(async_client, "bob_l")
+    entry_id = await _create_entry(async_client, alice)
+    await async_client.post(f"/journal/{entry_id}/resonance", headers=alice)
+    resp = await async_client.get(f"/journal/{entry_id}/marginalia", headers=bob)
+    assert resp.status_code == HTTPStatus.NOT_FOUND

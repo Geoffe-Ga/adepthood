@@ -392,7 +392,10 @@ async def list_marginalia(
         raise not_found("journal_entry")
     result = await session.execute(
         select(Marginalia)
-        .where(Marginalia.journal_entry_id == entry_id)
+        .where(
+            Marginalia.journal_entry_id == entry_id,
+            Marginalia.user_id == current_user,  # defense-in-depth alongside the entry check
+        )
         .order_by(col(Marginalia.anchor_start))
     )
     rows = result.scalars().all()
