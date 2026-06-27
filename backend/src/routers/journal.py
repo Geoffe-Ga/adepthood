@@ -22,7 +22,6 @@ from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.journal import (
     JOURNAL_MESSAGE_MAX_LENGTH,
-    JournalBotMessageCreate,
     JournalEntryUpdate,
     JournalListResponse,
     JournalMessageCreate,
@@ -491,35 +490,3 @@ async def delete_journal_entry(
         extra={"user_id": current_user, "entry_id": entry_id},
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.post(
-    "/bot-response",
-    response_model=JournalMessageResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_bot_response(
-    payload: JournalBotMessageCreate,
-    current_user: Annotated[int, Depends(get_current_user)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-) -> JournalEntry:
-    """Store a BotMason AI response (internal endpoint for AI integration layer).
-
-    ``user_id`` is sourced from the authenticated user — never from the request
-    body — to prevent cross-user injection (BUG-JOURNAL-002).
-
-    The bot message is also passed through :func:`sanitize_user_text`
-    (BUG-JOURNAL-003 / BUG-BM-004): a model-generated reflection of an
-    attacker's prompt-injection attempt could otherwise reintroduce control
-    characters or bidi overrides into the journal stream.
-    """
-    data = payload.model_dump()
-    data["message"] = _sanitize_message(data["message"])
-    entry = JournalEntry(sender="bot", user_id=current_user, **data)
-    session.add(entry)
-    await session.commit()
-    await session.refresh(entry)
-    logger.info(
-        "journal_bot_response_created", extra={"user_id": current_user, "entry_id": entry.id}
-    )
-    return entry

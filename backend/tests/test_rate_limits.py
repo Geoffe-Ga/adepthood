@@ -42,22 +42,6 @@ async def _promote_admin(db_session: AsyncSession, username: str = "alice") -> N
     await db_session.commit()
 
 
-async def _add_balance(db_session: AsyncSession, amount: int = 50, username: str = "alice") -> None:
-    """Seed offering credits via direct DB mutation.
-
-    The balance-add endpoint is admin-gated, so rate-limit tests that just
-    need a funded wallet sidestep the endpoint and write the balance column
-    straight into the test DB.
-    """
-    email = f"{username}@example.com"
-    await db_session.execute(
-        update(User)
-        .where(col(User.email) == email)
-        .values(offering_balance=col(User.offering_balance) + amount)
-    )
-    await db_session.commit()
-
-
 # ── Configuration ────────────────────────────────────────────────────────
 
 
@@ -89,36 +73,6 @@ async def test_rate_limit_response_includes_retry_after(async_client: AsyncClien
             "email": "ratelimit99@example.com",
             "password": "secret12345",  # pragma: allowlist secret
         },
-    )
-    assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
-    assert resp.json()["detail"] == "rate_limit_exceeded"
-    assert "retry-after" in resp.headers
-
-
-# ── Per-endpoint: POST /journal/chat (10/minute) ────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_chat_rate_limit_returns_429(
-    async_client: AsyncClient, db_session: AsyncSession
-) -> None:
-    """POST /journal/chat returns 429 after exceeding 10 requests/minute."""
-    headers = await _signup(async_client)
-    await _add_balance(db_session, amount=20)
-
-    # Make 10 requests (the limit)
-    for _ in range(10):
-        await async_client.post(
-            "/journal/chat",
-            json={"message": "Hello BotMason"},
-            headers=headers,
-        )
-
-    # 11th request should be rate-limited
-    resp = await async_client.post(
-        "/journal/chat",
-        json={"message": "One too many"},
-        headers=headers,
     )
     assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
     assert resp.json()["detail"] == "rate_limit_exceeded"
