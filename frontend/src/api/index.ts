@@ -507,62 +507,6 @@ async function attemptTokenRefresh(): Promise<RefreshResult> {
   return inFlightRefresh;
 }
 
-/**
- * Re-open the SSE stream after a 401 with a freshly refreshed token, or
- * fire the unauthorized callback and return ``null`` if refresh is not
- * possible.  Closes BUG-API-002 by sharing the refresh-then-retry
- * semantics with the non-streaming :func:`request` path.
- *
- * Lives here -- not inside :func:`botmason.chatStream` -- so the helper
- * can be unit-tested in isolation against a mocked fetch and so the
- * router stays declarative.
- */
-/**
- * Outcome of a refresh-then-retry attempt on the SSE channel.  Returning
- * the extracted detail alongside the response lets ``chatStream`` reuse
- * the value when the retry also fails -- ``Response.json()`` on an
- * already-consumed body throws ``TypeError: body used already`` in any
- * spec-conforming fetch implementation, so the body MUST be read once.
- */
-interface StreamRetryOutcome {
-  /** Refreshed and reopened stream response, or ``null`` when refresh failed. */
-  res: Response | null;
-  /** Detail string parsed from ``initialRes`` body before refresh ran. */
-  initialDetail: string;
-}
-
-async function retryStreamWithRefresh(
-  payload: ChatRequest,
-  options: { token?: string; signal?: AbortSignal },
-  initialRes: Response,
-): Promise<StreamRetryOutcome> {
-  // BUG-API-002 review fix: read the body EXACTLY once and thread the
-  // result back to the caller.  The previous implementation also called
-  // ``extractErrorDetail(initialRes)`` here, then ``chatStream`` did the
-  // same on the failure path -- ``Response.json()`` rejects the second
-  // call with ``TypeError: body used already`` in production fetch, so
-  // the thrown ``ApiError`` would be replaced by an uncaught TypeError.
-  // Mocks in Jest do not enforce single-read semantics, which is why the
-  // unit tests passed.
-  const initialDetail = await extractErrorDetail(initialRes);
-  const refresh = await attemptTokenRefresh();
-  if (refresh.token === null) {
-    onUnauthorizedCallback?.(reasonForUnauthorized(initialDetail, refresh.hadToken));
-    return { res: null, initialDetail };
-  }
-  const retryRes = await openChatStream(payload, { ...options, token: refresh.token });
-  if (retryRes.ok) return { res: retryRes, initialDetail };
-  if (retryRes.status === 401) {
-    const retryDetail = await extractErrorDetail(retryRes);
-    onUnauthorizedCallback?.(reasonForUnauthorized(retryDetail, true));
-    return { res: null, initialDetail };
-  }
-  // Non-401 retry failure -- propagate to the caller through
-  // ``handleErrorResponse`` for a uniform ``ApiError`` shape.
-  await handleErrorResponse(retryRes);
-  return { res: null, initialDetail }; // unreachable; ``handleErrorResponse`` always throws
-}
-
 function doFetch(
   url: string,
   init: RequestInit | undefined,
@@ -1295,8 +1239,13 @@ export const journal = {
 };
 
 /** Optional bring-your-own-key header for the resonance LLM endpoints. */
-const byokHeaders = (apiKey?: string): Record<string, string> | undefined =>
-  apiKey ? { [LLM_API_KEY_HEADER]: apiKey } : undefined;
+// Resolve the bring-your-own-key header: an explicit per-call key wins, else the
+// key registered by the BYOK provider (ApiKeyContext) at call time so rotations
+// apply immediately. Empty/absent → no header (backend falls back to its env).
+const byokHeaders = (apiKey?: string): Record<string, string> | undefined => {
+  const key = apiKey ?? llmApiKeyGetter?.() ?? null;
+  return key ? { [LLM_API_KEY_HEADER]: key } : undefined;
+};
 
 /**
  * Resonance + marginalia client (journal-resonance). ``generate`` and ``essay``
@@ -1326,19 +1275,8 @@ export const resonance = {
   },
 };
 
-// BotMason AI chat types and client
-export interface ChatRequest {
-  message: string;
-}
-
-export interface ChatResponse {
-  response: string;
-  remaining_balance: number;
-  remaining_messages: number;
-  monthly_reset_date: string;
-  bot_entry_id: number;
-}
-
+// Wallet (BotMason credit) types — the chat endpoints were retired with the
+// journal-resonance redesign; only the wallet surface remains.
 export interface BalanceResponse {
   balance: number;
 }
@@ -1351,266 +1289,7 @@ export interface UsageResponse {
   offering_balance: number;
 }
 
-/** Callback bag for ``botmason.chatStream``. */
-export interface ChatStreamCallbacks {
-  /** Called once per ``event: chunk`` frame with the incremental text delta. */
-  onChunk: (_text: string) => void;
-  /** Called once, after the final ``event: complete`` frame, with the full payload. */
-  onComplete: (_response: ChatResponse) => void;
-  /**
-   * Called when the server emits an ``event: error`` frame mid-stream. HTTP-level
-   * failures (401/402/429/etc.) surface as a thrown ``ApiError`` instead so
-   * callers can distinguish "never started" from "failed in flight".
-   */
-  onStreamError: (_error: { status: number; detail: string }) => void;
-}
-
-/**
- * Raised by ``chatStream`` when the runtime fetch implementation cannot expose
- * a streaming body (older React Native versions, misbehaving proxies). Callers
- * should catch this and fall back to the non-streaming ``chat`` endpoint.
- */
-export class StreamingUnsupportedError extends Error {
-  constructor() {
-    super('streaming_unsupported');
-    this.name = 'StreamingUnsupportedError';
-  }
-}
-
-// Server-Sent Events frame separator: a blank line.  Per the spec
-// (RFC EventSource / WHATWG HTML), a frame ends at LF-LF, CR-CR, or
-// CRLF-CRLF -- production servers behind Cloudflare or nginx commonly
-// emit CRLF-terminated frames, so a parser keyed only on ``\n\n``
-// silently dropped every event from a CRLF source (BUG-API-011).
-//
-// The regex captures any of the three terminators; ``SSE_FRAME_SEPARATOR_RE``
-// is what the buffer scanner uses while ``SSE_LINE_BREAK`` is used to
-// split a single frame into its ``event:`` / ``data:`` lines.
-const SSE_FRAME_SEPARATOR_RE = /\r\n\r\n|\n\n|\r\r/;
-const SSE_LINE_BREAK_RE = /\r\n|\n|\r/;
-const SSE_EVENT_PREFIX = 'event: ';
-const SSE_DATA_PREFIX = 'data: ';
-
-type MinimalReadable = {
-  getReader: () => {
-    read: () => Promise<{ done: boolean; value?: Uint8Array }>;
-    cancel?: () => Promise<void> | void;
-  };
-};
-
-function asReadableStream(body: unknown): MinimalReadable | null {
-  if (body !== null && typeof body === 'object' && 'getReader' in body) {
-    return body as MinimalReadable;
-  }
-  return null;
-}
-
-interface SsePayload {
-  event: string;
-  data: string;
-}
-
-function parseSseFrame(frame: string): SsePayload | null {
-  if (!frame.trim()) return null;
-  let event = '';
-  let data = '';
-  // BUG-API-011: split on any line break (LF / CRLF / CR) so a frame
-  // emitted by a server using CRLF line endings is parsed correctly.
-  for (const line of frame.split(SSE_LINE_BREAK_RE)) {
-    if (line.startsWith(SSE_EVENT_PREFIX)) event = line.slice(SSE_EVENT_PREFIX.length);
-    else if (line.startsWith(SSE_DATA_PREFIX)) data = line.slice(SSE_DATA_PREFIX.length);
-  }
-  if (!event || !data) return null;
-  return { event, data };
-}
-
-function safeJsonParse(raw: string, callbacks: ChatStreamCallbacks): unknown | undefined {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    // A malformed frame is treated as a provider-level error rather than a
-    // thrown exception so callers get a consistent failure surface.
-    callbacks.onStreamError({ status: 502, detail: MALFORMED_FRAME_DETAIL });
-    return undefined;
-  }
-}
-
-function dispatchSseFrame(frame: string, callbacks: ChatStreamCallbacks): void {
-  const parsed = parseSseFrame(frame);
-  if (!parsed) return;
-  const payload = safeJsonParse(parsed.data, callbacks);
-  if (payload === undefined) return;
-  if (parsed.event === 'chunk' && typeof (payload as { text?: string }).text === 'string') {
-    callbacks.onChunk((payload as { text: string }).text);
-  } else if (parsed.event === 'complete') {
-    callbacks.onComplete(payload as ChatResponse);
-  } else if (parsed.event === 'error') {
-    const errPayload = payload as { status: number; detail: string };
-    // BUG-API-014: a 401 inside a stream means the session expired
-    // mid-reply (token aged out, or the user signed out from another
-    // device).  The error frame is the only auth signal we get on the
-    // SSE channel, so route it through the same global unauthorized
-    // callback as the non-streaming path.  ``hadToken=true`` because
-    // the stream could not have opened without a session token.
-    if (errPayload.status === HTTP_UNAUTHORIZED) {
-      onUnauthorizedCallback?.(reasonForUnauthorized(errPayload.detail ?? null, true));
-    }
-    callbacks.onStreamError(errPayload);
-  }
-}
-
-/** HTTP status that indicates an authorization failure. */
-const HTTP_UNAUTHORIZED = 401;
-
-/** Server-reported detail string when a single SSE frame can't be parsed as JSON. */
-const MALFORMED_FRAME_DETAIL = 'malformed_stream_frame';
-
-async function openChatStream(
-  payload: ChatRequest,
-  options: { token?: string; signal?: AbortSignal },
-): Promise<Response> {
-  const resolvedToken = resolveToken(options.token);
-  const apiKey = llmApiKeyGetter?.() ?? null;
-  const extraHeaders: Record<string, string> = {
-    Accept: 'text/event-stream',
-    ...(apiKey ? { [LLM_API_KEY_HEADER]: apiKey } : {}),
-  };
-  const headers = buildHeaders(resolvedToken, payload, extraHeaders);
-  const path = '/journal/chat/stream';
-  // BUG-001: even the streaming endpoint needs a (generous) wall clock.
-  // 5 minutes is long enough to cover a large BotMason reply but still
-  // short enough to eventually surface a wedged connection.
-  return fetchWithTimeout(
-    `${API_BASE_URL}${path}`,
-    {
-      method: 'POST',
-      body: JSON.stringify(payload),
-      headers,
-    },
-    STREAM_TIMEOUT_MS,
-    options.signal,
-    path,
-  );
-}
-
-async function readChatStream(
-  readable: MinimalReadable,
-  callbacks: ChatStreamCallbacks,
-  signal?: AbortSignal,
-): Promise<void> {
-  const reader = readable.getReader();
-  // BUG-API-012: ``fetchWithTimeout`` already wires the signal to the
-  // underlying ``fetch``'s AbortController -- but in some runtimes the
-  // body reader is not torn down until the underlying socket actually
-  // closes, so the user-perceived "Stop" tap takes seconds to fire.
-  // Cancelling the reader directly on abort makes ``reader.read()``
-  // resolve with ``done: true`` immediately so the loop exits and the
-  // SSE generator yields control back to the caller.
-  const cancelOnAbort = (): void => {
-    void reader.cancel?.();
-  };
-  if (signal) {
-    if (signal.aborted) cancelOnAbort();
-    else signal.addEventListener('abort', cancelOnAbort, { once: true });
-  }
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let done = false;
-  try {
-    while (!done) {
-      const chunk = await reader.read();
-      done = chunk.done;
-      if (chunk.value) buffer += decoder.decode(chunk.value, { stream: true });
-      buffer = drainCompletedFrames(buffer, callbacks);
-    }
-    // Any trailing bytes that arrived without a terminating blank line still
-    // need to be dispatched — servers may elide the final separator.
-    if (buffer.trim()) dispatchSseFrame(buffer, callbacks);
-  } finally {
-    signal?.removeEventListener('abort', cancelOnAbort);
-  }
-}
-
-/**
- * Walk ``buffer`` for completed SSE frames, dispatch each, and return the
- * trailing partial-frame remainder for the next read.
- *
- * BUG-API-011: scans for any of LF-LF / CR-CR / CRLF-CRLF (per the
- * EventSource spec) so a server using CRLF terminators is parsed.
- * Previous version keyed on ``"\n\n"`` only and silently swallowed the
- * entire stream.
- */
-function drainCompletedFrames(buffer: string, callbacks: ChatStreamCallbacks): string {
-  let remainder = buffer;
-  while (true) {
-    const match = SSE_FRAME_SEPARATOR_RE.exec(remainder);
-    if (match === null) return remainder;
-    const frame = remainder.slice(0, match.index);
-    dispatchSseFrame(frame, callbacks);
-    remainder = remainder.slice(match.index + match[0].length);
-  }
-}
-
 export const botmason = {
-  chat(payload: ChatRequest, token?: string): Promise<ChatResponse> {
-    // The user-owned key (if any) is fetched from the getter at call time
-    // so rotations made in Settings apply immediately. A missing or empty
-    // key means "fall back to the server-side env var" on the backend.
-    const apiKey = llmApiKeyGetter?.() ?? null;
-    const headers = apiKey ? { [LLM_API_KEY_HEADER]: apiKey } : undefined;
-    return request<ChatResponse>('/journal/chat', {
-      method: 'POST',
-      body: payload,
-      token,
-      headers,
-    });
-  },
-  /**
-   * Open an SSE stream against ``/journal/chat/stream`` and dispatch each
-   * event to the supplied callbacks. Returns only once the stream has closed
-   * (either because ``complete`` arrived, an error frame arrived, or the
-   * connection was aborted).
-   *
-   * Error semantics mirror ``chat``: HTTP-level failures raise ``ApiError``
-   * so the caller can distinguish "auth expired" (retry won't help) from
-   * "provider blipped" (retry might). Runtime failures to read the body
-   * raise ``StreamingUnsupportedError`` so callers can seamlessly fall back
-   * to the non-streaming endpoint.
-   */
-  async chatStream(
-    payload: ChatRequest,
-    callbacks: ChatStreamCallbacks,
-    options: { token?: string; signal?: AbortSignal } = {},
-  ): Promise<void> {
-    const res = await openChatStream(payload, options);
-    if (res.ok) {
-      const readable = asReadableStream(res.body);
-      if (!readable) throw new StreamingUnsupportedError();
-      await readChatStream(readable, callbacks, options.signal);
-      return;
-    }
-    if (res.status === 401) {
-      // BUG-API-002: a 401 on the streaming endpoint MUST go through the
-      // same refresh-once-then-fail flow as ``request``.  The previous
-      // path fired the unauthorized callback on the first 401 and gave
-      // up, so a transient blip (token aged out mid-keystroke) logged
-      // the user out instead of recovering silently.
-      //
-      // ``retryStreamWithRefresh`` reads ``res`` body once and threads
-      // the detail back via ``initialDetail`` so this failure path can
-      // throw the real ``ApiError`` without re-reading an already
-      // consumed body (review fix for PR #297).
-      const outcome = await retryStreamWithRefresh(payload, options, res);
-      if (outcome.res !== null) {
-        const readable = asReadableStream(outcome.res.body);
-        if (!readable) throw new StreamingUnsupportedError();
-        await readChatStream(readable, callbacks, options.signal);
-        return;
-      }
-      throw new ApiError(res.status, outcome.initialDetail);
-    }
-    return handleErrorResponse(res);
-  },
   getBalance(token?: string): Promise<BalanceResponse> {
     return request<BalanceResponse>('/user/balance', { token });
   },
