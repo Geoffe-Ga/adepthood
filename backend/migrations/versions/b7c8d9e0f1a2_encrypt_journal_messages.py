@@ -46,24 +46,37 @@ def _retype_message(*, to_text: bool) -> None:
         op.alter_column("journalentry", "message", type_=new_type, existing_nullable=False)
 
 
+_BATCH_SIZE = 1_000
+
+
 def _transform_rows(transform: Callable[[str], str]) -> None:
     """Apply ``transform`` (encrypt | decrypt) to every row's ``message``.
 
     A no-op when no key is configured: the encrypt/decrypt helpers pass plaintext
-    through unchanged, so un-keyed environments only get the type change. O(n)
-    row-by-row: it reads all rows then issues one UPDATE per changed row, holding
-    the connection for the sweep — acceptable for a one-off journal migration.
+    through unchanged, so un-keyed environments only get the type change.
+    Keyset-paginated (``WHERE id > last_id`` in batches) so the whole table is
+    never loaded into memory — safe for a journal table that has grown large.
     """
     bind = op.get_bind()
-    rows = bind.execute(sa.select(_journal.c.id, _journal.c.message)).fetchall()
-    for row_id, message in rows:
-        if message is None:
-            continue
-        new_value = transform(message)
-        if new_value != message:
-            bind.execute(
-                sa.update(_journal).where(_journal.c.id == row_id).values(message=new_value)
-            )
+    last_id = 0
+    while True:
+        batch = bind.execute(
+            sa.select(_journal.c.id, _journal.c.message)
+            .where(_journal.c.id > last_id)
+            .order_by(_journal.c.id)
+            .limit(_BATCH_SIZE)
+        ).fetchall()
+        if not batch:
+            break
+        for row_id, message in batch:
+            last_id = row_id
+            if message is None:
+                continue
+            new_value = transform(message)
+            if new_value != message:
+                bind.execute(
+                    sa.update(_journal).where(_journal.c.id == row_id).values(message=new_value)
+                )
 
 
 def upgrade() -> None:

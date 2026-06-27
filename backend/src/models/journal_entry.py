@@ -59,9 +59,11 @@ class JournalEntry(SQLModel, table=True):
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
-    # Encrypted at rest via EncryptedString (audit-destub-05b). Input length is
-    # capped upstream (request schema + sanitizer), so no Field max_length here —
-    # the column is Text to fit the ciphertext (which exceeds the plaintext).
+    # Encrypted at rest via EncryptedString (audit-destub-05b). No Field
+    # max_length here (it can't coexist with sa_column, and ciphertext exceeds
+    # the plaintext so the column is Text): the 10k input cap is enforced at the
+    # write boundary by JournalMessageCreate / JournalBotMessageCreate
+    # (max_length=JOURNAL_MESSAGE_MAX_LENGTH) plus the router's sanitizer.
     message: str = Field(sa_column=Column(EncryptedString(), nullable=False))
     sender: str = Field(max_length=10)  # 'user' or 'bot'
     user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")

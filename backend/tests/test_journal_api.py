@@ -521,27 +521,30 @@ async def test_user_id_not_in_journal_response(async_client: AsyncClient) -> Non
         assert "user_id" not in item
 
 
+@pytest.fixture
+def _encryption_key(monkeypatch: pytest.MonkeyPatch) -> object:
+    """Enable journal encryption for a test; always clear the cached registry."""
+    monkeypatch.setenv("JOURNAL_ENCRYPTION_KEYS", Fernet.generate_key().decode())
+    journal_encryption.reset_cache()
+    yield
+    journal_encryption.reset_cache()
+
+
 @pytest.mark.asyncio
-async def test_search_rejected_when_encryption_enabled(
-    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+@pytest.mark.usefixtures("_encryption_key")
+async def test_search_rejected_when_encryption_enabled(async_client: AsyncClient) -> None:
     """With encryption on, keyword search 422s instead of silently returning nothing.
 
     The message column holds Fernet ciphertext, so an ILIKE substring match can
     never hit; the endpoint rejects search explicitly (audit-destub-05b).
     """
-    monkeypatch.setenv("JOURNAL_ENCRYPTION_KEYS", Fernet.generate_key().decode())
-    journal_encryption.reset_cache()
-    try:
-        headers = await _signup(async_client, "searcher")
-        await async_client.post(
-            "/journal/", json=_message_payload(message="encrypted guitar note"), headers=headers
-        )
-        resp = await async_client.get("/journal/?search=guitar", headers=headers)
-        assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-        # A non-search list still works (and round-trips decrypted content).
-        ok = await async_client.get("/journal/", headers=headers)
-        assert ok.status_code == HTTPStatus.OK
-        assert ok.json()["items"][0]["message"] == "encrypted guitar note"
-    finally:
-        journal_encryption.reset_cache()
+    headers = await _signup(async_client, "searcher")
+    await async_client.post(
+        "/journal/", json=_message_payload(message="encrypted guitar note"), headers=headers
+    )
+    resp = await async_client.get("/journal/?search=guitar", headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    # A non-search list still works (and round-trips decrypted content).
+    ok = await async_client.get("/journal/", headers=headers)
+    assert ok.status_code == HTTPStatus.OK
+    assert ok.json()["items"][0]["message"] == "encrypted guitar note"
