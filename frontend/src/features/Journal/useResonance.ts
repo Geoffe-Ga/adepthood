@@ -30,6 +30,8 @@ export interface UseResonanceResult {
   requestResonance: () => Promise<void>;
   /** Merge an updated note (e.g. one that just gained a cached essay) by id. */
   updateNote: (_note: Marginalia) => void;
+  /** Re-read the persisted marginalia (after an edit re-anchors/stales them). */
+  refresh: () => Promise<void>;
 }
 
 /** Union of two note lists, keyed by id (incoming wins on conflict). */
@@ -40,13 +42,11 @@ function mergeById(existing: Marginalia[], incoming: Marginalia[]): Marginalia[]
   return [...byId.values()].sort((a, b) => a.anchor_start - b.anchor_start);
 }
 
-export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseResonanceResult {
-  const [marginalia, setMarginalia] = useState<Marginalia[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [remaining, setRemaining] = useState<number | null>(null);
-  const inFlightRef = useRef(false);
-
+/** Load the entry's existing marginalia once on open (id only). */
+function useInitialMarginalia(
+  routeEntryId: number | null,
+  setMarginalia: (_notes: Marginalia[]) => void,
+): void {
   useEffect(() => {
     if (routeEntryId == null) return undefined;
     let active = true;
@@ -61,7 +61,17 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
     return () => {
       active = false;
     };
-  }, [routeEntryId]);
+  }, [routeEntryId, setMarginalia]);
+}
+
+export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseResonanceResult {
+  const [marginalia, setMarginalia] = useState<Marginalia[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [remaining, setRemaining] = useState<number | null>(null);
+  const inFlightRef = useRef(false);
+
+  useInitialMarginalia(routeEntryId, setMarginalia);
 
   const requestResonance = useCallback(async (): Promise<void> => {
     if (inFlightRef.current) return; // one pass at a time — no double-charge
@@ -89,5 +99,15 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
     setMarginalia((prev) => mergeById(prev, [updated]));
   }, []);
 
-  return { marginalia, loading, error, remaining, requestResonance, updateNote };
+  const refresh = useCallback(async (): Promise<void> => {
+    if (routeEntryId == null) return;
+    try {
+      const res = await resonance.list(routeEntryId);
+      setMarginalia(res.items);
+    } catch {
+      // A failed refresh leaves the current notes in place; nothing to surface.
+    }
+  }, [routeEntryId]);
+
+  return { marginalia, loading, error, remaining, requestResonance, updateNote, refresh };
 }

@@ -66,4 +66,16 @@ describe('buildHighlightSegments', () => {
     const segments = buildHighlightSegments(BODY, [n]);
     expect(segments.every((s) => s.note == null)).toBe(true);
   });
+
+  it('does not draw stale anchors inline', () => {
+    const start = BODY.indexOf('the willow');
+    const stale = note({
+      id: 8,
+      anchor_start: start,
+      anchor_end: start + 'the willow'.length,
+      status: 'stale',
+    });
+    const segments = buildHighlightSegments(BODY, [stale]);
+    expect(segments.every((s) => s.note == null)).toBe(true);
+  });
 });

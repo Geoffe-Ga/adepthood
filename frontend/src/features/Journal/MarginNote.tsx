@@ -34,7 +34,12 @@ function MarginNote({ note, onOpen }: MarginNoteProps): React.JSX.Element {
     >
       <Text style={[styles.kind, { color: colors.marginalia[note.kind] }]}>{note.kind}</Text>
       <Text style={styles.note}>{note.note}</Text>
-      <Text style={styles.open}>{isStale ? 'Anchor moved · Open' : 'Open'}</Text>
+      {isStale ? (
+        <Text style={styles.staleCaption} testID={`margin-note-stale-${note.id}`}>
+          The passage this noted has changed.
+        </Text>
+      ) : null}
+      <Text style={styles.open}>Open</Text>
     </TouchableOpacity>
   );
 }
@@ -59,6 +64,12 @@ const styles = StyleSheet.create({
   note: {
     ...editorialType.marginNote,
     color: colors.paper.ink,
+    paddingTop: spacing(0.5),
+  },
+  staleCaption: {
+    ...editorialType.caption,
+    fontStyle: 'italic',
+    color: colors.paper.inkSoft,
     paddingTop: spacing(0.5),
   },
   open: {

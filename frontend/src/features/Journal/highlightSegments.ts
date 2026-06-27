@@ -17,7 +17,13 @@ export interface HighlightSegment {
 function usableNotes(body: string, notes: Marginalia[]): Marginalia[] {
   return notes
     .filter(
-      (n) => n.anchor_start >= 0 && n.anchor_end <= body.length && n.anchor_start < n.anchor_end,
+      (n) =>
+        // Stale anchors no longer point at a trustworthy span, so they are not
+        // drawn inline (the note itself stays openable in the margin).
+        n.status !== 'stale' &&
+        n.anchor_start >= 0 &&
+        n.anchor_end <= body.length &&
+        n.anchor_start < n.anchor_end,
     )
     .sort((a, b) => a.anchor_start - b.anchor_start);
 }

@@ -78,6 +78,11 @@ const styles = StyleSheet.create({
   marginNoteSlot: {
     marginBottom: journalLayout.marginNoteGap,
   },
+  controlLink: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+    paddingTop: spacing(2),
+  },
 });
 
 export default styles;

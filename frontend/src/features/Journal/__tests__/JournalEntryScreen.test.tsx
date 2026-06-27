@@ -45,9 +45,12 @@ function entry(overrides: Partial<JournalMessage> = {}): JournalMessage {
 
 function renderScreen(params?: { entryId?: number }, extraProps: Record<string, unknown> = {}) {
   const route = { key: 'k', name: 'JournalEntry' as const, params };
-  const navigation = { navigate: jest.fn(), goBack: jest.fn() };
+  const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
   const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
-  return render(<Screen navigation={navigation} route={route} {...extraProps} />);
+  return {
+    ...render(<Screen navigation={navigation} route={route} {...extraProps} />),
+    navigation,
+  };
 }
 
 beforeEach(() => {
@@ -150,26 +153,29 @@ describe('JournalEntryScreen', () => {
     }
   });
 
-  it('renders read-mode highlights + margin notes once an entry has notes', async () => {
-    mockGet.mockResolvedValue(entry({ id: 7, message: 'I walked by the river.' }));
-    mockList.mockResolvedValue({
-      items: [
-        {
-          id: 50,
-          journal_entry_id: 7,
-          kind: 'theme',
-          anchor_start: 2,
-          anchor_end: 8,
-          anchor_text: 'walked',
-          note: 'You keep moving.',
-          essay: null,
-          essay_generated_at: null,
-          status: 'active',
-          created_at: '',
-          updated_at: '',
-        },
-      ],
-    });
+  function noteRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 50,
+      journal_entry_id: 7,
+      kind: 'theme',
+      anchor_start: 2,
+      anchor_end: 8,
+      anchor_text: 'walked',
+      note: 'You keep moving.',
+      essay: null,
+      essay_generated_at: null,
+      status: 'active',
+      created_at: '',
+      updated_at: '',
+      ...overrides,
+    };
+  }
+
+  it('renders read-mode highlights + margin notes for a finished entry', async () => {
+    mockGet.mockResolvedValue(
+      entry({ id: 7, message: 'I walked by the river.', status: 'finished' }),
+    );
+    mockList.mockResolvedValue({ items: [noteRow()] });
     const { findByTestId, queryByTestId } = renderScreen({ entryId: 7 });
     expect(await findByTestId('margin-note-50')).toBeTruthy();
     expect(queryByTestId('journal-body-read')).not.toBeNull();
@@ -178,7 +184,7 @@ describe('JournalEntryScreen', () => {
     expect(queryByTestId('journal-body-input')).toBeNull();
   });
 
-  it('loads an existing entry by id', async () => {
+  it('loads an existing draft by id (editable)', async () => {
     mockGet.mockResolvedValue(entry({ id: 7, title: 'Rivers', message: 'An existing page.' }));
     const { getByTestId } = renderScreen({ entryId: 7 });
     await waitFor(() => {
@@ -186,5 +192,96 @@ describe('JournalEntryScreen', () => {
     });
     expect(mockGet).toHaveBeenCalledWith(7);
     expect(getByTestId('journal-body-input').props.value).toBe('An existing page.');
+  });
+
+  describe('edit gate (finished entries)', () => {
+    async function renderFinished() {
+      mockGet.mockResolvedValue(entry({ id: 7, message: 'I walked.', status: 'finished' }));
+      mockList.mockResolvedValue({ items: [] });
+      const view = renderScreen({ entryId: 7 });
+      await waitFor(() => expect(view.queryByTestId('journal-edit-button')).not.toBeNull());
+      return view;
+    }
+
+    it('opens the confirm dialog when editing a finished entry', async () => {
+      const { getByTestId, queryByTestId } = await renderFinished();
+      fireEvent.press(getByTestId('journal-edit-button'));
+      expect(queryByTestId('edit-confirm-dialog')).not.toBeNull();
+      // Still locked — body not editable yet.
+      expect(queryByTestId('journal-body-input')).toBeNull();
+    });
+
+    it('Edit unlocks the editable body', async () => {
+      const { getByTestId, findByTestId } = await renderFinished();
+      fireEvent.press(getByTestId('journal-edit-button'));
+      fireEvent.press(getByTestId('edit-confirm-edit'));
+      expect(await findByTestId('journal-body-input')).toBeTruthy();
+    });
+
+    it('Start new navigates to a blank JournalEntry', async () => {
+      const { getByTestId, navigation } = await renderFinished();
+      fireEvent.press(getByTestId('journal-edit-button'));
+      fireEvent.press(getByTestId('edit-confirm-start-new'));
+      expect(navigation.push).toHaveBeenCalledWith('JournalEntry');
+    });
+
+    it('Cancel keeps the entry locked', async () => {
+      const { getByTestId, queryByTestId } = await renderFinished();
+      fireEvent.press(getByTestId('journal-edit-button'));
+      fireEvent.press(getByTestId('edit-confirm-cancel'));
+      expect(queryByTestId('journal-body-input')).toBeNull();
+      expect(queryByTestId('edit-confirm-dialog')).toBeNull();
+    });
+
+    it('re-fetches marginalia after the first save following an edit', async () => {
+      jest.useFakeTimers();
+      try {
+        mockGet.mockResolvedValue(entry({ id: 7, message: 'I walked.', status: 'finished' }));
+        mockList.mockResolvedValue({ items: [] });
+        const { getByTestId, findByTestId } = renderScreen(
+          { entryId: 7 },
+          { autosaveDelayMs: 100 },
+        );
+        await act(async () => {
+          await Promise.resolve();
+        });
+        fireEvent.press(getByTestId('journal-edit-button'));
+        fireEvent.press(getByTestId('edit-confirm-edit'));
+        const input = await findByTestId('journal-body-input');
+        mockList.mockClear();
+        fireEvent.changeText(input, 'I strolled instead.');
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(100);
+        });
+        expect(mockUpdate).toHaveBeenCalledWith(
+          7,
+          expect.objectContaining({ message: 'I strolled instead.' }),
+        );
+        expect(mockList).toHaveBeenCalledWith(7); // re-read after the edit-save
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+  });
+
+  it('marks a draft finished via the Finish control', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId, findByTestId } = renderScreen(undefined, { autosaveDelayMs: 100 });
+      fireEvent.changeText(getByTestId('journal-body-input'), 'A finished thought.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      mockUpdate.mockClear();
+      fireEvent.press(getByTestId('journal-finish-button'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(mockUpdate).toHaveBeenCalledWith(42, { status: 'finished' });
+      // Returns to read mode.
+      expect(await findByTestId('journal-edit-button')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
