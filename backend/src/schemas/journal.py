@@ -6,7 +6,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from models.journal_entry import JournalTag
+from models.journal_entry import EntryStatus, JournalTag
 
 JOURNAL_MESSAGE_MAX_LENGTH = 10_000
 
@@ -46,9 +46,12 @@ class JournalMessageResponse(BaseModel):
     """
 
     id: int
+    title: str | None
     message: str
+    status: EntryStatus
     sender: str
     timestamp: datetime
+    updated_at: datetime
     tag: str
     practice_session_id: int | None
     user_practice_id: int | None
