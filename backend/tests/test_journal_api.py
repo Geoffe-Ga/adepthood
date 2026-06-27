@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from http import HTTPStatus
 
 import pytest
+from cryptography.fernet import Fernet
 from httpx import AsyncClient
+
+from services import journal_encryption
 
 
 def _message_payload(**overrides: object) -> dict[str, object]:
@@ -516,3 +520,64 @@ async def test_user_id_not_in_journal_response(async_client: AsyncClient) -> Non
     list_resp = await async_client.get("/journal/", headers=headers)
     for item in list_resp.json()["items"]:
         assert "user_id" not in item
+
+
+@pytest.fixture(autouse=True)
+def _clear_encryption_cache() -> Iterator[None]:
+    """Reset the cached key registry around every test so keys never leak."""
+    journal_encryption.reset_cache()
+    yield
+    journal_encryption.reset_cache()
+
+
+@pytest.fixture
+def _encryption_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Enable journal encryption for a test (cache reset is autouse)."""
+    monkeypatch.setenv("JOURNAL_ENCRYPTION_KEYS", Fernet.generate_key().decode())
+    journal_encryption.reset_cache()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_encryption_key")
+async def test_search_rejected_when_encryption_enabled(async_client: AsyncClient) -> None:
+    """With encryption on, keyword search 422s instead of silently returning nothing.
+
+    The message column holds Fernet ciphertext, so an ILIKE substring match can
+    never hit; the endpoint rejects search explicitly (audit-destub-05b).
+    """
+    headers = await _signup(async_client, "searcher")
+    await async_client.post(
+        "/journal/", json=_message_payload(message="encrypted guitar note"), headers=headers
+    )
+    resp = await async_client.get("/journal/?search=guitar", headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    # A non-search list still works (and round-trips decrypted content).
+    ok = await async_client.get("/journal/", headers=headers)
+    assert ok.status_code == HTTPStatus.OK
+    assert ok.json()["items"][0]["message"] == "encrypted guitar note"
+
+
+@pytest.mark.asyncio
+async def test_decryption_failure_returns_distinct_500(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A read of a row whose key was rotated out surfaces as a logged 500.
+
+    Without the dedicated handler this would be an indistinguishable
+    internal_error; the handler tags it decryption_failure (audit-destub-05b).
+    """
+    monkeypatch.setenv("JOURNAL_ENCRYPTION_KEYS", Fernet.generate_key().decode())
+    journal_encryption.reset_cache()
+    headers = await _signup(async_client, "rotator")
+    created = await async_client.post(
+        "/journal/", json=_message_payload(message="secret under old key"), headers=headers
+    )
+    entry_id = created.json()["id"]
+
+    # Rotate to a brand-new key only — the old ciphertext can no longer decrypt.
+    monkeypatch.setenv("JOURNAL_ENCRYPTION_KEYS", Fernet.generate_key().decode())
+    journal_encryption.reset_cache()
+
+    resp = await async_client.get(f"/journal/{entry_id}", headers=headers)
+    assert resp.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    assert resp.json()["error"] == "decryption_failure"

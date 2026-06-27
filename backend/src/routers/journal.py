@@ -26,6 +26,7 @@ from schemas.journal import (
     JournalMessageResponse,
 )
 from security import TextTooLongError, sanitize_user_text
+from services import journal_encryption
 
 
 def _sanitize_message(message: str) -> str:
@@ -133,6 +134,12 @@ async def list_journal_entries(
     BUG-JOURNAL-007: soft-deleted entries (``deleted_at IS NOT NULL``) are
     excluded so the list surface never resurfaces deleted content.
     """
+    # Keyword search ILIKEs the message column; with encryption on, the stored
+    # value is Fernet ciphertext, so substring search cannot work. Reject it
+    # explicitly rather than silently returning nothing (audit-destub-05b);
+    # encrypted search is tracked as follow-up feature work.
+    if filters.search is not None and journal_encryption.is_enabled():
+        raise unprocessable("search_unavailable_with_encryption")
     conditions = _build_filter_conditions(filters)
     query = select(JournalEntry).where(
         JournalEntry.user_id == current_user,
