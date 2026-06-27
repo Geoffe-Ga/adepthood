@@ -277,6 +277,17 @@ describe('PracticeCatalogScreen — defaults wiring', () => {
     expect(mockPracticesList).toHaveBeenCalledWith({ stageNumber: 6, includeMine: true });
   });
 
+  it('sets the practice active for the seeded stage when "Use" is tapped', async () => {
+    const setActive = jest.fn(async () => undefined) as jest.MockedFunction<
+      (id: number, stage: number) => Promise<void>
+    >;
+    mockPracticesList.mockResolvedValueOnce([presetA]);
+    const view = render(<PracticeCatalogScreen initialStage={2} setActive={setActive} />);
+    await waitForLoad();
+    fireEvent.press(view.getByTestId('practice-catalog-row-1-use'));
+    expect(setActive).toHaveBeenCalledWith(1, 2);
+  });
+
   it('navigates to PracticeDetail when a row is tapped without an override', async () => {
     mockPracticesList.mockResolvedValueOnce([presetA]);
     const view = render(<PracticeCatalogScreen initialStage={1} />);

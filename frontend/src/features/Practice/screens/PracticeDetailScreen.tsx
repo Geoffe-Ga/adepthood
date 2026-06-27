@@ -26,6 +26,7 @@ import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 import { MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
 import type { RootStackParamList } from '@/navigation/RootStack';
+import { selectCurrentStage, useStageStore } from '@/store/useStageStore';
 
 export type PracticeDetailScreenProps = NativeStackScreenProps<
   RootStackParamList,
@@ -64,6 +65,7 @@ function initialState(): ScreenState {
 export function PracticeDetailScreen(props: PracticeDetailScreenProps): React.JSX.Element {
   const { practiceId } = props.route.params;
   const state = usePracticeDetail(practiceId);
+  const currentStage = useStageStore(selectCurrentStage);
   if (state.loading) {
     return (
       <View style={styles.loading} testID="practice-detail-loading">
@@ -92,6 +94,7 @@ export function PracticeDetailScreen(props: PracticeDetailScreenProps): React.JS
       )}
       <ActionRow
         practice={state.practice}
+        onUseForCurrentStage={() => void state.assign(currentStage)}
         onUseForStage={state.openPicker}
         onCustomizeCopy={() => navigateToCopy(props, state.practice!)}
       />
@@ -306,12 +309,14 @@ function summarizeConfig(config: ModeConfig): readonly string[] {
 
 interface ActionRowProps {
   practice: PracticeItem;
+  onUseForCurrentStage: () => void;
   onUseForStage: () => void;
   onCustomizeCopy: () => void;
 }
 
 const ActionRow = ({
   practice,
+  onUseForCurrentStage,
   onUseForStage,
   onCustomizeCopy,
 }: ActionRowProps): React.JSX.Element => (
@@ -322,10 +327,15 @@ const ActionRow = ({
   // adds an owner hint.
   <View style={styles.actionRow}>
     <ActionButton
+      label="Use for current stage"
+      onPress={onUseForCurrentStage}
+      testID="practice-detail-use-current-stage"
+      primary
+    />
+    <ActionButton
       label="Use for stage…"
       onPress={onUseForStage}
       testID="practice-detail-use-for-stage"
-      primary
     />
     <ActionButton
       label="Customize a copy"

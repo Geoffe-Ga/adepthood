@@ -323,12 +323,12 @@ describe('PracticeScreen', () => {
     });
   });
 
-  it('browse-all-practices opens the Catalog from the active-session state too', async () => {
+  it('change-practice opens the Catalog seeded to the current stage', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId } = render(<PracticeScreen />);
     await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
 
-    fireEvent.press(getByTestId('browse-catalog-button'));
+    fireEvent.press(getByTestId('change-practice-button'));
     expect(mockRootNavigate).toHaveBeenCalledWith('Catalog', { stageNumber: 1 });
   });
 
