@@ -38,6 +38,27 @@ describe('TierStar', () => {
     expect(findStarVertices(component)).toHaveLength(points * 2);
   });
 
+  it('defaults the accessibilityLabel to the spoken tier name', () => {
+    const labels: ReadonlyArray<[TierStarTier, string]> = [
+      ['low', 'Low Grit'],
+      ['clear', 'Clear Goal'],
+      ['stretch', 'Stretch Goal'],
+    ];
+    for (const [tier, label] of labels) {
+      const component = renderer.create(<TierStar tier={tier} color="#000000" />);
+      const svg = component.root.findByProps({ accessibilityRole: 'image' });
+      expect(svg.props.accessibilityLabel).toBe(label);
+    }
+  });
+
+  it('allows the accessibilityLabel to be overridden', () => {
+    const component = renderer.create(
+      <TierStar tier="low" color="#000000" accessibilityLabel="Custom" />,
+    );
+    const svg = component.root.findByProps({ accessibilityRole: 'image' });
+    expect(svg.props.accessibilityLabel).toBe('Custom');
+  });
+
   it('applies the tier color as the stroke', () => {
     const component = renderer.create(<TierStar tier="clear" color="#be6e46" />);
     const polygon: TestNode = component.root.find(

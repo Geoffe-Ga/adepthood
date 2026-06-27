@@ -18,6 +18,13 @@ import Svg, { Polygon } from 'react-native-svg';
 
 export type TierStarTier = 'low' | 'clear' | 'stretch';
 
+/** Spoken tier name, used as the default screen-reader label for each star. */
+export const TIER_LABELS: Record<TierStarTier, string> = {
+  low: 'Low Grit',
+  clear: 'Clear Goal',
+  stretch: 'Stretch Goal',
+};
+
 /** Point count per tier — the sole differentiator between the three stars. */
 const TIER_POINTS: Record<TierStarTier, number> = {
   low: 4,
@@ -75,16 +82,26 @@ interface TierStarProps {
   color: string;
   size?: number;
   testID?: string;
+  /** Screen-reader label; defaults to the spoken tier name so the star is
+   * never announced as a bare "image" the way the old text label was read. */
+  accessibilityLabel?: string;
 }
 
 /** Outlined, tier-encoding star marker (see module docstring). */
-export const TierStar = ({ tier, color, size = DEFAULT_SIZE, testID }: TierStarProps) => (
+export const TierStar = ({
+  tier,
+  color,
+  size = DEFAULT_SIZE,
+  testID,
+  accessibilityLabel,
+}: TierStarProps) => (
   <Svg
     width={size}
     height={size}
     viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`}
     testID={testID}
     accessibilityRole="image"
+    accessibilityLabel={accessibilityLabel ?? TIER_LABELS[tier]}
   >
     <Polygon
       points={STAR_POINTS[tier]}

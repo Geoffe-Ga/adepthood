@@ -59,7 +59,9 @@ export const colors = {
   // whose middle tier was darker than both neighbors and so broke the
   // visual ordering.
   tier: {
-    low: '#c9a66b', // soft brass / gold
+    // Low brass darkened from #c9a66b to clear WCAG 2.1 SC 1.4.11 (3:1 for
+    // graphical objects): #b08d40 is ~3.1:1 on white vs the prior ~2.3:1.
+    low: '#b08d40', // warm old-gold / brass
     clear: '#be6e46', // terracotta / sienna
     stretch: '#8c3b2e', // deep garnet / ember
     default: '#dad9d4',

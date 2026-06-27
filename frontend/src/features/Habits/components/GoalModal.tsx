@@ -63,21 +63,21 @@ const circleStyle = (color: string): ViewStyle => ({
 /** Size of the unlabeled tier star shown beneath the goal progress bar. */
 const TIER_STAR_SIZE = 14;
 
-const labelContainerStyle = (leftPct: number, z: number): ViewStyle => ({
-  position: 'absolute',
-  left: `${clampPercentage(leftPct)}%` as DimensionValue,
-  transform: [
-    {
-      translateX:
-        clampPercentage(leftPct) === 0
-          ? 0
-          : clampPercentage(leftPct) === 100
-            ? -TIER_STAR_SIZE
-            : -TIER_STAR_SIZE / 2,
-    },
-  ],
-  zIndex: z,
-});
+/** Center a star of TIER_STAR_SIZE over its position, clamped at the bar edges. */
+const centeredTranslateX = (clamped: number): number => {
+  if (clamped === 0) return 0;
+  return clamped === 100 ? -TIER_STAR_SIZE : -TIER_STAR_SIZE / 2;
+};
+
+const labelContainerStyle = (leftPct: number, z: number): ViewStyle => {
+  const clamped = clampPercentage(leftPct);
+  return {
+    position: 'absolute',
+    left: `${clamped}%` as DimensionValue,
+    transform: [{ translateX: centeredTranslateX(clamped) }],
+    zIndex: z,
+  };
+};
 
 const tooltipStyle = (color: string): ViewStyle => ({
   position: 'absolute',
