@@ -11,6 +11,24 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.journal_entry import JournalEntry
+from services.botmason import generate_response
+
+
+class BotmasonResonanceLLM:
+    """Adapts the BotMason provider to the resonance domain's ``ResonanceLLM``.
+
+    The domain only needs ``complete(prompt) -> text``; this maps that onto
+    ``generate_response`` (no conversation history, no system prompt) so the
+    resonance feature reuses the single LLM integration / BYOK seam.
+    """
+
+    def __init__(self, api_key: str | None) -> None:
+        """Store the optional BYOK key used for each completion."""
+        self._api_key = api_key
+
+    async def complete(self, prompt: str) -> str:
+        response = await generate_response(prompt, [], system_prompt=None, api_key=self._api_key)
+        return response.text
 
 
 async def reanchor_entry_marginalia(

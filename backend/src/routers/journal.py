@@ -7,15 +7,17 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import ColumnElement, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
 from dependencies.ownership import require_owned_journal_entry
+from domain.resonance import MarginaliaAnchored, generate_marginalia
 from errors import not_found, unprocessable
 from models.journal_entry import JournalEntry, JournalTag
+from models.marginalia import Marginalia, MarginaliaStatus
 from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.journal import (
@@ -26,9 +28,17 @@ from schemas.journal import (
     JournalMessageCreate,
     JournalMessageResponse,
 )
+from schemas.marginalia import (
+    MarginaliaListResponse,
+    MarginaliaResponse,
+    ResonanceResponse,
+)
 from security import TextTooLongError, sanitize_user_text
 from services import journal_encryption
-from services.marginalia import reanchor_entry_marginalia
+from services.botmason import LLMProviderError, resolve_chat_api_key
+from services.marginalia import BotmasonResonanceLLM, reanchor_entry_marginalia
+from services.usage import get_monthly_cap
+from services.wallet import preflight_deduction, require_user_fresh
 
 
 def _sanitize_message(message: str) -> str:
@@ -269,6 +279,129 @@ async def update_journal_entry(
     await session.refresh(entry)
     logger.info("journal_entry_updated", extra={"user_id": current_user, "entry_id": entry_id})
     return entry
+
+
+_RESONANCE_PRIOR_LIMIT = 3
+
+
+async def _load_user_entry(
+    session: AsyncSession, entry_id: int, user_id: int
+) -> JournalEntry | None:
+    """Load the caller's own non-deleted entry, or None (404-scoped)."""
+    result = await session.execute(
+        select(JournalEntry).where(
+            JournalEntry.id == entry_id,
+            JournalEntry.user_id == user_id,
+            col(JournalEntry.deleted_at).is_(None),
+        )
+    )
+    return result.scalars().first()
+
+
+async def _recent_prior_bodies(session: AsyncSession, user_id: int, exclude_id: int) -> list[str]:
+    """The caller's most recent other entry bodies, for connection context."""
+    result = await session.execute(
+        select(JournalEntry)
+        .where(
+            JournalEntry.user_id == user_id,
+            JournalEntry.id != exclude_id,
+            col(JournalEntry.deleted_at).is_(None),
+        )
+        .order_by(col(JournalEntry.id).desc())
+        .limit(_RESONANCE_PRIOR_LIMIT)
+    )
+    return [row.message for row in result.scalars().all()]
+
+
+def _persist_marginalia(
+    session: AsyncSession, entry_id: int, user_id: int, anchored: list[MarginaliaAnchored]
+) -> list[Marginalia]:
+    """Stage one Marginalia row per anchored note (active, no essay yet)."""
+    rows = [
+        Marginalia(
+            journal_entry_id=entry_id,
+            user_id=user_id,
+            kind=note.kind,
+            anchor_start=note.anchor_start,
+            anchor_end=note.anchor_end,
+            anchor_text=note.anchor_text,
+            note=note.note,
+            status=MarginaliaStatus.ACTIVE,
+        )
+        for note in anchored
+    ]
+    session.add_all(rows)
+    return rows
+
+
+@router.post("/{entry_id}/resonance", response_model=ResonanceResponse)
+@limiter.limit("10/minute")
+async def run_resonance(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    entry_id: int,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    x_llm_api_key: Annotated[str | None, Header(alias="X-LLM-API-Key")] = None,
+) -> ResonanceResponse:
+    """Run a resonance pass over the caller's entry, persist notes, charge one unit.
+
+    Wallet pre-flight deducts one message (402 when out of capacity). The LLM
+    pass + persistence + the charge commit atomically; any provider error rolls
+    the deduction back so a failed pass never charges (502 ``llm_provider_error``).
+    """
+    entry = await _load_user_entry(session, entry_id, current_user)
+    if entry is None:
+        raise not_found("journal_entry")
+    spent = await preflight_deduction(session, current_user)
+    prior = await _recent_prior_bodies(session, current_user, entry_id)
+    llm = BotmasonResonanceLLM(resolve_chat_api_key(x_llm_api_key))
+    try:
+        anchored = await generate_marginalia(entry.message, llm=llm, prior_entries=prior)
+    except LLMProviderError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="llm_provider_error"
+        ) from exc
+    rows = _persist_marginalia(session, entry_id, current_user, anchored)
+    user = await require_user_fresh(session, current_user)
+    reset_date = user.monthly_reset_date
+    await session.commit()
+    for row in rows:
+        await session.refresh(row)
+    logger.info(
+        "journal_resonance_generated",
+        extra={"user_id": current_user, "entry_id": entry_id, "count": len(rows)},
+    )
+    return ResonanceResponse(
+        marginalia=[MarginaliaResponse.model_validate(r, from_attributes=True) for r in rows],
+        remaining_messages=max(get_monthly_cap() - spent.monthly_used, 0),
+        remaining_balance=spent.offering_balance,
+        monthly_reset_date=reset_date,
+    )
+
+
+@router.get("/{entry_id}/marginalia", response_model=MarginaliaListResponse)
+async def list_marginalia(
+    entry_id: int,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> MarginaliaListResponse:
+    """List the caller's marginalia for an entry, ordered by anchor position."""
+    entry = await _load_user_entry(session, entry_id, current_user)
+    if entry is None:
+        raise not_found("journal_entry")
+    result = await session.execute(
+        select(Marginalia)
+        .where(
+            Marginalia.journal_entry_id == entry_id,
+            Marginalia.user_id == current_user,  # defense-in-depth alongside the entry check
+        )
+        .order_by(col(Marginalia.anchor_start))
+    )
+    rows = result.scalars().all()
+    return MarginaliaListResponse(
+        items=[MarginaliaResponse.model_validate(r, from_attributes=True) for r in rows]
+    )
 
 
 @router.delete("/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
