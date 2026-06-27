@@ -291,7 +291,16 @@ export const practiceItemSchema = z.object({
   description: z.string(),
   instructions: z.string(),
   default_duration_minutes: z.number(),
-  submitted_by_user_id: z.number().int().nullable(),
+  // The backend ``PracticeResponse`` intentionally OMITS this field
+  // (BUG-PRACTICE-001 / BUG-SCHEMA-010): echoing the submitter's user id on
+  // a catalog GET turns the endpoint into a user-id enumeration oracle. The
+  // field is therefore ABSENT on the wire, not ``null``. ``.nullish()``
+  // (``number | null | undefined``) tolerates the absence; a plain
+  // ``.nullable()`` rejected the missing key and failed every practice fetch
+  // with ``ApiValidationError`` — the "Something changed on the server"
+  // banner on the Practice and Catalog screens. Keep this absent-tolerant
+  // unless the backend re-introduces the field.
+  submitted_by_user_id: z.number().int().nullish(),
   approved: z.boolean(),
   mode: z.string().optional(),
   mode_config: z.record(z.unknown()).optional(),

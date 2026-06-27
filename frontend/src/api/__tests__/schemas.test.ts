@@ -337,6 +337,30 @@ describe('per-item paginated schemas', () => {
     expect(() => practiceItemSchema.parse({ ...practiceItem, name: undefined })).toThrow();
   });
 
+  it('practiceItemSchema accepts the live backend shape that omits submitted_by_user_id', () => {
+    // PracticeResponse deliberately excludes ``submitted_by_user_id``
+    // (BUG-PRACTICE-001 / BUG-SCHEMA-010) to avoid leaking who proposed a
+    // draft. The field is therefore ABSENT on the wire, not null. A
+    // ``.nullable()`` (non-optional) schema rejected ``undefined`` and made
+    // every catalog/practice fetch fail validation -> the "Something changed
+    // on the server" banner. The mode + mode_config keys are always present
+    // on the real response.
+    const wire = {
+      id: 7,
+      stage_number: 2,
+      name: 'Breath',
+      description: 'desc',
+      instructions: 'inst',
+      default_duration_minutes: 10,
+      approved: true,
+      mode: 'meditation_timer',
+      mode_config: { mode: 'meditation_timer', duration_minutes: 10 },
+    };
+    const parsed = practiceItemSchema.parse(wire);
+    expect(parsed.submitted_by_user_id).toBeUndefined();
+    expect(parsed.name).toBe('Breath');
+  });
+
   const userPractice = {
     id: 3,
     user_id: 1,
