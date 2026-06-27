@@ -42,7 +42,7 @@ import ActiveRitualSession from '@/features/Practice/components/ActiveRitualSess
 import { FrequencyBanner } from '@/features/Practice/components/FrequencyBanner';
 import { useActivePractice } from '@/features/Practice/hooks/useActivePractice';
 import { useWeeklyProgress } from '@/features/Practice/hooks/useWeeklyProgress';
-import { useAppNavigation, useAppRoute } from '@/navigation/hooks';
+import { useAppRoute } from '@/navigation/hooks';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { useDerivedCurrentStage } from '@/store/useProgramProgression';
 import { selectCurrentStage, useStageStore } from '@/store/useStageStore';
@@ -224,21 +224,17 @@ function useWriteReflection(
   effectiveName: string | null,
   practice: ActivePracticeHook['practice'],
 ): (_args: { session: PracticeSessionResponse; insight: string | null }) => void {
-  const navigation = useAppNavigation();
-  // The captured ``insight`` is persisted on the server-side
-  // ``practice_session.insight`` column (ritual-04). A follow-up will
-  // extend `RootTabParamList.Journal` with an ``initialDraft`` field so
-  // BotMason can open with the user's just-typed sentence; until then the
-  // journal opens blank and the insight is queryable alongside the session.
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  // Opens the long-form entry screen pre-linked to this session; the captured
+  // insight still lives on the server-side ``practice_session.insight`` column
+  // (ritual-04), queryable alongside the session.
   return useCallback(
     ({ session }) => {
       const name = effectiveName ?? practice?.name ?? 'Practice';
-      navigation.navigate('Journal', {
-        tag: 'practice_note',
+      navigation.navigate('JournalEntry', {
         practiceSessionId: session.id,
         userPracticeId: session.user_practice_id,
-        practiceName: name,
-        practiceDuration: Math.round(session.duration_minutes),
+        prefillTitle: `After ${name}`,
       });
     },
     [effectiveName, practice, navigation],

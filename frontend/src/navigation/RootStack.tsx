@@ -44,7 +44,16 @@ export type RootStackParamList = {
   PracticeDetail: { practiceId: number };
   CreatePractice: { prefill?: CreatePracticePrefill } | undefined;
   Catalog: { stageNumber?: number } | undefined;
-  JournalEntry: { entryId?: number } | undefined;
+  JournalEntry:
+    | {
+        entryId?: number;
+        weekNumber?: number;
+        promptQuestion?: string;
+        practiceSessionId?: number;
+        userPracticeId?: number;
+        prefillTitle?: string;
+      }
+    | undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();

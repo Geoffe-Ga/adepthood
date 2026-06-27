@@ -62,6 +62,9 @@ jest.mock('../../../navigation/hooks', () => ({
   useAppRoute: () => ({ key: 'Course-test', name: 'Course', params: undefined }),
   useAppNavigation: () => ({ navigate: jest.fn() }),
 }));
+jest.mock('@react-navigation/native', () => ({
+  useNavigation: () => ({ navigate: jest.fn() }),
+}));
 
 jest.mock('react-native-safe-area-context', () => {
   const ReactMod = require('react');

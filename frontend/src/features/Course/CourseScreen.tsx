@@ -1,3 +1,5 @@
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,7 +13,8 @@ import {
   type Stage,
 } from '../../api';
 import { STAGE_COLORS, colors } from '../../design/tokens';
-import { useAppNavigation, useAppRoute } from '../../navigation/hooks';
+import { useAppRoute } from '../../navigation/hooks';
+import type { RootStackParamList } from '../../navigation/RootStack';
 import { useProgramStore, programStage } from '../../store/useProgramStore';
 import { deriveCurrentStage } from '../Map/services/stageService';
 
@@ -252,7 +255,7 @@ const ContentArea = ({
 // --- Hook: viewer actions ---
 
 function useCourseViewer(selectedStage: number) {
-  const navigation = useAppNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [viewingItem, setViewingItem] = useState<ContentItem | null>(null);
   const [viewingResource, setViewingResource] = useState<SiteResource | null>(null);
 
@@ -271,10 +274,8 @@ function useCourseViewer(selectedStage: number) {
 
   const handleReflect = useCallback(() => {
     if (!viewingItem) return;
-    navigation.navigate('Journal', {
-      tag: 'stage_reflection',
-      stageNumber: selectedStage,
-      contentTitle: viewingItem.title,
+    navigation.navigate('JournalEntry', {
+      prefillTitle: `Stage ${selectedStage} reflection — ${viewingItem.title}`,
     });
     setViewingItem(null);
   }, [viewingItem, selectedStage, navigation]);

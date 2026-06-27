@@ -12,12 +12,16 @@ const mockUpdate = jest.fn() as jest.MockedFunction<
 >;
 
 const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ items: unknown[] }>>;
+const mockRespond = jest.fn() as jest.MockedFunction<(_w: number, _b: string) => Promise<unknown>>;
 
 jest.mock('@/api', () => ({
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),
     create: (...a: unknown[]) => (mockCreate as unknown as (...x: unknown[]) => unknown)(...a),
     update: (...a: unknown[]) => (mockUpdate as unknown as (...x: unknown[]) => unknown)(...a),
+  },
+  prompts: {
+    respond: (...a: unknown[]) => (mockRespond as unknown as (...x: unknown[]) => unknown)(...a),
   },
   resonance: {
     list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
@@ -43,7 +47,16 @@ function entry(overrides: Partial<JournalMessage> = {}): JournalMessage {
   };
 }
 
-function renderScreen(params?: { entryId?: number }, extraProps: Record<string, unknown> = {}) {
+function renderScreen(
+  params?: {
+    entryId?: number;
+    weekNumber?: number;
+    promptQuestion?: string;
+    prefillTitle?: string;
+    practiceSessionId?: number;
+  },
+  extraProps: Record<string, unknown> = {},
+) {
   const route = { key: 'k', name: 'JournalEntry' as const, params };
   const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
   const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
@@ -61,9 +74,54 @@ beforeEach(() => {
   mockUpdate.mockResolvedValue(entry({ id: 42 }));
   mockList.mockReset();
   mockList.mockResolvedValue({ items: [] });
+  mockRespond.mockReset();
+  mockRespond.mockResolvedValue({});
 });
 
 describe('JournalEntryScreen', () => {
+  it('records a weekly-prompt page via respond, not a duplicate create', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId } = renderScreen(
+        {
+          weekNumber: 3,
+          promptQuestion: 'What did you notice?',
+          prefillTitle: 'Week 3 Reflection',
+        },
+        { autosaveDelayMs: 100 },
+      );
+      expect(getByTestId('journal-title-input').props.value).toBe('Week 3 Reflection');
+      fireEvent.changeText(getByTestId('journal-body-input'), 'I noticed the willow.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.');
+      expect(mockCreate).not.toHaveBeenCalled(); // no double-create
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('pre-links a practice session on the created entry', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId } = renderScreen(
+        { practiceSessionId: 55, prefillTitle: 'After Forest grounding' },
+        { autosaveDelayMs: 100 },
+      );
+      fireEvent.changeText(getByTestId('journal-body-input'), 'That was calming.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'That was calming.', practice_session_id: 55 }),
+      );
+      expect(mockRespond).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('renders the title + body inputs and no chat UI', () => {
     const { getByTestId, queryByText } = renderScreen();
     expect(getByTestId('journal-title-input')).toBeTruthy();
@@ -94,7 +152,9 @@ describe('JournalEntryScreen', () => {
         await jest.advanceTimersByTimeAsync(1500);
       });
       expect(mockCreate).toHaveBeenCalledTimes(1);
-      expect(mockCreate).toHaveBeenCalledWith({ message: 'A new thought.' });
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'A new thought.' }),
+      );
     } finally {
       jest.useRealTimers();
     }
