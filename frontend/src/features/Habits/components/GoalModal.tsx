@@ -24,7 +24,15 @@ import EmojiSelector from 'react-native-emoji-selector';
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
 import { TierStar } from '../../../components/TierStar';
 import { useAuth } from '../../../context/AuthContext';
-import { colors, SPACING, STAGE_COLORS, shadows, touchTarget } from '../../../design/tokens';
+import {
+  colors,
+  spacing,
+  SPACING,
+  STAGE_COLORS,
+  shadows,
+  touchTarget,
+} from '../../../design/tokens';
+import useResponsive from '../../../design/useResponsive';
 import { addDaysInTZ, dayKeyInTZ, todayInUserTZ } from '../../../utils/dateUtils';
 import { TARGET_UNITS, FREQUENCY_UNITS } from '../constants';
 import styles from '../Habits.styles';
@@ -38,44 +46,25 @@ import {
   calculateTodaysProgress,
 } from '../HabitUtils';
 
-const markerContainerStyle = (leftPct: number, z: number): ViewStyle => ({
-  position: 'absolute',
-  left: `${clampPercentage(leftPct)}%` as DimensionValue,
-  top: -6,
-  transform: [
-    {
-      translateX: clampPercentage(leftPct) === 0 ? 0 : clampPercentage(leftPct) === 100 ? -12 : -6,
-    },
-  ],
-  zIndex: z,
-  alignItems: 'center',
-});
+/** Height of the goal progress bar; tier star markers are centered on it. */
+const MODAL_BAR_HEIGHT = 12;
 
-const circleStyle = (color: string): ViewStyle => ({
-  width: 12,
-  height: 12,
-  borderRadius: 6,
-  backgroundColor: '#fffdf7',
-  borderWidth: 2,
-  borderColor: color,
-});
-
-/** Size of the unlabeled tier star shown beneath the goal progress bar. */
-const TIER_STAR_SIZE = 14;
-
-/** Center a star of TIER_STAR_SIZE over its position, clamped at the bar edges. */
-const centeredTranslateX = (clamped: number): number => {
+/** Center a star of the given size over its position, clamped at the bar edges. */
+const centeredTranslateX = (clamped: number, size: number): number => {
   if (clamped === 0) return 0;
-  return clamped === 100 ? -TIER_STAR_SIZE : -TIER_STAR_SIZE / 2;
+  return clamped === 100 ? -size : -size / 2;
 };
 
-const labelContainerStyle = (leftPct: number, z: number): ViewStyle => {
+/** Position a tier star marker on the bar: centered on its threshold and on the bar height. */
+const markerContainerStyle = (leftPct: number, z: number, starSize: number): ViewStyle => {
   const clamped = clampPercentage(leftPct);
   return {
     position: 'absolute',
     left: `${clamped}%` as DimensionValue,
-    transform: [{ translateX: centeredTranslateX(clamped) }],
+    top: (MODAL_BAR_HEIGHT - starSize) / 2,
+    transform: [{ translateX: centeredTranslateX(clamped, starSize) }],
     zIndex: z,
+    alignItems: 'center',
   };
 };
 
@@ -126,12 +115,6 @@ const computeProgressPct = (
   );
 };
 
-const GOAL_LABEL_TIERS = [
-  { tier: 'low' as const, zIndex: 1 },
-  { tier: 'clear' as const, zIndex: 2 },
-  { tier: 'stretch' as const, zIndex: 3 },
-] as const;
-
 interface GoalMarkerItemProps {
   goal: Goal;
   tier: 'low' | 'clear' | 'stretch';
@@ -151,6 +134,9 @@ const GoalMarkerItem = ({
   setTooltip,
   panHandlers,
 }: GoalMarkerItemProps) => {
+  const { scale } = useResponsive();
+  // Match HabitTile's marker sizing so the two surfaces stay visually consistent.
+  const starSize = spacing(2, scale);
   const Wrapper = tier === 'stretch' ? TouchableOpacity : View;
   const interactionProps =
     tier === 'stretch'
@@ -163,14 +149,14 @@ const GoalMarkerItem = ({
       {...interactionProps}
       onMouseEnter={() => setTooltip(tier)}
       onMouseLeave={() => setTooltip(null)}
-      style={markerContainerStyle(position, zIndex)}
+      style={markerContainerStyle(position, zIndex, starSize)}
     >
       {tooltip === tier && (
         <View testID={`modal-tooltip-${tier}`} style={tooltipStyle(getTierColor(tier))}>
           <Text style={tooltipTextStyle}>{formatGoalTooltip(goal)}</Text>
         </View>
       )}
-      <View style={circleStyle(getTierColor(tier))} />
+      <TierStar tier={tier} color={getTierColor(tier)} size={starSize} />
     </Wrapper>
   );
 };
@@ -188,8 +174,6 @@ interface GoalProgressBarProps {
   setTooltip: (_v: 'low' | 'clear' | 'stretch' | null) => void;
   lowPanHandlers: GestureResponderHandlers;
   clearPanHandlers: GestureResponderHandlers;
-  goalsByTier: Record<string, Goal | undefined>;
-  markerPositions: Record<string, number>;
   onLayout: (_e: LayoutChangeEvent) => void;
 }
 
@@ -273,26 +257,6 @@ const GoalMarkersRow = ({
   </>
 );
 
-const GoalLabelRow = ({
-  goalsByTier,
-  markerPositions,
-}: {
-  goalsByTier: Record<string, Goal | undefined>;
-  markerPositions: Record<string, number>;
-}) => (
-  <View style={{ position: 'relative', marginTop: 4 }}>
-    {GOAL_LABEL_TIERS.filter((t) => goalsByTier[t.tier]).map((t) => (
-      <View
-        key={t.tier}
-        testID={`modal-label-${t.tier}`}
-        style={labelContainerStyle(markerPositions[t.tier]!, t.zIndex)}
-      >
-        <TierStar tier={t.tier} color={getTierColor(t.tier)} size={TIER_STAR_SIZE} />
-      </View>
-    ))}
-  </View>
-);
-
 const GoalProgressBar = ({
   progressPercentage,
   progressBarColor,
@@ -306,12 +270,10 @@ const GoalProgressBar = ({
   setTooltip,
   lowPanHandlers,
   clearPanHandlers,
-  goalsByTier,
-  markerPositions,
   onLayout,
 }: GoalProgressBarProps) => (
   <View style={{ marginVertical: 16 }} onLayout={onLayout}>
-    <View style={{ height: 12, position: 'relative' }}>
+    <View style={{ height: MODAL_BAR_HEIGHT, position: 'relative' }}>
       <ProgressFill progressPercentage={progressPercentage} progressBarColor={progressBarColor} />
       <GoalMarkersRow
         lowGoal={lowGoal}
@@ -326,7 +288,6 @@ const GoalProgressBar = ({
         clearPanHandlers={clearPanHandlers}
       />
     </View>
-    <GoalLabelRow goalsByTier={goalsByTier} markerPositions={markerPositions} />
   </View>
 );
 
@@ -1208,18 +1169,6 @@ interface GoalModalBodyProps {
   onUpdateHabit: GoalModalProps['onUpdateHabit'];
 }
 
-const buildGoalMaps = (m: ReturnType<typeof useGoalMarkers>) => ({
-  goalsByTier: { low: m.lowGoal, clear: m.clearGoal, stretch: m.stretchGoal } as Record<
-    string,
-    Goal | undefined
-  >,
-  markerPositions: {
-    low: m.lowMarker,
-    clear: m.clearMarker,
-    stretch: m.stretchMarker,
-  } as Record<string, number>,
-});
-
 const buildProgressBarProps = (
   habit: NonNullable<GoalModalProps['habit']>,
   m: ReturnType<typeof useGoalMarkers>,
@@ -1241,7 +1190,6 @@ const buildProgressBarProps = (
   setTooltip: m.setTooltip,
   lowPanHandlers: m.lowPan.panHandlers,
   clearPanHandlers: m.clearPan.panHandlers,
-  ...buildGoalMaps(m),
   onLayout: m.handleBarLayout,
 });
 
