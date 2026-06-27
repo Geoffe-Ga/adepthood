@@ -895,8 +895,8 @@ function repCounterSummary(config: RepCounterConfig, state: RitualState): ModeSu
 }
 
 const styles = StyleSheet.create({
-  // Flat surface: the session sits directly on the screen's padded scroll, with
-  // a hairline divider instead of a nested shadowed card-in-a-frame.
+  // Flat surface: the session sits on the screen's padded scroll, separated from
+  // the footer by a hairline divider (no elevation).
   card: {
     paddingBottom: SPACING.lg,
     marginBottom: SPACING.lg,
