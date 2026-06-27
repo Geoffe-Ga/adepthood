@@ -559,7 +559,12 @@ function useJournalEntryController(
 
   const { handleTitle, handleBody } = useBumpedHandlers(bump, autosave);
   const hasContent = autosave.body.trim().length > 0;
-  const visible = shouldShowResonance({ isIdle, hasContent, isLoading: resonance.loading });
+  // In weekly-prompt compose mode the entry is created by prompts.respond, which
+  // doesn't return a local id — so resonance can't run here. Hide the button; the
+  // reflection gains resonance normally once reopened from the shelf (with an id).
+  const isPromptCompose = ctx.weekNumber != null;
+  const visible =
+    !isPromptCompose && shouldShowResonance({ isIdle, hasContent, isLoading: resonance.loading });
 
   return { autosave, resonance, isIdle, visible, handleTitle, handleBody, modal, editGate };
 }

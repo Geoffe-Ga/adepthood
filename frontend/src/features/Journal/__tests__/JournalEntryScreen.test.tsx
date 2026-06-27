@@ -82,7 +82,7 @@ describe('JournalEntryScreen', () => {
   it('records a weekly-prompt page via respond, not a duplicate create', async () => {
     jest.useFakeTimers();
     try {
-      const { getByTestId } = renderScreen(
+      const { getByTestId, queryByTestId } = renderScreen(
         {
           weekNumber: 3,
           promptQuestion: 'What did you notice?',
@@ -97,6 +97,9 @@ describe('JournalEntryScreen', () => {
       });
       expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.');
       expect(mockCreate).not.toHaveBeenCalled(); // no double-create
+      // Resonance can't run on a prompt-compose entry (no local id), so the
+      // button must stay hidden even once idle with content.
+      expect(queryByTestId('get-resonance-button')).toBeNull();
     } finally {
       jest.useRealTimers();
     }
