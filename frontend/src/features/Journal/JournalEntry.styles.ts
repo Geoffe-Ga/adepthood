@@ -75,6 +75,9 @@ const styles = StyleSheet.create({
     color: colors.danger,
     paddingTop: spacing(1),
   },
+  marginNoteSlot: {
+    marginBottom: journalLayout.marginNoteGap,
+  },
 });
 
 export default styles;

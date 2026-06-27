@@ -12,11 +12,13 @@ import { ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-na
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import GetResonanceButton, { shouldShowResonance } from './GetResonanceButton';
+import HighlightedBody from './HighlightedBody';
 import styles from './JournalEntry.styles';
+import MarginNote from './MarginNote';
 import { useResonance } from './useResonance';
 
 import { journal } from '@/api';
-import type { JournalMessage } from '@/api';
+import type { JournalMessage, Marginalia } from '@/api';
 import { colors } from '@/design/tokens';
 import { useIdle } from '@/hooks/useIdle';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -260,12 +262,61 @@ function ResonanceMargin({ count, error }: { count: number; error: string | null
   );
 }
 
+/** Read-mode body: the title + the highlighted passage tree (shown once notes exist). */
+function ReadColumn({
+  title,
+  body,
+  notes,
+  onOpen,
+}: {
+  title: string;
+  body: string;
+  notes: Marginalia[];
+  onOpen: (_note: Marginalia) => void;
+}) {
+  return (
+    <ScrollView
+      style={styles.writingColumn}
+      contentContainerStyle={styles.writingColumnContent}
+      keyboardShouldPersistTaps="handled"
+    >
+      {title ? <Text style={styles.titleInput}>{title}</Text> : null}
+      <View style={styles.hairline} />
+      <HighlightedBody body={body} notes={notes} onOpen={onOpen} />
+    </ScrollView>
+  );
+}
+
+/** The stack of margin notes, ordered by anchor position. */
+function MarginNoteList({
+  notes,
+  onOpen,
+}: {
+  notes: Marginalia[];
+  onOpen: (_note: Marginalia) => void;
+}) {
+  const ordered = [...notes].sort((a, b) => a.anchor_start - b.anchor_start);
+  return (
+    <>
+      {ordered.map((note) => (
+        <View key={note.id} style={styles.marginNoteSlot}>
+          <MarginNote note={note} onOpen={onOpen} />
+        </View>
+      ))}
+    </>
+  );
+}
+
 /** Compose the autosave + idle + resonance hooks into the screen's view-model. */
 function useJournalEntryController(routeEntryId: number | null, autosaveDelayMs: number) {
   const autosave = useJournalAutosave(routeEntryId, autosaveDelayMs);
   const { isIdle, bump } = useIdle();
   const resonance = useResonance({ routeEntryId, flush: autosave.flush });
   const { onChangeTitle, onChangeBody } = autosave;
+  // Selected note is consumed by the essay modal in a later issue; here we only
+  // need to record the open intent so the highlight/note taps have a sink.
+  const [, setSelectedNote] = useState<Marginalia | null>(null);
+  const onOpenNote = useCallback((note: Marginalia) => setSelectedNote(note), []);
 
   const handleTitle = useCallback(
     (t: string) => {
@@ -284,7 +335,7 @@ function useJournalEntryController(routeEntryId: number | null, autosaveDelayMs:
   const hasContent = autosave.body.trim().length > 0;
   const visible = shouldShowResonance({ isIdle, hasContent, isLoading: resonance.loading });
 
-  return { autosave, resonance, isIdle, visible, handleTitle, handleBody };
+  return { autosave, resonance, isIdle, visible, handleTitle, handleBody, onOpenNote };
 }
 
 function JournalEntryScreen({
@@ -292,30 +343,39 @@ function JournalEntryScreen({
   renderMargin,
   autosaveDelayMs = AUTOSAVE_DELAY_MS,
 }: JournalEntryScreenProps): React.JSX.Element {
-  const { autosave, resonance, isIdle, visible, handleTitle, handleBody } =
+  const { autosave, resonance, isIdle, visible, handleTitle, handleBody, onOpenNote } =
     useJournalEntryController(route.params?.entryId ?? null, autosaveDelayMs);
   const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
   const { title, body, saveState } = autosave;
+  const notes = resonance.marginalia;
+  // Once notes exist the body switches to a highlighted read view; the
+  // deliberate edit-vs-read toggle lands in a later issue.
+  const hasNotes = notes.length > 0;
+
+  let marginContent: React.ReactNode;
+  if (renderMargin) marginContent = renderMargin({ body, isIdle });
+  else if (hasNotes) marginContent = <MarginNoteList notes={notes} onOpen={onOpenNote} />;
+  else marginContent = <ResonanceMargin count={0} error={resonance.error} />;
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={[styles.page, narrow && styles.pageNarrow]}>
-        <WritingColumn
-          title={title}
-          body={body}
-          saveState={saveState}
-          onChangeTitle={handleTitle}
-          onChangeBody={handleBody}
-        />
+        {hasNotes ? (
+          <ReadColumn title={title} body={body} notes={notes} onOpen={onOpenNote} />
+        ) : (
+          <WritingColumn
+            title={title}
+            body={body}
+            saveState={saveState}
+            onChangeTitle={handleTitle}
+            onChangeBody={handleBody}
+          />
+        )}
         <View
           style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
           testID="journal-margin-column"
         >
-          {renderMargin ? (
-            renderMargin({ body, isIdle })
-          ) : (
-            <ResonanceMargin count={resonance.marginalia.length} error={resonance.error} />
-          )}
+          {marginContent}
         </View>
       </View>
       <GetResonanceButton

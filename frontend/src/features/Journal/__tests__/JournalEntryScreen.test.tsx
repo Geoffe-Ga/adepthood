@@ -150,6 +150,34 @@ describe('JournalEntryScreen', () => {
     }
   });
 
+  it('renders read-mode highlights + margin notes once an entry has notes', async () => {
+    mockGet.mockResolvedValue(entry({ id: 7, message: 'I walked by the river.' }));
+    mockList.mockResolvedValue({
+      items: [
+        {
+          id: 50,
+          journal_entry_id: 7,
+          kind: 'theme',
+          anchor_start: 2,
+          anchor_end: 8,
+          anchor_text: 'walked',
+          note: 'You keep moving.',
+          essay: null,
+          essay_generated_at: null,
+          status: 'active',
+          created_at: '',
+          updated_at: '',
+        },
+      ],
+    });
+    const { findByTestId, queryByTestId } = renderScreen({ entryId: 7 });
+    expect(await findByTestId('margin-note-50')).toBeTruthy();
+    expect(queryByTestId('journal-body-read')).not.toBeNull();
+    expect(queryByTestId('highlight-50')).not.toBeNull();
+    // Read mode replaces the editable body.
+    expect(queryByTestId('journal-body-input')).toBeNull();
+  });
+
   it('loads an existing entry by id', async () => {
     mockGet.mockResolvedValue(entry({ id: 7, title: 'Rivers', message: 'An existing page.' }));
     const { getByTestId } = renderScreen({ entryId: 7 });
