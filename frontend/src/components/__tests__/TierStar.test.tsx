@@ -5,12 +5,21 @@ import renderer from 'react-test-renderer';
 
 import { TierStar, type TierStarTier } from '../TierStar';
 
+// react-test-renderer ships no type definitions in this project, so test
+// instances are annotated structurally (matching the pattern in the other
+// HabitTile/GoalModal renderer tests) to satisfy ``noImplicitAny``.
+interface TestNode {
+  props: Record<string, unknown>;
+}
+
+type Rendered = ReturnType<typeof renderer.create>;
+
 /** Pull the single star Polygon's vertex list out of a rendered TierStar. */
-const findStarVertices = (component: renderer.ReactTestRenderer): string[][] => {
-  const polygon = component.root.find(
-    (node) => typeof (node.props as { points?: unknown }).points === 'string',
+const findStarVertices = (component: Rendered): string[][] => {
+  const polygon: TestNode = component.root.find(
+    (node: TestNode) => typeof node.props.points === 'string',
   );
-  return (polygon.props as { points: string }).points
+  return String(polygon.props.points)
     .trim()
     .split(' ')
     .map((pair) => pair.split(','));
@@ -31,12 +40,12 @@ describe('TierStar', () => {
 
   it('applies the tier color as the stroke', () => {
     const component = renderer.create(<TierStar tier="clear" color="#be6e46" />);
-    const polygon = component.root.find(
-      (node) => typeof (node.props as { points?: unknown }).points === 'string',
+    const polygon: TestNode = component.root.find(
+      (node: TestNode) => typeof node.props.points === 'string',
     );
-    expect((polygon.props as { stroke: string }).stroke).toBe('#be6e46');
+    expect(polygon.props.stroke).toBe('#be6e46');
     // Outlined (stroke-only) to match the lucide bottom-tab icon style.
-    expect((polygon.props as { fill: string }).fill).toBe('none');
+    expect(polygon.props.fill).toBe('none');
   });
 
   it('honors an explicit size and forwards a testID', () => {
@@ -46,8 +55,10 @@ describe('TierStar', () => {
     // The testID is forwarded onto the rendered SVG.
     expect(component.root.findAllByProps({ testID: 'my-star' }).length).toBeGreaterThan(0);
     // The explicit size flows through to a width/height-bearing node.
-    expect(component.root.findAll((n) => n.props.width === 24).length).toBeGreaterThan(0);
-    expect(component.root.findAll((n) => n.props.height === 24).length).toBeGreaterThan(0);
+    expect(component.root.findAll((n: TestNode) => n.props.width === 24).length).toBeGreaterThan(0);
+    expect(component.root.findAll((n: TestNode) => n.props.height === 24).length).toBeGreaterThan(
+      0,
+    );
   });
 
   it('points every star straight up (top vertex centered on the x-axis)', () => {
