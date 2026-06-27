@@ -90,10 +90,12 @@ async function writeEntry(
   }
   const trimmedTitle = title.trim() ? title : null;
   if (entryIdRef.current == null) {
+    // Only attach context keys when present, so a plain entry's payload stays
+    // exactly { message } rather than carrying explicit nulls.
     const created = await journal.create({
       message: body,
-      practice_session_id: ctx.practiceSessionId ?? null,
-      user_practice_id: ctx.userPracticeId ?? null,
+      ...(ctx.practiceSessionId != null && { practice_session_id: ctx.practiceSessionId }),
+      ...(ctx.userPracticeId != null && { user_practice_id: ctx.userPracticeId }),
     });
     entryIdRef.current = created.id;
     if (trimmedTitle != null) {

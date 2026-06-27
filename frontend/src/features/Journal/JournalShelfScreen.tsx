@@ -4,7 +4,7 @@
  * full-text search. Tapping a page opens the entry screen by id. Replaces the
  * old chat list; categorization is the AI's marginalia now, so there are no tags.
  */
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useState } from 'react';
 import { FlatList, Text, TouchableOpacity, View } from 'react-native';
@@ -170,23 +170,30 @@ function ShelfEmpty({ loading, error }: { loading: boolean; error: string | null
   );
 }
 
-/** The current unanswered weekly prompt, or null (answered / none / load error). */
+/** The current unanswered weekly prompt, or null (answered / none / load error).
+ *
+ * Re-fetched on every focus (not just mount): the shelf stays mounted while the
+ * user pushes to the entry screen, so after responding + going back the card
+ * must clear — hence ``useFocusEffect`` and the explicit reset when answered.
+ */
 function usePrompt(): PromptDetail | null {
   const [prompt, setPrompt] = useState<PromptDetail | null>(null);
-  useEffect(() => {
-    let active = true;
-    void prompts
-      .current()
-      .then((p) => {
-        if (active && !p.has_responded) setPrompt(p);
-      })
-      .catch(() => {
-        // A prompt fetch failure shouldn't block the shelf; just hide the card.
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      void prompts
+        .current()
+        .then((p) => {
+          if (active) setPrompt(p.has_responded ? null : p);
+        })
+        .catch(() => {
+          // A prompt fetch failure shouldn't block the shelf; just hide the card.
+        });
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
   return prompt;
 }
 

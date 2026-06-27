@@ -21,9 +21,17 @@ jest.mock('@/api', () => ({
   },
 }));
 
-jest.mock('@react-navigation/native', () => ({
-  useNavigation: () => ({ navigate: mockNavigate }),
-}));
+jest.mock('@react-navigation/native', () => {
+  const react = jest.requireActual('react') as {
+    useEffect: (_cb: () => undefined | (() => void), _deps: unknown[]) => void;
+  };
+  return {
+    useNavigation: () => ({ navigate: mockNavigate }),
+    // Run the focus callback on mount (and its cleanup on unmount) — enough to
+    // exercise the prompt re-fetch in these render-once tests.
+    useFocusEffect: (cb: () => undefined | (() => void)) => react.useEffect(cb, []),
+  };
+});
 
 // Isolate the shelf's search wiring from SearchBar's own debounce/expand UI.
 jest.mock('../SearchBar', () => {
