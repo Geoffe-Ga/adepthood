@@ -95,10 +95,18 @@ jest.mock('../../../context/AuthContext', () => ({
 }));
 
 const mockNavigate = jest.fn();
+const mockRootNavigate = jest.fn();
 const mockRouteParams: Record<string, unknown> = {};
 jest.mock('../../../navigation/hooks', () => ({
   useAppNavigation: () => ({ navigate: mockNavigate }),
   useAppRoute: () => ({ key: 'Practice-test', name: 'Practice', params: mockRouteParams }),
+}));
+
+// The "Browse all practices" button navigates via the stack-typed useNavigation
+// (Catalog is a pushed RootStack route, not a tab).
+jest.mock('@react-navigation/native', () => ({
+  ...(jest.requireActual('@react-navigation/native') as object),
+  useNavigation: () => ({ navigate: mockRootNavigate }),
 }));
 
 jest.mock('expo-av', () => ({
@@ -276,6 +284,14 @@ describe('PracticeScreen', () => {
     expect(getByTestId('practice-screen')).toHaveStyle({ paddingTop: 47, paddingBottom: 34 });
   });
 
+  it('browse-all-practices navigates to the pushed Catalog screen with the stage', async () => {
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('selection-view')).toBeTruthy());
+
+    fireEvent.press(getByTestId('browse-catalog-button'));
+    expect(mockRootNavigate).toHaveBeenCalledWith('Catalog', { stageNumber: 1 });
+  });
+
   it('shows error state when the load fails', async () => {
     mockPracticesList.mockRejectedValue(new Error('Network error'));
     const { getByTestId, getByText } = render(<PracticeScreen />);
@@ -305,6 +321,15 @@ describe('PracticeScreen', () => {
       expect(getByTestId('active-practice-configure')).toBeTruthy();
       expect(getByTestId('meditation-timer-view')).toBeTruthy();
     });
+  });
+
+  it('browse-all-practices opens the Catalog from the active-session state too', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+
+    fireEvent.press(getByTestId('browse-catalog-button'));
+    expect(mockRootNavigate).toHaveBeenCalledWith('Catalog', { stageNumber: 1 });
   });
 
   it('applies safe-area insets to the active-session surface', async () => {

@@ -144,7 +144,7 @@ describe('CreatePracticeWizard — step navigation', () => {
     const nav = makeNav();
     const { view } = renderScreen({}, nav);
     fireEvent.press(view.getByTestId('create-practice-from-preset'));
-    expect(nav.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Catalog' });
+    expect(nav.navigate).toHaveBeenCalledWith('Catalog');
     expect(nav.goBack).not.toHaveBeenCalled();
   });
 

@@ -3,6 +3,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import React from 'react';
 
 import { CreatePracticeWizard } from '../features/Practice/screens/CreatePracticeWizard';
+import { PracticeCatalogScreen } from '../features/Practice/screens/PracticeCatalogScreen';
 import { PracticeDetailScreen } from '../features/Practice/screens/PracticeDetailScreen';
 import SharePreviewScreen from '../features/Practice/screens/SharePreviewScreen';
 import ApiKeySettingsScreen from '../features/Settings/ApiKeySettingsScreen';
@@ -41,6 +42,7 @@ export type RootStackParamList = {
   SharePreview: { token: string };
   PracticeDetail: { practiceId: number };
   CreatePractice: { prefill?: CreatePracticePrefill } | undefined;
+  Catalog: { stageNumber?: number } | undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -72,6 +74,11 @@ const RootStack = (): React.JSX.Element => (
       name="CreatePractice"
       component={CreatePracticeWizard}
       options={{ title: 'New practice' }}
+    />
+    <Stack.Screen
+      name="Catalog"
+      component={PracticeCatalogScreen}
+      options={{ title: 'Practices' }}
     />
   </Stack.Navigator>
 );

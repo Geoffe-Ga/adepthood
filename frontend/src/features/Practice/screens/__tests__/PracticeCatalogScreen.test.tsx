@@ -71,9 +71,11 @@ const myDraft: PracticeItem = {
 
 jest.mock('@react-navigation/native', () => ({
   useNavigation: () => mockNavigation,
+  useRoute: () => mockRoute,
 }));
 
 const mockNavigation = { navigate: jest.fn() as jest.Mock<(...args: unknown[]) => void> };
+const mockRoute: { params?: { stageNumber?: number } } = { params: undefined };
 
 const mockPracticesList = jest.fn() as jest.MockedFunction<
   (opts: { stageNumber: number; includeMine?: boolean }) => Promise<PracticeItem[]>
@@ -249,6 +251,7 @@ describe('PracticeCatalogScreen — defaults wiring', () => {
   beforeEach(() => {
     mockPracticesList.mockReset();
     mockNavigation.navigate.mockReset();
+    mockRoute.params = undefined;
   });
 
   it('calls practices.list with includeMine when no override is provided', async () => {
@@ -256,6 +259,22 @@ describe('PracticeCatalogScreen — defaults wiring', () => {
     render(<PracticeCatalogScreen initialStage={3} />);
     await waitForLoad();
     expect(mockPracticesList).toHaveBeenCalledWith({ stageNumber: 3, includeMine: true });
+  });
+
+  it('seeds the stage from the Catalog route param when no prop is given', async () => {
+    mockRoute.params = { stageNumber: 4 };
+    mockPracticesList.mockResolvedValueOnce([presetA]);
+    render(<PracticeCatalogScreen />);
+    await waitForLoad();
+    expect(mockPracticesList).toHaveBeenCalledWith({ stageNumber: 4, includeMine: true });
+  });
+
+  it('prefers an explicit initialStage prop over the route param', async () => {
+    mockRoute.params = { stageNumber: 4 };
+    mockPracticesList.mockResolvedValueOnce([presetA]);
+    render(<PracticeCatalogScreen initialStage={6} />);
+    await waitForLoad();
+    expect(mockPracticesList).toHaveBeenCalledWith({ stageNumber: 6, includeMine: true });
   });
 
   it('navigates to PracticeDetail when a row is tapped without an override', async () => {
