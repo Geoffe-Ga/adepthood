@@ -11,11 +11,17 @@ const mockUpdate = jest.fn() as jest.MockedFunction<
   (_id: number, _p: unknown) => Promise<JournalMessage>
 >;
 
+const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ items: unknown[] }>>;
+
 jest.mock('@/api', () => ({
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),
     create: (...a: unknown[]) => (mockCreate as unknown as (...x: unknown[]) => unknown)(...a),
     update: (...a: unknown[]) => (mockUpdate as unknown as (...x: unknown[]) => unknown)(...a),
+  },
+  resonance: {
+    list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
+    generate: jest.fn(),
   },
 }));
 
@@ -50,6 +56,8 @@ beforeEach(() => {
   mockUpdate.mockReset();
   mockCreate.mockResolvedValue(entry({ id: 42 }));
   mockUpdate.mockResolvedValue(entry({ id: 42 }));
+  mockList.mockReset();
+  mockList.mockResolvedValue({ items: [] });
 });
 
 describe('JournalEntryScreen', () => {
@@ -59,6 +67,11 @@ describe('JournalEntryScreen', () => {
     expect(getByTestId('journal-body-input')).toBeTruthy();
     // No chat affordances on the writing surface.
     expect(queryByText('Send')).toBeNull();
+  });
+
+  it('shows no count indicator on a fresh entry with no notes', () => {
+    const { queryByTestId } = renderScreen();
+    expect(queryByTestId('journal-margin-count')).toBeNull();
   });
 
   it('reserves a margin column and renders the renderMargin slot', () => {
