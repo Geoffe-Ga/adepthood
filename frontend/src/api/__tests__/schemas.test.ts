@@ -1,6 +1,8 @@
 /* eslint-env jest */
 /* global describe, it, expect */
 import {
+  apiGoalGroupSchema,
+  contentItemSchema,
   goalCompletionSchema,
   goalSchema,
   habitSchema,
@@ -401,5 +403,48 @@ describe('practiceRecipeSchema (audit-contracts-06)', () => {
 
   it('rejects a missing required field', () => {
     expect(() => practiceRecipeSchema.parse({ ...recipe, slug: undefined })).toThrow();
+  });
+});
+
+describe('apiGoalGroupSchema + contentItemSchema (audit-contracts-08)', () => {
+  const group = {
+    id: 1,
+    name: 'Morning',
+    icon: null,
+    description: null,
+    user_id: null,
+    shared_template: true,
+    source: null,
+    goals: [],
+  };
+  const content = {
+    id: 7,
+    title: 'Intro',
+    content_type: 'essay',
+    release_day: 0,
+    url: null,
+    is_locked: false,
+    is_read: false,
+  };
+
+  it('apiGoalGroupSchema accepts a valid group and rejects a drifted one', () => {
+    expect(apiGoalGroupSchema.parse(group).shared_template).toBe(true);
+    expect(() => apiGoalGroupSchema.parse({ ...group, shared_template: undefined })).toThrow();
+    expect(() => apiGoalGroupSchema.parse({ ...group, name: 123 })).toThrow();
+  });
+
+  it('apiGoalGroupSchema validates nested goals via goalSchema', () => {
+    const withGoal = {
+      ...group,
+      goals: [{ ...baseGoal, days_of_week: ['Mon'] }],
+    };
+    expect(apiGoalGroupSchema.parse(withGoal).goals[0]?.days_of_week).toEqual(['Mon']);
+    expect(() => apiGoalGroupSchema.parse({ ...group, goals: [{ bogus: true }] })).toThrow();
+  });
+
+  it('contentItemSchema accepts a valid item and rejects drift', () => {
+    expect(contentItemSchema.parse(content).url).toBeNull();
+    expect(() => contentItemSchema.parse({ ...content, is_locked: undefined })).toThrow();
+    expect(() => contentItemSchema.parse({ ...content, release_day: '0' })).toThrow();
   });
 });

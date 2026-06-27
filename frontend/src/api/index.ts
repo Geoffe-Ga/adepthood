@@ -2,7 +2,9 @@ import { z } from 'zod';
 
 import { flattenGoalCompletions } from './flattenGoalCompletions';
 import {
+  apiGoalGroupSchema,
   authResponseSchema,
+  contentItemSchema,
   habitWithGoalsSchema,
   isTier,
   journalListResponseSchema,
@@ -15,7 +17,6 @@ import {
   promptListResponseSchema,
   stageSchema,
   timezoneReadSchema,
-  unknownRecord,
   userPracticeSchema,
   type Page,
   type PasswordResetAcceptedT,
@@ -962,16 +963,6 @@ export interface PaginationParams {
 }
 
 /**
- * ``Page`` envelope validator for endpoints that do not yet have a strict
- * per-item Zod schema (BUG-INFRA-012-018). The envelope itself — ``items`` is
- * an array, ``total`` / ``limit`` / ``offset`` are non-negative ints,
- * ``has_more`` is a boolean — is validated; items are checked only as objects
- * and narrowed to their TypeScript type by the caller's cast. Strict item
- * schemas (cf. ``habitPageSchema``) replace this as they are written.
- */
-const loosePageSchema = pageSchema(unknownRecord);
-
-/**
  * Build the query string shared by every ``listPaginated`` helper: always opt
  * into the ``Page`` envelope (``paginate=true``), append any endpoint-specific
  * filters (e.g. ``stage_number``), then ``limit`` / ``offset`` only when the
@@ -1160,7 +1151,7 @@ export const goalGroups = {
   listPaginated(params: PaginationParams = {}, token?: string): Promise<Page<ApiGoalGroup>> {
     return request<Page<ApiGoalGroup>>(`/goal-groups/?${pageQuery({}, params)}`, {
       token,
-      schema: loosePageSchema as unknown as z.ZodType<Page<ApiGoalGroup>>,
+      schema: pageSchema(apiGoalGroupSchema) as unknown as z.ZodType<Page<ApiGoalGroup>>,
     });
   },
   get(groupId: number, token?: string): Promise<ApiGoalGroup> {
@@ -1723,7 +1714,7 @@ export const course = {
       `/course/stages/${stageNumber}/content?${pageQuery({}, params)}`,
       {
         token,
-        schema: loosePageSchema as unknown as z.ZodType<Page<ContentItem>>,
+        schema: pageSchema(contentItemSchema) as unknown as z.ZodType<Page<ContentItem>>,
       },
     );
   },
