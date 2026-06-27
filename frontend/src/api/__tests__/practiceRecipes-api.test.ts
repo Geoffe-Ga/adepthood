@@ -229,4 +229,10 @@ describe('practiceTags', () => {
       ApiValidationError,
     );
   });
+
+  test('update raises ApiValidationError on a drifted response', async () => {
+    const drifted = { ...tagFixture, created_at: undefined, createdAt: '2026-05-23T00:00:00Z' };
+    mockFetch.mockReturnValueOnce(jsonResponse(drifted));
+    await expect(practiceTags.update(3, { label: 'Crimson' })).rejects.toThrow(ApiValidationError);
+  });
 });
