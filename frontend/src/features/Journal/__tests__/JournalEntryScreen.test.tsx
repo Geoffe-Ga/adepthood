@@ -69,6 +69,11 @@ describe('JournalEntryScreen', () => {
     expect(queryByText('Send')).toBeNull();
   });
 
+  it('shows no count indicator on a fresh entry with no notes', () => {
+    const { queryByTestId } = renderScreen();
+    expect(queryByTestId('journal-margin-count')).toBeNull();
+  });
+
   it('reserves a margin column and renders the renderMargin slot', () => {
     const renderMargin = jest.fn(() => null);
     const { getByTestId } = renderScreen(undefined, { renderMargin });

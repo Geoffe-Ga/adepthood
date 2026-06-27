@@ -246,9 +246,11 @@ function WritingColumn({
 function ResonanceMargin({ count, error }: { count: number; error: string | null }) {
   return (
     <>
-      <Text style={styles.marginCount} testID="journal-margin-count">
-        {count === 1 ? '1 note in the margin' : `${count} notes in the margin`}
-      </Text>
+      {count > 0 ? (
+        <Text style={styles.marginCount} testID="journal-margin-count">
+          {count === 1 ? '1 note in the margin' : `${count} notes in the margin`}
+        </Text>
+      ) : null}
       {error ? (
         <Text style={styles.marginError} testID="journal-resonance-error">
           {error}
