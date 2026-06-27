@@ -47,6 +47,24 @@ async def test_patch_updates_message_title_status(async_client: AsyncClient) -> 
 
 
 @pytest.mark.asyncio
+async def test_patch_same_value_does_not_bump_updated_at(async_client: AsyncClient) -> None:
+    """A PATCH that doesn't actually change anything leaves updated_at untouched."""
+    headers = await _signup(async_client, "noop")
+    entry_id = await _create(async_client, headers)
+    first = (
+        await async_client.patch(
+            f"/journal/{entry_id}", json={"status": "finished"}, headers=headers
+        )
+    ).json()
+    again = (
+        await async_client.patch(
+            f"/journal/{entry_id}", json={"status": "finished"}, headers=headers
+        )
+    ).json()
+    assert again["updated_at"] == first["updated_at"]
+
+
+@pytest.mark.asyncio
 async def test_patch_empty_payload_is_422(async_client: AsyncClient) -> None:
     """An empty PATCH body is rejected so a no-op can't bump updated_at."""
     headers = await _signup(async_client, "empty")

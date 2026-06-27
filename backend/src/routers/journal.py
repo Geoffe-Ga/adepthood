@@ -234,7 +234,8 @@ async def _apply_entry_update(
         entry.title = payload.title
     if payload.status is not None:
         entry.status = payload.status
-    entry.updated_at = datetime.now(UTC)
+    # ``updated_at`` is bumped by the column's ``onupdate`` only when a value
+    # actually changes, so a same-value PATCH doesn't move it.
 
 
 @router.patch("/{entry_id}", response_model=JournalMessageResponse)
