@@ -51,10 +51,17 @@ export const colors = {
     transparentLight: 'rgba(255, 255, 255, 0.7)',
   },
 
+  // Goal-tier palette — "Candle & Ink". A warm, literary analogous arc
+  // (brass → terracotta → garnet) that deepens in saturation and value
+  // toward the more ambitious tier, so Low → Clear → Stretch reads as a
+  // single coherent progression rather than three unrelated earth tones.
+  // Replaces the muted aptitude.guru swatches (#bc845d / #807f66 / #b0ae91),
+  // whose middle tier was darker than both neighbors and so broke the
+  // visual ordering.
   tier: {
-    low: '#bc845d',
-    clear: '#807f66',
-    stretch: '#b0ae91',
+    low: '#c9a66b', // soft brass / gold
+    clear: '#be6e46', // terracotta / sienna
+    stretch: '#8c3b2e', // deep garnet / ember
     default: '#dad9d4',
   },
 

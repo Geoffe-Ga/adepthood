@@ -57,9 +57,11 @@ describe('design tokens', () => {
     });
 
     it('exports tier colors for goal display', () => {
-      expect(colors.tier.low).toBe('#bc845d');
-      expect(colors.tier.clear).toBe('#807f66');
-      expect(colors.tier.stretch).toBe('#b0ae91');
+      // "Candle & Ink" warm-literary arc: brass → terracotta → garnet,
+      // deepening toward the more ambitious tier.
+      expect(colors.tier.low).toBe('#c9a66b');
+      expect(colors.tier.clear).toBe('#be6e46');
+      expect(colors.tier.stretch).toBe('#8c3b2e');
       expect(colors.tier.default).toBe('#dad9d4');
     });
 

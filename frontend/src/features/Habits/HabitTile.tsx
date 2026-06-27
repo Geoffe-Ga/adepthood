@@ -9,6 +9,7 @@ import {
   type DimensionValue,
 } from 'react-native';
 
+import { TierStar } from '../../components/TierStar';
 import { STAGE_COLORS, spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 import { DEFAULT_TIMEZONE } from '../../utils/dateUtils';
@@ -33,15 +34,17 @@ const TIER_LABELS: Record<TierType, string> = {
   stretch: 'Stretch Goal',
 };
 
-const TIER_ABBREVIATIONS: Record<TierType, string> = {
-  low: 'LG',
-  clear: 'CG',
-  stretch: 'SG',
-};
+const MARKER_SIZE = 12;
 
 const computeTranslateX = (pct: number): number => {
   if (pct === 0) return 0;
-  return pct === 100 ? -12 : -6;
+  return pct === 100 ? -MARKER_SIZE : -MARKER_SIZE / 2;
+};
+
+/** Center an element of arbitrary width over its position, clamped at the bar edges. */
+const computeCenteredTranslateX = (pct: number, width: number): number => {
+  if (pct === 0) return 0;
+  return pct === 100 ? -width : -width / 2;
 };
 
 const formatGoalTooltip = (goal: Goal, habit: Habit, tz: string): string => {
@@ -154,21 +157,18 @@ interface GoalLabelProps {
 
 const GoalLabel = ({ tier, markerPosition, zIndex, scale }: GoalLabelProps) => {
   const clamped = clampPercentage(markerPosition);
+  const starSize = spacing(2, scale);
   return (
     <View
+      testID={`label-${tier}`}
       style={{
         position: 'absolute',
         left: `${clamped}%`,
-        transform: [{ translateX: computeTranslateX(clamped) }],
+        transform: [{ translateX: computeCenteredTranslateX(clamped, starSize) }],
         zIndex,
-        backgroundColor: '#fffdf7',
-        paddingHorizontal: 2,
-        borderRadius: 2,
       }}
     >
-      <Text style={{ fontSize: spacing(1.5, scale), color: getTierColor(tier) }}>
-        {TIER_ABBREVIATIONS[tier]}
-      </Text>
+      <TierStar tier={tier} color={getTierColor(tier)} size={starSize} />
     </View>
   );
 };
