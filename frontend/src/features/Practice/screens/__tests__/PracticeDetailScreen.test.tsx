@@ -176,13 +176,18 @@ describe('PracticeDetailScreen — Use for stage', () => {
   });
 });
 
-describe('PracticeDetailScreen — Customize a copy', () => {
-  it('navigates to CreatePractice with this practice prefilled', async () => {
+describe('PracticeDetailScreen — Duplicate & edit', () => {
+  it('reads "Duplicate & edit" and navigates to CreatePractice with this practice prefilled', async () => {
     mockPracticesGet.mockResolvedValueOnce(samplePractice);
     const nav = makeNav();
     const { view } = renderScreen(77, nav);
     await waitForLoad();
-    fireEvent.press(view.getByTestId('practice-detail-customize-copy'));
+    const button = view.getByTestId('practice-detail-customize-copy');
+    expect(view.getByText('Duplicate & edit')).toBeTruthy();
+    expect(button.props.accessibilityLabel).toBe(
+      'Duplicate this practice into a new, editable copy',
+    );
+    fireEvent.press(button);
     expect(nav.navigate).toHaveBeenCalledWith(
       'CreatePractice',
       expect.objectContaining({

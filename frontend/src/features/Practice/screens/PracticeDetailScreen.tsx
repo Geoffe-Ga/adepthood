@@ -341,9 +341,10 @@ const ActionRow = ({
       testID="practice-detail-use-for-stage"
     />
     <ActionButton
-      label="Customize a copy"
+      label="Duplicate & edit"
       onPress={onCustomizeCopy}
       testID="practice-detail-customize-copy"
+      accessibilityLabel="Duplicate this practice into a new, editable copy"
       disabled={practice.mode_config === undefined}
     />
   </View>
@@ -355,6 +356,7 @@ interface ActionButtonProps {
   testID: string;
   primary?: boolean;
   disabled?: boolean;
+  accessibilityLabel?: string;
 }
 
 const ActionButton = ({
@@ -363,10 +365,11 @@ const ActionButton = ({
   testID,
   primary = false,
   disabled = false,
+  accessibilityLabel,
 }: ActionButtonProps): React.JSX.Element => (
   <TouchableOpacity
     accessibilityRole="button"
-    accessibilityLabel={label}
+    accessibilityLabel={accessibilityLabel ?? label}
     accessibilityState={{ disabled }}
     onPress={disabled ? undefined : onPress}
     style={[

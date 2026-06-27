@@ -416,12 +416,13 @@ function SessionCard(props: SessionCardProps): React.JSX.Element {
       <View style={styles.cardHeader}>
         <TouchableOpacity
           accessibilityRole="button"
-          accessibilityLabel="Configure practice"
+          accessibilityLabel="Adjust this practice's settings"
           onPress={props.onConfigure}
           style={styles.gearButton}
           testID="active-practice-configure"
         >
           <Text style={styles.gearText}>⚙︎</Text>
+          <Text style={styles.gearLabel}>Adjust</Text>
         </TouchableOpacity>
       </View>
       <Text style={styles.name} testID="active-practice-name">
@@ -903,17 +904,20 @@ const styles = StyleSheet.create({
   },
   cardHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
     marginBottom: SPACING.xs,
   },
   gearButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
     minWidth: 44,
     minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
+    paddingHorizontal: SPACING.sm,
   },
-  gearText: { fontSize: 22, color: colors.text.secondary },
+  gearText: { fontSize: 18, color: colors.text.secondary },
+  gearLabel: { fontSize: 14, fontWeight: '600', color: colors.text.secondary },
   name: {
     fontSize: 20,
     fontWeight: '700',

@@ -50,6 +50,12 @@ describe('RitualConfiguratorSheet', () => {
     expect(getByTestId('ritual-configurator-aspect')).toBeTruthy();
   });
 
+  it('header makes the per-user-override scope explicit', () => {
+    const { getByTestId } = renderSheet();
+    expect(getByTestId('ritual-configurator-title').props.children).toBe('Adjust your practice');
+    expect(getByTestId('ritual-configurator-subtitle').props.children).toContain('your copy');
+  });
+
   it('disables save until the form is dirty', () => {
     const { getByTestId } = renderSheet();
     const save = getByTestId('ritual-configurator-save');
