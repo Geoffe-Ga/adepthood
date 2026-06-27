@@ -19,7 +19,7 @@ import { FeatureErrorBoundary } from '../components/FeatureErrorBoundary';
 import { colors, SPACING } from '../design/tokens';
 import CourseScreen from '../features/Course/CourseScreen';
 import HabitsScreen from '../features/Habits/HabitsScreen';
-import JournalScreen from '../features/Journal/JournalScreen';
+import JournalShelfScreen from '../features/Journal/JournalShelfScreen';
 import MapScreen from '../features/Map/MapScreen';
 import PracticeScreen from '../features/Practice/PracticeScreen';
 
@@ -67,7 +67,7 @@ function withBoundary<P extends object>(
 const HabitsTab = withBoundary('Habits', HabitsScreen);
 const PracticeTab = withBoundary('Practice', PracticeScreen);
 const CourseTab = withBoundary('Course', CourseScreen);
-const JournalTab = withBoundary('Journal', JournalScreen);
+const JournalTab = withBoundary('Journal', JournalShelfScreen);
 const MapTab = withBoundary('Map', MapScreen);
 
 const TAB_ICON_SIZE = 24;
