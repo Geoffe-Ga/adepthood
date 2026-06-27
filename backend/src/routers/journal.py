@@ -256,6 +256,7 @@ async def update_journal_entry(
         select(JournalEntry).where(
             JournalEntry.id == entry_id,
             JournalEntry.user_id == current_user,
+            JournalEntry.sender == "user",  # bot-authored entries are not user-editable
             col(JournalEntry.deleted_at).is_(None),
         )
     )
