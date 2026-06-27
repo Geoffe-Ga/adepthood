@@ -1,19 +1,20 @@
-import React from 'react';
-import Svg, { Polygon } from 'react-native-svg';
+import React, { useId } from 'react';
+import Svg, { Defs, FeDropShadow, Filter, LinearGradient, Polygon, Stop } from 'react-native-svg';
+
+import { colors } from '../design/tokens';
 
 /**
  * Unlabeled goal-tier star markers.
  *
  * Each habit goal tier is denoted by a star whose point-count encodes the
  * tier — a 4-pointed star for Low Grit, a 5-pointed star for Clear Goal, and
- * a 10-pointed star for Stretch Goal — so the markers read at a glance
- * without the old "LG / CG / SG" text labels.
+ * a 10-pointed star for Stretch Goal — so the markers read at a glance.
  *
- * The visual style intentionally matches the bottom-tab navigation icons
- * (``lucide-react-native``): a 24×24 viewBox, stroke-only outline, 2dp
- * stroke, and rounded joins. ``lucide`` ships no 4- or 10-pointed star, so
- * the shape is generated here from first principles while keeping that same
- * outlined look.
+ * The stars are tier-agnostic greyscale. While a tier is unmet the star is a
+ * stroke-only outline in darkish grey (same lucide-style 24×24 / rounded-join
+ * look as the bottom-tab icons). Once the tier is achieved (``met``) it fills
+ * with a greyscale gradient and gains a white border glow. ``lucide`` ships no
+ * 4- or 10-pointed star, so the shape is generated here from first principles.
  */
 
 export type TierStarTier = 'low' | 'clear' | 'stretch';
@@ -47,9 +48,13 @@ const TIER_INNER_RATIO: Record<TierStarTier, number> = {
 // Match the lucide 24×24 grid so these sit alongside the tab icons cleanly.
 const VIEWBOX = 24;
 const CENTER = VIEWBOX / 2;
-// Leave a 2dp margin inside the viewBox so the 2dp stroke is never clipped.
+// Leave a 2dp margin inside the viewBox so the stroke + glow are never clipped.
 const OUTER_RADIUS = 10;
 const STROKE_WIDTH = 2;
+// Thinner border on the filled (met) star so the white edge reads as a rim, not a slab.
+const MET_STROKE_WIDTH = 1.5;
+const GLOW_BLUR = 1.2;
+const GLOW_OPACITY = 0.9;
 const QUARTER_TURN = Math.PI / 2;
 const COORD_PRECISION = 3;
 
@@ -79,7 +84,8 @@ const DEFAULT_SIZE = 14;
 
 interface TierStarProps {
   tier: TierStarTier;
-  color: string;
+  /** When true the star is filled (greyscale gradient + white glow); otherwise outline-only. */
+  met?: boolean;
   size?: number;
   testID?: string;
   /** Screen-reader label; defaults to the spoken tier name so the star is
@@ -87,31 +93,88 @@ interface TierStarProps {
   accessibilityLabel?: string;
 }
 
-/** Outlined, tier-encoding star marker (see module docstring). */
-export const TierStar = ({
-  tier,
-  color,
-  size = DEFAULT_SIZE,
+const svgProps = (size: number, testID: string | undefined, label: string) => ({
+  width: size,
+  height: size,
+  viewBox: `0 0 ${VIEWBOX} ${VIEWBOX}`,
   testID,
-  accessibilityLabel,
-}: TierStarProps) => (
-  <Svg
-    width={size}
-    height={size}
-    viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`}
-    testID={testID}
-    accessibilityRole="image"
-    accessibilityLabel={accessibilityLabel ?? TIER_LABELS[tier]}
-  >
+  accessibilityRole: 'image' as const,
+  accessibilityLabel: label,
+});
+
+interface StarVariantProps {
+  tier: TierStarTier;
+  size: number;
+  testID: string | undefined;
+  label: string;
+}
+
+/** Unmet state: darkish-grey, stroke-only outline. */
+const OutlineStar = ({ tier, size, testID, label }: StarVariantProps) => (
+  <Svg {...svgProps(size, testID, label)}>
     <Polygon
       points={STAR_POINTS[tier]}
       fill="none"
-      stroke={color}
+      stroke={colors.starMarker.outline}
       strokeWidth={STROKE_WIDTH}
       strokeLinejoin="round"
       strokeLinecap="round"
     />
   </Svg>
 );
+
+/** Met state: greyscale gradient fill with a white border glow. */
+const MetStar = ({ tier, size, testID, label }: StarVariantProps) => {
+  // Unique, SVG-id-safe suffix so multiple stars' gradients/filters never
+  // collide (ids are document-global on web). useId is stable across renders.
+  const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
+  const gradientId = `tierStarFill-${uid}`;
+  const glowId = `tierStarGlow-${uid}`;
+  return (
+    <Svg {...svgProps(size, testID, label)}>
+      <Defs>
+        <LinearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
+          <Stop offset="0" stopColor={colors.starMarker.gradientFrom} />
+          <Stop offset="1" stopColor={colors.starMarker.gradientTo} />
+        </LinearGradient>
+        <Filter id={glowId} x="-50%" y="-50%" width="200%" height="200%">
+          <FeDropShadow
+            dx="0"
+            dy="0"
+            stdDeviation={GLOW_BLUR}
+            floodColor={colors.starMarker.glow}
+            floodOpacity={GLOW_OPACITY}
+          />
+        </Filter>
+      </Defs>
+      <Polygon
+        points={STAR_POINTS[tier]}
+        fill={`url(#${gradientId})`}
+        stroke={colors.starMarker.glow}
+        strokeWidth={MET_STROKE_WIDTH}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        filter={`url(#${glowId})`}
+      />
+    </Svg>
+  );
+};
+
+/** Tier-encoding star marker: greyscale outline when unmet, filled + glowing when met. */
+export const TierStar = ({
+  tier,
+  met = false,
+  size = DEFAULT_SIZE,
+  testID,
+  accessibilityLabel,
+}: TierStarProps) => {
+  const variantProps: StarVariantProps = {
+    tier,
+    size,
+    testID,
+    label: accessibilityLabel ?? TIER_LABELS[tier],
+  };
+  return met ? <MetStar {...variantProps} /> : <OutlineStar {...variantProps} />;
+};
 
 export default TierStar;

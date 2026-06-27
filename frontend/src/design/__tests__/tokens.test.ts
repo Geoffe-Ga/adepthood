@@ -66,6 +66,15 @@ describe('design tokens', () => {
       expect(colors.tier.default).toBe('#dad9d4');
     });
 
+    it('exports greyscale goal-tier star marker colors', () => {
+      // Tier-agnostic greyscale: darkish-grey outline (unmet) → greyscale
+      // gradient fill + white glow (met).
+      expect(colors.starMarker.outline).toBe('#555555');
+      expect(colors.starMarker.gradientFrom).toBe('#9c9c9c');
+      expect(colors.starMarker.gradientTo).toBe('#3a3a3a');
+      expect(colors.starMarker.glow).toBe('#ffffff');
+    });
+
     it('exports border color', () => {
       expect(colors.border).toBe('#ddd');
     });
