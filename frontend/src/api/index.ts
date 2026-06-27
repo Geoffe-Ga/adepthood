@@ -1199,12 +1199,15 @@ export interface JournalMessage {
   updated_at?: string;
 }
 
-/** PATCH body for editing an entry — only the provided fields are sent. */
+/**
+ * PATCH body for editing an entry — only the provided fields are sent. Mirrors
+ * the backend schema (message / title / status); ``tag`` is set at create time
+ * and is not editable here.
+ */
 export interface JournalEntryUpdate {
   message?: string;
   title?: string | null;
   status?: EntryStatus;
-  tag?: JournalTag;
 }
 
 export type MarginaliaKind = 'theme' | 'connection' | 'symbol';
