@@ -203,6 +203,38 @@ Feature work that extends the catalog or product surface, not part of the
 refactor roadmap. Each epic owns its own sub-issues and can ship
 independently.
 
+### Practice frontend redesign (minimalist IA)
+
+Frontend-only overhaul of the Practice feature. Moves the catalog off the
+bottom nav and surfaces it deliberately from the Practice screen; collapses the
+three overlapping choose-surfaces (`PracticeSelector`, `PracticeSwitcherSheet`,
+catalog) into one; disentangles the confusing Switch / Adjust / Duplicate
+affordances; de-duplicates and tightens copy; and applies a minimalist visual
+pass. No backend, engine, view, or configurator-form changes. Build in ascending
+order — each sub-issue assumes the earlier ones merged.
+
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| — | [Epic tracker](practice-redesign-epic.md) | — | — |
+| 01 | [Move the catalog off the bottom nav](practice-redesign-01-catalog-off-bottom-nav.md) | Frontend | ~250 |
+| 02 | [Slim frequency banner → frequency chip](practice-redesign-02-slim-frequency-chip.md) | Frontend | ~250 |
+| 03 | [One "Change practice" action via the catalog](practice-redesign-03-change-practice-via-catalog.md) | Frontend | ~275 |
+| 04 | [Retire the selector + switcher; minimal empty state](practice-redesign-04-retire-selector-switcher.md) | Frontend | ~200 |
+| 05 | [Disentangle edit / adjust / duplicate affordances](practice-redesign-05-clarify-edit-affordances.md) | Frontend | ~150 |
+| 06 | [De-duplicate and tighten Practice copy](practice-redesign-06-dedupe-tighten-copy.md) | Frontend | ~200 |
+| 07 | [Minimalist visual pass on the Practice surfaces](practice-redesign-07-minimalist-visual-pass.md) | Frontend | ~200 |
+
+Dependency graph:
+
+```
+01 catalog-off-bottom-nav
+   └─ 02 slim-frequency-chip
+        └─ 03 change-practice-via-catalog
+             └─ 04 retire-selector-switcher
+                  └─ 06 dedupe-tighten-copy ──┐
+05 clarify-edit-affordances (after 02, 03) ───┴─ 07 minimalist-visual-pass
+```
+
 ### Customizable practices, catalog browse, and share links
 
 Two new modes (`random_interval_bell`, `card_meditation`) round out the engine to 11; users can browse a global catalog, create custom practices in any mode, assign customs to any stage, and share a practice via private link. Rider-Waite-Smith deck content ships bundled.
