@@ -74,7 +74,6 @@ describe('FrequencyBanner', () => {
     const { getByTestId, queryByTestId, queryByText } = render(<FrequencyBanner />);
     expect(getByTestId('frequency-banner-color').props.children).toBe('Orange');
     expect(getByTestId('frequency-banner-aspect').props.children).toBe('Mind');
-    // practice-redesign-02: the verbose paragraph + "tap to replace" hint are gone.
     expect(queryByTestId('frequency-banner-text')).toBeNull();
     expect(queryByText('Tap to replace this practice')).toBeNull();
   });

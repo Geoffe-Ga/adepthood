@@ -414,8 +414,6 @@ function SessionCard(props: SessionCardProps): React.JSX.Element {
   return (
     <View style={styles.card} testID="active-practice-card">
       <View style={styles.cardHeader}>
-        {/* practice-redesign-02: the redundant "Your Practice" label is gone;
-            the practice name below stands on its own. */}
         <TouchableOpacity
           accessibilityRole="button"
           accessibilityLabel="Configure practice"

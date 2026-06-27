@@ -379,8 +379,8 @@ describe('PracticeScreen', () => {
   });
 
   it('shows the frequency chip (display-only) on the active screen', async () => {
-    // practice-redesign-02: the chip replaced the tappable banner; it no longer
-    // opens the switcher (the explicit "Change practice" button is #598).
+    // The chip replaced the tappable banner; it no longer opens the switcher
+    // (switching is a separate, explicit control).
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId, queryByTestId } = render(<PracticeScreen />);
     await waitFor(() => {

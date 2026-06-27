@@ -52,12 +52,9 @@ type WeeklyProgressHook = ReturnType<typeof useWeeklyProgress>;
 /**
  * Returns the frequency chip as a memoized element (stable reference unless the
  * stage changes), so passing it as a FlatList ``ListHeaderComponent`` doesn't
- * re-diff every render.
- *
- * practice-redesign-02: the chip is display-only now — it no longer opens the
- * practice switcher. The explicit "Change practice" button (and the switcher's
- * re-wiring) lands in practice-redesign-03; ``PracticeSwitcherSheet`` is kept
- * until practice-redesign-04.
+ * re-diff every render. The chip is display-only; the explicit "Change practice"
+ * button and switcher wiring are deferred to a follow-up, and
+ * ``PracticeSwitcherSheet`` is retained until then.
  */
 function usePracticeChrome(stageNumber: number): { banner: React.JSX.Element } {
   const banner = useMemo(() => <FrequencyBanner stageNumber={stageNumber} />, [stageNumber]);

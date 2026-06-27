@@ -1,12 +1,8 @@
 /**
  * `FrequencyBanner` — display-only chip above the active Practice. Shows the
  * user's current spiral-dynamics colour (a swatch dot) and aspect of wholeness,
- * sourced from ritual-05's `GET /user-practices/current/frequency`.
- *
- * practice-redesign-02: collapsed from the old paragraph banner into a slim
- * pill. It is NOT the switch control any more (the verbose copy + disguised
- * "tap to replace" affordance were the screen's biggest source of clutter); the
- * explicit "Change practice" button arrives in practice-redesign-03.
+ * sourced from `GET /user-practices/current/frequency`. It is intentionally not
+ * interactive — switching practices is a separate, explicit control.
  */
 import React from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
