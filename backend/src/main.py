@@ -334,6 +334,11 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # (issue #272) instead of inline noqa comments.
     import models
     from routers.auth import _get_secret_key
+    from services import journal_encryption
+
+    # Make the journal-encryption state observable per worker (each uvicorn
+    # worker caches its own key registry) without reading source (audit-destub-05b).
+    logger.info("journal_encryption_enabled=%s", journal_encryption.is_enabled())
 
     # BUG-AUTH-011: validate ``SECRET_KEY`` once at startup so a misconfigured
     # deployment fails the orchestrator's health probe immediately rather than

@@ -46,6 +46,8 @@ def _retype_message(*, to_text: bool) -> None:
         op.alter_column("journalentry", "message", type_=new_type, existing_nullable=False)
 
 
+# Rows per keyset page. Larger = fewer round-trips but a longer per-statement
+# lock hold; 1000 balances both for a typical journal table.
 _BATCH_SIZE = 1_000
 
 

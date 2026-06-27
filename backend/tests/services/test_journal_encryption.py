@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.journal_entry import JournalEntry
+from models.user import User
 from services import journal_encryption as je
 
 _ENV = "JOURNAL_ENCRYPTION_KEYS"
@@ -92,7 +93,10 @@ async def test_ciphertext_lands_in_the_column(
     """A raw DB read returns ciphertext; the ORM transparently decrypts."""
     monkeypatch.setenv(_ENV, _key())
     je.reset_cache()
-    db_session.add(JournalEntry(user_id=1, sender="user", message="my plaintext secret"))
+    user = User(email="cipher@example.com", password_hash="x")  # pragma: allowlist secret
+    db_session.add(user)
+    await db_session.flush()
+    db_session.add(JournalEntry(user_id=user.id, sender="user", message="my plaintext secret"))
     await db_session.commit()
 
     # Raw column read bypasses the TypeDecorator — must be ciphertext, not plaintext.

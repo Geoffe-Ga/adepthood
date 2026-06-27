@@ -75,7 +75,12 @@ def encrypt(plaintext: str) -> str:
 
 
 def decrypt(value: str) -> str:
-    """Decrypt a marked ciphertext; pass through legacy/plaintext values."""
+    """Decrypt a marked ciphertext; pass through legacy/plaintext values.
+
+    Pass-through is by the ``enc::v1::`` marker, so a (vanishingly unlikely)
+    user message that literally starts with that marker would be treated as
+    ciphertext — and raise in an un-keyed environment rather than round-trip.
+    """
     if not value.startswith(_PREFIX):
         return value
     registry = _registry()

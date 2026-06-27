@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from observability import NO_TRACE, TRACE_ID_HEADER, get_trace_id, truncate_log_path
 from sentry import capture_exception
+from services.journal_encryption import JournalEncryptionError
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,10 @@ REQUEST_ID_KEY = "request_id"
 # HTTP body (BUG-OBS-003 / security).  The full traceback goes to logs and
 # Sentry; the client only sees a stable token they can show the user.
 INTERNAL_ERROR = "internal_error"
+# Distinct code for a journal decrypt/encrypt failure (key misconfigured or
+# rotated out with un-migrated rows) so logs/clients can tell it apart from a
+# generic 500 — the difference between "rotation went wrong" and "unrelated bug".
+DECRYPTION_FAILURE = "decryption_failure"
 
 
 def not_found(resource: str) -> HTTPException:
@@ -89,10 +94,22 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     the contextvar is only a fallback for the bare-app test fixtures
     that do not install the middleware.
     """
+    return _sanitized_500(request, exc, log_event="unhandled_exception", error_code=INTERNAL_ERROR)
+
+
+def _sanitized_500(
+    request: Request, exc: Exception, *, log_event: str, error_code: str
+) -> JSONResponse:
+    """Log + Sentry-report ``exc`` and return the sanitised 500 envelope.
+
+    Shared by the catch-all and the journal-decryption handlers so both emit the
+    same ``{error, request_id}`` body + trace header while logging a distinct
+    event name (``log_event``) and returning a distinct ``error_code``.
+    """
     request_id = getattr(request.state, "request_id", None) or get_trace_id() or NO_TRACE
     truncated_path = truncate_log_path(request.url.path)
     logger.exception(
-        "unhandled_exception",
+        log_event,
         extra={
             "request_id": request_id,
             "request_path": truncated_path,
@@ -107,8 +124,21 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     )
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={ERROR_KEY: INTERNAL_ERROR, REQUEST_ID_KEY: request_id},
+        content={ERROR_KEY: error_code, REQUEST_ID_KEY: request_id},
         headers={TRACE_ID_HEADER: request_id},
+    )
+
+
+async def _journal_encryption_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Surface a journal encrypt/decrypt failure as a distinct, logged 500.
+
+    Without this, a key misconfiguration (or a rotation leaving rows encrypted
+    under a retired key) raised from inside SQLAlchemy result-loading would be
+    indistinguishable from any other 500 — blacking out the journal feature with
+    no diagnostic signal. The body stays sanitised; the log/Sentry event names it.
+    """
+    return _sanitized_500(
+        request, exc, log_event="journal_decryption_failure", error_code=DECRYPTION_FAILURE
     )
 
 
@@ -124,4 +154,7 @@ def install_exception_handlers(app: FastAPI) -> None:
     Kept as a function so tests can spin up a bare app and opt in
     selectively rather than inheriting the global handler from import.
     """
+    # Specific handler first so a journal decrypt/encrypt failure logs its own
+    # event instead of disappearing into the catch-all.
+    app.add_exception_handler(JournalEncryptionError, _journal_encryption_error_handler)
     app.add_exception_handler(Exception, _unhandled_exception_handler)
