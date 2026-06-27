@@ -5,6 +5,8 @@
  * should be imported from this module. Do not define design constants elsewhere.
  */
 
+import { Platform } from 'react-native';
+
 // ---------------------------------------------------------------------------
 // Colors
 // ---------------------------------------------------------------------------
@@ -102,6 +104,33 @@ export const colors = {
     recessedSurface: '#e9e9e9',
     edgeDark: '#bcbcbc',
     edgeLight: '#ffffff',
+  },
+
+  /**
+   * Warm editorial palette for the journal-resonance surface only. A paper-like
+   * off-white ground with dark ink, a faint rule, and a soft anchor highlight.
+   * Contrast on the primary ground (#faf6ef):
+   *   ink     #2b2620 = 13.9:1 — AAA
+   *   inkSoft #5a5046 =  7.3:1 — AAA
+   * The anchor highlight is a background wash (text keeps its own ink colour).
+   */
+  paper: {
+    background: '#faf6ef',
+    backgroundAlt: '#f3ecdf',
+    ink: '#2b2620',
+    inkSoft: '#5a5046',
+    hairline: '#e3dccd',
+    anchorHighlight: '#f0e3c2',
+  },
+
+  /**
+   * Subtle accent per margin-note kind. Used for the kind dot / rule beside a
+   * note; each clears AA as text on the paper ground (>= 4.5:1 on #faf6ef).
+   */
+  marginalia: {
+    theme: '#8a6a2f',
+    connection: '#4f6173',
+    symbol: '#7a4f63',
   },
 } as const;
 
@@ -360,3 +389,52 @@ export const typography = (width: number) => {
     caption: base * 0.8,
   } as const;
 };
+
+// ---------------------------------------------------------------------------
+// Editorial / journal-resonance tokens (additive — journal surface only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Layout metrics for the two-column journal page (writing column + margin
+ * notes). ``marginColumnWidth`` is the fixed gutter the margin notes occupy;
+ * ``pageMaxWidth`` keeps the reading measure comfortable on tablets.
+ */
+export const journalLayout = {
+  marginColumnWidth: 220,
+  pageHorizontalPadding: 24,
+  pageMaxWidth: 680,
+  marginNoteGap: 16,
+} as const;
+
+/**
+ * Warm, long-form serif typography for the journal surface. Uses the platform
+ * serif stack (no bundled font asset): Georgia on iOS, the system ``serif``
+ * family on Android, and a CSS-style stack on web. Line-heights are generous
+ * (~1.6 on body) for a calm reading rhythm.
+ *
+ * Resolved from ``Platform.OS`` (not ``Platform.select``) at module load: this
+ * file is imported app-wide, and the repo's hand-rolled ``react-native`` test
+ * mocks expose ``Platform.OS`` but not ``Platform.select`` — keeping the tokens
+ * module loadable under every mock.
+ */
+const serifByPlatform: Record<string, string> = {
+  ios: 'Georgia',
+  android: 'serif',
+};
+const serifStack = serifByPlatform[Platform.OS] ?? 'Georgia, "Times New Roman", serif';
+
+export const editorialType = {
+  serif: serifStack,
+  display: { fontFamily: serifStack, fontSize: 34, lineHeight: 42, fontWeight: '700' as const },
+  title: { fontFamily: serifStack, fontSize: 26, lineHeight: 34, fontWeight: '600' as const },
+  body: { fontFamily: serifStack, fontSize: 18, lineHeight: 29, fontWeight: '400' as const },
+  note: { fontFamily: serifStack, fontSize: 15, lineHeight: 24, fontWeight: '400' as const },
+  caption: { fontFamily: serifStack, fontSize: 13, lineHeight: 20, fontWeight: '400' as const },
+  marginNote: {
+    fontFamily: serifStack,
+    fontSize: 14,
+    lineHeight: 21,
+    fontStyle: 'italic' as const,
+    fontWeight: '400' as const,
+  },
+} as const;
