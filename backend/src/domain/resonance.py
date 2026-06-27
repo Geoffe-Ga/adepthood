@@ -82,23 +82,29 @@ def build_prompt(
     )
 
 
-def _parse_drafts(raw: str) -> list[MarginaliaDraft]:
-    """Defensively parse the model's JSON into drafts; never raise on bad input."""
+def _draft_from_item(item: object) -> MarginaliaDraft | None:
+    """Build a draft from one parsed JSON item, or None if it's the wrong shape."""
+    if not isinstance(item, dict):
+        return None
+    kind, quote, note = item.get("kind"), item.get("quote"), item.get("note")
+    if isinstance(kind, str) and isinstance(quote, str) and isinstance(note, str):
+        return MarginaliaDraft(kind=kind, quote=quote, note=note)
+    return None
+
+
+def _load_notes(raw: str) -> list[object]:
+    """Parse the completion to its ``notes`` list; [] on any malformed input."""
     try:
         payload = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         return []
     notes = payload.get("notes") if isinstance(payload, dict) else None
-    if not isinstance(notes, list):
-        return []
-    drafts: list[MarginaliaDraft] = []
-    for item in notes:
-        if not isinstance(item, dict):
-            continue
-        kind, quote, note = item.get("kind"), item.get("quote"), item.get("note")
-        if isinstance(kind, str) and isinstance(quote, str) and isinstance(note, str):
-            drafts.append(MarginaliaDraft(kind=kind, quote=quote, note=note))
-    return drafts
+    return notes if isinstance(notes, list) else []
+
+
+def _parse_drafts(raw: str) -> list[MarginaliaDraft]:
+    """Defensively parse the model's JSON into drafts; never raise on bad input."""
+    return [draft for item in _load_notes(raw) if (draft := _draft_from_item(item)) is not None]
 
 
 def _sanitize_note(note: str) -> str | None:
@@ -110,17 +116,23 @@ def _sanitize_note(note: str) -> str | None:
     return cleaned or None
 
 
+def _quote_span(body: str, quote: str) -> tuple[int, int] | None:
+    """Locate ``quote`` verbatim in ``body``; return its offsets or None."""
+    if not quote or len(quote) > ANCHOR_TEXT_MAX:
+        return None
+    start = body.find(quote)
+    return None if start == -1 else (start, start + len(quote))
+
+
 def _anchor(body: str, draft: MarginaliaDraft) -> MarginaliaAnchored | None:
     """Resolve a draft to a span, or None if it can't anchor / validate."""
-    if draft.kind not in VALID_KINDS or not draft.quote or len(draft.quote) > ANCHOR_TEXT_MAX:
+    if draft.kind not in VALID_KINDS:
         return None
-    start = body.find(draft.quote)
-    if start == -1:
-        return None
+    span = _quote_span(body, draft.quote)
     note = _sanitize_note(draft.note)
-    if note is None:
+    if span is None or note is None:
         return None
-    end = start + len(draft.quote)
+    start, end = span
     return MarginaliaAnchored(
         kind=draft.kind,
         anchor_start=start,
@@ -133,6 +145,11 @@ def _anchor(body: str, draft: MarginaliaDraft) -> MarginaliaAnchored | None:
 def _overlaps(a: MarginaliaAnchored, b: MarginaliaAnchored) -> bool:
     """True when two anchored spans intersect."""
     return a.anchor_start < b.anchor_end and b.anchor_start < a.anchor_end
+
+
+def _overlaps_any(candidate: MarginaliaAnchored, kept: list[MarginaliaAnchored]) -> bool:
+    """True when ``candidate`` overlaps any already-kept anchor."""
+    return any(_overlaps(candidate, other) for other in kept)
 
 
 async def generate_marginalia(
@@ -153,7 +170,7 @@ async def generate_marginalia(
     anchored: list[MarginaliaAnchored] = []
     for draft in _parse_drafts(raw):
         candidate = _anchor(body, draft)
-        if candidate is None or any(_overlaps(candidate, kept) for kept in anchored):
+        if candidate is None or _overlaps_any(candidate, anchored):
             continue
         anchored.append(candidate)
         if len(anchored) >= max_notes:
