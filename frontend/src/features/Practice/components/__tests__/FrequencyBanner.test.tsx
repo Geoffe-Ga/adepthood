@@ -32,6 +32,13 @@ describe('FrequencyBanner', () => {
     mockUseFrequency.mockReset();
   });
 
+  const flatBackground = (node: { props: { style: unknown } }): string => {
+    const style = Array.isArray(node.props.style)
+      ? Object.assign({}, ...(node.props.style as object[]))
+      : (node.props.style as { backgroundColor?: string });
+    return style.backgroundColor as string;
+  };
+
   it('renders a skeleton while the fetch is in flight', () => {
     mockUseFrequency.mockReturnValue({
       data: null,
@@ -39,7 +46,7 @@ describe('FrequencyBanner', () => {
       error: null,
       refetch: jest.fn(),
     });
-    const { getByTestId, queryByTestId } = render(<FrequencyBanner onSwitch={jest.fn()} />);
+    const { getByTestId, queryByTestId } = render(<FrequencyBanner />);
     expect(getByTestId('frequency-banner-skeleton')).toBeTruthy();
     expect(queryByTestId('frequency-banner-content')).toBeNull();
   });
@@ -52,41 +59,36 @@ describe('FrequencyBanner', () => {
       error: new Error('offline'),
       refetch,
     });
-    const { getByTestId } = render(<FrequencyBanner onSwitch={jest.fn()} />);
+    const { getByTestId } = render(<FrequencyBanner />);
     fireEvent.press(getByTestId('frequency-banner-retry'));
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 
-  it('renders the server banner_text verbatim — never assembles the copy itself', () => {
+  it('renders a slim colour/aspect chip — no paragraph, no switch hint', () => {
     mockUseFrequency.mockReturnValue({
       data: samplePayload,
       isLoading: false,
       error: null,
       refetch: jest.fn(),
     });
-    const { getByTestId } = render(<FrequencyBanner onSwitch={jest.fn()} />);
-    const body = getByTestId('frequency-banner-text');
-    expect(body.props.children).toBe(samplePayload.banner_text);
+    const { getByTestId, queryByTestId, queryByText } = render(<FrequencyBanner />);
+    expect(getByTestId('frequency-banner-color').props.children).toBe('Orange');
+    expect(getByTestId('frequency-banner-aspect').props.children).toBe('Mind');
+    expect(queryByTestId('frequency-banner-text')).toBeNull();
+    expect(queryByText('Tap to replace this practice')).toBeNull();
   });
 
-  it('shows the aspect chip + colour swatch sourced from the server colour field', () => {
+  it('colours the swatch dot from the server colour field', () => {
     mockUseFrequency.mockReturnValue({
       data: samplePayload,
       isLoading: false,
       error: null,
       refetch: jest.fn(),
     });
-    const { getByTestId } = render(<FrequencyBanner onSwitch={jest.fn()} />);
-    expect(getByTestId('frequency-banner-aspect').props.children).toBe('Mind');
-    // The container's backgroundColor should track the Orange swatch.
-    const content = getByTestId('frequency-banner-content');
-    const flatStyle = Array.isArray(content.props.style)
-      ? Object.assign({}, ...content.props.style)
-      : content.props.style;
+    const { getByTestId } = render(<FrequencyBanner />);
     // Track the palette constant rather than a hardcoded hex so a designer
-    // tweak to the Orange swatch doesn't break this assertion before the
-    // WCAG-contrast contract has a chance to flag it.
-    expect(flatStyle.backgroundColor).toBe(COLOR_PALETTE.Orange.bg);
+    // tweak to the Orange swatch doesn't break this assertion.
+    expect(flatBackground(getByTestId('frequency-chip-dot'))).toBe(COLOR_PALETTE.Orange.bg);
   });
 
   it('falls back to the neutral swatch when the server sends an unknown colour', () => {
@@ -96,26 +98,19 @@ describe('FrequencyBanner', () => {
       error: null,
       refetch: jest.fn(),
     });
-    const { getByTestId } = render(<FrequencyBanner onSwitch={jest.fn()} />);
-    const content = getByTestId('frequency-banner-content');
-    const flatStyle = Array.isArray(content.props.style)
-      ? Object.assign({}, ...content.props.style)
-      : content.props.style;
-    // Clear Light fallback keeps the banner legible.
-    expect(flatStyle.backgroundColor).toBe(COLOR_PALETTE['Clear Light'].bg);
+    const { getByTestId } = render(<FrequencyBanner />);
+    expect(flatBackground(getByTestId('frequency-chip-dot'))).toBe(COLOR_PALETTE['Clear Light'].bg);
   });
 
-  it('invokes the onSwitch callback when the banner body is tapped', () => {
-    const onSwitch = jest.fn();
+  it('is display-only — the chip is not a button', () => {
     mockUseFrequency.mockReturnValue({
       data: samplePayload,
       isLoading: false,
       error: null,
       refetch: jest.fn(),
     });
-    const { getByTestId } = render(<FrequencyBanner onSwitch={onSwitch} />);
-    fireEvent.press(getByTestId('frequency-banner-content'));
-    expect(onSwitch).toHaveBeenCalledTimes(1);
+    const { getByTestId } = render(<FrequencyBanner />);
+    expect(getByTestId('frequency-banner-content').props.accessibilityRole).toBe('text');
   });
 
   it('accepts an injected data prop for storybook / testing — overrides the hook', () => {
@@ -127,10 +122,8 @@ describe('FrequencyBanner', () => {
       error: null,
       refetch: jest.fn(),
     });
-    const { getByTestId, queryByTestId } = render(
-      <FrequencyBanner data={samplePayload} onSwitch={jest.fn()} />,
-    );
-    expect(getByTestId('frequency-banner-text').props.children).toBe(samplePayload.banner_text);
+    const { getByTestId, queryByTestId } = render(<FrequencyBanner data={samplePayload} />);
+    expect(getByTestId('frequency-banner-color').props.children).toBe('Orange');
     // The hook's loading state must not bleed into the rendered output.
     expect(queryByTestId('frequency-banner-skeleton')).toBeNull();
   });
