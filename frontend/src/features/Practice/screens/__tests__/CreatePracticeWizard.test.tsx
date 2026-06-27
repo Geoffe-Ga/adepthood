@@ -115,11 +115,12 @@ describe('CreatePracticeWizard — step navigation', () => {
     mockUserPracticesCreate.mockReset();
   });
 
-  it('opens on the entry step with two start options', () => {
+  it('opens on the entry step with two start options and a one-line lead', () => {
     const { view } = renderScreen();
     expect(view.getByTestId('create-practice-step-entry')).toBeTruthy();
     expect(view.getByTestId('create-practice-from-preset')).toBeTruthy();
     expect(view.getByTestId('create-practice-from-scratch')).toBeTruthy();
+    expect(view.getByText('Start from a preset and tweak it, or build from scratch.')).toBeTruthy();
   });
 
   it('applies safe-area insets to the wizard container', () => {

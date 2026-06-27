@@ -102,6 +102,8 @@ describe('PracticeDetailScreen — read-only summary', () => {
     expect(view.getByTestId('practice-detail-instructions')).toBeTruthy();
     expect(view.getByTestId('practice-detail-mode-badge')).toBeTruthy();
     expect(view.getByTestId('practice-detail-stage-badge')).toBeTruthy();
+    // Duration badge uses the shared formatter ("{n} min").
+    expect(view.getByText('5 min')).toBeTruthy();
   });
 
   it('renders a per-mode config summary block', async () => {

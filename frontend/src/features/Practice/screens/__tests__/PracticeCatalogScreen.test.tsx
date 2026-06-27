@@ -308,6 +308,16 @@ describe('PracticeCatalogScreen — defaults wiring', () => {
     alertSpy.mockRestore();
   });
 
+  it('gives the row a spoken-friendly accessibility label (no glyphs, "minutes" spelled out)', async () => {
+    mockPracticesList.mockResolvedValueOnce([presetA]);
+    const view = render(<PracticeCatalogScreen initialStage={1} />);
+    await waitForLoad();
+    const label = view.getByTestId('practice-catalog-row-1').props.accessibilityLabel as string;
+    expect(label).toBe('Concentration on the breath. Meditation timer, 10 minutes.');
+    expect(label).not.toContain('·');
+    expect(label).not.toMatch(/\bmin\b/);
+  });
+
   it('navigates to PracticeDetail when a row is tapped without an override', async () => {
     mockPracticesList.mockResolvedValueOnce([presetA]);
     const view = render(<PracticeCatalogScreen initialStage={1} />);

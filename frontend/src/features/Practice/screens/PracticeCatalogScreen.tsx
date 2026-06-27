@@ -37,6 +37,7 @@ import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows, touchTarget } from '@/design/tokens';
 import { MODE_CATEGORIES, type PickableMode } from '@/features/Practice/components/ModePicker';
 import { MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
+import { formatDuration } from '@/features/Practice/utils/formatDuration';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 type Section = 'presets' | 'drafts' | 'imported';
@@ -448,13 +449,16 @@ const PracticeRowComponent = ({
 }: PracticeRowProps): React.JSX.Element => {
   const mode = (practice.mode ?? 'meditation_timer') as PickableMode;
   const { label, icon } = MODE_PRESENTATION[mode] ?? FALLBACK_PRESENTATION;
-  const duration = Math.round(practice.default_duration_minutes);
-  const subtitle = `${label} · ${duration} min`;
+  const rounded = Math.round(practice.default_duration_minutes);
+  const subtitle = `${label} · ${formatDuration(rounded)}`;
+  // Spoken label avoids the visual "·" separator and spells out "minutes"
+  // (abbreviations + glyphs read poorly under VoiceOver/TalkBack).
+  const a11yLabel = `${practice.name}. ${label}, ${rounded} minutes.`;
   return (
     <View style={styles.rowContainer} testID={`practice-catalog-row-${practice.id}-container`}>
       <TouchableOpacity
         accessibilityRole="button"
-        accessibilityLabel={`${practice.name}. ${label}, ${duration} minutes.`}
+        accessibilityLabel={a11yLabel}
         onPress={() => onDetail(practice.id)}
         style={styles.row}
         testID={`practice-catalog-row-${practice.id}`}
