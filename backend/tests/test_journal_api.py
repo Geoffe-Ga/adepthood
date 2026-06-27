@@ -579,6 +579,34 @@ async def test_encrypted_search_paginates(async_client: AsyncClient) -> None:
     assert len(data["items"]) == 2
     assert data["has_more"] is True
 
+    # Page 2: the remaining item, has_more clears.
+    page2 = await async_client.get("/journal/?search=yoga&limit=2&offset=2", headers=headers)
+    body2 = page2.json()
+    assert body2["total"] == 3
+    assert len(body2["items"]) == 1
+    assert body2["has_more"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_encryption_key")
+async def test_encrypted_search_is_scoped_to_the_requesting_user(
+    async_client: AsyncClient,
+) -> None:
+    """Encrypted search never returns another user's entries (audit-destub-05c)."""
+    alice = await _signup(async_client, "alice_enc")
+    bob = await _signup(async_client, "bob_enc")
+    await async_client.post(
+        "/journal/", json=_message_payload(message="alice secret kayak"), headers=alice
+    )
+    await async_client.post(
+        "/journal/", json=_message_payload(message="bob secret kayak"), headers=bob
+    )
+
+    resp = await async_client.get("/journal/?search=kayak", headers=bob)
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["items"][0]["message"] == "bob secret kayak"
+
 
 @pytest.mark.asyncio
 async def test_decryption_failure_returns_distinct_500(

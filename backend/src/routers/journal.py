@@ -59,6 +59,11 @@ router = APIRouter(prefix="/journal", tags=["journal"])
 JOURNAL_SEARCH_MIN_LENGTH = 3
 JOURNAL_SEARCH_MAX_LENGTH = 64
 
+# Encrypted search scans a user's entries in memory (ciphertext can't be ILIKE'd).
+# Fine for a personal journal (~3 entries/day over a 36-week program ≈ 750 rows);
+# warn past this so a future blind-index/FTS need is observable, not a surprise.
+_ENCRYPTED_SCAN_WARN_THRESHOLD = 2000
+
 
 @dataclass
 class _ListFilters:
@@ -128,7 +133,7 @@ def _build_filter_conditions(filters: _ListFilters) -> list[ColumnElement[bool]]
 
 
 async def _encrypted_search_page(
-    session: AsyncSession, user_id: int, filters: _ListFilters
+    session: AsyncSession, user_id: int, filters: _ListFilters, *, search: str
 ) -> JournalListResponse:
     """Keyword search when messages are encrypted at rest (audit-destub-05c).
 
@@ -146,7 +151,11 @@ async def _encrypted_search_page(
         .order_by(col(JournalEntry.id).desc())
     )
     rows = list((await session.execute(query)).scalars().all())
-    needle = (filters.search or "").lower()
+    if len(rows) > _ENCRYPTED_SCAN_WARN_THRESHOLD:
+        # In-memory scan is fine for a personal journal; warn before it isn't, so
+        # a future blind-index/FTS need is observable rather than a surprise.
+        logger.warning("encrypted_search_large_scan", extra={"user_id": user_id, "rows": len(rows)})
+    needle = search.lower()
     matched = [row for row in rows if needle in row.message.lower()]
     page = matched[filters.offset : filters.offset + filters.limit]
     return JournalListResponse(
@@ -173,7 +182,7 @@ async def list_journal_entries(
     # encryption is on — so route encrypted search through a decrypt-then-filter
     # path in Python (audit-destub-05c) instead of the SQL ILIKE.
     if filters.search is not None and journal_encryption.is_enabled():
-        return await _encrypted_search_page(session, current_user, filters)
+        return await _encrypted_search_page(session, current_user, filters, search=filters.search)
     conditions = _build_filter_conditions(filters)
     query = select(JournalEntry).where(
         JournalEntry.user_id == current_user,
