@@ -4,7 +4,7 @@
  * full-text search. Tapping a page opens the entry screen by id. Replaces the
  * old chat list; categorization is the AI's marginalia now, so there are no tags.
  */
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useState } from 'react';
 import { FlatList, Text, TouchableOpacity, View } from 'react-native';
@@ -13,10 +13,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import styles from './JournalShelf.styles';
 import SearchBar from './SearchBar';
 
-import { journal } from '@/api';
-import type { JournalMessage } from '@/api';
+import { journal, prompts } from '@/api';
+import type { JournalMessage, PromptDetail } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import type { RootStackParamList } from '@/navigation/RootStack';
+import { useDerivedCurrentWeek } from '@/store/useProgramProgression';
 
 const PAGE_SIZE = 20;
 const SEARCH_MIN_LENGTH = 3;
@@ -169,15 +170,83 @@ function ShelfEmpty({ loading, error }: { loading: boolean; error: string | null
   );
 }
 
+/** The current unanswered weekly prompt, or null (answered / none / load error).
+ *
+ * Re-fetched on every focus (not just mount): the shelf stays mounted while the
+ * user pushes to the entry screen, so after responding + going back the card
+ * must clear — hence ``useFocusEffect`` and the explicit reset when answered.
+ */
+function usePrompt(): PromptDetail | null {
+  const [prompt, setPrompt] = useState<PromptDetail | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      void prompts
+        .current()
+        .then((p) => {
+          if (active) setPrompt(p.has_responded ? null : p);
+        })
+        .catch(() => {
+          // A prompt fetch failure shouldn't block the shelf; just hide the card.
+        });
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
+  return prompt;
+}
+
+/** The weekly prompt surfaced as a pre-titled page (tap → the entry screen). */
+function PromptCard({
+  week,
+  question,
+  onOpen,
+}: {
+  week: number;
+  question: string;
+  onOpen: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={styles.promptCard}
+      onPress={onOpen}
+      accessibilityRole="button"
+      accessibilityLabel={`Respond to the week ${week} prompt`}
+      testID="journal-weekly-prompt"
+    >
+      <Text style={styles.promptLabel}>Week {week}</Text>
+      <Text style={styles.promptQuestion}>{question}</Text>
+    </TouchableOpacity>
+  );
+}
+
 function JournalShelfScreen(): React.JSX.Element {
   const navigation = useNavigation<ShelfNavigation>();
   const { items, loading, error, hasMore, onSearch, loadMore } = useShelf();
+  const prompt = usePrompt();
+  const week = useDerivedCurrentWeek(prompt?.week_number ?? 1);
 
   const openEntry = useCallback(
     (entryId: number) => navigation.navigate('JournalEntry', { entryId }),
     [navigation],
   );
   const newEntry = useCallback(() => navigation.navigate('JournalEntry'), [navigation]);
+  const openPrompt = useCallback(() => {
+    if (!prompt) return;
+    navigation.navigate('JournalEntry', {
+      weekNumber: week,
+      promptQuestion: prompt.question,
+      prefillTitle: `Week ${week} Reflection`,
+    });
+  }, [navigation, prompt, week]);
+
+  const header = (
+    <>
+      {prompt ? <PromptCard week={week} question={prompt.question} onOpen={openPrompt} /> : null}
+      <ShelfHeader onSearch={onSearch} onNew={newEntry} />
+    </>
+  );
 
   return (
     <SafeAreaView style={styles.safeArea} testID="journal-shelf">
@@ -186,7 +255,7 @@ function JournalShelfScreen(): React.JSX.Element {
         data={items}
         keyExtractor={(item) => String(item.id)}
         renderItem={({ item }) => <PageCard entry={item} onOpen={openEntry} />}
-        ListHeaderComponent={<ShelfHeader onSearch={onSearch} onNew={newEntry} />}
+        ListHeaderComponent={header}
         ListEmptyComponent={<ShelfEmpty loading={loading} error={error} />}
         onEndReached={hasMore ? loadMore : undefined}
         onEndReachedThreshold={0.4}

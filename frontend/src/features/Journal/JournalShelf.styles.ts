@@ -73,6 +73,25 @@ const styles = StyleSheet.create({
     color: colors.danger,
     textAlign: 'center',
   },
+  promptCard: {
+    marginHorizontal: SPACING.lg,
+    marginTop: SPACING.lg,
+    padding: SPACING.lg,
+    borderRadius: BORDER_RADIUS.md,
+    backgroundColor: colors.paper.backgroundAlt,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.marginalia.theme,
+  },
+  promptLabel: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+    textTransform: 'uppercase',
+  },
+  promptQuestion: {
+    ...editorialType.title,
+    color: colors.paper.ink,
+    paddingTop: spacing(0.5),
+  },
 });
 
 export default styles;

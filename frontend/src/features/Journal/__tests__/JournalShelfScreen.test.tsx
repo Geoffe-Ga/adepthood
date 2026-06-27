@@ -3,22 +3,35 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
-import type { JournalListResponse, JournalMessage } from '@/api';
+import type { JournalListResponse, JournalMessage, PromptDetail } from '@/api';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
 >;
+const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
 const mockNavigate = jest.fn();
 
 jest.mock('@/api', () => ({
   journal: {
     list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
   },
+  prompts: {
+    current: (...a: unknown[]) =>
+      (mockPromptCurrent as unknown as (...x: unknown[]) => unknown)(...a),
+  },
 }));
 
-jest.mock('@react-navigation/native', () => ({
-  useNavigation: () => ({ navigate: mockNavigate }),
-}));
+jest.mock('@react-navigation/native', () => {
+  const react = jest.requireActual('react') as {
+    useEffect: (_cb: () => undefined | (() => void), _deps: unknown[]) => void;
+  };
+  return {
+    useNavigation: () => ({ navigate: mockNavigate }),
+    // Run the focus callback on mount (and its cleanup on unmount) — enough to
+    // exercise the prompt re-fetch in these render-once tests.
+    useFocusEffect: (cb: () => undefined | (() => void)) => react.useEffect(cb, []),
+  };
+});
 
 // Isolate the shelf's search wiring from SearchBar's own debounce/expand UI.
 jest.mock('../SearchBar', () => {
@@ -51,10 +64,24 @@ function page(items: JournalMessage[], hasMore = false): JournalListResponse {
   return { items, total: items.length, has_more: hasMore };
 }
 
+function prompt(overrides: Partial<PromptDetail> = {}): PromptDetail {
+  return {
+    week_number: 3,
+    question: 'What did you notice this week?',
+    has_responded: false,
+    response: null,
+    timestamp: null,
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   mockList.mockReset();
   mockNavigate.mockReset();
+  mockPromptCurrent.mockReset();
   mockList.mockResolvedValue(page([]));
+  // Default: the weekly prompt is already answered, so no card surfaces.
+  mockPromptCurrent.mockResolvedValue(prompt({ has_responded: true }));
 });
 
 describe('JournalShelfScreen', () => {
@@ -136,5 +163,26 @@ describe('JournalShelfScreen', () => {
     });
     await waitFor(() => expect(getByTestId('journal-shelf-card-3')).toBeTruthy());
     expect(mockList).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 2 }));
+  });
+
+  it('surfaces an unanswered weekly prompt and opens it as a pre-titled page', async () => {
+    mockPromptCurrent.mockResolvedValue(prompt({ week_number: 3, has_responded: false }));
+    const { findByTestId } = render(<JournalShelfScreen />);
+    fireEvent.press(await findByTestId('journal-weekly-prompt'));
+    expect(mockNavigate).toHaveBeenCalledWith(
+      'JournalEntry',
+      expect.objectContaining({
+        weekNumber: 3,
+        promptQuestion: 'What did you notice this week?',
+        prefillTitle: 'Week 3 Reflection',
+      }),
+    );
+  });
+
+  it('does not surface an already-answered weekly prompt', async () => {
+    mockPromptCurrent.mockResolvedValue(prompt({ has_responded: true }));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-shelf-empty');
+    expect(queryByTestId('journal-weekly-prompt')).toBeNull();
   });
 });

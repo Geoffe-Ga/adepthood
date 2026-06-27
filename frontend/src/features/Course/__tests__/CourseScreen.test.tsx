@@ -128,6 +128,10 @@ jest.mock('../../../navigation/hooks', () => ({
   useAppRoute: () => ({ key: 'Course-test', name: 'Course', params: undefined }),
   useAppNavigation: () => ({ navigate: mockNavigate }),
 }));
+// The reflect action now pushes the root-stack JournalEntry via useNavigation.
+jest.mock('@react-navigation/native', () => ({
+  useNavigation: () => ({ navigate: mockNavigate }),
+}));
 
 jest.mock('react-native-safe-area-context', () => {
   const React = require('react');
@@ -327,10 +331,9 @@ describe('CourseScreen', () => {
       fireEvent.press(getByTestId('reflect-button'));
     });
 
-    expect(mockNavigate).toHaveBeenCalledWith('Journal', {
-      tag: 'stage_reflection',
-      stageNumber: 2,
-      contentTitle: 'Welcome Essay',
-    });
+    expect(mockNavigate).toHaveBeenCalledWith(
+      'JournalEntry',
+      expect.objectContaining({ prefillTitle: 'Stage 2 reflection — Welcome Essay' }),
+    );
   });
 });

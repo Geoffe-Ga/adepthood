@@ -26,7 +26,7 @@ import MarginNote from './MarginNote';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import { useResonance } from './useResonance';
 
-import { journal } from '@/api';
+import { journal, prompts } from '@/api';
 import type { EntryStatus, JournalMessage, Marginalia } from '@/api';
 import { colors } from '@/design/tokens';
 import { useIdle } from '@/hooks/useIdle';
@@ -60,15 +60,43 @@ function savedHintLabel(state: SaveState): string {
   return ' ';
 }
 
+/**
+ * What context this entry is being written into. A ``weekNumber`` makes it a
+ * weekly-prompt response (recorded via the prompt endpoint, which creates the
+ * journal entry server-side — so we never also ``journal.create``); the practice
+ * ids link a session/stage reflection to its source.
+ */
+export interface SaveContext {
+  weekNumber?: number;
+  practiceSessionId?: number;
+  userPracticeId?: number;
+}
+
 /** Create on first save, then update; title is optional and saved separately. */
 async function writeEntry(
   entryIdRef: React.MutableRefObject<number | null>,
   title: string,
   body: string,
+  ctx: SaveContext,
+  respondedRef: React.MutableRefObject<boolean>,
 ): Promise<void> {
+  // Weekly-prompt mode: the respond endpoint persists the entry itself, so we
+  // submit exactly once and never pair it with journal.create (no double-create).
+  if (ctx.weekNumber != null) {
+    if (respondedRef.current) return;
+    await prompts.respond(ctx.weekNumber, body);
+    respondedRef.current = true;
+    return;
+  }
   const trimmedTitle = title.trim() ? title : null;
   if (entryIdRef.current == null) {
-    const created = await journal.create({ message: body });
+    // Only attach context keys when present, so a plain entry's payload stays
+    // exactly { message } rather than carrying explicit nulls.
+    const created = await journal.create({
+      message: body,
+      ...(ctx.practiceSessionId != null && { practice_session_id: ctx.practiceSessionId }),
+      ...(ctx.userPracticeId != null && { user_practice_id: ctx.userPracticeId }),
+    });
     entryIdRef.current = created.id;
     if (trimmedTitle != null) {
       await journal.update(created.id, { title: trimmedTitle, status: 'draft' });
@@ -112,29 +140,43 @@ function useEntryLoadEffect(
   }, [routeEntryId, apply]);
 }
 
-/** Debounced create-then-update draft saver; tracks the save state. */
-function useDebouncedSave(routeEntryId: number | null, delayMs: number, onSaved?: () => void) {
-  const [saveState, setSaveState] = useState<SaveState>('idle');
-  const entryIdRef = useRef<number | null>(routeEntryId);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Ref so a non-memoised callback doesn't churn the save callbacks below.
-  const onSavedRef = useRef(onSaved);
-  useEffect(() => {
-    onSavedRef.current = onSaved;
-  }, [onSaved]);
-
+/** Clear a pending timeout on unmount. */
+function useTimerCleanup(timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>) {
   useEffect(
     () => () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     },
-    [],
+    [timerRef],
   );
+}
+
+/** Debounced create-then-update draft saver; tracks the save state. */
+function useDebouncedSave(
+  routeEntryId: number | null,
+  delayMs: number,
+  ctx: SaveContext,
+  onSaved?: () => void,
+) {
+  const [saveState, setSaveState] = useState<SaveState>('idle');
+  const entryIdRef = useRef<number | null>(routeEntryId);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A weekly-prompt response is write-once; this guards against the debounce or
+  // flush submitting it twice (the backend 409s on a duplicate week).
+  const respondedRef = useRef(false);
+  // Refs so non-memoised inputs don't churn the save callbacks below.
+  const onSavedRef = useRef(onSaved);
+  const ctxRef = useRef(ctx);
+  useEffect(() => {
+    onSavedRef.current = onSaved;
+    ctxRef.current = ctx;
+  });
+  useTimerCleanup(timerRef);
 
   const run = useCallback(async (title: string, body: string): Promise<void> => {
     if (!body.trim()) return; // never persist an empty draft
     setSaveState('saving');
     try {
-      await writeEntry(entryIdRef, title, body);
+      await writeEntry(entryIdRef, title, body, ctxRef.current, respondedRef);
       setSaveState('saved');
       onSavedRef.current?.();
     } catch {
@@ -166,20 +208,50 @@ function useDebouncedSave(routeEntryId: number | null, delayMs: number, onSaved?
   return { saveState, save, flush };
 }
 
+type StrRef = React.MutableRefObject<string>;
+
+/** Referentially-stable change handlers; each save reads the other field's ref. */
+function useFieldHandlers(
+  titleRef: StrRef,
+  bodyRef: StrRef,
+  save: (_t: string, _b: string) => void,
+  setTitle: (_v: string) => void,
+  setBody: (_v: string) => void,
+) {
+  const onChangeTitle = useCallback(
+    (next: string) => {
+      titleRef.current = next;
+      setTitle(next);
+      save(next, bodyRef.current);
+    },
+    [titleRef, bodyRef, save, setTitle],
+  );
+  const onChangeBody = useCallback(
+    (next: string) => {
+      bodyRef.current = next;
+      setBody(next);
+      save(titleRef.current, next);
+    },
+    [titleRef, bodyRef, save, setBody],
+  );
+  return { onChangeTitle, onChangeBody };
+}
+
 /** Owns the entry's text + debounced draft autosave (create-then-update). */
 function useJournalAutosave(
   routeEntryId: number | null,
   delayMs: number,
+  ctx: SaveContext,
+  initialTitle: string,
   onSaved?: () => void,
 ): AutosaveApi {
-  const [title, setTitle] = useState('');
+  const [title, setTitle] = useState(initialTitle);
   const [body, setBody] = useState('');
   const [status, setStatus] = useState<EntryStatus>('draft');
-  // Refs mirror the latest text so the change handlers can stay referentially
-  // stable (each save needs the *other* field's current value).
-  const titleRef = useRef('');
+  // Refs mirror the latest text so the change handlers stay referentially stable.
+  const titleRef = useRef(initialTitle);
   const bodyRef = useRef('');
-  const { saveState, save, flush } = useDebouncedSave(routeEntryId, delayMs, onSaved);
+  const { saveState, save, flush } = useDebouncedSave(routeEntryId, delayMs, ctx, onSaved);
 
   useEntryLoadEffect(
     routeEntryId,
@@ -192,23 +264,13 @@ function useJournalAutosave(
     }, []),
   );
 
-  const onChangeTitle = useCallback(
-    (next: string) => {
-      titleRef.current = next;
-      setTitle(next);
-      save(next, bodyRef.current);
-    },
-    [save],
+  const { onChangeTitle, onChangeBody } = useFieldHandlers(
+    titleRef,
+    bodyRef,
+    save,
+    setTitle,
+    setBody,
   );
-  const onChangeBody = useCallback(
-    (next: string) => {
-      bodyRef.current = next;
-      setBody(next);
-      save(titleRef.current, next);
-    },
-    [save],
-  );
-
   const flushNow = useCallback(() => flush(titleRef.current, bodyRef.current), [flush]);
 
   return {
@@ -230,6 +292,7 @@ interface WritingColumnProps {
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
   onFinish?: () => void;
+  bodyPlaceholder?: string;
 }
 
 /** Quiet control to mark a draft finished. */
@@ -254,6 +317,7 @@ function WritingColumn({
   onChangeTitle,
   onChangeBody,
   onFinish,
+  bodyPlaceholder = 'Begin writing…',
 }: WritingColumnProps) {
   return (
     <ScrollView
@@ -275,7 +339,7 @@ function WritingColumn({
         style={styles.bodyInput}
         value={body}
         onChangeText={onChangeBody}
-        placeholder="Begin writing…"
+        placeholder={bodyPlaceholder}
         placeholderTextColor={colors.paper.inkSoft}
         multiline
         // The outer ScrollView owns scrolling so the field grows freely and long
@@ -432,39 +496,8 @@ function useEditGate({ status, setStatus, flush, body, navigation, onConfirmEdit
   };
 }
 
-/** Compose the autosave + idle + resonance hooks into the screen's view-model. */
-function useJournalEntryController(
-  routeEntryId: number | null,
-  autosaveDelayMs: number,
-  navigation: ScreenNavigation,
-) {
-  const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
-  const pendingRefreshRef = useRef(false);
-  // After the first save following an edit, re-read the (re-anchored/staled) notes.
-  const handleSaved = useCallback(() => {
-    if (!pendingRefreshRef.current) return;
-    pendingRefreshRef.current = false;
-    void refreshRef.current();
-  }, []);
-  const onConfirmEdit = useCallback(() => {
-    pendingRefreshRef.current = true;
-  }, []);
-
-  const autosave = useJournalAutosave(routeEntryId, autosaveDelayMs, handleSaved);
-  const { isIdle, bump } = useIdle();
-  const resonance = useResonance({ routeEntryId, flush: autosave.flush });
-  refreshRef.current = resonance.refresh;
-
-  const modal = useEssayModal(resonance.updateNote);
-  const editGate = useEditGate({
-    status: autosave.status,
-    setStatus: autosave.setStatus,
-    flush: autosave.flush,
-    body: autosave.body,
-    navigation,
-    onConfirmEdit,
-  });
-
+/** Wrap the autosave change handlers so each keystroke also bumps the idle timer. */
+function useBumpedHandlers(bump: () => void, autosave: AutosaveApi) {
   const { onChangeTitle, onChangeBody } = autosave;
   const handleTitle = useCallback(
     (t: string) => {
@@ -480,8 +513,58 @@ function useJournalEntryController(
     },
     [bump, onChangeBody],
   );
+  return { handleTitle, handleBody };
+}
+
+/** Compose the autosave + idle + resonance hooks into the screen's view-model. */
+function useJournalEntryController(
+  routeEntryId: number | null,
+  autosaveDelayMs: number,
+  navigation: ScreenNavigation,
+  ctx: SaveContext,
+  initialTitle: string,
+) {
+  const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const pendingRefreshRef = useRef(false);
+  // After the first save following an edit, re-read the (re-anchored/staled) notes.
+  const handleSaved = useCallback(() => {
+    if (!pendingRefreshRef.current) return;
+    pendingRefreshRef.current = false;
+    void refreshRef.current();
+  }, []);
+  const onConfirmEdit = useCallback(() => {
+    pendingRefreshRef.current = true;
+  }, []);
+
+  const autosave = useJournalAutosave(
+    routeEntryId,
+    autosaveDelayMs,
+    ctx,
+    initialTitle,
+    handleSaved,
+  );
+  const { isIdle, bump } = useIdle();
+  const resonance = useResonance({ routeEntryId, flush: autosave.flush });
+  refreshRef.current = resonance.refresh;
+
+  const modal = useEssayModal(resonance.updateNote);
+  const editGate = useEditGate({
+    status: autosave.status,
+    setStatus: autosave.setStatus,
+    flush: autosave.flush,
+    body: autosave.body,
+    navigation,
+    onConfirmEdit,
+  });
+
+  const { handleTitle, handleBody } = useBumpedHandlers(bump, autosave);
   const hasContent = autosave.body.trim().length > 0;
-  const visible = shouldShowResonance({ isIdle, hasContent, isLoading: resonance.loading });
+  // In weekly-prompt compose mode the entry is created by prompts.respond, which
+  // doesn't return a local id — so resonance can't run here. Hide the button; the
+  // reflection gains resonance normally once reopened from the shelf (with an id).
+  const isPromptCompose = ctx.weekNumber != null;
+  const visible =
+    !isPromptCompose && shouldShowResonance({ isIdle, hasContent, isLoading: resonance.loading });
 
   return { autosave, resonance, isIdle, visible, handleTitle, handleBody, modal, editGate };
 }
@@ -492,9 +575,11 @@ type Controller = ReturnType<typeof useJournalEntryController>;
 function JournalPage({
   ctl,
   renderMargin,
+  bodyPlaceholder,
 }: {
   ctl: Controller;
   renderMargin?: JournalEntryScreenProps['renderMargin'];
+  bodyPlaceholder: string;
 }) {
   const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
   const { title, body, saveState } = ctl.autosave;
@@ -517,6 +602,7 @@ function JournalPage({
           onChangeTitle={ctl.handleTitle}
           onChangeBody={ctl.handleBody}
           onFinish={canFinish ? markFinished : undefined}
+          bodyPlaceholder={bodyPlaceholder}
         />
       ) : (
         <ReadColumn
@@ -537,17 +623,46 @@ function JournalPage({
   );
 }
 
+interface EntryEntrypoint {
+  ctx: SaveContext;
+  initialTitle: string;
+  bodyPlaceholder: string;
+}
+
+/** Translate the route params into the save context + pre-filled title/placeholder. */
+function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntrypoint {
+  const p = params ?? {};
+  const initialTitle =
+    p.prefillTitle ?? (p.weekNumber != null ? `Week ${p.weekNumber} Reflection` : '');
+  return {
+    ctx: {
+      weekNumber: p.weekNumber,
+      practiceSessionId: p.practiceSessionId,
+      userPracticeId: p.userPracticeId,
+    },
+    initialTitle,
+    bodyPlaceholder: p.promptQuestion ?? 'Begin writing…',
+  };
+}
+
 function JournalEntryScreen({
   route,
   navigation,
   renderMargin,
   autosaveDelayMs = AUTOSAVE_DELAY_MS,
 }: JournalEntryScreenProps): React.JSX.Element {
-  const ctl = useJournalEntryController(route.params?.entryId ?? null, autosaveDelayMs, navigation);
+  const { ctx, initialTitle, bodyPlaceholder } = readEntrypoint(route.params);
+  const ctl = useJournalEntryController(
+    route.params?.entryId ?? null,
+    autosaveDelayMs,
+    navigation,
+    ctx,
+    initialTitle,
+  );
   const { editGate, modal } = ctl;
   return (
     <SafeAreaView style={styles.safeArea}>
-      <JournalPage ctl={ctl} renderMargin={renderMargin} />
+      <JournalPage ctl={ctl} renderMargin={renderMargin} bodyPlaceholder={bodyPlaceholder} />
       <GetResonanceButton
         visible={ctl.visible}
         loading={ctl.resonance.loading}

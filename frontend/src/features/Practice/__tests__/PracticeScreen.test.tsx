@@ -605,13 +605,12 @@ describe('PracticeScreen', () => {
       fireEvent.press(getByTestId('insight-journal'));
     });
     await waitFor(() => {
-      expect(mockNavigate).toHaveBeenCalledWith(
-        'Journal',
+      expect(mockRootNavigate).toHaveBeenCalledWith(
+        'JournalEntry',
         expect.objectContaining({
-          tag: 'practice_note',
           practiceSessionId: 100,
           userPracticeId: 10,
-          practiceName: 'Breath Awareness',
+          prefillTitle: 'After Breath Awareness',
         }),
       );
     });
