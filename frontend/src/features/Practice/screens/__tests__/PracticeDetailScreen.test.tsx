@@ -49,6 +49,15 @@ jest.mock('@/api', () => ({
   },
 }));
 
+// Stub the ShareSheet — its mint/revoke behaviour is covered by its own test;
+// here we only assert the Share action mounts it (visible).
+jest.mock('@/features/Practice/components/ShareSheet', () => {
+  const { Text } = require('react-native');
+  const Stub = ({ visible }: { visible: boolean }) =>
+    visible ? <Text testID="share-sheet">share-sheet</Text> : null;
+  return { __esModule: true, default: Stub };
+});
+
 const { PracticeDetailScreen } = require('../PracticeDetailScreen');
 
 interface NavMock {
@@ -162,6 +171,15 @@ describe('PracticeDetailScreen — Use for stage', () => {
       stage_number: 4,
     });
     expect(view.getByTestId('practice-detail-assigned-banner')).toBeTruthy();
+  });
+
+  it('opens the share sheet from the Share action', async () => {
+    mockPracticesGet.mockResolvedValueOnce(samplePractice);
+    const { view } = renderScreen();
+    await waitForLoad();
+    expect(view.queryByTestId('share-sheet')).toBeNull();
+    fireEvent.press(view.getByTestId('practice-detail-share'));
+    expect(view.getByTestId('share-sheet')).toBeTruthy();
   });
 
   it('surfaces an action error if assignment fails', async () => {
