@@ -1,9 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-import { colors } from '../../design/tokens';
-
-import styles from './Journal.styles';
+import { colors, radius, SPACING } from '../../design/tokens';
 
 const DEBOUNCE_DELAY_MS = 300;
 
@@ -140,5 +138,66 @@ const SearchBar = ({ onSearch, resultCount, searchQuery }: SearchBarProps): Reac
     />
   );
 };
+
+const styles = StyleSheet.create({
+  searchBarCollapsed: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs,
+  },
+  searchBarExpanded: {
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs,
+  },
+  searchInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  searchToggle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.background.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchIcon: {
+    fontSize: 16,
+    color: colors.text.secondary,
+    fontWeight: '600',
+  },
+  searchTextInput: {
+    flex: 1,
+    marginHorizontal: SPACING.sm,
+    height: 36,
+    paddingHorizontal: SPACING.md,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background.card,
+    fontSize: 14,
+    color: colors.text.primary,
+  },
+  searchClear: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.background.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchClearText: {
+    fontSize: 14,
+    color: colors.text.secondary,
+    fontWeight: '600',
+  },
+  searchResultCount: {
+    fontSize: 12,
+    color: colors.text.tertiary,
+    marginTop: SPACING.xs,
+    marginLeft: 44,
+  },
+});
 
 export default SearchBar;
