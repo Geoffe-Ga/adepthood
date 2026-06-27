@@ -77,6 +77,10 @@ class JournalEntry(SQLModel, table=True):
     # write boundary by JournalMessageCreate / JournalBotMessageCreate
     # (max_length=JOURNAL_MESSAGE_MAX_LENGTH) plus the router's sanitizer.
     message: str = Field(sa_column=Column(EncryptedString(), nullable=False))
+    # Long-form page metadata: an optional title and a draft/finished lifecycle.
+    # ``message`` remains the body. ``updated_at`` tracks the last edit.
+    title: str | None = Field(default=None, max_length=200)
+    status: str = Field(default=EntryStatus.DRAFT, max_length=20)
     sender: str = Field(max_length=10)  # 'user' or 'bot'
     user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
     tag: str = Field(default=JournalTag.FREEFORM, max_length=50)
@@ -86,6 +90,14 @@ class JournalEntry(SQLModel, table=True):
     deleted_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_column=Column(
+            DateTime(timezone=True),
+            nullable=False,
+            onupdate=lambda: datetime.now(UTC),
+        ),
     )
     user: "User" = Relationship(back_populates="journals")
     marginalia: list["Marginalia"] = Relationship(

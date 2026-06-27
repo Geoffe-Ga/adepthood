@@ -46,9 +46,12 @@ class JournalMessageResponse(BaseModel):
     """
 
     id: int
+    title: str | None
     message: str
+    status: str
     sender: str
     timestamp: datetime
+    updated_at: datetime
     tag: str
     practice_session_id: int | None
     user_practice_id: int | None
