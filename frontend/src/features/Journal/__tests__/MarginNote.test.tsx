@@ -2,10 +2,12 @@
 import { jest, describe, it, expect } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import MarginNote from '../MarginNote';
 
 import type { Marginalia } from '@/api';
+import { colors } from '@/design/tokens';
 
 function note(overrides: Partial<Marginalia> = {}): Marginalia {
   return {
@@ -50,6 +52,20 @@ describe('MarginNote', () => {
       : card.props.style;
     expect(flattened.opacity).toBeLessThan(1);
     expect(getByText(/The passage this noted has changed/)).toBeTruthy();
+  });
+
+  it('lifts the card off the page and colour-codes the left bar by kind', () => {
+    for (const kind of ['theme', 'connection'] as const) {
+      const { getByTestId } = render(
+        <MarginNote note={note({ id: 20, kind })} onOpen={jest.fn()} />,
+      );
+      const card = StyleSheet.flatten(getByTestId('margin-note-20').props.style);
+      // Lifted by the warm paper card shadow (iOS/web shadow + Android elevation).
+      expect(card.shadowRadius).toBeGreaterThan(0);
+      expect(card.elevation).toBeGreaterThan(0);
+      // The left bar carries the note's kind accent.
+      expect(card.borderLeftColor).toBe(colors.marginalia[kind]);
+    }
   });
 
   it('a stale note is still openable', () => {
