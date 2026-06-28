@@ -2,6 +2,9 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
+
+import { RESONANCE_BUTTON_CLEARANCE } from '../JournalEntry.styles';
 
 import type { JournalMessage } from '@/api';
 
@@ -143,6 +146,12 @@ describe('JournalEntryScreen', () => {
     const { getByTestId } = renderScreen(undefined, { renderMargin });
     expect(getByTestId('journal-margin-column')).toBeTruthy();
     expect(renderMargin).toHaveBeenCalled();
+  });
+
+  it('reserves bottom clearance so the floating Get Resonance button never overlaps content', () => {
+    const { getByTestId } = renderScreen();
+    const page = StyleSheet.flatten(getByTestId('journal-page').props.style);
+    expect(page.paddingBottom).toBe(RESONANCE_BUTTON_CLEARANCE);
   });
 
   it('autosaves once after the debounce when the body changes', async () => {
