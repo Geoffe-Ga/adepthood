@@ -67,3 +67,13 @@ class SiteResourceResponse(BaseModel):
     title: str
     description: str
     url: str
+
+
+class StageIntroResponse(BaseModel):
+    """Metadata for a stage's course introduction (body fetched separately)."""
+
+    stage: int
+    id: str
+    slug: str
+    title: str
+    summary: str | None

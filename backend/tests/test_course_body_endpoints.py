@@ -40,7 +40,7 @@ from services.content_repository import (
 # --------------------------------------------------------------------------- #
 
 _MANIFEST: dict[str, Any] = {
-    "schema_version": "1.0.0",
+    "schema_version": "1.1.0",
     "chapters": [
         {
             "id": "beige-1",
@@ -79,6 +79,23 @@ _MANIFEST: dict[str, Any] = {
             "path": "markdown/site/aptitude-stages.md",
         },
     ],
+    "stage_intros": [
+        {
+            "stage": 1,
+            "id": "beige-intro",
+            "slug": "beige-introduction",
+            "title": "Welcome to Beige",
+            "path": "markdown/01-beige/00-introduction.md",
+            "summary": "What Beige is about.",
+        },
+        {
+            "stage": 2,
+            "id": "purple-intro",
+            "slug": "purple-introduction",
+            "title": "Welcome to Purple",
+            "path": "markdown/02-purple/00-introduction.md",
+        },
+    ],
 }
 
 
@@ -96,6 +113,10 @@ def content_dir(tmp_path: Path) -> Iterator[Path]:
         md = root / resource["path"]
         md.parent.mkdir(parents=True, exist_ok=True)
         md.write_text(f"# {resource['title']}\n")
+    for intro in _MANIFEST["stage_intros"]:
+        md = root / intro["path"]
+        md.parent.mkdir(parents=True, exist_ok=True)
+        md.write_text(f"# {intro['title']}\n\nIntro body for stage {intro['stage']}.\n")
     set_content_repository_for_tests(ContentRepository(root))
     yield root
     reset_content_repository_for_tests()
@@ -398,5 +419,107 @@ async def test_site_resource_body_502_when_markdown_file_missing(
     headers = await _signup(async_client, "rsbad")
     (content_dir / "markdown/site/aptitude-stages.md").unlink()
     resp = await async_client.get("/course/site-resources/aptitude-stages/body", headers=headers)
+    assert resp.status_code == HTTPStatus.BAD_GATEWAY
+    assert resp.json()["detail"] == "content_unavailable"
+
+
+# --------------------------------------------------------------------------- #
+# /course/stages/{n}/intro (+ /body) — stage introductions                     #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("content_dir")
+async def test_stage_intro_metadata_and_body_for_unlocked_stage(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An unlocked stage serves its intro metadata and Markdown body."""
+    headers, user_id = await _signup_with_id(async_client, "introreader")
+    await _seed_stage_with_content(db_session, stage_number=1)
+    await _set_user_stage(db_session, user_id, stage_number=1, days_ago=1)
+
+    meta = await async_client.get("/course/stages/1/intro", headers=headers)
+    assert meta.status_code == HTTPStatus.OK
+    assert meta.json() == {
+        "stage": 1,
+        "id": "beige-intro",
+        "slug": "beige-introduction",
+        "title": "Welcome to Beige",
+        "summary": "What Beige is about.",
+    }
+
+    body = await async_client.get("/course/stages/1/intro/body", headers=headers)
+    assert body.status_code == HTTPStatus.OK
+    payload = body.json()
+    assert payload["body_markdown"].startswith("# Welcome to Beige")
+    assert payload["title"] == "Welcome to Beige"
+    assert payload["content_type"] == "introduction"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("content_dir")
+async def test_stage_intro_locked_stage_is_masked_as_not_found(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A locked stage's intro (which exists) is indistinguishable from absent."""
+    headers, user_id = await _signup_with_id(async_client, "introlocked")
+    await _seed_stage_with_content(db_session, stage_number=1)
+    await _seed_stage_with_content(db_session, stage_number=2, title="Tribal Rhythm")
+    await _set_user_stage(db_session, user_id, stage_number=1, days_ago=1)
+
+    for path in ("/course/stages/2/intro", "/course/stages/2/intro/body"):
+        resp = await async_client.get(path, headers=headers)
+        assert resp.status_code == HTTPStatus.NOT_FOUND
+        assert resp.json()["detail"] == "content_not_found"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("content_dir")
+async def test_stage_intro_unlocked_stage_without_intro_is_not_found(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An unlocked stage with no manifest intro returns content_not_found."""
+    headers, user_id = await _signup_with_id(async_client, "introless")
+    await _seed_stage_with_content(db_session, stage_number=3)
+    await _set_user_stage(db_session, user_id, stage_number=3, days_ago=1)
+
+    resp = await async_client.get("/course/stages/3/intro", headers=headers)
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "content_not_found"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("content_dir")
+async def test_stage_intro_unknown_stage_is_not_found(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A stage with no CourseStage row is a plain stage 404."""
+    headers, user_id = await _signup_with_id(async_client, "introghost")
+    await _set_user_stage(db_session, user_id, stage_number=1, days_ago=1)
+
+    resp = await async_client.get("/course/stages/999/intro", headers=headers)
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "stage_not_found"
+
+
+@pytest.mark.asyncio
+async def test_stage_intro_requires_auth(async_client: AsyncClient) -> None:
+    """Both intro endpoints require authentication."""
+    for path in ("/course/stages/1/intro", "/course/stages/1/intro/body"):
+        resp = await async_client.get(path)
+        assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_stage_intro_body_502_when_markdown_file_missing(
+    async_client: AsyncClient, db_session: AsyncSession, content_dir: Path
+) -> None:
+    """A manifest-listed intro whose file is gone is a server bug — 502."""
+    headers, user_id = await _signup_with_id(async_client, "introtorn")
+    await _seed_stage_with_content(db_session, stage_number=1)
+    await _set_user_stage(db_session, user_id, stage_number=1, days_ago=1)
+    (content_dir / "markdown/01-beige/00-introduction.md").unlink()
+
+    resp = await async_client.get("/course/stages/1/intro/body", headers=headers)
     assert resp.status_code == HTTPStatus.BAD_GATEWAY
     assert resp.json()["detail"] == "content_unavailable"
