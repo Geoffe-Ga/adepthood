@@ -63,6 +63,14 @@ GITHUB_API = "https://api.github.com"
 DISCORD_API = "https://discord.com/api/v10"
 # Discord embed accent — a Ralph-purple.
 EMBED_COLOR = 0x7C3AED
+# Zero-width space — a non-empty Discord field value that renders as blank, used
+# to turn a field into a header-only line.
+BLANK = "​"
+# Section headers. Discord can't size text, so uppercase + a trailing heavy rule
+# is what makes these read as section breaks rather than another bold field label.
+_RULE = "━" * 6
+THIS_PR_HEADER = f"📌  THIS PR  {_RULE}"
+LOOP_HEADER = f"📊  THE LOOP · 7D + ALL-TIME  {_RULE}"
 # The windowed stats (iterations, time-to-merge, tick cadence, busiest day) cover
 # this trailing span so they move with recent activity, not a frozen all-time average.
 RECENT_WINDOW_DAYS = 7
@@ -470,14 +478,19 @@ def _render_embed(
     footprint = f"+{latest_churn['additions']} / -{latest_churn['deletions']} across {latest_churn['files']} file(s)"
 
     fields = [
+        # A blank field is a Discord spacer; it puts a padding line above each
+        # section header so the blocks breathe instead of butting up against the
+        # field before them.
+        {"name": BLANK, "value": BLANK, "inline": False},
         {
-            "name": "📌 This PR",
+            "name": THIS_PR_HEADER,
             "value": f"*{headline}*\n[#{pr_number} — {latest.get('title', '')}]({pr_url})",
             "inline": False,
         },
         {"name": "⏱️ Time to merge", "value": _this_pr_time_line(latest_ttm_hours, latest_tick_hours), "inline": True},
         {"name": "🧮 Footprint", "value": footprint, "inline": True},
-        {"name": "​", "value": "**📊 The loop · rolling 7 days + all-time**", "inline": False},
+        {"name": BLANK, "value": BLANK, "inline": False},
+        {"name": LOOP_HEADER, "value": BLANK, "inline": False},
         {
             "name": "📦 PRs merged",
             "value": f"**{total_merged}** all-time · {int(rate['last_24h'])} in 24h · {int(rate['last_7_days'])} in 7d",
