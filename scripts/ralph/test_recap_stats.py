@@ -201,3 +201,89 @@ def test_count_open_backlog_respects_env_override(monkeypatch: pytest.MonkeyPatc
     ]
     _patch_issues(monkeypatch, issues)
     assert recap.count_open_backlog("owner/repo", token="t") == 2
+
+
+# ---------- _heuristic_headline ----------
+
+
+def test_heuristic_headline_strips_conventional_prefix() -> None:
+    assert recap._heuristic_headline("feat(backend): add the energy ledger") == "add the energy ledger"
+
+
+def test_heuristic_headline_clips_to_ten_words() -> None:
+    headline = recap._heuristic_headline("one two three four five six seven eight nine ten eleven")
+    assert headline == "one two three four five six seven eight nine ten"
+
+
+def test_heuristic_headline_blank_title_falls_back() -> None:
+    assert recap._heuristic_headline("   ") == "Latest change merged into the tick loop"
+
+
+# ---------- generate_headline ----------
+
+
+class _Block:
+    def __init__(self, text: str, kind: str = "text") -> None:
+        self.text = text
+        self.type = kind
+
+
+class _Response:
+    def __init__(self, blocks: list[_Block]) -> None:
+        self.content = blocks
+
+
+class _FakeAnthropic:
+    """Minimal stand-in for the anthropic SDK that records create() kwargs."""
+
+    last_kwargs: dict[str, Any] = {}
+
+    class _Client:
+        def __init__(self) -> None:
+            self.messages = _FakeAnthropic._Messages()
+
+    class _Messages:
+        def create(self, **kwargs: Any) -> _Response:
+            _FakeAnthropic.last_kwargs = kwargs
+            return _Response([_Block("Energy ledger now powers daily streaks")])
+
+    def Anthropic(self) -> "_FakeAnthropic._Client":  # noqa: N802 - mirrors the SDK's class name
+        return _FakeAnthropic._Client()
+
+
+def test_generate_headline_uses_sdk_and_passes_low_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeAnthropic()
+    _FakeAnthropic.last_kwargs = {}
+    monkeypatch.setattr(recap, "_anthropic_mod", fake)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")  # pragma: allowlist secret
+
+    headline = recap.generate_headline("feat: add energy ledger", "Body text")
+
+    assert headline == "Energy ledger now powers daily streaks"
+    assert _FakeAnthropic.last_kwargs["model"] == recap.HEADLINE_MODEL
+    assert _FakeAnthropic.last_kwargs["output_config"] == {"effort": "low"}
+
+
+def test_generate_headline_falls_back_when_no_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(recap, "_anthropic_mod", _FakeAnthropic())
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    assert recap.generate_headline("feat: add energy ledger", "Body") == "add energy ledger"
+
+
+def test_generate_headline_falls_back_when_sdk_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(recap, "_anthropic_mod", None)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")  # pragma: allowlist secret
+
+    assert recap.generate_headline("feat: add energy ledger", "Body") == "add energy ledger"
+
+
+def test_generate_headline_falls_back_on_sdk_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Boom:
+        def Anthropic(self) -> object:  # noqa: N802 - mirrors the SDK's class name
+            raise RuntimeError("api down")
+
+    monkeypatch.setattr(recap, "_anthropic_mod", _Boom())
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")  # pragma: allowlist secret
+
+    assert recap.generate_headline("feat: add energy ledger", "Body") == "add energy ledger"

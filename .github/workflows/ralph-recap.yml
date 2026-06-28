@@ -32,7 +32,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install Anthropic SDK (for the headline)
-        run: pip install anthropic
+        # Pinned floor guarantees the installed SDK supports output_config /
+        # effort (used by generate_headline); a fresh install resolves to the
+        # newest release in range.
+        run: pip install 'anthropic>=0.69,<1'
 
       - name: Post Ralph recap to Discord
         env:

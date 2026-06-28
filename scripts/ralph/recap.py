@@ -221,7 +221,9 @@ def _heuristic_headline(title: str) -> str:
     cleaned = title.strip()
     for prefix in ("feat:", "feat(", "fix:", "chore:", "refactor:", "docs:"):
         if cleaned.lower().startswith(prefix):
-            cleaned = cleaned.split(":", 1)[-1].strip() if ":" in cleaned else cleaned
+            # split on the first ":" if present; a prefix with no colon (rare)
+            # leaves the title unchanged since split returns the whole string.
+            cleaned = cleaned.split(":", 1)[-1].strip()
             break
     words = cleaned.split()
     return " ".join(words[:10]) if words else "Latest change merged into the tick loop"
