@@ -9,6 +9,7 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Animated,
   ScrollView,
   Text,
   TextInput,
@@ -23,6 +24,7 @@ import GetResonanceButton, { shouldShowResonance } from './GetResonanceButton';
 import HighlightedBody from './HighlightedBody';
 import styles from './JournalEntry.styles';
 import MarginNote from './MarginNote';
+import { useSettleIn } from './motion';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import { useResonance } from './useResonance';
 
@@ -30,6 +32,7 @@ import { journal, prompts } from '@/api';
 import type { EntryStatus, JournalMessage, Marginalia } from '@/api';
 import { colors } from '@/design/tokens';
 import { useIdle } from '@/hooks/useIdle';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 /** Default idle delay before an edit is persisted. */
@@ -607,6 +610,7 @@ function JournalPage({
   bodyPlaceholder: string;
 }) {
   const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
+  const settle = useSettleIn(useReducedMotion());
   const notes = ctl.resonance.marginalia;
 
   let marginContent: React.ReactNode;
@@ -617,7 +621,10 @@ function JournalPage({
 
   return (
     <View style={styles.desk}>
-      <View style={[styles.sheet, narrow && styles.sheetNarrow]} testID="journal-sheet">
+      <Animated.View
+        style={[styles.sheet, narrow && styles.sheetNarrow, settle]}
+        testID="journal-sheet"
+      >
         <View style={[styles.page, narrow && styles.pageNarrow]} testID="journal-page">
           <PageBodyColumn ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
           <View
@@ -627,7 +634,7 @@ function JournalPage({
             {marginContent}
           </View>
         </View>
-      </View>
+      </Animated.View>
     </View>
   );
 }
