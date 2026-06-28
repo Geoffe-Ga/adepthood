@@ -12,11 +12,11 @@ on:
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
+    # Skip Dependabot PRs: GitHub does not expose Actions secrets (incl.
+    # CLAUDE_CODE_OAUTH_TOKEN) to dependabot-triggered runs, so the action would
+    # hard-fail before reviewing and block the PR's required check. Dependency
+    # bumps merge on green CI + human judgment instead.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
 
     runs-on: ubuntu-latest
     permissions:
