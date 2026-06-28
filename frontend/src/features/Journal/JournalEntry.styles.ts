@@ -46,6 +46,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.paper.background,
     borderTopLeftRadius: journalSheet.cornerRadius,
     borderTopRightRadius: journalSheet.cornerRadius,
+    // A barely-there lit paper edge so the lifted sheet catches light at its
+    // border (pairs with the shadow below; not a hard box outline).
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.paper.sheetEdge,
     ...paperShadow.sheet,
   },
   sheetNarrow: {
@@ -74,10 +80,20 @@ const styles = StyleSheet.create({
     width: journalLayout.marginColumnWidth,
     paddingLeft: journalLayout.marginNoteGap,
     paddingVertical: spacing(3),
+    // Faint page-margin rule between the writing column and the marginalia —
+    // intentionally hairline-light so it reads as a margin, not a divider.
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderLeftColor: colors.paper.hairline,
   },
   marginColumnNarrow: {
     width: '100%',
     paddingLeft: 0,
+    // When the marginalia stacks under the writing area, rule the top instead.
+    borderLeftWidth: 0,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.paper.hairline,
+    paddingTop: spacing(2),
+    marginTop: spacing(1),
   },
   titleInput: {
     ...editorialType.title,

@@ -167,6 +167,29 @@ describe('JournalEntryScreen', () => {
     expect(root.backgroundColor).toBe(colors.paper.desk);
   });
 
+  it('rules a faint vertical page-margin between the columns on wide screens', () => {
+    const { getByTestId } = renderScreen();
+    const margin = StyleSheet.flatten(getByTestId('journal-margin-column').props.style);
+    expect(margin.borderLeftWidth).toBeGreaterThan(0);
+    expect(margin.borderLeftColor).toBe(colors.paper.hairline);
+  });
+
+  it('moves the margin rule to the top when the marginalia stacks on narrow screens', () => {
+    const rn = require('react-native');
+    const spy = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 400, height: 800, scale: 2, fontScale: 1 });
+    try {
+      const { getByTestId } = renderScreen();
+      const margin = StyleSheet.flatten(getByTestId('journal-margin-column').props.style);
+      expect(margin.borderTopWidth).toBeGreaterThan(0);
+      expect(margin.borderLeftWidth).toBe(0);
+      expect(margin.borderTopColor).toBe(colors.paper.hairline);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('autosaves once after the debounce when the body changes', async () => {
     jest.useFakeTimers();
     try {
