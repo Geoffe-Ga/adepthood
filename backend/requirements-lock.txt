@@ -61,7 +61,7 @@ httpx==0.28.1
     #   -r backend/requirements.txt
     #   anthropic
     #   openai
-idna==3.11
+idna==3.18
     # via
     #   anyio
     #   email-validator
