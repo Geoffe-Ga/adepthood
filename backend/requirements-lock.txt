@@ -119,7 +119,7 @@ rpds-py==2026.5.1
     # via
     #   jsonschema
     #   referencing
-slowapi==0.1.9
+slowapi==0.1.10
     # via -r backend/requirements.txt
 sniffio==1.3.1
     # via
