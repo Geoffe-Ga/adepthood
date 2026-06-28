@@ -87,10 +87,8 @@ async def require_owned_journal_entry(
 
     BUG-JOURNAL-007: soft-deleted rows are treated as non-existent (404)
     so a user cannot GET or DELETE an entry they already deleted.
-    BUG-JOURNAL-006: the ownership check uses the identity-map result from
-    the primary-key lookup; a future refactor should push the ``user_id``
-    filter into the WHERE clause, but the existing pattern is preserved here
-    to avoid touching more files than Prompt 12B owns.
+    Another user's entry is also collapsed to 404 (not 403) so GET/DELETE match
+    PATCH's enumeration-safe contract — the cross-user probe is still audited.
     """
     result = await session.execute(
         select(JournalEntry).where(
@@ -103,7 +101,7 @@ async def require_owned_journal_entry(
         raise not_found("journal_entry")
     if entry.user_id != current_user:
         log_ownership_denied("journal_entry", entry_id, current_user)
-        raise forbidden("forbidden")
+        raise not_found("journal_entry")
     return entry
 
 

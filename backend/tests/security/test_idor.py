@@ -10,7 +10,9 @@ Per the BUG-T7 remediation (prompt ``07-normalize-idor-ordering``):
 
 - Genuinely missing rows still 404 (sibling tests in each
   ``test_<resource>_api.py``).
-- Rows that exist but belong to another user 403, never 404.
+- Rows that exist but belong to another user 403, never 404 — EXCEPT the
+  enumeration-safe resources (goals, marginalia, and journal entries) which
+  deliberately collapse the cross-user branch to 404 on every method.
 - Course content is a shared catalog rather than a per-user resource;
   its enumeration oracle (BUG-COURSE-004) is closed by masking the
   locked branch as 404 instead.  That mask is asserted in
@@ -203,8 +205,11 @@ async def test_idor_habit_stats_returns_403(async_client: AsyncClient) -> None:
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
+# Journal entries are the deliberate exception to the 403-everywhere rule: GET,
+# DELETE, and PATCH all collapse a cross-user probe to 404 (enumeration-safe),
+# matching the goal/marginalia contract.
 @pytest.mark.asyncio
-async def test_idor_journal_entry_get_returns_403(async_client: AsyncClient) -> None:
+async def test_idor_journal_entry_get_returns_404(async_client: AsyncClient) -> None:
     alice_headers, _ = await _signup(async_client, "alice_j_get")
     bob_headers, _ = await _signup(async_client, "bob_j_get")
 
@@ -214,11 +219,11 @@ async def test_idor_journal_entry_get_returns_403(async_client: AsyncClient) -> 
     entry_id = create.json()["id"]
 
     resp = await async_client.get(f"/journal/{entry_id}", headers=bob_headers)
-    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 @pytest.mark.asyncio
-async def test_idor_journal_entry_delete_returns_403(async_client: AsyncClient) -> None:
+async def test_idor_journal_entry_delete_returns_404(async_client: AsyncClient) -> None:
     alice_headers, _ = await _signup(async_client, "alice_j_del")
     bob_headers, _ = await _signup(async_client, "bob_j_del")
 
@@ -228,7 +233,7 @@ async def test_idor_journal_entry_delete_returns_403(async_client: AsyncClient) 
     entry_id = create.json()["id"]
 
     resp = await async_client.delete(f"/journal/{entry_id}", headers=bob_headers)
-    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 @pytest.mark.asyncio

@@ -223,8 +223,9 @@ async def get_journal_entry(
 ) -> JournalEntry:
     """Return a single journal entry by ID, scoped to the authenticated user.
 
-    Ownership is verified by ``require_owned_journal_entry``: 404 when the
-    row does not exist, 403 when it exists but belongs to another user.
+    Ownership is verified by ``require_owned_journal_entry``: 404 when the row
+    does not exist *or* belongs to another user (enumeration-safe, matching
+    PATCH and DELETE).
     """
     return entry
 
