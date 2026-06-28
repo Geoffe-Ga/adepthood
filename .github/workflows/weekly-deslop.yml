@@ -8,15 +8,15 @@ name: Weekly De-Slop
 # nothing it cannot corroborate with two independent signals, and a clean run
 # (zero issues) is a valid, expected outcome.
 #
-# Trigger: every Monday 08:00 UTC, or manually via the Actions tab.
+# Trigger: every Sunday 00:00 UTC (midnight), or manually via the Actions tab.
 #
 # Required configuration:
 #   secret  CLAUDE_CODE_OAUTH_TOKEN  - same token the other Claude workflows use.
 
 on:
   schedule:
-    # Mondays at 08:00 UTC. (cron is UTC; GitHub may delay under load.)
-    - cron: "0 8 * * 1"
+    # Sundays at 00:00 UTC / midnight. (cron is UTC; GitHub may delay under load.)
+    - cron: "0 0 * * 0"
   workflow_dispatch:
     inputs:
       focus:
