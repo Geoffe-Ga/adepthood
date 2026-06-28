@@ -19,9 +19,6 @@ This is meant to run from a GitHub Actions workflow keyed on
         python scripts/ralph/recap.py --repo Geoffe-Ga/adepthood --dry-run
 
 `--dry-run` prints the rendered embed as JSON instead of posting it.
-`--skip-if-unconfigured` exits 0 (rather than erroring) when the Discord channel
-ID or bot token is unset, so the merge-triggered workflow stays green on repos
-that haven't wired up Discord delivery.
 
 The backlog count mirrors `scripts/ralph/pick-next.sh`: open issues bearing any
 of the picker's exclude labels (epics, blocked, etc.) are not part of Ralph's
@@ -465,33 +462,19 @@ def _gather(repo: str, gh_token: str, max_prs: int) -> dict[str, Any] | None:
         raise RecapError(f"network failure talking to GitHub: {exc.reason}") from exc
 
 
-def _deliver(channel_id: str | None, payload: dict[str, Any], *, skip_if_unconfigured: bool = False) -> bool:
-    """Post the payload to Discord, mapping failures to RecapError.
-
-    Returns ``True`` when the recap was posted and ``False`` when delivery was
-    skipped because the Discord configuration is absent and
-    ``skip_if_unconfigured`` is set. Without that flag a missing channel ID or
-    bot token is a hard error (exit code 2), as before.
-    """
+def _deliver(channel_id: str | None, payload: dict[str, Any]) -> None:
+    """Post the payload to Discord, mapping failures to RecapError."""
+    if not channel_id:
+        raise RecapError("RALPH_CHANNEL_ID (or --channel-id) is required to post", code=2)
     discord_token = os.environ.get("DISCORD_BOT_TOKEN")
-    missing = [
-        name
-        for name, value in (("RALPH_CHANNEL_ID (or --channel-id)", channel_id), ("DISCORD_BOT_TOKEN", discord_token))
-        if not value
-    ]
-    if missing or channel_id is None or discord_token is None:
-        detail = " and ".join(missing)
-        if skip_if_unconfigured:
-            print(f"Discord delivery not configured ({detail} unset) — skipping recap post.")
-            return False
-        raise RecapError(f"{detail} is required to post", code=2)
+    if not discord_token:
+        raise RecapError("DISCORD_BOT_TOKEN is required to post", code=2)
     try:
         post_to_discord(channel_id, discord_token, payload)
     except urllib.error.HTTPError as exc:
         raise RecapError(f"Discord API request failed: {exc.code} {exc.reason}") from exc
     except urllib.error.URLError as exc:
         raise RecapError(f"network failure talking to Discord: {exc.reason}") from exc
-    return True
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -509,8 +492,8 @@ def _run(args: argparse.Namespace) -> int:
         print(json.dumps(payload, indent=2))
         return 0
 
-    if _deliver(args.channel_id, payload, skip_if_unconfigured=args.skip_if_unconfigured):
-        print(f"Posted Ralph recap to channel {args.channel_id}.")
+    _deliver(args.channel_id, payload)
+    print(f"Posted Ralph recap to channel {args.channel_id}.")
     return 0
 
 
@@ -520,11 +503,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--channel-id", default=os.environ.get("RALPH_CHANNEL_ID"))
     parser.add_argument("--max-prs", type=int, default=DEFAULT_MAX_PRS)
     parser.add_argument("--dry-run", action="store_true", help="print the embed instead of posting")
-    parser.add_argument(
-        "--skip-if-unconfigured",
-        action="store_true",
-        help="exit 0 (instead of erroring) when the Discord channel ID or bot token is unset",
-    )
     args = parser.parse_args(argv)
     try:
         return _run(args)

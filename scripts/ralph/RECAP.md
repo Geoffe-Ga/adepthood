@@ -31,8 +31,9 @@ scripts/ralph/
 
 - `DISCORD_BOT_TOKEN` (repo **secret**) — a Discord bot token. The bot must be
   in the server with **View Channel** + **Send Messages** on the target channel.
-- `RALPH_CHANNEL_ID` (repo **variable**) — the target channel's numeric ID
-  (Developer Mode → right-click channel → Copy Channel ID).
+- `RALPH_CHANNEL_ID` (repo **secret** or **variable**) — the target channel's
+  numeric ID (Developer Mode → right-click channel → Copy Channel ID). The
+  workflow reads `secrets` first and falls back to `vars`, so either store works.
 - A GitHub token — in Actions the built-in `GITHUB_TOKEN` is enough
   (`contents: read`, `pull-requests: read`, `issues: read`).
 - `ANTHROPIC_API_KEY` (repo **secret**, optional) — enables the Claude-written
@@ -46,11 +47,12 @@ The workflow is keyed on `pull_request: types: [closed]`, gated to merges with
 and plain close; the guard keeps it to real merges. A `push: branches: [main]`
 trigger would wrongly fire on hotfixes and reverts too.)
 
-Wire the secrets/variable once:
+Wire the secrets once (`RALPH_CHANNEL_ID` can be a `gh variable set` instead —
+the workflow accepts either):
 
 ```bash
 gh secret set DISCORD_BOT_TOKEN
-gh variable set RALPH_CHANNEL_ID --body "123456789012345678"
+gh secret set RALPH_CHANNEL_ID    # or: gh variable set RALPH_CHANNEL_ID --body "1234..."
 gh secret set ANTHROPIC_API_KEY   # optional, for the headline
 ```
 
