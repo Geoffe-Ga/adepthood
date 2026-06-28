@@ -113,6 +113,35 @@ describe('FrequencyBanner', () => {
     expect(getByTestId('frequency-banner-content').props.accessibilityRole).toBe('text');
   });
 
+  it('refetches when refreshSignal changes after mount, but not on the initial value', () => {
+    const refetch = jest.fn();
+    mockUseFrequency.mockReturnValue({
+      data: samplePayload,
+      isLoading: false,
+      error: null,
+      refetch,
+    });
+    const { rerender } = render(<FrequencyBanner refreshSignal={0} />);
+    // The initial signal value is recorded without fetching (the hook already
+    // loaded on mount); only a subsequent change triggers a refetch.
+    expect(refetch).not.toHaveBeenCalled();
+    rerender(<FrequencyBanner refreshSignal={1} />);
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores refreshSignal when data is injected (no network for storybook / tests)', () => {
+    const refetch = jest.fn();
+    mockUseFrequency.mockReturnValue({
+      data: null,
+      isLoading: false,
+      error: null,
+      refetch,
+    });
+    const { rerender } = render(<FrequencyBanner data={samplePayload} refreshSignal={0} />);
+    rerender(<FrequencyBanner data={samplePayload} refreshSignal={1} />);
+    expect(refetch).not.toHaveBeenCalled();
+  });
+
   it('accepts an injected data prop for storybook / testing — overrides the hook', () => {
     // When `data` is passed explicitly it wins, mirroring the dependency
     // injection escape hatch used by the mode views.

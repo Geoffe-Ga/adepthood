@@ -28,7 +28,6 @@ import ShareSheet from '@/features/Practice/components/ShareSheet';
 import { MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
 import type { RootStackParamList } from '@/navigation/RootStack';
-import { selectCurrentStage, useStageStore } from '@/store/useStageStore';
 
 export type PracticeDetailScreenProps = NativeStackScreenProps<
   RootStackParamList,
@@ -69,12 +68,10 @@ function LoadedDetail({
   props,
   state,
   practice,
-  currentStage,
 }: {
   props: PracticeDetailScreenProps;
   state: PracticeDetailHook;
   practice: PracticeItem;
-  currentStage: number;
 }): React.JSX.Element {
   const [shareOpen, setShareOpen] = useState(false);
   return (
@@ -93,7 +90,12 @@ function LoadedDetail({
       )}
       <ActionRow
         practice={practice}
-        onUseForCurrentStage={() => void state.assign(currentStage)}
+        // A practice is catalogued for exactly one stage and the backend
+        // rejects assigning it anywhere else (BUG-PRACTICE-004), so the
+        // one-tap path targets the practice's own stage rather than the
+        // store's ``currentStage`` (which is derived differently from the
+        // stage the catalog filtered by and could mismatch -> silent 400).
+        onUseForCurrentStage={() => void state.assign(practice.stage_number)}
         onUseForStage={state.openPicker}
         onCustomizeCopy={() => navigateToCopy(props, practice)}
         onShare={() => setShareOpen(true)}
@@ -116,8 +118,13 @@ function LoadedDetail({
 
 export function PracticeDetailScreen(props: PracticeDetailScreenProps): React.JSX.Element {
   const { practiceId } = props.route.params;
-  const state = usePracticeDetail(practiceId);
-  const currentStage = useStageStore(selectCurrentStage);
+  const { navigation } = props;
+  // After a successful selection, pop back to the Practice screen (the tab is
+  // the first route under the root stack; the catalog + this detail screen are
+  // pushed on top), matching the catalog's one-tap "Use" which also returns the
+  // user to where they can see the active practice.
+  const onAssigned = useCallback(() => navigation.popToTop(), [navigation]);
+  const state = usePracticeDetail(practiceId, onAssigned);
   if (state.loading) {
     return (
       <View style={styles.loading} testID="practice-detail-loading">
@@ -130,14 +137,7 @@ export function PracticeDetailScreen(props: PracticeDetailScreenProps): React.JS
       <ErrorView message={state.loadError ?? 'Could not load practice.'} onRetry={state.reload} />
     );
   }
-  return (
-    <LoadedDetail
-      props={props}
-      state={state}
-      practice={state.practice}
-      currentStage={currentStage}
-    />
-  );
+  return <LoadedDetail props={props} state={state} practice={state.practice} />;
 }
 
 interface PracticeDetailHook {
@@ -154,7 +154,7 @@ interface PracticeDetailHook {
   assign: (stageNumber: number) => Promise<void>;
 }
 
-function usePracticeDetail(practiceId: number): PracticeDetailHook {
+function usePracticeDetail(practiceId: number, onAssigned?: () => void): PracticeDetailHook {
   const [state, setState] = useState<ScreenState>(initialState);
 
   const runReload = useCallback(async () => {
@@ -196,6 +196,9 @@ function usePracticeDetail(practiceId: number): PracticeDetailHook {
           pickerOpen: false,
           assignedStage: stageNumber,
         }));
+        // Confirmation banner is set above for the brief moment before the
+        // screen pops; the callback returns the user to the Practice screen.
+        onAssigned?.();
       } catch (err) {
         setState((prev) => ({
           ...prev,
@@ -204,7 +207,7 @@ function usePracticeDetail(practiceId: number): PracticeDetailHook {
         }));
       }
     },
-    [practiceId],
+    [practiceId, onAssigned],
   );
 
   return { ...state, reload, openPicker, closePicker, assign };

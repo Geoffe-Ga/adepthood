@@ -4,7 +4,7 @@
  * sourced from `GET /user-practices/current/frequency`. It is intentionally not
  * interactive — switching practices is a separate, explicit control.
  */
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { FrequencyResponse } from '@/api';
@@ -28,6 +28,13 @@ export interface FrequencyBannerProps {
    * resolves keeps the chip and the card in lockstep on every render.
    */
   stageNumber?: number | null;
+  /**
+   * Monotonic counter the parent bumps to force a background refetch (e.g. when
+   * the Practice screen regains focus after a selection made elsewhere). The
+   * initial value is ignored; only changes after mount trigger a refetch, and
+   * the refetch keeps the previous chip visible while it revalidates.
+   */
+  refreshSignal?: number;
 }
 
 function BannerSkeleton() {
@@ -79,8 +86,24 @@ function FrequencyChip({ data, swatch }: { data: FrequencyResponse; swatch: Colo
   );
 }
 
-export function FrequencyBanner({ data: injected, stageNumber }: FrequencyBannerProps) {
+export function FrequencyBanner({
+  data: injected,
+  stageNumber,
+  refreshSignal,
+}: FrequencyBannerProps) {
   const hook = useFrequency(stageNumber);
+  // Refetch when the parent bumps ``refreshSignal`` after mount. The injected
+  // (storybook / test) path owns its data, so it never hits the network; the
+  // initial value is recorded without fetching since ``useFrequency`` already
+  // loads on mount.
+  const { refetch } = hook;
+  const seenSignal = useRef(refreshSignal);
+  useEffect(() => {
+    if (injected !== undefined) return;
+    if (seenSignal.current === refreshSignal) return;
+    seenSignal.current = refreshSignal;
+    void refetch();
+  }, [refreshSignal, refetch, injected]);
   // Injected data wins for storybook / tests; otherwise consume the hook.
   const data = injected ?? hook.data;
   const isLoading = injected ? false : hook.isLoading;

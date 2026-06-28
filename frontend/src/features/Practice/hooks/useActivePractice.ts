@@ -41,7 +41,13 @@ export interface UseActivePracticeResult {
   effectiveConfig: ModeConfig | null;
   isLoading: boolean;
   error: string | null;
-  refresh: () => Promise<void>;
+  /**
+   * Re-fetch the stage catalogue + active row. Pass ``{ silent: true }`` to
+   * refresh in the background without flipping ``isLoading`` (so the screen
+   * keeps showing the current practice instead of flashing a spinner) — used
+   * when the screen regains focus after a selection made elsewhere.
+   */
+  refresh: (_opts?: { silent?: boolean }) => Promise<void>;
   /** Create/replace the active practice for the stage. */
   selectPractice: (_practiceId: number) => Promise<void>;
   /** Replace the in-memory active `UserPractice` after a child mutation. */
@@ -88,9 +94,11 @@ function useRefreshAction(
   stageNumber: number,
   setState: Dispatch<SetStateAction<State>>,
   mountedRef: RefObject<boolean>,
-): () => Promise<void> {
-  return useCallback(async () => {
-    setState((prev) => ({ ...prev, isLoading: true, error: null }));
+): (_opts?: { silent?: boolean }) => Promise<void> {
+  return useCallback(async (opts?: { silent?: boolean }) => {
+    // A silent refresh keeps the current view (no spinner) while it revalidates
+    // in the background; a normal refresh shows the loading state.
+    setState((prev) => ({ ...prev, isLoading: opts?.silent ? prev.isLoading : true, error: null }));
     try {
       const [practiceList, userPracticeList] = await Promise.all([
         practices.listAll(stageNumber),
