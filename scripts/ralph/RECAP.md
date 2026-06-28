@@ -1,10 +1,11 @@
 # Ralph Discord Recap
 
-Whenever a PR merges, this posts a clean Discord embed summarizing how
-adepthood's Ralph tick loop is doing: PRs merged, merge rate, average review
-iterations before LGTM, estimated time remaining on the backlog, the busiest
-day, the latest PR's footprint, and a ten-word headline for what the latest
-merge unlocked.
+Whenever a PR merges, this posts a clean Discord embed in two blocks —
+`————THIS PR————` (the just-merged PR: its unlock headline, link, footprint,
+review iterations, review time, and tick length) and `————THE LOOP————` (the
+rolling/all-time figures: busiest day, PRs merged, lines of code, merge rate,
+review iterations, review time, tick length, and backlog remaining). Within each
+block, multi-window stats run smallest window first (24h → 7d → all-time).
 
 A "Ralph tick loop" is the autonomous loop driven by `/loop /ralph-tick` (see
 `.claude/commands/ralph-tick.md`): each tick opens a PR, iterates against the
@@ -82,9 +83,15 @@ recent work instead of being diluted by a frozen lifetime average. The window is
 fetched via the search API (`is:pr is:merged merged:>=<date>`), capped at
 `--max-prs` (default 200) as a safety bound on a burst day.
 
-- **PRs merged** — the true cumulative count of merged PRs from the search API
-  (`total_count`), independent of any per-run fetch cap, plus "in 24h" and
-  "in 7d" counts from the window.
+- **PRs merged** — "in 24h" and "in 7d" counts from the window, then the true
+  cumulative all-time count from the search API (`total_count`), which is
+  independent of any per-run fetch cap (smallest window first).
+- **LoC** — lines-of-code churn as `+additions / -deletions` over the trailing
+  24h and 7d windows (summed from each window PR's detail call), then the
+  **full-repo net** from GitHub's code-frequency stats API
+  (`/stats/code_frequency`, additions − deletions across all history). The stats
+  endpoint warms asynchronously and answers 202 on a cold cache, so the full-repo
+  figure retries a few times and falls back to "—" if still unavailable.
 - **Merge rate** — rolling windows: merges in the last 24h as **per-hour**, and
   merges in the last 7 days as **per-day**. Fixed-width windows move every recap
   and decay toward zero when the loop idles. The 7-day per-day figure (steadier
@@ -112,14 +119,19 @@ fetched via the search API (`is:pr is:merged merged:>=<date>`), capped at
 - **Busiest day** (7d) — the UTC calendar day in the window with the most merges.
 
 The embed groups fields into two labelled blocks so a single merge's numbers are
-never confused with the dataset-wide ones:
+never confused with the dataset-wide ones. The `————THIS PR————` block holds:
 
-- **This PR · time to merge** — the just-merged PR's own `opened → merged`
-  window, plus `since the previous merge (full tick)` — the gap from the prior
-  merge, the per-PR analogue of the tick cadence. Both move on every recap.
-- **This PR · footprint** — additions/deletions/changed-files for the most
-  recently merged PR (the list endpoint omits diff stats, so it's fetched via
-  the single-PR detail endpoint).
+- **Unlock** — the ten-word "what this merge unlocked" headline (see below).
+- **Link** — the PR number, title, and URL.
+- **Footprint** — additions/deletions/changed-files for the just-merged PR (the
+  list endpoint omits diff stats, so it's fetched via the single-PR detail
+  endpoint).
+- **Review iterations** — this PR's own rounds before its first LGTM verdict
+  (`0` reads "clean first try"; a PR merged without an LGTM verdict says so).
+- **Time for review** — this PR's own `opened → merged` window.
+- **Tick length** — the gap from the previous merge, the per-PR analogue of the
+  tick cadence (`first tracked merge` when there is no prior merge in the window).
+
 - **The ten-word headline** — `generate_headline` asks `claude-opus-4-8`
   (effort `low`) for a plain-language headline of what the latest merge
   unlocked, and degrades to the cleaned PR title on any SDK/API absence or

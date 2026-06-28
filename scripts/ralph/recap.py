@@ -66,11 +66,12 @@ EMBED_COLOR = 0x7C3AED
 # Zero-width space — a non-empty Discord field value that renders as blank, used
 # to turn a field into a header-only line.
 BLANK = "​"
-# Section headers. Discord can't size text, so uppercase + a trailing heavy rule
-# is what makes these read as section breaks rather than another bold field label.
-_RULE = "━" * 6
-THIS_PR_HEADER = f"📌  THIS PR  {_RULE}"
-LOOP_HEADER = f"📊  THE LOOP · 7D + ALL-TIME  {_RULE}"
+# Section headers. Discord can't size text, so uppercase flanked by four em-dashes
+# on each side is what makes these read as section breaks rather than another bold
+# field label. No emoji, no window qualifier — just the section name.
+_RULE = "—" * 4
+THIS_PR_HEADER = f"{_RULE}THIS PR{_RULE}"
+LOOP_HEADER = f"{_RULE}THE LOOP{_RULE}"
 # The windowed stats (iterations, time-to-merge, tick cadence, busiest day) cover
 # this trailing span so they move with recent activity, not a frozen all-time average.
 RECENT_WINDOW_DAYS = 7
@@ -204,6 +205,24 @@ def fetch_pr_detail(repo: str, number: int, *, token: str) -> dict[str, Any]:
     return cast("dict[str, Any]", _request_json(url, headers=_gh_headers(token)))
 
 
+def _pr_churn(repo: str, number: int, *, token: str) -> tuple[int, int, int]:
+    """Return one PR's (additions, deletions, changed_files) from its detail.
+
+    The search/list endpoints omit diff stats, so each PR needs its own detail
+    call. A transport failure on a single PR degrades to a zero tuple rather than
+    failing the whole recap — the LoC sums simply skip that PR's churn.
+    """
+    try:
+        detail = fetch_pr_detail(repo, number, token=token)
+    except (urllib.error.HTTPError, urllib.error.URLError):
+        return (0, 0, 0)
+    return (
+        int(detail.get("additions", 0)),
+        int(detail.get("deletions", 0)),
+        int(detail.get("changed_files", 0)),
+    )
+
+
 def fetch_pr_verdicts(repo: str, number: int, *, token: str) -> list[str]:
     """Return the ordered list of normalized Claude verdicts on one PR."""
     comments = _gh_get_paged(
@@ -218,6 +237,25 @@ def fetch_pr_verdicts(repo: str, number: int, *, token: str) -> list[str]:
         if verdict is not None:
             verdicts.append(verdict)
     return verdicts
+
+
+def fetch_repo_net_lines(repo: str, *, token: str, attempts: int = 3) -> int | None:
+    """Return net lines of code across the whole repo via the code-frequency stats API.
+
+    GitHub computes the per-week additions/deletions stats asynchronously and
+    answers 202 with an empty body on a cold cache, so retry a few times. Any
+    failure (still warming, or an HTTP/transport error) returns None so the recap
+    shows a placeholder for the full-repo figure instead of failing outright.
+    """
+    url = f"{GITHUB_API}/repos/{repo}/stats/code_frequency"
+    for _ in range(attempts):
+        try:
+            data = _request_json(url, headers=_gh_headers(token))
+        except (urllib.error.HTTPError, urllib.error.URLError):
+            return None
+        if data:
+            return stats.net_lines_from_code_frequency(cast("list[list[int]]", data))
+    return None
 
 
 def _excluded_labels() -> set[str]:
@@ -368,25 +406,25 @@ def build_recap(repo: str, *, token: str, max_prs: int, now: dt.datetime) -> dic
 
     merged_at = [_pr_merged_at(pr) for pr in window]
 
+    # One pass over the window collects both review rounds (from verdicts) and
+    # churn (from PR detail) per PR. window[0] is the just-merged PR, so its own
+    # figures fall out of index 0 without a second fetch.
     iterations: list[int] = []
-    for pr in window:
+    churn: list[tuple[int, int, int]] = []
+    latest_iterations: int | None = None
+    for index, pr in enumerate(window):
         verdicts = fetch_pr_verdicts(repo, int(pr["number"]), token=token)
         rounds = stats.iterations_before_lgtm(verdicts)
         if rounds is not None:
             iterations.append(rounds)
+        if index == 0:
+            latest_iterations = rounds
+        churn.append(_pr_churn(repo, int(pr["number"]), token=token))
 
     open_to_merge = [_open_to_merge_hours(pr) for pr in window]
     intervals = stats.merge_intervals_hours(merged_at)
 
     latest = window[0]
-    latest_detail = fetch_pr_detail(repo, int(latest["number"]), token=token)
-    churn = [
-        (
-            int(latest_detail.get("additions", 0)),
-            int(latest_detail.get("deletions", 0)),
-            int(latest_detail.get("changed_files", 0)),
-        )
-    ]
 
     rate = stats.merge_rate(merged_at, now=now)
     ttm = stats.time_to_merge_stats(open_to_merge)
@@ -394,8 +432,15 @@ def build_recap(repo: str, *, token: str, max_prs: int, now: dt.datetime) -> dic
     iters = stats.iteration_stats(iterations)
     open_items = count_open_backlog(repo, token=token)
     estimate = stats.estimate_remaining(open_items, rate["per_day"], now=now)
-    totals = stats.churn_totals(churn)
     busy = stats.busiest_day(merged_at)
+
+    # Footprint is the just-merged PR; the loop's LoC sums the 7d window (the whole
+    # fetched set) and the 24h slice of it, with the full-repo net from the stats API.
+    day_ago = now - dt.timedelta(hours=stats.HOURS_PER_DAY)
+    latest_churn = stats.churn_totals(churn[:1])
+    loc_7d = stats.churn_totals(churn)
+    loc_24h = stats.churn_totals([c for c, ts in zip(churn, merged_at) if ts >= day_ago])
+    repo_net = fetch_repo_net_lines(repo, token=token)
 
     headline = generate_headline(str(latest.get("title", "")), str(latest.get("body") or ""))
 
@@ -413,8 +458,12 @@ def build_recap(repo: str, *, token: str, max_prs: int, now: dt.datetime) -> dic
         tick=tick,
         iters=iters,
         estimate=estimate,
-        latest_churn=totals,
+        latest_churn=latest_churn,
+        loc_24h=loc_24h,
+        loc_7d=loc_7d,
+        repo_net=repo_net,
         busy=busy,
+        latest_iterations=latest_iterations,
         latest_ttm_hours=latest_ttm_hours,
         latest_tick_hours=latest_tick_hours,
         now=now,
@@ -431,12 +480,36 @@ def _stat_line(summary: dict[str, float]) -> str:
     )
 
 
-def _this_pr_time_line(latest_ttm_hours: float, latest_tick_hours: float | None) -> str:
-    """One-line time summary for the just-merged PR: review window + full tick."""
-    line = f"**{_fmt_hours(latest_ttm_hours)}** open → merge"
-    if latest_tick_hours is not None:
-        line += f"\n{_fmt_hours(latest_tick_hours)} since the previous merge (full tick)"
-    return line
+def _this_pr_review_line(latest_ttm_hours: float) -> str:
+    """The just-merged PR's own open → merge review window."""
+    return f"**{_fmt_hours(latest_ttm_hours)}** open → merge"
+
+
+def _this_pr_tick_line(latest_tick_hours: float | None) -> str:
+    """The just-merged PR's full tick — the gap since the previous merge."""
+    if latest_tick_hours is None:
+        return "first tracked merge"
+    return f"**{_fmt_hours(latest_tick_hours)}** since the previous merge"
+
+
+def _this_pr_iter_line(latest_iterations: int | None) -> str:
+    """Review rounds the just-merged PR took before its first LGTM verdict."""
+    if latest_iterations is None:
+        return "merged without an LGTM verdict"
+    if latest_iterations == 0:
+        return "**0** rounds · clean first try"
+    plural = "round" if latest_iterations == 1 else "rounds"
+    return f"**{latest_iterations}** {plural} to LGTM"
+
+
+def _loc_line(loc_24h: dict[str, int], loc_7d: dict[str, int], repo_net: int | None) -> str:
+    """Lines-of-code churn over the 24h and 7d windows, plus the full-repo net."""
+
+    def churn(totals: dict[str, int]) -> str:
+        return f"+{totals['additions']:,} / -{totals['deletions']:,}"
+
+    full_repo = f"{repo_net:,} net" if repo_net is not None else "—"
+    return f"{churn(loc_24h)} (24h) · {churn(loc_7d)} (7d) · {full_repo} (full repo)"
 
 
 def _render_embed(
@@ -451,7 +524,11 @@ def _render_embed(
     iters: dict[str, float],
     estimate: dict[str, object],
     latest_churn: dict[str, int],
+    loc_24h: dict[str, int],
+    loc_7d: dict[str, int],
+    repo_net: int | None,
     busy: tuple[str, int] | None,
+    latest_iterations: int | None,
     latest_ttm_hours: float,
     latest_tick_hours: float | None,
     now: dt.datetime,
@@ -460,7 +537,8 @@ def _render_embed(
 
     Fields are split into two labelled blocks: the just-merged PR ("This PR")
     and the rolling/all-time loop figures ("The loop"), so a single merge's
-    numbers are never confused with the dataset-wide ones.
+    numbers are never confused with the dataset-wide ones. Within each block,
+    multi-window stats run smallest window first (24h → 7d → all-time).
     """
     pr_number = int(latest["number"])
     pr_url = str(latest.get("html_url", f"https://github.com/{repo}/pull/{pr_number}"))
@@ -482,34 +560,35 @@ def _render_embed(
         # section header so the blocks breathe instead of butting up against the
         # field before them.
         {"name": BLANK, "value": BLANK, "inline": False},
-        {
-            "name": THIS_PR_HEADER,
-            "value": f"*{headline}*\n[#{pr_number} — {latest.get('title', '')}]({pr_url})",
-            "inline": False,
-        },
-        {"name": "⏱️ Time to merge", "value": _this_pr_time_line(latest_ttm_hours, latest_tick_hours), "inline": True},
+        {"name": THIS_PR_HEADER, "value": BLANK, "inline": False},
+        {"name": "🔓 Unlock", "value": f"*{headline}*", "inline": False},
+        {"name": "🔗 Link", "value": f"[#{pr_number} — {latest.get('title', '')}]({pr_url})", "inline": False},
         {"name": "🧮 Footprint", "value": footprint, "inline": True},
+        {"name": "🔁 Review iterations", "value": _this_pr_iter_line(latest_iterations), "inline": True},
+        {"name": "⏱️ Time for review", "value": _this_pr_review_line(latest_ttm_hours), "inline": True},
+        {"name": "🔄 Tick length", "value": _this_pr_tick_line(latest_tick_hours), "inline": True},
         {"name": BLANK, "value": BLANK, "inline": False},
         {"name": LOOP_HEADER, "value": BLANK, "inline": False},
+        {"name": "🔥 Busiest day (7d)", "value": busy_line, "inline": True},
         {
             "name": "📦 PRs merged",
-            "value": f"**{total_merged}** all-time · {int(rate['last_24h'])} in 24h · {int(rate['last_7_days'])} in 7d",
+            "value": f"{int(rate['last_24h'])} in 24h · {int(rate['last_7_days'])} in 7d · **{total_merged}** all-time",
             "inline": True,
         },
+        {"name": "📈 LoC", "value": _loc_line(loc_24h, loc_7d, repo_net), "inline": False},
         {
             "name": "⚡ Merge rate",
             "value": f"**{rate['per_hour']:.2f}**/hr (24h) · {rate['per_day']:.1f}/day (7d)",
             "inline": True,
         },
         {"name": "🔁 Review iterations (7d)", "value": iter_line, "inline": False},
-        {"name": "⏱️ Time to merge · opened → merged (7d)", "value": _stat_line(ttm), "inline": False},
-        {"name": "🔄 Tick cadence · merge → merge (7d)", "value": _stat_line(tick), "inline": False},
+        {"name": "⏱️ Time for review (7d)", "value": _stat_line(ttm), "inline": False},
+        {"name": "🔄 Tick length (7d)", "value": _stat_line(tick), "inline": False},
         {
             "name": "🗺️ Backlog remaining",
             "value": f"**{estimate['open_items']}** open · ETA {_fmt_eta(estimate)}",
             "inline": True,
         },
-        {"name": "🔥 Busiest day (7d)", "value": busy_line, "inline": True},
     ]
 
     embed = {

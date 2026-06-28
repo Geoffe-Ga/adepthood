@@ -196,6 +196,16 @@ def churn_totals(churn: list[tuple[int, int, int]]) -> dict[str, int]:
     }
 
 
+def net_lines_from_code_frequency(weeks: list[list[int]]) -> int:
+    """Sum GitHub's weekly code-frequency rows into the repo's net lines of code.
+
+    Each row is `[unix_week, additions, deletions]` and GitHub reports deletions
+    as a negative number, so the running net is just additions and deletions added
+    straight across every week. Returns 0 for an empty history.
+    """
+    return sum(int(week[1]) + int(week[2]) for week in weeks)
+
+
 def busiest_day(merged_at: list[dt.datetime]) -> tuple[str, int] | None:
     """Return the (ISO date, count) of the day with the most merges, or None."""
     if not merged_at:
