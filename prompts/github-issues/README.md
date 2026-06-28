@@ -268,3 +268,28 @@ Dependency graph:
 02 mindful-anchor-mode ───┬── 04 mindful-anchor-presets
                           └── 06 mindful-anchor-view-frontend
 ```
+
+### Fix journal load failure + harden the API route-contract
+
+The Journal shelf fails to load with a misleading "check your connection"
+error: `journal.list/create` request `/journal` (no trailing slash) while the
+route is `/journal/`, so a 307 redirect fails CORS on web and `fetch` throws a
+`TypeError` that gets mislabeled as "offline". Ship the one-line hotfix, then
+guard the whole class of frontend↔backend route drift from both ends.
+
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| — | [Epic tracker](journal-load-fix-epic.md) | — | — |
+| 01 | [Fix journal collection trailing-slash mismatch](journal-load-fix-01-collection-trailing-slash.md) | Frontend | ~70 |
+| 02 | [Audit every API-client path + contract test](journal-load-fix-02-api-route-contract-audit.md) | Frontend | ~160 |
+| 03 | [Stop redirect/CORS failures masquerading as "offline"](journal-load-fix-03-network-error-classification.md) | Frontend | ~140 |
+| 04 | [Backend guard against collection-route slash drift](journal-load-fix-04-backend-route-contract-guard.md) | Backend | ~110 |
+
+Dependency graph:
+
+```
+01 collection-trailing-slash  (hotfix — ship first)
+        ├── 02 api-route-contract-audit
+        ├── 03 network-error-classification
+        └── 04 backend-route-contract-guard
+```
