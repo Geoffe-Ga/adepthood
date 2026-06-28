@@ -48,7 +48,7 @@ docstring-parser==0.18.0
     # via anthropic
 email-validator==2.3.0
     # via -r backend/requirements.txt
-fastapi==0.136.0
+fastapi==0.138.1
     # via -r backend/requirements.txt
 h11==0.16.0
     # via
