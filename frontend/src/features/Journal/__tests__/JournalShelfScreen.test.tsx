@@ -110,6 +110,19 @@ describe('JournalShelfScreen', () => {
     expect(root.backgroundColor).toBe(colors.paper.desk);
   });
 
+  it('floats the weekly-prompt card with matching depth while keeping its accent bar', async () => {
+    mockList.mockResolvedValue(page([entry(1)]));
+    mockPromptCurrent.mockResolvedValue(prompt({ week_number: 3, has_responded: false }));
+    const { findByTestId } = render(<JournalShelfScreen />);
+    const card = StyleSheet.flatten((await findByTestId('journal-weekly-prompt')).props.style);
+    // Same floated treatment as the entry cards…
+    expect(card.backgroundColor).toBe(colors.paper.background);
+    expect(card.shadowRadius).toBeGreaterThan(0);
+    expect(card.elevation).toBeGreaterThan(0);
+    // …but keeps its accent-bar identity.
+    expect(card.borderLeftColor).toBe(colors.marginalia.theme);
+  });
+
   it('shows the empty state when there are no entries', async () => {
     mockList.mockResolvedValue(page([]));
     const { findByTestId } = render(<JournalShelfScreen />);

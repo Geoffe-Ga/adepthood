@@ -26,7 +26,7 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.md,
   },
   newEntry: {
-    minHeight: 44,
+    minHeight: touchTarget.minimum,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: SPACING.sm,
