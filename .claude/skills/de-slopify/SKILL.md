@@ -33,6 +33,22 @@ autonomous implementation cycle (or worse, "fixes" correct code into broken
 code), so a finding that can't be corroborated is dropped. **A run that files
 nothing because the code is clean is a success.**
 
+## Two principles that decide whether a run is any good
+
+1. **Linters are table stakes, not the audit.** This repo already passes ruff,
+   mypy, radon, xenon, bandit, eslint, and tsc in pre-commit and CI on every
+   commit. Anything those tools gate is *already enforced* and **cannot be a
+   finding** — never report a complexity grade, a lint rule, or a type error as
+   slop. The evidence bundle from `collect-evidence.sh` is dominated by exactly
+   that output; treat it as a *map of where to look*, not as findings. Your
+   entire value is the slop linters are **blind to**.
+2. **The high-value families require reading code, not parsing tool JSON.**
+   Dead/stubbed/orphaned code, duplication, bad architecture, lying feature
+   flags, needless verbosity, comment slop, AI-generated tells, and weak/
+   coverage-theater tests do not show up in a linter report. A 5-minute,
+   single-threaded scan of tool output will conclude "clean" and miss all of
+   them. **You must do the reading pass in Step 4.**
+
 ## The three references (read them — they are the substance)
 
 | File | What it gives you |
@@ -73,7 +89,31 @@ NOT-slop list (`slop-taxonomy.md`): generated code, Alembic migrations,
 boilerplate (Pydantic/SQLModel/React Navigation), test fixtures, self-evident
 constants, deliberate repo conventions, and unmeasured "could be faster" claims.
 
-### Step 4 — Corroborate each survivor (the gate)
+### Step 4 — The reading pass (fan-out) — DO NOT SKIP
+
+This is the step that finds the slop linters cannot see, and the step the first
+audit skipped. Do not conclude "clean" without it.
+
+Fan out with the **Task tool**: spawn one subagent per feature area so the whole
+codebase is actually read in parallel, not skimmed by one thread. A good split:
+
+- one subagent per backend router (`backend/src/routers/*`),
+- one for the domain layer (`backend/src/domain/*`) and one for `services/`,
+- one for the models/schemas pair (look for frontend/backend shape drift),
+- one per frontend feature (`frontend/src/features/*`),
+- one for shared/util/config grab-bags (prime duplication + dead-code sites).
+
+Give each subagent the **full 13-family taxonomy** (`slop-taxonomy.md`) and this
+brief: *read the actual source in your area and return corroborated candidates
+for every family, with file:line evidence — focus on what linters miss: dead/
+stubbed/orphaned code, duplication (here and against the rest of the repo),
+architecture/layering violations, lying flags, verbosity, comment slop, AI-slop
+tells, and weak tests. Ignore anything ruff/mypy/radon/eslint already gates.*
+
+Use the `$EVID` bundle's churn and largest-file lists to prioritize. Collect all
+subagent candidates before corroborating.
+
+### Step 5 — Corroborate each survivor (the gate)
 
 Apply the **Two-Signal Rule** (`detection-playbook.md`): no finding survives
 without **two independent signals, at least one concrete and reproducible.**
@@ -90,7 +130,7 @@ without **two independent signals, at least one concrete and reproducible.**
 Classify each survivor by family and assign a severity (Critical/High/Medium/
 Low) from the rubric. When corroboration is shaky, **downgrade or drop.**
 
-### Step 5 — Cluster, then dedup against the backlog
+### Step 6 — Cluster, then dedup against the backlog
 
 Group corroborated findings by area/theme. A cluster needing coordinated
 multi-file change is an **epic**; standalone findings are single issues. Bundle
@@ -104,7 +144,7 @@ gh issue list --state open --search "in:title <keywords>" --json number,title
 gh search issues --repo Geoffe-Ga/adepthood "<keywords>" --state open
 ```
 
-### Step 6 — File the work (Ralph-ready)
+### Step 7 — File the work (Ralph-ready)
 
 Follow `references/issue-templates.md` exactly. The labels matter — Ralph's
 picker (`scripts/ralph/pick-next.sh`) skips `epic`/`blocked`/`needs-spec` and
@@ -121,13 +161,29 @@ works everything else lowest-number-first.
 Create any missing labels first (`gh label create ...`). Write issue bodies to
 files in the scratchpad and file with `--body-file` (never inline strings).
 
-### Step 7 — Report
+### Step 8 — Report (with a coverage ledger)
 
 Emit a concise run summary: counts by severity, what was filed (with issue
 numbers/links), what was **dropped and why** (failed corroboration / guard
-list), and what was **deduped**. If nothing met the bar, say so plainly:
-*"No corroborated slop this run — codebase is clean against the taxonomy."*
-That is a healthy outcome, not a failure.
+list), and what was **deduped**.
+
+Then add a **coverage ledger** — a table with one row per taxonomy family (all
+13) recording which areas/files you examined for it and the verdict
+(clean / candidates / filed). This is how a reader verifies the whole taxonomy
+was actually traversed in the reading pass, not assumed clean:
+
+```
+| Family | Areas examined | Verdict |
+|--------|----------------|---------|
+| 0 Correctness | routers/*, domain/energy.py | clean |
+| 3 Dispensables | services/, frontend/features/Habits | 2 filed (#812, #813) |
+| ... | ... | ... |
+```
+
+If nothing met the bar, say so plainly — *"No corroborated slop this run —
+codebase is clean against the taxonomy"* — but the ledger must still show the
+13 families were each looked at. A clean verdict with an empty ledger means the
+reading pass was skipped; that is a failed run, not a clean one.
 
 ## What this skill must never do
 
@@ -144,13 +200,15 @@ That is a healthy outcome, not a failure.
 ### Example 1 — Weekly scheduled run (the primary path)
 
 The `weekly-deslop` GitHub Action fires (or the user says "run the slop
-detector"). Collect evidence → triage → corroborate → cluster → dedup → file.
-vulture + grep prove `legacy_streak()` has zero callers → file one
-`dead-code`/`priority-medium` issue. radon grades `HabitsScreen` rendering
-logic `D` and a reading finds 4 responsibilities → file a `refactor` **epic**
-with sub-issues (via `triage-and-plan`). A suspected N+1 can't be confirmed
-without a query-count log → **dropped** and noted in the report. Net: 1 issue,
-1 epic (5 sub-issues), 3 dropped, 2 deduped.
+detector"). Collect evidence → triage → **fan-out reading pass** → corroborate →
+cluster → dedup → file → report-with-ledger. vulture + grep prove
+`legacy_streak()` has zero callers → file one `dead-code`/`priority-medium`
+issue. A reading subagent finds `HabitsScreen` mixes data-fetching, formatting,
+and 4 unrelated render responsibilities (something radon's complexity grade does
+*not* describe) → file a `refactor` **epic** with sub-issues (via
+`triage-and-plan`). A suspected N+1 can't be confirmed without a query-count
+log → **dropped** and noted in the report. Net: 1 issue, 1 epic (5 sub-issues),
+3 dropped, 2 deduped — plus a 13-row coverage ledger in the job summary.
 
 ### Example 2 — Clean run
 

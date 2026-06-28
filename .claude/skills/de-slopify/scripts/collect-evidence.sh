@@ -134,6 +134,19 @@ if command -v git >/dev/null 2>&1; then
     || echo "(churn unavailable)" >"$OUT/churn.txt"
 fi
 
+# Reading targets: the largest source files by line count. These — together
+# with churn.txt — are where the reading pass should start, because size and
+# change-frequency are where bloaters, duplication, and god-objects accumulate.
+{
+  echo "# Largest source files (LoC) — prime reading-pass targets"
+  if [[ ${#SEARCH_PATHS[@]} -gt 0 ]]; then
+    find "${SEARCH_PATHS[@]}" -type f \
+      \( -name '*.py' -o -name '*.ts' -o -name '*.tsx' \) \
+      -not -path '*/node_modules/*' -print0 2>/dev/null \
+      | xargs -0 wc -l 2>/dev/null | sort -rn | sed '/ total$/d' | head -30
+  fi
+} >"$OUT/reading-targets.txt"
+
 # ----------------------------------------------------------------------------
 # Manifest
 # ----------------------------------------------------------------------------
@@ -148,6 +161,15 @@ fi
   echo "Each *.json / *.txt holds raw tool or grep output. Every entry is a"
   echo "CANDIDATE only — apply the Two-Signal Rule from detection-playbook.md"
   echo "before filing anything. Tool exit codes are appended as [exit N]."
+  echo
+  echo "## IMPORTANT — this bundle is a MAP, not the findings"
+  echo "The linter outputs (ruff/mypy/radon/bandit/eslint/tsc) are TABLE STAKES:"
+  echo "the repo already passes them in pre-commit and CI, so they cannot be"
+  echo "findings. Do NOT file complexity grades, lint rules, or type errors."
+  echo "Use churn.txt + reading-targets.txt to drive a Task fan-out that READS"
+  echo "the source for what linters cannot see (dead/stubbed/orphaned code,"
+  echo "duplication, architecture, lying flags, verbosity, comment slop, AI"
+  echo "tells, weak tests). That reading pass is the actual audit."
 } >"$OUT/README.txt"
 
 log "evidence collected in $OUT"

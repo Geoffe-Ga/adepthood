@@ -134,29 +134,61 @@ For each taxonomy family, the primary tool and the required second signal.
 
 ---
 
+## What is already enforced — never file it
+
+The repo runs ruff (`select=ALL`), mypy (strict), radon/xenon, bandit, eslint
+(sonarjs+unicorn), and tsc in pre-commit **and** CI. Anything those gate cannot
+reach `main`, so it is **not a finding**:
+
+- complexity grades (radon CC/MI, xenon) — already gated at A/B,
+- ruff/eslint lint rules and formatting,
+- mypy/tsc type errors,
+- bandit's high-confidence security rules.
+
+If the only signal for a candidate is one of these tools agreeing with itself,
+**drop it.** Those tools are the *map* (where to look), not the *findings*. The
+findings come from reading the code for what the tools are blind to. A run whose
+"findings" are all linter-shaped is a failed run — that was the failure mode of
+the first audit.
+
 ## The weekly run procedure
 
 1. **Snapshot.** Run `scripts/collect-evidence.sh` → a consolidated evidence
-   report in the scratchpad (all tool JSON + grep hits + churn).
+   report in the scratchpad (all tool JSON + grep hits + churn + reading
+   targets). Treat the linter JSON as a map, per the rule above.
 2. **Triage candidates.** Parse the report into candidate findings. Discard
    anything in the "NOT slop" guard list (`slop-taxonomy.md`) — generated code,
-   migrations, justified suppressions, framework boilerplate, test fixtures.
-3. **Corroborate each survivor** against the Two-Signal Rule. For correctness
+   migrations, justified suppressions, framework boilerplate, test fixtures —
+   and anything already enforced by the gates above.
+3. **Reading pass (fan-out) — the core of the audit.** Spawn one `Task`
+   subagent per feature area (each backend router, `domain/`, `services/`, the
+   models/schemas pair, each `frontend/src/features/*`, and the util/config
+   grab-bags). Hand each the full taxonomy and have it **read the actual
+   source** and return corroborated candidates for the linter-invisible
+   families: dead/stubbed/orphaned code, duplication (local and repo-wide),
+   architecture/layering violations, lying flags, verbosity, comment slop,
+   AI-slop tells, weak tests. Prioritize by the churn / largest-file lists in
+   the bundle. **Do not skip this for a single-threaded skim — that produces the
+   false "clean".**
+4. **Corroborate each survivor** against the Two-Signal Rule. For correctness
    candidates, *write and run the reproducing test* in a throwaway location
    (do not commit it — the implementing issue will own the real test). If it
    doesn't reproduce, drop it.
-4. **Cluster.** Group corroborated findings by area/theme. A cluster that needs
+5. **Cluster.** Group corroborated findings by area/theme. A cluster that needs
    coordinated, multi-file change becomes an **epic**; standalone findings
    become single issues. Many Low findings in one file = one tidy-up issue.
-5. **Dedup against the backlog.** For every cluster/finding, search existing
+6. **Dedup against the backlog.** For every cluster/finding, search existing
    open issues (`gh issue list`, `gh search issues`) and recent closed ones.
    If it already exists, skip (optionally add a corroborating comment). Never
    file a duplicate.
-6. **Size & file.** Apply `issue-templates.md`. Respect the ~200–300 LoC
+7. **Size & file.** Apply `issue-templates.md`. Respect the ~200–300 LoC
    sizing; split anything bigger into an epic + sub-issues in dependency order.
-7. **Report.** Emit a run summary (counts by severity, what was filed, what was
-   dropped and why, what was deduped). A run that files nothing is a success if
-   the codebase is clean — say so explicitly.
+8. **Report with a coverage ledger.** Emit a run summary (counts by severity,
+   what was filed, dropped and why, deduped) **plus a 13-row table — one per
+   taxonomy family — naming the areas examined and the verdict.** The ledger
+   proves the reading pass actually traversed the taxonomy. A clean verdict with
+   no ledger means the reading pass was skipped — that is a failed run, not a
+   clean one.
 
 ---
 
