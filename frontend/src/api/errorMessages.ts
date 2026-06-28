@@ -225,6 +225,29 @@ function isValidation(err: unknown): boolean {
 }
 
 /**
+ * A failed ``fetch`` rejects with a ``TypeError`` whose message differs by
+ * engine: "Load failed" (iOS Safari/WebKit), "Failed to fetch" (Chrome/Blink),
+ * "NetworkError when attempting to fetch resource." (Firefox), "Network request
+ * failed" (React Native), "The network connection was lost." (iOS). These are
+ * cryptic engine strings that must never reach the user verbatim — most often a
+ * dropped connection mid-response (e.g. a large journal list on weak signal).
+ */
+const FETCH_NETWORK_MESSAGE_FRAGMENTS = [
+  'load failed',
+  'failed to fetch',
+  'networkerror',
+  'network request failed',
+  'network connection was lost',
+  'connection appears to be offline',
+] as const;
+
+function isFetchNetworkError(err: unknown): boolean {
+  if (!(err instanceof Error) || err.name !== 'TypeError') return false;
+  const message = err.message.toLowerCase();
+  return FETCH_NETWORK_MESSAGE_FRAGMENTS.some((fragment) => message.includes(fragment));
+}
+
+/**
  * Universal ``unknown`` → user-facing-string converter. Handles:
  *
  *  - ``ApiTimeoutError`` — timeout-specific copy before status/detail mapping
@@ -247,6 +270,9 @@ function isValidation(err: unknown): boolean {
 function classifyNetworkError(err: unknown): string | undefined {
   if (isTimeout(err)) return TIMEOUT_MESSAGE;
   if (isValidation(err)) return VALIDATION_MESSAGE;
+  // A raw fetch failure (TypeError) — show the same friendly offline copy as an
+  // explicit ``network_error`` rather than leaking the engine's debug string.
+  if (isFetchNetworkError(err)) return USER_FACING_ERROR_MESSAGES.network_error;
   return undefined;
 }
 

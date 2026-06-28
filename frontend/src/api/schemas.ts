@@ -233,6 +233,11 @@ export const journalTagSchema = z.enum([
   'stage_reflection',
   'practice_note',
   'habit_note',
+  // Responding to a weekly prompt creates a journal entry tagged
+  // ``weekly_prompt`` (backend ``JournalTag.WEEKLY_PROMPT``). The shelf list
+  // includes that row, so the enum must accept it — otherwise the whole page
+  // fails Zod validation and the user sees "Load failed".
+  'weekly_prompt',
 ]);
 
 /** One journal message (mirrors the backend ``JournalMessage`` response). */

@@ -7,7 +7,22 @@
  */
 import { StyleSheet } from 'react-native';
 
-import { colors, editorialType, journalLayout, spacing } from '@/design/tokens';
+import {
+  SPACING,
+  colors,
+  editorialType,
+  journalLayout,
+  spacing,
+  touchTarget,
+} from '@/design/tokens';
+
+/**
+ * Bottom inset reserving room for the floating "Get Resonance" button so page
+ * content (the save hint, Finish link, and the stacked margin column on narrow
+ * screens) never renders underneath it. Mirrors the button's own offset
+ * (``bottom: SPACING.xl``) plus its height plus a small breathing gap.
+ */
+export const RESONANCE_BUTTON_CLEARANCE = SPACING.xl + touchTarget.minimum + SPACING.md;
 
 const styles = StyleSheet.create({
   safeArea: {
@@ -22,6 +37,7 @@ const styles = StyleSheet.create({
     maxWidth: journalLayout.pageMaxWidth + journalLayout.marginColumnWidth,
     alignSelf: 'center',
     paddingHorizontal: journalLayout.pageHorizontalPadding,
+    paddingBottom: RESONANCE_BUTTON_CLEARANCE,
   },
   pageNarrow: {
     flexDirection: 'column',

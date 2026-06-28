@@ -270,6 +270,19 @@ describe('journalListResponseSchema validation', () => {
     expect(() => journalListResponseSchema.parse({ items: [message], total: 1 })).toThrow();
   });
 
+  it('accepts a weekly_prompt-tagged entry (created by prompts.respond)', () => {
+    // Regression: responding to a weekly prompt creates a journal entry tagged
+    // ``weekly_prompt`` server-side (routers/prompts.py). The shelf list then
+    // includes that row, so the tag enum must accept it — otherwise the whole
+    // page fails Zod validation and the user sees "Load failed".
+    const parsed = journalListResponseSchema.parse({
+      items: [{ ...message, tag: 'weekly_prompt' }],
+      total: 1,
+      has_more: false,
+    });
+    expect(parsed.items[0]?.tag).toBe('weekly_prompt');
+  });
+
   it('rejects an unknown sender', () => {
     expect(() =>
       journalListResponseSchema.parse({

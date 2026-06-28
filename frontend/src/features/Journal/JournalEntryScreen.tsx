@@ -593,7 +593,7 @@ function JournalPage({
   else marginContent = <ResonanceMargin count={0} error={ctl.resonance.error} />;
 
   return (
-    <View style={[styles.page, narrow && styles.pageNarrow]}>
+    <View style={[styles.page, narrow && styles.pageNarrow]} testID="journal-page">
       {editMode ? (
         <WritingColumn
           title={title}
