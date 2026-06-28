@@ -1,0 +1,117 @@
+name: Weekly De-Slop
+
+# Runs the `de-slopify` skill on a schedule: a comprehensive, evidence-based
+# code-quality audit that files corroborated findings as Ralph-ready GitHub
+# issues (and decomposed epics for large work). It NEVER writes to the repo —
+# the job's GITHUB_TOKEN is `contents: read` / `issues: write`, so the only
+# durable output is new issues. False positives are the enemy: the skill files
+# nothing it cannot corroborate with two independent signals, and a clean run
+# (zero issues) is a valid, expected outcome.
+#
+# Trigger: every Monday 08:00 UTC, or manually via the Actions tab.
+#
+# Required configuration:
+#   secret  CLAUDE_CODE_OAUTH_TOKEN  - same token the other Claude workflows use.
+
+on:
+  schedule:
+    # Mondays at 08:00 UTC. (cron is UTC; GitHub may delay under load.)
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      focus:
+        description: "Optional area to focus the audit on (e.g. 'backend', 'frontend/src/features/Habits'). Blank = whole repo."
+        required: false
+        default: ""
+
+# Avoid overlapping audits.
+concurrency:
+  group: weekly-deslop
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  # OIDC token for the claude action's auth exchange (mirrors claude.yml).
+  id-token: write
+
+jobs:
+  deslop:
+    name: Detect slop and file backlog issues
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (full history for churn analysis)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          # Full history so git-churn / hotspot detection has signal.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6.3.0
+        with:
+          node-version-file: "frontend/.nvmrc"
+
+      - name: Install backend toolbox (read-only analyzers)
+        run: |
+          python -m venv .venv
+          # shellcheck disable=SC1091
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+
+      - name: Install frontend toolbox
+        run: |
+          cd frontend && npm ci
+
+      - name: Run de-slopify audit
+        uses: anthropics/claude-code-action@521136812280ae7ef256e06045655b9da02793f0  # v1.0.158
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+          # The skill files issues via gh; expose the analyzers it relies on.
+          # Security boundary is the job's GITHUB_TOKEN (contents: read /
+          # issues: write) — Claude cannot push code, only open issues.
+          claude_args: >-
+            --allowed-tools "Bash,Read,Grep,Glob,Write,Skill,Task"
+            --max-turns 80
+
+          prompt: |
+            Run a comprehensive weekly code-quality audit of this repository
+            using the `de-slopify` skill. Invoke the skill and follow its
+            instructions exactly.
+
+            Focus area (blank means the whole repo): "${{ github.event.inputs.focus }}"
+
+            Hard requirements (the skill enforces these — do not deviate):
+            - Corroborate every finding with TWO independent signals before
+              filing. For any correctness/bug claim, write and run a reproducing
+              test first; if it does not reproduce, DROP the finding.
+            - Discard everything in the skill's NOT-slop guard list (generated
+              code, migrations, lockfiles, justified suppressions, framework
+              boilerplate, test fixtures, deliberate conventions).
+            - Dedup against existing open and recently-closed issues before
+              filing anything (`gh issue list`, `gh search issues`).
+            - File standalone findings as Ralph-ready issues (Template A) and
+              large coordinated work as an `epic`-labeled umbrella with
+              decomposed sub-issues (Template B); use the `triage-and-plan`
+              skill when an epic needs more than ~3 sub-issues.
+            - Create any missing labels first. Write issue bodies to files and
+              file with `gh issue create --body-file`.
+            - A run that files NOTHING because the code is clean is a SUCCESS.
+              Do not invent work to look productive.
+
+            End by writing a concise run summary to the GitHub Actions job
+            summary — append it to the file at $GITHUB_STEP_SUMMARY (e.g.
+            `cat >> "$GITHUB_STEP_SUMMARY"`) — containing: counts by severity,
+            issues/epics filed (with numbers), findings dropped and why, and
+            findings deduped. This is the durable record, linked to the workflow
+            run, and never touches the issue tracker. A clean run (nothing
+            filed) writes "codebase is clean against the taxonomy this week" to
+            the job summary and files NO issue. Only open a separate `de-slop` +
+            `report` issue when at least one finding was filed — never on a clean
+            run (a weekly report issue every Monday would flood the tracker).
