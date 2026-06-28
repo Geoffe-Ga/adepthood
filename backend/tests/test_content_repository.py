@@ -20,6 +20,7 @@ from services.content_repository import (
     ContentNotFoundError,
     ContentRepository,
     ContentRepositoryError,
+    StageIntroMeta,
     content_version_info,
     get_content_repository,
     reset_content_repository_for_tests,
@@ -27,7 +28,7 @@ from services.content_repository import (
 )
 
 _VALID_MANIFEST: dict[str, Any] = {
-    "schema_version": "1.0.0",
+    "schema_version": "1.1.0",
     "chapters": [
         {
             "id": "beige-1",
@@ -60,6 +61,23 @@ _VALID_MANIFEST: dict[str, Any] = {
             "path": "markdown/site/getting-started.md",
         }
     ],
+    "stage_intros": [
+        {
+            "stage": 2,
+            "id": "purple-intro",
+            "slug": "purple-introduction",
+            "title": "Welcome to Purple",
+            "path": "markdown/02-purple/00-introduction.md",
+        },
+        {
+            "stage": 1,
+            "id": "beige-intro",
+            "slug": "beige-introduction",
+            "title": "Welcome to Beige",
+            "path": "markdown/01-beige/00-introduction.md",
+            "summary": "What Beige is about.",
+        },
+    ],
 }
 
 
@@ -75,6 +93,10 @@ def _write_content_dir(root: Path, manifest: dict[str, Any]) -> Path:
         md = root / resource["path"]
         md.parent.mkdir(parents=True, exist_ok=True)
         md.write_text(f"# {resource['title']}\n")
+    for intro in manifest.get("stage_intros", []):
+        md = root / intro["path"]
+        md.parent.mkdir(parents=True, exist_ok=True)
+        md.write_text(f"# {intro['title']}\n\nIntro for stage {intro['stage']}.\n")
     return root
 
 
@@ -245,6 +267,82 @@ def test_resource_missing_description_is_rejected_at_construction(tmp_path: Path
     root = _write_content_dir(tmp_path / "content", sparse)
     with pytest.raises(ContentRepositoryError):
         ContentRepository(root)
+
+
+# ── Stage introductions (issue #718) ────────────────────────────────────
+
+
+def test_lists_stage_intros_in_stage_order(content_dir: Path) -> None:
+    """Intros sort by stage even though the manifest lists stage 2 first."""
+    repo = ContentRepository(content_dir)
+    intros = repo.list_stage_intros()
+    assert [i.stage for i in intros] == [1, 2]
+    assert isinstance(intros[0], StageIntroMeta)
+    assert intros[0].id == "beige-intro"
+    assert intros[0].slug == "beige-introduction"
+    assert intros[0].title == "Welcome to Beige"
+    assert intros[0].summary == "What Beige is about."
+    assert intros[1].summary is None  # optional field omitted in the manifest
+
+
+def test_get_stage_intro_returns_meta(content_dir: Path) -> None:
+    repo = ContentRepository(content_dir)
+    intro = repo.get_stage_intro(1)
+    assert intro is not None
+    assert intro.id == "beige-intro"
+
+
+def test_get_stage_intro_returns_none_for_unseeded_stage(content_dir: Path) -> None:
+    """Optional lookup mirrors ``get_chapter`` — no intro for stage 3."""
+    repo = ContentRepository(content_dir)
+    assert repo.get_stage_intro(3) is None
+
+
+def test_read_intro_body_returns_markdown_with_metadata(content_dir: Path) -> None:
+    repo = ContentRepository(content_dir)
+    body = repo.read_intro_body(1)
+    assert body.title == "Welcome to Beige"
+    assert body.content_type == "introduction"
+    assert "Intro for stage 1." in body.body
+
+
+def test_unknown_stage_intro_raises_not_found(content_dir: Path) -> None:
+    repo = ContentRepository(content_dir)
+    with pytest.raises(ContentNotFoundError):
+        repo.read_intro_body(99)
+
+
+def test_stage_intros_absent_yields_empty_list(tmp_path: Path) -> None:
+    """A 1.0.0 pin with no ``stage_intros`` key degrades to an empty index."""
+    manifest: dict[str, Any] = {"schema_version": "1.0.0", "chapters": [], "site_resources": []}
+    root = _write_content_dir(tmp_path / "content", manifest)
+    assert ContentRepository(root).list_stage_intros() == []
+
+
+def test_duplicate_stage_intro_raises_repository_error(tmp_path: Path) -> None:
+    doubled = copy.deepcopy(_VALID_MANIFEST)
+    doubled["stage_intros"].append(
+        {
+            "stage": 1,
+            "id": "beige-intro-2",
+            "slug": "beige-introduction-2",
+            "title": "Another Beige Intro",
+            "path": "markdown/01-beige/00-introduction.md",
+        }
+    )
+    root = _write_content_dir(tmp_path / "content", doubled)
+    with pytest.raises(ContentRepositoryError):
+        ContentRepository(root)
+
+
+def test_intro_path_traversal_is_rejected(tmp_path: Path) -> None:
+    evil = copy.deepcopy(_VALID_MANIFEST)
+    evil["stage_intros"][0]["path"] = "../secret.md"
+    root = _write_content_dir(tmp_path / "content", evil)
+    (tmp_path / "secret.md").write_text("classified")
+    repo = ContentRepository(root)
+    with pytest.raises(ContentRepositoryError):
+        repo.read_intro_body(2)  # stage 2 is the first entry, with the evil path
 
 
 def test_content_version_info_parses_stamp(content_dir: Path) -> None:

@@ -36,6 +36,11 @@ _SUPPORTED_SCHEMA_MAJOR = 1
 # chapter enum (chapter|essay|prompt|video) — deliberately distinct.
 _RESOURCE_CONTENT_TYPE: Final[str] = "resource"
 
+# Per-stage course introductions (manifest schema 1.1.0, issue #717) are
+# neither chapters nor resources, so they carry their own content_type —
+# distinct from the chapter enum and from ``_RESOURCE_CONTENT_TYPE``.
+_INTRO_CONTENT_TYPE: Final[str] = "introduction"
+
 #: Audit-trail stamp written by ``scripts/sync_content.py`` (issue #391).
 _CONTENT_VERSION_FILE: Final[str] = "CONTENT_VERSION"
 
@@ -76,6 +81,22 @@ class SiteResourceMeta:
     slug: str
     title: str
     description: str
+
+
+@dataclass(frozen=True)
+class StageIntroMeta:
+    """One per-stage course introduction's manifest metadata (issue #718).
+
+    Like :class:`SiteResourceMeta`, deliberately omits the manifest ``path`` —
+    body reads go through :meth:`ContentRepository.read_intro_body`, which
+    resolves the path internally with the traversal guard.
+    """
+
+    stage: int
+    id: str
+    slug: str
+    title: str
+    summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -173,6 +194,32 @@ def _index_resources(raw_resources: list[dict[str, Any]]) -> dict[str, dict[str,
     return resources
 
 
+def _index_intros(raw_intros: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    """Index stage introductions by stage, rejecting duplicates (the schema cannot).
+
+    At most one introduction per stage; a second one is a manifest error the
+    JSON Schema cannot express.
+    """
+    intros: dict[int, dict[str, Any]] = {}
+    for intro in raw_intros:
+        if intro["stage"] in intros:
+            msg = f"duplicate stage introduction in manifest for stage {intro['stage']}"
+            raise ContentRepositoryError(msg)
+        intros[intro["stage"]] = intro
+    return intros
+
+
+def _intro_meta(raw: dict[str, Any]) -> StageIntroMeta:
+    """Build a :class:`StageIntroMeta` from a validated manifest entry."""
+    return StageIntroMeta(
+        stage=raw["stage"],
+        id=raw["id"],
+        slug=raw["slug"],
+        title=raw["title"],
+        summary=raw.get("summary"),
+    )
+
+
 class ContentRepository:
     """Parse-once reader over the vendored content directory.
 
@@ -187,6 +234,9 @@ class ContentRepository:
         manifest = self._load_and_validate_manifest()
         self._chapters = _index_chapters(manifest["chapters"])
         self._resources = _index_resources(manifest["site_resources"])
+        # ``stage_intros`` is optional (manifest schema 1.1.0); a 1.0.0 pin
+        # without the key degrades to an empty index.
+        self._intros = _index_intros(manifest.get("stage_intros", []))
 
     def _load_and_validate_manifest(self) -> dict[str, Any]:
         """Load ``manifest.json`` and enforce the issue #389 contract."""
@@ -278,6 +328,34 @@ class ContentRepository:
             body=self._read_markdown(resource["path"]),
             title=resource["title"],
             content_type=_RESOURCE_CONTENT_TYPE,
+        )
+
+    def list_stage_intros(self) -> list[StageIntroMeta]:
+        """Every per-stage introduction, ordered by stage.
+
+        Empty when the manifest carries no ``stage_intros`` (a 1.0.0 pin).
+        """
+        return [_intro_meta(self._intros[stage]) for stage in sorted(self._intros)]
+
+    def get_stage_intro(self, stage: int) -> StageIntroMeta | None:
+        """The introduction for ``stage``, or ``None`` when unknown.
+
+        Optional lookup — returns ``None`` rather than raising, mirroring
+        :meth:`get_chapter`.
+        """
+        raw = self._intros.get(stage)
+        return _intro_meta(raw) if raw is not None else None
+
+    def read_intro_body(self, stage: int) -> ContentBody:
+        """Raw Markdown + title for a stage introduction, by stage."""
+        intro = self._intros.get(stage)
+        if intro is None:
+            msg = f"no stage introduction for stage {stage}"
+            raise ContentNotFoundError(msg)
+        return ContentBody(
+            body=self._read_markdown(intro["path"]),
+            title=intro["title"],
+            content_type=_INTRO_CONTENT_TYPE,
         )
 
 
