@@ -11,7 +11,7 @@ types-jsonschema>=4.0
 radon>=6.0
 ruff
 vulture>=2.13
-xenon>=0.9
+xenon>=0.9.3
 pydantic
 sqlmodel
 types-cachetools
