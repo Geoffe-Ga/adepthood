@@ -92,7 +92,7 @@ pluggy==1.6.0
     # via pytest
 pycparser==3.0
     # via cffi
-pydantic==2.13.2
+pydantic==2.13.4
     # via
     #   -r backend/requirements.txt
     #   anthropic
