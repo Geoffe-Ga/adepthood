@@ -4,6 +4,7 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
 import type { TalliedGroundingConfig } from '../../engine/types';
+import { TALLIED_KEY_PATTERN, validateModeConfig } from '../../engine/validation';
 import TalliedGroundingForm from '../forms/TalliedGroundingForm';
 
 const base: TalliedGroundingConfig = {
@@ -46,8 +47,14 @@ describe('TalliedGroundingForm', () => {
     fireEvent.press(getByTestId('tallied-add-category'));
     const next = onChange.mock.calls[0]![0] as TalliedGroundingConfig;
     expect(next.categories).toHaveLength(2);
-    expect(next.categories[1]!.key).not.toBe('c1');
+    const newKey = next.categories[1]!.key;
+    expect(newKey).not.toBe('c1');
     expect(next.categories[1]!.label).toBe('');
+    // The generated key must pass the validator the form enforces.
+    expect(TALLIED_KEY_PATTERN.test(newKey)).toBe(true);
+    // The shipped bug was a *key* error; an empty-label error may remain (the
+    // user fills it in) but a key error must not.
+    expect(validateModeConfig(next).some((e) => /key/i.test(e))).toBe(false);
   });
 
   it('removes a category', () => {

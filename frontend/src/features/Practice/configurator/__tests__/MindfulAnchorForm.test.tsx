@@ -4,6 +4,7 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
 import type { MindfulAnchorConfig } from '../../engine/types';
+import { OPTION_KEY_PATTERN, validateModeConfig } from '../../engine/validation';
 import MindfulAnchorForm from '../forms/MindfulAnchorForm';
 
 const base: MindfulAnchorConfig = {
@@ -57,7 +58,14 @@ describe('MindfulAnchorForm', () => {
     fireEvent.press(getByTestId('anchor-add-option'));
     const next = onChange.mock.calls[0]![0] as MindfulAnchorConfig;
     expect(next.options).toHaveLength(2);
-    expect(next.options[1]!.key).not.toBe('o1');
+    const newKey = next.options[1]!.key;
+    expect(newKey).not.toBe('o1');
+    // The generated key must satisfy the validator the same module enforces.
+    expect(OPTION_KEY_PATTERN.test(newKey)).toBe(true);
+    // The shipped bug was a *key* error (a field the form can't edit). A new
+    // row may still report an empty-label error (the user fills that in) — but
+    // never a key error.
+    expect(validateModeConfig(next).some((e) => /key/i.test(e))).toBe(false);
   });
 
   it('removes an option', () => {

@@ -92,7 +92,9 @@ const MindfulAnchorForm = ({ value, onChange }: Props): React.JSX.Element => {
   const removeOption = (index: number) =>
     onChange({ ...value, options: value.options.filter((_, i) => i !== index) });
   const addOption = () => {
-    const key = `option-${(nextOptionKey += 1)}`;
+    // Underscore, not hyphen: the key must match OPTION_KEY_PATTERN
+    // (^[a-z][a-z0-9_]*$) or validateModeConfig rejects the new row.
+    const key = `option_${(nextOptionKey += 1)}`;
     const next: MindfulAnchorOption = { key, label: '' };
     onChange({ ...value, options: [...value.options, next] });
   };
