@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
+from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia
 from models.user import User
 from services import marginalia as marginalia_service
@@ -59,6 +60,41 @@ def _raise_llm(monkeypatch: pytest.MonkeyPatch) -> None:
         raise LLMProviderError("provider down")
 
     monkeypatch.setattr(marginalia_service, "generate_response", _boom)
+
+
+@pytest.mark.asyncio
+async def test_persisted_marginalia_user_id_matches_entry_owner(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Owner invariant: a note's user_id is derived from the entry owner server-side.
+
+    The client never supplies it, so every persisted marginalia.user_id equals the
+    entry's user_id.
+    """
+    _fake_llm(
+        monkeypatch,
+        {"kind": "theme", "quote": "I walked by the river", "note": "You return to water."},
+    )
+    headers = await _signup(async_client, "owner")
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+
+    entry = (
+        await db_session.execute(select(JournalEntry).where(col(JournalEntry.id) == entry_id))
+    ).scalar_one()
+    rows = (
+        (
+            await db_session.execute(
+                select(Marginalia).where(col(Marginalia.journal_entry_id) == entry_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert rows
+    assert all(note.user_id == entry.user_id for note in rows)
 
 
 @pytest.mark.asyncio
