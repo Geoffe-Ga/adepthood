@@ -32,7 +32,9 @@ contract — changing it requires a `schema_version` bump and an ADR
 note) every time the app constructs its `ContentRepository` and every
 time the sync script runs.
 
-Two collections:
+Three collections (`stage_intros[]` added in `schema_version 1.1.0`, an
+additive minor bump — a `1.0.0` manifest with no `stage_intros` stays
+valid):
 
 * `chapters[]` — stage-locked, drip-fed reading. Each entry carries
   `id`, `stage` (1–10, identical numbering in both repos), `chapter`,
@@ -41,6 +43,10 @@ Two collections:
 * `site_resources[]` — free evergreen pages (philosophy, about, …),
   each with `slug`, `title`, `description`, `path`. Served
   authenticated but never stage-gated.
+* `stage_intros[]` — optional per-stage course introductions, each with
+  `stage`, `id`, `slug`, `title`, `path`, and optional `summary`. Unlike
+  chapters, intros are **ungated and not seeded** into the database — the
+  reader serves them straight from the manifest.
 
 ## How releases are timed
 

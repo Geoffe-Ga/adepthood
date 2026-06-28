@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Geoffe-Ga/adepthood/backend/content/manifest.schema.json",
   "title": "APTITUDE content manifest",
-  "description": "Frozen contract between the aptitude-course content repo (which generates this manifest from per-file YAML frontmatter) and the adepthood backend (which vendors and reads it). Changing this schema post-merge requires a schema_version bump and a note in docs/adr/0001-git-content-pipeline.md (issue #389).",
+  "description": "Frozen contract between the aptitude-course content repo (which generates this manifest from per-file YAML frontmatter) and the adepthood backend (which vendors and reads it). Changing this schema post-merge requires a schema_version bump and a note in docs/adr/0001-git-content-pipeline.md (issue #389). schema_version 1.1.0 adds the optional, additive 'stage_intros[]' tier (per-stage course introductions); a 1.0.0 manifest with no 'stage_intros' stays valid.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -27,6 +27,13 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/site_resource"
+      }
+    },
+    "stage_intros": {
+      "description": "Optional per-stage course introductions (added in schema_version 1.1.0). Ungated and not seeded; the reader serves them straight from the manifest. Omitting this key keeps a 1.0.0 manifest valid.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/stage_intro"
       }
     }
   },
@@ -131,6 +138,47 @@
         "path": {
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "stage_intro": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "id",
+        "slug",
+        "title",
+        "path"
+      ],
+      "properties": {
+        "stage": {
+          "description": "Curriculum stage 1..10 this introduction belongs to (same numbering as chapters).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "id": {
+          "description": "Stable identifier, unique repo-wide, e.g. 'beige-intro'. Never reused or renumbered.",
+          "type": "string",
+          "minLength": 1
+        },
+        "slug": {
+          "description": "URL-safe slug for the introduction.",
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "description": "Markdown path relative to the content repo root, e.g. 'markdown/01-beige/00-introduction.md'.",
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
         }
       }
     }
