@@ -28,6 +28,7 @@ from schemas.course import (
     ContentItemResponse,
     CourseProgressResponse,
     SiteResourceResponse,
+    StageIntroResponse,
 )
 from services.content_repository import (
     ContentBody,
@@ -550,3 +551,65 @@ async def get_site_resource_body(
     plain 404 via the repository's ``ContentNotFoundError``.
     """
     return _read_local_body(lambda: get_content_repository().read_resource_body(slug), slug)
+
+
+async def _require_unlocked_stage(
+    session: AsyncSession,
+    user_id: int,
+    stage_number: int,
+) -> None:
+    """Require the stage to exist and be unlocked for ``user_id``.
+
+    A nonexistent stage is a plain ``stage`` 404; a locked stage is masked as
+    ``content`` (BUG-COURSE-004) so a locked stage's intro is indistinguishable
+    from a nonexistent one over the wire.
+    """
+    await _get_stage_by_number(session, stage_number)
+    if not await _is_stage_unlocked_for_user(session, user_id, stage_number):
+        raise not_found("content")
+
+
+@router.get("/stages/{stage_number}/intro", response_model=StageIntroResponse)
+async def get_stage_introduction(
+    stage_number: int,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> StageIntroResponse:
+    """Return a stage's course-introduction metadata.
+
+    Ungated by ``release_day`` but gated by stage-unlock: a locked stage and a
+    stage with no intro both return ``content_not_found`` (BUG-COURSE-004) so
+    neither acts as an enumeration oracle.
+    """
+    await _require_unlocked_stage(session, current_user, stage_number)
+    intro = get_content_repository().get_stage_intro(stage_number)
+    if intro is None:
+        raise not_found("content")
+    return StageIntroResponse(
+        stage=intro.stage,
+        id=intro.id,
+        slug=intro.slug,
+        title=intro.title,
+        summary=intro.summary,
+    )
+
+
+@router.get("/stages/{stage_number}/intro/body", response_model=ContentBodyResponse)
+@limiter.limit(_CMS_PROXY_RATE_LIMIT)
+async def get_stage_intro_body(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    stage_number: int,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ContentBodyResponse:
+    """Return raw Markdown for a stage's course introduction.
+
+    Same gating as :func:`get_stage_introduction`. The read goes through
+    :func:`_read_local_body`, so an unknown stage keeps the 404 mask and a
+    broken repository surfaces as ``502 content_unavailable``.
+    """
+    await _require_unlocked_stage(session, current_user, stage_number)
+    return _read_local_body(
+        lambda: get_content_repository().read_intro_body(stage_number),
+        f"stage-{stage_number}-intro",
+    )
