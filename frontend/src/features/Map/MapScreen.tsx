@@ -1,10 +1,9 @@
 // frontend/features/Map/MapScreen.tsx
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
-  ImageBackground,
   InteractionManager,
   Modal,
   Pressable,
@@ -12,7 +11,6 @@ import {
   Text,
   TouchableOpacity,
   View,
-  useWindowDimensions,
 } from 'react-native';
 
 import type { HabitHistoryItem, PracticeHistoryItem, StageHistoryResponse } from '../../api';
@@ -29,8 +27,13 @@ import {
 } from '../../store/useStageStore';
 
 import styles from './Map.styles';
+import { MAP_ROWS, MAP_TITLE_LINES, STAGE_DISPLAY } from './mapLayout';
+import type { MapRow, StageDisplay } from './mapLayout';
 import { stageService, isStageUnlocked } from './services/stageService';
 import type { StageData } from './stageData';
+
+/** Lookup of stage number → StageData for resolving row/arrow content. */
+type StageLookup = Readonly<Record<number, StageData | undefined>>;
 
 const FULL_PROGRESS = 1;
 
@@ -68,51 +71,197 @@ const getHotspotStyle = (stage: StageData, currentStage: number | null) => {
   return null;
 };
 
-interface StageHotspotsProps {
-  stages: StageData[];
+const LockOverlay = (): React.JSX.Element => (
+  <View style={styles.lockOverlay}>
+    <Text style={styles.lockText}>🔒</Text>
+  </View>
+);
+
+interface StageTapProps {
+  stage: StageData;
+  display: StageDisplay;
+  locked: boolean;
+  onPress: (_stage: StageData) => void;
+}
+
+// --- Left column: colored stage text (also the -0 tap target) -------------
+
+const StageTextBlock = ({ stage, display, locked, onPress }: StageTapProps): React.JSX.Element => (
+  <TouchableOpacity
+    testID={`stage-hotspot-${display.stageNumber}-0`}
+    style={[styles.stageBlock, locked ? styles.hotspotLocked : null]}
+    onPress={() => onPress(stage)}
+    accessibilityRole="button"
+    accessibilityLabel={`${display.persona} - ${display.descriptor}`}
+  >
+    <Text style={[styles.personaText, { color: display.textColor }]}>{display.persona}</Text>
+    <Text style={[styles.lineText, { color: display.textColor }]}>{display.descriptor}</Text>
+    <Text style={[styles.lineText, { color: display.textColor }]}>{display.practice}</Text>
+    {locked ? <LockOverlay /> : null}
+  </TouchableOpacity>
+);
+
+interface RowProps {
+  row: MapRow;
+  isLast: boolean;
+  lookup: StageLookup;
   currentStage: number | null;
   onPress: (_stage: StageData) => void;
 }
 
-const StageHotspots = ({
+const cellStyle = (row: MapRow, isLast: boolean) => [
+  styles.rowCell,
+  { flex: row.stageNumbers.length },
+  isLast ? styles.rowCellLast : null,
+];
+
+const LeftRow = ({ row, isLast, lookup, currentStage, onPress }: RowProps): React.JSX.Element => (
+  <View style={cellStyle(row, isLast)}>
+    {row.stageNumbers.map((stageNumber) => {
+      const stage = lookup[stageNumber];
+      const display = STAGE_DISPLAY[stageNumber];
+      return stage && display ? (
+        <StageTextBlock
+          key={stageNumber}
+          stage={stage}
+          display={display}
+          locked={!isStageUnlocked(stage, currentStage)}
+          onPress={onPress}
+        />
+      ) : null;
+    })}
+  </View>
+);
+
+interface ColumnProps {
+  lookup: StageLookup;
+  currentStage: number | null;
+  onPress: (_stage: StageData) => void;
+}
+
+const LeftTextColumn = ({ lookup, currentStage, onPress }: ColumnProps): React.JSX.Element => (
+  <View style={styles.leftColumn}>
+    {MAP_ROWS.map((row, idx) => (
+      <LeftRow
+        key={row.rightLabel}
+        row={row}
+        isLast={idx === MAP_ROWS.length - 1}
+        lookup={lookup}
+        currentStage={currentStage}
+        onPress={onPress}
+      />
+    ))}
+  </View>
+);
+
+// --- Right column: aspect-of-wholeness labels -----------------------------
+
+const RightLabelColumn = (): React.JSX.Element => (
+  <View style={styles.rightColumn}>
+    {MAP_ROWS.map((row, idx) => (
+      <View key={row.rightLabel} style={cellStyle(row, idx === MAP_ROWS.length - 1)}>
+        <Text style={styles.rightLabelText}>{row.rightLabel}</Text>
+      </View>
+    ))}
+  </View>
+);
+
+// --- Center column: arrow artwork, grey bands, tap targets, labels --------
+
+const bandPosition = (stage: StageData) => {
+  const hs = stage.hotspots[0];
+  return { top: `${hs?.top ?? 0}%` as const, height: `${hs?.height ?? 0}%` as const };
+};
+
+const ArrowHotspot = ({
+  stage,
+  currentStage,
+  onPress,
+}: {
+  stage: StageData;
+  currentStage: number | null;
+  onPress: (_stage: StageData) => void;
+}): React.JSX.Element | null => {
+  const hs = stage.hotspots[0];
+  if (!hs) return null;
+  const locked = !isStageUnlocked(stage, currentStage);
+  return (
+    <TouchableOpacity
+      testID={`stage-hotspot-${stage.stageNumber}-1`}
+      style={[
+        styles.hotspot,
+        { top: `${hs.top}%`, left: `${hs.left}%`, width: `${hs.width}%`, height: `${hs.height}%` },
+        getHotspotStyle(stage, currentStage),
+      ]}
+      onPress={() => onPress(stage)}
+      accessibilityRole="button"
+      accessibilityLabel={`${stage.title} - ${stage.subtitle}`}
+    >
+      {locked ? <LockOverlay /> : null}
+      {stage.progress >= FULL_PROGRESS ? (
+        <View style={styles.completedBadge} testID={`stage-complete-${stage.stageNumber}`}>
+          <Text style={styles.completedBadgeText}>✓</Text>
+        </View>
+      ) : null}
+    </TouchableOpacity>
+  );
+};
+
+const ArrowLabel = ({ stage }: { stage: StageData }): React.JSX.Element | null => {
+  const display = STAGE_DISPLAY[stage.stageNumber];
+  if (!display?.arrowLabel) return null;
+  return (
+    <View pointerEvents="none" style={[styles.arrowLabelWrap, bandPosition(stage)]}>
+      <Text style={styles.arrowLabelText}>{display.arrowLabel}</Text>
+    </View>
+  );
+};
+
+const SpiralTitle = (): React.JSX.Element => (
+  <View pointerEvents="none" style={styles.titleOverlay}>
+    {MAP_TITLE_LINES.map((line) => (
+      <Text key={line} style={styles.titleText}>
+        {line}
+      </Text>
+    ))}
+  </View>
+);
+
+const GreyBands = (): React.JSX.Element => (
+  <>
+    <View pointerEvents="none" style={styles.greyBandFeminine} />
+    <View pointerEvents="none" style={styles.greyBandMasculine} />
+  </>
+);
+
+const CenterColumn = ({
   stages,
   currentStage,
   onPress,
-}: StageHotspotsProps): React.JSX.Element => (
-  <>
-    {stages.flatMap((stage) =>
-      stage.hotspots.map((hs, index) => (
-        <TouchableOpacity
-          key={`${stage.id}-${index}`}
-          testID={`stage-hotspot-${stage.stageNumber}-${index}`}
-          style={[
-            styles.hotspot,
-            {
-              top: `${hs.top}%`,
-              left: `${hs.left}%`,
-              width: `${hs.width}%`,
-              height: `${hs.height}%`,
-            },
-            getHotspotStyle(stage, currentStage),
-          ]}
-          onPress={() => onPress(stage)}
-          accessibilityLabel={`${stage.title} - ${stage.subtitle}`}
-          accessibilityRole="button"
-        >
-          {!isStageUnlocked(stage, currentStage) && (
-            <View style={styles.lockOverlay}>
-              <Text style={styles.lockText}>🔒</Text>
-            </View>
-          )}
-          {stage.progress >= FULL_PROGRESS && index === 0 && (
-            <View style={styles.completedBadge} testID={`stage-complete-${stage.stageNumber}`}>
-              <Text style={styles.completedBadgeText}>✓</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      )),
-    )}
-  </>
+}: {
+  stages: StageData[];
+  currentStage: number | null;
+  onPress: (_stage: StageData) => void;
+}): React.JSX.Element => (
+  <View style={styles.centerColumn}>
+    <View style={styles.centerInner}>
+      <GreyBands />
+      <Image
+        source={{ uri: MAP_BACKGROUND_URI }}
+        resizeMode="contain"
+        style={styles.arrowImage}
+        testID="map-background"
+      />
+      <ConnectionLines stages={stages} />
+      {stages.map((stage) => (
+        <ArrowHotspot key={stage.id} stage={stage} currentStage={currentStage} onPress={onPress} />
+      ))}
+      {stages.map((stage) => (
+        <ArrowLabel key={stage.id} stage={stage} />
+      ))}
+      <SpiralTitle />
+    </View>
+  </View>
 );
 
 const StageMetadataSection = ({ stage }: { stage: StageData }): React.JSX.Element => (
@@ -419,7 +568,7 @@ const StageDetailModal = ({
 
 const MapLoading = (): React.JSX.Element => (
   <View style={styles.centered} testID="map-loading">
-    <ActivityIndicator size="large" color="#fff" />
+    <ActivityIndicator size="large" color={styles.loadingText.color} />
     <Text style={styles.loadingText}>Loading stages...</Text>
   </View>
 );
@@ -450,74 +599,42 @@ const MapRefreshErrorBanner = ({ onRetry }: { onRetry: () => void }): React.JSX.
   </View>
 );
 
-function useBackgroundSize() {
-  const { width, height } = useWindowDimensions();
-  const [aspectRatio, setAspectRatio] = useState(1);
-
-  useEffect(() => {
-    Image.getSize(MAP_BACKGROUND_URI, (w, h) => setAspectRatio(w / h));
-  }, []);
-
-  const isPortrait = height >= width;
-  return isPortrait
-    ? { width, height: width / aspectRatio }
-    : { height, width: height * aspectRatio };
-}
-
-interface MapBackgroundProps {
+interface SpiralTableProps {
   stages: StageData[];
+  lookup: StageLookup;
   currentStage: number | null;
   onSelectStage: (_stage: StageData) => void;
 }
 
-const MapBackground = ({
+const SpiralTable = ({
   stages,
+  lookup,
   currentStage,
   onSelectStage,
-}: MapBackgroundProps): React.JSX.Element => {
-  const backgroundStyle = useBackgroundSize();
-
-  return (
-    <ImageBackground
-      source={{ uri: MAP_BACKGROUND_URI }}
-      style={backgroundStyle}
-      resizeMode="contain"
-      testID="map-background"
-    >
-      <ConnectionLines stages={stages} />
-      <StageHotspots stages={stages} currentStage={currentStage} onPress={onSelectStage} />
-    </ImageBackground>
-  );
-};
+}: SpiralTableProps): React.JSX.Element => (
+  <View style={styles.table}>
+    <LeftTextColumn lookup={lookup} currentStage={currentStage} onPress={onSelectStage} />
+    <CenterColumn stages={stages} currentStage={currentStage} onPress={onSelectStage} />
+    <RightLabelColumn />
+  </View>
+);
 
 // --- Main component ---
 
-const MapScreen = (): React.JSX.Element => {
+type NavTarget = 'Practice' | 'Course' | 'Journal';
+
+/**
+ * Build the stage-detail action navigator. Closes the modal first, then routes
+ * after interactions settle; a ref guards against double-taps mid-transition.
+ */
+const useStageNavigation = (onBeforeNavigate: () => void) => {
   const navigation = useAppNavigation();
-  const stages = useStageStore(selectStages);
-  const loading = useStageStore(selectStagesLoading);
-  const error = useStageStore(selectStagesError);
-  const storeCurrentStage = useStageStore(selectCurrentStage);
-  // Prefer the date-driven stage when the master anchor is set; the
-  // server's count-based ``currentStage`` is the fallback for users who
-  // haven't picked an anchor yet.
-  const currentStage = useDerivedCurrentStage(storeCurrentStage);
-  const [activeStage, setActiveStage] = useState<StageData | null>(null);
   const navigatingRef = useRef(false);
-
-  useEffect(() => {
-    if (stages.length === 0 && !loading) {
-      void stageService.loadStages();
-    }
-  }, [stages.length, loading]);
-
-  const handleRefresh = useCallback(() => void stageService.loadStages(), []);
-
-  const handleNavigate = useCallback(
-    (screen: 'Practice' | 'Course' | 'Journal', stage: StageData) => {
+  return useCallback(
+    (screen: NavTarget, stage: StageData) => {
       if (navigatingRef.current) return;
       navigatingRef.current = true;
-      setActiveStage(null);
+      onBeforeNavigate();
       InteractionManager.runAfterInteractions(() => {
         if (screen === 'Journal') {
           navigation.navigate('Journal', {
@@ -530,17 +647,48 @@ const MapScreen = (): React.JSX.Element => {
         navigatingRef.current = false;
       });
     },
-    [navigation],
+    [navigation, onBeforeNavigate],
+  );
+};
+
+const MapScreen = (): React.JSX.Element => {
+  const stages = useStageStore(selectStages);
+  const loading = useStageStore(selectStagesLoading);
+  const error = useStageStore(selectStagesError);
+  const storeCurrentStage = useStageStore(selectCurrentStage);
+  // Prefer the date-driven stage when the master anchor is set; the
+  // server's count-based ``currentStage`` is the fallback for users who
+  // haven't picked an anchor yet.
+  const currentStage = useDerivedCurrentStage(storeCurrentStage);
+  const [activeStage, setActiveStage] = useState<StageData | null>(null);
+
+  // Resolve each row's stage numbers to their loaded StageData once per change.
+  const lookup = useMemo<StageLookup>(
+    () => Object.fromEntries(stages.map((stage) => [stage.stageNumber, stage])),
+    [stages],
   );
 
+  useEffect(() => {
+    if (stages.length === 0 && !loading) {
+      void stageService.loadStages();
+    }
+  }, [stages.length, loading]);
+
+  const handleRefresh = useCallback(() => void stageService.loadStages(), []);
   const handleCloseModal = useCallback(() => setActiveStage(null), []);
+  const handleNavigate = useStageNavigation(handleCloseModal);
 
   if (loading && stages.length === 0) return <MapLoading />;
   if (error && stages.length === 0) return <MapError message={error} />;
 
   return (
     <View style={styles.container}>
-      <MapBackground stages={stages} currentStage={currentStage} onSelectStage={setActiveStage} />
+      <SpiralTable
+        stages={stages}
+        lookup={lookup}
+        currentStage={currentStage}
+        onSelectStage={setActiveStage}
+      />
       {error && stages.length > 0 && <MapRefreshErrorBanner onRetry={handleRefresh} />}
       <StageDetailModal
         activeStage={activeStage}

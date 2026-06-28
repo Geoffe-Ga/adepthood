@@ -2,9 +2,12 @@
 /* global describe, it, expect */
 import { HOTSPOTS, STAGE_COUNT } from '../stageData';
 
+const SIDE_SPLIT = 40;
+
 describe('stageData', () => {
-  it('provides hotspots for all stages', () => {
+  it('provides one arrow hotspot for every stage', () => {
     expect(HOTSPOTS).toHaveLength(STAGE_COUNT);
+    HOTSPOTS.forEach((spots) => expect(spots).toHaveLength(1));
   });
 
   it('has non-overlapping vertical hotspot ranges', () => {
@@ -18,20 +21,15 @@ describe('stageData', () => {
   });
 
   it('positions arrow hotspots on alternating sides of the spiral', () => {
-    // HOTSPOTS are indexed 0–9 where 0 = stage 10, 9 = stage 1
+    // HOTSPOTS are indexed 0–9 where 0 = stage 10, 9 = stage 1. Even
+    // (Divine-Feminine) stages return along the left; odd stages point right.
     HOTSPOTS.forEach((spots, index) => {
       const stageNumber = STAGE_COUNT - index;
-      const arrowSpots = spots.slice(1);
-      if (stageNumber === 9) {
-        expect(arrowSpots).toHaveLength(2);
+      const arrow = spots[0]!;
+      if (stageNumber % 2 === 0) {
+        expect(arrow.left).toBeLessThan(SIDE_SPLIT);
       } else {
-        expect(arrowSpots).toHaveLength(1);
-        const arrow = arrowSpots[0]!;
-        if (stageNumber % 2 === 0) {
-          expect(arrow.left).toBeLessThan(40);
-        } else {
-          expect(arrow.left).toBeGreaterThan(40);
-        }
+        expect(arrow.left).toBeGreaterThan(SIDE_SPLIT);
       }
     });
   });
