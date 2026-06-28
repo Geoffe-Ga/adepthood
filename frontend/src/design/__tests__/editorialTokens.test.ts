@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-import { colors, editorialType, journalLayout } from '../tokens';
+import { colors, editorialType, journalLayout, journalSheet, paperShadow } from '../tokens';
 
 /** WCAG relative luminance of a #rrggbb color. */
 const luminance = (hex: string): number => {
@@ -29,6 +29,8 @@ describe('editorial tokens', () => {
         expect.arrayContaining([
           'background',
           'backgroundAlt',
+          'desk',
+          'sheetEdge',
           'ink',
           'inkSoft',
           'hairline',
@@ -42,6 +44,33 @@ describe('editorial tokens', () => {
       expect(contrast(colors.paper.inkSoft, colors.paper.background)).toBeGreaterThanOrEqual(
         AA_NORMAL,
       );
+    });
+
+    it('has a desk ground darker than the page (so the sheet reads as lifted)', () => {
+      expect(colors.paper.desk).toMatch(/^#[\da-f]{6}$/i);
+      expect(colors.paper.sheetEdge).toMatch(/^#[\da-f]{6}$/i);
+      expect(luminance(colors.paper.desk)).toBeLessThan(luminance(colors.paper.background));
+    });
+  });
+
+  describe('paperShadow', () => {
+    it('exports sheet + card lifts with shadow props and an Android elevation', () => {
+      for (const lift of [paperShadow.sheet, paperShadow.card]) {
+        expect(lift.shadowColor).toBe(colors.paper.ink);
+        expect(lift.shadowOffset.height).toBeGreaterThan(0);
+        expect(lift.shadowOpacity).toBeGreaterThan(0);
+        expect(lift.elevation).toBeGreaterThan(0);
+      }
+      // The sheet sits higher off the desk than a card.
+      expect(paperShadow.sheet.elevation).toBeGreaterThan(paperShadow.card.elevation);
+    });
+  });
+
+  describe('journalSheet', () => {
+    it('exports positive sheet metrics without touching journalLayout', () => {
+      for (const value of Object.values(journalSheet)) {
+        expect(value).toBeGreaterThan(0);
+      }
     });
   });
 

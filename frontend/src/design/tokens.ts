@@ -121,6 +121,13 @@ export const colors = {
   paper: {
     background: '#faf6ef',
     backgroundAlt: '#f3ecdf',
+    // The deeper, warmer "desk" the writing sheet floats above — a step darker
+    // than `background` so the lighter sheet reads as lifted (the warm
+    // `paperShadow` below carries the rest of the depth cue).
+    desk: '#e7dcc8',
+    // Faint lit edge for the lifted sheet — slightly lighter than `hairline` so
+    // the sheet border reads as a paper edge, not a divider.
+    sheetEdge: '#efe7d8',
     ink: '#2b2620',
     inkSoft: '#5a5046',
     hairline: '#e3dccd',
@@ -450,4 +457,38 @@ export const editorialType = {
 /** Typography for interactive chrome, so button/label sizing lives in tokens. */
 export const uiType = {
   button: { fontSize: 16, fontWeight: '600' as const },
+} as const;
+
+// ---------------------------------------------------------------------------
+// Editorial elevation — depth primitives for the floating journal page
+// ---------------------------------------------------------------------------
+
+/**
+ * Soft, warm, downward shadows for lifting paper surfaces (the journal sheet,
+ * shelf cards, margin notes) off the desk ground. Ink-tinted rather than pure
+ * black so the lift reads as paper-on-desk, not card-on-glass. iOS/web use the
+ * shadow* props; Android uses `elevation`.
+ */
+export const paperShadow = {
+  sheet: {
+    shadowColor: colors.paper.ink,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.14,
+    shadowRadius: 18,
+    elevation: 6,
+  },
+  card: {
+    shadowColor: colors.paper.ink,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+} as const;
+
+/** Metrics for the floated journal sheet (the depth issues consume these). */
+export const journalSheet = {
+  cornerRadius: radius.lg, // rounded top of the lifted sheet
+  deskPaddingH: spacing(2), // desk visible left/right of the sheet
+  deskPaddingTop: spacing(1.5), // desk visible above the sheet
 } as const;
