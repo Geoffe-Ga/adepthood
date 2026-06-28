@@ -15,7 +15,8 @@ import styles, { markdownStyles } from './Course.styles';
  */
 export type ChapterReaderSource =
   | { kind: 'content'; id: number }
-  | { kind: 'resource'; slug: string };
+  | { kind: 'resource'; slug: string }
+  | { kind: 'intro'; stageNumber: number };
 
 interface ChapterReaderProps {
   source: ChapterReaderSource;
@@ -121,6 +122,17 @@ function describeError(): string {
   return 'This chapter couldn’t load right now. Please try again.';
 }
 
+function fetchBody(source: ChapterReaderSource): Promise<ContentBody> {
+  switch (source.kind) {
+    case 'content':
+      return courseApi.contentBody(source.id);
+    case 'resource':
+      return courseApi.siteResourceBody(source.slug);
+    case 'intro':
+      return courseApi.stageIntroBody(source.stageNumber);
+  }
+}
+
 function useContentBody(source: ChapterReaderSource): {
   body: ContentBody | null;
   loading: boolean;
@@ -149,10 +161,7 @@ function useContentBody(source: ChapterReaderSource): {
     // (set by ``AuthContext`` at sign-in), so the bearer header is
     // attached automatically.  Same pattern as ``stagesApi.list()``
     // and the other "no explicit token" callers in the codebase.
-    const promise =
-      source.kind === 'content'
-        ? courseApi.contentBody(source.id)
-        : courseApi.siteResourceBody(source.slug);
+    const promise = fetchBody(source);
 
     promise
       .then((result) => {

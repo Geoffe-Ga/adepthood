@@ -11,6 +11,7 @@ jest.mock('../../../api', () => ({
   course: {
     contentBody: jest.fn(),
     siteResourceBody: jest.fn(),
+    stageIntroBody: jest.fn(),
   },
 }));
 
@@ -18,10 +19,15 @@ const { course: courseApi } = jest.requireMock('../../../api') as {
   course: {
     contentBody: jest.MockedFunction<typeof Api.course.contentBody>;
     siteResourceBody: jest.MockedFunction<typeof Api.course.siteResourceBody>;
+    stageIntroBody: jest.MockedFunction<typeof Api.course.stageIntroBody>;
   };
 };
 
-const { contentBody: mockContentBody, siteResourceBody: mockSiteResourceBody } = courseApi;
+const {
+  contentBody: mockContentBody,
+  siteResourceBody: mockSiteResourceBody,
+  stageIntroBody: mockStageIntroBody,
+} = courseApi;
 
 const HAPPY_CHAPTER = {
   title: 'Chapter One',
@@ -35,11 +41,18 @@ const HAPPY_RESOURCE = {
   body_markdown: '# Philosophy\n\nphilosophy body.\n',
 };
 
+const HAPPY_INTRO = {
+  title: 'Welcome to Beige',
+  content_type: 'introduction',
+  body_markdown: '# Welcome to Beige\n\nintro body.\n',
+};
+
 describe('ChapterReader', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockContentBody.mockResolvedValue(HAPPY_CHAPTER);
     mockSiteResourceBody.mockResolvedValue(HAPPY_RESOURCE);
+    mockStageIntroBody.mockResolvedValue(HAPPY_INTRO);
   });
 
   it('renders the fallback title until the live one arrives', async () => {
@@ -74,6 +87,32 @@ describe('ChapterReader', () => {
     );
     await waitFor(() => expect(mockSiteResourceBody).toHaveBeenCalledWith('philosophy'));
     expect(mockContentBody).not.toHaveBeenCalled();
+  });
+
+  it('routes intro sources to course.stageIntroBody and renders the body', async () => {
+    const { findAllByText } = render(
+      <ChapterReader
+        source={{ kind: 'intro', stageNumber: 1 }}
+        fallbackTitle="x"
+        onBack={jest.fn()}
+      />,
+    );
+    await waitFor(() => expect(mockStageIntroBody).toHaveBeenCalledWith(1));
+    expect(mockContentBody).not.toHaveBeenCalled();
+    expect(mockSiteResourceBody).not.toHaveBeenCalled();
+    await findAllByText('Welcome to Beige');
+  });
+
+  it('shows the error state when an intro body fails to load', async () => {
+    mockStageIntroBody.mockRejectedValueOnce({ detail: 'boom' });
+    const { findByTestId } = render(
+      <ChapterReader
+        source={{ kind: 'intro', stageNumber: 2 }}
+        fallbackTitle="x"
+        onBack={jest.fn()}
+      />,
+    );
+    await findByTestId('reader-error');
   });
 
   it('renders a footer when one is provided', async () => {

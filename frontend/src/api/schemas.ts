@@ -399,6 +399,18 @@ export const contentItemSchema = z.object({
 });
 
 /**
+ * Stage-introduction metadata from ``GET /course/stages/{n}/intro``. Validated
+ * at the boundary so a backend field rename/retype raises ``ApiValidationError``.
+ */
+export const stageIntroSchema = z.object({
+  stage: z.number().int(),
+  id: z.string(),
+  slug: z.string(),
+  title: z.string(),
+  summary: z.string().nullable(),
+});
+
+/**
  * Frequency-banner payload from ``GET /user-practices/current/frequency``.
  * Validated at the boundary so a backend field rename/retype raises
  * ``ApiValidationError`` (the "Something changed on the server" path) instead of
