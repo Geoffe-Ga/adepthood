@@ -2,8 +2,10 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import type { JournalListResponse, JournalMessage, PromptDetail } from '@/api';
+import { colors } from '@/design/tokens';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
@@ -91,6 +93,34 @@ describe('JournalShelfScreen', () => {
     expect(await findByTestId('journal-shelf-card-3')).toBeTruthy();
     expect(getByTestId('journal-shelf-card-2')).toBeTruthy();
     expect(getByTestId('journal-shelf-card-1')).toBeTruthy();
+  });
+
+  it('floats each entry as a lifted paper card on the deeper desk ground', async () => {
+    mockList.mockResolvedValue(page([entry(1)]));
+    const { findByTestId, getByTestId } = render(<JournalShelfScreen />);
+    const card = StyleSheet.flatten((await findByTestId('journal-shelf-card-1')).props.style);
+    // Lifted paper card: matches the page ground, lifted by the warm card shadow,
+    // separated by gaps rather than the old hairline divider.
+    expect(card.backgroundColor).toBe(colors.paper.background);
+    expect(card.shadowRadius).toBeGreaterThan(0);
+    expect(card.elevation).toBeGreaterThan(0);
+    expect(card.borderBottomWidth).toBeUndefined();
+    // The shelf sits on the deeper desk ground the cards float above.
+    const root = StyleSheet.flatten(getByTestId('journal-shelf').props.style);
+    expect(root.backgroundColor).toBe(colors.paper.desk);
+  });
+
+  it('floats the weekly-prompt card with matching depth while keeping its accent bar', async () => {
+    mockList.mockResolvedValue(page([entry(1)]));
+    mockPromptCurrent.mockResolvedValue(prompt({ week_number: 3, has_responded: false }));
+    const { findByTestId } = render(<JournalShelfScreen />);
+    const card = StyleSheet.flatten((await findByTestId('journal-weekly-prompt')).props.style);
+    // Same floated treatment as the entry cards…
+    expect(card.backgroundColor).toBe(colors.paper.background);
+    expect(card.shadowRadius).toBeGreaterThan(0);
+    expect(card.elevation).toBeGreaterThan(0);
+    // …but keeps its accent-bar identity.
+    expect(card.borderLeftColor).toBe(colors.marginalia.theme);
   });
 
   it('shows the empty state when there are no entries', async () => {

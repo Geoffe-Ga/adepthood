@@ -1,15 +1,24 @@
 /** Styles for the journal shelf (the landing list of entry "pages"). */
 import { StyleSheet } from 'react-native';
 
-import { BORDER_RADIUS, SPACING, colors, editorialType, spacing } from '@/design/tokens';
+import {
+  BORDER_RADIUS,
+  SPACING,
+  colors,
+  editorialType,
+  paperShadow,
+  spacing,
+  touchTarget,
+} from '@/design/tokens';
 
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: colors.paper.background,
+    backgroundColor: colors.paper.desk, // shared desk ground (issue 01)
   },
   listContent: {
     paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.md,
     paddingBottom: SPACING.xxl,
     flexGrow: 1,
   },
@@ -17,7 +26,7 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.md,
   },
   newEntry: {
-    minHeight: 44,
+    minHeight: touchTarget.minimum,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: SPACING.sm,
@@ -31,10 +40,15 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   card: {
-    minHeight: 44,
+    minHeight: touchTarget.minimum,
     paddingVertical: SPACING.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.paper.hairline,
+    paddingHorizontal: SPACING.lg,
+    marginBottom: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    // The lifted page card: separation now comes from the gap + shadow between
+    // floated cards, so the old borderBottom hairline is gone.
+    backgroundColor: colors.paper.background,
+    ...paperShadow.card,
   },
   cardTitleRow: {
     flexDirection: 'row',
@@ -78,9 +92,12 @@ const styles = StyleSheet.create({
     marginTop: SPACING.lg,
     padding: SPACING.lg,
     borderRadius: BORDER_RADIUS.md,
-    backgroundColor: colors.paper.backgroundAlt,
+    // Lifted onto the desk like the entry cards, but keeps its accent-bar
+    // identity marking it as the weekly prompt.
+    backgroundColor: colors.paper.background,
     borderLeftWidth: 3,
     borderLeftColor: colors.marginalia.theme,
+    ...paperShadow.card,
   },
   promptLabel: {
     ...editorialType.caption,
