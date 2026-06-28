@@ -18,11 +18,11 @@ import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 /**
- * BYOK ("Bring Your Own Key") settings for BotMason chat.
+ * BYOK ("Bring Your Own Key") settings for BotMason Resonance.
  *
  * Lets a user paste an OpenAI or Anthropic API key that is stored **only on
- * their device** via SecureStore and is attached per-request to
- * ``/journal/chat`` via the ``X-LLM-API-Key`` header (issue #185). The key is
+ * their device** via SecureStore and is attached per-request to the
+ * journal resonance endpoint via the ``X-LLM-API-Key`` header (issue #185). The key is
  * never uploaded to the backend database and is masked by default — reveal
  * toggles only show the value locally in this screen.
  */

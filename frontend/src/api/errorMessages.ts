@@ -98,19 +98,19 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   payment_required:
     "You've reached this month's free allotment. Add your own API key in Settings, or wait until the next monthly reset.",
   insufficient_offerings:
-    "You've used all your free BotMason messages for the month. Add your own API key in Settings, or wait until your next monthly reset.",
+    "You've used all your free BotMason responses for the month. Add your own API key in Settings, or wait until your next monthly reset.",
   llm_key_required:
-    'BotMason needs a key to reply. Add your API key in Settings to start chatting.',
+    'BotMason needs a key to write your Resonance. Add your API key in Settings to continue.',
   invalid_llm_api_key_format:
     "That API key doesn't look right. Copy the full key from your OpenAI or Anthropic dashboard and paste it into Settings.",
 
   // --- Streaming / rate limits / network -------------------------------
   rate_limit_exceeded:
-    "You're sending messages faster than BotMason can keep up. Slow down to 10 messages per minute.",
+    "You're requesting Resonance faster than BotMason can keep up. Slow down to 10 requests per minute.",
   llm_provider_error: PROVIDER_TROUBLE,
   malformed_stream_frame: PROVIDER_TROUBLE,
   incomplete_stream:
-    'The connection dropped before BotMason finished its reply. Tap retry to send the same message again.',
+    'The connection dropped before BotMason finished writing. Tap retry to request Resonance again.',
   network_error: `You appear to be offline. ${CHECK_CONNECTION}`,
 
   // --- Database / infra ------------------------------------------------
@@ -296,8 +296,8 @@ export function formatApiError(err: unknown, options: FormatErrorOptions = {}): 
 }
 
 /**
- * Narrower helper for BotMason chat where callers already have a raw
- * backend ``detail`` string (e.g. from an SSE ``error`` frame) and want
+ * Narrower helper for BotMason Resonance where callers already have a raw
+ * backend ``detail`` string (e.g. from a failed resonance request) and want
  * the mapped user copy. Preserves the old ``JournalScreen`` API.
  */
 export function mapDetailToMessage(detail: string): string {

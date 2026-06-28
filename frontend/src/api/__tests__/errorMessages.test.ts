@@ -83,6 +83,18 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       expect(message).toMatch(/[.!?]$/);
     }
   });
+
+  // The BotMason chat surface was removed (backend #654, frontend #665) and
+  // replaced by the Resonance journal. No user-facing copy may still imply a
+  // chat interface ("chatting", "sending messages", "send the same message"),
+  // or it tells the user to do something the app no longer offers.
+  it('carries no leftover chat-era wording after the Resonance pivot', () => {
+    const chatWording =
+      /\bchatting\b|sending messages|send (the same )?message|messages per minute|messages for the month/i;
+    for (const [code, message] of Object.entries(USER_FACING_ERROR_MESSAGES)) {
+      expect(`${code}: ${message}`).not.toMatch(chatWording);
+    }
+  });
 });
 
 describe('practice-selection codes (BUG-PRACTICE-012)', () => {
@@ -161,7 +173,8 @@ describe('formatApiError', () => {
     const result = formatApiError(err, {
       statusOverrides: { 402: 'This should not be used.' },
     });
-    expect(result).toMatch(/BotMason messages/);
+    expect(result).toMatch(/BotMason responses/);
+    expect(result).not.toBe('This should not be used.');
   });
 
   it('returns GENERIC_FALLBACK for null/undefined inputs with no fallback', () => {
