@@ -25,6 +25,11 @@ updates:
       # upgrade (where expo-av is also superseded by expo-audio/expo-video).
       - dependency-name: "expo-av"
         versions: [">=16.0.0"]
+      # Expo SDK 52 pins expo-notifications to ~0.29.14 (verified by
+      # `expo install --check`); later majors target SDK 53+. Same SDK-managed
+      # rule as expo-av — unpin at the SDK 53 upgrade.
+      - dependency-name: "expo-notifications"
+        versions: [">=0.30.0"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
