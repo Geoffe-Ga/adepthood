@@ -76,22 +76,35 @@ once manually — handy for backfilling after enabling the bot mid-campaign.
 
 All math is pure and unit-tested in `stats.py`; all I/O is in `recap.py`.
 
-- **PRs merged** — closed PRs with a non-null `merged_at`, capped at `--max-prs`
-  (default 200). "last 7d" counts merges within the trailing 7 days of now.
-- **Merge rate** — `total_merges / span_days`, where `span_days` runs from the
-  **first** merge to **now** (not to the last merge). Anchoring to now makes a
-  stalled loop show a *decaying* rate instead of a frozen one.
-- **Review iterations before LGTM** — per merged PR, issue comments are read
-  oldest-first and a comment counts as a verdict only if it contains `VERDICT`
-  (case-insensitive), matching `iteration-trigger.yml`. The count is the number
-  of non-LGTM verdicts preceding the first LGTM. PRs that never reached an LGTM
-  verdict are excluded. The embed shows avg rounds, first-try-clean %, worst,
-  and the sample size `n`.
-- **Time to merge** — `merged_at - created_at` per PR; median, fastest, slowest.
+The headline **PRs merged** total is all-time; the activity and quality stats
+below cover a trailing **7-day window** (`RECENT_WINDOW_DAYS`) so they move with
+recent work instead of being diluted by a frozen lifetime average. The window is
+fetched via the search API (`is:pr is:merged merged:>=<date>`), capped at
+`--max-prs` (default 200) as a safety bound on a burst day.
+
+- **PRs merged** — the true cumulative count of merged PRs from the search API
+  (`total_count`), independent of any per-run fetch cap, plus "in 24h" and
+  "in 7d" counts from the window.
+- **Merge rate** — rolling windows: merges in the last 24h as **per-hour**, and
+  merges in the last 7 days as **per-day**. Fixed-width windows move every recap
+  and decay toward zero when the loop idles. The 7-day per-day figure (steadier
+  than the 24h one) is what the backlog ETA is built on.
+- **Review iterations before LGTM** (7d) — per merged PR in the window, issue
+  comments are read oldest-first and a comment counts as a verdict only if it
+  contains `VERDICT` (case-insensitive), matching `iteration-trigger.yml`. The
+  count is the number of non-LGTM verdicts preceding the first LGTM. PRs that
+  never reached an LGTM verdict are excluded. The embed shows avg rounds,
+  first-try-clean %, worst, and the sample size `n`.
+- **Cycle time** (7d) — `merged_at - first_commit_at` per PR: from the PR's
+  first commit (the work-beginning proxy, via the pull-request commits endpoint)
+  to merge, so it captures coding time rather than just the review window. Falls
+  back to `created_at` when no commit timestamp is available, and clamps to zero
+  so a rebased commit dated after the merge can't go negative. Median, fastest,
+  slowest.
 - **Backlog remaining and ETA** — `open_items / per_day` as days and a date.
   When the rate is zero the ETA reads "unknown (stalled)"; an empty backlog
   reads "backlog clear".
-- **Busiest day** — the UTC calendar day with the most merges.
+- **Busiest day** (7d) — the UTC calendar day in the window with the most merges.
 - **This PR's footprint** — additions/deletions/changed-files for the most
   recently merged PR (the list endpoint omits diff stats, so it's fetched via
   the single-PR detail endpoint).

@@ -75,22 +75,29 @@ def test_iterations_before_lgtm_none_when_never_lgtm() -> None:
 
 def test_merge_rate_empty() -> None:
     rate = rs.merge_rate([], now=_at(27))
-    assert rate["total"] == 0.0
-    assert rate["per_day"] == 0.0
+    assert rate == {"last_24h": 0.0, "per_hour": 0.0, "last_7_days": 0.0, "per_day": 0.0}
 
 
-def test_merge_rate_spans_first_merge_to_now() -> None:
-    merged = [_at(20), _at(22), _at(24)]
-    rate = rs.merge_rate(merged, now=_at(30))
-    assert rate["total"] == 3.0
-    assert rate["span_days"] == 10.0
-    assert rate["per_day"] == 0.3
+def test_merge_rate_last_24h_per_hour() -> None:
+    # Two merges within 24h of `now` (27th 06:00 and 12:00); one is older.
+    merged = [_at(26, 5), _at(27, 6), _at(27, 12)]
+    rate = rs.merge_rate(merged, now=_at(27, 12))
+    assert rate["last_24h"] == 2.0
+    assert rate["per_hour"] == 2.0 / 24.0
 
 
-def test_merge_rate_last_7_days_window() -> None:
+def test_merge_rate_last_7_days_per_day() -> None:
+    # Two merges within 7 days of the 28th; the 1st is outside the window.
     merged = [_at(1), _at(25), _at(27)]
     rate = rs.merge_rate(merged, now=_at(28))
     assert rate["last_7_days"] == 2.0
+    assert rate["per_day"] == 2.0 / 7.0
+
+
+def test_merge_rate_drops_stale_all_time_keys() -> None:
+    rate = rs.merge_rate([_at(27)], now=_at(27))
+    assert "total" not in rate
+    assert "span_days" not in rate
 
 
 # ---------- time_to_merge_stats ----------
@@ -201,6 +208,75 @@ def test_count_open_backlog_respects_env_override(monkeypatch: pytest.MonkeyPatc
     ]
     _patch_issues(monkeypatch, issues)
     assert recap.count_open_backlog("owner/repo", token="t") == 2
+
+
+# ---------- count_merged_total ----------
+
+
+def test_count_merged_total_reads_search_total_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(recap, "_request_json", lambda *a, **k: {"total_count": 723, "items": []})
+    assert recap.count_merged_total("owner/repo", token="t") == 723
+
+
+# ---------- fetch_pr_first_commit_at ----------
+
+
+def test_fetch_pr_first_commit_at_returns_author_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    commits = [{"commit": {"author": {"date": "2026-06-20T08:00:00Z"}}}]
+    monkeypatch.setattr(recap, "_request_json", lambda *a, **k: commits)
+    assert recap.fetch_pr_first_commit_at("owner/repo", 7, token="t") == _at(20, 8)
+
+
+def test_fetch_pr_first_commit_at_falls_back_to_committer_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    commits = [{"commit": {"committer": {"date": "2026-06-21T09:00:00Z"}}}]
+    monkeypatch.setattr(recap, "_request_json", lambda *a, **k: commits)
+    assert recap.fetch_pr_first_commit_at("owner/repo", 7, token="t") == _at(21, 9)
+
+
+def test_fetch_pr_first_commit_at_none_when_no_commits(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(recap, "_request_json", lambda *a, **k: [])
+    assert recap.fetch_pr_first_commit_at("owner/repo", 7, token="t") is None
+
+
+# ---------- fetch_recent_merged_prs ----------
+
+
+def _hit(number: int, *, merged: str, created: str) -> dict[str, Any]:
+    return {"number": number, "created_at": created, "pull_request": {"merged_at": merged}}
+
+
+def test_fetch_recent_merged_prs_sorts_newest_merge_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    hits = [
+        _hit(1, merged="2026-06-25T00:00:00Z", created="2026-06-24T00:00:00Z"),
+        _hit(2, merged="2026-06-27T00:00:00Z", created="2026-06-26T00:00:00Z"),
+        _hit(3, merged="2026-06-26T00:00:00Z", created="2026-06-25T00:00:00Z"),
+    ]
+    monkeypatch.setattr(recap, "_gh_search_issues", lambda *a, **k: hits)
+    out = recap.fetch_recent_merged_prs("owner/repo", token="t", since=_at(20).date(), max_prs=200)
+    assert [pr["number"] for pr in out] == [2, 3, 1]
+
+
+# ---------- _cycle_hours ----------
+
+
+def test_cycle_hours_uses_first_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(recap, "fetch_pr_first_commit_at", lambda *a, **k: _at(27, 9))
+    pr = _hit(1, merged="2026-06-27T12:00:00Z", created="2026-06-27T11:00:00Z")
+    # 09:00 first commit -> 12:00 merge = 3h, ignoring the later PR-open time.
+    assert recap._cycle_hours("owner/repo", pr, token="t") == 3.0
+
+
+def test_cycle_hours_falls_back_to_created_at(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(recap, "fetch_pr_first_commit_at", lambda *a, **k: None)
+    pr = _hit(1, merged="2026-06-27T12:00:00Z", created="2026-06-27T10:00:00Z")
+    assert recap._cycle_hours("owner/repo", pr, token="t") == 2.0
+
+
+def test_cycle_hours_clamps_negative_to_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A rebased first commit dated after the merge must not go negative.
+    monkeypatch.setattr(recap, "fetch_pr_first_commit_at", lambda *a, **k: _at(27, 14))
+    pr = _hit(1, merged="2026-06-27T12:00:00Z", created="2026-06-27T11:00:00Z")
+    assert recap._cycle_hours("owner/repo", pr, token="t") == 0.0
 
 
 # ---------- _heuristic_headline ----------

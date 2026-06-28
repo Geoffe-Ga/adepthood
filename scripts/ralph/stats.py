@@ -84,28 +84,33 @@ def _median(values: list[float]) -> float:
     return (ordered[mid - 1] + ordered[mid]) / 2
 
 
+HOURS_PER_DAY = 24.0
+DAYS_PER_WEEK = 7.0
+
+
 def merge_rate(merged_at: list[dt.datetime], *, now: dt.datetime) -> dict[str, float]:
-    """Compute merge throughput from a list of merge timestamps.
+    """Compute merge throughput over fixed rolling windows.
 
-    Returns merges-per-day over the whole campaign, merges over the trailing 7
-    days, and the span in days. The campaign span runs from the first merge to
-    `now` (not to the last merge) so a stalled loop shows a decaying rate rather
-    than a frozen one.
+    Reports activity over the trailing 24 hours (as merges-per-hour) and the
+    trailing 7 days (as merges-per-day). Fixed-width windows mean every recap
+    moves with the latest data instead of being diluted by a frozen all-time
+    span, and an idle loop decays toward zero rather than showing a stale
+    average. The 7-day per-day figure (steadier than the 24h one) is what the
+    backlog ETA is built on.
     """
-    count = len(merged_at)
-    if count == 0:
-        return {"total": 0.0, "per_day": 0.0, "last_7_days": 0.0, "span_days": 0.0}
+    if not merged_at:
+        return {"last_24h": 0.0, "per_hour": 0.0, "last_7_days": 0.0, "per_day": 0.0}
 
-    first = min(merged_at)
-    span_days = max((now - first).total_seconds() / 86400.0, 1e-9)
-    week_ago = now - dt.timedelta(days=7)
+    day_ago = now - dt.timedelta(hours=HOURS_PER_DAY)
+    week_ago = now - dt.timedelta(days=DAYS_PER_WEEK)
+    last_24h = sum(1 for ts in merged_at if ts >= day_ago)
     last_7 = sum(1 for ts in merged_at if ts >= week_ago)
 
     return {
-        "total": float(count),
-        "per_day": count / span_days,
+        "last_24h": float(last_24h),
+        "per_hour": last_24h / HOURS_PER_DAY,
         "last_7_days": float(last_7),
-        "span_days": span_days,
+        "per_day": last_7 / DAYS_PER_WEEK,
     }
 
 
