@@ -5,7 +5,9 @@
  * staleness styling lands in a later issue). Tapping signals ``onOpen``.
  */
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { Animated, StyleSheet, Text, TouchableOpacity } from 'react-native';
+
+import { usePressScale } from './motion';
 
 import type { Marginalia } from '@/api';
 import {
@@ -17,6 +19,7 @@ import {
   spacing,
   touchTarget,
 } from '@/design/tokens';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 export interface MarginNoteProps {
   note: Marginalia;
@@ -25,27 +28,32 @@ export interface MarginNoteProps {
 
 function MarginNote({ note, onOpen }: MarginNoteProps): React.JSX.Element {
   const isStale = note.status === 'stale';
+  const press = usePressScale(useReducedMotion());
   return (
-    <TouchableOpacity
-      style={[
-        styles.card,
-        { borderLeftColor: colors.marginalia[note.kind] },
-        isStale && styles.cardStale,
-      ]}
-      onPress={() => onOpen(note)}
-      accessibilityRole="button"
-      accessibilityLabel={`Open ${note.kind} note`}
-      testID={`margin-note-${note.id}`}
-    >
-      <Text style={[styles.kind, { color: colors.marginalia[note.kind] }]}>{note.kind}</Text>
-      <Text style={styles.note}>{note.note}</Text>
-      {isStale ? (
-        <Text style={styles.staleCaption} testID={`margin-note-stale-${note.id}`}>
-          The passage this noted has changed.
-        </Text>
-      ) : null}
-      <Text style={styles.open}>Open</Text>
-    </TouchableOpacity>
+    <Animated.View style={{ transform: [{ scale: press.scale }] }}>
+      <TouchableOpacity
+        style={[
+          styles.card,
+          { borderLeftColor: colors.marginalia[note.kind] },
+          isStale && styles.cardStale,
+        ]}
+        onPress={() => onOpen(note)}
+        onPressIn={press.onPressIn}
+        onPressOut={press.onPressOut}
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${note.kind} note`}
+        testID={`margin-note-${note.id}`}
+      >
+        <Text style={[styles.kind, { color: colors.marginalia[note.kind] }]}>{note.kind}</Text>
+        <Text style={styles.note}>{note.note}</Text>
+        {isStale ? (
+          <Text style={styles.staleCaption} testID={`margin-note-stale-${note.id}`}>
+            The passage this noted has changed.
+          </Text>
+        ) : null}
+        <Text style={styles.open}>Open</Text>
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 

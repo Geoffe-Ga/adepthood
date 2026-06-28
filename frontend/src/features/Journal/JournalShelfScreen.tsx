@@ -7,15 +7,17 @@
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useState } from 'react';
-import { FlatList, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import styles from './JournalShelf.styles';
+import { usePressScale } from './motion';
 import SearchBar from './SearchBar';
 
 import { journal, prompts } from '@/api';
 import type { JournalMessage, PromptDetail } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { useDerivedCurrentWeek } from '@/store/useProgramProgression';
 
@@ -111,24 +113,29 @@ function PageCard({
   entry: JournalMessage;
   onOpen: (_id: number) => void;
 }): React.JSX.Element {
+  const press = usePressScale(useReducedMotion());
   return (
-    <TouchableOpacity
-      style={styles.card}
-      onPress={() => onOpen(entry.id)}
-      accessibilityRole="button"
-      accessibilityLabel={`Open ${entry.title ?? 'untitled'} entry`}
-      testID={`journal-shelf-card-${entry.id}`}
-    >
-      <View style={styles.cardTitleRow}>
-        <Text style={styles.cardTitle} numberOfLines={1}>
-          {entry.title?.trim() ? entry.title : 'Untitled'}
+    <Animated.View style={{ transform: [{ scale: press.scale }] }}>
+      <TouchableOpacity
+        style={styles.card}
+        onPress={() => onOpen(entry.id)}
+        onPressIn={press.onPressIn}
+        onPressOut={press.onPressOut}
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${entry.title ?? 'untitled'} entry`}
+        testID={`journal-shelf-card-${entry.id}`}
+      >
+        <View style={styles.cardTitleRow}>
+          <Text style={styles.cardTitle} numberOfLines={1}>
+            {entry.title?.trim() ? entry.title : 'Untitled'}
+          </Text>
+          <Text style={styles.cardDate}>{formatDate(entry.timestamp)}</Text>
+        </View>
+        <Text style={styles.cardExcerpt} numberOfLines={2}>
+          {excerpt(entry.message)}
         </Text>
-        <Text style={styles.cardDate}>{formatDate(entry.timestamp)}</Text>
-      </View>
-      <Text style={styles.cardExcerpt} numberOfLines={2}>
-        {excerpt(entry.message)}
-      </Text>
-    </TouchableOpacity>
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 
