@@ -137,6 +137,20 @@ def test_all_chapter_records_empty_without_manifest(
         reset_content_repository_for_tests()
 
 
+def test_vendored_content_pin_lists_real_chapters_and_resources() -> None:
+    """The vendored content pin (course-cms-06) carries real chapters + resources.
+
+    Guards the activation: an empty ``backend/content`` (the pre-vendor state)
+    would seed zero StageContent rows and leave the Course screen blank.
+    """
+    repo = ContentRepository(Path(__file__).resolve().parent.parent / "content")
+    chapters = repo.list_chapters()
+    resources = repo.list_resources()
+    assert chapters, "vendored manifest should list chapters"
+    assert {c.stage for c in chapters}, "chapters should cover at least one stage"
+    assert resources, "vendored manifest should list site resources"
+
+
 def test_content_ref_format() -> None:
     assert content_ref("beige-1") == "content://beige-1"
 

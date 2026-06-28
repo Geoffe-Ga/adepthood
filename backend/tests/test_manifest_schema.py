@@ -52,8 +52,8 @@ def test_example_covers_the_contract_surface(example: dict[str, Any]) -> None:
     assert len(example["chapters"]) == 2
     assert len({c["stage"] for c in example["chapters"]}) == 1
     assert len(example["site_resources"]) == 1
-    # schema_version 1.1.0 ships the additive stage_intros[] tier.
-    assert example["schema_version"] == "1.1.0"
+    # schema_version 1.2.0: additive stage_intros[] (1.1.0) + site_resource.media.
+    assert example["schema_version"] == "1.2.0"
     assert len(example["stage_intros"]) == 1
     major, minor, patch = example["schema_version"].split(".")
     assert all(part.isdigit() for part in (major, minor, patch))
@@ -68,6 +68,20 @@ def test_stage_intros_are_optional_for_backwards_compatibility(
     legacy.pop("stage_intros")
     legacy["schema_version"] = "1.0.0"
     Draft202012Validator(schema).validate(legacy)
+
+
+def test_site_resource_media_is_optional(
+    schema: dict[str, Any],
+    example: dict[str, Any],
+) -> None:
+    """schema_version 1.2.0: site_resource.media is allowed but optional."""
+    # The example ships a resource carrying media.
+    assert example["site_resources"][0]["media"]
+    Draft202012Validator(schema).validate(example)
+    # A resource without media still validates.
+    no_media = json.loads(json.dumps(example))
+    no_media["site_resources"][0].pop("media")
+    Draft202012Validator(schema).validate(no_media)
 
 
 @pytest.mark.parametrize(

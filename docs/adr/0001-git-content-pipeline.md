@@ -97,6 +97,12 @@ rejects a differing *major*) already accepts `1.1.0`. Coordinated with the
 `aptitude-course` content repo (spec CR-B mirrors this tier). Intros are
 ungated and not seeded into the database.
 
+**2026-06-28 — `schema_version 1.2.0` (additive).** Added an optional `media[]`
+to `site_resource` (mirroring `chapter.media`) so vendored manifests that attach
+assets to a site resource validate. Purely additive — a resource without `media`
+stays valid, and `additionalProperties: false` still rejects unknown keys. This
+matched the shape the `aptitude-course` content pin already publishes.
+
 ## Consequences
 
 - Issues #390–#399 implement against this contract without

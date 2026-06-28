@@ -19,7 +19,10 @@ repos:
       - id: check-added-large-files
         args: ["--maxkb=250"]
         exclude: |
-          ^frontend/package-lock\.json$
+          (?x)(
+            ^frontend/package-lock\.json$
+            |^backend/content/
+          )
       - id: no-commit-to-branch
         args: ["--branch", "main"]
 
@@ -82,6 +85,10 @@ repos:
     hooks:
       - id: detect-secrets
         args: ["--baseline", ".secrets.baseline"]
+        # backend/content/ is vendored course content (managed only by
+        # sync_content.py and pinned by digest in CONTENT_VERSION); scanning
+        # published Markdown for secrets is pure noise, like node_modules.
+        exclude: ^backend/content/
 
   # Frontend (React Native) checks using local hooks (requires Node in the environment).
   # `bash -c` is used (not `bash -lc`) so hooks do not depend on interactive shell

@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 from httpx import AsyncClient
@@ -53,12 +55,14 @@ async def test_readiness_returns_ready_when_db_up(async_client: AsyncClient) -> 
 async def test_health_reports_content_version(async_client: AsyncClient) -> None:
     """``/health`` surfaces the vendored CONTENT_VERSION sha (issue #397).
 
-    In the test environment nothing is vendored, so the field reports
-    ``none`` — the point is that the key is always present so dashboards
-    can alert on an unexpected value after a deploy.
+    Real content is vendored (course-cms-06), so the field reports the pinned
+    commit sha rather than ``none``; the key is always present so dashboards can
+    alert on an unexpected value after a deploy.
     """
     response = await async_client.get("/health")
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "healthy"
-    assert body["content_version"] == "none"
+    content_version = body["content_version"]
+    assert content_version != "none"
+    assert re.fullmatch(r"[0-9a-f]{40}", content_version)
