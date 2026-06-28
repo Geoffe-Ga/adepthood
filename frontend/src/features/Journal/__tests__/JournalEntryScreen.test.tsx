@@ -7,6 +7,7 @@ import { StyleSheet } from 'react-native';
 import { RESONANCE_BUTTON_CLEARANCE } from '../JournalEntry.styles';
 
 import type { JournalMessage } from '@/api';
+import { colors } from '@/design/tokens';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
@@ -152,6 +153,18 @@ describe('JournalEntryScreen', () => {
     const { getByTestId } = renderScreen();
     const page = StyleSheet.flatten(getByTestId('journal-page').props.style);
     expect(page.paddingBottom).toBe(RESONANCE_BUTTON_CLEARANCE);
+  });
+
+  it('floats the writing area as a lighter sheet above the deeper desk', () => {
+    const { getByTestId } = renderScreen();
+    const sheet = StyleSheet.flatten(getByTestId('journal-sheet').props.style);
+    // The sheet is the lighter paper ground, lifted by the warm paper shadow.
+    expect(sheet.backgroundColor).toBe(colors.paper.background);
+    expect(sheet.shadowRadius).toBeGreaterThan(0);
+    expect(sheet.elevation).toBeGreaterThan(0);
+    // The screen root is the deeper desk ground the sheet floats above.
+    const root = StyleSheet.flatten(getByTestId('journal-screen').props.style);
+    expect(root.backgroundColor).toBe(colors.paper.desk);
   });
 
   it('autosaves once after the debounce when the body changes', async () => {
