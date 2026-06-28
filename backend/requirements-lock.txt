@@ -84,7 +84,7 @@ markupsafe==3.0.3
     # via mako
 openai==2.41.1
     # via -r backend/requirements.txt
-packaging==26.1
+packaging==26.2
     # via
     #   limits
     #   pytest
