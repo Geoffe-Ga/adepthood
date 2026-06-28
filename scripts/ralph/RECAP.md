@@ -95,17 +95,29 @@ fetched via the search API (`is:pr is:merged merged:>=<date>`), capped at
   count is the number of non-LGTM verdicts preceding the first LGTM. PRs that
   never reached an LGTM verdict are excluded. The embed shows avg rounds,
   first-try-clean %, worst, and the sample size `n`.
-- **Cycle time** (7d) — `merged_at - first_commit_at` per PR: from the PR's
-  first commit (the work-beginning proxy, via the pull-request commits endpoint)
-  to merge, so it captures coding time rather than just the review window. Falls
-  back to `created_at` when no commit timestamp is available, and clamps to zero
-  so a rebased commit dated after the merge can't go negative. Median, fastest,
-  slowest.
+- **Time to merge · opened → merged** (7d) — `merged_at - created_at` per PR:
+  the review/merge window. Clamped to zero so clock skew can't go negative.
+  Median, fastest, slowest. (A PR's first-commit timestamp is deliberately not
+  used: for single-commit squash PRs the commit is authored seconds before the
+  PR opens, so "first commit → merge" collapses to this same window.)
+- **Tick cadence · merge → merge** (7d) — the gap between consecutive merges
+  (`stats.merge_intervals_hours`). For a sequential loop this is the closest
+  proxy for how long each tick actually took end to end (pick → code → review →
+  merge), since commit timestamps only mark when work was committed, not begun.
+  Median, fastest, slowest; reads "not enough merges in the window yet" below two
+  merges.
 - **Backlog remaining and ETA** — `open_items / per_day` as days and a date.
   When the rate is zero the ETA reads "unknown (stalled)"; an empty backlog
   reads "backlog clear".
 - **Busiest day** (7d) — the UTC calendar day in the window with the most merges.
-- **This PR's footprint** — additions/deletions/changed-files for the most
+
+The embed groups fields into two labelled blocks so a single merge's numbers are
+never confused with the dataset-wide ones:
+
+- **This PR · time to merge** — the just-merged PR's own `opened → merged`
+  window, plus `since the previous merge (full tick)` — the gap from the prior
+  merge, the per-PR analogue of the tick cadence. Both move on every recap.
+- **This PR · footprint** — additions/deletions/changed-files for the most
   recently merged PR (the list endpoint omits diff stats, so it's fetched via
   the single-PR detail endpoint).
 - **The ten-word headline** — `generate_headline` asks `claude-opus-4-8`
