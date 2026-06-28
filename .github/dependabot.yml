@@ -19,6 +19,12 @@ updates:
       # when react-native-web is upgraded.
       - dependency-name: "styleq"
         versions: [">=0.2.0"]
+      # Expo SDK 52 pins expo-av to ~15.0.2 (verified by `expo install --check`);
+      # expo-av 16.x targets SDK 53. Expo packages are managed by `expo install`
+      # and must move together with the SDK, not piecemeal. Unpin at the SDK 53
+      # upgrade (where expo-av is also superseded by expo-audio/expo-video).
+      - dependency-name: "expo-av"
+        versions: [">=16.0.0"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
