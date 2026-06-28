@@ -398,6 +398,22 @@ export const contentItemSchema = z.object({
   is_read: z.boolean(),
 });
 
+/**
+ * Frequency-banner payload from ``GET /user-practices/current/frequency``.
+ * Validated at the boundary so a backend field rename/retype raises
+ * ``ApiValidationError`` (the "Something changed on the server" path) instead of
+ * the previous hand-rolled ``typeof`` check that threw a context-free error.
+ */
+export const frequencyResponseSchema = z.object({
+  stage_number: z.number(),
+  color: z.string(),
+  aspect: z.string(),
+  practice_name: z.string(),
+  practice_id: z.number(),
+  user_practice_id: z.number().nullable(),
+  banner_text: z.string(),
+});
+
 // ---------------------------------------------------------------------------
 // Lenient schemas for legacy endpoints (gradually tightened)
 // ---------------------------------------------------------------------------
