@@ -88,6 +88,15 @@ an existing reader bumps the major version, and readers must reject a
 manifest whose major version differs from theirs. Every bump gets a
 dated note appended to this ADR.
 
+**2026-06-28 — `schema_version 1.1.0` (additive).** Added an optional
+top-level `stage_intros[]` tier (`$defs/stage_intro`: required
+`stage`/`id`/`slug`/`title`/`path`, optional `summary`) to carry per-stage
+course introductions. Purely additive and backwards-compatible — a `1.0.0`
+manifest with no `stage_intros` still validates, and the reader (which only
+rejects a differing *major*) already accepts `1.1.0`. Coordinated with the
+`aptitude-course` content repo (spec CR-B mirrors this tier). Intros are
+ungated and not seeded into the database.
+
 ## Consequences
 
 - Issues #390–#399 implement against this contract without

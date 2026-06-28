@@ -48,13 +48,26 @@ def test_example_manifest_validates(schema: dict[str, Any], example: dict[str, A
 
 
 def test_example_covers_the_contract_surface(example: dict[str, Any]) -> None:
-    """Per the issue: one stage, two chapters, one site resource."""
+    """Per the issue: one stage, two chapters, one site resource, one intro."""
     assert len(example["chapters"]) == 2
     assert len({c["stage"] for c in example["chapters"]}) == 1
     assert len(example["site_resources"]) == 1
-    # Semver, the contract's change-control handle.
+    # schema_version 1.1.0 ships the additive stage_intros[] tier.
+    assert example["schema_version"] == "1.1.0"
+    assert len(example["stage_intros"]) == 1
     major, minor, patch = example["schema_version"].split(".")
     assert all(part.isdigit() for part in (major, minor, patch))
+
+
+def test_stage_intros_are_optional_for_backwards_compatibility(
+    schema: dict[str, Any],
+    example: dict[str, Any],
+) -> None:
+    """A 1.0.0-shaped manifest with no stage_intros must still validate."""
+    legacy = json.loads(json.dumps(example))
+    legacy.pop("stage_intros")
+    legacy["schema_version"] = "1.0.0"
+    Draft202012Validator(schema).validate(legacy)
 
 
 @pytest.mark.parametrize(
@@ -79,6 +92,20 @@ def test_example_covers_the_contract_surface(example: dict[str, Any]) -> None:
         pytest.param(
             lambda m: m["site_resources"][0].update(extra=True),
             id="site resource unknown field",
+        ),
+        pytest.param(lambda m: m["stage_intros"][0].pop("path"), id="stage_intro missing path"),
+        pytest.param(lambda m: m["stage_intros"][0].pop("stage"), id="stage_intro missing stage"),
+        pytest.param(
+            lambda m: m["stage_intros"][0].update(stage=0),
+            id="stage_intro stage below 1",
+        ),
+        pytest.param(
+            lambda m: m["stage_intros"][0].update(stage=11),
+            id="stage_intro stage above the 10-stage curriculum",
+        ),
+        pytest.param(
+            lambda m: m["stage_intros"][0].update(extra=True),
+            id="stage_intro unknown field",
         ),
     ],
 )
