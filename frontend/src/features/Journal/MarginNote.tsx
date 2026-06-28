@@ -13,6 +13,7 @@ import {
   SPACING,
   colors,
   editorialType,
+  paperShadow,
   spacing,
   touchTarget,
 } from '@/design/tokens';
@@ -26,7 +27,11 @@ function MarginNote({ note, onOpen }: MarginNoteProps): React.JSX.Element {
   const isStale = note.status === 'stale';
   return (
     <TouchableOpacity
-      style={[styles.card, isStale && styles.cardStale]}
+      style={[
+        styles.card,
+        { borderLeftColor: colors.marginalia[note.kind] },
+        isStale && styles.cardStale,
+      ]}
       onPress={() => onOpen(note)}
       accessibilityRole="button"
       accessibilityLabel={`Open ${note.kind} note`}
@@ -49,9 +54,13 @@ const styles = StyleSheet.create({
     minHeight: touchTarget.minimum,
     padding: SPACING.md,
     borderRadius: BORDER_RADIUS.md,
-    backgroundColor: colors.paper.backgroundAlt,
+    // Sits a touch above the page, lifted by paperShadow.card — the shadow does
+    // the separation, so the slip can match the page ground (was backgroundAlt)
+    // and still read as a lifted note pinned to the margin.
+    backgroundColor: colors.paper.background,
     borderLeftWidth: 3,
-    borderLeftColor: colors.paper.hairline,
+    borderLeftColor: colors.paper.hairline, // default; overridden per kind inline
+    ...paperShadow.card,
   },
   cardStale: {
     opacity: 0.55,
