@@ -1,0 +1,209 @@
+{
+  "main": {
+    "id": "af659f99c8a0ad72",
+    "type": "split",
+    "children": [
+      {
+        "id": "892a5eafc5c7a328",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "eac5595861fda70b",
+            "type": "leaf",
+            "state": {
+              "type": "empty",
+              "state": {},
+              "icon": "lucide-file",
+              "title": "New tab"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "85bafc20f5e38d6f",
+    "type": "split",
+    "children": [
+      {
+        "id": "08c7418b41bed115",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "9bbdbbedc67eb188",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "36e21bbb82bce0da",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "04ca000920ab0f2b",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "7623892db0ba8a8c",
+    "type": "split",
+    "children": [
+      {
+        "id": "392f7ab19ee3f335",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "a1aabb0cfdadcbd8",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "1.BEIGE.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for 1.BEIGE"
+            }
+          },
+          {
+            "id": "7906340e07bfbf65",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "1.BEIGE.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from 1.BEIGE"
+            }
+          },
+          {
+            "id": "b5b3f3485a9f8c12",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "3557b088c226d9e2",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "1.BEIGE.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of 1.BEIGE"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "eac5595861fda70b",
+  "lastOpenFiles": [
+    "01-beige/14-when-you-dont-ground-you-float-into-disconnection.md",
+    "9.ULTRAVIOLET.md",
+    "backup/9.ULTRAVIOLET.md",
+    "backup/8.TEAL.md",
+    "backup/7.YELLOW.md",
+    "backup/6.GREEN.md",
+    "backup/5.ORANGE.md",
+    "backup/4.BLUE.md",
+    "backup/3.RED.md",
+    "backup/2.PURPLE.md",
+    "backup/10.CLEARLIGHT.md",
+    "backup/1.BEIGE.md",
+    "backup",
+    "2.PURPLE.md.tmp.33797.1765083820355",
+    "03-red/04-the-relationship-to-free-will-at-red-dominator.md.tmp.33797.1765079669584",
+    "10-clearlight/01-what-is-clear-light.md.tmp.33797.1765074455176",
+    "02-purple/01-what-is-purple.md.tmp.33797.1765074026272",
+    "09-ultraviolet/README.md",
+    "09-ultraviolet/21-the-void-practice-advanced-meditation-techniques-for-ultravi.md",
+    "09-ultraviolet/20-what-450-hours-of-meditation-produces-a-developmental-milest.md",
+    "09-ultraviolet/18-the-hierarchy-that-serves-skillful-use-of-developmental-mode.md",
+    "09-ultraviolet/19-the-dark-night-ultraviolets-inevitable-passage.md",
+    "09-ultraviolet/17-the-practice-as-prayer-what-happens-at-75-minutes.md",
+    "09-ultraviolet/16-the-ultraviolet-shadow-when-emptiness-becomes-nihilism.md",
+    "09-ultraviolet/15-becoming-nobody-the-dissolution-of-spiritual-identity.md",
+    "09-ultraviolet/14-the-75-minute-threshold-why-this-is-the-gateway-practice.md",
+    "09-ultraviolet/13-practicing-hierarchy-off-the-cushion.md",
+    "09-ultraviolet/12-absorb-dofull-6-phase-wavelength-breakdown.md",
+    "09-ultraviolet/11-ultraviolets-shadow-spiritual-superiority.md",
+    "09-ultraviolet/10-ultraviolets-gift-the-recognition-of-natural-hierarchy.md",
+    "09-ultraviolet/09-ultraviolets-divine-gender-divine-masculineprecision-and-hie.md",
+    "09-ultraviolet",
+    "08-teal",
+    "07-yellow",
+    "06-green",
+    "05-orange",
+    "images/images/image1.jpg",
+    "images/images/image1.png"
+  ]
+}

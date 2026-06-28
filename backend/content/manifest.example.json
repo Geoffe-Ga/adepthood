@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.1.0",
+  "schema_version": "1.2.0",
   "chapters": [
     {
       "id": "beige-1",
@@ -31,7 +31,8 @@
       "slug": "getting-started",
       "title": "Getting Started",
       "description": "Orientation guide for new practitioners.",
-      "path": "markdown/site/getting-started.md"
+      "path": "markdown/site/getting-started.md",
+      "media": ["markdown/site/assets/welcome.png"]
     }
   ],
   "stage_intros": [

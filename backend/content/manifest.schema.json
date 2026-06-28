@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Geoffe-Ga/adepthood/backend/content/manifest.schema.json",
   "title": "APTITUDE content manifest",
-  "description": "Frozen contract between the aptitude-course content repo (which generates this manifest from per-file YAML frontmatter) and the adepthood backend (which vendors and reads it). Changing this schema post-merge requires a schema_version bump and a note in docs/adr/0001-git-content-pipeline.md (issue #389). schema_version 1.1.0 adds the optional, additive 'stage_intros[]' tier (per-stage course introductions); a 1.0.0 manifest with no 'stage_intros' stays valid.",
+  "description": "Frozen contract between the aptitude-course content repo (which generates this manifest from per-file YAML frontmatter) and the adepthood backend (which vendors and reads it). Changing this schema post-merge requires a schema_version bump and a note in docs/adr/0001-git-content-pipeline.md (issue #389). schema_version 1.1.0 adds the optional, additive 'stage_intros[]' tier (per-stage course introductions); a 1.0.0 manifest with no 'stage_intros' stays valid. schema_version 1.2.0 adds an optional 'media[]' to site_resource (mirroring chapter.media); resources without it stay valid.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -138,6 +138,14 @@
         "path": {
           "type": "string",
           "minLength": 1
+        },
+        "media": {
+          "description": "Optional asset paths referenced by the resource Markdown (added in schema_version 1.2.0; mirrors chapter.media). Omitting it is valid.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
