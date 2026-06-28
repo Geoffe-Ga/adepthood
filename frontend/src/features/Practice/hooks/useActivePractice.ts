@@ -95,39 +95,46 @@ function useRefreshAction(
   setState: Dispatch<SetStateAction<State>>,
   mountedRef: RefObject<boolean>,
 ): (_opts?: { silent?: boolean }) => Promise<void> {
-  return useCallback(async (opts?: { silent?: boolean }) => {
-    // A silent refresh keeps the current view (no spinner) while it revalidates
-    // in the background; a normal refresh shows the loading state.
-    setState((prev) => ({ ...prev, isLoading: opts?.silent ? prev.isLoading : true, error: null }));
-    try {
-      const [practiceList, userPracticeList] = await Promise.all([
-        practices.listAll(stageNumber),
-        userPractices.list(),
-      ]);
-      if (!mountedRef.current) return;
-      // Strict `=== null` matches the backend contract: a closed row gets
-      // an ISO date string in `end_date`, an open row gets JSON `null`.
-      // The OpenAPI schema is `string | null`, so an empty string would be
-      // a schema violation — flag it loudly if a future migration ever
-      // emits one rather than silently filtering past it.
-      const active =
-        userPracticeList.find((up) => up.stage_number === stageNumber && up.end_date === null) ??
-        null;
-      setState({
-        availablePractices: practiceList,
-        activeUserPractice: active,
-        isLoading: false,
-        error: null,
-      });
-    } catch (err) {
-      if (!mountedRef.current) return;
+  return useCallback(
+    async (opts?: { silent?: boolean }) => {
+      // A silent refresh keeps the current view (no spinner) while it revalidates
+      // in the background; a normal refresh shows the loading state.
       setState((prev) => ({
         ...prev,
-        isLoading: false,
-        error: formatApiError(err, { fallback: LOAD_FALLBACK }),
+        isLoading: opts?.silent ? prev.isLoading : true,
+        error: null,
       }));
-    }
-  }, [stageNumber, setState, mountedRef]);
+      try {
+        const [practiceList, userPracticeList] = await Promise.all([
+          practices.listAll(stageNumber),
+          userPractices.list(),
+        ]);
+        if (!mountedRef.current) return;
+        // Strict `=== null` matches the backend contract: a closed row gets
+        // an ISO date string in `end_date`, an open row gets JSON `null`.
+        // The OpenAPI schema is `string | null`, so an empty string would be
+        // a schema violation — flag it loudly if a future migration ever
+        // emits one rather than silently filtering past it.
+        const active =
+          userPracticeList.find((up) => up.stage_number === stageNumber && up.end_date === null) ??
+          null;
+        setState({
+          availablePractices: practiceList,
+          activeUserPractice: active,
+          isLoading: false,
+          error: null,
+        });
+      } catch (err) {
+        if (!mountedRef.current) return;
+        setState((prev) => ({
+          ...prev,
+          isLoading: false,
+          error: formatApiError(err, { fallback: LOAD_FALLBACK }),
+        }));
+      }
+    },
+    [stageNumber, setState, mountedRef],
+  );
 }
 
 function useSelectAction(

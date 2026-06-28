@@ -142,7 +142,7 @@ describe('PracticeDetailScreen — Use for stage', () => {
     mockUserPracticesCreate.mockReset();
   });
 
-  it('uses the practice\'s own stage in one tap and returns to the Practice screen', async () => {
+  it("uses the practice's own stage in one tap and returns to the Practice screen", async () => {
     mockPracticesGet.mockResolvedValueOnce(samplePractice);
     mockUserPracticesCreate.mockResolvedValueOnce(assignedUserPractice);
     const nav = makeNav();
