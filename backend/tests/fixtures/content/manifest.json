@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "chapters": [
     {
       "id": "beige-1",
@@ -63,6 +63,23 @@
       "title": "Getting Started",
       "description": "Orientation for new adepts.",
       "path": "markdown/site/getting-started.md"
+    }
+  ],
+  "stage_intros": [
+    {
+      "stage": 1,
+      "id": "beige-intro",
+      "slug": "beige-introduction",
+      "title": "Welcome to Beige",
+      "path": "markdown/01-beige/00-introduction.md",
+      "summary": "What Beige is about."
+    },
+    {
+      "stage": 2,
+      "id": "purple-intro",
+      "slug": "purple-introduction",
+      "title": "Welcome to Purple",
+      "path": "markdown/02-purple/00-introduction.md"
     }
   ]
 }
