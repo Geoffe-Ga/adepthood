@@ -296,7 +296,7 @@ const buildAddedHabit = (input: AddHabitInput, existingCount: number): Habit => 
 };
 
 /** Earliest habit start date (the program start); takes the min, not index 0, in case the list is unsorted. */
-const earliestStartDate = (habits: OnboardingHabit[]): Date | null => {
+const earliestStartDate = (habits: ReadonlyArray<{ start_date: Date }>): Date | null => {
   let earliest: number | null = null;
   for (const habit of habits) {
     const time = new Date(habit.start_date).getTime();
@@ -304,6 +304,31 @@ const earliestStartDate = (habits: OnboardingHabit[]): Date | null => {
     if (earliest === null || time < earliest) earliest = time;
   }
   return earliest === null ? null : new Date(earliest);
+};
+
+/** Same calendar day, ignoring time — the store normalises anchors to local midnight. */
+const sameCalendarDay = (a: Date, b: Date): boolean =>
+  a.getFullYear() === b.getFullYear() &&
+  a.getMonth() === b.getMonth() &&
+  a.getDate() === b.getDate();
+
+/**
+ * Re-derive the universal program anchor from the live habits' earliest
+ * ``start_date``. Map, Practice, Course and Journal all read this anchor to
+ * compute the current week/stage; it is written at ``onboardingSave`` but only
+ * ``loadHabits`` runs on every session. Without this re-sync a returning user
+ * — whose persisted anchor was wiped on logout, or who onboarded before the
+ * anchor existed — keeps a calendar-correct Habits screen while every other
+ * screen falls back to a divergent server value. Recomputing on load keeps all
+ * screens in lockstep and self-heals a missing anchor. Skipped for the demo
+ * FALLBACK seed, whose placeholder dates are not a real program start.
+ */
+const syncProgramAnchorFromHabits = (): void => {
+  const anchor = earliestStartDate(getHabits());
+  if (anchor === null) return;
+  const current = useProgramStore.getState().programStartDate;
+  if (current !== null && sameCalendarDay(current, anchor)) return;
+  useProgramStore.getState().setProgramStartDate(anchor);
 };
 
 const syncOnboardingHabits = async (fullHabits: ReturnType<typeof buildOnboardingHabits>) => {
@@ -417,42 +442,49 @@ const rescheduleAndPersist = (habit: Habit): Promise<void> => {
 const handleApiSuccess = async (
   apiHabits: Awaited<ReturnType<typeof habitsApi.list>>,
   hasCachedData: boolean,
-): Promise<void> => {
+): Promise<boolean> => {
   // Only seed FALLBACK when the user is truly fresh: no cache, no live store, no API.
   if (apiHabits.length === 0 && !hasCachedData && getHabits().length === 0) {
     setHabits(FALLBACK_HABITS);
-    return;
+    return true;
   }
   if (apiHabits.length > 0) {
     const mapped = mapApiHabits(apiHabits);
     setHabits(mapped);
     await persistHabits(mapped);
   }
+  return false;
 };
 
-const handleApiError = (err: unknown, hasCachedData: boolean): void => {
+const handleApiError = (err: unknown, hasCachedData: boolean): boolean => {
   console.error('Failed to load habits:', err);
   // Mirrors the live-store guard in ``handleApiSuccess`` for the error path.
-  if (hasCachedData || getHabits().length > 0) return;
+  if (hasCachedData || getHabits().length > 0) return false;
   setError(
     formatApiError(err, {
       fallback: "We couldn't load your habits. Check your connection, then pull down to try again.",
     }),
   );
   setHabits(FALLBACK_HABITS);
+  return true;
 };
 
-type FetchResult = { kind: 'ok'; count: number } | { kind: 'error' };
+// ``seededFallback`` is true only when the store now holds the demo FALLBACK
+// tiles — the caller skips the program-anchor sync so placeholder dates never
+// become a real program start.
+type FetchResult =
+  | { kind: 'ok'; count: number; seededFallback: boolean }
+  | { kind: 'error'; seededFallback: boolean };
 
 const fetchFromApi = async (hasCachedData: boolean): Promise<FetchResult> => {
   try {
     const apiHabits = await habitsApi.listAll();
-    await handleApiSuccess(apiHabits, hasCachedData);
+    const seededFallback = await handleApiSuccess(apiHabits, hasCachedData);
     setError(null);
-    return { kind: 'ok', count: apiHabits.length };
+    return { kind: 'ok', count: apiHabits.length, seededFallback };
   } catch (err) {
-    handleApiError(err, hasCachedData);
-    return { kind: 'error' };
+    const seededFallback = handleApiError(err, hasCachedData);
+    return { kind: 'error', seededFallback };
   }
 };
 
@@ -691,11 +723,13 @@ const loadHabits = async (tz?: string): Promise<void> => {
     setLoading(false);
   }
   const result = await fetchFromApi(hasCachedData);
+  let seededFallback = result.seededFallback;
   // Stuck-user recovery: cache has habits, server returned an empty list.
   // Push the cache back, then re-fetch so the store gets the server's ids.
   if (result.kind === 'ok' && result.count === 0 && hasCachedData) {
     await recoverStuckHabits(cached!);
     const refetch = await fetchFromApi(true);
+    seededFallback = refetch.seededFallback;
     // #286: the recovery push seeded default goal targets — replay any
     // cached customizations onto the fresh server goals.
     if (refetch.kind === 'ok') {
@@ -703,6 +737,10 @@ const loadHabits = async (tz?: string): Promise<void> => {
     }
   }
   setLoading(false);
+
+  // Keep Map/Practice/Course/Journal aligned with the now-current habits by
+  // re-deriving the shared program anchor from the real (non-demo) tiles.
+  if (!seededFallback) syncProgramAnchorFromHabits();
 
   // BUG-HABITS-007 + BUG-FE-HABIT-205 partial-success fix: replay pending
   // check-ins queued during offline, and when one fails mid-batch only re-

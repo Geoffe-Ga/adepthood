@@ -497,6 +497,66 @@ describe('habitManager', () => {
       expect(saveHabits).toHaveBeenCalled();
     });
 
+    it('re-anchors the universal program calendar to the earliest loaded habit start_date', async () => {
+      // Returning user: cache empty, the master anchor was wiped on logout,
+      // but the server still has the user's habits. The Habits screen derives
+      // each tile from its own ``start_date`` so it keeps progressing, but
+      // Map/Practice/Course/Journal read the program anchor — which only
+      // ``onboardingSave`` ever set. Without a reload-time re-sync the anchor
+      // stays null and those screens silently fall back to divergent values.
+      useProgramStore.getState().hydrateProgramStartDate(null);
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([
+        {
+          id: 1,
+          name: 'Survive',
+          icon: '\u{1F9D8}',
+          start_date: '2026-01-08',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          goals: [],
+        },
+        {
+          id: 2,
+          name: 'Belong',
+          icon: '\u{1F49C}',
+          start_date: '2026-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Purple',
+          streak: 0,
+          milestone_notifications: false,
+          goals: [],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      const anchor = useProgramStore.getState().programStartDate;
+      expect(anchor).not.toBeNull();
+      expect(anchor!.getFullYear()).toBe(2026);
+      expect(anchor!.getMonth()).toBe(0);
+      expect(anchor!.getDate()).toBe(1);
+    });
+
+    it('does NOT anchor the program calendar to the demo FALLBACK habits', async () => {
+      // Truly-fresh user: no cache, empty server. ``loadHabits`` seeds the
+      // hard-coded demo tiles (2025 dates) so the screen is not blank — but
+      // those are placeholders, not a real program start, so the master
+      // anchor must stay null and let every screen use its server fallback.
+      useProgramStore.getState().hydrateProgramStartDate(null);
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
+
+      await habitManager.loadHabits();
+
+      expect(useHabitStore.getState().habits.length).toBeGreaterThan(0);
+      expect(useProgramStore.getState().programStartDate).toBeNull();
+    });
+
     it('records an error message when the API fails and no cache exists', async () => {
       (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
       (habitsApi.listAll as jest.Mock).mockRejectedValueOnce(new Error('boom') as never);
