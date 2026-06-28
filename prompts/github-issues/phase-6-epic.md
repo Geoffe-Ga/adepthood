@@ -2,24 +2,35 @@
 
 **Labels:** `epic`, `phase-6`, `priority-high`, `monetization`
 
+> **Pivot note (2026-06-28):** This epic predates the journal pivot. BotMason
+> **chat** was removed (#654 backend, #665 frontend) and replaced by the
+> **Resonance + Marginalia** journal. The metered LLM resource is therefore a
+> **Resonance generation** (essay + anchored margin notes), *not* a chat turn —
+> read every "chat" reference below as "Resonance generation". The wallet was
+> kept (`services/wallet.py`, debited once per Resonance via `spend_one_message`)
+> so the token economy survives the pivot. Detailed Resonance pricing is tracked
+> separately and **deferred** under #623 ("Resonance economy & essay pricing");
+> do not build chat-turn billing.
+
 ## Summary
 
 APTITUDE (the course Adepthood facilitates) is sold on Gumroad under a
 gift-economy model: the price is "pay what feels right", with free as the
 floor. Adepthood currently has its own email/password auth with no link to
 purchases. This epic makes Gumroad the system-of-record for access and
-introduces a usage-based entitlement for BotMason (so we are not
-subsidizing LLM tokens indefinitely).
+introduces a usage-based entitlement for the metered LLM feature (so we are
+not subsidizing LLM tokens indefinitely).
 
 Two kinds of entitlement need to be modeled:
 
 1. **Course access** — binary. Granted by a verified Gumroad license for
    an APTITUDE SKU (one-time or monthly subscription). Free-tier $0
    licenses count; what matters is that a Gumroad sale exists.
-2. **BotMason tokens** — a per-user balance, debited as the user chats with
-   BotMason and credited by purchasing Gumroad token-pack SKUs. Must
-   coexist with the BYOK path from issue #185: users who supply their own
-   LLM API key via `X-LLM-API-Key` bypass the balance check.
+2. **Resonance tokens** — a per-user balance, debited each time the user
+   requests a Resonance generation (essay + marginalia) and credited by
+   purchasing Gumroad token-pack SKUs. Must coexist with the BYOK path from
+   issue #185: users who supply their own LLM API key via `X-LLM-API-Key`
+   bypass the balance check.
 
 After this epic, signing up for Adepthood requires an existing Gumroad
 purchase. A user lands on the signup screen, is directed to Gumroad to
@@ -43,8 +54,8 @@ cancellations, and token-pack purchases.
   license for an APTITUDE SKU.
 - The free-tier ($0) Gumroad variant grants the same course access as
   the paid variants — price is not what gates access.
-- BotMason chat requests debit from a user-scoped token balance when BYOK
-  is not used; requests fail with a clear `insufficient_tokens` error
+- Resonance generation requests debit from a user-scoped token balance when
+  BYOK is not used; requests fail with a clear `insufficient_offerings` error
   when the balance is zero and no BYOK key is supplied.
 - A refund or subscription cancellation on Gumroad revokes course access
   within one webhook delivery window.
@@ -87,7 +98,7 @@ Adepthood backend
 3. [`phase-6-03`](phase-6-03-frontend-onboarding-flow.md) —
    Frontend onboarding flow: redirect to Gumroad and redeem license
 4. [`phase-6-04`](phase-6-04-botmason-token-wallet.md) —
-   BotMason token wallet (model, debit on chat, BYOK bypass)
+   Token wallet (model, debit on Resonance generation, BYOK bypass)
 5. [`phase-6-05`](phase-6-05-token-credits-and-revocation.md) —
    Token-pack SKU crediting and refund/cancellation revocation
 6. [`phase-6-06`](phase-6-06-admin-override-endpoints.md) —
@@ -96,7 +107,9 @@ Adepthood backend
 ## Dependencies
 
 - Requires `phase-1-03` (auth router) — complete.
-- Touches `phase-3-07` (BotMason AI) for the token debit hook.
+- The token debit hook now lives on the Resonance generation path
+  (`routers/journal.py` → `services/wallet.py:spend_one_message`), not the
+  removed chat endpoint.
 - Interacts with issue #185 (BYOK) — BYOK requests must bypass the
   token balance check, not debit zero.
 
