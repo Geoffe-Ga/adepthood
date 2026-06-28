@@ -17,6 +17,7 @@ import {
   practiceSessionResponseSchema,
   practiceTagSchema,
   promptListResponseSchema,
+  stageIntroSchema,
   stageSchema,
   timezoneReadSchema,
   userPracticeSchema,
@@ -1464,6 +1465,15 @@ export interface SiteResource {
   url: string;
 }
 
+/** Metadata for a stage's course introduction (body fetched separately). */
+export interface StageIntro {
+  stage: number;
+  id: string;
+  slug: string;
+  title: string;
+  summary: string | null;
+}
+
 export const course = {
   stageContent(stageNumber: number, token?: string): Promise<ContentItem[]> {
     return request<ContentItem[]>(`/course/stages/${stageNumber}/content`, { token });
@@ -1509,6 +1519,15 @@ export const course = {
   },
   siteResourceBody(slug: string, token?: string): Promise<ContentBody> {
     return request<ContentBody>(`/course/site-resources/${slug}/body`, { token });
+  },
+  stageIntro(stageNumber: number, token?: string): Promise<StageIntro> {
+    return request<StageIntro>(`/course/stages/${stageNumber}/intro`, {
+      token,
+      schema: stageIntroSchema as unknown as z.ZodType<StageIntro>,
+    });
+  },
+  stageIntroBody(stageNumber: number, token?: string): Promise<ContentBody> {
+    return request<ContentBody>(`/course/stages/${stageNumber}/intro/body`, { token });
   },
 };
 
