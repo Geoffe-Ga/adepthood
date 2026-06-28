@@ -201,6 +201,7 @@ describe('formatApiError', () => {
     ['NetworkError when attempting to fetch resource.'],
     ['Network request failed'],
     ['The network connection was lost.'],
+    ['The Internet connection appears to be offline.'],
   ])('maps the fetch network TypeError %p to friendly offline copy', (message) => {
     const result = formatApiError(new TypeError(message));
     expect(result).not.toBe(message); // never leak the raw engine string

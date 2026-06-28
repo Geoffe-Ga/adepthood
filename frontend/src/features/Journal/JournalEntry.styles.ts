@@ -37,7 +37,6 @@ const styles = StyleSheet.create({
     maxWidth: journalLayout.pageMaxWidth + journalLayout.marginColumnWidth,
     alignSelf: 'center',
     paddingHorizontal: journalLayout.pageHorizontalPadding,
-    // Keep content clear of the floating Get Resonance button (overlap fix).
     paddingBottom: RESONANCE_BUTTON_CLEARANCE,
   },
   pageNarrow: {
