@@ -69,7 +69,9 @@ const TalliedGroundingForm = ({ value, onChange }: Props): React.JSX.Element => 
   const removeCategory = (index: number) =>
     onChange({ ...value, categories: value.categories.filter((_, i) => i !== index) });
   const addCategory = () => {
-    const key = `category-${(nextCategoryKey += 1)}`;
+    // Underscore, not hyphen: the key must match TALLIED_KEY_PATTERN
+    // (^[a-z][a-z0-9_]*$) or validateModeConfig rejects the new row.
+    const key = `category_${(nextCategoryKey += 1)}`;
     const next: TalliedCategory = { key, label: '', target_count: 1 };
     onChange({ ...value, categories: [...value.categories, next] });
   };
