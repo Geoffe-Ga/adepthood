@@ -23,6 +23,7 @@ import ContentCard from './ContentCard';
 import ContentViewer from './ContentViewer';
 import styles from './Course.styles';
 import SiteResourcesPanel from './SiteResourcesPanel';
+import StageIntroCard from './StageIntroCard';
 import StageSelector from './StageSelector';
 
 const DEFAULT_STAGE_NUMBER = 1;
@@ -258,6 +259,7 @@ function useCourseViewer(selectedStage: number) {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [viewingItem, setViewingItem] = useState<ContentItem | null>(null);
   const [viewingResource, setViewingResource] = useState<SiteResource | null>(null);
+  const [viewingIntro, setViewingIntro] = useState<number | null>(null);
 
   const handleContentPress = useCallback((item: ContentItem) => {
     if (!item.is_locked) setViewingItem(item);
@@ -267,9 +269,14 @@ function useCourseViewer(selectedStage: number) {
     setViewingResource(resource);
   }, []);
 
+  const handleIntroPress = useCallback((stageNumber: number) => {
+    setViewingIntro(stageNumber);
+  }, []);
+
   const handleBack = useCallback(() => {
     setViewingItem(null);
     setViewingResource(null);
+    setViewingIntro(null);
   }, []);
 
   const handleReflect = useCallback(() => {
@@ -285,8 +292,10 @@ function useCourseViewer(selectedStage: number) {
     setViewingItem,
     viewingResource,
     setViewingResource,
+    viewingIntro,
     handleContentPress,
     handleResourcePress,
+    handleIntroPress,
     handleBack,
     handleReflect,
   };
@@ -313,6 +322,15 @@ function renderOverlay(
       <ChapterReader
         source={{ kind: 'resource', slug: viewer.viewingResource.slug }}
         fallbackTitle={viewer.viewingResource.title}
+        onBack={viewer.handleBack}
+      />
+    );
+  }
+  if (viewer.viewingIntro !== null) {
+    return (
+      <ChapterReader
+        source={{ kind: 'intro', stageNumber: viewer.viewingIntro }}
+        fallbackTitle="Introduction"
         onBack={viewer.handleBack}
       />
     );
@@ -363,6 +381,7 @@ const CourseScreen = (): React.JSX.Element => {
         spiralColor={selectedStageData?.spiral_dynamics_color}
         error={stageContent.error}
       />
+      <StageIntroCard stageNumber={selectedStage} onOpen={viewer.handleIntroPress} />
       <ContentArea
         content={stageContent.content}
         loadingContent={stageContent.loadingContent}

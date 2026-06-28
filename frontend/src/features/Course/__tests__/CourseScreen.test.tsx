@@ -108,6 +108,14 @@ const mockSiteResourceBody = (jest.fn() as any).mockResolvedValue({
   content_type: 'resource',
   body_markdown: 'philosophy\n',
 });
+// Default: the selected stage has no intro (404) — the card stays hidden, so
+// existing tests are unaffected. Intro-specific tests override this.
+const mockStageIntro = (jest.fn() as any).mockRejectedValue({ detail: 'content_not_found' });
+const mockStageIntroBody = (jest.fn() as any).mockResolvedValue({
+  title: 'Welcome to Beige',
+  content_type: 'introduction',
+  body_markdown: '# Welcome to Beige\n\nintro\n',
+});
 
 jest.mock('../../../api', () => ({
   stages: {
@@ -120,6 +128,8 @@ jest.mock('../../../api', () => ({
     contentBody: (...args: unknown[]) => mockContentBody(...args),
     siteResources: (...args: unknown[]) => mockSiteResources(...args),
     siteResourceBody: (...args: unknown[]) => mockSiteResourceBody(...args),
+    stageIntro: (...args: unknown[]) => mockStageIntro(...args),
+    stageIntroBody: (...args: unknown[]) => mockStageIntroBody(...args),
   },
 }));
 
@@ -152,6 +162,8 @@ describe('CourseScreen', () => {
     mockStagesList.mockResolvedValue(sampleStages);
     mockStageContent.mockResolvedValue(sampleContent);
     mockStageProgress.mockResolvedValue(sampleProgress);
+    // Default: no intro for the stage — card hidden unless a test opts in.
+    mockStageIntro.mockRejectedValue({ detail: 'content_not_found' });
   });
 
   it('shows loading spinner initially', () => {
@@ -335,5 +347,65 @@ describe('CourseScreen', () => {
       'JournalEntry',
       expect.objectContaining({ prefillTitle: 'Stage 2 reflection — Welcome Essay' }),
     );
+  });
+
+  it('renders the stage intro card and opens it in the reader when an intro exists', async () => {
+    mockStageIntro.mockResolvedValue({
+      stage: 1,
+      id: 'beige-intro',
+      slug: 'beige-introduction',
+      title: 'Welcome to Beige',
+      summary: 'What Beige is about.',
+    });
+
+    const { getByTestId, getByText } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(getByTestId('stage-intro-card')).toBeTruthy();
+    });
+    expect(getByText('Welcome to Beige')).toBeTruthy();
+    expect(getByText('What Beige is about.')).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('stage-intro-card'));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('chapter-reader')).toBeTruthy();
+    });
+  });
+
+  it('shows no intro card and no error banner when the stage has no intro', async () => {
+    // Default mockStageIntro rejects with a 404 — a normal, non-error state.
+    const { getByText, queryByTestId } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(getByText('Welcome Essay')).toBeTruthy();
+    });
+    expect(queryByTestId('stage-intro-card')).toBeNull();
+    expect(queryByTestId('course-error')).toBeNull();
+  });
+
+  it('refetches the intro when the stage changes', async () => {
+    mockStageIntro.mockResolvedValue({
+      stage: 1,
+      id: 'beige-intro',
+      slug: 'beige-introduction',
+      title: 'Welcome to Beige',
+      summary: null,
+    });
+
+    const { getByTestId } = render(<CourseScreen />);
+    await waitFor(() => {
+      expect(getByTestId('stage-selector')).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('stage-pill-2'));
+    });
+
+    await waitFor(() => {
+      expect(mockStageIntro).toHaveBeenCalledWith(2);
+    });
   });
 });

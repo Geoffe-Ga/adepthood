@@ -1,6 +1,6 @@
 import { StyleSheet } from 'react-native';
 
-import { colors, radius, SPACING, shadows } from '../../design/tokens';
+import { colors, radius, SPACING, shadows, touchTarget } from '../../design/tokens';
 
 const STAGE_PILL_SIZE = 40;
 const PROGRESS_BAR_HEIGHT = 6;
@@ -89,6 +89,36 @@ const styles = StyleSheet.create({
   stageDetailValue: {
     fontSize: 12,
     color: colors.text.secondary,
+  },
+
+  // Stage introduction card
+  introCard: {
+    minHeight: touchTarget.minimum,
+    marginHorizontal: SPACING.lg,
+    marginTop: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.background.card,
+    ...shadows.small,
+  },
+  introCardLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.text.tertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  introCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.text.primary,
+  },
+  introCardSummary: {
+    fontSize: 14,
+    color: colors.text.secondary,
+    marginTop: 4,
   },
 
   // Progress bar
