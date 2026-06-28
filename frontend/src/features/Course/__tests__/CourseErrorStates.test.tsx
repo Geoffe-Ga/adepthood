@@ -55,6 +55,9 @@ jest.mock('../../../api', () => ({
     contentBody: jest.fn(),
     siteResources: () => Promise.resolve([]),
     siteResourceBody: jest.fn(),
+    // No intro in these error-state scenarios — keep the card hidden.
+    stageIntro: () => Promise.reject(new Error('content_not_found')),
+    stageIntroBody: jest.fn(),
   },
 }));
 
