@@ -287,3 +287,45 @@ def test_generate_headline_falls_back_on_sdk_error(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")  # pragma: allowlist secret
 
     assert recap.generate_headline("feat: add energy ledger", "Body") == "add energy ledger"
+
+
+def test_deliver_skips_when_unconfigured_and_flag_set(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
+
+    posted = recap._deliver(None, {"embeds": []}, skip_if_unconfigured=True)
+
+    assert posted is False
+    assert "skipping recap post" in capsys.readouterr().out
+
+
+def test_deliver_skips_when_only_token_missing_and_flag_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
+
+    assert recap._deliver("123", {"embeds": []}, skip_if_unconfigured=True) is False
+
+
+def test_deliver_errors_with_code_2_when_unconfigured_and_flag_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
+
+    with pytest.raises(recap.RecapError) as excinfo:
+        recap._deliver(None, {"embeds": []})
+
+    assert excinfo.value.code == 2
+    assert "required to post" in str(excinfo.value)
+
+
+def test_deliver_posts_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "bot-token")  # pragma: allowlist secret
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        recap,
+        "post_to_discord",
+        lambda channel_id, token, payload: calls.append((channel_id, token, payload)),
+    )
+
+    posted = recap._deliver("123", {"embeds": []}, skip_if_unconfigured=True)
+
+    assert posted is True
+    assert calls == [("123", "bot-token", {"embeds": []})]
