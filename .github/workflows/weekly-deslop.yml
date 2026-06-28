@@ -105,9 +105,13 @@ jobs:
             - A run that files NOTHING because the code is clean is a SUCCESS.
               Do not invent work to look productive.
 
-            End by posting a concise run summary as a single GitHub issue
-            labeled `de-slop` + `report` titled
-            "De-Slop weekly report — <date>" containing: counts by severity,
+            End by writing a concise run summary to the GitHub Actions job
+            summary — append it to the file at $GITHUB_STEP_SUMMARY (e.g.
+            `cat >> "$GITHUB_STEP_SUMMARY"`) — containing: counts by severity,
             issues/epics filed (with numbers), findings dropped and why, and
-            findings deduped. If nothing was filed, the report still goes out
-            and says the codebase is clean against the taxonomy this week.
+            findings deduped. This is the durable record, linked to the workflow
+            run, and never touches the issue tracker. A clean run (nothing
+            filed) writes "codebase is clean against the taxonomy this week" to
+            the job summary and files NO issue. Only open a separate `de-slop` +
+            `report` issue when at least one finding was filed — never on a clean
+            run (a weekly report issue every Monday would flood the tracker).

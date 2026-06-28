@@ -82,6 +82,7 @@ if [[ -d "$PY_SRC" ]]; then
   run bandit.json          bandit -r "$PY_SRC" -f json -c "$BACKEND/.bandit"
   run interrogate.txt      interrogate "$PY_SRC" -v
   run pip-audit.txt        pip-audit -r "$BACKEND/requirements.txt"
+  run detect-secrets.txt   detect-secrets scan "$PY_SRC"
 fi
 
 # ----------------------------------------------------------------------------
