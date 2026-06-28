@@ -374,16 +374,17 @@ describe('per-item paginated schemas', () => {
     expect(parsed.name).toBe('Breath');
   });
 
+  // No user_id: the backend omits it from user-scoped responses (BUG-T7), so the
+  // live shape this validator parses never carries it.
   const userPractice = {
     id: 3,
-    user_id: 1,
     practice_id: 7,
     stage_number: 2,
     start_date: '2026-01-01',
     end_date: null,
   };
 
-  it('userPracticeSchema accepts valid (optional overrides) and rejects drift', () => {
+  it('userPracticeSchema accepts the live shape without user_id and rejects drift', () => {
     expect(userPracticeSchema.parse(userPractice).end_date).toBeNull();
     expect(() =>
       userPracticeSchema.parse({ ...userPractice, effective_name: 'My Breath' }),
@@ -391,16 +392,16 @@ describe('per-item paginated schemas', () => {
     expect(() => userPracticeSchema.parse({ ...userPractice, start_date: undefined })).toThrow();
   });
 
+  // No user_id — same OwnedResourcePublic (BUG-T7) contract as userPractice.
   const session = {
     id: 9,
-    user_id: 1,
     user_practice_id: 3,
     duration_minutes: 10,
     timestamp: '2026-03-01T10:30:00Z',
     reflection: null,
   };
 
-  it('practiceSessionResponseSchema accepts valid and rejects a non-ISO timestamp', () => {
+  it('practiceSessionResponseSchema accepts the live shape (no user_id) and rejects a non-ISO timestamp', () => {
     expect(practiceSessionResponseSchema.parse(session).reflection).toBeNull();
     expect(() => practiceSessionResponseSchema.parse({ ...session, timestamp: 'oops' })).toThrow();
     expect(() =>

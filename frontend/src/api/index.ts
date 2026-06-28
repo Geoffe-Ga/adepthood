@@ -1554,7 +1554,8 @@ export interface PracticeItem {
 
 export interface UserPractice {
   id: number;
-  user_id: number;
+  /** Omitted by the backend's user-scoped responses (OwnedResourcePublic / BUG-T7). */
+  user_id?: number | null;
   practice_id: number;
   stage_number: number;
   start_date: string;
@@ -1699,7 +1700,8 @@ export interface PracticeSessionCreate {
 
 export interface PracticeSessionResponse {
   id: number;
-  user_id: number;
+  /** Omitted by the backend's user-scoped responses (OwnedResourcePublic / BUG-T7). */
+  user_id?: number | null;
   user_practice_id: number;
   duration_minutes: number;
   timestamp: string;
