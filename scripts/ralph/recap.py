@@ -63,11 +63,11 @@ GITHUB_API = "https://api.github.com"
 DISCORD_API = "https://discord.com/api/v10"
 # Discord embed accent — a Ralph-purple.
 EMBED_COLOR = 0x7C3AED
-# The windowed stats (iterations, cycle time, busiest day) cover this trailing
-# span so they move with recent activity instead of a frozen all-time average.
+# The windowed stats (iterations, time-to-merge, tick cadence, busiest day) cover
+# this trailing span so they move with recent activity, not a frozen all-time average.
 RECENT_WINDOW_DAYS = 7
-# Safety cap on PRs analyzed per run: each window PR costs two extra API calls
-# (verdicts + first commit), so bound a burst day rather than fan out unbounded.
+# Safety cap on PRs analyzed per run: each window PR costs one extra API call
+# (its verdicts), so bound a burst day rather than fan out unbounded.
 DEFAULT_MAX_PRS = 200
 HEADLINE_MODEL = "claude-opus-4-8"
 
@@ -188,22 +188,6 @@ def fetch_recent_merged_prs(repo: str, *, token: str, since: dt.date, max_prs: i
     items = _gh_search_issues(query, token=token, max_items=max_prs)
     items.sort(key=lambda it: cast("str", it["pull_request"]["merged_at"]), reverse=True)
     return items
-
-
-def fetch_pr_first_commit_at(repo: str, number: int, *, token: str) -> dt.datetime | None:
-    """Return the authored time of a PR's first commit, or None if unavailable.
-
-    The pull-request commits endpoint returns commits oldest-first, so the first
-    element is where work on the branch began — the closest cheap proxy for
-    "work started" behind the cycle-time metric.
-    """
-    url = f"{GITHUB_API}/repos/{repo}/pulls/{number}/commits?per_page=1"
-    commits = cast("list[dict[str, Any]]", _request_json(url, headers=_gh_headers(token)))
-    if not commits:
-        return None
-    commit = cast("dict[str, Any]", commits[0].get("commit", {}))
-    authored = commit.get("author", {}).get("date") or commit.get("committer", {}).get("date")
-    return stats.parse_iso(str(authored)) if authored else None
 
 
 def fetch_pr_detail(repo: str, number: int, *, token: str) -> dict[str, Any]:
@@ -345,28 +329,28 @@ def _pr_merged_at(pr: dict[str, Any]) -> dt.datetime:
     return stats.parse_iso(cast("str", pr["pull_request"]["merged_at"]))
 
 
-def _cycle_hours(repo: str, pr: dict[str, Any], *, token: str) -> float:
-    """Hours from a PR's first commit (or PR open, as fallback) to its merge.
+def _open_to_merge_hours(pr: dict[str, Any]) -> float:
+    """Hours from a PR opening to its merge — the review/merge window.
 
-    Measures real cycle time — work-beginning to merge — rather than just the
-    review window. Falls back to the PR's open time when no commit timestamp is
-    available, and clamps to zero so a rebased commit dated after the merge can
-    never produce a negative duration.
+    Clamped to zero so clock skew can never produce a negative duration. A PR's
+    commit timestamps are deliberately not used here: for single-commit squash
+    PRs the commit is authored seconds before the PR opens, so "first commit ->
+    merge" collapses to this same window. The genuine end-to-end work duration is
+    captured by the merge-to-merge tick cadence instead (see
+    `stats.merge_intervals_hours`).
     """
     merged = _pr_merged_at(pr)
-    started = fetch_pr_first_commit_at(repo, int(pr["number"]), token=token)
-    if started is None:
-        started = stats.parse_iso(cast("str", pr["created_at"]))
-    return max((merged - started).total_seconds() / 3600.0, 0.0)
+    opened = stats.parse_iso(cast("str", pr["created_at"]))
+    return max((merged - opened).total_seconds() / 3600.0, 0.0)
 
 
 def build_recap(repo: str, *, token: str, max_prs: int, now: dt.datetime) -> dict[str, Any] | None:
     """Gather data and assemble the Discord embed payload.
 
     The headline total is the true all-time merged count; the activity and
-    quality stats (rate, iterations, cycle time, busiest day) cover the trailing
-    `RECENT_WINDOW_DAYS` so they move with recent work. Returns None when there
-    are no merged PRs yet (nothing to recap).
+    quality stats (rate, iterations, time-to-merge, tick cadence, busiest day)
+    cover the trailing `RECENT_WINDOW_DAYS` so they move with recent work. Returns
+    None when there are no merged PRs yet (nothing to recap).
     """
     total_merged = count_merged_total(repo, token=token)
     since = (now - dt.timedelta(days=RECENT_WINDOW_DAYS)).date()
@@ -377,13 +361,14 @@ def build_recap(repo: str, *, token: str, max_prs: int, now: dt.datetime) -> dic
     merged_at = [_pr_merged_at(pr) for pr in window]
 
     iterations: list[int] = []
-    cycle_hours: list[float] = []
     for pr in window:
         verdicts = fetch_pr_verdicts(repo, int(pr["number"]), token=token)
         rounds = stats.iterations_before_lgtm(verdicts)
         if rounds is not None:
             iterations.append(rounds)
-        cycle_hours.append(_cycle_hours(repo, pr, token=token))
+
+    open_to_merge = [_open_to_merge_hours(pr) for pr in window]
+    intervals = stats.merge_intervals_hours(merged_at)
 
     latest = window[0]
     latest_detail = fetch_pr_detail(repo, int(latest["number"]), token=token)
@@ -396,7 +381,8 @@ def build_recap(repo: str, *, token: str, max_prs: int, now: dt.datetime) -> dic
     ]
 
     rate = stats.merge_rate(merged_at, now=now)
-    cycle = stats.time_to_merge_stats(cycle_hours)
+    ttm = stats.time_to_merge_stats(open_to_merge)
+    tick = stats.time_to_merge_stats(intervals)
     iters = stats.iteration_stats(iterations)
     open_items = count_open_backlog(repo, token=token)
     estimate = stats.estimate_remaining(open_items, rate["per_day"], now=now)
@@ -405,19 +391,44 @@ def build_recap(repo: str, *, token: str, max_prs: int, now: dt.datetime) -> dic
 
     headline = generate_headline(str(latest.get("title", "")), str(latest.get("body") or ""))
 
+    # Per-PR (this-merge) figures, kept distinct from the windowed dataset above.
+    latest_ttm_hours = _open_to_merge_hours(latest)
+    latest_tick_hours = (merged_at[0] - merged_at[1]).total_seconds() / 3600.0 if len(merged_at) >= 2 else None
+
     return _render_embed(
         repo=repo,
         latest=latest,
         headline=headline,
         total_merged=total_merged,
         rate=rate,
-        cycle=cycle,
+        ttm=ttm,
+        tick=tick,
         iters=iters,
         estimate=estimate,
         latest_churn=totals,
         busy=busy,
+        latest_ttm_hours=latest_ttm_hours,
+        latest_tick_hours=latest_tick_hours,
         now=now,
     )
+
+
+def _stat_line(summary: dict[str, float]) -> str:
+    """Render a median/fastest/slowest duration summary, or a gap-data notice."""
+    if summary["slowest"] <= 0:
+        return "not enough merges in the window yet"
+    return (
+        f"median **{_fmt_hours(summary['median'])}** · "
+        f"fastest {_fmt_hours(summary['fastest'])} · slowest {_fmt_hours(summary['slowest'])}"
+    )
+
+
+def _this_pr_time_line(latest_ttm_hours: float, latest_tick_hours: float | None) -> str:
+    """One-line time summary for the just-merged PR: review window + full tick."""
+    line = f"**{_fmt_hours(latest_ttm_hours)}** open → merge"
+    if latest_tick_hours is not None:
+        line += f"\n{_fmt_hours(latest_tick_hours)} since the previous merge (full tick)"
+    return line
 
 
 def _render_embed(
@@ -427,14 +438,22 @@ def _render_embed(
     headline: str,
     total_merged: int,
     rate: dict[str, float],
-    cycle: dict[str, float],
+    ttm: dict[str, float],
+    tick: dict[str, float],
     iters: dict[str, float],
     estimate: dict[str, object],
     latest_churn: dict[str, int],
     busy: tuple[str, int] | None,
+    latest_ttm_hours: float,
+    latest_tick_hours: float | None,
     now: dt.datetime,
 ) -> dict[str, Any]:
-    """Turn computed stats into a Discord embed payload (one message)."""
+    """Turn computed stats into a Discord embed payload (one message).
+
+    Fields are split into two labelled blocks: the just-merged PR ("This PR")
+    and the rolling/all-time loop figures ("The loop"), so a single merge's
+    numbers are never confused with the dataset-wide ones.
+    """
     pr_number = int(latest["number"])
     pr_url = str(latest.get("html_url", f"https://github.com/{repo}/pull/{pr_number}"))
 
@@ -448,13 +467,17 @@ def _render_embed(
     )
 
     busy_line = f"{busy[1]} merges on {busy[0]}" if busy else "—"
+    footprint = f"+{latest_churn['additions']} / -{latest_churn['deletions']} across {latest_churn['files']} file(s)"
 
     fields = [
         {
-            "name": "🚀 Latest unlock",
+            "name": "📌 This PR",
             "value": f"*{headline}*\n[#{pr_number} — {latest.get('title', '')}]({pr_url})",
             "inline": False,
         },
+        {"name": "⏱️ Time to merge", "value": _this_pr_time_line(latest_ttm_hours, latest_tick_hours), "inline": True},
+        {"name": "🧮 Footprint", "value": footprint, "inline": True},
+        {"name": "​", "value": "**📊 The loop · rolling 7 days + all-time**", "inline": False},
         {
             "name": "📦 PRs merged",
             "value": f"**{total_merged}** all-time · {int(rate['last_24h'])} in 24h · {int(rate['last_7_days'])} in 7d",
@@ -465,36 +488,15 @@ def _render_embed(
             "value": f"**{rate['per_hour']:.2f}**/hr (24h) · {rate['per_day']:.1f}/day (7d)",
             "inline": True,
         },
-        {
-            "name": "🔁 Review iterations (7d)",
-            "value": iter_line,
-            "inline": False,
-        },
-        {
-            "name": "⏱️ Cycle time · first commit → merge (7d)",
-            "value": (
-                f"median **{_fmt_hours(cycle['median'])}** · "
-                f"fastest {_fmt_hours(cycle['fastest'])} · slowest {_fmt_hours(cycle['slowest'])}"
-            ),
-            "inline": False,
-        },
+        {"name": "🔁 Review iterations (7d)", "value": iter_line, "inline": False},
+        {"name": "⏱️ Time to merge · opened → merged (7d)", "value": _stat_line(ttm), "inline": False},
+        {"name": "🔄 Tick cadence · merge → merge (7d)", "value": _stat_line(tick), "inline": False},
         {
             "name": "🗺️ Backlog remaining",
             "value": f"**{estimate['open_items']}** open · ETA {_fmt_eta(estimate)}",
             "inline": True,
         },
-        {
-            "name": "🔥 Busiest day (7d)",
-            "value": busy_line,
-            "inline": True,
-        },
-        {
-            "name": "🧮 This PR's footprint",
-            "value": (
-                f"+{latest_churn['additions']} / -{latest_churn['deletions']} across {latest_churn['files']} file(s)"
-            ),
-            "inline": False,
-        },
+        {"name": "🔥 Busiest day (7d)", "value": busy_line, "inline": True},
     ]
 
     embed = {
