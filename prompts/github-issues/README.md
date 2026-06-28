@@ -268,3 +268,33 @@ Dependency graph:
 02 mindful-anchor-mode ───┬── 04 mindful-anchor-presets
                           └── 06 mindful-anchor-view-frontend
 ```
+
+### Journal floating-page depth & editorial polish
+
+Make the journal **feel like writing on a sheet of paper floated above a
+desk** — margins, a soft warm shadow, lifted marginalia, a floated shelf, and
+reduced-motion-safe micro-interactions — instead of the current flat surface
+where page and background share one colour. Frontend-only; tokens-driven; zero
+behaviour/contrast regressions.
+
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| — | [Epic tracker](journal-depth-epic.md) | — | — |
+| 01 | [Add editorial elevation tokens (desk + paper shadow)](journal-depth-01-elevation-tokens.md) | Frontend | ~120 |
+| 02 | [Float the writing surface as a paper sheet](journal-depth-02-floating-writing-sheet.md) | Frontend | ~160 |
+| 03 | [Add a ruled margin & page edge to the sheet](journal-depth-03-ruled-margins-and-texture.md) | Frontend | ~120 |
+| 04 | [Lift the marginalia notes off the page](journal-depth-04-lift-marginalia-notes.md) | Frontend | ~110 |
+| 05 | [Float the shelf entries as paper cards](journal-depth-05-floating-shelf-cards.md) | Frontend | ~170 |
+| 06 | [Add depth-reinforcing motion (reduced-motion safe)](journal-depth-06-motion-and-micro-interactions.md) | Frontend | ~140 |
+
+Dependency graph:
+
+```
+                 ┌── 02 floating-writing-sheet ──┐
+                 │                                │
+01 elevation ────┼── 03 ruled-margins-texture ───┼── 06 motion-&-micro-interactions
+   tokens        │      (also depends on 02)      │
+                 ├── 04 lift-marginalia-notes ────┤
+                 │                                │
+                 └── 05 floating-shelf-cards ─────┘
+```
