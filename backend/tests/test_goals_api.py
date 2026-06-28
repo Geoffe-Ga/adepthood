@@ -102,7 +102,7 @@ async def test_update_goal_404_when_goal_missing(async_client: AsyncClient) -> N
 
 
 @pytest.mark.asyncio
-async def test_update_goal_403_when_caller_not_owner(
+async def test_update_goal_404_when_caller_not_owner(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """Cross-tenant probe: alice's goal cannot be updated by bob.

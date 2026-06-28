@@ -324,7 +324,7 @@ async def test_unknown_goal_returns_404(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_other_users_goal_returns_403(
+async def test_other_users_goal_returns_404(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     _alice_headers, alice_id = await _signup(async_client, "alice")
@@ -332,13 +332,14 @@ async def test_other_users_goal_returns_403(
 
     goal = await _seed_goal(db_session, alice_id)
 
-    # Bob tries to complete Alice's goal
+    # Bob tries to complete Alice's goal — collapsed to 404 (not 403) so the
+    # endpoint can't be used to enumerate other users' goals.
     resp = await async_client.post(
         "/goal_completions/",
         json={"goal_id": goal.id, "did_complete": True},
         headers=bob_headers,
     )
-    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 @pytest.mark.asyncio
@@ -358,7 +359,7 @@ async def test_cross_tenant_goal_completion_emits_audit_log(
             json={"goal_id": goal.id, "did_complete": True},
             headers=bob_headers,
         )
-    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.status_code == HTTPStatus.NOT_FOUND
     deny_logs = [r for r in caplog.records if r.message == "resource_access_denied"]
     assert deny_logs, "expected a resource_access_denied audit log entry"
     assert getattr(deny_logs[0], "resource", None) == "goal"

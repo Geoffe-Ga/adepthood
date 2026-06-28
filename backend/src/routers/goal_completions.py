@@ -18,7 +18,7 @@ from dependencies.ownership import log_ownership_denied
 from dependencies.timezone import current_user_timezone
 from domain.dates import day_bounds_in_tz, today_in_tz
 from domain.streaks import is_scheduled_on
-from errors import bad_request, forbidden, not_found
+from errors import bad_request, not_found
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
@@ -95,10 +95,20 @@ async def _get_owned_goal_and_habit(
 
     habit = await session.get(Habit, goal.habit_id)
     if habit is None:
-        raise forbidden("not_owner")
+        # Orphaned FK (goal exists, parent habit gone) — a distinct integrity
+        # signal, but collapsed to 404 like a missing goal so it never acts as
+        # an enumeration oracle (matches dependencies.ownership.require_owned_goal).
+        logger.warning(
+            "orphaned_goal_fk",
+            extra={"goal_id": goal_id, "habit_id": goal.habit_id, "user_id": user_id},
+        )
+        raise not_found("goal")
     if habit.user_id != user_id:
+        # Cross-tenant access is collapsed to 404 (not 403) so a prober cannot
+        # tell "exists but not yours" from "absent" — the enumeration-safe
+        # contract the goals router already enforces.
         log_ownership_denied("goal", goal_id, user_id)
-        raise forbidden("not_owner")
+        raise not_found("goal")
 
     return goal, habit, resolved_id
 
