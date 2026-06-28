@@ -341,7 +341,9 @@ export const practiceRecipeSchema = z.object({
 /** A user's selected practice (mirrors ``UserPractice``). */
 export const userPracticeSchema = z.object({
   id: z.number().int(),
-  user_id: z.number().int(),
+  // Backend omits user_id from user-scoped responses (OwnedResourcePublic /
+  // BUG-T7); nullish so a well-formed payload without it still validates.
+  user_id: z.number().int().nullish(),
   practice_id: z.number().int(),
   stage_number: z.number().int(),
   start_date: isoDate,
@@ -355,7 +357,9 @@ export const userPracticeSchema = z.object({
 /** A logged practice session (mirrors ``PracticeSessionResponse``). */
 export const practiceSessionResponseSchema = z.object({
   id: z.number().int(),
-  user_id: z.number().int(),
+  // Backend omits user_id from user-scoped responses (OwnedResourcePublic /
+  // BUG-T7); nullish so a well-formed payload without it still validates.
+  user_id: z.number().int().nullish(),
   user_practice_id: z.number().int(),
   duration_minutes: z.number(),
   timestamp: isoDateTime,
