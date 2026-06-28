@@ -572,6 +572,31 @@ function useJournalEntryController(
 type Controller = ReturnType<typeof useJournalEntryController>;
 
 /** The two-column page: the body (edit or read) + the margin. */
+/** The body column: the editable writing surface, or the read-mode highlighted view. */
+function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
+  const { title, body, saveState } = ctl.autosave;
+  const { editMode, canFinish, markFinished, requestEdit } = ctl.editGate;
+  return editMode ? (
+    <WritingColumn
+      title={title}
+      body={body}
+      saveState={saveState}
+      onChangeTitle={ctl.handleTitle}
+      onChangeBody={ctl.handleBody}
+      onFinish={canFinish ? markFinished : undefined}
+      bodyPlaceholder={bodyPlaceholder}
+    />
+  ) : (
+    <ReadColumn
+      title={title}
+      body={body}
+      notes={ctl.resonance.marginalia}
+      onOpen={ctl.modal.onOpenNote}
+      onEdit={requestEdit}
+    />
+  );
+}
+
 function JournalPage({
   ctl,
   renderMargin,
@@ -582,42 +607,26 @@ function JournalPage({
   bodyPlaceholder: string;
 }) {
   const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
-  const { title, body, saveState } = ctl.autosave;
   const notes = ctl.resonance.marginalia;
-  const hasNotes = notes.length > 0;
-  const { editMode, canFinish, markFinished, requestEdit } = ctl.editGate;
 
   let marginContent: React.ReactNode;
-  if (renderMargin) marginContent = renderMargin({ body, isIdle: ctl.isIdle });
-  else if (hasNotes) marginContent = <MarginNoteList notes={notes} onOpen={ctl.modal.onOpenNote} />;
-  else marginContent = <ResonanceMargin count={0} error={ctl.resonance.error} />;
+  if (renderMargin) marginContent = renderMargin({ body: ctl.autosave.body, isIdle: ctl.isIdle });
+  else if (notes.length > 0) {
+    marginContent = <MarginNoteList notes={notes} onOpen={ctl.modal.onOpenNote} />;
+  } else marginContent = <ResonanceMargin count={0} error={ctl.resonance.error} />;
 
   return (
-    <View style={[styles.page, narrow && styles.pageNarrow]} testID="journal-page">
-      {editMode ? (
-        <WritingColumn
-          title={title}
-          body={body}
-          saveState={saveState}
-          onChangeTitle={ctl.handleTitle}
-          onChangeBody={ctl.handleBody}
-          onFinish={canFinish ? markFinished : undefined}
-          bodyPlaceholder={bodyPlaceholder}
-        />
-      ) : (
-        <ReadColumn
-          title={title}
-          body={body}
-          notes={notes}
-          onOpen={ctl.modal.onOpenNote}
-          onEdit={requestEdit}
-        />
-      )}
-      <View
-        style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
-        testID="journal-margin-column"
-      >
-        {marginContent}
+    <View style={styles.desk}>
+      <View style={[styles.sheet, narrow && styles.sheetNarrow]} testID="journal-sheet">
+        <View style={[styles.page, narrow && styles.pageNarrow]} testID="journal-page">
+          <PageBodyColumn ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
+          <View
+            style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
+            testID="journal-margin-column"
+          >
+            {marginContent}
+          </View>
+        </View>
       </View>
     </View>
   );
@@ -661,7 +670,7 @@ function JournalEntryScreen({
   );
   const { editGate, modal } = ctl;
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} testID="journal-screen">
       <JournalPage ctl={ctl} renderMargin={renderMargin} bodyPlaceholder={bodyPlaceholder} />
       <GetResonanceButton
         visible={ctl.visible}

@@ -12,6 +12,8 @@ import {
   colors,
   editorialType,
   journalLayout,
+  journalSheet,
+  paperShadow,
   spacing,
   touchTarget,
 } from '@/design/tokens';
@@ -27,15 +29,33 @@ export const RESONANCE_BUTTON_CLEARANCE = SPACING.xl + touchTarget.minimum + SPA
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: colors.paper.background,
+    backgroundColor: colors.paper.desk,
   },
-  /** Centres the page and caps the reading measure on wide screens. */
+  /** Padded desk so the deeper ground shows as a border around the lifted sheet. */
+  desk: {
+    flex: 1,
+    paddingHorizontal: journalSheet.deskPaddingH,
+    paddingTop: journalSheet.deskPaddingTop,
+  },
+  /** The floating paper sheet: lighter ground, soft warm shadow, rounded top. */
+  sheet: {
+    flex: 1,
+    width: '100%',
+    maxWidth: journalLayout.pageMaxWidth + journalLayout.marginColumnWidth,
+    alignSelf: 'center',
+    backgroundColor: colors.paper.background,
+    borderTopLeftRadius: journalSheet.cornerRadius,
+    borderTopRightRadius: journalSheet.cornerRadius,
+    ...paperShadow.sheet,
+  },
+  sheetNarrow: {
+    maxWidth: '100%',
+  },
+  /** The two-column page inside the sheet (width cap + centring live on the sheet). */
   page: {
     flex: 1,
     flexDirection: 'row',
     width: '100%',
-    maxWidth: journalLayout.pageMaxWidth + journalLayout.marginColumnWidth,
-    alignSelf: 'center',
     paddingHorizontal: journalLayout.pageHorizontalPadding,
     paddingBottom: RESONANCE_BUTTON_CLEARANCE,
   },
