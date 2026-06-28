@@ -64,6 +64,7 @@ interface NavMock {
   goBack: jest.Mock<() => void>;
   replace: jest.Mock<(...args: unknown[]) => void>;
   navigate: jest.Mock<(...args: unknown[]) => void>;
+  popToTop: jest.Mock<() => void>;
 }
 
 function makeNav(): NavMock {
@@ -71,6 +72,7 @@ function makeNav(): NavMock {
     goBack: jest.fn() as jest.Mock<() => void>,
     replace: jest.fn() as jest.Mock<(...args: unknown[]) => void>,
     navigate: jest.fn() as jest.Mock<(...args: unknown[]) => void>,
+    popToTop: jest.fn() as jest.Mock<() => void>,
   };
 }
 
@@ -140,25 +142,29 @@ describe('PracticeDetailScreen — Use for stage', () => {
     mockUserPracticesCreate.mockReset();
   });
 
-  it('sets the practice active for the current stage in one tap (no picker)', async () => {
+  it("uses the practice's own stage in one tap and returns to the Practice screen", async () => {
     mockPracticesGet.mockResolvedValueOnce(samplePractice);
     mockUserPracticesCreate.mockResolvedValueOnce(assignedUserPractice);
-    const { view } = renderScreen();
+    const nav = makeNav();
+    const { view } = renderScreen(77, nav);
     await waitForLoad();
     await act(async () => {
       fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
       await flushPromises();
     });
-    // Store default current stage is 1; no stage picker is opened.
-    expect(mockUserPracticesCreate).toHaveBeenCalledWith({ practice_id: 77, stage_number: 1 });
+    // The practice is catalogued for stage 4, so the one-tap path targets that
+    // stage (the backend rejects any other) rather than the store's current
+    // stage. No picker is opened, and the screen pops back to Practice.
+    expect(mockUserPracticesCreate).toHaveBeenCalledWith({ practice_id: 77, stage_number: 4 });
     expect(view.queryByTestId('practice-detail-stage-picker')).toBeNull();
-    expect(view.getByTestId('practice-detail-assigned-banner')).toBeTruthy();
+    expect(nav.popToTop).toHaveBeenCalledTimes(1);
   });
 
-  it('opens the stage picker and writes via userPractices.create on pick', async () => {
+  it('opens the stage picker, writes via userPractices.create, and returns on pick', async () => {
     mockPracticesGet.mockResolvedValueOnce(samplePractice);
     mockUserPracticesCreate.mockResolvedValueOnce(assignedUserPractice);
-    const { view } = renderScreen();
+    const nav = makeNav();
+    const { view } = renderScreen(77, nav);
     await waitForLoad();
     fireEvent.press(view.getByTestId('practice-detail-use-for-stage'));
     expect(view.getByTestId('practice-detail-stage-picker')).toBeTruthy();
@@ -170,7 +176,7 @@ describe('PracticeDetailScreen — Use for stage', () => {
       practice_id: 77,
       stage_number: 4,
     });
-    expect(view.getByTestId('practice-detail-assigned-banner')).toBeTruthy();
+    expect(nav.popToTop).toHaveBeenCalledTimes(1);
   });
 
   it('opens the share sheet from the Share action', async () => {
@@ -182,10 +188,11 @@ describe('PracticeDetailScreen — Use for stage', () => {
     expect(view.getByTestId('share-sheet')).toBeTruthy();
   });
 
-  it('surfaces an action error if assignment fails', async () => {
+  it('surfaces an action error and stays put if assignment fails', async () => {
     mockPracticesGet.mockResolvedValueOnce(samplePractice);
     mockUserPracticesCreate.mockRejectedValueOnce(new Error('nope'));
-    const { view } = renderScreen();
+    const nav = makeNav();
+    const { view } = renderScreen(77, nav);
     await waitForLoad();
     fireEvent.press(view.getByTestId('practice-detail-use-for-stage'));
     await act(async () => {
@@ -193,6 +200,8 @@ describe('PracticeDetailScreen — Use for stage', () => {
       await flushPromises();
     });
     expect(view.getByTestId('practice-detail-action-error')).toBeTruthy();
+    // A failed assignment must not navigate away — the user stays to see the error.
+    expect(nav.popToTop).not.toHaveBeenCalled();
   });
 });
 

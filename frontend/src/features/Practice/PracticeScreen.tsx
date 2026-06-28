@@ -19,9 +19,9 @@
  * The screen itself stays small by keeping all state inside the extracted hooks
  * and the inner session component.
  */
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   ScrollView,
@@ -55,9 +55,39 @@ type WeeklyProgressHook = ReturnType<typeof useWeeklyProgress>;
  * stage changes). The chip is display-only — switching practices is the
  * explicit "Change practice" button, which routes through the catalog.
  */
-function usePracticeChrome(stageNumber: number): { banner: React.JSX.Element } {
-  const banner = useMemo(() => <FrequencyBanner stageNumber={stageNumber} />, [stageNumber]);
+function usePracticeChrome(
+  stageNumber: number,
+  refreshSignal: number,
+): { banner: React.JSX.Element } {
+  const banner = useMemo(
+    () => <FrequencyBanner stageNumber={stageNumber} refreshSignal={refreshSignal} />,
+    [stageNumber, refreshSignal],
+  );
   return { banner };
+}
+
+/**
+ * Re-fetch the active practice + frequency banner whenever the screen regains
+ * focus. The Practice tab stays mounted while the user pushes to the catalog /
+ * detail screen to choose a practice; without this, returning would show the
+ * stale selection (the selection saved fine — it just wasn't re-read). The
+ * first focus is skipped because the hooks already fetch on mount, and the
+ * refresh is silent so the current practice stays on screen while it reloads.
+ */
+function useFocusRefresh(refresh: (_opts?: { silent?: boolean }) => Promise<void>): number {
+  const [refreshSignal, setRefreshSignal] = useState(0);
+  const firstFocus = useRef(true);
+  useFocusEffect(
+    useCallback(() => {
+      if (firstFocus.current) {
+        firstFocus.current = false;
+        return;
+      }
+      void refresh({ silent: true });
+      setRefreshSignal((n) => n + 1);
+    }, [refresh]),
+  );
+  return refreshSignal;
 }
 
 const PracticeScreen = (): React.JSX.Element => {
@@ -66,7 +96,8 @@ const PracticeScreen = (): React.JSX.Element => {
   const active = useActivePractice(stageNumber);
   const weekly = useWeeklyProgress();
   const handleWriteReflection = useWriteReflection(active.effectiveName, active.practice);
-  const { banner } = usePracticeChrome(stageNumber);
+  const refreshSignal = useFocusRefresh(active.refresh);
+  const { banner } = usePracticeChrome(stageNumber, refreshSignal);
 
   if (active.isLoading) return <LoadingView />;
   if (active.error && !active.activeUserPractice) {

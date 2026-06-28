@@ -102,12 +102,33 @@ jest.mock('../../../navigation/hooks', () => ({
   useAppRoute: () => ({ key: 'Practice-test', name: 'Practice', params: mockRouteParams }),
 }));
 
+// Captured focus callbacks so tests can simulate the screen regaining focus
+// (e.g. returning from the catalog after picking a practice).
+const mockFocusCallbacks: Array<() => void | (() => void)> = [];
+
 // The "Browse all practices" button navigates via the stack-typed useNavigation
-// (Catalog is a pushed RootStack route, not a tab).
-jest.mock('@react-navigation/native', () => ({
-  ...(jest.requireActual('@react-navigation/native') as object),
-  useNavigation: () => ({ navigate: mockRootNavigate }),
-}));
+// (Catalog is a pushed RootStack route, not a tab). ``useFocusEffect`` is stubbed
+// to run the callback on mount and to expose it for manual re-triggering.
+jest.mock('@react-navigation/native', () => {
+  const reactMod = jest.requireActual('react') as {
+    useEffect: (_cb: () => undefined | (() => void), _deps: unknown[]) => void;
+  };
+  return {
+    ...(jest.requireActual('@react-navigation/native') as object),
+    useNavigation: () => ({ navigate: mockRootNavigate }),
+    useFocusEffect: (cb: () => void | (() => void)) => {
+      reactMod.useEffect(() => {
+        mockFocusCallbacks.push(cb);
+        const cleanup = cb();
+        return () => {
+          const index = mockFocusCallbacks.indexOf(cb);
+          if (index >= 0) mockFocusCallbacks.splice(index, 1);
+          if (typeof cleanup === 'function') cleanup();
+        };
+      }, [cb]);
+    },
+  };
+});
 
 jest.mock('expo-av', () => ({
   Audio: {
@@ -249,6 +270,7 @@ const modeFixtures: ModeFixture[] = [
 describe('PracticeScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockFocusCallbacks.length = 0;
     mockPracticesList.mockResolvedValue([samplePractice()]);
     mockUserPracticesList.mockResolvedValue([]);
     mockWeekCount.mockResolvedValue({ count: 2 });
@@ -314,6 +336,25 @@ describe('PracticeScreen', () => {
     expect(getByTestId('active-practice-configure').props.accessibilityLabel).toBe(
       "Adjust this practice's settings",
     );
+  });
+
+  it('reflects a practice selected elsewhere once the screen regains focus', async () => {
+    // The Practice tab stays mounted while the user pushes to the catalog to
+    // pick a practice. The selection saves there; on returning, a silent
+    // focus-refresh must re-read it so the screen stops showing the empty state.
+    mockUserPracticesList
+      .mockResolvedValueOnce([]) // initial mount: nothing selected yet
+      .mockResolvedValue([sampleUserPractice()]); // after focus: now selected
+    const { getByTestId, queryByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('practice-empty-state')).toBeTruthy());
+
+    await act(async () => {
+      mockFocusCallbacks.forEach((cb) => cb());
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+    expect(queryByTestId('practice-empty-state')).toBeNull();
   });
 
   it('change-practice opens the Catalog seeded to the current stage', async () => {
