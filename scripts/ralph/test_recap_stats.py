@@ -177,6 +177,19 @@ def test_churn_totals_sums_and_nets() -> None:
     assert out["files"] == 3
 
 
+# ---------- net_lines_from_code_frequency ----------
+
+
+def test_net_lines_from_code_frequency_sums_signed_weeks() -> None:
+    # GitHub reports deletions as negatives: (100-30) + (50-10) = 110.
+    weeks = [[1_700_000_000, 100, -30], [1_700_600_000, 50, -10]]
+    assert rs.net_lines_from_code_frequency(weeks) == 110
+
+
+def test_net_lines_from_code_frequency_empty_is_zero() -> None:
+    assert rs.net_lines_from_code_frequency([]) == 0
+
+
 # ---------- busiest_day ----------
 
 
@@ -266,6 +279,80 @@ def test_open_to_merge_hours_clamps_negative_to_zero() -> None:
     # Clock skew (merge stamped before open) must not produce a negative window.
     pr = _hit(1, merged="2026-06-27T10:00:00Z", created="2026-06-27T12:00:00Z")
     assert recap._open_to_merge_hours(pr) == 0.0
+
+
+# ---------- _pr_churn ----------
+
+
+def test_pr_churn_reads_detail_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(recap, "fetch_pr_detail", lambda *a, **k: {"additions": 12, "deletions": 4, "changed_files": 3})
+    assert recap._pr_churn("owner/repo", 1, token="t") == (12, 4, 3)
+
+
+def test_pr_churn_degrades_to_zero_on_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    import urllib.error
+
+    def _boom(*_a: Any, **_k: Any) -> dict[str, Any]:
+        raise urllib.error.URLError("network down")
+
+    monkeypatch.setattr(recap, "fetch_pr_detail", _boom)
+    assert recap._pr_churn("owner/repo", 1, token="t") == (0, 0, 0)
+
+
+# ---------- fetch_repo_net_lines ----------
+
+
+def test_fetch_repo_net_lines_sums_code_frequency(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(recap, "_request_json", lambda *a, **k: [[1, 100, -40], [2, 20, -5]])
+    assert recap.fetch_repo_net_lines("owner/repo", token="t") == 75
+
+
+def test_fetch_repo_net_lines_none_when_stats_still_warming(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A 202 from GitHub yields an empty body (None); retries exhaust to None.
+    monkeypatch.setattr(recap, "_request_json", lambda *a, **k: None)
+    assert recap.fetch_repo_net_lines("owner/repo", token="t", attempts=2) is None
+
+
+def test_fetch_repo_net_lines_none_on_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    import urllib.error
+
+    def _boom(*_a: Any, **_k: Any) -> object:
+        raise urllib.error.HTTPError("u", 500, "err", {}, None)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(recap, "_request_json", _boom)
+    assert recap.fetch_repo_net_lines("owner/repo", token="t") is None
+
+
+# ---------- this-PR display lines ----------
+
+
+def test_this_pr_iter_line_variants() -> None:
+    assert recap._this_pr_iter_line(None) == "merged without an LGTM verdict"
+    assert recap._this_pr_iter_line(0) == "**0** rounds · clean first try"
+    assert recap._this_pr_iter_line(1) == "**1** round to LGTM"
+    assert recap._this_pr_iter_line(3) == "**3** rounds to LGTM"
+
+
+def test_this_pr_tick_line_handles_first_merge() -> None:
+    assert recap._this_pr_tick_line(None) == "first tracked merge"
+    assert recap._this_pr_tick_line(0.5) == "**30m** since the previous merge"
+
+
+def test_this_pr_review_line_formats_window() -> None:
+    assert recap._this_pr_review_line(2.0) == "**2.0h** open → merge"
+
+
+def test_loc_line_renders_three_windows() -> None:
+    loc_24h = {"additions": 1200, "deletions": 300, "net": 900, "files": 5}
+    loc_7d = {"additions": 8400, "deletions": 1600, "net": 6800, "files": 40}
+    line = recap._loc_line(loc_24h, loc_7d, 124_500)
+    assert line == "+1,200 / -300 (24h) · +8,400 / -1,600 (7d) · 124,500 net (full repo)"
+
+
+def test_loc_line_placeholder_when_repo_net_unavailable() -> None:
+    totals = {"additions": 0, "deletions": 0, "net": 0, "files": 0}
+    line = recap._loc_line(totals, totals, None)
+    assert line.endswith("— (full repo)")
 
 
 # ---------- _heuristic_headline ----------
