@@ -2,11 +2,13 @@ name: Ralph Recap
 
 # Posts a Ralph tick-loop recap to Discord every time a pull request is merged.
 #
-# Configuration in the repo (delivery is skipped, not failed, when unset — see
-# the --skip-if-unconfigured flag below):
+# Required configuration in the repo:
 #   secret   DISCORD_BOT_TOKEN  - bot token with Send Messages on the channel
-#   variable RALPH_CHANNEL_ID   - target Discord channel ID (all digits)
+#   secret   RALPH_CHANNEL_ID   - target Discord channel ID (all digits)
 #   secret   ANTHROPIC_API_KEY  - optional; enables the Claude-written headline
+#
+# Each value is read from `secrets` first, falling back to a same-named repo
+# `vars` entry, so it resolves whether you store it as a Secret or a Variable.
 #
 # The built-in GITHUB_TOKEN supplies the merge history (read-only). See
 # scripts/ralph/RECAP.md for setup, the metric definitions, and tuning.
@@ -41,8 +43,8 @@ jobs:
       - name: Post Ralph recap to Discord
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-          RALPH_CHANNEL_ID: ${{ vars.RALPH_CHANNEL_ID }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN || vars.DISCORD_BOT_TOKEN }}
+          RALPH_CHANNEL_ID: ${{ secrets.RALPH_CHANNEL_ID || vars.RALPH_CHANNEL_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY || vars.ANTHROPIC_API_KEY }}
         run: |
-          python scripts/ralph/recap.py --repo "${{ github.repository }}" --skip-if-unconfigured
+          python scripts/ralph/recap.py --repo "${{ github.repository }}"
