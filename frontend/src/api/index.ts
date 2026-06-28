@@ -5,6 +5,7 @@ import {
   apiGoalGroupSchema,
   authResponseSchema,
   contentItemSchema,
+  frequencyResponseSchema,
   habitWithGoalsSchema,
   isTier,
   journalListResponseSchema,
@@ -2033,20 +2034,6 @@ export interface FrequencyResponse {
   banner_text: string;
 }
 
-export function validateFrequencyResponse(data: unknown): data is FrequencyResponse {
-  if (typeof data !== 'object' || data === null) return false;
-  const f = data as Record<string, unknown>;
-  return (
-    typeof f.stage_number === 'number' &&
-    typeof f.color === 'string' &&
-    typeof f.aspect === 'string' &&
-    typeof f.practice_name === 'string' &&
-    typeof f.practice_id === 'number' &&
-    (f.user_practice_id === null || typeof f.user_practice_id === 'number') &&
-    typeof f.banner_text === 'string'
-  );
-}
-
 export const frequency = {
   /**
    * @param stageNumber Optional override. Pins the banner to a specific
@@ -2061,14 +2048,10 @@ export const frequency = {
     const query = new URLSearchParams();
     if (stageNumber != null) query.set('stage_number', String(stageNumber));
     const qs = query.toString();
-    const data = await request<FrequencyResponse>(
-      `/user-practices/current/frequency${qs ? `?${qs}` : ''}`,
-      { token },
-    );
-    if (!validateFrequencyResponse(data)) {
-      throw new Error('Invalid frequency response');
-    }
-    return data;
+    return request<FrequencyResponse>(`/user-practices/current/frequency${qs ? `?${qs}` : ''}`, {
+      token,
+      schema: frequencyResponseSchema as unknown as z.ZodType<FrequencyResponse>,
+    });
   },
 };
 
