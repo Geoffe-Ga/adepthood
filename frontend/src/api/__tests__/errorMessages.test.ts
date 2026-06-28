@@ -189,4 +189,21 @@ describe('formatApiError', () => {
     const err = new Error('SecureStore is not available on this device.');
     expect(formatApiError(err)).toBe('SecureStore is not available on this device.');
   });
+
+  // A failed ``fetch`` rejects with a TypeError whose message differs by engine:
+  // "Load failed" (iOS Safari/WebKit), "Failed to fetch" (Chrome/Blink),
+  // "NetworkError when attempting to fetch resource." (Firefox), "Network
+  // request failed" (React Native). These are cryptic — surface the friendly
+  // offline copy instead of leaking the raw engine string to users.
+  it.each([
+    ['Load failed'],
+    ['Failed to fetch'],
+    ['NetworkError when attempting to fetch resource.'],
+    ['Network request failed'],
+    ['The network connection was lost.'],
+  ])('maps the fetch network TypeError %p to friendly offline copy', (message) => {
+    const result = formatApiError(new TypeError(message));
+    expect(result).not.toBe(message); // never leak the raw engine string
+    expect(result).toMatch(/offline/i);
+  });
 });
