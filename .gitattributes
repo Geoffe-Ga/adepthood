@@ -5,6 +5,10 @@
 # Vendored course content (synced from aptitude-course by scripts/sync_content.py;
 # committed so the deploy image is reproducible and pin bumps are reviewable).
 # The manifest schema/example beside it are first-party and NOT marked vendored.
-backend/content/markdown/** linguist-vendored
-backend/content/manifest.json linguist-vendored
-backend/content/CONTENT_VERSION linguist-vendored
+# `-text` exempts the vendored bytes from the repo-wide `text=auto eol=lf`
+# normalization: sync_content stamps a sha256 digest over the extracted bytes, so
+# any eol rewrite on commit would make CONTENT_VERSION drift in CI (the bytes git
+# checks out would differ from what was hashed). Store the pin verbatim.
+backend/content/markdown/** linguist-vendored -text
+backend/content/manifest.json linguist-vendored -text
+backend/content/CONTENT_VERSION linguist-vendored -text

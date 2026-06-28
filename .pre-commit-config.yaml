@@ -1,3 +1,9 @@
+# Vendored course content under backend/content/ is managed solely by
+# scripts/sync_content.py and pinned by a sha256 digest in CONTENT_VERSION.
+# No hook may read or (especially) rewrite it — a whitespace/eol fix would make
+# the digest drift in CI. Exempt the whole tree from every hook, like node_modules.
+exclude: ^backend/content/
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0

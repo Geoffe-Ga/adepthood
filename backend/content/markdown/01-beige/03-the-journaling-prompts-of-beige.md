@@ -31,7 +31,7 @@ Here’s the prompts:
     that contribute to your sense of security.
 
     Safety is never just personal—it’s contextual. By naming the structures that hold (or undermine) your sense of rootedness, you begin to reclaim discernment. This clarity will help you determine what to protect, what to shift, and what to release.
-
+    
 2.  “What kind of hero did I need to feel secure when I was a kid? What would it take to become that person in the next 9 months?”
 
     This question calls you back to your primal needs. It bypasses abstract goals and gets straight to the part of you that longs for protection, for care, for steady presence. If you can identify that hero and start showing up as them—bit by bit—you are laying spiritual rebar into your foundation.
