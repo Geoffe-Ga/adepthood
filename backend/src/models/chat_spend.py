@@ -1,9 +1,12 @@
-"""Idempotency store for chat-spend operations (BUG-BM-012).
+"""Idempotency store for metered-LLM spend operations (BUG-BM-012).
 
-One row per ``(user_id, idem_key)`` pair records whether a ``/journal/chat``
-or ``/journal/chat/stream`` request has already been charged.  Duplicate
-requests with the same key return the cached result without a second wallet
-deduction.
+One row per ``(user_id, idem_key)`` pair records whether a metered LLM
+request has already been charged.  Duplicate requests with the same key
+return the cached result without a second wallet deduction.
+
+Originally introduced for the ``/journal/chat`` endpoints, which were removed
+in the Resonance pivot (#654); the table is retained for the same idempotency
+guarantee on the metered Resonance generation path.
 
 The ``idem_key`` column stores a SHA-256 digest of the raw ``Idempotency-Key``
 header value so the raw client token is never persisted (same pattern used

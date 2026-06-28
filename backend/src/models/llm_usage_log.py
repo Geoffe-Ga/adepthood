@@ -1,6 +1,7 @@
 """Per-request LLM cost + token accounting.
 
-One row per successful ``/journal/chat`` call.  The table is append-only —
+One row per successful metered LLM generation (Resonance essay + marginalia;
+formerly the removed ``/journal/chat`` call).  The table is append-only —
 never updated, never deleted by the application code — so it doubles as an
 audit log for cost investigations.  Aggregates (total spend, per-user, per-
 model breakdowns) are computed on read by the admin stats endpoint.

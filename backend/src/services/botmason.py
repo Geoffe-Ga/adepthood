@@ -1,8 +1,11 @@
 """BotMason AI service — LLM integration layer.
 
 Supports configurable LLM providers via environment variables. The service
-loads a system prompt from a file path or inline text and maintains
-conversation history context for coherent multi-turn chat.
+loads a system prompt from a file path or inline text. It now backs the
+journal **Resonance** generation (essay + anchored marginalia); the earlier
+multi-turn chat surface was removed (#654), so callers pass a single turn
+(empty conversation history). The history parameter is retained generically
+in case a future surface needs it.
 """
 
 from __future__ import annotations
@@ -33,10 +36,6 @@ _DEFAULT_SYSTEM_PROMPT = (
     "Respond with wisdom, warmth, and a touch of playful mysticism. "
     "Reference the APTITUDE stages, habits, practices, and journaling when relevant."
 )
-
-# Maximum number of recent messages to include as conversation context.
-# Bumped from 20 to 50 so deeper reflections stay in context (BUG-JOURNAL-007).
-CONVERSATION_HISTORY_LIMIT = 50
 
 # Only allow prompt files from this directory to prevent path traversal.
 _ALLOWED_PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
