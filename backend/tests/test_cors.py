@@ -45,6 +45,18 @@ def test_production_with_valid_domain() -> None:
     assert origins == ["https://app.adepthood.com"]
 
 
+@patch.dict("os.environ", {"PROD_DOMAIN": "https://app.aptitude.guru"})
+def test_production_allows_the_live_frontend_origin() -> None:
+    """Regression guard (#765): the live web origin is a valid production origin.
+
+    A deploy whose PROD_DOMAIN omits app.aptitude.guru makes the browser block
+    every cross-origin response, so the whole app falsely reports "offline".
+    The origin must pass validation and be applied verbatim.
+    """
+    _validate_prod_origin("https://app.aptitude.guru")  # must not raise
+    assert get_cors_origins("production") == ["https://app.aptitude.guru"]
+
+
 @patch.dict(
     "os.environ",
     {"PROD_DOMAIN": "https://app.adepthood.com, https://www.adepthood.com"},
