@@ -32,6 +32,8 @@ import type { MapRow, StageDisplay } from './mapLayout';
 import { stageService, isStageUnlocked } from './services/stageService';
 import type { StageData } from './stageData';
 
+import { colors } from '@/design/tokens';
+
 /** Lookup of stage number → StageData for resolving row/arrow content. */
 type StageLookup = Readonly<Record<number, StageData | undefined>>;
 
@@ -339,9 +341,9 @@ const ActionLinks = ({ stage, onNavigate }: ActionLinksProps): React.JSX.Element
 );
 
 const GOAL_TIER_COLORS: Record<string, string> = {
-  low: '#CD7F32',
-  clear: '#C0C0C0',
-  stretch: '#FFD700',
+  low: colors.medal.bronze,
+  clear: colors.medal.silver,
+  stretch: colors.medal.gold,
 };
 
 const GOAL_TIER_LABELS: Record<string, string> = {
@@ -384,7 +386,7 @@ const HabitHistoryRow = ({ item }: { item: HabitHistoryItem }): React.JSX.Elemen
             styles.goalBadge,
             {
               backgroundColor: achieved
-                ? GOAL_TIER_COLORS[tier] ?? '#888'
+                ? GOAL_TIER_COLORS[tier] ?? colors.text.tertiary
                 : 'rgba(255,255,255,0.15)',
             },
           ]}
@@ -435,7 +437,7 @@ const HistoryBody = ({
   if (loading) {
     return (
       <View style={styles.historyLoading} testID="history-loading">
-        <ActivityIndicator size="small" color="#fff" />
+        <ActivityIndicator size="small" color={colors.text.light} />
       </View>
     );
   }

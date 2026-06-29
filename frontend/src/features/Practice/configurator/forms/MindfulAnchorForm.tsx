@@ -2,6 +2,11 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { MindfulAnchorConfig, MindfulAnchorOption } from '../../engine/types';
+import {
+  INSTRUCTION_MAX,
+  OPTION_DESCRIPTION_MAX as DESCRIPTION_MAX,
+  OPTION_LABEL_MAX as LABEL_MAX,
+} from '../../engine/validation';
 
 import { LabeledRow, NumericField, TextField, ToggleRow } from './shared';
 
@@ -11,10 +16,6 @@ interface Props {
   value: MindfulAnchorConfig;
   onChange: (next: MindfulAnchorConfig) => void;
 }
-
-const INSTRUCTION_MAX = 280;
-const LABEL_MAX = 60;
-const DESCRIPTION_MAX = 120;
 
 // Monotonic source of new option keys — the machine id recorded in session
 // metadata, generated once and never derived from the array index (audit

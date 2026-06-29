@@ -69,6 +69,16 @@ export const colors = {
     default: '#dad9d4',
   },
 
+  // Medal palette for the Map goal badges — deliberately the classic
+  // bronze/silver/gold (distinct from the `tier` palette above, which is the
+  // app's literary earth-tone arc). Keyed by goal tier: low→bronze, clear→silver,
+  // stretch→gold.
+  medal: {
+    bronze: '#cd7f32',
+    silver: '#c0c0c0',
+    gold: '#ffd700',
+  },
+
   // Goal-tier star markers are tier-agnostic greyscale: a darkish-grey outline
   // while the tier is unmet, then a greyscale gradient fill with a white border
   // glow once the tier is achieved.

@@ -30,7 +30,7 @@ WEEKLY_PROMPTS: dict[int, str] = {
     7: ("Where in your life do you feel powerful? Where do you feel powerless?"),
     8: ("Describe a time you stood up for yourself. What did it cost you? What did it give you?"),
     9: ("What anger or frustration are you carrying? What is it trying to protect?"),
-    # Blue �� Order / Structure
+    # Blue — Order / Structure
     10: ("What rules or structures help you thrive? Which ones feel like they hold you back?"),
     11: (
         "Reflect on a commitment you have kept faithfully. "
