@@ -1186,7 +1186,10 @@ export const journal = {
     if (params.limit != null) query.set('limit', String(params.limit));
     if (params.offset != null) query.set('offset', String(params.offset));
     const qs = query.toString();
-    return request<JournalListResponse>(`/journal${qs ? `?${qs}` : ''}`, {
+    // Canonical trailing slash: the collection route is `/journal/`; calling
+    // `/journal` triggers a 307 redirect that downgrades https->http behind the
+    // proxy and breaks the cross-origin request (#790).
+    return request<JournalListResponse>(`/journal/${qs ? `?${qs}` : ''}`, {
       token,
       schema: journalListResponseSchema as unknown as z.ZodType<JournalListResponse>,
     });
@@ -1195,7 +1198,8 @@ export const journal = {
     return request<JournalMessage>(`/journal/${entryId}`, { token });
   },
   create(entry: JournalMessageCreate, token?: string): Promise<JournalMessage> {
-    return request<JournalMessage>('/journal', {
+    // Trailing slash — the collection POST route is `/journal/` (#790).
+    return request<JournalMessage>('/journal/', {
       method: 'POST',
       body: entry,
       token,
