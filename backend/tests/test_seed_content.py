@@ -33,6 +33,10 @@ from services.content_repository import (
 # Placeholders kept for stages 2 and 3 (3 each) until the manifest covers them.
 _PLACEHOLDER_COUNT = 6
 
+# Resolved once at import (not inside async tests — pathlib in an async def trips
+# ASYNC240) so the real vendored content dir is reusable across tests.
+_VENDORED_CONTENT_DIR = Path(__file__).resolve().parent.parent / "content"
+
 
 def _chapter(
     chapter_id: str,
@@ -143,12 +147,46 @@ def test_vendored_content_pin_lists_real_chapters_and_resources() -> None:
     Guards the activation: an empty ``backend/content`` (the pre-vendor state)
     would seed zero StageContent rows and leave the Course screen blank.
     """
-    repo = ContentRepository(Path(__file__).resolve().parent.parent / "content")
+    repo = ContentRepository(_VENDORED_CONTENT_DIR)
     chapters = repo.list_chapters()
     resources = repo.list_resources()
     assert chapters, "vendored manifest should list chapters"
     assert {c.stage for c in chapters}, "chapters should cover at least one stage"
     assert resources, "vendored manifest should list site resources"
+
+
+@pytest.mark.asyncio
+async def test_seed_content_populates_stage_one_from_vendored_manifest(
+    db_session: AsyncSession,
+) -> None:
+    """Regression guard (#767): seeding the vendored manifest fills Stage 1.
+
+    Before the content pin shipped, Stage 1 had neither placeholder rows nor
+    manifest content, so the Course screen showed "No Content Yet" / "0/0". The
+    vendored manifest now covers Stage 1; seeding must produce non-zero
+    StageContent for it so the entry stage is never silently empty again.
+    """
+    set_content_repository_for_tests(ContentRepository(_VENDORED_CONTENT_DIR))
+    try:
+        await _seed_stages(db_session, count=10)
+        await seed_content(db_session)
+        stage_one = (
+            (await db_session.execute(select(CourseStage).where(CourseStage.stage_number == 1)))
+            .scalars()
+            .one()
+        )
+        rows = (
+            (
+                await db_session.execute(
+                    select(StageContent).where(StageContent.course_stage_id == stage_one.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert rows, "Stage 1 must seed real course content from the vendored manifest"
+    finally:
+        reset_content_repository_for_tests()
 
 
 def test_content_ref_format() -> None:
