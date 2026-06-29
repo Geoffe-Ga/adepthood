@@ -21,8 +21,12 @@ Clean-room stance
 - Marks: no Anthropic (or any other company's) name, logo, wordmark, or brand
   swatch is presented as Adepthood's own. "Candle & Ink" is an internal name
   for this language.
-- Fonts: no proprietary fonts. Editorial type uses a free/system serif stack
-  only (see `editorialType.serif`; enforced under design-language-02 / #800).
+- Fonts: no proprietary/commercial font files are bundled, self-hosted, or
+  embedded (#800). Both faces are platform-system stacks — serif
+  (`fonts.serif`: Georgia / system serif) and sans (`fonts.sans`: system UI /
+  sans-serif). No commercial face is pulled off the user's machine via fallback
+  stacks for brand parity. If an OFL/Apache face is ever bundled, its license
+  file must be committed and listed here.
 
 Summary: original palette, no proprietary fonts, no third-party marks; the only
 external input is the MIT-licensed reference doc, used for format guidance only.

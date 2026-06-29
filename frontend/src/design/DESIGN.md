@@ -36,10 +36,24 @@ The accent is an **original** terracotta/sienna derived from the app's own
 clears AA as text. It is **not** copied from any product or brand. See
 [`ATTRIBUTION`](./ATTRIBUTION).
 
+## Type system (`type(width)`, #800)
+
+A cohesive serif-display + clean-sans ramp, responsive on the same breakpoint
+base as `typography()`:
+
+- **Faces** — `fonts.serif` (display/title/heading) + `fonts.sans` (body/label/
+  caption). Both are **platform-system stacks**; no bundled font files. The
+  journal keeps its all-serif `editorialType` for long-form reading and now
+  shares `fonts.serif` as its source.
+- **Ramp** — `type(width)` → `{ display, title, heading, body, label, caption }`,
+  each `{ fontFamily, fontSize, lineHeight, fontWeight }`; sizes descend and
+  scale up from phone → tablet.
+
 ## Constraints (carried from the epic)
 
-- **No proprietary fonts** — editorial type uses a free/system serif stack
-  (see `editorialType.serif`); see #800.
+- **No proprietary fonts** — both serif and sans are free/system stacks
+  (`fonts.serif` / `fonts.sans`); any bundled OFL/Apache face must commit its
+  license. See #800 and `ATTRIBUTION`.
 - **No third-party brand marks or swatches** presented as our own.
 - **Additive, not destructive** — the legacy grey `colors.background` /
   `colors.surface` remain for un-migrated screens; this layer is the new
