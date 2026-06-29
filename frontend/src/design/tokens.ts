@@ -502,3 +502,63 @@ export const journalSheet = {
   deskPaddingH: spacing(2), // desk visible left/right of the sheet
   deskPaddingTop: spacing(1.5), // desk visible above the sheet
 } as const;
+
+// ---------------------------------------------------------------------------
+// Semantic app-wide layer — the "Candle & Ink" warm-editorial language (#798)
+// ---------------------------------------------------------------------------
+
+/**
+ * App-wide warm grounds. Derived from the existing paper palette so the whole
+ * app reads as paper-on-desk rather than flat grey chrome. The legacy
+ * ``background``/``surface`` greys remain for un-migrated screens but are no
+ * longer the design default.
+ */
+export const surface = {
+  canvas: colors.paper.background, // #faf6ef — the app ground
+  raised: '#ffffff', // lifted cards / sheets
+  sunken: colors.paper.backgroundAlt, // #f3ecdf — recessed wells
+  desk: colors.paper.desk, // #e7dcc8 — the deeper ground a sheet floats above
+  hairline: colors.paper.hairline, // #e3dccd — faint warm rule
+} as const;
+
+/**
+ * Ink scale for text on ``surface.canvas``. Every value clears WCAG AA
+ * (>= 4.5:1) on the canvas ground — asserted in ``semanticTokens.test.ts``.
+ */
+export const ink = {
+  primary: colors.paper.ink, // #2b2620 — 13.9:1 (AAA)
+  soft: colors.paper.inkSoft, // #5a5046 — 7.3:1 (AAA)
+  muted: '#6b6055', // 5.7:1 — captions / placeholders
+} as const;
+
+/**
+ * Original terracotta / sienna accent, darkened from ``colors.tier.clear``
+ * (#be6e46, a graphical-only ~3:1 swatch) so the accent clears AA as text on
+ * the canvas. Not any brand's swatch — see ``ATTRIBUTION``.
+ */
+export const accent = {
+  primary: '#a5572f', // 4.9:1 on canvas
+  strong: '#8f4a28', // 6.1:1 — pressed / emphasis
+} as const;
+
+/**
+ * App-wide warm elevation — the generalisation of ``paperShadow`` beyond the
+ * journal. Ink-tinted, downward; iOS/web use the shadow* props, Android uses
+ * ``elevation``. ``paperShadow`` stays as-is for the journal's contracts.
+ */
+export const surfaceShadow = {
+  card: {
+    shadowColor: colors.paper.ink,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  raised: {
+    shadowColor: colors.paper.ink,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.14,
+    shadowRadius: 18,
+    elevation: 6,
+  },
+} as const;
