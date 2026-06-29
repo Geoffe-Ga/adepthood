@@ -148,6 +148,11 @@ const styles = StyleSheet.create({
   arrowImage: {
     ...StyleSheet.absoluteFillObject,
   },
+  // Branded fill shown when no hosted map art is configured (#766) — keeps the
+  // map area on-brand instead of a third-party placeholder image.
+  mapBackgroundFallback: {
+    backgroundColor: colors.background.primary,
+  },
   greyBandFeminine: {
     position: ABSOLUTE,
     top: GREY_BAND_TOP,
