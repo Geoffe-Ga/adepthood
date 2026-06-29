@@ -119,6 +119,33 @@ def _subtractive_stats(
     )
 
 
+def _additive_stats(completions: list[GoalCompletion], user_timezone: str) -> HabitStats:
+    """Additive variant of :func:`compute_habit_stats`.
+
+    Additive parity (#781): a "did not complete" check-in persists a real
+    ``completed_units == 0`` row. ``GET /habits`` (services.streaks) excludes
+    those via ``completed_units > 0``; the stats path must use the same rule or
+    the two endpoints report different streaks. Filter once at the entry so the
+    day buckets, streaks, rate, and total all describe actual completions.
+    """
+    completed = [c for c in completions if c.completed_units > 0]
+    if not completed:
+        return _empty_stats()
+
+    units, counts, dates = _aggregate_by_day(completed, user_timezone)
+    sorted_dates = sorted(dates)
+    return HabitStats(
+        day_labels=list(_DAY_LABELS),
+        values=units,
+        completions_by_day=counts,
+        longest_streak=_longest_streak(sorted_dates),
+        current_streak=_current_streak(sorted_dates, user_timezone),
+        total_completions=len(completed),
+        completion_rate=_completion_rate(sorted_dates, user_timezone),
+        completion_dates=[d.isoformat() for d in sorted_dates],
+    )
+
+
 def compute_habit_stats(
     completions: list[GoalCompletion],
     user_timezone: str = "UTC",
@@ -135,19 +162,4 @@ def compute_habit_stats(
     """
     if subtractive is not None:
         return _subtractive_stats(completions, user_timezone, subtractive)
-    if not completions:
-        return _empty_stats()
-
-    units, counts, dates = _aggregate_by_day(completions, user_timezone)
-    sorted_dates = sorted(dates)
-
-    return HabitStats(
-        day_labels=list(_DAY_LABELS),
-        values=units,
-        completions_by_day=counts,
-        longest_streak=_longest_streak(sorted_dates),
-        current_streak=_current_streak(sorted_dates, user_timezone),
-        total_completions=len(completions),
-        completion_rate=_completion_rate(sorted_dates, user_timezone),
-        completion_dates=[d.isoformat() for d in sorted_dates],
-    )
+    return _additive_stats(completions, user_timezone)
