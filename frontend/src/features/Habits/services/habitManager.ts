@@ -1021,11 +1021,18 @@ export const habitManager = {
   },
 
   backfillMissedDays: (habitId: number, days: Date[]): void => {
-    setHabits(getHabits().map((h) => (h.id === habitId ? backfillHabit(h, days) : h)));
+    // Persist like every sibling mutation — without this the backfill lives only
+    // in the Zustand store and is silently lost on the next cold rehydrate (#783).
+    const next = getHabits().map((h) => (h.id === habitId ? backfillHabit(h, days) : h));
+    setHabits(next);
+    void persistHabits(next);
   },
 
   setNewStartDate: (habitId: number, newDate: Date): void => {
-    setHabits(getHabits().map((h) => (h.id === habitId ? resetHabitStart(h, newDate) : h)));
+    // Persist so the reset start date survives a rehydrate (#783).
+    const next = getHabits().map((h) => (h.id === habitId ? resetHabitStart(h, newDate) : h));
+    setHabits(next);
+    void persistHabits(next);
   },
 
   onboardingSave: async (newHabits: OnboardingHabit[], showToast?: ShowToast): Promise<void> => {
