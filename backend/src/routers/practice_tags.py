@@ -28,7 +28,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, or_, select
 
 from database import get_session
-from errors import conflict, forbidden, not_found
+from dependencies.ownership import require_personal_row, system_or_owned_clause
+from errors import conflict, not_found
 from models.practice_tag import PracticeTag
 from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
@@ -44,11 +45,9 @@ async def _load_visible_tag(tag_id: int, user_id: int, session: AsyncSession) ->
     """Fetch a tag the caller is allowed to see, else raise 404."""
     result = await session.execute(
         select(PracticeTag).where(
-            PracticeTag.id == tag_id,
-            or_(
-                col(PracticeTag.owner_user_id).is_(None),
-                PracticeTag.owner_user_id == user_id,
-            ),
+            system_or_owned_clause(
+                col(PracticeTag.id), col(PracticeTag.owner_user_id), tag_id, user_id
+            )
         )
     )
     tag = result.scalar_one_or_none()
@@ -59,8 +58,7 @@ async def _load_visible_tag(tag_id: int, user_id: int, session: AsyncSession) ->
 
 def _require_personal(tag: PracticeTag) -> None:
     """Reject mutation of a system tag with a stable 403 detail."""
-    if tag.owner_user_id is None:
-        raise forbidden("cannot_modify_system_tag")
+    require_personal_row(tag.owner_user_id, system_detail="cannot_modify_system_tag")
 
 
 @router.get("/", response_model=None)

@@ -34,9 +34,13 @@ from sqlalchemy.sql.selectable import Select
 from sqlmodel import col, or_, select
 
 from database import get_session
-from dependencies.ownership import require_owned_user_practice
+from dependencies.ownership import (
+    require_owned_user_practice,
+    require_personal_row,
+    system_or_owned_clause,
+)
 from domain.practice_resolution import effective_config, effective_name
-from errors import bad_request, conflict, forbidden, not_found
+from errors import bad_request, conflict, not_found
 from models.practice import Practice
 from models.practice_recipe import PracticeRecipe, PracticeRecipeStep
 from models.user_practice import UserPractice
@@ -122,11 +126,9 @@ async def _load_visible_recipe(
     """Fetch a recipe the caller is allowed to see, else raise 404."""
     result = await session.execute(
         select(PracticeRecipe).where(
-            PracticeRecipe.id == recipe_id,
-            or_(
-                col(PracticeRecipe.owner_user_id).is_(None),
-                PracticeRecipe.owner_user_id == user_id,
-            ),
+            system_or_owned_clause(
+                col(PracticeRecipe.id), col(PracticeRecipe.owner_user_id), recipe_id, user_id
+            )
         )
     )
     recipe = result.scalar_one_or_none()
@@ -137,8 +139,7 @@ async def _load_visible_recipe(
 
 def _require_personal(recipe: PracticeRecipe) -> None:
     """Reject mutation of a system recipe with a stable 403 detail."""
-    if recipe.owner_user_id is None:
-        raise forbidden("cannot_modify_system_recipe")
+    require_personal_row(recipe.owner_user_id, system_detail="cannot_modify_system_recipe")
 
 
 def _build_step_rows(recipe_id: int, payload_steps: list[Any]) -> list[PracticeRecipeStep]:

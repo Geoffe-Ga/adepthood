@@ -83,15 +83,11 @@ class GoalCompletionRequest(BaseModel):
 
 async def _get_owned_goal_and_habit(
     session: AsyncSession, goal_id: int, user_id: int
-) -> tuple[Goal, Habit, int]:
-    """Fetch a goal + parent habit + the resolved goal id, verifying ownership."""
+) -> tuple[Goal, Habit]:
+    """Fetch a goal + parent habit, verifying ownership."""
     goal = await session.get(Goal, goal_id)
     if goal is None:
         raise not_found("goal")
-    resolved_id = goal.id
-    if resolved_id is None:
-        msg = "Goal ID unexpectedly None after database fetch"
-        raise RuntimeError(msg)
 
     habit = await session.get(Habit, goal.habit_id)
     if habit is None:
@@ -110,7 +106,7 @@ async def _get_owned_goal_and_habit(
         log_ownership_denied("goal", goal_id, user_id)
         raise not_found("goal")
 
-    return goal, habit, resolved_id
+    return goal, habit
 
 
 async def _already_logged_on(
@@ -309,7 +305,8 @@ async def create_goal_completion(
     same (user, goal, day) -- the cheap day-pre-check runs before the
     expensive streak query so duplicate retries fail fast.
     """
-    goal, habit, goal_id = await _get_owned_goal_and_habit(session, payload.goal_id, current_user)
+    goal, habit = await _get_owned_goal_and_habit(session, payload.goal_id, current_user)
+    goal_id = payload.goal_id
     target_day = _resolve_target_day(payload.completed_on, user_tz)
     subtractive = await _subtractive_context_for_goal(session, habit, goal)
 

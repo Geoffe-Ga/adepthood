@@ -31,7 +31,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from slowapi.util import get_remote_address
 from sqlalchemy import or_ as sa_or
 from sqlalchemy import update as sa_update
 from sqlalchemy.engine import CursorResult
@@ -45,7 +44,8 @@ from models.practice import Practice
 from models.practice_share_link import PracticeShareLink
 from models.user import User
 from rate_limit import limiter
-from routers.auth import extract_user_id_from_authorization, get_current_user
+from rate_limit_keys import per_user_rate_limit_key
+from routers.auth import get_current_user
 from schemas.practice_share import (
     ShareLinkCreateRequest,
     ShareLinkImportResponse,
@@ -79,22 +79,6 @@ _DETAIL_EXHAUSTED = "share_link_exhausted"
 #   random tokens hits a wall quickly even without an account.
 _MINT_RATE_LIMIT = "10/hour"
 _REDEEM_RATE_LIMIT = "30/hour"
-
-
-def _per_user_rate_limit_key(request: Request) -> str:
-    """Rate-limit key derived from the JWT ``sub`` claim.
-
-    Mirrors :func:`routers.practices._per_user_rate_limit_key`: falling
-    back to the remote address on a malformed token means the limiter
-    never sees an empty key.
-    """
-    try:
-        return f"user:{extract_user_id_from_authorization(request.headers.get('authorization'))}"
-    except HTTPException:
-        # Malformed / missing token (the only thing the decode raises) → fall
-        # back to the IP key; a non-HTTP error is a programmer bug and must
-        # propagate rather than be silently masked as an anonymous request.
-        return get_remote_address(request)
 
 
 router = APIRouter(prefix="/practices", tags=["practice-share"])
@@ -264,7 +248,7 @@ def _clone_practice_for_recipient(source: Practice, recipient_user_id: int) -> P
     response_model=ShareLinkResponse,
     status_code=status.HTTP_201_CREATED,
 )
-@limiter.limit(_MINT_RATE_LIMIT, key_func=_per_user_rate_limit_key)
+@limiter.limit(_MINT_RATE_LIMIT, key_func=per_user_rate_limit_key)
 async def create_share_link(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     practice_id: int,

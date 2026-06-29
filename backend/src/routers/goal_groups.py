@@ -110,12 +110,7 @@ async def get_goal_group(
     runs the canonical 404→403 split (404 for missing, 403 for another
     user's private group); we then re-fetch with eager-loaded goals.
     """
-    statement = select(GoalGroup).where(GoalGroup.id == group_id).options(GOAL_GROUP_WITH_GOALS)
-    result = await session.execute(statement)
-    group = result.scalars().first()
-    if group is None:
-        raise not_found("goal_group")
-    return group
+    return await _refetch_goal_group_with_goals(session, group_id)
 
 
 @router.post("/", response_model=GoalGroupResponse, status_code=status.HTTP_201_CREATED)
@@ -201,13 +196,11 @@ async def delete_goal_group(
     """Delete a goal group. Unlinks goals but does not delete them.
 
     Owner-only via ``require_owned_goal_group`` (BUG-GOAL-006).  We
-    re-fetch with eager-loaded goals so the unlink step doesn't trigger
-    a lazy load on an async session; existence has already been
-    verified by the dep, so ``.one()`` is correct here.
+    re-fetch with eager-loaded goals (the shared helper) so the unlink step
+    doesn't trigger a lazy load on an async session; the dep has already
+    verified existence, so the helper's 404 guard is a no-op on the happy path.
     """
-    statement = select(GoalGroup).where(GoalGroup.id == group_id).options(GOAL_GROUP_WITH_GOALS)
-    result = await session.execute(statement)
-    group = result.scalars().one()
+    group = await _refetch_goal_group_with_goals(session, group_id)
     # Unlink goals from the group before deleting
     for goal in group.goals:
         goal.goal_group_id = None
