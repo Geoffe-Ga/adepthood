@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 
+import { resetCorruptKey } from './jsonStore';
+
 const KEY_PREFIX = '@adepthood/notifications';
 // expo-secure-store only allows alphanumerics plus `.`, `-`, `_` in keys,
 // so this one cannot share the `@adepthood/...` prefix with AsyncStorage keys.
@@ -14,14 +16,6 @@ function keyFor(habitId: number): string {
 /**
  * BUG-FRONTEND-INFRA-011 — self-heal when AsyncStorage returns malformed JSON.
  */
-async function resetCorruptKey(key: string, err: unknown): Promise<void> {
-  console.warn(`[storage] corrupt JSON in ${key}, clearing to self-heal`, err);
-  try {
-    await AsyncStorage.removeItem(key);
-  } catch (removeErr) {
-    console.warn(`[storage] failed to clear corrupt key ${key}`, removeErr);
-  }
-}
 
 export async function saveNotificationIds(habitId: number, ids: string[]): Promise<void> {
   await AsyncStorage.setItem(keyFor(habitId), JSON.stringify(ids));

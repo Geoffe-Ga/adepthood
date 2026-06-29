@@ -3,13 +3,13 @@ import { Text, TextInput, TouchableOpacity } from 'react-native';
 
 import { authStyles as styles } from './auth.styles';
 import { AuthScreenContainer } from './AuthScreenContainer';
+import { validatePasswordPair } from './passwordValidation';
 
 import { formatApiError } from '@/api/errorMessages';
 import { useAuth } from '@/context/AuthContext';
 
 const RESET_FALLBACK =
   "We couldn't apply that reset. The link may have expired -- request a new one and try again.";
-const MIN_PASSWORD_LENGTH = 8;
 const MIN_TOKEN_LENGTH = 32;
 
 interface RouteParams {
@@ -115,16 +115,6 @@ function MissingTokenView({ onRequestNew }: { onRequestNew: () => void }): React
   );
 }
 
-function _validatePasswordPair(password: string, confirmPassword: string): string | null {
-  if (password.length < MIN_PASSWORD_LENGTH) {
-    return `Pick a password that is at least ${MIN_PASSWORD_LENGTH} characters long.`;
-  }
-  if (password !== confirmPassword) {
-    return "Those passwords don't match. Re-type both fields to confirm.";
-  }
-  return null;
-}
-
 export default function ResetPasswordScreen({ navigation, route }: Props) {
   const { confirmPasswordReset } = useAuth();
   const [password, setPassword] = useState('');
@@ -140,7 +130,7 @@ export default function ResetPasswordScreen({ navigation, route }: Props) {
 
   const handleSubmit = async () => {
     setError(null);
-    const validationError = _validatePasswordPair(password, confirmPassword);
+    const validationError = validatePasswordPair(password, confirmPassword);
     if (validationError) {
       setError(validationError);
       return;

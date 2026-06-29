@@ -27,6 +27,9 @@ import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { STAGE_ORDER, calculateHabitStartDate } from '../HabitUtils';
 
+import { ConfirmDialog } from './ConfirmDialog';
+import { HABIT_NAME_MAX_LENGTH, MAX_HABITS, validateAndAddHabit } from './onboardingValidation';
+
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
@@ -36,8 +39,6 @@ interface SmoothSliderProps extends SliderProps {
   animationType?: 'timing' | 'spring';
   animationConfig?: Record<string, unknown>;
 }
-
-import { HABIT_NAME_MAX_LENGTH, MAX_HABITS, validateAndAddHabit } from './onboardingValidation';
 
 const SmoothSlider = Slider as React.ComponentType<SmoothSliderProps>;
 
@@ -61,56 +62,6 @@ const assignDatesAndStages = (habits: OnboardingHabit[], startDate: Date): Onboa
     start_date: calculateHabitStartDate(startDate, index),
     stage: STAGE_ORDER[index] ?? 'Clear Light',
   }));
-
-interface ConfirmDialogProps {
-  visible: boolean;
-  title: string;
-  message?: string;
-  testID: string;
-  cancelTestID: string;
-  confirmTestID: string;
-  cancelLabel: string;
-  confirmLabel: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-}
-
-const ConfirmDialog = ({
-  visible,
-  title,
-  message,
-  testID,
-  cancelTestID,
-  confirmTestID,
-  cancelLabel,
-  confirmLabel,
-  onCancel,
-  onConfirm,
-}: ConfirmDialogProps) => {
-  if (!visible) return null;
-  return (
-    <Modal transparent animationType="fade">
-      <View style={styles.modalOverlay} testID={testID}>
-        <View style={styles.discardModal}>
-          <Text style={styles.discardTitle}>{title}</Text>
-          {message && <Text style={styles.discardMessage}>{message}</Text>}
-          <View style={styles.discardActions}>
-            <TouchableOpacity onPress={onCancel} style={styles.discardButton} testID={cancelTestID}>
-              <Text style={styles.discardButtonText}>{cancelLabel}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={onConfirm}
-              style={styles.discardButton}
-              testID={confirmTestID}
-            >
-              <Text style={styles.discardExitText}>{confirmLabel}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-};
 
 interface HabitChipProps {
   habit: OnboardingHabit;
@@ -1107,6 +1058,7 @@ const OnboardingDialogs = ({ s }: { s: ReturnType<typeof useOnboardingState> }) 
       confirmTestID="discard-exit"
       cancelLabel="Cancel"
       confirmLabel="Exit"
+      destructive
       onCancel={() => s.setShowDiscardDialog(false)}
       onConfirm={s.handleConfirmDiscard}
     />
@@ -1118,6 +1070,7 @@ const OnboardingDialogs = ({ s }: { s: ReturnType<typeof useOnboardingState> }) 
       confirmTestID="count-warning-continue"
       cancelLabel="Keep Adding"
       confirmLabel="Continue"
+      destructive
       onCancel={() => s.setShowCountWarning(false)}
       onConfirm={() => {
         s.setShowCountWarning(false);

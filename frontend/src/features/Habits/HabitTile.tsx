@@ -14,6 +14,7 @@ import { colors, STAGE_COLORS, spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 import { DEFAULT_TIMEZONE } from '../../utils/dateUtils';
 
+import { TIER_LABELS, centeredTranslateX, tooltipBoxStyle, type TierType } from './goalMarker';
 import type { HabitTileProps, Goal, Habit } from './Habits.types';
 import {
   getProgressPercentage,
@@ -26,20 +27,6 @@ import {
   isEarlyUnlocked,
   calculateTodaysProgress,
 } from './HabitUtils';
-
-type TierType = 'low' | 'clear' | 'stretch';
-
-const TIER_LABELS: Record<TierType, string> = {
-  low: 'Low Grit',
-  clear: 'Clear Goal',
-  stretch: 'Stretch Goal',
-};
-
-/** Center an element of arbitrary width over its position, clamped at the bar edges. */
-const computeCenteredTranslateX = (pct: number, width: number): number => {
-  if (pct === 0) return 0;
-  return pct === 100 ? -width : -width / 2;
-};
 
 /** Marker star size: a touch larger than the bar so it reads as a sitting marker. */
 const markerStarSize = (scale: number): number => spacing(2, scale);
@@ -59,19 +46,7 @@ interface GoalTooltipProps {
 }
 
 const GoalTooltipContent = ({ goal, habit, tier, scale, tz }: GoalTooltipProps) => (
-  <View
-    testID={`tooltip-${tier}`}
-    style={{
-      position: 'absolute',
-      bottom: 16,
-      backgroundColor: '#fffdf7',
-      borderWidth: 1,
-      borderColor: getTierColor(tier),
-      borderRadius: 4,
-      paddingHorizontal: 4,
-      paddingVertical: 2,
-    }}
-  >
+  <View testID={`tooltip-${tier}`} style={tooltipBoxStyle(getTierColor(tier))}>
     <Text
       style={{
         fontSize: spacing(1.5, scale),
@@ -120,7 +95,7 @@ const GoalMarker = ({
         position: 'absolute',
         left: `${clamped}%`,
         top: (barHeight - starSize) / 2,
-        transform: [{ translateX: computeCenteredTranslateX(clamped, starSize) }],
+        transform: [{ translateX: centeredTranslateX(clamped, starSize) }],
         zIndex,
         alignItems: 'center',
       }}
