@@ -145,10 +145,12 @@ JWT tokens — keep it secret, keep it safe.
 This controls CORS (which origins can call your API). Set it to the URL where
 your frontend will live. Comma-separated if you have multiple:
 ```
-https://app.adepthood.com,https://www.adepthood.com
+https://app.aptitude.guru
 ```
 All entries **must** use `https://`. The backend will refuse to start if they
-don't — this is intentional.
+don't — this is intentional. **Every** live frontend origin must be listed: a
+missing one makes the browser block all responses and the app falsely report
+"offline" (#765).
 
 > You can come back and update `PROD_DOMAIN` after you deploy the frontend and
 > know its URL. The backend will need a redeploy to pick up the change.
@@ -245,7 +247,7 @@ requests from the frontend's URL.
 
 **If you add a custom domain later**, update `PROD_DOMAIN` to include it:
 ```
-https://app.adepthood.com,https://adepthood-frontend.up.railway.app
+https://app.aptitude.guru,https://adepthood-frontend.up.railway.app
 ```
 
 ---
