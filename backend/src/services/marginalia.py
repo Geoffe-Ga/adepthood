@@ -1,9 +1,11 @@
 """Marginalia maintenance hooks.
 
-The re-anchoring seam is intentionally a no-op here: editing a journal entry's
-body can shift or invalidate the character spans that marginalia anchor to, but
-the actual re-anchor / mark-stale logic lands in a later issue. This module
-exists so the PATCH endpoint can call a stable, documented seam now.
+When a journal entry's body changes, the character spans that marginalia anchor
+to can shift or disappear. ``reanchor_entry_marginalia`` re-anchors each active
+note by re-finding its snapshot text in the new body (via ``reanchor_one``),
+updating the anchor span when it moves and marking the note stale when the text
+can no longer be found. Notes are never deleted — a stale note stays for the
+user to resolve. The PATCH endpoint calls this after persisting a body edit.
 """
 
 from __future__ import annotations
