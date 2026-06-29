@@ -298,3 +298,37 @@ Dependency graph:
                  │                                │
                  └── 05 floating-shelf-cards ─────┘
 ```
+
+### Warm-editorial design language app-wide ("Candle & Ink")
+
+Promote the warm, editorial "paper" language that today lives only on the
+journal surface to the **whole app** — warm grounds instead of flat grey, an
+original terracotta accent, a serif-display + clean-sans type system on
+free/system fonts, soft warm elevation, and a matching warm dark mode.
+Inspiration: the [awesome-design-md](https://github.com/VoltAgent/awesome-design-md)
+*Claude* entry (MIT, reference only); implemented clean-room on Adepthood's own
+palette with **no proprietary fonts and no third-party brand assets** (see the
+epic's IP analysis). Frontend-only; tokens-driven; zero behaviour/contrast
+regressions.
+
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| — | [Epic tracker](design-language-warm-editorial-epic.md) | — | — |
+| 01 | [Promote warm-editorial tokens app-wide + record IP provenance](design-language-01-tokens-and-provenance.md) | Frontend | ~180 |
+| 02 | [Editorial type system on free/system fonts](design-language-02-typography-and-fonts.md) | Frontend | ~160 |
+| 03 | [Restyle shared buttons, controls & inputs](design-language-03-buttons-controls-inputs.md) | Frontend | ~150 |
+| 04 | [Warm grounds & soft elevation for cards/surfaces](design-language-04-cards-surfaces-elevation.md) | Frontend | ~150 |
+| 05 | [Editorial navigation: headers & bottom tab bar](design-language-05-navigation-headers-tabbar.md) | Frontend | ~120 |
+| 06 | [Warm dark mode to match the light language](design-language-06-warm-dark-mode.md) | Frontend | ~140 |
+
+Dependency graph:
+
+```
+                 ┌── 03 buttons-controls-inputs ──┐
+                 │                                 │
+01 tokens + ─────┼── 04 cards-surfaces-elevation ──┼── 06 warm-dark-mode
+   provenance    │                                 │
+   (+ 02 fonts)  ├── 05 navigation-headers-tabbar ─┤
+                 │                                 │
+                 └─────────────────────────────────┘
+```
