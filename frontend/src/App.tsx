@@ -34,6 +34,7 @@ import SignupScreen from './features/Auth/SignupScreen';
 import type { RootTabParamList } from './navigation/BottomTabs';
 import type { RootStackParamList } from './navigation/RootStack';
 import RootStack from './navigation/RootStack';
+import { navTheme } from './navigation/theme';
 import { useHydrateProgramStore } from './store/useProgramStore';
 
 type AuthStackParamList = {
@@ -190,7 +191,7 @@ function ThemedStatusBar(): React.JSX.Element {
 function AppShell(): React.JSX.Element {
   useHydrateProgramStore();
   return (
-    <NavigationContainer linking={linking}>
+    <NavigationContainer theme={navTheme} linking={linking}>
       <SafeAreaView style={styles.safeArea}>
         <ThemedStatusBar />
         <OfflineBanner />

@@ -45,6 +45,19 @@ jest.mock('@react-navigation/native', () => ({
       /* unused in this test */
     },
   }),
+  // navTheme (via App.tsx) extends DefaultTheme, so the mock must expose it.
+  DefaultTheme: {
+    dark: false,
+    colors: {
+      primary: '#000000',
+      background: '#ffffff',
+      card: '#ffffff',
+      text: '#000000',
+      border: '#cccccc',
+      notification: '#000000',
+    },
+    fonts: {},
+  },
 }));
 
 jest.mock('@react-navigation/native-stack', () => ({
