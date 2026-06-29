@@ -12,9 +12,13 @@ export const navTheme: Theme = {
   ...DefaultTheme,
   colors: {
     ...DefaultTheme.colors,
-    primary: accent.primary, // back/tint + active affordances
-    background: surface.canvas, // screen ground behind navigators
-    card: surface.raised, // headers + tab bar ground
+    // React Navigation's color keys are opaque, so the only non-obvious part is
+    // the mapping: primary drives the back arrow / header tint + active
+    // affordances, card is the header + tab-bar ground, background is the screen
+    // ground.
+    primary: accent.primary,
+    background: surface.canvas,
+    card: surface.raised,
     text: ink.primary,
     border: surface.hairline,
     notification: accent.primary,
