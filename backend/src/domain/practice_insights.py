@@ -133,9 +133,13 @@ def _streak_weeks(
 
 
 def _is_in_30d_window(session: PracticeSession, today: date, tz: str | None) -> bool:
-    """``True`` if the session's local date is within the rolling 30-day window."""
+    """``True`` if the session's local date is within the rolling 30-day window.
+
+    Strict lower bound so the span is exactly ``ROLLING_30D_WINDOW_DAYS`` distinct
+    calendar days (today-29 .. today); an inclusive lower bound would count 31.
+    """
     local_day = to_user_date(tz, _as_utc_aware(session.timestamp))
-    return today - timedelta(days=ROLLING_30D_WINDOW_DAYS) <= local_day <= today
+    return today - timedelta(days=ROLLING_30D_WINDOW_DAYS) < local_day <= today
 
 
 def _rolling_30d_stats(

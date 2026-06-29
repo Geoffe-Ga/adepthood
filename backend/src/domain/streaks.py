@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
-from domain.dates import to_user_date, today_in_tz
+from domain.dates import to_user_date_bucket, today_in_tz
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -60,22 +60,6 @@ class SubtractiveContext:
     start_date: date
 
 
-def _subtractive_user_date(ts: datetime | str, user_timezone: str) -> date:
-    """Bucket a stored timestamp into the user's local calendar day.
-
-    Accepts a :class:`datetime` (the Postgres ``timestamptz`` path) or an
-    ISO-8601 string (SQLite returns these for tz-aware columns).  Naive values
-    are treated as UTC — acceptable here because the source column is declared
-    timezone-aware and SQLite merely lies about its storage.
-    """
-    if isinstance(ts, datetime):
-        moment = ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
-    else:
-        parsed = datetime.fromisoformat(ts)
-        moment = parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
-    return to_user_date(user_timezone, moment)
-
-
 def subtractive_day_totals(
     completions: Sequence[GoalCompletion],
     user_timezone: str,
@@ -88,7 +72,7 @@ def subtractive_day_totals(
     """
     day_totals: dict[date, float] = {}
     for c in completions:
-        day = _subtractive_user_date(c.timestamp, user_timezone)
+        day = to_user_date_bucket(c.timestamp, user_timezone)
         day_totals[day] = day_totals.get(day, 0.0) + c.completed_units
     return day_totals
 

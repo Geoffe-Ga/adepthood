@@ -192,6 +192,27 @@ def test_avg_is_none_when_no_sessions_in_30d() -> None:
     assert insights.total_minutes_30d == 0.0
 
 
+@pytest.mark.usefixtures("frozen_clock")
+def test_30d_window_includes_day_29_boundary() -> None:
+    """A session 29 days back is inside the true 30-day window (today-29..today)."""
+    session = _session(timestamp=_FROZEN_NOW - timedelta(days=29), duration_minutes=15.0)
+    insights = build_insights([session], tz="UTC")
+    assert insights.total_minutes_30d == pytest.approx(15.0)
+
+
+@pytest.mark.usefixtures("frozen_clock")
+def test_30d_window_excludes_day_30_boundary() -> None:
+    """A session exactly 30 days back is outside a true 30-day window (#785).
+
+    An inclusive lower bound counted 31 distinct days; the strict bound makes the
+    span match the ``ROLLING_30D_WINDOW_DAYS`` name.
+    """
+    session = _session(timestamp=_FROZEN_NOW - timedelta(days=30), duration_minutes=15.0)
+    insights = build_insights([session], tz="UTC")
+    assert insights.total_minutes_30d == pytest.approx(0.0)
+    assert insights.avg_duration_minutes_30d is None
+
+
 def test_per_mode_counts_30d() -> None:
     now = _now_utc()
     sessions = [

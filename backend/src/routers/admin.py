@@ -17,6 +17,7 @@ from sqlmodel import col
 
 from database import get_session
 from dependencies.auth import require_admin
+from domain.stage_progress import completed_stage_gap, expected_completed_stages
 from errors import bad_request, not_found
 from models.llm_usage_log import LLMUsageLog
 from models.stage_progress import StageProgress
@@ -193,15 +194,15 @@ def _detect_gap(progress: StageProgress) -> StageProgressGap | None:
     endpoint's loop trivial.
     """
     completed = set(progress.completed_stages or [])
-    expected = set(range(1, progress.current_stage))
-    if completed == expected:
+    missing, extra = completed_stage_gap(completed, progress.current_stage)
+    if not missing and not extra:
         return None
     return StageProgressGap(
         user_id=progress.user_id,
         current_stage=progress.current_stage,
         completed_stages=sorted(completed),
-        missing_stages=sorted(expected - completed),
-        extra_stages=sorted(completed - expected),
+        missing_stages=sorted(missing),
+        extra_stages=sorted(extra),
     )
 
 
@@ -277,10 +278,10 @@ async def repair_stage_progress(
         raise not_found("stage_progress")
 
     before = set(progress.completed_stages or [])
-    expected = set(range(1, progress.current_stage))
-    stages_added = sorted(expected - before)
-    stages_removed = sorted(before - expected)
-    progress.completed_stages = sorted(expected)
+    missing, extra = completed_stage_gap(before, progress.current_stage)
+    stages_added = sorted(missing)
+    stages_removed = sorted(extra)
+    progress.completed_stages = sorted(expected_completed_stages(progress.current_stage))
     await session.commit()
     await session.refresh(progress)
 
@@ -298,7 +299,7 @@ async def repair_stage_progress(
     return StageProgressRepairResult(
         user_id=user_id,
         current_stage=progress.current_stage,
-        completed_stages=sorted(expected),
+        completed_stages=progress.completed_stages,
         stages_added=stages_added,
         stages_removed=stages_removed,
     )
