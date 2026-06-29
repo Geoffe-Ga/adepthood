@@ -3,6 +3,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import React from 'react';
 import renderer from 'react-test-renderer';
 
+import { surface } from '../../../design/tokens';
 import type { Habit } from '../Habits.types';
 import { HabitTile } from '../HabitTile';
 
@@ -159,7 +160,7 @@ describe('HabitTile locked state', () => {
     const tile = component.root.findByProps({ testID: 'habit-tile' });
 
     // Should have normal background
-    expect(tile.props.style.backgroundColor).toBe('#f8f8f8');
+    expect(tile.props.style.backgroundColor).toBe(surface.canvas);
 
     // Should have progress bar
     const progressFills = component.root.findAllByProps({ testID: 'progress-fill' });

@@ -3,7 +3,7 @@ import { render, fireEvent } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
-import { BORDER_RADIUS, SPACING, colors as COLORS } from '../../../../design/tokens';
+import { BORDER_RADIUS, SPACING, colors as COLORS, surface } from '../../../../design/tokens';
 
 const OnboardingModal = require('../OnboardingModal').default;
 
@@ -54,7 +54,7 @@ describe('OnboardingModal cost step', () => {
     expect(style.padding).toBe(SPACING.sm);
     expect(style.marginBottom).toBe(SPACING.sm);
     expect(style.borderRadius).toBe(BORDER_RADIUS.md);
-    expect(style.backgroundColor).toBe(COLORS.background.primary);
+    expect(style.backgroundColor).toBe(surface.canvas);
   });
 
   it('applies mystical slider styling', () => {
