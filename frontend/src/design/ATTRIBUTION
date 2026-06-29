@@ -1,0 +1,28 @@
+ATTRIBUTION — Adepthood "Candle & Ink" design language
+=======================================================
+
+This file records the provenance of Adepthood's design language so the IP
+position is auditable in-repo (epic #798 / design-language-01).
+
+Reference material (inspiration only, not copied)
+-------------------------------------------------
+- awesome-design-md — the "Claude" design-language Markdown entry was read as a
+  reference for *how to structure* a token-and-provenance doc. License: MIT.
+  No code, tokens, color values, type scale, or prose were copied from it; it
+  informed the format of DESIGN.md only.
+
+Clean-room stance
+-----------------
+- Palette: the warm grounds (`surface.*`, `ink.*`) are derived from Adepthood's
+  own pre-existing `colors.paper` journal palette. The terracotta `accent.*` is
+  derived from Adepthood's own `colors.tier.clear` (#be6e46), darkened to clear
+  WCAG AA as text. No swatch is taken from any third-party product or brand
+  palette.
+- Marks: no Anthropic (or any other company's) name, logo, wordmark, or brand
+  swatch is presented as Adepthood's own. "Candle & Ink" is an internal name
+  for this language.
+- Fonts: no proprietary fonts. Editorial type uses a free/system serif stack
+  only (see `editorialType.serif`; enforced under design-language-02 / #800).
+
+Summary: original palette, no proprietary fonts, no third-party marks; the only
+external input is the MIT-licensed reference doc, used for format guidance only.
