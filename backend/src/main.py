@@ -69,9 +69,12 @@ DEV_ORIGINS = [
 ]
 
 # CORS — only the methods the API actually serves are allowed.  Listing them
-# explicitly (BUG-INFRA-008) keeps the preflight surface tight; if a new
-# method is added (PATCH, etc.) the test suite will surface the omission.
-ALLOWED_METHODS = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+# explicitly (BUG-INFRA-008) keeps the preflight surface tight.  PATCH is
+# required: several endpoints (user-practices customize, journal, practice tags
+# and recipes) are PATCH, and omitting it 400s their browser preflight so every
+# save fails on the web app.  ``test_allowed_methods_cover_all_routes`` guards
+# that this list stays a superset of the verbs the routers actually serve.
+ALLOWED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 # ``X-Request-ID`` is included so browser clients on a different origin
 # can SET the header on outbound requests (otherwise the preflight
 # strips it).  It is also exposed via ``EXPOSED_HEADERS`` below so the
