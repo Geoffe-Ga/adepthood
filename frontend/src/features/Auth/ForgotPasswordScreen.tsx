@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Text, TouchableOpacity, View } from 'react-native';
 
 import { authStyles as styles } from './auth.styles';
 import { AuthScreenContainer } from './AuthScreenContainer';
@@ -7,6 +7,8 @@ import { canonicalizeEmail } from './canonicalizeEmail';
 
 import { auth as authApi } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
+import { Button } from '@/components/Button';
+import { TextField } from '@/components/TextField';
 
 const FORGOT_FALLBACK =
   "We couldn't reach the server. Check your connection, then try again in a moment.";
@@ -22,9 +24,9 @@ interface ForgotFieldsProps {
 
 function ForgotFields({ email, setEmail }: ForgotFieldsProps): React.JSX.Element {
   return (
-    <TextInput
+    <TextField
       accessibilityLabel="Email"
-      style={styles.input}
+      style={styles.inputSpacing}
       placeholder="Email"
       value={email}
       onChangeText={setEmail}
@@ -47,17 +49,15 @@ function ForgotActions({
 }: ForgotActionsProps): React.JSX.Element {
   return (
     <>
-      <TouchableOpacity
+      <Button
         accessibilityLabel="Send reset link"
-        accessibilityRole="button"
-        accessibilityState={{ disabled: submitting, busy: submitting }}
-        style={styles.button}
+        style={styles.buttonSpacing}
         onPress={onSubmit}
         disabled={submitting}
+        busy={submitting}
         testID="forgot-submit"
-      >
-        <Text style={styles.buttonText}>{submitting ? 'Sending...' : 'Send Reset Link'}</Text>
-      </TouchableOpacity>
+        label={submitting ? 'Sending...' : 'Send Reset Link'}
+      />
       <TouchableOpacity
         accessibilityLabel="Back to log in"
         accessibilityRole="link"
@@ -85,15 +85,14 @@ function SuccessNotice({ onBackToLogin }: { onBackToLogin: () => void }): React.
         If we have an account for that address, a reset link is on its way. The link expires in 30
         minutes.
       </Text>
-      <TouchableOpacity
+      <Button
         accessibilityLabel="Back to log in"
-        accessibilityRole="button"
-        style={styles.button}
+        variant="secondary"
+        style={styles.buttonSpacing}
         onPress={onBackToLogin}
         testID="forgot-back-to-login"
-      >
-        <Text style={styles.buttonText}>Back to Log In</Text>
-      </TouchableOpacity>
+        label="Back to Log In"
+      />
     </View>
   );
 }

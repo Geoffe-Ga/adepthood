@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { Text, TextInput, TouchableOpacity } from 'react-native';
+import { Text, TouchableOpacity } from 'react-native';
 
 import { authStyles as styles } from './auth.styles';
 import { AuthScreenContainer } from './AuthScreenContainer';
 import { canonicalizeEmail } from './canonicalizeEmail';
 
 import { formatApiError } from '@/api/errorMessages';
+import { Button } from '@/components/Button';
+import { TextField } from '@/components/TextField';
 import { useAuth } from '@/context/AuthContext';
 
 const LOGIN_FALLBACK =
@@ -30,18 +32,18 @@ function LoginFields({
 }: LoginFieldsProps): React.JSX.Element {
   return (
     <>
-      <TextInput
+      <TextField
         accessibilityLabel="Email"
-        style={styles.input}
+        style={styles.inputSpacing}
         placeholder="Email"
         value={email}
         onChangeText={setEmail}
         autoCapitalize="none"
         keyboardType="email-address"
       />
-      <TextInput
+      <TextField
         accessibilityLabel="Password"
-        style={styles.input}
+        style={styles.inputSpacing}
         placeholder="Password"
         value={password}
         onChangeText={setPassword}
@@ -66,17 +68,15 @@ function LoginActions({
 }: LoginActionsProps): React.JSX.Element {
   return (
     <>
-      <TouchableOpacity
+      <Button
         accessibilityLabel="Log in"
-        accessibilityRole="button"
-        accessibilityState={{ disabled: submitting, busy: submitting }}
-        style={styles.button}
+        style={styles.buttonSpacing}
         onPress={onLogin}
         disabled={submitting}
+        busy={submitting}
         testID="login-submit"
-      >
-        <Text style={styles.buttonText}>{submitting ? 'Logging in...' : 'Log In'}</Text>
-      </TouchableOpacity>
+        label={submitting ? 'Logging in...' : 'Log In'}
+      />
       <TouchableOpacity
         accessibilityLabel="Forgot password"
         accessibilityRole="link"

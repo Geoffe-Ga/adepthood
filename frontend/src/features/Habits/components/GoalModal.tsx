@@ -21,6 +21,7 @@ import type {
 import EmojiSelector from 'react-native-emoji-selector';
 
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
+import { Button } from '../../../components/Button';
 import { TierStar } from '../../../components/TierStar';
 import { useAuth } from '../../../context/AuthContext';
 import {
@@ -410,9 +411,7 @@ const LogUnitSection = ({
         onChangeText={setLogAmount}
         keyboardType="numeric"
       />
-      <TouchableOpacity style={styles.logUnitButton} onPress={onLog}>
-        <Text style={styles.logUnitButtonText}>Log Units</Text>
-      </TouchableOpacity>
+      <Button label="Log Units" onPress={onLog} testID="goal-log-units" />
     </View>
   </View>
 );

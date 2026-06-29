@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Text, TextInput, TouchableOpacity } from 'react-native';
+import { Text, TouchableOpacity } from 'react-native';
 
 import { authStyles as styles } from './auth.styles';
 import { AuthScreenContainer } from './AuthScreenContainer';
@@ -7,6 +7,8 @@ import { validatePasswordPair } from './passwordValidation';
 import { MIN_TOKEN_LENGTH } from './resetToken';
 
 import { formatApiError } from '@/api/errorMessages';
+import { Button } from '@/components/Button';
+import { TextField } from '@/components/TextField';
 import { useAuth } from '@/context/AuthContext';
 
 const RESET_FALLBACK =
@@ -36,18 +38,18 @@ function ResetFields({
 }: ResetFieldsProps): React.JSX.Element {
   return (
     <>
-      <TextInput
+      <TextField
         accessibilityLabel="New password"
-        style={styles.input}
+        style={styles.inputSpacing}
         placeholder="New Password"
         value={password}
         onChangeText={setPassword}
         secureTextEntry
         textContentType="newPassword"
       />
-      <TextInput
+      <TextField
         accessibilityLabel="Confirm new password"
-        style={styles.input}
+        style={styles.inputSpacing}
         placeholder="Confirm New Password"
         value={confirmPassword}
         onChangeText={setConfirmPassword}
@@ -71,17 +73,15 @@ function ResetActions({
 }: ResetActionsProps): React.JSX.Element {
   return (
     <>
-      <TouchableOpacity
+      <Button
         accessibilityLabel="Set new password"
-        accessibilityRole="button"
-        accessibilityState={{ disabled: submitting, busy: submitting }}
-        style={styles.button}
+        style={styles.buttonSpacing}
         onPress={onSubmit}
         disabled={submitting}
+        busy={submitting}
         testID="reset-submit"
-      >
-        <Text style={styles.buttonText}>{submitting ? 'Setting password...' : 'Set Password'}</Text>
-      </TouchableOpacity>
+        label={submitting ? 'Setting password...' : 'Set Password'}
+      />
       <TouchableOpacity
         accessibilityLabel="Back to log in"
         accessibilityRole="link"
@@ -102,15 +102,14 @@ function MissingTokenView({ onRequestNew }: { onRequestNew: () => void }): React
       <Text style={styles.subtitle}>
         That link is missing or malformed. Request a fresh one to continue.
       </Text>
-      <TouchableOpacity
+      <Button
         accessibilityLabel="Request a new reset link"
-        accessibilityRole="button"
-        style={styles.button}
+        variant="secondary"
+        style={styles.buttonSpacing}
         onPress={onRequestNew}
         testID="reset-request-new"
-      >
-        <Text style={styles.buttonText}>Request New Link</Text>
-      </TouchableOpacity>
+        label="Request New Link"
+      />
     </AuthScreenContainer>
   );
 }

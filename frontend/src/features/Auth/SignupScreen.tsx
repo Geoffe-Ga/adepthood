@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Text, TextInput, TouchableOpacity } from 'react-native';
+import { Text, TouchableOpacity } from 'react-native';
 
 import { authStyles as styles } from './auth.styles';
 import { AuthScreenContainer } from './AuthScreenContainer';
@@ -7,6 +7,8 @@ import { canonicalizeEmail } from './canonicalizeEmail';
 import { validatePasswordPair } from './passwordValidation';
 
 import { formatApiError } from '@/api/errorMessages';
+import { Button } from '@/components/Button';
+import { TextField } from '@/components/TextField';
 import { useAuth } from '@/context/AuthContext';
 
 const SIGNUP_FALLBACK =
@@ -35,26 +37,26 @@ function SignupFields({
 }: SignupFieldsProps) {
   return (
     <>
-      <TextInput
+      <TextField
         accessibilityLabel="Email"
-        style={styles.input}
+        style={styles.inputSpacing}
         placeholder="Email"
         value={email}
         onChangeText={setEmail}
         autoCapitalize="none"
         keyboardType="email-address"
       />
-      <TextInput
+      <TextField
         accessibilityLabel="Password"
-        style={styles.input}
+        style={styles.inputSpacing}
         placeholder="Password"
         value={password}
         onChangeText={setPassword}
         secureTextEntry
       />
-      <TextInput
+      <TextField
         accessibilityLabel="Confirm password"
-        style={styles.input}
+        style={styles.inputSpacing}
         placeholder="Confirm Password"
         value={confirmPassword}
         onChangeText={setConfirmPassword}
@@ -73,17 +75,15 @@ interface SignupActionsProps {
 function SignupActions({ onSignup, onNavigateLogin, submitting }: SignupActionsProps) {
   return (
     <>
-      <TouchableOpacity
+      <Button
         accessibilityLabel="Create account"
-        accessibilityRole="button"
-        accessibilityState={{ disabled: submitting, busy: submitting }}
-        style={styles.button}
+        style={styles.buttonSpacing}
         onPress={onSignup}
         disabled={submitting}
+        busy={submitting}
         testID="signup-submit"
-      >
-        <Text style={styles.buttonText}>{submitting ? 'Creating account...' : 'Sign Up'}</Text>
-      </TouchableOpacity>
+        label={submitting ? 'Creating account...' : 'Sign Up'}
+      />
       <TouchableOpacity
         accessibilityLabel="Go to log-in screen"
         accessibilityRole="link"
