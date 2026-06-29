@@ -151,6 +151,21 @@ const CatalogButton = ({ stageNumber, label, testID }: CatalogButtonProps): Reac
   );
 };
 
+/**
+ * Stable identity for the resolved practice config, folded into the session's
+ * `key`. Adjusting a practice (the configurator's Save) changes the effective
+ * config but **not** the `UserPractice` id, so keying on the id alone leaves
+ * the engine's reducer mounted — and `useReducer` only runs its initializer
+ * once, so the idle timer keeps showing the *previous* duration even though
+ * the new config is saved (e.g. saving 30 min still displayed 10:00).
+ * Re-keying on the config content forces a fresh mount so the idle display
+ * reflects the saved settings. `JSON.stringify` matches the configurator's
+ * own `deepEqualConfig` dirty-check, so equal configs yield an equal key.
+ */
+function configRevision(config: NonNullable<ActivePracticeHook['effectiveConfig']>): string {
+  return JSON.stringify(config);
+}
+
 interface ActiveSessionViewProps {
   userPractice: NonNullable<ActivePracticeHook['activeUserPractice']>;
   practiceName: string;
@@ -196,7 +211,7 @@ const ActiveSessionView = ({
           testID="change-practice-button"
         />
         <ActiveRitualSession
-          key={`practice-${userPractice.id}`}
+          key={`practice-${userPractice.id}-${configRevision(effectiveConfig)}`}
           userPractice={userPractice}
           effectiveName={effectiveName ?? practiceName}
           effectiveConfig={effectiveConfig}

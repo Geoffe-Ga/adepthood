@@ -393,6 +393,42 @@ describe('PracticeScreen', () => {
     expect(getByTestId('ritual-configurator-sheet')).toBeTruthy();
   });
 
+  it('reflects a saved duration change on the idle timer (BUG: save/display mismatch)', async () => {
+    // Adjusting the duration in the configurator and pressing Save must update
+    // the idle timer on the practice card. The session id is unchanged by a
+    // customize, so the engine only re-reads the new duration if the card
+    // re-keys on the resolved config — otherwise the reducer stays mounted and
+    // the ring keeps showing the old duration (saving 30 still showed 10:00).
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    mockUserPracticesCustomize.mockResolvedValue(
+      sampleUserPractice({
+        mode_config_override: { mode: 'meditation_timer', duration_minutes: 30 },
+        effective_config: { mode: 'meditation_timer', duration_minutes: 30 },
+      }),
+    );
+    const { getByTestId, getByText } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('meditation-timer-view')).toBeTruthy());
+    expect(getByText('10:00')).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('active-practice-configure'));
+    });
+    await act(async () => {
+      fireEvent.changeText(getByTestId('meditation-timer-duration'), '30');
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('ritual-configurator-save'));
+    });
+
+    await waitFor(() => {
+      expect(getByText('30:00')).toBeTruthy();
+    });
+    expect(mockUserPracticesCustomize).toHaveBeenCalledWith(10, {
+      custom_name: undefined,
+      mode_config_override: { mode: 'meditation_timer', duration_minutes: 30 },
+    });
+  });
+
   it('pins the frequency banner to the resolved stage', async () => {
     // The card and the banner must read the same stage. When the
     // client's resolved stage advances ahead of the server-stored
