@@ -50,6 +50,30 @@ describe('RitualConfiguratorSheet', () => {
     expect(getByTestId('ritual-configurator-aspect')).toBeTruthy();
   });
 
+  it('renders the tallied_grounding form (editable, not the unknown-mode notice)', () => {
+    const config: ModeConfig = {
+      mode: 'tallied_grounding',
+      rounds: 2,
+      categories: [{ key: 'c1', label: 'Red things', target_count: 3 }],
+    };
+    const { getByTestId, queryByTestId } = renderSheet({ initialConfig: config });
+    expect(getByTestId('tallied-grounding-form')).toBeTruthy();
+    expect(queryByTestId('ritual-configurator-unknown')).toBeNull();
+  });
+
+  it('renders the mindful_anchor form (editable, not the unknown-mode notice)', () => {
+    const config: ModeConfig = {
+      mode: 'mindful_anchor',
+      instruction: 'Stand on grass',
+      min_duration_seconds: 60,
+      options: [{ key: 'o1', label: 'Bare feet' }],
+      require_option_choice: false,
+    };
+    const { getByTestId, queryByTestId } = renderSheet({ initialConfig: config });
+    expect(getByTestId('mindful-anchor-form')).toBeTruthy();
+    expect(queryByTestId('ritual-configurator-unknown')).toBeNull();
+  });
+
   it('header makes the per-user-override scope explicit', () => {
     const { getByTestId } = renderSheet();
     expect(getByTestId('ritual-configurator-title').props.children).toBe('Adjust your practice');

@@ -20,10 +20,12 @@ import CountUpForm from './forms/CountUpForm';
 import IntervalBellForm from './forms/IntervalBellForm';
 import MeditationTimerForm from './forms/MeditationTimerForm';
 import MetronomeForm from './forms/MetronomeForm';
+import MindfulAnchorForm from './forms/MindfulAnchorForm';
 import RandomIntervalBellForm from './forms/RandomIntervalBellForm';
 import RepCounterForm from './forms/RepCounterForm';
 import SenseGroundingForm from './forms/SenseGroundingForm';
 import { ErrorList } from './forms/shared';
+import TalliedGroundingForm from './forms/TalliedGroundingForm';
 import TarotForm from './forms/TarotForm';
 
 import { type UserPractice, type UserPracticeCustomize, userPractices } from '@/api';
@@ -261,7 +263,12 @@ interface BodyProps {
   onChange: (next: ModeConfig) => void;
 }
 
-const ConfiguratorBody = ({ config, onChange }: BodyProps): React.JSX.Element => {
+// The dispatch is split into two helpers so each stays within the complexity
+// budget as modes accumulate: timer-family forms vs the card/grounding family.
+const timerBody = (
+  config: ModeConfig,
+  onChange: BodyProps['onChange'],
+): React.JSX.Element | null => {
   switch (config.mode) {
     case 'meditation_timer':
       return <MeditationTimerForm value={config} onChange={onChange} />;
@@ -275,8 +282,22 @@ const ConfiguratorBody = ({ config, onChange }: BodyProps): React.JSX.Element =>
       return <RandomIntervalBellForm value={config} onChange={onChange} />;
     case 'rep_counter':
       return <RepCounterForm value={config} onChange={onChange} />;
+    default:
+      return null;
+  }
+};
+
+const cardAndGroundingBody = (
+  config: ModeConfig,
+  onChange: BodyProps['onChange'],
+): React.JSX.Element => {
+  switch (config.mode) {
     case 'sense_grounding':
       return <SenseGroundingForm value={config} onChange={onChange} />;
+    case 'tallied_grounding':
+      return <TalliedGroundingForm value={config} onChange={onChange} />;
+    case 'mindful_anchor':
+      return <MindfulAnchorForm value={config} onChange={onChange} />;
     case 'tarot':
       return <TarotForm value={config} onChange={onChange} />;
     case 'card_meditation':
@@ -285,6 +306,9 @@ const ConfiguratorBody = ({ config, onChange }: BodyProps): React.JSX.Element =>
       return <UnknownModeNotice />;
   }
 };
+
+const ConfiguratorBody = ({ config, onChange }: BodyProps): React.JSX.Element =>
+  timerBody(config, onChange) ?? cardAndGroundingBody(config, onChange);
 
 const UnknownModeNotice = (): React.JSX.Element => (
   <View testID="ritual-configurator-unknown">
