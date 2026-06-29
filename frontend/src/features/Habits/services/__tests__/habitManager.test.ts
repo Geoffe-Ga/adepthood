@@ -1158,6 +1158,8 @@ describe('habitManager', () => {
       const habit = useHabitStore.getState().habits[0]!;
       expect(habit.streak).toBe(4);
       expect(habit.completions).toHaveLength(2);
+      // #783: must persist or the backfill is lost on the next cold rehydrate.
+      expect(saveHabits).toHaveBeenLastCalledWith([expect.objectContaining({ streak: 4 })]);
     });
   });
 
@@ -1176,6 +1178,10 @@ describe('habitManager', () => {
       expect(updated.streak).toBe(0);
       expect(updated.completions).toEqual([]);
       expect(updated.start_date).toEqual(newDate);
+      // #783: must persist or the reset start date is lost on the next rehydrate.
+      expect(saveHabits).toHaveBeenLastCalledWith([
+        expect.objectContaining({ start_date: newDate }),
+      ]);
     });
   });
 
