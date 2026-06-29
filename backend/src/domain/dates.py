@@ -142,3 +142,22 @@ def to_user_date(
         msg = "to_user_date refuses naive datetimes; pass tzinfo-aware values"
         raise ValueError(msg)
     return moment.astimezone(_resolve_zone(user_or_tz)).date()
+
+
+def to_user_date_bucket(ts: datetime | str, user_or_tz: _HasTimezone | str | None) -> date:
+    """Bucket a *stored* timestamp into the user's local calendar day.
+
+    Unlike :func:`to_user_date` (which demands a tz-aware datetime), this is the
+    storage-boundary helper: it accepts either a :class:`datetime` (the Postgres
+    ``timestamptz`` path) or an ISO-8601 string (SQLite returns these for tz-aware
+    columns), and coerces a naive value to UTC — acceptable here because the
+    source column is declared timezone-aware and SQLite merely lies about its
+    storage. The single canonical owner of this coercion (was duplicated in the
+    streak service and the subtractive domain).
+    """
+    if isinstance(ts, datetime):
+        moment = ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
+    else:
+        parsed = datetime.fromisoformat(ts)
+        moment = parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return to_user_date(user_or_tz, moment)

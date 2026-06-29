@@ -18,12 +18,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from domain.dates import to_user_date, today_in_tz
+from domain.dates import to_user_date_bucket, today_in_tz
 from domain.streaks import (
     SubtractiveContext,
     subtractive_current_streak,
@@ -43,35 +43,6 @@ __all__ = [
     "compute_streak_before_and_after",
     "update_streak",
 ]
-
-
-def _to_user_date(ts: datetime | str, user_timezone: str) -> date:
-    """Bucket a stored timestamp into the user's local calendar day.
-
-    Accepts either a :class:`datetime` (the production path through
-    Postgres ``timestamptz`` columns) or an ISO-8601 string (SQLite test
-    DB returns these for ``DateTime(timezone=True)`` columns since
-    SQLite has no native tz type).  Naive datetimes are treated as UTC
-    so SQLite-stored values still convert correctly; this is the one
-    place where naive coercion is acceptable because the source column
-    is declared timezone-aware and SQLite is just lying about its
-    storage.
-
-    Narrowing the type to ``datetime | str`` (rather than ``object``)
-    lets mypy reject bad call sites at the boundary; an unexpected
-    ``None`` from an ORM-column edge case used to fall through to
-    ``str()`` and raise an obscure ``ValueError`` from
-    ``fromisoformat``.
-    """
-    if isinstance(ts, datetime):
-        moment = ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
-    else:
-        # ISO-8601 string from SQLite; the column is timezone-aware so
-        # the format is always "YYYY-MM-DD HH:MM:SS[.fff][+HH:MM]".
-        # ``fromisoformat`` accepts that since Python 3.11.
-        parsed = datetime.fromisoformat(ts)
-        moment = parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
-    return to_user_date(user_timezone, moment)
 
 
 def _count_consecutive_days(sorted_days: list[date], day_ok: dict[date, bool]) -> int:
@@ -149,7 +120,7 @@ async def _fetch_day_totals(
     )
     day_totals: dict[date, float] = {}
     for ts, units in rows:
-        day = _to_user_date(ts, user_timezone)
+        day = to_user_date_bucket(ts, user_timezone)
         day_totals[day] = day_totals.get(day, 0.0) + units
     return day_totals
 
@@ -222,7 +193,11 @@ def _completed_user_dates(
     Split out so :func:`compute_habit_streak` stays at xenon rank A; the
     inner generator + filter pushed the parent block over the threshold.
     """
-    return {_to_user_date(c.timestamp, user_timezone) for c in completions if c.completed_units > 0}
+    return {
+        to_user_date_bucket(c.timestamp, user_timezone)
+        for c in completions
+        if c.completed_units > 0
+    }
 
 
 def compute_habit_streak(

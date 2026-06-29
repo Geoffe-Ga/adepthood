@@ -98,6 +98,27 @@ async def ensure_user_progress(session: AsyncSession, user_id: int) -> StageProg
     return progress
 
 
+def expected_completed_stages(current_stage: int) -> set[int]:
+    """Return the stages a row at ``current_stage`` must have completed.
+
+    The invariant set is ``{1 .. current_stage - 1}``.
+    """
+    return set(range(1, current_stage))
+
+
+def completed_stage_gap(completed: set[int], current_stage: int) -> tuple[set[int], set[int]]:
+    """Return ``(missing, extra)`` for a stage-progress row.
+
+    The invariant every stage mutation must preserve is
+    ``set(completed) == {1..current_stage-1}``. ``missing`` are stages that
+    should be marked complete but aren't; ``extra`` are stages credited beyond
+    the expected range. Both empty means the row is contiguous. This is the
+    canonical owner of the gap math the admin router used to inline twice.
+    """
+    expected = expected_completed_stages(current_stage)
+    return expected - completed, completed - expected
+
+
 def is_stage_unlocked(
     stage_number: int, progress: StageProgress | None, now: datetime | None = None
 ) -> bool:
