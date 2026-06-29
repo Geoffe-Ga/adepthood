@@ -1,6 +1,12 @@
 import { Platform, StyleSheet, type ViewStyle } from 'react-native';
 
-import { colors as COLORS, shadows as SHADOWS, SPACING, BORDER_RADIUS } from '../../design/tokens';
+import {
+  colors as COLORS,
+  shadows as SHADOWS,
+  SPACING,
+  BORDER_RADIUS,
+  surface,
+} from '../../design/tokens';
 
 export { colors as COLORS } from '../../design/tokens';
 
@@ -17,7 +23,7 @@ export const styles = StyleSheet.create({
   // ===== Layout containers =====
   container: {
     flex: 1,
-    backgroundColor: COLORS.background.primary,
+    backgroundColor: surface.canvas,
     padding: SPACING.md,
   },
   habitsGrid: {
@@ -475,7 +481,7 @@ export const styles = StyleSheet.create({
     borderColor: '#ddd',
     borderRadius: BORDER_RADIUS.md,
     overflow: 'hidden',
-    backgroundColor: '#fff',
+    backgroundColor: surface.raised,
   },
 
   // ===== Reorder Button =====
@@ -697,7 +703,7 @@ export const styles = StyleSheet.create({
   },
   statsInfoContainer: {
     marginTop: SPACING.lg,
-    backgroundColor: COLORS.background.primary,
+    backgroundColor: surface.canvas,
     borderRadius: BORDER_RADIUS.md,
     padding: SPACING.md,
   },
@@ -1019,7 +1025,7 @@ export const styles = StyleSheet.create({
 
   // ===== Energy Rating =====
   energyTile: {
-    backgroundColor: COLORS.background.primary,
+    backgroundColor: surface.canvas,
     padding: SPACING.sm,
     borderRadius: BORDER_RADIUS.md,
     marginBottom: SPACING.sm,
@@ -1099,7 +1105,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: JUSTIFY_SPACE_BETWEEN,
-    backgroundColor: COLORS.background.primary,
+    backgroundColor: surface.canvas,
     paddingVertical: SPACING.md,
     paddingHorizontal: SPACING.lg,
     borderRadius: BORDER_RADIUS.lg,
@@ -1139,7 +1145,7 @@ export const styles = StyleSheet.create({
   habitChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.background.primary,
+    backgroundColor: surface.canvas,
     borderRadius: BORDER_RADIUS.lg,
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.md,
@@ -1177,7 +1183,7 @@ export const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: '#fff',
+    backgroundColor: surface.raised,
     height: 280,
     borderTopLeftRadius: BORDER_RADIUS.xl,
     borderTopRightRadius: BORDER_RADIUS.xl,
@@ -1353,7 +1359,7 @@ export const styles = StyleSheet.create({
   // Enhanced progress bar styles
   goalProgressBar: {
     height: 12,
-    backgroundColor: COLORS.background.primary,
+    backgroundColor: surface.canvas,
     borderRadius: 6,
     overflow: 'hidden',
     position: 'relative',
@@ -1402,11 +1408,11 @@ export const styles = StyleSheet.create({
     position: 'absolute',
     top: 36,
     right: 8,
-    backgroundColor: '#fff',
+    backgroundColor: surface.raised,
     borderRadius: 8,
     padding: 8,
     zIndex: 1002,
-    shadowColor: '#000',
+    shadowColor: COLORS.paper.ink,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 4,

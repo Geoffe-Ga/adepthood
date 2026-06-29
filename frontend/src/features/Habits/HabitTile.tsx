@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Text, TouchableOpacity, View, type DimensionValue } from 'react-native';
 
 import { TierStar } from '../../components/TierStar';
-import { colors, STAGE_COLORS, spacing } from '../../design/tokens';
+import { colors, STAGE_COLORS, spacing, surface } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 import { DEFAULT_TIMEZONE } from '../../utils/dateUtils';
 
@@ -580,7 +580,7 @@ const buildUnlockedTileStyle = (
   margin: gridGutter / 2,
   minHeight: tileMinHeight,
   borderRadius: spacing(1, scale),
-  backgroundColor: '#f8f8f8',
+  backgroundColor: surface.canvas,
 });
 
 const UnlockedTile = ({

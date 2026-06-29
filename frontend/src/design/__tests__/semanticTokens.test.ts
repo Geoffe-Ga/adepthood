@@ -61,6 +61,18 @@ describe('semantic tokens (Candle & Ink)', () => {
     });
   });
 
+  describe('legacy text on the warm canvas (#802 migration safety)', () => {
+    it('keeps the chrome text tokens AA-legible after grounds moved to canvas', () => {
+      for (const value of [
+        colors.text.primary,
+        colors.text.secondary,
+        colors.text.secondaryAccessible,
+      ]) {
+        expect(contrast(value, surface.canvas)).toBeGreaterThanOrEqual(AA_NORMAL);
+      }
+    });
+  });
+
   describe('surfaceShadow', () => {
     it('flattens to warm, ink-tinted lifts with iOS/web + Android props', () => {
       for (const lift of [surfaceShadow.card, surfaceShadow.raised]) {

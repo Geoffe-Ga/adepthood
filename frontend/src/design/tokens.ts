@@ -290,28 +290,28 @@ export const BORDER_RADIUS = {
 
 export const shadows = {
   small: {
-    shadowColor: '#000000',
+    shadowColor: colors.paper.ink,
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
     elevation: 2,
   },
   medium: {
-    shadowColor: '#000000',
+    shadowColor: colors.paper.ink,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 3,
     elevation: 3,
   },
   large: {
-    shadowColor: '#000000',
+    shadowColor: colors.paper.ink,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 5,
   },
   glow: {
-    shadowColor: '#000000',
+    shadowColor: colors.paper.ink,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
     shadowRadius: 4,

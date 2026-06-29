@@ -1,6 +1,6 @@
 import { StyleSheet } from 'react-native';
 
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, colors, surface } from '@/design/tokens';
 
 // Cap the form width so fields don't stretch edge-to-edge on laptop/desktop
 // browsers; on phones the screen is narrower so it has no effect.
@@ -13,7 +13,7 @@ export const FORM_MAX_WIDTH = 480;
  */
 export const authStyles = StyleSheet.create({
   // Outer SafeAreaView wrapper for the full-screen auth screens.
-  safeArea: { flex: 1, backgroundColor: colors.background.card },
+  safeArea: { flex: 1, backgroundColor: surface.canvas },
   container: {
     flex: 1,
     justifyContent: 'center',

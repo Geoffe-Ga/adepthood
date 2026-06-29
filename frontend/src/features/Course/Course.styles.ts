@@ -1,6 +1,6 @@
 import { StyleSheet } from 'react-native';
 
-import { colors, radius, SPACING, shadows, touchTarget } from '../../design/tokens';
+import { colors, radius, SPACING, shadows, surface, touchTarget } from '../../design/tokens';
 
 const STAGE_PILL_SIZE = 40;
 const PROGRESS_BAR_HEIGHT = 6;
@@ -8,7 +8,7 @@ const PROGRESS_BAR_HEIGHT = 6;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background.primary,
+    backgroundColor: surface.canvas,
   },
 
   // Stage selector
@@ -196,7 +196,7 @@ const styles = StyleSheet.create({
   // Content viewer
   viewerContainer: {
     flex: 1,
-    backgroundColor: colors.background.primary,
+    backgroundColor: surface.canvas,
   },
   viewerHeader: {
     flexDirection: 'row',
@@ -299,7 +299,7 @@ const styles = StyleSheet.create({
   // Native Markdown reader body
   readerScroll: {
     flex: 1,
-    backgroundColor: colors.background.primary,
+    backgroundColor: surface.canvas,
     paddingHorizontal: SPACING.lg,
   },
   readerError: {

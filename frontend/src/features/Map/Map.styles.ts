@@ -2,7 +2,7 @@
 
 import { StyleSheet } from 'react-native';
 
-import { colors, editorialType, radius, shadows, spacing } from '../../design/tokens';
+import { colors, editorialType, radius, shadows, spacing, surface } from '../../design/tokens';
 
 // --- Layout constants for the three-column "spiral of becoming" table -------
 const LEFT_COLUMN_WIDTH = '40%';
@@ -27,7 +27,7 @@ const ARROW_LABEL_COLOR = '#262626';
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background.primary,
+    backgroundColor: surface.canvas,
   },
 
   // Loading / error states
@@ -35,7 +35,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: CENTER,
     justifyContent: CENTER,
-    backgroundColor: colors.background.primary,
+    backgroundColor: surface.canvas,
   },
   loadingText: {
     color: colors.text.primary,
@@ -151,7 +151,7 @@ const styles = StyleSheet.create({
   // Branded fill shown when no hosted map art is configured (#766) — keeps the
   // map area on-brand instead of a third-party placeholder image.
   mapBackgroundFallback: {
-    backgroundColor: colors.background.primary,
+    backgroundColor: surface.canvas,
   },
   greyBandFeminine: {
     position: ABSOLUTE,

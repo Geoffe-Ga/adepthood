@@ -19,7 +19,7 @@ exports[`MindfulAnchorView matches the option-chooser snapshot 1`] = `
         "marginBottom": 20,
         "maxWidth": 340,
         "padding": 20,
-        "shadowColor": "#000000",
+        "shadowColor": "#2b2620",
         "shadowOffset": {
           "height": 1,
           "width": 0,
@@ -225,7 +225,7 @@ exports[`MindfulAnchorView matches the option-chooser snapshot 1`] = `
           "minWidth": 220,
           "paddingHorizontal": 30,
           "paddingVertical": 14,
-          "shadowColor": "#000000",
+          "shadowColor": "#2b2620",
           "shadowOffset": {
             "height": 1,
             "width": 0,
