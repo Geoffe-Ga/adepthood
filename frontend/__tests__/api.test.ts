@@ -28,11 +28,11 @@ describe('API client request composition', () => {
     );
   });
 
-  it('creates journal entry with POST /journal', async () => {
+  it('creates journal entry with POST /journal/ (canonical, no 307)', async () => {
     const entry = { content: 'hi' };
     await api.journal.create(entry);
     expect(fetch).toHaveBeenCalledWith(
-      `${mockBaseUrl}/journal`,
+      `${mockBaseUrl}/journal/`,
       expect.objectContaining({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

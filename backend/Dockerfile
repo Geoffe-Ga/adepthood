@@ -52,4 +52,11 @@ EXPOSE 8000
 # Run migrations then start the server.  We import `main:app` (not
 # `src.main:app`) because PYTHONPATH is set to /app/src; this matches the
 # module layout used in tests.
-CMD ["sh", "-c", "python -m alembic upgrade head && python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2}"]
+#
+# --proxy-headers + --forwarded-allow-ips="*": the app runs behind Railway's
+# TLS-terminating proxy, so it must trust X-Forwarded-Proto to know it is on
+# https.  Without this, redirects (e.g. the trailing-slash 307) and any absolute
+# URL the app builds downgrade to http://, which browsers refuse to follow on a
+# cross-origin request — saving/loading then fails (#790).  Railway's only
+# ingress is its proxy, so trusting all forwarding peers is safe here.
+CMD ["sh", "-c", "python -m alembic upgrade head && python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2} --proxy-headers --forwarded-allow-ips=*"]
