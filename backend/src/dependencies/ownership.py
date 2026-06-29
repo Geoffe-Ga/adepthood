@@ -6,8 +6,10 @@ import logging
 from typing import Annotated
 
 from fastapi import Depends
+from sqlalchemy import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col, select
+from sqlalchemy.orm import Mapped
+from sqlmodel import and_, col, or_, select
 
 from database import get_session
 from errors import forbidden, not_found
@@ -20,6 +22,31 @@ from models.user_practice import UserPractice
 from routers.auth import get_current_user
 
 logger = logging.getLogger(__name__)
+
+
+def system_or_owned_clause(
+    id_col: Mapped[int | None],
+    owner_col: Mapped[int | None],
+    obj_id: int,
+    user_id: int,
+) -> ColumnElement[bool]:
+    """WHERE clause for a system (``owner_user_id IS NULL``) or caller-owned row.
+
+    The shared read-visibility predicate for the personal-library resources
+    (practice recipes + tags): the caller sees every system row plus their own.
+    Pass the model's ``col(Model.id)`` / ``col(Model.owner_user_id)``.
+    """
+    return and_(id_col == obj_id, or_(owner_col.is_(None), owner_col == user_id))
+
+
+def require_personal_row(owner_user_id: int | None, *, system_detail: str) -> None:
+    """Reject mutation of a system (ownerless) row with a stable 403 detail.
+
+    Shared by the recipe/tag mutation routes: a system row has
+    ``owner_user_id IS NULL`` and may be read but not modified.
+    """
+    if owner_user_id is None:
+        raise forbidden(system_detail)
 
 
 def log_ownership_denied(resource: str, resource_id: int, current_user: int) -> None:

@@ -2,10 +2,9 @@
 
 Routers call these helpers instead of computing streaks inline so the same
 logic can be reused from background jobs, admin tools, and tests without
-needing HTTP fixtures.  Pure functions stay in :mod:`domain.streaks` and
-:mod:`domain.milestones` so they remain trivially unit-testable; this module
-only adds the DB-query layer that composes them into a request-ready
-result.
+needing HTTP fixtures.  Pure functions stay in :mod:`domain.streaks` so they
+remain trivially unit-testable; this module only adds the DB-query layer that
+composes them into a request-ready result.
 
 Streak dates are reduced to *user-local* calendar days (BUG-STREAK-002).
 Storing timestamps in UTC and then bucketing with ``.date()`` would tick

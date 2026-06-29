@@ -205,19 +205,7 @@ async def get_content_item(
     leak surface is content-row count + stage boundaries; masking the
     locked branch as ``content_not_found`` removes the oracle.
     """
-    result = await session.execute(select(StageContent).where(StageContent.id == content_id))
-    item = result.scalars().first()
-    if item is None:
-        raise not_found("content")
-
-    # Find which stage this content belongs to
-    stage_result = await session.execute(
-        select(CourseStage).where(CourseStage.id == item.course_stage_id)
-    )
-    stage = stage_result.scalars().first()
-    if stage is None:
-        raise not_found("stage")
-
+    item, stage = await _load_content_with_stage(session, content_id)
     # BUG-COURSE-004: mask locked-stage access as 404 so locked content
     # is indistinguishable from nonexistent content over the wire.
     if not await _is_stage_unlocked_for_user(session, current_user, stage.stage_number):
@@ -231,16 +219,9 @@ async def get_content_item(
         raise RuntimeError(msg)
     read_ids = await _read_ids_for_user(session, current_user, [item_id])
 
-    raw = [
-        {
-            "id": item_id,
-            "title": item.title,
-            "content_type": item.content_type,
-            "release_day": item.release_day,
-            "url": item.url,
-        }
-    ]
-    filtered = filter_content_for_user(raw, days_elapsed=max(days, -1), read_content_ids=read_ids)
+    filtered = filter_content_for_user(
+        _items_to_raw_dicts([item]), days_elapsed=max(days, -1), read_content_ids=read_ids
+    )
     return ContentItemResponse(**filtered[0])
 
 
@@ -279,19 +260,10 @@ async def _resolve_unlocked_content(
     rank A and the resolution / authorisation steps are independently
     testable.
     """
-    result = await session.execute(select(StageContent).where(StageContent.id == content_id))
-    content_item = result.scalars().first()
-    if content_item is None:
-        raise not_found("content")
-    stage_result = await session.execute(
-        select(CourseStage).where(CourseStage.id == content_item.course_stage_id)
-    )
-    stage = stage_result.scalars().first()
-    if stage is None:
-        raise not_found("stage")
+    item, stage = await _load_content_with_stage(session, content_id)
     if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number):
         raise not_found("content")
-    return content_item
+    return item
 
 
 async def _insert_or_resolve_completion(

@@ -169,20 +169,12 @@ async def get_stage(
         raise not_found("stage")
 
     progress = await get_user_progress(session, current_user)
-    return StageResponse(
-        id=stage.id,
-        title=stage.title,
-        subtitle=stage.subtitle,
-        stage_number=stage.stage_number,
-        overview_url=stage.overview_url,
-        category=stage.category,
-        aspect=stage.aspect,
-        spiral_dynamics_color=stage.spiral_dynamics_color,
-        growing_up_stage=stage.growing_up_stage,
-        divine_gender_polarity=stage.divine_gender_polarity,
-        relationship_to_free_will=stage.relationship_to_free_will,
-        free_will_description=stage.free_will_description,
-        is_unlocked=is_stage_unlocked(stage.stage_number, progress),
+    # Single-stage view carries no progress overlay (the list view computes it in
+    # a batched pass); StageResponse.progress defaults to 0.0, so pass that.
+    return _build_stage_response(
+        stage,
+        0.0,
+        unlocked=is_stage_unlocked(stage.stage_number, progress),
     )
 
 
