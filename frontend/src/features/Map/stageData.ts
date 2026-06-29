@@ -33,53 +33,42 @@ export interface StageData {
   hotspots: Hotspot[]; // areas that respond to taps
 }
 
-// Percentage-based hotspot layout matching the spiral image. Each stage has a
-// tappable region over the colored text on the left and another over its spiral
-// arrow. Arrows alternate sides as the spiral winds; stage 9 has two arrows.
-// Indexed 0–9 where index 0 = stage 10 (top) and index 9 = stage 1 (bottom).
-export const HOTSPOTS: readonly Hotspot[][] = [
-  [
-    { top: 4, left: 4, width: 32, height: 6 },
-    { top: 4, left: 34, width: 40, height: 6 },
-  ],
-  [
-    { top: 12, left: 4, width: 32, height: 6 },
-    { top: 12, left: 34, width: 40, height: 6 },
-    { top: 12, left: 50, width: 40, height: 6 },
-  ],
-  [
-    { top: 20, left: 4, width: 32, height: 6 },
-    { top: 20, left: 34, width: 40, height: 6 },
-  ],
-  [
-    { top: 28, left: 4, width: 32, height: 6 },
-    { top: 28, left: 50, width: 40, height: 6 },
-  ],
-  [
-    { top: 36, left: 4, width: 32, height: 6 },
-    { top: 36, left: 34, width: 40, height: 6 },
-  ],
-  [
-    { top: 44, left: 4, width: 32, height: 6 },
-    { top: 44, left: 50, width: 40, height: 6 },
-  ],
-  [
-    { top: 52, left: 4, width: 32, height: 6 },
-    { top: 52, left: 34, width: 40, height: 6 },
-  ],
-  [
-    { top: 60, left: 4, width: 32, height: 6 },
-    { top: 60, left: 50, width: 40, height: 6 },
-  ],
-  [
-    { top: 68, left: 4, width: 32, height: 6 },
-    { top: 68, left: 34, width: 40, height: 6 },
-  ],
-  [
-    { top: 76, left: 4, width: 32, height: 6 },
-    { top: 76, left: 50, width: 40, height: 6 },
-  ],
-] as const;
-
 /** Total number of APTITUDE stages. */
 export const STAGE_COUNT = 10;
+
+// --- Arrow tap-target geometry ---------------------------------------------
+// The center column shows the colored-arrow spiral PNG. Each stage gets one
+// tappable band over its arrow loop, expressed as a percentage of the *center
+// column* (not the whole screen). The ten loops are evenly stacked top→bottom,
+// alternating sides as the spiral winds: even (Divine-Feminine) stages return
+// along the left, odd stages point right. Tune these against the final artwork.
+
+/** Height of one arrow band as a % of the column (ten evenly-spaced loops). */
+const ARROW_BAND_HEIGHT = 100 / STAGE_COUNT;
+/** Vertical inset so adjacent bands never touch / overlap. */
+const ARROW_BAND_INSET = 1;
+/** Horizontal extent of an arrow loop, as a % of the column width. */
+const ARROW_WIDTH = 46;
+/** Left edge of a left-returning (Divine-Feminine) arrow loop. */
+const ARROW_LEFT_X = 4;
+/** Left edge of a right-pointing arrow loop. */
+const ARROW_RIGHT_X = 50;
+
+const isLeftReturning = (stageNumber: number): boolean => stageNumber % 2 === 0;
+
+/**
+ * Percentage-based arrow hotspots, one band per stage. Indexed 0–9 where
+ * index 0 = stage 10 (top) and index 9 = stage 1 (bottom), matching the
+ * descending sort applied to the backend stage list.
+ */
+export const HOTSPOTS: readonly Hotspot[][] = Array.from({ length: STAGE_COUNT }, (_, index) => {
+  const stageNumber = STAGE_COUNT - index;
+  return [
+    {
+      top: index * ARROW_BAND_HEIGHT + ARROW_BAND_INSET,
+      left: isLeftReturning(stageNumber) ? ARROW_LEFT_X : ARROW_RIGHT_X,
+      width: ARROW_WIDTH,
+      height: ARROW_BAND_HEIGHT - ARROW_BAND_INSET * 2,
+    },
+  ];
+});
