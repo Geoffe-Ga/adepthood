@@ -110,13 +110,28 @@ jobs:
             theater tests. Finding those requires READING THE CODE, not parsing
             tool JSON. The evidence bundle is a starting map, not the territory.
 
-            Mandatory reading pass (this is what was skipped last time): after
-            collecting evidence, fan out with the Task tool — spawn a subagent
-            per feature area (each backend router, the domain/ modules, each
-            frontend feature) that actually READS the source against the full
-            13-family taxonomy in references/slop-taxonomy.md and reports
-            corroborated candidates. Do not conclude "clean" from a 5-minute
-            single-threaded scan of linter output.
+            Mandatory reading pass — EXHAUSTIVE, WHOLE-CODEBASE, EVERY RUN.
+            After collecting evidence, fan out with the Task tool and spawn a
+            reader subagent for EVERY area in the evidence bundle's
+            `area-inventory.txt`: every backend router, every backend/src/domain
+            and backend/src/services module, every frontend/src/features/* area,
+            and the shared api/ design/ components/ store/. Each reader READS the
+            source against the full 13-family taxonomy in
+            references/slop-taxonomy.md and reports corroborated candidates.
+
+            This is a whole-codebase audit on EVERY run, not a delta scan. A
+            clean linter bundle and an unchanged file are NOT reasons to skip the
+            reading pass for any area. "Delta-focused", "since the last run", and
+            "building on last week's baseline" scoping are FORBIDDEN — slop in
+            older, stable code must be read too. `churn.txt` / `reading-targets.txt`
+            decide only the ORDER areas are read, NEVER which areas are skipped.
+            Do not conclude "clean" from a single-threaded scan of linter output
+            or from reading only what changed.
+
+            Coverage ledger: maintain a ledger that lists, per area in
+            area-inventory.txt, that it was READ this run (and which families it
+            was checked against). A "0 findings" verdict is only valid when the
+            ledger covers the ENTIRE inventory this run — never "delta since #N".
 
             Hard requirements (the skill enforces these — do not deviate):
             - Corroborate every finding with TWO independent signals before
@@ -140,13 +155,15 @@ jobs:
             summary — append it to the file at $GITHUB_STEP_SUMMARY (e.g.
             `cat >> "$GITHUB_STEP_SUMMARY"`) — containing: counts by severity,
             issues/epics filed (with numbers), findings dropped and why,
-            findings deduped, AND a coverage ledger: a table with one row per
-            taxonomy family (all 13) listing which areas/files you examined for
-            it and the verdict (clean / candidates / filed). The ledger is how
-            we verify the whole taxonomy was actually traversed rather than
+            findings deduped, AND a coverage ledger that proves WHOLE-CODEBASE
+            coverage two ways: (a) one row per taxonomy family (all 13) with the
+            verdict (clean / candidates / filed), and (b) every area in
+            area-inventory.txt marked READ this run — no area may be marked
+            "unchanged → not read". The ledger is how we verify the whole
+            taxonomy AND the whole inventory were actually traversed rather than
             assumed clean. This is the durable record, linked to the workflow
-            run, and never touches the issue tracker. A clean run (nothing
-            filed) writes "codebase is clean against the taxonomy this week" to
-            the job summary and files NO issue. Only open a separate `de-slop` +
+            run, and never touches the issue tracker. A clean run (nothing filed)
+            writes "entire codebase read this run; clean against the taxonomy" to
+            the job summary (NOT "delta since #N") and files NO issue. Only open a separate `de-slop` +
             `report` issue when at least one finding was filed — never on a clean
             run (a weekly report issue every Monday would flood the tracker).
