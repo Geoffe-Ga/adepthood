@@ -444,6 +444,28 @@ const serifByPlatform: Record<string, string> = {
 };
 const serifStack = serifByPlatform[Platform.OS] ?? 'Georgia, "Times New Roman", serif';
 
+// Clean system sans for chrome/body — no bundled font asset (same IP stance as
+// the serif): the platform UI face on iOS, ``sans-serif`` on Android, a CSS
+// stack on web. Resolved from ``Platform.OS`` to stay loadable under the repo's
+// hand-rolled react-native mocks (see serif note above).
+const sansByPlatform: Record<string, string> = {
+  ios: 'System',
+  android: 'sans-serif',
+};
+const sansStack =
+  sansByPlatform[Platform.OS] ?? '-apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif';
+
+/**
+ * Shared font stacks — the single source of truth for the app's faces. Only
+ * platform-system fonts are used; no proprietary/commercial font files are
+ * bundled, self-hosted, or embedded (see ``ATTRIBUTION``). ``editorialType``
+ * (journal) and the app ``type`` ramp both draw their serif from ``serif``.
+ */
+export const fonts = {
+  serif: serifStack,
+  sans: sansStack,
+} as const;
+
 export const editorialType = {
   serif: serifStack,
   display: { fontFamily: serifStack, fontSize: 34, lineHeight: 42, fontWeight: '700' as const },
@@ -459,6 +481,50 @@ export const editorialType = {
     fontWeight: '400' as const,
   },
 } as const;
+
+// ---------------------------------------------------------------------------
+// App-wide editorial type ramp — serif display + clean-sans body (#800)
+// ---------------------------------------------------------------------------
+
+/**
+ * The cohesive app type system: a serif display/heading face paired with a
+ * clean system sans for body/labels (the journal keeps its all-serif
+ * ``editorialType`` for long-form reading). Responsive-aware — sizes scale on
+ * the same breakpoint base as :func:`typography`, so a phone reads tighter than
+ * a tablet. Every face comes from :data:`fonts` (system only — no bundled font).
+ */
+export const type = (width: number) => {
+  const base =
+    width < breakpoints.sm
+      ? 15
+      : width < breakpoints.md
+        ? 16
+        : width < breakpoints.lg
+          ? 17
+          : width < breakpoints.xl
+            ? 18
+            : 19;
+  const serif = (size: number, weight: '600' | '700') => ({
+    fontFamily: fonts.serif,
+    fontSize: size,
+    lineHeight: Math.round(size * 1.25),
+    fontWeight: weight,
+  });
+  const sans = (size: number, weight: '400' | '600') => ({
+    fontFamily: fonts.sans,
+    fontSize: size,
+    lineHeight: Math.round(size * 1.5),
+    fontWeight: weight,
+  });
+  return {
+    display: serif(Math.round(base * 2.1), '700'),
+    title: serif(Math.round(base * 1.6), '600'),
+    heading: serif(Math.round(base * 1.25), '600'),
+    body: sans(base, '400'),
+    label: sans(Math.round(base * 0.9), '600'),
+    caption: sans(Math.round(base * 0.8), '400'),
+  } as const;
+};
 
 // ---------------------------------------------------------------------------
 // UI typography — non-editorial chrome (buttons, chips) in the system stack
