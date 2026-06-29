@@ -3,10 +3,9 @@
  *
  * On open (entry already has an id) it loads existing marginalia. A request
  * flushes the draft save first (so we resonate against the *saved* latest body),
- * calls the generate endpoint, merges the returned notes, and refreshes the
- * remaining-pass balance. One request runs at a time so rapid taps can't
- * double-charge; errors (notably 402) are mapped to friendly copy and never
- * crash the page.
+ * calls the generate endpoint, and merges the returned notes. One request runs
+ * at a time so rapid taps can't double-charge; errors (notably 402) are mapped
+ * to friendly copy and never crash the page.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -26,7 +25,6 @@ export interface UseResonanceResult {
   marginalia: Marginalia[];
   loading: boolean;
   error: string | null;
-  remaining: number | null;
   requestResonance: () => Promise<void>;
   /** Merge an updated note (e.g. one that just gained a cached essay) by id. */
   updateNote: (_note: Marginalia) => void;
@@ -68,7 +66,6 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
   const [marginalia, setMarginalia] = useState<Marginalia[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [remaining, setRemaining] = useState<number | null>(null);
   const inFlightRef = useRef(false);
 
   useInitialMarginalia(routeEntryId, setMarginalia);
@@ -86,7 +83,6 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
       }
       const result = await resonance.generate(entryId);
       setMarginalia((prev) => mergeById(prev, result.marginalia));
-      setRemaining(result.remaining_messages);
     } catch (err) {
       setError(formatApiError(err));
     } finally {
@@ -109,5 +105,5 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
     }
   }, [routeEntryId]);
 
-  return { marginalia, loading, error, remaining, requestResonance, updateNote, refresh };
+  return { marginalia, loading, error, requestResonance, updateNote, refresh };
 }

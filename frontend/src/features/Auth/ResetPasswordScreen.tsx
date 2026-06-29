@@ -4,13 +4,13 @@ import { Text, TextInput, TouchableOpacity } from 'react-native';
 import { authStyles as styles } from './auth.styles';
 import { AuthScreenContainer } from './AuthScreenContainer';
 import { validatePasswordPair } from './passwordValidation';
+import { MIN_TOKEN_LENGTH } from './resetToken';
 
 import { formatApiError } from '@/api/errorMessages';
 import { useAuth } from '@/context/AuthContext';
 
 const RESET_FALLBACK =
   "We couldn't apply that reset. The link may have expired -- request a new one and try again.";
-const MIN_TOKEN_LENGTH = 32;
 
 interface RouteParams {
   token?: string;

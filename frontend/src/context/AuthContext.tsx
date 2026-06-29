@@ -208,6 +208,7 @@ async function saveTokenThenApply(
   newTimezone: string | undefined,
   mutators: AuthMutators,
   tokenRef: React.MutableRefObject<string | null>,
+  warnLabel: string,
 ): Promise<void> {
   if (tokenRef.current === null) {
     // Logout won the race — drop the late refresh response on the floor.
@@ -216,7 +217,7 @@ async function saveTokenThenApply(
   try {
     await saveToken(newToken);
   } catch (err: unknown) {
-    console.warn('saveToken failed in onTokenRefreshed', err);
+    console.warn(`saveToken failed in ${warnLabel}`, err);
     return;
   }
   if (tokenRef.current === null) return;
@@ -246,7 +247,7 @@ function useApiCallbacks(
       void clearTokenForReauth(mutators, reason);
     });
     setOnTokenRefreshed((t: string, tz: string | undefined) => {
-      void saveTokenThenApply(t, tz, mutators, tokenRef);
+      void saveTokenThenApply(t, tz, mutators, tokenRef, 'onTokenRefreshed');
     });
     return () => {
       setTokenGetter(null);
@@ -434,19 +435,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ``saveTokenThenApply`` so a logout that wins the race against a
   // proactive refresh does NOT silently resurrect the session by
   // re-applying a stale token after the user explicitly signed out.
-  const applyNewToken = useCallback(async (newToken: string, newTimezone: string | undefined) => {
-    if (tokenRef.current === null) return;
-    try {
-      await saveToken(newToken);
-    } catch (err: unknown) {
-      console.warn('saveToken failed in applyNewToken', err);
-      return;
-    }
-    if (tokenRef.current === null) return;
-    setToken(newToken);
-    setUserTimezone(newTimezone ?? 'UTC');
-    setAuthStatus('authenticated');
-  }, []);
+  const applyNewToken = useCallback(
+    async (newToken: string, newTimezone: string | undefined) => {
+      await saveTokenThenApply(newToken, newTimezone, mutators, tokenRef, 'applyNewToken');
+    },
+    [mutators],
+  );
 
   useApiCallbacks(tokenRef, mutators);
   useProactiveRefresh(token, tokenRef, applyNewToken);

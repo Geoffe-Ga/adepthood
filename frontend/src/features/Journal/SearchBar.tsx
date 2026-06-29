@@ -20,7 +20,7 @@ const CollapsedSearchBar = ({ onToggle }: { onToggle: () => void }): React.JSX.E
       accessibilityLabel="Open journal search"
       accessibilityRole="button"
     >
-      <Text style={styles.searchIcon}>?</Text>
+      <Text style={styles.searchIcon}>🔍</Text>
     </TouchableOpacity>
   </View>
 );
@@ -51,7 +51,7 @@ const ExpandedSearchBarContent = ({
         accessibilityLabel="Focus journal search"
         accessibilityRole="button"
       >
-        <Text style={styles.searchIcon}>?</Text>
+        <Text style={styles.searchIcon}>🔍</Text>
       </TouchableOpacity>
       <TextInput
         testID="search-input"
@@ -70,7 +70,7 @@ const ExpandedSearchBarContent = ({
         accessibilityLabel="Clear search"
         accessibilityRole="button"
       >
-        <Text style={styles.searchClearText}>X</Text>
+        <Text style={styles.searchClearText}>×</Text>
       </TouchableOpacity>
     </View>
     {searchQuery && resultCount != null && (

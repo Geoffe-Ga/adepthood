@@ -66,7 +66,7 @@ describe('useResonance', () => {
     expect(mockList).toHaveBeenCalledWith(7);
   });
 
-  it('flushes the save, then generates and stores notes + remaining', async () => {
+  it('flushes the save, then generates and stores notes', async () => {
     const flush = jest.fn(async () => 42);
     mockGenerate.mockResolvedValue(resonancePayload([note({ id: 5, journal_entry_id: 42 })]));
     const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
@@ -77,7 +77,6 @@ describe('useResonance', () => {
     expect(flush).toHaveBeenCalledTimes(1);
     expect(mockGenerate).toHaveBeenCalledWith(42);
     expect(result.current.marginalia).toHaveLength(1);
-    expect(result.current.remaining).toBe(48);
   });
 
   it('maps a 402 to a friendly error and leaves the page usable', async () => {

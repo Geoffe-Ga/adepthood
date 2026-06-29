@@ -1,13 +1,9 @@
-import React, { useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React from 'react';
+import { View } from 'react-native';
 
-import type { IntervalBellTone, RandomIntervalBellConfig } from '../../engine/types';
+import type { RandomIntervalBellConfig } from '../../engine/types';
 
-import { Chip, LabeledRow, NumericField, ToggleRow } from './shared';
-
-import { SPACING, colors } from '@/design/tokens';
-
-const TONES: readonly IntervalBellTone[] = ['bowl', 'chime', 'gong'];
+import { BellToneRow, CollapsibleSection, LabeledRow, NumericField, ToggleRow } from './shared';
 
 interface Props {
   value: RandomIntervalBellConfig;
@@ -42,45 +38,12 @@ const RandomIntervalBellForm = ({ value, onChange }: Props): React.JSX.Element =
         testID="random-interval-bell-max"
       />
     </LabeledRow>
-    <BellToneRow value={value} onChange={onChange} />
-    <AdvancedSection value={value} onChange={onChange} />
+    <BellToneRow value={value} onChange={onChange} testIDPrefix="random-interval-bell" />
+    <CollapsibleSection testIDBase="random-interval-bell-advanced">
+      <AdvancedFields value={value} onChange={onChange} />
+    </CollapsibleSection>
   </View>
 );
-
-const BellToneRow = ({ value, onChange }: Props): React.JSX.Element => (
-  <LabeledRow label="Bell tone">
-    <View style={styles.toneRow}>
-      {TONES.map((tone) => (
-        <Chip
-          key={tone}
-          label={tone}
-          active={value.bell_tone === tone}
-          onPress={() => onChange({ ...value, bell_tone: tone })}
-          testID={`random-interval-bell-tone-${tone}`}
-        />
-      ))}
-    </View>
-  </LabeledRow>
-);
-
-const AdvancedSection = ({ value, onChange }: Props): React.JSX.Element => {
-  const [open, setOpen] = useState(false);
-  return (
-    <View testID="random-interval-bell-advanced">
-      <TouchableOpacity
-        accessibilityRole="button"
-        accessibilityLabel="Advanced settings"
-        accessibilityState={{ expanded: open }}
-        onPress={() => setOpen((prev) => !prev)}
-        style={styles.advancedToggle}
-        testID="random-interval-bell-advanced-toggle"
-      >
-        <Text style={styles.advancedToggleText}>{`${open ? '▾' : '▸'} Advanced`}</Text>
-      </TouchableOpacity>
-      {open && <AdvancedFields value={value} onChange={onChange} />}
-    </View>
-  );
-};
 
 const AdvancedFields = ({ value, onChange }: Props): React.JSX.Element => (
   <View testID="random-interval-bell-advanced-fields">
@@ -107,11 +70,5 @@ const AdvancedFields = ({ value, onChange }: Props): React.JSX.Element => (
     />
   </View>
 );
-
-const styles = StyleSheet.create({
-  toneRow: { flexDirection: 'row', gap: SPACING.xs, flexWrap: 'wrap' },
-  advancedToggle: { paddingVertical: SPACING.md, marginTop: SPACING.sm },
-  advancedToggleText: { fontSize: 14, fontWeight: '600', color: colors.text.primary },
-});
 
 export default RandomIntervalBellForm;

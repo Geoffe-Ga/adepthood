@@ -1,7 +1,6 @@
 /* eslint-env jest */
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { Alert } from 'react-native';
 import renderer from 'react-test-renderer';
 
 import type { Habit } from '../Habits.types';
@@ -105,10 +104,12 @@ describe('HabitTile early-unlock visual indicator', () => {
 });
 
 describe('HabitTile locked tile long-press', () => {
-  beforeEach(() => {
-    jest.restoreAllMocks();
-    jest.spyOn(Alert, 'alert').mockImplementation(() => {});
-  });
+  // ConfirmDialog (#786) replaces Alert.alert, which is a no-op on RN Web mobile.
+  const mentionsHabit = (component: ReturnType<typeof renderer.create>, name: string): boolean =>
+    component.root.findAll(
+      (n: { props: { children?: unknown } }) =>
+        typeof n.props.children === 'string' && n.props.children.includes(name),
+    ).length > 0;
 
   it('shows unlock confirmation on long-press of a locked (unrevealed) tile', () => {
     const onUnlockHabit = jest.fn();
@@ -120,14 +121,10 @@ describe('HabitTile locked tile long-press', () => {
     renderer.act(() => {
       tile.props.onLongPress();
     });
-    expect(Alert.alert).toHaveBeenCalledWith(
-      'Unlock Early?',
-      expect.stringContaining('Future Habit'),
-      expect.arrayContaining([
-        expect.objectContaining({ text: 'Cancel' }),
-        expect.objectContaining({ text: 'Unlock' }),
-      ]),
-    );
+    // The rendered dialog appears (not a silently-dropped Alert) and names the habit.
+    expect(component.root.findByProps({ testID: 'unlock-habit-confirm' })).toBeTruthy();
+    expect(component.root.findByProps({ testID: 'unlock-habit-confirm-button' })).toBeTruthy();
+    expect(mentionsHabit(component, 'Future Habit')).toBe(true);
   });
 
   it('calls onUnlockHabit when unlock is confirmed', () => {
@@ -140,14 +137,9 @@ describe('HabitTile locked tile long-press', () => {
     renderer.act(() => {
       tile.props.onLongPress();
     });
-
-    // Get the Unlock button callback from the Alert.alert call
-    const alertCalls = (Alert.alert as jest.Mock).mock.calls;
-    const firstCall = alertCalls[0] as unknown[];
-    const buttons = firstCall[2] as Array<{ text: string; onPress?: () => void }>;
-    const unlockButton = buttons.find((b) => b.text === 'Unlock');
+    const confirmButton = component.root.findByProps({ testID: 'unlock-habit-confirm-button' });
     renderer.act(() => {
-      unlockButton?.onPress?.();
+      confirmButton.props.onPress();
     });
     expect(onUnlockHabit).toHaveBeenCalledWith(habit.id);
   });
@@ -162,7 +154,7 @@ describe('HabitTile locked tile long-press', () => {
     renderer.act(() => {
       tile.props.onLongPress();
     });
-    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(component.root.findAllByProps({ testID: 'unlock-habit-confirm' })).toHaveLength(0);
     expect(onLongPress).toHaveBeenCalled();
   });
 });

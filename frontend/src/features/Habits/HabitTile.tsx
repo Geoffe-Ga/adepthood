@@ -1,19 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import {
-  Alert,
-  Animated,
-  Easing,
-  Text,
-  TouchableOpacity,
-  View,
-  type DimensionValue,
-} from 'react-native';
+import { Animated, Easing, Text, TouchableOpacity, View, type DimensionValue } from 'react-native';
 
 import { TierStar } from '../../components/TierStar';
 import { colors, STAGE_COLORS, spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 import { DEFAULT_TIMEZONE } from '../../utils/dateUtils';
 
+import ConfirmDialog from './components/ConfirmDialog';
 import { TIER_LABELS, centeredTranslateX, tooltipBoxStyle, type TierType } from './goalMarker';
 import type { HabitTileProps, Goal, Habit } from './Habits.types';
 import {
@@ -457,18 +450,6 @@ const useHabitTileData = (habit: Habit, tz: string, stageColor: string) => {
   return { progressPercentage, progressBarColor, hasCompletedGoal, markers };
 };
 
-const showUnlockConfirmation = (habit: Habit, onUnlock: (_id: number) => void) => {
-  const dateStr = new Date(habit.start_date).toLocaleDateString();
-  Alert.alert(
-    'Unlock Early?',
-    `Unlock "${habit.name}" early? The recommended start date is ${dateStr}.`,
-    [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Unlock', onPress: () => onUnlock(habit.id) },
-    ],
-  );
-};
-
 const LOCKED_BACKGROUND = '#e8e8e8';
 const LOCKED_OPACITY = 0.4;
 const MS_PER_DAY = 86_400_000;
@@ -518,40 +499,60 @@ const LOCKED_NAME_STYLE = {
   color: '#999',
 };
 
-const LockedTile = ({
+const LockedTileButton = ({
   habit,
   stageColor,
   scale,
   gridGutter,
   tileMinHeight,
-  onUnlockHabit,
-}: LockedTileProps) => {
-  const handleLongPress = onUnlockHabit
-    ? () => showUnlockConfirmation(habit, onUnlockHabit)
-    : undefined;
-  return (
-    <TouchableOpacity
-      testID="habit-tile"
-      accessibilityLabel={`${habit.name} locked`}
-      onLongPress={handleLongPress}
-      style={getLockedTileStyle(stageColor, scale, gridGutter, tileMinHeight)}
+  onLongPress,
+}: Omit<LockedTileProps, 'onUnlockHabit'> & { onLongPress?: () => void }) => (
+  <TouchableOpacity
+    testID="habit-tile"
+    accessibilityLabel={`${habit.name} locked`}
+    onLongPress={onLongPress}
+    style={getLockedTileStyle(stageColor, scale, gridGutter, tileMinHeight)}
+  >
+    <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <Text style={{ fontSize: spacing(2, scale), marginRight: spacing(1, scale) }}>🔒</Text>
+      <Text style={{ ...LOCKED_NAME_STYLE, fontSize: spacing(2, scale) }}>{habit.name}</Text>
+    </View>
+    <Text
+      testID="unlock-label"
+      style={{
+        fontSize: spacing(1.5, scale),
+        color: '#999',
+        marginTop: spacing(0.5, scale),
+        fontStyle: 'italic',
+      }}
     >
-      <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <Text style={{ fontSize: spacing(2, scale), marginRight: spacing(1, scale) }}>🔒</Text>
-        <Text style={{ ...LOCKED_NAME_STYLE, fontSize: spacing(2, scale) }}>{habit.name}</Text>
-      </View>
-      <Text
-        testID="unlock-label"
-        style={{
-          fontSize: spacing(1.5, scale),
-          color: '#999',
-          marginTop: spacing(0.5, scale),
-          fontStyle: 'italic',
+      {getUnlockLabel(habit)}
+    </Text>
+  </TouchableOpacity>
+);
+
+const LockedTile = ({ onUnlockHabit, ...rest }: LockedTileProps) => {
+  const [showUnlockConfirm, setShowUnlockConfirm] = useState(false);
+  const handleLongPress = onUnlockHabit ? () => setShowUnlockConfirm(true) : undefined;
+  const dateStr = new Date(rest.habit.start_date).toLocaleDateString();
+  return (
+    <>
+      <LockedTileButton {...rest} onLongPress={handleLongPress} />
+      <ConfirmDialog
+        visible={showUnlockConfirm}
+        title="Unlock Early?"
+        message={`Unlock "${rest.habit.name}" early? The recommended start date is ${dateStr}.`}
+        testID="unlock-habit-confirm"
+        cancelTestID="unlock-habit-cancel"
+        confirmTestID="unlock-habit-confirm-button"
+        confirmLabel="Unlock"
+        onCancel={() => setShowUnlockConfirm(false)}
+        onConfirm={() => {
+          setShowUnlockConfirm(false);
+          onUnlockHabit?.(rest.habit.id);
         }}
-      >
-        {getUnlockLabel(habit)}
-      </Text>
-    </TouchableOpacity>
+      />
+    </>
   );
 };
 
