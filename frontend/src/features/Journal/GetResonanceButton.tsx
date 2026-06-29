@@ -91,8 +91,10 @@ function GetResonanceButton({
 const styles = StyleSheet.create({
   wrapper: {
     position: 'absolute',
-    right: SPACING.lg,
+    left: 0,
+    right: 0,
     bottom: SPACING.xl,
+    alignItems: 'center',
   },
   button: {
     minHeight: touchTarget.minimum,
