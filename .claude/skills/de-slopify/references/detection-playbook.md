@@ -160,16 +160,20 @@ the first audit.
    anything in the "NOT slop" guard list (`slop-taxonomy.md`) — generated code,
    migrations, justified suppressions, framework boilerplate, test fixtures —
    and anything already enforced by the gates above.
-3. **Reading pass (fan-out) — the core of the audit.** Spawn one `Task`
-   subagent per feature area (each backend router, `domain/`, `services/`, the
-   models/schemas pair, each `frontend/src/features/*`, and the util/config
-   grab-bags). Hand each the full taxonomy and have it **read the actual
-   source** and return corroborated candidates for the linter-invisible
-   families: dead/stubbed/orphaned code, duplication (local and repo-wide),
-   architecture/layering violations, lying flags, verbosity, comment slop,
-   AI-slop tells, weak tests. Prioritize by the churn / largest-file lists in
-   the bundle. **Do not skip this for a single-threaded skim — that produces the
-   false "clean".**
+3. **Reading pass (fan-out) — the core of the audit. EXHAUSTIVE, WHOLE-CODEBASE,
+   EVERY RUN.** The bundle's `area-inventory.txt` is the authoritative coverage
+   set. Spawn one `Task` subagent for **every** area in it — every backend
+   router, every `domain/` and `services/` module, the models/schemas pair,
+   every `frontend/src/features/*`, and the shared `api/`/`design/`/`components/`/
+   `store/` — never just the changed ones. Hand each the full taxonomy and have
+   it **read the actual source** and return corroborated candidates for the
+   linter-invisible families: dead/stubbed/orphaned code, duplication (local and
+   repo-wide), architecture/layering violations, lying flags, verbosity, comment
+   slop, AI-slop tells, weak tests. **`churn.txt` / `reading-targets.txt` set the
+   ORDER only, never which areas to skip; a clean linter bundle or an unchanged
+   file is no reason to skip an area; "delta-focused" / "since last run" /
+   "building on last week's baseline" scoping is FORBIDDEN.** Do not skip this
+   for a single-threaded skim or a delta scan — both produce the false "clean".
 4. **Corroborate each survivor** against the Two-Signal Rule. For correctness
    candidates, *write and run the reproducing test* in a throwaway location
    (do not commit it — the implementing issue will own the real test). If it
@@ -184,11 +188,14 @@ the first audit.
 7. **Size & file.** Apply `issue-templates.md`. Respect the ~200–300 LoC
    sizing; split anything bigger into an epic + sub-issues in dependency order.
 8. **Report with a coverage ledger.** Emit a run summary (counts by severity,
-   what was filed, dropped and why, deduped) **plus a 13-row table — one per
-   taxonomy family — naming the areas examined and the verdict.** The ledger
-   proves the reading pass actually traversed the taxonomy. A clean verdict with
-   no ledger means the reading pass was skipped — that is a failed run, not a
-   clean one.
+   what was filed, dropped and why, deduped) **plus a coverage ledger that proves
+   WHOLE-CODEBASE coverage two ways: (a) a 13-row table — one per taxonomy family
+   — naming the areas examined and the verdict, and (b) every area in
+   `area-inventory.txt` marked READ this run (no area "unchanged → not read").**
+   A clean verdict must read *"entire codebase read this run"*, never *"delta
+   since #N"*. A clean verdict with no ledger, or a ledger that doesn't cover the
+   full inventory, means the reading pass was skipped or narrowed to changed
+   areas — that is a failed run, not a clean one.
 
 ---
 

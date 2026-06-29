@@ -94,14 +94,24 @@ constants, deliberate repo conventions, and unmeasured "could be faster" claims.
 This is the step that finds the slop linters cannot see, and the step the first
 audit skipped. Do not conclude "clean" without it.
 
-Fan out with the **Task tool**: spawn one subagent per feature area so the whole
-codebase is actually read in parallel, not skimmed by one thread. A good split:
+**This is an EXHAUSTIVE, WHOLE-CODEBASE reading pass on EVERY run.** Coverage is
+governed by the evidence bundle's `area-inventory.txt`, which enumerates every
+area in the repo. Fan out with the **Task tool** and spawn a reader subagent for
+**every** area in that inventory — never just the changed ones:
 
 - one subagent per backend router (`backend/src/routers/*`),
-- one for the domain layer (`backend/src/domain/*`) and one for `services/`,
+- one for each `backend/src/domain/*` and each `backend/src/services/*` module,
 - one for the models/schemas pair (look for frontend/backend shape drift),
 - one per frontend feature (`frontend/src/features/*`),
-- one for shared/util/config grab-bags (prime duplication + dead-code sites).
+- one for the shared areas (`api/`, `design/`, `components/`, `store/`) — prime
+  duplication + dead-code sites.
+
+A clean linter bundle and an unchanged file are **NOT** reasons to skip the
+reading pass for any area. **"Delta-focused", "since the last run", and "building
+on last week's baseline" scoping are FORBIDDEN** — slop in older, stable code
+must be read too. `churn.txt` / `reading-targets.txt` decide only the **order**
+areas are read first, **never** which areas are skipped (files untouched in 90
+days are absent from those lists by design).
 
 Give each subagent the **full 13-family taxonomy** (`slop-taxonomy.md`) and this
 brief: *read the actual source in your area and return corroborated candidates
@@ -110,7 +120,7 @@ stubbed/orphaned code, duplication (here and against the rest of the repo),
 architecture/layering violations, lying flags, verbosity, comment slop, AI-slop
 tells, and weak tests. Ignore anything ruff/mypy/radon/eslint already gates.*
 
-Use the `$EVID` bundle's churn and largest-file lists to prioritize. Collect all
+Use churn / largest-file lists only to prioritize the order. Collect all
 subagent candidates before corroborating.
 
 ### Step 5 — Corroborate each survivor (the gate)
@@ -167,23 +177,29 @@ Emit a concise run summary: counts by severity, what was filed (with issue
 numbers/links), what was **dropped and why** (failed corroboration / guard
 list), and what was **deduped**.
 
-Then add a **coverage ledger** — a table with one row per taxonomy family (all
-13) recording which areas/files you examined for it and the verdict
-(clean / candidates / filed). This is how a reader verifies the whole taxonomy
-was actually traversed in the reading pass, not assumed clean:
+Then add a **coverage ledger** that proves WHOLE-CODEBASE coverage two ways:
+1. one row per taxonomy family (all 13) with the verdict (clean / candidates /
+   filed), and
+2. **every area in `area-inventory.txt` marked READ this run** — no area may be
+   "unchanged → not read". This is how a reader verifies the whole taxonomy AND
+   the whole inventory were actually traversed, not assumed clean:
 
 ```
 | Family | Areas examined | Verdict |
 |--------|----------------|---------|
-| 0 Correctness | routers/*, domain/energy.py | clean |
-| 3 Dispensables | services/, frontend/features/Habits | 2 filed (#812, #813) |
+| 0 Correctness | routers/* (all 19), domain/energy.py | clean |
+| 3 Dispensables | services/* (all), frontend/features/Habits | 2 filed (#812, #813) |
 | ... | ... | ... |
+
+Inventory coverage: 19/19 routers · 16/16 domain · 12/12 services ·
+7/7 features · 4/4 shared — all READ this run.
 ```
 
-If nothing met the bar, say so plainly — *"No corroborated slop this run —
-codebase is clean against the taxonomy"* — but the ledger must still show the
-13 families were each looked at. A clean verdict with an empty ledger means the
-reading pass was skipped; that is a failed run, not a clean one.
+If nothing met the bar, say so plainly — *"Entire codebase read this run; clean
+against the taxonomy"* (never *"delta since #N"*) — but the ledger must still show
+all 13 families AND the full inventory were each read. A clean verdict with an
+empty or inventory-incomplete ledger means the reading pass was skipped or
+narrowed to changed areas; that is a failed run, not a clean one.
 
 ## What this skill must never do
 

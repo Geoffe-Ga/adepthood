@@ -127,6 +127,11 @@ greps grep-commented.txt    '^\s*#\s*(def |class |return |if |for |while |import
 greps grep-any.txt          ':\s*any\b|<any>|as any'
 
 # Git churn / hotspots (top 30 most-changed files in the last 90 days).
+# PRIORITIZATION SIGNAL ONLY — churn (and reading-targets below) decide which
+# area the reading pass starts with; they NEVER decide which areas are skipped.
+# Files untouched in 90 days never appear here, so a run anchored to this list
+# would never read stable code. Coverage is governed by area-inventory.txt
+# (every area must be read each run); this is just the order to read it in.
 if command -v git >/dev/null 2>&1; then
   git log --since="90 days ago" --format= --name-only 2>/dev/null \
     | grep -E '^(backend|frontend)/' \
@@ -134,11 +139,13 @@ if command -v git >/dev/null 2>&1; then
     || echo "(churn unavailable)" >"$OUT/churn.txt"
 fi
 
-# Reading targets: the largest source files by line count. These — together
-# with churn.txt — are where the reading pass should start, because size and
-# change-frequency are where bloaters, duplication, and god-objects accumulate.
+# Reading targets: the largest source files by line count. PRIORITIZATION ONLY
+# (same caveat as churn.txt) — together with churn they say where to START
+# reading, because size and change-frequency are where bloaters, duplication,
+# and god-objects accumulate. They are NOT the coverage set.
 {
-  echo "# Largest source files (LoC) — prime reading-pass targets"
+  echo "# Largest source files (LoC) — prime reading-pass START targets."
+  echo "# Prioritization order only; NOT a coverage filter (see area-inventory.txt)."
   if [[ ${#SEARCH_PATHS[@]} -gt 0 ]]; then
     find "${SEARCH_PATHS[@]}" -type f \
       \( -name '*.py' -o -name '*.ts' -o -name '*.tsx' \) \
@@ -146,6 +153,40 @@ fi
       | xargs -0 wc -l 2>/dev/null | sort -rn | sed '/ total$/d' | head -30
   fi
 } >"$OUT/reading-targets.txt"
+
+# ----------------------------------------------------------------------------
+# Area inventory — the AUTHORITATIVE coverage set for the reading pass.
+# EVERY area listed here MUST be read every run (whole-codebase audit). Churn /
+# reading-targets decide the ORDER only. The coverage ledger must enumerate
+# every area below and mark it read this run; a "0 findings" verdict is only
+# defensible when the ledger covers this entire inventory — never "delta since
+# last run". Best-effort + never-fail: missing dirs are simply skipped.
+# ----------------------------------------------------------------------------
+{
+  echo "# Area inventory — the coverage set the reading pass MUST cover in full."
+  echo "# Every area must be read each run; churn/reading-targets are order only."
+  echo
+  echo "## backend routers"
+  [[ -d "$PY_SRC/routers" ]] \
+    && find "$PY_SRC/routers" -maxdepth 1 -name '*.py' ! -name '__init__.py' 2>/dev/null | sort
+  echo
+  echo "## backend domain modules"
+  [[ -d "$PY_SRC/domain" ]] \
+    && find "$PY_SRC/domain" -maxdepth 1 -name '*.py' ! -name '__init__.py' 2>/dev/null | sort
+  echo
+  echo "## backend services modules"
+  [[ -d "$PY_SRC/services" ]] \
+    && find "$PY_SRC/services" -maxdepth 1 -name '*.py' ! -name '__init__.py' 2>/dev/null | sort
+  echo
+  echo "## frontend feature areas"
+  [[ -d "$TS_SRC/features" ]] \
+    && find "$TS_SRC/features" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort
+  echo
+  echo "## frontend shared areas"
+  for shared in api design components store; do
+    [[ -d "$TS_SRC/$shared" ]] && echo "$TS_SRC/$shared"
+  done
+} >"$OUT/area-inventory.txt"
 
 # ----------------------------------------------------------------------------
 # Manifest
@@ -166,10 +207,20 @@ fi
   echo "The linter outputs (ruff/mypy/radon/bandit/eslint/tsc) are TABLE STAKES:"
   echo "the repo already passes them in pre-commit and CI, so they cannot be"
   echo "findings. Do NOT file complexity grades, lint rules, or type errors."
-  echo "Use churn.txt + reading-targets.txt to drive a Task fan-out that READS"
-  echo "the source for what linters cannot see (dead/stubbed/orphaned code,"
-  echo "duplication, architecture, lying flags, verbosity, comment slop, AI"
-  echo "tells, weak tests). That reading pass is the actual audit."
+  echo "Drive a Task fan-out that READS the source for what linters cannot see"
+  echo "(dead/stubbed/orphaned code, duplication, architecture, lying flags,"
+  echo "verbosity, comment slop, AI tells, weak tests). That reading pass is the"
+  echo "actual audit."
+  echo
+  echo "## COVERAGE IS MANDATORY AND WHOLE-CODEBASE"
+  echo "area-inventory.txt is the AUTHORITATIVE coverage set: the reading pass"
+  echo "MUST cover EVERY area in it EVERY run. churn.txt + reading-targets.txt"
+  echo "are PRIORITIZATION ORDER ONLY — they say where to start, never which"
+  echo "areas to skip. A clean linter bundle or an unchanged file is NOT a reason"
+  echo "to skip reading an area. 'Delta-focused' / 'since last run' / 'building on"
+  echo "last week's baseline' scoping is FORBIDDEN. A '0 findings' verdict is only"
+  echo "valid when the coverage ledger enumerates this entire inventory as read"
+  echo "this run."
 } >"$OUT/README.txt"
 
 log "evidence collected in $OUT"
