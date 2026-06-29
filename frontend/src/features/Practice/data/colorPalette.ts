@@ -43,43 +43,6 @@ export const COLOR_PALETTE: Readonly<Record<SpiralDynamicsColor, ColorSwatch>> =
   'Clear Light': { bg: '#ffffff', text: '#000000' },
 });
 
-const HEX_PATTERN = /^#?[0-9a-f]{6}$/i;
-
-function parseChannel(hex: string, offset: number): number {
-  return Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
-}
-
-function srgbToLinear(channel: number): number {
-  // sRGB → linear-light per WCAG 2.1 §1.4.3 definition of relative luminance.
-  return channel <= 0.039_28 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-}
-
-/**
- * Relative luminance of an sRGB hex colour per WCAG 2.1.
- *
- * Throws on malformed input so a typo in the palette surfaces as a loud
- * test failure rather than a silent `NaN` contrast ratio.
- */
-export function relativeLuminance(hex: string): number {
-  if (!HEX_PATTERN.test(hex)) {
-    throw new Error(`Expected 6-digit hex colour, got ${JSON.stringify(hex)}`);
-  }
-  const raw = hex.startsWith('#') ? hex.slice(1) : hex;
-  const r = srgbToLinear(parseChannel(raw, 0));
-  const g = srgbToLinear(parseChannel(raw, 2));
-  const b = srgbToLinear(parseChannel(raw, 4));
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-/** WCAG contrast ratio between two sRGB hex colours. Order-independent. */
-export function contrastRatio(a: string, b: string): number {
-  const la = relativeLuminance(a);
-  const lb = relativeLuminance(b);
-  const lighter = Math.max(la, lb);
-  const darker = Math.min(la, lb);
-  return (lighter + 0.05) / (darker + 0.05);
-}
-
 export function isSpiralDynamicsColor(value: string): value is SpiralDynamicsColor {
   return (SPIRAL_DYNAMICS_COLORS as readonly string[]).includes(value);
 }

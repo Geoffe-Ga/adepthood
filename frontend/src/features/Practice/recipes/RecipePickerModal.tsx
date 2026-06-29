@@ -444,11 +444,11 @@ const RecipeRowMutationButtons = (props: RecipeRowMutationButtonsProps): React.J
   );
 };
 
-type RowButtonVariant = 'primary' | 'default' | 'quiet' | 'quietDanger';
+type RowButtonVariant = 'primary' | 'quiet' | 'quietDanger';
 
 interface RowButtonProps {
   label: string;
-  variant?: RowButtonVariant;
+  variant: RowButtonVariant;
   /** Stretch to fill the row — used for the primary "Use this" action. */
   block?: boolean;
   disabled: boolean;
@@ -458,7 +458,7 @@ interface RowButtonProps {
 
 const RowButton = ({
   label,
-  variant = 'default',
+  variant,
   block = false,
   disabled,
   onPress,
@@ -466,13 +466,11 @@ const RowButton = ({
 }: RowButtonProps): React.JSX.Element => {
   const bg = {
     primary: styles.primaryButton,
-    default: styles.defaultButton,
     quiet: styles.quietButton,
     quietDanger: styles.quietButton,
   }[variant];
   const text = {
     primary: styles.lightText,
-    default: styles.defaultText,
     quiet: styles.quietText,
     quietDanger: styles.quietDangerText,
   }[variant];
@@ -618,10 +616,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   blockButton: { alignSelf: 'stretch', marginTop: SPACING.xs },
-  defaultButton: { backgroundColor: colors.background.accent, paddingHorizontal: SPACING.md },
   primaryButton: { backgroundColor: colors.primary, paddingHorizontal: SPACING.md },
   quietButton: { backgroundColor: 'transparent', paddingHorizontal: 0 },
-  defaultText: { color: colors.text.primary, fontSize: 13, fontWeight: '500' },
   lightText: { color: colors.text.light, fontSize: 14, fontWeight: '600' },
   quietText: { color: colors.text.secondaryAccessible, fontSize: 13, fontWeight: '500' },
   quietDangerText: { color: colors.danger, fontSize: 13, fontWeight: '500' },

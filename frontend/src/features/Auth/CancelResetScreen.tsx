@@ -3,11 +3,10 @@ import { ActivityIndicator, StyleSheet, Text, TouchableOpacity } from 'react-nat
 
 import { authStyles as styles } from './auth.styles';
 import { AuthScreenContainer } from './AuthScreenContainer';
+import { MIN_TOKEN_LENGTH } from './resetToken';
 
 import { auth as authApi } from '@/api';
 import { SPACING, colors } from '@/design/tokens';
-
-const MIN_TOKEN_LENGTH = 32;
 
 type CancelStatus = 'pending' | 'success' | 'error' | 'invalid_token';
 

@@ -1,7 +1,6 @@
 import { Check, ChevronLeft, ChevronRight, Pencil } from 'lucide-react-native';
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -47,6 +46,8 @@ import {
   isGoalAchieved,
   calculateTodaysProgress,
 } from '../HabitUtils';
+
+import ConfirmDialog from './ConfirmDialog';
 
 /** Height of the goal progress bar; tier star markers are centered on it. */
 const MODAL_BAR_HEIGHT = 12;
@@ -937,38 +938,37 @@ const useGoalGroup = (habit: GoalModalProps['habit']) => {
   return goalGroup;
 };
 
-const confirmGoalUpdate = (
+interface PendingGoalEdit {
+  tier: 'low' | 'clear';
+  goal: Goal;
+  newTarget: number;
+  title: string;
+  message: string;
+}
+
+/**
+ * Build the pending goal-edit confirmation for a marker drop, or ``null`` when
+ * the drop is a no-op. Rendered via ``ConfirmDialog`` rather than ``Alert.alert``
+ * because the latter is a no-op on React Native Web mobile (#786).
+ */
+const buildPendingGoalEdit = (
   tier: 'low' | 'clear',
   percent: number,
-  lowGoal: Goal | undefined,
-  clearGoal: Goal | undefined,
-  stretchGoal: Goal | undefined,
+  tiers: ReturnType<typeof useGoalTiers>,
   habitId: number | undefined,
-  markers: { low: number; clear: number },
-  setLowMarker: (_v: number) => void,
-  setClearMarker: (_v: number) => void,
-  onUpdateGoal: GoalModalProps['onUpdateGoal'],
-) => {
-  const goal = tier === 'low' ? lowGoal : clearGoal;
-  if (!goal || !habitId) return;
-  const stretchTarget = stretchGoal ? getGoalTarget(stretchGoal) : goal.target;
+): PendingGoalEdit | null => {
+  const goal = tier === 'low' ? tiers.lowGoal : tiers.clearGoal;
+  if (!goal || !habitId) return null;
+  const stretchTarget = tiers.stretchGoal ? getGoalTarget(tiers.stretchGoal) : goal.target;
   const newTarget = Math.max(1, Math.round((percent / 100) * stretchTarget));
   const tierLabel = tier === 'low' ? 'Low Grit' : 'Clear Goal';
-  Alert.alert(
-    `Edit ${tierLabel.split(' ')[0]} Goal`,
-    `Edit the ${tierLabel} to be ${newTarget} ${goal.target_unit} ${goal.frequency_unit.replace('_', ' ')}?`,
-    [
-      {
-        text: 'No',
-        style: 'cancel',
-        onPress: () => {
-          if (tier === 'low') setLowMarker(markers.low);
-          else setClearMarker(markers.clear);
-        },
-      },
-      { text: 'Yes', onPress: () => onUpdateGoal(habitId, { ...goal, target: newTarget }) },
-    ],
-  );
+  return {
+    tier,
+    goal,
+    newTarget,
+    title: `Edit ${tierLabel.split(' ')[0]} Goal`,
+    message: `Edit the ${tierLabel} to be ${newTarget} ${goal.target_unit} ${goal.frequency_unit.replace('_', ' ')}?`,
+  };
 };
 
 function useGoalTiers(habit: GoalModalProps['habit']) {
@@ -1018,20 +1018,21 @@ function useGoalConfirm(
   setClearMarker: (_v: number) => void,
   onUpdateGoal: GoalModalProps['onUpdateGoal'],
 ) {
-  return (tier: 'low' | 'clear', percent: number) => {
-    confirmGoalUpdate(
-      tier,
-      percent,
-      tiers.lowGoal,
-      tiers.clearGoal,
-      tiers.stretchGoal,
-      habitId,
-      tiers.markers,
-      setLowMarker,
-      setClearMarker,
-      onUpdateGoal,
-    );
+  const [pending, setPending] = useState<PendingGoalEdit | null>(null);
+  const onConfirm = (tier: 'low' | 'clear', percent: number) => {
+    const edit = buildPendingGoalEdit(tier, percent, tiers, habitId);
+    if (edit) setPending(edit);
   };
+  const cancelPending = () => {
+    if (pending?.tier === 'low') setLowMarker(tiers.markers.low);
+    else if (pending?.tier === 'clear') setClearMarker(tiers.markers.clear);
+    setPending(null);
+  };
+  const applyPending = () => {
+    if (pending && habitId) onUpdateGoal(habitId, { ...pending.goal, target: pending.newTarget });
+    setPending(null);
+  };
+  return { onConfirm, pending, cancelPending, applyPending };
 }
 
 const useGoalMarkers = (
@@ -1053,7 +1054,13 @@ const useGoalMarkers = (
     barWidth.current = e.nativeEvent.layout.width;
   };
 
-  const onConfirm = useGoalConfirm(tiers, habit?.id, setLowMarker, setClearMarker, onUpdateGoal);
+  const { onConfirm, pending, cancelPending, applyPending } = useGoalConfirm(
+    tiers,
+    habit?.id,
+    setLowMarker,
+    setClearMarker,
+    onUpdateGoal,
+  );
   const { lowPan, clearPan } = useMarkerPanResponders(
     tiers,
     barWidth,
@@ -1075,6 +1082,9 @@ const useGoalMarkers = (
     lowPan,
     clearPan,
     handleBarLayout,
+    pendingGoalEdit: pending,
+    cancelGoalEdit: cancelPending,
+    applyGoalEdit: applyPending,
   };
 };
 
@@ -1211,6 +1221,25 @@ const useLogState = (
   return { logAmount, setLogAmount, logDate, setLogDate, handleLogUnit };
 };
 
+const GoalEditConfirmDialog = ({
+  m,
+}: {
+  m: ReturnType<typeof useGoalMarkers>;
+}): React.JSX.Element => (
+  <ConfirmDialog
+    visible={!!m.pendingGoalEdit}
+    title={m.pendingGoalEdit?.title ?? ''}
+    message={m.pendingGoalEdit?.message}
+    confirmLabel="Yes"
+    cancelLabel="No"
+    testID="goal-edit-confirm"
+    confirmTestID="goal-edit-confirm-button"
+    cancelTestID="goal-edit-cancel"
+    onCancel={m.cancelGoalEdit}
+    onConfirm={m.applyGoalEdit}
+  />
+);
+
 const GoalModalBody = ({
   habit,
   onClose,
@@ -1257,6 +1286,7 @@ const GoalModalBody = ({
         tz={userTimezone}
         onLog={log.handleLogUnit}
       />
+      <GoalEditConfirmDialog m={m} />
     </View>
   );
 };

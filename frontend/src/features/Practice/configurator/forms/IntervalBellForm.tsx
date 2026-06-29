@@ -1,13 +1,11 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import type { IntervalBellConfig, IntervalBellTone } from '../../engine/types';
+import type { IntervalBellConfig } from '../../engine/types';
 
-import { Chip, LabeledRow, NumericField } from './shared';
+import { BellToneRow, Chip, LabeledRow, NumericField } from './shared';
 
 import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
-
-const TONES: readonly IntervalBellTone[] = ['bowl', 'chime', 'gong'];
 
 interface Props {
   value: IntervalBellConfig;
@@ -30,7 +28,7 @@ const IntervalBellForm = ({ value, onChange }: Props): React.JSX.Element => {
       ) : (
         <CustomOffsetControls value={value} onChange={onChange} />
       )}
-      <BellToneRow value={value} onChange={onChange} />
+      <BellToneRow value={value} onChange={onChange} testIDPrefix="interval-bell" />
     </View>
   );
 };
@@ -77,22 +75,6 @@ const SpacingRow = ({ kind, value, onChange }: SpacingRowProps): React.JSX.Eleme
     </LabeledRow>
   );
 };
-
-const BellToneRow = ({ value, onChange }: Props): React.JSX.Element => (
-  <LabeledRow label="Bell tone">
-    <View style={localStyles.kindRow}>
-      {TONES.map((tone) => (
-        <Chip
-          key={tone}
-          label={tone}
-          active={value.bell_tone === tone}
-          onPress={() => onChange({ ...value, bell_tone: tone })}
-          testID={`interval-bell-tone-${tone}`}
-        />
-      ))}
-    </View>
-  </LabeledRow>
-);
 
 const EvenIntervalControls = ({ value, onChange }: Props): React.JSX.Element => (
   <LabeledRow label="Interval (minutes)">

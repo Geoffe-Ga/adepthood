@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef } from 'react';
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { resolveCardImage } from '../../data/assetResolver';
@@ -14,7 +14,7 @@ import {
 } from '../../engine/types';
 import { pickCardPhoto } from '../../utils/pickCardPhoto';
 
-import { Chip, LabeledRow, NumericField, TextField, ToggleRow } from './shared';
+import { Chip, CollapsibleSection, LabeledRow, NumericField, TextField, ToggleRow } from './shared';
 
 import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
 
@@ -43,7 +43,9 @@ const CardMeditationForm = ({ value, onChange }: Props): React.JSX.Element => {
       ) : (
         <DeckSummary deckId={value.deck_id} />
       )}
-      <AdvancedSection value={value} onChange={onChange} />
+      <CollapsibleSection testIDBase="card-meditation-advanced">
+        <AdvancedFields value={value} onChange={onChange} />
+      </CollapsibleSection>
     </View>
   );
 };
@@ -260,25 +262,6 @@ const CardPhotoField = ({ index, card, onUpdate }: CardPhotoFieldProps): React.J
   );
 };
 
-const AdvancedSection = ({ value, onChange }: Props): React.JSX.Element => {
-  const [open, setOpen] = useState(false);
-  return (
-    <View testID="card-meditation-advanced">
-      <TouchableOpacity
-        accessibilityRole="button"
-        accessibilityLabel="Advanced settings"
-        accessibilityState={{ expanded: open }}
-        onPress={() => setOpen((prev) => !prev)}
-        style={styles.advancedToggle}
-        testID="card-meditation-advanced-toggle"
-      >
-        <Text style={styles.advancedToggleText}>{`${open ? '▾' : '▸'} Advanced`}</Text>
-      </TouchableOpacity>
-      {open && <AdvancedFields value={value} onChange={onChange} />}
-    </View>
-  );
-};
-
 const AdvancedFields = ({ value, onChange }: Props): React.JSX.Element => (
   <View testID="card-meditation-advanced-fields">
     <LabeledRow label="Minutes with the card">
@@ -393,8 +376,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background.accent,
   },
   addButtonText: { fontSize: 14, fontWeight: '600', color: colors.text.primary },
-  advancedToggle: { paddingVertical: SPACING.md, marginTop: SPACING.sm },
-  advancedToggleText: { fontSize: 14, fontWeight: '600', color: colors.text.primary },
 });
 
 export default CardMeditationForm;

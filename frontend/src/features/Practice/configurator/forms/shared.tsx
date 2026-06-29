@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+
+import type { IntervalBellTone } from '../../engine/types';
 
 import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
 
@@ -190,7 +192,72 @@ export const ErrorList = ({ errors }: { errors: readonly string[] }): React.JSX.
   );
 };
 
+/** The bell tones every interval-bell mode offers. */
+export const BELL_TONES: readonly IntervalBellTone[] = ['bowl', 'chime', 'gong'];
+
+interface BellToneRowProps<T extends { bell_tone: IntervalBellTone }> {
+  value: T;
+  onChange: (_next: T) => void;
+  /** testID stem, e.g. ``interval-bell`` → ``interval-bell-tone-bowl``. */
+  testIDPrefix: string;
+}
+
+/** Tone picker shared by the interval-bell and random-interval-bell forms. */
+export const BellToneRow = <T extends { bell_tone: IntervalBellTone }>({
+  value,
+  onChange,
+  testIDPrefix,
+}: BellToneRowProps<T>): React.JSX.Element => (
+  <LabeledRow label="Bell tone">
+    <View style={formStyles.toneRow}>
+      {BELL_TONES.map((tone) => (
+        <Chip
+          key={tone}
+          label={tone}
+          active={value.bell_tone === tone}
+          onPress={() => onChange({ ...value, bell_tone: tone })}
+          testID={`${testIDPrefix}-tone-${tone}`}
+        />
+      ))}
+    </View>
+  </LabeledRow>
+);
+
+interface CollapsibleSectionProps {
+  /** testID stem, e.g. ``card-meditation-advanced`` → ``…-advanced-toggle``. */
+  testIDBase: string;
+  label?: string;
+  children: React.ReactNode;
+}
+
+/** "Advanced" disclosure shared across configurator forms. */
+export const CollapsibleSection = ({
+  testIDBase,
+  label = 'Advanced',
+  children,
+}: CollapsibleSectionProps): React.JSX.Element => {
+  const [open, setOpen] = useState(false);
+  return (
+    <View testID={testIDBase}>
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={`${label} settings`}
+        accessibilityState={{ expanded: open }}
+        onPress={() => setOpen((prev) => !prev)}
+        style={formStyles.advancedToggle}
+        testID={`${testIDBase}-toggle`}
+      >
+        <Text style={formStyles.advancedToggleText}>{`${open ? '▾' : '▸'} ${label}`}</Text>
+      </TouchableOpacity>
+      {open && children}
+    </View>
+  );
+};
+
 const formStyles = StyleSheet.create({
+  toneRow: { flexDirection: 'row', gap: SPACING.xs, flexWrap: 'wrap' },
+  advancedToggle: { paddingVertical: SPACING.md, marginTop: SPACING.sm },
+  advancedToggleText: { fontSize: 14, fontWeight: '600', color: colors.text.primary },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

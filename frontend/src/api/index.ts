@@ -41,13 +41,6 @@ export type { Page } from './schemas';
 /** Default per-request timeout. Tuned long enough to cover slow 3G + warm-up. */
 export const FETCH_TIMEOUT_MS = 30_000;
 
-/**
- * Longer timeout applied to BotMason SSE streams. The server keeps the
- * connection open until the model finishes; a 30-second cap would kill the
- * tail of every reply.
- */
-export const STREAM_TIMEOUT_MS = 5 * 60_000;
-
 /** Maximum retry attempts **after** the initial request. */
 const MAX_RETRIES = 2;
 const BASE_BACKOFF_MS = 500;
@@ -1991,10 +1984,6 @@ export const practiceRecipes = {
  * `banner_text` is the fully formatted English string — the client
  * renders it verbatim, never assembling the copy from the structured
  * fields. The structured fields are still exposed for chips and tests.
- *
- * TODO(ritual-05): once #310 (frequency-copy endpoint) merges, align this
- * hand-written shape with the backend response (e.g. via a shared Zod schema)
- * for end-to-end type safety.
  */
 export interface FrequencyResponse {
   stage_number: number;

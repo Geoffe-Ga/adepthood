@@ -18,9 +18,11 @@ describe('SearchBar', () => {
   });
 
   it('renders search icon button when collapsed', () => {
-    const { getByTestId, queryByTestId } = render(<SearchBar onSearch={onSearch} />);
+    const { getByTestId, queryByTestId, getByText } = render(<SearchBar onSearch={onSearch} />);
     expect(getByTestId('search-toggle')).toBeTruthy();
     expect(queryByTestId('search-input')).toBeNull();
+    // Real magnifier glyph, not the old literal "?" placeholder.
+    expect(getByText('🔍')).toBeTruthy();
   });
 
   it('expands to show text input on toggle press', () => {
