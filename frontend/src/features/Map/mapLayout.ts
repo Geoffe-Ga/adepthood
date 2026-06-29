@@ -15,12 +15,6 @@
  * match the supplied spiral PNG rather than the app-wide spiral-dynamics swatches.
  */
 
-const SIDE_LEFT = 'left';
-const SIDE_RIGHT = 'right';
-
-/** Which side of the center column a stage's arrow loop sits on. */
-export type ArrowSide = typeof SIDE_LEFT | typeof SIDE_RIGHT;
-
 /** Static, design-specific copy + color for a single stage's left-column text. */
 export interface StageDisplay {
   stageNumber: number;
@@ -148,15 +142,3 @@ export const MAP_ROWS: readonly MapRow[] = [
   { rightLabel: 'Love', stageNumbers: [4, 3] },
   { rightLabel: 'Yes-And-Ness', stageNumbers: [2, 1] },
 ];
-
-/**
- * Even-numbered stages are the Divine-Feminine ("We" / "Feel") side and their
- * arrows return along the left; odd-numbered stages point right. This mirrors
- * the alternating sweep of the spiral artwork.
- */
-export const arrowSide = (stageNumber: number): ArrowSide =>
-  stageNumber % 2 === 0 ? SIDE_LEFT : SIDE_RIGHT;
-
-/** True for the Divine-Feminine side, which carries the grey background band. */
-export const isFeminineSide = (stageNumber: number): boolean =>
-  arrowSide(stageNumber) === SIDE_LEFT;
