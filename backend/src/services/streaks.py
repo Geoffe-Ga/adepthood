@@ -25,7 +25,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.dates import to_user_date, today_in_tz
-from domain.streaks import update_streak
+from domain.streaks import (
+    SubtractiveContext,
+    subtractive_current_streak,
+    subtractive_day_totals,
+    update_streak,
+)
 from models.goal_completion import GoalCompletion
 from schemas.milestone import Milestone
 
@@ -39,22 +44,6 @@ __all__ = [
     "compute_streak_before_and_after",
     "update_streak",
 ]
-
-
-@dataclass(frozen=True)
-class SubtractiveContext:
-    """Habit-level context required to compute a subtractive streak.
-
-    Bundles the two values a subtractive-habit streak walk needs into a
-    single kwarg so streak functions stay under the project's
-    ``PLR0913`` (max-5-args) bar even after picking up the abstention
-    code path.  ``clear_threshold`` is the day's failure cutoff (sum >
-    threshold = transgression); ``start_date`` is the habit's birth so
-    the walk cannot accrue streak days before the habit existed.
-    """
-
-    clear_threshold: float
-    start_date: date
 
 
 def _to_user_date(ts: datetime | str, user_timezone: str) -> date:
@@ -173,7 +162,7 @@ def _streak_from_day_totals(
 ) -> int:
     """Count the consecutive-day streak from pre-bucketed day totals."""
     if subtractive is not None:
-        return _compute_subtractive_streak(day_totals, user_timezone, subtractive)
+        return subtractive_current_streak(day_totals, user_timezone, subtractive)
 
     sorted_days = sorted(day_totals, reverse=True)
     # Mirror the frontend's recency gate so a stale chain reports 0 here
@@ -237,60 +226,6 @@ def _completed_user_dates(
     return {_to_user_date(c.timestamp, user_timezone) for c in completions if c.completed_units > 0}
 
 
-def _bucket_day_totals(
-    completions: Sequence[GoalCompletion],
-    user_timezone: str,
-) -> dict[date, float]:
-    """Sum completion units per user-local day, *without* the >0 filter.
-
-    The additive path uses :func:`_completed_user_dates` because absence
-    of a row is the failure signal there.  For subtractive habits the
-    opposite is true (no row = perfect abstention), so the bucketing
-    must keep zero-sum days addressable too.  Returns ``{day: total}``;
-    callers treat ``get(day, 0.0)`` as the canonical "did the user stay
-    under their limit" probe.
-    """
-    day_totals: dict[date, float] = {}
-    for c in completions:
-        day = _to_user_date(c.timestamp, user_timezone)
-        day_totals[day] = day_totals.get(day, 0.0) + c.completed_units
-    return day_totals
-
-
-def _compute_subtractive_streak(
-    day_totals: dict[date, float],
-    user_timezone: str,
-    ctx: SubtractiveContext,
-) -> int:
-    """Count consecutive abstention days for a subtractive habit.
-
-    Walks backwards from today.  A day counts toward the streak when
-    the user's total for that day is at most ``ctx.clear_threshold`` —
-    which is trivially true for a day that has no row at all (no log =
-    didn't slip).  The walk stops when:
-
-    * the user logged *above* the clear threshold on that day
-      (a "transgression" breaks the chain), or
-    * the cursor crosses ``ctx.start_date`` going backwards (you
-      cannot accrue streak before the habit existed).
-
-    Returns 0 when the habit's start_date is in the future relative to
-    the user's "today" — the habit hasn't begun yet, so there is no
-    abstention to count.
-    """
-    today = today_in_tz(user_timezone)
-    if ctx.start_date > today:
-        return 0
-    streak = 0
-    cursor = today
-    while cursor >= ctx.start_date:
-        if day_totals.get(cursor, 0.0) > ctx.clear_threshold:
-            break
-        streak += 1
-        cursor -= timedelta(days=1)
-    return streak
-
-
 def compute_habit_streak(
     completions: Sequence[GoalCompletion],
     user_timezone: str = "UTC",
@@ -317,8 +252,8 @@ def compute_habit_streak(
     ``start_date`` to walk backwards counting abstention days instead.
     """
     if subtractive is not None:
-        day_totals = _bucket_day_totals(completions, user_timezone)
-        return _compute_subtractive_streak(day_totals, user_timezone, subtractive)
+        day_totals = subtractive_day_totals(completions, user_timezone)
+        return subtractive_current_streak(day_totals, user_timezone, subtractive)
     dates = _completed_user_dates(completions, user_timezone)
     if not dates:
         return 0
