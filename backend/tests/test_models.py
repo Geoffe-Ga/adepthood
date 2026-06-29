@@ -22,7 +22,6 @@ from sqlalchemy.orm import Mapper
 from sqlmodel import SQLModel
 
 from models import (
-    ChatSpend,
     ContentCompletion,
     CourseStage,
     EnergyPlan,
@@ -69,7 +68,6 @@ EXPECTED_TABLES: dict[type, str] = {
     PracticeRecipe: "practicerecipe",
     PracticeRecipeStep: "practicerecipestep",
     ContentCompletion: "contentcompletion",
-    ChatSpend: "chatspend",
     EnergyPlan: "energyplan",
     PracticeSessionSpend: "practicesessionspend",
     WalletAudit: "walletaudit",
@@ -105,7 +103,6 @@ FOREIGN_KEYS: list[tuple[type, str, str, str | None]] = [
     (PracticeRecipeStep, "recipe_id", "practicerecipe", "CASCADE"),
     (ContentCompletion, "user_id", "user", "CASCADE"),
     (ContentCompletion, "content_id", "stagecontent", None),
-    (ChatSpend, "user_id", "user", "CASCADE"),
     (EnergyPlan, "user_id", "user", "CASCADE"),
     (PracticeSessionSpend, "user_id", "user", "CASCADE"),
     (PracticeSessionSpend, "session_id", "practicesession", "CASCADE"),
@@ -119,7 +116,6 @@ FOREIGN_KEYS: list[tuple[type, str, str, str | None]] = [
 # Named composite UNIQUE constraints that must exist on the table.
 COMPOSITE_UNIQUES: list[tuple[type, str]] = [
     (PromptResponse, "uq_promptresponse_user_week"),
-    (ChatSpend, "uq_chatspend_user_idem_key"),
     (PracticeSessionSpend, "uq_practicesessionspend_user_idem_key"),
     (ContentCompletion, "uq_contentcompletion_user_content"),
 ]

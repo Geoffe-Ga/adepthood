@@ -5,7 +5,7 @@ lost its state on restart): two requests carrying the same ``Idempotency-Key``
 on different workers could both insert a fresh ``PracticeSession``. One row per
 ``(user_id, idem_key)`` records the deduplicated ``session_id``; the UNIQUE
 constraint lets the database serialise the check-then-insert race across workers
-without process-local locks. Modelled on :class:`models.chat_spend.ChatSpend`.
+without process-local locks.
 
 Unlike chat (slow LLM calls need an in-flight tombstone window), practice-session
 writes are fast and synchronous, so there is no tombstone: the row is inserted in
@@ -20,7 +20,7 @@ from sqlalchemy import Column, DateTime, String, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 # SHA-256 hex digest is 64 chars; column headroom to 128 for a future hash
-# algorithm migration (mirrors ``ChatSpend.idem_key``).
+# algorithm migration.
 _IDEM_KEY_COLUMN_WIDTH = 128
 
 

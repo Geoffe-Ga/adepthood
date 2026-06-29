@@ -1277,36 +1277,6 @@ export const resonance = {
   },
 };
 
-// Wallet (BotMason credit) types — the chat endpoints were retired with the
-// journal-resonance redesign; only the wallet surface remains.
-export interface BalanceResponse {
-  balance: number;
-}
-
-export interface UsageResponse {
-  monthly_messages_used: number;
-  monthly_messages_remaining: number;
-  monthly_cap: number;
-  monthly_reset_date: string;
-  offering_balance: number;
-}
-
-export const botmason = {
-  getBalance(token?: string): Promise<BalanceResponse> {
-    return request<BalanceResponse>('/user/balance', { token });
-  },
-  getUsage(token?: string): Promise<UsageResponse> {
-    return request<UsageResponse>('/user/usage', { token });
-  },
-  addBalance(amount: number, token?: string): Promise<{ balance: number; added: number }> {
-    return request<{ balance: number; added: number }>('/user/balance/add', {
-      method: 'POST',
-      body: { amount },
-      token,
-    });
-  },
-};
-
 // Prompts types and client
 export interface PromptDetail {
   week_number: number;
@@ -2375,7 +2345,6 @@ export default {
   goalGroups,
   goals,
   journal,
-  botmason,
   prompts,
   stages,
   course,
