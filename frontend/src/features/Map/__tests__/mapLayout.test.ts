@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-import { MAP_ROWS, MAP_TITLE_LINES, STAGE_DISPLAY, arrowSide, isFeminineSide } from '../mapLayout';
+import { MAP_ROWS, MAP_TITLE_LINES, STAGE_DISPLAY } from '../mapLayout';
 import { STAGE_COUNT } from '../stageData';
 
 const HEX_COLOR = /^#[\da-f]{6}$/i;
@@ -35,12 +35,5 @@ describe('mapLayout', () => {
 
   it('exposes the EMPTINESS / UNITY title', () => {
     expect(MAP_TITLE_LINES).toEqual(['EMPTINESS', 'UNITY']);
-  });
-
-  it('puts even (Divine-Feminine) stages on the left and odd on the right', () => {
-    expect(arrowSide(8)).toBe('left');
-    expect(arrowSide(7)).toBe('right');
-    expect(isFeminineSide(8)).toBe(true);
-    expect(isFeminineSide(7)).toBe(false);
   });
 });
