@@ -36,9 +36,11 @@ import datetime as dt
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from typing import Any, cast
 
 import stats
@@ -239,22 +241,34 @@ def fetch_pr_verdicts(repo: str, number: int, *, token: str) -> list[str]:
     return verdicts
 
 
-def fetch_repo_net_lines(repo: str, *, token: str, attempts: int = 3) -> int | None:
+def fetch_repo_net_lines(
+    repo: str,
+    *,
+    token: str,
+    attempts: int = 4,
+    sleep: Callable[[float], None] = time.sleep,
+) -> int | None:
     """Return net lines of code across the whole repo via the code-frequency stats API.
 
     GitHub computes the per-week additions/deletions stats asynchronously and
-    answers 202 with an empty body on a cold cache, so retry a few times. Any
-    failure (still warming, or an HTTP/transport error) returns None so the recap
-    shows a placeholder for the full-repo figure instead of failing outright.
+    answers 202 with an empty body on a cold cache; ``_request_json`` surfaces
+    that as ``None``. The recap runs right after a merge, so the cache is almost
+    always cold — wait with exponential backoff (2s, 4s, 8s) between attempts to
+    let it warm rather than firing all retries back-to-back. A genuine ``200 []``
+    (parsed as an empty list, not ``None``) is a real "no history" answer and
+    yields ``0 net``. Only a still-cold cache after every attempt, or an
+    HTTP/transport error, returns ``None`` so the recap shows the ``—`` placeholder.
     """
     url = f"{GITHUB_API}/repos/{repo}/stats/code_frequency"
-    for _ in range(attempts):
+    for attempt in range(attempts):
         try:
             data = _request_json(url, headers=_gh_headers(token))
         except (urllib.error.HTTPError, urllib.error.URLError):
             return None
-        if data:
+        if data is not None:  # 200 with rows, or a valid empty [] → 0 net
             return stats.net_lines_from_code_frequency(cast("list[list[int]]", data))
+        if attempt < attempts - 1:  # cold 202 — give the async cache time to warm
+            sleep(2.0 * (2**attempt))
     return None
 
 

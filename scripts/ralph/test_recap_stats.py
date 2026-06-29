@@ -309,8 +309,42 @@ def test_fetch_repo_net_lines_sums_code_frequency(monkeypatch: pytest.MonkeyPatc
 
 def test_fetch_repo_net_lines_none_when_stats_still_warming(monkeypatch: pytest.MonkeyPatch) -> None:
     # A 202 from GitHub yields an empty body (None); retries exhaust to None.
+    # Inject a no-op sleep so the backoff doesn't actually wait.
     monkeypatch.setattr(recap, "_request_json", lambda *a, **k: None)
-    assert recap.fetch_repo_net_lines("owner/repo", token="t", attempts=2) is None
+    assert (
+        recap.fetch_repo_net_lines("owner/repo", token="t", attempts=2, sleep=lambda _s: None)
+        is None
+    )
+
+
+def test_fetch_repo_net_lines_warms_to_data_after_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Cold 202 (None) twice, then the warmed stats land — backoff between tries.
+    responses: list[object] = [None, None, [[0, 100, -40]]]
+    calls = {"n": 0}
+
+    def _req(*_a: Any, **_k: Any) -> object:
+        out = responses[calls["n"]]
+        calls["n"] += 1
+        return out
+
+    monkeypatch.setattr(recap, "_request_json", _req)
+    slept: list[float] = []
+    result = recap.fetch_repo_net_lines("owner/repo", token="t", attempts=4, sleep=slept.append)
+    assert result == 60  # 100 + (-40)
+    assert calls["n"] == 3
+    assert slept == [2.0, 4.0]  # exponential backoff before the 2nd and 3rd attempts
+
+
+def test_fetch_repo_net_lines_empty_list_is_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A valid 200 [] (no history) is 0 net, not the "—" placeholder.
+    monkeypatch.setattr(recap, "_request_json", lambda *a, **k: [])
+    assert recap.fetch_repo_net_lines("owner/repo", token="t", sleep=lambda _s: None) == 0
+
+
+def test_loc_line_renders_zero_net_not_dash() -> None:
+    line = recap._loc_line({"additions": 0, "deletions": 0}, {"additions": 0, "deletions": 0}, 0)
+    assert "0 net" in line
+    assert "—" not in line
 
 
 def test_fetch_repo_net_lines_none_on_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
