@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { Habit } from '../features/Habits/Habits.types';
 
+import { resetCorruptKey } from './jsonStore';
 import { serialize } from './serializedWrite';
 
 const STORAGE_KEY = '@adepthood/habits';
@@ -28,22 +29,6 @@ function rehydrateHabit(raw: Habit): Habit {
       timestamp: new Date(c.timestamp),
     })),
   };
-}
-
-/**
- * BUG-FRONTEND-INFRA-011 — when AsyncStorage hands us malformed JSON we used
- * to silently return ``null`` / ``[]``, masking both a parse failure and the
- * fact that future writes would keep appending to corrupt data. Now we log,
- * clear the poisoned key so subsequent launches self-heal, and let the
- * caller show a toast if the loss is user-visible.
- */
-async function resetCorruptKey(key: string, err: unknown): Promise<void> {
-  console.warn(`[storage] corrupt JSON in ${key}, clearing to self-heal`, err);
-  try {
-    await AsyncStorage.removeItem(key);
-  } catch (removeErr) {
-    console.warn(`[storage] failed to clear corrupt key ${key}`, removeErr);
-  }
 }
 
 export async function saveHabits(habits: Habit[]): Promise<void> {

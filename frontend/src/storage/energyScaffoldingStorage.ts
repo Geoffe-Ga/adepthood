@@ -1,16 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const ARCHIVED_KEY = '@adepthood/energy_scaffolding_archived';
+import { resetCorruptKey } from './jsonStore';
 
-// Clears poisoned storage on bad JSON so the next launch self-heals.
-async function resetCorruptKey(key: string, err: unknown): Promise<void> {
-  console.warn(`[storage] corrupt JSON in ${key}, clearing to self-heal`, err);
-  try {
-    await AsyncStorage.removeItem(key);
-  } catch (removeErr) {
-    console.warn(`[storage] failed to clear corrupt key ${key}`, removeErr);
-  }
-}
+const ARCHIVED_KEY = '@adepthood/energy_scaffolding_archived';
 
 // Device-scoped (not wiped on logout) so the dismissal survives the next login.
 export async function saveEnergyScaffoldingArchived(archived: boolean): Promise<void> {

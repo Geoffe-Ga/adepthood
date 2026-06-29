@@ -35,6 +35,7 @@ import {
 import useResponsive from '../../../design/useResponsive';
 import { addDaysInTZ, dayKeyInTZ, todayInUserTZ } from '../../../utils/dateUtils';
 import { TARGET_UNITS, FREQUENCY_UNITS } from '../constants';
+import { TIER_LABELS, centeredTranslateX, tooltipBoxStyle } from '../goalMarker';
 import styles from '../Habits.styles';
 import type { GoalModalProps, Goal } from '../Habits.types';
 import {
@@ -50,12 +51,6 @@ import {
 /** Height of the goal progress bar; tier star markers are centered on it. */
 const MODAL_BAR_HEIGHT = 12;
 
-/** Center a star of the given size over its position, clamped at the bar edges. */
-const centeredTranslateX = (clamped: number, size: number): number => {
-  if (clamped === 0) return 0;
-  return clamped === 100 ? -size : -size / 2;
-};
-
 /** Position a tier star marker on the bar: centered on its threshold and on the bar height. */
 const markerContainerStyle = (leftPct: number, z: number, starSize: number): ViewStyle => {
   const clamped = clampPercentage(leftPct);
@@ -69,29 +64,12 @@ const markerContainerStyle = (leftPct: number, z: number, starSize: number): Vie
   };
 };
 
-const tooltipStyle = (color: string): ViewStyle => ({
-  position: 'absolute',
-  bottom: 16,
-  backgroundColor: '#fffdf7',
-  borderWidth: 1,
-  borderColor: color,
-  borderRadius: 4,
-  paddingHorizontal: 4,
-  paddingVertical: 2,
-});
-
 const tooltipTextStyle: TextStyle = {
   fontSize: 10,
   color: '#333',
   fontFamily: 'serif',
   fontStyle: 'italic',
   letterSpacing: 0.5,
-};
-
-const TIER_LABELS: Record<string, string> = {
-  low: 'Low Grit',
-  clear: 'Clear Goal',
-  stretch: 'Stretch Goal',
 };
 
 const formatGoalTooltip = (g: Goal | undefined): string => {
@@ -155,7 +133,7 @@ const GoalMarkerItem = ({
       style={markerContainerStyle(position, zIndex, starSize)}
     >
       {tooltip === tier && (
-        <View testID={`modal-tooltip-${tier}`} style={tooltipStyle(getTierColor(tier))}>
+        <View testID={`modal-tooltip-${tier}`} style={tooltipBoxStyle(getTierColor(tier))}>
           <Text style={tooltipTextStyle}>{formatGoalTooltip(goal)}</Text>
         </View>
       )}

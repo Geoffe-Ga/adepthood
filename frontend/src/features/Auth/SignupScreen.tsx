@@ -4,13 +4,13 @@ import { Text, TextInput, TouchableOpacity } from 'react-native';
 import { authStyles as styles } from './auth.styles';
 import { AuthScreenContainer } from './AuthScreenContainer';
 import { canonicalizeEmail } from './canonicalizeEmail';
+import { validatePasswordPair } from './passwordValidation';
 
 import { formatApiError } from '@/api/errorMessages';
 import { useAuth } from '@/context/AuthContext';
 
 const SIGNUP_FALLBACK =
   "We couldn't create your account. Check your connection, then try again in a moment.";
-const MIN_PASSWORD_LENGTH = 8;
 
 interface Props {
   navigation: { navigate: (_screen: string) => void };
@@ -108,12 +108,9 @@ export default function SignupScreen({ navigation }: Props) {
   const handleSignup = async () => {
     setError(null);
 
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      setError(`Pick a password that is at least ${MIN_PASSWORD_LENGTH} characters long.`);
-      return;
-    }
-    if (password !== confirmPassword) {
-      setError("Those passwords don't match. Re-type both fields to confirm.");
+    const validationError = validatePasswordPair(password, confirmPassword);
+    if (validationError) {
+      setError(validationError);
       return;
     }
 
