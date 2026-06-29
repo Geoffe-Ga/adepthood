@@ -3,7 +3,6 @@
 import { brightenColor, STAGE_COLORS } from '../../../design/tokens';
 import type { Habit, Goal } from '../Habits.types';
 import {
-  calculateHabitProgress,
   getProgressPercentage,
   getGoalTier,
   getProgressBarColor,
@@ -77,26 +76,6 @@ describe('habit progress utilities', () => {
       is_additive: false,
     },
   ];
-
-  it('sums completion units for habit progress', () => {
-    const habit: Habit = {
-      id: 1,
-      stage: 'Beige',
-      name: 'Test',
-      icon: '🔥',
-      streak: 0,
-      energy_cost: 0,
-      energy_return: 0,
-      start_date: new Date(),
-      goals: additiveGoals,
-      completions: [
-        { id: 'c-1', timestamp: new Date(), completed_units: 1 },
-        { id: 'c-2', timestamp: new Date(), completed_units: 2.5 },
-      ],
-    };
-
-    expect(calculateHabitProgress(habit)).toBeCloseTo(3.5);
-  });
 
   it('reports additive progress against the stretch target on a unified 0-100 scale', () => {
     const habit: Habit = {

@@ -208,7 +208,3 @@ export const cancelForHabit = async (habitId: number): Promise<void> => {
     console.error(`Failed to cancel notifications for habit ${habitId}:`, error);
   }
 };
-
-export const scheduleForHabit = async (habit: Habit): Promise<string[]> => {
-  return updateHabitNotifications(habit);
-};

@@ -360,22 +360,13 @@ function WritingColumn({
   );
 }
 
-/** Quiet placeholder margin content until the notes UI lands (#617). */
-function ResonanceMargin({ count, error }: { count: number; error: string | null }) {
-  return (
-    <>
-      {count > 0 ? (
-        <Text style={styles.marginCount} testID="journal-margin-count">
-          {count === 1 ? '1 note in the margin' : `${count} notes in the margin`}
-        </Text>
-      ) : null}
-      {error ? (
-        <Text style={styles.marginError} testID="journal-resonance-error">
-          {error}
-        </Text>
-      ) : null}
-    </>
-  );
+/** Margin content for the no-notes case: surfaces a resonance error, if any. */
+function ResonanceMargin({ error }: { error: string | null }) {
+  return error ? (
+    <Text style={styles.marginError} testID="journal-resonance-error">
+      {error}
+    </Text>
+  ) : null;
 }
 
 /** Read-mode body: the title + the highlighted passage tree + an Edit affordance. */
@@ -617,7 +608,7 @@ function JournalPage({
   if (renderMargin) marginContent = renderMargin({ body: ctl.autosave.body, isIdle: ctl.isIdle });
   else if (notes.length > 0) {
     marginContent = <MarginNoteList notes={notes} onOpen={ctl.modal.onOpenNote} />;
-  } else marginContent = <ResonanceMargin count={0} error={ctl.resonance.error} />;
+  } else marginContent = <ResonanceMargin error={ctl.resonance.error} />;
 
   return (
     <View style={styles.desk}>

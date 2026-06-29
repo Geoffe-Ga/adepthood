@@ -34,7 +34,7 @@ export interface Habit {
    * This value is derived from the sum of all completion units
    * recorded in the `completions` array and should not be set
    * directly. It is kept optional to encourage calculating the
-   * current progress programmatically via `calculateHabitProgress`.
+   * current progress programmatically via `calculateTodaysProgress`.
    */
   progress?: number;
   completions?: Completion[];

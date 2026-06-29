@@ -14,8 +14,8 @@ import {
   ApiTimeoutError,
   ApiValidationError,
   auth,
-  energy,
   FETCH_TIMEOUT_MS,
+  goalCompletions,
   habits,
   practiceSessions,
   setOnUnauthorized,
@@ -222,14 +222,14 @@ describe('BUG-007: retry policy', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  test('retries a POST when the caller supplies X-Idempotency-Key', async () => {
+  test('retries a POST when the caller supplies an idempotency key', async () => {
     jest.useFakeTimers();
     mockFetch
       .mockReturnValueOnce(jsonResponse({ detail: 'overloaded' }, 503))
-      .mockReturnValueOnce(jsonResponse({ total_cost: 0, total_return: 0, plan: [] }));
-    const promise = energy.createPlan(
-      { habits: [], start_date: '2026-04-15' },
-      'idempotency-key-abc',
+      .mockReturnValueOnce(jsonResponse({ result: 'logged', reason_code: 'ok' }));
+    const promise = goalCompletions.create(
+      { goal_id: 1, did_complete: true },
+      { idempotencyKey: 'idempotency-key-abc' },
     );
     await jest.runAllTimersAsync();
     await promise;
