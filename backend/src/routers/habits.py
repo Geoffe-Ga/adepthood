@@ -69,16 +69,33 @@ def _subtractive_context(habit: Habit) -> SubtractiveContext | None:
     """Return the streak context for a subtractive habit, else ``None``.
 
     ``None`` selects the additive code path in :func:`compute_habit_streak`.
-    Onboarding writes the three tiers atomically with a shared
-    ``is_additive`` value, so the first subtractive *clear*-tier goal is
-    a sufficient probe; a habit lacking that goal (older test fixtures,
-    partial migrations) falls back to additive logic to avoid
-    mis-counting against a phantom threshold.
+
+    Polarity is decided by a single rule shared with the frontend
+    (``HabitUtils.getGoalTier``): a habit is subtractive iff **any** of its
+    goals is non-additive. Probing one specific tier let the backend and the UI
+    disagree when the tiers were not perfectly consistent — the backend took the
+    additive path and a never-logged abstention habit reported a ``0`` streak
+    while the badge said "Achieved" (BUG #768). The clear threshold comes from
+    the ``clear``-tier goal's target; if that tier is absent it falls back to the
+    first non-additive goal's target so a subtractive habit never silently
+    returns ``None`` and mis-counts down the additive path.
     """
-    clear = next((g for g in habit.goals if g.tier == "clear" and not g.is_additive), None)
-    if clear is None:
+    non_additive = [g for g in habit.goals if not g.is_additive]
+    if not non_additive:
         return None
-    return SubtractiveContext(clear_threshold=clear.target, start_date=habit.start_date)
+    threshold = _subtractive_threshold(habit, non_additive[0])
+    return SubtractiveContext(clear_threshold=threshold, start_date=habit.start_date)
+
+
+def _subtractive_threshold(habit: Habit, fallback: Goal) -> float:
+    """Abstention threshold for a subtractive streak.
+
+    The ``clear``-tier goal's target is the ceiling; if that tier is absent the
+    first non-additive goal (``fallback``) stands in so the streak still
+    computes rather than mis-counting down the additive path.
+    """
+    clear = next((g for g in habit.goals if g.tier == "clear"), None)
+    return clear.target if clear is not None else fallback.target
 
 
 def _populate_streak(habit: Habit, completions: list[GoalCompletion], user_timezone: str) -> None:
@@ -206,6 +223,7 @@ async def create_habit(
     payload: HabitCreate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> Habit:
     """Create a habit + three default goals; 409 over-quota or duplicate name."""
     await _ensure_under_quota(session, current_user)
@@ -213,6 +231,10 @@ async def create_habit(
     habit = Habit(user_id=current_user, **payload.model_dump())
     new_id = await _persist_habit_with_default_goals(session, habit)
     refreshed = await _refetch_with_goals(session, new_id, current_user)
+    # Recompute the streak like the list/detail paths so POST mirrors GET instead
+    # of returning the model default (0); a subtractive habit can already have a
+    # non-zero abstention streak from its start_date with no completions (#768).
+    await _populate_streaks_for(session, [refreshed], current_user, user_tz)
     logger.info("habit_created", extra={"user_id": current_user, "habit_id": refreshed.id})
     return refreshed
 

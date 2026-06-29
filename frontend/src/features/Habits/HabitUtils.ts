@@ -231,9 +231,14 @@ export const getGoalTier = (habit: Habit, tz: string = DEFAULT_TIMEZONE): GoalTi
   }
 
   const todayProgress = calculateTodaysProgress(habit, tz);
-  return lowGoal.is_additive
-    ? resolveAdditiveTier(todayProgress, lowGoal, clearGoal, stretchGoal)
-    : resolveSubtractiveTier(todayProgress, lowGoal, clearGoal, stretchGoal);
+  // A habit is subtractive iff ANY of its goals is non-additive — the same rule
+  // the backend's _subtractive_context uses, so the "Achieved" badge and the
+  // server-computed streak can never disagree (#768). Probing a single tier let
+  // them diverge when the tiers were not perfectly consistent.
+  const isSubtractive = habit.goals.some((g) => !g.is_additive);
+  return isSubtractive
+    ? resolveSubtractiveTier(todayProgress, lowGoal, clearGoal, stretchGoal)
+    : resolveAdditiveTier(todayProgress, lowGoal, clearGoal, stretchGoal);
 };
 
 /** Progress on the unified 0-100 scale shared with :func:`getMarkerPositions`. */
@@ -374,19 +379,22 @@ const computeCompletionRate = (sortedDays: Date[], totalUniqueDays: number): num
  * is additive or lacks the clear-tier sibling to read the threshold
  * from, falling back to the additive code path.
  *
- * Probes ``tier === 'clear' && !is_additive`` together so a partial
- * fixture (or future migration that lets per-tier ``is_additive`` drift)
- * cannot misclassify an additive habit as subtractive.  Mirrors the
- * backend ``_subtractive_context`` helper in ``routers/habits.py``.
+ * Subtractive iff **any** goal is non-additive — the single polarity rule
+ * shared with ``getGoalTier`` (the badge) and the backend
+ * ``_subtractive_context`` (BUG #768): probing one specific tier let the two
+ * disagree, so a never-logged abstention habit reported a ``0`` streak while
+ * the badge said "Achieved". The threshold comes from the ``clear``-tier goal,
+ * or the first non-additive goal if the clear tier is absent.
  */
 const subtractiveStreakInputs = (
   habit: Habit,
   tz: string,
 ): { clearThreshold: number; startDate: string } | null => {
-  const clearGoal = habit.goals.find((g) => g.tier === 'clear' && !g.is_additive);
-  if (!clearGoal) return null;
+  const nonAdditive = habit.goals.filter((g) => !g.is_additive);
+  if (nonAdditive.length === 0) return null;
+  const thresholdGoal = habit.goals.find((g) => g.tier === 'clear') ?? nonAdditive[0]!;
   return {
-    clearThreshold: getGoalTarget(clearGoal),
+    clearThreshold: getGoalTarget(thresholdGoal),
     startDate: dayKeyInTZ(habit.start_date, tz),
   };
 };

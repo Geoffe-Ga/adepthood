@@ -10,6 +10,7 @@ from http import HTTPStatus
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from domain.dates import today_in_tz
 from models.goal import Goal
@@ -752,3 +753,39 @@ async def test_cross_tenant_completions_survive_a_commit_after_get(
     assert persisted is not None, "cross-tenant completion row was lost by a post-GET commit"
     assert persisted.goal_id == goal_id
     assert persisted.user_id == 999_999
+
+
+@pytest.mark.asyncio
+async def test_subtractive_habit_no_logs_streaks_from_start_date_via_list(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#768 wiring guard: a subtractive habit with zero logs streaks via GET /habits.
+
+    The list path (``_populate_streaks_for``) must take the subtractive streak
+    path for an any-non-additive habit and report the consecutive abstention
+    day-count, not 0 — the production symptom where the badge said "Achieved"
+    while the streak read 0.
+    """
+    headers = await _signup(async_client, "abstainer")
+    created = await async_client.post(
+        "/habits/", json=sample_payload(name="No Sugar"), headers=headers
+    )
+    assert created.status_code == HTTPStatus.OK
+    habit_id = created.json()["id"]
+
+    # POST creates additive defaults; flip them subtractive + backdate the start
+    # so the abstention chain is today + the five prior days = 6.
+    habit = await db_session.get(Habit, habit_id)
+    assert habit is not None
+    habit.start_date = today_in_tz("UTC") - timedelta(days=5)
+    goals = (
+        (await db_session.execute(select(Goal).where(Goal.habit_id == habit_id))).scalars().all()
+    )
+    for goal in goals:
+        goal.is_additive = False
+    await db_session.commit()
+
+    resp = await async_client.get("/habits/", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    row = next(h for h in resp.json() if h["id"] == habit_id)
+    assert row["streak"] == 6

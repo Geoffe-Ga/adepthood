@@ -114,6 +114,49 @@ describe('HabitUtils', () => {
     expect(Math.round(pct)).toBe(50);
   });
 
+  test('getGoalTier treats an any-non-additive habit as subtractive (#768)', () => {
+    // Inconsistent tiers: low is additive but clear/stretch are not. The old
+    // rule probed the low tier and resolved ADDITIVE, disagreeing with the
+    // backend (subtractive) so the badge said "Achieved" while the streak read 0.
+    // The new any-non-additive rule resolves subtractive on both sides.
+    const goals: Goal[] = [
+      {
+        id: 1,
+        tier: 'low',
+        title: 'low',
+        target: 10,
+        target_unit: 'u',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: true,
+      },
+      {
+        id: 2,
+        tier: 'clear',
+        title: 'clear',
+        target: 5,
+        target_unit: 'u',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: false,
+      },
+      {
+        id: 3,
+        tier: 'stretch',
+        title: 'stretch',
+        target: 2,
+        target_unit: 'u',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: false,
+      },
+    ];
+    // No units logged today → a subtractive habit is fully achieved (abstained);
+    // an additive one would not be. So `completedAllGoals` proves the polarity.
+    const habit: Habit = { ...baseHabit, goals, completions: [] };
+    expect(getGoalTier(habit).completedAllGoals).toBe(true);
+  });
+
   // Pins the missing-stretch fallback: ``stretchGoal ?? currentGoal``.
   test('getProgressPercentage falls back to currentGoal when stretch is missing (additive)', () => {
     const lowOnly: Goal = {
