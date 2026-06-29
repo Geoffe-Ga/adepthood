@@ -112,26 +112,3 @@ export const selectStages = (state: StageStoreState): StageData[] => state.stage
 export const selectCurrentStage = (state: StageStoreState): number => state.currentStage;
 export const selectStagesLoading = (state: StageStoreState): boolean => state.loading;
 export const selectStagesError = (state: StageStoreState): string | null => state.error;
-
-// BUG-FE-STATE-002: memoize per stage number so repeat
-// ``useStageStore(selectStageByNumber(n))`` calls return the SAME
-// closure and Zustand's internal slice ref stays warm.  Without the
-// cache, every render minted a fresh selector and Zustand re-subscribed
-// the store with one extra forced render per id change.
-const NULL_STAGE_SELECTOR = (_state: StageStoreState): StageData | undefined => undefined;
-const stageByNumberSelectorCache = new Map<
-  number,
-  (_state: StageStoreState) => StageData | undefined
->();
-
-export const selectStageByNumber = (
-  stageNumber: number | null | undefined,
-): ((_state: StageStoreState) => StageData | undefined) => {
-  if (stageNumber == null) return NULL_STAGE_SELECTOR;
-  let cached = stageByNumberSelectorCache.get(stageNumber);
-  if (cached === undefined) {
-    cached = (state: StageStoreState) => state.stagesByNumber[stageNumber];
-    stageByNumberSelectorCache.set(stageNumber, cached);
-  }
-  return cached;
-};

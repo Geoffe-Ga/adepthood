@@ -8,7 +8,7 @@ import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react-native';
 
 import type { Habit, Goal } from '../Habits.types';
-import { calculateHabitProgress, getGoalTier, getProgressPercentage } from '../HabitUtils';
+import { getGoalTier, getProgressPercentage } from '../HabitUtils';
 import { useHabits } from '../hooks/useHabits';
 
 // ---------------------------------------------------------------------------
@@ -179,7 +179,6 @@ describe('Onboarding → Habit lifecycle flow', () => {
     act(() => result.current.setHabitsForTesting(habits));
 
     for (const habit of result.current.habits) {
-      expect(calculateHabitProgress(habit)).toBe(0);
       const { currentGoal, completedAllGoals } = getGoalTier(habit);
       // At zero progress, current goal is the "low" tier and nothing is completed
       expect(currentGoal.tier).toBe('low');

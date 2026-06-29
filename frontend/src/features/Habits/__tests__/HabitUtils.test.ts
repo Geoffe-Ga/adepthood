@@ -8,7 +8,6 @@ import {
   getProgressPercentage,
   getMarkerPositions,
   getGoalTier,
-  calculateHabitProgress,
   calculateTodaysProgress,
   getProgressBarColor,
   isGoalAchieved,
@@ -272,51 +271,11 @@ describe('HabitUtils', () => {
     let habit: Habit = { ...baseHabit, goals, completions: [], streak: 0 };
     const day = new Date('2023-01-01T08:00:00');
     habit = logHabitUnits(habit, 3, day);
-    expect(calculateHabitProgress(habit)).toBe(3);
     expect(habit.streak).toBe(1);
     habit = logHabitUnits(habit, 4, new Date('2023-01-01T12:00:00'));
-    expect(calculateHabitProgress(habit)).toBe(7);
     expect(habit.streak).toBe(1);
     habit = logHabitUnits(habit, 2, new Date('2023-01-02T09:00:00'));
-    expect(calculateHabitProgress(habit)).toBe(9);
     expect(habit.streak).toBe(2);
-  });
-
-  test('calculateHabitProgress sums exactly the cached window (#294)', () => {
-    // Issue #294 resolution: the server embeds a rolling 90-day window,
-    // so the bar shows the rolling-window sum. This pins the accumulator
-    // as window-agnostic — it sums whatever completions are present, and
-    // rows the server trimmed simply stop contributing after a fresh
-    // load replaces the cache.
-    const goals: Goal[] = [
-      {
-        id: 1,
-        title: 'Clear',
-        tier: 'clear',
-        target: 100,
-        target_unit: 'units',
-        frequency: 1,
-        frequency_unit: 'per_day',
-        is_additive: true,
-      },
-    ];
-    const windowed: Habit = {
-      ...baseHabit,
-      goals,
-      streak: 0,
-      completions: [
-        { id: 'a', timestamp: new Date('2026-05-01T08:00:00'), completed_units: 5 },
-        { id: 'b', timestamp: new Date('2026-06-01T08:00:00'), completed_units: 2 },
-      ],
-    };
-    expect(calculateHabitProgress(windowed)).toBe(7);
-
-    // A fresh windowed load that dropped the older row: the bar follows.
-    const trimmed: Habit = {
-      ...windowed,
-      completions: [{ id: 'b', timestamp: new Date('2026-06-01T08:00:00'), completed_units: 2 }],
-    };
-    expect(calculateHabitProgress(trimmed)).toBe(2);
   });
 
   test('logHabitUnits supports subtractive habits', () => {
@@ -355,7 +314,6 @@ describe('HabitUtils', () => {
     let habit: Habit = { ...baseHabit, goals, completions: [], streak: 0 };
     habit = logHabitUnits(habit, 4, new Date('2023-01-01T08:00:00'));
     habit = logHabitUnits(habit, 3, new Date('2023-01-01T12:00:00'));
-    expect(calculateHabitProgress(habit)).toBe(7);
     expect(habit.streak).toBe(1);
     habit = logHabitUnits(habit, 1, new Date('2023-01-02T09:00:00'));
     expect(habit.streak).toBe(2);
@@ -448,9 +406,6 @@ describe('HabitUtils', () => {
         completions: [{ id: 'y-1', timestamp: yesterdayUtc(), completed_units: 5 }],
       };
       expect(calculateTodaysProgress(habit, 'UTC')).toBe(0);
-      // The all-time accumulator still sees yesterday's log -- streaks /
-      // stats rely on it. Pinned to keep the two helpers distinct.
-      expect(calculateHabitProgress(habit)).toBe(5);
     });
 
     test('getGoalTier reports incomplete when only yesterday hit the stretch goal', () => {

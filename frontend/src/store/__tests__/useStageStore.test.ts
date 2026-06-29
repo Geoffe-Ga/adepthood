@@ -111,17 +111,6 @@ describe('useStageStore', () => {
     warnSpy.mockRestore();
   });
 
-  it('selectStageByNumber returns a stage or undefined', () => {
-    const { useStageStore, selectStageByNumber } = require('../useStageStore');
-    act(() => useStageStore.getState().setStages([makeStage(3)]));
-    const state = useStageStore.getState();
-
-    expect(selectStageByNumber(3)(state)!.stageNumber).toBe(3);
-    expect(selectStageByNumber(99)(state)).toBeUndefined();
-    expect(selectStageByNumber(null)(state)).toBeUndefined();
-    expect(selectStageByNumber(undefined)(state)).toBeUndefined();
-  });
-
   // BUG-FE-STATE-001
   it('reset() restores the initial empty state', () => {
     const { useStageStore } = require('../useStageStore');

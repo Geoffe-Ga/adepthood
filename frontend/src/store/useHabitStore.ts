@@ -98,7 +98,6 @@ registerStoreReset(() => {
 
 export const selectHabits = (state: HabitStoreState): Habit[] => state.habits;
 export const selectHabitsLoading = (state: HabitStoreState): boolean => state.loading;
-export const selectHabitsError = (state: HabitStoreState): string | null => state.error;
 
 /**
  * Factory for a "single habit by ID" selector. The habit lookup is O(1) via
