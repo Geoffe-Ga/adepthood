@@ -4,7 +4,7 @@ The conversational chat endpoints were retired in favour of journal
 resonance; what remains here exercises the wallet surface
 (``/user/balance``, ``/user/usage``, ``/user/balance/add``) and the
 ``services.botmason`` provider layer (system-prompt loading, BYOK key
-resolution, provider routing, and streaming generation).
+resolution, and provider routing).
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import importlib
 import pathlib
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import ClassVar
@@ -578,36 +577,6 @@ async def test_generate_response_byok_key_overrides_stub_provider(
     assert _forwarded_key(mock_call) == _VALID_OPENAI_KEY
 
 
-@pytest.mark.asyncio
-async def test_generate_response_stream_byok_key_overrides_stub_provider(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``generate_response_stream`` also honours the BYOK key's provider on a stub server."""
-    monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
-
-    async def _fake(
-        _msg: str,
-        _history: list[dict[str, str]],
-        _prompt: str,
-        api_key: str | None,
-    ) -> AsyncIterator[tuple[str, LLMResponse | None]]:
-        yield "", _mock_openai_response(api_key or "")
-
-    monkeypatch.setattr(botmason_mod, "_stream_openai", _fake)
-    chunks = [
-        item
-        async for item in botmason_mod.generate_response_stream(
-            "hi",
-            [],
-            api_key=_VALID_OPENAI_KEY,
-        )
-    ]
-
-    assert chunks[-1][1] is not None
-    assert chunks[-1][1].text == _VALID_OPENAI_KEY
-
-
 # ── Monthly message cap / token wallet (issue #186) ───────────────────
 # Every user receives ``BOTMASON_MONTHLY_CAP`` free messages per calendar
 # month.  Once spent, requests fall through to ``offering_balance``; when
@@ -685,84 +654,6 @@ def test_compute_next_reset_normalises_naive_input() -> None:
     # mismatched comparisons later.
     result = compute_next_reset(datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC))
     assert result == datetime(2026, 7, 1, tzinfo=UTC)
-
-
-# ── generate_response_stream service unit tests ──────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_stub_stream_yields_words_then_final() -> None:
-    """The stub chunker emits the canned response word-by-word and a final payload."""
-    chunks: list[tuple[str, LLMResponse | None]] = [
-        item async for item in botmason_mod.generate_response_stream("ping", [])
-    ]
-
-    # At least two chunks (non-final plus final) so clients get progressive UI.
-    assert len(chunks) >= 2
-    # Non-final chunks have ``final=None``; only the last one carries metadata.
-    assert all(final is None for _, final in chunks[:-1])
-    _, last_final = chunks[-1]
-    assert last_final is not None
-    assert last_final.provider == "stub"
-    # Concatenation must round-trip to the canned stub text.
-    reassembled = "".join(chunk for chunk, _ in chunks)
-    assert reassembled == last_final.text
-    assert "ping" in last_final.text
-
-
-@pytest.mark.asyncio
-async def test_stream_dispatch_routes_to_configured_provider(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``generate_response_stream`` must fan out by ``BOTMASON_PROVIDER``.
-
-    We don't exercise the real provider SDKs in tests (they require network /
-    keys), so we patch the private streamers and assert the dispatcher picks
-    the right one and forwards the api_key override intact.
-    """
-
-    async def _fake(
-        _msg: str,
-        _history: list[dict[str, str]],
-        _prompt: str,
-        api_key: str | None,
-    ) -> AsyncIterator[tuple[str, LLMResponse | None]]:
-        # Echo the api_key back through the final LLMResponse so the caller
-        # can prove the override propagated without leaking it in logs.
-        final = LLMResponse(
-            text=api_key or "",
-            provider="fake",
-            model="fake",
-            prompt_tokens=0,
-            completion_tokens=0,
-        )
-        yield "", final
-
-    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
-    monkeypatch.setattr(botmason_mod, "_stream_openai", _fake)
-    openai_chunks = [
-        item
-        async for item in botmason_mod.generate_response_stream(
-            "hi",
-            [],
-            api_key="sk-override",  # pragma: allowlist secret
-        )
-    ]
-    assert openai_chunks[-1][1] is not None
-    assert openai_chunks[-1][1].text == "sk-override"
-
-    monkeypatch.setenv("BOTMASON_PROVIDER", "anthropic")
-    monkeypatch.setattr(botmason_mod, "_stream_anthropic", _fake)
-    anthropic_chunks = [
-        item
-        async for item in botmason_mod.generate_response_stream(
-            "hi",
-            [],
-            api_key="sk-ant-override",  # pragma: allowlist secret
-        )
-    ]
-    assert anthropic_chunks[-1][1] is not None
-    assert anthropic_chunks[-1][1].text == "sk-ant-override"
 
 
 # ── Issue #402: live-provider activation ────────────────────────────────
@@ -866,7 +757,6 @@ def test_registry_specs_are_internally_consistent() -> None:
     for name, spec in botmason_mod.PROVIDER_REGISTRY.items():
         assert spec.default_model in spec.allowed_models, name
         assert callable(getattr(botmason_mod, spec.call_name)), name
-        assert callable(getattr(botmason_mod, spec.stream_name)), name
         assert spec.key_prefix, name
 
 
