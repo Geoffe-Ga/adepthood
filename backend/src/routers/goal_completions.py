@@ -24,6 +24,7 @@ from models.goal_completion import GoalCompletion
 from models.habit import Habit
 from routers.auth import get_current_user
 from schemas import CheckInResult
+from schemas.checkin import CheckInReasonCode
 from services.streaks import (
     PendingCompletion,
     StreakScope,
@@ -31,7 +32,6 @@ from services.streaks import (
     check_milestones,
     compute_consecutive_streak,
     compute_streak_before_and_after,
-    update_streak,
 )
 
 
@@ -238,6 +238,22 @@ def _completion_timestamp(completed_on: date | None, user_timezone: str) -> date
     return start + (end - start) / 2
 
 
+def _reason_for_streak_transition(old_streak: int, new_streak: int) -> CheckInReasonCode:
+    """Map the actual streak change to a reason code (#782).
+
+    Derived from the real (subtractive-aware) ``new_streak`` rather than the
+    additive ``update_streak`` heuristic, so the flag never contradicts the
+    number it ships with: a subtractive transgression that zeroes the streak now
+    reads ``streak_reset``, not ``streak_incremented``. (The
+    ``already_logged_today`` case is handled before this point.)
+    """
+    if new_streak > old_streak:
+        return "streak_incremented"
+    if new_streak < old_streak:
+        return "streak_reset"
+    return "streak_held"
+
+
 async def _persist_and_build_response(session: AsyncSession, job: _CheckInJob) -> CheckInResult:
     """Persist the completion and build a CheckInResult; streak values arrive pre-computed."""
     completion = GoalCompletion(
@@ -252,12 +268,9 @@ async def _persist_and_build_response(session: AsyncSession, job: _CheckInJob) -
         await session.flush()
     await session.commit()
     # ``new_streak`` was computed alongside ``old_streak`` from one history read
-    # (issue dedup); these are pure derivations, no DB recompute.
-    _, reason = update_streak(
-        job.old_streak,
-        did_check_in=job.did_complete,
-        is_scheduled_today=job.is_scheduled,
-    )
+    # (issue dedup); these are pure derivations, no DB recompute. The reason code
+    # is derived from the actual transition so it can't contradict new_streak.
+    reason = _reason_for_streak_transition(job.old_streak, job.new_streak)
     milestones = check_milestones(job.new_streak, _DEFAULT_THRESHOLDS, job.old_streak)
     logger.info(
         "goal_completion_recorded",

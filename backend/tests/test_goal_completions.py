@@ -306,6 +306,67 @@ async def test_miss_resets_streak(async_client: AsyncClient, db_session: AsyncSe
     assert data["milestones"] == []
 
 
+@pytest.mark.asyncio
+async def test_subtractive_transgression_resets_not_increments(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#782: a subtractive transgression returns streak 0 AND a reason that agrees.
+
+    Previously reason_code came from the additive update_streak heuristic, so a
+    transgression that zeroed the streak still reported "streak_incremented" —
+    the flag contradicting the number.
+    """
+    headers, user_id = await _signup(async_client, "subuser")
+    # Long abstention history so the pre-check-in streak is large.
+    habit = Habit(
+        name="No Sugar",
+        icon="🍬",
+        start_date=date(2025, 1, 1),
+        energy_cost=10,
+        energy_return=20,
+        user_id=user_id,
+    )
+    db_session.add(habit)
+    await db_session.commit()
+    await db_session.refresh(habit)
+    # Subtractive: clear threshold = 1 serving; logging the stretch goal's 5
+    # servings today exceeds it -> a transgression that resets the streak.
+    clear = Goal(
+        habit_id=habit.id,
+        title="Stay clean",
+        tier="clear",
+        target=1.0,
+        target_unit="servings",
+        frequency=1.0,
+        frequency_unit="per_day",
+        is_additive=False,
+    )
+    binge = Goal(
+        habit_id=habit.id,
+        title="Hard limit",
+        tier="stretch",
+        target=5.0,
+        target_unit="servings",
+        frequency=1.0,
+        frequency_unit="per_day",
+        is_additive=False,
+    )
+    db_session.add_all([clear, binge])
+    await db_session.commit()
+    await db_session.refresh(binge)
+
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": binge.id, "did_complete": True},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert data["streak"] == 0
+    assert data["reason_code"] == "streak_reset"
+    assert data["reason_code"] != "streak_incremented"
+
+
 # ── Unknown goal returns 404 ────────────────────────────────────────────
 
 
@@ -525,7 +586,12 @@ async def test_backfill_past_date_records_completion(
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.OK
-    assert resp.json()["reason_code"] == "streak_incremented"
+    # reason_code now follows the actual streak transition (#782): backfilling
+    # yesterday extends the current streak to 1 (incremented), but backfilling an
+    # isolated day 3 back leaves the current streak at 0 — "held", not the old
+    # "incremented" lie that contradicted the zero streak.
+    expected_reason = "streak_incremented" if days_back == 1 else "streak_held"
+    assert resp.json()["reason_code"] == expected_reason
 
     result = await db_session.execute(
         select(GoalCompletion).where(GoalCompletion.goal_id == goal.id)
