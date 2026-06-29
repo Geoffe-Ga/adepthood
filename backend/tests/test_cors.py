@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import (
+    ALLOWED_METHODS,
     DEV_ORIGINS,
     _assert_credentials_safe,
     _validate_prod_origin,
@@ -257,14 +258,45 @@ def test_forbidden_origin_no_cors_headers() -> None:
     assert "access-control-allow-origin" not in response.headers
 
 
-def test_preflight_disallowed_method() -> None:
-    """Preflight request for a disallowed method should return 400."""
+def test_preflight_patch_allowed() -> None:
+    """A PATCH preflight succeeds (#788): the API serves PATCH endpoints.
+
+    Omitting PATCH from the allow-list 400s the browser preflight for every
+    PATCH route (user-practices customize, journal, practice tags/recipes), so
+    saves fail with a false "offline" on the web app.
+    """
     headers = {
         "Origin": ALLOWED_ORIGIN,
         "Access-Control-Request-Method": "PATCH",
     }
     response = client.options("/auth/login", headers=headers)
+    assert response.status_code == HTTPStatus.OK
+    assert "PATCH" in response.headers.get("access-control-allow-methods", "")
+
+
+def test_preflight_disallowed_method() -> None:
+    """Preflight for a method the API never serves returns 400."""
+    headers = {
+        "Origin": ALLOWED_ORIGIN,
+        "Access-Control-Request-Method": "TRACE",
+    }
+    response = client.options("/auth/login", headers=headers)
     assert response.status_code == HTTPStatus.BAD_REQUEST
+
+
+def test_allowed_methods_cover_all_routes() -> None:
+    """Every HTTP verb the routers serve must be in the CORS allow-list (#788).
+
+    A PATCH endpoint with PATCH missing from ALLOWED_METHODS 400s its browser
+    preflight. HEAD/OPTIONS are auto-handled by Starlette (not served by the
+    routers), so they are excluded from the comparison.
+    """
+    served: set[str] = set()
+    for route in app.routes:
+        served |= getattr(route, "methods", None) or set()
+    served -= {"HEAD", "OPTIONS"}
+    missing = served - set(ALLOWED_METHODS)
+    assert not missing, f"router methods missing from CORS allow-list: {missing}"
 
 
 # ── BUG-APP-003: PROD_DOMAIN URL-validation hardening ─────────────────────
