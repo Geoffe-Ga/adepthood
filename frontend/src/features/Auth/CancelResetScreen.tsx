@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text } from 'react-native';
 
 import { authStyles as styles } from './auth.styles';
 import { AuthScreenContainer } from './AuthScreenContainer';
 import { MIN_TOKEN_LENGTH } from './resetToken';
 
 import { auth as authApi } from '@/api';
+import { Button } from '@/components/Button';
 import { SPACING, colors } from '@/design/tokens';
 
 type CancelStatus = 'pending' | 'success' | 'error' | 'invalid_token';
@@ -30,15 +31,14 @@ function TerminalView({ title, body, onBackToLogin }: TerminalViewProps): React.
     <AuthScreenContainer testID="cancel-reset">
       <Text style={localStyles.title}>{title}</Text>
       <Text style={localStyles.subtitle}>{body}</Text>
-      <TouchableOpacity
+      <Button
         accessibilityLabel="Back to log in"
-        accessibilityRole="button"
-        style={styles.button}
+        variant="secondary"
+        style={styles.buttonSpacing}
         onPress={onBackToLogin}
         testID="cancel-reset-back-to-login"
-      >
-        <Text style={styles.buttonText}>Back to Log In</Text>
-      </TouchableOpacity>
+        label="Back to Log In"
+      />
     </AuthScreenContainer>
   );
 }

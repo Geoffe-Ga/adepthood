@@ -30,6 +30,7 @@ import { useResonance } from './useResonance';
 
 import { journal, prompts } from '@/api';
 import type { EntryStatus, JournalMessage, Marginalia } from '@/api';
+import { Button } from '@/components/Button';
 import { colors } from '@/design/tokens';
 import { useIdle } from '@/hooks/useIdle';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
@@ -301,14 +302,13 @@ interface WritingColumnProps {
 /** Quiet control to mark a draft finished. */
 function FinishControl({ onFinish }: { onFinish: () => void }) {
   return (
-    <TouchableOpacity
+    <Button
+      variant="tertiary"
       onPress={onFinish}
-      accessibilityRole="button"
       accessibilityLabel="Mark this entry finished"
       testID="journal-finish-button"
-    >
-      <Text style={styles.controlLink}>Finish</Text>
-    </TouchableOpacity>
+      label="Finish"
+    />
   );
 }
 

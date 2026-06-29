@@ -40,6 +40,11 @@ export const authStyles = StyleSheet.create({
     marginBottom: SPACING.md,
     fontSize: 16,
   },
+  // Layout-only spacing for the warm `TextField`/`Button` primitives (#801),
+  // which own their own ground/border/colour. Keeps field/button rhythm without
+  // re-imposing the legacy grey chrome.
+  inputSpacing: { marginBottom: SPACING.md },
+  buttonSpacing: { marginBottom: SPACING.lg },
   error: { color: colors.danger, marginBottom: SPACING.md, textAlign: 'center' },
   button: {
     backgroundColor: colors.primary,
