@@ -248,12 +248,18 @@ const CenterColumn = ({
   <View style={styles.centerColumn}>
     <View style={styles.centerInner}>
       <GreyBands />
-      <Image
-        source={{ uri: MAP_BACKGROUND_URI }}
-        resizeMode="contain"
-        style={styles.arrowImage}
-        testID="map-background"
-      />
+      {MAP_BACKGROUND_URI ? (
+        <Image
+          source={{ uri: MAP_BACKGROUND_URI }}
+          resizeMode="contain"
+          style={styles.arrowImage}
+          testID="map-background"
+        />
+      ) : (
+        // No hosted art configured — branded in-app fallback, never an external
+        // placeholder (#766). The stage labels/bands still render on top.
+        <View style={[styles.arrowImage, styles.mapBackgroundFallback]} testID="map-background" />
+      )}
       <ConnectionLines stages={stages} />
       {stages.map((stage) => (
         <ArrowHotspot key={stage.id} stage={stage} currentStage={currentStage} onPress={onPress} />
