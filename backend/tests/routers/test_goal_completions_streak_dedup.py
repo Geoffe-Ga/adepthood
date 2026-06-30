@@ -16,7 +16,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import routers.goal_completions as gc_module
+import services.checkin as checkin_module
 from domain.dates import today_in_tz
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
@@ -89,8 +89,8 @@ def _spy_streak_calls(monkeypatch: pytest.MonkeyPatch) -> tuple[list[int], list[
     """
     consecutive = [0]
     before_after = [0]
-    real_consecutive = gc_module.compute_consecutive_streak
-    real_before_after = gc_module.compute_streak_before_and_after
+    real_consecutive = checkin_module.compute_consecutive_streak
+    real_before_after = checkin_module.compute_streak_before_and_after
 
     async def _count_consecutive(
         session: AsyncSession,
@@ -108,8 +108,8 @@ def _spy_streak_calls(monkeypatch: pytest.MonkeyPatch) -> tuple[list[int], list[
         before_after[0] += 1
         return await real_before_after(session, scope, pending)
 
-    monkeypatch.setattr(gc_module, "compute_consecutive_streak", _count_consecutive)
-    monkeypatch.setattr(gc_module, "compute_streak_before_and_after", _count_before_after)
+    monkeypatch.setattr(checkin_module, "compute_consecutive_streak", _count_consecutive)
+    monkeypatch.setattr(checkin_module, "compute_streak_before_and_after", _count_before_after)
     return consecutive, before_after
 
 

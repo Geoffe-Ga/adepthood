@@ -7,6 +7,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from models.completion_suggestion import CompletionTargetType, SuggestionStatus
+from schemas.checkin import CheckInResult
 
 
 class CompletionSuggestionResponse(BaseModel):
@@ -36,3 +37,10 @@ class CompletionSuggestionListResponse(BaseModel):
     """All completion suggestions for an entry (any status)."""
 
     items: list[CompletionSuggestionResponse]
+
+
+class AcceptSuggestionResponse(BaseModel):
+    """The accepted suggestion plus the check-in it logged (streak + milestones)."""
+
+    suggestion: CompletionSuggestionResponse
+    check_in: CheckInResult
