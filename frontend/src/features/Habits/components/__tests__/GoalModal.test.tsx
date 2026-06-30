@@ -1,6 +1,7 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
+import type { DimensionValue } from 'react-native';
 
 // EmojiSelector pulls in native bindings; render a stub.
 jest.mock('react-native-emoji-selector', () => () => null);
@@ -445,5 +446,49 @@ describe('GoalModal log-date stepper', () => {
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     expect(dayKeyInTZ(date, 'UTC')).toBe(dayKeyInTZ(yesterday, 'UTC'));
+  });
+});
+
+describe('GoalModal progress-bar zero/equal-target guards', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  const fillWidth = (habit: Habit): DimensionValue => {
+    const { getByTestId } = renderModal(habit);
+    return getByTestId('modal-progress-fill').props.style.width as DimensionValue;
+  };
+
+  // The modal once reimplemented the progress formula without the canonical
+  // helper's zero-guards, so these degenerate targets divided 0/0 -> NaN and
+  // rendered an invalid "NaN%" width. The shared helper returns 100/0 instead.
+  it('renders a valid 100% width (not NaN%) for an additive goal with stretchTarget === 0', () => {
+    const habit = makeHabit({
+      goals: [
+        makeGoal('low', { target: 0 }),
+        makeGoal('clear', { target: 0 }),
+        makeGoal('stretch', { target: 0 }),
+      ],
+      completions: [],
+    });
+    const width = fillWidth(habit);
+    expect(width).toBe('100%');
+    expect(String(width)).not.toContain('NaN');
+  });
+
+  it('renders a valid 0% width (not NaN%) for a subtractive goal with lowTarget === stretchTarget', () => {
+    const habit = makeHabit({
+      goals: [
+        makeGoal('low', { target: 5, is_additive: false }),
+        makeGoal('clear', { target: 5, is_additive: false }),
+        makeGoal('stretch', { target: 5, is_additive: false }),
+      ],
+      // Progress past the equal low/stretch boundary -> the guarded helper
+      // returns 0 (over the limit) rather than dividing by a zero range.
+      completions: [{ timestamp: new Date(), completed_units: 9 }],
+    });
+    const width = fillWidth(habit);
+    expect(width).toBe('0%');
+    expect(String(width)).not.toContain('NaN');
   });
 });
