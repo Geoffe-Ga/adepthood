@@ -87,6 +87,27 @@ export const programWeek = (anchor: Date | null, today: Date = new Date()): numb
   return week;
 };
 
+// Cumulative day offset at which a 1-based stage *begins* (stage 1 starts at day 0).
+const stageStartDay = (stageNumber: number): number => {
+  let start = 0;
+  for (let i = 0; i < stageNumber - 1 && i < STAGE_COUNT; i += 1) {
+    start += STAGE_DURATIONS_DAYS[i]!;
+  }
+  return start;
+};
+
+// Whole days until ``stageNumber`` unlocks on the calendar, or null when no anchor.
+// 0 (or negative) means the stage has already been reached — callers treat <= 0 as unlocked.
+export const daysUntilStage = (
+  stageNumber: number,
+  anchor: Date | null,
+  today: Date = new Date(),
+): number | null => {
+  const offset = programDayOffset(anchor, today);
+  if (offset === null) return null;
+  return stageStartDay(stageNumber) - offset;
+};
+
 // Current stage (1-10) walking STAGE_DURATIONS_DAYS so the 21/42-day split is honoured.
 export const programStage = (anchor: Date | null, today: Date = new Date()): number | null => {
   const offset = programDayOffset(anchor, today);

@@ -17,7 +17,11 @@ import type { HabitHistoryItem, PracticeHistoryItem, StageHistoryResponse } from
 import { stages as stagesApi } from '../../api';
 import { MAP_BACKGROUND_URI } from '../../constants/images';
 import { useAppNavigation } from '../../navigation/hooks';
-import { useDerivedCurrentStage } from '../../store/useProgramProgression';
+import {
+  useDaysUntilStage,
+  useDerivedCurrentStage,
+  useDerivedCurrentWeek,
+} from '../../store/useProgramProgression';
 import {
   selectCurrentStage,
   selectStages,
@@ -26,12 +30,14 @@ import {
   useStageStore,
 } from '../../store/useStageStore';
 
+import { journeyRead, progressionSentence, rankedStats, unlockTimeline } from './journeyNarrative';
 import styles from './Map.styles';
 import { MAP_ROWS, STAGE_DISPLAY, TITLE_BY_STAGE } from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
 import { stageService, isStageUnlocked } from './services/stageService';
-import { isLeftReturning, type StageData } from './stageData';
+import { isLeftReturning, STAGE_COUNT, type StageData } from './stageData';
 
+import { Celebration } from '@/components/feedback/Celebration';
 import { colors } from '@/design/tokens';
 
 /** Lookup of stage number → StageData for resolving row/arrow content. */
@@ -52,6 +58,26 @@ const ARROW_GLYPH_RIGHT = '↪';
 const LockOverlay = (): React.JSX.Element => (
   <View style={styles.lockOverlay}>
     <Text style={styles.lockText}>🔒</Text>
+  </View>
+);
+
+/**
+ * "Unlocks in N days" / unlock-condition copy for a locked stage, computed from
+ * the existing calendar drip (no new backend). Falls back to the condition when
+ * no program anchor is set.
+ */
+const UnlockTimeline = ({ stageNumber }: { stageNumber: number }): React.JSX.Element => {
+  const daysUntil = useDaysUntilStage(stageNumber);
+  return (
+    <Text style={styles.unlockTimeline} testID={`stage-unlock-${stageNumber}`}>
+      {unlockTimeline(daysUntil)}
+    </Text>
+  );
+};
+
+const YouAreHereMarker = (): React.JSX.Element => (
+  <View style={styles.youAreHere} testID="you-are-here">
+    <Text style={styles.youAreHereText}>YOU ARE HERE</Text>
   </View>
 );
 
@@ -120,6 +146,8 @@ const StageCenterCell = ({
   >
     <CenterContent display={display} />
     {locked ? <LockOverlay /> : null}
+    {locked ? <UnlockTimeline stageNumber={display.stageNumber} /> : null}
+    {isCurrent ? <YouAreHereMarker /> : null}
     {stage.progress >= FULL_PROGRESS ? (
       <View style={styles.completedBadge} testID={`stage-complete-${stage.stageNumber}`}>
         <Text style={styles.completedBadgeText}>✓</Text>
@@ -225,29 +253,36 @@ interface ActionLinksProps {
   onNavigate: (_screen: 'Practice' | 'Course' | 'Journal', _stage: StageData) => void;
 }
 
+// Ranked actions: the primary "Continue" (the stage's Practice) sits full-width
+// above two secondary links. Visual hierarchy only — every handler + testID is
+// unchanged, so Practice/Course/Journal still route exactly as before.
 const ActionLinks = ({ stage, onNavigate }: ActionLinksProps): React.JSX.Element => (
   <View style={styles.actions}>
     <TouchableOpacity
       testID="practice-link"
-      style={styles.actionButton}
+      style={styles.primaryAction}
       onPress={() => onNavigate('Practice', stage)}
+      accessibilityRole="button"
+      accessibilityLabel="Continue this stage"
     >
-      <Text style={styles.actionText}>Practice</Text>
+      <Text style={styles.primaryActionText}>Continue</Text>
     </TouchableOpacity>
-    <TouchableOpacity
-      testID="course-link"
-      style={styles.actionButton}
-      onPress={() => onNavigate('Course', stage)}
-    >
-      <Text style={styles.actionText}>Course</Text>
-    </TouchableOpacity>
-    <TouchableOpacity
-      testID="journal-link"
-      style={styles.actionButton}
-      onPress={() => onNavigate('Journal', stage)}
-    >
-      <Text style={styles.actionText}>Journal</Text>
-    </TouchableOpacity>
+    <View style={styles.secondaryActionsRow}>
+      <TouchableOpacity
+        testID="course-link"
+        style={styles.secondaryAction}
+        onPress={() => onNavigate('Course', stage)}
+      >
+        <Text style={styles.secondaryActionText}>Course</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        testID="journal-link"
+        style={styles.secondaryAction}
+        onPress={() => onNavigate('Journal', stage)}
+      >
+        <Text style={styles.secondaryActionText}>Journal</Text>
+      </TouchableOpacity>
+    </View>
   </View>
 );
 
@@ -310,8 +345,42 @@ const HabitHistoryRow = ({ item }: { item: HabitHistoryItem }): React.JSX.Elemen
   </View>
 );
 
+const RankedStatsRow = ({
+  history,
+}: {
+  history: StageHistoryResponse;
+}): React.JSX.Element | null => {
+  const stats = rankedStats(history);
+  if (stats.length === 0) return null;
+  return (
+    <View style={styles.rankedStatsRow} testID="ranked-stats">
+      {stats.map((stat) => (
+        <View key={stat.key} style={styles.rankedStat} testID={`ranked-stat-${stat.key}`}>
+          <Text style={styles.rankedStatValue}>{stat.value}</Text>
+          <Text style={styles.rankedStatLabel}>{stat.label}</Text>
+        </View>
+      ))}
+    </View>
+  );
+};
+
+/** One progression sentence + the ranked headline stats for the stage. */
+const JourneyNarrativeBlock = ({
+  history,
+}: {
+  history: StageHistoryResponse;
+}): React.JSX.Element => (
+  <View testID="journey-narrative">
+    <Text style={styles.progressionSentence} testID="progression-sentence">
+      {progressionSentence(history)}
+    </Text>
+    <RankedStatsRow history={history} />
+  </View>
+);
+
 const HistoryContent = ({ history }: { history: StageHistoryResponse }): React.JSX.Element => (
   <View testID="history-content">
+    <JourneyNarrativeBlock history={history} />
     {history.practices.length > 0 && (
       <>
         <Text style={styles.historySubheading}>Practices</Text>
@@ -472,7 +541,11 @@ const StageDetailModal = ({
 }: StageDetailModalProps): React.JSX.Element => (
   <Modal visible={!!activeStage} transparent animationType="slide" onRequestClose={onClose}>
     <Pressable style={styles.modalOverlay} onPress={onClose} testID="modal-overlay">
-      <Pressable style={styles.modalContent} onPress={() => {}} testID="stage-modal">
+      <Pressable
+        style={[styles.modalContent, activeStage ? { borderLeftColor: activeStage.color } : null]}
+        onPress={() => {}}
+        testID="stage-modal"
+      >
         {activeStage && <ModalBody stage={activeStage} onClose={onClose} onNavigate={onNavigate} />}
       </Pressable>
     </Pressable>
@@ -532,6 +605,16 @@ const MapBackdrop = (): React.JSX.Element =>
     <View style={styles.backdrop} testID="map-background" pointerEvents="none" />
   );
 
+/** Compact momentum read at the top of the Map: "Stage N of 10 · Week W". */
+const JourneyHeader = ({ currentStage }: { currentStage: number }): React.JSX.Element => {
+  const week = useDerivedCurrentWeek(1);
+  return (
+    <View style={styles.journeyHeader} testID="journey-read">
+      <Text style={styles.journeyReadText}>{journeyRead(currentStage, week, STAGE_COUNT)}</Text>
+    </View>
+  );
+};
+
 const MapGrid = ({ lookup, currentStage, onSelectStage }: MapGridProps): React.JSX.Element => (
   <View style={styles.grid}>
     {MAP_ROWS.map((row) => (
@@ -578,6 +661,63 @@ const useStageNavigation = (onBeforeNavigate: () => void) => {
   );
 };
 
+/** Highest stage number whose progress has reached 100%, or 0 when none. */
+const highestCompletedStage = (stages: readonly StageData[]): number =>
+  stages.reduce((max, s) => (s.progress >= FULL_PROGRESS ? Math.max(max, s.stageNumber) : max), 0);
+
+interface CompletionCelebration {
+  active: boolean;
+  message: string;
+  dismiss: () => void;
+}
+
+/**
+ * Watch for a newly-completed stage and surface a celebration naming the stage
+ * that just unlocked. The first render seeds the baseline (no celebration on
+ * mount); thereafter a rise in the highest-completed stage fires once.
+ */
+const useStageCompletionCelebration = (
+  stages: readonly StageData[],
+  lookup: StageLookup,
+): CompletionCelebration => {
+  const completed = highestCompletedStage(stages);
+  const prevCompletedRef = useRef<number | null>(null);
+  const [active, setActive] = useState(false);
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    const prev = prevCompletedRef.current;
+    prevCompletedRef.current = completed;
+    if (prev === null || completed <= prev) return;
+    const next = lookup[completed + 1];
+    const nextName = next ? next.title : 'The next stage';
+    setMessage(`${nextName} unlocked`);
+    setActive(true);
+  }, [completed, lookup]);
+
+  const dismiss = useCallback(() => setActive(false), []);
+  return { active, message, dismiss };
+};
+
+const CelebrationBanner = ({
+  active,
+  message,
+  onDismiss,
+}: {
+  active: boolean;
+  message: string;
+  onDismiss: () => void;
+}): React.JSX.Element | null => {
+  if (!active) return null;
+  return (
+    <Celebration active={active} onDismiss={onDismiss} testID="stage-celebration">
+      <View style={styles.celebrationBanner}>
+        <Text style={styles.celebrationText}>{message}</Text>
+      </View>
+    </Celebration>
+  );
+};
+
 const MapScreen = (): React.JSX.Element => {
   const stages = useStageStore(selectStages);
   const loading = useStageStore(selectStagesLoading);
@@ -604,6 +744,7 @@ const MapScreen = (): React.JSX.Element => {
   const handleRefresh = useCallback(() => void stageService.loadStages(), []);
   const handleCloseModal = useCallback(() => setActiveStage(null), []);
   const handleNavigate = useStageNavigation(handleCloseModal);
+  const celebration = useStageCompletionCelebration(stages, lookup);
 
   if (loading && stages.length === 0) return <MapLoading />;
   if (error && stages.length === 0) return <MapError message={error} />;
@@ -611,8 +752,14 @@ const MapScreen = (): React.JSX.Element => {
   return (
     <View style={styles.container}>
       <MapBackdrop />
+      <JourneyHeader currentStage={currentStage} />
       <MapGrid lookup={lookup} currentStage={currentStage} onSelectStage={setActiveStage} />
       {error && stages.length > 0 && <MapRefreshErrorBanner onRetry={handleRefresh} />}
+      <CelebrationBanner
+        active={celebration.active}
+        message={celebration.message}
+        onDismiss={celebration.dismiss}
+      />
       <StageDetailModal
         activeStage={activeStage}
         onClose={handleCloseModal}

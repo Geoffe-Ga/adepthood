@@ -7,8 +7,11 @@ import {
   colors,
   editorialType,
   ink,
+  onShowcase,
   radius,
   shadows,
+  showcase,
+  showcaseShadow,
   spacing,
   surface,
   touchTarget,
@@ -114,11 +117,30 @@ const styles = StyleSheet.create({
   cellMasculine: {
     backgroundColor: surface.canvas,
   },
-  // Legible current-stage marker (replaces the faint hotspot border).
+  // Brighter "you are here" current-stage marker: a thicker accent halo +
+  // recessed warm fill so the live stage reads at a glance.
   cellCurrent: {
-    borderWidth: 2,
-    borderColor: accent.primary,
+    borderWidth: 3,
+    borderColor: accent.strong,
+    borderRadius: radius.md,
+    backgroundColor: surface.desk,
+    ...shadows.medium,
+  },
+  // "You are here" pill anchored to the current stage's center cell.
+  youAreHere: {
+    position: 'absolute',
+    top: spacing(0.25),
+    left: spacing(0.25),
+    paddingVertical: spacing(0.25),
+    paddingHorizontal: spacing(0.5),
     borderRadius: radius.sm,
+    backgroundColor: accent.strong,
+  },
+  youAreHereText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: colors.text.light,
+    letterSpacing: 0.5,
   },
   arrowGlyph: {
     fontSize: 22,
@@ -169,6 +191,56 @@ const styles = StyleSheet.create({
   locked: {
     opacity: 0.4,
   },
+  // Unlock timeline beneath the lock glyph ("Unlocks in N days").
+  unlockTimeline: {
+    position: 'absolute',
+    bottom: spacing(0.25),
+    left: 0,
+    right: 0,
+    fontSize: 9,
+    color: ink.muted,
+    textAlign: CENTER,
+    paddingHorizontal: spacing(0.25),
+  },
+
+  // --- Stage-completion celebration banner ----------------------------------
+  celebrationBanner: {
+    position: 'absolute',
+    top: spacing(2),
+    alignSelf: CENTER,
+    maxWidth: '90%',
+    backgroundColor: showcase.canvas,
+    borderRadius: radius.md,
+    paddingVertical: spacing(1.25),
+    paddingHorizontal: spacing(2.5),
+    borderLeftWidth: 4,
+    borderLeftColor: accent.primary,
+    ...showcaseShadow,
+  },
+  celebrationText: {
+    fontFamily: editorialType.serif,
+    fontSize: 15,
+    fontWeight: '700',
+    color: onShowcase.primary,
+    textAlign: CENTER,
+  },
+
+  // --- Journey read header --------------------------------------------------
+  journeyHeader: {
+    paddingVertical: spacing(1),
+    paddingHorizontal: spacing(2),
+    alignItems: CENTER,
+    backgroundColor: surface.sunken,
+    borderBottomWidth: 1,
+    borderBottomColor: surface.hairline,
+  },
+  journeyReadText: {
+    fontFamily: editorialType.serif,
+    fontSize: 16,
+    fontWeight: '700',
+    color: ink.primary,
+    letterSpacing: 0.5,
+  },
 
   // Completed stage checkmark
   completedBadge: {
@@ -201,14 +273,17 @@ const styles = StyleSheet.create({
     justifyContent: CENTER,
     alignItems: CENTER,
   },
+  // Re-grounded on the showcase umber band; the per-stage colour is
+  // applied inline as a left accent rail so each stage tints its own modal.
   modalContent: {
     width: '85%',
     maxHeight: '80%',
-    backgroundColor: colors.secondary,
+    backgroundColor: showcase.canvas,
     padding: spacing(2.5),
     borderRadius: radius.lg,
+    borderLeftWidth: 4,
     position: 'relative',
-    ...shadows.large,
+    ...showcaseShadow,
   },
 
   // Close button
@@ -216,13 +291,16 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: spacing(1),
     right: spacing(1),
-    padding: spacing(0.5),
+    minWidth: touchTarget.minimum,
+    minHeight: touchTarget.minimum,
+    alignItems: CENTER,
+    justifyContent: CENTER,
     zIndex: 1,
   },
   closeText: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '600',
-    color: colors.text.light,
+    color: onShowcase.soft,
   },
 
   // Stage color indicator dot
@@ -241,15 +319,50 @@ const styles = StyleSheet.create({
 
   // Title and subtitle
   modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.text.light,
+    ...editorialType.title,
+    fontSize: 22,
+    color: onShowcase.primary,
   },
   modalSubtitle: {
     fontSize: 14,
-    color: colors.mystical.transparentLight,
+    color: onShowcase.soft,
     marginBottom: spacing(1.5),
     fontStyle: 'italic',
+  },
+
+  // One-sentence progression read (replaces the disparate count list).
+  progressionSentence: {
+    fontFamily: editorialType.serif,
+    fontSize: 15,
+    lineHeight: 22,
+    color: onShowcase.primary,
+    marginBottom: spacing(1.5),
+  },
+
+  // Ranked headline stats row
+  rankedStatsRow: {
+    flexDirection: 'row',
+    gap: spacing(1),
+    marginBottom: spacing(1.5),
+  },
+  rankedStat: {
+    flex: 1,
+    backgroundColor: showcase.raised,
+    borderRadius: radius.md,
+    paddingVertical: spacing(1),
+    paddingHorizontal: spacing(0.5),
+    alignItems: CENTER,
+  },
+  rankedStatValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: onShowcase.primary,
+  },
+  rankedStatLabel: {
+    fontSize: 10,
+    color: onShowcase.muted,
+    textAlign: CENTER,
+    marginTop: spacing(0.25),
   },
 
   // Progress bar
@@ -258,12 +371,12 @@ const styles = StyleSheet.create({
   },
   progressLabel: {
     fontSize: 12,
-    color: colors.mystical.transparentLight,
+    color: onShowcase.soft,
     marginBottom: spacing(0.5),
   },
   progressBar: {
     height: 8,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: showcase.raised,
     borderRadius: radius.sm,
     overflow: 'hidden',
   },
@@ -282,18 +395,18 @@ const styles = StyleSheet.create({
   },
   metadataLabel: {
     fontSize: 12,
-    color: colors.mystical.transparentLight,
+    color: onShowcase.soft,
     width: 100,
     fontWeight: '600',
   },
   metadataValue: {
     fontSize: 12,
-    color: colors.text.light,
+    color: onShowcase.primary,
     flex: 1,
   },
   freeWillDescription: {
     fontSize: 12,
-    color: colors.mystical.transparentLight,
+    color: onShowcase.soft,
     marginTop: spacing(0.5),
     lineHeight: 18,
     fontStyle: 'italic',
@@ -302,27 +415,46 @@ const styles = StyleSheet.create({
   // Separator
   separator: {
     height: 1,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: showcase.raised,
     marginVertical: spacing(1.5),
   },
 
-  // Quick action buttons
+  // Ranked actions: a full-width primary "Continue" stacked above two
+  // secondary actions (visual hierarchy only — all three keep their handlers).
   actions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     gap: spacing(1),
   },
-  actionButton: {
+  primaryAction: {
+    minHeight: touchTarget.minimum,
+    paddingVertical: spacing(1.25),
+    paddingHorizontal: spacing(1.5),
+    borderRadius: radius.md,
+    alignItems: CENTER,
+    justifyContent: CENTER,
+    backgroundColor: accent.primary,
+  },
+  primaryActionText: {
+    fontSize: 15,
+    color: colors.text.light,
+    fontWeight: '700',
+  },
+  secondaryActionsRow: {
+    flexDirection: 'row',
+    gap: spacing(1),
+  },
+  secondaryAction: {
     flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    minHeight: touchTarget.minimum,
+    backgroundColor: showcase.raised,
     paddingVertical: spacing(1),
     paddingHorizontal: spacing(1.5),
     borderRadius: radius.md,
     alignItems: CENTER,
+    justifyContent: CENTER,
   },
-  actionText: {
+  secondaryActionText: {
     fontSize: 13,
-    color: colors.text.light,
+    color: onShowcase.primary,
     fontWeight: '600',
   },
 
@@ -339,11 +471,11 @@ const styles = StyleSheet.create({
   historyTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: colors.text.light,
+    color: onShowcase.primary,
   },
   historyToggle: {
     fontSize: 12,
-    color: colors.mystical.transparentLight,
+    color: onShowcase.soft,
   },
   historyLoading: {
     paddingVertical: spacing(1.5),
@@ -351,7 +483,7 @@ const styles = StyleSheet.create({
   },
   historyEmpty: {
     fontSize: 12,
-    color: colors.mystical.transparentLight,
+    color: onShowcase.soft,
     fontStyle: 'italic',
     paddingVertical: spacing(1),
     textAlign: CENTER,
@@ -373,7 +505,7 @@ const styles = StyleSheet.create({
   historyRetryText: {
     fontSize: 12,
     fontWeight: '600',
-    color: colors.text.light,
+    color: onShowcase.primary,
   },
   refreshBanner: {
     position: 'absolute',
@@ -408,7 +540,7 @@ const styles = StyleSheet.create({
   historySubheading: {
     fontSize: 12,
     fontWeight: '600',
-    color: colors.mystical.transparentLight,
+    color: onShowcase.soft,
     marginTop: spacing(1),
     marginBottom: spacing(0.5),
   },
@@ -423,12 +555,12 @@ const styles = StyleSheet.create({
   },
   historyItemName: {
     fontSize: 12,
-    color: colors.text.light,
+    color: onShowcase.primary,
     flex: 1,
   },
   historyItemDetail: {
     fontSize: 11,
-    color: colors.mystical.transparentLight,
+    color: onShowcase.soft,
   },
   goalBadges: {
     flexDirection: 'row',

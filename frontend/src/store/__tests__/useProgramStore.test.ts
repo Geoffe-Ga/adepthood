@@ -144,3 +144,26 @@ describe('programDayOffset / programWeek / programStage', () => {
     expect(programStage(anchor, today)).toBe(10);
   });
 });
+
+describe('daysUntilStage', () => {
+  const { daysUntilStage } = require('../useProgramStore');
+
+  it('returns null when no anchor is set', () => {
+    expect(daysUntilStage(3, null)).toBeNull();
+  });
+
+  it('counts whole days until a future stage begins', () => {
+    const anchor = new Date(2026, 0, 1);
+    // Stage 3 begins on day 42 (two 21-day stages). On day 0 that is 42 days out.
+    expect(daysUntilStage(3, anchor, anchor)).toBe(42);
+    // Ten days in, 32 remain.
+    expect(daysUntilStage(3, anchor, new Date(2026, 0, 11))).toBe(32);
+  });
+
+  it('returns <= 0 once the stage has been reached', () => {
+    const anchor = new Date(2026, 0, 1);
+    // Stage 1 begins at day 0, so it is always already reached.
+    expect(daysUntilStage(1, anchor, anchor)).toBe(0);
+    expect(daysUntilStage(1, anchor, new Date(2026, 0, 11))).toBeLessThan(0);
+  });
+});
