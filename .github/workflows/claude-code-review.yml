@@ -38,43 +38,73 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_bots: "dependabot[bot]"
           prompt:  |
-            Please review this pull request and provide feedback using the following template:
+            Review this pull request against the repository's CLAUDE.md. Read the
+            change with `gh pr diff` and `gh pr view` (and any files you need).
 
-            ## Summary
-            Brief overview (2-3 sentences)
+            Do NOT post a comment yourself. Return ONLY the structured result with
+            two fields:
 
-            ## Strengths
-            What's done well?
+            - "review_markdown": the full review as GitHub markdown, using this
+              template (omit the verdict here — it is the separate field below):
 
-            ## Security Concerns
-            Vulnerabilities? 🔴 BLOCKING | 🟡 HIGH | 🟢 LOW
+              ## Summary
+              Brief overview (2-3 sentences)
+              ## Strengths
+              What's done well?
+              ## Security Concerns
+              Vulnerabilities? 🔴 BLOCKING | 🟡 HIGH | 🟢 LOW
+              ## Problems
+              Critical issues blocking merge (mark 🔴)
+              ## Code Quality
+              Non-blocking improvements (these are COMMENTS, not blockers)
+              ## CLAUDE.md Adherence
+              ✅/❌ Coverage, linting, types, patterns, commits
+              ## Testing
+              Test quality (insufficient testing is BLOCKING)
+              ## Documentation
+              Docs completeness
 
-            ## Problems
-            Critical issues blocking merge (mark 🔴)
-            Consider priority greater than Minor as "Blocking"
+            - "verdict": exactly one of CHANGES_REQUESTED, COMMENTS, LGTM.
+              CHANGES_REQUESTED only when there is a real blocking problem;
+              COMMENTS for clean code with non-blocking suggestions; LGTM when
+              clean with nothing worth noting.
 
-            ## Code Quality
-            Non-blocking improvements for educational purposes or for future GitHub Issues
+          # The --json-schema flag makes the action return a validated
+          # ``structured_output`` JSON string (verdict + review_markdown) instead
+          # of relying on the agent to remember to post a comment — the "Post
+          # review" step below then posts it deterministically (fixes the flaky
+          # success-with-no-comment runs, #810). gh pr comment is intentionally
+          # NOT in allowed-tools so the agent cannot post on its own.
+          claude_args: >-
+            --json-schema '{"type":"object","additionalProperties":false,"required":["verdict","review_markdown"],"properties":{"verdict":{"type":"string","enum":["CHANGES_REQUESTED","COMMENTS","LGTM"]},"review_markdown":{"type":"string"}}}'
+            --allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"
 
-            ## CLAUDE.md Adherence
-            ✅/❌ Coverage, linting, types, patterns, commits
-
-            ## Testing
-            Test quality evaluation
-            Insufficient testing is Blocking (mark 🔴)
-
-            ## Documentation
-            Docs completeness
-
-
-            ## Verdict
-            ✅ LGTM | 🔄 CHANGES_REQUESTED | 💬 COMMENTS
-            **Reasoning:** Specific references
-
-            Use the repository's CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
-
-            Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
-
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://docs.claude.com/en/docs/claude-code/sdk#command-line for available options
-          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+      - name: Post review
+        # Deterministic: this step always runs after a successful review and posts
+        # the comment. If the action produced no structured output (a genuinely
+        # failed/empty review), fail so the check is red and the review is
+        # re-run — never a silent success with no review (#810).
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          STRUCTURED: ${{ steps.claude-review.outputs.structured_output }}
+        run: |
+          set -euo pipefail
+          if [ -z "${STRUCTURED:-}" ]; then
+            # claude-code-action self-skips (anti-tamper) on any PR that edits this
+            # workflow file, so there is no review to post — that is expected and
+            # must not fail the check (the workflow change is reviewed manually).
+            if gh pr diff "$PR_NUMBER" -R "$REPO" --name-only \
+                 | grep -qx '.github/workflows/claude-code-review.yml'; then
+              echo "::warning::This PR edits the review workflow, so the action self-skips — no automated verdict; review manually."
+              exit 0
+            fi
+            echo "::error::Claude review produced no structured output — failing so it is re-run, never a silent no-review."
+            exit 1
+          fi
+          verdict=$(jq -r '.verdict' <<<"$STRUCTURED")
+          jq -r '.review_markdown' <<<"$STRUCTURED" > review.md
+          printf '\n\n## Verdict: %s\n' "$verdict" >> review.md
+          gh pr comment "$PR_NUMBER" -R "$REPO" --body-file review.md
+          echo "Posted review with verdict: ${verdict}"
