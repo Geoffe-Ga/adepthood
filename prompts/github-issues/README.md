@@ -325,6 +325,7 @@ foundation issues (01–03) are the critical path; 04–12 parallelise after.
 | 10 | [Auth as a branded editorial first impression](design-act2/design-act2-10-auth-first-impression.md) | Frontend | ~230 |
 | 11 | [Settings hub + warm adoption](design-act2/design-act2-11-settings-hub.md) | Frontend | ~200 |
 | 12 | [Program onboarding / welcome](design-act2/design-act2-12-program-onboarding.md) | Frontend | ~280 |
+| 13 | [Fix the garbled Map layout (title overlap, clipped labels, overlap & truncation)](design-act2/design-act2-13-map-layout-legibility.md) | Frontend | ~220 |
 
 Dependency graph:
 

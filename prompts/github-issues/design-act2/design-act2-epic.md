@@ -91,10 +91,19 @@ their primitives. After 01–03 land, 04–12 can proceed in parallel.
  02 showcase-&-callout ─────┼──────► 05 journal-shelf      09 map-journey
  03 motion-&-empty-states ──┘        06 practice-catalog   10 auth-first-impression
                                      07 practice-player    11 settings-hub
- related (do not duplicate):         12 program-onboarding
+                                     12 program-onboarding
+ 13 map-layout-legibility ──────────► fixes the garbled Map render; 09 builds on it
+ related (do not duplicate):
    #803 editorial navigation chrome (tab bar + headers)
    #804 warm dark mode
 ```
+
+> **13 is a legibility bug, not a redesign.** On a real phone the Map's
+> "EMPTINESS UNITY" title overlaps the top stage rows, the right-column aspect
+> labels clip off-screen mid-word, and the center labels collide with their lock
+> icons (with a truncated "Self-" and a stray box). 13 makes the Map render
+> cleanly first; 09 then layers the journey narrative + showcase modal on the
+> fixed layout.
 
 ## Sub-issues
 
@@ -112,6 +121,7 @@ their primitives. After 01–03 land, 04–12 can proceed in parallel.
 | 10 | [Auth as a branded editorial first impression](design-act2-10-auth-first-impression.md) | Frontend | ~230 |
 | 11 | [Settings hub + warm adoption](design-act2-11-settings-hub.md) | Frontend | ~200 |
 | 12 | [Program onboarding / welcome](design-act2-12-program-onboarding.md) | Frontend | ~280 |
+| 13 | [Fix the garbled Map layout (title overlap, clipped labels, overlap & truncation)](design-act2-13-map-layout-legibility.md) | Frontend | ~220 |
 
 ## Acceptance Criteria (epic-level)
 

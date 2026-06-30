@@ -2,7 +2,7 @@
 
 **Labels:** `frontend`, `ux`, `design`
 **Epic:** [Candle & Ink, Act II](design-act2-epic.md)
-**Depends on:** 02 (showcase), 03 (celebration)
+**Depends on:** 02 (showcase), 03 (celebration), 13 (the legible Map layout this builds on)
 **Estimated LoC:** ~260
 
 ## Problem
