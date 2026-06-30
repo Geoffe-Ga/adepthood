@@ -35,7 +35,15 @@ import type {
 } from '@/api';
 import { practiceSessions } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
-import { SPACING, colors, ink, surface } from '@/design/tokens';
+import {
+  BORDER_RADIUS,
+  SPACING,
+  colors,
+  onShowcase,
+  showcase,
+  showcaseShadow,
+  surface,
+} from '@/design/tokens';
 import { InsightCaptureModal } from '@/features/Practice/components/InsightCaptureModal';
 import RitualConfiguratorSheet from '@/features/Practice/configurator/RitualConfiguratorSheet';
 import type { PickedCard } from '@/features/Practice/data/resolveCard';
@@ -411,23 +419,29 @@ interface SessionCardProps {
 }
 
 function SessionCard(props: SessionCardProps): React.JSX.Element {
+  // The session is fronted by a warm-dark showcase header band (practice name +
+  // Adjust on the umber ground) so a running practice reads as a focal moment
+  // rather than a settings form; the mode view renders below on its readable
+  // ground. The shared RitualControlsBar plays the completion Celebration.
   return (
     <View style={styles.card} testID="active-practice-card">
-      <View style={styles.cardHeader}>
-        <TouchableOpacity
-          accessibilityRole="button"
-          accessibilityLabel="Adjust this practice's settings"
-          onPress={props.onConfigure}
-          style={styles.gearButton}
-          testID="active-practice-configure"
-        >
-          <Text style={styles.gearText}>⚙︎</Text>
-          <Text style={styles.gearLabel}>Adjust</Text>
-        </TouchableOpacity>
+      <View style={styles.headerBand}>
+        <View style={styles.cardHeader}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Adjust this practice's settings"
+            onPress={props.onConfigure}
+            style={styles.gearButton}
+            testID="active-practice-configure"
+          >
+            <Text style={styles.gearText}>⚙︎</Text>
+            <Text style={styles.gearLabel}>Adjust</Text>
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.name} testID="active-practice-name">
+          {props.effectiveName}
+        </Text>
       </View>
-      <Text style={styles.name} testID="active-practice-name">
-        {props.effectiveName}
-      </Text>
       <ModeView
         config={props.config}
         state={props.state}
@@ -895,13 +909,22 @@ function repCounterSummary(config: RepCounterConfig, state: RitualState): ModeSu
 }
 
 const styles = StyleSheet.create({
-  // Flat surface: the session sits on the screen's padded scroll, separated from
-  // the footer by a hairline divider (no elevation).
+  // Flat session container; the warm-dark showcase header band sits at its top.
   card: {
     paddingBottom: SPACING.lg,
     marginBottom: SPACING.lg,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: surface.hairline,
+  },
+  // The showcase header band: the practice name + Adjust on the umber ground.
+  headerBand: {
+    backgroundColor: showcase.canvas,
+    borderRadius: BORDER_RADIUS.lg,
+    paddingHorizontal: SPACING.lg,
+    paddingBottom: SPACING.md,
+    paddingTop: SPACING.xs,
+    marginBottom: SPACING.lg,
+    ...showcaseShadow,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -917,12 +940,12 @@ const styles = StyleSheet.create({
     minHeight: 44,
     paddingHorizontal: SPACING.sm,
   },
-  gearText: { fontSize: 18, color: ink.soft },
-  gearLabel: { fontSize: 14, fontWeight: '600', color: ink.soft },
+  gearText: { fontSize: 18, color: onShowcase.soft },
+  gearLabel: { fontSize: 14, fontWeight: '600', color: onShowcase.soft },
   name: {
     fontSize: 20,
     fontWeight: '700',
-    color: ink.primary,
+    color: onShowcase.primary,
     marginBottom: SPACING.md,
   },
   error: {

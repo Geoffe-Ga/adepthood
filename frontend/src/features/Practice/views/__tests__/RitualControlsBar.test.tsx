@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 
 import RitualControlsBar from '../RitualControlsBar';
@@ -45,6 +45,15 @@ describe('RitualControlsBar', () => {
     expect(getByTestId('ritual-complete-label')).toBeTruthy();
     expect(queryByTestId('ritual-start')).toBeNull();
     expect(queryByTestId('ritual-cancel')).toBeNull();
+  });
+
+  it('plays the completion Celebration around the complete label', () => {
+    const controls = fakeControls();
+    const { getByTestId } = render(<RitualControlsBar status="complete" controls={controls} />);
+    const celebration = getByTestId('ritual-complete-celebration');
+    expect(celebration).toBeTruthy();
+    // The label is rendered inside the celebration wrapper, not bare.
+    expect(within(celebration).getByTestId('ritual-complete-label')).toBeTruthy();
   });
 
   it('honours the optional startLabel override on the start button', () => {

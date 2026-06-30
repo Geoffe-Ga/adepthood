@@ -20,6 +20,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Animated,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -37,6 +38,7 @@ import {
 } from '../insights/format';
 
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import { useEntrance } from '@/hooks/useEntrance';
 
 /** Soft cap — the modal nudges the user toward a single sentence past this. */
 export const PRACTICE_INSIGHT_SOFT_CAP = 200;
@@ -290,21 +292,33 @@ export function InsightCaptureModal({
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.backdrop}
       >
-        <SheetContent
-          mode={mode}
-          durationMinutes={durationMinutes}
-          modeMetadata={modeMetadata}
-          draft={draft}
-          setDraft={setDraft}
-          withinSoftCap={withinSoftCap}
-          withinHardCap={withinHardCap}
-          onSavePress={handleSave}
-          onSkipPress={onSkip}
-          onJournalPress={onJournal ? handleJournal : undefined}
-        />
+        <RisingSheet>
+          <SheetContent
+            mode={mode}
+            durationMinutes={durationMinutes}
+            modeMetadata={modeMetadata}
+            draft={draft}
+            setDraft={setDraft}
+            withinSoftCap={withinSoftCap}
+            withinHardCap={withinHardCap}
+            onSavePress={handleSave}
+            onSkipPress={onSkip}
+            onJournalPress={onJournal ? handleJournal : undefined}
+          />
+        </RisingSheet>
       </KeyboardAvoidingView>
     </Modal>
   );
+}
+
+/**
+ * Wraps the sheet in a soft rise (fade + small translateY) so the reflection
+ * prompt settles in rather than snapping over the immersive session view.
+ * Static under reduced motion (the shared `useEntrance` seam).
+ */
+function RisingSheet({ children }: { children: React.ReactNode }): React.JSX.Element {
+  const entrance = useEntrance();
+  return <Animated.View style={entrance}>{children}</Animated.View>;
 }
 
 const styles = StyleSheet.create({
