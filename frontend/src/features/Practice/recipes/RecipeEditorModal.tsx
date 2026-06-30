@@ -27,6 +27,13 @@ import type {
 import { practiceRecipes, practiceTags } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import {
+  CUSTOM_NAME_MAX,
+  PROMPT_LABEL_MAX,
+  TALLIED_CATEGORIES_MAX,
+  TALLIED_ROUNDS_MAX,
+  TALLIED_TARGET_MAX,
+} from '@/features/Practice/engine/validation';
 
 export interface RecipeEditorModalProps {
   visible: boolean;
@@ -43,12 +50,15 @@ export interface RecipeEditorModalProps {
   createTag?: typeof practiceTags.create;
 }
 
-const NAME_MAX = 255;
+// Bounds that mirror the backend recipe schema are owned by ``engine/validation``;
+// alias them to the names this draft editor uses so the contract stays single-sourced.
+const NAME_MAX = CUSTOM_NAME_MAX;
+const PROMPT_MAX = PROMPT_LABEL_MAX;
+const ROUNDS_MAX = TALLIED_ROUNDS_MAX;
+const TARGET_COUNT_MAX = TALLIED_TARGET_MAX;
+const STEPS_MAX = TALLIED_CATEGORIES_MAX;
+// Recipe description cap has no engine-owned constant (no mode config mirrors it).
 const DESCRIPTION_MAX = 2_000;
-const PROMPT_MAX = 255;
-const ROUNDS_MAX = 10;
-const TARGET_COUNT_MAX = 20;
-const STEPS_MAX = 12;
 
 const RecipeEditorModal = (props: RecipeEditorModalProps): React.JSX.Element => {
   const deps = resolveDeps(props);
