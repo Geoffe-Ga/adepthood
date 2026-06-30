@@ -2,27 +2,31 @@
 
 import { StyleSheet } from 'react-native';
 
-import { colors, editorialType, radius, shadows, spacing, surface } from '../../design/tokens';
+import {
+  accent,
+  colors,
+  editorialType,
+  ink,
+  radius,
+  shadows,
+  spacing,
+  surface,
+  touchTarget,
+} from '../../design/tokens';
 
-// --- Layout constants for the three-column "spiral of becoming" table -------
-const LEFT_COLUMN_WIDTH = '40%';
-const CENTER_COLUMN_WIDTH = '40%';
-const RIGHT_COLUMN_WIDTH = '20%';
-/** The grey band starts below the two title rows (Awareness + Being). */
-const GREY_BAND_TOP = '20%';
-const HALF = '50%';
-const FULL = '100%';
-const ABSOLUTE = 'absolute';
+// --- Grid weights for the three cells of every stage row -------------------
+// One responsive row grid is the single source of vertical truth: each stage
+// row is [LeftCell | CenterCell | RightCell] with these flex weights (≈40/40/20),
+// so the three columns are siblings in the same row and cannot drift.
+const LEFT_FLEX = 2;
+const CENTER_FLEX = 2;
+const RIGHT_FLEX = 1;
 const CENTER = 'center';
-const TABLE_BORDER_COLOR = '#111111';
-const FEMININE_BAND_COLOR = '#d9d9d9';
-const MASCULINE_BAND_COLOR = '#efefef';
-const ARROW_LABEL_COLOR = '#262626';
 
 /**
- * Mystical-aesthetic styles for the Map screen.
- * Supports hotspot overlays, rich stage detail modal, glow effects,
- * and visual states for locked/current/completed stages.
+ * Styles for the Map's spiral-of-becoming grid + the rich stage-detail modal.
+ * The grid is token-only and laid out purely with flex; the modal keeps the
+ * existing mystical treatment.
  */
 const styles = StyleSheet.create({
   container: {
@@ -38,82 +42,36 @@ const styles = StyleSheet.create({
     backgroundColor: surface.canvas,
   },
   loadingText: {
-    color: colors.text.primary,
+    color: ink.primary,
     fontSize: 14,
     marginTop: spacing(1),
   },
   errorText: {
     color: colors.danger,
     fontSize: 14,
-    textAlign: 'center',
+    textAlign: CENTER,
     paddingHorizontal: spacing(2),
   },
 
-  // Hotspot touch targets (transparent overlays on the background image)
-  hotspot: {
-    position: 'absolute',
-    backgroundColor: 'rgba(255,255,255,0.01)',
-  },
-  hotspotLocked: {
-    opacity: 0.4,
-  },
-  hotspotCurrent: {
-    borderWidth: 2,
-    borderColor: colors.mystical.glowLight,
-    borderRadius: radius.sm,
-  },
-  hotspotCompleted: {
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
-    borderRadius: radius.sm,
-  },
-
-  // Lock icon overlay for locked stages
-  lockOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  lockText: {
-    fontSize: 14,
-    color: colors.text.light,
-    opacity: 0.7,
-  },
-
-  // Stage connection lines between stages
-  connectionLine: {
-    position: ABSOLUTE,
-    width: 2,
-    backgroundColor: 'rgba(0,0,0,0.10)',
-  },
-
-  // --- Three-column spiral table -------------------------------------------
-  table: {
+  // --- The single responsive row grid --------------------------------------
+  grid: {
     flex: 1,
+  },
+  // One stage row; flex weight set inline to stageNumbers.length so a paired
+  // row is twice the height of a single-stage row.
+  groupRow: {
     flexDirection: 'row',
-    borderWidth: 2,
-    borderColor: TABLE_BORDER_COLOR,
   },
-  leftColumn: {
-    width: LEFT_COLUMN_WIDTH,
+  leftCell: {
+    flex: LEFT_FLEX,
   },
-  centerColumn: {
-    width: CENTER_COLUMN_WIDTH,
+  centerCell: {
+    flex: CENTER_FLEX,
   },
-  rightColumn: {
-    width: RIGHT_COLUMN_WIDTH,
-  },
-  rowCell: {
-    borderBottomWidth: 2,
-    borderBottomColor: TABLE_BORDER_COLOR,
+  rightCell: {
+    flex: RIGHT_FLEX,
     justifyContent: CENTER,
-  },
-  rowCellLast: {
-    borderBottomWidth: 0,
+    paddingLeft: spacing(1),
   },
 
   // Left-column stage text block (also the tap target -0)
@@ -133,78 +91,115 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 
-  // Right-column aspect label
+  // Right-column aspect label (wraps to fit — never clipped)
   rightLabelText: {
-    fontSize: 16,
-    color: colors.text.primary,
-    paddingLeft: spacing(1),
+    fontFamily: editorialType.serif,
+    fontSize: 15,
+    color: ink.primary,
   },
 
-  // Center column — artwork, bands, overlays
-  centerInner: {
+  // --- Center column: per-stage arrow cell (tap target -1) ------------------
+  centerStageCell: {
     flex: 1,
-    position: 'relative',
-  },
-  arrowImage: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  // Branded fill shown when no hosted map art is configured (#766) — keeps the
-  // map area on-brand instead of a third-party placeholder image.
-  mapBackgroundFallback: {
-    backgroundColor: surface.canvas,
-  },
-  greyBandFeminine: {
-    position: ABSOLUTE,
-    top: GREY_BAND_TOP,
-    left: 0,
-    width: HALF,
-    bottom: 0,
-    backgroundColor: FEMININE_BAND_COLOR,
-  },
-  greyBandMasculine: {
-    position: ABSOLUTE,
-    top: GREY_BAND_TOP,
-    left: HALF,
-    width: HALF,
-    bottom: 0,
-    backgroundColor: MASCULINE_BAND_COLOR,
-  },
-  arrowLabelWrap: {
-    position: ABSOLUTE,
-    left: 0,
-    width: FULL,
+    minHeight: touchTarget.minimum,
     alignItems: CENTER,
     justifyContent: CENTER,
+    paddingHorizontal: spacing(0.5),
+  },
+  // Gentle alternating band (replaces the old absolute grey half-bands): even
+  // (Divine-Feminine) stages get a recessed tint, odd stages stay on canvas.
+  cellFeminine: {
+    backgroundColor: surface.sunken,
+  },
+  cellMasculine: {
+    backgroundColor: surface.canvas,
+  },
+  // Legible current-stage marker (replaces the faint hotspot border).
+  cellCurrent: {
+    borderWidth: 2,
+    borderColor: accent.primary,
+    borderRadius: radius.sm,
+  },
+  arrowGlyph: {
+    fontSize: 22,
+    fontWeight: '700',
+    lineHeight: 26,
+  },
+  centerLabelRow: {
+    flexDirection: 'row',
+    alignItems: CENTER,
+    justifyContent: CENTER,
+    gap: spacing(0.5),
   },
   arrowLabelText: {
     fontWeight: '700',
     fontSize: 12,
-    color: ARROW_LABEL_COLOR,
+    color: ink.soft,
+    textAlign: CENTER,
+    flexShrink: 1,
+  },
+  // Responsive title carried in the top stage rows' own grid cells (no fixed
+  // 40px overlay): the serif ramp scales rather than overflowing the column.
+  titleText: {
+    ...editorialType.title,
+    color: ink.primary,
+    letterSpacing: 1,
     textAlign: CENTER,
   },
-  titleOverlay: {
-    position: ABSOLUTE,
-    top: 0,
-    left: 0,
-    width: FULL,
-    height: GREY_BAND_TOP,
+  // Thin connector between a stage and the one below it (replaces the old
+  // percentage-positioned connection line).
+  connector: {
+    width: 2,
+    height: spacing(1),
+    marginTop: spacing(0.25),
+    backgroundColor: surface.hairline,
+  },
+
+  // Lock icon overlay for locked stages
+  lockOverlay: {
+    ...StyleSheet.absoluteFillObject,
     alignItems: CENTER,
     justifyContent: CENTER,
   },
-  titleText: {
-    fontFamily: editorialType.serif,
+  lockText: {
+    fontSize: 14,
+    color: ink.muted,
+  },
+  // Locked stages read recessed
+  locked: {
+    opacity: 0.4,
+  },
+
+  // Completed stage checkmark
+  completedBadge: {
+    position: 'absolute',
+    top: spacing(0.25),
+    right: spacing(0.25),
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: colors.success,
+    alignItems: CENTER,
+    justifyContent: CENTER,
+  },
+  completedBadgeText: {
+    fontSize: 11,
+    color: colors.text.light,
     fontWeight: '700',
-    fontSize: 40,
-    color: TABLE_BORDER_COLOR,
-    letterSpacing: 2,
+  },
+
+  // Optional decorative backdrop behind the grid (only when art is configured)
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    opacity: 0.12,
   },
 
   // Modal overlay and content
   modalOverlay: {
     flex: 1,
     backgroundColor: colors.mystical.overlay,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: CENTER,
+    alignItems: CENTER,
   },
   modalContent: {
     width: '85%',
@@ -239,7 +234,7 @@ const styles = StyleSheet.create({
   },
   titleRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: CENTER,
     marginBottom: spacing(0.5),
     paddingRight: spacing(3),
   },
@@ -323,7 +318,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing(1),
     paddingHorizontal: spacing(1.5),
     borderRadius: radius.md,
-    alignItems: 'center',
+    alignItems: CENTER,
   },
   actionText: {
     fontSize: 13,
@@ -338,7 +333,7 @@ const styles = StyleSheet.create({
   historyHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: CENTER,
     paddingVertical: spacing(1),
   },
   historyTitle: {
@@ -352,23 +347,23 @@ const styles = StyleSheet.create({
   },
   historyLoading: {
     paddingVertical: spacing(1.5),
-    alignItems: 'center',
+    alignItems: CENTER,
   },
   historyEmpty: {
     fontSize: 12,
     color: colors.mystical.transparentLight,
     fontStyle: 'italic',
     paddingVertical: spacing(1),
-    textAlign: 'center',
+    textAlign: CENTER,
   },
   historyError: {
     paddingVertical: spacing(1.5),
-    alignItems: 'center',
+    alignItems: CENTER,
   },
   historyErrorText: {
     fontSize: 12,
     color: colors.danger,
-    textAlign: 'center',
+    textAlign: CENTER,
     marginBottom: spacing(1),
   },
   historyRetry: {
@@ -383,10 +378,10 @@ const styles = StyleSheet.create({
   refreshBanner: {
     position: 'absolute',
     top: spacing(2),
-    alignSelf: 'center',
+    alignSelf: CENTER,
     maxWidth: '90%',
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: CENTER,
     backgroundColor: colors.mystical.overlay,
     paddingVertical: spacing(1),
     paddingHorizontal: spacing(2),
@@ -419,7 +414,7 @@ const styles = StyleSheet.create({
   },
   historyItem: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: CENTER,
     paddingVertical: spacing(0.5),
   },
   historyItemIcon: {
@@ -444,31 +439,13 @@ const styles = StyleSheet.create({
     width: 14,
     height: 14,
     borderRadius: 7,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: CENTER,
+    justifyContent: CENTER,
   },
   goalBadgeText: {
     fontSize: 8,
     fontWeight: '700',
     color: colors.text.light,
-  },
-
-  // Completed stage checkmark
-  completedBadge: {
-    position: 'absolute',
-    top: -4,
-    right: -4,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: colors.success,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  completedBadgeText: {
-    fontSize: 11,
-    color: colors.text.light,
-    fontWeight: '700',
   },
 });
 

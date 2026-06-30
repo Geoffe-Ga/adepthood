@@ -38,8 +38,17 @@ export interface MapRow {
   stageNumbers: readonly number[];
 }
 
-/** The serif title overlaid across the top of the spiral (top → bottom). */
+/** The serif title across the top of the spiral (top → bottom). */
 export const MAP_TITLE_LINES = ['EMPTINESS', 'UNITY'] as const;
+
+/**
+ * The title line each top stage carries in its own grid row (no absolute
+ * overlay): stage 10 reads EMPTINESS, stage 9 reads UNITY. Stages 1–8 have none.
+ */
+export const TITLE_BY_STAGE: Readonly<Record<number, string>> = {
+  10: MAP_TITLE_LINES[0],
+  9: MAP_TITLE_LINES[1],
+};
 
 /**
  * Per-stage left-column copy and color, keyed by ``stage_number`` (1–10).
@@ -108,7 +117,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     persona: 'Dominator',
     descriptor: 'Power',
     practice: 'Confidence Meditation',
-    arrowLabel: 'Self-',
+    arrowLabel: 'Self-Interest',
     textColor: '#b14a3a',
   },
   2: {

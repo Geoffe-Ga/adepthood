@@ -11,7 +11,7 @@ import { stages as stagesApi } from '../../../api';
 import type { Stage } from '../../../api';
 import { STAGE_COLORS, STAGE_ORDER } from '../../../design/tokens';
 import { useStageStore } from '../../../store/useStageStore';
-import { HOTSPOTS, STAGE_COUNT } from '../stageData';
+import { STAGE_COUNT } from '../stageData';
 import type { StageData } from '../stageData';
 
 /**
@@ -28,7 +28,6 @@ export const clampProgress = (raw: number | null | undefined): number => {
 
 /** Convert a backend Stage response into a frontend StageData with layout. */
 export const toStageData = (apiStage: Stage): StageData => {
-  const index = STAGE_COUNT - apiStage.stage_number; // stage 10 → index 0
   const colorName = STAGE_ORDER[apiStage.stage_number - 1] ?? 'Beige';
   return {
     id: apiStage.id,
@@ -49,7 +48,6 @@ export const toStageData = (apiStage: Stage): StageData => {
     relationshipToFreeWill: apiStage.relationship_to_free_will,
     freeWillDescription: apiStage.free_will_description,
     overviewUrl: apiStage.overview_url,
-    hotspots: [...(HOTSPOTS[index] ?? [])],
   };
 };
 
