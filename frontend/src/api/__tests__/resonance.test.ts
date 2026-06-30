@@ -37,6 +37,7 @@ function marginalia(overrides: Partial<Marginalia> = {}): Marginalia {
 function resonancePayload(): ResonanceResponse {
   return {
     marginalia: [marginalia()],
+    suggestions: [],
     remaining_messages: 49,
     remaining_balance: 0,
     monthly_reset_date: '2026-07-01T00:00:00Z',

@@ -31,6 +31,11 @@ jest.mock('@/api', () => ({
     list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
     generate: jest.fn(),
   },
+  completionSuggestions: {
+    list: jest.fn(() => Promise.resolve({ items: [] })),
+    accept: jest.fn(),
+    dismiss: jest.fn(),
+  },
 }));
 
 const JournalEntryScreen = require('../JournalEntryScreen').default;

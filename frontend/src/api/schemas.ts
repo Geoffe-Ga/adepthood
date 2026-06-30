@@ -431,6 +431,51 @@ export const frequencyResponseSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Completion suggestions (habit-resonance #819) — mirror the backend
+// CompletionSuggestionResponse (no user_id) + the accept result.
+// ---------------------------------------------------------------------------
+
+export const completionTargetTypeSchema = z.enum(['habit', 'practice']);
+export const suggestionStatusSchema = z.enum(['pending', 'accepted', 'dismissed']);
+
+/** Matches the backend's CheckInResult (streak + milestones + reason). */
+export const checkInResultSchema = z.object({
+  streak: z.number().int(),
+  milestones: z.array(z.object({ threshold: z.number().int() })),
+  reason_code: z.string(),
+});
+
+export const completionSuggestionSchema = z.object({
+  id: z.number().int(),
+  journal_entry_id: z.number().int(),
+  target_type: completionTargetTypeSchema,
+  goal_id: z.number().int().nullable(),
+  user_practice_id: z.number().int().nullable(),
+  label: z.string(),
+  anchor_start: z.number().int(),
+  anchor_end: z.number().int(),
+  anchor_text: z.string(),
+  status: suggestionStatusSchema,
+  accepted_at: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+export const completionSuggestionListResponseSchema = z.object({
+  items: z.array(completionSuggestionSchema),
+});
+
+export const acceptSuggestionResultSchema = z.object({
+  suggestion: completionSuggestionSchema,
+  check_in: checkInResultSchema,
+});
+
+export type CompletionTargetTypeT = z.infer<typeof completionTargetTypeSchema>;
+export type SuggestionStatusT = z.infer<typeof suggestionStatusSchema>;
+export type CompletionSuggestionT = z.infer<typeof completionSuggestionSchema>;
+export type AcceptSuggestionResultT = z.infer<typeof acceptSuggestionResultSchema>;
+
+// ---------------------------------------------------------------------------
 // Lenient schemas for legacy endpoints (gradually tightened)
 // ---------------------------------------------------------------------------
 
