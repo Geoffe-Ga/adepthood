@@ -32,24 +32,14 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { defaultConfigFor, suggestedDurationFor } from '../configurator/defaults';
-import CardMeditationForm from '../configurator/forms/CardMeditationForm';
-import CountUpForm from '../configurator/forms/CountUpForm';
-import IntervalBellForm from '../configurator/forms/IntervalBellForm';
-import MeditationTimerForm from '../configurator/forms/MeditationTimerForm';
-import MetronomeForm from '../configurator/forms/MetronomeForm';
-import MindfulAnchorForm from '../configurator/forms/MindfulAnchorForm';
-import RandomIntervalBellForm from '../configurator/forms/RandomIntervalBellForm';
-import RepCounterForm from '../configurator/forms/RepCounterForm';
-import SenseGroundingForm from '../configurator/forms/SenseGroundingForm';
 import { ErrorList } from '../configurator/forms/shared';
-import TalliedGroundingForm from '../configurator/forms/TalliedGroundingForm';
-import TarotForm from '../configurator/forms/TarotForm';
 import type { ModeConfig } from '../engine/types';
 import { validateModeConfig } from '../engine/validation';
 
 import { practices, userPractices } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import ConfiguratorBody from '@/features/Practice/components/ConfiguratorBody';
 import ModePicker, { type PickableMode } from '@/features/Practice/components/ModePicker';
 import { FALLBACK_STAGE, MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
@@ -326,7 +316,11 @@ const ConfigureStep = (props: ConfigureStepProps): React.JSX.Element => {
   return (
     <View testID="create-practice-step-configure">
       <Text style={styles.bodyLead}>Defaults are filled in — tweak or continue.</Text>
-      <ConfiguratorBody config={config} onChange={props.onChange} />
+      <ConfiguratorBody
+        config={config}
+        onChange={props.onChange}
+        renderFallback={renderWizardFallback}
+      />
       <ErrorList errors={errors} />
       <NavRow
         onBack={props.onBack}
@@ -339,56 +333,20 @@ const ConfigureStep = (props: ConfigureStepProps): React.JSX.Element => {
   );
 };
 
-interface ConfiguratorBodyProps {
-  config: ModeConfig;
-  onChange: (next: ModeConfig) => void;
-}
-
-type FormComponent<M extends ModeConfig['mode']> = React.ComponentType<{
-  value: Extract<ModeConfig, { mode: M }>;
-  onChange: (next: Extract<ModeConfig, { mode: M }>) => void;
-}>;
-
-type FormTable = { [K in ModeConfig['mode']]: FormComponent<K> | null };
-
-const MODE_FORMS: FormTable = {
-  meditation_timer: MeditationTimerForm,
-  count_up: CountUpForm,
-  metronome: MetronomeForm,
-  interval_bell: IntervalBellForm,
-  random_interval_bell: RandomIntervalBellForm,
-  rep_counter: RepCounterForm,
-  sense_grounding: SenseGroundingForm,
-  tarot: TarotForm,
-  card_meditation: CardMeditationForm,
-  tallied_grounding: TalliedGroundingForm,
-  mindful_anchor: MindfulAnchorForm,
-};
-
 /** Title-case a mode key for user-facing copy (e.g. ``mindful_anchor`` → "Mindful anchor"). */
 const humanizeMode = (mode: string): string => {
   const spaced = mode.replace(/_/g, ' ');
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 };
 
-const ConfiguratorBody = ({ config, onChange }: ConfiguratorBodyProps): React.JSX.Element => {
-  type AnyForm = React.ComponentType<{
-    value: ModeConfig;
-    onChange: (next: ModeConfig) => void;
-  }>;
-  const Form = MODE_FORMS[config.mode] as AnyForm | null;
-  if (Form === null) {
-    // Defensive: every current mode has a form, but if a future mode maps to
-    // null the notice must name *that* mode, not a hardcoded one.
-    return (
-      <NoticeView
-        testID="create-practice-configure-fallback"
-        message={`${humanizeMode(config.mode)} will ship with a configurator soon. The defaults below will be saved as-is.`}
-      />
-    );
-  }
-  return <Form value={config} onChange={onChange} />;
-};
+// Defensive: every current mode has a form, but if a future mode maps to null
+// the notice must name *that* mode, not a hardcoded one.
+const renderWizardFallback = (mode: string): React.JSX.Element => (
+  <NoticeView
+    testID="create-practice-configure-fallback"
+    message={`${humanizeMode(mode)} will ship with a configurator soon. The defaults below will be saved as-is.`}
+  />
+);
 
 interface MetadataStepProps {
   state: WizardState;

@@ -15,22 +15,12 @@ import type { ModeConfig } from '../engine/types';
 import { CUSTOM_NAME_MAX, validateCustomName, validateModeConfig } from '../engine/validation';
 import RecipePickerModal from '../recipes/RecipePickerModal';
 
-import CardMeditationForm from './forms/CardMeditationForm';
-import CountUpForm from './forms/CountUpForm';
-import IntervalBellForm from './forms/IntervalBellForm';
-import MeditationTimerForm from './forms/MeditationTimerForm';
-import MetronomeForm from './forms/MetronomeForm';
-import MindfulAnchorForm from './forms/MindfulAnchorForm';
-import RandomIntervalBellForm from './forms/RandomIntervalBellForm';
-import RepCounterForm from './forms/RepCounterForm';
-import SenseGroundingForm from './forms/SenseGroundingForm';
 import { ErrorList } from './forms/shared';
-import TalliedGroundingForm from './forms/TalliedGroundingForm';
-import TarotForm from './forms/TarotForm';
 
 import { type UserPractice, type UserPracticeCustomize, userPractices } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import ConfiguratorBody from '@/features/Practice/components/ConfiguratorBody';
 
 /** Modes that have a recipe library backing them; see backend `RECIPE_MODES`. */
 const RECIPE_LIBRARY_MODES = new Set(['sense_grounding', 'tallied_grounding']);
@@ -116,7 +106,11 @@ const ConfiguratorSheetBody = (props: ConfiguratorSheetBodyProps): React.JSX.Ele
       />
       <ScrollView style={styles.body} keyboardShouldPersistTaps="handled">
         {props.recipeLibraryAvailable && <RecipeLibraryButton onPress={props.onOpenRecipePicker} />}
-        <ConfiguratorBody config={props.edit.config} onChange={props.edit.setConfig} />
+        <ConfiguratorBody
+          config={props.edit.config}
+          onChange={props.edit.setConfig}
+          renderFallback={renderUnknownModeNotice}
+        />
         <ErrorList errors={props.edit.errors} />
         {props.state.apiError !== null && (
           <Text style={styles.apiError} testID="ritual-configurator-api-error">
@@ -258,59 +252,7 @@ const ConfiguratorHeader = ({
   </View>
 );
 
-interface BodyProps {
-  config: ModeConfig;
-  onChange: (next: ModeConfig) => void;
-}
-
-// The dispatch is split into two helpers so each stays within the complexity
-// budget as modes accumulate: timer-family forms vs the card/grounding family.
-const timerBody = (
-  config: ModeConfig,
-  onChange: BodyProps['onChange'],
-): React.JSX.Element | null => {
-  switch (config.mode) {
-    case 'meditation_timer':
-      return <MeditationTimerForm value={config} onChange={onChange} />;
-    case 'count_up':
-      return <CountUpForm value={config} onChange={onChange} />;
-    case 'metronome':
-      return <MetronomeForm value={config} onChange={onChange} />;
-    case 'interval_bell':
-      return <IntervalBellForm value={config} onChange={onChange} />;
-    case 'random_interval_bell':
-      return <RandomIntervalBellForm value={config} onChange={onChange} />;
-    case 'rep_counter':
-      return <RepCounterForm value={config} onChange={onChange} />;
-    default:
-      return null;
-  }
-};
-
-const cardAndGroundingBody = (
-  config: ModeConfig,
-  onChange: BodyProps['onChange'],
-): React.JSX.Element => {
-  switch (config.mode) {
-    case 'sense_grounding':
-      return <SenseGroundingForm value={config} onChange={onChange} />;
-    case 'tallied_grounding':
-      return <TalliedGroundingForm value={config} onChange={onChange} />;
-    case 'mindful_anchor':
-      return <MindfulAnchorForm value={config} onChange={onChange} />;
-    case 'tarot':
-      return <TarotForm value={config} onChange={onChange} />;
-    case 'card_meditation':
-      return <CardMeditationForm value={config} onChange={onChange} />;
-    default:
-      return <UnknownModeNotice />;
-  }
-};
-
-const ConfiguratorBody = ({ config, onChange }: BodyProps): React.JSX.Element =>
-  timerBody(config, onChange) ?? cardAndGroundingBody(config, onChange);
-
-const UnknownModeNotice = (): React.JSX.Element => (
+const renderUnknownModeNotice = (): React.JSX.Element => (
   <View testID="ritual-configurator-unknown">
     <Text style={styles.unknownText}>
       Configuration not yet available — long-press to replace this practice.
