@@ -477,6 +477,76 @@ export type CompletionSuggestionT = z.infer<typeof completionSuggestionSchema>;
 export type AcceptSuggestionResultT = z.infer<typeof acceptSuggestionResultSchema>;
 
 // ---------------------------------------------------------------------------
+// Resonance + marginalia + care (journal-resonance #891)
+// ---------------------------------------------------------------------------
+
+export const marginaliaKindSchema = z.enum(['theme', 'connection', 'symbol']);
+export const marginaliaStatusSchema = z.enum(['active', 'stale']);
+
+/** One margin note (mirrors the backend ``MarginaliaResponse``). */
+export const marginaliaSchema = z.object({
+  id: z.number().int(),
+  journal_entry_id: z.number().int(),
+  kind: marginaliaKindSchema,
+  anchor_start: z.number().int(),
+  anchor_end: z.number().int(),
+  anchor_text: z.string(),
+  note: z.string(),
+  essay: z.string().nullable(),
+  essay_generated_at: z.string().nullable(),
+  status: marginaliaStatusSchema,
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+/**
+ * The four non-clinical care routings (mirrors ``domain.care.CareKind``):
+ * crisis ``hotline`` / ``text_line``, a trusted ``human``, and clinical
+ * ``professional`` support. Anything else is a contract drift and is rejected
+ * at the boundary so an unknown routing can never render an unlabelled card.
+ */
+export const careKindSchema = z.enum(['hotline', 'text_line', 'human', 'professional']);
+
+/** One support pointer (mirrors the backend ``CareResourceResponse``). */
+export const careResourceSchema = z.object({
+  kind: careKindSchema,
+  name: z.string(),
+  contact: z.string(),
+  what_it_is: z.string(),
+});
+
+/**
+ * The care surface returned only on an acute-distress signal (NORTH-STAR §10):
+ * a warm, non-shaming message plus the ordered human + professional resources.
+ * Mirrors the backend ``CareResponse``; ``null`` on every ordinary entry.
+ */
+export const careResponseSchema = z.object({
+  message: z.string(),
+  resources: z.array(careResourceSchema),
+});
+
+/**
+ * Result of a resonance pass (mirrors the backend ``ResonanceResponse``).
+ *
+ * ``care`` is additive: it is ``None`` on every ordinary entry — absent on the
+ * wire — so ``.nullish()`` keeps existing (no-care) responses validating and
+ * behaving exactly as before. It is set only on an elevated signal.
+ */
+export const resonanceResponseSchema = z.object({
+  marginalia: z.array(marginaliaSchema),
+  suggestions: z.array(completionSuggestionSchema),
+  remaining_messages: z.number().int(),
+  remaining_balance: z.number().int(),
+  monthly_reset_date: z.string(),
+  care: careResponseSchema.nullish(),
+});
+
+export type CareKindT = z.infer<typeof careKindSchema>;
+export type CareResourceT = z.infer<typeof careResourceSchema>;
+export type CareResponseT = z.infer<typeof careResponseSchema>;
+export type ResonanceResponseT = z.infer<typeof resonanceResponseSchema>;
+
+// ---------------------------------------------------------------------------
 // Lenient schemas for legacy endpoints (gradually tightened)
 // ---------------------------------------------------------------------------
 

@@ -19,7 +19,7 @@ import {
 } from 'react';
 
 import { completionSuggestions, resonance } from '@/api';
-import type { CheckInResult, CompletionSuggestion, Marginalia } from '@/api';
+import type { CareResponse, CheckInResult, CompletionSuggestion, Marginalia } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 
 const EMPTY_BODY_MESSAGE = 'Write a little first, then ask for its resonance.';
@@ -37,6 +37,12 @@ export interface UseResonanceResult {
   suggestions: CompletionSuggestion[];
   /** Check-in (streak) per accepted suggestion id, for the confirmed card. */
   acceptedCheckIns: Record<number, CheckInResult | null>;
+  /**
+   * Human + professional support surface for the latest pass (NORTH-STAR §10).
+   * Always ``null`` (never ``undefined``) until a generate pass returns care; a
+   * new pass clears any stale care, and the load-on-open path never sets it.
+   */
+  care: CareResponse | null;
   loading: boolean;
   error: string | null;
   requestResonance: () => Promise<void>;
@@ -191,13 +197,17 @@ interface GeneratePass {
   requestResonance: () => Promise<void>;
 }
 
-/** The charged "generate" pass: flush, generate, merge notes + suggestions. */
-function useGeneratePass(
-  flush: () => Promise<number | null>,
-  setMarginalia: Dispatch<SetStateAction<Marginalia[]>>,
-  mergeFromGenerate: (_incoming: CompletionSuggestion[]) => void,
-  setError: Dispatch<SetStateAction<string | null>>,
-): GeneratePass {
+interface GeneratePassDeps {
+  flush: () => Promise<number | null>;
+  setMarginalia: Dispatch<SetStateAction<Marginalia[]>>;
+  mergeFromGenerate: (_incoming: CompletionSuggestion[]) => void;
+  setCare: Dispatch<SetStateAction<CareResponse | null>>;
+  setError: Dispatch<SetStateAction<string | null>>;
+}
+
+/** The charged "generate" pass: flush, generate, merge notes + suggestions + care. */
+function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
+  const { flush, setMarginalia, mergeFromGenerate, setCare, setError } = deps;
   const [loading, setLoading] = useState(false);
   const inFlightRef = useRef(false);
 
@@ -206,6 +216,9 @@ function useGeneratePass(
     inFlightRef.current = true;
     setLoading(true);
     setError(null);
+    // Clear any care from a prior pass up front so a distressed-then-calm
+    // sequence never leaves a stale crisis surface on the page.
+    setCare(null);
     try {
       const entryId = await flush();
       if (entryId == null) {
@@ -215,29 +228,35 @@ function useGeneratePass(
       const result = await resonance.generate(entryId);
       setMarginalia((prev) => mergeById(prev, result.marginalia));
       mergeFromGenerate(result.suggestions);
+      // ``care`` is nullable/absent on ordinary entries — normalise to null.
+      setCare(result.care ?? null);
     } catch (err) {
       setError(formatApiError(err));
     } finally {
       inFlightRef.current = false;
       setLoading(false);
     }
-  }, [flush, setMarginalia, mergeFromGenerate, setError]);
+  }, [flush, setMarginalia, mergeFromGenerate, setCare, setError]);
 
   return { loading, requestResonance };
 }
 
 export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseResonanceResult {
   const [marginalia, setMarginalia] = useState<Marginalia[]>([]);
+  // Default null (never undefined): the load-on-open path never sets care, so
+  // the surface stays hidden until a generate pass returns one.
+  const [care, setCare] = useState<CareResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useLoadOnOpen(routeEntryId, resonance.list, setMarginalia);
   const sug = useSuggestions(routeEntryId, setError);
-  const { loading, requestResonance } = useGeneratePass(
+  const { loading, requestResonance } = useGeneratePass({
     flush,
     setMarginalia,
-    sug.mergeFromGenerate,
+    mergeFromGenerate: sug.mergeFromGenerate,
+    setCare,
     setError,
-  );
+  });
 
   const updateNote = useCallback((updated: Marginalia) => {
     setMarginalia((prev) => mergeById(prev, [updated]));
@@ -257,6 +276,7 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
     marginalia,
     suggestions: sug.suggestions,
     acceptedCheckIns: sug.acceptedCheckIns,
+    care,
     loading,
     error,
     requestResonance,

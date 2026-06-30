@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import CareSupportNote from './CareSupportNote';
 import CompletionSuggestionNote from './CompletionSuggestionNote';
 import EditConfirmDialog from './EditConfirmDialog';
 import GetResonanceButton, { shouldShowResonance } from './GetResonanceButton';
@@ -701,6 +702,10 @@ function JournalEntryScreen({
   const { editGate, modal } = ctl;
   return (
     <SafeAreaView style={styles.safeArea} testID="journal-screen">
+      {/* Screen-level care surface (NORTH-STAR §10): a sibling ABOVE the page,
+          never nested in the margin column — so on an acute-distress signal the
+          human + professional support reads as the page's own, not a margin note. */}
+      <CareSupportNote care={ctl.resonance.care} />
       <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
       <GetResonanceButton
         visible={ctl.visible}
