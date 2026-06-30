@@ -76,12 +76,13 @@ jest.mock('@/components/FeatureErrorBoundary', () => {
   return { __esModule: true, FeatureErrorBoundary: Boundary };
 });
 
-import { render } from '@testing-library/react-native';
+import { render, act } from '@testing-library/react-native';
 import React from 'react';
 
 import { RootNavigator } from '@/App';
 import * as AuthContextModule from '@/context/AuthContext';
 import type { AuthStatus } from '@/context/AuthContext';
+import { useWelcomeStore } from '@/store/useWelcomeStore';
 
 type MockAuth = {
   token: string | null;
@@ -128,6 +129,10 @@ function mockAuthStatus(status: AuthStatus, token: string | null = null) {
 
 beforeEach(() => {
   jest.restoreAllMocks();
+  // This suite asserts the authStatus → navigator contract, not the #836
+  // first-run welcome gate. Seed the welcome flag as seen so an authenticated
+  // render lands on the shell rather than the WelcomeScreen.
+  act(() => useWelcomeStore.setState({ hasSeenWelcome: true }));
 });
 
 describe('RootNavigator gated on authStatus (BUG-NAV-001 / BUG-NAV-002)', () => {
