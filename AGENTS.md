@@ -1,3 +1,15 @@
+## 🧭 Product North Star
+
+Before building, read [`NORTH-STAR.md`](./NORTH-STAR.md) — the product thesis
+("Graduated Engagement"). Adepthood is a journal-first PKM at its floor, with
+optional, self-chosen depths arranged around it; the governing principle is
+**"you choose your depth."** Build accordingly: nothing is gated or mandatory,
+deeper rings surface only as resonant, one-tap-declinable invitations, and there
+is **no gamified pressure** — no streak-shame, no guilt mechanics, no dark
+patterns. The telos is to springboard people back to embodied community as Whole
+Adepts; success can include a user outgrowing the app. The visual direction
+lives in [`DESIGN.md`](./DESIGN.md).
+
 ## ⚙️ Agent Behavior and Development Philosophy
 
 To set up the full development environment, run:

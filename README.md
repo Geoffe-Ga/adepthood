@@ -1,14 +1,18 @@
 # Adepthood
 
-Adepthood is a React Native + FastAPI app that guides users through the 36-week **APTITUDE** program, a structured path of habit-building, meditative practices, and personal growth toward Free Will and Self-Actualization.
+Adepthood is a React Native + FastAPI app whose floor is a **journal-first personal knowledge base** that, over time, becomes a _Higher Self_ — reflecting your own past reflections back to you in the language of the **APTITUDE** program and the Archetypal Wavelength. Arranged around that floor are optional, self-chosen **depths** — prompted journaling, habit scaffolding, a practice ramp, the course reading, and the Digital Sangha. Nothing is gated, nothing is mandatory, and there is no gamified pressure: **you choose your depth**. A single 36-week Archetypal Wavelength cadence (eight stages × 3 weeks + Unity & Emptiness × 6 weeks) paces whichever depths are turned on, and it loops — the Map reads as a wheel of wholeness, not a ladder to climb.
+
+See [`NORTH-STAR.md`](./NORTH-STAR.md) for the full product thesis ("Graduated Engagement") and [`DESIGN.md`](./DESIGN.md) for the "Candle & Ink" visual north star.
 
 ## ✨ Features
 
-- 📚 **Course** — Explore educational content stage by stage through the APTITUDE program
-- 📊 **Habits** — Track cumulative habits with energy scaffolding, streaks, and goals
-- 🧘 **Practices** — Complete timed meditations unique to each stage, with sound cues and progress tracking
-- 📓 **Journal** — Reflect daily and chat with Robot Mason, your Liminal Trickster Mystic guide
-- 🗺️ **Map** — Visualize your growth across the 10 stages of APTITUDE in a skill-tree style
+- 📓 **Journal** — Write freely, then **Get Resonance**: anchored AI margin notes (Marginalia) reflected back in your own voice. Journaling about a habit or practice you actually did surfaces a one-tap **"check it off?"** suggestion — a resonant invitation, always declinable, never a nag.
+- 🏠 **Today** — A home hub that gathers what is live for you across the depths you have turned on.
+- 📊 **Habits** — Opt into cumulative habits with energy scaffolding, streaks, and tiered goals so the stack never overwhelms.
+- 🧘 **Practices** — Stage practices (mindfulness, breathwork, movement) with an immersive session player — timed cues and sound bells.
+- 📚 **Course** — Read the teachings stage by stage in a native Markdown reader, drip-fed at the stage cadence.
+- 🗺️ **Map** — See your journey through the 10 stages of APTITUDE.
+- 🧠 **BotMason** — A Liminal Trickster Mystic guide you can chat with about your reflections and practice insights.
 
 
 ## 🛠️ Tech Stack
@@ -21,12 +25,18 @@ Adepthood is a React Native + FastAPI app that guides users through the 36-week 
 
 ```
 .
-├── backend/   # FastAPI service
-├── frontend/  # React Native + Expo client
-├── prompts/   # LLM prompt history and specification documents
-├── scripts/   # Development and CI helper scripts
-├── AGENTS.md  # Necessary instructions for AI collaborators
+├── backend/       # FastAPI service
+├── frontend/      # React Native + Expo client (design system in src/design/)
+├── docs/          # Architecture decision records and content guide
+├── prompts/       # LLM prompt history and specification documents
+├── scripts/       # Development and CI helper scripts
+├── AGENTS.md      # Necessary instructions for AI collaborators
+├── NORTH-STAR.md  # Product thesis — "Graduated Engagement"
+├── DESIGN.md      # Visual north star — the "Candle & Ink" design language
 ```
+
+The implemented design system (tokens, theme, and its own `DESIGN.md`) lives in
+`frontend/src/design/`.
 
 ## 🚀 Getting Started
 
