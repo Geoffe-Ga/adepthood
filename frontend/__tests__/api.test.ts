@@ -42,6 +42,21 @@ describe('API client request composition', () => {
     );
   });
 
+  it('lists journal entries with GET /journal/ (canonical, no 307)', async () => {
+    // #791 review backfill: a 307 on list is how the journal screen fails to
+    // populate, distinct from the create path — guard the canonical slash here too.
+    // list() validates against journalListResponseSchema, so return that shape.
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ items: [], total: 0, has_more: false }),
+    });
+    await api.journal.list({});
+    expect(fetch).toHaveBeenCalledWith(
+      `${mockBaseUrl}/journal/`,
+      expect.objectContaining(expectSignal),
+    );
+  });
+
   it('requests stage list with GET /stages', async () => {
     await api.stages.list();
     expect(fetch).toHaveBeenCalledWith(
