@@ -40,7 +40,11 @@ class CompletionSuggestionListResponse(BaseModel):
 
 
 class AcceptSuggestionResponse(BaseModel):
-    """The accepted suggestion plus the check-in it logged (streak + milestones)."""
+    """The accepted suggestion plus the check-in it logged (streak + milestones).
+
+    ``check_in`` is ``None`` for practice targets — a journal-attested
+    ``PracticeSession`` carries no streak (#821).
+    """
 
     suggestion: CompletionSuggestionResponse
-    check_in: CheckInResult
+    check_in: CheckInResult | None = None

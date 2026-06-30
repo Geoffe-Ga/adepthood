@@ -15,7 +15,9 @@ from sqlmodel import select
 from conftest import test_engine
 from models.goal import Goal
 from models.habit import Habit
+from models.practice import Practice
 from models.user import User
+from models.user_practice import UserPractice
 from services.completion_candidates import (
     MAX_CANDIDATES,
     gather_candidates,
@@ -175,15 +177,44 @@ async def test_caps_at_max_candidates_and_warns(
     assert any("truncated" in r.message for r in caplog.records)
 
 
+async def _active_practice(session: AsyncSession, user_id: int, name: str) -> int:
+    """Seed a Practice + active UserPractice; return the user_practice id."""
+    practice = Practice(
+        stage_number=1,
+        name=name,
+        description="x",
+        instructions="x",
+        default_duration_minutes=10.0,
+        mode="meditation_timer",
+        mode_config={"mode": "meditation_timer", "duration_minutes": 10},
+    )
+    session.add(practice)
+    await session.commit()
+    await session.refresh(practice)
+    user_practice = UserPractice(
+        user_id=user_id, practice_id=practice.id, stage_number=1, start_date=date(2025, 1, 1)
+    )
+    session.add(user_practice)
+    await session.commit()
+    await session.refresh(user_practice)
+    assert user_practice.id is not None
+    return user_practice.id
+
+
 @pytest.mark.asyncio
-async def test_include_practices_is_dormant(db_session: AsyncSession) -> None:
+async def test_include_practices_adds_active_practices(db_session: AsyncSession) -> None:
     user_id = await _user(db_session)
     await _habit(db_session, user_id, "Only habit", tiers=("clear",))
+    up_id = await _active_practice(db_session, user_id, "Morning sit")
 
     off = await gather_candidates(db_session, user_id, include_practices=False)
     on = await gather_candidates(db_session, user_id, include_practices=True)
 
-    assert [c.name for c in on] == [c.name for c in off] == ["Only habit"]
+    assert [c.name for c in off] == ["Only habit"]  # practices excluded by default
+    assert [c.name for c in on] == ["Only habit", "Morning sit"]  # appended, shared budget
+    practice = next(c for c in on if c.target_type == "practice")
+    assert practice.target_id == up_id
+    assert practice.index == 1  # dense index continues after the habit
 
 
 @pytest.mark.asyncio

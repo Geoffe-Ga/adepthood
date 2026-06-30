@@ -91,6 +91,21 @@ describe('CompletionSuggestionNote', () => {
     expect(getByText(/4-day streak/)).toBeTruthy();
   });
 
+  it('accepted practice: renders "Logged" with no streak when check_in is null (#821)', () => {
+    const { getByTestId, getByText, queryByText } = render(
+      <CompletionSuggestionNote
+        suggestion={suggestion({ status: 'accepted', target_type: 'practice' })}
+        checkIn={null}
+        onAccept={noop}
+        onDismiss={noop}
+      />,
+    );
+    expect(getByTestId('suggestion-7-checked')).toBeTruthy();
+    expect(getByText(/Logged/)).toBeTruthy();
+    expect(queryByText(/Checked off/)).toBeNull();
+    expect(queryByText(/streak/)).toBeNull();
+  });
+
   it('Not now calls onDismiss(id)', () => {
     const onDismiss = jest.fn(() => Promise.resolve());
     const { getByTestId } = render(

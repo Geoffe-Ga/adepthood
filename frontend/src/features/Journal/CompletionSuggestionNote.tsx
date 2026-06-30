@@ -33,6 +33,7 @@ const OK_LABEL = 'OK';
 const DISMISS_LABEL = 'Not now';
 const CHECKING_LABEL = 'Checking…';
 const CHECKED_LABEL = '✓ Checked off';
+const LOGGED_LABEL = '✓ Logged';
 
 /** "N-day streak" from a check-in, or null when there is no streak to show. */
 function streakLabel(checkIn: CheckInResult | null): string | null {
@@ -48,19 +49,26 @@ export interface CompletionSuggestionNoteProps {
   onDismiss: (_id: number) => void | Promise<void>;
 }
 
-/** The settled confirmation shown once a suggestion is accepted. */
+/** The settled confirmation shown once a suggestion is accepted.
+ *
+ * Habits read "✓ Checked off" + an optional streak; practices read "✓ Logged"
+ * with no streak line (a journal-attested session has none).
+ */
 function AcceptedCard({
   id,
+  targetType,
   checkIn,
 }: {
   id: number;
+  targetType: CompletionSuggestion['target_type'];
   checkIn: CheckInResult | null;
 }): React.JSX.Element {
   const streak = streakLabel(checkIn);
+  const label = targetType === 'practice' ? LOGGED_LABEL : CHECKED_LABEL;
   return (
     <View style={styles.card} testID={`suggestion-${id}`}>
       <Text style={styles.checked} testID={`suggestion-${id}-checked`}>
-        {CHECKED_LABEL}
+        {label}
         {streak ? <Text style={styles.streak}>{`  ${streak}`}</Text> : null}
       </Text>
     </View>
@@ -158,7 +166,9 @@ function CompletionSuggestionNote({
 }: CompletionSuggestionNoteProps): React.JSX.Element | null {
   if (suggestion.status === 'dismissed') return null;
   if (suggestion.status === 'accepted') {
-    return <AcceptedCard id={suggestion.id} checkIn={checkIn} />;
+    return (
+      <AcceptedCard id={suggestion.id} targetType={suggestion.target_type} checkIn={checkIn} />
+    );
   }
   return <PendingCard suggestion={suggestion} onAccept={onAccept} onDismiss={onDismiss} />;
 }

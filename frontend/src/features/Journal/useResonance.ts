@@ -38,7 +38,7 @@ export interface UseResonanceResult {
   /** The check-in (streak + milestones) from the most recent accept, if any. */
   lastCheckIn: CheckInResult | null;
   /** Check-in (streak) per accepted suggestion id, for the confirmed card. */
-  acceptedCheckIns: Record<number, CheckInResult>;
+  acceptedCheckIns: Record<number, CheckInResult | null>;
   loading: boolean;
   error: string | null;
   requestResonance: () => Promise<void>;
@@ -97,7 +97,7 @@ interface SuggestionsApi {
   suggestions: CompletionSuggestion[];
   lastCheckIn: CheckInResult | null;
   /** Check-in (streak) per accepted suggestion id, for the confirmed card. */
-  acceptedCheckIns: Record<number, CheckInResult>;
+  acceptedCheckIns: Record<number, CheckInResult | null>;
   mergeFromGenerate: (_incoming: CompletionSuggestion[]) => void;
   acceptSuggestion: (_id: number) => Promise<void>;
   dismissSuggestion: (_id: number) => Promise<void>;
@@ -107,7 +107,9 @@ interface SuggestionsApi {
 function useSuggestions(routeEntryId: number | null, setError: SetError): SuggestionsApi {
   const [suggestions, setSuggestions] = useState<CompletionSuggestion[]>([]);
   const [lastCheckIn, setLastCheckIn] = useState<CheckInResult | null>(null);
-  const [acceptedCheckIns, setAcceptedCheckIns] = useState<Record<number, CheckInResult>>({});
+  const [acceptedCheckIns, setAcceptedCheckIns] = useState<Record<number, CheckInResult | null>>(
+    {},
+  );
   const pendingIdsRef = useRef<Set<number>>(new Set());
 
   useLoadOnOpen(routeEntryId, completionSuggestions.list, setSuggestions);
@@ -147,7 +149,7 @@ interface AcceptDeps {
   pendingIdsRef: MutableRefObject<Set<number>>;
   setSuggestions: Dispatch<SetStateAction<CompletionSuggestion[]>>;
   setLastCheckIn: Dispatch<SetStateAction<CheckInResult | null>>;
-  setAcceptedCheckIns: Dispatch<SetStateAction<Record<number, CheckInResult>>>;
+  setAcceptedCheckIns: Dispatch<SetStateAction<Record<number, CheckInResult | null>>>;
   setError: SetError;
 }
 
