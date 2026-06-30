@@ -8,7 +8,6 @@ import {
   STAGE_ORDER,
   brightenColor,
   colors,
-  darkColors,
   radius,
   shadows,
   spacing,
@@ -99,21 +98,6 @@ describe('design tokens', () => {
       // 44dp is the WCAG 2.5.5 / Apple HIG / Material baseline.
       // Shared primitives must size their hit area to at least this value.
       expect(touchTarget.minimum).toBe(44);
-    });
-  });
-
-  describe('darkColors (BUG-FE-UI-003)', () => {
-    it('exports a Material-anchored dark background scale', () => {
-      expect(darkColors.background.primary).toBe('#121212');
-      expect(darkColors.background.card).toBe('#1e1e1e');
-      expect(darkColors.background.accent).toBe('#2a2a2a');
-    });
-
-    it('ships text shades that clear AA on the dark surface', () => {
-      // Spot-check the values; contrast ratios documented inline in tokens.ts.
-      expect(darkColors.text.primary).toBe('#f5f5f5');
-      expect(darkColors.text.secondary).toBe('#b0b0b0');
-      expect(darkColors.text.tertiary).toBe('#8a8a8a');
     });
   });
 

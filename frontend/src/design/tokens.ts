@@ -111,8 +111,8 @@ export const colors = {
    * surface and a lighter edge along the bottom + right reads as a
    * depression. Used by the goal-target editor's input field; pair with
    * ``shadows.small`` on the saved-state chip for the convex counterpart.
-   * Dark-mode equivalents will live alongside the rest of ``darkColors``
-   * when that theme ships.
+   * Dark-mode equivalents will live alongside the warm dark surface tokens
+   * (``surfaceDark``) when the editor adopts that theme.
    */
   bevel: {
     recessedSurface: '#e9e9e9',
@@ -365,38 +365,6 @@ export const shadows = {
  */
 export const touchTarget = {
   minimum: 44,
-} as const;
-
-// ---------------------------------------------------------------------------
-// Dark-mode palette (BUG-FE-UI-003)
-// ---------------------------------------------------------------------------
-
-/**
- * Dark-mode swatches.  Background / surface anchored to ``#121212``
- * (Material's recommended dark base) with elevation overlays that
- * already respect WCAG-AA contrast for the same text scale used in
- * the light palette.  Component adoption ships behind a follow-up
- * theme-context PR -- this module exports the values so the
- * downstream work has a single source of truth.
- */
-export const darkColors = {
-  background: {
-    primary: '#121212',
-    card: '#1e1e1e',
-    accent: '#2a2a2a',
-  },
-  text: {
-    // Contrast ratios on #121212:
-    //   primary    #f5f5f5 / #121212 = 16.06 — pass AAA
-    //   secondary  #b0b0b0 / #121212 = 8.59  — pass AAA
-    //   tertiary   #8a8a8a / #121212 = 5.45  — pass AA normal
-    //   light      #ffffff / dark BG — case-by-case
-    primary: '#f5f5f5',
-    secondary: '#b0b0b0',
-    tertiary: '#8a8a8a',
-    light: '#ffffff',
-  },
-  border: '#2f2f2f',
 } as const;
 
 /** WCAG-AA on the white modal card: #555 = 7.22:1 on #ffffff (AAA normal). */
@@ -749,19 +717,4 @@ export const showcaseShadow = {
   shadowOpacity: 0.18,
   shadowRadius: 22,
   elevation: 8,
-} as const;
-
-/**
- * Warm dark equivalents of the journal ``colors.paper`` palette so the journal
- * joins warm dark. Mirrors the ``paper`` keys; ink clears AA on the dark ground.
- */
-export const paperDark = {
-  background: '#1c1814',
-  backgroundAlt: '#15110d',
-  desk: '#120e0b',
-  sheetEdge: '#2a2219',
-  ink: '#f3ece0', // 15.0:1 on background
-  inkSoft: '#cdbfae', // 9.8:1 on background
-  hairline: '#3a3026',
-  anchorHighlight: '#4a3a24',
 } as const;

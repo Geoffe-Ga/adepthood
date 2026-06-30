@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-import { accentDark, inkDark, paperDark, surfaceDark } from '../tokens';
+import { accentDark, inkDark, surfaceDark } from '../tokens';
 
 /** WCAG relative luminance of a #rrggbb color. */
 const luminance = (hex: string): number => {
@@ -47,10 +47,5 @@ describe('warm dark tokens (Candle & Ink, #804)', () => {
     for (const value of Object.values(accentDark)) {
       expect(contrast(value, surfaceDark.canvas)).toBeGreaterThanOrEqual(AA_NORMAL);
     }
-  });
-
-  it('dark journal paper keeps ink AA on its dark ground', () => {
-    expect(contrast(paperDark.ink, paperDark.background)).toBeGreaterThanOrEqual(AA_NORMAL);
-    expect(contrast(paperDark.inkSoft, paperDark.background)).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 });
