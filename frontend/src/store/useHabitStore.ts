@@ -96,9 +96,6 @@ registerStoreReset(() => {
 // store (which re-renders on every unrelated mutation).
 // ---------------------------------------------------------------------------
 
-export const selectHabits = (state: HabitStoreState): Habit[] => state.habits;
-export const selectHabitsLoading = (state: HabitStoreState): boolean => state.loading;
-
 /**
  * Factory for a "single habit by ID" selector. The habit lookup is O(1) via
  * the canonical `habitsById` map, and Zustand will only trigger a re-render
