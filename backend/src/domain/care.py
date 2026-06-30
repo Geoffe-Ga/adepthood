@@ -106,6 +106,22 @@ CARE_RESOURCES: tuple[CareResource, ...] = (
 )
 
 
+# A safety instruction addressed to the *model*, embedded in every prompt that
+# sends a user's writing to an LLM. NORTH-STAR §10 ("Wellbeing and care
+# boundaries") draws a hard line: the app never advises anyone to reduce or stop
+# psychiatric medication — that decision belongs to a person and their
+# prescriber. Wording it as a single shared constant means each prompt builder
+# imports the same boundary, so it can be reviewed and revised in exactly one
+# place rather than drifting across builders.
+MEDICATION_GUARDRAIL = (
+    "Safety boundary: never advise the writer to reduce, stop, or change any "
+    "medication — including psychiatric medication — and never suggest a "
+    "specific dose. That decision belongs to the writer and their prescriber. "
+    "Affirm the writer's agency and, when medication comes up, defer it to them "
+    "and their prescriber rather than offering medical direction."
+)
+
+
 def build_care_payload() -> CarePayload:
     """Return the care surface (warm message + human and professional pointers).
 

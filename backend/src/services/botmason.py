@@ -20,6 +20,7 @@ from types import ModuleType
 
 from fastapi import HTTPException
 
+from domain.care import MEDICATION_GUARDRAIL
 from errors import bad_request, payment_required
 from security import sanitize_user_text
 
@@ -381,13 +382,18 @@ def _make_nonce() -> str:
 
 
 def _augment_system_prompt(system_prompt: str, nonce: str) -> str:
-    """Return ``system_prompt`` with the per-request delimiter instruction appended.
+    """Return ``system_prompt`` with the safety guardrail + delimiter instruction.
 
-    Pulled into a helper so OpenAI and Anthropic builders share the wording
-    and so tests can assert that the instruction lands inside the system role
-    (not a user turn).
+    Both builders (OpenAI and Anthropic) route their system prompt through here,
+    so this is the single seam where every authoritative instruction is added at
+    build time. Injecting the medication-safety guardrail
+    (:data:`domain.care.MEDICATION_GUARDRAIL`, NORTH-STAR §10) here — rather than
+    hard-appending it to ``_DEFAULT_SYSTEM_PROMPT`` — guarantees it travels with
+    an operator-supplied ``BOTMASON_SYSTEM_PROMPT`` too, so the boundary cannot
+    be dropped by configuration. It lands in the system role, never a user turn.
     """
-    return system_prompt + "\n\n" + _DELIMITER_INSTRUCTION_TEMPLATE.format(nonce=nonce)
+    delimiter_instruction = _DELIMITER_INSTRUCTION_TEMPLATE.format(nonce=nonce)
+    return f"{system_prompt}\n\n{MEDICATION_GUARDRAIL}\n\n{delimiter_instruction}"
 
 
 def _wrap_user_input(text: str, nonce: str) -> str:
