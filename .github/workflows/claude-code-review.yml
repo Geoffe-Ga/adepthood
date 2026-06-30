@@ -42,10 +42,10 @@ jobs:
             change with `gh pr diff` and `gh pr view` (and any files you need).
 
             Do NOT post a comment yourself. Return ONLY the structured result with
-            two fields:
+            three fields:
 
             - "review_markdown": the full review as GitHub markdown, using this
-              template (omit the verdict here — it is the separate field below):
+              template (omit the verdict here — it is a separate field below):
 
               ## Summary
               Brief overview (2-3 sentences)
@@ -64,19 +64,35 @@ jobs:
               ## Documentation
               Docs completeness
 
-            - "verdict": exactly one of CHANGES_REQUESTED, COMMENTS, LGTM.
-              CHANGES_REQUESTED only when there is a real blocking problem;
-              COMMENTS for clean code with non-blocking suggestions; LGTM when
-              clean with nothing worth noting.
+            - "verdict": exactly one of CHANGES_REQUESTED, COMMENTS, LGTM. Take a
+              clear stance — do NOT default to COMMENTS as a safe middle ground.
+              Reason about it like this:
+
+                1. Is there ANY blocking problem? A real bug, a 🔴 security issue,
+                   insufficient/missing tests, or a CLAUDE.md violation that must
+                   be fixed before merge → CHANGES_REQUESTED.
+                2. Otherwise, would you merge this as-is right now? If the only
+                   remarks are nits you would not block on (or there is nothing to
+                   note), say so → LGTM. Minor style nits do NOT downgrade an
+                   otherwise-mergeable PR.
+                3. Reserve COMMENTS for the genuine middle: nothing blocks merge,
+                   but there ARE substantive non-blocking suggestions the author
+                   should weigh first. If you reach for COMMENTS, name the specific
+                   suggestion that keeps it out of LGTM — if you can't, it's LGTM.
+
+            - "verdict_rationale": one or two sentences justifying the verdict,
+              required for ALL THREE outcomes. For CHANGES_REQUESTED, name the
+              blocking issue(s). For COMMENTS, name the substantive suggestion(s)
+              that kept it from LGTM. For LGTM, state why it is ready to merge.
 
           # The --json-schema flag makes the action return a validated
-          # ``structured_output`` JSON string (verdict + review_markdown) instead
-          # of relying on the agent to remember to post a comment — the "Post
-          # review" step below then posts it deterministically (fixes the flaky
-          # success-with-no-comment runs, #810). gh pr comment is intentionally
-          # NOT in allowed-tools so the agent cannot post on its own.
+          # ``structured_output`` JSON string (verdict + rationale +
+          # review_markdown) instead of relying on the agent to remember to post a
+          # comment — the "Post review" step below then posts it deterministically
+          # (fixes the flaky success-with-no-comment runs, #810). gh pr comment is
+          # intentionally NOT in allowed-tools so the agent cannot post on its own.
           claude_args: >-
-            --json-schema '{"type":"object","additionalProperties":false,"required":["verdict","review_markdown"],"properties":{"verdict":{"type":"string","enum":["CHANGES_REQUESTED","COMMENTS","LGTM"]},"review_markdown":{"type":"string"}}}'
+            --json-schema '{"type":"object","additionalProperties":false,"required":["verdict","verdict_rationale","review_markdown"],"properties":{"verdict":{"type":"string","enum":["CHANGES_REQUESTED","COMMENTS","LGTM"]},"verdict_rationale":{"type":"string"},"review_markdown":{"type":"string"}}}'
             --allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"
 
       - name: Post review
@@ -109,7 +125,14 @@ jobs:
             exit 1
           fi
           verdict=$(jq -r '.verdict' <<<"$STRUCTURED")
+          rationale=$(jq -r '.verdict_rationale // ""' <<<"$STRUCTURED")
           jq -r '.review_markdown' <<<"$STRUCTURED" > review.md
+          # Keep the "## Verdict: <verdict>" line exactly — downstream skills
+          # (address-feedback, await-claude-review) parse it. The rationale goes
+          # on the following line so the verdict is never ambiguous.
           printf '\n\n## Verdict: %s\n' "$verdict" >> review.md
+          if [ -n "$rationale" ]; then
+            printf '\n%s\n' "$rationale" >> review.md
+          fi
           gh pr comment "$PR_NUMBER" -R "$REPO" --body-file review.md
           echo "Posted review with verdict: ${verdict}"
