@@ -79,12 +79,13 @@ jobs:
           # or https://docs.claude.com/en/docs/claude-code/sdk#command-line for available options
           claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
 
-      - name: Enforce LGTM verdict
+      - name: Enforce review verdict
         # The review step above posts a ``## Verdict: <LGTM|CHANGES_REQUESTED|
-        # COMMENTS>`` comment but never fails the job, so a non-LGTM verdict used
-        # to merge silently. Read the latest verdict and fail the check unless it
-        # is LGTM, so this required check actually gates the merge. Fail-closed if
-        # no verdict is found (a missing review must not pass).
+        # COMMENTS>`` comment but never fails the job, so a blocking verdict used
+        # to merge silently. Read the latest verdict and fail the check on
+        # CHANGES_REQUESTED so this required check actually gates the merge. LGTM
+        # and COMMENTS pass (COMMENTS = non-blocking suggestions, triaged to
+        # follow-up issues). Fail-closed if no verdict is found.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -114,9 +115,9 @@ jobs:
             exit 1
           fi
           echo "Review verdict: ${normalized}"
-          if [ "$normalized" = "LGTM" ]; then
-            echo "✅ LGTM — gate passes."
-          else
-            echo "::error::Review verdict is '${normalized}' (not LGTM) — blocking merge until addressed."
+          if [ "$normalized" = "CHANGES_REQUESTED" ]; then
+            echo "::error::Verdict CHANGES_REQUESTED — blocking merge until the review's blockers are addressed."
             exit 1
           fi
+          # LGTM and COMMENTS both pass; only CHANGES_REQUESTED is a hard block.
+          echo "Verdict '${normalized}' is non-blocking — gate passes."
