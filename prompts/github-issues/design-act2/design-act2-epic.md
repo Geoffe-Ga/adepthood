@@ -92,18 +92,22 @@ their primitives. After 01–03 land, 04–12 can proceed in parallel.
  03 motion-&-empty-states ──┘        06 practice-catalog   10 auth-first-impression
                                      07 practice-player    11 settings-hub
                                      12 program-onboarding
- 13 map-layout-legibility ──────────► fixes the garbled Map render; 09 builds on it
+ 13 map-grid-rearchitecture ────────► rebuilds the Map layout; 09 builds on it
  related (do not duplicate):
    #803 editorial navigation chrome (tab bar + headers)
    #804 warm dark mode
 ```
 
-> **13 is a legibility bug, not a redesign.** On a real phone the Map's
-> "EMPTINESS UNITY" title overlaps the top stage rows, the right-column aspect
-> labels clip off-screen mid-word, and the center labels collide with their lock
-> icons (with a truncated "Self-" and a stray box). 13 makes the Map render
-> cleanly first; 09 then layers the journey narrative + showcase modal on the
-> fixed layout.
+> **13 is a layout re-architecture, not a patch.** On a real phone the Map
+> renders garbled — the "EMPTINESS UNITY" title overlaps the top stage rows,
+> right-column aspect labels clip off-screen mid-word, center labels collide with
+> their lock icons. The root cause is structural: the Map computes the same
+> 10-stage grid **twice** (a content-driven flex table for the left/right columns
+> vs. absolute percentage-positioned overlays for the center), so the two drift
+> apart on any device but the design one. 13 replaces both with **one responsive
+> row grid** that is the single source of vertical truth (and retires the
+> often-missing hosted spiral PNG as a layout driver); 09 then layers the journey
+> narrative + showcase modal on that stable grid.
 
 ## Sub-issues
 
@@ -121,7 +125,7 @@ their primitives. After 01–03 land, 04–12 can proceed in parallel.
 | 10 | [Auth as a branded editorial first impression](design-act2-10-auth-first-impression.md) | Frontend | ~230 |
 | 11 | [Settings hub + warm adoption](design-act2-11-settings-hub.md) | Frontend | ~200 |
 | 12 | [Program onboarding / welcome](design-act2-12-program-onboarding.md) | Frontend | ~280 |
-| 13 | [Fix the garbled Map layout (title overlap, clipped labels, overlap & truncation)](design-act2-13-map-layout-legibility.md) | Frontend | ~220 |
+| 13 | [Re-architect the Map onto a single responsive row grid](design-act2-13-map-grid-rearchitecture.md) | Frontend | ~420 |
 
 ## Acceptance Criteria (epic-level)
 
