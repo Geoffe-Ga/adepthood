@@ -45,11 +45,13 @@ Route only the dimensions the diff actually touches — no redundant reviews.
 
 1. Read the diff (`git diff` against the merge base) and the architect's risk
    flags.
-2. For each applicable dimension, dispatch the specialist in **review mode** with
-   the diff scope. Prefer running independent read-only reviewers in parallel.
-   **Fallback (no nested spawning):** if you cannot spawn sub-agents, review the
-   applicable dimensions yourself against each specialist's checklist and the
-   shared constraints.
+2. **Primary path — review the applicable dimensions yourself** against each
+   specialist's checklist (above) and the shared constraints. You run on Opus
+   precisely so a single agent can carry every dimension. **Enhancement:** where
+   the runtime supports nested spawning, you *may* fan out a specialist in review
+   mode per dimension (in parallel, read-only) for deeper coverage — but do not
+   depend on it; the Ralph conductor spawns sub-agents, and a tick's review must
+   not stall if you cannot.
 3. Collect findings; **deduplicate** overlaps; resolve contradictions; rank by
    severity.
 4. Return the consolidated report (below). Findings that are real defects block

@@ -13,20 +13,27 @@ agent below via the `Agent` tool. The chief-architect is the strategic **brain**
 ## The graph (honest — every node exists in this repo)
 
 ```
-ralph-tick (main loop = CONDUCTOR; spawns every agent)
-  └─ chief-architect ............ L0  opus    plan + ordered dispatch list (no code)
-       ├─ test-specialist ........... L2  sonnet  Gate 1 RED: failing tests
-       ├─ implementation-specialist . L2  opus    Gate 1 GREEN + Refactor
-       ├─ security-specialist ....... L2  opus    harden auth/JWT/CORS/input/DB
-       ├─ performance-specialist .... L2  sonnet  profile/optimize hot paths
-       ├─ documentation-specialist .. L2  sonnet  docstrings/READMEs/ADRs
-       ├─ dependency-review-spec. ... L2  sonnet  deps/pins/licenses (read-only)
-       └─ code-review-orchestrator .. L1  opus    Gate 2.5 pre-push self-review
+ralph-tick (main loop = CONDUCTOR — spawns every agent below)
+  ├─ chief-architect ............ L0  opus    plan + ordered dispatch list (no code)
+  ├─ test-specialist ............ L2  sonnet  Gate 1 RED: failing tests          ─┐
+  ├─ implementation-specialist .. L2  opus    Gate 1 GREEN + Refactor             │ run per
+  ├─ security-specialist ........ L2  opus    harden auth/JWT/CORS/input/DB       │ the
+  ├─ performance-specialist ..... L2  sonnet  profile/optimize hot paths          │ architect's
+  ├─ documentation-specialist ... L2  sonnet  docstrings/READMEs/ADRs             │ dispatch
+  ├─ dependency-review-spec. .... L2  sonnet  deps/pins/licenses (read-only)      │ list
+  └─ code-review-orchestrator ... L1  opus    Gate 2.5 pre-push self-review      ─┘
 ```
 
-Only the two orchestrators (chief-architect, code-review-orchestrator) hold the
-`Task` tool. The six specialists are leaf workers — they do their own work and do
-not sub-delegate.
+**The tree above is the spawn graph: the conductor spawns every node directly.**
+It is *not* a delegation hierarchy — the indentation does not mean chief-architect
+spawns the others. chief-architect only *plans*; the conductor executes its
+ordered dispatch list by spawning each specialist itself.
+
+The frontmatter `delegates_to` / `receives_from` fields model **logical dataflow**
+(who informs whom — e.g. the architect's risk flags reach the reviewers), **not**
+the spawn mechanism, which is always the conductor. Only the two orchestrators
+(chief-architect, code-review-orchestrator) hold the `Task` tool; the six
+specialists are leaf workers that do their own work and do not sub-delegate.
 
 ## Model tiers (strategic mix)
 
@@ -46,7 +53,7 @@ not sub-delegate.
 | Gate 1 GREEN | implement + refactor to green | **implementation-specialist** |
 | Cross-cutting (only if flagged) | harden / optimize / document / vet deps | **security / performance / documentation / dependency** specialists |
 | Gate 2 | run `./scripts/<side>/check-all.sh` | — (conductor, Bash) |
-| Gate 2.5 | pre-push self-review of the diff | **code-review-orchestrator** → its specialists in review mode |
+| Gate 2.5 | pre-push self-review of the diff | **code-review-orchestrator** (reviews the flagged dimensions itself; may fan out to specialists in review mode where nested spawning is available) |
 | Push / PR | commit, push, open PR | — (conductor) |
 | Gate 3 fail (CI) | `ci-debugging` → fix | **test / implementation** specialist |
 | Gate 4 fail (review) | `address-feedback` → fix | the specialist owning the comment's dimension |

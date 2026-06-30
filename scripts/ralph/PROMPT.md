@@ -53,9 +53,11 @@ drives Gates 3–4. The taxonomy you dispatch is mapped in
    design approach, touch-list, TDD test strategy, an **ordered dispatch list**,
    and **risk flags** (security / performance / deps / docs). You execute that
    list — you do not improvise the design.
-6. **Dispatch the build (TDD via `stay-green`, `max-quality-no-shortcuts`).** Run
-   the plan's specialists **sequentially** (they share one working tree — never
-   spawn write-agents in parallel):
+6. **Dispatch the build.** The test- and implementation-specialists *embody* the
+   `stay-green` Red→Green→Refactor discipline and `max-quality-no-shortcuts`
+   (no bypasses) — that is now the TDD path; you do not separately invoke the
+   `stay-green` skill around them. Run the plan's specialists **sequentially**
+   (they share one working tree — never spawn write-agents in parallel):
    - **Gate 1 RED** — `Agent(test-specialist)`: write the failing tests; confirm
      they fail for the right reason.
    - **Gate 1 GREEN** — `Agent(implementation-specialist)`: implement to green,
