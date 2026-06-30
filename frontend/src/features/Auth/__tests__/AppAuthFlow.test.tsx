@@ -118,9 +118,14 @@ jest.mock('@/features/Journal/JournalEntryScreen', () => {
 });
 
 import App, { linking } from '@/App';
+import { useWelcomeStore } from '@/store/useWelcomeStore';
 
 beforeEach(() => {
   mockAuthState = { token: null, authStatus: 'anonymous', isLoading: false };
+  // This suite asserts the auth-status → shell contract; the #836 first-run
+  // welcome gate is exercised separately. Seed the flag as seen so an authed
+  // render reaches the shell rather than the WelcomeScreen.
+  useWelcomeStore.setState({ hasSeenWelcome: true });
 });
 
 describe('App auth flow', () => {

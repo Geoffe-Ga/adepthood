@@ -32,11 +32,13 @@ import LoginScreen from './features/Auth/LoginScreen';
 import { ReauthSheet } from './features/Auth/ReauthSheet';
 import ResetPasswordScreen from './features/Auth/ResetPasswordScreen';
 import SignupScreen from './features/Auth/SignupScreen';
+import { WelcomeScreen } from './features/Welcome/WelcomeScreen';
 import type { RootTabParamList } from './navigation/BottomTabs';
 import type { RootStackParamList } from './navigation/RootStack';
 import RootStack from './navigation/RootStack';
 import { navThemeFor } from './navigation/theme';
 import { useHydrateProgramStore } from './store/useProgramStore';
+import { useFirstRun } from './store/useWelcomeStore';
 
 type AuthStackParamList = {
   Login: undefined;
@@ -130,6 +132,22 @@ function AuthNavigator() {
  * tab state, stale route params, and route state that ``CommonActions.reset``
  * would otherwise miss.
  */
+/**
+ * Program welcome gate (#836). On first run — once the persisted
+ * ``hasSeenWelcome`` flag has resolved to unset — the editorial intro shows
+ * above the app shell. Begin *or* Skip persists the flag, which flips
+ * ``isFirstRun`` to false and lands the user on the already-mounted Today hub.
+ * Returning users (flag set) never see it; before hydration ``isFirstRun`` is
+ * false, so the shell renders without a flash.
+ */
+function WelcomeGate(): React.JSX.Element {
+  const { isFirstRun, markSeen } = useFirstRun();
+  if (isFirstRun) {
+    return <WelcomeScreen onComplete={markSeen} onBegin={markSeen} />;
+  }
+  return <RootStack key="auth" />;
+}
+
 export function RootNavigator(): React.JSX.Element {
   const { authStatus } = useAuth();
 
@@ -154,7 +172,7 @@ export function RootNavigator(): React.JSX.Element {
   // back in.
   return (
     <FeatureErrorBoundary name="App">
-      <RootStack key="auth" />
+      <WelcomeGate />
       {authStatus === 'reauth-required' ? <ReauthSheet /> : null}
     </FeatureErrorBoundary>
   );
