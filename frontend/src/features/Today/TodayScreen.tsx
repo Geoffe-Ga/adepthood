@@ -10,6 +10,7 @@ import { SkeletonCard } from '@/components/feedback/Skeleton';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { ShowcaseCard } from '@/components/layout/ShowcaseCard';
 import { STAGE_ORDER } from '@/design/tokens';
+import type { Habit } from '@/features/Habits/Habits.types';
 import { useEntrance } from '@/hooks/useEntrance';
 import type { RootTabParamList } from '@/navigation/BottomTabs';
 import { useHabitStore } from '@/store/useHabitStore';
@@ -33,16 +34,18 @@ function greeting(): string {
   return 'Good evening';
 }
 
-/** Habits with at least one real completion logged on today's calendar day. */
-function doneToday(): { done: number; total: number } {
-  const habits = useHabitStore.getState().habits;
+/** Count habits with a real completion on today's calendar day.
+ *
+ * Pure (takes the habits it counts) so callers subscribe to the store reactively
+ * rather than reading an imperative snapshot in a render path.
+ */
+function countDoneToday(habits: readonly Habit[]): number {
   const todayKey = dayKeyInTZ(new Date(), DEFAULT_TIMEZONE);
-  const done = habits.filter((h) =>
+  return habits.filter((h) =>
     (h.completions ?? []).some(
       (c) => c.completed_units > 0 && dayKeyInTZ(c.timestamp, DEFAULT_TIMEZONE) === todayKey,
     ),
   ).length;
-  return { done, total: habits.length };
 }
 
 /** The showcase hero: greeting + position in the 36-week journey. */
@@ -96,7 +99,8 @@ const TodayBand = ({ index, title, value, subtitle, onPress, testID }: BandProps
 /** Today's-habits band: skeleton while loading, empty state with no habits. */
 const HabitsBand = ({ index, onPress }: { index: number; onPress: () => void }) => {
   const loading = useHabitStore((state) => state.loading);
-  const total = useHabitStore((state) => state.habits.length);
+  const habits = useHabitStore((state) => state.habits);
+  const total = habits.length;
   if (loading && total === 0) return <SkeletonCard testID="today-habits-skeleton" />;
   if (total === 0) {
     return (
@@ -117,7 +121,7 @@ const HabitsBand = ({ index, onPress }: { index: number; onPress: () => void }) 
       />
     );
   }
-  const { done } = doneToday();
+  const done = countDoneToday(habits);
   return (
     <TodayBand
       index={index}
