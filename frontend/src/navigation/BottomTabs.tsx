@@ -147,6 +147,8 @@ const BottomTabs = (): React.JSX.Element => {
         // terracotta vs muted ink, both AA on the raised ground.
         tabBarActiveTintColor: accent.primary,
         tabBarInactiveTintColor: ink.muted,
+        // borderTopWidth is intentionally omitted — RN Navigation defaults it to
+        // StyleSheet.hairlineWidth; we only retint the existing edge.
         tabBarStyle: { backgroundColor: surface.raised, borderTopColor: surface.hairline },
         headerRight: renderHeaderRight,
       }}

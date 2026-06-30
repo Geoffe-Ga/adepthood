@@ -38,27 +38,19 @@ jest.mock('react-native-safe-area-context', () => ({
 // route-focus auto-reset (BUG-FE-UI-102); returning a stub navigation
 // object that no-ops on ``addListener`` keeps the unrelated auth-flow
 // assertions free of routing side effects.
-jest.mock('@react-navigation/native', () => ({
-  NavigationContainer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  useNavigation: () => ({
-    addListener: () => () => {
-      /* unused in this test */
-    },
-  }),
+jest.mock('@react-navigation/native', () => {
   // navTheme (via App.tsx) extends DefaultTheme, so the mock must expose it.
-  DefaultTheme: {
-    dark: false,
-    colors: {
-      primary: '#000000',
-      background: '#ffffff',
-      card: '#ffffff',
-      text: '#000000',
-      border: '#cccccc',
-      notification: '#000000',
-    },
-    fonts: {},
-  },
-}));
+  const { mockDefaultTheme } = require('@/test-utils/navMocks');
+  return {
+    NavigationContainer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    useNavigation: () => ({
+      addListener: () => () => {
+        /* unused in this test */
+      },
+    }),
+    DefaultTheme: mockDefaultTheme,
+  };
+});
 
 jest.mock('@react-navigation/native-stack', () => ({
   createNativeStackNavigator: () => ({

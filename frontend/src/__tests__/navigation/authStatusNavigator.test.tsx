@@ -13,6 +13,8 @@
  */
 jest.mock('@react-navigation/native', () => {
   const React = require('react');
+  // navTheme (via App.tsx) extends DefaultTheme, so the mock must expose it.
+  const { mockDefaultTheme } = require('@/test-utils/navMocks');
   return {
     __esModule: true,
     NavigationContainer: ({ children }: { children: React.ReactNode }) =>
@@ -20,19 +22,7 @@ jest.mock('@react-navigation/native', () => {
     useNavigation: () => ({ navigate: jest.fn(), getParent: () => undefined }),
     useRoute: () => ({ params: undefined }),
     useFocusEffect: (fn: () => void) => fn(),
-    // navTheme (via App.tsx) extends DefaultTheme, so the mock must expose it.
-    DefaultTheme: {
-      dark: false,
-      colors: {
-        primary: '#000000',
-        background: '#ffffff',
-        card: '#ffffff',
-        text: '#000000',
-        border: '#cccccc',
-        notification: '#000000',
-      },
-      fonts: {},
-    },
+    DefaultTheme: mockDefaultTheme,
   };
 });
 
