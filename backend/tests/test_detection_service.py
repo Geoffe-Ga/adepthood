@@ -14,7 +14,7 @@ from domain.detection import (
     build_detection_prompt,
     detect_completions,
 )
-from models.completion_suggestion import CompletionTargetType
+from models.completion_suggestion import _LABEL_MAX, CompletionTargetType
 
 _BODY = (
     "This morning I meditated for twenty minutes by the window. "
@@ -51,6 +51,15 @@ def _hits_json(*hits: dict[str, object]) -> str:
 def test_valid_target_types_match_the_model_enum() -> None:
     """The domain's local target-type set must not drift from the model enum."""
     assert {t.value for t in CompletionTargetType} == detection.VALID_TARGET_TYPES
+
+
+def test_label_max_matches_the_db_column() -> None:
+    """LABEL_MAX must equal the CompletionSuggestion.label column cap (#843 review).
+
+    A larger domain cap would let a detected label pass here and then fail at DB
+    insert in the endpoint layer.
+    """
+    assert detection.LABEL_MAX == _LABEL_MAX
 
 
 @pytest.mark.asyncio

@@ -24,8 +24,9 @@ from security import TextTooLongError, sanitize_user_text
 # ``resonance.VALID_KINDS``); ``test_detection_service`` guards them against
 # ``models.completion_suggestion.CompletionTargetType`` drift.
 VALID_TARGET_TYPES = frozenset({"habit", "practice"})
-# A detected label is a verbatim quote, so it shares resonance's anchor bound.
-LABEL_MAX = 280
+# Must match ``CompletionSuggestion.label``'s ``_LABEL_MAX`` (255) — a longer
+# detected label passes here but fails at DB insert in the endpoint layer.
+LABEL_MAX = 255
 MAX_HITS = 5
 
 
