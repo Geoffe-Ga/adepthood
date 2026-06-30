@@ -4,11 +4,11 @@ import { Text, TouchableOpacity, View } from 'react-native';
 import { authStyles as styles } from './auth.styles';
 import { AuthScreenContainer } from './AuthScreenContainer';
 import { canonicalizeEmail } from './canonicalizeEmail';
+import { EmailField } from './components/EmailField';
 
 import { auth as authApi } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { Button } from '@/components/Button';
-import { TextField } from '@/components/TextField';
 
 const FORGOT_FALLBACK =
   "We couldn't reach the server. Check your connection, then try again in a moment.";
@@ -24,14 +24,11 @@ interface ForgotFieldsProps {
 
 function ForgotFields({ email, setEmail }: ForgotFieldsProps): React.JSX.Element {
   return (
-    <TextField
+    <EmailField
       accessibilityLabel="Email"
       style={styles.inputSpacing}
-      placeholder="Email"
       value={email}
       onChangeText={setEmail}
-      autoCapitalize="none"
-      keyboardType="email-address"
     />
   );
 }

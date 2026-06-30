@@ -74,17 +74,6 @@ export const authStyles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: SPACING.xl,
   },
-  input: {
-    borderWidth: 1,
-    borderColor: surface.hairline,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.md,
-    minHeight: 44,
-    color: ink.primary,
-    backgroundColor: surface.raised,
-    marginBottom: SPACING.md,
-    fontSize: 16,
-  },
   // Layout-only spacing for the warm `TextField`/`Button` primitives (#801),
   // which own their own ground/border/colour. Keeps field/button rhythm without
   // re-imposing the legacy grey chrome.

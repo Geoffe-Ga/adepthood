@@ -6,13 +6,14 @@ import {
   Platform,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 
 import { authStyles } from './auth.styles';
 import { canonicalizeEmail } from './canonicalizeEmail';
+import { EmailField } from './components/EmailField';
+import { PasswordField } from './components/PasswordField';
 
 import { formatApiError } from '@/api/errorMessages';
 import { useAuth } from '@/context/AuthContext';
@@ -92,23 +93,18 @@ function ReauthForm(props: ReauthFormProps): React.JSX.Element {
       <Text style={localStyles.subtitle}>
         Your session expired. Enter your credentials to keep going where you left off.
       </Text>
-      <TextInput
+      <EmailField
         accessibilityLabel="Email"
-        style={authStyles.input}
-        placeholder="Email"
+        style={authStyles.inputSpacing}
         value={email}
         onChangeText={onEmailChange}
-        autoCapitalize="none"
-        keyboardType="email-address"
         testID="reauth-email"
       />
-      <TextInput
+      <PasswordField
         accessibilityLabel="Password"
-        style={authStyles.input}
-        placeholder="Password"
+        style={authStyles.inputSpacing}
         value={password}
         onChangeText={onPasswordChange}
-        secureTextEntry
         testID="reauth-password"
       />
       {error ? <Text style={authStyles.error}>{error}</Text> : null}
