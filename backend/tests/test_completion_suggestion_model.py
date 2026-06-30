@@ -98,7 +98,7 @@ def _habit_suggestion(
         "goal_id": goal_id,
         "label": "Run",
         "anchor_start": 0,
-        "anchor_end": 19,
+        "anchor_end": 22,
         "anchor_text": "I went for a run today",
     }
     base.update(over)
