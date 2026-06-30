@@ -92,6 +92,14 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${STRUCTURED:-}" ]; then
+            # claude-code-action self-skips (anti-tamper) on any PR that edits this
+            # workflow file, so there is no review to post — that is expected and
+            # must not fail the check (the workflow change is reviewed manually).
+            if gh pr diff "$PR_NUMBER" -R "$REPO" --name-only \
+                 | grep -qx '.github/workflows/claude-code-review.yml'; then
+              echo "::warning::This PR edits the review workflow, so the action self-skips — no automated verdict; review manually."
+              exit 0
+            fi
             echo "::error::Claude review produced no structured output — failing so it is re-run, never a silent no-review."
             exit 1
           fi
