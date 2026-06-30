@@ -5,6 +5,9 @@ import {
   apiGoalGroupSchema,
   authResponseSchema,
   contentItemSchema,
+  acceptSuggestionResultSchema,
+  completionSuggestionListResponseSchema,
+  completionSuggestionSchema,
   frequencyResponseSchema,
   habitWithGoalsSchema,
   isTier,
@@ -21,8 +24,12 @@ import {
   stageSchema,
   timezoneReadSchema,
   userPracticeSchema,
+  type AcceptSuggestionResultT,
+  type CompletionSuggestionT,
+  type CompletionTargetTypeT,
   type Page,
   type PasswordResetAcceptedT,
+  type SuggestionStatusT,
   type Tier,
   type TimezoneReadT,
 } from './schemas';
@@ -1146,6 +1153,8 @@ export interface Marginalia {
 
 export interface ResonanceResponse {
   marginalia: Marginalia[];
+  /** Completion suggestions detected on the same pass (#817); defaults to []. */
+  suggestions: CompletionSuggestion[];
   remaining_messages: number;
   remaining_balance: number;
   monthly_reset_date: string;
@@ -1247,6 +1256,47 @@ export const resonance = {
       method: 'POST',
       token,
       headers: byokHeaders(apiKey),
+    });
+  },
+};
+
+// Completion suggestions client (habit-resonance #819)
+export type CompletionTargetType = CompletionTargetTypeT;
+export type SuggestionStatus = SuggestionStatusT;
+export type CompletionSuggestion = CompletionSuggestionT;
+export type AcceptSuggestionResult = AcceptSuggestionResultT;
+
+export interface CompletionSuggestionListResponse {
+  items: CompletionSuggestion[];
+}
+
+/**
+ * Suggestions surfaced by the resonance pass (#817/#818). URLs are the canonical
+ * non-slash sub-resource forms the backend serves directly (no 307). ``accept``
+ * carries a deterministic idempotency key so a double-tap can't double-log the
+ * underlying completion (mirrors ``goalCompletions.create``).
+ */
+export const completionSuggestions = {
+  list(entryId: number, token?: string): Promise<CompletionSuggestionListResponse> {
+    return request<CompletionSuggestionListResponse>(`/journal/${entryId}/suggestions`, {
+      token,
+      schema:
+        completionSuggestionListResponseSchema as unknown as z.ZodType<CompletionSuggestionListResponse>,
+    });
+  },
+  accept(id: number, token?: string): Promise<AcceptSuggestionResult> {
+    return request<AcceptSuggestionResult>(`/journal/suggestions/${id}/accept`, {
+      method: 'POST',
+      token,
+      headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey('accept-suggestion', id) },
+      schema: acceptSuggestionResultSchema as unknown as z.ZodType<AcceptSuggestionResult>,
+    });
+  },
+  dismiss(id: number, token?: string): Promise<CompletionSuggestion> {
+    return request<CompletionSuggestion>(`/journal/suggestions/${id}/dismiss`, {
+      method: 'POST',
+      token,
+      schema: completionSuggestionSchema as unknown as z.ZodType<CompletionSuggestion>,
     });
   },
 };
