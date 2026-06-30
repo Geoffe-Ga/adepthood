@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 import { flattenGoalCompletions } from './flattenGoalCompletions';
 import {
-  apiGoalGroupSchema,
   authResponseSchema,
   contentItemSchema,
   acceptSuggestionResultSchema,
@@ -17,13 +16,11 @@ import {
   passwordResetAcceptedSchema,
   practiceItemSchema,
   practiceRecipeSchema,
-  practiceSessionResponseSchema,
   practiceTagSchema,
   promptListResponseSchema,
   stageIntroSchema,
   stageSchema,
   timezoneReadSchema,
-  userPracticeSchema,
   type AcceptSuggestionResultT,
   type CompletionSuggestionT,
   type CompletionTargetTypeT,
@@ -759,14 +756,6 @@ export interface ApiGoalGroup {
   goals: ApiGoal[];
 }
 
-export interface GoalGroupCreatePayload {
-  name: string;
-  icon?: string | null;
-  description?: string | null;
-  shared_template?: boolean;
-  source?: string | null;
-}
-
 export interface ApiHabit {
   id: number;
   // ``user_id`` is intentionally absent — see ``habitSchema`` in ``schemas.ts``.
@@ -959,12 +948,6 @@ export const habits = {
   listAll(token?: string): Promise<ApiHabitWithGoals[]> {
     return fetchAllPages((params) => habits.listPaginated(params, token));
   },
-  get(habitId: number, token?: string): Promise<ApiHabitWithGoals> {
-    return request<ApiHabitWithGoals>(`/habits/${habitId}`, {
-      token,
-      schema: habitWithGoalsSchema as unknown as z.ZodType<ApiHabitWithGoals>,
-    });
-  },
   create(payload: HabitCreatePayload, token?: string): Promise<ApiHabit> {
     return request<ApiHabit>('/habits/', { method: 'POST', body: payload, token });
   },
@@ -1067,32 +1050,8 @@ export const goalGroups = {
   list(token?: string): Promise<ApiGoalGroup[]> {
     return request<ApiGoalGroup[]>('/goal-groups/', { token });
   },
-  /**
-   * Paginated goal-groups list (BUG-INFRA-015). Opts into the ``Page``
-   * envelope; prefer this over the bare-list variant when ``total`` /
-   * ``has_more`` are needed for a "load more" control.
-   */
-  listPaginated(params: PaginationParams = {}, token?: string): Promise<Page<ApiGoalGroup>> {
-    return request<Page<ApiGoalGroup>>(`/goal-groups/?${pageQuery({}, params)}`, {
-      token,
-      schema: pageSchema(apiGoalGroupSchema) as unknown as z.ZodType<Page<ApiGoalGroup>>,
-    });
-  },
   get(groupId: number, token?: string): Promise<ApiGoalGroup> {
     return request<ApiGoalGroup>(`/goal-groups/${groupId}`, { token });
-  },
-  create(payload: GoalGroupCreatePayload, token?: string): Promise<ApiGoalGroup> {
-    return request<ApiGoalGroup>('/goal-groups/', { method: 'POST', body: payload, token });
-  },
-  update(groupId: number, payload: GoalGroupCreatePayload, token?: string): Promise<ApiGoalGroup> {
-    return request<ApiGoalGroup>(`/goal-groups/${groupId}`, {
-      method: 'PUT',
-      body: payload,
-      token,
-    });
-  },
-  delete(groupId: number, token?: string): Promise<void> {
-    return request<void>(`/goal-groups/${groupId}`, { method: 'DELETE', token });
   },
 };
 
@@ -1362,13 +1321,6 @@ export interface Stage {
   progress: number;
 }
 
-export interface StageProgressDetail {
-  habits_progress: number;
-  practice_sessions_completed: number;
-  course_items_completed: number;
-  overall_progress: number;
-}
-
 export interface PracticeHistoryItem {
   name: string;
   sessions_completed: number;
@@ -1407,12 +1359,6 @@ export const stages = {
   /** Whole stages list via the ``Page`` envelope (issue #408). */
   listAll(token?: string): Promise<Stage[]> {
     return fetchAllPages((params) => stages.listPaginated(params, token));
-  },
-  get(stageNumber: number, token?: string): Promise<Stage> {
-    return request<Stage>(`/stages/${stageNumber}`, { token });
-  },
-  progress(stageNumber: number, token?: string): Promise<StageProgressDetail> {
-    return request<StageProgressDetail>(`/stages/${stageNumber}/progress`, { token });
   },
   history(stageNumber: number, token?: string): Promise<StageHistoryResponse> {
     return request<StageHistoryResponse>(`/stages/${stageNumber}/history`, { token });
@@ -1469,9 +1415,6 @@ export interface StageIntro {
 }
 
 export const course = {
-  stageContent(stageNumber: number, token?: string): Promise<ContentItem[]> {
-    return request<ContentItem[]>(`/course/stages/${stageNumber}/content`, { token });
-  },
   /**
    * Paginated stage content (BUG-INFRA-018). Opts into the ``Page`` envelope.
    *
@@ -1836,17 +1779,6 @@ export const userPractices = {
     return request<UserPractice[]>('/user-practices/', { token });
   },
   /**
-   * Paginated user-practices list (BUG-INFRA-017). Opts into the ``Page``
-   * envelope; prefer this over the bare-list variant when ``total`` /
-   * ``has_more`` are needed.
-   */
-  listPaginated(params: PaginationParams = {}, token?: string): Promise<Page<UserPractice>> {
-    return request<Page<UserPractice>>(`/user-practices/?${pageQuery({}, params)}`, {
-      token,
-      schema: pageSchema(userPracticeSchema) as unknown as z.ZodType<Page<UserPractice>>,
-    });
-  },
-  /**
    * PATCH the per-user overrides (custom name + mode_config_override).
    *
    * Passing ``mode_config_override: null`` resets to the catalog default;
@@ -1988,12 +1920,6 @@ export const practiceRecipes = {
       schema: recipeArraySchema,
     });
   },
-  get(recipeId: number, token?: string): Promise<PracticeRecipe> {
-    return request<PracticeRecipe>(`/practice-recipes/${recipeId}`, {
-      token,
-      schema: recipeSchema,
-    });
-  },
   create(payload: PracticeRecipeCreate, token?: string): Promise<PracticeRecipe> {
     return request<PracticeRecipe>('/practice-recipes/', {
       method: 'POST',
@@ -2073,26 +1999,6 @@ export const practiceSessions = {
       body: payload,
       token,
     });
-  },
-  /**
-   * Paginated session history for one user-practice (BUG-INFRA-014). Opts into
-   * the ``Page`` envelope; ``userPracticeId`` is required (the backend route
-   * scopes sessions to a single user-practice).
-   */
-  listPaginated(
-    params: { userPracticeId: number } & PaginationParams,
-    token?: string,
-  ): Promise<Page<PracticeSessionResponse>> {
-    const { userPracticeId, ...page } = params;
-    return request<Page<PracticeSessionResponse>>(
-      `/practice-sessions/?${pageQuery({ user_practice_id: userPracticeId }, page)}`,
-      {
-        token,
-        schema: pageSchema(practiceSessionResponseSchema) as unknown as z.ZodType<
-          Page<PracticeSessionResponse>
-        >,
-      },
-    );
   },
   weekCount(token?: string): Promise<WeekCountResponse> {
     return request<WeekCountResponse>('/practice-sessions/week-count', { token });

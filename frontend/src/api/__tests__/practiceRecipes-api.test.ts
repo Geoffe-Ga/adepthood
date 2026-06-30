@@ -73,14 +73,6 @@ describe('practiceRecipes.list', () => {
   });
 });
 
-describe('practiceRecipes.get drift', () => {
-  test('raises ApiValidationError when a required field is renamed', async () => {
-    const drifted = { ...recipeFixture, owner_user_id: undefined, ownerUserId: null };
-    mockFetch.mockReturnValueOnce(jsonResponse(drifted));
-    await expect(practiceRecipes.get(7)).rejects.toThrow(ApiValidationError);
-  });
-});
-
 describe('practiceRecipes.create', () => {
   test('POSTs the payload and parses the response', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse(recipeFixture, 201));

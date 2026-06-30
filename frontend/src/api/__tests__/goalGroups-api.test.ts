@@ -43,43 +43,6 @@ describe('goalGroups API client', () => {
     expect(result).toEqual(group);
   });
 
-  test('goalGroups.create sends POST with payload', async () => {
-    const created = { id: 2, name: 'Custom', shared_template: false, goals: [] };
-    mockFetch.mockReturnValueOnce(jsonResponse(created, 201));
-
-    const result = await goalGroups.create({ name: 'Custom', icon: '🎯' }, 'test-token');
-
-    const [url, init] = mockFetch.mock.calls[0];
-    expect(url).toBe('http://test/goal-groups/');
-    expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body)).toMatchObject({ name: 'Custom', icon: '🎯' });
-    expect(result).toEqual(created);
-  });
-
-  test('goalGroups.update sends PUT with payload', async () => {
-    const updated = { id: 1, name: 'Updated', shared_template: false, goals: [] };
-    mockFetch.mockReturnValueOnce(jsonResponse(updated));
-
-    const result = await goalGroups.update(1, { name: 'Updated' }, 'test-token');
-
-    const [url, init] = mockFetch.mock.calls[0];
-    expect(url).toBe('http://test/goal-groups/1');
-    expect(init.method).toBe('PUT');
-    expect(result).toEqual(updated);
-  });
-
-  test('goalGroups.delete sends DELETE request', async () => {
-    mockFetch.mockReturnValueOnce(
-      Promise.resolve({ ok: true, status: 204, json: () => Promise.resolve(null) }),
-    );
-
-    await goalGroups.delete(1, 'test-token');
-
-    const [url, init] = mockFetch.mock.calls[0];
-    expect(url).toBe('http://test/goal-groups/1');
-    expect(init.method).toBe('DELETE');
-  });
-
   test('goalGroups.list throws ApiError on failure', async () => {
     mockFetch.mockReturnValueOnce(
       Promise.resolve({
