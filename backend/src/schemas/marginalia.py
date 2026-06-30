@@ -7,6 +7,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from models.marginalia import MarginaliaKind, MarginaliaStatus
+from schemas.completion_suggestion import CompletionSuggestionResponse
 
 
 class MarginaliaResponse(BaseModel):
@@ -32,9 +33,14 @@ class MarginaliaResponse(BaseModel):
 
 
 class ResonanceResponse(BaseModel):
-    """Result of a resonance pass: the new notes plus refreshed wallet balances."""
+    """Result of a resonance pass: the new notes plus refreshed wallet balances.
+
+    ``suggestions`` carries any completion suggestions detected on the same pass
+    (additive, best-effort — empty when none are found or detection failed).
+    """
 
     marginalia: list[MarginaliaResponse]
+    suggestions: list[CompletionSuggestionResponse] = []
     remaining_messages: int
     remaining_balance: int
     monthly_reset_date: datetime
