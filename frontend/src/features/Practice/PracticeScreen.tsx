@@ -21,6 +21,7 @@
  */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RefreshCw } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -36,8 +37,18 @@ import WeeklyProgress from './WeeklyProgress';
 
 import type { PracticeSessionResponse } from '@/api';
 import { EmptyState } from '@/components/feedback/EmptyState';
+import { ShowcaseCard } from '@/components/layout/ShowcaseCard';
 import { useAuth } from '@/context/AuthContext';
-import { BORDER_RADIUS, SPACING, colors, touchTarget } from '@/design/tokens';
+import {
+  BORDER_RADIUS,
+  SPACING,
+  accent,
+  colors,
+  editorialType,
+  onShowcase,
+  surface,
+  touchTarget,
+} from '@/design/tokens';
 import { stageService } from '@/features/Map/services/stageService';
 import ActiveRitualSession from '@/features/Practice/components/ActiveRitualSession';
 import { FrequencyBanner } from '@/features/Practice/components/FrequencyBanner';
@@ -128,6 +139,8 @@ interface CatalogButtonProps {
   stageNumber: number;
   label: string;
   testID: string;
+  /** Optional leading icon (e.g. the RefreshCw glyph on "Change practice"). */
+  icon?: React.ReactNode;
 }
 
 /**
@@ -135,7 +148,12 @@ interface CatalogButtonProps {
  * user's resolved stage. Used as "Change practice" in the active state and
  * "Browse all practices" in the selection state — both open the same catalog.
  */
-const CatalogButton = ({ stageNumber, label, testID }: CatalogButtonProps): React.JSX.Element => {
+const CatalogButton = ({
+  stageNumber,
+  label,
+  testID,
+  icon,
+}: CatalogButtonProps): React.JSX.Element => {
   // Catalog is a pushed RootStack screen (not a tab), so navigate with the
   // stack-typed navigation rather than the tab-scoped useAppNavigation.
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -147,10 +165,27 @@ const CatalogButton = ({ stageNumber, label, testID }: CatalogButtonProps): Reac
       accessibilityLabel={label}
       testID={testID}
     >
+      {icon}
       <Text style={styles.browseCatalogText}>{label}</Text>
     </TouchableOpacity>
   );
 };
+
+/**
+ * The arrival hero for the active practice — a focal warm-umber showcase band
+ * that frames the session as a "begin a session" moment. Presentation only:
+ * the large Begin control lives in the engine's mode view below (its
+ * `idle → running` wiring is unchanged).
+ */
+const BeginHero = ({ practiceName }: { practiceName: string }): React.JSX.Element => (
+  <ShowcaseCard style={styles.hero} testID="practice-begin-hero">
+    <Text style={styles.heroEyebrow}>PRACTICE</Text>
+    <Text style={styles.heroTitle} accessibilityRole="header">
+      Begin a session
+    </Text>
+    <Text style={styles.heroLead}>Settle in with {practiceName} when you’re ready.</Text>
+  </ShowcaseCard>
+);
 
 interface ActiveSessionViewProps {
   userPractice: NonNullable<ActivePracticeHook['activeUserPractice']>;
@@ -189,12 +224,14 @@ const ActiveSessionView = ({
         testID="practice-screen"
       >
         {banner}
+        <BeginHero practiceName={effectiveName ?? practiceName} />
         {/* The primary switch affordance, in the scroll header (not over the
             timer, so it doesn't intercept mid-session taps). */}
         <CatalogButton
           stageNumber={stageNumber}
           label="Change practice"
           testID="change-practice-button"
+          icon={<RefreshCw size={16} color={accent.primary} style={styles.browseCatalogIcon} />}
         />
         <ActiveRitualSession
           key={`practice-${userPractice.id}`}
@@ -283,7 +320,7 @@ const LoadingView = (): React.JSX.Element => {
       style={[styles.centered, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
       testID="practice-loading"
     >
-      <ActivityIndicator size="large" color={colors.primary} />
+      <ActivityIndicator size="large" color={accent.primary} />
     </View>
   );
 };
@@ -314,7 +351,7 @@ const ErrorView = ({
 };
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background.primary },
+  screen: { flex: 1, backgroundColor: surface.canvas },
   fill: { flex: 1 },
   scrollContent: { padding: SPACING.md, paddingBottom: SPACING.xxl },
   centered: {
@@ -322,7 +359,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: SPACING.xxl,
-    backgroundColor: colors.background.primary,
+    backgroundColor: surface.canvas,
   },
   errorText: {
     color: colors.danger,
@@ -331,27 +368,39 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.lg,
   },
   retryButton: {
-    backgroundColor: colors.primary,
+    backgroundColor: accent.primary,
     borderRadius: BORDER_RADIUS.md,
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.xl,
   },
-  retryButtonText: { color: colors.text.light, fontWeight: '600' },
+  retryButtonText: { color: surface.raised, fontWeight: '600' },
+  hero: { marginHorizontal: SPACING.md, marginBottom: SPACING.md },
+  heroEyebrow: {
+    ...editorialType.caption,
+    color: onShowcase.muted,
+    letterSpacing: 1.5,
+    marginBottom: SPACING.xs,
+  },
+  heroTitle: { ...editorialType.display, color: onShowcase.primary, marginBottom: SPACING.xs },
+  heroLead: { ...editorialType.note, color: onShowcase.soft },
   browseCatalog: {
+    flexDirection: 'row',
+    gap: SPACING.xs,
     marginHorizontal: SPACING.md,
     marginBottom: SPACING.md,
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.lg,
     borderRadius: BORDER_RADIUS.md,
     borderWidth: 1,
-    borderColor: colors.primary,
+    borderColor: accent.primary,
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: touchTarget.minimum,
   },
+  browseCatalogIcon: { marginRight: SPACING.xs },
   // fontSize 16 mirrors retryButtonText above (the app has no static type token;
   // typography() is viewport-responsive) so the two buttons stay visually aligned.
-  browseCatalogText: { color: colors.primary, fontWeight: '600', fontSize: 16 },
+  browseCatalogText: { color: accent.primary, fontWeight: '600', fontSize: 16 },
 });
 
 export default PracticeScreen;

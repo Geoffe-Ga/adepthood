@@ -34,11 +34,25 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { type PracticeItem, practices, userPractices } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
-import { BORDER_RADIUS, SPACING, colors, shadows, touchTarget } from '@/design/tokens';
+import { Button } from '@/components/Button';
+import { EmptyState } from '@/components/feedback/EmptyState';
+import { ScreenHeader } from '@/components/layout/ScreenHeader';
+import {
+  BORDER_RADIUS,
+  SPACING,
+  accent,
+  colors,
+  ink,
+  surface,
+  surfaceShadow,
+  touchTarget,
+} from '@/design/tokens';
 import { MODE_CATEGORIES, type PickableMode } from '@/features/Practice/components/ModePicker';
 import { MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
+import { useRecentPractices } from '@/features/Practice/hooks/useRecentPractices';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
 import type { RootStackParamList } from '@/navigation/RootStack';
+import type { RecentPractice } from '@/storage/recentPracticesStorage';
 
 type Section = 'presets' | 'drafts' | 'imported';
 
@@ -82,8 +96,9 @@ export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Eleme
     navigateToDetail,
     navigateToCreate,
   );
-  const onUse = useCatalogSetActive(stageNumber, navigation, setActive);
-
+  const setActivePractice = useCatalogSetActive(stageNumber, navigation, setActive);
+  const { recents, record } = useRecentPractices();
+  const onUse = useRecordedUse(setActivePractice, record);
   const { sections, renderItem } = useCatalogList(state, query, modeCategory, onDetail, onUse);
   const insets = useSafeAreaInsets();
   const containerStyle = [styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }];
@@ -96,7 +111,7 @@ export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Eleme
         keyExtractor={catalogKeyExtractor}
         renderItem={renderItem}
         renderSectionHeader={renderSectionHeader}
-        renderSectionFooter={renderSectionFooter}
+        renderSectionFooter={makeSectionFooter(onCreate)}
         ListHeaderComponent={
           <CatalogHeader
             query={query}
@@ -106,6 +121,8 @@ export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Eleme
             modeCategory={modeCategory}
             onMode={setModeCategory}
             onCreate={onCreate}
+            recents={recents}
+            onDetail={onDetail}
           />
         }
         ListFooterComponent={<CatalogStatus state={state} onRetry={reload} />}
@@ -115,6 +132,30 @@ export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Eleme
       />
     </View>
   );
+}
+
+/** "Use this practice" — snapshot it into the recents list, then set it active. */
+function useRecordedUse(
+  setActivePractice: (id: number) => void,
+  record: (_entry: RecentPractice) => void,
+): (practice: PracticeItem) => void {
+  return useCallback(
+    (practice: PracticeItem) => {
+      record(toRecentPractice(practice));
+      setActivePractice(practice.id);
+    },
+    [record, setActivePractice],
+  );
+}
+
+/** Snapshot a catalog item into the persisted recent-practice shape. */
+function toRecentPractice(practice: PracticeItem): RecentPractice {
+  return {
+    id: practice.id,
+    name: practice.name,
+    mode: practice.mode ?? null,
+    durationMinutes: practice.default_duration_minutes,
+  };
 }
 
 /** Seed the stage chip: an explicit prop (tests) wins, else the ``Catalog``
@@ -134,7 +175,7 @@ function useCatalogList(
   query: string,
   modeCategory: string | null,
   onDetail: (id: number) => void,
-  onUse: (id: number) => void,
+  onUse: (practice: PracticeItem) => void,
 ): { sections: CatalogSection[]; renderItem: (info: { item: PracticeItem }) => React.JSX.Element } {
   const sections = useMemo(
     () => buildSections(state.practices, query, modeCategory),
@@ -202,18 +243,58 @@ interface CatalogSection {
 
 const catalogKeyExtractor = (item: PracticeItem): string => `practice-${item.id}`;
 
-const renderSectionHeader = ({ section }: { section: CatalogSection }): React.JSX.Element => (
-  <View style={styles.section} testID={`practice-catalog-section-${section.section}`}>
-    <Text style={styles.sectionTitle}>{section.title}</Text>
-  </View>
-);
+const renderSectionHeader = ({ section }: { section: CatalogSection }): React.JSX.Element | null =>
+  section.data.length === 0 ? null : (
+    <View style={styles.section} testID={`practice-catalog-section-${section.section}`}>
+      <Text style={styles.sectionTitle}>{section.title}</Text>
+    </View>
+  );
 
-const renderSectionFooter = ({ section }: { section: CatalogSection }): React.JSX.Element | null =>
-  section.data.length === 0 ? (
-    <Text style={styles.emptyText} testID={`practice-catalog-section-${section.section}-empty`}>
-      Nothing here yet.
-    </Text>
-  ) : null;
+interface SectionFooterProps {
+  section: Section;
+  onCreate: () => void;
+}
+
+const SECTION_EMPTY_COPY: Readonly<Record<Section, { title: string; body: string }>> = {
+  presets: { title: 'No presets here', body: 'No curated practices match this filter yet.' },
+  drafts: { title: 'No drafts yet', body: 'Author a practice and it lands here.' },
+  imported: { title: 'Nothing imported', body: 'Practices shared with you will appear here.' },
+};
+
+/**
+ * An empty catalog section reads as an editorial empty state that points to the
+ * create wizard, rather than the old passive "Nothing here yet." line.
+ */
+/** A SectionList footer renderer that shows the empty state only for empty sections. */
+function makeSectionFooter(
+  onCreate: () => void,
+): (info: { section: CatalogSection }) => React.JSX.Element | null {
+  return ({ section }) =>
+    section.data.length === 0 ? (
+      <SectionFooter section={section.section} onCreate={onCreate} />
+    ) : null;
+}
+
+const SectionFooter = ({ section, onCreate }: SectionFooterProps): React.JSX.Element | null => {
+  const copy = SECTION_EMPTY_COPY[section];
+  return (
+    <EmptyState
+      glyph="🪶"
+      title={copy.title}
+      body={copy.body}
+      style={styles.sectionEmpty}
+      testID={`practice-catalog-section-${section}-empty`}
+      cta={
+        <Button
+          variant="secondary"
+          label="Create a practice"
+          onPress={onCreate}
+          testID={`practice-catalog-section-${section}-create`}
+        />
+      }
+    />
+  );
+};
 
 /** Build the three catalog sections (always present, even when empty). */
 function buildSections(
@@ -237,6 +318,8 @@ interface CatalogHeaderProps {
   modeCategory: string | null;
   onMode: (category: string | null) => void;
   onCreate: () => void;
+  recents: readonly RecentPractice[];
+  onDetail: (id: number) => void;
 }
 
 /** Non-scrolling-away header for the SectionList (kept as an element so the
@@ -247,8 +330,55 @@ const CatalogHeader = (props: CatalogHeaderProps): React.JSX.Element => (
     <SearchBar value={props.query} onChange={props.onQueryChange} />
     <StageChips selected={props.stageNumber} onSelect={props.onStage} />
     <ModeChips selected={props.modeCategory} onSelect={props.onMode} />
+    <RecentlyUsed recents={props.recents} onDetail={props.onDetail} />
   </View>
 );
+
+interface RecentlyUsedProps {
+  recents: readonly RecentPractice[];
+  onDetail: (id: number) => void;
+}
+
+/** A quick "Recently used" shortcut above the full catalog; hidden when empty. */
+const RecentlyUsed = ({ recents, onDetail }: RecentlyUsedProps): React.JSX.Element | null => {
+  if (recents.length === 0) return null;
+  return (
+    <View style={styles.section} testID="practice-catalog-recently-used">
+      <Text style={styles.sectionTitle}>Recently used</Text>
+      {recents.map((recent) => (
+        <RecentRow key={`recent-${recent.id}`} recent={recent} onDetail={onDetail} />
+      ))}
+    </View>
+  );
+};
+
+interface RecentRowProps {
+  recent: RecentPractice;
+  onDetail: (id: number) => void;
+}
+
+const RecentRow = ({ recent, onDetail }: RecentRowProps): React.JSX.Element => {
+  const mode = (recent.mode ?? 'meditation_timer') as PickableMode;
+  const { label, icon } = MODE_PRESENTATION[mode] ?? FALLBACK_PRESENTATION;
+  const rounded = Math.round(recent.durationMinutes);
+  return (
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel={`${recent.name}. ${label}, ${rounded} minutes.`}
+      onPress={() => onDetail(recent.id)}
+      style={[styles.row, styles.recentRow]}
+      testID={`practice-catalog-recent-row-${recent.id}`}
+    >
+      <Text style={styles.rowIcon}>{icon}</Text>
+      <View style={styles.rowText}>
+        <Text style={styles.rowName} numberOfLines={1}>
+          {recent.name}
+        </Text>
+        <Text style={styles.rowSubtitle}>{`${label} · ${formatDuration(rounded)}`}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+};
 
 interface CatalogStatusProps {
   state: CatalogState;
@@ -260,7 +390,7 @@ const CatalogStatus = ({ state, onRetry }: CatalogStatusProps): React.JSX.Elemen
   if (state.loading) {
     return (
       <View style={styles.loadingBlock} testID="practice-catalog-loading">
-        <ActivityIndicator color={colors.primary} />
+        <ActivityIndicator color={accent.primary} />
       </View>
     );
   }
@@ -325,21 +455,19 @@ interface HeaderProps {
 }
 
 const Header = ({ onCreate }: HeaderProps): React.JSX.Element => (
-  <View style={styles.header}>
-    <View>
-      <Text style={styles.heading}>Practice catalog</Text>
-      <Text style={styles.subheading}>Browse every practice, or author your own.</Text>
-    </View>
-    <TouchableOpacity
-      accessibilityRole="button"
-      accessibilityLabel="Create a new practice"
-      onPress={onCreate}
-      style={styles.createButton}
-      testID="practice-catalog-create"
-    >
-      <Text style={styles.createButtonText}>+ Create</Text>
-    </TouchableOpacity>
-  </View>
+  <ScreenHeader
+    eyebrow="Practice"
+    title="Catalog"
+    lead="Browse every practice, or author your own."
+    action={
+      <Button
+        label="+ Create"
+        accessibilityLabel="Create a new practice"
+        onPress={onCreate}
+        testID="practice-catalog-create"
+      />
+    }
+  />
 );
 
 interface SearchBarProps {
@@ -352,7 +480,7 @@ const SearchBar = ({ value, onChange }: SearchBarProps): React.JSX.Element => (
     accessibilityLabel="Search practices by name or description"
     style={styles.search}
     placeholder="Search by name or description"
-    placeholderTextColor={colors.text.tertiaryAccessible}
+    placeholderTextColor={ink.muted}
     value={value}
     onChangeText={onChange}
     testID="practice-catalog-search"
@@ -429,7 +557,7 @@ const FilterChip = ({ label, selected, onPress, testID }: FilterChipProps): Reac
 interface PracticeRowProps {
   practice: PracticeItem;
   onDetail: (id: number) => void;
-  onUse: (id: number) => void;
+  onUse: (practice: PracticeItem) => void;
 }
 
 // Derived from MODE_CATEGORIES so adding a mode propagates here automatically.
@@ -477,7 +605,7 @@ const PracticeRowComponent = ({
       <TouchableOpacity
         accessibilityRole="button"
         accessibilityLabel={`Use ${practice.name}`}
-        onPress={() => onUse(practice.id)}
+        onPress={() => onUse(practice)}
         style={styles.rowUse}
         testID={`practice-catalog-row-${practice.id}-use`}
       >
@@ -548,36 +676,17 @@ function bucketSections(items: readonly PracticeItem[]): SectionBuckets {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background.primary },
+  screen: { flex: 1, backgroundColor: surface.canvas },
   body: { padding: SPACING.md, paddingBottom: SPACING.xl },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: SPACING.md,
-  },
-  heading: { fontSize: 22, fontWeight: '700', color: colors.text.primary },
-  subheading: {
-    fontSize: 13,
-    color: colors.text.secondaryAccessible,
-    marginTop: 2,
-  },
-  createButton: {
-    backgroundColor: colors.primary,
-    paddingVertical: SPACING.sm,
-    paddingHorizontal: SPACING.md,
-    borderRadius: BORDER_RADIUS.sm,
-  },
-  createButtonText: { color: colors.text.light, fontWeight: '700', fontSize: 13 },
   search: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: surface.hairline,
     borderRadius: BORDER_RADIUS.sm,
     paddingHorizontal: SPACING.sm,
     paddingVertical: SPACING.sm,
     fontSize: 14,
-    color: colors.text.primary,
-    backgroundColor: colors.background.card,
+    color: ink.primary,
+    backgroundColor: surface.raised,
     marginBottom: SPACING.sm,
   },
   chipRow: {
@@ -591,12 +700,12 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.xs,
     borderRadius: BORDER_RADIUS.lg,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.background.card,
+    borderColor: surface.hairline,
+    backgroundColor: surface.raised,
   },
-  chipSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
-  chipText: { fontSize: 12, color: colors.text.primary, fontWeight: '600' },
-  chipTextSelected: { color: colors.text.light },
+  chipSelected: { backgroundColor: accent.primary, borderColor: accent.primary },
+  chipText: { fontSize: 12, color: ink.primary, fontWeight: '600' },
+  chipTextSelected: { color: surface.raised },
   loadingBlock: { padding: SPACING.lg, alignItems: 'center' },
   errorBlock: { padding: SPACING.lg, alignItems: 'center', gap: SPACING.sm },
   errorText: { color: colors.destructive.text, fontSize: 13 },
@@ -604,20 +713,20 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: colors.background.card,
+    backgroundColor: surface.raised,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: surface.hairline,
   },
-  retryButtonText: { color: colors.text.primary, fontWeight: '600' },
+  retryButtonText: { color: ink.primary, fontWeight: '600' },
   section: { marginTop: SPACING.md },
   sectionTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: colors.text.secondaryAccessible,
+    color: ink.soft,
     textTransform: 'uppercase',
     marginBottom: SPACING.sm,
   },
-  emptyText: { color: colors.text.tertiaryAccessible, fontSize: 13 },
+  sectionEmpty: { flex: 0, alignItems: 'stretch', paddingVertical: SPACING.md, gap: SPACING.sm },
   rowContainer: {
     flexDirection: 'row',
     alignItems: 'stretch',
@@ -629,28 +738,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACING.md,
-    backgroundColor: colors.background.card,
+    backgroundColor: surface.raised,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.md,
-    ...shadows.small,
+    ...surfaceShadow.card,
   },
+  recentRow: { marginBottom: SPACING.sm },
   rowUse: {
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: SPACING.md,
     minWidth: touchTarget.minimum,
     minHeight: touchTarget.minimum,
-    backgroundColor: colors.primary,
+    backgroundColor: accent.primary,
     borderRadius: BORDER_RADIUS.lg,
-    ...shadows.small,
+    ...surfaceShadow.card,
   },
-  rowUseText: { color: colors.text.light, fontWeight: '700', fontSize: 14 },
+  rowUseText: { color: surface.raised, fontWeight: '700', fontSize: 14 },
   rowIcon: { fontSize: 24, width: 32, textAlign: 'center' },
   rowText: { flex: 1 },
-  rowName: { fontSize: 15, fontWeight: '700', color: colors.text.primary },
+  rowName: { fontSize: 15, fontWeight: '700', color: ink.primary },
   rowSubtitle: {
     fontSize: 13,
-    color: colors.text.secondaryAccessible,
+    color: ink.soft,
     marginTop: 2,
   },
 });
