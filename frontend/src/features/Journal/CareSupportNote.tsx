@@ -16,6 +16,7 @@ import React, { useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { CareResource, CareResponse } from '@/api';
+import CareResourceCard from '@/components/care/CareResourceCard';
 import {
   BORDER_RADIUS,
   SPACING,
@@ -23,7 +24,6 @@ import {
   editorialType,
   ink,
   paperShadow,
-  spacing,
   surface,
   touchTarget,
 } from '@/design/tokens';
@@ -33,30 +33,9 @@ const REOPEN_LABEL = 'Show support options';
 const DISMISS_A11Y = 'Hide the support options';
 const REOPEN_A11Y = 'Show the support options again';
 
-/** Accessibility label combining a resource's name, contact, and description. */
-function resourceLabel(resource: CareResource): string {
-  return `${resource.name}. ${resource.contact}. ${resource.what_it_is}`;
-}
-
 export interface CareSupportNoteProps {
   /** The care surface from the latest resonance pass; ``null`` hides everything. */
   care: CareResponse | null;
-}
-
-/** One support pointer: name, how to reach it, and what it is. */
-function ResourceCard({ resource }: { resource: CareResource }): React.JSX.Element {
-  return (
-    <View
-      style={styles.resource}
-      testID={`care-resource-${resource.kind}`}
-      accessible
-      accessibilityLabel={resourceLabel(resource)}
-    >
-      <Text style={styles.resourceName}>{resource.name}</Text>
-      <Text style={styles.resourceContact}>{resource.contact}</Text>
-      <Text style={styles.resourceWhat}>{resource.what_it_is}</Text>
-    </View>
-  );
 }
 
 /** The collapsed state: a single affordance that restores the resource list. */
@@ -85,7 +64,7 @@ function ExpandedBody({
   return (
     <>
       {resources.map((resource) => (
-        <ResourceCard key={resource.kind} resource={resource} />
+        <CareResourceCard key={resource.kind} resource={resource} />
       ))}
       <TouchableOpacity
         style={styles.dismiss}
@@ -131,26 +110,6 @@ const styles = StyleSheet.create({
     ...editorialType.title,
     color: ink.primary,
     marginBottom: SPACING.md,
-  },
-  resource: {
-    paddingVertical: SPACING.sm,
-    borderTopWidth: 1,
-    borderTopColor: surface.hairline,
-  },
-  resourceName: {
-    ...editorialType.note,
-    fontWeight: '600',
-    color: ink.primary,
-  },
-  resourceContact: {
-    ...editorialType.note,
-    color: accent.strong,
-    marginTop: spacing(0.25),
-  },
-  resourceWhat: {
-    ...editorialType.caption,
-    color: ink.soft,
-    marginTop: spacing(0.25),
   },
   dismiss: {
     minHeight: touchTarget.minimum,
