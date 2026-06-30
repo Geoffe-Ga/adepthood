@@ -87,11 +87,16 @@ class CompletionSuggestion(SQLModel, table=True):
 
     # The hot read is "all suggestions for an entry", so index that FK; the
     # denormalized owner FK is indexed so "all suggestions for a user" is a range
-    # scan. CHECKs keep the enum columns, anchor bounds, and the polymorphic
-    # target honest at the DB level (matching the Marginalia precedent).
+    # scan. The polymorphic target FKs are indexed too so reverse lookups
+    # ("pending suggestions for goal X" / "for user-practice Y") are range scans
+    # rather than full table scans (Postgres does not auto-index FK columns).
+    # CHECKs keep the enum columns, anchor bounds, and the polymorphic target
+    # honest at the DB level (matching the Marginalia precedent).
     __table_args__ = (
         Index("ix_completion_suggestion_journal_entry_id", "journal_entry_id"),
         Index("ix_completion_suggestion_user_id", "user_id"),
+        Index("ix_completion_suggestion_goal_id", "goal_id"),
+        Index("ix_completion_suggestion_user_practice_id", "user_practice_id"),
         _target_type_check(),
         _status_check(),
         CheckConstraint("anchor_start >= 0", name="ck_completion_suggestion_anchor_start_nonneg"),
