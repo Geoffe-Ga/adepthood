@@ -13,6 +13,7 @@ import TimezoneSettingsScreen from '../features/Settings/TimezoneSettingsScreen'
 import type { RootTabParamList } from './BottomTabs';
 import BottomTabs from './BottomTabs';
 
+import { accent, fonts, ink } from '@/design/tokens';
 import type { ModeConfig } from '@/features/Practice/engine/types';
 
 /**
@@ -59,7 +60,14 @@ export type RootStackParamList = {
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const RootStack = (): React.JSX.Element => (
-  <Stack.Navigator>
+  // Header background/border come from the warm navTheme; here we add the
+  // editorial serif title + terracotta back/tint (#803).
+  <Stack.Navigator
+    screenOptions={{
+      headerTintColor: accent.primary,
+      headerTitleStyle: { fontFamily: fonts.serif, color: ink.primary },
+    }}
+  >
     <Stack.Screen name="Tabs" component={BottomTabs} options={{ headerShown: false }} />
     <Stack.Screen
       name="ApiKeySettings"

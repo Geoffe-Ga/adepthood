@@ -16,7 +16,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { JournalTag } from '../api';
 import { FeatureErrorBoundary } from '../components/FeatureErrorBoundary';
-import { colors, SPACING } from '../design/tokens';
+import { accent, ink, SPACING, surface } from '../design/tokens';
 import CourseScreen from '../features/Course/CourseScreen';
 import HabitsScreen from '../features/Habits/HabitsScreen';
 import JournalShelfScreen from '../features/Journal/JournalShelfScreen';
@@ -143,8 +143,13 @@ const BottomTabs = (): React.JSX.Element => {
     <Tab.Navigator
       initialRouteName="Habits"
       screenOptions={{
-        tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.text.tertiaryAccessible,
+        // Warm tab bar (#803): raised paper ground + hairline top edge; active
+        // terracotta vs muted ink, both AA on the raised ground.
+        tabBarActiveTintColor: accent.primary,
+        tabBarInactiveTintColor: ink.muted,
+        // borderTopWidth is intentionally omitted — RN Navigation defaults it to
+        // StyleSheet.hairlineWidth; we only retint the existing edge.
+        tabBarStyle: { backgroundColor: surface.raised, borderTopColor: surface.hairline },
         headerRight: renderHeaderRight,
       }}
     >
@@ -163,7 +168,7 @@ const BottomTabs = (): React.JSX.Element => {
 const styles = StyleSheet.create({
   headerRight: { flexDirection: 'row', alignItems: 'center', marginRight: SPACING.sm },
   headerButton: { paddingHorizontal: SPACING.sm, paddingVertical: SPACING.xs },
-  headerButtonText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
+  headerButtonText: { color: accent.primary, fontSize: 14, fontWeight: '600' },
 });
 
 export default BottomTabs;
