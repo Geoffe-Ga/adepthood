@@ -31,6 +31,20 @@ describe('SignupScreen', () => {
     expect(getByPlaceholderText('Confirm Password')).toBeTruthy();
   });
 
+  it('opens on the branded editorial cover: serif wordmark + program voice', () => {
+    const { getByTestId, getByText } = render(<SignupScreen navigation={mockNavigation} />);
+
+    expect(getByTestId('auth-brand-band')).toBeTruthy();
+    expect(getByText('Adepthood')).toBeTruthy();
+    expect(getByText(/thirty-six week/i)).toBeTruthy();
+  });
+
+  it('shows the "Begin" serif title', () => {
+    const { getByText } = render(<SignupScreen navigation={mockNavigation} />);
+
+    expect(getByText('Begin')).toBeTruthy();
+  });
+
   it('shows error when passwords do not match', async () => {
     const { getByPlaceholderText, getByText, findByText } = render(
       <SignupScreen navigation={mockNavigation} />,

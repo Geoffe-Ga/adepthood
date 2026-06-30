@@ -16,7 +16,18 @@ import { canonicalizeEmail } from './canonicalizeEmail';
 
 import { formatApiError } from '@/api/errorMessages';
 import { useAuth } from '@/context/AuthContext';
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
+import {
+  BORDER_RADIUS,
+  SPACING,
+  accent,
+  colors,
+  ink,
+  surface,
+  surfaceShadow,
+  type as typeRamp,
+} from '@/design/tokens';
+
+const TYPE = typeRamp(0);
 
 const REAUTH_FALLBACK =
   "We couldn't sign you back in. Check your connection, then try again in a moment.";
@@ -168,36 +179,38 @@ export function ReauthSheet(): React.JSX.Element {
 const localStyles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: colors.mystical.overlay,
     justifyContent: 'center',
     padding: SPACING.xl,
   },
   card: {
-    backgroundColor: colors.background.card,
+    backgroundColor: surface.raised,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.xl,
+    ...surfaceShadow.raised,
   },
   title: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: colors.text.primary,
+    ...TYPE.title,
+    color: ink.primary,
     marginBottom: SPACING.sm,
   },
   subtitle: {
-    fontSize: 14,
-    color: colors.text.secondary,
+    ...TYPE.body,
+    color: ink.soft,
     marginBottom: SPACING.lg,
   },
   primaryButton: {
-    backgroundColor: colors.primary,
+    backgroundColor: accent.primary,
     borderRadius: BORDER_RADIUS.md,
     padding: SPACING.buttonV,
+    minHeight: 44,
     alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: SPACING.md,
   },
   secondaryLink: {
     textAlign: 'center',
-    color: colors.text.secondary,
+    color: ink.soft,
     paddingVertical: SPACING.sm,
   },
 });

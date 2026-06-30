@@ -36,6 +36,20 @@ describe('LoginScreen', () => {
     expect(getByText('Log In')).toBeTruthy();
   });
 
+  it('opens on the branded editorial cover: serif wordmark + program voice', () => {
+    const { getByTestId, getByText } = render(<LoginScreen navigation={mockNavigation} />);
+
+    expect(getByTestId('auth-brand-band')).toBeTruthy();
+    expect(getByText('Adepthood')).toBeTruthy();
+    expect(getByText(/thirty-six week/i)).toBeTruthy();
+  });
+
+  it('shows the "Welcome back" serif title', () => {
+    const { getByText } = render(<LoginScreen navigation={mockNavigation} />);
+
+    expect(getByText('Welcome back')).toBeTruthy();
+  });
+
   it('calls login with email and password on submit', async () => {
     mockLogin.mockResolvedValue(undefined);
     const { getByPlaceholderText, getByText } = render(<LoginScreen navigation={mockNavigation} />);

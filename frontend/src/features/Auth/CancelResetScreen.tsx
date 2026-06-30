@@ -7,7 +7,9 @@ import { MIN_TOKEN_LENGTH } from './resetToken';
 
 import { auth as authApi } from '@/api';
 import { Button } from '@/components/Button';
-import { SPACING, colors } from '@/design/tokens';
+import { SPACING, ink, type as typeRamp } from '@/design/tokens';
+
+const TYPE = typeRamp(0);
 
 type CancelStatus = 'pending' | 'success' | 'error' | 'invalid_token';
 
@@ -105,10 +107,10 @@ export default function CancelResetScreen({ navigation, route }: Props) {
 // Confirmation-screen typography (smaller title than the form screens); the
 // container/button/buttonText come from the shared authStyles.
 const localStyles = StyleSheet.create({
-  title: { fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: SPACING.md },
+  title: { ...TYPE.title, color: ink.primary, textAlign: 'center', marginBottom: SPACING.md },
   subtitle: {
-    fontSize: 15,
-    color: colors.text.secondary,
+    ...TYPE.body,
+    color: ink.soft,
     textAlign: 'center',
     marginBottom: SPACING.xl,
   },

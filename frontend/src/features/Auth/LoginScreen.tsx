@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Text, TouchableOpacity } from 'react-native';
 
 import { authStyles as styles } from './auth.styles';
+import { AuthBrandBand } from './AuthBrandBand';
 import { AuthScreenContainer } from './AuthScreenContainer';
 import { canonicalizeEmail } from './canonicalizeEmail';
 
@@ -126,7 +127,9 @@ export default function LoginScreen({ navigation }: Props) {
 
   return (
     <AuthScreenContainer testID="login">
-      <Text style={styles.title}>Adepthood</Text>
+      <AuthBrandBand />
+      <Text style={styles.title}>Welcome back</Text>
+      <Text style={styles.lead}>Sign in to pick up where you left off.</Text>
       <LoginFields
         email={email}
         setEmail={setEmail}
