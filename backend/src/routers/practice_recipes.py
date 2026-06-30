@@ -31,13 +31,14 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Select
-from sqlmodel import col, or_, select
+from sqlmodel import col, select
 
 from database import get_session
 from dependencies.ownership import (
     require_owned_user_practice,
     require_personal_row,
     system_or_owned_clause,
+    visible_to_user,
 )
 from domain.practice_resolution import effective_config, effective_name
 from errors import bad_request, conflict, not_found
@@ -165,10 +166,7 @@ def _build_recipe_list_query(user_id: int, mode: str | None) -> Select[tuple[Pra
     complexity that inlining them pushes the endpoint to rank B.
     """
     query = select(PracticeRecipe).where(
-        or_(
-            col(PracticeRecipe.owner_user_id).is_(None),
-            PracticeRecipe.owner_user_id == user_id,
-        )
+        visible_to_user(col(PracticeRecipe.owner_user_id), user_id)
     )
     if mode is not None:
         query = query.where(PracticeRecipe.mode == mode)

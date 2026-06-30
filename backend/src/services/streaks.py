@@ -29,7 +29,6 @@ from domain.streaks import (
     current_consecutive_streak,
     subtractive_current_streak,
     sum_units_by_user_day,
-    update_streak,
 )
 from models.goal_completion import GoalCompletion
 from schemas.milestone import Milestone
@@ -42,7 +41,6 @@ __all__ = [
     "compute_consecutive_streak",
     "compute_habit_streak",
     "compute_streak_before_and_after",
-    "update_streak",
 ]
 
 

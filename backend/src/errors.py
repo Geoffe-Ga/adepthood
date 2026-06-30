@@ -68,6 +68,16 @@ def unprocessable(reason: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=reason)
 
 
+def bad_gateway(reason: str) -> HTTPException:
+    """Return a 502 HTTPException for an upstream-dependency failure.
+
+    Use this when a downstream provider the request relies on (the LLM
+    provider, the content repository) errors out, so the caller sees a
+    stable snake_case token rather than the raw upstream error.
+    """
+    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=reason)
+
+
 async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Catch-all handler — log, report to Sentry, return a sanitised envelope.
 

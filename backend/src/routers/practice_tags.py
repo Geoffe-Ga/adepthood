@@ -25,10 +25,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col, or_, select
+from sqlmodel import col, select
 
 from database import get_session
-from dependencies.ownership import require_personal_row, system_or_owned_clause
+from dependencies.ownership import (
+    require_personal_row,
+    system_or_owned_clause,
+    visible_to_user,
+)
 from errors import conflict, not_found
 from models.practice_tag import PracticeTag
 from routers.auth import get_current_user
@@ -74,12 +78,7 @@ async def list_practice_tags(
     """
     query = (
         select(PracticeTag)
-        .where(
-            or_(
-                col(PracticeTag.owner_user_id).is_(None),
-                PracticeTag.owner_user_id == user_id,
-            )
-        )
+        .where(visible_to_user(col(PracticeTag.owner_user_id), user_id))
         .order_by(col(PracticeTag.owner_user_id).nulls_first(), PracticeTag.label)
     )
     items, total = await paginate_query(session, query, pagination)

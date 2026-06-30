@@ -20,7 +20,6 @@ from services.streaks import (
     check_milestones,
     compute_consecutive_streak,
     compute_habit_streak,
-    update_streak,
 )
 
 # ── Frozen clock for date-coupled tests (§5.4 un-flake) ────────────────────
@@ -132,12 +131,6 @@ def test_check_milestones_all_new_when_old_is_zero() -> None:
 
 def test_check_milestones_returns_empty_when_none_reached() -> None:
     assert check_milestones(0, [1, 3, 7]) == []
-
-
-def test_update_streak_is_re_exported_from_service() -> None:
-    """``update_streak`` should stay importable from the service layer too."""
-    assert update_streak(2, did_check_in=True) == (3, "streak_incremented")
-    assert update_streak(99, did_check_in=False) == (0, "streak_reset")
 
 
 @pytest.mark.asyncio

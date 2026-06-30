@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -15,7 +15,7 @@ from content_config import CONTENT_REF_SCHEME, content_ref
 from database import get_session
 from domain.course import compute_days_elapsed, filter_content_for_user, next_unlock_day
 from domain.stage_progress import ensure_user_progress, get_user_progress, is_stage_unlocked
-from errors import forbidden, not_found
+from errors import bad_gateway, forbidden, not_found
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
@@ -398,10 +398,7 @@ def _read_local_body(read: Callable[[], ContentBody], reference: str) -> Content
         raise not_found("content") from None
     except ContentRepositoryError as exc:
         logger.exception("content_read_failed", extra={"reference": reference})
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=_CONTENT_UNAVAILABLE_DETAIL,
-        ) from exc
+        raise bad_gateway(_CONTENT_UNAVAILABLE_DETAIL) from exc
     return ContentBodyResponse(
         title=body.title,
         content_type=body.content_type,

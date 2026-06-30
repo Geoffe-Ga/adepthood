@@ -292,7 +292,8 @@ async def require_user_fresh(session: AsyncSession, user_id: int) -> User:
 async def preflight_deduction(session: AsyncSession, user_id: int) -> SpendResult:
     """Roll over the monthly counter and deduct one BotMason message.
 
-    Shared pre-flight for the streaming and non-streaming chat endpoints.
+    Pre-flight for the BotMason reflection write path (the ``/resonance``
+    endpoint in :mod:`routers.journal`), its sole caller.
     Raises ``400 user_not_found`` if the authenticated user disappeared
     between auth and spend and ``402 insufficient_offerings`` when neither
     wallet has capacity.  Returns the post-deduction :class:`SpendResult`

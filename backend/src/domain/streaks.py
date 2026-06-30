@@ -30,20 +30,6 @@ def is_scheduled_on(notification_days: list[str] | None, weekday_name: str) -> b
     return any(day.lower() == target for day in notification_days)
 
 
-def update_streak(
-    current_streak: int,
-    *,
-    did_check_in: bool,
-    is_scheduled_today: bool = True,
-) -> tuple[int, str]:
-    """Increment on check-in, hold on unscheduled miss, reset on scheduled miss."""
-    if did_check_in:
-        return current_streak + 1, "streak_incremented"
-    if not is_scheduled_today:
-        return current_streak, "streak_held"
-    return 0, "streak_reset"
-
-
 @dataclass(frozen=True)
 class SubtractiveContext:
     """Habit-level context required to compute a subtractive streak.

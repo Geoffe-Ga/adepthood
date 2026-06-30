@@ -2,7 +2,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from domain.streaks import current_consecutive_streak, is_scheduled_on, update_streak
+from domain.streaks import current_consecutive_streak, is_scheduled_on
 
 _TODAY = date(2026, 6, 30)
 _YESTERDAY = _TODAY - timedelta(days=1)
@@ -37,32 +37,6 @@ def test_current_consecutive_streak_gap_breaks_chain() -> None:
     """A gap > 1 day ends the walk; only the leading run counts."""
     days_desc = [_TODAY, _YESTERDAY, _TODAY - timedelta(days=3)]
     assert current_consecutive_streak(days_desc, _TODAY) == 2
-
-
-def test_streak_increment() -> None:
-    new_streak, code = update_streak(3, did_check_in=True)
-    assert new_streak == 4
-    assert code == "streak_incremented"
-
-
-def test_streak_reset() -> None:
-    new_streak, code = update_streak(5, did_check_in=False)
-    assert new_streak == 0
-    assert code == "streak_reset"
-
-
-def test_streak_held_when_not_scheduled() -> None:
-    """A miss on a non-scheduled day holds the streak."""
-    new_streak, code = update_streak(5, did_check_in=False, is_scheduled_today=False)
-    assert new_streak == 5
-    assert code == "streak_held"
-
-
-def test_streak_increments_on_unscheduled_day_when_user_checks_in() -> None:
-    """An opportunistic check-in on a non-scheduled day still increments."""
-    new_streak, code = update_streak(2, did_check_in=True, is_scheduled_today=False)
-    assert new_streak == 3
-    assert code == "streak_incremented"
 
 
 def test_is_scheduled_on_none_means_every_day() -> None:
