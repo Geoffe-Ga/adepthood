@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from domain.marginalia_anchoring import reanchor_one
+from models.completion_suggestion import CompletionSuggestion, SuggestionStatus
 from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia, MarginaliaStatus
 from services.botmason import generate_response
@@ -64,3 +65,31 @@ async def reanchor_entry_marginalia(
         else:
             note.anchor_start = outcome.anchor_start
             note.anchor_end = outcome.anchor_end
+
+
+async def reanchor_entry_suggestions(
+    entry: JournalEntry,
+    new_message: str,
+    session: AsyncSession,
+) -> None:
+    """Re-anchor (or auto-dismiss) the entry's PENDING completion suggestions.
+
+    Mirrors :func:`reanchor_entry_marginalia`: each pending suggestion re-anchors
+    to its span if its ``anchor_text`` still occurs in ``new_message``; if the
+    mention was deleted the suggestion auto-flips to ``dismissed`` (the user never
+    attested to a completion the edited entry no longer claims). Accepted and
+    already-dismissed suggestions are left untouched.
+    """
+    result = await session.execute(
+        select(CompletionSuggestion).where(
+            CompletionSuggestion.journal_entry_id == entry.id,
+            CompletionSuggestion.status == SuggestionStatus.PENDING,
+        )
+    )
+    for suggestion in result.scalars().all():
+        outcome = reanchor_one(suggestion.anchor_text, suggestion.anchor_start, new_message)
+        if outcome.stale:
+            suggestion.status = SuggestionStatus.DISMISSED
+        else:
+            suggestion.anchor_start = outcome.anchor_start
+            suggestion.anchor_end = outcome.anchor_end

@@ -14,12 +14,22 @@ from sqlmodel import col, select
 
 from database import get_session
 from dependencies.ownership import require_owned_journal_entry
+from domain.detection import CompletionDetected, detect_completions
 from domain.resonance import MarginaliaAnchored, generate_essay, generate_marginalia
 from errors import not_found, unprocessable
+from models.completion_suggestion import (
+    CompletionSuggestion,
+    CompletionTargetType,
+    SuggestionStatus,
+)
 from models.journal_entry import JournalEntry, JournalTag
 from models.marginalia import Marginalia, MarginaliaStatus
 from rate_limit import limiter
 from routers.auth import get_current_user
+from schemas.completion_suggestion import (
+    CompletionSuggestionListResponse,
+    CompletionSuggestionResponse,
+)
 from schemas.journal import (
     JOURNAL_MESSAGE_MAX_LENGTH,
     JournalEntryUpdate,
@@ -35,7 +45,12 @@ from schemas.marginalia import (
 from security import TextTooLongError, sanitize_user_text
 from services import journal_encryption
 from services.botmason import LLMProviderError, resolve_chat_api_key
-from services.marginalia import BotmasonResonanceLLM, reanchor_entry_marginalia
+from services.completion_candidates import gather_candidates
+from services.marginalia import (
+    BotmasonResonanceLLM,
+    reanchor_entry_marginalia,
+    reanchor_entry_suggestions,
+)
 from services.usage import get_monthly_cap
 from services.wallet import preflight_deduction, require_user_fresh
 
@@ -240,6 +255,7 @@ async def _apply_entry_update(
         if new_message != old_message:
             entry.message = new_message
             await reanchor_entry_marginalia(entry, old_message, new_message, session)
+            await reanchor_entry_suggestions(entry, new_message, session)
     if payload.title is not None:
         entry.title = payload.title
     if payload.status is not None:
@@ -334,6 +350,69 @@ def _persist_marginalia(
     return rows
 
 
+def _suggestion_from_hit(
+    entry_id: int, user_id: int, hit: CompletionDetected
+) -> CompletionSuggestion:
+    """Map a detection hit to a PENDING CompletionSuggestion row.
+
+    The polymorphic FK is selected by ``target_type`` to satisfy the model's
+    target-fk-matches CHECK (habit → goal_id, practice → user_practice_id).
+    """
+    is_habit = hit.target_type == CompletionTargetType.HABIT
+    return CompletionSuggestion(
+        journal_entry_id=entry_id,
+        user_id=user_id,
+        target_type=hit.target_type,
+        goal_id=hit.target_id if is_habit else None,
+        user_practice_id=None if is_habit else hit.target_id,
+        label=hit.label,
+        anchor_start=hit.anchor_start,
+        anchor_end=hit.anchor_end,
+        anchor_text=hit.anchor_text,
+        status=SuggestionStatus.PENDING,
+    )
+
+
+async def _detect_and_persist_suggestions(
+    session: AsyncSession, entry_id: int, message: str, user_id: int, llm: BotmasonResonanceLLM
+) -> list[CompletionSuggestion]:
+    """Best-effort completion detection on the same pass; stage PENDING rows.
+
+    Empty candidates short-circuit with no LLM call (cost guard). A provider error
+    is swallowed (returns ``[]``) so the literary pass, the wallet charge, and the
+    commit are never rolled back — detection is strictly additive.
+    """
+    candidates = await gather_candidates(session, user_id)
+    if not candidates:
+        return []
+    try:
+        hits = await detect_completions(message, candidates=candidates, llm=llm)
+    except LLMProviderError:
+        logger.warning("journal_detection_failed", extra={"user_id": user_id, "entry_id": entry_id})
+        return []
+    rows = [_suggestion_from_hit(entry_id, user_id, hit) for hit in hits]
+    session.add_all(rows)
+    return rows
+
+
+async def _generate_marginalia_or_502(
+    message: str, llm: BotmasonResonanceLLM, prior: list[str], session: AsyncSession
+) -> list[MarginaliaAnchored]:
+    """Run the literary pass; a provider error rolls back the charge and 502s.
+
+    This is the only charged LLM call — a failure here must un-deduct the wallet
+    so a failed pass never charges (the detection pass that follows is best-effort
+    and never triggers a rollback).
+    """
+    try:
+        return await generate_marginalia(message, llm=llm, prior_entries=prior)
+    except LLMProviderError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="llm_provider_error"
+        ) from exc
+
+
 @router.post("/{entry_id}/resonance", response_model=ResonanceResponse)
 @limiter.limit("10/minute")
 async def run_resonance(
@@ -355,25 +434,31 @@ async def run_resonance(
     spent = await preflight_deduction(session, current_user)
     prior = await _recent_prior_bodies(session, current_user, entry_id)
     llm = BotmasonResonanceLLM(resolve_chat_api_key(x_llm_api_key))
-    try:
-        anchored = await generate_marginalia(entry.message, llm=llm, prior_entries=prior)
-    except LLMProviderError as exc:
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail="llm_provider_error"
-        ) from exc
+    anchored = await _generate_marginalia_or_502(entry.message, llm, prior, session)
     rows = _persist_marginalia(session, entry_id, current_user, anchored)
+    suggestions = await _detect_and_persist_suggestions(
+        session, entry_id, entry.message, current_user, llm
+    )
     user = await require_user_fresh(session, current_user)
     reset_date = user.monthly_reset_date
     await session.commit()
-    for row in rows:
+    for row in (*rows, *suggestions):
         await session.refresh(row)
     logger.info(
         "journal_resonance_generated",
-        extra={"user_id": current_user, "entry_id": entry_id, "count": len(rows)},
+        extra={
+            "user_id": current_user,
+            "entry_id": entry_id,
+            "count": len(rows),
+            "suggestions": len(suggestions),
+        },
     )
     return ResonanceResponse(
         marginalia=[MarginaliaResponse.model_validate(r, from_attributes=True) for r in rows],
+        suggestions=[
+            CompletionSuggestionResponse.model_validate(s, from_attributes=True)
+            for s in suggestions
+        ],
         remaining_messages=max(get_monthly_cap() - spent.monthly_used, 0),
         remaining_balance=spent.offering_balance,
         monthly_reset_date=reset_date,
@@ -401,6 +486,35 @@ async def list_marginalia(
     rows = result.scalars().all()
     return MarginaliaListResponse(
         items=[MarginaliaResponse.model_validate(r, from_attributes=True) for r in rows]
+    )
+
+
+@router.get("/{entry_id}/suggestions", response_model=CompletionSuggestionListResponse)
+async def list_suggestions(
+    entry_id: int,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CompletionSuggestionListResponse:
+    """List the caller's completion suggestions for an entry, ordered by anchor.
+
+    Ownership-scoped: a missing, soft-deleted, or foreign entry resolves to 404
+    (enumeration-safe, matching the marginalia list). ``user_id`` is never
+    returned.
+    """
+    entry = await _load_user_entry(session, entry_id, current_user)
+    if entry is None:
+        raise not_found("journal_entry")
+    result = await session.execute(
+        select(CompletionSuggestion)
+        .where(
+            CompletionSuggestion.journal_entry_id == entry_id,
+            CompletionSuggestion.user_id == current_user,  # defense-in-depth
+        )
+        .order_by(col(CompletionSuggestion.anchor_start))
+    )
+    rows = result.scalars().all()
+    return CompletionSuggestionListResponse(
+        items=[CompletionSuggestionResponse.model_validate(r, from_attributes=True) for r in rows]
     )
 
 
