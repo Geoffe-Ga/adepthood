@@ -1,6 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { Celebration } from '@/components/feedback/Celebration';
 import { colors, SPACING, BORDER_RADIUS } from '@/design/tokens';
 
 const WEEKLY_TARGET = 4;
@@ -52,12 +53,14 @@ const WeeklyProgress: React.FC<WeeklyProgressProps> = ({ count }) => {
           );
         })}
       </View>
-      <Text
-        style={[styles.helper, isComplete && styles.helperComplete]}
-        testID={isComplete ? 'weekly-complete-message' : 'weekly-helper'}
-      >
-        {helperText(completed)}
-      </Text>
+      <Celebration active={isComplete} testID="weekly-celebration">
+        <Text
+          style={[styles.helper, isComplete && styles.helperComplete]}
+          testID={isComplete ? 'weekly-complete-message' : 'weekly-helper'}
+        >
+          {helperText(completed)}
+        </Text>
+      </Celebration>
     </View>
   );
 };
