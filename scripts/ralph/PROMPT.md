@@ -69,6 +69,10 @@ drives Gates 3–4.
 - Never write to `main` directly (except `scripts/ralph/state.json`, which the
   orchestrator handles).
 - Never force-push. Rewrite on a fresh branch if needed.
+- **`dependencies` issues:** the in-flight PR is Dependabot's own branch
+  (linked via `Closes`); push fixes **there**, not a fresh branch. A breaking
+  major is a normal Gate-1 TDD adaptation — never pin back, suppress, or weaken
+  a gate. The three SDK-tied pins are deferred to the Expo SDK 53 epic (#885).
 - Never disable a CI check or pre-commit hook, and never lower a quality
   threshold to pass. No `# noqa` / `# type: ignore` / `// @ts-ignore` /
   `// eslint-disable` / `@pytest.mark.skip` without an `Issue #N`
