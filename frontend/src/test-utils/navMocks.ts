@@ -19,3 +19,20 @@ export const mockDefaultTheme = {
   },
   fonts: {},
 } as const;
+
+/**
+ * Dark counterpart — `navThemeDark` spreads `DarkTheme`, so any App-importing
+ * test mock must expose it too (#804).
+ */
+export const mockDarkTheme = {
+  dark: true,
+  colors: {
+    primary: '#ffffff',
+    background: '#000000',
+    card: '#000000',
+    text: '#ffffff',
+    border: '#333333',
+    notification: '#ffffff',
+  },
+  fonts: {},
+} as const;

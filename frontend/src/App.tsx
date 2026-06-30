@@ -24,6 +24,7 @@ import { CONFIG_ERROR } from './config';
 import { ApiKeyProvider } from './context/ApiKeyContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { NetworkStatusProvider } from './context/NetworkStatusContext';
+import { ThemeProvider, useTheme } from './design/ThemeContext';
 import { colors, SPACING } from './design/tokens';
 import CancelResetScreen from './features/Auth/CancelResetScreen';
 import ForgotPasswordScreen from './features/Auth/ForgotPasswordScreen';
@@ -34,7 +35,7 @@ import SignupScreen from './features/Auth/SignupScreen';
 import type { RootTabParamList } from './navigation/BottomTabs';
 import type { RootStackParamList } from './navigation/RootStack';
 import RootStack from './navigation/RootStack';
-import { navTheme } from './navigation/theme';
+import { navThemeFor } from './navigation/theme';
 import { useHydrateProgramStore } from './store/useProgramStore';
 
 type AuthStackParamList = {
@@ -190,8 +191,9 @@ function ThemedStatusBar(): React.JSX.Element {
 
 function AppShell(): React.JSX.Element {
   useHydrateProgramStore();
+  const { mode } = useTheme();
   return (
-    <NavigationContainer theme={navTheme} linking={linking}>
+    <NavigationContainer theme={navThemeFor(mode)} linking={linking}>
       <SafeAreaView style={styles.safeArea}>
         <ThemedStatusBar />
         <OfflineBanner />
@@ -207,17 +209,19 @@ export default function App(): React.JSX.Element {
   }
   return (
     <ErrorBoundary>
-      <SafeAreaProvider>
-        <NetworkStatusProvider>
-          <AuthProvider>
-            <ApiKeyProvider>
-              <ToastProvider>
-                <AppShell />
-              </ToastProvider>
-            </ApiKeyProvider>
-          </AuthProvider>
-        </NetworkStatusProvider>
-      </SafeAreaProvider>
+      <ThemeProvider>
+        <SafeAreaProvider>
+          <NetworkStatusProvider>
+            <AuthProvider>
+              <ApiKeyProvider>
+                <ToastProvider>
+                  <AppShell />
+                </ToastProvider>
+              </ApiKeyProvider>
+            </AuthProvider>
+          </NetworkStatusProvider>
+        </SafeAreaProvider>
+      </ThemeProvider>
     </ErrorBoundary>
   );
 }

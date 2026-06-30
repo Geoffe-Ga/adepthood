@@ -40,7 +40,7 @@ jest.mock('react-native-safe-area-context', () => ({
 // assertions free of routing side effects.
 jest.mock('@react-navigation/native', () => {
   // navTheme (via App.tsx) extends DefaultTheme, so the mock must expose it.
-  const { mockDefaultTheme } = require('@/test-utils/navMocks');
+  const { mockDefaultTheme, mockDarkTheme } = require('@/test-utils/navMocks');
   return {
     NavigationContainer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
     useNavigation: () => ({
@@ -49,6 +49,7 @@ jest.mock('@react-navigation/native', () => {
       },
     }),
     DefaultTheme: mockDefaultTheme,
+    DarkTheme: mockDarkTheme,
   };
 });
 

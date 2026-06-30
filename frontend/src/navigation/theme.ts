@@ -1,6 +1,7 @@
-import { DefaultTheme, type Theme } from '@react-navigation/native';
+import { DarkTheme, DefaultTheme, type Theme } from '@react-navigation/native';
 
-import { accent, ink, surface } from '@/design/tokens';
+import type { ThemeMode } from '@/design/ThemeContext';
+import { accent, accentDark, ink, inkDark, surface, surfaceDark } from '@/design/tokens';
 
 /**
  * Warm "Candle & Ink" React Navigation theme (#803). Extends ``DefaultTheme``
@@ -24,3 +25,23 @@ export const navTheme: Theme = {
     notification: accent.primary,
   },
 };
+
+/**
+ * Warm dark nav theme (#804). Extends ``DarkTheme`` (so ``dark: true`` + the v7
+ * ``fonts`` block are inherited) and repaints the chrome from the dark tokens.
+ */
+export const navThemeDark: Theme = {
+  ...DarkTheme,
+  colors: {
+    ...DarkTheme.colors,
+    primary: accentDark.primary,
+    background: surfaceDark.canvas,
+    card: surfaceDark.raised,
+    text: inkDark.primary,
+    border: surfaceDark.hairline,
+    notification: accentDark.primary,
+  },
+};
+
+/** Select the nav theme for the active mode. */
+export const navThemeFor = (mode: ThemeMode): Theme => (mode === 'dark' ? navThemeDark : navTheme);
