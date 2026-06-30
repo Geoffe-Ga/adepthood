@@ -504,17 +504,22 @@ async def list_suggestions(
     entry_id: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    suggestion_status: Annotated[
+        SuggestionStatus | None,
+        Query(alias="status", description="Filter to a single status; omit for all."),
+    ] = None,
 ) -> CompletionSuggestionListResponse:
     """List the caller's completion suggestions for an entry, ordered by anchor.
 
     Ownership-scoped: a missing, soft-deleted, or foreign entry resolves to 404
     (enumeration-safe, matching the marginalia list). ``user_id`` is never
-    returned.
+    returned. The optional ``status`` query param narrows to a single lifecycle
+    state (e.g. ``?status=pending``); omitting it returns every status.
     """
     entry = await _load_user_entry(session, entry_id, current_user)
     if entry is None:
         raise not_found("journal_entry")
-    result = await session.execute(
+    query = (
         select(CompletionSuggestion)
         .where(
             CompletionSuggestion.journal_entry_id == entry_id,
@@ -522,6 +527,9 @@ async def list_suggestions(
         )
         .order_by(col(CompletionSuggestion.anchor_start))
     )
+    if suggestion_status is not None:
+        query = query.where(CompletionSuggestion.status == suggestion_status)
+    result = await session.execute(query)
     rows = result.scalars().all()
     return CompletionSuggestionListResponse(
         items=[CompletionSuggestionResponse.model_validate(r, from_attributes=True) for r in rows]

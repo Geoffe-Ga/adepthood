@@ -94,6 +94,10 @@ def _fake(
         prompt: str, history: object, *, system_prompt: object, api_key: object
     ) -> SimpleNamespace:
         del history, system_prompt, api_key
+        # Routes by prompt content: the detection prompt asks for a JSON ``{"hits": ...}``
+        # payload and labels resolved spans ``COMPLETED``, while the literary/marginalia
+        # prompt asks for ``{"notes": ...}``. Keying on either of those detection-only
+        # markers lets one seam serve both passes without inspecting the domain module.
         if '"hits"' in prompt or "COMPLETED" in prompt:  # the detection prompt
             if detection_calls is not None:
                 detection_calls.append(prompt)
@@ -207,6 +211,109 @@ async def test_list_suggestions_foreign_entry_is_404(
 
     bob = await _signup(async_client, "bob")
     resp = await async_client.get(f"/journal/{entry_id}/suggestions", headers=bob)
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+async def _seed_mixed_statuses(session: AsyncSession, *, entry_id: int, user_id: int) -> None:
+    """Persist one pending, one accepted, and one dismissed suggestion on the entry."""
+    goal_id = (await session.execute(select(col(Goal.id)))).scalars().first()
+    assert goal_id is not None
+    for offset, status in enumerate(SuggestionStatus):  # PENDING, ACCEPTED, DISMISSED
+        session.add(
+            CompletionSuggestion(
+                journal_entry_id=entry_id,
+                user_id=user_id,
+                target_type="habit",
+                goal_id=goal_id,
+                label="seeded",
+                anchor_start=offset,
+                anchor_end=offset + 1,
+                anchor_text="x",
+                status=status,
+            )
+        )
+    await session.commit()
+
+
+@pytest.mark.parametrize(
+    "wanted",
+    [SuggestionStatus.PENDING, SuggestionStatus.ACCEPTED, SuggestionStatus.DISMISSED],
+)
+@pytest.mark.asyncio
+async def test_list_suggestions_status_filter_returns_only_that_status(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    wanted: SuggestionStatus,
+) -> None:
+    headers = await _signup(async_client, "filt")
+    uid = await _user_id(db_session, "filt")
+    await _seed_habit(db_session, uid)
+    entry_id = await _create_entry(async_client, headers)
+    await _seed_mixed_statuses(db_session, entry_id=entry_id, user_id=uid)
+
+    resp = await async_client.get(
+        f"/journal/{entry_id}/suggestions",
+        params={"status": wanted.value},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    items = resp.json()["items"]
+    assert len(items) == 1
+    assert items[0]["status"] == wanted.value
+    assert "user_id" not in items[0]
+
+
+@pytest.mark.asyncio
+async def test_list_suggestions_no_status_returns_all(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await _signup(async_client, "allst")
+    uid = await _user_id(db_session, "allst")
+    await _seed_habit(db_session, uid)
+    entry_id = await _create_entry(async_client, headers)
+    await _seed_mixed_statuses(db_session, entry_id=entry_id, user_id=uid)
+
+    resp = await async_client.get(f"/journal/{entry_id}/suggestions", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    items = resp.json()["items"]
+    assert len(items) == 3  # every lifecycle state, unchanged behaviour
+    assert {i["status"] for i in items} == {s.value for s in SuggestionStatus}
+    assert all("user_id" not in i for i in items)
+
+
+@pytest.mark.asyncio
+async def test_list_suggestions_invalid_status_is_422(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await _signup(async_client, "badst")
+    uid = await _user_id(db_session, "badst")
+    await _seed_habit(db_session, uid)
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.get(
+        f"/journal/{entry_id}/suggestions",
+        params={"status": "nonsense"},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_list_suggestions_status_filter_foreign_entry_is_404(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await _signup(async_client, "carol")
+    uid = await _user_id(db_session, "carol")
+    await _seed_habit(db_session, uid)
+    entry_id = await _create_entry(async_client, headers)
+    await _seed_mixed_statuses(db_session, entry_id=entry_id, user_id=uid)
+
+    dave = await _signup(async_client, "dave")
+    resp = await async_client.get(
+        f"/journal/{entry_id}/suggestions",
+        params={"status": SuggestionStatus.PENDING.value},
+        headers=dave,
+    )
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
