@@ -8,6 +8,12 @@ unguessable nonce in the tag name closes that vector.
 Sanitization runs inside the wrapper so any zero-width / bidi codepoints in
 either the new user message or replayed history get stripped before the
 prompt reaches the model.
+
+Issue #890 adds :class:`TestMedicationGuardrailInSystemPrompt` which asserts
+that :data:`~domain.care.MEDICATION_GUARDRAIL` reaches the model inside the
+system role for both the OpenAI path (:func:`_build_messages`) and the
+Anthropic path (:func:`_build_anthropic_messages`), covering both the default
+system prompt and an operator-supplied ``BOTMASON_SYSTEM_PROMPT``.
 """
 
 from __future__ import annotations
@@ -16,7 +22,9 @@ import re
 
 import pytest
 
+from domain.care import MEDICATION_GUARDRAIL
 from services.botmason import (
+    _DEFAULT_SYSTEM_PROMPT,
     _augment_system_prompt,
     _build_anthropic_messages,
     _build_messages,
@@ -273,3 +281,108 @@ class TestBuildMessagesKeyErrorSafety:
         assert messages[0]["content"].endswith(">")
         # The augmented system prompt is unaffected by malformed history rows.
         assert _NONCE_RE.search(augmented) is not None
+
+
+class TestMedicationGuardrailInSystemPrompt:
+    """MEDICATION_GUARDRAIL must land in the system role for every message builder.
+
+    Issue #890: a shared safety constant must accompany every prompt that sends
+    user writing to a model.  These tests pin the import from
+    :data:`domain.care.MEDICATION_GUARDRAIL` so that the single source of truth
+    drives every builder — changing the constant wording in one place propagates
+    automatically.
+
+    Both the OpenAI path (``_build_messages``, where system is the first list
+    entry with ``role == "system"``) and the Anthropic path
+    (``_build_anthropic_messages``, where system is the second return value)
+    must carry the guardrail.
+
+    Two system-prompt cases are covered for each builder:
+
+    1. **Default system prompt** — ``_DEFAULT_SYSTEM_PROMPT`` is passed through
+       unchanged; the implementation must inject the guardrail at build time.
+    2. **Operator-supplied system prompt** — an arbitrary string is passed as
+       ``system_prompt``; the implementation must still inject the guardrail
+       even when the operator did not include it, so operators cannot
+       accidentally omit it.
+    """
+
+    # --- OpenAI path (_build_messages) ---
+
+    def test_openai_default_system_prompt_contains_guardrail(self) -> None:
+        """Guardrail is present in the system message when using the default prompt."""
+        messages = _build_messages("hello", [], _DEFAULT_SYSTEM_PROMPT)
+        system_message = messages[0]
+        assert system_message["role"] == "system"
+        assert MEDICATION_GUARDRAIL in system_message["content"], (
+            "_build_messages must embed MEDICATION_GUARDRAIL in the system role "
+            "when the default system prompt is used"
+        )
+
+    def test_openai_operator_supplied_system_prompt_contains_guardrail(self) -> None:
+        """Guardrail is present in the system message even with an operator prompt.
+
+        This is the critical regression guard: an operator could configure a
+        custom ``BOTMASON_SYSTEM_PROMPT`` that does not mention medication at
+        all.  The implementation must inject the guardrail at build time
+        regardless of what the operator provided, so the safety boundary cannot
+        be bypassed by configuration.
+        """
+        operator_prompt = "You are a helpful wellness companion. Be warm and concise."
+        messages = _build_messages("hello", [], operator_prompt)
+        system_message = messages[0]
+        assert system_message["role"] == "system"
+        assert MEDICATION_GUARDRAIL in system_message["content"], (
+            "_build_messages must embed MEDICATION_GUARDRAIL even when an "
+            "operator-supplied system prompt that lacks the guardrail is used"
+        )
+
+    def test_openai_guardrail_is_in_system_role_not_user_turn(self) -> None:
+        """The guardrail must land in the system role, not injected as a user turn."""
+        messages = _build_messages("hello", [], _DEFAULT_SYSTEM_PROMPT)
+        # The guardrail belongs in the authoritative system role...
+        assert messages[0]["role"] == "system"
+        assert MEDICATION_GUARDRAIL in messages[0]["content"], (
+            "guardrail must be present in the system role message"
+        )
+        # ...and must NOT live in a user turn (where crafted input could displace it).
+        user_turns_content = " ".join(m["content"] for m in messages if m["role"] == "user")
+        assert MEDICATION_GUARDRAIL not in user_turns_content
+
+    # --- Anthropic path (_build_anthropic_messages) ---
+
+    def test_anthropic_default_system_prompt_contains_guardrail(self) -> None:
+        """Guardrail is present in the augmented system string on the Anthropic path."""
+        _messages, augmented_system = _build_anthropic_messages("hello", [], _DEFAULT_SYSTEM_PROMPT)
+        assert MEDICATION_GUARDRAIL in augmented_system, (
+            "_build_anthropic_messages must embed MEDICATION_GUARDRAIL in the "
+            "augmented system string (passed as system= kwarg to the API)"
+        )
+
+    def test_anthropic_operator_supplied_system_prompt_contains_guardrail(self) -> None:
+        """Guardrail is injected even when the operator prompt omits it (Anthropic path).
+
+        Mirrors ``test_openai_operator_supplied_system_prompt_contains_guardrail``
+        for the Anthropic builder, which returns ``(messages, augmented_system)``
+        rather than embedding system as a leading message.
+        """
+        operator_prompt = "You are a helpful wellness companion. Be warm and concise."
+        _messages, augmented_system = _build_anthropic_messages("hello", [], operator_prompt)
+        assert MEDICATION_GUARDRAIL in augmented_system, (
+            "_build_anthropic_messages must embed MEDICATION_GUARDRAIL even when "
+            "an operator-supplied system prompt that lacks the guardrail is used"
+        )
+
+    def test_anthropic_guardrail_not_in_user_message_list(self) -> None:
+        """Guardrail must not appear only in the Anthropic user-message list.
+
+        Anthropic's API passes ``system`` separately from ``messages``.  If the
+        implementation injected the guardrail into the ``messages`` list instead
+        of the augmented system string, it would land in the wrong role and could
+        be treated as user-supplied context rather than an operator instruction.
+        """
+        _messages, augmented_system = _build_anthropic_messages("hello", [], _DEFAULT_SYSTEM_PROMPT)
+        # Guardrail must be in the augmented system string (the correct location).
+        assert MEDICATION_GUARDRAIL in augmented_system
+        # Sanity: no system role leaks into the Anthropic messages list.
+        assert all(m["role"] in {"user", "assistant"} for m in _messages)

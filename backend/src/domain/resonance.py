@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from domain.care import MEDICATION_GUARDRAIL
 from security import TextTooLongError, sanitize_user_text
 
 # Kept as literals (not imported from models.marginalia) so the domain stays
@@ -57,7 +58,13 @@ class ResonanceLLM(Protocol):
 def build_prompt(
     body: str, prior_entries: Sequence[str] | None = None, max_notes: int = _DEFAULT_MAX_NOTES
 ) -> str:
-    """Build the structured prompt asking for up to ``max_notes`` margin notes."""
+    """Build the structured prompt asking for up to ``max_notes`` margin notes.
+
+    Leads with :data:`~domain.care.MEDICATION_GUARDRAIL`. The botmason adapter
+    (:class:`services.marginalia.BotmasonResonanceLLM`) also injects the same
+    guardrail at the system role, so it is intentionally present twice on this
+    path (defense-in-depth) — do not "deduplicate" by removing either copy.
+    """
     prior_block = ""
     if prior_entries:
         capped = [entry[:_PRIOR_ENTRY_CHARS] for entry in prior_entries[:MAX_PRIOR_ENTRIES]]
@@ -67,6 +74,7 @@ def build_prompt(
             f"<prior>\n{joined}\n</prior>"
         )
     return (
+        f"{MEDICATION_GUARDRAIL}\n\n"
         "You are a thoughtful reader leaving margin notes on someone's journal "
         "page. Read the entry and surface up to "
         f"{max_notes} of the most resonant observations.\n\n"
@@ -180,8 +188,14 @@ async def generate_marginalia(
 
 
 def _build_essay_prompt(body: str, anchor_text: str, kind: str, note: str) -> str:
-    """Build the prompt expanding one margin note into a short letter-like essay."""
+    """Build the prompt expanding one margin note into a short letter-like essay.
+
+    Leads with :data:`~domain.care.MEDICATION_GUARDRAIL`; the botmason adapter also
+    injects it at the system role, so it is intentionally present twice on this
+    path (defense-in-depth) — do not remove either copy.
+    """
     return (
+        f"{MEDICATION_GUARDRAIL}\n\n"
         "You are writing a short, warm letter to the person whose journal this is, "
         f"expanding on a margin note you left. Stay grounded in the passage you "
         f"anchored to; speak in second person; never refer to yourself as an AI.\n\n"

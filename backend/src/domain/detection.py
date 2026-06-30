@@ -17,6 +17,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from domain.care import MEDICATION_GUARDRAIL
 from domain.resonance import ResonanceLLM, _quote_span
 from security import TextTooLongError, sanitize_user_text
 
@@ -70,9 +71,14 @@ def build_detection_prompt(body: str, candidates: Sequence[DetectionCandidate]) 
     Candidates are numbered by ``index``; the model returns that index plus a
     verbatim quote. The instruction excludes intentions, plans, and avoidance so
     "I want to meditate" or "I skipped sugar" is not read as a completion.
+
+    Leads with :data:`~domain.care.MEDICATION_GUARDRAIL`; the botmason adapter also
+    injects it at the system role, so it is intentionally present twice on this
+    path (defense-in-depth) — do not remove either copy.
     """
     listed = "\n".join(f"{c.index}. {c.name} ({c.target_type})" for c in candidates)
     return (
+        f"{MEDICATION_GUARDRAIL}\n\n"
         "You read a journal entry and decide which of the listed habits or "
         "practices the writer actually DID or COMPLETED in it.\n\n"
         "Rules:\n"
