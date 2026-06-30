@@ -7,6 +7,7 @@ import {
   BookOpen,
   Compass,
   Flower2,
+  Home,
   NotebookPen,
   Sprout,
   type LucideIcon,
@@ -22,12 +23,14 @@ import HabitsScreen from '../features/Habits/HabitsScreen';
 import JournalShelfScreen from '../features/Journal/JournalShelfScreen';
 import MapScreen from '../features/Map/MapScreen';
 import PracticeScreen from '../features/Practice/PracticeScreen';
+import TodayScreen from '../features/Today/TodayScreen';
 
 import type { RootStackParamList } from './RootStack';
 
 import { useAuth } from '@/context/AuthContext';
 
 export type RootTabParamList = {
+  Today: undefined;
   Habits: undefined;
   Practice: { stageNumber?: number } | undefined;
   Course: { stageNumber?: number } | undefined;
@@ -64,6 +67,7 @@ function withBoundary<P extends object>(
   return Wrapped;
 }
 
+const TodayTab = withBoundary('Today', TodayScreen);
 const HabitsTab = withBoundary('Habits', HabitsScreen);
 const PracticeTab = withBoundary('Practice', PracticeScreen);
 const CourseTab = withBoundary('Course', CourseScreen);
@@ -85,6 +89,7 @@ const TAB_CONFIGS: ReadonlyArray<{
   component: React.ComponentType<object>;
   icon: LucideIcon;
 }> = [
+  { name: 'Today', component: TodayTab, icon: Home },
   { name: 'Habits', component: HabitsTab, icon: Sprout },
   { name: 'Practice', component: PracticeTab, icon: Flower2 },
   { name: 'Course', component: CourseTab, icon: BookOpen },
@@ -141,7 +146,7 @@ const BottomTabs = (): React.JSX.Element => {
 
   return (
     <Tab.Navigator
-      initialRouteName="Habits"
+      initialRouteName="Today"
       screenOptions={{
         // Warm tab bar (#803): raised paper ground + hairline top edge; active
         // terracotta vs muted ink, both AA on the raised ground.
