@@ -60,21 +60,58 @@ class SubtractiveContext:
     start_date: date
 
 
-def subtractive_day_totals(
+def sum_units_by_user_day(
     completions: Sequence[GoalCompletion],
     user_timezone: str,
 ) -> dict[date, float]:
-    """Sum completion units per user-local day, *without* the >0 filter.
+    """Sum completion units per user-local calendar day.
 
-    For subtractive habits the absence of a row means perfect abstention, so the
-    bucketing keeps zero-sum days addressable too.  Callers treat
-    ``get(day, 0.0)`` as the "did the user stay under their limit" probe.
+    The single owner of the ``day_totals[day] = get(day, 0.0) + units`` bucketing
+    loop keyed on :func:`domain.dates.to_user_date_bucket`.  Used by both the
+    in-memory streak path (``GET /habits``) and the per-goal stats/streak paths,
+    which must agree or the same goal would report two different streaks.  No
+    ``> 0`` filter is applied: subtractive habits treat the absence of a row as
+    perfect abstention, so zero-sum days stay addressable via ``get(day, 0.0)``.
     """
     day_totals: dict[date, float] = {}
     for c in completions:
         day = to_user_date_bucket(c.timestamp, user_timezone)
         day_totals[day] = day_totals.get(day, 0.0) + c.completed_units
     return day_totals
+
+
+def current_consecutive_streak(sorted_days_desc: Sequence[date], today: date) -> int:
+    """Count the current additive consecutive-day streak (the single owner).
+
+    The one canonical implementation of the additive streak the frontend
+    ``streakFromCompletions`` helper mirrors; both ``GET /habits``
+    (``services.streaks``) and ``GET /habits/{id}/stats`` (``domain.habit_stats``)
+    delegate here so the same goal can never report two different streak counts.
+
+    ``sorted_days_desc`` must be the distinct user-local completion days sorted
+    *descending* (most recent first).  Two rules apply:
+
+    * **Recency grace gate** — if the most recent day is older than yesterday
+      (``most_recent < today - 1``) the chain is stale and the streak is 0.  The
+      one-day grace prevents the UI flashing "streak lost" between local midnight
+      and the user's first completion of the day; one stale day is forgiven, two
+      is not.
+    * **Backward walk** — starting from the most recent day, count days while
+      each step back is exactly one calendar day; the first gap > 1 day ends the
+      streak.
+
+    Returns 0 for an empty sequence.
+    """
+    if not sorted_days_desc:
+        return 0
+    if sorted_days_desc[0] < today - timedelta(days=1):
+        return 0
+    streak = 1
+    for i in range(1, len(sorted_days_desc)):
+        if (sorted_days_desc[i - 1] - sorted_days_desc[i]).days != 1:
+            break
+        streak += 1
+    return streak
 
 
 def subtractive_current_streak(
