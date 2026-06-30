@@ -9,15 +9,16 @@ import {
   Flower2,
   Home,
   NotebookPen,
+  Settings,
   Sprout,
   type LucideIcon,
 } from 'lucide-react-native';
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, TouchableOpacity } from 'react-native';
 
 import type { JournalTag } from '../api';
 import { FeatureErrorBoundary } from '../components/FeatureErrorBoundary';
-import { accent, ink, SPACING, surface } from '../design/tokens';
+import { accent, ink, SPACING, surface, touchTarget } from '../design/tokens';
 import CourseScreen from '../features/Course/CourseScreen';
 import HabitsScreen from '../features/Habits/HabitsScreen';
 import JournalShelfScreen from '../features/Journal/JournalShelfScreen';
@@ -26,8 +27,6 @@ import PracticeScreen from '../features/Practice/PracticeScreen';
 import TodayScreen from '../features/Today/TodayScreen';
 
 import type { RootStackParamList } from './RootStack';
-
-import { useAuth } from '@/context/AuthContext';
 
 export type RootTabParamList = {
   Today: undefined;
@@ -76,6 +75,7 @@ const MapTab = withBoundary('Map', MapScreen);
 
 const TAB_ICON_SIZE = 24;
 const TAB_ICON_STROKE = 2;
+const SETTINGS_ICON_SIZE = 24;
 
 /** Returns a tab-bar icon renderer with shared size/stroke for every entry. */
 const makeTabIcon =
@@ -99,32 +99,21 @@ const TAB_CONFIGS: ReadonlyArray<{
 
 interface TabHeaderRightProps {
   onSettings: () => void;
-  onLogout: () => void;
 }
 
-/** Header actions (settings + logout), hoisted to a stable component so it is
- * not redefined on every ``BottomTabs`` render. */
-const TabHeaderRight = ({ onSettings, onLogout }: TabHeaderRightProps): React.JSX.Element => (
-  <View style={styles.headerRight}>
-    <TouchableOpacity
-      onPress={onSettings}
-      style={styles.headerButton}
-      accessibilityLabel="Open settings"
-      accessibilityRole="button"
-      testID="open-settings-button"
-    >
-      <Text style={styles.headerButtonText}>⚙︎</Text>
-    </TouchableOpacity>
-    <TouchableOpacity
-      onPress={onLogout}
-      style={styles.headerButton}
-      accessibilityLabel="Log out"
-      accessibilityRole="button"
-      testID="logout-button"
-    >
-      <Text style={styles.headerButtonText}>Logout</Text>
-    </TouchableOpacity>
-  </View>
+/** Header-right gear that opens the Settings hub (#835), hoisted to a stable
+ * component so it is not redefined on every ``BottomTabs`` render. Logout now
+ * lives inside the hub's Session group, not on the tab header. */
+const TabHeaderRight = ({ onSettings }: TabHeaderRightProps): React.JSX.Element => (
+  <TouchableOpacity
+    onPress={onSettings}
+    style={styles.headerButton}
+    accessibilityLabel="Open settings"
+    accessibilityRole="button"
+    testID="open-settings-button"
+  >
+    <Settings color={accent.primary} size={SETTINGS_ICON_SIZE} />
+  </TouchableOpacity>
 );
 
 /**
@@ -132,16 +121,15 @@ const TabHeaderRight = ({ onSettings, onLogout }: TabHeaderRightProps): React.JS
  * Each tab corresponds to a major feature area.
  */
 const BottomTabs = (): React.JSX.Element => {
-  const { logout } = useAuth();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   const openSettings = React.useCallback(() => {
-    navigation.navigate('ApiKeySettings');
+    navigation.navigate('Settings');
   }, [navigation]);
 
   const renderHeaderRight = React.useCallback(
-    () => <TabHeaderRight onSettings={openSettings} onLogout={logout} />,
-    [openSettings, logout],
+    () => <TabHeaderRight onSettings={openSettings} />,
+    [openSettings],
   );
 
   return (
@@ -171,9 +159,13 @@ const BottomTabs = (): React.JSX.Element => {
 };
 
 const styles = StyleSheet.create({
-  headerRight: { flexDirection: 'row', alignItems: 'center', marginRight: SPACING.sm },
-  headerButton: { paddingHorizontal: SPACING.sm, paddingVertical: SPACING.xs },
-  headerButtonText: { color: accent.primary, fontSize: 14, fontWeight: '600' },
+  headerButton: {
+    minWidth: touchTarget.minimum,
+    minHeight: touchTarget.minimum,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: SPACING.sm,
+  },
 });
 
 export default BottomTabs;

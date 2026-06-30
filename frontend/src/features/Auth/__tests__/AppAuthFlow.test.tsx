@@ -117,7 +117,7 @@ jest.mock('@/features/Journal/JournalEntryScreen', () => {
   return { __esModule: true, default: Stub };
 });
 
-import App from '@/App';
+import App, { linking } from '@/App';
 
 beforeEach(() => {
   mockAuthState = { token: null, authStatus: 'anonymous', isLoading: false };
@@ -167,5 +167,20 @@ describe('App auth flow', () => {
 
     expect(getByText('BottomTabs')).toBeTruthy();
     expect(getByText('ReauthSheet')).toBeTruthy();
+  });
+});
+
+describe('deep linking config', () => {
+  it('keeps the adepthood://api-key-settings deep link pointed at the API key screen', () => {
+    const screens = linking.config?.screens as Record<string, unknown> | undefined;
+
+    expect(linking.prefixes).toContain('adepthood://');
+    expect(screens?.ApiKeySettings).toBe('api-key-settings');
+  });
+
+  it('resolves the Settings hub deep link', () => {
+    const screens = linking.config?.screens as Record<string, unknown> | undefined;
+
+    expect(screens?.Settings).toBe('settings');
   });
 });

@@ -48,6 +48,12 @@ beforeEach(() => {
 });
 
 describe('TimezoneSettingsScreen', () => {
+  test('renders on the warm screen scaffold', () => {
+    setAuthState('Europe/Paris');
+    const { getByTestId } = render(<TimezoneSettingsScreen />);
+    expect(getByTestId('timezone-settings-screen')).toBeTruthy();
+  });
+
   test('shows the time zone the server has on record', () => {
     setAuthState('Europe/Paris');
     const { getByTestId } = render(<TimezoneSettingsScreen />);

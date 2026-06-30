@@ -104,6 +104,12 @@ describe('provider deep links and detection', () => {
 });
 
 describe('ApiKeySettingsScreen', () => {
+  test('renders on the warm screen scaffold', () => {
+    setApiKeyState({});
+    const { getByTestId } = render(<ApiKeySettingsScreen />);
+    expect(getByTestId('api-key-settings-screen')).toBeTruthy();
+  });
+
   test('shows the loading indicator while the stored key is being read', () => {
     setApiKeyState({ isLoading: true });
     const { getByTestId, queryByTestId } = render(<ApiKeySettingsScreen />);

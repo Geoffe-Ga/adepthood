@@ -1,9 +1,10 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { ApiError, users } from '@/api';
+import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { useAuth } from '@/context/AuthContext';
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, accent, colors, ink, surface } from '@/design/tokens';
 import { detectDeviceTimezone } from '@/utils/dateUtils';
 
 /**
@@ -208,7 +209,7 @@ const ScreenBody = ({
   onSave,
   onBack,
 }: ScreenBodyProps): React.JSX.Element => (
-  <ScrollView contentContainerStyle={styles.container}>
+  <ScreenScaffold scroll testID="timezone-settings-screen">
     <Text style={styles.title}>Time zone</Text>
     <Text style={styles.body}>
       Streaks and daily stats count days in this time zone. Update it if you moved or if it was
@@ -222,7 +223,7 @@ const ScreenBody = ({
     />
     <FeedbackBanner error={state.error} status={state.status} />
     <ScreenFooter submitting={state.submitting} onSave={onSave} onBack={onBack} />
-  </ScrollView>
+  </ScreenScaffold>
 );
 
 export default function TimezoneSettingsScreen({ navigation }: Props = {}): React.JSX.Element {
@@ -264,69 +265,73 @@ export default function TimezoneSettingsScreen({ navigation }: Props = {}): Reac
   );
 }
 
+const MENLO_MONOSPACE = 'Menlo';
+const CURRENT_LABEL_LETTER_SPACING = 0.5;
+
 const styles = StyleSheet.create({
-  container: { padding: SPACING.xl, backgroundColor: colors.background.card, flexGrow: 1 },
-  title: { fontSize: 22, fontWeight: '700', marginBottom: SPACING.md },
+  title: { fontSize: 22, fontWeight: '700', marginBottom: SPACING.md, color: ink.primary },
   body: {
     fontSize: 14,
-    color: colors.text.secondaryAccessible,
+    color: ink.soft,
     marginBottom: SPACING.xl,
     lineHeight: 20,
   },
   currentCard: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: surface.hairline,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.lg,
     marginBottom: SPACING.xl,
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.raised,
   },
   currentLabel: {
     fontSize: 12,
-    color: colors.text.secondary,
+    color: ink.muted,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: CURRENT_LABEL_LETTER_SPACING,
   },
   currentValue: {
     fontSize: 18,
-    fontFamily: 'Menlo',
+    fontFamily: MENLO_MONOSPACE,
     marginTop: SPACING.sm,
-    color: colors.text.primary,
+    color: ink.primary,
   },
   inputLabel: {
     fontSize: 14,
     fontWeight: '600',
     marginBottom: SPACING.sm,
-    color: colors.text.primary,
+    color: ink.primary,
   },
   input: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: surface.hairline,
     borderRadius: BORDER_RADIUS.md,
     padding: SPACING.md,
     fontSize: 16,
     marginBottom: SPACING.md,
+    backgroundColor: surface.raised,
+    color: ink.primary,
   },
   secondaryButton: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: surface.hairline,
     borderRadius: BORDER_RADIUS.md,
     padding: SPACING.md,
     alignItems: 'center',
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
     marginBottom: SPACING.md,
   },
-  secondaryButtonText: { fontSize: 14, color: colors.text.primary, fontWeight: '600' },
-  error: { color: colors.danger, marginBottom: SPACING.md },
+  secondaryButtonText: { fontSize: 14, color: ink.primary, fontWeight: '600' },
+  error: { color: colors.destructive.text, marginBottom: SPACING.md },
   success: { color: colors.successText, marginBottom: SPACING.md },
   primaryButton: {
     borderRadius: BORDER_RADIUS.md,
     padding: SAVE_BUTTON_PADDING,
     alignItems: 'center',
-    backgroundColor: colors.primary,
+    backgroundColor: accent.primary,
     marginTop: SPACING.xs,
   },
   primaryButtonText: { color: colors.text.light, fontSize: 16, fontWeight: '600' },
   linkRow: { marginTop: SPACING.xl, alignItems: 'center' },
-  link: { color: colors.primary, fontWeight: '600' },
+  link: { color: accent.primary, fontWeight: '600' },
 });

@@ -64,7 +64,7 @@ type LinkedRootParamList = Omit<RootStackParamList, 'Tabs'> & {
  * password-recovery email landing page -- the parser puts ``token``
  * into ``route.params`` so ``ResetPasswordScreen`` can pick it up.
  */
-const linking: LinkingOptions<LinkedRootParamList> = {
+export const linking: LinkingOptions<LinkedRootParamList> = {
   prefixes: ['adepthood://'],
   config: {
     screens: {
@@ -77,6 +77,7 @@ const linking: LinkingOptions<LinkedRootParamList> = {
           Map: 'map',
         },
       },
+      Settings: 'settings',
       ApiKeySettings: 'api-key-settings', // pragma: allowlist secret
       // Practice share-link landing (issue #348). The recipient
       // taps ``adepthood://practices/share/<token>`` -- the parser
