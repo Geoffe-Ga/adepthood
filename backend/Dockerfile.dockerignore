@@ -37,5 +37,12 @@ node_modules/
 *.md
 **/*.md
 
+# ...except the vendored course content: the chapter bodies under
+# backend/content/markdown are runtime data the content repository serves, not
+# docs.  Re-include the whole content tree so the blanket *.md rule above does
+# not strip it from the build context (#773).
+!backend/content
+!backend/content/**
+
 # Backend-only dev-time exclusions
 backend/tests/

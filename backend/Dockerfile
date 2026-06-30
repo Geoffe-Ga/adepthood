@@ -43,6 +43,15 @@ ENV PYTHONPATH=/app/src
 COPY backend/alembic.ini ./
 COPY backend/migrations/ migrations/
 
+# Vendored course content (manifest + chapter markdown bodies + assets).  The
+# content repository and the startup seeder resolve this at /app/content
+# (``parents[2]/content`` from src/services); omitting it leaves the running
+# image with no manifest, so ``/health`` reports ``content_version: none`` and
+# every stage seeds empty (#773 — the prod symptom of #767).  The matching
+# ``!backend/content`` negation in Dockerfile.dockerignore keeps the .md bodies
+# from the blanket ``*.md`` exclusion.
+COPY backend/content/ content/
+
 # Create non-root user
 RUN useradd --create-home appuser
 USER appuser
