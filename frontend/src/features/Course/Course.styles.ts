@@ -1,6 +1,14 @@
 import { StyleSheet } from 'react-native';
 
-import { colors, radius, SPACING, shadows, surface, touchTarget } from '../../design/tokens';
+import {
+  colors,
+  radius,
+  rhythm,
+  SPACING,
+  shadows,
+  surface,
+  touchTarget,
+} from '../../design/tokens';
 
 const STAGE_PILL_SIZE = 40;
 const PROGRESS_BAR_HEIGHT = 6;
@@ -9,6 +17,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: surface.canvas,
+  },
+
+  // Editorial header band (#825): aligns ScreenHeader to the screen gutter.
+  headerBand: {
+    paddingHorizontal: rhythm.screenPaddingH,
   },
 
   // Stage selector

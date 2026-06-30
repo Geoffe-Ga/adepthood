@@ -12,6 +12,7 @@ import {
   type SiteResource,
   type Stage,
 } from '../../api';
+import { ScreenHeader } from '../../components/layout/ScreenHeader';
 import { STAGE_COLORS, colors } from '../../design/tokens';
 import { useAppRoute } from '../../navigation/hooks';
 import type { RootStackParamList } from '../../navigation/RootStack';
@@ -338,6 +339,9 @@ function renderOverlay(
   return null;
 }
 
+const COURSE_EYEBROW = 'Aptitude Program';
+const COURSE_TITLE = 'The Course';
+
 const CourseScreen = (): React.JSX.Element => {
   const { allStages, selectedStage, setSelectedStage, loading, error, retry } = useStagesLoader();
   const stageContent = useStageContent(selectedStage, allStages.length > 0);
@@ -369,6 +373,9 @@ const CourseScreen = (): React.JSX.Element => {
 
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
+      <View style={styles.headerBand}>
+        <ScreenHeader eyebrow={COURSE_EYEBROW} title={COURSE_TITLE} />
+      </View>
       <StageSelector
         stages={allStages}
         selectedStage={selectedStage}
