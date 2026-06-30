@@ -215,6 +215,28 @@ describe('CourseScreen', () => {
     });
   });
 
+  it('renders the stage cover with the serif stage name and reading progress', async () => {
+    const { getByTestId, getByText } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(getByTestId('stage-cover')).toBeTruthy();
+      expect(getByTestId('stage-cover-progress')).toBeTruthy();
+      // The cover shows the serif stage title and its own reading-progress line.
+      expect(getByText('Stage 2')).toBeTruthy();
+      expect(getByText('1 of 2 read')).toBeTruthy();
+    });
+  });
+
+  it('celebrates on the cover when the stage is fully read', async () => {
+    mockStageProgress.mockResolvedValue({ total_items: 2, read_items: 2, progress_percent: 100 });
+    const { getByText, getByTestId } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(getByTestId('stage-cover-celebration')).toBeTruthy();
+      expect(getByText('✓ Stage complete')).toBeTruthy();
+    });
+  });
+
   it('renders content items in the list', async () => {
     const { getByText } = render(<CourseScreen />);
 

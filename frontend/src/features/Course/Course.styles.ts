@@ -1,17 +1,22 @@
 import { StyleSheet } from 'react-native';
 
 import {
-  colors,
+  accent,
+  editorialType,
+  ink,
+  paperShadow,
   radius,
   rhythm,
   SPACING,
   shadows,
   surface,
+  surfaceShadow,
   touchTarget,
 } from '../../design/tokens';
 
 const STAGE_PILL_SIZE = 40;
 const PROGRESS_BAR_HEIGHT = 6;
+const STAGE_COVER_ARC = 4;
 
 const styles = StyleSheet.create({
   container: {
@@ -24,12 +29,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: rhythm.screenPaddingH,
   },
 
-  // Stage selector
+  // Stage selector — warm, borderless (the current chapter reads via the ring).
   stageSelectorContainer: {
     paddingVertical: SPACING.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.background.card,
+    backgroundColor: surface.canvas,
   },
   stageSelectorContent: {
     paddingHorizontal: SPACING.md,
@@ -44,8 +47,9 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'transparent',
   },
+  // The selected stage reads as the "current chapter": accent ring + lift.
   stagePillActive: {
-    borderColor: colors.primary,
+    borderColor: accent.primary,
     ...shadows.medium,
   },
   stagePillLocked: {
@@ -57,34 +61,88 @@ const styles = StyleSheet.create({
   stagePillText: {
     fontSize: 14,
     fontWeight: '700',
-    color: colors.text.light,
+    color: surface.canvas,
   },
   stagePillCheck: {
     fontSize: 16,
-    color: colors.text.light,
+    color: surface.canvas,
   },
   stagePillLock: {
     fontSize: 14,
-    color: colors.text.light,
+    color: surface.canvas,
+  },
+
+  // Stage cover — the showcase "book cover" for the selected stage.
+  stageCover: {
+    marginHorizontal: rhythm.screenPaddingH,
+    marginTop: SPACING.sm,
+  },
+  stageCoverEyebrow: {
+    ...editorialType.caption,
+    color: '#a8967c', // onShowcase.muted — small-caps eyebrow on the umber
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: SPACING.xs,
+  },
+  stageCoverTitle: {
+    ...editorialType.title,
+    color: '#f3ece0', // onShowcase.primary
+  },
+  stageCoverSubtitle: {
+    ...editorialType.note,
+    color: '#cdbfae', // onShowcase.soft
+    marginTop: 2,
+  },
+  // Spiral-Dynamics accent rule under the title.
+  stageCoverRule: {
+    height: STAGE_COVER_ARC,
+    width: 56,
+    borderRadius: STAGE_COVER_ARC / 2,
+    marginTop: SPACING.sm,
+  },
+  stageCoverProgressTrack: {
+    height: STAGE_COVER_ARC,
+    borderRadius: STAGE_COVER_ARC / 2,
+    backgroundColor: '#352a20', // showcase.raised — a recessed step on the band
+    overflow: 'hidden',
+    marginTop: SPACING.md,
+  },
+  stageCoverProgressFill: {
+    height: STAGE_COVER_ARC,
+    borderRadius: STAGE_COVER_ARC / 2,
+  },
+  stageCoverProgressLabel: {
+    ...editorialType.caption,
+    color: '#a8967c', // onShowcase.muted
+    marginTop: SPACING.xs,
+  },
+
+  // Editorial section band labels ("Start here" / "Chapters").
+  sectionBand: {
+    paddingHorizontal: rhythm.screenPaddingH,
+    marginTop: SPACING.md,
+  },
+  sectionBandLabel: {
+    ...editorialType.caption,
+    color: ink.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
 
   // Stage metadata
   stageMetadata: {
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
-    backgroundColor: colors.background.card,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
   },
   stageTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: colors.text.primary,
+    color: ink.primary,
     marginBottom: 2,
   },
   stageSubtitle: {
     fontSize: 14,
-    color: colors.text.secondary,
+    color: ink.soft,
     marginBottom: SPACING.sm,
   },
   stageDetailRow: {
@@ -94,31 +152,31 @@ const styles = StyleSheet.create({
   },
   stageDetailLabel: {
     fontSize: 12,
-    color: colors.text.tertiary,
+    color: ink.muted,
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   stageDetailValue: {
     fontSize: 12,
-    color: colors.text.secondary,
+    color: ink.soft,
   },
 
-  // Stage introduction card
+  // Stage introduction card — lifted onto a warm raised surface.
   introCard: {
     minHeight: touchTarget.minimum,
     marginHorizontal: SPACING.lg,
-    marginTop: SPACING.md,
+    marginTop: SPACING.sm,
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
     borderRadius: radius.md,
-    backgroundColor: colors.background.card,
-    ...shadows.small,
+    backgroundColor: surface.raised,
+    ...surfaceShadow.card,
   },
   introCardLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: colors.text.tertiary,
+    color: ink.muted,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: 2,
@@ -126,11 +184,11 @@ const styles = StyleSheet.create({
   introCardTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: colors.text.primary,
+    color: ink.primary,
   },
   introCardSummary: {
     fontSize: 14,
-    color: colors.text.secondary,
+    color: ink.soft,
     marginTop: 4,
   },
 
@@ -138,14 +196,11 @@ const styles = StyleSheet.create({
   progressBarContainer: {
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.sm,
-    backgroundColor: colors.background.card,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
   },
   progressBarTrack: {
     height: PROGRESS_BAR_HEIGHT,
     borderRadius: PROGRESS_BAR_HEIGHT / 2,
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
     overflow: 'hidden',
   },
   progressBarFill: {
@@ -154,20 +209,22 @@ const styles = StyleSheet.create({
   },
   progressBarLabel: {
     fontSize: 12,
-    color: colors.text.tertiary,
+    color: ink.muted,
     marginTop: 4,
     textAlign: 'right',
   },
 
-  // Content card
+  // Content card — lifted onto a raised surface, separated by warm spacing.
   contentCard: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
-    backgroundColor: colors.background.card,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    marginHorizontal: rhythm.screenPaddingH,
+    marginBottom: SPACING.sm,
+    borderRadius: radius.md,
+    backgroundColor: surface.raised,
+    ...surfaceShadow.card,
   },
   contentCardLocked: {
     opacity: 0.5,
@@ -192,21 +249,22 @@ const styles = StyleSheet.create({
   contentCardTitle: {
     fontSize: 15,
     fontWeight: '600',
-    color: colors.text.primary,
+    color: ink.primary,
     marginBottom: 2,
   },
   contentCardSubtitle: {
     fontSize: 13,
-    color: colors.text.secondary,
+    color: ink.soft,
   },
   contentCardStatus: {
     marginLeft: SPACING.sm,
   },
   contentCardStatusText: {
     fontSize: 16,
+    color: ink.muted,
   },
 
-  // Content viewer
+  // Content viewer — the reader floats a paper sheet on the deeper desk ground.
   viewerContainer: {
     flex: 1,
     backgroundColor: surface.canvas,
@@ -216,9 +274,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.background.card,
+    backgroundColor: surface.canvas,
   },
   viewerBackButton: {
     paddingRight: SPACING.md,
@@ -226,55 +282,53 @@ const styles = StyleSheet.create({
   },
   viewerBackText: {
     fontSize: 16,
-    color: colors.secondary,
+    color: accent.primary,
     fontWeight: '600',
   },
   viewerTitle: {
     flex: 1,
     fontSize: 16,
     fontWeight: '600',
-    color: colors.text.primary,
+    color: ink.primary,
   },
   viewerFooter: {
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.background.card,
+    backgroundColor: surface.canvas,
   },
   markReadButton: {
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.lg,
     borderRadius: radius.md,
-    backgroundColor: colors.success,
+    backgroundColor: accent.primary,
     alignItems: 'center',
   },
   markReadButtonDone: {
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
   },
   markReadText: {
     fontSize: 15,
     fontWeight: '600',
-    color: colors.text.light,
+    color: surface.canvas,
   },
   markReadTextDone: {
-    color: colors.text.secondary,
+    color: ink.soft,
   },
   reflectButton: {
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.lg,
     borderRadius: radius.md,
-    backgroundColor: colors.secondary,
+    backgroundColor: accent.strong,
     alignItems: 'center',
     marginTop: SPACING.sm,
   },
   reflectText: {
     fontSize: 15,
     fontWeight: '600',
-    color: colors.text.light,
+    color: surface.canvas,
   },
 
-  // Loading and empty states
+  // Loading and empty/error states
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -293,13 +347,13 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: colors.text.primary,
+    color: ink.primary,
     marginBottom: SPACING.sm,
     textAlign: 'center',
   },
   emptySubtitle: {
     fontSize: 14,
-    color: colors.text.secondary,
+    color: ink.soft,
     textAlign: 'center',
     lineHeight: 20,
   },
@@ -308,12 +362,25 @@ const styles = StyleSheet.create({
   contentList: {
     flex: 1,
   },
+  contentListContent: {
+    paddingTop: SPACING.sm,
+    paddingBottom: SPACING.xl,
+  },
 
-  // Native Markdown reader body
+  // Native Markdown reader body — floated on a warm paper sheet.
   readerScroll: {
     flex: 1,
-    backgroundColor: surface.canvas,
+    backgroundColor: surface.desk,
+  },
+  readerSheet: {
+    marginHorizontal: SPACING.md,
+    marginTop: SPACING.md,
     paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.sm,
+    paddingBottom: SPACING.lg,
+    borderRadius: radius.lg,
+    backgroundColor: surface.raised,
+    ...paperShadow.sheet,
   },
   readerError: {
     flex: 1,
@@ -324,13 +391,13 @@ const styles = StyleSheet.create({
   readerErrorTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: colors.text.primary,
+    color: ink.primary,
     marginBottom: SPACING.sm,
     textAlign: 'center',
   },
   readerErrorSubtitle: {
     fontSize: 14,
-    color: colors.text.secondary,
+    color: ink.soft,
     marginBottom: SPACING.md,
     textAlign: 'center',
   },
@@ -339,12 +406,12 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.lg,
     borderRadius: radius.md,
-    backgroundColor: colors.secondary,
+    backgroundColor: accent.primary,
   },
   retryText: {
     fontSize: 15,
     fontWeight: '600',
-    color: colors.text.light,
+    color: surface.canvas,
   },
 
   // Site resources panel
@@ -352,14 +419,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.lg,
     paddingTop: SPACING.md,
     paddingBottom: SPACING.sm,
-    backgroundColor: colors.background.card,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    backgroundColor: surface.canvas,
   },
   resourcesHeading: {
     fontSize: 12,
     fontWeight: '600',
-    color: colors.text.tertiary,
+    color: ink.muted,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: SPACING.sm,
@@ -373,12 +438,12 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.md,
     borderRadius: radius.md,
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
   },
   resourceChipText: {
     fontSize: 13,
     fontWeight: '600',
-    color: colors.text.primary,
+    color: ink.primary,
   },
 });
 
@@ -387,34 +452,35 @@ export default styles;
 /**
  * Styles consumed by ``react-native-markdown-display`` — keys follow the
  * library's rule names, values are plain RN styles built from design
- * tokens (no hardcoded colors/sizes).  ``contentImage`` and the reader
- * chrome above are ours, referenced from the custom image rule.
+ * tokens (no hardcoded colors/sizes).  Headings use the serif editorial face;
+ * ``contentImage`` and the reader chrome above are ours.
  */
 export const markdownStyles = StyleSheet.create({
   body: {
     fontSize: 17,
     lineHeight: 26,
-    color: colors.text.primary,
+    color: ink.primary,
     paddingTop: SPACING.md,
   },
   heading1: {
-    fontSize: 26,
-    fontWeight: '700',
-    color: colors.text.primary,
+    ...editorialType.title,
+    color: ink.primary,
     marginTop: SPACING.md,
     marginBottom: SPACING.sm,
   },
   heading2: {
+    fontFamily: editorialType.serif,
     fontSize: 21,
     fontWeight: '600',
-    color: colors.text.primary,
+    color: ink.primary,
     marginTop: SPACING.md,
     marginBottom: SPACING.sm,
   },
   heading3: {
+    fontFamily: editorialType.serif,
     fontSize: 18,
     fontWeight: '600',
-    color: colors.text.primary,
+    color: ink.primary,
     marginTop: SPACING.sm,
     marginBottom: SPACING.xs,
   },
@@ -423,31 +489,31 @@ export const markdownStyles = StyleSheet.create({
     marginBottom: SPACING.sm,
   },
   blockquote: {
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
     borderLeftWidth: 3,
-    borderLeftColor: colors.secondary,
+    borderLeftColor: accent.primary,
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.xs,
     marginVertical: SPACING.sm,
     fontStyle: 'italic',
   },
   code_inline: {
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
     borderRadius: radius.sm,
     paddingHorizontal: SPACING.xs,
   },
   code_block: {
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
     borderRadius: radius.md,
     padding: SPACING.md,
   },
   fence: {
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
     borderRadius: radius.md,
     padding: SPACING.md,
   },
   link: {
-    color: colors.secondary,
+    color: accent.primary,
     textDecorationLine: 'underline',
   },
   bullet_list: {
@@ -457,7 +523,7 @@ export const markdownStyles = StyleSheet.create({
     marginVertical: SPACING.xs,
   },
   hr: {
-    backgroundColor: colors.border,
+    backgroundColor: surface.hairline,
     marginVertical: SPACING.md,
   },
   contentImage: {

@@ -192,9 +192,11 @@ function renderBody(body: ContentBody): React.ReactElement {
       contentContainerStyle={{ paddingBottom: SPACING.xxl }}
       testID="reader-markdown"
     >
-      <Markdown style={markdownStyles} rules={markdownRules} onLinkPress={handleLinkPress}>
-        {body.body_markdown}
-      </Markdown>
+      <View style={styles.readerSheet}>
+        <Markdown style={markdownStyles} rules={markdownRules} onLinkPress={handleLinkPress}>
+          {body.body_markdown}
+        </Markdown>
+      </View>
     </ScrollView>
   );
 }

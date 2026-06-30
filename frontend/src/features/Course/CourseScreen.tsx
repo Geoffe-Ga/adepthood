@@ -12,7 +12,11 @@ import {
   type SiteResource,
   type Stage,
 } from '../../api';
+import { Celebration } from '../../components/feedback/Celebration';
+import { EmptyState } from '../../components/feedback/EmptyState';
+import { EditorialSection } from '../../components/layout/EditorialSection';
 import { ScreenHeader } from '../../components/layout/ScreenHeader';
+import { ShowcaseCard } from '../../components/layout/ShowcaseCard';
 import { STAGE_COLORS, colors } from '../../design/tokens';
 import { useAppRoute } from '../../navigation/hooks';
 import type { RootStackParamList } from '../../navigation/RootStack';
@@ -117,10 +121,54 @@ function useStageContent(selectedStage: number, stagesLoaded: boolean) {
 
 // --- Sub-components ---
 
+const stageAccent = (spiralColor: string | undefined): string =>
+  spiralColor ? STAGE_COLORS[spiralColor] ?? colors.neutral : colors.neutral;
+
+const stageIsComplete = (progress: CourseProgress | null): boolean =>
+  progress != null && progress.total_items > 0 && progress.read_items >= progress.total_items;
+
+interface StageCoverProps {
+  stage: Stage;
+  progress: CourseProgress | null;
+  spiralColor: string | undefined;
+}
+
+/** The showcase "book cover" for the selected stage: serif title, Spiral-Dynamics
+ *  accent rule, progress arc, and a celebration when the stage is finished. */
+const StageCover = ({ stage, progress, spiralColor }: StageCoverProps): React.JSX.Element => {
+  const accentColor = stageAccent(spiralColor);
+  const percent = progress ? progress.progress_percent : 0;
+  const complete = stageIsComplete(progress);
+  return (
+    <ShowcaseCard style={styles.stageCover} testID="stage-cover">
+      <Text style={styles.stageCoverEyebrow}>{`Chapter ${stage.stage_number}`}</Text>
+      <Text style={styles.stageCoverTitle}>{stage.title}</Text>
+      <Text style={styles.stageCoverSubtitle}>{stage.subtitle}</Text>
+      <View style={[styles.stageCoverRule, { backgroundColor: accentColor }]} />
+      <View style={styles.stageCoverProgressTrack}>
+        <View
+          testID="stage-cover-progress"
+          style={[
+            styles.stageCoverProgressFill,
+            { width: `${percent}%`, backgroundColor: accentColor },
+          ]}
+        />
+      </View>
+      <Celebration active={complete} testID="stage-cover-celebration">
+        <Text style={styles.stageCoverProgressLabel}>
+          {complete
+            ? '✓ Stage complete'
+            : progress
+              ? `${progress.read_items} of ${progress.total_items} read`
+              : ' '}
+        </Text>
+      </Celebration>
+    </ShowcaseCard>
+  );
+};
+
 const StageMetadata = ({ stage }: { stage: Stage }): React.JSX.Element => (
   <View style={styles.stageMetadata} testID="stage-metadata">
-    <Text style={styles.stageTitle}>{stage.title}</Text>
-    <Text style={styles.stageSubtitle}>{stage.subtitle}</Text>
     <View style={styles.stageDetailRow}>
       <Text style={styles.stageDetailLabel}>Spiral Dynamics</Text>
       <Text style={styles.stageDetailValue}>{stage.spiral_dynamics_color}</Text>
@@ -168,13 +216,11 @@ const CourseProgressBar = ({
 };
 
 const CourseEmptyState = (): React.JSX.Element => (
-  <View style={styles.emptyContainer}>
-    <Text style={styles.emptyIcon}>{'📚'}</Text>
-    <Text style={styles.emptyTitle}>No Content Yet</Text>
-    <Text style={styles.emptySubtitle}>
-      Content for this stage has not been added yet. Check back soon.
-    </Text>
-  </View>
+  <EmptyState
+    glyph="📚"
+    title="No Content Yet"
+    body="Content for this stage has not been added yet. Check back soon."
+  />
 );
 
 const CourseErrorState = ({ onRetry }: { onRetry: () => void }): React.JSX.Element => (
@@ -246,6 +292,7 @@ const ContentArea = ({
     <FlatList
       testID="content-list"
       style={styles.contentList}
+      contentContainerStyle={styles.contentListContent}
       data={content}
       renderItem={renderContentItem}
       keyExtractor={(item) => String(item.id)}
@@ -342,6 +389,51 @@ function renderOverlay(
 const COURSE_EYEBROW = 'Aptitude Program';
 const COURSE_TITLE = 'The Course';
 
+interface StagePanelProps {
+  selectedStage: number;
+  selectedStageData: Stage | undefined;
+  stageContent: ReturnType<typeof useStageContent>;
+  viewer: ReturnType<typeof useCourseViewer>;
+}
+
+/** The selected stage's cover, metadata, progress, intro, and chapter list. */
+const StagePanel = ({
+  selectedStage,
+  selectedStageData,
+  stageContent,
+  viewer,
+}: StagePanelProps): React.JSX.Element => (
+  <>
+    {selectedStageData && (
+      <StageCover
+        stage={selectedStageData}
+        progress={stageContent.progress}
+        spiralColor={selectedStageData.spiral_dynamics_color}
+      />
+    )}
+    <SiteResourcesPanel onSelect={viewer.handleResourcePress} />
+    {selectedStageData && <StageMetadata stage={selectedStageData} />}
+    <CourseProgressBar
+      progress={stageContent.progress}
+      spiralColor={selectedStageData?.spiral_dynamics_color}
+      error={stageContent.error}
+    />
+    <EditorialSection title="Start here">
+      <StageIntroCard stageNumber={selectedStage} onOpen={viewer.handleIntroPress} />
+    </EditorialSection>
+    <View style={styles.sectionBand}>
+      <Text style={styles.sectionBandLabel}>Chapters</Text>
+    </View>
+    <ContentArea
+      content={stageContent.content}
+      loadingContent={stageContent.loadingContent}
+      error={stageContent.error}
+      onContentPress={viewer.handleContentPress}
+      onRetry={stageContent.retry}
+    />
+  </>
+);
+
 const CourseScreen = (): React.JSX.Element => {
   const { allStages, selectedStage, setSelectedStage, loading, error, retry } = useStagesLoader();
   const stageContent = useStageContent(selectedStage, allStages.length > 0);
@@ -381,20 +473,11 @@ const CourseScreen = (): React.JSX.Element => {
         selectedStage={selectedStage}
         onSelectStage={handleStageSelect}
       />
-      <SiteResourcesPanel onSelect={viewer.handleResourcePress} />
-      {selectedStageData && <StageMetadata stage={selectedStageData} />}
-      <CourseProgressBar
-        progress={stageContent.progress}
-        spiralColor={selectedStageData?.spiral_dynamics_color}
-        error={stageContent.error}
-      />
-      <StageIntroCard stageNumber={selectedStage} onOpen={viewer.handleIntroPress} />
-      <ContentArea
-        content={stageContent.content}
-        loadingContent={stageContent.loadingContent}
-        error={stageContent.error}
-        onContentPress={viewer.handleContentPress}
-        onRetry={stageContent.retry}
+      <StagePanel
+        selectedStage={selectedStage}
+        selectedStageData={selectedStageData}
+        stageContent={stageContent}
+        viewer={viewer}
       />
     </SafeAreaView>
   );

@@ -2,7 +2,7 @@ import React from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 
 import type { ContentItem } from '../../api';
-import { colors } from '../../design/tokens';
+import { colors, surface } from '../../design/tokens';
 
 import styles from './Course.styles';
 
@@ -21,7 +21,7 @@ const CONTENT_TYPE_COLORS: Record<string, string> = {
 };
 
 const DEFAULT_ICON = '📄';
-const DEFAULT_COLOR = colors.background.accent;
+const DEFAULT_COLOR = surface.sunken;
 
 interface ContentCardProps {
   item: ContentItem;
