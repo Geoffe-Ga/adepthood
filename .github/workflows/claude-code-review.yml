@@ -85,10 +85,12 @@ jobs:
         # failed/empty review), fail so the check is red and the review is
         # re-run — never a silent success with no review (#810).
         env:
-          # Prefer the action's Claude App token so the comment is authored by
-          # "claude" (consistent with the pre-#810 flow + any author-aware
-          # consumer); fall back to GITHUB_TOKEN if no Claude App is configured.
-          GH_TOKEN: ${{ steps.claude-review.outputs.github_token || secrets.GITHUB_TOKEN }}
+          # Prefer GEOFFE_GA_PAT (a real PAT with pull-requests:write, the same
+          # one iteration-trigger uses) so the verdict comment is authored by a
+          # real account the mobile webhook recognizes; fall back to GITHUB_TOKEN
+          # (github-actions[bot]) if the PAT secret is absent. NOT the action's
+          # Claude App github_token output — that 401s with gh (#839/#843).
+          GH_TOKEN: ${{ secrets.GEOFFE_GA_PAT || secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           STRUCTURED: ${{ steps.claude-review.outputs.structured_output }}
