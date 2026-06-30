@@ -701,6 +701,44 @@ export const surfaceShadowDark = {
   },
 } as const;
 
+// ---------------------------------------------------------------------------
+// Showcase surfaces — a warm-dark "designed product" band on a light screen
+// ---------------------------------------------------------------------------
+
+/**
+ * Deep warm-umber showcase ground for hero moments on an otherwise light screen
+ * (Today #828, the Practice player #831, the Course cover #832, the Map
+ * celebration #833). An original derivation of the app's own warm ink — a brown
+ * umber (red channel above blue), NOT navy and NOT Material's ``#121212``. See
+ * ``ATTRIBUTION``.
+ */
+export const showcase = {
+  canvas: '#2a211a', // the umber band ground
+  raised: '#352a20', // a lifted step within the band
+} as const;
+
+/**
+ * Ink for text on ``showcase.canvas``. Every value clears WCAG AA (>= 4.5:1) on
+ * the umber ground — asserted in ``showcaseTokens.test.ts``.
+ */
+export const onShowcase = {
+  primary: '#f3ece0', // 13.4:1 — warm off-white
+  soft: '#cdbfae', // 8.8:1
+  muted: '#a8967c', // 5.5:1 — captions
+} as const;
+
+/**
+ * Elevation for a showcase band lifting off a light screen — ink-tinted,
+ * downward; iOS/web shadow* props + Android ``elevation``.
+ */
+export const showcaseShadow = {
+  shadowColor: colors.paper.ink,
+  shadowOffset: { width: 0, height: 10 },
+  shadowOpacity: 0.18,
+  shadowRadius: 22,
+  elevation: 8,
+} as const;
+
 /**
  * Warm dark equivalents of the journal ``colors.paper`` palette so the journal
  * joins warm dark. Mirrors the ``paper`` keys; ink clears AA on the dark ground.

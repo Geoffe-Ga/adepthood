@@ -18,6 +18,9 @@ Clean-room stance
   derived from Adepthood's own `colors.tier.clear` (#be6e46), darkened to clear
   WCAG AA as text. No swatch is taken from any third-party product or brand
   palette.
+- Showcase palette (#826): `showcase.*`/`onShowcase.*` are an original warm-umber
+  derivation of Adepthood's own warm ink (`colors.paper.ink`) — a brown umber,
+  not navy and not Material's `#121212`. No third-party product/brand swatch.
 - Marks: no Anthropic (or any other company's) name, logo, wordmark, or brand
   swatch is presented as Adepthood's own. "Candle & Ink" is an internal name
   for this language.
