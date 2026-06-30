@@ -6,6 +6,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from domain.care import CareKind
 from models.marginalia import MarginaliaKind, MarginaliaStatus
 from schemas.completion_suggestion import CompletionSuggestionResponse
 
@@ -32,11 +33,42 @@ class MarginaliaResponse(BaseModel):
     updated_at: datetime
 
 
+class CareResourceResponse(BaseModel):
+    """One non-clinical support pointer in the care surface.
+
+    Mirrors :class:`domain.care.CareResource`: a routing ``kind``, a name, how to
+    reach it, and what it is. Carries no diagnosis or medication guidance.
+    """
+
+    kind: CareKind
+    name: str
+    contact: str
+    what_it_is: str
+
+
+class CareResponse(BaseModel):
+    """The care surface returned when an entry screens as acute distress.
+
+    A warm, non-shaming message plus structured human + professional support
+    pointers (NORTH-STAR §10). Present only on an elevated signal; ``None`` on
+    every ordinary entry. It accompanies the reflection — never replaces it — so
+    a distressed person is never left alone with only AI-generated text.
+    """
+
+    message: str
+    resources: list[CareResourceResponse]
+
+
 class ResonanceResponse(BaseModel):
     """Result of a resonance pass: the new notes plus refreshed wallet balances.
 
     ``suggestions`` carries any completion suggestions detected on the same pass
     (additive, best-effort — empty when none are found or detection failed).
+
+    ``care`` is ``None`` for an ordinary entry (no behavior change); on an acute
+    -distress signal it carries the human + professional support surface, which
+    accompanies — never replaces — the reflection (NORTH-STAR §10). It is derived
+    only from the entry being processed, so it can never leak across users.
     """
 
     marginalia: list[MarginaliaResponse]
@@ -44,6 +76,7 @@ class ResonanceResponse(BaseModel):
     remaining_messages: int
     remaining_balance: int
     monthly_reset_date: datetime
+    care: CareResponse | None = None
 
 
 class MarginaliaListResponse(BaseModel):

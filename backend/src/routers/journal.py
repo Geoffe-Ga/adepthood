@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import ColumnElement, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -15,9 +15,11 @@ from sqlmodel import col, select
 from database import get_session
 from dependencies.ownership import require_owned_journal_entry
 from dependencies.timezone import current_user_timezone
+from domain.care import CarePayload, build_care_payload
 from domain.detection import CompletionDetected, detect_completions
 from domain.practice_resolution import effective_config
 from domain.resonance import MarginaliaAnchored, generate_essay, generate_marginalia
+from domain.safety import assess_distress
 from errors import bad_gateway, conflict, not_found, unprocessable
 from models.completion_suggestion import (
     CompletionSuggestion,
@@ -46,6 +48,8 @@ from schemas.journal import (
     JournalMessageResponse,
 )
 from schemas.marginalia import (
+    CareResourceResponse,
+    CareResponse,
     MarginaliaListResponse,
     MarginaliaResponse,
     ResonanceResponse,
@@ -62,7 +66,7 @@ from services.marginalia import (
 )
 from services.practice_session_idempotency import record_session, recorded_session_id
 from services.usage import get_monthly_cap
-from services.wallet import preflight_deduction, require_user_fresh
+from services.wallet import SpendResult, preflight_deduction, require_user_fresh
 
 
 def _sanitize_message(message: str) -> str:
@@ -421,6 +425,115 @@ async def _generate_marginalia_or_502(
         raise bad_gateway("llm_provider_error") from exc
 
 
+def _care_for(body: str) -> CarePayload | None:
+    """Screen ``body`` and return the care payload on an elevated signal, else None.
+
+    Pure and local (no network/LLM): :func:`assess_distress` cannot fail the
+    request, and the payload is built from reviewable constants — derived from
+    this entry alone, so it can never leak across users.
+    """
+    if assess_distress(body).level == "elevated":
+        return build_care_payload()
+    return None
+
+
+def _care_response(payload: CarePayload | None) -> CareResponse | None:
+    """Map a care payload to its response DTO, or ``None`` when not flagged."""
+    if payload is None:
+        return None
+    return CareResponse(
+        message=payload.message,
+        resources=[
+            CareResourceResponse(
+                kind=resource.kind,
+                name=resource.name,
+                contact=resource.contact,
+                what_it_is=resource.what_it_is,
+            )
+            for resource in payload.resources
+        ],
+    )
+
+
+async def _care_only_response(
+    session: AsyncSession, user_id: int, care: CareResponse
+) -> ResonanceResponse:
+    """Care surface with no reflection, used when an elevated entry's LLM pass fails.
+
+    The marginalia charge was already rolled back, so the wallet is unspent; we
+    surface the human + professional pointers regardless, because care must never
+    depend on the LLM succeeding (NORTH-STAR §10).
+    """
+    user = await require_user_fresh(session, user_id)
+    return ResonanceResponse(
+        marginalia=[],
+        suggestions=[],
+        remaining_messages=max(get_monthly_cap() - user.monthly_messages_used, 0),
+        remaining_balance=user.offering_balance,
+        monthly_reset_date=user.monthly_reset_date,
+        care=care,
+    )
+
+
+async def _resonance_pass_or_care(
+    message: str,
+    llm: BotmasonResonanceLLM,
+    prior: list[str],
+    session: AsyncSession,
+    care: CareResponse | None,
+) -> list[MarginaliaAnchored] | None:
+    """Run the literary pass; on an LLM failure return ``None`` iff care can stand in.
+
+    A flagged entry swallows the 502 (the charge was already rolled back) and
+    yields ``None`` so the caller can return a care-only response — care must
+    never depend on the LLM succeeding. An ordinary entry re-raises the 502,
+    preserving today's behavior exactly.
+    """
+    try:
+        return await _generate_marginalia_or_502(message, llm, prior, session)
+    except HTTPException:
+        if care is not None:
+            return None
+        raise
+
+
+async def _persist_resonance(
+    session: AsyncSession,
+    entry: JournalEntry,
+    user_id: int,
+    llm: BotmasonResonanceLLM,
+    anchored: list[MarginaliaAnchored],
+) -> tuple[list[Marginalia], list[CompletionSuggestion]]:
+    """Stage the anchored notes and best-effort completion suggestions for an entry."""
+    entry_id = cast("int", entry.id)
+    rows = _persist_marginalia(session, entry_id, user_id, anchored)
+    suggestions = await _detect_and_persist_suggestions(
+        session, entry_id, entry.message, user_id, llm
+    )
+    return rows, suggestions
+
+
+def _resonance_response(
+    rows: list[Marginalia],
+    suggestions: list[CompletionSuggestion],
+    spent: SpendResult,
+    reset_date: datetime,
+    care: CareResponse | None,
+) -> ResonanceResponse:
+    """Build the success response: notes, suggestions, refreshed balances, care."""
+    return ResonanceResponse(
+        marginalia=[MarginaliaResponse.model_validate(r, from_attributes=True) for r in rows],
+        suggestions=[
+            CompletionSuggestionResponse.model_validate(s, from_attributes=True)
+            for s in suggestions
+        ],
+        remaining_messages=max(get_monthly_cap() - spent.monthly_used, 0),
+        remaining_balance=spent.offering_balance,
+        monthly_reset_date=reset_date,
+        care=care,
+    )
+
+
 @router.post("/{entry_id}/resonance", response_model=ResonanceResponse)
 @limiter.limit("10/minute")
 async def run_resonance(
@@ -435,42 +548,36 @@ async def run_resonance(
     Wallet pre-flight deducts one message (402 when out of capacity). The LLM
     pass + persistence + the charge commit atomically; any provider error rolls
     the deduction back so a failed pass never charges (502 ``llm_provider_error``).
+
+    The entry is first screened for an acute-distress signal with a pure, local
+    check; on an elevated signal the response carries a ``care`` surface (human +
+    professional support) that accompanies — never replaces — the reflection, and
+    is returned even if the LLM pass fails, so care never depends on the LLM
+    (NORTH-STAR §10). An ordinary entry behaves exactly as before (``care`` None).
     """
     entry = await _load_user_entry(session, entry_id, current_user)
     if entry is None:
         raise not_found("journal_entry")
+    # Screen first, with a pure/local check that can't fail the request, so the
+    # care surface is decided independently of the LLM (NORTH-STAR §10).
+    care = _care_response(_care_for(entry.message))
     spent = await preflight_deduction(session, current_user)
     prior = await _recent_prior_bodies(session, current_user, entry_id)
     llm = BotmasonResonanceLLM(resolve_chat_api_key(x_llm_api_key))
-    anchored = await _generate_marginalia_or_502(entry.message, llm, prior, session)
-    rows = _persist_marginalia(session, entry_id, current_user, anchored)
-    suggestions = await _detect_and_persist_suggestions(
-        session, entry_id, entry.message, current_user, llm
-    )
-    user = await require_user_fresh(session, current_user)
-    reset_date = user.monthly_reset_date
+    anchored = await _resonance_pass_or_care(entry.message, llm, prior, session, care)
+    if anchored is None:
+        # The reflection failed but the entry is flagged: surface care regardless.
+        return await _care_only_response(session, current_user, cast("CareResponse", care))
+    rows, suggestions = await _persist_resonance(session, entry, current_user, llm, anchored)
+    spent_user = await require_user_fresh(session, current_user)
     await session.commit()
     for row in (*rows, *suggestions):
         await session.refresh(row)
     logger.info(
         "journal_resonance_generated",
-        extra={
-            "user_id": current_user,
-            "entry_id": entry_id,
-            "count": len(rows),
-            "suggestions": len(suggestions),
-        },
+        extra={"user_id": current_user, "entry_id": entry_id, "count": len(rows)},
     )
-    return ResonanceResponse(
-        marginalia=[MarginaliaResponse.model_validate(r, from_attributes=True) for r in rows],
-        suggestions=[
-            CompletionSuggestionResponse.model_validate(s, from_attributes=True)
-            for s in suggestions
-        ],
-        remaining_messages=max(get_monthly_cap() - spent.monthly_used, 0),
-        remaining_balance=spent.offering_balance,
-        monthly_reset_date=reset_date,
-    )
+    return _resonance_response(rows, suggestions, spent, spent_user.monthly_reset_date, care)
 
 
 @router.get("/{entry_id}/marginalia", response_model=MarginaliaListResponse)
