@@ -628,3 +628,76 @@ export const surfaceShadow = {
     elevation: 6,
   },
 } as const;
+
+// ---------------------------------------------------------------------------
+// Warm dark mode — the candlelit counterpart of the light language (#804)
+// ---------------------------------------------------------------------------
+
+/**
+ * Warm dark grounds — deep umber/charcoal, NOT Material's neutral ``#121212``,
+ * so the dark theme reads as candlelit paper rather than a black slab. Mirrors
+ * the light ``surface`` shape; ``raised`` is lighter than ``canvas`` (a lifted
+ * sheet) and ``desk`` is the deepest ground.
+ */
+export const surfaceDark = {
+  canvas: '#1c1814', // the dark app ground (warm umber)
+  raised: '#272019', // lifted cards / sheets — a step lighter
+  sunken: '#15110d', // recessed wells — a step darker
+  desk: '#120e0b', // the deepest ground a sheet floats above
+  hairline: '#3a3026', // faint warm rule on the dark ground
+} as const;
+
+/**
+ * Warm off-white ink for ``surfaceDark.canvas``. Every value clears WCAG AA
+ * (>= 4.5:1) on the dark canvas — asserted in ``semanticTokensDark.test.ts``.
+ */
+export const inkDark = {
+  primary: '#f3ece0', // 15.0:1 (AAA)
+  soft: '#cdbfae', // 9.8:1 (AAA)
+  muted: '#a89880', // 6.3:1 — captions / placeholders
+} as const;
+
+/**
+ * Terracotta accent for dark mode — brightened from the light ``accent`` so it
+ * clears AA as text on the dark canvas (a dark ground needs a lighter accent).
+ */
+export const accentDark = {
+  primary: '#e0895a', // 6.6:1 on the dark canvas
+  strong: '#eaa078', // 8.2:1 — pressed / emphasis
+} as const;
+
+/**
+ * Dark elevation. Shadows read faintly on dark grounds, so the lift leans on a
+ * near-black warm shadow at higher opacity plus the same Android elevations.
+ */
+export const surfaceShadowDark = {
+  card: {
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  raised: {
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.5,
+    shadowRadius: 18,
+    elevation: 6,
+  },
+} as const;
+
+/**
+ * Warm dark equivalents of the journal ``colors.paper`` palette so the journal
+ * joins warm dark. Mirrors the ``paper`` keys; ink clears AA on the dark ground.
+ */
+export const paperDark = {
+  background: '#1c1814',
+  backgroundAlt: '#15110d',
+  desk: '#120e0b',
+  sheetEdge: '#2a2219',
+  ink: '#f3ece0', // 15.0:1 on background
+  inkSoft: '#cdbfae', // 9.8:1 on background
+  hairline: '#3a3026',
+  anchorHighlight: '#4a3a24',
+} as const;

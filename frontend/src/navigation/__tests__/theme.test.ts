@@ -1,7 +1,7 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-import { accent, ink, surface } from '../../design/tokens';
-import { navTheme } from '../theme';
+import { accent, accentDark, ink, inkDark, surface, surfaceDark } from '../../design/tokens';
+import { navTheme, navThemeDark, navThemeFor } from '../theme';
 
 /** WCAG relative luminance of a #rrggbb color. */
 const luminance = (hex: string): number => {
@@ -43,5 +43,26 @@ describe('navTheme (#803)', () => {
     // active vs inactive are distinguished by hue (terracotta vs muted ink), not
     // luminance, so they must not be the same value.
     expect(accent.primary).not.toBe(ink.muted);
+  });
+});
+
+describe('navThemeDark (#804)', () => {
+  it('derives its chrome colors from the dark tokens', () => {
+    expect(navThemeDark.dark).toBe(true);
+    expect(navThemeDark.colors.primary).toBe(accentDark.primary);
+    expect(navThemeDark.colors.background).toBe(surfaceDark.canvas);
+    expect(navThemeDark.colors.card).toBe(surfaceDark.raised);
+    expect(navThemeDark.colors.text).toBe(inkDark.primary);
+    expect(navThemeDark.colors.border).toBe(surfaceDark.hairline);
+  });
+
+  it('navThemeFor selects by mode', () => {
+    expect(navThemeFor('dark')).toBe(navThemeDark);
+    expect(navThemeFor('light')).toBe(navTheme);
+  });
+
+  it('active dark tint clears AA on the dark tab-bar ground', () => {
+    expect(contrast(accentDark.primary, surfaceDark.raised)).toBeGreaterThanOrEqual(AA_NORMAL);
+    expect(contrast(inkDark.muted, surfaceDark.raised)).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 });
