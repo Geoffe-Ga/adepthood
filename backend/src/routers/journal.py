@@ -14,19 +14,23 @@ from sqlmodel import col, select
 
 from database import get_session
 from dependencies.ownership import require_owned_journal_entry
+from dependencies.timezone import current_user_timezone
 from domain.detection import CompletionDetected, detect_completions
 from domain.resonance import MarginaliaAnchored, generate_essay, generate_marginalia
-from errors import not_found, unprocessable
+from errors import conflict, not_found, unprocessable
 from models.completion_suggestion import (
     CompletionSuggestion,
     CompletionTargetType,
     SuggestionStatus,
 )
+from models.goal import Goal
+from models.habit import Habit
 from models.journal_entry import JournalEntry, JournalTag
 from models.marginalia import Marginalia, MarginaliaStatus
 from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.completion_suggestion import (
+    AcceptSuggestionResponse,
     CompletionSuggestionListResponse,
     CompletionSuggestionResponse,
 )
@@ -45,6 +49,7 @@ from schemas.marginalia import (
 from security import TextTooLongError, sanitize_user_text
 from services import journal_encryption
 from services.botmason import LLMProviderError, resolve_chat_api_key
+from services.checkin import CheckInContext, current_check_in, record_goal_completion
 from services.completion_candidates import gather_candidates
 from services.marginalia import (
     BotmasonResonanceLLM,
@@ -516,6 +521,107 @@ async def list_suggestions(
     return CompletionSuggestionListResponse(
         items=[CompletionSuggestionResponse.model_validate(r, from_attributes=True) for r in rows]
     )
+
+
+async def _load_user_suggestion(
+    session: AsyncSession, suggestion_id: int, user_id: int
+) -> CompletionSuggestion | None:
+    """Load the caller's own suggestion, or None (404-scoped, enumeration-safe)."""
+    result = await session.execute(
+        select(CompletionSuggestion).where(
+            CompletionSuggestion.id == suggestion_id,
+            CompletionSuggestion.user_id == user_id,
+        )
+    )
+    return result.scalars().first()
+
+
+async def _resolve_suggestion_goal(
+    session: AsyncSession, suggestion: CompletionSuggestion, user_id: int
+) -> tuple[Goal, Habit]:
+    """Resolve a habit suggestion's goal + parent habit, ownership-checked (404-mask)."""
+    goal = await session.get(Goal, suggestion.goal_id) if suggestion.goal_id is not None else None
+    if goal is None:
+        raise not_found("goal")
+    habit = await session.get(Habit, goal.habit_id)
+    if habit is None or habit.user_id != user_id:
+        raise not_found("goal")
+    return goal, habit
+
+
+def _suggestion_response(suggestion: CompletionSuggestion) -> CompletionSuggestionResponse:
+    """Map a suggestion row to its user_id-free response model."""
+    return CompletionSuggestionResponse.model_validate(suggestion, from_attributes=True)
+
+
+async def _accept_pending_habit(
+    session: AsyncSession,
+    suggestion: CompletionSuggestion,
+    current_user: int,
+    user_tz: str,
+) -> AcceptSuggestionResponse:
+    """Log today's completion for a pending habit suggestion and flip it to accepted."""
+    goal, habit = await _resolve_suggestion_goal(session, suggestion, current_user)
+    ctx = CheckInContext(goal=goal, habit=habit, user_id=current_user, user_timezone=user_tz)
+    check_in = await record_goal_completion(session, ctx, did_complete=True)
+    suggestion.status = SuggestionStatus.ACCEPTED
+    suggestion.accepted_at = datetime.now(UTC)
+    session.add(suggestion)
+    await session.commit()
+    await session.refresh(suggestion)
+    return AcceptSuggestionResponse(suggestion=_suggestion_response(suggestion), check_in=check_in)
+
+
+@router.post("/suggestions/{suggestion_id}/accept", response_model=AcceptSuggestionResponse)
+async def accept_suggestion(
+    suggestion_id: int,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
+) -> AcceptSuggestionResponse:
+    """Accept a pending habit suggestion: log today's completion + flip to accepted.
+
+    Ownership-scoped (404). Practice targets are an explicit 422 until #821.
+    Re-accepting an already-accepted suggestion is an idempotent no-op (no second
+    completion); accepting a dismissed one is a 409 illegal transition. The
+    check-in goes through the shared ``record_goal_completion`` (idempotent per
+    goal/day, so a same-day manual check-in is not double-counted).
+    """
+    suggestion = await _load_user_suggestion(session, suggestion_id, current_user)
+    if suggestion is None:
+        raise not_found("completion_suggestion")
+    if suggestion.target_type == CompletionTargetType.PRACTICE:
+        raise unprocessable("practice_accept_not_supported")
+    if suggestion.status == SuggestionStatus.DISMISSED:
+        raise conflict("suggestion_dismissed")
+    if suggestion.status == SuggestionStatus.ACCEPTED:
+        goal, habit = await _resolve_suggestion_goal(session, suggestion, current_user)
+        ctx = CheckInContext(goal=goal, habit=habit, user_id=current_user, user_timezone=user_tz)
+        check_in = await current_check_in(session, ctx)
+        return AcceptSuggestionResponse(
+            suggestion=_suggestion_response(suggestion), check_in=check_in
+        )
+    return await _accept_pending_habit(session, suggestion, current_user, user_tz)
+
+
+@router.post("/suggestions/{suggestion_id}/dismiss", response_model=CompletionSuggestionResponse)
+async def dismiss_suggestion(
+    suggestion_id: int,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CompletionSuggestionResponse:
+    """Dismiss a pending suggestion (idempotent). Dismissing an accepted one is 409."""
+    suggestion = await _load_user_suggestion(session, suggestion_id, current_user)
+    if suggestion is None:
+        raise not_found("completion_suggestion")
+    if suggestion.status == SuggestionStatus.ACCEPTED:
+        raise conflict("suggestion_accepted")
+    if suggestion.status == SuggestionStatus.PENDING:
+        suggestion.status = SuggestionStatus.DISMISSED
+        session.add(suggestion)
+        await session.commit()
+        await session.refresh(suggestion)
+    return _suggestion_response(suggestion)
 
 
 # Economy seam: essay expansion is free by default. A future pricing pass would
