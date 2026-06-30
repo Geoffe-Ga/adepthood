@@ -1,5 +1,6 @@
 """Database models package."""
 
+from .completion_suggestion import CompletionSuggestion
 from .content_completion import ContentCompletion
 from .course_stage import CourseStage
 from .energy_plan import EnergyPlan
@@ -27,6 +28,7 @@ from .user_practice import UserPractice
 from .wallet_audit import WalletAudit
 
 __all__ = [
+    "CompletionSuggestion",
     "ContentCompletion",
     "CourseStage",
     "EnergyPlan",

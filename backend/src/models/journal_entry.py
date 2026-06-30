@@ -8,6 +8,7 @@ from sqlmodel import Field, Relationship, SQLModel
 from services.journal_encryption import EncryptedString
 
 if TYPE_CHECKING:
+    from .completion_suggestion import CompletionSuggestion
     from .marginalia import Marginalia
     from .user import User
 
@@ -98,6 +99,10 @@ class JournalEntry(SQLModel, table=True):
     )
     user: "User" = Relationship(back_populates="journals")
     marginalia: list["Marginalia"] = Relationship(
+        back_populates="entry",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+    suggestions: list["CompletionSuggestion"] = Relationship(
         back_populates="entry",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
