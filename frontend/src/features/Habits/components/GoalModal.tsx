@@ -41,11 +41,11 @@ import type { GoalModalProps, Goal } from '../Habits.types';
 import {
   getMarkerPositions,
   getProgressBarColor,
+  getProgressPercentage,
   clampPercentage,
   getTierColor,
   getGoalTarget,
   isGoalAchieved,
-  calculateTodaysProgress,
 } from '../HabitUtils';
 
 import ConfirmDialog from './ConfirmDialog';
@@ -78,22 +78,6 @@ const formatGoalTooltip = (g: Goal | undefined): string => {
   if (!g) return '';
   const label = TIER_LABELS[g.tier] ?? g.tier;
   return `${label}: ${g.target} ${g.target_unit} per ${g.frequency_unit.replace('_', ' ')}`;
-};
-
-const computeProgressPct = (
-  totalProgress: number,
-  lowGoal: Goal | undefined,
-  stretchGoal: Goal | undefined,
-): number => {
-  if (!stretchGoal) return 0;
-  if (lowGoal?.is_additive) {
-    return clampPercentage((totalProgress / getGoalTarget(stretchGoal)) * 100);
-  }
-  const stretchTarget = getGoalTarget(stretchGoal);
-  const lowTarget = getGoalTarget(lowGoal!);
-  return clampPercentage(
-    100 - ((totalProgress - stretchTarget) / (lowTarget - stretchTarget)) * 100,
-  );
 };
 
 interface GoalMarkerItemProps {
@@ -1175,16 +1159,26 @@ interface GoalModalBodyProps {
   onUpdateHabit: GoalModalProps['onUpdateHabit'];
 }
 
+// Reuse the canonical, zero-guarded helper the habit tile uses so the modal
+// bar can never diverge into a NaN width. The stretch goal stands in for
+// `currentGoal`: its `is_additive` flag selects the same branch the old copy
+// did, and the helper re-derives the stretch/low tiers from the habit. A
+// goal-less habit (synthetic onboarding state) has no bar to fill, so 0%.
+const modalProgressPercentage = (
+  habit: NonNullable<GoalModalProps['habit']>,
+  m: ReturnType<typeof useGoalMarkers>,
+  tz: string,
+): number => {
+  const currentGoal = m.stretchGoal ?? m.lowGoal ?? habit.goals[0];
+  return currentGoal ? getProgressPercentage(habit, currentGoal, tz) : 0;
+};
+
 const buildProgressBarProps = (
   habit: NonNullable<GoalModalProps['habit']>,
   m: ReturnType<typeof useGoalMarkers>,
   tz: string,
 ) => ({
-  progressPercentage: computeProgressPct(
-    calculateTodaysProgress(habit, tz),
-    m.lowGoal,
-    m.stretchGoal,
-  ),
+  progressPercentage: modalProgressPercentage(habit, m, tz),
   progressBarColor: getProgressBarColor(habit, tz),
   lowGoal: m.lowGoal,
   clearGoal: m.clearGoal,
