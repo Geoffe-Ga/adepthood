@@ -35,8 +35,6 @@ export interface UseResonanceArgs {
 export interface UseResonanceResult {
   marginalia: Marginalia[];
   suggestions: CompletionSuggestion[];
-  /** The check-in (streak + milestones) from the most recent accept, if any. */
-  lastCheckIn: CheckInResult | null;
   /** Check-in (streak) per accepted suggestion id, for the confirmed card. */
   acceptedCheckIns: Record<number, CheckInResult | null>;
   loading: boolean;
@@ -95,7 +93,6 @@ function useLoadOnOpen<T>(
 
 interface SuggestionsApi {
   suggestions: CompletionSuggestion[];
-  lastCheckIn: CheckInResult | null;
   /** Check-in (streak) per accepted suggestion id, for the confirmed card. */
   acceptedCheckIns: Record<number, CheckInResult | null>;
   mergeFromGenerate: (_incoming: CompletionSuggestion[]) => void;
@@ -106,7 +103,6 @@ interface SuggestionsApi {
 /** Owns suggestion state: load-on-open, merge, and accept/dismiss with guards. */
 function useSuggestions(routeEntryId: number | null, setError: SetError): SuggestionsApi {
   const [suggestions, setSuggestions] = useState<CompletionSuggestion[]>([]);
-  const [lastCheckIn, setLastCheckIn] = useState<CheckInResult | null>(null);
   const [acceptedCheckIns, setAcceptedCheckIns] = useState<Record<number, CheckInResult | null>>(
     {},
   );
@@ -123,7 +119,6 @@ function useSuggestions(routeEntryId: number | null, setError: SetError): Sugges
       runAccept(id, {
         pendingIdsRef,
         setSuggestions,
-        setLastCheckIn,
         setAcceptedCheckIns,
         setError,
       }),
@@ -137,7 +132,6 @@ function useSuggestions(routeEntryId: number | null, setError: SetError): Sugges
 
   return {
     suggestions,
-    lastCheckIn,
     acceptedCheckIns,
     mergeFromGenerate,
     acceptSuggestion,
@@ -148,7 +142,6 @@ function useSuggestions(routeEntryId: number | null, setError: SetError): Sugges
 interface AcceptDeps {
   pendingIdsRef: MutableRefObject<Set<number>>;
   setSuggestions: Dispatch<SetStateAction<CompletionSuggestion[]>>;
-  setLastCheckIn: Dispatch<SetStateAction<CheckInResult | null>>;
   setAcceptedCheckIns: Dispatch<SetStateAction<Record<number, CheckInResult | null>>>;
   setError: SetError;
 }
@@ -160,7 +153,6 @@ async function runAccept(id: number, deps: AcceptDeps): Promise<void> {
   try {
     const result = await completionSuggestions.accept(id);
     deps.setSuggestions((prev) => mergeSuggestionsById(prev, [result.suggestion]));
-    deps.setLastCheckIn(result.check_in);
     deps.setAcceptedCheckIns((prev) => ({ ...prev, [id]: result.check_in }));
   } catch (err) {
     deps.setError(formatApiError(err)); // row stays pending; user can retry
@@ -264,7 +256,6 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
   return {
     marginalia,
     suggestions: sug.suggestions,
-    lastCheckIn: sug.lastCheckIn,
     acceptedCheckIns: sug.acceptedCheckIns,
     loading,
     error,

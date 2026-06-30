@@ -5,6 +5,7 @@ import { STAGE_DURATIONS_DAYS } from '../../constants/program';
 import { brightenColor, colors, STAGE_COLORS, STAGE_ORDER } from '../../design/tokens';
 import {
   DEFAULT_TIMEZONE,
+  MS_PER_DAY,
   dayKeyInTZ,
   streakFromCompletions,
   subtractiveLongestStreakFromCompletions,
@@ -17,8 +18,6 @@ import type { Goal, Habit, Completion, HabitStatsData } from './Habits.types';
 export { STAGE_ORDER };
 // Re-export so existing call sites stay valid; canonical definition lives in src/constants/program.ts.
 export { STAGE_DURATIONS_DAYS };
-
-const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
 /**
  * Calculate the start date for a habit based on its order in the onboarding

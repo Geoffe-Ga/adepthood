@@ -27,6 +27,9 @@
  */
 export const DEFAULT_TIMEZONE = 'UTC';
 
+/** Milliseconds in one calendar day — the single source for day-span math. */
+export const MS_PER_DAY = 86_400_000;
+
 /**
  * Resolve a likely-valid IANA zone, falling back to UTC on error.
  *

@@ -79,8 +79,8 @@ import { SHOWCASE_SURFACE, SessionSurfaceProvider } from '@/features/Practice/vi
 import TalliedGroundingView from '@/features/Practice/views/TalliedGroundingView';
 import TarotMeditationView from '@/features/Practice/views/TarotMeditationView';
 import { useOptimisticMutation } from '@/hooks/useOptimisticMutation';
+import { MS_PER_DAY } from '@/utils/dateUtils';
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_MINUTE = 60_000;
 const TAROT_DECK_SIZE = 22;
 const KEEP_AWAKE_TAG = 'ritual-engine';

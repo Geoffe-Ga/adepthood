@@ -26,12 +26,12 @@ import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { useDerivedCurrentWeek } from '@/store/useProgramProgression';
+import { MS_PER_DAY } from '@/utils/dateUtils';
 
 const PAGE_SIZE = 20;
 const SEARCH_MIN_LENGTH = 3;
 const SEARCH_MAX_LENGTH = 64; // mirrors the backend JOURNAL_SEARCH_MAX_LENGTH guard
 const EXCERPT_MAX = 140;
-const MS_PER_DAY = 86_400_000;
 const WEEK_DAYS = 7;
 const MONTH_DAYS = 30;
 const WORDS_PER_MINUTE = 200;

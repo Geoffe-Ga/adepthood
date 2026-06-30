@@ -368,7 +368,6 @@ const applyLogUnit = (
 export interface LogUnitContext {
   prev: Habit[];
   next: Habit[];
-  updated: Habit;
   habitName: string;
   /** Amount of units the caller logged in this operation. */
   amount: number;
@@ -956,7 +955,6 @@ export const habitManager = {
     return {
       prev,
       next,
-      updated,
       habitName,
       amount,
       oldProgress,

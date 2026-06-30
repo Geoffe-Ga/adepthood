@@ -15,14 +15,13 @@ import { useEntrance } from '@/hooks/useEntrance';
 import type { RootTabParamList } from '@/navigation/BottomTabs';
 import { useHabitStore } from '@/store/useHabitStore';
 import {
+  TOTAL_PROGRAM_WEEKS,
   programStage,
   programWeek,
   selectProgramStartDate,
   useProgramStore,
 } from '@/store/useProgramStore';
 import { DEFAULT_TIMEZONE, dayKeyInTZ } from '@/utils/dateUtils';
-
-const TOTAL_WEEKS = 36;
 
 type TodayNav = BottomTabNavigationProp<RootTabParamList>;
 
@@ -51,7 +50,7 @@ function countDoneToday(habits: readonly Habit[]): number {
 /** The showcase hero: greeting + position in the 36-week journey. */
 const TodayHero = ({ week, stage }: { week: number | null; stage: number | null }) => {
   const entrance = useEntrance(0);
-  const position = week === null ? 'Your journey awaits' : `Week ${week} of ${TOTAL_WEEKS}`;
+  const position = week === null ? 'Your journey awaits' : `Week ${week} of ${TOTAL_PROGRAM_WEEKS}`;
   const stageName = stage === null ? null : STAGE_ORDER[stage - 1] ?? null;
   return (
     <Animated.View style={entrance}>

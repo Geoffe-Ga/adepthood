@@ -993,7 +993,7 @@ describe('habitManager', () => {
       expect(ctx).not.toBeNull();
       habitManager.applyLogUnitContext(ctx!);
 
-      expect(ctx!.updated.completions).toHaveLength(1);
+      expect(ctx!.next[0]!.completions).toHaveLength(1);
       expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(1);
     });
 

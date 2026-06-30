@@ -8,15 +8,15 @@ import {
   loadProgramStartDate,
   saveProgramStartDate,
 } from '../storage/programStorage';
+import { MS_PER_DAY } from '../utils/dateUtils';
 
 import { registerStoreReset } from './registry';
 
-const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const DAYS_PER_WEEK = 7;
 const STAGE_COUNT = STAGE_DURATIONS_DAYS.length;
 const TOTAL_PROGRAM_DAYS = STAGE_DURATIONS_DAYS.reduce((sum, d) => sum + d, 0);
 // Integer-pinned so a future non-7-multiple change to STAGE_DURATIONS_DAYS can't silently leak fractional weeks.
-const TOTAL_PROGRAM_WEEKS = Math.floor(TOTAL_PROGRAM_DAYS / DAYS_PER_WEEK);
+export const TOTAL_PROGRAM_WEEKS = Math.floor(TOTAL_PROGRAM_DAYS / DAYS_PER_WEEK);
 
 export interface ProgramStoreState {
   programStartDate: Date | null;
