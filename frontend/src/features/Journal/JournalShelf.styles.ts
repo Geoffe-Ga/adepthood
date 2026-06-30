@@ -1,43 +1,37 @@
-/** Styles for the journal shelf (the landing list of entry "pages"). */
+/** Styles for the journal shelf (the editorial library of entry "pages"). */
 import { StyleSheet } from 'react-native';
 
 import {
   BORDER_RADIUS,
   SPACING,
+  accent,
   colors,
   editorialType,
-  paperShadow,
+  ink,
   spacing,
+  surface,
+  surfaceShadow,
   touchTarget,
 } from '@/design/tokens';
 
+const PROMPT_ACCENT_BAR = 3; // the weekly prompt's identifying left rule
+const HEADING_TRACKING = 1; // small-caps letter-spacing for recency headings
+
 const styles = StyleSheet.create({
-  safeArea: {
+  list: {
     flex: 1,
-    backgroundColor: colors.paper.desk, // shared desk ground (issue 01)
   },
   listContent: {
-    paddingHorizontal: SPACING.lg,
-    paddingTop: SPACING.md,
     paddingBottom: SPACING.xxl,
     flexGrow: 1,
   },
-  header: {
-    paddingVertical: SPACING.md,
-  },
-  newEntry: {
-    minHeight: touchTarget.minimum,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: SPACING.sm,
-    paddingVertical: SPACING.md,
-    borderRadius: BORDER_RADIUS.md,
-    backgroundColor: colors.primary,
-  },
-  newEntryLabel: {
-    color: colors.text.light,
-    fontSize: 16,
-    fontWeight: '600',
+  sectionHeading: {
+    ...editorialType.caption,
+    color: ink.muted,
+    textTransform: 'uppercase',
+    letterSpacing: HEADING_TRACKING,
+    marginTop: SPACING.lg,
+    marginBottom: SPACING.sm,
   },
   card: {
     minHeight: touchTarget.minimum,
@@ -45,10 +39,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.lg,
     marginBottom: SPACING.md,
     borderRadius: BORDER_RADIUS.md,
-    // The lifted page card: separation now comes from the gap + shadow between
-    // floated cards, so the old borderBottom hairline is gone.
-    backgroundColor: colors.paper.background,
-    ...paperShadow.card,
+    // A warm paper tile lifted off the canvas by the shared card shadow;
+    // separation comes from the gap + shadow, not a hairline divider.
+    backgroundColor: surface.desk,
+    ...surfaceShadow.card,
   },
   cardTitleRow: {
     flexDirection: 'row',
@@ -57,18 +51,26 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     ...editorialType.title,
-    color: colors.paper.ink,
+    color: ink.primary,
     flexShrink: 1,
   },
   cardDate: {
     ...editorialType.caption,
-    color: colors.paper.inkSoft,
+    color: ink.soft,
     paddingLeft: SPACING.sm,
   },
   cardExcerpt: {
     ...editorialType.note,
-    color: colors.paper.inkSoft,
+    color: ink.soft,
     paddingTop: spacing(0.5),
+  },
+  cardCaption: {
+    ...editorialType.caption,
+    color: ink.muted,
+    paddingTop: spacing(0.5),
+  },
+  searchRow: {
+    marginBottom: SPACING.sm,
   },
   emptyWrap: {
     flex: 1,
@@ -79,7 +81,7 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     ...editorialType.body,
-    color: colors.paper.inkSoft,
+    color: ink.soft,
     textAlign: 'center',
   },
   emptyError: {
@@ -88,25 +90,23 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   promptCard: {
-    marginHorizontal: SPACING.lg,
     marginTop: SPACING.lg,
     padding: SPACING.lg,
     borderRadius: BORDER_RADIUS.md,
-    // Lifted onto the desk like the entry cards, but keeps its accent-bar
-    // identity marking it as the weekly prompt.
-    backgroundColor: colors.paper.background,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.marginalia.theme,
-    ...paperShadow.card,
+    // Lifted onto a raised sheet, but keeps an accent bar marking it the prompt.
+    backgroundColor: surface.raised,
+    borderLeftWidth: PROMPT_ACCENT_BAR,
+    borderLeftColor: accent.primary,
+    ...surfaceShadow.card,
   },
   promptLabel: {
     ...editorialType.caption,
-    color: colors.paper.inkSoft,
+    color: ink.muted,
     textTransform: 'uppercase',
   },
   promptQuestion: {
     ...editorialType.title,
-    color: colors.paper.ink,
+    color: ink.primary,
     paddingTop: spacing(0.5),
   },
 });

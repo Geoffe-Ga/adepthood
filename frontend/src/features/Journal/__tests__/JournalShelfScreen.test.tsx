@@ -5,7 +5,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 
 import type { JournalListResponse, JournalMessage, PromptDetail } from '@/api';
-import { colors } from '@/design/tokens';
+import { accent, surface } from '@/design/tokens';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
@@ -95,38 +95,77 @@ describe('JournalShelfScreen', () => {
     expect(getByTestId('journal-shelf-card-1')).toBeTruthy();
   });
 
-  it('floats each entry as a lifted paper card on the deeper desk ground', async () => {
+  it('floats each entry as a warm paper tile lifted off the canvas ground', async () => {
     mockList.mockResolvedValue(page([entry(1)]));
     const { findByTestId, getByTestId } = render(<JournalShelfScreen />);
     const card = StyleSheet.flatten((await findByTestId('journal-shelf-card-1')).props.style);
-    // Lifted paper card: matches the page ground, lifted by the warm card shadow,
+    // Lifted warm paper tile (surface.desk) raised by the shared card shadow,
     // separated by gaps rather than the old hairline divider.
-    expect(card.backgroundColor).toBe(colors.paper.background);
+    expect(card.backgroundColor).toBe(surface.desk);
     expect(card.shadowRadius).toBeGreaterThan(0);
     expect(card.elevation).toBeGreaterThan(0);
     expect(card.borderBottomWidth).toBeUndefined();
-    // The shelf sits on the deeper desk ground the cards float above.
+    // The shelf now sits on the warm scaffold canvas.
     const root = StyleSheet.flatten(getByTestId('journal-shelf').props.style);
-    expect(root.backgroundColor).toBe(colors.paper.desk);
+    expect(root.backgroundColor).toBe(surface.canvas);
   });
 
-  it('floats the weekly-prompt card with matching depth while keeping its accent bar', async () => {
+  it('floats the weekly-prompt band with matching depth while keeping its accent bar', async () => {
     mockList.mockResolvedValue(page([entry(1)]));
     mockPromptCurrent.mockResolvedValue(prompt({ week_number: 3, has_responded: false }));
     const { findByTestId } = render(<JournalShelfScreen />);
     const card = StyleSheet.flatten((await findByTestId('journal-weekly-prompt')).props.style);
-    // Same floated treatment as the entry cards…
-    expect(card.backgroundColor).toBe(colors.paper.background);
+    // Lifted onto a raised sheet…
+    expect(card.backgroundColor).toBe(surface.raised);
     expect(card.shadowRadius).toBeGreaterThan(0);
     expect(card.elevation).toBeGreaterThan(0);
     // …but keeps its accent-bar identity.
-    expect(card.borderLeftColor).toBe(colors.marginalia.theme);
+    expect(card.borderLeftColor).toBe(accent.primary);
   });
 
   it('shows the empty state when there are no entries', async () => {
     mockList.mockResolvedValue(page([]));
     const { findByTestId } = render(<JournalShelfScreen />);
     expect(await findByTestId('journal-shelf-empty')).toBeTruthy();
+  });
+
+  it('groups entries into recency sections (This week / This month / Earlier)', async () => {
+    const DAY_MS = 86_400_000;
+    const ago = (days: number) => new Date(Date.now() - days * DAY_MS).toISOString();
+    mockList.mockResolvedValue(
+      page([
+        entry(1, { timestamp: ago(1) }), // This week
+        entry(2, { timestamp: ago(10) }), // This month
+        entry(3, { timestamp: ago(60) }), // Earlier
+      ]),
+    );
+    const { findByText, getByText, getByTestId } = render(<JournalShelfScreen />);
+    expect(await findByText('This week')).toBeTruthy();
+    expect(getByText('This month')).toBeTruthy();
+    expect(getByText('Earlier')).toBeTruthy();
+    expect(getByTestId('journal-shelf-card-1')).toBeTruthy();
+    expect(getByTestId('journal-shelf-card-3')).toBeTruthy();
+  });
+
+  it('starts a blank page from the empty-state call to action', async () => {
+    mockList.mockResolvedValue(page([]));
+    const { findByTestId } = render(<JournalShelfScreen />);
+    fireEvent.press(await findByTestId('journal-empty-cta'));
+    expect(mockNavigate).toHaveBeenCalledWith('JournalEntry');
+  });
+
+  it('shows a no-results line when a search returns nothing', async () => {
+    mockList.mockResolvedValue(page([entry(1)]));
+    const { findByTestId, getByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-shelf-card-1');
+
+    mockList.mockResolvedValue(page([])); // the search comes back empty
+    await act(async () => {
+      fireEvent.changeText(getByTestId('shelf-search'), 'zzz');
+    });
+    expect(await findByTestId('journal-shelf-no-results')).toBeTruthy();
+    // The inviting empty state is suppressed during an active search.
+    expect(queryByTestId('journal-shelf-empty')).toBeNull();
   });
 
   it('opens a fresh entry from "New entry"', async () => {
