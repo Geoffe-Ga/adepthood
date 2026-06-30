@@ -10,6 +10,7 @@ import type { RitualControls, RitualState } from '../engine/types';
 
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
+import { useSessionSurface } from './sessionSurface';
 
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 
@@ -49,6 +50,7 @@ const CardMeditationView = ({
   controls,
   picked: pickedProp,
 }: Props): React.JSX.Element => {
+  const surface = useSessionSurface();
   const [picked] = useState<PickedCard>(() => pickedProp ?? pickCard(config));
   const reveal = config.reveal_after_meditation ?? false;
   const hideTimer = config.hide_timer_during_meditation ?? true;
@@ -58,14 +60,25 @@ const CardMeditationView = ({
     state.status === 'complete' ||
     (state.status === 'running' && !hideTimer);
   return (
-    <View style={styles.container} testID="card-meditation-view">
+    <View
+      style={[styles.container, { backgroundColor: surface.ground }]}
+      testID="card-meditation-view"
+    >
       {showCard ? <CardFace card={picked.card} /> : <RevealPlaceholder />}
       {showTimer && (
-        <Text style={styles.timer} testID="card-meditation-time-remaining">
+        <Text
+          style={[styles.timer, { color: surface.text }]}
+          testID="card-meditation-time-remaining"
+        >
           {formatTime(state.remainingMs ?? 0)}
         </Text>
       )}
-      <CardFooter state={state} controls={controls} hideTimer={hideTimer} />
+      <CardFooter
+        state={state}
+        controls={controls}
+        hideTimer={hideTimer}
+        cancelTint={surface.textMuted}
+      />
     </View>
   );
 };
@@ -120,9 +133,11 @@ interface FooterProps {
   state: RitualState;
   controls: RitualControls;
   hideTimer: boolean;
+  /** Surface-aware tint for the timer-hidden long-press cancel affordance. */
+  cancelTint: string;
 }
 
-const CardFooter = ({ state, controls, hideTimer }: FooterProps): React.JSX.Element => {
+const CardFooter = ({ state, controls, hideTimer, cancelTint }: FooterProps): React.JSX.Element => {
   if (state.status === 'idle') {
     return (
       <Pressable
@@ -139,7 +154,7 @@ const CardFooter = ({ state, controls, hideTimer }: FooterProps): React.JSX.Elem
   if (state.status === 'running' && hideTimer) {
     return (
       <Pressable
-        style={styles.longCancel}
+        style={[styles.longCancel, { borderColor: cancelTint }]}
         onLongPress={controls.cancel}
         delayLongPress={800}
         testID="card-meditation-cancel-longpress"
@@ -147,7 +162,7 @@ const CardFooter = ({ state, controls, hideTimer }: FooterProps): React.JSX.Elem
         accessibilityLabel="Long-press to cancel meditation"
         accessibilityHint="Hold to end the sit early without revealing the timer."
       >
-        <Text style={styles.longCancelText}>Hold to cancel</Text>
+        <Text style={[styles.longCancelText, { color: cancelTint }]}>Hold to cancel</Text>
       </Pressable>
     );
   }
@@ -208,7 +223,6 @@ const styles = StyleSheet.create({
   timer: {
     fontSize: 36,
     fontWeight: '300',
-    color: colors.text.primary,
     fontVariant: ['tabular-nums'],
     marginBottom: SPACING.lg,
   },
@@ -227,10 +241,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.xl,
     borderRadius: BORDER_RADIUS.lg,
     borderWidth: 1,
-    borderColor: colors.text.tertiaryAccessible,
   },
   longCancelText: {
-    color: colors.text.tertiaryAccessible,
     fontSize: 13,
     letterSpacing: 1,
   },

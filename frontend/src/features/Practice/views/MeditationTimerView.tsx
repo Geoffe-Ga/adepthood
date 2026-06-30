@@ -6,8 +6,9 @@ import type { RitualControls, RitualState } from '../engine/types';
 
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
+import { useSessionSurface } from './sessionSurface';
 
-import { SPACING, colors, shadows } from '@/design/tokens';
+import { SPACING, shadows } from '@/design/tokens';
 
 const RING_SIZE = 240;
 const STROKE_WIDTH = 8;
@@ -21,25 +22,29 @@ interface Props {
 }
 
 const MeditationTimerView = ({ state, controls }: Props): React.JSX.Element => {
+  const surface = useSessionSurface();
   const dashOffset = CIRCUMFERENCE * (1 - Math.min(1, Math.max(0, state.progress)));
   const remainingMs = state.remainingMs ?? 0;
   return (
-    <View style={styles.container} testID="meditation-timer-view">
+    <View
+      style={[styles.container, { backgroundColor: surface.ground }]}
+      testID="meditation-timer-view"
+    >
       <View style={styles.ringContainer}>
         <Svg width={RING_SIZE} height={RING_SIZE} testID="meditation-timer-ring">
           <Circle
             cx={CENTER}
             cy={CENTER}
             r={RADIUS}
-            stroke={colors.background.accent}
+            stroke={surface.ground}
             strokeWidth={STROKE_WIDTH}
-            fill={colors.background.card}
+            fill={surface.raised}
           />
           <Circle
             cx={CENTER}
             cy={CENTER}
             r={RADIUS}
-            stroke={colors.success}
+            stroke={surface.accent}
             strokeWidth={STROKE_WIDTH}
             fill="none"
             strokeDasharray={CIRCUMFERENCE}
@@ -49,7 +54,7 @@ const MeditationTimerView = ({ state, controls }: Props): React.JSX.Element => {
           />
         </Svg>
         <View style={styles.center} pointerEvents="none">
-          <Text style={styles.time} testID="meditation-time-remaining">
+          <Text style={[styles.time, { color: surface.text }]} testID="meditation-time-remaining">
             {formatTime(remainingMs)}
           </Text>
         </View>
@@ -79,7 +84,6 @@ const styles = StyleSheet.create({
   time: {
     fontSize: 42,
     fontWeight: '300',
-    color: colors.text.primary,
     fontVariant: ['tabular-nums'],
   },
 });

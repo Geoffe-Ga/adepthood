@@ -5,8 +5,9 @@ import type { MetronomeConfig, RitualControls, RitualState } from '../engine/typ
 
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
+import { useSessionSurface } from './sessionSurface';
 
-import { SPACING, colors } from '@/design/tokens';
+import { SPACING } from '@/design/tokens';
 
 const PULSE_DURATION_MS = 120;
 const PULSE_MAX_SCALE = 1.6;
@@ -38,18 +39,19 @@ const MetronomeView = ({ config, state, controls }: Props): React.JSX.Element =>
     ]).start();
   }, [state.cuesStruck, pulse]);
 
+  const surface = useSessionSurface();
   const elapsedMs = state.elapsedMs;
   return (
-    <View style={styles.container} testID="metronome-view">
-      <Text style={styles.bpm} testID="metronome-bpm">
+    <View style={[styles.container, { backgroundColor: surface.ground }]} testID="metronome-view">
+      <Text style={[styles.bpm, { color: surface.text }]} testID="metronome-bpm">
         {config.bpm}
       </Text>
-      <Text style={styles.label}>bpm</Text>
+      <Text style={[styles.label, { color: surface.textSoft }]}>bpm</Text>
       <Animated.View
-        style={[styles.dot, { transform: [{ scale: pulse }] }]}
+        style={[styles.dot, { backgroundColor: surface.accent, transform: [{ scale: pulse }] }]}
         testID="metronome-pulse"
       />
-      <Text style={styles.miniTimer} testID="metronome-mini-timer">
+      <Text style={[styles.miniTimer, { color: surface.textSoft }]} testID="metronome-mini-timer">
         {formatTime(elapsedMs)}
       </Text>
       <View style={styles.spacer} />
@@ -63,13 +65,11 @@ const styles = StyleSheet.create({
   bpm: {
     fontSize: 84,
     fontWeight: '200',
-    color: colors.text.primary,
     fontVariant: ['tabular-nums'],
     marginTop: SPACING.xl,
   },
   label: {
     fontSize: 14,
-    color: colors.text.secondaryAccessible,
     textTransform: 'uppercase',
     letterSpacing: 2,
     marginBottom: SPACING.xl,
@@ -78,12 +78,10 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: colors.success,
     marginBottom: SPACING.xl,
   },
   miniTimer: {
     fontSize: 24,
-    color: colors.text.secondary,
     fontVariant: ['tabular-nums'],
     marginBottom: SPACING.xl,
   },

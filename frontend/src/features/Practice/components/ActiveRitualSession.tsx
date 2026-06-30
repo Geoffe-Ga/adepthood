@@ -75,6 +75,7 @@ import MindfulAnchorView from '@/features/Practice/views/MindfulAnchorView';
 import RandomIntervalBellView from '@/features/Practice/views/RandomIntervalBellView';
 import RepCounterView from '@/features/Practice/views/RepCounterView';
 import SenseGroundingView from '@/features/Practice/views/SenseGroundingView';
+import { SHOWCASE_SURFACE, SessionSurfaceProvider } from '@/features/Practice/views/sessionSurface';
 import TalliedGroundingView from '@/features/Practice/views/TalliedGroundingView';
 import TarotMeditationView from '@/features/Practice/views/TarotMeditationView';
 import { useOptimisticMutation } from '@/hooks/useOptimisticMutation';
@@ -442,15 +443,17 @@ function SessionCard(props: SessionCardProps): React.JSX.Element {
           {props.effectiveName}
         </Text>
       </View>
-      <ModeView
-        config={props.config}
-        state={props.state}
-        controls={props.controls}
-        tarotCardIndex={props.tarotCardIndex}
-        cardPick={props.cardPick}
-        onRandomBellMetadata={props.onRandomBellMetadata}
-        onMindfulAnchorComplete={props.onMindfulAnchorComplete}
-      />
+      <SessionSurfaceProvider value={SHOWCASE_SURFACE}>
+        <ModeView
+          config={props.config}
+          state={props.state}
+          controls={props.controls}
+          tarotCardIndex={props.tarotCardIndex}
+          cardPick={props.cardPick}
+          onRandomBellMetadata={props.onRandomBellMetadata}
+          onMindfulAnchorComplete={props.onMindfulAnchorComplete}
+        />
+      </SessionSurfaceProvider>
       {props.saveError !== null && (
         <Text style={styles.error} testID="active-practice-save-error">
           {props.saveError}

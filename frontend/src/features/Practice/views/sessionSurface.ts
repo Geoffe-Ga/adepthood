@@ -33,13 +33,21 @@ export interface SessionSurface {
   accent: string;
 }
 
-/** The original light palette — the default so non-session views are unchanged. */
+/**
+ * The original light palette — the default so non-session views are unchanged.
+ *
+ * `textSoft` / `textMuted` map to the *Accessible* text tokens because that is
+ * what the mode views' static `StyleSheet`s already used (the AA-tuned
+ * `*Accessible` variants, not the legacy `secondary` / `tertiary`). Mapping them
+ * here keeps the no-provider render byte-for-byte identical to the pre-migration
+ * light palette.
+ */
 export const LIGHT_SURFACE: SessionSurface = {
   ground: colors.background.primary,
   raised: colors.background.card,
   text: colors.text.primary,
-  textSoft: colors.text.secondary,
-  textMuted: colors.text.tertiary,
+  textSoft: colors.text.secondaryAccessible,
+  textMuted: colors.text.tertiaryAccessible,
   accent: colors.success,
 };
 
