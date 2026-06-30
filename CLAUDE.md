@@ -2,10 +2,18 @@
 
 ## Project Overview
 
-Adepthood is a React Native + FastAPI full-stack application for the 36-week
-APTITUDE personal development program. It guides users through habit-building,
-meditative practices, journaling with an AI companion (BotMason), and
-stage-gated course content.
+Adepthood is a React Native + FastAPI full-stack application built on a
+philosophy of **graduated engagement**: at its floor it is a journal-first
+personal knowledge base whose growing corpus becomes a "Higher Self" that
+reflects the user's own wisdom back in the language of the 36-week APTITUDE
+program and the Archetypal Wavelength. Around that floor are optional,
+self-chosen **depths** — prompted journaling, habit scaffolding, a practice
+ramp, the course reading, and the Digital Sangha. Nothing is gated and nothing
+is mandatory: the governing principle is **"you choose your depth."** Deeper
+rings are offered only as resonant, declinable invitations — never gamified
+pressure. The product vision lives in `NORTH-STAR.md`; the visual north star
+("Candle & Ink") lives in `DESIGN.md`, with the implemented design system under
+`frontend/src/design/`.
 
 - **Frontend:** React Native with Expo (TypeScript, Zustand, React Navigation)
 - **Backend:** FastAPI with PostgreSQL (SQLModel, async, Alembic migrations)
@@ -19,27 +27,31 @@ adepthood/
     src/
       main.py              # FastAPI app, CORS, router mounting
       database.py          # Async engine, session factory, get_session
-      models/              # 26 SQLModel ORM classes
+      models/              # 27 SQLModel ORM classes
       routers/             # Route handlers (auth, habits, practices, etc.)
       schemas/             # Pydantic request/response DTOs
-      domain/              # Business logic (energy, streaks, goals, stages)
+      domain/              # Business logic (energy, streaks, stage progress,
+                           #   resonance + completion-suggestion detection)
+      seed_content.py      # Content seeder (run on FastAPI startup lifespan)
       errors.py            # Custom exceptions
     conftest.py            # Pytest fixtures (db_session, async_client)
     pyproject.toml         # All Python tool configs
   frontend/
     src/
       App.tsx              # Entry point with AuthProvider + navigation
-      features/            # Feature modules (Auth, Habits, Journal, Practice, Course, Map)
+      features/            # Feature modules (Today, Habits, Practice, Course,
+                           #   Journal, Map, plus Auth, Welcome, Settings)
       api/                 # HTTP client + TypeScript types
       context/             # AuthContext (JWT management)
-      navigation/          # React Navigation (BottomTabs, AuthStack)
-      design/              # Design tokens, responsive utils
+      navigation/          # React Navigation (BottomTabs: Today/Habits/Practice/
+                           #   Course/Journal/Map, RootStack, AuthStack)
+      design/              # Candle & Ink design system (tokens, theme, DESIGN.md)
       components/          # Shared UI components
       store/               # State management (Zustand)
       storage/             # AsyncStorage persistence
     package.json
     tsconfig.json
-  prompts/github-issues/   # Roadmap: 40 issues across 4 phases
+  prompts/github-issues/   # Roadmap: phased epics (see its README for the graph)
   AGENTS.md                # Development philosophy (read this)
   .pre-commit-config.yaml  # 15+ quality gates
 ```
@@ -112,9 +124,10 @@ fails, fix the root cause — don't suppress the check.
 
 ## Roadmap
 
-The development plan lives in `prompts/github-issues/`. There are 40 issues
-across 4 phases. Phase 1 is the critical path. See `README.md` in that
-directory for the dependency graph.
+The development plan lives in `prompts/github-issues/`, organized into phased
+epics (the original Phase 1 "Make It Real" critical path has shipped; later
+phases continue to be added). See `README.md` in that directory for the
+dependency graph and the current phase breakdown.
 
 When continuing work, always check git log and codebase state to determine
 which issues are complete before picking up the next one.

@@ -3,7 +3,7 @@
 All course content — stage-locked chapters and the free site resources —
 lives in the [`Geoffe-Ga/aptitude-course`](https://github.com/Geoffe-Ga/aptitude-course)
 repo and is **vendored** into this one at `backend/content/` by
-`scripts/sync_content.py`. The app never fetches content over the
+`backend/scripts/sync_content.py`. The app never fetches content over the
 network at runtime; the deploy image carries everything it serves.
 Design rationale: ADR 0001 (`docs/adr/0001-git-content-pipeline.md`).
 
