@@ -419,7 +419,7 @@ type MarginItem =
 interface MarginStreamProps {
   notes: Marginalia[];
   suggestions: CompletionSuggestion[];
-  acceptedCheckIns: Record<number, CheckInResult>;
+  acceptedCheckIns: Record<number, CheckInResult | null>;
   onOpen: (_note: Marginalia) => void;
   onAccept: (_id: number) => void | Promise<void>;
   onDismiss: (_id: number) => void | Promise<void>;

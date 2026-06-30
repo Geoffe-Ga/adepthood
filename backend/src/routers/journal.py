@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import ColumnElement, func
@@ -16,6 +16,7 @@ from database import get_session
 from dependencies.ownership import require_owned_journal_entry
 from dependencies.timezone import current_user_timezone
 from domain.detection import CompletionDetected, detect_completions
+from domain.practice_resolution import effective_config
 from domain.resonance import MarginaliaAnchored, generate_essay, generate_marginalia
 from errors import conflict, not_found, unprocessable
 from models.completion_suggestion import (
@@ -27,6 +28,9 @@ from models.goal import Goal
 from models.habit import Habit
 from models.journal_entry import JournalEntry, JournalTag
 from models.marginalia import Marginalia, MarginaliaStatus
+from models.practice import Practice
+from models.practice_session import PracticeSession
+from models.user_practice import UserPractice
 from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.completion_suggestion import (
@@ -56,6 +60,7 @@ from services.marginalia import (
     reanchor_entry_marginalia,
     reanchor_entry_suggestions,
 )
+from services.practice_session_idempotency import record_session, recorded_session_id
 from services.usage import get_monthly_cap
 from services.wallet import preflight_deduction, require_user_fresh
 
@@ -387,7 +392,7 @@ async def _detect_and_persist_suggestions(
     is swallowed (returns ``[]``) so the literary pass, the wallet charge, and the
     commit are never rolled back — detection is strictly additive.
     """
-    candidates = await gather_candidates(session, user_id)
+    candidates = await gather_candidates(session, user_id, include_practices=True)
     if not candidates:
         return []
     try:
@@ -572,6 +577,79 @@ async def _accept_pending_habit(
     return AcceptSuggestionResponse(suggestion=_suggestion_response(suggestion), check_in=check_in)
 
 
+# Positive fallback so a journal-attested session (no recorded duration) still
+# counts toward weekly totals when the resolved config carries no duration.
+_JOURNAL_ATTESTED_FALLBACK_MINUTES = 1.0
+
+
+async def _resolve_suggestion_practice(
+    session: AsyncSession, suggestion: CompletionSuggestion, current_user: int
+) -> tuple[UserPractice, Practice]:
+    """Load the suggestion's UserPractice (ownership-scoped) + its catalog Practice."""
+    user_practice = await session.get(UserPractice, suggestion.user_practice_id)
+    if user_practice is None or user_practice.user_id != current_user:
+        raise not_found("completion_suggestion")
+    practice = await session.get(Practice, user_practice.practice_id)
+    if practice is None:
+        raise not_found("completion_suggestion")
+    return user_practice, practice
+
+
+def _attested_duration(practice: Practice, user_practice: UserPractice) -> float:
+    """Resolved-config duration if positive, else a positive fallback."""
+    duration = getattr(effective_config(practice, user_practice), "duration_minutes", None)
+    if isinstance(duration, (int, float)) and duration > 0:
+        return float(duration)
+    return _JOURNAL_ATTESTED_FALLBACK_MINUTES
+
+
+async def _accept_pending_practice(
+    session: AsyncSession, suggestion: CompletionSuggestion, current_user: int
+) -> AcceptSuggestionResponse:
+    """Log a journal-attested PracticeSession for a pending practice suggestion.
+
+    Idempotent via the practice-session spend layer keyed
+    ``accept-suggestion:practice:{id}`` (already recorded ⇒ no second session),
+    backstopping the suggestion-status guard. Practices carry no streak, so
+    ``check_in`` is ``None``.
+    """
+    user_practice, practice = await _resolve_suggestion_practice(session, suggestion, current_user)
+    key = f"accept-suggestion:practice:{suggestion.id}"
+    if await recorded_session_id(session, current_user, key) is None:
+        practice_session = PracticeSession(
+            user_id=current_user,
+            user_practice_id=cast("int", user_practice.id),
+            duration_minutes=_attested_duration(practice, user_practice),
+            mode=practice.mode,
+            mode_metadata={"attested_via": "journal", "mode": practice.mode},
+            completed=True,
+        )
+        session.add(practice_session)
+        await session.flush()
+        await record_session(session, current_user, key, cast("int", practice_session.id))
+    suggestion.status = SuggestionStatus.ACCEPTED
+    suggestion.accepted_at = datetime.now(UTC)
+    session.add(suggestion)
+    await session.commit()
+    await session.refresh(suggestion)
+    return AcceptSuggestionResponse(suggestion=_suggestion_response(suggestion), check_in=None)
+
+
+async def _already_accepted_response(
+    session: AsyncSession, suggestion: CompletionSuggestion, current_user: int, user_tz: str
+) -> AcceptSuggestionResponse:
+    """Idempotent response for an already-accepted suggestion (no new write).
+
+    Habits re-derive the current streak; practices have none (``check_in=None``).
+    """
+    if suggestion.target_type == CompletionTargetType.PRACTICE:
+        return AcceptSuggestionResponse(suggestion=_suggestion_response(suggestion), check_in=None)
+    goal, habit = await _resolve_suggestion_goal(session, suggestion, current_user)
+    ctx = CheckInContext(goal=goal, habit=habit, user_id=current_user, user_timezone=user_tz)
+    check_in = await current_check_in(session, ctx)
+    return AcceptSuggestionResponse(suggestion=_suggestion_response(suggestion), check_in=check_in)
+
+
 @router.post("/suggestions/{suggestion_id}/accept", response_model=AcceptSuggestionResponse)
 async def accept_suggestion(
     suggestion_id: int,
@@ -579,28 +657,23 @@ async def accept_suggestion(
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> AcceptSuggestionResponse:
-    """Accept a pending habit suggestion: log today's completion + flip to accepted.
+    """Accept a pending suggestion: log the completion + flip to accepted.
 
-    Ownership-scoped (404). Practice targets are an explicit 422 until #821.
-    Re-accepting an already-accepted suggestion is an idempotent no-op (no second
-    completion); accepting a dismissed one is a 409 illegal transition. The
-    check-in goes through the shared ``record_goal_completion`` (idempotent per
-    goal/day, so a same-day manual check-in is not double-counted).
+    Ownership-scoped (404). A habit logs today's completion via the shared
+    ``record_goal_completion`` (idempotent per goal/day) and returns its streak; a
+    practice logs a journal-attested ``PracticeSession`` (idempotent, no streak).
+    Re-accepting an accepted one is an idempotent no-op; accepting a dismissed one
+    is a 409 illegal transition.
     """
     suggestion = await _load_user_suggestion(session, suggestion_id, current_user)
     if suggestion is None:
         raise not_found("completion_suggestion")
-    if suggestion.target_type == CompletionTargetType.PRACTICE:
-        raise unprocessable("practice_accept_not_supported")
     if suggestion.status == SuggestionStatus.DISMISSED:
         raise conflict("suggestion_dismissed")
     if suggestion.status == SuggestionStatus.ACCEPTED:
-        goal, habit = await _resolve_suggestion_goal(session, suggestion, current_user)
-        ctx = CheckInContext(goal=goal, habit=habit, user_id=current_user, user_timezone=user_tz)
-        check_in = await current_check_in(session, ctx)
-        return AcceptSuggestionResponse(
-            suggestion=_suggestion_response(suggestion), check_in=check_in
-        )
+        return await _already_accepted_response(session, suggestion, current_user, user_tz)
+    if suggestion.target_type == CompletionTargetType.PRACTICE:
+        return await _accept_pending_practice(session, suggestion, current_user)
     return await _accept_pending_habit(session, suggestion, current_user, user_tz)
 
 

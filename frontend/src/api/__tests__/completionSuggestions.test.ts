@@ -72,7 +72,7 @@ describe('completionSuggestions.accept', () => {
     expect(init.method).toBe('POST');
     expect(init.headers[IDEMPOTENCY_KEY_HEADER]).toBe('accept-suggestion:1');
     expect(result.suggestion.status).toBe('accepted');
-    expect(result.check_in.streak).toBe(4);
+    expect(result.check_in?.streak).toBe(4);
   });
 
   test('surfaces a 422 (practice accept) as an ApiError', async () => {

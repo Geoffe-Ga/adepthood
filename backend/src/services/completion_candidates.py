@@ -2,8 +2,8 @@
 
 Turns the caller's current habits into the ``DetectionCandidate`` list that
 :func:`domain.detection.detect_completions` consumes, so the check-off endpoint
-(#817) stays thin. Habits only for now; practices ride a dormant
-``include_practices`` flag that issue #821 fills in.
+(#817) stays thin. Covers habits and, with ``include_practices``, the user's
+active practices too (#821) — sharing one candidate budget.
 """
 
 from __future__ import annotations
@@ -14,17 +14,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.detection import DetectionCandidate
+from domain.practice_resolution import effective_name
 from load_options import HABIT_WITH_GOALS
 from models.goal import Goal, GoalTier
 from models.habit import Habit
+from models.practice import Practice
+from models.user_practice import UserPractice
 
 logger = logging.getLogger(__name__)
 
 # Upper bound on the candidate list handed to the LLM, to keep the prompt (and
-# its cost) bounded for users with many habits.
+# its cost) bounded for users with many habits + practices (shared budget).
 MAX_CANDIDATES = 25
 
 _HABIT_TARGET = "habit"
+_PRACTICE_TARGET = "practice"
 
 
 def _pick_representative(goals: list[Goal]) -> Goal | None:
@@ -77,6 +81,37 @@ def _habit_candidates(habits: list[Habit]) -> list[DetectionCandidate]:
     return candidates
 
 
+async def _practice_candidates(
+    session: AsyncSession, user_id: int, *, start_index: int
+) -> list[DetectionCandidate]:
+    """The user's active practices as candidates, dense-indexed after the habits.
+
+    A practice is active while ``end_date IS NULL``; its display name is the
+    user's custom name or the catalog name (:func:`effective_name`). The target
+    is the ``UserPractice`` row, so accept logs a journal-attested
+    ``PracticeSession`` against it (#821).
+    """
+    result = await session.execute(
+        select(UserPractice, Practice)
+        .join(Practice, col(Practice.id) == UserPractice.practice_id)
+        .where(UserPractice.user_id == user_id, col(UserPractice.end_date).is_(None))
+        .order_by(col(UserPractice.id)),
+    )
+    candidates: list[DetectionCandidate] = []
+    for user_practice, practice in result.all():
+        if user_practice.id is None:
+            continue
+        candidates.append(
+            DetectionCandidate(
+                index=start_index + len(candidates),
+                target_type=_PRACTICE_TARGET,
+                target_id=user_practice.id,
+                name=effective_name(practice, user_practice),
+            ),
+        )
+    return candidates
+
+
 def _capped(candidates: list[DetectionCandidate], user_id: int) -> list[DetectionCandidate]:
     """Truncate to :data:`MAX_CANDIDATES`, warning when habits are dropped."""
     if len(candidates) <= MAX_CANDIDATES:
@@ -100,9 +135,10 @@ async def gather_candidates(
     per habit (clear-tier, else first), skips goal-less habits, stamps dense
     0-based indices in habit-id order, and truncates to :data:`MAX_CANDIDATES`.
 
-    ``include_practices`` is a dormant seam (default off) wired up by issue #821:
-    journal-attested PracticeSessions will become candidates here. It is a no-op
-    today so the endpoint (#817) can already pass the flag through.
+    With ``include_practices`` (default off), the user's active practices are
+    appended after the habits, sharing the same :data:`MAX_CANDIDATES` budget and
+    continuing the dense index, so accept can log a journal-attested
+    PracticeSession against the resolved UserPractice (#821).
     """
     result = await session.execute(
         select(Habit)
@@ -111,5 +147,7 @@ async def gather_candidates(
         .order_by(col(Habit.id)),
     )
     habits = list(result.scalars().all())
-    _ = include_practices  # dormant until #821
-    return _capped(_habit_candidates(habits), user_id)
+    candidates = _habit_candidates(habits)
+    if include_practices:
+        candidates += await _practice_candidates(session, user_id, start_index=len(candidates))
+    return _capped(candidates, user_id)

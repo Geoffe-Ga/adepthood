@@ -20,6 +20,7 @@ from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
 from models.practice import Practice
+from models.practice_session import PracticeSession
 from models.user import User
 from models.user_practice import UserPractice
 
@@ -232,16 +233,11 @@ async def test_accept_dismissed_is_conflict(
     assert resp.status_code == HTTPStatus.CONFLICT
 
 
-@pytest.mark.asyncio
-async def test_accept_practice_is_unsupported(
-    async_client: AsyncClient, db_session: AsyncSession
-) -> None:
-    """Accepting a practice suggestion is an explicit 422 placeholder for #821."""
-    headers = await _signup(async_client)
-    user_id = await _user_id(db_session)
-    entry_id = await _create_entry(async_client, headers)
-    user_practice_id = await _seed_user_practice(db_session, user_id)
-    practice_suggestion = CompletionSuggestion(
+async def _seed_practice_suggestion(
+    session: AsyncSession, *, entry_id: int, user_id: int, user_practice_id: int
+) -> int:
+    """Seed a pending PRACTICE suggestion targeting ``user_practice_id``."""
+    suggestion = CompletionSuggestion(
         journal_entry_id=entry_id,
         user_id=user_id,
         target_type=CompletionTargetType.PRACTICE,
@@ -253,16 +249,72 @@ async def test_accept_practice_is_unsupported(
         anchor_text="I sat",
         status=SuggestionStatus.PENDING,
     )
-    db_session.add(practice_suggestion)
-    await db_session.commit()
-    await db_session.refresh(practice_suggestion)
+    session.add(suggestion)
+    await session.commit()
+    await session.refresh(suggestion)
+    assert suggestion.id is not None
+    return suggestion.id
 
-    resp = await async_client.post(
-        f"/journal/suggestions/{practice_suggestion.id}/accept", headers=headers
+
+async def _practice_session_count(session: AsyncSession, user_practice_id: int) -> int:
+    result = await session.execute(
+        select(func.count())
+        .select_from(PracticeSession)
+        .where(col(PracticeSession.user_practice_id) == user_practice_id)
+    )
+    return int(result.scalar_one())
+
+
+@pytest.mark.asyncio
+async def test_accept_practice_logs_journal_attested_session(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Accepting a practice logs a completed, journal-attested PracticeSession (#821)."""
+    headers = await _signup(async_client)
+    user_id = await _user_id(db_session)
+    entry_id = await _create_entry(async_client, headers)
+    up_id = await _seed_user_practice(db_session, user_id)
+    sug_id = await _seed_practice_suggestion(
+        db_session, entry_id=entry_id, user_id=user_id, user_practice_id=up_id
     )
 
-    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert resp.json()["detail"] == "practice_accept_not_supported"
+    resp = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["suggestion"]["status"] == "accepted"
+    assert body["check_in"] is None  # practices carry no streak
+    assert "user_id" not in body["suggestion"]
+    ps = (
+        await db_session.execute(
+            select(PracticeSession).where(col(PracticeSession.user_practice_id) == up_id)
+        )
+    ).scalar_one()
+    assert ps.completed is True
+    assert ps.mode_metadata is not None
+    assert ps.mode_metadata["attested_via"] == "journal"
+
+
+@pytest.mark.asyncio
+async def test_accept_practice_is_idempotent(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Re-accepting a practice suggestion does not log a second session (#821)."""
+    headers = await _signup(async_client)
+    user_id = await _user_id(db_session)
+    entry_id = await _create_entry(async_client, headers)
+    up_id = await _seed_user_practice(db_session, user_id)
+    sug_id = await _seed_practice_suggestion(
+        db_session, entry_id=entry_id, user_id=user_id, user_practice_id=up_id
+    )
+
+    first = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+    second = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+
+    assert first.status_code == HTTPStatus.OK
+    assert second.status_code == HTTPStatus.OK
+    assert second.json()["check_in"] is None
+    assert await _practice_session_count(db_session, up_id) == 1
 
 
 @pytest.mark.asyncio

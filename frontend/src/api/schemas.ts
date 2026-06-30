@@ -467,7 +467,8 @@ export const completionSuggestionListResponseSchema = z.object({
 
 export const acceptSuggestionResultSchema = z.object({
   suggestion: completionSuggestionSchema,
-  check_in: checkInResultSchema,
+  // null for practice targets — a journal-attested PracticeSession has no streak (#821).
+  check_in: checkInResultSchema.nullable(),
 });
 
 export type CompletionTargetTypeT = z.infer<typeof completionTargetTypeSchema>;
