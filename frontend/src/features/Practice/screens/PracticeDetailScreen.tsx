@@ -10,20 +10,23 @@
 
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { ModeConfig } from '../engine/types';
 
 import { type PracticeItem, practices, userPractices } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
-import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
+import {
+  BORDER_RADIUS,
+  SPACING,
+  accent,
+  colors,
+  editorialType,
+  ink,
+  surface,
+  surfaceShadow,
+} from '@/design/tokens';
 import ShareSheet from '@/features/Practice/components/ShareSheet';
 import { MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
@@ -75,7 +78,7 @@ function LoadedDetail({
 }): React.JSX.Element {
   const [shareOpen, setShareOpen] = useState(false);
   return (
-    <ScrollView contentContainerStyle={styles.body} testID="practice-detail-screen">
+    <ScreenScaffold scroll style={styles.scaffold} testID="practice-detail-screen">
       <DetailHeader practice={practice} />
       <DetailBody practice={practice} />
       {state.actionError !== null && (
@@ -112,7 +115,7 @@ function LoadedDetail({
         practiceId={practice.id}
         onClose={() => setShareOpen(false)}
       />
-    </ScrollView>
+    </ScreenScaffold>
   );
 }
 
@@ -128,7 +131,7 @@ export function PracticeDetailScreen(props: PracticeDetailScreenProps): React.JS
   if (state.loading) {
     return (
       <View style={styles.loading} testID="practice-detail-loading">
-        <ActivityIndicator color={colors.primary} size="large" />
+        <ActivityIndicator color={accent.primary} size="large" />
       </View>
     );
   }
@@ -233,7 +236,8 @@ interface DetailHeaderProps {
 
 const DetailHeader = ({ practice }: DetailHeaderProps): React.JSX.Element => (
   <View style={styles.headerBlock}>
-    <Text style={styles.heading} testID="practice-detail-name">
+    <Text style={styles.eyebrow}>PRACTICE</Text>
+    <Text style={styles.heading} accessibilityRole="header" testID="practice-detail-name">
       {practice.name}
     </Text>
     <View style={styles.metaRow}>
@@ -498,10 +502,21 @@ const ErrorView = ({ message, onRetry }: ErrorViewProps): React.JSX.Element => (
 );
 
 const styles = StyleSheet.create({
-  loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  body: { padding: SPACING.md, paddingBottom: SPACING.xl },
+  loading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: surface.canvas,
+  },
+  scaffold: { paddingBottom: SPACING.xl },
   headerBlock: { marginBottom: SPACING.md },
-  heading: { fontSize: 22, fontWeight: '700', color: colors.text.primary },
+  eyebrow: {
+    ...editorialType.caption,
+    color: accent.primary,
+    letterSpacing: 1.5,
+    marginBottom: SPACING.xs,
+  },
+  heading: { ...editorialType.display, color: ink.primary },
   metaRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -509,53 +524,53 @@ const styles = StyleSheet.create({
     marginTop: SPACING.xs,
   },
   badge: {
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.sm,
     borderRadius: BORDER_RADIUS.sm,
   },
-  badgeText: { color: colors.text.primary, fontSize: 12, fontWeight: '600' },
+  badgeText: { color: ink.primary, fontSize: 12, fontWeight: '600' },
   bodyBlock: {
-    backgroundColor: colors.background.card,
+    backgroundColor: surface.raised,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.md,
     marginBottom: SPACING.md,
-    ...shadows.small,
+    ...surfaceShadow.card,
   },
   section: { marginBottom: SPACING.sm },
   sectionLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: colors.text.secondaryAccessible,
+    color: ink.soft,
     textTransform: 'uppercase',
     marginBottom: SPACING.xs,
   },
-  sectionText: { fontSize: 14, color: colors.text.primary, lineHeight: 20 },
-  bullet: { fontSize: 13, color: colors.text.primary, marginVertical: 1 },
+  sectionText: { fontSize: 14, color: ink.primary, lineHeight: 20 },
+  bullet: { fontSize: 13, color: ink.primary, marginVertical: 1 },
   actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm },
   actionButton: {
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: colors.background.card,
+    backgroundColor: surface.raised,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: surface.hairline,
   },
-  actionButtonPrimary: { backgroundColor: colors.primary, borderColor: colors.primary },
-  actionButtonText: { color: colors.text.primary, fontWeight: '600', fontSize: 13 },
-  actionButtonTextPrimary: { color: colors.text.light },
+  actionButtonPrimary: { backgroundColor: accent.primary, borderColor: accent.primary },
+  actionButtonText: { color: ink.primary, fontWeight: '600', fontSize: 13 },
+  actionButtonTextPrimary: { color: surface.raised },
   disabledButton: { opacity: 0.5 },
   pickerCard: {
-    backgroundColor: colors.background.card,
+    backgroundColor: surface.raised,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.md,
     marginTop: SPACING.md,
-    ...shadows.small,
+    ...surfaceShadow.card,
   },
   pickerHeading: {
     fontSize: 14,
     fontWeight: '700',
-    color: colors.text.primary,
+    color: ink.primary,
     marginBottom: SPACING.sm,
   },
   pickerRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs },
@@ -564,20 +579,27 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.sm,
     borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
     alignItems: 'center',
   },
-  stageBoxText: { color: colors.text.primary, fontWeight: '700' },
+  stageBoxText: { color: ink.primary, fontWeight: '700' },
   pickerCancel: { marginTop: SPACING.sm, alignSelf: 'flex-end' },
-  pickerCancelText: { color: colors.primary, fontWeight: '600', fontSize: 13 },
+  pickerCancelText: { color: accent.primary, fontWeight: '600', fontSize: 13 },
   banner: {
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
     padding: SPACING.sm,
     borderRadius: BORDER_RADIUS.sm,
     marginBottom: SPACING.sm,
   },
   bannerText: { color: colors.successText, fontSize: 13, fontWeight: '600' },
-  errorBlock: { padding: SPACING.lg, alignItems: 'center', gap: SPACING.md },
+  errorBlock: {
+    flex: 1,
+    padding: SPACING.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.md,
+    backgroundColor: surface.canvas,
+  },
   errorText: { color: colors.destructive.text, fontSize: 13, marginBottom: SPACING.sm },
 });
 

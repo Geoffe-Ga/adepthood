@@ -35,7 +35,7 @@ import type {
 } from '@/api';
 import { practiceSessions } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
-import { SPACING, colors } from '@/design/tokens';
+import { SPACING, colors, ink, surface } from '@/design/tokens';
 import { InsightCaptureModal } from '@/features/Practice/components/InsightCaptureModal';
 import RitualConfiguratorSheet from '@/features/Practice/configurator/RitualConfiguratorSheet';
 import type { PickedCard } from '@/features/Practice/data/resolveCard';
@@ -901,7 +901,7 @@ const styles = StyleSheet.create({
     paddingBottom: SPACING.lg,
     marginBottom: SPACING.lg,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.separator,
+    borderBottomColor: surface.hairline,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -917,12 +917,12 @@ const styles = StyleSheet.create({
     minHeight: 44,
     paddingHorizontal: SPACING.sm,
   },
-  gearText: { fontSize: 18, color: colors.text.secondary },
-  gearLabel: { fontSize: 14, fontWeight: '600', color: colors.text.secondary },
+  gearText: { fontSize: 18, color: ink.soft },
+  gearLabel: { fontSize: 14, fontWeight: '600', color: ink.soft },
   name: {
     fontSize: 20,
     fontWeight: '700',
-    color: colors.text.primary,
+    color: ink.primary,
     marginBottom: SPACING.md,
   },
   error: {

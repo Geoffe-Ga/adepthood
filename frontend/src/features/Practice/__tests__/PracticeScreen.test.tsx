@@ -357,6 +357,31 @@ describe('PracticeScreen', () => {
     expect(queryByTestId('practice-empty-state')).toBeNull();
   });
 
+  it('frames the active practice with a focal "Begin a session" showcase hero', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId, getByText } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+    // The warm showcase hero presents the arrival moment; the engine's own
+    // Begin control (ritual-start) still drives idle → running unchanged.
+    expect(getByTestId('practice-begin-hero')).toBeTruthy();
+    expect(getByText('Begin a session')).toBeTruthy();
+    expect(getByTestId('ritual-start')).toBeTruthy();
+  });
+
+  it('begins the session from the unchanged engine start control', async () => {
+    jest.useFakeTimers();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId, queryByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('practice-begin-hero')).toBeTruthy());
+    // Pressing Begin (ritual-start) transitions the engine into a running
+    // session — the meditation timer view exposes its running cancel control.
+    await act(async () => {
+      fireEvent.press(getByTestId('ritual-start'));
+    });
+    expect(queryByTestId('ritual-cancel')).toBeTruthy();
+    jest.useRealTimers();
+  });
+
   it('change-practice opens the Catalog seeded to the current stage', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId } = render(<PracticeScreen />);

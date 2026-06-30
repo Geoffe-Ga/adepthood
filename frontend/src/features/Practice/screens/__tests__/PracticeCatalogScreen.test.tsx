@@ -1,5 +1,6 @@
 /* eslint-env jest */
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 import { Alert } from 'react-native';
@@ -343,6 +344,66 @@ describe('PracticeCatalogScreen — defaults wiring', () => {
     // Filtering by Timers should keep this row visible — the fallback maps it to meditation_timer.
     fireEvent.press(view.getByTestId('practice-catalog-mode-timers'));
     expect(view.getByTestId('practice-catalog-row-1')).toBeTruthy();
+  });
+});
+
+describe('PracticeCatalogScreen — empty sections', () => {
+  it('renders an editorial empty state with a Create CTA into the wizard', async () => {
+    const { view, navigateToCreate } = renderScreen();
+    await waitForLoad();
+    // The Imported section is always empty today — it shows the warm empty state
+    // (replacing the old passive "Nothing here yet." line) with a create CTA.
+    expect(view.getByTestId('practice-catalog-section-imported-empty')).toBeTruthy();
+    expect(view.queryByText('Nothing here yet.')).toBeNull();
+    fireEvent.press(view.getByTestId('practice-catalog-section-imported-create'));
+    expect(navigateToCreate).toHaveBeenCalled();
+  });
+});
+
+describe('PracticeCatalogScreen — recently used', () => {
+  beforeEach(async () => {
+    await AsyncStorage.clear();
+  });
+
+  it('hides the Recently-used shortcut when there is no history', async () => {
+    const { view } = renderScreen();
+    await waitForLoad();
+    expect(view.queryByTestId('practice-catalog-recently-used')).toBeNull();
+  });
+
+  it('surfaces a recorded practice in the Recently-used shortcut and opens its detail', async () => {
+    await AsyncStorage.setItem(
+      '@adepthood/recent_practices',
+      JSON.stringify([
+        {
+          id: 2,
+          name: 'Awareness bells preset',
+          mode: 'random_interval_bell',
+          durationMinutes: 20,
+        },
+      ]),
+    );
+    const { view, navigateToDetail } = renderScreen();
+    await waitForLoad();
+    expect(view.getByTestId('practice-catalog-recently-used')).toBeTruthy();
+    const recentRow = view.getByTestId('practice-catalog-recent-row-2');
+    expect(recentRow).toBeTruthy();
+    fireEvent.press(recentRow);
+    expect(navigateToDetail).toHaveBeenCalledWith(2);
+  });
+
+  it('records a practice when its Use button is tapped', async () => {
+    const setActive = jest.fn(async () => undefined) as jest.MockedFunction<
+      (id: number, stage: number) => Promise<void>
+    >;
+    const { view } = renderScreen({ setActive });
+    await waitForLoad();
+    fireEvent.press(view.getByTestId('practice-catalog-row-1-use'));
+    await waitFor(async () => {
+      const raw = await AsyncStorage.getItem('@adepthood/recent_practices');
+      expect(raw).not.toBeNull();
+      expect(JSON.parse(raw as string)[0].id).toBe(1);
+    });
   });
 });
 
