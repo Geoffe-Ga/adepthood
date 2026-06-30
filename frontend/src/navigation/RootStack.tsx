@@ -8,6 +8,7 @@ import { PracticeCatalogScreen } from '../features/Practice/screens/PracticeCata
 import { PracticeDetailScreen } from '../features/Practice/screens/PracticeDetailScreen';
 import SharePreviewScreen from '../features/Practice/screens/SharePreviewScreen';
 import ApiKeySettingsScreen from '../features/Settings/ApiKeySettingsScreen';
+import SettingsHubScreen from '../features/Settings/SettingsHubScreen';
 import TimezoneSettingsScreen from '../features/Settings/TimezoneSettingsScreen';
 
 import type { RootTabParamList } from './BottomTabs';
@@ -39,6 +40,7 @@ export interface CreatePracticePrefill {
 
 export type RootStackParamList = {
   Tabs: NavigatorScreenParams<RootTabParamList>;
+  Settings: undefined;
   ApiKeySettings: undefined;
   TimezoneSettings: undefined;
   SharePreview: { token: string };
@@ -69,6 +71,7 @@ const RootStack = (): React.JSX.Element => (
     }}
   >
     <Stack.Screen name="Tabs" component={BottomTabs} options={{ headerShown: false }} />
+    <Stack.Screen name="Settings" component={SettingsHubScreen} options={{ title: 'Settings' }} />
     <Stack.Screen
       name="ApiKeySettings"
       component={ApiKeySettingsScreen}

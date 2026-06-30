@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -13,8 +12,9 @@ import {
 
 import { BYOK_PROVIDERS, providerForKey } from './byokProviders';
 
+import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { useApiKey } from '@/context/ApiKeyContext';
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, accent, colors, ink, surface } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 /**
@@ -436,7 +436,7 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScreenScaffold scroll testID="api-key-settings-screen">
       <ScreenBody
         apiKey={apiKey}
         draft={state.draft}
@@ -451,44 +451,52 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
         onBack={onBack}
         onOpenTimezone={onOpenTimezone}
       />
-    </ScrollView>
+    </ScreenScaffold>
   );
 }
 
+const MENLO_MONOSPACE = 'Menlo';
+const STORED_LABEL_LETTER_SPACING = 0.5;
+const PROVIDER_HINT_MARGIN_TOP = 2;
+
 const styles = StyleSheet.create({
-  container: { padding: SPACING.xl, backgroundColor: colors.background.card, flexGrow: 1 },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  title: { fontSize: 22, fontWeight: '700', marginBottom: SPACING.md },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: surface.canvas,
+  },
+  title: { fontSize: 22, fontWeight: '700', marginBottom: SPACING.md, color: ink.primary },
   body: {
     fontSize: 14,
-    color: colors.text.secondaryAccessible,
+    color: ink.soft,
     marginBottom: SPACING.xl,
     lineHeight: 20,
   },
   storedCard: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: surface.hairline,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.lg,
     marginBottom: SPACING.xl,
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.raised,
   },
   storedLabel: {
     fontSize: 12,
-    color: colors.text.secondary,
+    color: ink.muted,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: STORED_LABEL_LETTER_SPACING,
   },
   storedValue: {
     fontSize: 18,
-    fontFamily: 'Menlo',
+    fontFamily: MENLO_MONOSPACE,
     marginTop: SPACING.sm,
     marginBottom: SPACING.lg,
-    color: colors.text.primary,
+    color: ink.primary,
   },
   hint: {
     fontSize: 14,
-    color: colors.text.secondary,
+    color: ink.muted,
     marginBottom: SPACING.xl,
     fontStyle: 'italic',
   },
@@ -496,32 +504,34 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     marginBottom: SPACING.sm,
-    color: colors.text.primary,
+    color: ink.primary,
   },
   inputRow: { flexDirection: 'row', alignItems: 'stretch', marginBottom: SPACING.md },
   input: {
     flex: 1,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: surface.hairline,
     borderRadius: BORDER_RADIUS.md,
     padding: SPACING.md,
     fontSize: 16,
+    backgroundColor: surface.raised,
+    color: ink.primary,
   },
   revealButton: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: surface.hairline,
     borderLeftWidth: 0,
     borderTopRightRadius: BORDER_RADIUS.md,
     borderBottomRightRadius: BORDER_RADIUS.md,
     paddingHorizontal: SPACING.md,
     justifyContent: 'center',
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
   },
-  revealButtonText: { fontSize: 14, color: colors.text.primary, fontWeight: '600' },
-  error: { color: colors.danger, marginBottom: SPACING.md },
+  revealButtonText: { fontSize: 14, color: ink.primary, fontWeight: '600' },
+  error: { color: colors.destructive.text, marginBottom: SPACING.md },
   success: { color: colors.successText, marginBottom: SPACING.md },
   button: { borderRadius: BORDER_RADIUS.md, padding: SPACING.md + 2, alignItems: 'center' },
-  primaryButton: { backgroundColor: colors.primary, marginTop: SPACING.xs },
+  primaryButton: { backgroundColor: accent.primary, marginTop: SPACING.xs },
   primaryButtonText: { color: colors.text.light, fontSize: 16, fontWeight: '600' },
   destructiveButton: {
     backgroundColor: colors.destructive.background,
@@ -530,7 +540,7 @@ const styles = StyleSheet.create({
   },
   destructiveButtonText: { color: colors.destructive.text, fontWeight: '600' },
   linkRow: { marginTop: SPACING.xl, alignItems: 'center' },
-  link: { color: colors.primary, fontWeight: '600' },
+  link: { color: accent.primary, fontWeight: '600' },
   providerSection: { marginBottom: SPACING.xl },
   providerRow: {
     flexDirection: 'row',
@@ -538,10 +548,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: SPACING.sm,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: surface.hairline,
   },
   providerInfo: { flex: 1, paddingRight: SPACING.md },
-  providerName: { fontSize: 15, fontWeight: '600', color: colors.text.primary },
-  providerHint: { fontSize: 13, color: colors.text.secondaryAccessible, marginTop: 2 },
+  providerName: { fontSize: 15, fontWeight: '600', color: ink.primary },
+  providerHint: { fontSize: 13, color: ink.soft, marginTop: PROVIDER_HINT_MARGIN_TOP },
   detected: { color: colors.successText, marginBottom: SPACING.md, fontSize: 13 },
 });

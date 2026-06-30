@@ -1,7 +1,7 @@
 /* eslint-env jest */
 /* global describe, it, expect, beforeEach, jest */
 import { NavigationContainer } from '@react-navigation/native';
-import { render, fireEvent } from '@testing-library/react-native';
+import { render } from '@testing-library/react-native';
 import {
   BookOpen,
   Compass,
@@ -9,15 +9,10 @@ import {
   Home,
   LayoutGrid,
   NotebookPen,
+  Settings,
   Sprout,
 } from 'lucide-react-native';
 import React from 'react';
-
-const mockLogout = jest.fn(() => Promise.resolve());
-
-jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ logout: mockLogout }),
-}));
 
 jest.mock('expo-notifications', () => ({
   getPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
@@ -42,25 +37,25 @@ beforeEach(() => {
 });
 
 describe('BottomTabs', () => {
-  it('renders a logout button in the header', () => {
-    const { getByText } = render(
+  it('renders the settings gear in the header (logout moved to the hub)', () => {
+    const { getByTestId } = render(
       <NavigationContainer>
         <BottomTabs />
       </NavigationContainer>,
     );
 
-    expect(getByText('Logout')).toBeTruthy();
+    expect(getByTestId('open-settings-button')).toBeTruthy();
   });
 
-  it('calls logout when the logout button is pressed', () => {
-    const { getByText } = render(
+  it('renders the gear as the lucide Settings icon, not a logout text link', () => {
+    const { UNSAFE_getAllByType, queryByText } = render(
       <NavigationContainer>
         <BottomTabs />
       </NavigationContainer>,
     );
 
-    fireEvent.press(getByText('Logout'));
-    expect(mockLogout).toHaveBeenCalled();
+    expect(UNSAFE_getAllByType(Settings).length).toBeGreaterThanOrEqual(1);
+    expect(queryByText('Logout')).toBeNull();
   });
 
   it('renders a lucide icon for each of the six tabs', () => {
