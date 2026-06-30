@@ -54,7 +54,6 @@ class _CheckInJob:
     user_id: int
     user_timezone: str
     did_complete: bool
-    is_scheduled: bool
     old_streak: int
     new_streak: int
     # Explicit completion time for a backfilled past day; ``None`` lets the
@@ -327,7 +326,6 @@ async def record_goal_completion(
         user_id=ctx.user_id,
         user_timezone=ctx.user_timezone,
         did_complete=did_complete,
-        is_scheduled=is_scheduled,
         old_streak=old_streak,
         new_streak=new_streak,
         timestamp=_completion_timestamp(completed_on, ctx.user_timezone),

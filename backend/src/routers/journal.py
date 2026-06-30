@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from sqlalchemy import ColumnElement, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -18,7 +18,7 @@ from dependencies.timezone import current_user_timezone
 from domain.detection import CompletionDetected, detect_completions
 from domain.practice_resolution import effective_config
 from domain.resonance import MarginaliaAnchored, generate_essay, generate_marginalia
-from errors import conflict, not_found, unprocessable
+from errors import bad_gateway, conflict, not_found, unprocessable
 from models.completion_suggestion import (
     CompletionSuggestion,
     CompletionTargetType,
@@ -418,9 +418,7 @@ async def _generate_marginalia_or_502(
         return await generate_marginalia(message, llm=llm, prior_entries=prior)
     except LLMProviderError as exc:
         await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail="llm_provider_error"
-        ) from exc
+        raise bad_gateway("llm_provider_error") from exc
 
 
 @router.post("/{entry_id}/resonance", response_model=ResonanceResponse)
@@ -757,9 +755,7 @@ async def expand_marginalia_essay(
             note=note.note,
         )
     except LLMProviderError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail="llm_provider_error"
-        ) from exc
+        raise bad_gateway("llm_provider_error") from exc
     note.essay = essay
     note.essay_generated_at = datetime.now(UTC)
     await session.commit()

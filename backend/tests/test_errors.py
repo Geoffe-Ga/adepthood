@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException, status
 
-from errors import bad_request, forbidden, not_found
+from errors import bad_gateway, bad_request, forbidden, not_found
 
 
 def test_not_found_returns_404_with_resource_detail() -> None:
@@ -33,3 +33,10 @@ def test_bad_request_returns_400_with_reason() -> None:
     assert isinstance(exc, HTTPException)
     assert exc.status_code == status.HTTP_400_BAD_REQUEST
     assert exc.detail == "user_already_exists"
+
+
+def test_bad_gateway_returns_502_with_reason() -> None:
+    exc = bad_gateway("llm_provider_error")
+    assert isinstance(exc, HTTPException)
+    assert exc.status_code == status.HTTP_502_BAD_GATEWAY
+    assert exc.detail == "llm_provider_error"

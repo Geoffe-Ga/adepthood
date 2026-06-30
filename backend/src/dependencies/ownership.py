@@ -24,6 +24,17 @@ from routers.auth import get_current_user
 logger = logging.getLogger(__name__)
 
 
+def visible_to_user(owner_col: Mapped[int | None], user_id: int) -> ColumnElement[bool]:
+    """WHERE predicate matching system (``owner_user_id IS NULL``) or caller-owned rows.
+
+    The shared read-visibility predicate for the personal-library resources
+    (practice recipes + tags): the caller sees every system row plus their own.
+    List endpoints use it directly; :func:`system_or_owned_clause` ANDs it with
+    an id filter for the single-row lookup.  Pass ``col(Model.owner_user_id)``.
+    """
+    return or_(owner_col.is_(None), owner_col == user_id)
+
+
 def system_or_owned_clause(
     id_col: Mapped[int | None],
     owner_col: Mapped[int | None],
@@ -32,11 +43,11 @@ def system_or_owned_clause(
 ) -> ColumnElement[bool]:
     """WHERE clause for a system (``owner_user_id IS NULL``) or caller-owned row.
 
-    The shared read-visibility predicate for the personal-library resources
-    (practice recipes + tags): the caller sees every system row plus their own.
-    Pass the model's ``col(Model.id)`` / ``col(Model.owner_user_id)``.
+    The single-row variant of :func:`visible_to_user`: ANDs the visibility
+    predicate with an id filter.  Pass the model's ``col(Model.id)`` /
+    ``col(Model.owner_user_id)``.
     """
-    return and_(id_col == obj_id, or_(owner_col.is_(None), owner_col == user_id))
+    return and_(id_col == obj_id, visible_to_user(owner_col, user_id))
 
 
 def require_personal_row(owner_user_id: int | None, *, system_detail: str) -> None:
