@@ -277,6 +277,18 @@ export const rhythm = {
 } as const;
 
 // ---------------------------------------------------------------------------
+// Motion — shared durations + distance for the app-wide entrance/feedback
+// vocabulary. Every consumer gates on ``useReducedMotion`` and falls back to the
+// resting state, so this polish never costs accessibility.
+// ---------------------------------------------------------------------------
+
+export const motion = {
+  fast: 90, // ms — press / quick feedback
+  base: 220, // ms — entrance fade + settle, celebration pulse
+  settleY: 6, // px — the small upward translate an element settles from
+} as const;
+
+// ---------------------------------------------------------------------------
 // Border radius
 // ---------------------------------------------------------------------------
 

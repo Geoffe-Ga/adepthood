@@ -35,6 +35,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import WeeklyProgress from './WeeklyProgress';
 
 import type { PracticeSessionResponse } from '@/api';
+import { EmptyState } from '@/components/feedback/EmptyState';
 import { useAuth } from '@/context/AuthContext';
 import { BORDER_RADIUS, SPACING, colors, touchTarget } from '@/design/tokens';
 import { stageService } from '@/features/Map/services/stageService';
@@ -222,17 +223,20 @@ interface EmptyStateViewProps {
 const EmptyStateView = ({ stageNumber }: EmptyStateViewProps): React.JSX.Element => {
   const insets = useSafeAreaInsets();
   return (
-    <View
-      style={[styles.empty, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+    <EmptyState
+      glyph="🧘"
+      title="No practice yet"
+      body="No practice set for this stage yet."
+      cta={
+        <CatalogButton
+          stageNumber={stageNumber}
+          label="Browse practices"
+          testID="browse-catalog-button"
+        />
+      }
+      style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
       testID="practice-empty-state"
-    >
-      <Text style={styles.emptyText}>No practice set for this stage yet.</Text>
-      <CatalogButton
-        stageNumber={stageNumber}
-        label="Browse practices"
-        testID="browse-catalog-button"
-      />
-    </View>
+    />
   );
 };
 
@@ -319,19 +323,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: SPACING.xxl,
     backgroundColor: colors.background.primary,
-  },
-  empty: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: SPACING.lg,
-    padding: SPACING.xxl,
-    backgroundColor: colors.background.primary,
-  },
-  emptyText: {
-    fontSize: 16,
-    color: colors.text.secondary,
-    textAlign: 'center',
   },
   errorText: {
     color: colors.danger,
