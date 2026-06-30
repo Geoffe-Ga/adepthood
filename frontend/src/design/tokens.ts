@@ -262,6 +262,20 @@ export const SPACING = {
   buttonV: 14,
 } as const;
 
+/**
+ * Editorial screen rhythm (#825) — the single source of screen padding + section
+ * gaps so every screen inherits Habits' composed feel. Derived from ``spacing``
+ * (8px base); consumed by the layout primitives (ScreenScaffold / ScreenHeader /
+ * EditorialSection).
+ */
+export const rhythm = {
+  screenPaddingH: spacing(2), // 16 — horizontal page gutter
+  screenPaddingTop: spacing(2), // 16 — top padding under the safe area
+  sectionGap: spacing(3), // 24 — between editorial sections
+  blockGap: spacing(1.5), // 12 — between blocks within a section
+  heroPaddingV: spacing(3), // 24 — vertical breathing room around a screen header
+} as const;
+
 // ---------------------------------------------------------------------------
 // Border radius
 // ---------------------------------------------------------------------------
