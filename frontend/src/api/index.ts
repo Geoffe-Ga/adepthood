@@ -18,10 +18,14 @@ import {
   practiceRecipeSchema,
   practiceTagSchema,
   promptListResponseSchema,
+  resonanceResponseSchema,
   stageIntroSchema,
   stageSchema,
   timezoneReadSchema,
   type AcceptSuggestionResultT,
+  type CareKindT,
+  type CareResourceT,
+  type CareResponseT,
   type CompletionSuggestionT,
   type CompletionTargetTypeT,
   type Page,
@@ -1110,6 +1114,13 @@ export interface Marginalia {
   updated_at: string;
 }
 
+/** One of the four non-clinical care routings (mirrors ``domain.care.CareKind``). */
+export type CareKind = CareKindT;
+/** One support pointer (mirrors the backend ``CareResourceResponse``). */
+export type CareResource = CareResourceT;
+/** The care surface (mirrors the backend ``CareResponse``); see ``CareSupportNote``. */
+export type CareResponse = CareResponseT;
+
 export interface ResonanceResponse {
   marginalia: Marginalia[];
   /** Completion suggestions detected on the same pass (#817); defaults to []. */
@@ -1117,6 +1128,12 @@ export interface ResonanceResponse {
   remaining_messages: number;
   remaining_balance: number;
   monthly_reset_date: string;
+  /**
+   * Human + professional support surface (NORTH-STAR §10). ``null`` on every
+   * ordinary entry; set only on an acute-distress signal. Additive — a response
+   * without it parses and behaves exactly as before.
+   */
+  care?: CareResponse | null;
 }
 
 export interface MarginaliaListResponse {
@@ -1203,6 +1220,7 @@ export const resonance = {
       method: 'POST',
       token,
       headers: byokHeaders(apiKey),
+      schema: resonanceResponseSchema as unknown as z.ZodType<ResonanceResponse>,
     });
   },
   /** List an entry's margin notes (ordered by anchor position). */
