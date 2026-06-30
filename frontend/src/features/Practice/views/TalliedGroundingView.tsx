@@ -6,6 +6,8 @@ import type { TalliedPosition } from '../engine/tallied';
 import type { RitualControls, RitualState, TalliedGroundingConfig } from '../engine/types';
 
 import RitualControlsBar from './RitualControlsBar';
+import type { SessionSurface } from './sessionSurface';
+import { useSessionSurface } from './sessionSurface';
 
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 
@@ -27,18 +29,27 @@ interface Props {
 }
 
 const TalliedGroundingView = ({ config, state, controls, onSave }: Props): React.JSX.Element => {
+  const surface = useSessionSurface();
   const total = totalSteps(config);
   const isComplete = state.status === 'complete' || state.currentStepIndex >= total;
   // Skip the decomposition entirely once complete — the result would be unused.
   const position = isComplete ? null : decompose(state.currentStepIndex, config);
   const canAdvance = state.status === 'running' && !isComplete;
   return (
-    <View style={styles.container} testID="tallied-grounding-view">
-      <TalliedHeader config={config} position={position} />
+    <View
+      style={[styles.container, { backgroundColor: surface.ground }]}
+      testID="tallied-grounding-view"
+    >
+      <TalliedHeader config={config} position={position} surface={surface} />
       {position === null ? (
-        <CompleteCard onSave={onSave} />
+        <CompleteCard onSave={onSave} surface={surface} />
       ) : (
-        <ActivePrompt position={position} canAdvance={canAdvance} onTap={controls.tap} />
+        <ActivePrompt
+          position={position}
+          canAdvance={canAdvance}
+          onTap={controls.tap}
+          surface={surface}
+        />
       )}
       <RitualControlsBar status={state.status} controls={controls} startLabel="Begin grounding" />
     </View>
@@ -48,30 +59,41 @@ const TalliedGroundingView = ({ config, state, controls, onSave }: Props): React
 interface HeaderProps {
   config: TalliedGroundingConfig;
   position: TalliedPosition | null;
+  surface: SessionSurface;
 }
 
-const TalliedHeader = ({ config, position }: HeaderProps): React.JSX.Element => (
+const TalliedHeader = ({ config, position, surface }: HeaderProps): React.JSX.Element => (
   <View
     style={styles.header}
     testID="tallied-grounding-header"
     accessibilityRole="header"
     accessibilityLabel="Tallied grounding"
   >
-    <Text style={styles.badge} testID="tallied-grounding-badge">
+    <Text style={[styles.badge, { color: surface.text }]} testID="tallied-grounding-badge">
       {`${config.categories.length} × ${config.rounds}`}
     </Text>
     {position && (
-      <Text style={styles.round} testID="tallied-grounding-round">
+      <Text style={[styles.round, { color: surface.text }]} testID="tallied-grounding-round">
         {`Round ${position.roundIndex + 1} of ${config.rounds}`}
       </Text>
     )}
   </View>
 );
 
-const CompleteCard = ({ onSave }: { onSave?: () => void }): React.JSX.Element => (
-  <View style={styles.completeCard} testID="tallied-grounding-complete">
-    <Text style={styles.completeTitle}>Grounding complete</Text>
-    <Text style={styles.completeBody}>You tallied every round. Save the session below.</Text>
+interface CompleteCardProps {
+  onSave?: () => void;
+  surface: SessionSurface;
+}
+
+const CompleteCard = ({ onSave, surface }: CompleteCardProps): React.JSX.Element => (
+  <View
+    style={[styles.completeCard, { backgroundColor: surface.raised }]}
+    testID="tallied-grounding-complete"
+  >
+    <Text style={[styles.completeTitle, { color: surface.accent }]}>Grounding complete</Text>
+    <Text style={[styles.completeBody, { color: surface.textSoft }]}>
+      You tallied every round. Save the session below.
+    </Text>
     <Pressable
       style={[styles.save, !onSave && styles.saveDisabled]}
       onPress={onSave}
@@ -90,14 +112,20 @@ interface ActivePromptProps {
   position: TalliedPosition;
   canAdvance: boolean;
   onTap: () => void;
+  surface: SessionSurface;
 }
 
-const ActivePrompt = ({ position, canAdvance, onTap }: ActivePromptProps): React.JSX.Element => {
+const ActivePrompt = ({
+  position,
+  canAdvance,
+  onTap,
+  surface,
+}: ActivePromptProps): React.JSX.Element => {
   const { category, itemInCategory } = position;
   const promptText = `Find ${category.label} (${itemInCategory + 1} of ${category.target_count})`;
   return (
     <>
-      <Text style={styles.prompt} testID="tallied-grounding-prompt">
+      <Text style={[styles.prompt, { color: surface.text }]} testID="tallied-grounding-prompt">
         {promptText}
       </Text>
       <Pressable
@@ -122,19 +150,16 @@ const styles = StyleSheet.create({
     fontSize: 36,
     fontWeight: '700',
     letterSpacing: 4,
-    color: colors.text.primary,
     marginBottom: SPACING.sm,
   },
   round: {
     fontSize: 18,
     fontWeight: '700',
     letterSpacing: 2,
-    color: colors.text.primary,
   },
   prompt: {
     fontSize: 20,
     fontWeight: '500',
-    color: colors.text.primary,
     textAlign: 'center',
     marginBottom: SPACING.xxl,
     paddingHorizontal: SPACING.lg,
@@ -156,7 +181,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   completeCard: {
-    backgroundColor: colors.background.card,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.xl,
     alignItems: 'center',
@@ -167,12 +191,10 @@ const styles = StyleSheet.create({
   completeTitle: {
     fontSize: 22,
     fontWeight: '600',
-    color: colors.success,
     marginBottom: SPACING.sm,
   },
   completeBody: {
     fontSize: 14,
-    color: colors.text.secondaryAccessible,
     textAlign: 'center',
     marginBottom: SPACING.lg,
   },

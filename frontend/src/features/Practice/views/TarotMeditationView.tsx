@@ -6,6 +6,8 @@ import type { RitualControls, RitualState } from '../engine/types';
 
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
+import type { SessionSurface } from './sessionSurface';
+import { useSessionSurface } from './sessionSurface';
 
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 
@@ -41,33 +43,50 @@ const TarotMeditationView = ({
   hideTimer,
   onSave,
 }: Props): React.JSX.Element => {
+  const surface = useSessionSurface();
   const showTimer =
     state.status === 'paused' ||
     state.status === 'complete' ||
     (state.status === 'running' && !hideTimer);
   return (
-    <View style={styles.container} testID="tarot-meditation-view">
-      <TarotCardFace card={card} />
+    <View
+      style={[styles.container, { backgroundColor: surface.ground }]}
+      testID="tarot-meditation-view"
+    >
+      <TarotCardFace card={card} surface={surface} />
       {showTimer && (
-        <Text style={styles.timer} testID="tarot-time-remaining">
+        <Text style={[styles.timer, { color: surface.text }]} testID="tarot-time-remaining">
           {formatTime(state.remainingMs ?? 0)}
         </Text>
       )}
-      <TarotFooter state={state} controls={controls} hideTimer={hideTimer} onSave={onSave} />
+      <TarotFooter
+        state={state}
+        controls={controls}
+        hideTimer={hideTimer}
+        onSave={onSave}
+        surface={surface}
+      />
     </View>
   );
 };
 
-const TarotCardFace = ({ card }: { card: TarotCard }): React.JSX.Element => (
-  <View style={styles.card} testID="tarot-card">
-    <Text style={styles.cardIndex}>{`${card.index} · MAJOR ARCANA`}</Text>
-    <Text style={styles.cardName} testID="tarot-card-name">
+interface TarotCardFaceProps {
+  card: TarotCard;
+  surface: SessionSurface;
+}
+
+const TarotCardFace = ({ card, surface }: TarotCardFaceProps): React.JSX.Element => (
+  <View style={[styles.card, { backgroundColor: surface.raised }]} testID="tarot-card">
+    <Text style={[styles.cardIndex, { color: surface.textMuted }]}>
+      {`${card.index} · MAJOR ARCANA`}
+    </Text>
+    <Text style={[styles.cardName, { color: surface.text }]} testID="tarot-card-name">
       {card.name}
     </Text>
-    <Text style={styles.cardKeyword} testID="tarot-card-keyword">
+    <Text style={[styles.cardKeyword, { color: surface.textSoft }]} testID="tarot-card-keyword">
       {card.keyword}
     </Text>
-    <Text style={styles.cardSymbolism} testID="tarot-card-symbolism">
+    <Text style={[styles.cardSymbolism, { color: surface.textSoft }]} testID="tarot-card-symbolism">
       {card.symbolism}
     </Text>
   </View>
@@ -78,9 +97,16 @@ interface FooterProps {
   controls: RitualControls;
   hideTimer: boolean;
   onSave?: () => void;
+  surface: SessionSurface;
 }
 
-const TarotFooter = ({ state, controls, hideTimer, onSave }: FooterProps): React.JSX.Element => {
+const TarotFooter = ({
+  state,
+  controls,
+  hideTimer,
+  onSave,
+  surface,
+}: FooterProps): React.JSX.Element => {
   if (state.status === 'idle') {
     return (
       <Pressable
@@ -97,7 +123,7 @@ const TarotFooter = ({ state, controls, hideTimer, onSave }: FooterProps): React
   if (state.status === 'running' && hideTimer) {
     return (
       <Pressable
-        style={styles.longCancel}
+        style={[styles.longCancel, { borderColor: surface.textMuted }]}
         onLongPress={controls.cancel}
         delayLongPress={800}
         testID="tarot-cancel-longpress"
@@ -105,7 +131,7 @@ const TarotFooter = ({ state, controls, hideTimer, onSave }: FooterProps): React
         accessibilityLabel="Long-press to cancel meditation"
         accessibilityHint="Hold to end the sit early without revealing the timer."
       >
-        <Text style={styles.longCancelText}>Hold to cancel</Text>
+        <Text style={[styles.longCancelText, { color: surface.textMuted }]}>Hold to cancel</Text>
       </Pressable>
     );
   }
@@ -139,7 +165,6 @@ const styles = StyleSheet.create({
   card: {
     width: 260,
     minHeight: 360,
-    backgroundColor: colors.background.card,
     borderRadius: BORDER_RADIUS.xl,
     borderWidth: 2,
     borderColor: colors.secondary,
@@ -152,26 +177,22 @@ const styles = StyleSheet.create({
   cardIndex: {
     fontSize: 11,
     letterSpacing: 3,
-    color: colors.text.tertiaryAccessible,
     marginBottom: SPACING.md,
   },
   cardName: {
     fontSize: 26,
     fontWeight: '600',
-    color: colors.text.primary,
     textAlign: 'center',
     marginBottom: SPACING.md,
   },
   cardKeyword: {
     fontSize: 14,
     fontStyle: 'italic',
-    color: colors.text.secondaryAccessible,
     textAlign: 'center',
     marginBottom: SPACING.lg,
   },
   cardSymbolism: {
     fontSize: 13,
-    color: colors.text.secondaryAccessible,
     textAlign: 'center',
     lineHeight: 18,
     paddingHorizontal: SPACING.sm,
@@ -179,7 +200,6 @@ const styles = StyleSheet.create({
   timer: {
     fontSize: 36,
     fontWeight: '300',
-    color: colors.text.primary,
     fontVariant: ['tabular-nums'],
     marginBottom: SPACING.lg,
   },
@@ -198,10 +218,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.xl,
     borderRadius: BORDER_RADIUS.lg,
     borderWidth: 1,
-    borderColor: colors.text.tertiaryAccessible,
   },
   longCancelText: {
-    color: colors.text.tertiaryAccessible,
     fontSize: 13,
     letterSpacing: 1,
   },

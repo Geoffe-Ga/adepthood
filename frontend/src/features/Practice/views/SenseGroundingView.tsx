@@ -10,6 +10,8 @@ import type {
 } from '../engine/types';
 
 import RitualControlsBar from './RitualControlsBar';
+import type { SessionSurface } from './sessionSurface';
+import { useSessionSurface } from './sessionSurface';
 
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 
@@ -47,6 +49,7 @@ interface Props {
 }
 
 const SenseGroundingView = ({ config, state, controls, onSave }: Props): React.JSX.Element => {
+  const surface = useSessionSurface();
   const total = config.prompts.length;
   const currentIdx = Math.min(state.currentStepIndex, total - 1);
   const activePrompt = config.prompts[currentIdx];
@@ -54,8 +57,11 @@ const SenseGroundingView = ({ config, state, controls, onSave }: Props): React.J
   // Show the advance button only once started; idle shows a primer instead of a dead button.
   const inProgress = (state.status === 'running' || state.status === 'paused') && !isComplete;
   return (
-    <View style={styles.container} testID="sense-grounding-view">
-      <SenseHeader prompt={inProgress ? activePrompt : null} />
+    <View
+      style={[styles.container, { backgroundColor: surface.ground }]}
+      testID="sense-grounding-view"
+    >
+      <SenseHeader prompt={inProgress ? activePrompt : null} surface={surface} />
       <SenseBody
         isComplete={isComplete}
         inProgress={inProgress}
@@ -63,6 +69,7 @@ const SenseGroundingView = ({ config, state, controls, onSave }: Props): React.J
         canAdvance={state.status === 'running' && !isComplete}
         onTap={controls.tap}
         onSave={onSave}
+        surface={surface}
       />
       <RitualControlsBar status={state.status} controls={controls} startLabel="Begin grounding" />
     </View>
@@ -76,6 +83,7 @@ interface SenseBodyProps {
   canAdvance: boolean;
   onTap: () => void;
   onSave?: () => void;
+  surface: SessionSurface;
 }
 
 /** The middle of the card: completion summary, live prompt, or idle primer. */
@@ -86,41 +94,55 @@ const SenseBody = ({
   canAdvance,
   onTap,
   onSave,
+  surface,
 }: SenseBodyProps): React.JSX.Element => {
-  if (isComplete) return <CompleteCard onSave={onSave} />;
+  if (isComplete) return <CompleteCard onSave={onSave} surface={surface} />;
   if (inProgress && prompt) {
     return <AdvanceButton sense={prompt.sense} canAdvance={canAdvance} onTap={onTap} />;
   }
   return (
-    <Text style={styles.intro} testID="sense-grounding-intro">
+    <Text style={[styles.intro, { color: surface.textSoft }]} testID="sense-grounding-intro">
       Move through your five senses, one at a time, to settle into the present moment.
     </Text>
   );
 };
 
-const SenseHeader = ({ prompt }: { prompt: SensePrompt | null | undefined }): React.JSX.Element => (
+interface SenseHeaderProps {
+  prompt: SensePrompt | null | undefined;
+  surface: SessionSurface;
+}
+
+const SenseHeader = ({ prompt, surface }: SenseHeaderProps): React.JSX.Element => (
   <View
     style={styles.header}
     testID="sense-grounding-header"
     accessibilityRole="header"
     accessibilityLabel="5-4-3-2-1 grounding"
   >
-    <Text style={styles.badge} testID="sense-grounding-badge">
+    <Text style={[styles.badge, { color: surface.text }]} testID="sense-grounding-badge">
       5-4-3-2-1
     </Text>
     {prompt && (
-      <Text style={styles.count} testID="sense-grounding-count">
+      <Text style={[styles.count, { color: surface.textSoft }]} testID="sense-grounding-count">
         {`${SENSE_COUNT[prompt.sense]} things you can `}
-        <Text style={styles.countVerb}>{SENSE_VERB[prompt.sense]}</Text>
+        <Text style={[styles.countVerb, { color: surface.text }]}>{SENSE_VERB[prompt.sense]}</Text>
       </Text>
     )}
   </View>
 );
 
-const CompleteCard = ({ onSave }: { onSave?: () => void }): React.JSX.Element => (
-  <View style={styles.completeCard} testID="sense-grounding-complete">
-    <Text style={styles.completeTitle}>Grounding complete</Text>
-    <Text style={styles.completeBody}>
+interface CompleteCardProps {
+  onSave?: () => void;
+  surface: SessionSurface;
+}
+
+const CompleteCard = ({ onSave, surface }: CompleteCardProps): React.JSX.Element => (
+  <View
+    style={[styles.completeCard, { backgroundColor: surface.raised }]}
+    testID="sense-grounding-complete"
+  >
+    <Text style={[styles.completeTitle, { color: surface.accent }]}>Grounding complete</Text>
+    <Text style={[styles.completeBody, { color: surface.textSoft }]}>
       You moved through all five senses. Save the session below.
     </Text>
     <Pressable
@@ -164,21 +186,17 @@ const styles = StyleSheet.create({
     fontSize: 36,
     fontWeight: '700',
     letterSpacing: 4,
-    color: colors.text.primary,
     marginBottom: SPACING.sm,
   },
   count: {
     fontSize: 18,
-    color: colors.text.secondaryAccessible,
   },
   countVerb: {
     fontWeight: '700',
     letterSpacing: 2,
-    color: colors.text.primary,
   },
   intro: {
     fontSize: 16,
-    color: colors.text.secondaryAccessible,
     textAlign: 'center',
     marginBottom: SPACING.xxl,
     paddingHorizontal: SPACING.lg,
@@ -201,7 +219,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   completeCard: {
-    backgroundColor: colors.background.card,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.xl,
     alignItems: 'center',
@@ -212,12 +229,10 @@ const styles = StyleSheet.create({
   completeTitle: {
     fontSize: 22,
     fontWeight: '600',
-    color: colors.success,
     marginBottom: SPACING.sm,
   },
   completeBody: {
     fontSize: 14,
-    color: colors.text.secondaryAccessible,
     textAlign: 'center',
     marginBottom: SPACING.lg,
   },

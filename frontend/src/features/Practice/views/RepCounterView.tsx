@@ -5,8 +5,9 @@ import type { RepCounterConfig, RitualControls, RitualState } from '../engine/ty
 
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
+import { useSessionSurface } from './sessionSurface';
 
-import { SPACING, colors } from '@/design/tokens';
+import { SPACING } from '@/design/tokens';
 
 interface Props {
   config: RepCounterConfig;
@@ -15,29 +16,30 @@ interface Props {
 }
 
 const RepCounterView = ({ config, state, controls }: Props): React.JSX.Element => {
+  const surface = useSessionSurface();
   const canTap = state.status === 'running';
   const timeCapMs = config.time_cap_minutes != null ? config.time_cap_minutes * 60_000 : null;
   const remaining = timeCapMs !== null ? Math.max(0, timeCapMs - state.elapsedMs) : null;
   return (
-    <View style={styles.container} testID="rep-counter-view">
+    <View style={[styles.container, { backgroundColor: surface.ground }]} testID="rep-counter-view">
       <Pressable
-        style={styles.tapZone}
+        style={[styles.tapZone, { backgroundColor: surface.raised }]}
         onPress={canTap ? controls.tap : undefined}
         testID="rep-counter-tap-zone"
         accessibilityRole="button"
         accessibilityLabel={`Add one ${config.unit_label}`}
         accessibilityHint={canTap ? 'Double-tap to add a rep' : undefined}
       >
-        <Text style={styles.count} testID="rep-counter-count">
+        <Text style={[styles.count, { color: surface.text }]} testID="rep-counter-count">
           {state.repCount}
         </Text>
-        <Text style={styles.target}>of {config.target_reps}</Text>
-        <Text style={styles.unit} testID="rep-counter-unit">
+        <Text style={[styles.target, { color: surface.textSoft }]}>of {config.target_reps}</Text>
+        <Text style={[styles.unit, { color: surface.textSoft }]} testID="rep-counter-unit">
           {config.unit_label}
         </Text>
       </Pressable>
       {remaining !== null && (
-        <Text style={styles.timeCap} testID="rep-counter-time-cap">
+        <Text style={[styles.timeCap, { color: surface.textMuted }]} testID="rep-counter-time-cap">
           time cap: {formatTime(remaining)}
         </Text>
       )}
@@ -55,30 +57,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: SPACING.xl,
     marginBottom: SPACING.xl,
-    backgroundColor: colors.background.card,
     borderRadius: 24,
   },
   count: {
     fontSize: 120,
     fontWeight: '200',
-    color: colors.text.primary,
     fontVariant: ['tabular-nums'],
   },
   target: {
     fontSize: 18,
-    color: colors.text.secondaryAccessible,
     marginTop: SPACING.xs,
   },
   unit: {
     fontSize: 14,
-    color: colors.text.secondaryAccessible,
     textTransform: 'uppercase',
     letterSpacing: 2,
     marginTop: SPACING.xs,
   },
   timeCap: {
     fontSize: 14,
-    color: colors.text.tertiaryAccessible,
     marginBottom: SPACING.xl,
     fontVariant: ['tabular-nums'],
   },

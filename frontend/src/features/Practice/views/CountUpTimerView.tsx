@@ -5,6 +5,7 @@ import type { RitualControls, RitualState } from '../engine/types';
 
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
+import { useSessionSurface } from './sessionSurface';
 
 import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
 
@@ -13,40 +14,44 @@ interface Props {
   controls: RitualControls;
 }
 
-const CountUpTimerView = ({ state, controls }: Props): React.JSX.Element => (
-  <View style={styles.container} testID="count-up-timer-view">
-    <Text style={styles.time} testID="count-up-elapsed">
-      {formatTime(state.elapsedMs)}
-    </Text>
-    <Text style={styles.label}>elapsed</Text>
-    {state.status === 'running' && (
-      <TouchableOpacity
-        style={styles.endButton}
-        onPress={controls.complete}
-        testID="count-up-end"
-        accessibilityRole="button"
-        accessibilityLabel="End session"
-      >
-        <Text style={styles.endButtonText}>End session</Text>
-      </TouchableOpacity>
-    )}
-    <View style={styles.spacer} />
-    <RitualControlsBar status={state.status} controls={controls} />
-  </View>
-);
+const CountUpTimerView = ({ state, controls }: Props): React.JSX.Element => {
+  const surface = useSessionSurface();
+  return (
+    <View
+      style={[styles.container, { backgroundColor: surface.ground }]}
+      testID="count-up-timer-view"
+    >
+      <Text style={[styles.time, { color: surface.text }]} testID="count-up-elapsed">
+        {formatTime(state.elapsedMs)}
+      </Text>
+      <Text style={[styles.label, { color: surface.textSoft }]}>elapsed</Text>
+      {state.status === 'running' && (
+        <TouchableOpacity
+          style={styles.endButton}
+          onPress={controls.complete}
+          testID="count-up-end"
+          accessibilityRole="button"
+          accessibilityLabel="End session"
+        >
+          <Text style={styles.endButtonText}>End session</Text>
+        </TouchableOpacity>
+      )}
+      <View style={styles.spacer} />
+      <RitualControlsBar status={state.status} controls={controls} />
+    </View>
+  );
+};
 
 const styles = StyleSheet.create({
   container: { alignItems: 'center', padding: SPACING.xl },
   time: {
     fontSize: 64,
     fontWeight: '200',
-    color: colors.text.primary,
     fontVariant: ['tabular-nums'],
     marginTop: SPACING.xxl,
   },
   label: {
     fontSize: 14,
-    color: colors.text.secondaryAccessible,
     marginTop: SPACING.xs,
     marginBottom: SPACING.xl,
     textTransform: 'uppercase',

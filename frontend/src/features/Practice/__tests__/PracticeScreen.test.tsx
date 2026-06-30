@@ -338,6 +338,18 @@ describe('PracticeScreen', () => {
     );
   });
 
+  it('wraps the running session mode view in the showcase SessionSurface (#859)', async () => {
+    // The active session provides the warm-dark showcase surface to the mode
+    // view, so the interior renders on the umber ground (not the light one).
+    const { StyleSheet } = require('react-native');
+    const { showcase } = require('../../../design/tokens');
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('meditation-timer-view')).toBeTruthy());
+    const ground = StyleSheet.flatten(getByTestId('meditation-timer-view').props.style);
+    expect(ground.backgroundColor).toBe(showcase.canvas);
+  });
+
   it('reflects a practice selected elsewhere once the screen regains focus', async () => {
     // The Practice tab stays mounted while the user pushes to the catalog to
     // pick a practice. The selection saves there; on returning, a silent

@@ -25,6 +25,8 @@ import type {
 
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
+import type { SessionSurface } from './sessionSurface';
+import { useSessionSurface } from './sessionSurface';
 
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 
@@ -120,19 +122,24 @@ function useAnchorState(
 
 const MindfulAnchorView = ({ config, state, controls, onComplete }: Props): React.JSX.Element => {
   const { status } = state;
+  const surface = useSessionSurface();
   const anchor = useAnchorState(config, controls, status, onComplete);
   const beginDisabled = config.require_option_choice && anchor.selectedOptionKey === null;
   return (
-    <View style={styles.container} testID="mindful-anchor-view">
-      <InstructionCard instruction={config.instruction} />
+    <View
+      style={[styles.container, { backgroundColor: surface.ground }]}
+      testID="mindful-anchor-view"
+    >
+      <InstructionCard instruction={config.instruction} surface={surface} />
       {status === 'idle' && config.options.length > 0 && (
         <OptionChooser
           options={config.options}
           selectedKey={anchor.selectedOptionKey}
           onSelect={anchor.setSelectedOptionKey}
+          surface={surface}
         />
       )}
-      {status === 'running' && <ElapsedDisplay seconds={anchor.elapsedSeconds} />}
+      {status === 'running' && <ElapsedDisplay seconds={anchor.elapsedSeconds} surface={surface} />}
       {status === 'idle' ? (
         <BeginButton disabled={beginDisabled} onPress={controls.start} />
       ) : (
@@ -149,9 +156,17 @@ const MindfulAnchorView = ({ config, state, controls, onComplete }: Props): Reac
   );
 };
 
-const InstructionCard = ({ instruction }: { instruction: string }): React.JSX.Element => (
-  <View style={styles.instructionCard} testID="mindful-anchor-instruction">
-    <Text style={styles.instructionText}>{instruction}</Text>
+interface InstructionCardProps {
+  instruction: string;
+  surface: SessionSurface;
+}
+
+const InstructionCard = ({ instruction, surface }: InstructionCardProps): React.JSX.Element => (
+  <View
+    style={[styles.instructionCard, { backgroundColor: surface.raised }]}
+    testID="mindful-anchor-instruction"
+  >
+    <Text style={[styles.instructionText, { color: surface.text }]}>{instruction}</Text>
   </View>
 );
 
@@ -159,12 +174,14 @@ interface OptionChooserProps {
   options: readonly MindfulAnchorOption[];
   selectedKey: string | null;
   onSelect: (_key: string) => void;
+  surface: SessionSurface;
 }
 
 const OptionChooser = ({
   options,
   selectedKey,
   onSelect,
+  surface,
 }: OptionChooserProps): React.JSX.Element => (
   <View
     style={styles.chooser}
@@ -178,6 +195,7 @@ const OptionChooser = ({
         option={option}
         selected={option.key === selectedKey}
         onSelect={onSelect}
+        surface={surface}
       />
     ))}
   </View>
@@ -187,32 +205,49 @@ interface OptionRowProps {
   option: MindfulAnchorOption;
   selected: boolean;
   onSelect: (_key: string) => void;
+  surface: SessionSurface;
 }
 
-const OptionRow = ({ option, selected, onSelect }: OptionRowProps): React.JSX.Element => (
+const OptionRow = ({ option, selected, onSelect, surface }: OptionRowProps): React.JSX.Element => (
   <Pressable
-    style={[styles.option, selected && styles.optionSelected]}
+    style={[
+      styles.option,
+      { borderColor: surface.textMuted },
+      selected && [styles.optionSelected, { backgroundColor: surface.raised }],
+    ]}
     onPress={() => onSelect(option.key)}
     testID={`mindful-anchor-option-${option.key}`}
     accessibilityRole="radio"
     accessibilityLabel={option.label}
     accessibilityState={{ selected }}
   >
-    <Text style={styles.optionLabel}>{option.label}</Text>
-    {option.description && <Text style={styles.optionDescription}>{option.description}</Text>}
+    <Text style={[styles.optionLabel, { color: surface.text }]}>{option.label}</Text>
+    {option.description && (
+      <Text style={[styles.optionDescription, { color: surface.textSoft }]}>
+        {option.description}
+      </Text>
+    )}
   </Pressable>
 );
 
-const ElapsedDisplay = ({ seconds }: { seconds: number }): React.JSX.Element => (
+interface ElapsedDisplayProps {
+  seconds: number;
+  surface: SessionSurface;
+}
+
+const ElapsedDisplay = ({ seconds, surface }: ElapsedDisplayProps): React.JSX.Element => (
   <View
     style={styles.elapsedBlock}
     testID="mindful-anchor-elapsed"
     accessibilityLiveRegion="polite"
   >
-    <Text style={styles.elapsedTime} testID="mindful-anchor-elapsed-time">
+    <Text
+      style={[styles.elapsedTime, { color: surface.text }]}
+      testID="mindful-anchor-elapsed-time"
+    >
       {formatTime(seconds * MS_PER_SECOND)}
     </Text>
-    <Text style={styles.elapsedLabel}>elapsed</Text>
+    <Text style={[styles.elapsedLabel, { color: surface.textSoft }]}>elapsed</Text>
   </View>
 );
 
@@ -305,7 +340,6 @@ const ConfirmDialog = ({
 const styles = StyleSheet.create({
   container: { alignItems: 'center', padding: SPACING.xl },
   instructionCard: {
-    backgroundColor: colors.background.card,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.xl,
     marginBottom: SPACING.xl,
@@ -315,37 +349,32 @@ const styles = StyleSheet.create({
   instructionText: {
     fontSize: 20,
     fontWeight: '500',
-    color: colors.text.primary,
     textAlign: 'center',
     lineHeight: 28,
   },
   chooser: { alignSelf: 'stretch', gap: SPACING.sm, marginBottom: SPACING.xl },
   option: {
     borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.md,
   },
+  // Selection highlight: brand border reads as the active cue on either ground.
   optionSelected: {
     borderColor: colors.primary,
-    backgroundColor: colors.background.accent,
   },
-  optionLabel: { fontSize: 16, fontWeight: '600', color: colors.text.primary },
+  optionLabel: { fontSize: 16, fontWeight: '600' },
   optionDescription: {
     fontSize: 13,
-    color: colors.text.secondaryAccessible,
     marginTop: SPACING.xs,
   },
   elapsedBlock: { alignItems: 'center', marginBottom: SPACING.xl },
   elapsedTime: {
     fontSize: 56,
     fontWeight: '200',
-    color: colors.text.primary,
     fontVariant: ['tabular-nums'],
   },
   elapsedLabel: {
     fontSize: 14,
-    color: colors.text.secondaryAccessible,
     marginTop: SPACING.xs,
     textTransform: 'uppercase',
     letterSpacing: 2,

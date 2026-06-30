@@ -14,8 +14,9 @@ import { RANDOM_BELL_MAX_BELLS_CEILING, SECONDS_PER_MINUTE } from '../engine/typ
 
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
+import { useSessionSurface } from './sessionSurface';
 
-import { SPACING, colors } from '@/design/tokens';
+import { SPACING } from '@/design/tokens';
 
 const MS_PER_SECOND = 1000;
 
@@ -155,19 +156,23 @@ const RandomIntervalBellView = ({
     });
   }, [onMetadataChange, schedule, struckCount]);
 
+  const surface = useSessionSurface();
   const total = schedule?.offsets.length ?? 0;
   const nextHint = nextBellHint(schedule, struckCount, state.elapsedMs, state.status);
   return (
-    <View style={styles.container} testID="random-interval-bell-view">
-      <Text style={styles.label}>elapsed</Text>
-      <Text style={styles.time} testID="random-interval-bell-elapsed">
+    <View
+      style={[styles.container, { backgroundColor: surface.ground }]}
+      testID="random-interval-bell-view"
+    >
+      <Text style={[styles.label, { color: surface.textSoft }]}>elapsed</Text>
+      <Text style={[styles.time, { color: surface.text }]} testID="random-interval-bell-elapsed">
         {formatTime(state.elapsedMs)}
       </Text>
-      <Text style={styles.count} testID="random-interval-bell-count">
+      <Text style={[styles.count, { color: surface.text }]} testID="random-interval-bell-count">
         {`${struckCount} / ${total} bells`}
       </Text>
       {nextHint !== null && (
-        <Text style={styles.hint} testID="random-interval-bell-next">
+        <Text style={[styles.hint, { color: surface.textSoft }]} testID="random-interval-bell-next">
           {`Next bell in ~${nextHint}s`}
         </Text>
       )}
@@ -194,7 +199,6 @@ const styles = StyleSheet.create({
   container: { alignItems: 'center', padding: SPACING.xl, flex: 1 },
   label: {
     fontSize: 14,
-    color: colors.text.secondaryAccessible,
     textTransform: 'uppercase',
     letterSpacing: 2,
     marginTop: SPACING.xl,
@@ -202,19 +206,16 @@ const styles = StyleSheet.create({
   time: {
     fontSize: 48,
     fontWeight: '300',
-    color: colors.text.primary,
     fontVariant: ['tabular-nums'],
     marginVertical: SPACING.md,
   },
   count: {
     fontSize: 18,
-    color: colors.text.primary,
     fontVariant: ['tabular-nums'],
     marginBottom: SPACING.sm,
   },
   hint: {
     fontSize: 14,
-    color: colors.text.secondaryAccessible,
     marginBottom: SPACING.md,
   },
 });
