@@ -1,6 +1,42 @@
+from datetime import date, timedelta
+
 import pytest
 
-from domain.streaks import is_scheduled_on, update_streak
+from domain.streaks import current_consecutive_streak, is_scheduled_on, update_streak
+
+_TODAY = date(2026, 6, 30)
+_YESTERDAY = _TODAY - timedelta(days=1)
+
+
+def test_current_consecutive_streak_empty_is_zero() -> None:
+    assert current_consecutive_streak([], _TODAY) == 0
+
+
+def test_current_consecutive_streak_today_counts() -> None:
+    """A completion today grace-gates open and starts the chain at 1."""
+    assert current_consecutive_streak([_TODAY], _TODAY) == 1
+
+
+def test_current_consecutive_streak_yesterday_grace_window() -> None:
+    """Most-recent day == yesterday is still inside the one-day grace gate."""
+    assert current_consecutive_streak([_YESTERDAY], _TODAY) == 1
+
+
+def test_current_consecutive_streak_two_days_stale_breaks() -> None:
+    """Most-recent day older than yesterday is stale; the streak is 0."""
+    two_days_ago = _TODAY - timedelta(days=2)
+    assert current_consecutive_streak([two_days_ago], _TODAY) == 0
+
+
+def test_current_consecutive_streak_counts_consecutive_run() -> None:
+    days_desc = [_TODAY - timedelta(days=i) for i in range(3)]
+    assert current_consecutive_streak(days_desc, _TODAY) == 3
+
+
+def test_current_consecutive_streak_gap_breaks_chain() -> None:
+    """A gap > 1 day ends the walk; only the leading run counts."""
+    days_desc = [_TODAY, _YESTERDAY, _TODAY - timedelta(days=3)]
+    assert current_consecutive_streak(days_desc, _TODAY) == 2
 
 
 def test_streak_increment() -> None:

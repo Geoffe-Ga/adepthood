@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -26,8 +26,9 @@ from sqlmodel import col, select
 from domain.dates import to_user_date_bucket, today_in_tz
 from domain.streaks import (
     SubtractiveContext,
+    current_consecutive_streak,
     subtractive_current_streak,
-    subtractive_day_totals,
+    sum_units_by_user_day,
     update_streak,
 )
 from models.goal_completion import GoalCompletion
@@ -43,43 +44,6 @@ __all__ = [
     "compute_streak_before_and_after",
     "update_streak",
 ]
-
-
-def _count_consecutive_days(sorted_days: list[date], day_ok: dict[date, bool]) -> int:
-    """Count consecutive days from most recent where ``day_ok`` is True.
-
-    ``sorted_days`` MUST be sorted descending (most recent first); the
-    consecutive-day check ``(sorted_days[i - 1] - day).days == 1`` only
-    holds for that ordering, and a future caller passing ascending
-    dates would silently return the wrong streak length without this
-    invariant being documented.
-    """
-    streak = 0
-    for i, day in enumerate(sorted_days):
-        if not day_ok[day]:
-            break
-        if i > 0 and (sorted_days[i - 1] - day).days != 1:
-            break
-        streak += 1
-    return streak
-
-
-def _is_chain_stale(sorted_days_desc: list[date], user_timezone: str) -> bool:
-    """Return True when the most-recent completion day is older than yesterday.
-
-    Mirrors the frontend ``streakFromCompletions`` recency gate so both
-    sides of the wire agree: if the user has not completed today *or*
-    yesterday, the chain is considered broken and the streak is 0.
-
-    The "yesterday" grace window prevents the UI from briefly flashing
-    "streak lost" between local midnight and the user's first
-    completion of the day; one stale day is forgiven, two is not.
-    """
-    if not sorted_days_desc:
-        return True
-    today = today_in_tz(user_timezone)
-    yesterday = today - timedelta(days=1)
-    return sorted_days_desc[0] < yesterday
 
 
 async def compute_consecutive_streak(
@@ -114,15 +78,29 @@ async def _fetch_day_totals(
 ) -> dict[date, float]:
     """Sum a goal's completion units per user-local calendar day (one query)."""
     rows = await session.execute(
-        select(GoalCompletion.timestamp, GoalCompletion.completed_units)
+        select(GoalCompletion)
         .where(GoalCompletion.goal_id == goal_id, GoalCompletion.user_id == user_id)
         .order_by(col(GoalCompletion.timestamp).desc())
     )
-    day_totals: dict[date, float] = {}
-    for ts, units in rows:
-        day = to_user_date_bucket(ts, user_timezone)
-        day_totals[day] = day_totals.get(day, 0.0) + units
-    return day_totals
+    return sum_units_by_user_day(rows.scalars().all(), user_timezone)
+
+
+def _additive_streak_from_day_totals(day_totals: dict[date, float], user_timezone: str) -> int:
+    """Additive consecutive-day streak from bucketed totals (incl. zero days).
+
+    A most-recent *logged* day that wasn't a completion (a persisted
+    ``completed_units == 0`` "did not complete" row) breaks the chain
+    immediately, so the streak is 0 even though earlier days completed.  The
+    leading completed days then go to the shared
+    :func:`domain.streaks.current_consecutive_streak`, which owns the recency
+    grace gate + backward walk that the frontend ``streakFromCompletions``
+    mirrors — keeping GET /habits and GET /habits/{id}/stats in lockstep.
+    """
+    sorted_days = sorted(day_totals, reverse=True)
+    completed_days = [d for d in sorted_days if day_totals[d] > 0]
+    if not completed_days or completed_days[0] != sorted_days[0]:
+        return 0
+    return current_consecutive_streak(completed_days, today_in_tz(user_timezone))
 
 
 def _streak_from_day_totals(
@@ -133,17 +111,7 @@ def _streak_from_day_totals(
     """Count the consecutive-day streak from pre-bucketed day totals."""
     if subtractive is not None:
         return subtractive_current_streak(day_totals, user_timezone, subtractive)
-
-    sorted_days = sorted(day_totals, reverse=True)
-    # Mirror the frontend's recency gate so a stale chain reports 0 here
-    # too.  ``compute_consecutive_streak`` is also called from the
-    # check-in path which inserts today's completion before reading,
-    # so the gate is a no-op there; the win is preventing surprise
-    # divergence from any future caller.
-    if _is_chain_stale(sorted_days, user_timezone):
-        return 0
-    day_ok = {d: day_totals[d] > 0 for d in sorted_days}
-    return _count_consecutive_days(sorted_days, day_ok)
+    return _additive_streak_from_day_totals(day_totals, user_timezone)
 
 
 @dataclass(frozen=True)
@@ -226,16 +194,10 @@ def compute_habit_streak(
     ``start_date`` to walk backwards counting abstention days instead.
     """
     if subtractive is not None:
-        day_totals = subtractive_day_totals(completions, user_timezone)
+        day_totals = sum_units_by_user_day(completions, user_timezone)
         return subtractive_current_streak(day_totals, user_timezone, subtractive)
-    dates = _completed_user_dates(completions, user_timezone)
-    if not dates:
-        return 0
-    sorted_dates = sorted(dates, reverse=True)
-    if _is_chain_stale(sorted_dates, user_timezone):
-        return 0
-    day_ok = dict.fromkeys(sorted_dates, True)
-    return _count_consecutive_days(sorted_dates, day_ok)
+    sorted_dates = sorted(_completed_user_dates(completions, user_timezone), reverse=True)
+    return current_consecutive_streak(sorted_dates, today_in_tz(user_timezone))
 
 
 def check_milestones(
