@@ -2,7 +2,15 @@
 /* global describe, it, expect, beforeEach, jest */
 import { NavigationContainer } from '@react-navigation/native';
 import { render, fireEvent } from '@testing-library/react-native';
-import { BookOpen, Compass, Flower2, LayoutGrid, NotebookPen, Sprout } from 'lucide-react-native';
+import {
+  BookOpen,
+  Compass,
+  Flower2,
+  Home,
+  LayoutGrid,
+  NotebookPen,
+  Sprout,
+} from 'lucide-react-native';
 import React from 'react';
 
 const mockLogout = jest.fn(() => Promise.resolve());
@@ -55,7 +63,7 @@ describe('BottomTabs', () => {
     expect(mockLogout).toHaveBeenCalled();
   });
 
-  it('renders a lucide icon for each of the five tabs', () => {
+  it('renders a lucide icon for each of the six tabs', () => {
     const { UNSAFE_getAllByType } = render(
       <NavigationContainer>
         <BottomTabs />
@@ -66,7 +74,7 @@ describe('BottomTabs', () => {
     // animation in @react-navigation/bottom-tabs); only assert each icon
     // appears at least once, which is what makeTabIcon being invoked
     // for every TAB_CONFIGS entry guarantees.
-    for (const Icon of [Sprout, Flower2, BookOpen, NotebookPen, Compass]) {
+    for (const Icon of [Home, Sprout, Flower2, BookOpen, NotebookPen, Compass]) {
       expect(UNSAFE_getAllByType(Icon).length).toBeGreaterThanOrEqual(1);
     }
   });
@@ -78,7 +86,7 @@ describe('BottomTabs', () => {
       </NavigationContainer>,
     );
 
-    // LayoutGrid was the Catalog tab icon; it must be absent now (5 tabs).
+    // LayoutGrid was the Catalog tab icon; it must be absent now (6 tabs).
     expect(UNSAFE_queryAllByType(LayoutGrid)).toHaveLength(0);
   });
 });
