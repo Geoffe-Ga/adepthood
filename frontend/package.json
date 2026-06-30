@@ -16,7 +16,7 @@
     "expo-image-picker": "~16.0.6",
     "expo-keep-awake": "~14.0.3",
     "expo-notifications": "~0.29.14",
-    "expo-secure-store": "^55.0.11",
+    "expo-secure-store": "^56.0.4",
     "expo-status-bar": "~2.0.1",
     "lucide-react-native": "0.542.0",
     "react": "18.3.1",
