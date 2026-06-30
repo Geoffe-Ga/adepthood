@@ -85,7 +85,10 @@ jobs:
         # failed/empty review), fail so the check is red and the review is
         # re-run — never a silent success with no review (#810).
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Prefer the action's Claude App token so the comment is authored by
+          # "claude" (consistent with the pre-#810 flow + any author-aware
+          # consumer); fall back to GITHUB_TOKEN if no Claude App is configured.
+          GH_TOKEN: ${{ steps.claude-review.outputs.github_token || secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           STRUCTURED: ${{ steps.claude-review.outputs.structured_output }}
