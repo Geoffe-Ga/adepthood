@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import CompletionSuggestionNote from './CompletionSuggestionNote';
 import EditConfirmDialog from './EditConfirmDialog';
 import GetResonanceButton, { shouldShowResonance } from './GetResonanceButton';
 import HighlightedBody from './HighlightedBody';
@@ -29,7 +30,13 @@ import ResonanceEssayModal from './ResonanceEssayModal';
 import { useResonance } from './useResonance';
 
 import { journal, prompts } from '@/api';
-import type { EntryStatus, JournalMessage, Marginalia } from '@/api';
+import type {
+  CheckInResult,
+  CompletionSuggestion,
+  EntryStatus,
+  JournalMessage,
+  Marginalia,
+} from '@/api';
 import { Button } from '@/components/Button';
 import { colors } from '@/design/tokens';
 import { useIdle } from '@/hooks/useIdle';
@@ -404,20 +411,52 @@ function ReadColumn({
   );
 }
 
-/** The stack of margin notes, ordered by anchor position. */
-function MarginNoteList({
-  notes,
-  onOpen,
-}: {
+type MarginItem =
+  | { key: string; anchor: number; note: Marginalia }
+  | { key: string; anchor: number; suggestion: CompletionSuggestion };
+
+/** Literary notes + actionable suggestions interleaved by anchor position. */
+interface MarginStreamProps {
   notes: Marginalia[];
+  suggestions: CompletionSuggestion[];
+  acceptedCheckIns: Record<number, CheckInResult>;
   onOpen: (_note: Marginalia) => void;
-}) {
-  const ordered = [...notes].sort((a, b) => a.anchor_start - b.anchor_start);
+  onAccept: (_id: number) => void | Promise<void>;
+  onDismiss: (_id: number) => void | Promise<void>;
+}
+
+function buildMarginItems(notes: Marginalia[], suggestions: CompletionSuggestion[]): MarginItem[] {
+  const items: MarginItem[] = [
+    ...notes.map((note) => ({ key: `note-${note.id}`, anchor: note.anchor_start, note })),
+    ...suggestions
+      .filter((s) => s.status !== 'dismissed')
+      .map((s) => ({ key: `suggestion-${s.id}`, anchor: s.anchor_start, suggestion: s })),
+  ];
+  return items.sort((a, b) => a.anchor - b.anchor);
+}
+
+function MarginStream({
+  notes,
+  suggestions,
+  acceptedCheckIns,
+  onOpen,
+  onAccept,
+  onDismiss,
+}: MarginStreamProps) {
   return (
     <>
-      {ordered.map((note) => (
-        <View key={note.id} style={styles.marginNoteSlot}>
-          <MarginNote note={note} onOpen={onOpen} />
+      {buildMarginItems(notes, suggestions).map((item) => (
+        <View key={item.key} style={styles.marginNoteSlot}>
+          {'note' in item ? (
+            <MarginNote note={item.note} onOpen={onOpen} />
+          ) : (
+            <CompletionSuggestionNote
+              suggestion={item.suggestion}
+              checkIn={acceptedCheckIns[item.suggestion.id] ?? null}
+              onAccept={onAccept}
+              onDismiss={onDismiss}
+            />
+          )}
         </View>
       ))}
     </>
@@ -603,11 +642,22 @@ function JournalPage({
   const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
   const settle = useSettleIn(useReducedMotion());
   const notes = ctl.resonance.marginalia;
+  const suggestions = ctl.resonance.suggestions;
+  const hasVisibleSuggestions = suggestions.some((s) => s.status !== 'dismissed');
 
   let marginContent: React.ReactNode;
   if (renderMargin) marginContent = renderMargin({ body: ctl.autosave.body, isIdle: ctl.isIdle });
-  else if (notes.length > 0) {
-    marginContent = <MarginNoteList notes={notes} onOpen={ctl.modal.onOpenNote} />;
+  else if (notes.length > 0 || hasVisibleSuggestions) {
+    marginContent = (
+      <MarginStream
+        notes={notes}
+        suggestions={suggestions}
+        acceptedCheckIns={ctl.resonance.acceptedCheckIns}
+        onOpen={ctl.modal.onOpenNote}
+        onAccept={ctl.resonance.acceptSuggestion}
+        onDismiss={ctl.resonance.dismissSuggestion}
+      />
+    );
   } else marginContent = <ResonanceMargin error={ctl.resonance.error} />;
 
   return (
