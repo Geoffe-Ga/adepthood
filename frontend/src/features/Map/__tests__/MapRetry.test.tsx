@@ -26,6 +26,8 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 jest.mock('../../../store/useProgramProgression', () => ({
   useDerivedCurrentStage: (fallback: number) => fallback,
+  useDerivedCurrentWeek: (fallback: number) => fallback,
+  useDaysUntilStage: () => null,
 }));
 
 interface StageHistoryData {

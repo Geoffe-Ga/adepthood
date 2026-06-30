@@ -29,8 +29,12 @@ jest.mock('react-native-safe-area-context', () => ({
 // consumes ``useDerivedCurrentStage`` directly, so mocking it here drives both
 // the "current" highlight and the calendar-based unlock.
 let mockDerivedStage = 1;
+let mockDerivedWeek = 1;
+let mockDaysUntilStage: number | null = null;
 jest.mock('../../../store/useProgramProgression', () => ({
   useDerivedCurrentStage: (fallback: number) => mockDerivedStage ?? fallback,
+  useDerivedCurrentWeek: (fallback: number) => mockDerivedWeek ?? fallback,
+  useDaysUntilStage: () => mockDaysUntilStage,
 }));
 
 /** Build a realistic StageData for testing (must be prefixed with mock). */
@@ -118,6 +122,8 @@ describe('MapScreen', () => {
     mockNavigate.mockClear();
     mockLoadStages.mockClear();
     mockDerivedStage = 1;
+    mockDerivedWeek = 1;
+    mockDaysUntilStage = null;
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
 
