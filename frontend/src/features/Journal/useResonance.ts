@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type MutableRefObject,
   type SetStateAction,
 } from 'react';
 
@@ -36,6 +37,8 @@ export interface UseResonanceResult {
   suggestions: CompletionSuggestion[];
   /** The check-in (streak + milestones) from the most recent accept, if any. */
   lastCheckIn: CheckInResult | null;
+  /** Check-in (streak) per accepted suggestion id, for the confirmed card. */
+  acceptedCheckIns: Record<number, CheckInResult>;
   loading: boolean;
   error: string | null;
   requestResonance: () => Promise<void>;
@@ -93,6 +96,8 @@ function useLoadOnOpen<T>(
 interface SuggestionsApi {
   suggestions: CompletionSuggestion[];
   lastCheckIn: CheckInResult | null;
+  /** Check-in (streak) per accepted suggestion id, for the confirmed card. */
+  acceptedCheckIns: Record<number, CheckInResult>;
   mergeFromGenerate: (_incoming: CompletionSuggestion[]) => void;
   acceptSuggestion: (_id: number) => Promise<void>;
   dismissSuggestion: (_id: number) => Promise<void>;
@@ -102,6 +107,7 @@ interface SuggestionsApi {
 function useSuggestions(routeEntryId: number | null, setError: SetError): SuggestionsApi {
   const [suggestions, setSuggestions] = useState<CompletionSuggestion[]>([]);
   const [lastCheckIn, setLastCheckIn] = useState<CheckInResult | null>(null);
+  const [acceptedCheckIns, setAcceptedCheckIns] = useState<Record<number, CheckInResult>>({});
   const pendingIdsRef = useRef<Set<number>>(new Set());
 
   useLoadOnOpen(routeEntryId, completionSuggestions.list, setSuggestions);
@@ -111,41 +117,79 @@ function useSuggestions(routeEntryId: number | null, setError: SetError): Sugges
   }, []);
 
   const acceptSuggestion = useCallback(
-    async (id: number): Promise<void> => {
-      if (pendingIdsRef.current.has(id)) return; // per-id guard — no double-log
-      pendingIdsRef.current.add(id);
-      try {
-        const result = await completionSuggestions.accept(id);
-        setSuggestions((prev) => mergeSuggestionsById(prev, [result.suggestion]));
-        setLastCheckIn(result.check_in);
-      } catch (err) {
-        setError(formatApiError(err)); // row stays pending; user can retry
-      } finally {
-        pendingIdsRef.current.delete(id);
-      }
-    },
+    (id: number) =>
+      runAccept(id, {
+        pendingIdsRef,
+        setSuggestions,
+        setLastCheckIn,
+        setAcceptedCheckIns,
+        setError,
+      }),
     [setError],
   );
 
   const dismissSuggestion = useCallback(
-    async (id: number): Promise<void> => {
-      if (pendingIdsRef.current.has(id)) return;
-      pendingIdsRef.current.add(id);
-      const snapshot = suggestions;
-      setSuggestions(snapshot.filter((s) => s.id !== id)); // optimistic
-      try {
-        await completionSuggestions.dismiss(id);
-      } catch (err) {
-        setSuggestions(snapshot); // revert
-        setError(formatApiError(err));
-      } finally {
-        pendingIdsRef.current.delete(id);
-      }
-    },
+    (id: number) => runDismiss(id, suggestions, { pendingIdsRef, setSuggestions, setError }),
     [suggestions, setError],
   );
 
-  return { suggestions, lastCheckIn, mergeFromGenerate, acceptSuggestion, dismissSuggestion };
+  return {
+    suggestions,
+    lastCheckIn,
+    acceptedCheckIns,
+    mergeFromGenerate,
+    acceptSuggestion,
+    dismissSuggestion,
+  };
+}
+
+interface AcceptDeps {
+  pendingIdsRef: MutableRefObject<Set<number>>;
+  setSuggestions: Dispatch<SetStateAction<CompletionSuggestion[]>>;
+  setLastCheckIn: Dispatch<SetStateAction<CheckInResult | null>>;
+  setAcceptedCheckIns: Dispatch<SetStateAction<Record<number, CheckInResult>>>;
+  setError: SetError;
+}
+
+/** Accept a suggestion: per-id guarded; logs the completion, flips to accepted. */
+async function runAccept(id: number, deps: AcceptDeps): Promise<void> {
+  if (deps.pendingIdsRef.current.has(id)) return; // per-id guard — no double-log
+  deps.pendingIdsRef.current.add(id);
+  try {
+    const result = await completionSuggestions.accept(id);
+    deps.setSuggestions((prev) => mergeSuggestionsById(prev, [result.suggestion]));
+    deps.setLastCheckIn(result.check_in);
+    deps.setAcceptedCheckIns((prev) => ({ ...prev, [id]: result.check_in }));
+  } catch (err) {
+    deps.setError(formatApiError(err)); // row stays pending; user can retry
+  } finally {
+    deps.pendingIdsRef.current.delete(id);
+  }
+}
+
+interface DismissDeps {
+  pendingIdsRef: MutableRefObject<Set<number>>;
+  setSuggestions: Dispatch<SetStateAction<CompletionSuggestion[]>>;
+  setError: SetError;
+}
+
+/** Dismiss a suggestion: per-id guarded; optimistic remove, revert on error. */
+async function runDismiss(
+  id: number,
+  snapshot: CompletionSuggestion[],
+  deps: DismissDeps,
+): Promise<void> {
+  if (deps.pendingIdsRef.current.has(id)) return;
+  deps.pendingIdsRef.current.add(id);
+  deps.setSuggestions(snapshot.filter((s) => s.id !== id)); // optimistic
+  try {
+    await completionSuggestions.dismiss(id);
+  } catch (err) {
+    deps.setSuggestions(snapshot); // revert
+    deps.setError(formatApiError(err));
+  } finally {
+    deps.pendingIdsRef.current.delete(id);
+  }
 }
 
 interface GeneratePass {
@@ -219,6 +263,7 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
     marginalia,
     suggestions: sug.suggestions,
     lastCheckIn: sug.lastCheckIn,
+    acceptedCheckIns: sug.acceptedCheckIns,
     loading,
     error,
     requestResonance,
