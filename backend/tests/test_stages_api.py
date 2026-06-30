@@ -78,12 +78,6 @@ async def test_list_stages_requires_auth(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_stage_requires_auth(async_client: AsyncClient) -> None:
-    resp = await async_client.get("/stages/1")
-    assert resp.status_code == HTTPStatus.UNAUTHORIZED
-
-
-@pytest.mark.asyncio
 async def test_get_stage_progress_requires_auth(async_client: AsyncClient) -> None:
     resp = await async_client.get("/stages/1/progress")
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
@@ -201,34 +195,6 @@ async def test_list_stages_populates_progress_field(
     # Stage 1 is always unlocked, and the user has a practice session,
     # so progress should be > 0.
     assert data[0]["progress"] > 0.0
-
-
-# ── GET /stages/{stage_number} ──────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_get_stage_detail(
-    async_client: AsyncClient,
-    db_session: AsyncSession,
-) -> None:
-    headers, _user_id = await _signup(async_client)
-    await _seed_stages(db_session, count=2)
-    resp = await async_client.get("/stages/1", headers=headers)
-    assert resp.status_code == HTTPStatus.OK
-    data = resp.json()
-    assert data["stage_number"] == 1
-    assert data["title"] == "Stage 1"
-    assert data["spiral_dynamics_color"] == "beige"
-    assert "is_unlocked" in data
-
-
-@pytest.mark.asyncio
-async def test_get_stage_not_found(
-    async_client: AsyncClient,
-) -> None:
-    headers, _user_id = await _signup(async_client)
-    resp = await async_client.get("/stages/99", headers=headers)
-    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 # ── GET /stages/{stage_number}/progress ─────────────────────────────────

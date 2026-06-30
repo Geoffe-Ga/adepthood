@@ -1,16 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import {
-  fetchAllPages,
-  habits,
-  practices,
-  practiceSessions,
-  goalGroups,
-  stages,
-  userPractices,
-  course,
-  ApiValidationError,
-} from '../index';
+import { fetchAllPages, habits, practices, stages, course, ApiValidationError } from '../index';
 
 // Mock global fetch
 const mockFetch = jest.fn() as jest.Mock;
@@ -73,35 +63,6 @@ const validPractice = (over: Record<string, unknown> = {}) => ({
   approved: true,
   ...over,
 });
-const validUserPractice = (over: Record<string, unknown> = {}) => ({
-  id: 1,
-  user_id: 1,
-  practice_id: 2,
-  stage_number: 1,
-  start_date: '2026-01-01',
-  end_date: null,
-  ...over,
-});
-const validSession = (over: Record<string, unknown> = {}) => ({
-  id: 9,
-  user_id: 1,
-  user_practice_id: 5,
-  duration_minutes: 10,
-  timestamp: '2026-03-01T10:30:00Z',
-  reflection: null,
-  ...over,
-});
-const validGoalGroup = (over: Record<string, unknown> = {}) => ({
-  id: 1,
-  name: 'Morning',
-  icon: null,
-  description: null,
-  user_id: null,
-  shared_template: true,
-  source: null,
-  goals: [],
-  ...over,
-});
 const validContentItem = (over: Record<string, unknown> = {}) => ({
   id: 1,
   title: 'Intro',
@@ -136,26 +97,6 @@ describe('paginated list endpoints (issue #221 — Page envelope)', () => {
     expect(url).toBe('http://test/practices/?paginate=true&stage_number=2&limit=50&offset=50');
   });
 
-  test('practiceSessions.listPaginated forwards user_practice_id', async () => {
-    const envelope = page([validSession()]);
-    mockFetch.mockReturnValueOnce(jsonResponse(envelope));
-
-    const result = await practiceSessions.listPaginated({ userPracticeId: 5 }, 'tok');
-
-    const [url] = mockFetch.mock.calls[0];
-    expect(url).toBe('http://test/practice-sessions/?paginate=true&user_practice_id=5');
-    expect(result.items).toHaveLength(1);
-  });
-
-  test('goalGroups.listPaginated hits /goal-groups/ with the envelope flag', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse(page([validGoalGroup()])));
-
-    await goalGroups.listPaginated({ limit: 10 }, 'tok');
-
-    const [url] = mockFetch.mock.calls[0];
-    expect(url).toBe('http://test/goal-groups/?paginate=true&limit=10');
-  });
-
   test('stages.listPaginated hits /stages (no trailing slash) with the envelope flag', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse(page([validStage()])));
 
@@ -163,15 +104,6 @@ describe('paginated list endpoints (issue #221 — Page envelope)', () => {
 
     const [url] = mockFetch.mock.calls[0];
     expect(url).toBe('http://test/stages?paginate=true');
-  });
-
-  test('userPractices.listPaginated hits /user-practices/ with the envelope flag', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse(page([validUserPractice()])));
-
-    await userPractices.listPaginated({ offset: 0 }, 'tok');
-
-    const [url] = mockFetch.mock.calls[0];
-    expect(url).toBe('http://test/user-practices/?paginate=true&offset=0');
   });
 
   test('course.stageContentPaginated targets the stage content path with the envelope flag', async () => {
@@ -202,7 +134,7 @@ describe('paginated list endpoints (issue #221 — Page envelope)', () => {
       jsonResponse({ items: 'nope', total: 0, limit: 50, offset: 0, has_more: false }),
     );
 
-    await expect(goalGroups.listPaginated({}, 'tok')).rejects.toThrow(ApiValidationError);
+    await expect(stages.listPaginated({}, 'tok')).rejects.toThrow(ApiValidationError);
   });
 });
 

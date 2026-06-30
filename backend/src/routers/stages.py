@@ -154,30 +154,6 @@ async def get_program_calendar(
     )
 
 
-@router.get("/{stage_number}", response_model=StageResponse)
-async def get_stage(
-    stage_number: int,
-    current_user: Annotated[int, Depends(get_current_user)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-) -> StageResponse:
-    """Get a single stage with full metadata and progress."""
-    result = await session.execute(
-        select(CourseStage).where(CourseStage.stage_number == stage_number)
-    )
-    stage = result.scalars().first()
-    if stage is None:
-        raise not_found("stage")
-
-    progress = await get_user_progress(session, current_user)
-    # Single-stage view carries no progress overlay (the list view computes it in
-    # a batched pass); StageResponse.progress defaults to 0.0, so pass that.
-    return _build_stage_response(
-        stage,
-        0.0,
-        unlocked=is_stage_unlocked(stage.stage_number, progress),
-    )
-
-
 @router.get("/{stage_number}/progress", response_model=StageProgressResponse)
 async def get_stage_progress(
     stage_number: int,
