@@ -24,6 +24,27 @@ You are Ralph's brain for one tick of adepthood's local outer loop.
 
 "Drop to Gate 1" means: fix the root cause with a failing-test-first cycle, re-clear Gate 2 locally, push, and climb again. Never weaken a gate to pass it.
 
+## The subagent taxonomy (you are the conductor)
+
+You do not write code in the main loop. You **dispatch** the agents in
+`.claude/agents/` (full map + model tiers in `.claude/agents/README.md`). The
+shared rules — gates, thresholds, anti-bypass — live in
+`.claude/agents/shared/adepthood-constraints.md`.
+
+| Spawn (`Agent`, `subagent_type:`) | When |
+| --- | --- |
+| `chief-architect` (opus) | Plan brain — every new issue: returns design + ordered dispatch list + risk flags. |
+| `test-specialist` | Gate 1 RED — failing tests. |
+| `implementation-specialist` (opus) | Gate 1 GREEN + refactor — production code. |
+| `security-specialist` (opus) | Only if architect flags security (auth/JWT/CORS/secrets/input/DB). |
+| `performance-specialist` | Only if architect flags performance (queries/hot paths/large lists). |
+| `documentation-specialist` | Only if architect flags a docs gap. |
+| `dependency-review-specialist` | Only if manifests/lockfiles changed (read-only). |
+| `code-review-orchestrator` (opus) | Gate 2.5 — pre-push self-review of the diff. |
+
+Dispatch write-agents **sequentially** (one working tree). Invoke only the
+specialists the architect flagged — padding is waste, not thoroughness.
+
 ---
 
 ## Step 0 — Pause check, then read state
@@ -90,10 +111,10 @@ gh pr merge "$PR_NUM" --squash --delete-branch
 Then do the 2a completion block (close issue + bump state + `git checkout main`). Fall through to Step 3.
 
 ### 2c. Gate 4 failed — latest verdict is CHANGES_REQUESTED or COMMENTS  → drop to Gate 1
-Invoke the **`address-feedback`** skill: it parses the verdict, triages blockers/problems/nits, runs a TDD fix loop (Gate 1), re-clears Gate 2 (the relevant `./scripts/<side>/check-all.sh`), commits, pushes, replies to and resolves threads. When it returns, go to Step 4 (arm the watch) and end the turn.
+Invoke the **`address-feedback`** skill: it parses the verdict, triages blockers/problems/nits, runs a TDD fix loop (Gate 1), re-clears Gate 2 (the relevant `./scripts/<side>/check-all.sh`), commits, pushes, replies to and resolves threads. Within that loop, **dispatch the specialist that owns each comment's dimension** (`Agent(test-specialist)` for test gaps, `Agent(implementation-specialist)` for logic, `Agent(security-specialist)`/`performance-specialist`/`documentation-specialist`/`dependency-review-specialist` for theirs — see `.claude/agents/README.md`). When it returns, go to Step 4 (arm the watch) and end the turn.
 
 ### 2d. Gate 3 failed — CI rollup has a failure  → drop to Gate 1
-Invoke the **`ci-debugging`** skill on the failing job. Reproduce locally, fix root cause with a failing test first (Gate 1), re-clear Gate 2, push. Go to Step 4 and end the turn.
+Invoke the **`ci-debugging`** skill on the failing job. Reproduce locally, then fix the root cause via the owning specialist — `Agent(test-specialist)` for a failing/flaky test, `Agent(implementation-specialist)` for the code (failing test first) — re-clear Gate 2 and the Gate 2.5 self-review, push. Go to Step 4 and end the turn.
 
 ### 2e. PR open, Gate 3 in progress or Gate 4 not yet posted
 Go to Step 4 (arm the Monitor) and end the turn.
@@ -116,7 +137,7 @@ ISSUE_N=$(scripts/ralph/pick-next.sh)
 ```
 Empty → Mode A: announce "Backlog drained" and call `/loop` to stop.
 
-Otherwise work the issue per `scripts/ralph/PROMPT.md` (read it now, with `$RALPH_ISSUE = $ISSUE_N`): branch from `main`; **Gate 1** TDD with `stay-green`; **Gate 2** run the relevant `./scripts/<side>/check-all.sh` (`scripts/backend/check-all.sh` and/or `scripts/frontend/check-all.sh`) until exit 0 (`max-quality-no-shortcuts` — no bypasses); conventional commit with the repo trailer; push; open a PR whose body has `## Summary`, `## Test plan`, `Closes #$ISSUE_N`, and `Refs #<epic>` if named. Then go to Step 4.
+Otherwise work the issue per `scripts/ralph/PROMPT.md` (read it now, with `$RALPH_ISSUE = $ISSUE_N`). That contract makes you the **conductor of the subagent taxonomy** (`.claude/agents/README.md`): branch from `main`; spawn the **chief-architect** for the plan + dispatch list; run its specialists sequentially — `Agent(test-specialist)` (**Gate 1** RED), `Agent(implementation-specialist)` (Gate 1 GREEN + refactor), plus any flagged `security`/`performance`/`documentation`/`dependency` specialist; **Gate 2** run the relevant `./scripts/<side>/check-all.sh` (`scripts/backend/check-all.sh` and/or `scripts/frontend/check-all.sh`) until exit 0 (`max-quality-no-shortcuts` — no bypasses); **Gate 2.5** dispatch `Agent(code-review-orchestrator)` over the diff and fix to `CLEAN`; conventional commit with the repo trailer; push; open a PR whose body has `## Summary`, `## Test plan`, `Closes #$ISSUE_N`, and `Refs #<epic>` if named. Then go to Step 4.
 
 If the issue is genuinely blocked: comment why, apply a blocking label (`gh issue edit "$ISSUE_N" --add-label blocked`), open no PR, end the turn.
 
