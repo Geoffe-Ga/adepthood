@@ -259,3 +259,46 @@ describe('CareSupportNote — no chat UI', () => {
     expect(queryByText('Send')).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Issue #892 regression — care-resource-${kind} testIDs survive the
+// ResourceCard → CareResourceCard extraction.
+//
+// After issue #892 the inline ``ResourceCard`` function in ``CareSupportNote``
+// is extracted to ``components/care/CareResourceCard`` and re-imported.
+// These tests confirm that the testID contract on the reactive (journal)
+// surface is IDENTICAL after the refactor — the implementation-specialist
+// must NOT rename the testIDs or alter the accessibilityLabel formula.
+// ---------------------------------------------------------------------------
+
+describe('CareSupportNote — regression: care-resource testIDs after CareResourceCard extraction (issue #892)', () => {
+  it('still mounts "care-resource-hotline" after the extraction refactor', () => {
+    const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
+    expect(getByTestId('care-resource-hotline')).toBeTruthy();
+  });
+
+  it('still mounts "care-resource-text_line" after the extraction refactor', () => {
+    const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
+    expect(getByTestId('care-resource-text_line')).toBeTruthy();
+  });
+
+  it('still mounts "care-resource-human" after the extraction refactor', () => {
+    const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
+    expect(getByTestId('care-resource-human')).toBeTruthy();
+  });
+
+  it('still mounts "care-resource-professional" after the extraction refactor', () => {
+    const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
+    expect(getByTestId('care-resource-professional')).toBeTruthy();
+  });
+
+  it('accessibilityLabel format is preserved: "{name}. {contact}. {what_it_is}"', () => {
+    const payload = carePayload();
+    const { getByTestId } = render(<CareSupportNote care={payload} />);
+    const hotlineResource = payload.resources.find((r) => r.kind === 'hotline');
+    if (!hotlineResource) throw new Error('fixture missing hotline resource');
+    const card = getByTestId('care-resource-hotline');
+    const expected = `${hotlineResource.name}. ${hotlineResource.contact}. ${hotlineResource.what_it_is}`;
+    expect(card.props.accessibilityLabel).toBe(expected);
+  });
+});

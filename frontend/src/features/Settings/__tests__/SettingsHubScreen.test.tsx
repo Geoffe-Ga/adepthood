@@ -55,3 +55,41 @@ describe('SettingsHubScreen', () => {
     expect(mockLogout).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Issue #892 — "Support & care" row additions (RED — fails until impl exists)
+// ---------------------------------------------------------------------------
+
+describe('SettingsHubScreen — Support & care row (issue #892)', () => {
+  test('renders the "Support & care" row with testID "settings-row-support"', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    // This row does not exist until the implementation-specialist adds it.
+    // The test will fail with "Unable to find an element with testID: settings-row-support".
+    expect(getByTestId('settings-row-support')).toBeTruthy();
+  });
+
+  test('the "Support & care" row has accessible label text "Support & care"', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+    const row = getByTestId('settings-row-support');
+    expect(row.props.accessibilityLabel).toBe('Support & care');
+  });
+
+  test('tapping "settings-row-support" navigates to SupportCare', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(getByTestId('settings-row-support'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('SupportCare');
+  });
+
+  test('the existing rows are unaffected by the new Support & care row', () => {
+    // Regression: the original three rows must still render after the new row
+    // is added to prevent accidental reordering or duplication.
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    expect(getByTestId('settings-row-api-key')).toBeTruthy();
+    expect(getByTestId('settings-row-timezone')).toBeTruthy();
+    expect(getByTestId('settings-row-logout')).toBeTruthy();
+  });
+});

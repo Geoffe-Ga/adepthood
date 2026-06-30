@@ -9,6 +9,7 @@ import { PracticeDetailScreen } from '../features/Practice/screens/PracticeDetai
 import SharePreviewScreen from '../features/Practice/screens/SharePreviewScreen';
 import ApiKeySettingsScreen from '../features/Settings/ApiKeySettingsScreen';
 import SettingsHubScreen from '../features/Settings/SettingsHubScreen';
+import SupportCareScreen from '../features/Settings/SupportCareScreen';
 import TimezoneSettingsScreen from '../features/Settings/TimezoneSettingsScreen';
 
 import type { RootTabParamList } from './BottomTabs';
@@ -43,6 +44,7 @@ export type RootStackParamList = {
   Settings: undefined;
   ApiKeySettings: undefined;
   TimezoneSettings: undefined;
+  SupportCare: undefined;
   SharePreview: { token: string };
   PracticeDetail: { practiceId: number };
   CreatePractice: { prefill?: CreatePracticePrefill } | undefined;
@@ -61,15 +63,15 @@ export type RootStackParamList = {
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
+// Header background/border come from the warm navTheme; here we add the
+// editorial serif title + terracotta back/tint.
+const NAV_SCREEN_OPTIONS = {
+  headerTintColor: accent.primary,
+  headerTitleStyle: { fontFamily: fonts.serif, color: ink.primary },
+} as const;
+
 const RootStack = (): React.JSX.Element => (
-  // Header background/border come from the warm navTheme; here we add the
-  // editorial serif title + terracotta back/tint (#803).
-  <Stack.Navigator
-    screenOptions={{
-      headerTintColor: accent.primary,
-      headerTitleStyle: { fontFamily: fonts.serif, color: ink.primary },
-    }}
-  >
+  <Stack.Navigator screenOptions={NAV_SCREEN_OPTIONS}>
     <Stack.Screen name="Tabs" component={BottomTabs} options={{ headerShown: false }} />
     <Stack.Screen name="Settings" component={SettingsHubScreen} options={{ title: 'Settings' }} />
     <Stack.Screen
@@ -81,6 +83,11 @@ const RootStack = (): React.JSX.Element => (
       name="TimezoneSettings"
       component={TimezoneSettingsScreen}
       options={{ title: 'Time zone' }}
+    />
+    <Stack.Screen
+      name="SupportCare"
+      component={SupportCareScreen}
+      options={{ title: 'Support & care' }}
     />
     <Stack.Screen
       name="SharePreview"

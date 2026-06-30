@@ -1,6 +1,13 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { ChevronRight, Globe, KeyRound, LogOut, type LucideIcon } from 'lucide-react-native';
+import {
+  ChevronRight,
+  Globe,
+  KeyRound,
+  LifeBuoy,
+  LogOut,
+  type LucideIcon,
+} from 'lucide-react-native';
 import React, { useCallback } from 'react';
 import { StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 
@@ -60,12 +67,65 @@ const SettingsRow = ({
   );
 };
 
+interface AccountSectionProps {
+  onApiKey: () => void;
+  onTimezone: () => void;
+}
+
+/** Account group: the bring-your-own-key and time-zone destinations. */
+const AccountSection = ({ onApiKey, onTimezone }: AccountSectionProps): React.JSX.Element => (
+  <EditorialSection title="Account" testID="settings-group-account">
+    <SettingsRow
+      icon={KeyRound}
+      label="API key"
+      description="Bring your own BotMason API key, stored on this device."
+      onPress={onApiKey}
+      testID="settings-row-api-key"
+    />
+    <SettingsRow
+      icon={Globe}
+      label="Time zone"
+      description="Set the zone streaks and daily stats count days in."
+      onPress={onTimezone}
+      testID="settings-row-timezone"
+    />
+  </EditorialSection>
+);
+
+/** Session group: the destructive log-out action. */
+const SessionSection = ({ onLogout }: { onLogout: () => void }): React.JSX.Element => (
+  <EditorialSection title="Session" testID="settings-group-session">
+    <SettingsRow
+      icon={LogOut}
+      label="Log out"
+      description="Sign out of Adepthood on this device."
+      onPress={onLogout}
+      testID="settings-row-logout"
+      destructive
+    />
+  </EditorialSection>
+);
+
+/** Always-available Support & care destination (issue #892). */
+const SupportSection = ({ onSupportCare }: { onSupportCare: () => void }): React.JSX.Element => (
+  <EditorialSection title="Support & care" testID="settings-group-support">
+    <SettingsRow
+      icon={LifeBuoy}
+      label="Support & care"
+      description="Reach a person — crisis lines and professional care, any time."
+      onPress={onSupportCare}
+      testID="settings-row-support"
+    />
+  </EditorialSection>
+);
+
 const SettingsHubScreen = (): React.JSX.Element => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { logout } = useAuth();
 
   const openApiKey = useCallback(() => navigation.navigate('ApiKeySettings'), [navigation]);
   const openTimezone = useCallback(() => navigation.navigate('TimezoneSettings'), [navigation]);
+  const openSupportCare = useCallback(() => navigation.navigate('SupportCare'), [navigation]);
   const onLogout = useCallback(() => void logout(), [logout]);
 
   return (
@@ -75,32 +135,9 @@ const SettingsHubScreen = (): React.JSX.Element => {
         title="Settings"
         lead="Manage how Adepthood works for you."
       />
-      <EditorialSection title="Account" testID="settings-group-account">
-        <SettingsRow
-          icon={KeyRound}
-          label="API key"
-          description="Bring your own BotMason API key, stored on this device."
-          onPress={openApiKey}
-          testID="settings-row-api-key"
-        />
-        <SettingsRow
-          icon={Globe}
-          label="Time zone"
-          description="Set the zone streaks and daily stats count days in."
-          onPress={openTimezone}
-          testID="settings-row-timezone"
-        />
-      </EditorialSection>
-      <EditorialSection title="Session" testID="settings-group-session">
-        <SettingsRow
-          icon={LogOut}
-          label="Log out"
-          description="Sign out of Adepthood on this device."
-          onPress={onLogout}
-          testID="settings-row-logout"
-          destructive
-        />
-      </EditorialSection>
+      <AccountSection onApiKey={openApiKey} onTimezone={openTimezone} />
+      <SessionSection onLogout={onLogout} />
+      <SupportSection onSupportCare={openSupportCare} />
     </ScreenScaffold>
   );
 };
