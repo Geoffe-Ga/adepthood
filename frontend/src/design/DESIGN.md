@@ -69,3 +69,19 @@ base as `typography()`:
 - #802 — warm grounds & soft elevation for cards/surfaces
 - #803 — editorial navigation (headers + bottom tab bar)
 - #804 — warm dark mode matching the light language
+
+## Showcase surfaces (Act II, #826)
+
+A warm-dark "designed product" band on an otherwise light screen — the hero
+moment for Today, the Practice player, the Course cover, and the Map celebration.
+
+- `showcase.canvas` `#2a211a` / `showcase.raised` `#352a20` — deep warm **umber**
+  (red channel above blue; not navy, not `#121212`), an original derivation of
+  the app's own warm ink.
+- `onShowcase.{primary,soft,muted}` (`#f3ece0` / `#cdbfae` / `#a8967c`) — every
+  value clears WCAG AA on the umber (13.4 / 8.8 / 5.5:1); enforced by
+  `showcaseTokens.test.ts`.
+- `showcaseShadow` — ink-tinted portable elevation (iOS/web shadow\* + Android).
+- Primitives (`components/layout/`): `ShowcaseCard` (rounded umber band) and
+  `CalloutBand` (full-bleed `accent.primary` band with an inverted cream CTA —
+  `surface.canvas` at 4.9:1 AA on the accent; used scarcely).
