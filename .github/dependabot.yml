@@ -6,6 +6,18 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore(deps)"
+    # Batch low-risk patch + minor bumps into a single PR per ecosystem so the
+    # Dependabot → Ralph bridge files one issue per batch instead of one per
+    # dependency. Major bumps stay individual (separate PRs) so they get
+    # focused review — they may carry breaking changes Ralph must adapt to.
+    groups:
+      pip-patch-minor:
+        update-types:
+          - "patch"
+          - "minor"
+    # Grouped batches can exceed the default cap; raise the limit so a weekly
+    # batch plus outstanding majors are never throttled.
+    open-pull-requests-limit: 15
 
   - package-ecosystem: "npm"
     directory: "/frontend"
@@ -13,21 +25,28 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore(deps)"
+    # Batch patch + minor into one PR per run; majors stay individual.
+    groups:
+      npm-patch-minor:
+        update-types:
+          - "patch"
+          - "minor"
+    open-pull-requests-limit: 15
     ignore:
       # react-native-web 0.19.13 requires styleq ^0.1.3; styleq 0.2.x targets
       # RNW 0.20+, so adopting it now desyncs the web style runtime. Unpin this
-      # when react-native-web is upgraded.
+      # when react-native-web is upgraded (Expo SDK 53 epic, #885).
       - dependency-name: "styleq"
         versions: [">=0.2.0"]
       # Expo SDK 52 pins expo-av to ~15.0.2 (verified by `expo install --check`);
       # expo-av 16.x targets SDK 53. Expo packages are managed by `expo install`
       # and must move together with the SDK, not piecemeal. Unpin at the SDK 53
-      # upgrade (where expo-av is also superseded by expo-audio/expo-video).
+      # upgrade (#885), where expo-av is also superseded by expo-audio/expo-video.
       - dependency-name: "expo-av"
         versions: [">=16.0.0"]
       # Expo SDK 52 pins expo-notifications to ~0.29.14 (verified by
       # `expo install --check`); later majors target SDK 53+. Same SDK-managed
-      # rule as expo-av — unpin at the SDK 53 upgrade.
+      # rule as expo-av — unpin at the SDK 53 upgrade (#885).
       - dependency-name: "expo-notifications"
         versions: [">=0.30.0"]
 
@@ -37,3 +56,10 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "ci(deps)"
+    # Batch patch + minor action bumps; majors stay individual.
+    groups:
+      actions-patch-minor:
+        update-types:
+          - "patch"
+          - "minor"
+    open-pull-requests-limit: 15

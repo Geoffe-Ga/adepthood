@@ -98,6 +98,16 @@ Invoke the **`ci-debugging`** skill on the failing job. Reproduce locally, fix r
 ### 2e. PR open, Gate 3 in progress or Gate 4 not yet posted
 Go to Step 4 (arm the Monitor) and end the turn.
 
+### 2f. `dependencies` issues — the in-flight PR is Dependabot's own branch
+For a `dependencies` issue (filed by `dependabot-to-ralph-issue.yml`), the
+in-flight PR is **Dependabot's PR**, already linked via `Closes`. Push Gate-1/
+Gate-3 fixes **to the Dependabot branch** (Mode 2c/2d) — do **not** open a fresh
+branch or a second PR. A breaking major (e.g. zod 3→4) is a normal Gate-1 TDD
+adaptation: make the code changes, never pin back, suppress, or weaken a gate.
+Dependabot stops rebasing once the PR carries a non-Dependabot commit, so your
+pushes are safe. The three SDK-tied pins (styleq, expo-av, expo-notifications)
+are deferred to the Expo SDK 53 epic (#885), not lifted here.
+
 ---
 
 ## Step 3 — Pick next issue and open a PR
