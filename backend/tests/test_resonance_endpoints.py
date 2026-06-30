@@ -194,6 +194,110 @@ async def test_list_marginalia_is_ordered_and_hides_user_id(
     assert all("user_id" not in i for i in items)
 
 
+# An entry body the acute-distress screen flags (see domain.safety) — used to
+# exercise the care surface without depending on resonance LLM output.
+_DISTRESS_BODY = "I keep thinking I want to kill myself and end my life tonight."
+
+
+def _assert_care_routes_to_human_and_professional(care: dict[str, object]) -> None:
+    """Assert the care payload carries the human + professional pointers + a warm note."""
+    assert isinstance(care["message"], str)
+    lowered = care["message"].lower()
+    # Warm and non-shaming: names that distress is not a failure.
+    assert "failure" in lowered
+    blob = json.dumps(care).lower()
+    assert "988" in blob  # immediate crisis line (human counselor)
+    assert "741741" in blob  # crisis text line
+    assert "trust" in blob  # someone you trust (human)
+    assert "professional" in blob  # professional support
+    resources = care["resources"]
+    assert isinstance(resources, list)
+    kinds = {r["kind"] for r in resources if isinstance(r, dict)}
+    assert {"hotline", "text_line", "human", "professional"} <= kinds
+
+
+@pytest.mark.asyncio
+async def test_normal_entry_returns_no_care(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-distress entry is unchanged: care is None, marginalia intact."""
+    _fake_llm(
+        monkeypatch,
+        {"kind": "theme", "quote": "I walked by the river", "note": "You return to water."},
+    )
+    headers = await _signup(async_client, "calm")
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["care"] is None
+    assert len(body["marginalia"]) == 1
+    assert body["remaining_messages"] == 49
+
+
+@pytest.mark.asyncio
+async def test_distress_entry_returns_care_alongside_reflection(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A flagged entry returns the care surface AND the reflection (never only AI)."""
+    _fake_llm(
+        monkeypatch,
+        {"kind": "theme", "quote": "kill myself", "note": "You are not alone in this."},
+    )
+    headers = await _signup(async_client, "flagged")
+    entry_id = await _create_entry(async_client, headers, body=_DISTRESS_BODY)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["care"] is not None
+    _assert_care_routes_to_human_and_professional(body["care"])
+    # Care accompanies the reflection — it is additive, not a replacement.
+    assert len(body["marginalia"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_distress_entry_returns_care_even_when_llm_fails(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Care must not depend on the LLM: a flagged entry surfaces care on an LLM error.
+
+    The reflection is absent (marginalia empty) and the charge is rolled back, but
+    the human + professional pointers are returned regardless (NORTH-STAR §10).
+    """
+    _raise_llm(monkeypatch)
+    headers = await _signup(async_client, "flagged_err")
+    entry_id = await _create_entry(async_client, headers, body=_DISTRESS_BODY)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["care"] is not None
+    _assert_care_routes_to_human_and_professional(body["care"])
+    assert body["marginalia"] == []
+    # No reflection persisted, and the charge was rolled back.
+    rows = (await db_session.execute(select(func.count()).select_from(Marginalia))).scalar_one()
+    assert rows == 0
+    user = (
+        await db_session.execute(select(User).where(col(User.email) == "flagged_err@example.com"))
+    ).scalar_one()
+    assert user.monthly_messages_used == 0
+
+
+@pytest.mark.asyncio
+async def test_normal_entry_llm_error_is_502_no_care(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-flagged entry keeps today's behavior on an LLM error: 502, no care."""
+    _raise_llm(monkeypatch)
+    headers = await _signup(async_client, "calm_err")
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+    assert resp.status_code == HTTPStatus.BAD_GATEWAY
+
+
 @pytest.mark.asyncio
 async def test_list_marginalia_other_users_entry_is_404(
     async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
