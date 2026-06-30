@@ -3,12 +3,12 @@ import { Text, TouchableOpacity } from 'react-native';
 
 import { authStyles as styles } from './auth.styles';
 import { AuthScreenContainer } from './AuthScreenContainer';
+import { PasswordField } from './components/PasswordField';
 import { validatePasswordPair } from './passwordValidation';
 import { MIN_TOKEN_LENGTH } from './resetToken';
 
 import { formatApiError } from '@/api/errorMessages';
 import { Button } from '@/components/Button';
-import { TextField } from '@/components/TextField';
 import { useAuth } from '@/context/AuthContext';
 
 const RESET_FALLBACK =
@@ -38,22 +38,20 @@ function ResetFields({
 }: ResetFieldsProps): React.JSX.Element {
   return (
     <>
-      <TextField
+      <PasswordField
         accessibilityLabel="New password"
         style={styles.inputSpacing}
         placeholder="New Password"
         value={password}
         onChangeText={setPassword}
-        secureTextEntry
         textContentType="newPassword"
       />
-      <TextField
+      <PasswordField
         accessibilityLabel="Confirm new password"
         style={styles.inputSpacing}
         placeholder="Confirm New Password"
         value={confirmPassword}
         onChangeText={setConfirmPassword}
-        secureTextEntry
         textContentType="newPassword"
       />
     </>

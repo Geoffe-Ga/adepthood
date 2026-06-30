@@ -5,10 +5,11 @@ import { authStyles as styles } from './auth.styles';
 import { AuthBrandBand } from './AuthBrandBand';
 import { AuthScreenContainer } from './AuthScreenContainer';
 import { canonicalizeEmail } from './canonicalizeEmail';
+import { EmailField } from './components/EmailField';
+import { PasswordField } from './components/PasswordField';
 
 import { formatApiError } from '@/api/errorMessages';
 import { Button } from '@/components/Button';
-import { TextField } from '@/components/TextField';
 import { useAuth } from '@/context/AuthContext';
 
 const LOGIN_FALLBACK =
@@ -33,22 +34,17 @@ function LoginFields({
 }: LoginFieldsProps): React.JSX.Element {
   return (
     <>
-      <TextField
+      <EmailField
         accessibilityLabel="Email"
         style={styles.inputSpacing}
-        placeholder="Email"
         value={email}
         onChangeText={setEmail}
-        autoCapitalize="none"
-        keyboardType="email-address"
       />
-      <TextField
+      <PasswordField
         accessibilityLabel="Password"
         style={styles.inputSpacing}
-        placeholder="Password"
         value={password}
         onChangeText={setPassword}
-        secureTextEntry
       />
     </>
   );
