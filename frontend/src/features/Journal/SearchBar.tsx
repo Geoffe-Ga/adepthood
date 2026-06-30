@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-import { colors, radius, SPACING } from '../../design/tokens';
+import { accent, ink, radius, SPACING, surface } from '../../design/tokens';
 
 const DEBOUNCE_DELAY_MS = 300;
 
@@ -34,6 +34,52 @@ interface ExpandedSearchBarProps {
   resultCount?: number;
 }
 
+/** The result line: "No results …" when a query came back empty, else the count. */
+function resultLine(searchQuery: string, resultCount: number): string {
+  return resultCount === 0
+    ? `No results for '${searchQuery}'`
+    : `${resultCount} results for '${searchQuery}'`;
+}
+
+/** The warm-palette text field; owns its own accent-on-focus border. */
+const SearchTextInput = ({
+  text,
+  onChangeText,
+}: {
+  text: string;
+  onChangeText: (_value: string) => void;
+}): React.JSX.Element => {
+  const [focused, setFocused] = useState(false);
+  return (
+    <TextInput
+      testID="search-input"
+      accessibilityLabel="Search journal"
+      style={[styles.searchTextInput, focused && styles.searchTextInputFocused]}
+      value={text}
+      onChangeText={onChangeText}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      placeholder="Search journal..."
+      placeholderTextColor={ink.muted}
+      autoFocus
+    />
+  );
+};
+
+/** The count / "no results" caption, shown only for an active query. */
+const SearchResultLine = ({
+  searchQuery,
+  resultCount,
+}: {
+  searchQuery?: string;
+  resultCount?: number;
+}): React.JSX.Element | null =>
+  searchQuery && resultCount != null ? (
+    <Text style={styles.searchResultCount} testID="search-result-count">
+      {resultLine(searchQuery, resultCount)}
+    </Text>
+  ) : null;
+
 const ExpandedSearchBarContent = ({
   text,
   onChangeText,
@@ -53,16 +99,7 @@ const ExpandedSearchBarContent = ({
       >
         <Text style={styles.searchIcon}>🔍</Text>
       </TouchableOpacity>
-      <TextInput
-        testID="search-input"
-        accessibilityLabel="Search journal"
-        style={styles.searchTextInput}
-        value={text}
-        onChangeText={onChangeText}
-        placeholder="Search journal..."
-        placeholderTextColor={colors.text.tertiary}
-        autoFocus
-      />
+      <SearchTextInput text={text} onChangeText={onChangeText} />
       <TouchableOpacity
         testID="search-clear"
         onPress={onClear}
@@ -73,11 +110,7 @@ const ExpandedSearchBarContent = ({
         <Text style={styles.searchClearText}>×</Text>
       </TouchableOpacity>
     </View>
-    {searchQuery && resultCount != null && (
-      <Text style={styles.searchResultCount}>
-        {resultCount} results for &apos;{searchQuery}&apos;
-      </Text>
-    )}
+    <SearchResultLine searchQuery={searchQuery} resultCount={resultCount} />
   </View>
 );
 
@@ -158,13 +191,13 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
     alignItems: 'center',
     justifyContent: 'center',
   },
   searchIcon: {
     fontSize: 16,
-    color: colors.text.secondary,
+    color: ink.soft,
     fontWeight: '600',
   },
   searchTextInput: {
@@ -174,27 +207,30 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.md,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.background.card,
+    borderColor: surface.hairline,
+    backgroundColor: surface.raised,
     fontSize: 14,
-    color: colors.text.primary,
+    color: ink.primary,
+  },
+  searchTextInputFocused: {
+    borderColor: accent.primary,
   },
   searchClear: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
     alignItems: 'center',
     justifyContent: 'center',
   },
   searchClearText: {
     fontSize: 14,
-    color: colors.text.secondary,
+    color: ink.soft,
     fontWeight: '600',
   },
   searchResultCount: {
     fontSize: 12,
-    color: colors.text.tertiary,
+    color: ink.muted,
     marginTop: SPACING.xs,
     marginLeft: 44,
   },

@@ -91,4 +91,12 @@ describe('SearchBar', () => {
     fireEvent.press(getByTestId('search-toggle'));
     expect(getByText("5 results for 'test'")).toBeTruthy();
   });
+
+  it('shows a "No results" line when a query comes back empty', () => {
+    const { getByTestId, getByText } = render(
+      <SearchBar onSearch={onSearch} resultCount={0} searchQuery="willow" />,
+    );
+    fireEvent.press(getByTestId('search-toggle'));
+    expect(getByText("No results for 'willow'")).toBeTruthy();
+  });
 });
