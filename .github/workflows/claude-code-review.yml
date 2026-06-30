@@ -85,10 +85,12 @@ jobs:
         # failed/empty review), fail so the check is red and the review is
         # re-run — never a silent success with no review (#810).
         env:
-          # Prefer the action's Claude App token so the comment is authored by
-          # "claude" (consistent with the pre-#810 flow + any author-aware
-          # consumer); fall back to GITHUB_TOKEN if no Claude App is configured.
-          GH_TOKEN: ${{ steps.claude-review.outputs.github_token || secrets.GITHUB_TOKEN }}
+          # Use GITHUB_TOKEN (posts as github-actions[bot]). The action's
+          # github_token output (Claude App token) is NOT a usable gh credential
+          # for `gh pr comment` — it 401s "Bad credentials" (#839/#843), which
+          # fail-closed turned into a red check on every PR. github-actions[bot]
+          # as the author is fine: downstream consumers parse by content, not author.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           STRUCTURED: ${{ steps.claude-review.outputs.structured_output }}
