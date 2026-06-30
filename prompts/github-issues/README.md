@@ -298,3 +298,42 @@ Dependency graph:
                  │                                │
                  └── 05 floating-shelf-cards ─────┘
 ```
+
+### Candle & Ink, Act II — re-imagine every screen into one cohesive product
+
+The **second wave** of the warm-editorial design epic (#798). Wave one delivered
+the *vocabulary* (semantic tokens #799, type ramp #800, primitives #801, warm
+surfaces #802). Act II delivers the *composition* — re-imagined **layout,
+information architecture, and user story** for every screen except Habits (the
+gold-standard reference we codify and match), so the whole app reads as one
+designed product with a UX *wow* factor. Clean-room on the app's own "Candle &
+Ink" palette — no third-party brand assets (binding IP stance from #799). Three
+foundation issues (01–03) are the critical path; 04–12 parallelise after.
+
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| — | [Epic tracker](design-act2/design-act2-epic.md) | — | — |
+| 01 | [Editorial screen scaffold + section rhythm](design-act2/design-act2-01-editorial-scaffolding.md) | Frontend | ~260 |
+| 02 | [Warm-dark showcase surface + accent callout band](design-act2/design-act2-02-showcase-surface-and-callout.md) | Frontend | ~220 |
+| 03 | [Motion language + editorial empty / loading states](design-act2/design-act2-03-motion-and-empty-states.md) | Frontend | ~240 |
+| 04 | [Today hub — the editorial home tab](design-act2/design-act2-04-today-hub.md) | Frontend | ~360 |
+| 05 | [Journal shelf as an editorial library](design-act2/design-act2-05-journal-shelf-library.md) | Frontend | ~240 |
+| 06 | [Practice catalog + "begin a session" + warm adoption](design-act2/design-act2-06-practice-catalog-and-begin.md) | Frontend | ~280 |
+| 07 | [Immersive practice player + completion celebration](design-act2/design-act2-07-practice-player-immersion.md) | Frontend | ~240 |
+| 08 | [Course as an immersive reading experience](design-act2/design-act2-08-course-immersive-reading.md) | Frontend | ~300 |
+| 09 | [Map: a journey narrative with achievement](design-act2/design-act2-09-map-journey-narrative.md) | Frontend | ~260 |
+| 10 | [Auth as a branded editorial first impression](design-act2/design-act2-10-auth-first-impression.md) | Frontend | ~230 |
+| 11 | [Settings hub + warm adoption](design-act2/design-act2-11-settings-hub.md) | Frontend | ~200 |
+| 12 | [Program onboarding / welcome](design-act2/design-act2-12-program-onboarding.md) | Frontend | ~280 |
+
+Dependency graph:
+
+```
+ FOUNDATION (critical path)          SCREENS (parallel after foundation)
+ 01 editorial-scaffolding ──┐         04 today-hub          08 course-immersive
+ 02 showcase-&-callout ─────┼───────► 05 journal-shelf      09 map-journey
+ 03 motion-&-empty-states ──┘         06 practice-catalog   10 auth-first-impression
+                                      07 practice-player    11 settings-hub
+ related (do not duplicate):          12 program-onboarding
+   #803 editorial nav chrome · #804 warm dark mode
+```
