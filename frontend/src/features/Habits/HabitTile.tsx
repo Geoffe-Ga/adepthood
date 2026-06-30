@@ -4,7 +4,7 @@ import { Animated, Easing, Text, TouchableOpacity, View, type DimensionValue } f
 import { TierStar } from '../../components/TierStar';
 import { colors, STAGE_COLORS, spacing, surface } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
-import { DEFAULT_TIMEZONE } from '../../utils/dateUtils';
+import { DEFAULT_TIMEZONE, MS_PER_DAY } from '../../utils/dateUtils';
 
 import ConfirmDialog from './components/ConfirmDialog';
 import { TIER_LABELS, centeredTranslateX, tooltipBoxStyle, type TierType } from './goalMarker';
@@ -452,7 +452,6 @@ const useHabitTileData = (habit: Habit, tz: string, stageColor: string) => {
 
 const LOCKED_BACKGROUND = '#e8e8e8';
 const LOCKED_OPACITY = 0.4;
-const MS_PER_DAY = 86_400_000;
 
 const calculateDaysUntilUnlock = (startDate: Date): number => {
   const now = new Date();

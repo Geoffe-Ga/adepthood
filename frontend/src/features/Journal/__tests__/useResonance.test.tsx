@@ -205,7 +205,7 @@ describe('useResonance — suggestions', () => {
     });
     expect(mockAccept).toHaveBeenCalledWith(1);
     expect(result.current.suggestions[0]!.status).toBe('accepted');
-    expect(result.current.lastCheckIn?.streak).toBe(4);
+    expect(result.current.acceptedCheckIns[1]?.streak).toBe(4);
   });
 
   it('accept leaves the row pending and surfaces a friendly error on failure', async () => {

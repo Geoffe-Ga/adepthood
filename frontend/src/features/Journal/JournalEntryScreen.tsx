@@ -2,9 +2,9 @@
  * ``JournalEntryScreen`` — the long-form page the user writes in.
  *
  * Warm editorial layout: an optional serif title and a large growing serif body
- * on a paper ground, with a reserved right-hand margin column (a pluggable
- * ``renderMargin`` slot the marginalia UI fills in a later issue). The page
- * autosaves as a draft on idle — there is no send button and no chat UI.
+ * on a paper ground, with a reserved right-hand margin column that the
+ * marginalia UI (``MarginStream``) fills inline. The page autosaves as a draft
+ * on idle — there is no send button and no chat UI.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -51,15 +51,7 @@ const NARROW_BREAKPOINT = 600;
 
 type SaveState = 'idle' | 'typing' | 'saving' | 'saved' | 'error';
 
-/** Context handed to the pluggable margin slot (and exposed for the Resonance CTA). */
-export interface JournalMarginContext {
-  body: string;
-  isIdle: boolean;
-}
-
 export type JournalEntryScreenProps = NativeStackScreenProps<RootStackParamList, 'JournalEntry'> & {
-  /** Pluggable right-margin content (margin notes UI lands in a later issue). */
-  renderMargin?: (_ctx: JournalMarginContext) => React.ReactNode;
   /** Overridable for tests; defaults to {@link AUTOSAVE_DELAY_MS}. */
   autosaveDelayMs?: number;
 };
@@ -630,15 +622,7 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
   );
 }
 
-function JournalPage({
-  ctl,
-  renderMargin,
-  bodyPlaceholder,
-}: {
-  ctl: Controller;
-  renderMargin?: JournalEntryScreenProps['renderMargin'];
-  bodyPlaceholder: string;
-}) {
+function JournalPage({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
   const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
   const settle = useSettleIn(useReducedMotion());
   const notes = ctl.resonance.marginalia;
@@ -646,8 +630,7 @@ function JournalPage({
   const hasVisibleSuggestions = suggestions.some((s) => s.status !== 'dismissed');
 
   let marginContent: React.ReactNode;
-  if (renderMargin) marginContent = renderMargin({ body: ctl.autosave.body, isIdle: ctl.isIdle });
-  else if (notes.length > 0 || hasVisibleSuggestions) {
+  if (notes.length > 0 || hasVisibleSuggestions) {
     marginContent = (
       <MarginStream
         notes={notes}
@@ -705,7 +688,6 @@ function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntryp
 function JournalEntryScreen({
   route,
   navigation,
-  renderMargin,
   autosaveDelayMs = AUTOSAVE_DELAY_MS,
 }: JournalEntryScreenProps): React.JSX.Element {
   const { ctx, initialTitle, bodyPlaceholder } = readEntrypoint(route.params);
@@ -719,7 +701,7 @@ function JournalEntryScreen({
   const { editGate, modal } = ctl;
   return (
     <SafeAreaView style={styles.safeArea} testID="journal-screen">
-      <JournalPage ctl={ctl} renderMargin={renderMargin} bodyPlaceholder={bodyPlaceholder} />
+      <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
       <GetResonanceButton
         visible={ctl.visible}
         loading={ctl.resonance.loading}

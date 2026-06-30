@@ -147,11 +147,9 @@ describe('JournalEntryScreen', () => {
     expect(queryByTestId('journal-margin-count')).toBeNull();
   });
 
-  it('reserves a margin column and renders the renderMargin slot', () => {
-    const renderMargin = jest.fn(() => null);
-    const { getByTestId } = renderScreen(undefined, { renderMargin });
+  it('reserves a margin column for the inline marginalia UI', () => {
+    const { getByTestId } = renderScreen();
     expect(getByTestId('journal-margin-column')).toBeTruthy();
-    expect(renderMargin).toHaveBeenCalled();
   });
 
   it('reserves bottom clearance so the floating Get Resonance button never overlaps content', () => {

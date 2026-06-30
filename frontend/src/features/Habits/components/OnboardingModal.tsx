@@ -25,7 +25,7 @@ import DatePicker, { parseISODate, toISODate } from '../../../components/DatePic
 import { colors, STAGE_COLORS } from '../../../design/tokens';
 import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
-import { STAGE_ORDER, calculateHabitStartDate } from '../HabitUtils';
+import { STAGE_ORDER, calculateHabitStartDate, calculateNetEnergy } from '../HabitUtils';
 
 import { ConfirmDialog } from './ConfirmDialog';
 import { HABIT_NAME_MAX_LENGTH, MAX_HABITS, validateAndAddHabit } from './onboardingValidation';
@@ -49,8 +49,8 @@ type RevealPhase = 'idle' | 'showing-scores' | 'sorting' | 'complete';
 
 const sortByNetEnergy = (habits: OnboardingHabit[]): OnboardingHabit[] =>
   [...habits].sort((a, b) => {
-    const netA = a.energy_return - a.energy_cost;
-    const netB = b.energy_return - b.energy_cost;
+    const netA = calculateNetEnergy(a.energy_cost, a.energy_return);
+    const netB = calculateNetEnergy(b.energy_cost, b.energy_return);
     if (netA !== netB) return netB - netA;
     if (a.energy_cost !== b.energy_cost) return a.energy_cost - b.energy_cost;
     return b.energy_return - a.energy_return;
@@ -161,7 +161,7 @@ const ReorderItem = ({ item, index, drag, isActive, onEditIcon }: ReorderItemPro
         <View style={styles.habitEnergyInfo}>
           <Text style={styles.habitEnergyText}>
             Cost: {item.energy_cost} | Return: {item.energy_return} | Net:{' '}
-            {item.energy_return - item.energy_cost}
+            {calculateNetEnergy(item.energy_cost, item.energy_return)}
           </Text>
         </View>
       </Animated.View>
@@ -446,7 +446,7 @@ const RevealStep = ({ habits, revealedScoreCount, revealPhase }: RevealStepProps
             </Text>
             {index < revealedScoreCount && (
               <Text testID="reveal-score" style={revealStyles.score}>
-                Net: {habit.energy_return - habit.energy_cost}
+                Net: {calculateNetEnergy(habit.energy_cost, habit.energy_return)}
               </Text>
             )}
           </View>
