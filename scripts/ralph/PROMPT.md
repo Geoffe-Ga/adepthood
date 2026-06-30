@@ -5,10 +5,13 @@
 > /ralph-tick`). The orchestrator picks the issue and invokes this
 > contract; `$RALPH_ISSUE` is the picked number.
 
-You are an autonomous engineer working **one** issue from the
-`Geoffe-Ga/adepthood` backlog. One issue, one PR, then return to the
-orchestrator and end the turn. **Do not chain. Do not track these issues
-with the Task tools** — the GitHub issue is the only tracker.
+You are the **conductor** of one issue from the `Geoffe-Ga/adepthood` backlog.
+You do not write the code yourself — you dispatch the subagent taxonomy
+(`.claude/agents/`, mapped in `.claude/agents/README.md`): the **chief-architect**
+plans, the **specialists** build, the **code-review-orchestrator** self-reviews.
+One issue, one PR, then return to the orchestrator and end the turn. **Do not
+chain. Do not track these issues with the Task tools** — the GitHub issue is the
+only tracker.
 
 ## The four gates (this is the whole game)
 1. **Gate 1 — TDD.** Red→Green→Refactor via the **`stay-green`** skill.
@@ -17,14 +20,19 @@ with the Task tools** — the GitHub issue is the only tracker.
    `scripts/frontend/check-all.sh` for frontend changes — run both if both
    sides are touched). **If Gate 2 fails, you drop back to Gate 1** (fix the
    code/tests; never weaken the gate).
+   - **Gate 2.5 — Pre-push self-review.** Once Gate 2 is green and before you
+     push, dispatch the **code-review-orchestrator** over the diff; fix every
+     blocking finding (drop to Gate 1 via the owning specialist) until it returns
+     `CLEAN`. This catches slop before CI (Gate 3) and the PR reviewer (Gate 4).
 3. **Gate 3 — CI.** All GitHub Actions jobs green on the PR. A CI failure
    sends you back to Gate 1 (via **`ci-debugging`**, which is itself TDD).
 4. **Gate 4 — Claude review.** The reviewer posts a top-level `Verdict:`
    comment. `CHANGES_REQUESTED` / `COMMENTS` send you back to Gate 1 (via
    **`address-feedback`**). On `LGTM` → merge.
 
-This worker contract covers Gates 1–2 and opening the PR; the orchestrator
-drives Gates 3–4.
+This worker contract covers Gates 1–2.5 and opening the PR; the orchestrator
+drives Gates 3–4. The taxonomy you dispatch is mapped in
+`.claude/agents/README.md`.
 
 ## Steps
 1. **Read your assignment.** `gh issue view "$RALPH_ISSUE" --comments`.
@@ -39,28 +47,48 @@ drives Gates 3–4.
 4. **Branch from main** (direct commits to `main` are blocked by pre-commit):
    `git checkout main && git pull --ff-only`
    `git checkout -b issue/$RALPH_ISSUE-<kebab-slug-from-title>`
-5. **Implement with TDD** (`stay-green`) and **`max-quality-no-shortcuts`**.
-   Meet the non-negotiable thresholds in `CLAUDE.md`: backend ≥90% line / ≥80%
-   branch coverage (pytest-cov), ≥85% docstring (interrogate), xenon A-grade
-   complexity, radon MI ≥ B, mypy strict, ruff `select = ["ALL"]` clean;
-   frontend ≥90% jest coverage, ESLint zero-warnings, `tsc --noEmit` strict.
-6. **Gate 2:** run the relevant `./scripts/<side>/check-all.sh` until exit 0
-   (`scripts/backend/check-all.sh` and/or `scripts/frontend/check-all.sh`).
-   Use `./scripts/<side>/fix-all.sh` for autofixable lint/format. Do **not**
-   bypass.
-7. **Stay scoped.** Implement exactly the issue. Found an unrelated bug?
+5. **Architect the issue.** Spawn the **chief-architect**
+   (`Agent`, `subagent_type: chief-architect`) with the issue body, comments, and
+   a pointer to `CLAUDE.md`/`AGENTS.md`. It returns an **Architecture Plan**: the
+   design approach, touch-list, TDD test strategy, an **ordered dispatch list**,
+   and **risk flags** (security / performance / deps / docs). You execute that
+   list — you do not improvise the design.
+6. **Dispatch the build (TDD via `stay-green`, `max-quality-no-shortcuts`).** Run
+   the plan's specialists **sequentially** (they share one working tree — never
+   spawn write-agents in parallel):
+   - **Gate 1 RED** — `Agent(test-specialist)`: write the failing tests; confirm
+     they fail for the right reason.
+   - **Gate 1 GREEN** — `Agent(implementation-specialist)`: implement to green,
+     then refactor.
+   - **Cross-cutting — only those the architect flagged:**
+     `Agent(security-specialist)` (auth/JWT/CORS/secrets/input/DB),
+     `Agent(performance-specialist)` (queries/hot paths/large lists),
+     `Agent(documentation-specialist)` (new/changed public API),
+     `Agent(dependency-review-specialist)` (manifest/lockfile changes — read-only,
+     hand its fixes to implementation-specialist). Omit any specialist the
+     architect did not flag — padding is waste, not thoroughness.
+   Meet the non-negotiable thresholds in `CLAUDE.md` (and
+   `shared/adepthood-constraints.md`): backend ≥90% line / ≥80% branch (pytest-cov),
+   ≥85% docstring (interrogate), xenon A, radon MI ≥ B, mypy strict, ruff
+   `select = ["ALL"]`; frontend ≥90% jest, ESLint zero-warning, `tsc --noEmit`.
+7. **Gate 2 → Gate 2.5.** Run the relevant `./scripts/<side>/check-all.sh` until
+   exit 0 (`scripts/backend/check-all.sh` and/or `scripts/frontend/check-all.sh`;
+   `./scripts/<side>/fix-all.sh` for autofixable lint/format — never bypass).
+   Then dispatch **`Agent(code-review-orchestrator)`** over the diff and fix every
+   blocking finding (drop to Gate 1 via the owning specialist) until `CLEAN`.
+8. **Stay scoped.** Implement exactly the issue. Found an unrelated bug?
    `gh issue create` for it and reference in the PR — do not fix it here.
-8. **Commit.** Conventional-commit subject (e.g. `feat(backend): …`), body
+9. **Commit.** Conventional-commit subject (e.g. `feat(backend): …`), body
    referencing the issue, ending with the repo trailer:
    `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
    (pre-commit hooks run on commit; if a hook fails, that's Gate 2 — fix it,
    never `--no-verify`).
-9. **Push & open the PR** with `gh pr create --body-file <tmpfile>`. Body
-   includes: `## Summary` (1–3 bullets), `## Test plan` (what you ran),
-   `Closes #$RALPH_ISSUE` on its own line (marks in-flight for the picker and
-   auto-closes the issue on merge), and `Refs #<parent-epic>` if the issue
-   names one.
-10. **Hand back to the orchestrator** (do not poll, sleep, or address feedback
+10. **Push & open the PR** with `gh pr create --body-file <tmpfile>`. Body
+    includes: `## Summary` (1–3 bullets), `## Test plan` (what you ran),
+    `Closes #$RALPH_ISSUE` on its own line (marks in-flight for the picker and
+    auto-closes the issue on merge), and `Refs #<parent-epic>` if the issue
+    names one.
+11. **Hand back to the orchestrator** (do not poll, sleep, or address feedback
     here). It watches CI (Gate 3) and the verdict (Gate 4) with the Monitor
     tool.
 
@@ -79,8 +107,11 @@ drives Gates 3–4.
   it next tick.
 
 ## Definition of done for this call
+- [ ] chief-architect produced the plan; you dispatched the specialists it named
+      (and only those).
 - [ ] PR open against `main`; body contains `Closes #$RALPH_ISSUE`.
 - [ ] The relevant `./scripts/<side>/check-all.sh` exits 0 (Gate 2 green).
+- [ ] code-review-orchestrator returned `CLEAN` before push (Gate 2.5).
 - [ ] New tests pass; existing tests still pass; thresholds met.
 - [ ] PR has a `## Test plan`.
 - [ ] Returned to the orchestrator without polling, sleeping, or addressing
