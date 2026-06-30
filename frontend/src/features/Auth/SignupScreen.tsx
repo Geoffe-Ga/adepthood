@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Text, TouchableOpacity } from 'react-native';
 
 import { authStyles as styles } from './auth.styles';
+import { AuthBrandBand } from './AuthBrandBand';
 import { AuthScreenContainer } from './AuthScreenContainer';
 import { canonicalizeEmail } from './canonicalizeEmail';
 import { validatePasswordPair } from './passwordValidation';
@@ -131,7 +132,9 @@ export default function SignupScreen({ navigation }: Props) {
 
   return (
     <AuthScreenContainer testID="signup">
-      <Text style={styles.title}>Create Account</Text>
+      <AuthBrandBand />
+      <Text style={styles.title}>Begin</Text>
+      <Text style={styles.lead}>Create your account and start the practice.</Text>
       <SignupFields
         email={email}
         setEmail={setEmail}

@@ -53,6 +53,23 @@ describe('ForgotPasswordScreen', () => {
     expect(await findByText('Check your inbox')).toBeTruthy();
   });
 
+  it('keeps the anti-enumeration success copy verbatim through the restyle', async () => {
+    // design-act2-10: the restyle must not touch the SPEC R4 copy. Assert the
+    // exact string still renders so a future style change can't quietly reword
+    // the anti-enumeration body.
+    mockRequest.mockResolvedValueOnce({ message: 'ok' });
+    const { getByLabelText, getByText, findByText } = render(
+      <ForgotPasswordScreen navigation={navigation} />,
+    );
+    fireEvent.changeText(getByLabelText('Email'), 'foo@example.com');
+    fireEvent.press(getByText('Send Reset Link'));
+    expect(
+      await findByText(
+        'If we have an account for that address, a reset link is on its way. The link expires in 30 minutes.',
+      ),
+    ).toBeTruthy();
+  });
+
   it('surfaces a friendly error when the request fails entirely', async () => {
     mockRequest.mockRejectedValueOnce(new TypeError('Network request failed'));
     const { getByLabelText, getByText, findByText } = render(
