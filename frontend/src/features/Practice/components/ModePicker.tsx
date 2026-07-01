@@ -15,7 +15,15 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { ModeConfig } from '../engine/types';
 
-import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import {
+  BORDER_RADIUS,
+  SPACING,
+  accent,
+  editorialType,
+  ink,
+  surface,
+  surfaceShadow,
+} from '@/design/tokens';
 
 /**
  * Discriminator union for every mode shown in the picker. Every mode now has a
@@ -239,16 +247,16 @@ const ModeRow = ({ entry, selected, onSelect }: ModeRowProps): React.JSX.Element
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: colors.background.card,
+    backgroundColor: surface.raised,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.md,
     marginBottom: SPACING.md,
-    ...shadows.small,
+    ...surfaceShadow.card,
   },
-  categoryTitle: { fontSize: 16, fontWeight: '700', color: colors.text.primary },
+  categoryTitle: { ...editorialType.title, color: ink.primary },
   categoryBlurb: {
-    fontSize: 13,
-    color: colors.text.secondaryAccessible,
+    ...editorialType.caption,
+    color: ink.soft,
     marginTop: SPACING.xs,
     marginBottom: SPACING.sm,
   },
@@ -260,23 +268,23 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.md,
     gap: SPACING.sm,
   },
-  rowSelected: { backgroundColor: colors.background.accent },
+  rowSelected: { backgroundColor: surface.sunken },
   rowIcon: { fontSize: 22, width: 28, textAlign: 'center' },
   rowText: { flex: 1 },
   rowLabelLine: { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs },
-  rowLabel: { fontSize: 15, fontWeight: '600', color: colors.text.primary },
+  rowLabel: { ...editorialType.note, color: ink.primary },
   rowDescription: {
-    fontSize: 12,
-    color: colors.text.secondaryAccessible,
+    ...editorialType.caption,
+    color: ink.soft,
     marginTop: 2,
   },
   newBadge: {
-    backgroundColor: colors.success,
+    backgroundColor: accent.primary,
     paddingHorizontal: SPACING.xs,
     paddingVertical: 2,
     borderRadius: BORDER_RADIUS.sm,
   },
-  newBadgeText: { color: colors.text.light, fontSize: 10, fontWeight: '700' },
+  newBadgeText: { color: surface.raised, fontSize: 10, fontWeight: '700' },
 });
 
 export default ModePicker;
