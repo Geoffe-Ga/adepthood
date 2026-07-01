@@ -6,6 +6,7 @@ import {
   KeyRound,
   LifeBuoy,
   LogOut,
+  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react-native';
 import React, { useCallback } from 'react';
@@ -27,6 +28,14 @@ import type { RootStackParamList } from '@/navigation/RootStack';
 
 const ICON_SIZE = 22;
 const CHEVRON_SIZE = 20;
+
+/** Entry-visibility promise: the three privacy tiers are the user's choice. */
+const PRIVACY_VISIBILITY_LINE =
+  'You choose the privacy of every entry — Public, Personal, or Intimate.';
+/** The hard guarantee that Intimate entries are never shared with any model. */
+const PRIVACY_INTIMATE_LINE = 'Entries you mark Intimate are never sent to any AI.';
+/** Full-sentence a11y label so screen-reader users hear both promises at once. */
+const PRIVACY_A11Y_LABEL = `${PRIVACY_VISIBILITY_LINE} ${PRIVACY_INTIMATE_LINE}`;
 
 interface SettingsRowProps {
   icon: LucideIcon;
@@ -92,6 +101,33 @@ const AccountSection = ({ onApiKey, onTimezone }: AccountSectionProps): React.JS
   </EditorialSection>
 );
 
+/**
+ * Privacy group: a non-interactive, informational statement surfacing the
+ * entry-visibility tiers and the Intimate/AI guarantee as a first-class feature
+ * rather than a buried setting. Kept non-navigational — it makes a promise, it
+ * is not a destination.
+ */
+const PrivacySection = (): React.JSX.Element => {
+  const { width } = useWindowDimensions();
+  const t = typeRamp(width);
+  return (
+    <EditorialSection title="Privacy" testID="settings-group-privacy">
+      <View
+        style={styles.privacyStatement}
+        accessibilityRole="text"
+        accessibilityLabel={PRIVACY_A11Y_LABEL}
+        testID="settings-privacy-statement"
+      >
+        <ShieldCheck color={accent.primary} size={ICON_SIZE} />
+        <View style={styles.privacyText}>
+          <Text style={[t.body, styles.privacyLine]}>{PRIVACY_VISIBILITY_LINE}</Text>
+          <Text style={[t.caption, styles.privacyLineSoft]}>{PRIVACY_INTIMATE_LINE}</Text>
+        </View>
+      </View>
+    </EditorialSection>
+  );
+};
+
 /** Session group: the destructive log-out action. */
 const SessionSection = ({ onLogout }: { onLogout: () => void }): React.JSX.Element => (
   <EditorialSection title="Session" testID="settings-group-session">
@@ -136,6 +172,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
         lead="Manage how Adepthood works for you."
       />
       <AccountSection onApiKey={openApiKey} onTimezone={openTimezone} />
+      <PrivacySection />
       <SessionSection onLogout={onLogout} />
       <SupportSection onSupportCare={openSupportCare} />
     </ScreenScaffold>
@@ -159,6 +196,22 @@ const styles = StyleSheet.create({
     color: ink.primary,
   },
   rowDescription: {
+    color: ink.soft,
+    marginTop: rhythm.blockGap / 3,
+  },
+  privacyStatement: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: rhythm.blockGap,
+  },
+  privacyText: {
+    flex: 1,
+    marginLeft: rhythm.blockGap,
+  },
+  privacyLine: {
+    color: ink.primary,
+  },
+  privacyLineSoft: {
     color: ink.soft,
     marginTop: rhythm.blockGap / 3,
   },

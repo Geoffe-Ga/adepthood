@@ -36,6 +36,11 @@ const WelcomePanelView = ({ panel, index, width }: PanelProps): React.JSX.Elemen
             ))}
           </View>
         ) : null}
+        {panel.note ? (
+          <Text style={s.note} testID="welcome-privacy-note">
+            {panel.note}
+          </Text>
+        ) : null}
       </View>
     </ShowcaseCard>
   </View>

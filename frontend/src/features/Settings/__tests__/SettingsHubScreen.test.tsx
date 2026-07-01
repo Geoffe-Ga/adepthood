@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 
 const mockNavigate = jest.fn();
@@ -91,5 +91,76 @@ describe('SettingsHubScreen — Support & care row (issue #892)', () => {
     expect(getByTestId('settings-row-api-key')).toBeTruthy();
     expect(getByTestId('settings-row-timezone')).toBeTruthy();
     expect(getByTestId('settings-row-logout')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #897 — Privacy section in Settings (RED — fails until impl exists)
+// ---------------------------------------------------------------------------
+
+describe('SettingsHubScreen — Privacy section (issue #897)', () => {
+  test('renders the Privacy group and statement block', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    expect(getByTestId('settings-group-privacy')).toBeTruthy();
+    expect(getByTestId('settings-privacy-statement')).toBeTruthy();
+  });
+
+  test('statement block is contained within the Privacy group', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+    const group = getByTestId('settings-group-privacy');
+
+    expect(within(group).getByTestId('settings-privacy-statement')).toBeTruthy();
+  });
+
+  test('renders the entry-visibility privacy statement verbatim', () => {
+    const { getByText } = render(<SettingsHubScreen />);
+
+    expect(
+      getByText('You choose the privacy of every entry — Public, Personal, or Intimate.'),
+    ).toBeTruthy();
+  });
+
+  test('renders the Intimate-entries AI statement verbatim', () => {
+    const { getByText } = render(<SettingsHubScreen />);
+
+    expect(getByText('Entries you mark Intimate are never sent to any AI.')).toBeTruthy();
+  });
+
+  test('statement block carries a non-empty accessibilityLabel and accessibilityRole="text"', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+    const block = getByTestId('settings-privacy-statement');
+
+    expect(typeof block.props.accessibilityLabel).toBe('string');
+    expect((block.props.accessibilityLabel as string).length).toBeGreaterThan(0);
+    expect(block.props.accessibilityRole).toBe('text');
+  });
+
+  test('accessibilityLabel is a full sentence, not a fragment', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+    const block = getByTestId('settings-privacy-statement');
+    const label = block.props.accessibilityLabel as string;
+
+    // A complete sentence ends with a full-stop or equivalent punctuation.
+    expect(label).toMatch(/[.!?]$/u);
+    // Must reference both key concepts so screen-reader users get the full picture.
+    expect(label.toLowerCase()).toContain('intimate');
+    expect(label.toLowerCase()).toContain('privacy');
+  });
+
+  test('NEGATIVE accuracy guard: does not claim "encrypted at rest"', () => {
+    const { queryByText } = render(<SettingsHubScreen />);
+
+    expect(queryByText(/encrypted at rest/iu)).toBeNull();
+  });
+
+  test('regression: existing sections and rows still render after Privacy addition', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    expect(getByTestId('settings-group-account')).toBeTruthy();
+    expect(getByTestId('settings-row-api-key')).toBeTruthy();
+    expect(getByTestId('settings-group-session')).toBeTruthy();
+    expect(getByTestId('settings-row-logout')).toBeTruthy();
+    expect(getByTestId('settings-group-support')).toBeTruthy();
   });
 });
