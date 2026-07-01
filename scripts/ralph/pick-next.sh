@@ -37,6 +37,9 @@
 # Exit codes:
 #   0 — issue number printed (or nothing if backlog empty / nothing compatible)
 #   2 — gh CLI not authenticated / missing
+#
+# Requires bash >= 4 (associative arrays `declare -A`, `${var,,}` lowercasing);
+# on macOS use /opt/homebrew/bin/bash (bash 5), not the system bash 3.2.
 set -euo pipefail
 
 if ! command -v gh >/dev/null 2>&1; then
@@ -105,8 +108,8 @@ if repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
   wt_dir="$repo_root/.ralph/worktrees"
   if [[ -d "$wt_dir" ]]; then
     worktree_issues=$(
-      find "$wt_dir" -maxdepth 1 -type d -name 'issue-*' -printf '%f\n' 2>/dev/null \
-        | sed 's/^issue-//' | sort -u || true
+      find "$wt_dir" -maxdepth 1 -type d -name 'issue-*' 2>/dev/null \
+        | sed 's#^.*/issue-##' | sort -u || true
     )
   fi
 fi
