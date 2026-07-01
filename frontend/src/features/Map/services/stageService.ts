@@ -76,6 +76,13 @@ export const isStageUnlocked = (
   currentStage: number | null,
 ): boolean => stage.isUnlocked || (currentStage !== null && stage.stageNumber <= currentStage);
 
+/** True only on the final stage with its progress complete — the gate for the declinable "begin again" affordance. */
+export const isEndOfCycle = (
+  stagesByNumber: Record<number, { progress: number } | undefined>,
+  currentStage: number,
+): boolean =>
+  currentStage === STAGE_COUNT && (stagesByNumber[STAGE_COUNT]?.progress ?? 0) >= FULLY_COMPLETE;
+
 /**
  * Snapshot captured by `prepareAdvanceStage` and consumed by
  * `applyAdvanceStage` / `rollbackAdvanceStage`. Holding the previous
@@ -177,6 +184,24 @@ export const stageService = {
    */
   rollbackAdvanceStage: (ctx: AdvanceStageContext): void => {
     useStageStore.getState().setCurrentStage(ctx.prev);
+  },
+
+  /**
+   * Open a fresh cycle: record the server's new cycle number, then reload
+   * stages so state resets from server truth. Mirrors `loadStages`'s
+   * error handling — a failed begin-again POST routes to `useStageStore.error`
+   * rather than rejecting unhandled, since the call site discards the promise.
+   */
+  beginAgain: async (token?: string): Promise<void> => {
+    try {
+      const record = await stagesApi.beginAgain(token);
+      useStageStore.getState().setCycleNumber(record.cycle_number);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to begin again';
+      useStageStore.getState().setError(message);
+      return;
+    }
+    await stageService.loadStages(token);
   },
 };
 

@@ -22,11 +22,14 @@ export interface StageStoreState {
   /** Derived array view. Kept in sync by actions. */
   stages: StageData[];
   currentStage: number;
+  /** Which pass through the arc the user is on; 1 on a first walk-through. */
+  cycleNumber: number;
   loading: boolean;
   error: string | null;
 
   setStages: (_stages: StageData[]) => void;
   setCurrentStage: (_stageNumber: number) => void;
+  setCycleNumber: (_cycleNumber: number) => void;
   setLoading: (_loading: boolean) => void;
   setError: (_error: string | null) => void;
   updateStageProgress: (_stageNumber: number, _progress: number) => void;
@@ -39,6 +42,7 @@ const INITIAL_STATE = {
   stageOrder: [] as number[],
   stages: [] as StageData[],
   currentStage: 1,
+  cycleNumber: 1,
   loading: false,
   error: null as string | null,
 };
@@ -70,6 +74,7 @@ export const useStageStore = create<StageStoreState>((set) => ({
 
   setStages: (stages) => set(normalizeStages(stages)),
   setCurrentStage: (currentStage) => set({ currentStage }),
+  setCycleNumber: (cycleNumber) => set({ cycleNumber }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
   updateStageProgress: (stageNumber, progress) =>
@@ -110,5 +115,6 @@ registerStoreReset(() => {
 
 export const selectStages = (state: StageStoreState): StageData[] => state.stages;
 export const selectCurrentStage = (state: StageStoreState): number => state.currentStage;
+export const selectCycleNumber = (state: StageStoreState): number => state.cycleNumber;
 export const selectStagesLoading = (state: StageStoreState): boolean => state.loading;
 export const selectStagesError = (state: StageStoreState): string | null => state.error;

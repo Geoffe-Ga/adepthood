@@ -24,21 +24,25 @@ import {
 } from '../../store/useProgramProgression';
 import {
   selectCurrentStage,
+  selectCycleNumber,
   selectStages,
   selectStagesError,
   selectStagesLoading,
   useStageStore,
 } from '../../store/useStageStore';
 
+import { BEGIN_AGAIN_COPY, cycleLabel } from './beginAgain';
+import { useBeginAgainGuard } from './hooks/useBeginAgainGuard';
 import { useWheelBalance } from './hooks/useWheelBalance';
 import { journeyRead, progressionSentence, rankedStats, unlockTimeline } from './journeyNarrative';
 import styles from './Map.styles';
 import { MAP_ROWS, STAGE_DISPLAY, TITLE_BY_STAGE } from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
-import { stageService, isStageUnlocked } from './services/stageService';
+import { stageService, isStageUnlocked, isEndOfCycle } from './services/stageService';
 import { isLeftReturning, STAGE_COUNT, type StageData } from './stageData';
 import { BALANCE_COPY, emphasisStyle, FULLNESS_ALIVE_THRESHOLD, summaryFor } from './wheelBalance';
 
+import { Button } from '@/components/Button';
 import { Celebration } from '@/components/feedback/Celebration';
 import { colors } from '@/design/tokens';
 
@@ -639,15 +643,52 @@ const MapBackdrop = (): React.JSX.Element =>
     <View style={styles.backdrop} testID="map-background" pointerEvents="none" />
   );
 
+/** The first pass through the arc; cycles beyond it earn the subtle indicator. */
+const FIRST_CYCLE = 1;
+
+interface JourneyHeaderProps {
+  currentStage: number;
+  cycleNumber: number;
+}
+
 /** Compact momentum read at the top of the Map: "Stage N of 10 · Week W". */
-const JourneyHeader = ({ currentStage }: { currentStage: number }): React.JSX.Element => {
+const JourneyHeader = ({ currentStage, cycleNumber }: JourneyHeaderProps): React.JSX.Element => {
   const week = useDerivedCurrentWeek(1);
   return (
     <View style={styles.journeyHeader} testID="journey-read">
       <Text style={styles.journeyReadText}>{journeyRead(currentStage, week, STAGE_COUNT)}</Text>
+      {cycleNumber > FIRST_CYCLE ? (
+        <Text style={styles.cycleIndicator} testID="cycle-indicator">
+          {cycleLabel(cycleNumber)}
+        </Text>
+      ) : null}
     </View>
   );
 };
+
+/** End-of-arc "begin again" affordance: a gentle, declinable invitation the user chooses — never auto-invoked. */
+const BeginAgainBlock = ({
+  onBeginAgain,
+  beginning,
+}: {
+  onBeginAgain: () => void;
+  beginning: boolean;
+}): React.JSX.Element => (
+  <View style={styles.beginAgain} testID="begin-again">
+    <Text style={styles.beginAgainHeading}>{BEGIN_AGAIN_COPY.heading}</Text>
+    <Text style={styles.beginAgainBody}>{BEGIN_AGAIN_COPY.body}</Text>
+    <Button
+      label={BEGIN_AGAIN_COPY.action}
+      variant="tertiary"
+      onPress={onBeginAgain}
+      // Disable while the first POST is in flight so a double-press can't
+      // advance the cycle twice before ``loadStages`` hides this button.
+      disabled={beginning}
+      testID="begin-again-button"
+      accessibilityLabel="Begin again — start a new cycle through the arc"
+    />
+  </View>
+);
 
 const MapGrid = ({
   lookup,
@@ -776,10 +817,14 @@ interface MapContentProps {
   lookup: StageLookup;
   fullnessByStage: FullnessLookup;
   currentStage: number;
+  cycleNumber: number;
+  showBeginAgain: boolean;
+  beginning: boolean;
   showRefreshError: boolean;
   activeStage: StageData | null;
   celebration: CompletionCelebration;
   onRefresh: () => void;
+  onBeginAgain: () => void;
   onSelectStage: (_stage: StageData) => void;
   onCloseModal: () => void;
   onNavigate: (_screen: NavTarget, _stage: StageData) => void;
@@ -789,7 +834,7 @@ interface MapContentProps {
 const MapContent = (props: MapContentProps): React.JSX.Element => (
   <View style={styles.container}>
     <MapBackdrop />
-    <JourneyHeader currentStage={props.currentStage} />
+    <JourneyHeader currentStage={props.currentStage} cycleNumber={props.cycleNumber} />
     <MapGrid
       lookup={props.lookup}
       fullnessByStage={props.fullnessByStage}
@@ -797,6 +842,9 @@ const MapContent = (props: MapContentProps): React.JSX.Element => (
       onSelectStage={props.onSelectStage}
     />
     <BalanceSummary fullnessByStage={props.fullnessByStage} />
+    {props.showBeginAgain && (
+      <BeginAgainBlock onBeginAgain={props.onBeginAgain} beginning={props.beginning} />
+    )}
     {props.showRefreshError && <MapRefreshErrorBanner onRetry={props.onRefresh} />}
     <CelebrationBanner
       active={props.celebration.active}
@@ -816,6 +864,7 @@ const MapScreen = (): React.JSX.Element => {
   const loading = useStageStore(selectStagesLoading);
   const error = useStageStore(selectStagesError);
   const storeCurrentStage = useStageStore(selectCurrentStage);
+  const cycleNumber = useStageStore(selectCycleNumber);
   // Prefer the date-driven stage when the master anchor is set; the
   // server's count-based ``currentStage`` is the fallback for users who
   // haven't picked an anchor yet.
@@ -823,6 +872,7 @@ const MapScreen = (): React.JSX.Element => {
   // Additive overlay: a failed/loading read leaves the map empty so every Aspect reads thin.
   const { fullnessByStage } = useWheelBalance();
   const [activeStage, setActiveStage] = useState<StageData | null>(null);
+  const { beginning, handleBeginAgain } = useBeginAgainGuard();
 
   // Resolve each row's stage numbers to their loaded StageData once per change.
   const lookup = useMemo<StageLookup>(
@@ -849,10 +899,14 @@ const MapScreen = (): React.JSX.Element => {
       lookup={lookup}
       fullnessByStage={fullnessByStage}
       currentStage={currentStage}
+      cycleNumber={cycleNumber}
+      showBeginAgain={isEndOfCycle(lookup, currentStage)}
+      beginning={beginning}
       showRefreshError={!!error && stages.length > 0}
       activeStage={activeStage}
       celebration={celebration}
       onRefresh={handleRefresh}
+      onBeginAgain={handleBeginAgain}
       onSelectStage={setActiveStage}
       onCloseModal={handleCloseModal}
       onNavigate={handleNavigate}

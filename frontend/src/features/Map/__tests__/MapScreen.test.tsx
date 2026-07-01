@@ -13,6 +13,8 @@ jest.mock('react-native/Libraries/Interaction/InteractionManager', () => ({
     cb();
     return { then: () => {}, done: () => {}, cancel: () => {} };
   },
+  createInteractionHandle: () => 1,
+  clearInteractionHandle: () => {},
 }));
 
 // Mock navigation so we can observe tab linking behaviour.
@@ -79,13 +81,24 @@ function mockMakeStage(stageNumber: number) {
 
 const mockStages = Array.from({ length: 10 }, (_, i) => mockMakeStage(10 - i));
 
+let mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
+  () => false,
+);
+let mockCycleNumber = 1;
+
 const mockLoadStages = jest.fn();
+const mockBeginAgain = jest.fn();
 jest.mock('../services/stageService', () => ({
-  stageService: { loadStages: (...args: unknown[]) => mockLoadStages(...args) },
+  stageService: {
+    loadStages: (...args: unknown[]) => mockLoadStages(...args),
+    beginAgain: (...args: unknown[]) => mockBeginAgain(...args),
+  },
   isStageUnlocked: (
     stage: { isUnlocked: boolean; stageNumber: number },
     currentStage: number | null,
   ) => stage.isUnlocked || (currentStage !== null && stage.stageNumber <= currentStage),
+  isEndOfCycle: (stagesByNumber: Record<number, { progress: number }>, currentStage: number) =>
+    mockIsEndOfCycle(stagesByNumber, currentStage),
 }));
 
 const buildMockStageState = () => ({
@@ -95,11 +108,13 @@ const buildMockStageState = () => ({
   currentStage: 1,
   loading: false,
   error: null,
+  cycleNumber: mockCycleNumber,
   setStages: jest.fn(),
   setCurrentStage: jest.fn(),
   setLoading: jest.fn(),
   setError: jest.fn(),
   updateStageProgress: jest.fn(),
+  setCycleNumber: jest.fn(),
 });
 
 jest.mock('../../../store/useStageStore', () => ({
@@ -111,6 +126,7 @@ jest.mock('../../../store/useStageStore', () => ({
   selectCurrentStage: (s: { currentStage: unknown }) => s.currentStage,
   selectStagesLoading: (s: { loading: unknown }) => s.loading,
   selectStagesError: (s: { error: unknown }) => s.error,
+  selectCycleNumber: (s: { cycleNumber: number }) => s.cycleNumber,
   selectStageByNumber:
     (n: number | null | undefined) => (s: { stagesByNumber: Record<number, unknown> }) =>
       n == null ? undefined : s.stagesByNumber[n],
@@ -134,6 +150,11 @@ describe('MapScreen', () => {
   beforeEach(() => {
     mockNavigate.mockClear();
     mockLoadStages.mockClear();
+    mockBeginAgain.mockClear();
+    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
+      () => false,
+    );
+    mockCycleNumber = 1;
     mockDerivedStage = 1;
     mockDerivedWeek = 1;
     mockDaysUntilStage = null;
@@ -355,5 +376,81 @@ describe('MapScreen', () => {
     expect(hotspots.length).toBeGreaterThan(0);
     // No full-screen loader should obscure the grid.
     expect(() => tree.root.findByProps({ testID: 'map-loading' })).toThrow();
+  });
+
+  // --- begin-again affordance ---
+
+  it('shows begin-again-button at end of cycle', () => {
+    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(() => true);
+    const tree = create(<MapScreen />);
+    const btn = tree.root.findByProps({ testID: 'begin-again-button' });
+    expect(btn).toBeTruthy();
+  });
+
+  it('pressing begin-again-button calls stageService.beginAgain', () => {
+    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(() => true);
+    mockBeginAgain.mockResolvedValue(undefined);
+    const tree = create(<MapScreen />);
+    act(() => {
+      tree.root.findByProps({ testID: 'begin-again-button' }).props.onPress();
+    });
+    expect(mockBeginAgain).toHaveBeenCalledTimes(1);
+  });
+
+  it('double-pressing begin-again-button sends exactly one request', () => {
+    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(() => true);
+    // Never-resolving so the in-flight guard stays true across both presses;
+    // the second tap must be a no-op or a second POST would skip a cycle.
+    mockBeginAgain.mockReturnValue(new Promise<void>(() => {}));
+    const tree = create(<MapScreen />);
+    act(() => {
+      tree.root.findByProps({ testID: 'begin-again-button' }).props.onPress();
+      tree.root.findByProps({ testID: 'begin-again-button' }).props.onPress();
+    });
+    expect(mockBeginAgain).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables begin-again-button while a begin-again request is in flight', () => {
+    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(() => true);
+    mockBeginAgain.mockReturnValue(new Promise<void>(() => {}));
+    const tree = create(<MapScreen />);
+    act(() => {
+      tree.root.findByProps({ testID: 'begin-again-button' }).props.onPress();
+    });
+    const btn = tree.root.findByProps({ testID: 'begin-again-button' });
+    // The Button node carries the in-flight guard via its ``disabled`` prop.
+    expect(btn.props.disabled).toBe(true);
+  });
+
+  it('begin-again-button is absent mid-cycle', () => {
+    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
+      () => false,
+    );
+    const tree = create(<MapScreen />);
+    expect(
+      tree.root.findAll((n: TestNode) => n.props.testID === 'begin-again-button'),
+    ).toHaveLength(0);
+  });
+
+  // --- cycle-indicator ---
+
+  it('shows cycle-indicator with "Cycle 2" when cycleNumber is 2', () => {
+    mockCycleNumber = 2;
+    const tree = create(<MapScreen />);
+    const indicator = tree.root.findByProps({ testID: 'cycle-indicator' });
+    expect(indicator).toBeTruthy();
+    const flat = (indicator.props.children as unknown[]).flat
+      ? (indicator.props.children as unknown[]).flat(10)
+      : [indicator.props.children];
+    const text = flat.join('');
+    expect(text).toContain('Cycle 2');
+  });
+
+  it('cycle-indicator is absent when cycleNumber is 1', () => {
+    mockCycleNumber = 1;
+    const tree = create(<MapScreen />);
+    expect(tree.root.findAll((n: TestNode) => n.props.testID === 'cycle-indicator')).toHaveLength(
+      0,
+    );
   });
 });
