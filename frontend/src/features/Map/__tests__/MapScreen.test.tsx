@@ -453,4 +453,87 @@ describe('MapScreen', () => {
       0,
     );
   });
+
+  // --- sine-wave overlay (struck-tuning-fork) ---
+
+  const WAVE_LAYOUT_WIDTH = 300;
+  const WAVE_LAYOUT_HEIGHT = 600;
+  const MIN_WAVE_SEGMENTS = 9;
+
+  const fireGridLayout = (tree: ReturnType<typeof create>) => {
+    act(() => {
+      tree.root.findByProps({ testID: 'map-grid' }).props.onLayout({
+        nativeEvent: { layout: { width: WAVE_LAYOUT_WIDTH, height: WAVE_LAYOUT_HEIGHT } },
+      });
+    });
+  };
+
+  it('renders the wave overlay once the grid reports a non-zero layout size', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    expect(tree.root.findByProps({ testID: 'map-wave' })).toBeTruthy();
+  });
+
+  it('renders at least 9 wave path segments and arrowheads after layout', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    const paths = tree.root.findAll(
+      (node: TestNode) => typeof node.props.d === 'string' && node.props.d.length > 0,
+    );
+    expect(paths.length).toBeGreaterThanOrEqual(MIN_WAVE_SEGMENTS);
+    expect(tree.root.findByProps({ testID: 'wave-arrow-1' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'wave-arrow-5' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'wave-arrow-9' })).toBeTruthy();
+  });
+
+  it('does not render the wave overlay before the grid has reported a size', () => {
+    const tree = create(<MapScreen />);
+    expect(() => tree.root.findByProps({ testID: 'map-wave' })).toThrow();
+  });
+
+  it('no longer renders the old directional arrow glyphs', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    const glyphNodes = tree.root.findAll(
+      (node: TestNode) => node.props.children === '↩' || node.props.children === '↪',
+    );
+    expect(glyphNodes).toHaveLength(0);
+  });
+
+  it('keeps every stage-hotspot present after the wave overlay renders', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    const hotspots = tree.root.findAll(
+      (node: TestNode) =>
+        typeof node.props.testID === 'string' && node.props.testID.startsWith('stage-hotspot'),
+    );
+    const unique = new Set(hotspots.map((s: TestNode) => s.props.testID as string));
+    expect(unique.size).toBe(20);
+  });
+
+  it('keeps you-are-here present for the current stage after the wave overlay renders', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    expect(tree.root.findByProps({ testID: 'you-are-here' })).toBeTruthy();
+  });
+
+  it('keeps all six Aspect labels present after the wave overlay renders', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    const aspectLabels = ['Awareness', 'Being', 'Wisdom', 'Understanding', 'Love', 'Yes-And-Ness'];
+    for (const label of aspectLabels) {
+      expect(tree.root.findAll((n: TestNode) => n.props.children === label).length).toBeGreaterThan(
+        0,
+      );
+    }
+  });
+
+  it('renders the wave overlay independent of MAP_BACKGROUND_URI (MapBackdrop is a no-op)', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    // MapBackdrop still renders its placeholder testID regardless of the PNG,
+    // and the wave overlay renders alongside it with no dependency between them.
+    expect(tree.root.findByProps({ testID: 'map-background' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'map-wave' })).toBeTruthy();
+  });
 });
