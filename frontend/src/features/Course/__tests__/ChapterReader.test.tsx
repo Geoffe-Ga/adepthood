@@ -181,6 +181,84 @@ describe('ChapterReader', () => {
       <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
     );
     await findByTestId('reader-empty');
-    await findByText(/hasn’t been written yet/i);
+    await findByText(/hasn['’]t been written yet/i);
+  });
+
+  // A single in-paragraph newline (soft break) must reflow to a space.
+  it('reflows hard-wrapped lines within a paragraph into a single visual line', async () => {
+    mockContentBody.mockResolvedValueOnce({
+      title: 'Reflow Test',
+      content_type: 'chapter',
+      body_markdown: 'a crash\ncourse in flow.\n',
+    });
+    const { findByText } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    // Passes only when the softbreak between 'crash' and 'course' becomes a space.
+    await findByText(/crash course/);
+  });
+
+  // GREEN guard: blank-line paragraph boundaries must not be collapsed by the softbreak fix.
+  it('preserves blank-line paragraph boundaries after the softbreak fix', async () => {
+    mockContentBody.mockResolvedValueOnce({
+      title: 'Para Boundary',
+      content_type: 'chapter',
+      body_markdown: 'para one.\n\npara two.\n',
+    });
+    const { findByText, queryByText } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    await findByText(/para one/);
+    await findByText(/para two/);
+    // The two paragraphs must remain separate — not joined into one run of text.
+    expect(queryByText(/para one\.\s*para two/)).toBeNull();
+  });
+
+  // GREEN guard: list items must remain distinct after the softbreak fix.
+  it('renders list items as distinct nodes, not collapsed into one line', async () => {
+    mockContentBody.mockResolvedValueOnce({
+      title: 'List Test',
+      content_type: 'chapter',
+      body_markdown: '- alpha\n- beta\n',
+    });
+    const { findByText } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    // Both items must be independently queryable.
+    await findByText(/alpha/);
+    await findByText(/beta/);
+  });
+
+  // GREEN guard: a two-trailing-space hard break must NOT be collapsed to a space.
+  it('preserves a hard break (two trailing spaces) after the softbreak fix', async () => {
+    mockContentBody.mockResolvedValueOnce({
+      title: 'Hard Break',
+      content_type: 'chapter',
+      body_markdown: 'line one  \nline two.\n',
+    });
+    const { findByText, queryByText } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    await findByText(/line one/);
+    await findByText(/line two/);
+    // The hard break must keep them apart — not reflowed into one spaced run.
+    expect(queryByText(/line one line two/)).toBeNull();
+  });
+
+  // Defensive: raw frontmatter must never reach the Markdown renderer.
+  it('does not render YAML frontmatter fields when body_markdown opens with a fence', async () => {
+    mockContentBody.mockResolvedValueOnce({
+      title: 'Frontmatter Test',
+      content_type: 'chapter',
+      body_markdown: '---\nslug: leak\ntitle: "T"\n---\n\n# Real\n\nProse.\n',
+    });
+    const { findByText, queryByText } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    // Body text must appear once frontmatter is stripped.
+    await findByText(/Real/);
+    // Raw YAML keys must not appear anywhere in the rendered output.
+    expect(queryByText(/slug:/)).toBeNull();
+    expect(queryByText(/title:/)).toBeNull();
   });
 });
