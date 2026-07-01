@@ -263,7 +263,8 @@ export type EngineAction =
   | { type: 'COMPLETE'; now: number }
   | { type: 'TICK'; now: number }
   | { type: 'TAP' }
-  | { type: 'ADVANCE_STEP' };
+  | { type: 'ADVANCE_STEP' }
+  | { type: 'CONFIG_CHANGED' };
 
 export const MS_PER_MINUTE = 60_000;
 export const SECONDS_PER_MINUTE = 60;

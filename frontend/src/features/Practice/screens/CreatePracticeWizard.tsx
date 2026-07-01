@@ -34,7 +34,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { defaultConfigFor, suggestedDurationFor } from '../configurator/defaults';
+import { defaultConfigFor, isDurationDriven, suggestedDurationFor } from '../configurator/defaults';
 import { ErrorList } from '../configurator/forms/shared';
 import type { ModeConfig } from '../engine/types';
 import { validateModeConfig } from '../engine/validation';
@@ -375,7 +375,9 @@ const MetadataStep = (props: MetadataStepProps): React.JSX.Element => {
       <NameField state={props.state} setState={props.setState} />
       <DescriptionField state={props.state} setState={props.setState} />
       <InstructionsField state={props.state} setState={props.setState} />
-      <DurationField state={props.state} setState={props.setState} />
+      {showsDurationField(props.state) && (
+        <DurationField state={props.state} setState={props.setState} />
+      )}
       <StageField state={props.state} setState={props.setState} />
       <ErrorList errors={errors} />
       {props.submit.apiError !== null && (
@@ -635,12 +637,29 @@ async function createOrReuseDraft(
     name: state.name.trim(),
     description: state.description.trim(),
     instructions: state.instructions.trim(),
-    default_duration_minutes: state.duration,
+    default_duration_minutes: deriveDefaultDuration(config, state.duration),
     mode: config.mode,
     mode_config: config,
   });
   draftIdRef.current = created.id;
   return created.id;
+}
+
+/**
+ * Reconcile ``default_duration_minutes`` with the timer's own duration.
+ *
+ * For a duration-driven mode the countdown lives in ``mode_config`` (e.g.
+ * ``metronome.timer.duration_minutes``), so the saved default is derived
+ * from it — the standalone field is hidden and the two numbers agree. Every
+ * other mode threads the user-typed field value through unchanged.
+ */
+function deriveDefaultDuration(config: ModeConfig, typedDuration: number): number {
+  return isDurationDriven(config.mode) ? suggestedDurationFor(config) : typedDuration;
+}
+
+/** The standalone duration field shows only for modes without an inherent duration. */
+function showsDurationField(state: WizardState): boolean {
+  return state.config === null || !isDurationDriven(state.config.mode);
 }
 
 /**

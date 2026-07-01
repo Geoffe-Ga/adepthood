@@ -214,7 +214,9 @@ describe('CreatePracticeWizard — metadata + submit', () => {
   it('shows a formatted suggested-duration hint on the metadata step', () => {
     const { view } = renderScreen();
     fireEvent.press(view.getByTestId('create-practice-from-scratch'));
-    fireEvent.press(view.getByTestId('mode-picker-mode-random_interval_bell'));
+    // A non-duration-driven mode keeps the standalone duration field (and its
+    // suggested-duration hint); duration-driven modes derive it from the config.
+    fireEvent.press(view.getByTestId('mode-picker-mode-rep_counter'));
     fireEvent.press(view.getByTestId('create-practice-configure-next'));
     expect(view.getByTestId('create-practice-duration-suggested')).toBeTruthy();
     expect(view.getByText(/Suggested:/)).toBeTruthy();
@@ -450,7 +452,9 @@ describe('CreatePracticeWizard — metadata fields + nav', () => {
   it('strips non-numeric characters when parsing duration', () => {
     const { view } = renderScreen();
     fireEvent.press(view.getByTestId('create-practice-from-scratch'));
-    fireEvent.press(view.getByTestId('mode-picker-mode-meditation_timer'));
+    // rep_counter is not duration-driven, so the standalone duration field is
+    // shown and its parsing can be exercised.
+    fireEvent.press(view.getByTestId('mode-picker-mode-rep_counter'));
     fireEvent.press(view.getByTestId('create-practice-configure-next'));
     fireEvent.changeText(view.getByTestId('create-practice-duration'), 'abc');
     expect(view.getByTestId('create-practice-duration').props.value).toBe('');
@@ -470,7 +474,9 @@ describe('CreatePracticeWizard — metadata fields + nav', () => {
   it('lets the user override the auto-suggested duration', () => {
     const { view } = renderScreen();
     fireEvent.press(view.getByTestId('create-practice-from-scratch'));
-    fireEvent.press(view.getByTestId('mode-picker-mode-meditation_timer'));
+    // For a duration-driven mode the countdown is edited in the configurator, so
+    // the standalone field only applies to modes without an inherent duration.
+    fireEvent.press(view.getByTestId('mode-picker-mode-rep_counter'));
     fireEvent.press(view.getByTestId('create-practice-configure-next'));
     // Smart default was filled in from the mode default — user can still tweak.
     fireEvent.changeText(view.getByTestId('create-practice-duration'), '45');

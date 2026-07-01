@@ -45,9 +45,7 @@ export function ritualReducer(
     case 'START':
       return handleStart(state, action.now, config);
     case 'PAUSE':
-      return state.status === 'running'
-        ? { ...state, status: 'paused', pauseStartedAtMs: action.now }
-        : state;
+      return handlePause(state, action.now);
     case 'RESUME':
       return handleResume(state, action.now);
     case 'CANCEL':
@@ -60,7 +58,27 @@ export function ritualReducer(
       return handleTap(state, config);
     case 'ADVANCE_STEP':
       return handleAdvanceStep(state, config);
+    case 'CONFIG_CHANGED':
+      return handleConfigChanged(state, config);
   }
+}
+
+/**
+ * Reconcile the idle countdown when the configurator saves a new duration.
+ *
+ * Only an idle session is re-seeded: a running or paused countdown is
+ * returned by reference so a live session is never disturbed by a config
+ * edit. The cue schedule is rebuilt from the fresh config at START, so no
+ * mid-session state needs touching here.
+ */
+function handleConfigChanged(state: EngineState, config: ModeConfig): EngineState {
+  if (state.status !== 'idle') return state;
+  return { ...state, remainingMs: getTotalMs(config), progress: 0 };
+}
+
+/** Pause a running countdown; a non-running session is left untouched. */
+function handlePause(state: EngineState, now: number): EngineState {
+  return state.status === 'running' ? { ...state, status: 'paused', pauseStartedAtMs: now } : state;
 }
 
 function handleStart(state: EngineState, now: number, config: ModeConfig): EngineState {

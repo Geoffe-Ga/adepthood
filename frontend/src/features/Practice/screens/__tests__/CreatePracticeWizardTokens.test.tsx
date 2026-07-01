@@ -155,10 +155,9 @@ describe('Candle & Ink token guard — primary CTA (create-practice-submit)', ()
   it('submit button background resolves to accent.primary when enabled', () => {
     const { view } = navigateToMetadata();
     // Fill the name field so the button is enabled (not disabled-opaque).
+    // meditation_timer is duration-driven: its duration is seeded from the
+    // config, so the standalone field is hidden and no explicit set is needed.
     fireEvent.changeText(view.getByTestId('create-practice-name'), 'Bell sit');
-    // Also need a valid duration — the configured default is auto-set, but
-    // the form validation requires duration > 0; set it explicitly.
-    fireEvent.changeText(view.getByTestId('create-practice-duration'), '20');
     const submit = view.getByTestId('create-practice-submit');
     // POST-migration expected value — the migrated semantic token value.
     expect(flatBackground(submit.props.style)).toBe(accent.primary);
@@ -167,7 +166,6 @@ describe('Candle & Ink token guard — primary CTA (create-practice-submit)', ()
   it('submit button does NOT use the legacy colors.primary near-black', () => {
     const { view } = navigateToMetadata();
     fireEvent.changeText(view.getByTestId('create-practice-name'), 'Bell sit');
-    fireEvent.changeText(view.getByTestId('create-practice-duration'), '20');
     const submit = view.getByTestId('create-practice-submit');
     expect(flatBackground(submit.props.style)).not.toBe(colors.primary);
   });

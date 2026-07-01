@@ -149,3 +149,23 @@ export function suggestedDurationFor(config: ModeConfig): number {
   const hint = DURATION_HINTS[config.mode] as AnyHint;
   return Math.max(1, Math.round(hint(config)));
 }
+
+/**
+ * Timer-family modes whose config carries the countdown duration itself.
+ *
+ * For these modes ``default_duration_minutes`` is derived from the config
+ * ({@link suggestedDurationFor}) rather than typed in a standalone field, so
+ * the metadata step hides the field and the two numbers can never disagree.
+ * The step-counted and open-ended modes keep the standalone field.
+ */
+const DURATION_DRIVEN_MODES: ReadonlySet<ModeConfig['mode']> = new Set([
+  'meditation_timer',
+  'interval_bell',
+  'random_interval_bell',
+  'metronome',
+]);
+
+/** Whether ``mode``'s config carries its own countdown duration. */
+export function isDurationDriven(mode: ModeConfig['mode']): boolean {
+  return DURATION_DRIVEN_MODES.has(mode);
+}
