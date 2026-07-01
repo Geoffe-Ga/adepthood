@@ -13,6 +13,15 @@ Reconciliation is idempotent and never destructive: rows update in place
 when their fields drift, and nothing is ever deleted — rows referenced
 by ``ContentCompletion`` stay put.
 
+Seeding fails loudly when the manifest ships a stage that has no matching
+``CourseStage`` row: that mismatch means stages and content were seeded
+out of order (or a stage rollback left content orphaned), so we raise
+``SeedContentStageMissingError`` before touching the DB rather than
+silently dropping the stage's chapters.  ``_seed_startup_data`` catches
+it per seeder and surfaces it as ``seed_failed seeder=content`` in the
+boot logs.  Placeholder rows for stages the manifest does not cover keep
+skipping quietly — their ``CourseStage`` row may legitimately be absent.
+
 Editing happens in the content repo; see ``docs/content.md``.
 """
 
@@ -24,6 +33,11 @@ from sqlmodel import select
 from content_config import ChapterRecord, all_chapter_records
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
+
+
+class SeedContentStageMissingError(ValueError):
+    """Raised when a manifest stage has no matching ``CourseStage`` row."""
+
 
 # Placeholder rows for stages the content manifest does not cover yet.
 # Once the manifest ships a stage, its placeholders are suppressed
@@ -120,6 +134,13 @@ def desired_content_records() -> list[ChapterRecord]:
     return [*manifest_records, *_placeholder_records(covered)]
 
 
+def _unmapped_manifest_stages(stage_map: dict[int, int]) -> list[int]:
+    """Return sorted manifest stage numbers with no ``CourseStage`` row."""
+    return sorted(
+        {r.stage_number for r in all_chapter_records() if r.stage_number not in stage_map}
+    )
+
+
 async def _load_stage_map(session: AsyncSession) -> dict[int, int]:
     """Build a map of ``stage_number -> CourseStage.id`` from the DB."""
     result = await session.execute(select(CourseStage))
@@ -191,6 +212,29 @@ def _reconcile_one(
     return False, False
 
 
+def _guard_manifest_stages_mapped(stage_map: dict[int, int]) -> None:
+    """Raise loudly when a manifest stage has no ``CourseStage`` row."""
+    unmapped = _unmapped_manifest_stages(stage_map)
+    if unmapped:
+        message = f"Manifest stages have no CourseStage row: {unmapped}"
+        raise SeedContentStageMissingError(message)
+
+
+def _reconcile_all(
+    session: AsyncSession,
+    stage_map: dict[int, int],
+    existing: dict[tuple[int, str], StageContent],
+) -> tuple[int, bool]:
+    """Reconcile every desired record; return ``(inserted_count, dirty)``."""
+    inserted = 0
+    dirty = False
+    for record in desired_content_records():
+        was_inserted, was_dirty = _reconcile_one(session, record, stage_map, existing)
+        inserted += int(was_inserted)
+        dirty = dirty or was_dirty
+    return inserted, dirty
+
+
 async def seed_content(session: AsyncSession) -> int:
     """Reconcile ``StageContent`` rows with the declarative config.
 
@@ -200,15 +244,10 @@ async def seed_content(session: AsyncSession) -> int:
     second time.
     """
     stage_map = await _load_stage_map(session)
+    _guard_manifest_stages_mapped(stage_map)
     existing = await _load_existing_keys(session)
 
-    inserted = 0
-    dirty = False
-    for record in desired_content_records():
-        was_inserted, was_dirty = _reconcile_one(session, record, stage_map, existing)
-        if was_inserted:
-            inserted += 1
-        dirty = dirty or was_dirty
+    inserted, dirty = _reconcile_all(session, stage_map, existing)
 
     if dirty:
         await session.commit()
