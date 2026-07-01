@@ -116,10 +116,10 @@ jest.mock('../../../store/useStageStore', () => ({
       n == null ? undefined : s.stagesByNumber[n],
 }));
 
-// react-test-renderer ships no types here, so structurally type just the prop
-// we read instead of reaching for `any`.
-const isLockIcon = (node: { props: { children?: unknown } }): boolean =>
-  node.props.children === '🔒';
+// react-test-renderer ships no node types, so structurally type just the props.
+type TestNode = { props: Record<string, unknown> };
+
+const isLockIcon = (node: TestNode): boolean => node.props.children === '🔒';
 
 const countLockIcons = (tree: ReturnType<typeof create>): number =>
   tree.root.findAll(isLockIcon).length;
@@ -146,14 +146,10 @@ describe('MapScreen', () => {
   it('renders text and arrow hotspots for each stage', () => {
     const tree = create(<MapScreen />);
     const hotspots = tree.root.findAll(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (node: any) =>
+      (node: TestNode) =>
         typeof node.props.testID === 'string' && node.props.testID.startsWith('stage-hotspot'),
     );
-    const unique = new Set(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      hotspots.map((s: any) => s.props.testID as string),
-    );
+    const unique = new Set(hotspots.map((s: TestNode) => s.props.testID as string));
     // Each stage has 2 hotspots = 20 total
     expect(unique.size).toBe(20);
   });
@@ -237,8 +233,7 @@ describe('MapScreen', () => {
   it('renders connection lines between adjacent stages', () => {
     const tree = create(<MapScreen />);
     const connections = tree.root.findAll(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (node: any) =>
+      (node: TestNode) =>
         typeof node.props.testID === 'string' && node.props.testID.startsWith('stage-connection'),
     );
     // 10 stages → 9 gaps, but connections only render when next stage exists
@@ -354,8 +349,7 @@ describe('MapScreen', () => {
 
     // The grid must be present — wheel loading never blanks the spiral.
     const hotspots = tree.root.findAll(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (node: any) =>
+      (node: TestNode) =>
         typeof node.props.testID === 'string' && node.props.testID.startsWith('stage-hotspot'),
     );
     expect(hotspots.length).toBeGreaterThan(0);

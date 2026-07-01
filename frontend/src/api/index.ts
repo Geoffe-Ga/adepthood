@@ -36,6 +36,7 @@ import {
   type SuggestionStatusT,
   type Tier,
   type TimezoneReadT,
+  type WheelBalanceT,
 } from './schemas';
 
 import { API_BASE_URL } from '@/config';
@@ -1408,30 +1409,14 @@ export const stages = {
 
 // Wheel-of-wholeness balance types and client (Map balance reading)
 
-/** One Aspect's fullness on the wheel reading (mirrors the backend ``WheelAspect``). */
-export interface WheelAspect {
-  stage_number: number;
-  aspect: string;
-  /** 0..1 fullness fraction; the Map clamps at the boundary. */
-  fullness: number;
-}
+/** Public aliases of the zod-inferred wheel types so consumers avoid duplicate shapes. */
+export type { WheelAspectT as WheelAspect, WheelBalanceT as WheelBalance } from './schemas';
 
-/** The full wheel reading: one fullness entry per Aspect (mirrors ``WheelBalance``). */
-export interface WheelBalance {
-  aspects: WheelAspect[];
-}
-
-// Responses validate via ``wheelBalanceSchema`` so a mis-shaped payload (e.g. a
-// non-number fullness) raises ApiValidationError rather than corrupting the
-// overlay. The route has no trailing slash — the backend serves ``/stages/wheel``
-// directly (no 307 redirect).
+// Responses validate via ``wheelBalanceSchema`` (no trailing slash — served directly).
 export const wheel = {
   /** Read the caller's wheel-of-wholeness balance (fullness per Aspect). */
-  get(token?: string): Promise<WheelBalance> {
-    return request<WheelBalance>('/stages/wheel', {
-      token,
-      schema: wheelBalanceSchema as unknown as z.ZodType<WheelBalance>,
-    });
+  get(token?: string): Promise<WheelBalanceT> {
+    return request<WheelBalanceT>('/stages/wheel', { token, schema: wheelBalanceSchema });
   },
 };
 

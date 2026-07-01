@@ -1,13 +1,4 @@
-/**
- * Fetch the wheel-of-wholeness balance on mount and expose a fullness map the
- * Map spiral can join by stage number.
- *
- * The overlay is additive: on a fetch error (or an empty reading) the map stays
- * empty so every Aspect reads as thin — the neutral "whole wheel waiting"
- * fallback — and the spiral never breaks. The auth token is supplied by the API
- * client's registered token getter (mirroring ``stageService.loadStages``), so
- * the hook needs no ``AuthProvider`` of its own.
- */
+/** Fetch-on-mount wheel-of-wholeness balance; empty map on error reads all-thin. */
 
 import { useEffect, useState } from 'react';
 
@@ -26,12 +17,7 @@ export interface WheelBalanceState {
 const toFullnessByStage = (aspects: { stage_number: number; fullness: number }[]) =>
   Object.fromEntries(aspects.map((a) => [a.stage_number, clampProgress(a.fullness)]));
 
-/**
- * Load the wheel-of-wholeness balance once on mount.
- *
- * @returns The fullness-by-stage map plus ``loading`` / ``error`` flags. On any
- *   failure the map is left empty (all-thin fallback) and ``error`` is set.
- */
+/** Load the wheel balance once on mount; empty map + ``error`` on any failure. */
 export function useWheelBalance(): WheelBalanceState {
   const [fullnessByStage, setFullnessByStage] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(true);

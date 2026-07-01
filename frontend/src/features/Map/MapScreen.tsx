@@ -108,11 +108,7 @@ interface StageTextBlockProps extends StageCellProps {
   fullness: number;
 }
 
-// --- Left cell: colored stage text (the -0 tap target) --------------------
-//
-// The wheel-of-wholeness overlay is additive here: the node keeps every existing
-// style/handler and gains an emphasis opacity (fuller Aspect reads more present)
-// plus a "reads full/thin" a11y suffix — no re-sort, no re-colour of the spiral.
+// Left cell: colored stage text (the -0 tap target); wheel overlay adds emphasis opacity + a11y only.
 
 const StageTextBlock = ({
   stage,
@@ -824,8 +820,7 @@ const MapScreen = (): React.JSX.Element => {
   // server's count-based ``currentStage`` is the fallback for users who
   // haven't picked an anchor yet.
   const currentStage = useDerivedCurrentStage(storeCurrentStage);
-  // Additive wheel-of-wholeness overlay: a failed/loading read leaves the map
-  // empty so every Aspect reads thin — the spiral itself never blanks.
+  // Additive overlay: a failed/loading read leaves the map empty so every Aspect reads thin.
   const { fullnessByStage } = useWheelBalance();
   const [activeStage, setActiveStage] = useState<StageData | null>(null);
 
