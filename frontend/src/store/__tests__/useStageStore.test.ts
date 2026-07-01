@@ -138,4 +138,30 @@ describe('useStageStore', () => {
     act(() => resetAllStores());
     expect(useStageStore.getState().stages).toEqual([]);
   });
+
+  describe('cycleNumber', () => {
+    it('defaults to 1', () => {
+      const { useStageStore } = require('../useStageStore');
+      expect(useStageStore.getState().cycleNumber).toBe(1);
+    });
+
+    it('setCycleNumber(2) updates cycleNumber to 2', () => {
+      const { useStageStore } = require('../useStageStore');
+      act(() => useStageStore.getState().setCycleNumber(2));
+      expect(useStageStore.getState().cycleNumber).toBe(2);
+    });
+
+    it('selectCycleNumber reads cycleNumber from state', () => {
+      const { useStageStore, selectCycleNumber } = require('../useStageStore');
+      act(() => useStageStore.getState().setCycleNumber(3));
+      expect(selectCycleNumber(useStageStore.getState())).toBe(3);
+    });
+
+    it('reset() restores cycleNumber to 1', () => {
+      const { useStageStore } = require('../useStageStore');
+      act(() => useStageStore.getState().setCycleNumber(5));
+      act(() => useStageStore.getState().reset());
+      expect(useStageStore.getState().cycleNumber).toBe(1);
+    });
+  });
 });

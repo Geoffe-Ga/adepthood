@@ -296,6 +296,17 @@ export const stageSchema = z.object({
   progress: z.number(),
 });
 
+/** A user's stage-progress record (mirrors the backend ``StageProgressRecord``). */
+export const stageProgressRecordSchema = z.object({
+  id: z.number(),
+  user_id: z.number(),
+  current_stage: z.number(),
+  completed_stages: z.array(z.number()),
+  cycle_number: z.number(),
+});
+
+export type StageProgressRecordT = z.infer<typeof stageProgressRecordSchema>;
+
 /** A catalog practice (mirrors ``PracticeItem``); exported for reuse (issue 06). */
 export const practiceItemSchema = z.object({
   id: z.number().int(),

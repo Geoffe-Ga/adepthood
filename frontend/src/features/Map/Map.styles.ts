@@ -241,6 +241,35 @@ const styles = StyleSheet.create({
     color: ink.primary,
     letterSpacing: 0.5,
   },
+  // Subtle "Cycle N" caption in the journey header (a wheel, not a rank).
+  cycleIndicator: {
+    fontFamily: editorialType.serif,
+    fontSize: 12,
+    color: ink.muted,
+    marginTop: spacing(0.25),
+    letterSpacing: 0.5,
+  },
+
+  // --- Begin-again affordance (end-of-arc, declinable) ----------------------
+  beginAgain: {
+    marginTop: spacing(1.5),
+    alignItems: CENTER,
+    gap: spacing(0.5),
+  },
+  beginAgainHeading: {
+    fontFamily: editorialType.serif,
+    fontSize: 16,
+    fontWeight: '700',
+    color: onShowcase.primary,
+    textAlign: CENTER,
+  },
+  beginAgainBody: {
+    fontFamily: editorialType.serif,
+    fontSize: 13,
+    lineHeight: 20,
+    color: onShowcase.soft,
+    textAlign: CENTER,
+  },
 
   // Wheel-of-wholeness balance read beneath the spiral (balance, not ladder).
   balanceSummary: {

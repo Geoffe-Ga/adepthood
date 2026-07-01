@@ -1,12 +1,16 @@
 import { describe, expect, it, beforeEach, jest } from '@jest/globals';
 import { act } from '@testing-library/react-native';
 
-import type { Stage } from '../../../../api';
+import type { Stage, StageProgressRecord } from '../../../../api';
 import { clampProgress, isStageUnlocked } from '../stageService';
 
 const mockList = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<Stage[]>>;
+const mockBeginAgainClient = jest.fn() as jest.MockedFunction<() => Promise<StageProgressRecord>>;
 jest.mock('../../../../api', () => ({
-  stages: { listAll: (...args: [string?]) => mockList(...args) },
+  stages: {
+    listAll: (...args: [string?]) => mockList(...args),
+    beginAgain: () => mockBeginAgainClient(),
+  },
 }));
 
 /** Build a fake API Stage response. */
@@ -34,12 +38,14 @@ describe('stageService', () => {
   beforeEach(() => {
     jest.resetModules();
     mockList.mockReset();
+    mockBeginAgainClient.mockReset();
     const { useStageStore } = require('../../../../store/useStageStore');
     act(() => {
       useStageStore.getState().setStages([]);
       useStageStore.getState().setCurrentStage(1);
       useStageStore.getState().setLoading(false);
       useStageStore.getState().setError(null);
+      useStageStore.getState().setCycleNumber(1);
     });
   });
 
@@ -267,6 +273,137 @@ describe('stageService', () => {
     it('falls back to the server flag when there is no calendar anchor', () => {
       expect(isStageUnlocked({ isUnlocked: false, stageNumber: 2 }, null)).toBe(false);
       expect(isStageUnlocked({ isUnlocked: true, stageNumber: 2 }, null)).toBe(true);
+    });
+  });
+
+  describe('isEndOfCycle', () => {
+    function makeStagesByNumber(
+      overrides: Record<number, Partial<{ progress: number }>>,
+    ): Record<number, { progress: number }> {
+      const map: Record<number, { progress: number }> = {};
+      for (let n = 1; n <= 10; n += 1) {
+        map[n] = { progress: overrides[n]?.progress ?? 0 };
+      }
+      return map;
+    }
+
+    it('returns true when currentStage is STAGE_COUNT and stage-10 progress >= 1', () => {
+      const { isEndOfCycle } = require('../stageService');
+      const stagesByNumber = makeStagesByNumber({ 10: { progress: 1 } });
+      expect(isEndOfCycle(stagesByNumber, 10)).toBe(true);
+    });
+
+    it('returns true when stage-10 progress is exactly 1.0 and currentStage is 10', () => {
+      const { isEndOfCycle } = require('../stageService');
+      const stagesByNumber = makeStagesByNumber({ 10: { progress: 1.0 } });
+      expect(isEndOfCycle(stagesByNumber, 10)).toBe(true);
+    });
+
+    it('returns false when currentStage is 10 but stage-10 progress < 1', () => {
+      const { isEndOfCycle } = require('../stageService');
+      const stagesByNumber = makeStagesByNumber({ 10: { progress: 0.9 } });
+      expect(isEndOfCycle(stagesByNumber, 10)).toBe(false);
+    });
+
+    it('returns false when stage-10 is complete but currentStage < STAGE_COUNT', () => {
+      const { isEndOfCycle } = require('../stageService');
+      const stagesByNumber = makeStagesByNumber({ 10: { progress: 1 } });
+      expect(isEndOfCycle(stagesByNumber, 5)).toBe(false);
+    });
+
+    it('returns false mid-cycle (currentStage 3, nothing complete)', () => {
+      const { isEndOfCycle } = require('../stageService');
+      const stagesByNumber = makeStagesByNumber({});
+      expect(isEndOfCycle(stagesByNumber, 3)).toBe(false);
+    });
+
+    it('returns false when stage-10 entry is absent from stagesByNumber', () => {
+      const { isEndOfCycle } = require('../stageService');
+      const stagesByNumber: Record<number, { progress: number }> = {};
+      for (let n = 1; n <= 9; n += 1) {
+        stagesByNumber[n] = { progress: 1 };
+      }
+      expect(isEndOfCycle(stagesByNumber, 10)).toBe(false);
+    });
+  });
+
+  describe('beginAgain action', () => {
+    function makeProgressRecord(cycleNumber: number): StageProgressRecord {
+      return {
+        id: 1,
+        user_id: 42,
+        current_stage: 1,
+        completed_stages: [],
+        cycle_number: cycleNumber,
+      };
+    }
+
+    it('calls stages.beginAgain() on the API client', async () => {
+      mockBeginAgainClient.mockResolvedValueOnce(makeProgressRecord(2));
+      mockList.mockResolvedValueOnce([makeApiStage(1)]);
+      const { stageService } = require('../stageService');
+
+      await act(async () => {
+        await stageService.beginAgain();
+      });
+
+      expect(mockBeginAgainClient).toHaveBeenCalledTimes(1);
+    });
+
+    it('sets cycleNumber from the response record', async () => {
+      mockBeginAgainClient.mockResolvedValueOnce(makeProgressRecord(2));
+      mockList.mockResolvedValueOnce([makeApiStage(1)]);
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+
+      await act(async () => {
+        await stageService.beginAgain();
+      });
+
+      expect(useStageStore.getState().cycleNumber).toBe(2);
+    });
+
+    it('reloads stages after setting cycleNumber', async () => {
+      mockBeginAgainClient.mockResolvedValueOnce(makeProgressRecord(2));
+      mockList.mockResolvedValueOnce([makeApiStage(1)]);
+      const { stageService } = require('../stageService');
+
+      await act(async () => {
+        await stageService.beginAgain();
+      });
+
+      expect(mockList).toHaveBeenCalledTimes(1);
+    });
+
+    it('routes a failed begin-again to the store error without rejecting', async () => {
+      mockBeginAgainClient.mockRejectedValueOnce(new Error('boom'));
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+
+      // The call site discards this promise, so a failure must not reject.
+      await act(async () => {
+        await expect(stageService.beginAgain()).resolves.toBeUndefined();
+      });
+
+      const state = useStageStore.getState();
+      expect(typeof state.error).toBe('string');
+      expect(state.error).toBe('boom');
+      // Failure short-circuits: no reload and no cycle bump from a bad response.
+      expect(mockList).not.toHaveBeenCalled();
+      expect(state.cycleNumber).toBe(1);
+    });
+
+    it('reflects cycle_number 3 when the server returns it', async () => {
+      mockBeginAgainClient.mockResolvedValueOnce(makeProgressRecord(3));
+      mockList.mockResolvedValueOnce([makeApiStage(1)]);
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+
+      await act(async () => {
+        await stageService.beginAgain();
+      });
+
+      expect(useStageStore.getState().cycleNumber).toBe(3);
     });
   });
 });

@@ -21,6 +21,7 @@ import {
   promptListResponseSchema,
   resonanceResponseSchema,
   stageIntroSchema,
+  stageProgressRecordSchema,
   stageSchema,
   timezoneReadSchema,
   wheelBalanceSchema,
@@ -33,6 +34,7 @@ import {
   type DepthPreferencesT,
   type Page,
   type PasswordResetAcceptedT,
+  type StageProgressRecordT,
   type SuggestionStatusT,
   type Tier,
   type TimezoneReadT,
@@ -1405,7 +1407,18 @@ export const stages = {
   history(stageNumber: number, token?: string): Promise<StageHistoryResponse> {
     return request<StageHistoryResponse>(`/stages/${stageNumber}/history`, { token });
   },
+  /** Open a fresh cycle through the arc; returns the reset progress record. */
+  beginAgain(token?: string): Promise<StageProgressRecordT> {
+    return request<StageProgressRecordT>('/stages/begin-again', {
+      method: 'POST',
+      token,
+      schema: stageProgressRecordSchema,
+    });
+  },
 };
+
+/** Public alias of the zod-inferred stage-progress type so consumers avoid a duplicate shape. */
+export type { StageProgressRecordT as StageProgressRecord } from './schemas';
 
 // Wheel-of-wholeness balance types and client (Map balance reading)
 

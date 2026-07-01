@@ -81,6 +81,7 @@ let mockError: string | null = null;
 
 jest.mock('../services/stageService', () => ({
   stageService: { loadStages: (...args: unknown[]) => mockLoadStages(...args) },
+  isEndOfCycle: () => false,
   isStageUnlocked: (
     stage: { isUnlocked: boolean; stageNumber: number },
     currentStage: number | null,
