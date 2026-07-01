@@ -256,6 +256,36 @@ describe('PracticeDetailScreen — stage picker cancel', () => {
   });
 });
 
+describe('PracticeDetailScreen — assignError route param', () => {
+  beforeEach(() => {
+    mockPracticesGet.mockReset();
+    mockUserPracticesCreate.mockReset();
+  });
+
+  // RED: the screen currently reads only `practiceId` from route params and
+  // ignores `assignError`.  When the wizard threads the assign-failure message
+  // through navigation.replace, the detail screen must surface it via the
+  // existing `practice-detail-action-error` banner on mount.  Today that
+  // banner is only shown after the screen's own assign() call fails, so this
+  // assertion fails against current code.
+  it('renders the action-error banner on mount when assignError is in route params', async () => {
+    mockPracticesGet.mockResolvedValueOnce(samplePractice);
+    const navigation = makeNav();
+    const route = {
+      key: 'k',
+      name: 'PracticeDetail' as const,
+      params: { practiceId: 77, assignError: 'Stage assign failed — try again from this screen.' },
+    };
+    const Screen = PracticeDetailScreen as unknown as React.ComponentType<{
+      navigation: NavMock;
+      route: typeof route;
+    }>;
+    const { getByTestId } = render(<Screen navigation={navigation} route={route} />);
+    await waitForLoad();
+    expect(getByTestId('practice-detail-action-error')).toBeTruthy();
+  });
+});
+
 describe('PracticeDetailScreen — config summary variants', () => {
   it.each([
     [{ mode: 'meditation_timer', duration_minutes: 10 } as const],

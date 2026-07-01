@@ -79,7 +79,7 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
     "You can't move to an earlier stage — APTITUDE is designed to progress forward only.",
   already_responded: "You've already answered this week's prompt. A new one unlocks each week.",
   practice_not_approved:
-    "That practice isn't available for selection yet. Pick one of the approved options for this stage.",
+    "This practice is still pending review, so it isn't available to select yet.",
   // --- Practice selection (BUG-PRACTICE-012) ---------------------------
   // ``stage_locked`` (403) and ``stage_number_mismatch`` (400) used to
   // fall through to the generic per-status copy ("You don't have access"

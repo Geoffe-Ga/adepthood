@@ -313,6 +313,111 @@ describe('CreatePracticeWizard — prefill mode', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Ownership-aware select fix — submit idempotency and navigation contract
+//
+// Tests 5-7 cover three behaviours that are RED until the fix lands:
+//   5. Happy path — both API calls resolve → navigates to PracticeDetail,
+//      practices.create called exactly once.  (May be partially green already
+//      for the navigation assertion; the call-count assertion is the pin.)
+//   6. Select-failure navigates — practices.create resolves but
+//      userPractices.create rejects → wizard still navigates to PracticeDetail
+//      because the draft exists even when the select fails.  RED today: the
+//      throw from the catch block prevents navigation.
+//   7. Idempotent retry — userPractices.create rejects on tap 1; user taps
+//      Save again → practices.create must be called exactly ONCE across both
+//      taps (no duplicate draft).  RED today: every tap re-calls create.
+// ---------------------------------------------------------------------------
+
+describe('CreatePracticeWizard — submit idempotency + navigation contract', () => {
+  beforeEach(() => {
+    mockPracticesCreate.mockReset();
+    mockUserPracticesCreate.mockReset();
+  });
+
+  // Helper: navigate to the metadata step with stage 4 selected and a name
+  // filled in, then return the view + nav so the caller can trigger Save.
+  function navigateToReadyMetadata(navOverride?: NavMock) {
+    const { view, navigation } = renderScreen({}, navOverride);
+    fireEvent.press(view.getByTestId('create-practice-from-scratch'));
+    fireEvent.press(view.getByTestId('mode-picker-mode-random_interval_bell'));
+    fireEvent.press(view.getByTestId('create-practice-configure-next'));
+    fireEvent.changeText(view.getByTestId('create-practice-name'), 'Awareness bells');
+    fireEvent.press(view.getByTestId('create-practice-stage-4'));
+    return { view, navigation };
+  }
+
+  // Test 5 — happy path: both calls resolve → navigates with created id,
+  // practices.create called exactly once.
+  it('navigates to PracticeDetail when both API calls succeed', async () => {
+    mockPracticesCreate.mockResolvedValue(createdPractice);
+    mockUserPracticesCreate.mockResolvedValue(createdUserPractice);
+    const nav = makeNav();
+    const { view } = navigateToReadyMetadata(nav);
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('create-practice-submit'));
+      await flushPromises();
+    });
+
+    expect(mockPracticesCreate).toHaveBeenCalledTimes(1);
+    expect(nav.replace).toHaveBeenCalledWith('PracticeDetail', { practiceId: createdPractice.id });
+  });
+
+  // Test 6 — RED: select-failure must still navigate to PracticeDetail AND
+  // thread the assign-failure message so the detail screen can surface it.
+  // Today the wizard passes only { practiceId } (no assignError), so the
+  // objectContaining assertion below fails.
+  it('navigates to PracticeDetail with assignError when userPractices.create rejects', async () => {
+    mockPracticesCreate.mockResolvedValue(createdPractice);
+    mockUserPracticesCreate.mockRejectedValue(new Error('select_failed'));
+    const nav = makeNav();
+    const { view } = navigateToReadyMetadata(nav);
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('create-practice-submit'));
+      await flushPromises();
+    });
+
+    // The draft exists — navigate regardless of the select failure, and carry
+    // the error message so PracticeDetailScreen can render it on mount.
+    expect(nav.replace).toHaveBeenCalledWith(
+      'PracticeDetail',
+      expect.objectContaining({ practiceId: createdPractice.id, assignError: expect.any(String) }),
+    );
+  });
+
+  // Test 7 — RED: a second Save tap after a select failure must NOT call
+  // practices.create again.  The created practice id must be remembered
+  // within the submit attempt so a retry only re-tries the select step.
+  // Today the controller has no such memoisation, so the second tap calls
+  // practices.create a second time.
+  it('does not re-call practices.create on a retry after select failure', async () => {
+    mockPracticesCreate.mockResolvedValue(createdPractice);
+    // Reject on first call, resolve on second so the second tap can complete.
+    mockUserPracticesCreate
+      .mockRejectedValueOnce(new Error('select_failed'))
+      .mockResolvedValue(createdUserPractice);
+    const nav = makeNav();
+    const { view } = navigateToReadyMetadata(nav);
+
+    // First tap — practices.create resolves, userPractices.create rejects.
+    await act(async () => {
+      fireEvent.press(view.getByTestId('create-practice-submit'));
+      await flushPromises();
+    });
+
+    // Second tap — idempotent: must reuse the already-created practice id.
+    await act(async () => {
+      fireEvent.press(view.getByTestId('create-practice-submit'));
+      await flushPromises();
+    });
+
+    // practices.create must have been called exactly once across both taps.
+    expect(mockPracticesCreate).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('CreatePracticeWizard — configurator dispatch (smoke)', () => {
   it.each([
     ['count_up', 'count-up-form'],
