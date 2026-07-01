@@ -4,5 +4,7 @@
   "groom_interval": 10,
   "last_groom_at": null,
   "last_completed_issue": null,
-  "started_at": null
+  "started_at": null,
+  "parallel_enabled": true,
+  "max_workers": 4
 }

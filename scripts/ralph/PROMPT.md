@@ -47,6 +47,11 @@ drives Gates 3–4. The taxonomy you dispatch is mapped in
 4. **Branch from main** (direct commits to `main` are blocked by pre-commit):
    `git checkout main && git pull --ff-only`
    `git checkout -b issue/$RALPH_ISSUE-<kebab-slug-from-title>`
+   **Parallel (fleet) mode:** when you are a `ralph-worker` the orchestrator has
+   *already* created your branch and worktree (`$RALPH_WORKTREE`,
+   see `scripts/ralph/FLEET.md`). Skip this step — you are already on your branch
+   inside your worktree — and run every remaining step **inside `$RALPH_WORKTREE`**
+   (never `cd` to the repo root, never `git checkout main`).
 5. **Architect the issue.** Spawn the **chief-architect**
    (`Agent`, `subagent_type: chief-architect`) with the issue body, comments, and
    a pointer to `CLAUDE.md`/`AGENTS.md`. It returns an **Architecture Plan**: the
