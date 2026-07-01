@@ -307,6 +307,70 @@ async def _advance_existing_progress(
     )
 
 
+_FIRST_STAGE = 1
+_FIRST_CYCLE_COMPLETED: tuple[int, ...] = ()
+
+
+def _loop_to_next_cycle(existing: StageProgress) -> StageProgressRecord:
+    """Mutate a completed-cycle row in place for the next loop, returning its record.
+
+    Resets the calendar anchors (``stage_started_at`` + ``program_started_at``)
+    to now so the fresh cycle restarts its schedule instead of instantly
+    re-unlocking every stage, bumps ``cycle_number``, and clears
+    ``completed_stages`` back to stage 1. No engagement data is touched.
+    """
+    now = datetime.now(UTC)
+    existing.cycle_number += 1
+    existing.current_stage = _FIRST_STAGE
+    existing.completed_stages = list(_FIRST_CYCLE_COMPLETED)
+    existing.stage_started_at = now
+    existing.program_started_at = now
+    return StageProgressRecord(
+        id=existing.id,
+        user_id=existing.user_id,
+        current_stage=existing.current_stage,
+        completed_stages=existing.completed_stages,
+        cycle_number=existing.cycle_number,
+    )
+
+
+@router.post("/begin-again", response_model=StageProgressRecord)
+async def begin_again(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> StageProgressRecord:
+    """Loop the caller's completed program back to stage 1 as a new cycle.
+
+    An explicit, user-driven restart offered only to someone who has reached
+    the final stage: ``current_stage`` resets to 1 and ``completed_stages``
+    clears while ``cycle_number`` increments, all carried on the single
+    existing row. The Stage-10 ``all_stages_completed`` advance signal is left
+    intact — this is a separate, opt-in path, not a replacement for it.
+
+    Journal, habit streaks, goal completions, practice sessions, and energy are
+    all untouched: the carry-over is automatic and there is no penalty. A user
+    mid-cycle (``current_stage < TOTAL_STAGES``) is rejected with
+    ``cycle_not_complete``; a user with no progress row at all is rejected and
+    no row is created as a side-effect. The row is read under ``FOR UPDATE`` so
+    a concurrent advance cannot interleave with the loop reset.
+    """
+    existing = await get_user_progress_for_update(session, current_user)
+    if existing is None:
+        raise not_found("stage_progress")
+    if existing.current_stage < TOTAL_STAGES:
+        raise conflict("cycle_not_complete")
+
+    record = _loop_to_next_cycle(existing)
+    session.add(existing)
+    await session.commit()
+    await session.refresh(existing)
+    logger.info(
+        "stage_cycle_looped",
+        extra={"user_id": existing.user_id, "cycle_number": existing.cycle_number},
+    )
+    return record
+
+
 @router.put("/progress", response_model=StageProgressRecord)
 async def update_progress(
     payload: StageProgressUpdate,
