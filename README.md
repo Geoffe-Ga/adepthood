@@ -6,13 +6,18 @@ See [`NORTH-STAR.md`](./NORTH-STAR.md) for the full product thesis ("Graduated E
 
 ## ✨ Features
 
-- 📓 **Journal** — Write freely, then **Get Resonance**: anchored AI margin notes (Marginalia) reflected back in your own voice. Journaling about a habit or practice you actually did surfaces a one-tap **"check it off?"** suggestion — a resonant invitation, always declinable, never a nag.
-- 🏠 **Today** — A home hub that gathers what is live for you across the depths you have turned on.
+**The floor — always on:**
+
+- 📓 **Journal & Higher Self** — Write freely; each entry folds into your private corpus. Over time, **Get Resonance**: anchored margin notes (Marginalia) reflect your own past wisdom back to you in the language of the APTITUDE program and the Archetypal Wavelength. Journaling about a habit or practice you actually did surfaces a one-tap **"check it off?"** suggestion — a resonant invitation, always declinable, never a nag.
+- 🏠 **Today** — A home hub that gathers what is live for you across whichever optional depths you have turned on.
+
+**Optional depths — choose any, in any order:**
+
 - 📊 **Habits** — Opt into cumulative habits with energy scaffolding, streaks, and tiered goals so the stack never overwhelms.
 - 🧘 **Practices** — Stage practices (mindfulness, breathwork, movement) with an immersive session player — timed cues and sound bells.
-- 📚 **Course** — Read the teachings stage by stage in a native Markdown reader, drip-fed at the stage cadence.
-- 🗺️ **Map** — See your journey through the 10 stages of APTITUDE.
-- 🧠 **BotMason** — A Liminal Trickster Mystic guide you can chat with about your reflections and practice insights.
+- 📚 **Course** — Read the teachings Aspect by Aspect in a native Markdown reader, drip-fed at the stage cadence.
+- 🗺️ **Map** — A Wheel of Wholeness showing balance across the ten Aspects — which facets are full, which are thin, where you are out of balance.
+- 🌐 **Digital Sangha** — Community for those who want company on the path, oriented from the start toward returning people to embodied life.
 
 
 ## 🛠️ Tech Stack
