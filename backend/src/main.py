@@ -38,6 +38,7 @@ from routers.goal_groups import router as goal_groups_router
 from routers.goal_groups import seed_goal_group_templates
 from routers.goals import router as goals_router
 from routers.habits import router as habits_router
+from routers.invitations import router as invitations_router
 from routers.journal import router as journal_router
 from routers.practice_recipes import router as practice_recipes_router
 from routers.practice_sessions import router as practice_sessions_router
@@ -442,6 +443,7 @@ app.include_router(goals_router)
 app.include_router(stages_router)
 app.include_router(users_router)
 app.include_router(depth_preferences_router)
+app.include_router(invitations_router)
 
 
 # BUG-APP-004: separate liveness from readiness so the orchestrator can
