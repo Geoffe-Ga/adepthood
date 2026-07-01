@@ -35,15 +35,7 @@ import type {
 } from '@/api';
 import { practiceSessions } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
-import {
-  BORDER_RADIUS,
-  SPACING,
-  colors,
-  onShowcase,
-  showcase,
-  showcaseShadow,
-  surface,
-} from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, colors, ink, surface, surfaceShadow } from '@/design/tokens';
 import { InsightCaptureModal } from '@/features/Practice/components/InsightCaptureModal';
 import RitualConfiguratorSheet from '@/features/Practice/configurator/RitualConfiguratorSheet';
 import type { PickedCard } from '@/features/Practice/data/resolveCard';
@@ -75,7 +67,7 @@ import MindfulAnchorView from '@/features/Practice/views/MindfulAnchorView';
 import RandomIntervalBellView from '@/features/Practice/views/RandomIntervalBellView';
 import RepCounterView from '@/features/Practice/views/RepCounterView';
 import SenseGroundingView from '@/features/Practice/views/SenseGroundingView';
-import { SHOWCASE_SURFACE, SessionSurfaceProvider } from '@/features/Practice/views/sessionSurface';
+import { CALM_SURFACE, SessionSurfaceProvider } from '@/features/Practice/views/sessionSurface';
 import TalliedGroundingView from '@/features/Practice/views/TalliedGroundingView';
 import TarotMeditationView from '@/features/Practice/views/TarotMeditationView';
 import { useOptimisticMutation } from '@/hooks/useOptimisticMutation';
@@ -420,13 +412,13 @@ interface SessionCardProps {
 }
 
 function SessionCard(props: SessionCardProps): React.JSX.Element {
-  // The session is fronted by a warm-dark showcase header band (practice name +
-  // Adjust on the umber ground) so a running practice reads as a focal moment
-  // rather than a settings form; the mode view renders below on its readable
+  // The session is fronted by a lifted-paper header band (practice name +
+  // Adjust on white raised paper) so a running practice reads as a focal moment
+  // rather than a settings form; the mode view renders below on the same calm
   // ground. The shared RitualControlsBar plays the completion Celebration.
   return (
     <View style={styles.card} testID="active-practice-card">
-      <View style={styles.headerBand}>
+      <View style={styles.headerBand} testID="active-practice-header-band">
         <View style={styles.cardHeader}>
           <TouchableOpacity
             accessibilityRole="button"
@@ -443,7 +435,7 @@ function SessionCard(props: SessionCardProps): React.JSX.Element {
           {props.effectiveName}
         </Text>
       </View>
-      <SessionSurfaceProvider value={SHOWCASE_SURFACE}>
+      <SessionSurfaceProvider value={CALM_SURFACE}>
         <ModeView
           config={props.config}
           state={props.state}
@@ -912,22 +904,22 @@ function repCounterSummary(config: RepCounterConfig, state: RitualState): ModeSu
 }
 
 const styles = StyleSheet.create({
-  // Flat session container; the warm-dark showcase header band sits at its top.
+  // Flat session container; the lifted-paper header band sits at its top.
   card: {
     paddingBottom: SPACING.lg,
     marginBottom: SPACING.lg,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: surface.hairline,
   },
-  // The showcase header band: the practice name + Adjust on the umber ground.
+  // The lifted-paper header band: the practice name + Adjust on white raised paper.
   headerBand: {
-    backgroundColor: showcase.canvas,
+    backgroundColor: surface.raised,
     borderRadius: BORDER_RADIUS.lg,
     paddingHorizontal: SPACING.lg,
     paddingBottom: SPACING.md,
     paddingTop: SPACING.xs,
     marginBottom: SPACING.lg,
-    ...showcaseShadow,
+    ...surfaceShadow.card,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -943,12 +935,12 @@ const styles = StyleSheet.create({
     minHeight: 44,
     paddingHorizontal: SPACING.sm,
   },
-  gearText: { fontSize: 18, color: onShowcase.soft },
-  gearLabel: { fontSize: 14, fontWeight: '600', color: onShowcase.soft },
+  gearText: { fontSize: 18, color: ink.soft },
+  gearLabel: { fontSize: 14, fontWeight: '600', color: ink.soft },
   name: {
     fontSize: 20,
     fontWeight: '700',
-    color: onShowcase.primary,
+    color: ink.primary,
     marginBottom: SPACING.md,
   },
   error: {

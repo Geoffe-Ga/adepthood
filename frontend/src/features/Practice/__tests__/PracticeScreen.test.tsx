@@ -338,16 +338,17 @@ describe('PracticeScreen', () => {
     );
   });
 
-  it('wraps the running session mode view in the showcase SessionSurface (#859)', async () => {
-    // The active session provides the warm-dark showcase surface to the mode
-    // view, so the interior renders on the umber ground (not the light one).
+  it('wraps the running session mode view in the calm SessionSurface', async () => {
+    // The active session now provides the calm lifted-paper surface to the mode
+    // view, so the interior renders on the light raised ground; the deep umber
+    // is reserved for the single Begin hero accent.
     const { StyleSheet } = require('react-native');
-    const { showcase } = require('../../../design/tokens');
+    const { surface } = require('../../../design/tokens');
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId } = render(<PracticeScreen />);
     await waitFor(() => expect(getByTestId('meditation-timer-view')).toBeTruthy());
     const ground = StyleSheet.flatten(getByTestId('meditation-timer-view').props.style);
-    expect(ground.backgroundColor).toBe(showcase.canvas);
+    expect(ground.backgroundColor).toBe(surface.raised);
   });
 
   it('reflects a practice selected elsewhere once the screen regains focus', async () => {

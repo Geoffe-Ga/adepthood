@@ -11,12 +11,13 @@
  * The default value is the original light palette, so any view rendered WITHOUT
  * a provider (e.g. the idle selector, existing unit tests) is byte-for-byte
  * unchanged. `ActiveRitualSession` wraps the live session in
- * {@link SessionSurfaceProvider} with {@link SHOWCASE_SURFACE} to flip the whole
- * mode view onto the umber ground with AA-clearing `onShowcase` cues.
+ * {@link SessionSurfaceProvider} with {@link CALM_SURFACE} to skin the whole
+ * mode view onto lifted white paper with AA-clearing `ink.*` cues, keeping the
+ * deep umber `showcase` ground for the single Begin hero accent.
  */
 import { createContext, useContext } from 'react';
 
-import { colors, onShowcase, showcase } from '@/design/tokens';
+import { accent, colors, ink, onShowcase, showcase, surface } from '@/design/tokens';
 
 export interface SessionSurface {
   /** The ground the session renders on. */
@@ -59,6 +60,22 @@ export const SHOWCASE_SURFACE: SessionSurface = {
   textSoft: onShowcase.soft,
   textMuted: onShowcase.muted,
   accent: onShowcase.primary,
+};
+
+/**
+ * The calm lifted-paper session surface — a running session rests on white
+ * `surface.raised` with the AA-clearing `ink.*` scale, recessed `surface.sunken`
+ * wells, and the terracotta `accent.primary`. The deep umber `showcase` ground
+ * is reserved for the single Begin hero accent, so a running practice reads as
+ * quiet lifted paper rather than a third stacked umber band.
+ */
+export const CALM_SURFACE: SessionSurface = {
+  ground: surface.raised,
+  raised: surface.sunken,
+  text: ink.primary,
+  textSoft: ink.soft,
+  textMuted: ink.muted,
+  accent: accent.primary,
 };
 
 const SessionSurfaceContext = createContext<SessionSurface>(LIGHT_SURFACE);
