@@ -114,6 +114,31 @@ def _content_dir_from_env() -> Path:
     return Path(override) if override else _DEFAULT_CONTENT_DIR
 
 
+#: Line that opens and closes a YAML frontmatter block (a lone triple-dash).
+_FRONTMATTER_FENCE: Final[str] = "---"
+
+#: UTF-8 byte-order mark some editors prepend; tolerated before the fence.
+_BOM: Final[str] = "﻿"
+
+
+def _strip_frontmatter(text: str) -> str:
+    """Drop a leading ``---``-delimited YAML frontmatter block from Markdown.
+
+    Only a fence on line 1 (after an optional UTF-8 BOM) counts; a ``---``
+    after prose is a thematic break and is preserved.  When there is no
+    opening fence, or the block is never closed, ``text`` is returned
+    byte-for-byte so nothing is silently swallowed.
+    """
+    body = text.removeprefix(_BOM)
+    lines = body.splitlines(keepends=True)
+    if not lines or lines[0].rstrip() != _FRONTMATTER_FENCE:
+        return text
+    for index in range(1, len(lines)):
+        if lines[index].rstrip() == _FRONTMATTER_FENCE:
+            return "".join(lines[index + 1 :])
+    return text
+
+
 def _parse_stamp_entries(text: str) -> dict[str, str]:
     """Parse ``key: value`` lines from a ``CONTENT_VERSION`` stamp."""
     entries: dict[str, str] = {}
@@ -269,7 +294,7 @@ class ContentRepository:
             msg = f"content path escapes the content directory: {rel_path!r}"
             raise ContentRepositoryError(msg)
         try:
-            return resolved.read_text()
+            return _strip_frontmatter(resolved.read_text())
         except FileNotFoundError as exc:
             msg = f"manifest references a missing file: {rel_path!r}"
             raise ContentRepositoryError(msg) from exc
