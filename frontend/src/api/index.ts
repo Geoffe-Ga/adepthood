@@ -23,6 +23,7 @@ import {
   stageIntroSchema,
   stageSchema,
   timezoneReadSchema,
+  wheelBalanceSchema,
   type AcceptSuggestionResultT,
   type CareKindT,
   type CareResourceT,
@@ -35,6 +36,7 @@ import {
   type SuggestionStatusT,
   type Tier,
   type TimezoneReadT,
+  type WheelBalanceT,
 } from './schemas';
 
 import { API_BASE_URL } from '@/config';
@@ -1405,6 +1407,19 @@ export const stages = {
   },
 };
 
+// Wheel-of-wholeness balance types and client (Map balance reading)
+
+/** Public aliases of the zod-inferred wheel types so consumers avoid duplicate shapes. */
+export type { WheelAspectT as WheelAspect, WheelBalanceT as WheelBalance } from './schemas';
+
+// Responses validate via ``wheelBalanceSchema`` (no trailing slash — served directly).
+export const wheel = {
+  /** Read the caller's wheel-of-wholeness balance (fullness per Aspect). */
+  get(token?: string): Promise<WheelBalanceT> {
+    return request<WheelBalanceT>('/stages/wheel', { token, schema: wheelBalanceSchema });
+  },
+};
+
 // Course content types and client
 export interface ContentItem {
   id: number;
@@ -2352,6 +2367,7 @@ export default {
   auth,
   users,
   depthPreferences,
+  wheel,
   setTokenGetter,
   setOnUnauthorized,
   setOnTokenRefreshed,

@@ -4,6 +4,9 @@ import React from 'react';
 import { Image } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
+import MapScreen from '../MapScreen';
+import { BALANCE_COPY, emphasisStyle, FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
+
 // Mock InteractionManager to run callbacks synchronously in tests.
 jest.mock('react-native/Libraries/Interaction/InteractionManager', () => ({
   runAfterInteractions: (cb: () => void) => {
@@ -22,6 +25,18 @@ jest.mock('@react-navigation/bottom-tabs', () => ({
 }));
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+}));
+
+// Default wheel state: all stages thin (zero fullness). Override per-test.
+let mockWheelFullnessByStage: Record<number, number> = {};
+let mockWheelLoading = false;
+let mockWheelError: string | null = null;
+jest.mock('../hooks/useWheelBalance', () => ({
+  useWheelBalance: () => ({
+    fullnessByStage: mockWheelFullnessByStage,
+    loading: mockWheelLoading,
+    error: mockWheelError,
+  }),
 }));
 
 // Control the date-derived current stage without importing the real program
@@ -101,12 +116,10 @@ jest.mock('../../../store/useStageStore', () => ({
       n == null ? undefined : s.stagesByNumber[n],
 }));
 
-import MapScreen from '../MapScreen';
+// react-test-renderer ships no node types, so structurally type just the props.
+type TestNode = { props: Record<string, unknown> };
 
-// react-test-renderer ships no types here, so structurally type just the prop
-// we read instead of reaching for `any`.
-const isLockIcon = (node: { props: { children?: unknown } }): boolean =>
-  node.props.children === '🔒';
+const isLockIcon = (node: TestNode): boolean => node.props.children === '🔒';
 
 const countLockIcons = (tree: ReturnType<typeof create>): number =>
   tree.root.findAll(isLockIcon).length;
@@ -124,20 +137,19 @@ describe('MapScreen', () => {
     mockDerivedStage = 1;
     mockDerivedWeek = 1;
     mockDaysUntilStage = null;
+    mockWheelFullnessByStage = {};
+    mockWheelLoading = false;
+    mockWheelError = null;
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
 
   it('renders text and arrow hotspots for each stage', () => {
     const tree = create(<MapScreen />);
     const hotspots = tree.root.findAll(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (node: any) =>
+      (node: TestNode) =>
         typeof node.props.testID === 'string' && node.props.testID.startsWith('stage-hotspot'),
     );
-    const unique = new Set(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      hotspots.map((s: any) => s.props.testID as string),
-    );
+    const unique = new Set(hotspots.map((s: TestNode) => s.props.testID as string));
     // Each stage has 2 hotspots = 20 total
     expect(unique.size).toBe(20);
   });
@@ -221,8 +233,7 @@ describe('MapScreen', () => {
   it('renders connection lines between adjacent stages', () => {
     const tree = create(<MapScreen />);
     const connections = tree.root.findAll(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (node: any) =>
+      (node: TestNode) =>
         typeof node.props.testID === 'string' && node.props.testID.startsWith('stage-connection'),
     );
     // 10 stages → 9 gaps, but connections only render when next stage exists
@@ -252,5 +263,97 @@ describe('MapScreen', () => {
     expect(hotspotHasLock(tree, 5)).toBe(false);
     expect(hotspotHasLock(tree, 8)).toBe(true);
     act(() => tree.unmount());
+  });
+
+  // --- Wheel-of-wholeness balance tests ---
+
+  it('alive node (fullness >= threshold) renders with higher opacity than a thin node', () => {
+    // Stage 3 is alive; stage 1 is thin.
+    mockWheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD, 1: 0.0 };
+    const tree = create(<MapScreen />);
+
+    const aliveHotspot = tree.root.findByProps({ testID: 'stage-hotspot-3-0' });
+    const thinHotspot = tree.root.findByProps({ testID: 'stage-hotspot-1-0' });
+
+    const aliveOpacity = emphasisStyle(FULLNESS_ALIVE_THRESHOLD).opacity;
+    const thinOpacity = emphasisStyle(0.0).opacity;
+
+    // The alive node must render with a visually distinct (higher) opacity.
+    expect(aliveOpacity).toBeGreaterThan(thinOpacity as number);
+
+    // The alive hotspot carries the alive-emphasis style; the thin does not.
+    const aliveStyles = (aliveHotspot.props.style as unknown[]).flat(10);
+    const thinStyles = (thinHotspot.props.style as unknown[]).flat(10);
+    const opacityOf = (styles: unknown[]) =>
+      styles.reduce<number | undefined>((acc, s) => {
+        if (s && typeof s === 'object' && 'opacity' in (s as object)) {
+          return (s as { opacity: number }).opacity;
+        }
+        return acc;
+      }, undefined);
+
+    expect(opacityOf(aliveStyles)).toBeGreaterThan(opacityOf(thinStyles) ?? 0);
+  });
+
+  it('alive node accessibilityLabel contains "reads full" suffix', () => {
+    mockWheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD };
+    const tree = create(<MapScreen />);
+    const hotspot = tree.root.findByProps({ testID: 'stage-hotspot-3-0' });
+    expect(hotspot.props.accessibilityLabel as string).toContain('reads full');
+  });
+
+  it('thin node accessibilityLabel contains "reads thin" suffix', () => {
+    mockWheelFullnessByStage = { 1: 0.0 };
+    const tree = create(<MapScreen />);
+    const hotspot = tree.root.findByProps({ testID: 'stage-hotspot-1-0' });
+    expect(hotspot.props.accessibilityLabel as string).toContain('reads thin');
+  });
+
+  it('BalanceSummary renders all-thin copy when every stage is 0.0', () => {
+    mockWheelFullnessByStage = Object.fromEntries(
+      Array.from({ length: 10 }, (_, i) => [i + 1, 0.0]),
+    );
+    const tree = create(<MapScreen />);
+    const summary = tree.root.findByProps({ testID: 'balance-summary' });
+    expect(summary.props.children as string).toBe(BALANCE_COPY.allThin);
+  });
+
+  it('BalanceSummary renders mixed copy when some stages are alive', () => {
+    mockWheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD, 7: 0.9 };
+    const tree = create(<MapScreen />);
+    const summary = tree.root.findByProps({ testID: 'balance-summary' });
+    expect(summary.props.children as string).toBe(BALANCE_COPY.mixed);
+  });
+
+  it('BalanceSummary renders all-alive copy when every stage is at full fullness', () => {
+    mockWheelFullnessByStage = Object.fromEntries(
+      Array.from({ length: 10 }, (_, i) => [i + 1, 1.0]),
+    );
+    const tree = create(<MapScreen />);
+    const summary = tree.root.findByProps({ testID: 'balance-summary' });
+    expect(summary.props.children as string).toBe(BALANCE_COPY.allAlive);
+  });
+
+  it('BALANCE_COPY constants contain none of the banned gamification words', () => {
+    const BANNED = /\b(level|climb|ascend|higher|rank|altitude|ladder)\b/i;
+    for (const [key, value] of Object.entries(BALANCE_COPY)) {
+      expect(BANNED.test(value)).toBe(false);
+      // Confirms key name for the pinned-contract assertion.
+      expect(['allThin', 'mixed', 'allAlive']).toContain(key);
+    }
+  });
+
+  it('Map spiral grid remains visible while wheel data is loading', () => {
+    mockWheelLoading = true;
+    const tree = create(<MapScreen />);
+
+    // The grid must be present — wheel loading never blanks the spiral.
+    const hotspots = tree.root.findAll(
+      (node: TestNode) =>
+        typeof node.props.testID === 'string' && node.props.testID.startsWith('stage-hotspot'),
+    );
+    expect(hotspots.length).toBeGreaterThan(0);
+    // No full-screen loader should obscure the grid.
+    expect(() => tree.root.findByProps({ testID: 'map-loading' })).toThrow();
   });
 });

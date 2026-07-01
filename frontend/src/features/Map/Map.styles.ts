@@ -242,6 +242,16 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
+  // Wheel-of-wholeness balance read beneath the spiral (balance, not ladder).
+  balanceSummary: {
+    fontFamily: editorialType.serif,
+    fontSize: 15,
+    color: ink.soft,
+    textAlign: CENTER,
+    paddingHorizontal: spacing(2),
+    paddingVertical: spacing(1),
+  },
+
   // Completed stage checkmark
   completedBadge: {
     position: 'absolute',

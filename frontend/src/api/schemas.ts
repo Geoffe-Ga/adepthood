@@ -576,6 +576,32 @@ export const depthPreferencesSchema = z.object({
 export type DepthPreferencesT = z.infer<typeof depthPreferencesSchema>;
 
 // ---------------------------------------------------------------------------
+// Wheel-of-wholeness balance (Map balance reading)
+// ---------------------------------------------------------------------------
+
+/**
+ * One Aspect's fullness on the wheel-of-wholeness reading (mirrors the backend
+ * ``WheelAspect``). ``fullness`` is a 0..1 fraction the Map clamps at the
+ * boundary; validated at the client edge so a drifted field raises
+ * ``ApiValidationError`` instead of a raw ``TypeError`` in the overlay. Unknown
+ * keys are stripped (plain object, not ``.strict()``) so an additive backend
+ * field cannot fail a client build.
+ */
+export const wheelAspectSchema = z.object({
+  stage_number: z.number().int(),
+  aspect: z.string(),
+  fullness: z.number(),
+});
+
+/** The full wheel reading: one fullness entry per Aspect (mirrors ``WheelBalance``). */
+export const wheelBalanceSchema = z.object({
+  aspects: z.array(wheelAspectSchema),
+});
+
+export type WheelAspectT = z.infer<typeof wheelAspectSchema>;
+export type WheelBalanceT = z.infer<typeof wheelBalanceSchema>;
+
+// ---------------------------------------------------------------------------
 // Lenient schemas for legacy endpoints (gradually tightened)
 // ---------------------------------------------------------------------------
 
