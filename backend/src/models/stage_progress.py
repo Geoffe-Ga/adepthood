@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Column, DateTime, Integer
+from sqlalchemy import CheckConstraint, Column, DateTime, Integer
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -11,6 +11,10 @@ if TYPE_CHECKING:
 
 class StageProgress(SQLModel, table=True):
     """Tracks which stage a user is currently working on and which stages have been completed."""
+
+    __table_args__ = (
+        CheckConstraint("cycle_number >= 1", name="ck_stageprogress_cycle_number_positive"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     current_stage: int
@@ -32,5 +36,7 @@ class StageProgress(SQLModel, table=True):
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
+    # Loop index for the 36-week arc; progression/loop logic lands in a later issue.
+    cycle_number: int = Field(default=1, ge=1)
     user_id: int = Field(foreign_key="user.id", unique=True, ondelete="CASCADE")
     user: "User" = Relationship(back_populates="stage_progress")

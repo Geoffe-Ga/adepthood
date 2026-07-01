@@ -76,6 +76,7 @@ class StageProgressRecord(BaseModel):
     user_id: int
     current_stage: int
     completed_stages: list[int]
+    cycle_number: int = Field(default=1, ge=1)
 
 
 class PracticeHistoryItem(BaseModel):

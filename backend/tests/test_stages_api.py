@@ -633,6 +633,44 @@ _CONCURRENT_FIRST_ADVANCE_FANOUT = 5
 
 
 @pytest.mark.asyncio
+async def test_update_progress_response_includes_cycle_number(
+    async_client: AsyncClient,
+) -> None:
+    """PUT /stages/progress response JSON must include cycle_number == 1."""
+    headers, _user_id = await _signup(async_client, "cycleboot")
+    resp = await async_client.put(
+        "/stages/progress",
+        json={"current_stage": 1},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert "cycle_number" in data
+    assert data["cycle_number"] == 1
+
+
+@pytest.mark.asyncio
+async def test_advancing_stage_does_not_change_cycle_number(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Advancing from stage 1 to 2 leaves cycle_number unchanged at 1."""
+    headers, user_id = await _signup(async_client, "cycleadvance")
+    progress = StageProgress(user_id=user_id, current_stage=1, completed_stages=[])
+    db_session.add(progress)
+    await db_session.commit()
+
+    resp = await async_client.put(
+        "/stages/progress",
+        json={"current_stage": 2},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert data["cycle_number"] == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.usefixtures("disable_rate_limit")
 async def test_concurrent_first_advance_yields_one_progress_row(
     concurrent_async_client: AsyncClient,
