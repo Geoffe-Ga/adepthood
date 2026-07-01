@@ -6,6 +6,19 @@ import { course as courseApi, type ContentBody } from '../../api';
 import { colors, SPACING } from '../../design/tokens';
 
 import styles, { markdownStyles } from './Course.styles';
+import { stripFrontmatter, stripLeadingTitleHeading } from './stripFrontmatter';
+
+/**
+ * Small-caps eyebrow shown above the sheet title, keyed by content type.
+ * Only the types listed here map to a label; others (e.g. seeded ``essay`` /
+ * ``video`` / ``prompt`` chapters) resolve to ``undefined`` and render no
+ * eyebrow, which the sheet header handles gracefully.
+ */
+const READER_EYEBROWS: Record<string, string> = {
+  chapter: 'Chapter',
+  resource: 'Resource',
+  introduction: 'Introduction',
+};
 
 /**
  * Source descriptor for the reader.  ``kind`` decides which backend
@@ -64,6 +77,8 @@ const markdownRules = {
       />
     );
   },
+  // Render a CommonMark soft break as a space (the library default emits '\n'), so hard-wrapped prose reflows.
+  softbreak: (node: { key?: string }): React.ReactNode => <Text key={node.key}> </Text>,
 };
 
 interface HeaderProps {
@@ -86,6 +101,24 @@ const ReaderHeader = ({ title, onBack }: HeaderProps): React.JSX.Element => (
       {title}
     </Text>
   </View>
+);
+
+interface SheetHeaderProps {
+  eyebrow: string | undefined;
+  title: string;
+}
+
+const ReaderSheetHeader = ({ eyebrow, title }: SheetHeaderProps): React.JSX.Element => (
+  <>
+    {eyebrow !== undefined && (
+      <Text testID="reader-sheet-eyebrow" style={styles.readerEyebrow}>
+        {eyebrow}
+      </Text>
+    )}
+    <Text testID="reader-sheet-title" style={styles.readerTitle}>
+      {title}
+    </Text>
+  </>
 );
 
 interface ErrorViewProps {
@@ -183,9 +216,11 @@ function useContentBody(source: ChapterReaderSource): {
 }
 
 function renderBody(body: ContentBody): React.ReactElement {
-  if (body.body_markdown.trim() === '') {
+  const stripped = stripFrontmatter(body.body_markdown);
+  if (stripped.trim() === '') {
     return <EmptyView />;
   }
+  const markdown = stripLeadingTitleHeading(stripped, body.title);
   return (
     <ScrollView
       style={styles.readerScroll}
@@ -193,8 +228,9 @@ function renderBody(body: ContentBody): React.ReactElement {
       testID="reader-markdown"
     >
       <View style={styles.readerSheet}>
+        <ReaderSheetHeader eyebrow={READER_EYEBROWS[body.content_type]} title={body.title} />
         <Markdown style={markdownStyles} rules={markdownRules} onLinkPress={handleLinkPress}>
-          {body.body_markdown}
+          {markdown}
         </Markdown>
       </View>
     </ScrollView>

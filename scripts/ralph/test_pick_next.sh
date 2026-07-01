@@ -147,6 +147,16 @@ check "epic guard off => same-epic candidate allowed" "11" \
 new_scenario drained
 check "empty candidate list => nothing" "" "$(run_pick)"
 
+# 10) A repo path segment matching "issue-<digits>" above .ralph/worktrees must not be mistaken for an active issue.
+new_scenario parent_path_issue_segment
+REPO2="$WORK/issue-777-fixture/repo"
+git init -q -b main "$REPO2"
+(cd "$REPO2" && git config user.email t@t.t && git config user.name t)
+candidate 10 ""; candidate 11 ""
+mkdir -p "$REPO2/.ralph/worktrees/issue-10"
+check "path segment matching issue-<n> above worktrees dir is ignored" "11" \
+  "$(cd "$REPO2" && PATH="$BIN:$PATH" "$PICK")"
+
 echo
 echo "pick-next tests: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

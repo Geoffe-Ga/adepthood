@@ -20,7 +20,7 @@ sequential loop the orchestrator drives a single worker. Either way the spawn
 graph under a conductor is identical:
 
 ```
-ralph-tick (fleet ORCHESTRATOR — reconcile · serialized-merge · sync · monitor)
+ralph-tick (fleet ORCHESTRATOR — worker pool: reconcile · serialized-merge · lazy-sync · refill)
   └─ ralph-worker × up to 4 . L1  opus    per-issue CONDUCTOR in an isolated worktree
        ├─ chief-architect ..... L0  fable   plan + ordered dispatch list (no code)
        ├─ test-specialist ..... L2  sonnet  Gate 1 RED: failing tests          ─┐
