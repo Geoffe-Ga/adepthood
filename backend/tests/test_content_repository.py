@@ -388,3 +388,94 @@ def test_lazy_singleton_builds_from_content_dir_env(
         assert [c.id for c in first.list_chapters()] == ["beige-1", "beige-2"]
     finally:
         reset_content_repository_for_tests()
+
+
+# ── Frontmatter stripping ───────────────────────────────────────────────
+
+
+def test_frontmatter_stripped_from_chapter_body(content_dir: Path) -> None:
+    # overwrite chapter file with YAML frontmatter before constructing the repo
+    md = content_dir / "markdown/01-beige/01-survival.md"
+    md.write_text("---\nslug: survival\ntitle: Survival\nmedia: x\n---\n\n# Survival\n\nBody.\n")
+    repo = ContentRepository(content_dir)
+    body = repo.read_body("beige-1").body
+    assert "# Survival" in body
+    assert "Body." in body
+    assert "slug:" not in body
+    assert "title:" not in body
+    assert "media:" not in body
+    assert not body.startswith("---")
+
+
+def test_no_frontmatter_body_returned_byte_for_byte(content_dir: Path) -> None:
+    # characterization guard: prose-first file must come back unchanged
+    raw = "# Heading\n\nProse.\n"
+    md = content_dir / "markdown/01-beige/01-survival.md"
+    md.write_text(raw)
+    repo = ContentRepository(content_dir)
+    assert repo.read_body("beige-1").body == raw
+
+
+def test_mid_body_thematic_break_survives(content_dir: Path) -> None:
+    # characterization guard: only a line-1 fence is stripped; mid-doc --- must survive
+    raw = "# H\n\nBefore.\n\n---\n\nAfter.\n"
+    md = content_dir / "markdown/01-beige/01-survival.md"
+    md.write_text(raw)
+    repo = ContentRepository(content_dir)
+    body = repo.read_body("beige-1").body
+    assert "---" in body
+    assert "Before." in body
+    assert "After." in body
+
+
+def test_frontmatter_value_containing_dashes_not_mistaken_for_fence(
+    content_dir: Path,
+) -> None:
+    # closing fence is the first lone --- line; a value like "a --- b" must not close it
+    md = content_dir / "markdown/01-beige/01-survival.md"
+    md.write_text('---\ntitle: "a --- b"\nnote: c:d\n---\n\nProse.\n')
+    repo = ContentRepository(content_dir)
+    body = repo.read_body("beige-1").body
+    assert "Prose." in body
+    assert "title:" not in body
+    assert "note:" not in body
+    assert not body.startswith("---")
+
+
+def test_frontmatter_stripped_across_all_three_read_paths(content_dir: Path) -> None:
+    # all three public read methods share _read_markdown; verify each strips frontmatter
+    chapter_md = content_dir / "markdown/01-beige/01-survival.md"
+    chapter_md.write_text("---\nslug: survival\n---\n\n# Survival body.\n")
+    resource_md = content_dir / "markdown/site/getting-started.md"
+    resource_md.write_text("---\nslug: getting-started\n---\n\n# Resource body.\n")
+    intro_md = content_dir / "markdown/01-beige/00-introduction.md"
+    intro_md.write_text("---\nstage: 1\n---\n\n# Intro body.\n")
+    repo = ContentRepository(content_dir)
+    chapter_body = repo.read_body("beige-1").body
+    assert "slug:" not in chapter_body
+    assert "# Survival body." in chapter_body
+    resource_body = repo.read_resource_body("getting-started").body
+    assert "slug:" not in resource_body
+    assert "# Resource body." in resource_body
+    intro_body = repo.read_intro_body(1).body
+    assert "stage:" not in intro_body
+    assert "# Intro body." in intro_body
+
+
+def test_bom_prefixed_frontmatter_is_stripped(content_dir: Path) -> None:
+    # UTF-8 BOM before the opening --- must still trigger stripping
+    md = content_dir / "markdown/01-beige/01-survival.md"
+    md.write_bytes("﻿---\nslug: x\n---\n\nProse.\n".encode())
+    repo = ContentRepository(content_dir)
+    body = repo.read_body("beige-1").body
+    assert "Prose." in body
+    assert "slug:" not in body
+
+
+def test_unterminated_frontmatter_returned_unchanged(content_dir: Path) -> None:
+    # defensive guard: no closing fence means the file is returned verbatim
+    raw = "---\nslug: x\nno closing fence here\n"
+    md = content_dir / "markdown/01-beige/01-survival.md"
+    md.write_text(raw)
+    repo = ContentRepository(content_dir)
+    assert repo.read_body("beige-1").body == raw
