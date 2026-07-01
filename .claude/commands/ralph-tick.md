@@ -33,7 +33,7 @@ shared rules — gates, thresholds, anti-bypass — live in
 
 | Spawn (`Agent`, `subagent_type:`) | When |
 | --- | --- |
-| `chief-architect` (opus) | Plan brain — every new issue: returns design + ordered dispatch list + risk flags. |
+| `chief-architect` (fable) | Plan brain — every new issue: returns design + ordered dispatch list + risk flags. Runs on Anthropic's most capable model — planning is the tick's highest-leverage step. |
 | `test-specialist` | Gate 1 RED — failing tests. |
 | `implementation-specialist` (opus) | Gate 1 GREEN + refactor — production code. |
 | `security-specialist` (opus) | Only if architect flags security (auth/JWT/CORS/secrets/input/DB). |

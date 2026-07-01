@@ -4,7 +4,7 @@ description: "Read-only review of dependency changes — version pinning, lockfi
 level: 2
 phase: Cleanup
 tools: Read,Grep,Glob
-model: sonnet
+model: haiku
 delegates_to: []
 receives_from: [chief-architect, code-review-orchestrator]
 ---
@@ -29,6 +29,9 @@ implementation-specialist applies any edits.
 
 ## Workflow
 
+0. **Load the rules.** `Read`
+   [`shared/adepthood-constraints.md`](shared/adepthood-constraints.md) (gates and
+   anti-bypass — not auto-injected) before reviewing.
 1. Diff the dependency manifests/lockfiles in the change.
 2. Check each added/changed dependency against the checklist below.
 3. Report findings to the conductor (or, in PR review, to the PR) as `file:line`
