@@ -11,9 +11,11 @@ self-chosen **depths** — prompted journaling, habit scaffolding, a practice
 ramp, the course reading, and the Digital Sangha. Nothing is gated and nothing
 is mandatory: the governing principle is **"you choose your depth."** Deeper
 rings are offered only as resonant, declinable invitations — never gamified
-pressure. The product vision lives in `NORTH-STAR.md`; the visual north star
-("Candle & Ink") lives in `DESIGN.md`, with the implemented design system under
-`frontend/src/design/`.
+pressure. The product vision lives in `NORTH-STAR.md`; the "Candle & Ink" visual north
+star and implemented design system live in `frontend/src/design/DESIGN.md`
+(tokens under `frontend/src/design/`). Root `DESIGN.md` is an external
+inspiration reference — an analysis of the Anthropic / Claude.com
+marketing-site aesthetic that informed the Candle & Ink vocabulary.
 
 - **Frontend:** React Native with Expo (TypeScript, Zustand, React Navigation)
 - **Backend:** FastAPI with PostgreSQL (SQLModel, async, Alembic migrations)
