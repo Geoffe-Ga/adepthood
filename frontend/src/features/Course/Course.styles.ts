@@ -380,8 +380,22 @@ const styles = StyleSheet.create({
     paddingTop: SPACING.sm,
     paddingBottom: SPACING.lg,
     borderRadius: radius.lg,
-    backgroundColor: surface.raised,
+    backgroundColor: surface.canvas,
     ...paperShadow.sheet,
+  },
+  // Small-caps eyebrow over the sheet title (mirrors sectionBandLabel).
+  readerEyebrow: {
+    ...editorialType.caption,
+    color: ink.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: SPACING.xs,
+  },
+  // Serif editorial title heading the sheet; inherits its size from the token.
+  readerTitle: {
+    ...editorialType.title,
+    color: ink.primary,
+    marginBottom: SPACING.sm,
   },
   readerError: {
     flex: 1,
@@ -461,7 +475,6 @@ export const markdownStyles = StyleSheet.create({
     fontSize: 17,
     lineHeight: 26,
     color: ink.primary,
-    paddingTop: SPACING.md,
   },
   heading1: {
     ...editorialType.title,
@@ -524,7 +537,7 @@ export const markdownStyles = StyleSheet.create({
     marginVertical: SPACING.xs,
   },
   hr: {
-    backgroundColor: surface.hairline,
+    backgroundColor: accent.primary,
     marginVertical: SPACING.md,
   },
   contentImage: {

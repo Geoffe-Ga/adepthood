@@ -43,6 +43,7 @@ Create any that don't exist (`gh label create <name> --color <hex> --description
 | `backend` / `frontend` / `full-stack` | Scope | tool-matched |
 | `bug` | Family 0 / 12 correctness finding (has a reproducing test) | `#d73a4a` |
 | `dead-code` | Family 3 dispensable | `#cfd3d7` |
+| `wire-in` | Family 3 finding whose remedy is connect-it + e2e test (not delete) | `#0052cc` |
 | `refactor` | Bloaters / couplers / verbosity | `#fbca04` |
 | `tech-debt` | Architecture / change-preventers | `#e99695` |
 | `security` | Family 10 (work itself defers to the `security` skill) | `#b60205` |
@@ -50,13 +51,18 @@ Create any that don't exist (`gh label create <name> --color <hex> --description
 | `blocked` / `needs-spec` | Not ready for autonomous pickup | `#000000` |
 
 Keep labels minimal per issue: one severity + one scope + one category + `de-slop`.
+`wire-in` is **not** in `pick-next.sh`'s exclude list, so Ralph still picks
+these issues up like any other standalone finding.
 
 ---
 
 ## Template A — Standalone finding (single, atomic, Ralph-ready)
 
 Mirror the established `prompts/github-issues/*.md` shape so it's actionable
-without a single clarifying question. Title is imperative and specific.
+without a single clarifying question. Title is imperative and specific. For a
+wire-in finding, title it as a connect-it task, e.g. "Wire in orphaned
+`export_journal()` from Settings and cover it with an e2e test" — not as a
+removal.
 
 ```markdown
 # <imperative title> (e.g. "Remove dead `legacy_streak()` and its orphaned test")
@@ -64,6 +70,7 @@ without a single clarifying question. Title is imperative and specific.
 **Labels:** `de-slop`, `<scope>`, `<category>`, `priority-<level>`
 **Detected by:** weekly de-slopify run <YYYY-MM-DD>
 **Severity:** <Critical|High|Medium|Low>
+**Remediation:** <delete | wire-in (+ e2e test) | decision-needed>
 
 ## Problem
 <2-3 sentences. What's wrong, where. Cite file:line. State the taxonomy family.>
@@ -91,6 +98,9 @@ without a single clarifying question. Title is imperative and specific.
 |------|--------|
 | `path/to/file.py` | Modify / Delete / Create |
 ```
+
+For a wire-in issue, the Files table's Action column is Create/Modify — the
+wired call site plus the new e2e test file — not Delete.
 
 **Rule:** a standalone issue should be ~50–300 net LoC and touch ≤ ~5 files. If
 it's bigger, it's an epic.
