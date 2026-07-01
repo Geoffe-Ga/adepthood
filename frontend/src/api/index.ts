@@ -10,6 +10,7 @@ import {
   depthPreferencesSchema,
   frequencyResponseSchema,
   habitWithGoalsSchema,
+  invitationSchema,
   isTier,
   journalListResponseSchema,
   loginAuthResponseSchema,
@@ -32,6 +33,7 @@ import {
   type CompletionSuggestionT,
   type CompletionTargetTypeT,
   type DepthPreferencesT,
+  type InvitationT,
   type Page,
   type PasswordResetAcceptedT,
   type StageProgressRecordT,
@@ -1300,6 +1302,32 @@ export const completionSuggestions = {
       method: 'POST',
       token,
       schema: completionSuggestionSchema as unknown as z.ZodType<CompletionSuggestion>,
+    });
+  },
+};
+
+// Invitations client (subtle invitation surface, NORTH-STAR §6)
+export type Invitation = InvitationT;
+
+/**
+ * The declinable invitation surface (silent-by-default, one-tap decline). ``list``
+ * returns a bare array (not an ``{ items }`` envelope); ``dismiss`` permanently
+ * removes one and is idempotent, so a deterministic key guards a double-tap.
+ * ``dismiss`` returns 200 with the dismissed row; the caller has no use for it,
+ * so the body is intentionally fetched-and-dropped as ``void``.
+ */
+export const invitations = {
+  list(token?: string): Promise<Invitation[]> {
+    return request<Invitation[]>('/invitations', {
+      token,
+      schema: z.array(invitationSchema) as unknown as z.ZodType<Invitation[]>,
+    });
+  },
+  dismiss(id: number, token?: string): Promise<void> {
+    return request<void>(`/invitations/${id}/dismiss`, {
+      method: 'POST',
+      token,
+      headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey('dismiss-invitation', id) },
     });
   },
 };

@@ -8,11 +8,26 @@ jest.mock('@react-navigation/native', () => ({
   useNavigation: () => ({ navigate: mockNavigate }),
 }));
 
+const mockDismiss = jest.fn();
+let mockInvitations: Invitation[] = [];
+jest.mock('../useInvitations', () => ({
+  useInvitations: () => ({ invitations: mockInvitations, dismiss: mockDismiss }),
+}));
+
 import TodayScreen from '../TodayScreen';
 
+import type { Invitation } from '@/api';
 import type { Habit } from '@/features/Habits/Habits.types';
 import { useHabitStore } from '@/store/useHabitStore';
 import { useProgramStore } from '@/store/useProgramStore';
+
+const makeInvitation = (id: number): Invitation => ({
+  id,
+  target_type: 'practice',
+  target_id: null,
+  kind: 'readiness',
+  created_at: '2026-01-01T00:00:00Z',
+});
 
 const makeHabit = (id: number, completedToday: boolean): Habit =>
   ({
@@ -32,6 +47,8 @@ const makeHabit = (id: number, completedToday: boolean): Habit =>
 
 beforeEach(() => {
   mockNavigate.mockClear();
+  mockDismiss.mockClear();
+  mockInvitations = [];
   useProgramStore.setState({ programStartDate: new Date() });
   useHabitStore.setState({ habits: [], loading: false });
 });
@@ -63,6 +80,22 @@ describe('TodayScreen', () => {
     // One source being empty must not blank the screen — sibling bands still render.
     expect(getByTestId('today-practice-band')).toBeTruthy();
     expect(getByTestId('today-course-band')).toBeTruthy();
+  });
+
+  it('renders no invitation surface when there are none (silence by default)', () => {
+    const { queryByTestId, getByTestId } = render(<TodayScreen />);
+    expect(queryByTestId(/^invitation-/)).toBeNull();
+    // Silence must not blank the screen — the hero and bands still render.
+    expect(getByTestId('today-hero')).toBeTruthy();
+    expect(getByTestId('today-practice-band')).toBeTruthy();
+  });
+
+  it('renders a pending invitation card between the hero and the bands', () => {
+    mockInvitations = [makeInvitation(7)];
+    const { getByTestId } = render(<TodayScreen />);
+    expect(getByTestId('invitation-7')).toBeTruthy();
+    expect(getByTestId('today-hero')).toBeTruthy();
+    expect(getByTestId('today-practice-band')).toBeTruthy();
   });
 
   it('routes each band into its feature tab', () => {
