@@ -69,6 +69,12 @@ class ResonanceResponse(BaseModel):
     -distress signal it carries the human + professional support surface, which
     accompanies — never replaces — the reflection (NORTH-STAR §10). It is derived
     only from the entry being processed, so it can never leak across users.
+
+    ``private`` is ``True`` only for an ``intimate`` entry (issue #895): such an
+    entry is never sent to a cloud LLM, so no marginalia/suggestions are produced
+    and ``private_message`` carries the non-shaming explanation. Both fields are
+    defaulted, so every existing (public/personal) response is byte-for-byte
+    unchanged.
     """
 
     marginalia: list[MarginaliaResponse]
@@ -77,6 +83,8 @@ class ResonanceResponse(BaseModel):
     remaining_balance: int
     monthly_reset_date: datetime
     care: CareResponse | None = None
+    private: bool = False
+    private_message: str | None = None
 
 
 class MarginaliaListResponse(BaseModel):

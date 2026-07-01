@@ -28,7 +28,7 @@ from models.completion_suggestion import (
 )
 from models.goal import Goal
 from models.habit import Habit
-from models.journal_entry import JournalEntry, JournalTag
+from models.journal_entry import JournalClassification, JournalEntry, JournalTag
 from models.marginalia import Marginalia, MarginaliaStatus
 from models.practice import Practice
 from models.practice_session import PracticeSession
@@ -339,13 +339,21 @@ async def _load_user_entry(
 
 
 async def _recent_prior_bodies(session: AsyncSession, user_id: int, exclude_id: int) -> list[str]:
-    """The caller's most recent other entry bodies, for connection context."""
+    """The caller's most recent other entry bodies, for connection context.
+
+    Intimate entries (issue #895) are excluded: these bodies are embedded in the
+    resonance prompt and sent to the cloud LLM, so an intimate entry must never
+    reach the cloud even as *prior context* for a newer non-intimate entry's
+    pass. The classification is read off the persisted row (never client-supplied
+    at resonance time), mirroring the per-entry privacy floor in ``run_resonance``.
+    """
     result = await session.execute(
         select(JournalEntry)
         .where(
             JournalEntry.user_id == user_id,
             JournalEntry.id != exclude_id,
             col(JournalEntry.deleted_at).is_(None),
+            col(JournalEntry.classification) != JournalClassification.INTIMATE,
         )
         .order_by(col(JournalEntry.id).desc())
         .limit(_RESONANCE_PRIOR_LIMIT)
@@ -465,6 +473,35 @@ def _care_response(payload: CarePayload | None) -> CareResponse | None:
     )
 
 
+# Non-shaming copy shown when an intimate entry is kept off the cloud (issue #895).
+# The exact string is contract with the client and the RED tests — one named
+# constant so the wording lives in a single place.
+_INTIMATE_PRIVATE_MESSAGE = (
+    "This entry stays private — it's not sent to any AI. Change its privacy to enable reflection."
+)
+
+
+async def _private_response(session: AsyncSession, user_id: int) -> ResonanceResponse:
+    """Resonance response for an intimate entry: no cloud call, no charge.
+
+    An ``intimate`` entry is never sent to a cloud LLM (issue #895), so this is
+    returned *before* any wallet deduction or LLM construction: no marginalia,
+    no suggestions, unspent balances (read fresh, like :func:`_care_only_response`,
+    with no ``preflight_deduction``), and the non-shaming private message.
+    """
+    user = await require_user_fresh(session, user_id)
+    return ResonanceResponse(
+        marginalia=[],
+        suggestions=[],
+        remaining_messages=max(get_monthly_cap() - user.monthly_messages_used, 0),
+        remaining_balance=user.offering_balance,
+        monthly_reset_date=user.monthly_reset_date,
+        care=None,
+        private=True,
+        private_message=_INTIMATE_PRIVATE_MESSAGE,
+    )
+
+
 async def _care_only_response(
     session: AsyncSession, user_id: int, care: CareResponse
 ) -> ResonanceResponse:
@@ -568,6 +605,12 @@ async def run_resonance(
     entry = await _load_user_entry(session, entry_id, current_user)
     if entry is None:
         raise not_found("journal_entry")
+    # Privacy floor (issue #895): an intimate entry is NEVER sent to a cloud LLM.
+    # Decided from the *persisted* classification (never client-supplied) and
+    # returned here — before any care screen, wallet charge, LLM construction, or
+    # usage-log write — so the cloud is provably unreachable for intimate entries.
+    if entry.classification == JournalClassification.INTIMATE:
+        return await _private_response(session, current_user)
     # Screen first, with a pure/local check that can't fail the request, so the
     # care surface is decided independently of the LLM (NORTH-STAR §10).
     care = _care_response(_care_for(entry.message))
@@ -862,11 +905,28 @@ async def expand_marginalia_essay(
     entry = await _load_user_entry(session, note.journal_entry_id, current_user)
     if entry is None:  # pragma: no cover — marginalia FK guarantees the parent
         raise not_found("journal_entry")
-    llm = BotmasonResonanceLLM(resolve_chat_api_key(x_llm_api_key))
+    # Privacy floor (issue #895): an intimate entry is NEVER sent to a cloud LLM,
+    # so skip essay generation entirely and return the note (no essay) unchanged.
+    # Decided from the *persisted* classification, before the LLM is constructed.
+    if entry.classification == JournalClassification.INTIMATE:
+        return note
+    return await _cache_essay(session, note, entry.message, x_llm_api_key)
+
+
+async def _cache_essay(
+    session: AsyncSession, note: Marginalia, body: str, api_key: str | None
+) -> Marginalia:
+    """Generate the essay via the cloud LLM, cache it on the note, and persist.
+
+    A provider error maps to 502 with no write. Called only for non-intimate
+    entries — the intimate guard in :func:`expand_marginalia_essay` returns before
+    this seam, so the cloud is never reached for an intimate entry's essay.
+    """
+    llm = BotmasonResonanceLLM(resolve_chat_api_key(api_key))
     try:
         essay = await generate_essay(
             llm=llm,
-            body=entry.message,
+            body=body,
             anchor_text=note.anchor_text,
             kind=note.kind,
             note=note.note,
@@ -877,7 +937,7 @@ async def expand_marginalia_essay(
     note.essay_generated_at = datetime.now(UTC)
     await session.commit()
     await session.refresh(note)
-    logger.info("marginalia_essay_generated", extra={"user_id": current_user, "id": marginalia_id})
+    logger.info("marginalia_essay_generated", extra={"user_id": note.user_id, "id": note.id})
     return note
 
 
