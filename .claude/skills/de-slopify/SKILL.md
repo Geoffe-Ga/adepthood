@@ -49,6 +49,25 @@ nothing because the code is clean is a success.**
    single-threaded scan of tool output will conclude "clean" and miss all of
    them. **You must do the reading pass in Step 4.**
 
+## Two run modes (the coverage set changes; nothing else does)
+
+1. **Full audit** (default): the coverage set is the whole codebase, as
+   enumerated by the evidence bundle's `area-inventory.txt`.
+2. **Targeted area scan**: the caller supplies a scope — an area id plus a
+   path list (the De-Slop workflow's matrix does this from the registry in
+   `.github/deslop-areas.json`). The scope **replaces** `area-inventory.txt`
+   as the coverage set: read EVERY file in the scope plus the tests that
+   cover it, against all 13 families, and the coverage ledger must prove
+   full-scope coverage. Reading *outside* the scope is allowed — encouraged —
+   for corroboration (duplication of scoped code elsewhere, cross-boundary
+   layering violations), but **file only findings anchored inside the
+   scope**; out-of-scope slop belongs to that area's own scan. Targeted
+   scans never file a `report` issue — the job summary is the record.
+
+Every other rule (two signals, guard list, dedup, templates, precision over
+recall) is identical in both modes. Wherever the steps below say
+"whole codebase", a targeted scan reads "whole scope".
+
 ## The three references (read them — they are the substance)
 
 | File | What it gives you |
@@ -94,10 +113,12 @@ constants, deliberate repo conventions, and unmeasured "could be faster" claims.
 This is the step that finds the slop linters cannot see, and the step the first
 audit skipped. Do not conclude "clean" without it.
 
-**This is an EXHAUSTIVE, WHOLE-CODEBASE reading pass on EVERY run.** Coverage is
-governed by the evidence bundle's `area-inventory.txt`, which enumerates every
-area in the repo. Fan out with the **Task tool** and spawn a reader subagent for
-**every** area in that inventory — never just the changed ones:
+**This is an EXHAUSTIVE reading pass over the ENTIRE coverage set on EVERY
+run.** In a full audit the coverage set is the evidence bundle's
+`area-inventory.txt`, which enumerates every area in the repo; in a targeted
+scan it is the caller-supplied scope (fan out per module/screen within it).
+Fan out with the **Task tool** and spawn a reader subagent for **every** area
+in the coverage set — never just the changed ones. For a full audit:
 
 - one subagent per backend router (`backend/src/routers/*`),
 - one for each `backend/src/domain/*` and each `backend/src/services/*` module,
@@ -185,12 +206,13 @@ Emit a concise run summary: counts by severity, what was filed (with issue
 numbers/links), what was **dropped and why** (failed corroboration / guard
 list), and what was **deduped**.
 
-Then add a **coverage ledger** that proves WHOLE-CODEBASE coverage two ways:
+Then add a **coverage ledger** that proves FULL-COVERAGE-SET coverage two ways:
 1. one row per taxonomy family (all 13) with the verdict (clean / candidates /
    filed), and
-2. **every area in `area-inventory.txt` marked READ this run** — no area may be
-   "unchanged → not read". This is how a reader verifies the whole taxonomy AND
-   the whole inventory were actually traversed, not assumed clean:
+2. **every area in the coverage set (`area-inventory.txt` for a full audit;
+   the caller's scope for a targeted scan) marked READ this run** — no area may
+   be "unchanged → not read". This is how a reader verifies the whole taxonomy
+   AND the whole inventory were actually traversed, not assumed clean:
 
 ```
 | Family | Areas examined | Verdict |
@@ -224,10 +246,13 @@ narrowed to changed areas; that is a failed run, not a clean one.
 
 ## Examples
 
-### Example 1 — Weekly scheduled run (the primary path)
+### Example 1 — Scheduled targeted scan (the primary path)
 
-The `weekly-deslop` GitHub Action fires (or the user says "run the slop
-detector"). Collect evidence → triage → **fan-out reading pass** → corroborate →
+The `De-Slop` GitHub Action (`.github/workflows/deslop.yml`) fires — weekly on
+the Monday cron, or dispatched by the Ralph loop's de-slop gate — running one
+matrix job per area in `.github/deslop-areas.json` (or the user says "run the
+slop detector", which is a full audit). Each job: collect evidence → triage →
+**fan-out reading pass over its scope** → corroborate →
 cluster → dedup → file → report-with-ledger. vulture + grep prove
 `legacy_streak()` has zero callers → file one `dead-code`/`priority-medium`
 issue. A reading subagent finds `HabitsScreen` mixes data-fetching, formatting,

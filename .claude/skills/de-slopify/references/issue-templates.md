@@ -37,7 +37,7 @@ Create any that don't exist (`gh label create <name> --color <hex> --description
 
 | Label | Meaning | Color |
 |-------|---------|-------|
-| `de-slop` | Filed by the weekly de-slopify detector | `#5319e7` |
+| `de-slop` | Filed by the de-slopify detector | `#5319e7` |
 | `epic` | Umbrella issue; Ralph skips, works sub-issues | `#3e4b9e` |
 | `priority-critical` / `priority-high` / `priority-medium` / `priority-low` | Severity from the rubric | red→grey |
 | `backend` / `frontend` / `full-stack` | Scope | tool-matched |
@@ -68,7 +68,7 @@ removal.
 # <imperative title> (e.g. "Remove dead `legacy_streak()` and its orphaned test")
 
 **Labels:** `de-slop`, `<scope>`, `<category>`, `priority-<level>`
-**Detected by:** weekly de-slopify run <YYYY-MM-DD>
+**Detected by:** de-slopify scan (<area id or "full audit">) <YYYY-MM-DD>
 **Severity:** <Critical|High|Medium|Low>
 **Remediation:** <delete | wire-in (+ e2e test) | decision-needed>
 
@@ -118,7 +118,7 @@ contracts", "destub the aspirational encryption feature"). Mirrors the existing
 # <Epic title> (e.g. "De-Slop: Decompose the HabitsScreen god-component")
 
 **Labels:** `de-slop`, `epic`, `<scope>`, `priority-<level>`
-**Detected by:** weekly de-slopify run <YYYY-MM-DD>
+**Detected by:** de-slopify scan (<area id or "full audit">) <YYYY-MM-DD>
 
 ## Why this is an epic
 <The corroborated problem and why it can't be one atomic PR. Cite evidence.>
