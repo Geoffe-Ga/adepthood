@@ -8,6 +8,7 @@
 import { StyleSheet } from 'react-native';
 
 import {
+  BORDER_RADIUS,
   SPACING,
   colors,
   editorialType,
@@ -130,6 +131,50 @@ const styles = StyleSheet.create({
     ...editorialType.caption,
     color: colors.paper.inkSoft,
     paddingTop: spacing(2),
+  },
+  /** Privacy tier chooser block above the growing body. */
+  privacyTierControl: {
+    paddingBottom: spacing(1),
+  },
+  privacyTierRow: {
+    flexDirection: 'row',
+    gap: SPACING.xs,
+  },
+  /** Each tier option; both min dims hold the touch target at the 44dp floor. */
+  privacyTierOption: {
+    flex: 1,
+    minHeight: touchTarget.minimum,
+    minWidth: touchTarget.minimum,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.sm,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.paper.hairline,
+  },
+  privacyTierOptionSelected: {
+    backgroundColor: colors.paper.anchorHighlight,
+    borderColor: colors.paper.inkSoft,
+  },
+  privacyTierLabel: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+  },
+  privacyTierLabelSelected: {
+    color: colors.paper.ink,
+  },
+  privacyTierExplainer: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+    paddingTop: spacing(1),
+  },
+  /** Reason line shown beside the disabled resonance button for intimate entries. */
+  privacyResonanceReason: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+    textAlign: 'center',
+    paddingHorizontal: SPACING.xl,
+    paddingBottom: SPACING.sm,
   },
 });
 

@@ -43,6 +43,12 @@ export interface UseResonanceResult {
    * new pass clears any stale care, and the load-on-open path never sets it.
    */
   care: CareResponse | null;
+  /**
+   * Reason copy from a pass that was withheld for an intimate entry.
+   * ``null`` until a generate pass returns a ``private_message``; the privacy
+   * gate falls back to its own default copy when this is null.
+   */
+  privateMessage: string | null;
   loading: boolean;
   error: string | null;
   requestResonance: () => Promise<void>;
@@ -202,12 +208,13 @@ interface GeneratePassDeps {
   setMarginalia: Dispatch<SetStateAction<Marginalia[]>>;
   mergeFromGenerate: (_incoming: CompletionSuggestion[]) => void;
   setCare: Dispatch<SetStateAction<CareResponse | null>>;
+  setPrivateMessage: Dispatch<SetStateAction<string | null>>;
   setError: Dispatch<SetStateAction<string | null>>;
 }
 
 /** The charged "generate" pass: flush, generate, merge notes + suggestions + care. */
 function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
-  const { flush, setMarginalia, mergeFromGenerate, setCare, setError } = deps;
+  const { flush, setMarginalia, mergeFromGenerate, setCare, setPrivateMessage, setError } = deps;
   const [loading, setLoading] = useState(false);
   const inFlightRef = useRef(false);
 
@@ -230,13 +237,15 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
       mergeFromGenerate(result.suggestions);
       // ``care`` is nullable/absent on ordinary entries — normalise to null.
       setCare(result.care ?? null);
+      // ``private_message`` is present only when the pass was withheld.
+      setPrivateMessage(result.private_message ?? null);
     } catch (err) {
       setError(formatApiError(err));
     } finally {
       inFlightRef.current = false;
       setLoading(false);
     }
-  }, [flush, setMarginalia, mergeFromGenerate, setCare, setError]);
+  }, [flush, setMarginalia, mergeFromGenerate, setCare, setPrivateMessage, setError]);
 
   return { loading, requestResonance };
 }
@@ -246,6 +255,8 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
   // Default null (never undefined): the load-on-open path never sets care, so
   // the surface stays hidden until a generate pass returns one.
   const [care, setCare] = useState<CareResponse | null>(null);
+  // Reason copy from a withheld (intimate) pass; null until one returns it.
+  const [privateMessage, setPrivateMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useLoadOnOpen(routeEntryId, resonance.list, setMarginalia);
@@ -255,6 +266,7 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
     setMarginalia,
     mergeFromGenerate: sug.mergeFromGenerate,
     setCare,
+    setPrivateMessage,
     setError,
   });
 
@@ -277,6 +289,7 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
     suggestions: sug.suggestions,
     acceptedCheckIns: sug.acceptedCheckIns,
     care,
+    privateMessage,
     loading,
     error,
     requestResonance,
