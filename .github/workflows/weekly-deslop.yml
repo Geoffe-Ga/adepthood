@@ -146,6 +146,12 @@ jobs:
               large coordinated work as an `epic`-labeled umbrella with
               decomposed sub-issues (Template B); use the `triage-and-plan`
               skill when an epic needs more than ~3 sub-issues.
+            - Orphaned/dead code that is complete AND has explicit intent
+              evidence may warrant WIRING IN (with an e2e test) instead of
+              deletion; classify each Family-3 finding's remediation
+              direction (delete / wire-in (+ e2e) / decision-needed) per
+              Template A, preferring decision-needed over silently deleting
+              finished work.
             - Create any missing labels first. Write issue bodies to files and
               file with `gh issue create --body-file`.
             - A run that files NOTHING because the code is clean is a SUCCESS.
