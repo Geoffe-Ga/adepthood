@@ -139,8 +139,8 @@ before each merge** — merging one lane can push the others `BEHIND`. Serialize
 always up-to-date: correctness holds; a ready lane is never held back by a slow
 sibling.
 
-If any merge happened, commit the `state.json` bump (state-only changes may go
-directly on `main`).
+If any merge happened, commit the `state.json` bump **once** — a single commit
+covering every merge this wake (state-only changes may go directly on `main`).
 
 ### Step 2 — Advance failing lanes (per PR, independent)
 
@@ -214,8 +214,10 @@ for all of them. Arrange, in this order of preference:
    mcp__github__subscribe_pr_activity  (owner, repo, pullNumber)   # once per open PR
    ```
    Comment and CI-failure events arrive as `<github-webhook-activity>` and wake
-   this session; a verdict comment wakes you directly. Unsubscribe a PR once it
-   merges/closes.
+   this session; a verdict comment wakes you directly. `subscribe_pr_activity` is
+   **idempotent** — re-subscribing an already-watched PR every wake is safe and
+   does not stack subscriptions, so just (re)subscribe every open PR each wake.
+   Unsubscribe a PR once it merges/closes.
 3. **`ScheduleWakeup` fallback** (~1200–1800s): webhooks do **not** deliver CI
    *success*, `BEHIND→green` transitions, or merges, so keep one modest fallback
    armed to re-poll Step 0–4 for any lane that quietly went green or up-to-date.
