@@ -7,6 +7,7 @@ import {
   acceptSuggestionResultSchema,
   completionSuggestionListResponseSchema,
   completionSuggestionSchema,
+  depthPreferencesSchema,
   frequencyResponseSchema,
   habitWithGoalsSchema,
   isTier,
@@ -28,6 +29,7 @@ import {
   type CareResponseT,
   type CompletionSuggestionT,
   type CompletionTargetTypeT,
+  type DepthPreferencesT,
   type Page,
   type PasswordResetAcceptedT,
   type SuggestionStatusT,
@@ -2292,6 +2294,44 @@ export const users = {
   },
 };
 
+// Depth-preferences types and client (you-choose-your-depth ring toggles)
+
+/** The four optional-depth ring toggles (mirrors the backend response). */
+export type DepthPreferences = DepthPreferencesT;
+
+/** Partial update body — only the flipped rings are sent. */
+export type DepthPreferencesUpdate = Partial<DepthPreferences>;
+
+// Responses are validated via ``depthPreferencesSchema`` so a mis-shaped
+// payload (e.g. a non-boolean toggle) raises ApiValidationError rather than
+// silently corrupting a ring flag. The route has no trailing slash — the
+// backend serves ``/depth-preferences`` directly (no 307 redirect).
+const depthPreferencesResponseSchema =
+  depthPreferencesSchema as unknown as z.ZodType<DepthPreferences>;
+
+export const depthPreferences = {
+  /** Read the caller's current ring toggles. */
+  get(token?: string): Promise<DepthPreferences> {
+    return request<DepthPreferences>('/depth-preferences', {
+      token,
+      schema: depthPreferencesResponseSchema,
+    });
+  },
+  /**
+   * Flip one or more rings. The partial is sent verbatim; the server echoes
+   * the FULL four-key state back, so callers get the authoritative post-update
+   * snapshot rather than the subset they sent.
+   */
+  update(partial: DepthPreferencesUpdate, token?: string): Promise<DepthPreferences> {
+    return request<DepthPreferences>('/depth-preferences', {
+      method: 'PATCH',
+      body: partial,
+      token,
+      schema: depthPreferencesResponseSchema,
+    });
+  },
+};
+
 // Energy plan client
 export default {
   habits,
@@ -2311,6 +2351,7 @@ export default {
   practiceSessions,
   auth,
   users,
+  depthPreferences,
   setTokenGetter,
   setOnUnauthorized,
   setOnTokenRefreshed,

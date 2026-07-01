@@ -555,6 +555,27 @@ export type CareResponseT = z.infer<typeof careResponseSchema>;
 export type ResonanceResponseT = z.infer<typeof resonanceResponseSchema>;
 
 // ---------------------------------------------------------------------------
+// Depth preferences (you-choose-your-depth ring toggles)
+// ---------------------------------------------------------------------------
+
+/**
+ * The four optional-depth toggles (mirrors the backend ``DepthPreferences``).
+ * Each ring is on by default; a user opts *out* of a depth by flipping its
+ * flag false. Validated at the boundary so a mis-shaped payload (e.g. a
+ * stringly-typed "yes") raises ``ApiValidationError`` instead of quietly
+ * corrupting a boolean toggle. Unknown keys are stripped (plain object, not
+ * ``.strict()``) so an additive backend field cannot fail a client build.
+ */
+export const depthPreferencesSchema = z.object({
+  enable_habits: z.boolean(),
+  enable_practices: z.boolean(),
+  enable_course: z.boolean(),
+  enable_sangha: z.boolean(),
+});
+
+export type DepthPreferencesT = z.infer<typeof depthPreferencesSchema>;
+
+// ---------------------------------------------------------------------------
 // Lenient schemas for legacy endpoints (gradually tightened)
 // ---------------------------------------------------------------------------
 

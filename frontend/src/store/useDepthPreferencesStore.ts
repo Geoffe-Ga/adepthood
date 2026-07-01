@@ -1,0 +1,106 @@
+import { create } from 'zustand';
+
+import { depthPreferences } from '../api';
+import type { DepthPreferences, DepthPreferencesUpdate } from '../api';
+
+import { registerStoreReset } from './registry';
+
+/**
+ * Depth-preferences store — the client-side mirror of the "you choose your
+ * depth" ring toggles. Every ring is on by default, matching the product
+ * principle that nothing is gated: a user opts *out* of a depth, never in.
+ *
+ * Unlike an optimistic toggle, ``update`` waits for the server's echoed full
+ * state before mutating: the four flags interact (a backend rule may force a
+ * dependent ring off), so the authoritative post-update snapshot is the only
+ * safe thing to store. A failed call leaves the current flags untouched and
+ * surfaces a string ``error`` for the UI to render.
+ */
+export interface DepthPreferencesStoreState {
+  enable_habits: boolean;
+  enable_practices: boolean;
+  enable_course: boolean;
+  enable_sangha: boolean;
+  loading: boolean;
+  error: string | null;
+
+  /** Fetch the current ring toggles and replace local state with the result. */
+  load: (_token?: string) => Promise<void>;
+  /** Flip one or more rings; stores the server's echoed full state on resolve. */
+  update: (_partial: DepthPreferencesUpdate, _token?: string) => Promise<void>;
+  /** Wipe every field back to the all-on defaults on logout. */
+  reset: () => void;
+}
+
+const INITIAL_STATE = {
+  enable_habits: true,
+  enable_practices: true,
+  enable_course: true,
+  enable_sangha: true,
+  loading: false,
+  error: null as string | null,
+};
+
+/** Narrow the four toggle flags out of a full API response. */
+const toToggles = (prefs: DepthPreferences) => ({
+  enable_habits: prefs.enable_habits,
+  enable_practices: prefs.enable_practices,
+  enable_course: prefs.enable_course,
+  enable_sangha: prefs.enable_sangha,
+});
+
+/** Human-readable message for an unknown rejection value. */
+const messageFor = (err: unknown): string =>
+  err instanceof Error ? err.message : 'Failed to load depth preferences';
+
+export const useDepthPreferencesStore = create<DepthPreferencesStoreState>((set) => ({
+  ...INITIAL_STATE,
+
+  load: async (token) => {
+    set({ loading: true, error: null });
+    try {
+      const prefs = await depthPreferences.get(token);
+      set({ ...toToggles(prefs), loading: false });
+    } catch (err: unknown) {
+      // Leave the existing flags intact — a failed read must not flip a ring.
+      set({ loading: false, error: messageFor(err) });
+    }
+  },
+
+  update: async (partial, token) => {
+    set({ loading: true, error: null });
+    try {
+      const prefs = await depthPreferences.update(partial, token);
+      // Non-optimistic: state comes only from the server's echoed full snapshot.
+      set({ ...toToggles(prefs), loading: false });
+    } catch (err: unknown) {
+      set({ loading: false, error: messageFor(err) });
+    }
+  },
+
+  reset: () => set({ ...INITIAL_STATE }),
+}));
+
+// Publish our reset to the shared registry so a single ``resetAllStores()``
+// call in AuthContext.logout clears every store, including this one.
+registerStoreReset(() => {
+  useDepthPreferencesStore.getState().reset();
+});
+
+// ---------------------------------------------------------------------------
+// Selectors — narrow state subscriptions. Zustand compares the returned value
+// with ``Object.is``, so components re-render only when their slice changes.
+// ---------------------------------------------------------------------------
+
+export const selectEnableHabits = (state: DepthPreferencesStoreState): boolean =>
+  state.enable_habits;
+export const selectEnablePractices = (state: DepthPreferencesStoreState): boolean =>
+  state.enable_practices;
+export const selectEnableCourse = (state: DepthPreferencesStoreState): boolean =>
+  state.enable_course;
+export const selectEnableSangha = (state: DepthPreferencesStoreState): boolean =>
+  state.enable_sangha;
+export const selectDepthPreferencesLoading = (state: DepthPreferencesStoreState): boolean =>
+  state.loading;
+export const selectDepthPreferencesError = (state: DepthPreferencesStoreState): string | null =>
+  state.error;
