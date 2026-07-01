@@ -79,6 +79,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.xl,
     paddingTop: SPACING.xxl,
   },
+  emptyCtaGroup: {
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
   emptyText: {
     ...editorialType.body,
     color: ink.soft,

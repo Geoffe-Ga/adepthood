@@ -36,6 +36,9 @@ const WEEK_DAYS = 7;
 const MONTH_DAYS = 30;
 const WORDS_PER_MINUTE = 200;
 
+// A single curated opening invitation for a brand-new journal (no rotation).
+const FIRST_PROMPT = 'What brought you here?';
+
 type ShelfNavigation = NativeStackNavigationProp<RootStackParamList>;
 
 interface ShelfSection {
@@ -214,6 +217,7 @@ interface ShelfEmptyProps {
   error: string | null;
   searching: boolean;
   onNew: () => void;
+  onFirstPrompt: () => void;
 }
 
 /** Empty list: nothing while loading, the load error, a no-results line for an
@@ -223,6 +227,7 @@ function ShelfEmpty({
   error,
   searching,
   onNew,
+  onFirstPrompt,
 }: ShelfEmptyProps): React.JSX.Element | null {
   if (loading) return null;
   if (error != null) {
@@ -248,7 +253,18 @@ function ShelfEmpty({
       glyph="📖"
       title="Your shelf is empty"
       body="Start your first page — a quiet place to think out loud."
-      cta={<Button label="Start a page" onPress={onNew} testID="journal-empty-cta" />}
+      cta={
+        <View style={styles.emptyCtaGroup}>
+          <Button label="Start a page" onPress={onNew} testID="journal-empty-cta" />
+          <Button
+            label={FIRST_PROMPT}
+            variant="tertiary"
+            onPress={onFirstPrompt}
+            accessibilityLabel="Begin a first page from the question: What brought you here?"
+            testID="journal-empty-first-prompt"
+          />
+        </View>
+      }
       testID="journal-shelf-empty"
     />
   );
@@ -344,6 +360,7 @@ interface ShelfNav {
   openEntry: (_id: number) => void;
   newEntry: () => void;
   openPrompt: () => void;
+  openWithPrompt: () => void;
 }
 
 /** Memoized navigation callbacks for the shelf's three destinations. */
@@ -357,6 +374,10 @@ function useShelfNavigation(
     [navigation],
   );
   const newEntry = useCallback(() => navigation.navigate('JournalEntry'), [navigation]);
+  const openWithPrompt = useCallback(
+    () => navigation.navigate('JournalEntry', { promptQuestion: FIRST_PROMPT }),
+    [navigation],
+  );
   const openPrompt = useCallback(() => {
     if (!prompt) return;
     navigation.navigate('JournalEntry', {
@@ -365,7 +386,15 @@ function useShelfNavigation(
       prefillTitle: `Week ${week} Reflection`,
     });
   }, [navigation, prompt, week]);
-  return { openEntry, newEntry, openPrompt };
+  return { openEntry, newEntry, openPrompt, openWithPrompt };
+}
+
+function renderSectionHeader({
+  section,
+}: {
+  section: SectionListData<JournalMessage, ShelfSection>;
+}): React.JSX.Element {
+  return <SectionHeading title={section.title} />;
 }
 
 function JournalShelfScreen(): React.JSX.Element {
@@ -382,11 +411,6 @@ function JournalShelfScreen(): React.JSX.Element {
   const renderItem = ({ item }: SectionListRenderItemInfo<JournalMessage, ShelfSection>) => (
     <PageCard entry={item} onOpen={nav.openEntry} now={now} />
   );
-  const renderSectionHeader = ({
-    section,
-  }: {
-    section: SectionListData<JournalMessage, ShelfSection>;
-  }) => <SectionHeading title={section.title} />;
 
   return (
     <ScreenScaffold testID="journal-shelf">
@@ -410,7 +434,13 @@ function JournalShelfScreen(): React.JSX.Element {
           />
         }
         ListEmptyComponent={
-          <ShelfEmpty loading={loading} error={error} searching={searching} onNew={nav.newEntry} />
+          <ShelfEmpty
+            loading={loading}
+            error={error}
+            searching={searching}
+            onNew={nav.newEntry}
+            onFirstPrompt={nav.openWithPrompt}
+          />
         }
         onEndReached={hasMore ? loadMore : undefined}
         onEndReachedThreshold={0.4}

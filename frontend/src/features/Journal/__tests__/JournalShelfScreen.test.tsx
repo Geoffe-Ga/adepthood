@@ -1,6 +1,6 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
@@ -253,5 +253,78 @@ describe('JournalShelfScreen', () => {
     const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
     await findByTestId('journal-shelf-empty');
     expect(queryByTestId('journal-weekly-prompt')).toBeNull();
+  });
+
+  // Warm first-prompt affordance — true-empty branch only.
+
+  it('renders the warm first-prompt affordance alongside the start-a-page CTA when the shelf is empty', async () => {
+    mockList.mockResolvedValue(page([]));
+    const { findByTestId, getByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-shelf-empty');
+    expect(getByTestId('journal-empty-first-prompt')).toBeTruthy();
+    expect(getByTestId('journal-empty-cta')).toBeTruthy();
+  });
+
+  it('shows the prompt copy "What brought you here?" on the warm affordance', async () => {
+    mockList.mockResolvedValue(page([]));
+    const { findByTestId, getByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-empty-first-prompt');
+    // Exact copy asserted verbatim — the implementation must match.
+    const affordance = getByTestId('journal-empty-first-prompt');
+    expect(within(affordance).getByText('What brought you here?')).toBeTruthy();
+  });
+
+  it('exposes accessibilityRole="button" and a non-empty accessibilityLabel on the warm affordance', async () => {
+    mockList.mockResolvedValue(page([]));
+    const { findByTestId, getByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-empty-first-prompt');
+    const affordance = getByTestId('journal-empty-first-prompt');
+    expect(affordance.props.accessibilityRole).toBe('button');
+    const label: string = affordance.props.accessibilityLabel ?? '';
+    expect(label.length).toBeGreaterThan(0);
+  });
+
+  it('navigates with the warm prompt question when the affordance is tapped', async () => {
+    mockList.mockResolvedValue(page([]));
+    const { findByTestId } = render(<JournalShelfScreen />);
+    fireEvent.press(await findByTestId('journal-empty-first-prompt'));
+    // Exact nav params — implementation must match verbatim.
+    expect(mockNavigate).toHaveBeenCalledWith('JournalEntry', {
+      promptQuestion: 'What brought you here?',
+    });
+  });
+
+  it('hides the warm affordance when there is at least one journal entry', async () => {
+    mockList.mockResolvedValue(page([entry(1)]));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-shelf-card-1');
+    expect(queryByTestId('journal-empty-first-prompt')).toBeNull();
+  });
+
+  it('hides the warm affordance while the initial load is in flight', async () => {
+    // Never resolve so the component stays in the loading state.
+    mockList.mockReturnValue(new Promise<JournalListResponse>(() => undefined));
+    const { queryByTestId } = render(<JournalShelfScreen />);
+    expect(queryByTestId('journal-empty-first-prompt')).toBeNull();
+  });
+
+  it('hides the warm affordance when the initial load fails', async () => {
+    mockList.mockRejectedValue(new Error('network down'));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-shelf-error');
+    expect(queryByTestId('journal-empty-first-prompt')).toBeNull();
+  });
+
+  it('hides the warm affordance when a search returns no results', async () => {
+    mockList.mockResolvedValue(page([entry(1)]));
+    const { findByTestId, getByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-shelf-card-1');
+
+    mockList.mockResolvedValue(page([]));
+    await act(async () => {
+      fireEvent.changeText(getByTestId('shelf-search'), 'zzz');
+    });
+    await findByTestId('journal-shelf-no-results');
+    expect(queryByTestId('journal-empty-first-prompt')).toBeNull();
   });
 });
