@@ -1075,3 +1075,133 @@ def test_random_interval_bell_downgrade_refuses_with_existing_rows(
 
     with pytest.raises(RuntimeError, match="random_interval_bell"):
         command.downgrade(cfg, _RANDOM_INTERVAL_BELL_BASE_REVISION)
+
+
+# -- issue #894 journal_classification_tier migration round-trip ------------
+
+# These revision IDs are intentional placeholders that the implementer will
+# replace with the real IDs when writing the migration.  Until then the test
+# fails with ``CommandError`` (unknown revision) — which is the correct RED
+# failure mode: it forces the implementer to write the migration first.
+_JOURNAL_CLASSIFICATION_BASE_REVISION = "c5d6e7f8a9b0"  # pragma: allowlist secret
+# The implementer must set this to the real revision ID of the migration they
+# author for issue #894.
+_JOURNAL_CLASSIFICATION_REVISION = "d8e9f0a1b2c3"  # pragma: allowlist secret
+
+
+def _bootstrap_journalentry_table(sync_url: str) -> None:
+    """Pre-create a minimal ``journalentry`` table for the round-trip fixture.
+
+    Mirrors the schema in place just before the classification-tier migration,
+    without pulling in every preceding migration.  One existing row is seeded
+    so the upgrade backfill can be observed.
+    """
+    bootstrap_engine = create_engine(sync_url)
+    with bootstrap_engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE journalentry ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " sender VARCHAR(10) NOT NULL,"
+                " message TEXT NOT NULL,"
+                " tag VARCHAR(50) NOT NULL DEFAULT 'freeform',"
+                " status VARCHAR(20) NOT NULL DEFAULT 'draft',"
+                " title VARCHAR(200),"
+                " deleted_at DATETIME,"
+                " updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+                " timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO journalentry (id, user_id, sender, message)"
+                " VALUES (1, 1, 'user', 'Pre-migration entry.')"
+            )
+        )
+    bootstrap_engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_journal_classification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite Alembic config positioned just before the #894 migration.
+
+    Bootstraps a minimal ``journalentry`` table with one legacy row (no
+    ``classification`` column) and stamps the DB at the head revision just
+    before the new migration, so the round-trip exercises only the
+    classification-tier migration.
+    """
+    db_path = tmp_path / "journal_classification_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_journalentry_table(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _JOURNAL_CLASSIFICATION_BASE_REVISION)
+    return cfg
+
+
+def _journalentry_row(db_url: str, entry_id: int) -> dict[str, Any]:
+    """Fetch a single ``journalentry`` row as a dict."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            row = (
+                conn.execute(
+                    text("SELECT id, classification FROM journalentry WHERE id = :id"),
+                    {"id": entry_id},
+                )
+                .mappings()
+                .first()
+            )
+            assert row is not None
+            return dict(row)
+    finally:
+        engine.dispose()
+
+
+def test_journal_classification_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_journal_classification: Config,
+) -> None:
+    """Round-trip the #894 migration: upgrade adds column + backfills; downgrade drops it.
+
+    Phase 1: upgrade adds ``classification`` NOT NULL DEFAULT 'personal' and
+    backfills the pre-existing legacy row to 'personal'.
+    Phase 2: downgrade removes the column.
+    Phase 3: re-upgrade is idempotent — the backfill re-runs cleanly.
+
+    This test will fail until the implementer authors the migration and sets
+    ``_JOURNAL_CLASSIFICATION_REVISION`` to its real revision ID.
+    """
+    cfg = alembic_sqlite_config_journal_classification
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade adds the classification column and backfills the legacy row.
+    command.upgrade(cfg, _JOURNAL_CLASSIFICATION_REVISION)
+    cols = _columns_of(db_url, "journalentry")
+    assert "classification" in cols
+
+    row = _journalentry_row(db_url, entry_id=1)
+    assert row["classification"] == "personal", (
+        "Upgrade must backfill pre-existing rows to 'personal' (the default tier)."
+    )
+
+    # Phase 2: downgrade removes the classification column.
+    command.downgrade(cfg, _JOURNAL_CLASSIFICATION_BASE_REVISION)
+    cols_after = _columns_of(db_url, "journalentry")
+    assert "classification" not in cols_after
+
+    # Phase 3: re-upgrade — backfill must reproduce the same value (idempotent).
+    command.upgrade(cfg, _JOURNAL_CLASSIFICATION_REVISION)
+    row_after = _journalentry_row(db_url, entry_id=1)
+    assert row_after["classification"] == "personal"

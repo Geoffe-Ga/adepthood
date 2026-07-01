@@ -7,7 +7,7 @@ from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
-from models.journal_entry import EntryStatus, JournalTag
+from models.journal_entry import EntryStatus, JournalClassification, JournalTag
 
 JOURNAL_MESSAGE_MAX_LENGTH = 10_000
 
@@ -21,6 +21,7 @@ class JournalMessageCreate(BaseModel):
 
     message: str = Field(min_length=1, max_length=JOURNAL_MESSAGE_MAX_LENGTH)
     tag: JournalTag = JournalTag.FREEFORM
+    classification: JournalClassification = JournalClassification.PERSONAL
     practice_session_id: int | None = None
     user_practice_id: int | None = None
 
@@ -35,10 +36,12 @@ class JournalEntryUpdate(BaseModel):
     message: str | None = Field(default=None, min_length=1, max_length=JOURNAL_MESSAGE_MAX_LENGTH)
     title: str | None = Field(default=None, max_length=200)
     status: EntryStatus | None = None
+    classification: JournalClassification | None = None
 
     @model_validator(mode="after")
     def _require_at_least_one_field(self) -> Self:
-        if self.message is None and self.title is None and self.status is None:
+        provided = (self.message, self.title, self.status, self.classification)
+        if all(value is None for value in provided):
             msg = "at least one field must be provided"
             raise ValueError(msg)
         return self
@@ -59,6 +62,7 @@ class JournalMessageResponse(BaseModel):
     timestamp: datetime
     updated_at: datetime
     tag: str
+    classification: JournalClassification
     practice_session_id: int | None
     user_practice_id: int | None
 
