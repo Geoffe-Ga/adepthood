@@ -116,6 +116,19 @@ active=$(printf '%s\n%s\n' "$inflight" "$worktree_issues" | grep -E '^[0-9]+$' |
 
 is_active() { [[ -n "$active" ]] && grep -qx "$1" <<<"$active"; }
 
+# Exact per-token membership: has_label "<labels-csv>" "<label>" (case-insensitive).
+# Matches a whole comma-separated label, NOT a substring or the joined line — so
+# a `solo` guard fires on "bug,solo,backend", not only on a lone "solo" label.
+has_label() {
+  local want="${2,,}" tok
+  local -a toks
+  IFS=',' read -ra toks <<<"$1"
+  for tok in "${toks[@]}"; do
+    [[ "${tok,,}" == "$want" ]] && return 0
+  done
+  return 1
+}
+
 # Epic-prefixed labels of an issue (labels beginning with "epic").
 epic_labels() {
   printf '%s\n' "${1//,/$'\n'}" | grep -iE '^epic' | sort -u || true
@@ -127,7 +140,7 @@ conflicts_with_active() {
   [[ -n "$active" ]] || return 1 # first worker: never conflicts
 
   # A candidate that must run solo cannot join a non-empty fleet.
-  if grep -qiwx "$SOLO_LABEL" <<<"${cand_labels//,/ }"; then
+  if has_label "$cand_labels" "$SOLO_LABEL"; then
     return 0
   fi
 
@@ -136,14 +149,14 @@ conflicts_with_active() {
   while IFS= read -r a; do
     [[ -n "$a" ]] || continue
     a_labels="$(labels_of "$a")"
-    if grep -qiwx "$SOLO_LABEL" <<<"${a_labels//,/ }"; then
+    if has_label "$a_labels" "$SOLO_LABEL"; then
       return 0
     fi
   done <<<"$active"
 
   # Same-epic guard (unless the candidate opts into parallel).
   if [[ "$RESPECT_EPICS" == "1" ]] \
-    && ! grep -qiwx "$PARALLEL_LABEL" <<<"${cand_labels//,/ }"; then
+    && ! has_label "$cand_labels" "$PARALLEL_LABEL"; then
     local cand_epics
     cand_epics="$(epic_labels "$cand_labels")"
     if [[ -n "$cand_epics" ]]; then

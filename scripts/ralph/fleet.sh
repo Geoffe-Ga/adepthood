@@ -7,15 +7,15 @@
 # each in its own git worktree so concurrent edits never collide on disk. This
 # script is the mechanism the orchestrator (`.claude/commands/ralph-tick.md`)
 # and the worker agent (`.claude/agents/ralph-worker.md`) use to create,
-# inspect, rebase, and tear down those worktrees — never more than
+# inspect, sync, and tear down those worktrees — never more than
 # `max_workers` (default 4) at a time.
 #
 # Design contract ("optimistic parallelism, pessimistic merge"):
 #   * Parallel work is a speculation that the chosen issues are independent.
 #   * Correctness is guaranteed at MERGE time, not pick time: the orchestrator
-#     merges ONE PR per tick, then `rebase`s every surviving worktree onto the
-#     new `main` and re-runs its local gate before that worktree may merge.
-#   * A worktree that cannot cleanly rebase drops to Gate 1 (see the docs in
+#     merges ONE PR per tick, then merges `origin/main` into every surviving
+#     worktree and re-runs its local gate before that worktree may merge.
+#   * A worktree with a merge conflict drops to Gate 1 (see the docs in
 #     `scripts/ralph/FLEET.md`). Nothing here weakens a gate.
 #
 # Worktrees live under `.ralph/worktrees/issue-<N>` on branch
@@ -196,14 +196,15 @@ cmd_assign() {
   printf '%s\n' "$dir"
 }
 
-# Normalize an arbitrary title fragment into a safe kebab slug.
+# Normalize an arbitrary title fragment into a safe kebab slug. Truncate first,
+# then trim a trailing hyphen so a mid-word cut never yields a dangling '-'.
 sanitize_slug() {
   local raw="${1:-}"
-  raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-')"
-  raw="${raw##-}"
-  raw="${raw%%-}"
+  raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | cut -c1-40)"
+  raw="${raw#-}"
+  raw="${raw%-}"
   [[ -n "$raw" ]] || raw="issue"
-  printf '%s\n' "$raw" | cut -c1-40
+  printf '%s\n' "$raw"
 }
 
 # Integrate latest origin/main by MERGE (not rebase): no history rewrite, so the

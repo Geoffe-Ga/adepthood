@@ -121,12 +121,20 @@ GitHub**, never from stored bookkeeping, so the loop stays re-entrant.
 
 ## Tests
 
-`scripts/ralph/test_fleet.sh` builds a throwaway repo (with an `origin` remote
-and a fake `gh`) and exercises assign / list / count / free / path / sync
-(clean **and** conflicting) / release / reconcile offline:
+Two offline suites cover the fleet, both run in CI by
+`.github/workflows/ralph-recap-tests.yml` on any `scripts/ralph/**` change:
+
+- `scripts/ralph/test_fleet.sh` builds a throwaway repo (with an `origin` remote
+  and a fake `gh`) and exercises assign / list / count / free / path / sync
+  (clean **and** conflicting) / release / reconcile.
+- `scripts/ralph/test_pick_next.sh` stubs `gh` and exercises the picker's
+  parallel-awareness: first-worker-lowest, worktree exclusion, in-flight-PR
+  exclusion, the `solo` guard (candidate and active), the same-epic guard, the
+  `parallelizable` override, and `RALPH_RESPECT_EPICS=0`.
 
 ```bash
 bash scripts/ralph/test_fleet.sh
+bash scripts/ralph/test_pick_next.sh
 ```
 
 ## Failure modes and how they're handled
