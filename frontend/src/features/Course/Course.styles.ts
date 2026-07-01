@@ -363,6 +363,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentListContent: {
+    flexGrow: 1,
     paddingTop: SPACING.sm,
     paddingBottom: SPACING.xl,
   },
