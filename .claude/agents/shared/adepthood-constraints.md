@@ -69,7 +69,8 @@ re-clear Gate 2 locally, push, climb again. **Never weaken a gate to pass it.**
 
 - Conventional-commit subjects (`feat(backend): …`, `fix(frontend): …`,
   `refactor(...): …`, `test(...): …`), body referencing the issue, ending with
-  the repo trailer:
-  `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
+  the repo trailer (kept model-agnostic on purpose — a tick's commit is produced
+  across several models: the conductor plus specialists on opus/sonnet/haiku/fable):
+  `Co-Authored-By: Claude <noreply@anthropic.com>`
 - PR body: `## Summary` (1–3 bullets), `## Test plan` (what you ran),
   `Closes #N` on its own line, `Refs #<epic>` if the issue names one.

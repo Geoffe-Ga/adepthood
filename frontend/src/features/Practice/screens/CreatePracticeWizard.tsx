@@ -13,12 +13,15 @@
  *
  * On submit the wizard POSTs ``/practices/`` and, when the user pinned a
  * stage, follows with ``POST /user-practices/`` so the new draft is
- * already active for that stage. Successful submissions navigate to
- * ``PracticeDetail`` for the brand-new row.
+ * already active for that stage. Submissions navigate to ``PracticeDetail``
+ * for the brand-new row; if the stage-assign step fails the failure message
+ * is carried along in the ``assignError`` route param so the detail screen
+ * can surface it (the draft still exists, so the user retries there rather
+ * than staying stuck in the wizard).
  */
 
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -31,14 +34,23 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { defaultConfigFor, suggestedDurationFor } from '../configurator/defaults';
+import { defaultConfigFor, isDurationDriven, suggestedDurationFor } from '../configurator/defaults';
 import { ErrorList } from '../configurator/forms/shared';
 import type { ModeConfig } from '../engine/types';
 import { validateModeConfig } from '../engine/validation';
 
 import { practices, userPractices } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
-import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import {
+  BORDER_RADIUS,
+  SPACING,
+  accent,
+  colors,
+  editorialType,
+  ink,
+  surface,
+  surfaceShadow,
+} from '@/design/tokens';
 import ConfiguratorBody from '@/features/Practice/components/ConfiguratorBody';
 import ModePicker, { type PickableMode } from '@/features/Practice/components/ModePicker';
 import { FALLBACK_STAGE, MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
@@ -363,7 +375,9 @@ const MetadataStep = (props: MetadataStepProps): React.JSX.Element => {
       <NameField state={props.state} setState={props.setState} />
       <DescriptionField state={props.state} setState={props.setState} />
       <InstructionsField state={props.state} setState={props.setState} />
-      <DurationField state={props.state} setState={props.setState} />
+      {showsDurationField(props.state) && (
+        <DurationField state={props.state} setState={props.setState} />
+      )}
       <StageField state={props.state} setState={props.setState} />
       <ErrorList errors={errors} />
       {props.submit.apiError !== null && (
@@ -601,44 +615,125 @@ interface SubmitController {
   run: () => Promise<void>;
 }
 
+/**
+ * Create the catalog draft, or reuse the one minted on an earlier tap.
+ *
+ * ``stage_number`` is required on ``POST /practices/`` (catalog rows are
+ * stage-scoped), so a "Skip stage" choice mints the draft under
+ * FALLBACK_STAGE. The id is cached in ``draftIdRef`` so a retry after a
+ * failed stage-assign only re-tries the assign step instead of minting a
+ * second draft. See ``features/Practice/constants.ts`` for the rationale.
+ * Note: edits made after the draft is minted are not re-sent on retry — the
+ * cached row is reused as-is.
+ */
+async function createOrReuseDraft(
+  state: WizardState,
+  config: ModeConfig,
+  draftIdRef: React.MutableRefObject<number | null>,
+): Promise<number> {
+  if (draftIdRef.current !== null) return draftIdRef.current;
+  const created = await practices.create({
+    stage_number: state.stageNumber ?? FALLBACK_STAGE,
+    name: state.name.trim(),
+    description: state.description.trim(),
+    instructions: state.instructions.trim(),
+    default_duration_minutes: deriveDefaultDuration(config, state.duration),
+    mode: config.mode,
+    mode_config: config,
+  });
+  draftIdRef.current = created.id;
+  return created.id;
+}
+
+/**
+ * Reconcile ``default_duration_minutes`` with the timer's own duration.
+ *
+ * For a duration-driven mode the countdown lives in ``mode_config`` (e.g.
+ * ``metronome.timer.duration_minutes``), so the saved default is derived
+ * from it — the standalone field is hidden and the two numbers agree. Every
+ * other mode threads the user-typed field value through unchanged.
+ */
+function deriveDefaultDuration(config: ModeConfig, typedDuration: number): number {
+  return isDurationDriven(config.mode) ? suggestedDurationFor(config) : typedDuration;
+}
+
+/** The standalone duration field shows only for modes without an inherent duration. */
+function showsDurationField(state: WizardState): boolean {
+  return state.config === null || !isDurationDriven(state.config.mode);
+}
+
+/**
+ * Assign the draft as the active practice for the pinned stage.
+ *
+ * A stage-assign failure is recoverable — the draft already exists — so the
+ * error message is returned (not thrown) and carried to ``PracticeDetail``
+ * via the ``assignError`` route param, where the user retries rather than
+ * staying trapped in the wizard. Returns ``null`` on success (or when no
+ * stage was pinned); the caught message otherwise.
+ */
+async function tryAssign(
+  practiceId: number,
+  stageNumber: number | null,
+  draftIdRef: React.MutableRefObject<number | null>,
+): Promise<string | null> {
+  if (stageNumber === null) {
+    draftIdRef.current = null;
+    return null;
+  }
+  try {
+    await userPractices.create({ practice_id: practiceId, stage_number: stageNumber });
+    draftIdRef.current = null;
+    return null;
+  } catch (err) {
+    return formatApiError(err, { fallback: 'Could not assign practice to the stage.' });
+  }
+}
+
+function navigateToDetail(
+  props: CreatePracticeWizardProps,
+  practiceId: number,
+  assignError: string | null,
+): void {
+  if (assignError === null) {
+    props.navigation.replace('PracticeDetail', { practiceId });
+    return;
+  }
+  props.navigation.replace('PracticeDetail', { practiceId, assignError });
+}
+
 function useSubmitController(
   props: CreatePracticeWizardProps,
   state: WizardState,
 ): SubmitController {
   const [busy, setBusy] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  // Remembers the draft minted this wizard session so a retry after a failed
+  // stage-assign reuses it instead of creating a duplicate catalog row.
+  const draftIdRef = useRef<number | null>(null);
 
   const run = async () => {
     if (state.config === null) return;
     setBusy(true);
     setApiError(null);
+    let practiceId: number | null = null;
+    let assignError: string | null = null;
     try {
-      // ``stage_number`` is required on ``POST /practices/`` (catalog rows
-      // are stage-scoped), so a "Skip stage" choice mints the draft under
-      // FALLBACK_STAGE and skips the follow-up ``POST /user-practices``.
-      // The draft is then stored but not active for any stage; the user
-      // can assign it later from the detail screen. See
-      // ``features/Practice/constants.ts`` for the rationale.
-      const created = await practices.create({
-        stage_number: state.stageNumber ?? FALLBACK_STAGE,
-        name: state.name.trim(),
-        description: state.description.trim(),
-        instructions: state.instructions.trim(),
-        default_duration_minutes: state.duration,
-        mode: state.config.mode,
-        mode_config: state.config,
-      });
-      if (state.stageNumber !== null) {
-        await userPractices.create({
-          practice_id: created.id,
-          stage_number: state.stageNumber,
-        });
-      }
-      props.navigation.replace('PracticeDetail', { practiceId: created.id });
+      practiceId = await createOrReuseDraft(state, state.config, draftIdRef);
     } catch (err) {
       setApiError(formatApiError(err, { fallback: 'Could not save practice.' }));
-    } finally {
-      setBusy(false);
+    }
+    if (practiceId !== null) {
+      assignError = await tryAssign(practiceId, state.stageNumber, draftIdRef);
+    }
+    setBusy(false);
+    // The draft exists once ``createOrReuseDraft`` returns, so navigate even
+    // when the stage-assign failed. On failure the user lands on the detail
+    // screen with the message shown via the ``assignError`` route param, where
+    // they retry via "Use for stage" rather than staying stuck in the wizard.
+    // ``draftIdRef`` is only cleared on a successful assign (in ``tryAssign``),
+    // so a retry reuses the same draft instead of minting a duplicate.
+    if (practiceId !== null) {
+      navigateToDetail(props, practiceId, assignError);
     }
   };
 
@@ -666,68 +761,67 @@ function metadataErrors(state: WizardState): string[] {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background.primary },
+  screen: { flex: 1, backgroundColor: surface.canvas },
   body: { padding: SPACING.md, paddingBottom: SPACING.xl },
   indicator: {
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.sm,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.background.card,
+    borderBottomColor: surface.hairline,
+    backgroundColor: surface.raised,
   },
   progressTrack: { flexDirection: 'row', gap: SPACING.xs, marginBottom: SPACING.sm },
   progressSegment: {
     flex: 1,
     height: 3,
     borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: colors.border,
+    backgroundColor: surface.hairline,
   },
-  progressSegmentFilled: { backgroundColor: colors.primary },
+  progressSegmentFilled: { backgroundColor: accent.primary },
   indicatorStep: {
-    fontSize: 12,
-    color: colors.text.secondaryAccessible,
+    ...editorialType.caption,
+    color: ink.soft,
     fontWeight: '600',
   },
-  indicatorTitle: { fontSize: 16, color: colors.text.primary, marginTop: 2 },
+  indicatorTitle: { ...editorialType.title, color: ink.primary, marginTop: 2 },
   bodyLead: {
-    fontSize: 14,
-    color: colors.text.secondaryAccessible,
+    ...editorialType.body,
+    color: ink.soft,
     marginBottom: SPACING.md,
   },
   entryCard: {
-    backgroundColor: colors.background.card,
+    backgroundColor: surface.raised,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.lg,
     marginBottom: SPACING.md,
-    ...shadows.small,
+    ...surfaceShadow.card,
   },
-  entryCardTitle: { fontSize: 16, fontWeight: '700', color: colors.text.primary },
+  entryCardTitle: { ...editorialType.title, color: ink.primary },
   entryCardSubtitle: {
-    fontSize: 13,
-    color: colors.text.secondaryAccessible,
+    ...editorialType.caption,
+    color: ink.soft,
     marginTop: SPACING.xs,
   },
   field: { marginBottom: SPACING.md },
   fieldLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.text.primary,
+    ...editorialType.note,
+    color: ink.primary,
     marginBottom: SPACING.xs,
   },
   fieldHelp: {
-    fontSize: 12,
-    color: colors.text.secondaryAccessible,
+    ...editorialType.caption,
+    color: ink.soft,
     marginBottom: SPACING.xs,
   },
   input: {
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: BORDER_RADIUS.sm,
+    borderColor: surface.hairline,
+    borderRadius: BORDER_RADIUS.md,
     paddingHorizontal: SPACING.sm,
     paddingVertical: SPACING.sm,
     fontSize: 14,
-    color: colors.text.primary,
-    backgroundColor: colors.background.card,
+    color: ink.primary,
+    backgroundColor: surface.raised,
   },
   inputMultiline: { minHeight: 64, textAlignVertical: 'top' },
   stageRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs },
@@ -736,19 +830,19 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.xs,
     borderRadius: BORDER_RADIUS.lg,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.background.card,
+    borderColor: surface.hairline,
+    backgroundColor: surface.raised,
   },
-  stageChipSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
-  stageChipText: { color: colors.text.primary, fontSize: 13, fontWeight: '600' },
-  stageChipTextSelected: { color: colors.text.light },
+  stageChipSelected: { backgroundColor: accent.primary, borderColor: accent.primary },
+  stageChipText: { ...editorialType.note, color: ink.primary },
+  stageChipTextSelected: { color: surface.raised },
   notice: {
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
     padding: SPACING.md,
     borderRadius: BORDER_RADIUS.md,
     marginBottom: SPACING.md,
   },
-  noticeText: { color: colors.text.primary, fontSize: 13 },
+  noticeText: { ...editorialType.caption, color: ink.primary },
   navRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -756,14 +850,14 @@ const styles = StyleSheet.create({
     marginTop: SPACING.md,
   },
   backButton: { paddingVertical: SPACING.sm, paddingHorizontal: SPACING.md },
-  backButtonText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
+  backButtonText: { ...editorialType.note, color: accent.primary },
   primaryButton: {
-    backgroundColor: colors.primary,
+    backgroundColor: accent.primary,
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.lg,
-    borderRadius: BORDER_RADIUS.sm,
+    borderRadius: BORDER_RADIUS.md,
   },
-  primaryButtonText: { color: colors.text.light, fontWeight: '700', fontSize: 14 },
+  primaryButtonText: { color: surface.raised, fontWeight: '700', fontSize: 14 },
   disabledButton: { opacity: 0.5 },
   apiError: {
     color: colors.destructive.text,

@@ -1,7 +1,7 @@
 import type { Dispatch, MutableRefObject } from 'react';
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 
-import { initialState, ritualReducer } from './reducer';
+import { getTotalMs, initialState, ritualReducer } from './reducer';
 import type {
   AudioAdapter,
   EngineAction,
@@ -67,16 +67,35 @@ function buildControls(
 }
 
 /**
+ * Re-seed the idle countdown when the config's total duration changes (a
+ * configurator save on the same row does not remount the engine). The reducer's
+ * idle guard makes this a no-op for a running/paused session; the mounted ref
+ * suppresses the redundant mount dispatch.
+ */
+function useConfigReseed(totalMs: number | null, dispatch: Dispatch<EngineAction>): void {
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      return;
+    }
+    dispatch({ type: 'CONFIG_CHANGED' });
+  }, [totalMs, dispatch]);
+}
+
+/**
  * Drives the ritual state machine for a given preset config.
  *
- * Caller contract: `config` must be a stable reference for the lifetime of
- * a session. The reducer captures it in a closure; the cue list and the
- * elapsedMs anchor are built once at START. Changing `config` mid-session
- * leaves the `state.cues` schedule from the old config in place while new
- * TICKs are scored against the new `getTotalMs(config)` — call
- * `controls.cancel()` first, then re-render with the new config and call
- * `controls.start()` again.
+ * Caller contract: `config` may change between renders (e.g. a configurator
+ * save that swaps the duration). While the session is idle, a change to the
+ * total duration re-seeds the countdown via a `CONFIG_CHANGED` dispatch, so
+ * the display reconciles without a remount. A running or paused session is
+ * left intact — its cue schedule and elapsedMs anchor are built once at
+ * START and are not re-derived from a later config edit. To restart a live
+ * session against a new config, call `controls.cancel()` first, then
+ * `controls.start()` again after the config prop has updated.
  */
+
 export function useRitualEngine(
   config: ModeConfig,
   deps: EngineDeps = {},
@@ -93,6 +112,8 @@ export function useRitualEngine(
   const [state, dispatch] = useReducer(reducer, deps.startCardIndex ?? 0, (idx) =>
     initialState(config, idx),
   );
+
+  useConfigReseed(getTotalMs(config), dispatch);
 
   const prevCueIndexRef = useRef(0);
   const prevCuesRef = useRef(state.cues);

@@ -30,6 +30,11 @@ reviewer**. Reasoning runs on Opus — security is a judgment role.
 
 ## Workflow
 
+0. **Load the rules and the craft.** `Read`
+   [`shared/adepthood-constraints.md`](shared/adepthood-constraints.md) (gates,
+   thresholds, anti-bypass — not auto-injected), then invoke the `security` skill
+   via the Skill tool (and `cve-remediation` if an advisory is in play) before
+   threat-modeling.
 1. Take the architect's risk note + the diff/touch-list.
 2. Threat-model the change: what untrusted input enters, what trust boundary it
    crosses, what could be abused.
@@ -38,7 +43,18 @@ reviewer**. Reasoning runs on Opus — security is a judgment role.
    to make it pass.
 4. Verify with `scripts/backend/security.sh` (bandit + pip-audit) and the
    `security` skill checklist; confirm no secret is committed (detect-secrets).
-5. Ensure errors fail closed and reveal nothing about internals.
+5. Ensure errors fail closed and reveal nothing about internals, then hand back
+   the Handoff block below.
+
+## Handoff (return this — terse; the conductor consumes it, not a human)
+
+```
+Status: HARDENED | FINDINGS | BLOCKED
+Files touched: <paths, incl. the failing-then-passing security test>
+Verify with: scripts/backend/security.sh + <the test command>
+Threats closed: <IDOR / forged-JWT / injection / … — 1 line each>
+Residual risk / follow-ups: <notes, or "none">
+```
 
 ## Review mode
 

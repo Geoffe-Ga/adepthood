@@ -58,7 +58,10 @@ touches `main`, never waits on CI.
 
 **Launch workers in parallel** (up to `max_workers`) by putting multiple
 `Agent(ralph-worker)` calls in a single message — but only when each targets a
-**different worktree**. Never run two workers against the same worktree.
+**different worktree**. Never run two workers against the same worktree. Within a
+worktree, its worker dispatches the taxonomy **sequentially** (one working tree
+per worker — no parallel edits) and invokes only the specialists the architect
+flagged; the per-agent map + model tiers live in `.claude/agents/README.md`.
 
 ---
 

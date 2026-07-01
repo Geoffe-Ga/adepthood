@@ -62,6 +62,28 @@ async def _resolve_practice(session: AsyncSession, practice_id: int) -> Practice
     return practice
 
 
+async def _resolve_selectable_practice(
+    session: AsyncSession, practice_id: int, current_user: int
+) -> Practice:
+    """Fetch a practice the caller is allowed to *select* for a stage.
+
+    Unlike :func:`_resolve_practice` (the read/customize path), this write
+    path permits an approved catalog practice **or** the caller's own draft:
+    ``practice.submitted_by_user_id == current_user`` clears an unapproved
+    row so an author can activate the practice they just submitted. A
+    non-owner selecting someone else's still-pending submission continues to
+    receive 400 ``practice_not_approved``; a missing row 404s exactly as the
+    read path does.
+    """
+    result = await session.execute(select(Practice).where(Practice.id == practice_id))
+    practice = result.scalars().first()
+    if practice is None:
+        raise not_found("practice")
+    if not (practice.approved or practice.submitted_by_user_id == current_user):
+        raise bad_request("practice_not_approved")
+    return practice
+
+
 async def _check_stage_eligibility(
     session: AsyncSession,
     current_user: int,
@@ -142,7 +164,7 @@ async def create_user_practice(
     reset ``start_date`` (the user-facing "I started this" label) or the
     streak math that hangs off it.
     """
-    practice = await _resolve_practice(session, payload.practice_id)
+    practice = await _resolve_selectable_practice(session, payload.practice_id, current_user)
     await _check_stage_eligibility(session, current_user, practice, payload.stage_number)
 
     # ``start_date`` is the user-facing "I started this practice today"

@@ -1,11 +1,13 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import type { ModeConfig } from '../../engine/types';
 import RitualConfiguratorSheet from '../RitualConfiguratorSheet';
 
 import { ApiError, type UserPractice } from '@/api';
+import { accent, colors } from '@/design/tokens';
 
 const updated: UserPractice = {
   id: 17,
@@ -242,5 +244,34 @@ describe('RitualConfiguratorSheet', () => {
       expect(getByTestId(testID)).toBeTruthy();
       unmount();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Candle & Ink token guard for the RitualConfiguratorSheet save button.
+//
+// The save button (`ritual-configurator-save`) background is `accent.primary`
+// (#a5572f), migrated from the legacy `colors.primary` (#1a1910); the negative
+// pin guards the swap.
+// ---------------------------------------------------------------------------
+
+describe('Candle & Ink token guard — RitualConfiguratorSheet save button', () => {
+  const flatBackground = (style: unknown): string | undefined =>
+    (StyleSheet.flatten(style as never) as { backgroundColor?: string }).backgroundColor;
+
+  it('save button background resolves to accent.primary when the sheet is dirty', () => {
+    const { getByTestId } = renderSheet();
+    // Make the sheet dirty so the save button is enabled (canSave=true).
+    fireEvent.changeText(getByTestId('ritual-configurator-name'), 'Adjusted sit');
+    const save = getByTestId('ritual-configurator-save');
+    // POST-migration expected value — the migrated semantic token value.
+    expect(flatBackground(save.props.style)).toBe(accent.primary);
+  });
+
+  it('save button does NOT use the legacy colors.primary near-black', () => {
+    const { getByTestId } = renderSheet();
+    fireEvent.changeText(getByTestId('ritual-configurator-name'), 'Adjusted sit');
+    const save = getByTestId('ritual-configurator-save');
+    expect(flatBackground(save.props.style)).not.toBe(colors.primary);
   });
 });

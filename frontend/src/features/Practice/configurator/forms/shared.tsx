@@ -3,7 +3,15 @@ import { StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'rea
 
 import type { IntervalBellTone } from '../../engine/types';
 
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
+import {
+  BORDER_RADIUS,
+  SPACING,
+  accent,
+  colors,
+  editorialType,
+  ink,
+  surface,
+} from '@/design/tokens';
 
 interface LabeledRowProps {
   label: string;
@@ -257,7 +265,7 @@ export const CollapsibleSection = ({
 const formStyles = StyleSheet.create({
   toneRow: { flexDirection: 'row', gap: SPACING.xs, flexWrap: 'wrap' },
   advancedToggle: { paddingVertical: SPACING.md, marginTop: SPACING.sm },
-  advancedToggleText: { fontSize: 14, fontWeight: '600', color: colors.text.primary },
+  advancedToggleText: { ...editorialType.note, color: ink.primary },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -266,9 +274,8 @@ const formStyles = StyleSheet.create({
     gap: SPACING.md,
   },
   label: {
-    color: colors.text.primary,
-    fontSize: 14,
-    fontWeight: '500',
+    ...editorialType.note,
+    color: ink.primary,
     flexShrink: 1,
   },
   control: {
@@ -285,30 +292,29 @@ const formStyles = StyleSheet.create({
     minWidth: 48,
     textAlign: 'center',
     fontSize: 16,
-    color: colors.text.primary,
+    color: ink.primary,
     fontVariant: ['tabular-nums'],
   },
   stepperButton: {
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.sm,
-    borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: colors.background.accent,
+    borderRadius: BORDER_RADIUS.md,
+    backgroundColor: surface.sunken,
     minWidth: 36,
     alignItems: 'center',
   },
   stepperButtonText: {
-    color: colors.text.primary,
-    fontSize: 14,
-    fontWeight: '600',
+    ...editorialType.note,
+    color: ink.primary,
   },
   input: {
     minWidth: 80,
     borderWidth: 1,
-    borderColor: colors.background.accent,
-    borderRadius: BORDER_RADIUS.sm,
+    borderColor: surface.hairline,
+    borderRadius: BORDER_RADIUS.md,
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.sm,
-    color: colors.text.primary,
+    color: ink.primary,
     fontSize: 14,
   },
   chip: {
@@ -316,23 +322,22 @@ const formStyles = StyleSheet.create({
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.xl,
     borderWidth: 1,
-    borderColor: colors.background.accent,
-    backgroundColor: colors.background.card,
+    borderColor: surface.hairline,
+    backgroundColor: surface.raised,
   },
   chipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+    backgroundColor: accent.primary,
+    borderColor: accent.primary,
   },
   chipText: {
-    color: colors.text.secondaryAccessible,
-    fontSize: 13,
-    fontWeight: '500',
+    ...editorialType.caption,
+    color: ink.soft,
   },
   chipTextActive: {
-    color: colors.text.light,
+    color: surface.raised,
   },
   errors: {
-    backgroundColor: colors.background.card,
+    backgroundColor: surface.raised,
     borderLeftColor: colors.danger,
     borderLeftWidth: 3,
     paddingVertical: SPACING.sm,
