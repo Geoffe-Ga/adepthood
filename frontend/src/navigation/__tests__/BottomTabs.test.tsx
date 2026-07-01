@@ -85,14 +85,7 @@ describe('BottomTabs', () => {
     expect(UNSAFE_queryAllByType(LayoutGrid)).toHaveLength(0);
   });
 
-  // Issue #900: Journal-first navigation — RED tests (fail until implementation).
-  // The fix sets initialRouteName="Journal" and moves Journal to TAB_CONFIGS[0].
-
-  it('opens into the Journal tab as the initial route (issue #900)', async () => {
-    // NavigationContainerRef exposes getCurrentRoute() after the navigation
-    // state commits. waitFor polls until the ref is populated, which also
-    // flushes the Animated(View) update that would otherwise surface as an
-    // act() warning.
+  it('opens into the Journal tab as the initial route', async () => {
     const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
 
     render(
@@ -101,20 +94,14 @@ describe('BottomTabs', () => {
       </NavigationContainer>,
     );
 
-    // getCurrentRoute() returns the leaf route that has focus. After mount with
-    // initialRouteName="Journal" this must be "Journal", not "Today".
+    // waitFor: the navigation state commits asynchronously, and polling inside
+    // act() also drains the tab bar's Animated update (else an act() warning).
     await waitFor(() => {
       expect(navRef.current?.getCurrentRoute()?.name).toBe('Journal');
     });
   });
 
-  it('Journal is the first tab in navigation order (issue #900)', async () => {
-    // getState() on NavigationContainerRef is not guaranteed to be populated
-    // synchronously at the point render() returns — the navigation state is
-    // committed asynchronously by @react-navigation/native. waitFor() polls
-    // until the assertion passes (or times out), giving the state time to
-    // commit. This also flushes pending Animated updates inside act(), so no
-    // act() warning is emitted.
+  it('Journal is the first tab in navigation order', async () => {
     const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
 
     render(
@@ -123,11 +110,8 @@ describe('BottomTabs', () => {
       </NavigationContainer>,
     );
 
-    // getRootState() returns the committed root navigation state whose routes[]
-    // array reflects the physical left-to-right tab ordering (TAB_CONFIGS order).
-    // The container ref exposes getRootState() reliably (it backs
-    // getCurrentRoute()); a bare getState() can read undefined before commit.
-    // With TAB_CONFIGS[0] === Journal, routes[0].name must equal 'Journal'.
+    // getRootState() (not a bare getState(), which can read undefined before
+    // commit) exposes routes[] in physical tab order; waitFor lets it commit.
     await waitFor(() => {
       expect(navRef.current?.getRootState()?.routes?.[0]?.name).toBe('Journal');
     });
