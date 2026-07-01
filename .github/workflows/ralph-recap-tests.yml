@@ -1,8 +1,9 @@
 name: Ralph Recap Tests
 
-# Unit tests for the Ralph recap tooling (scripts/ralph/). The recap scripts
-# live outside backend/, so the backend-scoped lint/coverage gates don't cover
-# them — this workflow keeps the pure stats math and the backlog filter honest.
+# Unit tests for the Ralph tooling under scripts/ralph/. These scripts live
+# outside backend/, so the backend-scoped lint/coverage gates don't cover them —
+# this workflow keeps the pure stats math, the backlog filter, and the parallel
+# worktree fleet (fleet.sh + pick-next.sh parallel-awareness) honest.
 
 on:
   push:
@@ -33,3 +34,10 @@ jobs:
 
       - name: Run recap tests
         run: python -m pytest scripts/ralph -q
+
+      - name: Run fleet + picker shell tests
+        run: |
+          git config --global user.email ci@example.com
+          git config --global user.name ci
+          bash scripts/ralph/test_fleet.sh
+          bash scripts/ralph/test_pick_next.sh

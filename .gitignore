@@ -143,3 +143,6 @@ plans/github-issues/COMMIT_*.md
 !*.example
 !.env.example
 !.gitignore
+
+# Ralph parallel worktrees (ephemeral, per-issue isolation)
+.ralph/

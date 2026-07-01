@@ -12,22 +12,33 @@ agent below via the `Agent` tool. The chief-architect is the strategic **brain**
 
 ## The graph (honest — every node exists in this repo)
 
+In the **parallel fleet** (`scripts/ralph/FLEET.md`), `ralph-tick` is the fleet
+**orchestrator**: it manages up to `max_workers` (default 4) git worktrees and
+dispatches one **`ralph-worker`** per issue, each of which is the per-issue
+conductor *inside its own worktree* (it spawns the graph below). In the classic
+sequential loop the orchestrator drives a single worker. Either way the spawn
+graph under a conductor is identical:
+
 ```
-ralph-tick (main loop = CONDUCTOR — spawns every agent below)
-  ├─ chief-architect ............ L0  fable   plan + ordered dispatch list (no code)
-  ├─ test-specialist ............ L2  sonnet  Gate 1 RED: failing tests          ─┐
-  ├─ implementation-specialist .. L2  opus    Gate 1 GREEN + Refactor             │ run per
-  ├─ security-specialist ........ L2  opus    harden auth/JWT/CORS/input/DB       │ the
-  ├─ performance-specialist ..... L2  sonnet  profile/optimize hot paths          │ architect's
-  ├─ documentation-specialist ... L2  sonnet  docstrings/READMEs/ADRs             │ dispatch
-  ├─ dependency-review-spec. .... L2  haiku   deps/pins/licenses (read-only)      │ list
-  └─ code-review-orchestrator ... L1  opus    Gate 2.5 pre-push self-review      ─┘
+ralph-tick (fleet ORCHESTRATOR — reconcile · serialized-merge · sync · monitor)
+  └─ ralph-worker × up to 4 . L1  opus    per-issue CONDUCTOR in an isolated worktree
+       ├─ chief-architect ..... L0  fable   plan + ordered dispatch list (no code)
+       ├─ test-specialist ..... L2  sonnet  Gate 1 RED: failing tests          ─┐
+       ├─ implementation-spec.  L2  opus    Gate 1 GREEN + Refactor             │ run per
+       ├─ security-specialist . L2  opus    harden auth/JWT/CORS/input/DB       │ the
+       ├─ performance-spec. ... L2  sonnet  profile/optimize hot paths          │ architect's
+       ├─ documentation-spec. . L2  sonnet  docstrings/READMEs/ADRs             │ dispatch
+       ├─ dependency-review ... L2  haiku   deps/pins/licenses (read-only)      │ list
+       └─ code-review-orch. ... L1  opus    Gate 2.5 pre-push self-review      ─┘
 ```
 
-**The tree above is the spawn graph: the conductor spawns every node directly.**
+**The tree above is the spawn graph: each conductor (`ralph-worker`, or
+`ralph-tick` itself in the sequential loop) spawns every node under it directly.**
 It is *not* a delegation hierarchy — the indentation does not mean chief-architect
 spawns the others. chief-architect only *plans*; the conductor executes its
-ordered dispatch list by spawning each specialist itself.
+ordered dispatch list by spawning each specialist itself. The orchestrator
+(`ralph-tick`) spawns `ralph-worker`s and nothing else; each worker spawns the
+taxonomy inside its own worktree.
 
 The frontmatter `delegates_to` / `receives_from` fields model **logical dataflow**
 (who informs whom — e.g. the architect's risk flags reach the reviewers), **not**
@@ -114,6 +125,7 @@ purely mechanical, read-only checklist walk: `dependency-review-specialist`
 
 | File | Agent `name:` |
 | --- | --- |
+| `ralph-worker.md` | ralph-worker |
 | `chief-architect.md` | chief-architect |
 | `test-specialist.md` | test-specialist |
 | `implementation-specialist.md` | implementation-specialist |
