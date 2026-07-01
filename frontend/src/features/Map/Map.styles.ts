@@ -109,13 +109,13 @@ const styles = StyleSheet.create({
     justifyContent: CENTER,
     paddingHorizontal: spacing(0.5),
   },
-  // Gentle alternating band (replaces the old absolute grey half-bands): even
-  // (Divine-Feminine) stages get a recessed tint, odd stages stay on canvas.
+  // Polarity is now carried by the sine-wave overlay, so the center cells stay
+  // transparent and let the wave read through the whole column.
   cellFeminine: {
-    backgroundColor: surface.sunken,
+    backgroundColor: 'transparent',
   },
   cellMasculine: {
-    backgroundColor: surface.canvas,
+    backgroundColor: 'transparent',
   },
   // Brighter "you are here" current-stage marker: a thicker accent halo +
   // recessed warm fill so the live stage reads at a glance.
@@ -141,11 +141,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.text.light,
     letterSpacing: 0.5,
-  },
-  arrowGlyph: {
-    fontSize: 22,
-    fontWeight: '700',
-    lineHeight: 26,
   },
   centerLabelRow: {
     flexDirection: 'row',
