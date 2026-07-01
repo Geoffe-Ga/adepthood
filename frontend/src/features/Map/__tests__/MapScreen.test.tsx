@@ -7,6 +7,8 @@ import { act, create } from 'react-test-renderer';
 import MapScreen from '../MapScreen';
 import { BALANCE_COPY, emphasisStyle, FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
 
+import { ranksOrShames } from './copyIntentRule';
+
 // Mock InteractionManager to run callbacks synchronously in tests.
 jest.mock('react-native/Libraries/Interaction/InteractionManager', () => ({
   runAfterInteractions: (cb: () => void) => {
@@ -355,11 +357,9 @@ describe('MapScreen', () => {
     expect(summary.props.children as string).toBe(BALANCE_COPY.allAlive);
   });
 
-  it('BALANCE_COPY constants contain none of the banned gamification words', () => {
-    const BANNED = /\b(level|climb|ascend|higher|rank|altitude|ladder)\b/i;
+  it('BALANCE_COPY ranks or shames no one (intent rule, not a wordlist)', () => {
     for (const [key, value] of Object.entries(BALANCE_COPY)) {
-      expect(BANNED.test(value)).toBe(false);
-      // Confirms key name for the pinned-contract assertion.
+      expect(ranksOrShames(value)).toBe(false);
       expect(['allThin', 'mixed', 'allAlive']).toContain(key);
     }
   });
