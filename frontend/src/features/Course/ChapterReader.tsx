@@ -6,7 +6,14 @@ import { course as courseApi, type ContentBody } from '../../api';
 import { colors, SPACING } from '../../design/tokens';
 
 import styles, { markdownStyles } from './Course.styles';
-import { stripFrontmatter } from './stripFrontmatter';
+import { stripFrontmatter, stripLeadingTitleHeading } from './stripFrontmatter';
+
+/** Small-caps eyebrow shown above the sheet title, keyed by content type. */
+const READER_EYEBROWS: Record<string, string> = {
+  chapter: 'Chapter',
+  resource: 'Resource',
+  introduction: 'Introduction',
+};
 
 /**
  * Source descriptor for the reader.  ``kind`` decides which backend
@@ -89,6 +96,24 @@ const ReaderHeader = ({ title, onBack }: HeaderProps): React.JSX.Element => (
       {title}
     </Text>
   </View>
+);
+
+interface SheetHeaderProps {
+  eyebrow: string | undefined;
+  title: string;
+}
+
+const ReaderSheetHeader = ({ eyebrow, title }: SheetHeaderProps): React.JSX.Element => (
+  <>
+    {eyebrow !== undefined && (
+      <Text testID="reader-sheet-eyebrow" style={styles.readerEyebrow}>
+        {eyebrow}
+      </Text>
+    )}
+    <Text testID="reader-sheet-title" style={styles.readerTitle}>
+      {title}
+    </Text>
+  </>
 );
 
 interface ErrorViewProps {
@@ -186,10 +211,11 @@ function useContentBody(source: ChapterReaderSource): {
 }
 
 function renderBody(body: ContentBody): React.ReactElement {
-  const markdown = stripFrontmatter(body.body_markdown);
-  if (markdown.trim() === '') {
+  const stripped = stripFrontmatter(body.body_markdown);
+  if (stripped.trim() === '') {
     return <EmptyView />;
   }
+  const markdown = stripLeadingTitleHeading(stripped, body.title);
   return (
     <ScrollView
       style={styles.readerScroll}
@@ -197,6 +223,7 @@ function renderBody(body: ContentBody): React.ReactElement {
       testID="reader-markdown"
     >
       <View style={styles.readerSheet}>
+        <ReaderSheetHeader eyebrow={READER_EYEBROWS[body.content_type]} title={body.title} />
         <Markdown style={markdownStyles} rules={markdownRules} onLinkPress={handleLinkPress}>
           {markdown}
         </Markdown>

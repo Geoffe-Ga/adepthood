@@ -261,4 +261,81 @@ describe('ChapterReader', () => {
     expect(queryByText(/slug:/)).toBeNull();
     expect(queryByText(/title:/)).toBeNull();
   });
+
+  it('renders the manifest title in the reader sheet header', async () => {
+    const { findByTestId } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    const title = await findByTestId('reader-sheet-title');
+    expect(title.props.children).toBe('Chapter One');
+  });
+
+  it('labels the sheet eyebrow "Chapter" for content sources', async () => {
+    const { findByTestId } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    const eyebrow = await findByTestId('reader-sheet-eyebrow');
+    expect(eyebrow.props.children).toBe('Chapter');
+  });
+
+  it('labels the sheet eyebrow "Resource" for site-resource sources', async () => {
+    const { findByTestId } = render(
+      <ChapterReader
+        source={{ kind: 'resource', slug: 'philosophy' }}
+        fallbackTitle="x"
+        onBack={jest.fn()}
+      />,
+    );
+    const eyebrow = await findByTestId('reader-sheet-eyebrow');
+    expect(eyebrow.props.children).toBe('Resource');
+  });
+
+  it('labels the sheet eyebrow "Introduction" for intro sources', async () => {
+    const { findByTestId } = render(
+      <ChapterReader
+        source={{ kind: 'intro', stageNumber: 1 }}
+        fallbackTitle="x"
+        onBack={jest.fn()}
+      />,
+    );
+    const eyebrow = await findByTestId('reader-sheet-eyebrow');
+    expect(eyebrow.props.children).toBe('Introduction');
+  });
+
+  it('renders no eyebrow for an unmapped content_type', async () => {
+    mockContentBody.mockResolvedValueOnce({
+      title: 'X',
+      content_type: 'mystery',
+      body_markdown: '# X\n\nbody.\n',
+    });
+    const { findByTestId, queryByTestId } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    await findByTestId('reader-sheet-title');
+    expect(queryByTestId('reader-sheet-eyebrow')).toBeNull();
+  });
+
+  it('dedupes a leading H1 that matches the manifest title', async () => {
+    const { findByTestId, getAllByText } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    await findByTestId('reader-sheet-title');
+    // Only the viewer header and the sheet title render "Chapter One" -- the
+    // leading markdown H1 duplicate is stripped.
+    expect(getAllByText('Chapter One')).toHaveLength(2);
+  });
+
+  it('preserves a leading H1 that differs from the manifest title', async () => {
+    mockContentBody.mockResolvedValueOnce({
+      title: 'Manifest Title',
+      content_type: 'chapter',
+      body_markdown: '# Different Heading\n\nbody.\n',
+    });
+    const { findByTestId, findByText } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    const title = await findByTestId('reader-sheet-title');
+    expect(title.props.children).toBe('Manifest Title');
+    await findByText('Different Heading');
+  });
 });
