@@ -14,13 +14,13 @@ agent below via the `Agent` tool. The chief-architect is the strategic **brain**
 
 ```
 ralph-tick (main loop = CONDUCTOR — spawns every agent below)
-  ├─ chief-architect ............ L0  opus    plan + ordered dispatch list (no code)
+  ├─ chief-architect ............ L0  fable   plan + ordered dispatch list (no code)
   ├─ test-specialist ............ L2  sonnet  Gate 1 RED: failing tests          ─┐
   ├─ implementation-specialist .. L2  opus    Gate 1 GREEN + Refactor             │ run per
   ├─ security-specialist ........ L2  opus    harden auth/JWT/CORS/input/DB       │ the
   ├─ performance-specialist ..... L2  sonnet  profile/optimize hot paths          │ architect's
   ├─ documentation-specialist ... L2  sonnet  docstrings/READMEs/ADRs             │ dispatch
-  ├─ dependency-review-spec. .... L2  sonnet  deps/pins/licenses (read-only)      │ list
+  ├─ dependency-review-spec. .... L2  haiku   deps/pins/licenses (read-only)      │ list
   └─ code-review-orchestrator ... L1  opus    Gate 2.5 pre-push self-review      ─┘
 ```
 
@@ -35,14 +35,41 @@ the spawn mechanism, which is always the conductor. Only the two orchestrators
 (chief-architect, code-review-orchestrator) hold the `Task` tool; the six
 specialists are leaf workers that do their own work and do not sub-delegate.
 
+> **Frontmatter caveat.** The Claude Code runtime only reads `name`,
+> `description`, `tools`, and `model`. The extra fields here — `level`, `phase`,
+> `delegates_to`, `receives_from` — are **descriptive documentation only**; they
+> do not drive dispatch, ordering, or permissions. The conductor's dispatch
+> logic is authoritative. Nested spawning (an orchestrator using `Task`) is
+> best-effort: agents that rely on it must degrade to Read/Grep/Glob when it is
+> unavailable, never stall.
+
+> **Shared constraints are not auto-injected.** A subagent's context is only its
+> own `.md` file; markdown links are inert. Every agent's Step 0 therefore
+> **`Read`s** [`shared/adepthood-constraints.md`](shared/adepthood-constraints.md)
+> at the start of its run so the gates, thresholds, and anti-bypass block
+> actually bind — the link alone does not carry them into context.
+
 ## Model tiers (strategic mix)
 
-**Opus** where judgment drives quality: `chief-architect` (design + dispatch),
+**Fable** for the single hardest-reasoning, long-horizon role: `chief-architect`.
+Planning is the highest-leverage decision in a tick — one wrong design compounds
+across every specialist that executes it — so the architect runs on Anthropic's
+most capable model. Fable is ~2× Opus-tier cost and can run minutes-long turns,
+which is acceptable for a once-per-issue planning pass but **not** for scoped
+worker roles. Two Fable caveats shape the fleet: its safety classifiers target
+**cyber/bio** content (so the code-writing `security-specialist` stays on **Opus**,
+never Fable — legitimate hardening work can trip a false-positive refusal), and it
+prefers **less-prescriptive prompts** (state the goal and constraints; the
+architect's Output Contract is a format spec, not step-by-step scaffolding).
+
+**Opus** where judgment drives quality:
 `implementation-specialist` (production code is the core quality lever),
-`security-specialist` (threat modeling), `code-review-orchestrator` (synthesis).
+`security-specialist` (threat modeling — and deliberately kept off Fable per the
+caveat above), `code-review-orchestrator` (synthesis).
 **Sonnet** for well-scoped roles guided by an explicit plan: `test-specialist`,
-`performance-specialist`, `documentation-specialist`,
-`dependency-review-specialist`.
+`performance-specialist`, `documentation-specialist`. **Haiku** for the
+purely mechanical, read-only checklist walk: `dependency-review-specialist`
+(pins/lockfile/license checks need no deep reasoning — spend the cheaper tier).
 
 ## Gate → agent invocation matrix
 

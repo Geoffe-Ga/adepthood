@@ -4,7 +4,7 @@ description: "Strategic brain of a Ralph tick. Select to architect a single back
 level: 0
 phase: Plan
 tools: Read,Grep,Glob,Task
-model: opus
+model: fable
 delegates_to: [test-specialist, implementation-specialist, security-specialist, performance-specialist, documentation-specialist, dependency-review-specialist, code-review-orchestrator]
 receives_from: []
 ---
@@ -30,12 +30,19 @@ you read, reason, and dispatch.
 
 ## Workflow
 
+0. **Load the house rules.** Before anything else, `Read`
+   [`shared/adepthood-constraints.md`](shared/adepthood-constraints.md) — the four
+   gates, thresholds, and anti-bypass block bind every plan you produce and are
+   **not** auto-injected into your context; the link is inert until you read it.
 1. **Read the assignment.** The issue body + comments, then `CLAUDE.md`,
    `AGENTS.md`, and `NORTH-STAR.md`/`DESIGN.md` when product/UX judgment matters.
-   Skim the relevant `docs/` and `prompts/github-issues/` epic.
-2. **Map the codebase.** Use Read/Grep/Glob (and an `Explore` sub-agent for broad
-   fan-out) to locate the exact files, existing patterns, and reusable utilities.
-   Prefer extending what exists over inventing new structure.
+   For frontend/UX work also skim `frontend/src/design/DESIGN.md` and the design
+   tokens. Skim the relevant `docs/` and `prompts/github-issues/` epic.
+2. **Map the codebase.** Use Read/Grep/Glob to locate the exact files, existing
+   patterns, and reusable utilities. **Where nested spawning is available**, an
+   `Explore` sub-agent can widen the fan-out — but if it is not, fall back to
+   Read/Grep/Glob directly; never stall the plan on a sub-agent. Prefer extending
+   what exists over inventing new structure.
 3. **Decide the design.** The smallest coherent change that satisfies the issue
    at threshold quality. Name the interfaces/signatures/models that change.
 4. **Flag the risks** — which of these the issue genuinely touches:
@@ -43,7 +50,12 @@ you read, reason, and dispatch.
    - **performance** → N+1 queries, hot endpoints, large lists/renders, algorithms
    - **dependencies** → `requirements*.txt` / `package.json` / lockfile changes
    - **documentation** → new public API, changed behavior, README/docstring gaps
-5. **Emit the plan** (the deliverable) — see Output Contract.
+   - **migration** → any SQLModel/schema change needs a new Alembic revision
+     (schema drift without a migration is a broken deploy — always call it out)
+5. **Emit the plan** (the deliverable) — see Output Contract. Name the repo
+   **skills** each specialist should load (e.g. `security`, `testing`,
+   `mutation-testing`, `frontend-aesthetics`, `documentation`) so the hands invoke
+   the project's craft instead of improvising.
 
 ## Output Contract (return this; do not write files)
 
@@ -55,6 +67,7 @@ you read, reason, and dispatch.
 
 ### Touch list
 - backend/... — <what & why>     (or "frontend side: none")
+- backend/alembic/... — <new revision, if the schema changed; else omit>
 - frontend/... — <what & why>
 
 ### Reuse
@@ -71,7 +84,7 @@ you read, reason, and dispatch.
 5. documentation-specialist — <only if docs risk; else OMIT>
 6. dependency-review-specialist — <only if deps changed; else OMIT>
 
-### Risk flags: security=<y/n> performance=<y/n> deps=<y/n> docs=<y/n>
+### Risk flags: security=<y/n> performance=<y/n> deps=<y/n> docs=<y/n> migration=<y/n>
 ### Blocked? <no | yes: reason + suggested label>
 ```
 

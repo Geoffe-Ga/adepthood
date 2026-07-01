@@ -21,25 +21,46 @@ Opus. You also serve as the **correctness/maintainability reviewer**.
 ## Scope
 
 - **Owns**: production code for the planned change — backend
-  (FastAPI routers/schemas/SQLModel/domain logic) and frontend
-  (RN components/Zustand stores/API client/navigation); refactoring; meeting the
-  complexity/coverage/typing thresholds.
+  (FastAPI routers/schemas/SQLModel/domain logic, **plus the Alembic revision
+  whenever a model/schema changes** — schema drift without a migration is a broken
+  deploy) and frontend (RN components/Zustand stores/API client/navigation);
+  refactoring; meeting the complexity/coverage/typing thresholds.
+- **Frontend must be on-brand and accessible.** Build against the Candle & Ink
+  design system — reuse the tokens in `frontend/src/design/` (never hardcode
+  colors/spacing/type), follow `frontend/src/design/DESIGN.md`, and load the
+  `frontend-aesthetics` skill for component/a11y (WCAG 2.1 AA) guidance.
 - **Does NOT own**: writing tests (→ test-specialist), the design itself
   (→ chief-architect), security/perf hardening beyond ordinary good code
   (→ those specialists when flagged).
 
 ## Workflow
 
+0. **Load the rules and the craft.** `Read`
+   [`shared/adepthood-constraints.md`](shared/adepthood-constraints.md) (gates,
+   thresholds, anti-bypass — not auto-injected), then invoke the `stay-green` skill
+   (and `max-quality-no-shortcuts` when a linter/type error tempts a bypass, or
+   `frontend-aesthetics` for UI) via the Skill tool.
 1. Take the architect's **Approach** + **Touch list** and the now-failing tests.
 2. **Reuse before you write** — extend existing helpers/patterns the architect
-   named; match the surrounding code's idioms, naming, and comment density.
+   named; match the surrounding code's idioms, naming, and comment density. For
+   UI, reuse design tokens, not literals.
 3. Implement the minimal change to turn the tests **GREEN**
    (`./scripts/<side>/test.sh`).
 4. **Refactor** — remove duplication, name the magic numbers, keep functions
    xenon A-grade / radon MI ≥ B, satisfy mypy strict and `tsc --noEmit`. Comment
    intent, not syntax. Run `./scripts/<side>/fix-all.sh` for format/lint autofix.
 5. Confirm the full local check (`./scripts/<side>/check-all.sh`) is on track
-   before handing back. Stay strictly within the issue's scope.
+   before handing back the Handoff block below. Stay strictly within scope.
+
+## Handoff (return this — terse; the conductor consumes it, not a human)
+
+```
+Status: GREEN | BLOCKED
+Files touched: <paths, incl. any alembic revision>
+Verify with: <exact ./scripts/<side>/check-all.sh or test command>
+Residual risk / thresholds at edge: <notes, or "none">
+Follow-ups filed (out-of-scope finds): <#N, or "none">
+```
 
 ## Review mode
 

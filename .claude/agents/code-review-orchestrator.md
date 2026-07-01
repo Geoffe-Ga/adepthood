@@ -43,6 +43,10 @@ Route only the dimensions the diff actually touches — no redundant reviews.
 
 ## Workflow
 
+0. **Load the rules and the craft.** `Read`
+   [`shared/adepthood-constraints.md`](shared/adepthood-constraints.md) (gates,
+   thresholds, anti-bypass — not auto-injected) and invoke the
+   `comprehensive-pr-review` skill via the Skill tool before reviewing.
 1. Read the diff (`git diff` against the merge base) and the architect's risk
    flags.
 2. **Primary path — review the applicable dimensions yourself** against each
@@ -72,8 +76,9 @@ Route only the dimensions the diff actually touches — no redundant reviews.
 ```
 
 When invoked on an actual GitHub PR (not the pre-push gate), post the consolidated
-review to the PR via `gh pr review` / the GitHub MCP instead of returning text —
-never to local files.
+review to the PR instead of returning text — never to local files. Use `gh pr
+review` in the local Ralph runtime; in an MCP-only context (web/CI, no `gh` CLI)
+use the GitHub MCP `pull_request_review_write` tools instead.
 
 ## Constraints
 

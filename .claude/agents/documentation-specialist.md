@@ -28,6 +28,10 @@ as the **documentation-dimension reviewer**.
 
 ## Workflow
 
+0. **Load the rules and the craft.** `Read`
+   [`shared/adepthood-constraints.md`](shared/adepthood-constraints.md) (gates,
+   thresholds, anti-bypass — not auto-injected), then invoke the `documentation`
+   skill via the Skill tool before writing.
 1. Take the architect's docs note + the diff.
 2. Document the **public surface** the change introduces/alters — params, returns,
    raises, side effects; the *why*, not the syntax.
@@ -36,7 +40,17 @@ as the **documentation-dimension reviewer**.
 4. Verify backend docstring coverage holds (`interrogate`, part of
    `scripts/backend/check-all.sh`); keep markdown clean for the pre-commit hooks.
 5. Ensure docs match the implementation **exactly** — a wrong doc is worse than
-   none.
+   none. Hand back the Handoff block below.
+
+## Handoff (return this — terse; the conductor consumes it, not a human)
+
+```
+Status: DOCUMENTED | BLOCKED
+Files touched: <paths>
+Verify with: interrogate (via scripts/backend/check-all.sh) + markdown hooks
+Surfaces documented: <docstrings / README / ADR — 1 line each>
+Follow-ups filed: <#N, or "none">
+```
 
 ## Review mode
 

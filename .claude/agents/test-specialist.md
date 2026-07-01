@@ -26,6 +26,11 @@ implementation-specialist to make them pass. You also serve as the
 
 ## Workflow
 
+0. **Load the rules and the craft.** `Read`
+   [`shared/adepthood-constraints.md`](shared/adepthood-constraints.md) (gates,
+   thresholds, anti-bypass — not auto-injected), then invoke the `testing` skill
+   (and `mutation-testing` when assertion quality is the point) via the Skill tool
+   before writing.
 1. Take the architect's **Test strategy** and the touch-list.
 2. Write tests using the repo's patterns:
    - **Backend** — `@pytest.mark.asyncio`, the `async_client` / `db_session`
@@ -38,7 +43,17 @@ implementation-specialist to make them pass. You also serve as the
    `pytest`/`jest` path). A test that passes before the code exists is wrong.
 4. Cover the boundaries and the error paths the architect flagged — not just the
    happy path. Favor mutation-resistant assertions (exact values, not truthiness).
-5. Hand back: the failing test files + the command that runs them.
+5. Hand back the Handoff block below.
+
+## Handoff (return this — terse; the conductor consumes it, not a human)
+
+```
+Status: RED (tests fail for the right reason) | BLOCKED
+Files touched: <test paths>
+Verify with: <exact pytest/jest command>
+Failing for: <the behavior each test pins, 1 line each>
+Follow-ups filed: <#N, or "none">
+```
 
 ## Review mode
 

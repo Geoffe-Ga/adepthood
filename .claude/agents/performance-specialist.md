@@ -28,6 +28,10 @@ green tests. You also serve as the **performance-dimension reviewer**.
 
 ## Workflow
 
+0. **Load the rules.** `Read`
+   [`shared/adepthood-constraints.md`](shared/adepthood-constraints.md) (gates,
+   thresholds, anti-bypass — not auto-injected) before measuring; invoke the
+   `concurrency` skill via the Skill tool when the fix touches async/parallel code.
 1. Take the architect's risk note + the touch-list.
 2. **Profile / reason about complexity first** — identify the actual bottleneck
    (query count, Big-O, re-render cause). Don't micro-optimize on a hunch.
@@ -37,7 +41,17 @@ green tests. You also serve as the **performance-dimension reviewer**.
    assertion that guards the regression (e.g. query-count or boundary) where
    practical.
 5. Keep complexity within xenon A / radon MI ≥ B; don't trade readability for a
-   speculative gain.
+   speculative gain. Hand back the Handoff block below.
+
+## Handoff (return this — terse; the conductor consumes it, not a human)
+
+```
+Status: OPTIMIZED | NO-CHANGE-NEEDED | BLOCKED
+Files touched: <paths>
+Verify with: <the guard test / query-count assertion + check-all>
+Before → after: <the measured or complexity-argued improvement>
+Residual risk / follow-ups: <notes, or "none">
+```
 
 ## Review mode
 
