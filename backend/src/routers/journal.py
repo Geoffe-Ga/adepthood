@@ -259,17 +259,25 @@ async def get_journal_entry(
     return entry
 
 
+async def _apply_message_edit(
+    entry: JournalEntry, payload: JournalEntryUpdate, session: AsyncSession
+) -> None:
+    """Re-sanitize the body on edit and re-anchor marginalia + suggestions."""
+    if payload.message is None:
+        return
+    old_message = entry.message
+    new_message = _sanitize_message(payload.message)
+    if new_message != old_message:
+        entry.message = new_message
+        await reanchor_entry_marginalia(entry, old_message, new_message, session)
+        await reanchor_entry_suggestions(entry, new_message, session)
+
+
 async def _apply_entry_update(
     entry: JournalEntry, payload: JournalEntryUpdate, session: AsyncSession
 ) -> None:
     """Apply the provided fields to ``entry``, re-anchoring marginalia on a body edit."""
-    if payload.message is not None:
-        old_message = entry.message
-        new_message = _sanitize_message(payload.message)
-        if new_message != old_message:
-            entry.message = new_message
-            await reanchor_entry_marginalia(entry, old_message, new_message, session)
-            await reanchor_entry_suggestions(entry, new_message, session)
+    await _apply_message_edit(entry, payload, session)
     if payload.title is not None:
         entry.title = payload.title
     if payload.status is not None:

@@ -40,12 +40,8 @@ class JournalEntryUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _require_at_least_one_field(self) -> Self:
-        if (
-            self.message is None
-            and self.title is None
-            and self.status is None
-            and self.classification is None
-        ):
+        provided = (self.message, self.title, self.status, self.classification)
+        if all(value is None for value in provided):
             msg = "at least one field must be provided"
             raise ValueError(msg)
         return self
