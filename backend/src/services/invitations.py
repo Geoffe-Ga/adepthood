@@ -47,7 +47,7 @@ from models.user_practice import UserPractice
 _NULL_TARGET = -1
 
 # Dedup / persisted-row identity: ``(target_type, target_id-or-sentinel, kind)``.
-type _SignalKey = tuple[str, int, str]
+_SignalKey = tuple[str, int, str]
 
 
 def _signal_key(target_type: str, target_id: int | None, kind: str) -> _SignalKey:
