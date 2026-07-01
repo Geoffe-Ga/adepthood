@@ -9,10 +9,14 @@ from http import HTTPStatus
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlmodel import select
+from sqlmodel import col, select
 
 from domain.constants import TOTAL_STAGES
 from models.course_stage import CourseStage
+from models.goal import Goal
+from models.goal_completion import GoalCompletion
+from models.habit import Habit
+from models.journal_entry import JournalEntry
 from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.stage_progress import StageProgress
@@ -726,3 +730,212 @@ async def test_concurrent_first_advance_yields_one_progress_row(
     assert len(rows) == 1
     assert rows[0].current_stage == 1
     assert rows[0].completed_stages == []
+
+
+# ── POST /stages/begin-again ─────────────────────────────────────────────
+
+
+async def _seed_stage_10_progress(
+    db_session: AsyncSession,
+    user_id: int,
+    *,
+    cycle_number: int = 1,
+) -> StageProgress:
+    """Insert a completed-cycle StageProgress row (current_stage == TOTAL_STAGES)."""
+    progress = StageProgress(
+        user_id=user_id,
+        current_stage=TOTAL_STAGES,
+        completed_stages=list(range(1, TOTAL_STAGES)),
+        cycle_number=cycle_number,
+    )
+    db_session.add(progress)
+    await db_session.commit()
+    await db_session.refresh(progress)
+    return progress
+
+
+@pytest.mark.asyncio
+async def test_begin_again_happy_path(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Stage-10 user loops back to stage 1 with cycle_number incremented."""
+    headers, user_id = await _signup(async_client, "beginagain_happy")
+    await _seed_stage_10_progress(db_session, user_id, cycle_number=1)
+
+    resp = await async_client.post("/stages/begin-again", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert data["current_stage"] == 1
+    assert data["completed_stages"] == []
+    assert data["cycle_number"] == 2
+
+
+@pytest.mark.asyncio
+async def test_begin_again_preserves_journal_habit_and_goal_completion(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """begin-again must not touch journal, habit streak, or goal-completion rows."""
+    headers, user_id = await _signup(async_client, "beginagain_preserve")
+    await _seed_stage_10_progress(db_session, user_id, cycle_number=1)
+
+    # Seed a journal entry for the same user.
+    journal = JournalEntry(sender="user", user_id=user_id, message="carry me over")
+    db_session.add(journal)
+    await db_session.commit()
+    await db_session.refresh(journal)
+    journal_id = journal.id
+
+    # Seed a habit with a nonzero streak.
+    habit = Habit(
+        name="Morning run",
+        icon="running",
+        start_date=datetime.now(UTC).date(),
+        energy_cost=2,
+        energy_return=3,
+        user_id=user_id,
+        streak=7,
+    )
+    db_session.add(habit)
+    await db_session.commit()
+    await db_session.refresh(habit)
+    habit_id = habit.id
+    expected_streak = 7
+
+    # Seed a Goal and a GoalCompletion attached to that habit.
+    goal = Goal(
+        habit_id=habit_id,
+        title="Run 30 min",
+        tier="clear",
+        target=30.0,
+        target_unit="minutes",
+        frequency=1.0,
+        frequency_unit="per_day",
+    )
+    db_session.add(goal)
+    await db_session.commit()
+    await db_session.refresh(goal)
+    completion = GoalCompletion(
+        goal_id=goal.id,
+        user_id=user_id,
+        completed_units=30.0,
+    )
+    db_session.add(completion)
+    await db_session.commit()
+    await db_session.refresh(completion)
+    completion_id = completion.id
+
+    resp = await async_client.post("/stages/begin-again", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+
+    # Journal row survives.
+    journal_result = await db_session.execute(
+        select(JournalEntry).where(col(JournalEntry.id) == journal_id)
+    )
+    assert journal_result.scalar_one_or_none() is not None
+
+    # Habit row survives AND streak is unchanged (no penalty).
+    habit_result = await db_session.execute(select(Habit).where(col(Habit.id) == habit_id))
+    surviving_habit = habit_result.scalar_one_or_none()
+    assert surviving_habit is not None
+    assert surviving_habit.streak == expected_streak
+
+    # GoalCompletion row survives.
+    gc_result = await db_session.execute(
+        select(GoalCompletion).where(col(GoalCompletion.id) == completion_id)
+    )
+    assert gc_result.scalar_one_or_none() is not None
+
+
+@pytest.mark.asyncio
+async def test_begin_again_rejects_mid_cycle(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """begin-again on a mid-cycle user returns 409 cycle_not_complete; row unchanged."""
+    headers, user_id = await _signup(async_client, "beginagain_midcycle")
+    progress = StageProgress(
+        user_id=user_id,
+        current_stage=5,
+        completed_stages=[1, 2, 3, 4],
+        cycle_number=1,
+    )
+    db_session.add(progress)
+    await db_session.commit()
+
+    resp = await async_client.post("/stages/begin-again", headers=headers)
+
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.json()["detail"] == "cycle_not_complete"
+
+    # Row must be untouched.
+    row_result = await db_session.execute(
+        select(StageProgress).where(col(StageProgress.user_id) == user_id)
+    )
+    row = row_result.scalar_one()
+    assert row.current_stage == 5
+    assert row.cycle_number == 1
+
+
+@pytest.mark.asyncio
+async def test_begin_again_rejects_fresh_user_no_row(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """begin-again with no StageProgress row must be rejected (4xx, not 200)."""
+    headers, user_id = await _signup(async_client, "beginagain_norow")
+
+    resp = await async_client.post("/stages/begin-again", headers=headers)
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+
+    # No StageProgress row may be created as a side-effect.
+    row_result = await db_session.execute(
+        select(StageProgress).where(col(StageProgress.user_id) == user_id)
+    )
+    assert row_result.scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+async def test_begin_again_requires_auth(async_client: AsyncClient) -> None:
+    """POST /stages/begin-again without a token returns 401."""
+    resp = await async_client.post("/stages/begin-again")
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_begin_again_second_loop_increments_to_cycle_3(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A user already on cycle 2 at stage 10 advances to cycle_number 3."""
+    headers, user_id = await _signup(async_client, "beginagain_cycle2")
+    await _seed_stage_10_progress(db_session, user_id, cycle_number=2)
+
+    resp = await async_client.post("/stages/begin-again", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert data["cycle_number"] == 3
+    assert data["current_stage"] == 1
+    assert data["completed_stages"] == []
+
+
+@pytest.mark.asyncio
+async def test_advance_at_stage_10_still_returns_409_all_stages_completed(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """PUT /stages/progress at stage 10 still 409s — begin-again does NOT replace it."""
+    headers, user_id = await _signup(async_client, "beginagain_regression")
+    await _seed_stage_10_progress(db_session, user_id, cycle_number=1)
+
+    resp = await async_client.put(
+        "/stages/progress",
+        json={"current_stage": TOTAL_STAGES},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.json()["detail"] == "all_stages_completed"
