@@ -1,7 +1,6 @@
 /* eslint-env jest */
 import { describe, expect, it } from '@jest/globals';
 
-// stripFrontmatter.ts does not exist yet — this import will fail (RED).
 import { stripFrontmatter } from '../stripFrontmatter';
 
 describe('stripFrontmatter', () => {
@@ -39,5 +38,12 @@ describe('stripFrontmatter', () => {
     const result = stripFrontmatter(input);
     // The leading blank means the --- is NOT on line 1; input returned unchanged.
     expect(result).toBe(input);
+  });
+
+  it('tolerates a leading UTF-8 BOM before the opening fence', () => {
+    const input = '﻿---\nslug: x\n---\n\n# Body\n';
+    const result = stripFrontmatter(input);
+    expect(result).not.toContain('slug:');
+    expect(result).toContain('# Body');
   });
 });

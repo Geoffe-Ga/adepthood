@@ -184,7 +184,7 @@ describe('ChapterReader', () => {
     await findByText(/hasn['’]t been written yet/i);
   });
 
-  // RED: softbreak currently emits '\n'; the regex won't match across a newline.
+  // A single in-paragraph newline (soft break) must reflow to a space.
   it('reflows hard-wrapped lines within a paragraph into a single visual line', async () => {
     mockContentBody.mockResolvedValueOnce({
       title: 'Reflow Test',
@@ -229,7 +229,23 @@ describe('ChapterReader', () => {
     await findByText(/beta/);
   });
 
-  // RED: frontmatter is currently passed raw to the Markdown renderer.
+  // GREEN guard: a two-trailing-space hard break must NOT be collapsed to a space.
+  it('preserves a hard break (two trailing spaces) after the softbreak fix', async () => {
+    mockContentBody.mockResolvedValueOnce({
+      title: 'Hard Break',
+      content_type: 'chapter',
+      body_markdown: 'line one  \nline two.\n',
+    });
+    const { findByText, queryByText } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    await findByText(/line one/);
+    await findByText(/line two/);
+    // The hard break must keep them apart — not reflowed into one spaced run.
+    expect(queryByText(/line one line two/)).toBeNull();
+  });
+
+  // Defensive: raw frontmatter must never reach the Markdown renderer.
   it('does not render YAML frontmatter fields when body_markdown opens with a fence', async () => {
     mockContentBody.mockResolvedValueOnce({
       title: 'Frontmatter Test',
