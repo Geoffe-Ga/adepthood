@@ -1213,6 +1213,11 @@ def test_journal_classification_migration_round_trip_on_sqlite(
 _USER_DEPTH_PREFS_BASE_REVISION = "d8e9f0a1b2c3"  # pragma: allowlist secret
 _USER_DEPTH_PREFS_REVISION = "e2f3a4b5c6d8"  # pragma: allowlist secret
 
+# stageprogress-01: add cycle_number column (NOT NULL, server_default=1, CHECK >= 1).
+_STAGEPROGRESS_CYCLE_BASE_REVISION = "e2f3a4b5c6d8"  # pragma: allowlist secret
+# The implementer must replace this with the real revision ID they author.
+_STAGEPROGRESS_CYCLE_REVISION = "f2a3b4c5d6e8"  # pragma: allowlist secret
+
 
 def _bootstrap_user_table_for_depth_prefs(sync_url: str) -> None:
     """Pre-create a minimal ``user`` table with two seeded rows.
@@ -1325,3 +1330,123 @@ def test_user_depth_prefs_migration_round_trip_on_sqlite(
     for row in rows_again:
         assert bool(row["enable_habits"]) is True
         assert bool(row["enable_sangha"]) is True
+
+
+# -- stageprogress-01 cycle_number column migration round-trip ----------------
+
+
+def _bootstrap_stageprogress_table(sync_url: str) -> None:
+    """Pre-create a minimal ``stageprogress`` table with one legacy row.
+
+    Mirrors the schema in place just before the cycle_number migration runs.
+    One existing row is seeded without cycle_number so the upgrade backfill
+    can be observed. The user FK is created as a standalone table; SQLite
+    FK enforcement is off by default so referential integrity is not the
+    concern here.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE user ( id INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL)")
+        )
+        conn.execute(text("INSERT INTO user (id, email) VALUES (1, 'legacy@example.com')"))
+        conn.execute(
+            text(
+                "CREATE TABLE stageprogress ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL UNIQUE,"
+                " current_stage INTEGER NOT NULL,"
+                " completed_stages TEXT NOT NULL DEFAULT '[]',"
+                " stage_started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+                " program_started_at DATETIME"
+                ")"
+            )
+        )
+        conn.execute(
+            text("INSERT INTO stageprogress (id, user_id, current_stage) VALUES (1, 1, 1)")
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_stageprogress_cycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite Alembic config positioned just before the cycle_number migration.
+
+    Bootstraps a minimal ``stageprogress`` table with one legacy row (no
+    ``cycle_number`` column) and stamps the DB at ``e2f3a4b5c6d8`` (the
+    current chain head before this migration) so the round-trip exercises
+    only the new migration.
+    """
+    db_path = tmp_path / "stageprogress_cycle_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_stageprogress_table(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _STAGEPROGRESS_CYCLE_BASE_REVISION)
+    return cfg
+
+
+def _stageprogress_row(db_url: str, row_id: int) -> dict[str, Any]:
+    """Fetch a ``stageprogress`` row including the new cycle_number column."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT id, current_stage, cycle_number FROM stageprogress WHERE id = :id"
+                    ),
+                    {"id": row_id},
+                )
+                .mappings()
+                .first()
+            )
+            assert row is not None
+            return dict(row)
+    finally:
+        engine.dispose()
+
+
+def test_stageprogress_cycle_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_stageprogress_cycle: Config,
+) -> None:
+    """Round-trip the cycle_number migration: upgrade adds column + backfills; downgrade drops it.
+
+    Phase 1: upgrade adds ``cycle_number`` NOT NULL and backfills the
+    pre-existing legacy row to 1.
+    Phase 2: downgrade removes the column.
+    Phase 3: re-upgrade is idempotent — the backfill re-runs cleanly.
+
+    This test fails until the implementer authors the migration and sets
+    ``_STAGEPROGRESS_CYCLE_REVISION`` to its real revision ID.
+    """
+    cfg = alembic_sqlite_config_stageprogress_cycle
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade adds the column and backfills the legacy row.
+    command.upgrade(cfg, _STAGEPROGRESS_CYCLE_REVISION)
+    cols = _columns_of(db_url, "stageprogress")
+    assert "cycle_number" in cols
+
+    row = _stageprogress_row(db_url, row_id=1)
+    assert row["cycle_number"] == 1, "Upgrade must backfill pre-existing rows to 1."
+
+    # Phase 2: downgrade drops the cycle_number column.
+    command.downgrade(cfg, _STAGEPROGRESS_CYCLE_BASE_REVISION)
+    cols_after = _columns_of(db_url, "stageprogress")
+    assert "cycle_number" not in cols_after
+
+    # Phase 3: re-upgrade — backfill must reproduce the same value.
+    command.upgrade(cfg, _STAGEPROGRESS_CYCLE_REVISION)
+    row_after = _stageprogress_row(db_url, row_id=1)
+    assert row_after["cycle_number"] == 1

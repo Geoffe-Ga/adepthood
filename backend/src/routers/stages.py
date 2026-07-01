@@ -216,6 +216,7 @@ def _bootstrap_record(existing: StageProgress) -> StageProgressRecord:
         user_id=existing.user_id,
         current_stage=existing.current_stage,
         completed_stages=existing.completed_stages,
+        cycle_number=existing.cycle_number,
     )
 
 
@@ -302,6 +303,7 @@ async def _advance_existing_progress(
         user_id=existing.user_id,
         current_stage=existing.current_stage,
         completed_stages=existing.completed_stages,
+        cycle_number=existing.cycle_number,
     )
 
 
