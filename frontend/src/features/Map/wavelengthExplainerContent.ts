@@ -1,10 +1,3 @@
-// frontend/features/Map/wavelengthExplainerContent.ts
-//
-// Copy for the opt-in "How the Wavelength works" explainer. It describes the
-// model — the torus, the growing spiral, compression-wave emission, the rising
-// octaves, and the chord — in the course's warm, resonant voice. It never ranks
-// or shames the reader: it explains a shape of reality, not a scoreboard.
-
 export const WAVELENGTH_EXPLAINER = {
   title: 'How the Wavelength works',
   markdown: `# How the Wavelength works

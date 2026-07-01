@@ -1,5 +1,3 @@
-// frontend/features/Map/WavelengthExplainer.tsx
-
 import React from 'react';
 import { Modal, Pressable, ScrollView, Text } from 'react-native';
 import Markdown from 'react-native-markdown-display';
@@ -37,14 +35,7 @@ const ExplainerSheet = ({ onClose }: { onClose: () => void }): React.JSX.Element
   </Pressable>
 );
 
-/**
- * Opt-in "How the Wavelength works" explainer. It is a declinable door the user
- * chooses to open from the Map — never auto-shown, never gated behind, never a
- * demand. It only explains the model (torus, spiral, compression waves, rising
- * octaves, the chord); it never ranks or judges the reader. Closing it returns
- * the Map exactly as it was, matching the NORTH-STAR "you choose your depth"
- * framing.
- */
+/** Opt-in, declinable "How the Wavelength works" explainer — never auto-shown, never ranking. */
 export default function WavelengthExplainer({
   visible,
   onClose,
