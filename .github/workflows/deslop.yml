@@ -73,7 +73,7 @@ jobs:
             exit 1
           fi
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
-          echo "Scanning areas: $(jq -r 'map(.id) | join(\", \")' <<<\"$MATRIX\")"
+          echo "Scanning areas: $(jq -r 'map(.id) | join(", ")' <<<"$MATRIX")"
 
   deslop:
     name: "Scan ${{ matrix.area.id }}"

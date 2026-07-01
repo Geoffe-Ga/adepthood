@@ -128,25 +128,25 @@ jobs:
 
             # Build the Ralph-ready issue body: hidden marker, the verbatim
             # contract (with {PR} substituted), and a link to the Dependabot PR.
-            local contract_body="${contract//\\{PR\\}/$pr}"
-            issue_body="$(printf '%s\\n\\n%s\\n\\nDependabot PR: #%s\\n' \\
+            local contract_body="${contract//\{PR\}/$pr}"
+            issue_body="$(printf '%s\n\n%s\n\nDependabot PR: #%s\n' \
               "$marker" "$contract_body" "$pr")"
 
             # Title mirrors the Dependabot PR so the dep/from/to is legible.
             # Labels: `dependencies` only — none of pick-next.sh's exclude set,
             # so the picker treats it as a normal candidate.
-            issue_num="$(gh issue create --repo "$REPO" \\
-              --title "chore(deps): adopt Dependabot PR #$pr — $title" \\
-              --label dependencies \\
-              --body "$issue_body" \\
+            issue_num="$(gh issue create --repo "$REPO" \
+              --title "chore(deps): adopt Dependabot PR #$pr — $title" \
+              --label dependencies \
+              --body "$issue_body" \
               | grep -oE '[0-9]+$')"
 
             echo "Filed issue #$issue_num for PR #$pr."
 
             # Append `Closes #<issue>` so the Dependabot PR becomes Ralph's
             # in-flight PR and auto-closes the issue on merge into main.
-            gh pr edit "$pr" --repo "$REPO" \\
-              --body "$(printf '%s\\n\\nCloses #%s' "$pr_body" "$issue_num")"
+            gh pr edit "$pr" --repo "$REPO" \
+              --body "$(printf '%s\n\nCloses #%s' "$pr_body" "$issue_num")"
 
             echo "Linked PR #$pr → issue #$issue_num via Closes."
           }
@@ -162,7 +162,7 @@ jobs:
           # Reconciler path (schedule / manual): bridge every open Dependabot
           # PR that is not yet linked. Idempotent — a re-run files/edits nothing.
           echo "Reconciler: scanning open Dependabot PRs."
-          prs="$(gh pr list --repo "$REPO" --state open --author 'app/dependabot' \\
+          prs="$(gh pr list --repo "$REPO" --state open --author 'app/dependabot' \
             --limit 200 --json number,title,body,headRefName)"
 
           count="$(printf '%s' "$prs" | jq 'length')"
