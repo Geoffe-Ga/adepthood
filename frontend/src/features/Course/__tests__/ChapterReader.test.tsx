@@ -65,7 +65,7 @@ describe('ChapterReader', () => {
       />,
     );
     expect(getByText('Loading…')).toBeTruthy();
-    // Header title + the markdown H1 both render the live title.
+    // The viewer header and the sheet title both render the live title.
     await findAllByText('Chapter One');
   });
 

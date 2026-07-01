@@ -8,7 +8,12 @@ import { colors, SPACING } from '../../design/tokens';
 import styles, { markdownStyles } from './Course.styles';
 import { stripFrontmatter, stripLeadingTitleHeading } from './stripFrontmatter';
 
-/** Small-caps eyebrow shown above the sheet title, keyed by content type. */
+/**
+ * Small-caps eyebrow shown above the sheet title, keyed by content type.
+ * Only the types listed here map to a label; others (e.g. seeded ``essay`` /
+ * ``video`` / ``prompt`` chapters) resolve to ``undefined`` and render no
+ * eyebrow, which the sheet header handles gracefully.
+ */
 const READER_EYEBROWS: Record<string, string> = {
   chapter: 'Chapter',
   resource: 'Resource',
