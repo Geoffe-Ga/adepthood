@@ -1,25 +1,12 @@
 /* eslint-env jest */
 /* global describe, it, expect, beforeEach, jest */
-/**
- * Regression-lock tests: after Welcome is dismissed via Begin or Skip, the
- * authenticated shell MUST open on the Journal tab (not Today). These tests
- * lock the journal-first initial route: ``initialRouteName="Journal"`` in
- * BottomTabs + ``TAB_CONFIGS[0] === Journal``.
- *
- * Mechanism: unlike ``welcomeGate.test.tsx`` (which stubs RootStack to a
- * plain testID marker), this harness keeps the REAL NavigationContainer,
- * RootStack, and BottomTabs so that ``NavigationContainerRef.getCurrentRoute()``
- * can witness which tab is focused. All individual tab *screens* and the
- * WelcomeScreen are mocked as lightweight stubs; the navigation plumbing is
- * genuine. ``saveHasSeenWelcome`` is a never-settling promise to prove the
- * shell swap does not await the async persist (no blank-frame regression).
- */
+// Regression locks for the journal-first landing: Welcome dismissal (Begin/Skip)
+// opens the shell on Journal, via a REAL NavigationContainer/RootStack/BottomTabs
+// harness (leaf screens stubbed) so getCurrentRoute() witnesses the focused tab.
 
 // ─── Screen stubs (keep the navigation plumbing real) ───────────────────────
 
-// The WelcomeScreen mock exposes two pressable testIDs so tests can trigger
-// the Begin path (onBegin + onComplete) and the Skip path (onComplete only),
-// matching the production WelcomeScreen surface contract.
+// WelcomeScreen stub: Begin fires onBegin+onComplete, Skip fires onComplete only.
 jest.mock('@/features/Welcome/WelcomeScreen', () => {
   const React = require('react');
   const { Pressable, Text, View } = require('react-native');
@@ -154,8 +141,7 @@ jest.mock('@/features/Journal/JournalEntryScreen', () => {
   return { __esModule: true, default: Stub };
 });
 
-// Habit modals referenced by HabitsScreen (indirectly via mocked HabitsScreen
-// above, but kept here for completeness in case BottomTabs imports them).
+// Habit modals BottomTabs may import.
 jest.mock('@/features/Habits/components/GoalModal', () => () => null);
 jest.mock('@/features/Habits/components/HabitSettingsModal', () => () => null);
 jest.mock('@/features/Habits/components/MissedDaysModal', () => () => null);
@@ -174,13 +160,8 @@ jest.mock('expo-notifications', () => ({
 
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
-// ─── Storage: never-settling persist to prove no-blank-frame guarantee ───────
-//
-// ``saveHasSeenWelcome`` returns a promise that never resolves/rejects.
-// ``markWelcomeSeen`` (Zustand) calls it as a fire-and-forget side-effect
-// AFTER setting state synchronously. If the implementation were changed to
-// await the persist before flipping ``hasSeenWelcome``, the Journal tab
-// would never appear while this mock is in play — proving the regression.
+// Never-settling persist: proves markWelcomeSeen flips state before (not after)
+// the fire-and-forget save — an awaited save would hang the shell render.
 jest.mock('@/storage/welcomeStorage', () => ({
   __esModule: true,
   loadHasSeenWelcome: jest.fn(() => new Promise<boolean>(() => undefined)),
@@ -217,12 +198,8 @@ import type { RootTabParamList } from '@/navigation/BottomTabs';
 import { navThemeFor } from '@/navigation/theme';
 import { useWelcomeStore } from '@/store/useWelcomeStore';
 
-// ─── Navigation state helper ──────────────────────────────────────────────────
-//
-// Resolves the effective first-tab name from the nav ref without embedding
-// the drill-down logic inline (keeps each waitFor arrow trivially simple).
-// Early-returns (rather than chained optionals) keep the branch count low:
-// resolve the tab navigator's first route, else fall back to the focused route.
+// Resolve the tab navigator's first route (else the focused route); early-returns
+// keep the branch count under the complexity limit.
 function firstTabName(
   navRef: React.RefObject<NavigationContainerRef<RootTabParamList>>,
 ): string | undefined {
@@ -254,13 +231,7 @@ function mockAuthenticated(): void {
   } as unknown as ReturnType<typeof AuthContextModule.useAuth>);
 }
 
-// ─── Focused harness ──────────────────────────────────────────────────────────
-//
-// Wraps RootNavigator in a REAL NavigationContainer with a ref so that
-// ``navRef.current.getCurrentRoute()`` and ``getRootState()`` are available.
-// The ``navThemeFor('light')`` call satisfies the theme shape that
-// NavigationContainer expects (same as AppShell in production).
-
+// Wrap RootNavigator in a REAL NavigationContainer + ref so getCurrentRoute() works.
 function renderWithNav(navRef: React.RefObject<NavigationContainerRef<RootTabParamList>>) {
   return render(
     <NavigationContainer theme={navThemeFor('light')} ref={navRef}>
@@ -279,19 +250,7 @@ beforeEach(() => {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('Welcome → Journal landing', () => {
-  /**
-   * Test 1 — Begin path lands on Journal.
-   *
-   * First-run state (hasSeenWelcome=false) shows the WelcomeScreen stub.
-   * Pressing the Begin button calls onBegin then onComplete, both of which
-   * delegate to markSeen. markSeen sets hasSeenWelcome=true synchronously
-   * (BEFORE the never-settling saveHasSeenWelcome resolves), so WelcomeGate
-   * renders RootStack → BottomTabs immediately. The focused route MUST be
-   * Journal (initialRouteName="Journal" in BottomTabs).
-   *
-   * Regression: if initialRouteName reverts to "Today" this fails because
-   * getCurrentRoute().name would be "Today", not "Journal".
-   */
+  // Begin (onBegin+onComplete → markSeen) lands on Journal; fails if the initial route reverts.
   it('Begin path: focused route is Journal after Welcome is dismissed', async () => {
     const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
     act(() => useWelcomeStore.setState({ hasSeenWelcome: false }));
@@ -316,15 +275,7 @@ describe('Welcome → Journal landing', () => {
     });
   });
 
-  /**
-   * Test 2 — Skip path lands on Journal.
-   *
-   * Skip calls onComplete only (onBegin is NOT called). Both paths call
-   * markSeen, so the landing tab must be the same: Journal.
-   *
-   * Regression: same as Test 1 — initialRouteName revert or an explicit
-   * navigate('Today') redirect introduced would break this.
-   */
+  // Skip (onComplete only → markSeen) lands on Journal, same as Begin.
   it('Skip path: focused route is Journal after Welcome is dismissed', async () => {
     const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
     act(() => useWelcomeStore.setState({ hasSeenWelcome: false }));
@@ -344,17 +295,7 @@ describe('Welcome → Journal landing', () => {
     });
   });
 
-  /**
-   * Test 3 — No intermediate blank screen (persist non-blocking).
-   *
-   * ``saveHasSeenWelcome`` is mocked as a never-settling promise (it will
-   * never resolve during this test). After pressing Begin, the shell (with
-   * Journal as the focused route) must already be rendered — proving that
-   * markSeen flips state synchronously and the WelcomeGate swap does NOT
-   * await the persist. If the implementation were changed to await
-   * saveHasSeenWelcome before flipping hasSeenWelcome, this test would hang
-   * indefinitely inside the waitFor timeout.
-   */
+  // Shell mounts on Journal while the persist is still pending — no blank frame.
   it('shell renders Journal without awaiting the persist (no blank frame)', async () => {
     const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
     act(() => useWelcomeStore.setState({ hasSeenWelcome: false }));
@@ -374,15 +315,7 @@ describe('Welcome → Journal landing', () => {
     });
   });
 
-  /**
-   * Test 4 — Returning user never sees Welcome; shell opens on Journal.
-   *
-   * hasSeenWelcome=true → WelcomeGate renders RootStack directly. The
-   * focused route must be Journal.
-   *
-   * Regression: if initialRouteName reverts to "Today" or an explicit
-   * navigate('Today') is added to the RootStack mount path, this fails.
-   */
+  // Returning user (hasSeenWelcome=true) skips Welcome and opens on Journal.
   it('returning user (hasSeenWelcome=true): shell opens on Journal without Welcome', async () => {
     const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
     act(() => useWelcomeStore.setState({ hasSeenWelcome: true }));
@@ -397,17 +330,7 @@ describe('Welcome → Journal landing', () => {
     });
   });
 
-  /**
-   * Test 5 — Pre-hydration no-flash preserved; Journal is the initial route.
-   *
-   * hasSeenWelcome=null (storage not yet read) → WelcomeGate renders
-   * RootStack (isFirstRun is false). Shell must mount on Journal, and Welcome
-   * must never appear. This locks the no-flash guarantee alongside the
-   * journal-first landing change.
-   *
-   * Regression: if the gate logic is changed to show Welcome while null
-   * (adding a third truthy branch), this fails.
-   */
+  // Pre-hydration (hasSeenWelcome=null) shows the shell on Journal, no Welcome flash.
   it('pre-hydration (hasSeenWelcome=null): Journal renders without Welcome flash', async () => {
     const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
     act(() => useWelcomeStore.setState({ hasSeenWelcome: null }));
@@ -421,17 +344,7 @@ describe('Welcome → Journal landing', () => {
     });
   });
 
-  /**
-   * Bonus — Journal is TAB_CONFIGS[0] (first in physical tab order).
-   *
-   * ``getRootState().routes[0].name`` is the first registered tab; it must
-   * be Journal so that the keyboard / accessibility order starts at Journal.
-   * Mirrors the assertion in BottomTabs.test.tsx ("Journal is the first tab
-   * in navigation order") but from the end-to-end Welcome→shell path.
-   *
-   * Regression: reordering TAB_CONFIGS so Journal is no longer index 0 would
-   * break this even if initialRouteName is still "Journal".
-   */
+  // Journal is TAB_CONFIGS[0] (physical tab order), end-to-end from the Welcome path.
   it('Journal is the first route in the tab bar (TAB_CONFIGS[0])', async () => {
     const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
     act(() => useWelcomeStore.setState({ hasSeenWelcome: true }));

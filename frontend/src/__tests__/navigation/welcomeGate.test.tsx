@@ -130,31 +130,10 @@ describe('WelcomeGate (issue #836)', () => {
   });
 });
 
-/**
- * Journal-shell regression locks (gate-level).
- *
- * This suite asserts the WelcomeGate→shell swap contract at the stub level:
- * ``root-stack`` (the RootStack stub) maps 1:1 to the authenticated shell
- * whose ``initialRouteName`` is Journal. The focused route-level assertion
- * (``getCurrentRoute().name === 'Journal'``) lives in the companion harness
- * ``welcomeLandsOnJournal.test.tsx`` which renders a real NavigationContainer
- * with a ref. Both suites must stay green; each catches a different class of
- * regression.
- *
- * These tests pass against the CURRENT correct implementation and would FAIL if:
- * - The WelcomeGate removed RootStack after Begin/Skip and replaced it with a
- *   different component (breaks ``root-stack`` presence assertion).
- * - The WelcomeScreen stopped invoking ``markSeen`` on Begin or Skip (breaks
- *   the swap: ``root-stack`` would never appear while Welcome is visible).
- */
+// Gate-level swap locks (stub RootStack = the Journal shell); the route-level
+// assertion lives in the companion welcomeLandsOnJournal.test.tsx harness.
 describe('WelcomeGate → Journal shell (regression locks)', () => {
-  /**
-   * Regression: if markSeen is no longer called by WelcomeScreen's Begin
-   * button, hasSeenWelcome stays false and the shell (root-stack) never
-   * mounts. The WelcomeScreen mock here does call onBegin+onComplete; if
-   * the real component diverges from that contract, WelcomeScreen.test.tsx
-   * will catch it.
-   */
+  // Fails if markSeen stops firing on Begin/Skip so the shell never mounts.
   it('returning user sees the shell (root-stack) that hosts Journal, not Welcome', () => {
     // Returning user: hasSeenWelcome already true (no Begin/Skip needed).
     act(() => useWelcomeStore.setState({ hasSeenWelcome: true }));
@@ -165,11 +144,7 @@ describe('WelcomeGate → Journal shell (regression locks)', () => {
     expect(queryByTestId('welcome-screen')).toBeNull();
   });
 
-  /**
-   * Regression: if the WelcomeGate is changed to show Welcome while
-   * hasSeenWelcome is null (pending hydration), returning users would see
-   * a flash of Welcome before the Journal shell renders.
-   */
+  // Fails if the gate showed Welcome while hasSeenWelcome is null (a flash).
   it('pre-hydration state shows the shell (root-stack) that hosts Journal, not Welcome', () => {
     // null = storage not yet read; no-flash contract: shell renders immediately.
     act(() => useWelcomeStore.setState({ hasSeenWelcome: null }));
