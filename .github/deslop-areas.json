@@ -1,0 +1,122 @@
+[
+  {
+    "id": "backend-api",
+    "stack": "backend",
+    "paths": [
+      "backend/src/routers",
+      "backend/src/schemas",
+      "backend/src/dependencies",
+      "backend/src/middleware"
+    ],
+    "charter": "The HTTP surface: route handlers, request/response DTOs, dependency-injection helpers, and middleware. Prime sites for copy-paste endpoint variants, schema/model shape drift, dead routes, and inconsistent error handling."
+  },
+  {
+    "id": "backend-domain",
+    "stack": "backend",
+    "paths": [
+      "backend/src/domain",
+      "backend/src/models"
+    ],
+    "charter": "Business logic and the SQLModel ORM layer. Prime sites for duplicated rules, god-modules, lying flags/docstrings, dead branches, and frontend/backend shape drift."
+  },
+  {
+    "id": "backend-services",
+    "stack": "backend",
+    "paths": [
+      "backend/src/services",
+      "backend/src/security"
+    ],
+    "charter": "The service layer (email, encryption, wallet, streaks, LLM usage, check-ins) plus security utilities. Prime sites for stubbed integrations, swallowed exceptions, and logic duplicated from domain/."
+  },
+  {
+    "id": "backend-platform",
+    "stack": "backend",
+    "paths": [
+      "backend/src/*.py",
+      "backend/src/prompts"
+    ],
+    "charter": "App wiring and operations: main, database, seeds, rate limiting, observability, Sentry, content config. Owns every backend/src top-level module NOT claimed by another backend scan. Prime sites for config drift, dead seed data, and copy-paste seed scripts."
+  },
+  {
+    "id": "frontend-today",
+    "stack": "frontend",
+    "paths": [
+      "frontend/src/features/Today"
+    ],
+    "charter": "The Today tab: daily dashboard screens, components, and hooks."
+  },
+  {
+    "id": "frontend-habits",
+    "stack": "frontend",
+    "paths": [
+      "frontend/src/features/Habits"
+    ],
+    "charter": "The Habits tab: habit list, creation/editing flows, streak display."
+  },
+  {
+    "id": "frontend-practice",
+    "stack": "frontend",
+    "paths": [
+      "frontend/src/features/Practice"
+    ],
+    "charter": "The Practice tab: ritual engine, cue scheduling, mode views, session flows. The largest feature area — watch for god-components and engine/view layering violations."
+  },
+  {
+    "id": "frontend-course",
+    "stack": "frontend",
+    "paths": [
+      "frontend/src/features/Course"
+    ],
+    "charter": "The Course tab: 36-week APTITUDE program reading, stage content, and progress."
+  },
+  {
+    "id": "frontend-journal",
+    "stack": "frontend",
+    "paths": [
+      "frontend/src/features/Journal"
+    ],
+    "charter": "The Journal tab: entry composition, prompted journaling, marginalia."
+  },
+  {
+    "id": "frontend-map",
+    "stack": "frontend",
+    "paths": [
+      "frontend/src/features/Map"
+    ],
+    "charter": "The Map tab: stage/wheel visualization and program navigation."
+  },
+  {
+    "id": "frontend-entry",
+    "stack": "frontend",
+    "paths": [
+      "frontend/src/features/Auth",
+      "frontend/src/features/Welcome",
+      "frontend/src/features/Settings",
+      "frontend/src/context",
+      "frontend/src/navigation"
+    ],
+    "charter": "The app's entry and account surfaces: Auth, Welcome, and Settings screens, the AuthContext (JWT lifecycle), and React Navigation wiring."
+  },
+  {
+    "id": "frontend-shared",
+    "stack": "frontend",
+    "paths": [
+      "frontend/src/api",
+      "frontend/src/components",
+      "frontend/src/design",
+      "frontend/src/store",
+      "frontend/src/storage",
+      "frontend/src/hooks",
+      "frontend/src/utils",
+      "frontend/src/constants",
+      "frontend/src/observability",
+      "frontend/src/test-utils",
+      "frontend/src/__tests__",
+      "frontend/src/__mocks__",
+      "frontend/src/App.tsx",
+      "frontend/src/config.ts",
+      "frontend/src/index.ts"
+    ],
+    "charter": "Shared frontend infrastructure: API client + types, Candle & Ink design system, shared components, Zustand stores, AsyncStorage persistence, hooks, and utilities. The prime cross-feature duplication and dead-export site."
+  }
+]
