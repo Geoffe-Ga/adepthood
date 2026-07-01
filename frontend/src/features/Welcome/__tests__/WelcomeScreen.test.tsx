@@ -52,7 +52,7 @@ describe('WelcomeScreen', () => {
     expect(queryByTestId('welcome-begin')).toBeNull();
   });
 
-  it('Begin completes (sets flag) and navigates to Today', () => {
+  it("Begin completes (sets flag) and lands on Journal (the app shell's initial route)", () => {
     const { getByTestId, onComplete, onBegin } = setup();
     // Page to the last panel via the pager scroll handler.
     const lastIndex = WELCOME_PANELS.length - 1;

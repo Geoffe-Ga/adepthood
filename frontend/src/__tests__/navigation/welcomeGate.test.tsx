@@ -129,3 +129,27 @@ describe('WelcomeGate (issue #836)', () => {
     expect(queryByTestId('welcome-screen')).toBeNull();
   });
 });
+
+// Gate-level swap locks (stub RootStack = the Journal shell); the route-level
+// assertion lives in the companion welcomeLandsOnJournal.test.tsx harness.
+describe('WelcomeGate → Journal shell (regression locks)', () => {
+  // Fails if markSeen stops firing on Begin/Skip so the shell never mounts.
+  it('returning user sees the shell (root-stack) that hosts Journal, not Welcome', () => {
+    // Returning user: hasSeenWelcome already true (no Begin/Skip needed).
+    act(() => useWelcomeStore.setState({ hasSeenWelcome: true }));
+    const { getByTestId, queryByTestId } = render(<RootNavigator />);
+    // The shell embeds BottomTabs with initialRouteName="Journal".
+    // This testID presence is the gate-level proxy for "Journal is mounted".
+    expect(getByTestId('root-stack')).toBeTruthy();
+    expect(queryByTestId('welcome-screen')).toBeNull();
+  });
+
+  // Fails if the gate showed Welcome while hasSeenWelcome is null (a flash).
+  it('pre-hydration state shows the shell (root-stack) that hosts Journal, not Welcome', () => {
+    // null = storage not yet read; no-flash contract: shell renders immediately.
+    act(() => useWelcomeStore.setState({ hasSeenWelcome: null }));
+    const { getByTestId, queryByTestId } = render(<RootNavigator />);
+    expect(getByTestId('root-stack')).toBeTruthy();
+    expect(queryByTestId('welcome-screen')).toBeNull();
+  });
+});

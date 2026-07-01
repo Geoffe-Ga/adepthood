@@ -142,7 +142,7 @@ const useWelcomePager = (): Pager => {
 export interface WelcomeScreenProps {
   /** Persist the flag and dismiss the welcome (called on Begin and Skip). */
   onComplete: () => void;
-  /** Land on the Today hub, optionally opening the first-habits step. */
+  /** Land on the Journal home, optionally opening the first-habits step. */
   onBegin: () => void;
 }
 
@@ -150,7 +150,7 @@ export interface WelcomeScreenProps {
  * The program welcome (#836): a swipeable editorial intro to the 36-week
  * journey. Paging works with or without animation (reduced-motion-safe), a
  * persistent Skip sits on every panel, and the final panel's Begin CTA lands
- * the user on Today.
+ * the user on the Journal home (the app shell's initial route).
  */
 export const WelcomeScreen = ({ onComplete, onBegin }: WelcomeScreenProps): React.JSX.Element => {
   const { page, width, scrollRef, onScroll, goNext } = useWelcomePager();
