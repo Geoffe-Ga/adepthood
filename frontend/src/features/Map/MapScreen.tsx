@@ -32,6 +32,7 @@ import {
 } from '../../store/useStageStore';
 
 import { BEGIN_AGAIN_COPY, cycleLabel } from './beginAgain';
+import { useBeginAgainGuard } from './hooks/useBeginAgainGuard';
 import { useWheelBalance } from './hooks/useWheelBalance';
 import { journeyRead, progressionSentence, rankedStats, unlockTimeline } from './journeyNarrative';
 import styles from './Map.styles';
@@ -666,7 +667,13 @@ const JourneyHeader = ({ currentStage, cycleNumber }: JourneyHeaderProps): React
 };
 
 /** End-of-arc "begin again" affordance: a gentle, declinable invitation the user chooses — never auto-invoked. */
-const BeginAgainBlock = ({ onBeginAgain }: { onBeginAgain: () => void }): React.JSX.Element => (
+const BeginAgainBlock = ({
+  onBeginAgain,
+  beginning,
+}: {
+  onBeginAgain: () => void;
+  beginning: boolean;
+}): React.JSX.Element => (
   <View style={styles.beginAgain} testID="begin-again">
     <Text style={styles.beginAgainHeading}>{BEGIN_AGAIN_COPY.heading}</Text>
     <Text style={styles.beginAgainBody}>{BEGIN_AGAIN_COPY.body}</Text>
@@ -674,6 +681,9 @@ const BeginAgainBlock = ({ onBeginAgain }: { onBeginAgain: () => void }): React.
       label={BEGIN_AGAIN_COPY.action}
       variant="tertiary"
       onPress={onBeginAgain}
+      // Disable while the first POST is in flight so a double-press can't
+      // advance the cycle twice before ``loadStages`` hides this button.
+      disabled={beginning}
       testID="begin-again-button"
       accessibilityLabel="Begin again — start a new cycle through the arc"
     />
@@ -809,6 +819,7 @@ interface MapContentProps {
   currentStage: number;
   cycleNumber: number;
   showBeginAgain: boolean;
+  beginning: boolean;
   showRefreshError: boolean;
   activeStage: StageData | null;
   celebration: CompletionCelebration;
@@ -831,7 +842,9 @@ const MapContent = (props: MapContentProps): React.JSX.Element => (
       onSelectStage={props.onSelectStage}
     />
     <BalanceSummary fullnessByStage={props.fullnessByStage} />
-    {props.showBeginAgain && <BeginAgainBlock onBeginAgain={props.onBeginAgain} />}
+    {props.showBeginAgain && (
+      <BeginAgainBlock onBeginAgain={props.onBeginAgain} beginning={props.beginning} />
+    )}
     {props.showRefreshError && <MapRefreshErrorBanner onRetry={props.onRefresh} />}
     <CelebrationBanner
       active={props.celebration.active}
@@ -859,6 +872,7 @@ const MapScreen = (): React.JSX.Element => {
   // Additive overlay: a failed/loading read leaves the map empty so every Aspect reads thin.
   const { fullnessByStage } = useWheelBalance();
   const [activeStage, setActiveStage] = useState<StageData | null>(null);
+  const { beginning, handleBeginAgain } = useBeginAgainGuard();
 
   // Resolve each row's stage numbers to their loaded StageData once per change.
   const lookup = useMemo<StageLookup>(
@@ -873,7 +887,6 @@ const MapScreen = (): React.JSX.Element => {
   }, [stages.length, loading]);
 
   const handleRefresh = useCallback(() => void stageService.loadStages(), []);
-  const handleBeginAgain = useCallback(() => void stageService.beginAgain(), []);
   const handleCloseModal = useCallback(() => setActiveStage(null), []);
   const handleNavigate = useStageNavigation(handleCloseModal);
   const celebration = useStageCompletionCelebration(stages, lookup);
@@ -888,6 +901,7 @@ const MapScreen = (): React.JSX.Element => {
       currentStage={currentStage}
       cycleNumber={cycleNumber}
       showBeginAgain={isEndOfCycle(lookup, currentStage)}
+      beginning={beginning}
       showRefreshError={!!error && stages.length > 0}
       activeStage={activeStage}
       celebration={celebration}

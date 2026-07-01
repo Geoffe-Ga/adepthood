@@ -13,6 +13,8 @@ jest.mock('react-native/Libraries/Interaction/InteractionManager', () => ({
     cb();
     return { then: () => {}, done: () => {}, cancel: () => {} };
   },
+  createInteractionHandle: () => 1,
+  clearInteractionHandle: () => {},
 }));
 
 // Mock navigation so we can observe tab linking behaviour.
@@ -393,6 +395,31 @@ describe('MapScreen', () => {
       tree.root.findByProps({ testID: 'begin-again-button' }).props.onPress();
     });
     expect(mockBeginAgain).toHaveBeenCalledTimes(1);
+  });
+
+  it('double-pressing begin-again-button sends exactly one request', () => {
+    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(() => true);
+    // Never-resolving so the in-flight guard stays true across both presses;
+    // the second tap must be a no-op or a second POST would skip a cycle.
+    mockBeginAgain.mockReturnValue(new Promise<void>(() => {}));
+    const tree = create(<MapScreen />);
+    act(() => {
+      tree.root.findByProps({ testID: 'begin-again-button' }).props.onPress();
+      tree.root.findByProps({ testID: 'begin-again-button' }).props.onPress();
+    });
+    expect(mockBeginAgain).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables begin-again-button while a begin-again request is in flight', () => {
+    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(() => true);
+    mockBeginAgain.mockReturnValue(new Promise<void>(() => {}));
+    const tree = create(<MapScreen />);
+    act(() => {
+      tree.root.findByProps({ testID: 'begin-again-button' }).props.onPress();
+    });
+    const btn = tree.root.findByProps({ testID: 'begin-again-button' });
+    // The Button node carries the in-flight guard via its ``disabled`` prop.
+    expect(btn.props.disabled).toBe(true);
   });
 
   it('begin-again-button is absent mid-cycle', () => {
