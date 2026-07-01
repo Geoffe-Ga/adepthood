@@ -3,7 +3,9 @@ import { useNavigation } from '@react-navigation/native';
 import React from 'react';
 import { Animated, Pressable, Text } from 'react-native';
 
+import InvitationNote from './InvitationNote';
 import { todayStyles as s } from './Today.styles';
+import { useInvitations } from './useInvitations';
 
 import { EmptyState } from '@/components/feedback/EmptyState';
 import { SkeletonCard } from '@/components/feedback/Skeleton';
@@ -133,6 +135,19 @@ const HabitsBand = ({ index, onPress }: { index: number; onPress: () => void }) 
   );
 };
 
+/** The pending invitations (NORTH-STAR §6): silent when empty, one card each. */
+const InvitationStack = (): React.JSX.Element | null => {
+  const { invitations, dismiss } = useInvitations();
+  if (invitations.length === 0) return null;
+  return (
+    <>
+      {invitations.map((invitation) => (
+        <InvitationNote key={invitation.id} invitation={invitation} onDismiss={dismiss} />
+      ))}
+    </>
+  );
+};
+
 /** The editorial home tab: where am I in the journey, and what's next today. */
 const TodayScreen = (): React.JSX.Element => {
   const navigation = useNavigation<TodayNav>();
@@ -142,6 +157,7 @@ const TodayScreen = (): React.JSX.Element => {
   return (
     <ScreenScaffold scroll testID="today-screen">
       <TodayHero week={week} stage={stage} />
+      <InvitationStack />
       <HabitsBand index={1} onPress={() => navigation.navigate('Habits')} />
       <TodayBand
         index={2}

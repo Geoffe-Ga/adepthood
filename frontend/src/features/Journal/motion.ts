@@ -8,13 +8,12 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Animated } from 'react-native';
 
+export { usePressScale, PRESS_DURATION_MS, PRESS_SCALE } from '@/hooks/usePressScale';
+export type { PressScale } from '@/hooks/usePressScale';
+
 /** Sheet settle-in: a brief fade + a few-px lift into place. */
 export const SETTLE_DURATION_MS = 220;
 export const SETTLE_DISTANCE = 6;
-
-/** Card press-in: a barely-there scale-down for a "press into the desk" feel. */
-export const PRESS_DURATION_MS = 90;
-export const PRESS_SCALE = 0.98;
 
 export interface SettleStyle {
   opacity: Animated.AnimatedInterpolation<number> | Animated.Value;
@@ -52,34 +51,4 @@ export function useSettleIn(reduced: boolean): SettleStyle {
     }),
     [anim],
   );
-}
-
-export interface PressScale {
-  scale: Animated.Value;
-  onPressIn: () => void;
-  onPressOut: () => void;
-}
-
-/**
- * A press-feedback scale for a card. ``onPressIn``/``onPressOut`` drive a subtle
- * scale-down and back; both are no-ops under reduced motion (the scale stays at
- * 1, so the card still gets ``TouchableOpacity``'s default opacity dip only).
- */
-export function usePressScale(reduced: boolean): PressScale {
-  const scale = useRef(new Animated.Value(1)).current;
-
-  const animateTo = (toValue: number): void => {
-    if (reduced) return;
-    Animated.timing(scale, {
-      toValue,
-      duration: PRESS_DURATION_MS,
-      useNativeDriver: true,
-    }).start();
-  };
-
-  return {
-    scale,
-    onPressIn: () => animateTo(PRESS_SCALE),
-    onPressOut: () => animateTo(1),
-  };
 }

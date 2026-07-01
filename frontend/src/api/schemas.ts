@@ -491,6 +491,33 @@ export type CompletionSuggestionT = z.infer<typeof completionSuggestionSchema>;
 export type AcceptSuggestionResultT = z.infer<typeof acceptSuggestionResultSchema>;
 
 // ---------------------------------------------------------------------------
+// Invitations (subtle invitation surface, NORTH-STAR §6) — mirror the backend
+// InvitationResponse (bare array, no user_id).
+// ---------------------------------------------------------------------------
+
+export const invitationTargetTypeSchema = z.enum([
+  'habit',
+  'practice',
+  'course',
+  'sangha',
+  'embodied_community',
+]);
+export const invitationKindSchema = z.enum(['readiness', 'consistency', 'mastery']);
+
+/** One declinable invitation (mirrors the backend ``InvitationResponse``). */
+export const invitationSchema = z.object({
+  id: z.number(),
+  target_type: invitationTargetTypeSchema,
+  target_id: z.number().nullable(),
+  kind: invitationKindSchema,
+  created_at: z.string(),
+});
+
+export type InvitationTargetTypeT = z.infer<typeof invitationTargetTypeSchema>;
+export type InvitationKindT = z.infer<typeof invitationKindSchema>;
+export type InvitationT = z.infer<typeof invitationSchema>;
+
+// ---------------------------------------------------------------------------
 // Resonance + marginalia + care (journal-resonance #891)
 // ---------------------------------------------------------------------------
 
