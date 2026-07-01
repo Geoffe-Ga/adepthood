@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
-import { Alert } from 'react-native';
+import { Alert, StyleSheet } from 'react-native';
 
 import type { PracticeItem } from '@/api';
+import { surface } from '@/design/tokens';
 
 // The catalog reads useSafeAreaInsets; stub it with non-zero insets (no
 // SafeAreaProvider in tests) so the safe-area padding is observable.
@@ -142,10 +143,16 @@ describe('PracticeCatalogScreen — sections', () => {
     });
   });
 
-  it('renders an empty Imported section because no share-token signal exists yet', async () => {
+  it('renders no Imported rows or footer when siblings are populated (no share-token signal yet)', async () => {
+    // Imported is structurally empty today (no share-token mechanism yet).
+    // When presets and drafts are populated the footer is suppressed so it
+    // cannot overlap and swallow taps on the populated list.
     const { view } = renderScreen();
     await waitForLoad();
-    expect(view.getByTestId('practice-catalog-section-imported-empty')).toBeTruthy();
+    // Section header is absent for empty sections (renderSectionHeader returns null).
+    expect(view.queryByTestId('practice-catalog-section-imported')).toBeNull();
+    // Empty-state footer must also be absent — suppressed while siblings have rows.
+    expect(view.queryByTestId('practice-catalog-section-imported-empty')).toBeNull();
   });
 
   it('shows a + Create button that fires the navigate callback', async () => {
@@ -348,14 +355,25 @@ describe('PracticeCatalogScreen — defaults wiring', () => {
 });
 
 describe('PracticeCatalogScreen — empty sections', () => {
-  it('renders an editorial empty state with a Create CTA into the wizard', async () => {
-    const { view, navigateToCreate } = renderScreen();
+  it('renders an editorial empty state with a Create CTA into the wizard when the whole catalog is empty', async () => {
+    // The empty-state footer (with its Create CTA) shows only when every
+    // section is empty — that is the correct, non-overlapping contract.
+    const navigateToCreate = jest.fn();
+    const view = render(
+      <PracticeCatalogScreen
+        initialStage={1}
+        loadPractices={allEmptyLoad}
+        navigateToDetail={jest.fn()}
+        navigateToCreate={navigateToCreate}
+      />,
+    );
     await waitForLoad();
-    // The Imported section is always empty today — it shows the warm empty state
-    // (replacing the old passive "Nothing here yet." line) with a create CTA.
-    expect(view.getByTestId('practice-catalog-section-imported-empty')).toBeTruthy();
+    // All three section footers render under all-empty.
+    expect(view.getByTestId('practice-catalog-section-presets-empty')).toBeTruthy();
+    // Passive "Nothing here yet." copy must not appear in any footer.
     expect(view.queryByText('Nothing here yet.')).toBeNull();
-    fireEvent.press(view.getByTestId('practice-catalog-section-imported-create'));
+    // The Create CTA in the presets footer opens the wizard.
+    fireEvent.press(view.getByTestId('practice-catalog-section-presets-create'));
     expect(navigateToCreate).toHaveBeenCalled();
   });
 });
@@ -412,10 +430,11 @@ describe('PracticeCatalogScreen — virtualization parity', () => {
     const { view, navigateToDetail } = renderScreen();
     await waitForLoad();
 
-    // All three section headers render (the empty Imported section keeps its footer).
+    // Populated section headers render; the empty Imported section renders no header.
     expect(view.getByTestId('practice-catalog-section-presets')).toBeTruthy();
     expect(view.getByTestId('practice-catalog-section-drafts')).toBeTruthy();
-    expect(view.getByTestId('practice-catalog-section-imported-empty')).toBeTruthy();
+    // Footer suppression: Imported is empty but siblings are populated, so no footer.
+    expect(view.queryByTestId('practice-catalog-section-imported-empty')).toBeNull();
 
     // Rows from different sections all appear in the same windowed pass...
     expect(view.getByTestId('practice-catalog-row-1')).toBeTruthy();
@@ -425,5 +444,107 @@ describe('PracticeCatalogScreen — virtualization parity', () => {
     // ...and pressing a row still navigates (behavior unchanged by virtualization).
     fireEvent.press(view.getByTestId('practice-catalog-row-9'));
     expect(navigateToDetail).toHaveBeenCalledWith(9);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gate-1 RED: footer-suppression + inline-style contract
+// ---------------------------------------------------------------------------
+
+const presetsOnlyLoad = jest.fn(async () => [presetA, presetB]) as jest.MockedFunction<
+  (_stage: number) => Promise<PracticeItem[]>
+>;
+
+const allEmptyLoad = jest.fn(async () => []) as jest.MockedFunction<
+  (_stage: number) => Promise<PracticeItem[]>
+>;
+
+describe('PracticeCatalogScreen — footer suppression (RED until fix)', () => {
+  // Test 1: empty sibling footers must be absent when any section is populated.
+  it('hides drafts and imported empty-footers when presets are populated', async () => {
+    const setActive = jest.fn(async () => undefined) as jest.MockedFunction<
+      (id: number, stage: number) => Promise<void>
+    >;
+    presetsOnlyLoad.mockResolvedValue([presetA, presetB]);
+    const view = render(
+      <PracticeCatalogScreen
+        initialStage={1}
+        loadPractices={presetsOnlyLoad}
+        navigateToDetail={jest.fn()}
+        navigateToCreate={jest.fn()}
+        setActive={setActive}
+      />,
+    );
+    await waitForLoad();
+    // Both of these must be absent — today they render → RED.
+    expect(view.queryByTestId('practice-catalog-section-drafts-empty')).toBeNull();
+    expect(view.queryByTestId('practice-catalog-section-imported-empty')).toBeNull();
+  });
+
+  // Test 2: all-empty catalog MUST still show the presets empty footer (characterization guard).
+  it('shows the presets empty-footer when the whole catalog is empty', async () => {
+    allEmptyLoad.mockResolvedValue([]);
+    const view = render(
+      <PracticeCatalogScreen
+        initialStage={1}
+        loadPractices={allEmptyLoad}
+        navigateToDetail={jest.fn()}
+        navigateToCreate={jest.fn()}
+      />,
+    );
+    await waitForLoad();
+    // Must remain visible after the fix — suppression applies only to populated siblings.
+    expect(view.getByTestId('practice-catalog-section-presets-empty')).toBeTruthy();
+  });
+
+  // Test 3: Use button and row detail handler are reachable when presets are populated.
+  it('fires Use handler and detail handler on populated-preset rows', async () => {
+    const setActive = jest.fn(async () => undefined) as jest.MockedFunction<
+      (id: number, stage: number) => Promise<void>
+    >;
+    const navigateToDetail = jest.fn();
+    presetsOnlyLoad.mockResolvedValue([presetA, presetB]);
+    const view = render(
+      <PracticeCatalogScreen
+        initialStage={1}
+        loadPractices={presetsOnlyLoad}
+        navigateToDetail={navigateToDetail}
+        navigateToCreate={jest.fn()}
+        setActive={setActive}
+      />,
+    );
+    await waitForLoad();
+    // Use button must exist and fire the activate callback.
+    const useBtn = view.getByTestId('practice-catalog-row-1-use');
+    expect(useBtn).toBeTruthy();
+    fireEvent.press(useBtn);
+    await waitFor(() => expect(setActive).toHaveBeenCalledWith(1, 1));
+    // Row itself must open detail.
+    fireEvent.press(view.getByTestId('practice-catalog-row-1'));
+    expect(navigateToDetail).toHaveBeenCalledWith(1);
+  });
+
+  // Test 4: the inline empty-footer container must not carry full-screen styles.
+  it('section empty-footer has inline style contract (no full-screen canvas bg)', async () => {
+    allEmptyLoad.mockResolvedValue([]);
+    const view = render(
+      <PracticeCatalogScreen
+        initialStage={1}
+        loadPractices={allEmptyLoad}
+        navigateToDetail={jest.fn()}
+        navigateToCreate={jest.fn()}
+      />,
+    );
+    await waitForLoad();
+    const footer = view.getByTestId('practice-catalog-section-presets-empty');
+    const flat = StyleSheet.flatten(
+      footer.props.style as Parameters<typeof StyleSheet.flatten>[0],
+    ) as { flex?: number; justifyContent?: string; backgroundColor?: string };
+    // Must NOT be a full-screen block — today the base container contributes these → RED.
+    expect(flat.flex).not.toBe(1);
+    expect(flat.justifyContent).not.toBe('center');
+    expect(flat.backgroundColor).not.toBe(surface.canvas);
+    // Must positively declare itself as non-expanding.
+    expect(flat.flex).toBe(0);
   });
 });

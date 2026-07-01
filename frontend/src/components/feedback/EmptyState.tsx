@@ -3,6 +3,11 @@
  * an optional call-to-action slot. Replaces the bare one-line "nothing here yet"
  * text the Practice / Journal / Course screens each rolled by hand. Fades in via
  * ``useEntrance`` (static under reduced motion); token-only, AA on the canvas.
+ *
+ * Two layouts: the default full-screen centred surface, and a compact ``inline``
+ * variant (transparent, non-expanding, no settle offset) for use as an in-list
+ * block such as a ``SectionList`` footer, where the full-screen version would
+ * overlap and cover neighbouring rows.
  */
 import React from 'react';
 import {
@@ -28,6 +33,16 @@ interface EmptyStateProps {
   cta?: React.ReactNode;
   /** Extra container style — e.g. safe-area insets from the host screen. */
   style?: StyleProp<ViewStyle>;
+  /**
+   * When ``true``, render as a compact, transparent, non-expanding block that
+   * sits inline within a host list (e.g. a ``SectionList`` footer) rather than
+   * as its own full-screen surface. Also suppresses the entrance's upward
+   * settle so it doesn't read as floating over the content beneath it.
+   *
+   * Defaults to ``false``: the full-screen centered/opaque behavior the
+   * Today / Course / Journal / Practice screens rely on is preserved untouched.
+   */
+  inline?: boolean;
   testID?: string;
 }
 
@@ -37,12 +52,19 @@ export function EmptyState({
   body,
   cta,
   style,
+  inline = false,
   testID = 'empty-state',
 }: EmptyStateProps): React.JSX.Element {
   const t = type(useWindowDimensions().width);
   const entrance = useEntrance();
+  // Inline keeps the opacity fade but drops the upward settle so it reads as
+  // part of the list, not a surface floating in from below.
+  const entranceStyle = inline ? { opacity: entrance.opacity } : entrance;
   return (
-    <Animated.View style={[styles.container, style, entrance]} testID={testID}>
+    <Animated.View
+      style={[styles.container, inline && styles.inline, style, entranceStyle]}
+      testID={testID}
+    >
       <Text style={styles.glyph} accessibilityElementsHidden importantForAccessibility="no">
         {glyph}
       </Text>
@@ -63,6 +85,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: rhythm.screenPaddingH,
     gap: rhythm.blockGap,
     backgroundColor: surface.canvas,
+  },
+  inline: {
+    flex: 0,
+    alignItems: 'stretch',
+    justifyContent: 'flex-start',
+    backgroundColor: 'transparent',
   },
   glyph: { fontSize: GLYPH_SIZE },
   title: { color: ink.primary, textAlign: 'center' },
