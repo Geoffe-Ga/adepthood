@@ -46,7 +46,7 @@ export type RootStackParamList = {
   TimezoneSettings: undefined;
   SupportCare: undefined;
   SharePreview: { token: string };
-  PracticeDetail: { practiceId: number };
+  PracticeDetail: { practiceId: number; assignError?: string };
   CreatePractice: { prefill?: CreatePracticePrefill } | undefined;
   Catalog: { stageNumber?: number } | undefined;
   JournalEntry:

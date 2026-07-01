@@ -47,11 +47,11 @@ interface ScreenState {
   assignedStage: number | null;
 }
 
-function initialState(): ScreenState {
+function initialState(actionError: string | null): ScreenState {
   return {
     practice: null,
     loadError: null,
-    actionError: null,
+    actionError,
     assigning: false,
     loading: true,
     pickerOpen: false,
@@ -120,14 +120,16 @@ function LoadedDetail({
 }
 
 export function PracticeDetailScreen(props: PracticeDetailScreenProps): React.JSX.Element {
-  const { practiceId } = props.route.params;
+  const { practiceId, assignError } = props.route.params;
   const { navigation } = props;
   // After a successful selection, pop back to the Practice screen (the tab is
   // the first route under the root stack; the catalog + this detail screen are
   // pushed on top), matching the catalog's one-tap "Use" which also returns the
   // user to where they can see the active practice.
   const onAssigned = useCallback(() => navigation.popToTop(), [navigation]);
-  const state = usePracticeDetail(practiceId, onAssigned);
+  // A wizard stage-assign that failed hands its message down via the route so
+  // the same banner used for this screen's own assign() failures surfaces it.
+  const state = usePracticeDetail(practiceId, onAssigned, assignError ?? null);
   if (state.loading) {
     return (
       <View style={styles.loading} testID="practice-detail-loading">
@@ -157,8 +159,25 @@ interface PracticeDetailHook {
   assign: (stageNumber: number) => Promise<void>;
 }
 
-function usePracticeDetail(practiceId: number, onAssigned?: () => void): PracticeDetailHook {
-  const [state, setState] = useState<ScreenState>(initialState);
+const withAssignSuccess = (prev: ScreenState, stageNumber: number): ScreenState => ({
+  ...prev,
+  assigning: false,
+  pickerOpen: false,
+  assignedStage: stageNumber,
+});
+
+const withAssignError = (prev: ScreenState, err: unknown): ScreenState => ({
+  ...prev,
+  assigning: false,
+  actionError: formatApiError(err, { fallback: 'Could not assign practice.' }),
+});
+
+function usePracticeDetail(
+  practiceId: number,
+  onAssigned?: () => void,
+  initialActionError: string | null = null,
+): PracticeDetailHook {
+  const [state, setState] = useState<ScreenState>(() => initialState(initialActionError));
 
   const runReload = useCallback(async () => {
     try {
@@ -193,21 +212,11 @@ function usePracticeDetail(practiceId: number, onAssigned?: () => void): Practic
       setState((prev) => ({ ...prev, assigning: true, actionError: null }));
       try {
         await userPractices.create({ practice_id: practiceId, stage_number: stageNumber });
-        setState((prev) => ({
-          ...prev,
-          assigning: false,
-          pickerOpen: false,
-          assignedStage: stageNumber,
-        }));
-        // Confirmation banner is set above for the brief moment before the
-        // screen pops; the callback returns the user to the Practice screen.
+        setState((prev) => withAssignSuccess(prev, stageNumber));
+        // The callback returns the user to the Practice screen after assigning.
         onAssigned?.();
       } catch (err) {
-        setState((prev) => ({
-          ...prev,
-          assigning: false,
-          actionError: formatApiError(err, { fallback: 'Could not assign practice.' }),
-        }));
+        setState((prev) => withAssignError(prev, err));
       }
     },
     [practiceId, onAssigned],
