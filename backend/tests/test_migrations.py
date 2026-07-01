@@ -1450,3 +1450,126 @@ def test_stageprogress_cycle_migration_round_trip_on_sqlite(
     command.upgrade(cfg, _STAGEPROGRESS_CYCLE_REVISION)
     row_after = _stageprogress_row(db_url, row_id=1)
     assert row_after["cycle_number"] == 1
+
+
+# -- invitation-signal-01 invitationsignal table migration round-trip ---------
+
+# Revision anchors for the invitation_signal migration round-trip.
+# down_revision is f2a3b4c5d6e8 (the stageprogress cycle_number migration).
+_INVITATION_SIGNAL_BASE_REVISION = "f2a3b4c5d6e8"  # pragma: allowlist secret
+_INVITATION_SIGNAL_REVISION = "b3c4d5e6f7a8"  # pragma: allowlist secret
+
+
+def _bootstrap_invitation_signal_baseline(sync_url: str) -> None:
+    """Bootstrap a minimal ``user`` table required by the invitation_signal migration.
+
+    The migration creates ``invitationsignal`` with a FK to ``user.id``
+    (ondelete CASCADE); SQLite needs the parent table present even with FK
+    enforcement off.  One user row is inserted so unique-index enforcement
+    can be exercised inside the round-trip test.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE user ( id INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL)")
+        )
+        conn.execute(text("INSERT INTO user (id, email) VALUES (1, 'inv@example.com')"))
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_invitation_signal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite Alembic config positioned just before the invitation_signal migration.
+
+    Bootstraps a minimal ``user`` table and stamps the DB at
+    ``f2a3b4c5d6e8`` (the chain head before this migration) so the
+    round-trip exercises only the new migration.
+    """
+    db_path = tmp_path / "invitation_signal_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_invitation_signal_baseline(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _INVITATION_SIGNAL_BASE_REVISION)
+    return cfg
+
+
+def _insert_invitation_signal_row(
+    db_url: str,
+    *,
+    user_id: int,
+    target_type: str,
+    target_id: int | None,
+    kind: str,
+) -> None:
+    """Insert a single invitationsignal row (raises on constraint violation)."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO invitationsignal"
+                    " (user_id, target_type, target_id, kind, created_at)"
+                    " VALUES (:u, :tt, :tid, :k, '2026-06-01T00:00:00+00:00')"
+                ),
+                {"u": user_id, "tt": target_type, "tid": target_id, "k": kind},
+            )
+    finally:
+        engine.dispose()
+
+
+def test_invitation_signal_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_invitation_signal: Config,
+) -> None:
+    """Round-trip the invitation_signal migration: upgrade creates table; downgrade drops it.
+
+    Phase 1: upgrade installs ``invitationsignal`` with the expected columns
+    and both partial unique indexes, and the null-target_id partial index
+    enforces uniqueness (insert a duplicate → IntegrityError).
+    Phase 2: downgrade removes the table cleanly.
+    Phase 3: re-upgrade is idempotent.
+    """
+    cfg = alembic_sqlite_config_invitation_signal
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade creates the table.
+    command.upgrade(cfg, _INVITATION_SIGNAL_REVISION)
+    assert _table_exists(db_url, "invitationsignal")
+    cols = _columns_of(db_url, "invitationsignal")
+    expected_cols = {
+        "id",
+        "user_id",
+        "target_type",
+        "target_id",
+        "kind",
+        "created_at",
+        "dismissed_at",
+    }
+    assert expected_cols.issubset(cols)
+
+    # The null-target_id partial index must enforce uniqueness.
+    _insert_invitation_signal_row(
+        db_url, user_id=1, target_type="habit", target_id=None, kind="readiness"
+    )
+    with pytest.raises(IntegrityError):
+        _insert_invitation_signal_row(
+            db_url, user_id=1, target_type="habit", target_id=None, kind="readiness"
+        )
+
+    # Phase 2: downgrade drops the table.
+    command.downgrade(cfg, _INVITATION_SIGNAL_BASE_REVISION)
+    assert not _table_exists(db_url, "invitationsignal")
+
+    # Phase 3: re-upgrade is idempotent.
+    command.upgrade(cfg, _INVITATION_SIGNAL_REVISION)
+    assert _table_exists(db_url, "invitationsignal")
