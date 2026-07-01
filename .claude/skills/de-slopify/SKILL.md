@@ -140,6 +140,14 @@ without **two independent signals, at least one concrete and reproducible.**
 Classify each survivor by family and assign a severity (Critical/High/Medium/
 Low) from the rubric. When corroboration is shaky, **downgrade or drop.**
 
+For **Family-3 (dead/orphaned/stubbed) survivors**, after corroboration classify
+the **remediation direction** — `delete` / `wire-in (+ e2e test)` /
+`decision-needed` — using the intent + completeness signals from
+`slop-taxonomy.md`. Wire-in requires **both** signals; the filed issue must then
+demand an e2e test proving the newly wired path works end to end. This does not
+loosen the two-signal corroboration gate above — it only decides what to
+recommend *after* a finding has already survived it.
+
 ### Step 6 — Cluster, then dedup against the backlog
 
 Group corroborated findings by area/theme. A cluster needing coordinated
@@ -210,6 +218,9 @@ narrowed to changed areas; that is a failed run, not a clean one.
 - Touch generated code, migrations, lockfiles, or justified suppressions.
 - Create duplicate issues, or flood the backlog with low-value nits.
 - File a stylistic opinion that contradicts CLAUDE.md/AGENTS.md conventions.
+- Recommend deleting orphaned/dead code without first checking the wire-in
+  signals (intent + completeness) — reflexively discarding finished, intended
+  work is itself slop.
 
 ## Examples
 
@@ -241,6 +252,22 @@ plaintext with no encrypt hook (signal 2). Corroborated and high-severity — th
 code advertises a guarantee it doesn't deliver. File an `audit-destub`-style
 epic to make it real (encrypt-on-write, key rotation, migration), mirroring the
 existing `prompts/github-issues/audit-destub-05b-*.md` precedent.
+
+### Example 4 — Orphaned-but-finished code (wire-in, not delete)
+
+grep on `export_journal()` in `backend/src/domain/journal_export.py`
+shows a typed, fully implemented, unit-tested function with zero inbound
+edges — no router calls it (signal 1, the orphaned-code tell). Reading the
+Settings screen's docstring finds a comment promising "export your journal as
+Markdown" and a roadmap reference in `prompts/github-issues/README.md` to the
+same feature (signal 2 = intent). Reading the function itself confirms it's
+complete and matches the house pattern (async, typed, follows the existing
+`domain/` conventions) — not a husk (completeness). Both signals hold, so this
+is **not** a deletion candidate: file a `de-slop`/`wire-in` Template A issue
+that requires wiring the intended Settings call site to the export endpoint
+**and** adding an e2e test (`async_client` hitting the real router) that proves
+the newly connected path returns the exported Markdown — not an issue to
+delete `journal_export.py`.
 
 ## Troubleshooting
 

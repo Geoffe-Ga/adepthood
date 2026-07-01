@@ -80,10 +80,12 @@ they cause incidents, not just friction.
 
 ---
 
-## Family 3 — Dispensables (code that should not exist)
+## Family 3 — Dispensables (code with no justified presence as written)
 
 This family is the heart of "de-slopping." It is where dead, stubbed, orphaned,
-and duplicated code lives.
+and duplicated code lives. Not everything here is destined for deletion — some
+orphaned code is finished work merely awaiting the connection it was written
+for; see the remediation note below the table.
 
 | Smell | The tell | Corroboration hint |
 |-------|----------|--------------------|
@@ -98,6 +100,21 @@ and duplicated code lives.
 | **Data class (anemic)** | a bag of fields with no behavior where behavior belongs | confirm logic is scattered across users. |
 | **Dead config / deps** | declared dependencies never imported; env vars never read; settings never used | grep usage of each; confirm zero references. |
 | **Redundant test** | tests asserting framework behavior, tautologies, `assert True`, snapshot-only with no logic | confirm it would survive a logic mutation (see mutation-testing). |
+
+**Remediation direction (delete vs. wire-in + e2e).** The default for
+Dead/Orphaned/Stubbed findings is still **delete** (git remembers) unless
+**both** hold: (a) **intent evidence** — a docstring/flag promise, a roadmap/
+epic/`NORTH-STAR.md` reference, or an adjacent call site that clearly meant to
+use it; and (b) **completeness evidence** — the orphaned code is a finished,
+coherent, house-pattern-consistent implementation, not a husk. Both present ⇒
+recommend **wire-in + an e2e test** that exercises the newly connected path
+(backend: through the real router via `async_client`; frontend: through the
+screen via RNTL). Intent without completeness is not this case — that is the
+existing **Fake/aspirational feature flag** row above, the `audit-destub`
+"make it real" pattern. Ambiguous ⇒ file as **decision-needed** rather than
+silently deleting finished work. Neither signal ⇒ delete. The detector only
+**files** the issue either way — it never wires anything in and never deletes
+anything itself.
 
 ---
 
