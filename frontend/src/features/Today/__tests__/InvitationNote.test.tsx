@@ -3,6 +3,12 @@ import { jest, describe, it, expect } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
+const mockPressIn = jest.fn();
+const mockPressOut = jest.fn();
+jest.mock('@/hooks/usePressScale', () => ({
+  usePressScale: () => ({ scale: 1, onPressIn: mockPressIn, onPressOut: mockPressOut }),
+}));
+
 import { invitationCopy, INVITATION_COPY_ENTRIES } from '../invitationCopy';
 import InvitationNote from '../InvitationNote';
 
@@ -106,5 +112,19 @@ describe('InvitationNote', () => {
       expect(entry.line.endsWith('!')).toBe(false);
       expect(entry.declineA11y.endsWith('!')).toBe(false);
     }
+  });
+
+  it('wires the press-scale handlers to the decline touchable', () => {
+    // Pressing the decline button must drive usePressScale's handlers, so the
+    // scale animation is live (the regression: they were never wired).
+    mockPressIn.mockClear();
+    mockPressOut.mockClear();
+    const inv = invitation({ id: 7 });
+    const { getByTestId } = render(<InvitationNote invitation={inv} onDismiss={noop} />);
+    const btn = getByTestId('invitation-7-dismiss');
+    fireEvent(btn, 'pressIn');
+    fireEvent(btn, 'pressOut');
+    expect(mockPressIn).toHaveBeenCalledTimes(1);
+    expect(mockPressOut).toHaveBeenCalledTimes(1);
   });
 });

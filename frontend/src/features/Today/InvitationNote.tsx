@@ -19,7 +19,7 @@ import {
   spacing,
   touchTarget,
 } from '@/design/tokens';
-import { usePressScale } from '@/features/Journal/motion';
+import { usePressScale } from '@/hooks/usePressScale';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 const DECLINE_LABEL = 'Not now';
@@ -34,15 +34,21 @@ function DeclineButton({
   id,
   label,
   onDismiss,
+  onPressIn,
+  onPressOut,
 }: {
   id: number;
   label: string;
   onDismiss: () => void;
+  onPressIn: () => void;
+  onPressOut: () => void;
 }): React.JSX.Element {
   return (
     <TouchableOpacity
       style={styles.decline}
       onPress={onDismiss}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
       accessibilityRole="button"
       accessibilityLabel={label}
       testID={`invitation-${id}-dismiss`}
@@ -63,6 +69,8 @@ function InvitationNote({ invitation, onDismiss }: InvitationNoteProps): React.J
           id={invitation.id}
           label={copy.declineA11y}
           onDismiss={() => onDismiss(invitation.id)}
+          onPressIn={press.onPressIn}
+          onPressOut={press.onPressOut}
         />
       </View>
     </Animated.View>
