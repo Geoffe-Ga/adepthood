@@ -24,6 +24,7 @@ from domain.stage_progress import (
     is_stage_unlocked,
     stage_exists,
 )
+from domain.wheel import compute_wheel_balance
 from errors import bad_request, conflict, forbidden, not_found
 from models.course_stage import CourseStage
 from models.stage_progress import StageProgress
@@ -38,6 +39,7 @@ from schemas.stage import (
     StageProgressUpdate,
     StageResponse,
 )
+from schemas.wheel import WheelAspect, WheelBalanceResponse
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +154,21 @@ async def get_program_calendar(
         calendar_week=calendar_week(anchor),
         current_stage=progress.current_stage,
     )
+
+
+@router.get("/wheel", response_model=WheelBalanceResponse)
+async def get_wheel_balance(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> WheelBalanceResponse:
+    """Per-Aspect fullness for all ten stages, in canonical stage order.
+
+    Registered ABOVE ``/{stage_number}`` so the static ``wheel`` path wins
+    route matching. Fullness reuses each stage's ``overall_progress`` signal;
+    a new user sees all zeros.
+    """
+    balance = await compute_wheel_balance(session, current_user)
+    return WheelBalanceResponse(aspects=[WheelAspect(**item) for item in balance])
 
 
 @router.get("/{stage_number}/progress", response_model=StageProgressResponse)
