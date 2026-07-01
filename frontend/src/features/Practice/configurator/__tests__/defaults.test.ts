@@ -3,7 +3,7 @@ import { describe, expect, it } from '@jest/globals';
 
 import type { ModeConfig } from '../../engine/types';
 import { validateModeConfig } from '../../engine/validation';
-import { defaultConfigFor, suggestedDurationFor } from '../defaults';
+import { defaultConfigFor, isDurationDriven, suggestedDurationFor } from '../defaults';
 
 const ALL_MODES: ReadonlyArray<ModeConfig['mode']> = [
   'meditation_timer',
@@ -16,6 +16,7 @@ const ALL_MODES: ReadonlyArray<ModeConfig['mode']> = [
   'tallied_grounding',
   'tarot',
   'card_meditation',
+  'mindful_anchor',
 ];
 
 describe('defaultConfigFor', () => {
@@ -76,5 +77,45 @@ describe('suggestedDurationFor', () => {
         deck_id: 'rws',
       } satisfies ModeConfig),
     ).toBeGreaterThan(0);
+  });
+});
+
+describe('isDurationDriven', () => {
+  // Modes whose config carries the countdown duration — the wizard hides the
+  // standalone duration field and derives default_duration_minutes from config.
+  it.each(['meditation_timer', 'interval_bell', 'random_interval_bell', 'metronome'] as const)(
+    'returns true for timer-family mode %s',
+    (mode) => {
+      expect(isDurationDriven(mode)).toBe(true);
+    },
+  );
+
+  // Open-ended and step-counted modes keep the standalone duration field.
+  it.each(['count_up', 'rep_counter', 'sense_grounding', 'tallied_grounding'] as const)(
+    'returns false for open-ended/step-counted mode %s',
+    (mode) => {
+      expect(isDurationDriven(mode)).toBe(false);
+    },
+  );
+
+  // Card-based modes derive duration per-card, not via the timer family.
+  it.each(['tarot', 'card_meditation'] as const)('returns false for card-based mode %s', (mode) => {
+    expect(isDurationDriven(mode)).toBe(false);
+  });
+
+  // mindful_anchor has a min_duration_seconds hint but is deliberately NOT
+  // duration-driven — its duration field must remain user-editable.
+  it('returns false for mindful_anchor despite its duration hint', () => {
+    expect(isDurationDriven('mindful_anchor')).toBe(false);
+  });
+
+  // Exhaustive cross-check: exactly 4 modes are duration-driven across the
+  // full 11-mode set. If a future edit adds or drops a mode the count changes.
+  it('returns true for exactly 4 of the 11 modes', () => {
+    const driven = ALL_MODES.filter((m) => isDurationDriven(m));
+    expect(driven).toHaveLength(4);
+    expect(new Set(driven)).toEqual(
+      new Set(['meditation_timer', 'interval_bell', 'random_interval_bell', 'metronome']),
+    );
   });
 });

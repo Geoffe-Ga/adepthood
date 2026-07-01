@@ -10,9 +10,10 @@
  * the component boundary instead of guarding every hook with a sentinel.
  *
  * Responsibilities:
- *   - Mount `useRitualEngine(effectiveConfig)` exactly once for the active
- *     session. Re-mounts when `effectiveConfig` changes (configurator
- *     save) via the parent's stable `key` prop.
+ *   - Mount `useRitualEngine(effectiveConfig)` for the active session. A
+ *     same-row configurator save does not remount (the `key` is stable);
+ *     instead the engine reconciles an idle countdown in-place via its
+ *     `CONFIG_CHANGED` path, and a running/paused session is left intact.
  *   - Dispatch on `effectiveConfig.mode` to the correct mode view.
  *   - Harvest per-mode `SessionMetadata` (wire) and `ModeSummaryMetadata`
  *     (display) from engine state on completion.
