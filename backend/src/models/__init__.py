@@ -8,6 +8,7 @@ from .goal import Goal
 from .goal_completion import GoalCompletion
 from .goal_group import GoalGroup
 from .habit import Habit
+from .invitation_signal import InvitationSignal
 from .journal_entry import JournalEntry
 from .llm_usage_log import LLMUsageLog
 from .login_attempt import LoginAttempt
@@ -37,6 +38,7 @@ __all__ = [
     "GoalCompletion",
     "GoalGroup",
     "Habit",
+    "InvitationSignal",
     "JournalEntry",
     "LLMUsageLog",
     "LoginAttempt",
