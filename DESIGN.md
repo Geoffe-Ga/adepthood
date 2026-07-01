@@ -298,6 +298,15 @@ components:
     padding: 64px
 ---
 
+> **External inspiration reference — not Adepthood's design system.**
+> This document is an analysis of the Anthropic / Claude.com marketing-site visual
+> language. It captures the cream/coral/navy editorial aesthetic that informed the
+> vocabulary of the Candle & Ink design language, but it describes that external
+> site — not Adepthood's implemented design system.
+>
+> The canonical Candle & Ink reference for this codebase lives at
+> [`frontend/src/design/DESIGN.md`](./frontend/src/design/DESIGN.md).
+
 ## Overview
 
 Claude.com is the warmest, most editorial interface in the AI-product category. The base atmosphere is a **tinted cream canvas** (`{colors.canvas}` — #faf9f5) — distinctly warm, deliberately not the cool gray-white that every other AI brand uses. Headlines run a **slab-serif display** ("Copernicus" / Tiempos Headline) at weight 400 with negative letter-spacing, paired with **StyreneB / Inter** body sans. The combination feels like a literary publication, not a SaaS marketing page.

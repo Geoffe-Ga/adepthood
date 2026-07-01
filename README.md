@@ -2,7 +2,7 @@
 
 Adepthood is a React Native + FastAPI app whose floor is a **journal-first personal knowledge base** that, over time, becomes a _Higher Self_ — reflecting your own past reflections back to you in the language of the **APTITUDE** program and the Archetypal Wavelength. Arranged around that floor are optional, self-chosen **depths** — prompted journaling, habit scaffolding, a practice ramp, the course reading, and the Digital Sangha. Nothing is gated, nothing is mandatory, and there is no gamified pressure: **you choose your depth**. A single 36-week Archetypal Wavelength cadence (eight stages × 3 weeks + Unity & Emptiness × 6 weeks) paces whichever depths are turned on, and it loops — the Map reads as a wheel of wholeness, not a ladder to climb.
 
-See [`NORTH-STAR.md`](./NORTH-STAR.md) for the full product thesis ("Graduated Engagement") and [`DESIGN.md`](./DESIGN.md) for the "Candle & Ink" visual north star.
+See [`NORTH-STAR.md`](./NORTH-STAR.md) for the full product thesis ("Graduated Engagement") and [`frontend/src/design/DESIGN.md`](./frontend/src/design/DESIGN.md) for the "Candle & Ink" visual north star (the implemented design system). Root [`DESIGN.md`](./DESIGN.md) is an external inspiration reference — an analysis of the Anthropic / Claude.com marketing-site aesthetic that informed the Candle & Ink vocabulary.
 
 ## ✨ Features
 
@@ -37,10 +37,10 @@ See [`NORTH-STAR.md`](./NORTH-STAR.md) for the full product thesis ("Graduated E
 ├── scripts/       # Development and CI helper scripts
 ├── AGENTS.md      # Necessary instructions for AI collaborators
 ├── NORTH-STAR.md  # Product thesis — "Graduated Engagement"
-├── DESIGN.md      # Visual north star — the "Candle & Ink" design language
+├── DESIGN.md      # External inspiration reference — Anthropic/Claude.com marketing-site analysis
 ```
 
-The implemented design system (tokens, theme, and its own `DESIGN.md`) lives in
+The "Candle & Ink" design system (tokens, theme, and its own `DESIGN.md`) lives in
 `frontend/src/design/`.
 
 ## 🚀 Getting Started
