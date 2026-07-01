@@ -298,3 +298,43 @@ Dependency graph:
                  │                                │
                  └── 05 floating-shelf-cards ─────┘
 ```
+
+### The Capability Registry — journal-driven, pluggable features
+
+Turn the hand-wired feature set into a **capability registry**: habits,
+practices, self-care, wavelength/wheel tracking, course, map — and future
+plugins like Apple Shortcuts — all register the same way, are gated by one
+generic opt-in mechanism, and can be **referenced and controlled from a journal
+entry** through one generalized detection→suggestion→confirm pipeline. Builds
+directly on the existing detection (`domain/detection.py`), suggestion
+lifecycle (`CompletionSuggestion`), generic invitation addressing
+(`InvitationSignal`), store-reset registry (`store/registry.ts`), and the
+provider-registry LLM layer. Adds the MCP seam `NORTH-STAR.md` names but the
+code does not yet have. Every step holds the vision's guardrails: human-in-the-
+loop (no auto-execution from text), opt-in + declinable, anti-guru, privacy
+floor, care boundaries.
+
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| — | [Epic tracker](capability-registry-epic.md) | — | — |
+| 01 | [Capability descriptor + backend registry](capability-registry-01-backend-registry.md) | Backend | ~250 |
+| 02 | [Generic feature-flag opt-in (retire boolean-per-ring)](capability-registry-02-generic-feature-flags.md) | Full-stack | ~250 |
+| 03 | [Generalize `CompletionSuggestion` → `ActionSuggestion`](capability-registry-03-action-suggestion-model.md) | Backend | ~300 |
+| 04 | [Registry-driven intent detection (verbs + params)](capability-registry-04-intent-detection.md) | Backend | ~300 |
+| 05 | [Capability execute handlers + generic accept endpoint](capability-registry-05-execute-handlers.md) | Backend | ~300 |
+| 06 | [Frontend feature manifest → registry-driven nav/store/flags](capability-registry-06-frontend-manifest.md) | Frontend | ~300 |
+| 07 | [Capability-agnostic suggestion inbox UI](capability-registry-07-suggestion-inbox.md) | Frontend | ~250 |
+| 08 | [MCP client + tool-calling in the LLM layer](capability-registry-08-mcp-client-tool-calling.md) | Backend | ~300 |
+| 09 | [Creek Vault MCP binding + external capability](capability-registry-09-creek-vault-binding.md) *(blocked on creek-vault repo access)* | Full-stack | ~300 |
+
+Dependency graph:
+
+```
+01 backend-registry ──┬── 02 generic-feature-flags ──┐
+                      ├── 03 action-suggestion-model ─┤
+                      │                               ├── 04 intent-detection ── 05 execute-handlers ──┐
+                      └───────────────────────────────┘                                                │
+                                                                                                       ├── 07 suggestion-inbox
+06 frontend-manifest (needs 01, 02) ───────────────────────────────────────────────────────────────── ┘
+05 ── 08 mcp-client-tool-calling ── 09 creek-vault-binding  (09 BLOCKED on creek-vault repo access)
+```
