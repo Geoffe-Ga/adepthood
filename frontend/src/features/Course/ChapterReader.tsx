@@ -6,6 +6,7 @@ import { course as courseApi, type ContentBody } from '../../api';
 import { colors, SPACING } from '../../design/tokens';
 
 import styles, { markdownStyles } from './Course.styles';
+import { stripFrontmatter } from './stripFrontmatter';
 
 /**
  * Source descriptor for the reader.  ``kind`` decides which backend
@@ -64,6 +65,8 @@ const markdownRules = {
       />
     );
   },
+  // Render a CommonMark soft break as a space (the library default emits '\n'), so hard-wrapped prose reflows.
+  softbreak: (node: { key?: string }): React.ReactNode => <Text key={node.key}> </Text>,
 };
 
 interface HeaderProps {
@@ -183,7 +186,8 @@ function useContentBody(source: ChapterReaderSource): {
 }
 
 function renderBody(body: ContentBody): React.ReactElement {
-  if (body.body_markdown.trim() === '') {
+  const markdown = stripFrontmatter(body.body_markdown);
+  if (markdown.trim() === '') {
     return <EmptyView />;
   }
   return (
@@ -194,7 +198,7 @@ function renderBody(body: ContentBody): React.ReactElement {
     >
       <View style={styles.readerSheet}>
         <Markdown style={markdownStyles} rules={markdownRules} onLinkPress={handleLinkPress}>
-          {body.body_markdown}
+          {markdown}
         </Markdown>
       </View>
     </ScrollView>
