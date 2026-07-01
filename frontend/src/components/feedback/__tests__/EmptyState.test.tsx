@@ -40,9 +40,8 @@ describe('EmptyState', () => {
     expect(getByTestId('es')).toHaveStyle({ paddingTop: 47 });
   });
 
-  // Test 5: default-vs-inline guard.
-  // The default half (no inline prop) is a CHARACTERIZATION guard — must stay green.
-  // The inline half is RED until the prop is implemented.
+  // Default-vs-inline guard: the default half locks the full-screen contract the
+  // four full-screen consumers depend on; the inline half pins the compact variant.
   it('default mode keeps full-screen centered opaque container (characterization)', () => {
     const { getByTestId } = render(
       <EmptyState glyph="🧘" title="Full" body="Screen." testID="es-default" />,
@@ -56,7 +55,7 @@ describe('EmptyState', () => {
     expect(flat.backgroundColor).toBe(surface.canvas);
   });
 
-  it('inline mode uses flex:0, flex-start alignment, and transparent background (RED until prop exists)', () => {
+  it('inline mode uses flex:0, flex-start alignment, and transparent background', () => {
     const { getByTestId } = render(
       <EmptyState glyph="🪶" title="Inline" body="Footer." inline testID="es-inline" />,
     );

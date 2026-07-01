@@ -459,7 +459,7 @@ const allEmptyLoad = jest.fn(async () => []) as jest.MockedFunction<
   (_stage: number) => Promise<PracticeItem[]>
 >;
 
-describe('PracticeCatalogScreen — footer suppression (RED until fix)', () => {
+describe('PracticeCatalogScreen — footer suppression', () => {
   // Test 1: empty sibling footers must be absent when any section is populated.
   it('hides drafts and imported empty-footers when presets are populated', async () => {
     const setActive = jest.fn(async () => undefined) as jest.MockedFunction<
@@ -476,7 +476,7 @@ describe('PracticeCatalogScreen — footer suppression (RED until fix)', () => {
       />,
     );
     await waitForLoad();
-    // Both of these must be absent — today they render → RED.
+    // Both empty-section footers must be absent while a sibling section has rows.
     expect(view.queryByTestId('practice-catalog-section-drafts-empty')).toBeNull();
     expect(view.queryByTestId('practice-catalog-section-imported-empty')).toBeNull();
   });
@@ -540,7 +540,7 @@ describe('PracticeCatalogScreen — footer suppression (RED until fix)', () => {
     const flat = StyleSheet.flatten(
       footer.props.style as Parameters<typeof StyleSheet.flatten>[0],
     ) as { flex?: number; justifyContent?: string; backgroundColor?: string };
-    // Must NOT be a full-screen block — today the base container contributes these → RED.
+    // Must NOT be a full-screen block: no expanding flex, centering, or opaque canvas.
     expect(flat.flex).not.toBe(1);
     expect(flat.justifyContent).not.toBe('center');
     expect(flat.backgroundColor).not.toBe(surface.canvas);
