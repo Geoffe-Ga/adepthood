@@ -136,7 +136,8 @@ function AuthNavigator() {
  * Program welcome gate (#836). On first run — once the persisted
  * ``hasSeenWelcome`` flag has resolved to unset — the editorial intro shows
  * above the app shell. Begin *or* Skip persists the flag, which flips
- * ``isFirstRun`` to false and lands the user on the already-mounted Today hub.
+ * ``isFirstRun`` to false and swaps to the app shell, which mounts at its
+ * ``Journal`` initial route — so both paths land the user on the Journal home.
  * Returning users (flag set) never see it; before hydration ``isFirstRun`` is
  * false, so the shell renders without a flash.
  */
