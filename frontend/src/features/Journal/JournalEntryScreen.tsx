@@ -27,6 +27,7 @@ import HighlightedBody from './HighlightedBody';
 import styles from './JournalEntry.styles';
 import MarginNote from './MarginNote';
 import { useSettleIn } from './motion';
+import PrivacyTierControl, { type PrivacyTier } from './PrivacyTierControl';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import { useResonance } from './useResonance';
 
@@ -35,6 +36,7 @@ import type {
   CheckInResult,
   CompletionSuggestion,
   EntryStatus,
+  JournalClassification,
   JournalMessage,
   Marginalia,
 } from '@/api';
@@ -49,6 +51,12 @@ export const AUTOSAVE_DELAY_MS = 1500;
 
 /** Below this width the margin column stacks under the writing column. */
 const NARROW_BREAKPOINT = 600;
+
+/** Backend default privacy tier for a fresh entry. */
+const DEFAULT_CLASSIFICATION: JournalClassification = 'personal';
+
+/** Fallback reason shown when resonance is gated off for an intimate entry. */
+const INTIMATE_RESONANCE_REASON = 'Intimate entries are kept private — resonance is paused.';
 
 type SaveState = 'idle' | 'typing' | 'saving' | 'saved' | 'error';
 
@@ -76,14 +84,21 @@ export interface SaveContext {
   userPracticeId?: number;
 }
 
+interface WriteEntryRefs {
+  entryIdRef: React.MutableRefObject<number | null>;
+  respondedRef: React.MutableRefObject<boolean>;
+  /** Latest chosen privacy tier; carried on the first ``journal.create``. */
+  classificationRef: React.MutableRefObject<JournalClassification>;
+}
+
 /** Create on first save, then update; title is optional and saved separately. */
 async function writeEntry(
-  entryIdRef: React.MutableRefObject<number | null>,
+  refs: WriteEntryRefs,
   title: string,
   body: string,
   ctx: SaveContext,
-  respondedRef: React.MutableRefObject<boolean>,
 ): Promise<void> {
+  const { entryIdRef, respondedRef, classificationRef } = refs;
   // Weekly-prompt mode: the respond endpoint persists the entry itself, so we
   // submit exactly once and never pair it with journal.create (no double-create).
   if (ctx.weekNumber != null) {
@@ -95,9 +110,11 @@ async function writeEntry(
   const trimmedTitle = title.trim() ? title : null;
   if (entryIdRef.current == null) {
     // Only attach context keys when present, so a plain entry's payload stays
-    // exactly { message } rather than carrying explicit nulls.
+    // lean rather than carrying explicit nulls. ``classification`` always rides
+    // along so the entry's privacy tier is set at birth (defaults to personal).
     const created = await journal.create({
       message: body,
+      classification: classificationRef.current,
       ...(ctx.practiceSessionId != null && { practice_session_id: ctx.practiceSessionId }),
       ...(ctx.userPracticeId != null && { user_practice_id: ctx.userPracticeId }),
     });
@@ -116,8 +133,12 @@ interface AutosaveApi {
   status: EntryStatus;
   setStatus: (_status: EntryStatus) => void;
   saveState: SaveState;
+  /** The entry's privacy tier; drives the control and the resonance gate. */
+  classification: PrivacyTier;
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
+  /** Set the privacy tier: updates the control and persists (create/PATCH). */
+  onChangeClassification: (_tier: PrivacyTier) => void;
   /** Persist the latest text immediately and resolve to the entry id (or null). */
   flush: () => Promise<number | null>;
 }
@@ -154,6 +175,70 @@ function useTimerCleanup(timerRef: React.MutableRefObject<ReturnType<typeof setT
   );
 }
 
+interface ClassificationPersist {
+  classificationRef: React.MutableRefObject<JournalClassification>;
+  /** Record the tier for the next create and PATCH it when the entry exists. */
+  changeClassification: (_tier: JournalClassification) => void;
+}
+
+/**
+ * Owns the latest privacy tier: it rides the first ``journal.create`` via the
+ * ref, and on an existing entry a change is PATCHed immediately so a
+ * re-classification never waits on (or is lost to) the body-save debounce.
+ */
+function useClassificationPersist(
+  entryIdRef: React.MutableRefObject<number | null>,
+): ClassificationPersist {
+  const classificationRef = useRef<JournalClassification>(DEFAULT_CLASSIFICATION);
+  const changeClassification = useCallback(
+    (tier: JournalClassification): void => {
+      classificationRef.current = tier;
+      if (entryIdRef.current != null) {
+        void journal.update(entryIdRef.current, { classification: tier });
+      }
+    },
+    [entryIdRef],
+  );
+  return { classificationRef, changeClassification };
+}
+
+type TimerRef = React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
+type RunSave = (_title: string, _body: string) => Promise<void>;
+
+interface SaveTimer {
+  save: (_title: string, _body: string) => void;
+  flush: (_title: string, _body: string) => Promise<number | null>;
+}
+
+/** Debounce (``save``) + immediate (``flush``) wrappers around the async writer. */
+function useSaveTimer(
+  run: RunSave,
+  timerRef: TimerRef,
+  entryIdRef: React.MutableRefObject<number | null>,
+  delayMs: number,
+  setTyping: () => void,
+): SaveTimer {
+  const save = useCallback(
+    (title: string, body: string): void => {
+      setTyping();
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => void run(title, body), delayMs);
+    },
+    [run, delayMs, timerRef, setTyping],
+  );
+  // Cancel any pending debounce and persist now; resolves to the entry id so a
+  // caller (e.g. resonance) can act on the just-saved entry.
+  const flush = useCallback(
+    async (title: string, body: string): Promise<number | null> => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      if (body.trim()) await run(title, body);
+      return entryIdRef.current;
+    },
+    [run, timerRef, entryIdRef],
+  );
+  return { save, flush };
+}
+
 /** Debounced create-then-update draft saver; tracks the save state. */
 function useDebouncedSave(
   routeEntryId: number | null,
@@ -167,6 +252,7 @@ function useDebouncedSave(
   // A weekly-prompt response is write-once; this guards against the debounce or
   // flush submitting it twice (the backend 409s on a duplicate week).
   const respondedRef = useRef(false);
+  const { classificationRef, changeClassification } = useClassificationPersist(entryIdRef);
   // Refs so non-memoised inputs don't churn the save callbacks below.
   const onSavedRef = useRef(onSaved);
   const ctxRef = useRef(ctx);
@@ -176,40 +262,27 @@ function useDebouncedSave(
   });
   useTimerCleanup(timerRef);
 
-  const run = useCallback(async (title: string, body: string): Promise<void> => {
-    if (!body.trim()) return; // never persist an empty draft
-    setSaveState('saving');
-    try {
-      await writeEntry(entryIdRef, title, body, ctxRef.current, respondedRef);
-      setSaveState('saved');
-      onSavedRef.current?.();
-    } catch {
-      // Surface a distinct error state so the hint isn't mistaken for "untouched".
-      setSaveState('error');
-    }
-  }, []);
-
-  const save = useCallback(
-    (title: string, body: string): void => {
-      setSaveState('typing');
-      if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => void run(title, body), delayMs);
+  const run = useCallback<RunSave>(
+    async (title, body) => {
+      if (!body.trim()) return; // never persist an empty draft
+      setSaveState('saving');
+      const refs = { entryIdRef, respondedRef, classificationRef };
+      try {
+        await writeEntry(refs, title, body, ctxRef.current);
+        setSaveState('saved');
+        onSavedRef.current?.();
+      } catch {
+        // Surface a distinct error state so the hint isn't mistaken for "untouched".
+        setSaveState('error');
+      }
     },
-    [run, delayMs],
+    [classificationRef],
   );
 
-  // Cancel any pending debounce and persist now; resolves to the entry id so a
-  // caller (e.g. resonance) can act on the just-saved entry.
-  const flush = useCallback(
-    async (title: string, body: string): Promise<number | null> => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      if (body.trim()) await run(title, body);
-      return entryIdRef.current;
-    },
-    [run],
-  );
+  const setTyping = useCallback(() => setSaveState('typing'), []);
+  const { save, flush } = useSaveTimer(run, timerRef, entryIdRef, delayMs, setTyping);
 
-  return { saveState, save, flush };
+  return { saveState, save, flush, changeClassification };
 }
 
 type StrRef = React.MutableRefObject<string>;
@@ -241,21 +314,28 @@ function useFieldHandlers(
   return { onChangeTitle, onChangeBody };
 }
 
-/** Owns the entry's text + debounced draft autosave (create-then-update). */
-function useJournalAutosave(
-  routeEntryId: number | null,
-  delayMs: number,
-  ctx: SaveContext,
-  initialTitle: string,
-  onSaved?: () => void,
-): AutosaveApi {
+interface EntryState {
+  title: string;
+  body: string;
+  status: EntryStatus;
+  setStatus: (_status: EntryStatus) => void;
+  classification: PrivacyTier;
+  setClassification: (_tier: PrivacyTier) => void;
+  setTitle: (_v: string) => void;
+  setBody: (_v: string) => void;
+  titleRef: StrRef;
+  bodyRef: StrRef;
+}
+
+/** The entry's editable state (title/body/status/tier) + one-time load-on-open. */
+function useEntryState(routeEntryId: number | null, initialTitle: string): EntryState {
   const [title, setTitle] = useState(initialTitle);
   const [body, setBody] = useState('');
   const [status, setStatus] = useState<EntryStatus>('draft');
+  const [classification, setClassification] = useState<PrivacyTier>(DEFAULT_CLASSIFICATION);
   // Refs mirror the latest text so the change handlers stay referentially stable.
   const titleRef = useRef(initialTitle);
   const bodyRef = useRef('');
-  const { saveState, save, flush } = useDebouncedSave(routeEntryId, delayMs, ctx, onSaved);
 
   useEntryLoadEffect(
     routeEntryId,
@@ -265,26 +345,72 @@ function useJournalAutosave(
       setTitle(titleRef.current);
       setBody(bodyRef.current);
       setStatus(entry.status ?? 'draft');
+      // Pre-select the server's tier so an intimate entry loads intimate.
+      setClassification(entry.classification ?? DEFAULT_CLASSIFICATION);
     }, []),
   );
-
-  const { onChangeTitle, onChangeBody } = useFieldHandlers(
-    titleRef,
-    bodyRef,
-    save,
-    setTitle,
-    setBody,
-  );
-  const flushNow = useCallback(() => flush(titleRef.current, bodyRef.current), [flush]);
 
   return {
     title,
     body,
     status,
     setStatus,
+    classification,
+    setClassification,
+    setTitle,
+    setBody,
+    titleRef,
+    bodyRef,
+  };
+}
+
+/** Owns the entry's text + debounced draft autosave (create-then-update). */
+function useJournalAutosave(
+  routeEntryId: number | null,
+  delayMs: number,
+  ctx: SaveContext,
+  initialTitle: string,
+  onSaved?: () => void,
+): AutosaveApi {
+  const entry = useEntryState(routeEntryId, initialTitle);
+  const { titleRef, bodyRef, setClassification } = entry;
+  const { saveState, save, flush, changeClassification } = useDebouncedSave(
+    routeEntryId,
+    delayMs,
+    ctx,
+    onSaved,
+  );
+
+  const { onChangeTitle, onChangeBody } = useFieldHandlers(
+    titleRef,
+    bodyRef,
+    save,
+    entry.setTitle,
+    entry.setBody,
+  );
+  const flushNow = useCallback(
+    () => flush(titleRef.current, bodyRef.current),
+    [flush, titleRef, bodyRef],
+  );
+  // Reflect the choice in the control, then persist it (create-time ref or PATCH).
+  const onChangeClassification = useCallback(
+    (tier: PrivacyTier) => {
+      setClassification(tier);
+      changeClassification(tier);
+    },
+    [changeClassification, setClassification],
+  );
+
+  return {
+    title: entry.title,
+    body: entry.body,
+    status: entry.status,
+    setStatus: entry.setStatus,
     saveState,
+    classification: entry.classification,
     onChangeTitle,
     onChangeBody,
+    onChangeClassification,
     flush: flushNow,
   };
 }
@@ -293,8 +419,10 @@ interface WritingColumnProps {
   title: string;
   body: string;
   saveState: SaveState;
+  classification: PrivacyTier;
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
+  onChangeClassification: (_tier: PrivacyTier) => void;
   onFinish?: () => void;
   bodyPlaceholder?: string;
 }
@@ -317,8 +445,10 @@ function WritingColumn({
   title,
   body,
   saveState,
+  classification,
   onChangeTitle,
   onChangeBody,
+  onChangeClassification,
   onFinish,
   bodyPlaceholder = 'Begin writing…',
 }: WritingColumnProps) {
@@ -328,6 +458,7 @@ function WritingColumn({
       contentContainerStyle={styles.writingColumnContent}
       keyboardShouldPersistTaps="handled"
     >
+      <PrivacyTierControl value={classification} onChange={onChangeClassification} />
       <TextInput
         style={styles.titleInput}
         value={title}
@@ -542,17 +673,58 @@ function useBumpedHandlers(bump: () => void, autosave: AutosaveApi) {
   return { handleTitle, handleBody };
 }
 
-/** Compose the autosave + idle + resonance hooks into the screen's view-model. */
-function useJournalEntryController(
-  routeEntryId: number | null,
-  autosaveDelayMs: number,
-  navigation: ScreenNavigation,
-  ctx: SaveContext,
-  initialTitle: string,
-) {
+interface ResonanceGate {
+  /** Whether the resonance affordance is shown at all (hidden in prompt-compose). */
+  visible: boolean;
+  /** Shown-but-disabled: an intimate entry is never sent to AI. */
+  resonanceDisabled: boolean;
+  /** One-line reason accompanying a disabled/withheld resonance affordance. */
+  resonanceReason: string;
+}
+
+interface ResonanceGateArgs {
+  isIdle: boolean;
+  isLoading: boolean;
+  body: string;
+  classification: PrivacyTier;
+  isPromptCompose: boolean;
+  privateMessage: string | null;
+}
+
+/** Derive whether/how the resonance affordance shows, incl. the intimate gate. */
+function deriveResonanceGate(args: ResonanceGateArgs): ResonanceGate {
+  const hasContent = args.body.trim().length > 0;
+  // In weekly-prompt compose mode the entry is created by prompts.respond, which
+  // doesn't return a local id — so resonance can't run here. Hide the button; the
+  // reflection gains resonance normally once reopened from the shelf (with an id).
+  const visible =
+    !args.isPromptCompose &&
+    shouldShowResonance({ isIdle: args.isIdle, hasContent, isLoading: args.isLoading });
+  return {
+    visible,
+    // Client-side privacy gate: an intimate entry is never sent to AI, so the
+    // resonance affordance is shown-but-disabled with a visible reason.
+    resonanceDisabled: args.classification === 'intimate',
+    resonanceReason: args.privateMessage ?? INTIMATE_RESONANCE_REASON,
+  };
+}
+
+interface RefreshAfterEdit {
+  refreshRef: React.MutableRefObject<() => Promise<void>>;
+  /** Fires the deferred marginalia refresh after the first post-edit save. */
+  handleSaved: () => void;
+  /** Arms the deferred refresh when the user confirms an edit of a finished entry. */
+  onConfirmEdit: () => void;
+}
+
+/**
+ * A finished entry's notes re-anchor/stale on the first save after an edit, so
+ * the refresh is deferred: ``onConfirmEdit`` arms it and the next ``handleSaved``
+ * fires it once (via ``refreshRef``, wired to resonance.refresh by the caller).
+ */
+function useRefreshAfterEdit(): RefreshAfterEdit {
   const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const pendingRefreshRef = useRef(false);
-  // After the first save following an edit, re-read the (re-anchored/staled) notes.
   const handleSaved = useCallback(() => {
     if (!pendingRefreshRef.current) return;
     pendingRefreshRef.current = false;
@@ -561,6 +733,18 @@ function useJournalEntryController(
   const onConfirmEdit = useCallback(() => {
     pendingRefreshRef.current = true;
   }, []);
+  return { refreshRef, handleSaved, onConfirmEdit };
+}
+
+/** Compose the autosave + idle + resonance hooks into the screen's view-model. */
+function useJournalEntryController(
+  routeEntryId: number | null,
+  autosaveDelayMs: number,
+  navigation: ScreenNavigation,
+  ctx: SaveContext,
+  initialTitle: string,
+) {
+  const { refreshRef, handleSaved, onConfirmEdit } = useRefreshAfterEdit();
 
   const autosave = useJournalAutosave(
     routeEntryId,
@@ -584,31 +768,44 @@ function useJournalEntryController(
   });
 
   const { handleTitle, handleBody } = useBumpedHandlers(bump, autosave);
-  const hasContent = autosave.body.trim().length > 0;
-  // In weekly-prompt compose mode the entry is created by prompts.respond, which
-  // doesn't return a local id — so resonance can't run here. Hide the button; the
-  // reflection gains resonance normally once reopened from the shelf (with an id).
-  const isPromptCompose = ctx.weekNumber != null;
-  const visible =
-    !isPromptCompose && shouldShowResonance({ isIdle, hasContent, isLoading: resonance.loading });
+  const gate = deriveResonanceGate({
+    isIdle,
+    isLoading: resonance.loading,
+    body: autosave.body,
+    classification: autosave.classification,
+    isPromptCompose: ctx.weekNumber != null,
+    privateMessage: resonance.privateMessage,
+  });
 
-  return { autosave, resonance, isIdle, visible, handleTitle, handleBody, modal, editGate };
+  return {
+    autosave,
+    resonance,
+    isIdle,
+    visible: gate.visible,
+    resonanceDisabled: gate.resonanceDisabled,
+    resonanceReason: gate.resonanceReason,
+    handleTitle,
+    handleBody,
+    modal,
+    editGate,
+  };
 }
 
 type Controller = ReturnType<typeof useJournalEntryController>;
 
-/** The two-column page: the body (edit or read) + the margin. */
 /** The body column: the editable writing surface, or the read-mode highlighted view. */
 function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
-  const { title, body, saveState } = ctl.autosave;
+  const { title, body, saveState, classification } = ctl.autosave;
   const { editMode, canFinish, markFinished, requestEdit } = ctl.editGate;
   return editMode ? (
     <WritingColumn
       title={title}
       body={body}
       saveState={saveState}
+      classification={classification}
       onChangeTitle={ctl.handleTitle}
       onChangeBody={ctl.handleBody}
+      onChangeClassification={ctl.autosave.onChangeClassification}
       onFinish={canFinish ? markFinished : undefined}
       bodyPlaceholder={bodyPlaceholder}
     />
@@ -686,6 +883,25 @@ function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntryp
   };
 }
 
+/**
+ * The one-line reason shown when resonance is gated off for an intimate entry.
+ * A sibling above the floating button so it reads as the button's own caption.
+ */
+function PrivacyResonanceReason({
+  visible,
+  reason,
+}: {
+  visible: boolean;
+  reason: string;
+}): React.JSX.Element | null {
+  if (!visible) return null;
+  return (
+    <Text style={styles.privacyResonanceReason} testID="privacy-resonance-reason">
+      {reason}
+    </Text>
+  );
+}
+
 function JournalEntryScreen({
   route,
   navigation,
@@ -707,9 +923,14 @@ function JournalEntryScreen({
           human + professional support reads as the page's own, not a margin note. */}
       <CareSupportNote care={ctl.resonance.care} />
       <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
+      <PrivacyResonanceReason
+        visible={ctl.visible && ctl.resonanceDisabled}
+        reason={ctl.resonanceReason}
+      />
       <GetResonanceButton
         visible={ctl.visible}
         loading={ctl.resonance.loading}
+        disabled={ctl.resonanceDisabled}
         onPress={ctl.resonance.requestResonance}
       />
       <ResonanceEssayModal

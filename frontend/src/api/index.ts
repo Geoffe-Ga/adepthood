@@ -1062,11 +1062,20 @@ export const goalGroups = {
 // Journal types and client
 export type JournalTag = 'freeform' | 'stage_reflection' | 'practice_note' | 'habit_note';
 
+/**
+ * Privacy classification for a journal entry (mirrors the backend enum). An
+ * ``intimate`` entry is never sent to AI: resonance is client-side gated off
+ * for it. ``personal`` is the backend default; ``public`` is the most open.
+ */
+export type JournalClassification = 'public' | 'personal' | 'intimate';
+
 export interface JournalMessageCreate {
   message: string;
   tag?: JournalTag;
   practice_session_id?: number | null;
   user_practice_id?: number | null;
+  /** Privacy tier chosen at creation; the backend defaults to ``personal``. */
+  classification?: JournalClassification;
 }
 
 export type EntryStatus = 'draft' | 'finished';
@@ -1083,6 +1092,8 @@ export interface JournalMessage {
   title?: string | null;
   status?: EntryStatus;
   updated_at?: string;
+  /** Privacy tier; absent on older responses (defaults to ``personal``). */
+  classification?: JournalClassification;
 }
 
 /**
@@ -1094,6 +1105,8 @@ export interface JournalEntryUpdate {
   message?: string;
   title?: string | null;
   status?: EntryStatus;
+  /** Re-classify an existing entry's privacy tier. */
+  classification?: JournalClassification;
 }
 
 export type MarginaliaKind = 'theme' | 'connection' | 'symbol';
@@ -1134,6 +1147,13 @@ export interface ResonanceResponse {
    * without it parses and behaves exactly as before.
    */
   care?: CareResponse | null;
+  /**
+   * True when the pass was withheld because the entry is intimate.
+   * Absent on ordinary responses; additive — older responses parse unchanged.
+   */
+  private?: boolean;
+  /** Reason copy shown when ``private`` is true; ``null`` when unset. */
+  private_message?: string | null;
 }
 
 export interface MarginaliaListResponse {

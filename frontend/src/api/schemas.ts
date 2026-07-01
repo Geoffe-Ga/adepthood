@@ -256,6 +256,9 @@ export const journalMessageSchema = z.object({
   title: z.string().nullable().optional(),
   status: z.enum(['draft', 'finished']).optional(),
   updated_at: isoDateTime.optional(),
+  // Privacy tier. Optional so responses predating the column still
+  // validate; the enum rejects any value that drifts from the backend set.
+  classification: z.enum(['public', 'personal', 'intimate']).optional(),
 });
 
 /** Journal list envelope: ``{ items, total, has_more }`` (bespoke, not ``Page``). */
@@ -539,6 +542,11 @@ export const resonanceResponseSchema = z.object({
   remaining_balance: z.number().int(),
   monthly_reset_date: z.string(),
   care: careResponseSchema.nullish(),
+  // Privacy gate: ``private`` is true when the pass was withheld for an
+  // intimate entry, with optional reason copy. Additive/nullish so older
+  // responses (which omit both) still validate and behave as before.
+  private: z.boolean().optional(),
+  private_message: z.string().nullish(),
 });
 
 export type CareKindT = z.infer<typeof careKindSchema>;
