@@ -88,6 +88,20 @@ registerStoreReset(() => {
 });
 
 // ---------------------------------------------------------------------------
+// Stable action exports — module-level bound references to the store actions so
+// a consumer can call them without subscribing (they never change identity,
+// making them safe dependency-free deps in a mount-only effect).
+// ---------------------------------------------------------------------------
+
+/** Fetch the current ring toggles and replace local state with the result. */
+export const load = (token?: string): Promise<void> =>
+  useDepthPreferencesStore.getState().load(token);
+
+/** Flip one or more rings; stores the server's echoed full state on resolve. */
+export const update = (partial: DepthPreferencesUpdate, token?: string): Promise<void> =>
+  useDepthPreferencesStore.getState().update(partial, token);
+
+// ---------------------------------------------------------------------------
 // Selectors — narrow state subscriptions. Zustand compares the returned value
 // with ``Object.is``, so components re-render only when their slice changes.
 // ---------------------------------------------------------------------------

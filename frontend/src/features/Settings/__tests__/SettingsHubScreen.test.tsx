@@ -11,7 +11,7 @@ jest.mock('@react-navigation/native', () => ({
 }));
 
 jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ logout: mockLogout }),
+  useAuth: () => ({ logout: mockLogout, token: 'hub-test-token' }),
 }));
 
 import SettingsHubScreen from '../SettingsHubScreen';
@@ -161,6 +161,30 @@ describe('SettingsHubScreen — Privacy section (issue #897)', () => {
     expect(getByTestId('settings-row-api-key')).toBeTruthy();
     expect(getByTestId('settings-group-session')).toBeTruthy();
     expect(getByTestId('settings-row-logout')).toBeTruthy();
+    expect(getByTestId('settings-group-support')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// "Choose your depths" section in the hub (RED — fails until impl exists)
+// ---------------------------------------------------------------------------
+
+describe('SettingsHubScreen — Choose your depths section', () => {
+  test('renders the depths section with testID "settings-group-depths"', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    // Fails until ChooseDepthsSection is mounted inside SettingsHubScreen.
+    expect(getByTestId('settings-group-depths')).toBeTruthy();
+  });
+
+  test('regression: all pre-existing sections and rows still render after depths addition', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    expect(getByTestId('settings-group-account')).toBeTruthy();
+    expect(getByTestId('settings-row-api-key')).toBeTruthy();
+    expect(getByTestId('settings-group-session')).toBeTruthy();
+    expect(getByTestId('settings-row-logout')).toBeTruthy();
+    expect(getByTestId('settings-group-privacy')).toBeTruthy();
     expect(getByTestId('settings-group-support')).toBeTruthy();
   });
 });

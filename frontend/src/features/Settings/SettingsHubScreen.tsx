@@ -17,6 +17,7 @@ import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { useAuth } from '@/context/AuthContext';
 import { accent, ink, rhythm, surface, touchTarget, type as typeRamp } from '@/design/tokens';
+import ChooseDepthsSection from '@/features/Settings/ChooseDepthsSection';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 /**
@@ -173,6 +174,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
       />
       <AccountSection onApiKey={openApiKey} onTimezone={openTimezone} />
       <PrivacySection />
+      <ChooseDepthsSection />
       <SessionSection onLogout={onLogout} />
       <SupportSection onSupportCare={openSupportCare} />
     </ScreenScaffold>
