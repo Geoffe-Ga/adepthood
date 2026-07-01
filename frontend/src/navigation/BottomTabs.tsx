@@ -89,11 +89,11 @@ const TAB_CONFIGS: ReadonlyArray<{
   component: React.ComponentType<object>;
   icon: LucideIcon;
 }> = [
+  { name: 'Journal', component: JournalTab, icon: NotebookPen },
   { name: 'Today', component: TodayTab, icon: Home },
   { name: 'Habits', component: HabitsTab, icon: Sprout },
   { name: 'Practice', component: PracticeTab, icon: Flower2 },
   { name: 'Course', component: CourseTab, icon: BookOpen },
-  { name: 'Journal', component: JournalTab, icon: NotebookPen },
   { name: 'Map', component: MapTab, icon: Compass },
 ];
 
@@ -134,7 +134,7 @@ const BottomTabs = (): React.JSX.Element => {
 
   return (
     <Tab.Navigator
-      initialRouteName="Today"
+      initialRouteName="Journal"
       screenOptions={{
         // Warm tab bar (#803): raised paper ground + hairline top edge; active
         // terracotta vs muted ink, both AA on the raised ground.

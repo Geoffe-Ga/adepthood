@@ -1,7 +1,7 @@
 /* eslint-env jest */
 /* global describe, it, expect, beforeEach, jest */
-import { NavigationContainer } from '@react-navigation/native';
-import { render } from '@testing-library/react-native';
+import { NavigationContainer, type NavigationContainerRef } from '@react-navigation/native';
+import { render, waitFor } from '@testing-library/react-native';
 import {
   BookOpen,
   Compass,
@@ -30,7 +30,7 @@ jest.mock('@/features/Habits/components/ReorderHabitsModal', () => () => null);
 jest.mock('@/features/Habits/components/StatsModal', () => () => null);
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
-import BottomTabs from '../BottomTabs';
+import BottomTabs, { type RootTabParamList } from '../BottomTabs';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -83,5 +83,37 @@ describe('BottomTabs', () => {
 
     // LayoutGrid was the Catalog tab icon; it must be absent now (6 tabs).
     expect(UNSAFE_queryAllByType(LayoutGrid)).toHaveLength(0);
+  });
+
+  it('opens into the Journal tab as the initial route', async () => {
+    const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
+
+    render(
+      <NavigationContainer ref={navRef}>
+        <BottomTabs />
+      </NavigationContainer>,
+    );
+
+    // waitFor: the navigation state commits asynchronously, and polling inside
+    // act() also drains the tab bar's Animated update (else an act() warning).
+    await waitFor(() => {
+      expect(navRef.current?.getCurrentRoute()?.name).toBe('Journal');
+    });
+  });
+
+  it('Journal is the first tab in navigation order', async () => {
+    const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
+
+    render(
+      <NavigationContainer ref={navRef}>
+        <BottomTabs />
+      </NavigationContainer>,
+    );
+
+    // getRootState() (not a bare getState(), which can read undefined before
+    // commit) exposes routes[] in physical tab order; waitFor lets it commit.
+    await waitFor(() => {
+      expect(navRef.current?.getRootState()?.routes?.[0]?.name).toBe('Journal');
+    });
   });
 });
