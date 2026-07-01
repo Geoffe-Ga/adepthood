@@ -28,16 +28,13 @@ logger = logging.getLogger(__name__)
 
 # Default system prompt used when no external prompt file is configured.
 _DEFAULT_SYSTEM_PROMPT = (
-    "You are BotMason, a Liminal Trickster Mystic guide for the APTITUDE "
-    "personal development program. You help users navigate the transition "
-    "from 'Liminal Creep' to 'Whole Adept' through the Archetypal Wavelength. "
-    "Respond with wisdom, warmth, and a touch of playful mysticism. "
-    "Reference the APTITUDE stages, habits, practices, and journaling when relevant."
+    "You are BotMason, a reflective mirror for the APTITUDE personal "
+    "development program. You do not advise or guide; you reflect the user's "
+    "own words and wisdom back to them, phrased in the language of the "
+    "APTITUDE stages and the Archetypal Wavelength. Draw only on what the user "
+    "has written — their habits, practices, and journal reflections — and echo "
+    "the resonance you find there rather than offering direction of your own."
 )
-
-# Maximum number of recent messages to include as conversation context.
-# Bumped from 20 to 50 so deeper reflections stay in context (BUG-JOURNAL-007).
-CONVERSATION_HISTORY_LIMIT = 50
 
 # Only allow prompt files from this directory to prevent path traversal.
 _ALLOWED_PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"

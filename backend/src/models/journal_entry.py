@@ -64,7 +64,9 @@ def _classification_check() -> CheckConstraint:
 
 
 class JournalEntry(SQLModel, table=True):
-    """Stores a chat message between the user and BotMason.
+    """Stores a user's journal reflection, optionally paired with an AI resonance response.
+
+    A ``sender`` of ``'bot'`` marks an AI resonance reply rather than a chat turn.
 
     Supports context tagging for stage reflections, practice notes, and
     habit-related thoughts.
