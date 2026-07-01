@@ -11,7 +11,17 @@ export interface WelcomePanel {
   title: string;
   body: string;
   pillars?: readonly WelcomePillar[];
+  /** Optional privacy reassurance rendered inline beneath the panel body. */
+  note?: string;
 }
+
+/**
+ * Onboarding privacy promise, surfaced inline on the Five-pillars panel so the
+ * "you choose your depth" ethos is visible before any entry is written — no
+ * extra panel, no gate.
+ */
+export const WELCOME_PRIVACY_NOTE =
+  'Your journal is yours — you choose each entry’s privacy, and anything you mark Intimate never leaves for AI.';
 
 /** The five APTITUDE pillars introduced on the second panel. */
 export const WELCOME_PILLARS: readonly WelcomePillar[] = [
@@ -34,6 +44,7 @@ export const WELCOME_PANELS: readonly WelcomePanel[] = [
     title: 'How the work holds together',
     body: 'Each week weaves the same five threads. Lean on whichever the day asks for.',
     pillars: WELCOME_PILLARS,
+    note: WELCOME_PRIVACY_NOTE,
   },
   {
     eyebrow: 'A week, lived',

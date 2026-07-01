@@ -57,6 +57,11 @@ export const welcomeStyles = StyleSheet.create({
     ...editorialType.body,
     color: onShowcase.soft,
   },
+  note: {
+    ...editorialType.caption,
+    color: onShowcase.muted,
+    marginTop: rhythm.blockGap,
+  },
   pillars: {
     gap: rhythm.blockGap,
     marginTop: rhythm.blockGap,
