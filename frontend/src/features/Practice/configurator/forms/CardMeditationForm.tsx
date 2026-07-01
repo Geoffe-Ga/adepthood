@@ -16,7 +16,7 @@ import { pickCardPhoto } from '../../utils/pickCardPhoto';
 
 import { Chip, CollapsibleSection, LabeledRow, NumericField, TextField, ToggleRow } from './shared';
 
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, colors, editorialType, ink, surface } from '@/design/tokens';
 
 interface Props {
   value: CardMeditationConfig;
@@ -302,9 +302,9 @@ const THUMB_SIZE = 44;
 
 const styles = StyleSheet.create({
   sectionTitle: {
-    fontSize: 13,
+    ...editorialType.caption,
     fontWeight: '600',
-    color: colors.text.tertiary,
+    color: ink.muted,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginTop: SPACING.md,
@@ -315,36 +315,36 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: SPACING.md,
     padding: SPACING.md,
-    backgroundColor: colors.background.card,
+    backgroundColor: surface.raised,
     borderRadius: BORDER_RADIUS.md,
     marginTop: SPACING.sm,
   },
   summaryText: { flex: 1 },
-  summaryName: { fontSize: 15, fontWeight: '600', color: colors.text.primary },
-  summaryCount: { fontSize: 13, color: colors.text.secondaryAccessible, marginTop: 2 },
+  summaryName: { ...editorialType.note, color: ink.primary },
+  summaryCount: { ...editorialType.caption, color: ink.soft, marginTop: 2 },
   summaryDescription: {
-    fontSize: 13,
-    color: colors.text.secondaryAccessible,
+    ...editorialType.caption,
+    color: ink.soft,
     marginTop: SPACING.xs,
     lineHeight: 18,
   },
   cover: { width: COVER_SIZE, height: COVER_SIZE, borderRadius: BORDER_RADIUS.sm },
   unknownDeck: { fontSize: 14, color: colors.danger, marginTop: SPACING.sm },
   photoNote: {
-    fontSize: 12,
-    color: colors.text.secondaryAccessible,
+    ...editorialType.caption,
+    color: ink.soft,
     fontStyle: 'italic',
     marginBottom: SPACING.sm,
   },
   emptyState: {
-    fontSize: 14,
-    color: colors.text.secondaryAccessible,
+    ...editorialType.body,
+    color: ink.soft,
     paddingVertical: SPACING.md,
   },
   cardRow: {
     padding: SPACING.md,
     borderWidth: 1,
-    borderColor: colors.background.accent,
+    borderColor: surface.hairline,
     borderRadius: BORDER_RADIUS.md,
     marginBottom: SPACING.sm,
   },
@@ -353,7 +353,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  cardRowLabel: { fontSize: 13, fontWeight: '600', color: colors.text.primary },
+  cardRowLabel: { ...editorialType.note, color: ink.primary },
   removeText: { fontSize: 13, color: colors.danger, fontWeight: '500' },
   photoRow: {
     flexDirection: 'row',
@@ -364,18 +364,18 @@ const styles = StyleSheet.create({
   photoButton: {
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.md,
-    borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: colors.background.accent,
+    borderRadius: BORDER_RADIUS.md,
+    backgroundColor: surface.sunken,
   },
-  photoButtonText: { fontSize: 13, fontWeight: '500', color: colors.text.primary },
+  photoButtonText: { ...editorialType.caption, fontWeight: '500', color: ink.primary },
   photoThumb: { width: THUMB_SIZE, height: THUMB_SIZE, borderRadius: BORDER_RADIUS.sm },
   addButton: {
     paddingVertical: SPACING.sm,
     alignItems: 'center',
-    borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: colors.background.accent,
+    borderRadius: BORDER_RADIUS.md,
+    backgroundColor: surface.sunken,
   },
-  addButtonText: { fontSize: 14, fontWeight: '600', color: colors.text.primary },
+  addButtonText: { ...editorialType.note, color: ink.primary },
 });
 
 export default CardMeditationForm;

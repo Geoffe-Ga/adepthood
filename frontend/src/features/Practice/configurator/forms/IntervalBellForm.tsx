@@ -5,7 +5,7 @@ import type { IntervalBellConfig } from '../../engine/types';
 
 import { BellToneRow, Chip, LabeledRow, NumericField } from './shared';
 
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, accent, editorialType, ink, surface } from '@/design/tokens';
 
 interface Props {
   value: IntervalBellConfig;
@@ -149,23 +149,23 @@ const AddOffsetRow = ({ onAdd }: { onAdd: (raw: number | null) => void }): React
 
 const localStyles = StyleSheet.create({
   kindRow: { flexDirection: 'row', gap: SPACING.xs, flexWrap: 'wrap' },
-  subLabel: { color: colors.text.secondaryAccessible, fontSize: 13, marginTop: SPACING.sm },
+  subLabel: { ...editorialType.caption, color: ink.soft, marginTop: SPACING.sm },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs, marginVertical: SPACING.sm },
   offsetChip: {
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.sm,
     borderRadius: BORDER_RADIUS.lg,
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
   },
-  offsetChipText: { color: colors.text.primary, fontSize: 13 },
+  offsetChipText: { ...editorialType.caption, color: ink.primary },
   addRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
   addButton: {
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.md,
-    borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: colors.primary,
+    borderRadius: BORDER_RADIUS.md,
+    backgroundColor: accent.primary,
   },
-  addButtonText: { color: colors.text.light, fontWeight: '600', fontSize: 13 },
+  addButtonText: { color: surface.raised, fontWeight: '600', fontSize: 13 },
 });
 
 export default IntervalBellForm;

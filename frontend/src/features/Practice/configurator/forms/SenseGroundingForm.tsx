@@ -7,7 +7,7 @@ import { PROMPT_LABEL_MAX } from '../../engine/validation';
 import GroundingDropdown from './GroundingDropdown';
 import { TextField } from './shared';
 
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, editorialType, ink, surface } from '@/design/tokens';
 
 interface Props {
   value: SenseGroundingConfig;
@@ -167,7 +167,7 @@ const SmallButton = ({
 const localStyles = StyleSheet.create({
   promptCard: {
     padding: SPACING.sm,
-    backgroundColor: colors.background.card,
+    backgroundColor: surface.raised,
     borderRadius: BORDER_RADIUS.md,
     marginBottom: SPACING.sm,
     gap: SPACING.xs,
@@ -176,20 +176,20 @@ const localStyles = StyleSheet.create({
   smallButton: {
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.sm,
-    borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: colors.background.accent,
+    borderRadius: BORDER_RADIUS.md,
+    backgroundColor: surface.sunken,
     minHeight: 32,
   },
-  smallButtonText: { color: colors.text.primary, fontSize: 13, fontWeight: '500' },
+  smallButtonText: { ...editorialType.caption, color: ink.primary },
   disabled: { opacity: 0.4 },
   addButton: {
     paddingVertical: SPACING.sm,
-    borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: colors.background.accent,
+    borderRadius: BORDER_RADIUS.md,
+    backgroundColor: surface.sunken,
     alignItems: 'center',
     marginTop: SPACING.sm,
   },
-  addButtonText: { color: colors.text.primary, fontWeight: '600', fontSize: 14 },
+  addButtonText: { ...editorialType.note, color: ink.primary },
 });
 
 export default SenseGroundingForm;

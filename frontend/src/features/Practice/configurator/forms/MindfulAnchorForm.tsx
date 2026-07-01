@@ -10,7 +10,7 @@ import {
 
 import { LabeledRow, NumericField, TextField, ToggleRow } from './shared';
 
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, accent, colors, surface } from '@/design/tokens';
 
 interface Props {
   value: MindfulAnchorConfig;
@@ -127,13 +127,13 @@ const MindfulAnchorForm = ({ value, onChange }: Props): React.JSX.Element => {
 const localStyles = StyleSheet.create({
   card: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: surface.hairline,
     borderRadius: BORDER_RADIUS.md,
     padding: SPACING.sm,
     marginBottom: SPACING.sm,
   },
   addButton: { paddingVertical: SPACING.sm },
-  addButtonText: { color: colors.primary, fontWeight: '600' },
+  addButtonText: { color: accent.primary, fontWeight: '600' },
   removeButton: { paddingVertical: SPACING.xs },
   removeButtonText: { color: colors.danger },
 });

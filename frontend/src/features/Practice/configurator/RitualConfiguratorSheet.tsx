@@ -19,7 +19,16 @@ import { ErrorList } from './forms/shared';
 
 import { type UserPractice, type UserPracticeCustomize, userPractices } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
-import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import {
+  BORDER_RADIUS,
+  SPACING,
+  accent,
+  colors,
+  editorialType,
+  ink,
+  surface,
+  surfaceShadow,
+} from '@/design/tokens';
 import ConfiguratorBody from '@/features/Practice/components/ConfiguratorBody';
 
 /** Modes that have a recipe library backing them; see backend `RECIPE_MODES`. */
@@ -332,54 +341,54 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   sheet: {
-    backgroundColor: colors.background.primary,
+    backgroundColor: surface.canvas,
     borderTopLeftRadius: BORDER_RADIUS.xl,
     borderTopRightRadius: BORDER_RADIUS.xl,
     maxHeight: '90%',
-    ...shadows.large,
+    ...surfaceShadow.raised,
   },
   header: {
     paddingHorizontal: SPACING.lg,
     paddingTop: SPACING.lg,
     paddingBottom: SPACING.md,
     borderBottomWidth: 1,
-    borderBottomColor: colors.separator,
+    borderBottomColor: surface.hairline,
     gap: SPACING.sm,
   },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: colors.text.primary },
-  headerSubtitle: { fontSize: 13, color: colors.text.secondary },
+  headerTitle: { ...editorialType.title, color: ink.primary },
+  headerSubtitle: { ...editorialType.caption, color: ink.soft },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
   nameInput: {
     flex: 1,
     fontSize: 18,
     fontWeight: '600',
-    color: colors.text.primary,
+    color: ink.primary,
     paddingVertical: SPACING.xs,
     borderBottomWidth: 1,
-    borderBottomColor: colors.separator,
+    borderBottomColor: surface.hairline,
   },
   aspectChip: {
     paddingHorizontal: SPACING.sm,
     paddingVertical: SPACING.xs,
     borderRadius: BORDER_RADIUS.lg,
-    backgroundColor: colors.background.accent,
+    backgroundColor: surface.sunken,
   },
-  aspectText: { color: colors.text.primary, fontSize: 12, fontWeight: '500' },
+  aspectText: { ...editorialType.caption, color: ink.primary, fontWeight: '500' },
   actionRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: SPACING.sm },
   cancelButton: {
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.lg,
     borderRadius: BORDER_RADIUS.md,
   },
-  cancelText: { color: colors.text.secondaryAccessible, fontSize: 14, fontWeight: '500' },
+  cancelText: { color: ink.soft, fontSize: 14, fontWeight: '500' },
   saveButton: {
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.lg,
     borderRadius: BORDER_RADIUS.md,
-    backgroundColor: colors.primary,
+    backgroundColor: accent.primary,
   },
   disabledButton: { opacity: 0.4 },
-  saveText: { color: colors.text.light, fontSize: 14, fontWeight: '600' },
+  saveText: { color: surface.raised, fontSize: 14, fontWeight: '600' },
   body: { padding: SPACING.lg },
   apiError: { color: colors.danger, fontSize: 13, marginTop: SPACING.sm },
   resetButton: {
@@ -388,18 +397,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   resetText: { color: colors.danger, fontSize: 13, fontWeight: '500' },
-  unknownText: { color: colors.text.secondaryAccessible, fontSize: 14, lineHeight: 20 },
+  unknownText: { color: ink.soft, fontSize: 14, lineHeight: 20 },
   recipeLibraryButton: {
     marginBottom: SPACING.md,
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.md,
-    backgroundColor: colors.background.card,
+    backgroundColor: surface.raised,
     borderWidth: 1,
-    borderColor: colors.background.accent,
+    borderColor: surface.hairline,
     alignItems: 'center',
   },
-  recipeLibraryText: { color: colors.text.primary, fontSize: 14, fontWeight: '600' },
+  recipeLibraryText: { ...editorialType.note, color: ink.primary },
 });
 
 export default RitualConfiguratorSheet;
