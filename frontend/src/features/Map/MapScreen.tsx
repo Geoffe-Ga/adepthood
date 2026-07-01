@@ -30,12 +30,14 @@ import {
   useStageStore,
 } from '../../store/useStageStore';
 
+import { useWheelBalance } from './hooks/useWheelBalance';
 import { journeyRead, progressionSentence, rankedStats, unlockTimeline } from './journeyNarrative';
 import styles from './Map.styles';
 import { MAP_ROWS, STAGE_DISPLAY, TITLE_BY_STAGE } from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
 import { stageService, isStageUnlocked } from './services/stageService';
 import { isLeftReturning, STAGE_COUNT, type StageData } from './stageData';
+import { BALANCE_COPY, emphasisStyle, FULLNESS_ALIVE_THRESHOLD, summaryFor } from './wheelBalance';
 
 import { Celebration } from '@/components/feedback/Celebration';
 import { colors } from '@/design/tokens';
@@ -43,7 +45,19 @@ import { colors } from '@/design/tokens';
 /** Lookup of stage number → StageData for resolving row/arrow content. */
 type StageLookup = Readonly<Record<number, StageData | undefined>>;
 
+/** Wheel-of-wholeness fullness (0..1) keyed by stage number; absent reads thin. */
+type FullnessLookup = Readonly<Record<number, number>>;
+
 const FULL_PROGRESS = 1;
+const THIN_FULLNESS = 0;
+
+/** Accessibility suffix appended to a node's label from its wheel fullness. */
+const balanceLabelSuffix = (fullness: number): string =>
+  fullness >= FULLNESS_ALIVE_THRESHOLD ? 'reads full' : 'reads thin';
+
+/** Full a11y label for a stage node: persona/descriptor plus the balance read. */
+const stageNodeLabel = (display: StageDisplay, fullness: number): string =>
+  `${display.persona} - ${display.descriptor} - ${balanceLabelSuffix(fullness)}`;
 /** Directional spiral glyphs — the Map reads with no background PNG (#766). */
 const ARROW_GLYPH_LEFT = '↩';
 const ARROW_GLYPH_RIGHT = '↪';
@@ -89,15 +103,30 @@ interface StageCellProps {
   onPress: (_stage: StageData) => void;
 }
 
-// --- Left cell: colored stage text (the -0 tap target) --------------------
+interface StageTextBlockProps extends StageCellProps {
+  /** Wheel-of-wholeness fullness (0..1) for this Aspect; drives emphasis + a11y. */
+  fullness: number;
+}
 
-const StageTextBlock = ({ stage, display, locked, onPress }: StageCellProps): React.JSX.Element => (
+// --- Left cell: colored stage text (the -0 tap target) --------------------
+//
+// The wheel-of-wholeness overlay is additive here: the node keeps every existing
+// style/handler and gains an emphasis opacity (fuller Aspect reads more present)
+// plus a "reads full/thin" a11y suffix — no re-sort, no re-colour of the spiral.
+
+const StageTextBlock = ({
+  stage,
+  display,
+  locked,
+  fullness,
+  onPress,
+}: StageTextBlockProps): React.JSX.Element => (
   <TouchableOpacity
     testID={`stage-hotspot-${display.stageNumber}-0`}
-    style={[styles.stageBlock, locked ? styles.locked : null]}
+    style={[styles.stageBlock, locked ? styles.locked : null, emphasisStyle(fullness)]}
     onPress={() => onPress(stage)}
     accessibilityRole="button"
-    accessibilityLabel={`${display.persona} - ${display.descriptor}`}
+    accessibilityLabel={stageNodeLabel(display, fullness)}
   >
     <Text style={[styles.personaText, { color: display.textColor }]}>{display.persona}</Text>
     <Text style={[styles.lineText, { color: display.textColor }]}>{display.descriptor}</Text>
@@ -163,12 +192,19 @@ const StageCenterCell = ({
 interface MapRowProps {
   row: MapRow;
   lookup: StageLookup;
+  fullnessByStage: FullnessLookup;
   currentStage: number | null;
   onPress: (_stage: StageData) => void;
 }
 
 /** One grid row: left text + center glyph stacked per stage, one aspect label. */
-const MapRowView = ({ row, lookup, currentStage, onPress }: MapRowProps): React.JSX.Element => {
+const MapRowView = ({
+  row,
+  lookup,
+  fullnessByStage,
+  currentStage,
+  onPress,
+}: MapRowProps): React.JSX.Element => {
   const resolved = row.stageNumbers
     .map((n) => ({ stage: lookup[n], display: STAGE_DISPLAY[n] }))
     .filter((r): r is { stage: StageData; display: StageDisplay } => !!r.stage && !!r.display);
@@ -182,6 +218,7 @@ const MapRowView = ({ row, lookup, currentStage, onPress }: MapRowProps): React.
             display={display}
             locked={!isStageUnlocked(stage, currentStage)}
             isCurrent={stage.stageNumber === currentStage}
+            fullness={fullnessByStage[stage.stageNumber] ?? THIN_FULLNESS}
             onPress={onPress}
           />
         ))}
@@ -587,6 +624,7 @@ const MapRefreshErrorBanner = ({ onRetry }: { onRetry: () => void }): React.JSX.
 
 interface MapGridProps {
   lookup: StageLookup;
+  fullnessByStage: FullnessLookup;
   currentStage: number | null;
   onSelectStage: (_stage: StageData) => void;
 }
@@ -615,18 +653,38 @@ const JourneyHeader = ({ currentStage }: { currentStage: number }): React.JSX.El
   );
 };
 
-const MapGrid = ({ lookup, currentStage, onSelectStage }: MapGridProps): React.JSX.Element => (
+const MapGrid = ({
+  lookup,
+  fullnessByStage,
+  currentStage,
+  onSelectStage,
+}: MapGridProps): React.JSX.Element => (
   <View style={styles.grid}>
     {MAP_ROWS.map((row) => (
       <MapRowView
         key={row.rightLabel}
         row={row}
         lookup={lookup}
+        fullnessByStage={fullnessByStage}
         currentStage={currentStage}
         onPress={onSelectStage}
       />
     ))}
   </View>
+);
+
+/**
+ * Whole-wheel balance read shown beneath the spiral: one balance-not-ladder
+ * sentence keyed to whether every Aspect is thin, alive, or a mix.
+ */
+const BalanceSummary = ({
+  fullnessByStage,
+}: {
+  fullnessByStage: FullnessLookup;
+}): React.JSX.Element => (
+  <Text style={styles.balanceSummary} testID="balance-summary">
+    {BALANCE_COPY[summaryFor(fullnessByStage)]}
+  </Text>
 );
 
 // --- Main component ---
@@ -718,6 +776,45 @@ const CelebrationBanner = ({
   );
 };
 
+interface MapContentProps {
+  lookup: StageLookup;
+  fullnessByStage: FullnessLookup;
+  currentStage: number;
+  showRefreshError: boolean;
+  activeStage: StageData | null;
+  celebration: CompletionCelebration;
+  onRefresh: () => void;
+  onSelectStage: (_stage: StageData) => void;
+  onCloseModal: () => void;
+  onNavigate: (_screen: NavTarget, _stage: StageData) => void;
+}
+
+/** The rendered Map: spiral grid + balance overlay + banners + stage modal. */
+const MapContent = (props: MapContentProps): React.JSX.Element => (
+  <View style={styles.container}>
+    <MapBackdrop />
+    <JourneyHeader currentStage={props.currentStage} />
+    <MapGrid
+      lookup={props.lookup}
+      fullnessByStage={props.fullnessByStage}
+      currentStage={props.currentStage}
+      onSelectStage={props.onSelectStage}
+    />
+    <BalanceSummary fullnessByStage={props.fullnessByStage} />
+    {props.showRefreshError && <MapRefreshErrorBanner onRetry={props.onRefresh} />}
+    <CelebrationBanner
+      active={props.celebration.active}
+      message={props.celebration.message}
+      onDismiss={props.celebration.dismiss}
+    />
+    <StageDetailModal
+      activeStage={props.activeStage}
+      onClose={props.onCloseModal}
+      onNavigate={props.onNavigate}
+    />
+  </View>
+);
+
 const MapScreen = (): React.JSX.Element => {
   const stages = useStageStore(selectStages);
   const loading = useStageStore(selectStagesLoading);
@@ -727,6 +824,9 @@ const MapScreen = (): React.JSX.Element => {
   // server's count-based ``currentStage`` is the fallback for users who
   // haven't picked an anchor yet.
   const currentStage = useDerivedCurrentStage(storeCurrentStage);
+  // Additive wheel-of-wholeness overlay: a failed/loading read leaves the map
+  // empty so every Aspect reads thin — the spiral itself never blanks.
+  const { fullnessByStage } = useWheelBalance();
   const [activeStage, setActiveStage] = useState<StageData | null>(null);
 
   // Resolve each row's stage numbers to their loaded StageData once per change.
@@ -750,22 +850,18 @@ const MapScreen = (): React.JSX.Element => {
   if (error && stages.length === 0) return <MapError message={error} />;
 
   return (
-    <View style={styles.container}>
-      <MapBackdrop />
-      <JourneyHeader currentStage={currentStage} />
-      <MapGrid lookup={lookup} currentStage={currentStage} onSelectStage={setActiveStage} />
-      {error && stages.length > 0 && <MapRefreshErrorBanner onRetry={handleRefresh} />}
-      <CelebrationBanner
-        active={celebration.active}
-        message={celebration.message}
-        onDismiss={celebration.dismiss}
-      />
-      <StageDetailModal
-        activeStage={activeStage}
-        onClose={handleCloseModal}
-        onNavigate={handleNavigate}
-      />
-    </View>
+    <MapContent
+      lookup={lookup}
+      fullnessByStage={fullnessByStage}
+      currentStage={currentStage}
+      showRefreshError={!!error && stages.length > 0}
+      activeStage={activeStage}
+      celebration={celebration}
+      onRefresh={handleRefresh}
+      onSelectStage={setActiveStage}
+      onCloseModal={handleCloseModal}
+      onNavigate={handleNavigate}
+    />
   );
 };
 
