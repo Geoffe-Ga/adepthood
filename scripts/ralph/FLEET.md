@@ -19,24 +19,30 @@ predict which files a change will touch before we make it. So the loop never
   `.ralph/worktrees/issue-<N>` on branch `issue/<N>-<slug>`, so concurrent edits
   never collide on disk. Each worktree runs the full four-gate pipeline exactly
   as the sequential loop does.
-- **Merge pessimistically.** Only **one PR merges to `main` per tick**. After a
-  merge, every surviving worktree **syncs the new `main` into its branch (by
-  merge, not rebase — so a plain push updates the PR, never a force-push) and
-  re-runs its local gate** (`check-all.sh`) before it is itself allowed to merge.
-  A worktree that cannot cleanly sync **drops to Gate 1** and fixes the conflict
-  as a root-cause, failing-test-first change.
+- **Merge pessimistically, but never with a barrier.** Merges to `main` are
+  **serialized** (one at a time — the single orchestrator session serializes them
+  for free) and each merge is **always up-to-date**: a lane merges only when it is
+  `LGTM` + CI-green + up-to-date with `main` (`mergeStateStatus == CLEAN`). If a
+  sibling merged after this lane went green, the lane is `BEHIND`; it **syncs the
+  new `main` into its branch (by merge, not rebase — a plain push updates the PR
+  and re-runs CI, never a force-push)** and merges on a later wake once green
+  again. A lane that cannot cleanly sync **drops to Gate 1**. This sync is **lazy**
+  — a lane only pays it when it is itself about to merge, not proactively every
+  time any sibling merges.
+- **Never wait on the slowest lane.** Whichever lane is ready merges immediately;
+  the slot it frees refills at once. A fast lane at Gate 4 never waits for a slow
+  lane at Gate 1.
 
-The result: an imperfect independence guess costs at most a sync (and, in the
-worst case, one worker redoing part of its work) — it can **never** merge broken
-or conflicting code, because the serialized-merge-then-sync step re-validates
-every worktree against the real, updated `main`.
+The result: an imperfect independence guess costs at most a sync — it can
+**never** merge broken or conflicting code (every merge is re-validated against
+the real, updated `main`), and it **never** stalls a ready lane behind a slow one.
 
 ```
-pick optimistically ──▶ work in parallel (isolated worktrees)
+pick optimistically ──▶ N lanes build in parallel (isolated worktrees)
         │
-   merge ONE PR/tick ──▶ sync new main into every other worktree (merge)
-        │            ──▶ re-run check-all in each
-    sync conflict?   ──▶ that worktree drops to Gate 1 (never a forced merge)
+   a lane goes LGTM+green ──▶ up-to-date (CLEAN)? ──▶ merge NOW, refill its slot
+        │                 ──▶ BEHIND? ── sync main in (lazy) ── re-green ── merge next wake
+   sync conflict?         ──▶ that lane drops to Gate 1 (never a forced merge)
 ```
 
 ## Why worktrees (not branches in one tree, not clones)
@@ -49,29 +55,41 @@ pick optimistically ──▶ work in parallel (isolated worktrees)
   "N isolated working copies of one repo" — the right primitive here.
 
 Ralph manages its **own persistent** worktrees rather than the `Agent` tool's
-ephemeral `isolation: "worktree"` because a worktree must **survive across ticks**:
-Gates 3–4 (CI + review) span multiple ticks, with the turn ending in between.
+ephemeral `isolation: "worktree"` because a worktree must **survive across wakes**:
+Gates 3–4 (CI + review) span many wakes, with the turn ending in between.
 
-## Execution model
+## Execution model — an event-driven worker pool
 
-One re-entrant orchestrator session (`/loop /ralph-tick`) remains the single
-brain. Each tick it:
+One re-entrant orchestrator session (`/loop /ralph-tick`) is the single brain. It
+runs a **worker pool**: up to `max_workers` **lanes**, each one issue in its own
+worktree moving through the four gates **independently, on its own clock**. There
+is **no per-tick barrier and no all-lanes Monitor** — the orchestrator is woken by
+*per-lane events* and acts on whichever lane the wake is about.
 
-1. **Reconciles** the fleet — releases worktrees whose PR merged/closed
-   (`fleet.sh reconcile`).
-2. **Merges at most one** LGTM+green PR, then syncs (merges main into) +
-   re-greens every other worktree (the pessimistic-merge step).
-3. **Advances** each active worker that needs a code action (Gate-1/2 fix, CI
-   fix, review feedback) by launching a `ralph-worker` subagent **in that
-   worktree** — up to `max_workers` in parallel, in one `Agent` message.
-4. **Fills** free slots: while `fleet.sh free > 0` and `pick-next.sh` yields a
-   compatible issue, assign a worktree and launch a `ralph-worker` for it.
-5. **Arms one Monitor** across all in-flight PRs and ends the turn.
+On each wake it:
 
-Workers never merge, never touch `main`, and never coordinate with each other —
-all cross-worker coordination (merge order, sync, slot allocation) is the
-orchestrator's job. This keeps the concurrency model simple: **fan-out for
-building, serialize for integrating.**
+1. **Reconciles** — releases worktrees whose PR merged/closed (`fleet.sh
+   reconcile`), freeing their slots.
+2. **Merges every ready lane** — any PR that is `LGTM` + green + up-to-date
+   (`mergeStateStatus == CLEAN`) merges *now*, serialized; a `BEHIND` lane lazily
+   syncs first and merges on a later wake. A ready lane never waits for a slow one.
+3. **Advances failing lanes** — a `ralph-worker` is dispatched into the worktree
+   of any PR that needs a fix (CI failure → `ci-debugging`; `CHANGES_REQUESTED` →
+   `address-feedback`).
+4. **Refills every open slot** — while `fleet.sh free > 0` and `pick-next.sh`
+   yields a compatible issue, assign a worktree and launch a `ralph-worker`.
+5. **Arms per-lane wakes** — background workers wake it on their own completion;
+   each in-flight PR is `subscribe_pr_activity`-subscribed so its CI/verdict wakes
+   it independently; a modest `ScheduleWakeup` backstops the CI-success /
+   `BEHIND→green` transitions the webhook doesn't deliver. Then it ends the turn.
+
+**Workers are background tasks.** Each `ralph-worker` is launched with
+`run_in_background: true` and **never awaited** — launch, end the turn, and let its
+completion be its own wake. Awaiting a batch of workers would re-introduce the
+slowest-lane barrier this design exists to avoid. Workers never merge, never touch
+`main`, and never coordinate with each other — all cross-lane coordination (merge
+serialization, lazy sync, slot allocation) is the orchestrator's job: **fan-out
+for building, serialize only the merge.**
 
 ## Which issues run in parallel (the safety gate)
 
@@ -91,7 +109,8 @@ filters and open-PR exclusion, it:
     ordered/overlapping). Toggle with `RALPH_RESPECT_EPICS=0`.
 
 These heuristics only reduce *sync churn*; they are **not** the correctness
-mechanism. Correctness is the serialized-merge + sync + re-green step above.
+mechanism. Correctness is the serialized, always-up-to-date merge (lazy sync +
+re-green when `BEHIND`) described above.
 
 ## Configuration (`scripts/ralph/state.json`)
 
@@ -141,8 +160,9 @@ bash scripts/ralph/test_pick_next.sh
 
 | Scenario | Handling |
 | --- | --- |
-| Two "independent" issues touch the same file | Second-to-merge syncs main in; conflict ⇒ drops to Gate 1. Never a broken merge. |
-| A worker crashes / abandons an issue | `reconcile` releases it once its PR closes; an un-PR'd stale worktree is re-detected and either resumed or released next tick. |
-| Fleet silts up with merged work | `reconcile` at the top of every tick GCs merged/closed worktrees. |
+| Two "independent" issues touch the same file | Whichever merges first wins; the other goes `BEHIND`, lazily syncs main in, re-greens, then merges. A sync conflict ⇒ drops to Gate 1. Never a broken merge. |
+| A slow lane would stall a fast one | It can't — lanes are independent; a ready lane merges immediately and its slot refills without waiting on any sibling. |
+| A worker crashes / abandons an issue | `reconcile` releases it once its PR closes; an un-PR'd stale worktree is re-detected and either resumed or released on the next wake. |
+| Fleet silts up with merged work | `reconcile` at the top of every wake GCs merged/closed worktrees. |
 | A genuinely serial issue | Label it `solo`; it runs alone and blocks fills until done. |
 | Want to disable parallelism | `parallel_enabled: false` in `state.json`. |
