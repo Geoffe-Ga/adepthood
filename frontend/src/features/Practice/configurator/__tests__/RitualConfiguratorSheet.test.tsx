@@ -248,12 +248,11 @@ describe('RitualConfiguratorSheet', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Gate 1 RED — Candle & Ink token guard for RitualConfiguratorSheet
+// Candle & Ink token guard for the RitualConfiguratorSheet save button.
 //
-// The save button (`ritual-configurator-save`) must migrate its background
-// from `colors.primary` (#1a1910) to `accent.primary` (#a5572f). Every
-// assertion below FAILS today because the component still reads from
-// `styles.saveButton = { backgroundColor: colors.primary }`.
+// The save button (`ritual-configurator-save`) background is `accent.primary`
+// (#a5572f), migrated from the legacy `colors.primary` (#1a1910); the negative
+// pin guards the swap.
 // ---------------------------------------------------------------------------
 
 describe('Candle & Ink token guard — RitualConfiguratorSheet save button', () => {
@@ -265,7 +264,7 @@ describe('Candle & Ink token guard — RitualConfiguratorSheet save button', () 
     // Make the sheet dirty so the save button is enabled (canSave=true).
     fireEvent.changeText(getByTestId('ritual-configurator-name'), 'Adjusted sit');
     const save = getByTestId('ritual-configurator-save');
-    // POST-migration expected value — RED today (component returns #1a1910).
+    // POST-migration expected value — the migrated semantic token value.
     expect(flatBackground(save.props.style)).toBe(accent.primary);
   });
 

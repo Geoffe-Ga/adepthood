@@ -1,11 +1,10 @@
 /* eslint-env jest */
 /**
- * Gate 1 RED — Candle & Ink token-consumption guards for the practice
- * authoring flow.
+ * Candle & Ink token-consumption guards for the practice authoring flow.
  *
- * Each assertion names the POST-migration semantic token value imported
- * directly from `@/design/tokens`; the components still read from the legacy
- * `colors.*` layer, so every assertion below FAILS today.
+ * Each assertion names the semantic token value imported directly from
+ * `@/design/tokens` and pins that the migrated node resolves to it, with a
+ * negative pin against the legacy value it replaced.
  *
  * Covered nodes:
  *   1. Wizard canvas (`create-practice-wizard`) → surface.canvas
@@ -115,7 +114,7 @@ const flatBackground = (style: unknown): string | undefined =>
 
 // ---------------------------------------------------------------------------
 // Guard 1: Wizard canvas background → surface.canvas
-// RED today: styles.screen uses `colors.background.primary` (#f8f8f8).
+// Legacy value guarded against: styles.screen uses `colors.background.primary` (#f8f8f8).
 // ---------------------------------------------------------------------------
 
 describe('Candle & Ink token guard — wizard canvas (create-practice-wizard)', () => {
@@ -127,7 +126,7 @@ describe('Candle & Ink token guard — wizard canvas (create-practice-wizard)', 
   it('wizard canvas resolves to surface.canvas, not the legacy background.primary', () => {
     const { view } = renderScreen();
     const canvas = view.getByTestId('create-practice-wizard');
-    // POST-migration expected value — RED today (component returns #f8f8f8).
+    // POST-migration expected value — the migrated semantic token value.
     expect(flatBackground(canvas.props.style)).toBe(surface.canvas);
   });
 
@@ -142,7 +141,7 @@ describe('Candle & Ink token guard — wizard canvas (create-practice-wizard)', 
 
 // ---------------------------------------------------------------------------
 // Guard 2: Primary CTA "Save practice" background → accent.primary
-// RED today: styles.primaryButton uses `colors.primary` (#1a1910).
+// Legacy value guarded against: styles.primaryButton uses `colors.primary` (#1a1910).
 // The button carries `[styles.primaryButton, nextDisabled && styles.disabledButton]`;
 // flatten resolves the array to a single style object.
 // ---------------------------------------------------------------------------
@@ -161,7 +160,7 @@ describe('Candle & Ink token guard — primary CTA (create-practice-submit)', ()
     // the form validation requires duration > 0; set it explicitly.
     fireEvent.changeText(view.getByTestId('create-practice-duration'), '20');
     const submit = view.getByTestId('create-practice-submit');
-    // POST-migration expected value — RED today (component returns #1a1910).
+    // POST-migration expected value — the migrated semantic token value.
     expect(flatBackground(submit.props.style)).toBe(accent.primary);
   });
 
@@ -177,7 +176,7 @@ describe('Candle & Ink token guard — primary CTA (create-practice-submit)', ()
 // ---------------------------------------------------------------------------
 // Guard 3: Selected stage chip background → accent.primary
 // Unselected chip must NOT carry accent.primary.
-// RED today: stageChipSelected uses `colors.primary` (#1a1910).
+// Legacy value guarded against: stageChipSelected uses `colors.primary` (#1a1910).
 // ---------------------------------------------------------------------------
 
 describe('Candle & Ink token guard — selected stage chip (create-practice-stage-3)', () => {
@@ -190,7 +189,7 @@ describe('Candle & Ink token guard — selected stage chip (create-practice-stag
     const { view } = navigateToMetadata();
     fireEvent.press(view.getByTestId('create-practice-stage-3'));
     const chip = view.getByTestId('create-practice-stage-3');
-    // POST-migration expected value — RED today (component returns #1a1910).
+    // POST-migration expected value — the migrated semantic token value.
     expect(flatBackground(chip.props.style)).toBe(accent.primary);
   });
 

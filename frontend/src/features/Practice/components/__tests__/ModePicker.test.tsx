@@ -99,12 +99,10 @@ describe('ModePicker — New badge', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Gate 1 RED — Candle & Ink token guard for ModePicker selected mode row
+// Candle & Ink token guard for the ModePicker selected mode row.
 //
-// The selected row background must migrate from `colors.background.accent`
-// (#f0f0f0) to `surface.sunken` (#f3ecdf). Every assertion below FAILS today
-// because ModePicker still reads `styles.rowSelected = { backgroundColor:
-// colors.background.accent }`.
+// The selected row background is `surface.sunken` (#f3ecdf), migrated from the
+// legacy `colors.background.accent` (#f0f0f0); the negative pin guards the swap.
 // ---------------------------------------------------------------------------
 
 describe('Candle & Ink token guard — ModePicker selected mode row', () => {
@@ -116,7 +114,7 @@ describe('Candle & Ink token guard — ModePicker selected mode row', () => {
       <ModePicker selectedMode="card_meditation" onSelect={jest.fn()} />,
     );
     const selected = getByTestId('mode-picker-mode-card_meditation');
-    // POST-migration expected value — RED today (component returns #f0f0f0).
+    // POST-migration expected value — the migrated semantic token value.
     expect(flatBackground(selected.props.style)).toBe(surface.sunken);
   });
 

@@ -8,6 +8,11 @@ import { Alert, StyleSheet } from 'react-native';
 import type { PracticeItem } from '@/api';
 import { surface } from '@/design/tokens';
 
+// Each test renders the full catalog with an async practice load; the settle is
+// marginal against Jest's 5s default under CI parallel-worker contention. Give
+// this heavy integration suite generous headroom (tracked in #1062).
+jest.setTimeout(15000);
+
 // The catalog reads useSafeAreaInsets; stub it with non-zero insets (no
 // SafeAreaProvider in tests) so the safe-area padding is observable.
 jest.mock('react-native-safe-area-context', () => {
