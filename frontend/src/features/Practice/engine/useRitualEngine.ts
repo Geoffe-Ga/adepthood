@@ -67,18 +67,6 @@ function buildControls(
 }
 
 /**
- * Drives the ritual state machine for a given preset config.
- *
- * Caller contract: `config` may change between renders (e.g. a configurator
- * save that swaps the duration). While the session is idle, a change to the
- * total duration re-seeds the countdown via a `CONFIG_CHANGED` dispatch, so
- * the display reconciles without a remount. A running or paused session is
- * left intact — its cue schedule and elapsedMs anchor are built once at
- * START and are not re-derived from a later config edit. To restart a live
- * session against a new config, call `controls.cancel()` first, then
- * `controls.start()` again after the config prop has updated.
- */
-/**
  * Re-seed the idle countdown when the config's total duration changes (a
  * configurator save on the same row does not remount the engine). The reducer's
  * idle guard makes this a no-op for a running/paused session; the mounted ref
@@ -94,6 +82,19 @@ function useConfigReseed(totalMs: number | null, dispatch: Dispatch<EngineAction
     dispatch({ type: 'CONFIG_CHANGED' });
   }, [totalMs, dispatch]);
 }
+
+/**
+ * Drives the ritual state machine for a given preset config.
+ *
+ * Caller contract: `config` may change between renders (e.g. a configurator
+ * save that swaps the duration). While the session is idle, a change to the
+ * total duration re-seeds the countdown via a `CONFIG_CHANGED` dispatch, so
+ * the display reconciles without a remount. A running or paused session is
+ * left intact — its cue schedule and elapsedMs anchor are built once at
+ * START and are not re-derived from a later config edit. To restart a live
+ * session against a new config, call `controls.cancel()` first, then
+ * `controls.start()` again after the config prop has updated.
+ */
 
 export function useRitualEngine(
   config: ModeConfig,

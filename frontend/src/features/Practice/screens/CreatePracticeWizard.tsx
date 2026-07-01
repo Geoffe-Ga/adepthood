@@ -375,7 +375,7 @@ const MetadataStep = (props: MetadataStepProps): React.JSX.Element => {
       <NameField state={props.state} setState={props.setState} />
       <DescriptionField state={props.state} setState={props.setState} />
       <InstructionsField state={props.state} setState={props.setState} />
-      {!showsDurationField(props.state) ? null : (
+      {showsDurationField(props.state) && (
         <DurationField state={props.state} setState={props.setState} />
       )}
       <StageField state={props.state} setState={props.setState} />
