@@ -1,6 +1,6 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -32,6 +32,10 @@ import StageIntroCard from './StageIntroCard';
 import StageSelector from './StageSelector';
 
 const DEFAULT_STAGE_NUMBER = 1;
+
+// Stable empty reference so the FlatList shows ListEmptyComponent while a stage
+// is loading or after a failed fetch, without churning the data prop's identity.
+const EMPTY_CONTENT: ContentItem[] = [];
 
 // --- Hook: load stages on mount ---
 
@@ -250,18 +254,29 @@ const CourseLoadingState = (): React.JSX.Element => (
   </SafeAreaView>
 );
 
+const ContentLoadingIndicator = (): React.JSX.Element => (
+  <View style={styles.loadingContainer}>
+    <ActivityIndicator testID="content-loading" size="small" />
+  </View>
+);
+
 interface ContentAreaProps {
   content: ContentItem[];
   loadingContent: boolean;
   error: boolean;
+  header: React.ReactElement;
   onContentPress: (_item: ContentItem) => void;
   onRetry: () => void;
 }
 
+/** The single scroll surface: the stage header and the chapter list share one
+ *  FlatList so the whole landing page scrolls together. Loading, error, and
+ *  empty states render in ``ListEmptyComponent`` below the pinned header. */
 const ContentArea = ({
   content,
   loadingContent,
   error,
+  header,
   onContentPress,
   onRetry,
 }: ContentAreaProps): React.JSX.Element => {
@@ -270,23 +285,11 @@ const ContentArea = ({
     [onContentPress],
   );
 
-  const renderEmpty = useCallback(() => {
-    if (loadingContent) return null;
+  const empty = useMemo(() => {
+    if (loadingContent) return <ContentLoadingIndicator />;
+    if (error) return <CourseErrorState onRetry={onRetry} />;
     return <CourseEmptyState />;
-  }, [loadingContent]);
-
-  if (loadingContent) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator testID="content-loading" size="small" />
-      </View>
-    );
-  }
-
-  // A failed content fetch shows error+retry, distinct from the empty state.
-  if (error) {
-    return <CourseErrorState onRetry={onRetry} />;
-  }
+  }, [loadingContent, error, onRetry]);
 
   return (
     <FlatList
@@ -296,7 +299,8 @@ const ContentArea = ({
       data={content}
       renderItem={renderContentItem}
       keyExtractor={(item) => String(item.id)}
-      ListEmptyComponent={renderEmpty}
+      ListHeaderComponent={header}
+      ListEmptyComponent={empty}
     />
   );
 };
@@ -396,8 +400,9 @@ interface StagePanelProps {
   viewer: ReturnType<typeof useCourseViewer>;
 }
 
-/** The selected stage's cover, metadata, progress, intro, and chapter list. */
-const StagePanel = ({
+/** The selected stage's cover, metadata, progress, and intro — the pinned
+ *  header that rides atop the shared chapter-list scroll surface. */
+const StageHeader = ({
   selectedStage,
   selectedStageData,
   stageContent,
@@ -424,15 +429,45 @@ const StagePanel = ({
     <View style={styles.sectionBand}>
       <Text style={styles.sectionBandLabel}>Chapters</Text>
     </View>
+  </>
+);
+
+/** The selected stage's cover, metadata, progress, intro, and chapter list,
+ *  all hosted in one FlatList so the landing page scrolls as a single surface. */
+const StagePanel = ({
+  selectedStage,
+  selectedStageData,
+  stageContent,
+  viewer,
+}: StagePanelProps): React.JSX.Element => {
+  const header = useMemo(
+    () => (
+      <StageHeader
+        selectedStage={selectedStage}
+        selectedStageData={selectedStageData}
+        stageContent={stageContent}
+        viewer={viewer}
+      />
+    ),
+    [selectedStage, selectedStageData, stageContent, viewer],
+  );
+
+  // While loading or after a failed fetch the list is empty so the header stays
+  // pinned and the loading/error state renders in ListEmptyComponent.
+  const items =
+    stageContent.loadingContent || stageContent.error ? EMPTY_CONTENT : stageContent.content;
+
+  return (
     <ContentArea
-      content={stageContent.content}
+      content={items}
       loadingContent={stageContent.loadingContent}
       error={stageContent.error}
+      header={header}
       onContentPress={viewer.handleContentPress}
       onRetry={stageContent.retry}
     />
-  </>
-);
+  );
+};
 
 const CourseScreen = (): React.JSX.Element => {
   const { allStages, selectedStage, setSelectedStage, loading, error, retry } = useStagesLoader();

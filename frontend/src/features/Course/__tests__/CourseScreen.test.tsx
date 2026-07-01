@@ -153,7 +153,7 @@ jest.mock('react-native-safe-area-context', () => {
 });
 
 // eslint-disable-next-line import/order
-const { render, waitFor, fireEvent, act } = require('@testing-library/react-native');
+const { render, waitFor, fireEvent, act, within } = require('@testing-library/react-native');
 const CourseScreen = require('../CourseScreen').default;
 
 describe('CourseScreen', () => {
@@ -429,5 +429,78 @@ describe('CourseScreen', () => {
     await waitFor(() => {
       expect(mockStageIntro).toHaveBeenCalledWith(2);
     });
+  });
+});
+
+describe('single scroll surface', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockStagesList.mockResolvedValue(sampleStages);
+    mockStageContent.mockResolvedValue(sampleContent);
+    mockStageProgress.mockResolvedValue(sampleProgress);
+    mockStageIntro.mockRejectedValue({ detail: 'content_not_found' });
+  });
+
+  it('hosts the stage header inside the chapter list', async () => {
+    const { getByTestId } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(getByTestId('content-list')).toBeTruthy();
+    });
+
+    const list = within(getByTestId('content-list'));
+    expect(list.getByTestId('stage-cover')).toBeTruthy();
+    expect(list.getByTestId('stage-metadata')).toBeTruthy();
+    expect(list.getByTestId('progress-bar')).toBeTruthy();
+    expect(list.getByText('Chapters')).toBeTruthy();
+  });
+
+  it('keeps a single scrollable surface with the cover when the stage is empty', async () => {
+    mockStageContent.mockResolvedValue([]);
+
+    const { getByTestId } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(getByTestId('content-list')).toBeTruthy();
+    });
+
+    const list = within(getByTestId('content-list'));
+    expect(list.getByTestId('stage-cover')).toBeTruthy();
+    expect(list.getByText('No Content Yet')).toBeTruthy();
+  });
+
+  it('keeps the header on the same surface when content fails, and recovers on retry', async () => {
+    mockStageContent.mockRejectedValueOnce(new Error('boom'));
+
+    const { getByTestId } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(getByTestId('content-list')).toBeTruthy();
+    });
+
+    const listOnError = within(getByTestId('content-list'));
+    expect(listOnError.getByTestId('course-error')).toBeTruthy();
+    expect(getByTestId('stage-cover')).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(listOnError.getByTestId('course-retry'));
+    });
+
+    await waitFor(() => {
+      expect(within(getByTestId('content-list')).getByText('Welcome Essay')).toBeTruthy();
+    });
+    expect(within(getByTestId('content-list')).queryByTestId('course-error')).toBeNull();
+  });
+
+  it('renders both the header and chapter items in the same list', async () => {
+    const { getByTestId } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(getByTestId('content-list')).toBeTruthy();
+    });
+
+    const list = within(getByTestId('content-list'));
+    expect(list.getByText('Welcome Essay')).toBeTruthy();
+    expect(list.getByTestId('stage-cover')).toBeTruthy();
   });
 });
