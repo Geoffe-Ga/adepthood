@@ -99,6 +99,21 @@ set_labels 10 ""            # active issue 10 (worktree) is not solo
 worktree 10
 check "solo candidate skipped when fleet active" "12" "$(run_pick)"
 
+# 4b) The `solo` guard fires when solo is one of MANY labels — the exact case the
+#     has_label fix was for (the old grep -qiwx only matched a lone `solo`).
+new_scenario solo_multilabel
+candidate 11 "bug,solo,backend"; candidate 12 "chore"
+set_labels 10 "area,backend"
+worktree 10
+check "multi-label solo candidate skipped" "12" "$(run_pick)"
+
+# 4c) An active issue with solo among many labels still monopolizes the fleet.
+new_scenario active_solo_multilabel
+candidate 11 "chore"
+set_labels 10 "epic-x,solo,backend"
+worktree 10
+check "multi-label active solo blocks fills" "" "$(run_pick)"
+
 # 5) An active `solo` issue monopolizes the fleet (nothing else is pickable).
 new_scenario solo_monopoly
 candidate 11 ""

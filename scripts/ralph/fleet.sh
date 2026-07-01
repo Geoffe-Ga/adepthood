@@ -244,10 +244,9 @@ cmd_release() {
 # itself closed with no open PR. Keeps the fleet from silting up.
 cmd_reconcile() {
   command -v gh >/dev/null 2>&1 || die "reconcile: gh CLI required" 2
-  local issue branch _path
+  local issue branch _path pr_state issue_state
   while IFS=$'\t' read -r issue branch _path; do
     [[ -n "$issue" ]] || continue
-    local pr_state issue_state
     pr_state="$(gh pr list --head "$branch" --state all --limit 1 \
       --json state --jq '.[0].state // ""' 2>/dev/null || true)"
     if [[ "$pr_state" == "MERGED" || "$pr_state" == "CLOSED" ]]; then

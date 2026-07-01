@@ -32,7 +32,7 @@
 #   of every active issue: not `solo`, and (unless `parallelizable`) not sharing
 #   an epic label with an active issue. A `solo` issue, once active, blocks any
 #   further parallel pick. Correctness across imperfect independence guesses is
-#   guaranteed at merge time by the orchestrator's serialized-merge + rebase.
+#   guaranteed at merge time by the orchestrator's serialized-merge + sync.
 #
 # Exit codes:
 #   0 — issue number printed (or nothing if backlog empty / nothing compatible)
@@ -116,6 +116,18 @@ active=$(printf '%s\n%s\n' "$inflight" "$worktree_issues" | grep -E '^[0-9]+$' |
 
 is_active() { [[ -n "$active" ]] && grep -qx "$1" <<<"$active"; }
 
+# Pre-fetch each active issue's labels ONCE. conflicts_with_active() runs per
+# candidate and consults active-issue labels in both the solo and epic loops;
+# without this cache that would be up to 2×(active workers) `gh issue view` calls
+# per candidate. Keyed by issue number.
+declare -A ACTIVE_LABELS=()
+if [[ -n "$active" ]]; then
+  while IFS= read -r _a; do
+    [[ -n "$_a" ]] || continue
+    ACTIVE_LABELS["$_a"]="$(labels_of "$_a")"
+  done <<<"$active"
+fi
+
 # Exact per-token membership: has_label "<labels-csv>" "<label>" (case-insensitive).
 # Matches a whole comma-separated label, NOT a substring or the joined line — so
 # a `solo` guard fires on "bug,solo,backend", not only on a lone "solo" label.
@@ -148,7 +160,7 @@ conflicts_with_active() {
   local a a_labels
   while IFS= read -r a; do
     [[ -n "$a" ]] || continue
-    a_labels="$(labels_of "$a")"
+    a_labels="${ACTIVE_LABELS[$a]:-}"
     if has_label "$a_labels" "$SOLO_LABEL"; then
       return 0
     fi
@@ -163,7 +175,7 @@ conflicts_with_active() {
       while IFS= read -r a; do
         [[ -n "$a" ]] || continue
         local a_epics
-        a_epics="$(epic_labels "$(labels_of "$a")")"
+        a_epics="$(epic_labels "${ACTIVE_LABELS[$a]:-}")"
         [[ -n "$a_epics" ]] || continue
         if comm -12 <(printf '%s\n' "$cand_epics") <(printf '%s\n' "$a_epics") \
           | grep -q .; then

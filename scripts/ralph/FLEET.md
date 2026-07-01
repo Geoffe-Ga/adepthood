@@ -69,7 +69,7 @@ brain. Each tick it:
 5. **Arms one Monitor** across all in-flight PRs and ends the turn.
 
 Workers never merge, never touch `main`, and never coordinate with each other —
-all cross-worker coordination (merge order, rebase, slot allocation) is the
+all cross-worker coordination (merge order, sync, slot allocation) is the
 orchestrator's job. This keeps the concurrency model simple: **fan-out for
 building, serialize for integrating.**
 
@@ -90,8 +90,8 @@ filters and open-PR exclusion, it:
     that shares an **epic** label with an active issue (same epic ⇒ likely
     ordered/overlapping). Toggle with `RALPH_RESPECT_EPICS=0`.
 
-These heuristics only reduce *rebase churn*; they are **not** the correctness
-mechanism. Correctness is the serialized-merge + rebase + re-green step above.
+These heuristics only reduce *sync churn*; they are **not** the correctness
+mechanism. Correctness is the serialized-merge + sync + re-green step above.
 
 ## Configuration (`scripts/ralph/state.json`)
 

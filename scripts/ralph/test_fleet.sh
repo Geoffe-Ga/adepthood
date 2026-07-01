@@ -107,22 +107,37 @@ else
   ok "release deleted branch"
 fi
 
-# --- reconcile releases a worktree whose PR merged (fake gh) ---------------
+# --- reconcile releases only the MERGED worktree, keeps the open one -------
+# Branch-aware fake gh: only $MERGED_BRANCH reports a MERGED PR, and only issue
+# $CLOSED_ISSUE reports CLOSED — so an open second worktree must survive. This
+# guards against an over-broad "MERGED for everything" stub silently releasing
+# healthy workers.
+run assign 105 'keep me open' >/dev/null 2>&1
+check "two workers before reconcile" "2" "$(run count)"
 BIN="$WORK/bin"; mkdir -p "$BIN"
 cat > "$BIN/gh" <<'STUB'
 #!/usr/bin/env bash
-# Fake gh: real gh applies --jq, so we emit the already-extracted scalar.
-case "$*" in
-  *"pr list"*"--json state"*)    echo 'MERGED' ;;
-  *"pr list"*)                   echo '' ;;
-  *"issue view"*"--json state"*) echo 'CLOSED' ;;
+# real gh applies --jq, so emit the already-extracted scalar — branch-aware.
+args="$*"
+case "$args" in
+  *"pr list"*"--json state"*)
+    if [[ "$args" == *"--head $MERGED_BRANCH"* ]]; then echo 'MERGED'; else echo ''; fi ;;
+  *"pr list"*) echo '' ;;
+  *"issue view"*"--json state"*)
+    for tok in "$@"; do
+      if [[ "$tok" =~ ^[0-9]+$ ]]; then
+        if [[ "$tok" == "${CLOSED_ISSUE:-}" ]]; then echo 'CLOSED'; else echo 'OPEN'; fi
+        break
+      fi
+    done ;;
   *) echo '' ;;
 esac
 STUB
 chmod +x "$BIN/gh"
-check "one worker before reconcile" "1" "$(run count)"
-(cd "$REPO" && PATH="$BIN:$PATH" "$FLEET" reconcile >/dev/null 2>&1)
-check "reconcile drained merged worker" "0" "$(run count)"
+(cd "$REPO" && PATH="$BIN:$PATH" MERGED_BRANCH="issue/102-frontend-tweak" \
+  "$FLEET" reconcile >/dev/null 2>&1)
+check "reconcile released only the merged worker" "1" "$(run count)"
+check "the open worker survived reconcile"        "105" "$(run active)"
 
 # --- summary ----------------------------------------------------------------
 echo
