@@ -51,9 +51,12 @@ discipline.
 3. **Route the resonance pass** (`routers/journal.py:584-633`) to persist
    `ActionSuggestion` rows from generalized hits. The habit/practice path now
    flows through this generic detector.
-4. **Retain guardrails:** `MEDICATION_GUARDRAIL` stays in the prompt; if
-   `assess_distress` fires, suppress action hits in favour of care resources
-   (preserve current behaviour).
+4. **Retain guardrails:** `MEDICATION_GUARDRAIL` stays in the prompt; the
+   care-only early return stays the gate — today an elevated `assess_distress`
+   short-circuits the resonance pass before any suggestions are persisted
+   (`routers/journal.py`, "surface care regardless"), and that must remain true
+   for generalized action hits. This generation-time suppression is the primary
+   care gate (distress is not persisted — see 05).
 5. **Tests:** existing detection tests pass (habit/practice `complete` still
    works); new tests for verb selection, params validation + rejection, and a
    non-completion capability (`wheel`/`note`).

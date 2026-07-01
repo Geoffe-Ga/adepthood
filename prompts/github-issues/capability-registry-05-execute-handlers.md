@@ -46,9 +46,14 @@ shortcut run) supply their own handler and need no endpoint changes.
    dispatch `execute`, set `status=accepted`, `accepted_at`. `POST /suggestions/{id}/dismiss`
    stays generic. Both idempotent and ownership-guarded; keep the legacy
    `accept_suggestion` route working as a thin alias for one release.
-4. **Care gate:** an accept for an action capability is refused (409/care
-   payload) if the entry is flagged for distress — actions never fire under a
-   care signal.
+4. **Care gate (verified constraint):** distress is **not persisted** anywhere —
+   `assess_distress` (`domain/safety.py`) is computed transiently during the
+   resonance pass, and when it fires the pass returns care-only and persists no
+   suggestions (so distress-flagged entries normally have nothing to accept).
+   Do NOT invent a stored flag. As cheap defense-in-depth, recompute
+   `assess_distress(entry.message)` at accept time — it is pure, local, and
+   LLM-free — and refuse with the care payload if elevated (covers the
+   entry-edited-after-detection edge).
 5. **Tests:** habit + practice accept parity (existing tests green through the
    generic path); a new capability handler round-trip; ownership rejection when
    `target_id` belongs to another user; idempotent double-accept.

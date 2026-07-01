@@ -1,107 +1,131 @@
-# capability-registry-09: Creek Vault MCP binding + external capability
+# capability-registry-09: Creek Vault MCP binding (client of `creek-tools-mcp`)
 
-**Labels:** `enhancement`, `architecture`, `backend`, `frontend`, `mcp`, `capability-registry`, `blocked`
+**Labels:** `enhancement`, `architecture`, `backend`, `frontend`, `mcp`, `capability-registry`
 **Epic:** [The Capability Registry](capability-registry-epic.md)
 **Depends on:** 08
-**Blocked on:** `geoffe-ga/creek-vault` repository access (not in this session's GitHub scope)
 **Estimated LoC:** ~300
 
 ## Role
 
-You are a full-stack engineer wiring the first **remote** MCP server — the Creek
-Vault — as a capability source, realizing the seam `NORTH-STAR.md:70` promises
-and the shared ontology it names (Adepthood's Aspects = Creek's Frequencies =
-the Wavelength phases). This is also the template for future outbound plugins
-(Apple Shortcuts, other apps).
+You are a full-stack engineer implementing the **client** side of an integration
+whose server side already exists: the Creek Vault ships an MCP server,
+`creek-tools-mcp`, that explicitly names Adepthood as a consumer — its
+`creek.journal` tool docstring reads *"Ingest one Adepthood journal entry as a
+vault fragment (idempotently)."* Your job is to honour that contract, not
+design a new one.
 
-## ⚠️ Blocked — read first
+## The contract (verified 2026-07-01 from `geoffe-ga/creek-vault` @ `main`, `creek-tools/creek_mcp/`)
 
-The `geoffe-ga/creek-vault` repo is **not configured for this session's GitHub
-scope** (verified: `Access denied … Allowed repositories: geoffe-ga/adepthood`).
-Its MCP server framework, transport (stdio vs HTTP/SSE), exposed tools/resources,
-auth model, and the concrete shared-ontology representation are therefore
-**unconfirmed**. Before implementing:
-
-1. Add `geoffe-ga/creek-vault` to the environment's allowed repositories and
-   resume the session.
-2. Pin this issue's tool names, input schemas, transport, and auth to the Vault's
-   **actual** MCP manifest — do not invent them.
-
-Everything below is design-complete against the *general* MCP shape and must be
-reconciled with the real manifest at implementation time.
+- **Server:** `creek-tools-mcp`, built on the official `mcp` Python SDK
+  (`mcp.server.fastmcp.FastMCP`). 31 tools named `creek.{action}`.
+- **Transports:** `stdio` (default) and `streamable-http` (default bind
+  `127.0.0.1:8000`) with **bearer-token auth** (`ConsumerTokenVerifier`).
+- **Tier model (aligns with Adepthood #895):** tiers `open / personal /
+  intimate`; `TierCeiling` enum `OPEN < PERSONAL < INTIMATE < ALL` with rank
+  admission. **Remote callers are capped:** `_REMOTE_ADMITTED_CEILINGS =
+  {OPEN, PERSONAL}` — intimate content is unreachable over the network, and the
+  handshake advertises an "intimate never egresses" policy. Every tool takes
+  `privacy_tier_ceiling` + a free-form `consumer` audit id; writes above the
+  ceiling are **refused, never downgraded**; calls land in a hash-chained audit
+  log.
+- **Tools relevant to v1:**
+  - `creek.handshake(vault_path, capabilities, server_name, privacy_tier_ceiling, consumer)`
+    → `{available, contract_version, ontology_version, tiers, tier_model, capabilities, …}`.
+    Must be called first; gate everything on `contract_version` / `ontology_version`.
+  - `creek.journal(vault_path, content, external_id, timestamp?, tier="open", privacy_tier_ceiling, consumer)`
+    → `{status, external_id, fragment_id, action ∈ created|updated|unchanged, tier}` or a
+    structured refusal. `external_id` is the idempotency key **Adepthood supplies**.
+  - `creek.wheel(vault_path, privacy_tier_ceiling, consumer)` → per-frequency
+    balance map `{F1..F10: {name, count, share}, total_classified, unclassified}`.
+  - (Later reads: `creek.reflect`, `creek.state.read` — out of v1 scope.)
+- **Precedent consumer:** `crawdad/` (Discord bot) already consumes
+  `creek-tools-mcp`; Adepthood is the second client, not the first.
 
 ## Goal
 
-Register a `creek_vault` capability (and/or context source) backed by the remote
-Vault MCP server: (a) pull shared-ontology context (the Aspect/Frequency/
-Wavelength mapping and any user-scoped Vault notes) to enrich the Higher Self
-reflection, and (b) expose one round-trip write/read verb (e.g. "save this
-reflection to the Vault" / "recall my Vault note on <Aspect>") as a **confirmed**
-capability action. Off by default; consent-gated per action.
+Bind the Vault through the MCP client seam (08) as an opt-in capability:
+(a) **outbound** — a `creek_vault` capability with verb `save_to_vault` whose
+`execute` (05) calls `creek.journal`, surfaced as a normal confirmable
+`ActionSuggestion`; (b) **inbound context** — read `creek.wheel` to show
+corpus-side Wavelength balance alongside Adepthood's engagement-side wheel.
+Off by default; consent-gated; tier-mapped.
 
-## Context
+## Tasks
 
-08 built the MCP client seam and local tools. This issue connects the first
-remote server through that seam and adds an external-capability example so the
-"talk to other apps" story is demonstrated end to end while honouring the privacy
-floor.
+1. **Handshake + config:** connect via `streamable-http` + bearer token (env:
+   `CREEK_VAULT_URL`, `CREEK_VAULT_TOKEN`, `CREEK_VAULT_PATH`); call
+   `creek.handshake` with `consumer="adepthood"` at startup (health-check style:
+   loud-but-non-fatal log, mirroring `_log_content_status`). Refuse to enable
+   the capability if `contract_version`/`ontology_version` are unknown.
+2. **Tier mapping module** (`backend/src/domain/ontology.py`): map
+   `JournalClassification` ↔ Creek tiers. **Note the naming mismatch:**
+   Adepthood `public` ↔ Creek `open`; `personal`/`intimate` map 1:1. Also map
+   Adepthood's 10 stages/Aspects ↔ Creek's `F1..F10` frequencies (validate
+   canonical names against the `creek.wheel` response; drift test).
+3. **Outbound capability:** register `creek_vault` (flag `creek_vault`, verb
+   `save_to_vault`). Execute calls `creek.journal` with
+   `external_id=f"adepthood-journal-{entry_id}"` (idempotent — safe to re-accept),
+   `tier` from the entry's **persisted** classification, `timestamp` from the
+   entry. Handle `action` (created/updated/unchanged) and structured refusals
+   (surface, don't retry-downgrade). **Intimate entries are never offered this
+   verb at all** — enforce client-side from the persisted classification (the
+   exact pattern of `routers/journal.py`'s #895 gates), on top of the server's
+   remote ceiling cap. Defense in both directions.
+4. **Inbound context:** a read path that fetches `creek.wheel` (ceiling
+   `PERSONAL`) and exposes corpus balance to the Map/wheel view as a clearly
+   labelled second series — Adepthood's wheel measures *engagement fullness*
+   (`domain/wheel.py`), Creek's measures *corpus share*; never conflate them.
+5. **Frontend:** Vault entry in the feature manifest (06) + settings toggle;
+   proposals render in the existing inbox (07) with no inbox changes.
+6. **Tests:** handshake gating (unknown contract version → capability disabled);
+   tier mapping incl. `public→open`; idempotent double-accept (`unchanged`);
+   refusal handling; intimate entries excluded from candidates and from
+   `save_to_vault`; wheel mapping drift test. Mock the MCP client; do not
+   require a live vault in CI.
 
-## Tasks (reconcile with the real manifest)
+## Deployment topology — decide before implementing
 
-1. **Vault connection:** configure the Vault MCP server in `mcp_client.py`
-   (transport + auth from env/secret, never hard-coded); health-check at startup
-   with a loud-but-non-fatal log (mirror `_log_content_status` /
-   `_log_botmason_provider`).
-2. **Shared-ontology mapping:** a typed mapping module asserting Adepthood stage
-   ↔ Aspect ↔ Frequency ↔ Wavelength phase, sourced from / validated against the
-   Vault's representation. Add a drift test.
-3. **Context source:** allow the resonance/Higher-Self pass to *optionally*
-   include Vault-sourced context for the current Aspect — read-only, and only
-   when the user has enabled the Vault ring (02) and consented.
-4. **Outbound capability:** a `creek_vault` capability with a verb like
-   `save_reflection` whose `execute` (05) calls the Vault MCP tool. It surfaces
-   as a normal confirmable `ActionSuggestion` in the inbox (07). **Privacy:** the
-   payload contains only what the user confirmed in the proposal — never raw
-   journal text implicitly; encrypted/intimate entries are never forwarded.
-5. **Frontend:** a Vault feature manifest entry (06) + a settings toggle; the
-   capability's proposals render in the existing inbox with no inbox changes.
-6. **Tests:** ontology drift test; Vault client mocked for save/recall round-trip;
-   capability disabled → no candidates, no context, no outbound calls; consent
-   gate enforced.
+`creek-tools-mcp` is **local-first** (default bind `127.0.0.1:8000`); the
+Adepthood backend is cloud-deployed. A cloud backend cannot reach a laptop's
+loopback. Options (pick one in the PR, document in `docs/`):
+- **(a) Self-hosted vault endpoint:** user exposes the vault server (tailscale /
+  reverse proxy) and pastes URL + bearer token into Adepthood settings. Simplest
+  server-side; per-user config.
+- **(b) Device-mediated sync:** the *frontend* (on the user's machine/phone)
+  performs the MCP calls to the local vault, pulling confirmed suggestions from
+  the backend. No cloud→home connectivity needed; more moving parts.
+- **(c) Outbox queue:** backend queues confirmed `save_to_vault` actions; a
+  small local agent (or the CLI) drains the queue into the vault.
+
+v1 recommendation: (a), since bearer auth + `streamable-http` already exist
+server-side; (b)/(c) are follow-ups if (a)'s setup burden proves too high.
 
 ## Acceptance Criteria
 
-- [ ] Tool names/schemas/transport/auth match the **actual** creek-vault manifest (not invented).
-- [ ] Vault is **off by default**; enabling is opt-in and per-action consent-gated.
-- [ ] The shared ontology (Aspect = Frequency = Wavelength phase) is represented once, validated against the Vault, drift-tested.
-- [ ] An outbound Vault action flows through the standard proposal→confirm→execute path and inbox.
-- [ ] Privacy floor holds: no journal text (esp. encrypted entries) is sent to the Vault without explicit per-action consent.
+- [ ] `creek.handshake` is called first; capability auto-disables on contract/ontology version mismatch.
+- [ ] Tier mapping is exact (`public→open`), drift-tested, and **intimate entries never leave the app** — excluded from candidates, verbs, and context reads (client-side, on top of the server's remote ceiling).
+- [ ] `save_to_vault` flows proposal→confirm→execute through the standard pipeline and is idempotent via `external_id`.
+- [ ] Refusals surface as structured errors; the client never downgrades a tier to force a write.
+- [ ] `consumer="adepthood"` on every call (Creek's audit log requirement).
+- [ ] Vault is off by default; enabling is an explicit settings action.
 - [ ] `pytest backend/` + frontend suite + `pre-commit run --all-files` green.
 
-## Files (indicative — confirm against manifest)
+## Files (indicative)
 
 | File | Action |
 |------|--------|
-| `backend/src/services/mcp_client.py` | Modify (remote Vault connection) |
-| `backend/src/domain/ontology.py` | **Create** (shared mapping + drift test) |
+| `backend/src/services/mcp_client.py` | Modify (vault connection + handshake) |
+| `backend/src/domain/ontology.py` | **Create** (tier + frequency mapping, drift tests) |
 | `backend/src/domain/capability_defs.py` | Modify (register `creek_vault`) |
-| `backend/src/routers/journal.py` | Modify (optional Vault context in resonance) |
+| `backend/src/routers/journal.py` or map router | Modify (wheel context read) |
 | `frontend/src/features/manifest.ts` | Modify (Vault entry + settings toggle) |
 | `backend/tests/test_creek_vault_binding.py` | **Create** |
 
 ## Constraints
 
-- Do not implement until the creek-vault manifest is in scope and pinned.
-- Remote calls are consent-gated and minimal-payload; the privacy floor is a hard
-  gate, not a preference.
-- This is the reference implementation for future outbound plugins (Apple
-  Shortcuts, etc.) — keep the remote-capability shape generic enough to reuse.
-
-## Future (out of scope, noted for the roadmap)
-
-- **Apple Shortcuts capability:** a `shortcut` capability whose `run` verb invokes
-  a Shortcut (via an MCP bridge or a deep link), letting the journal drive other
-  apps — the same proposal→confirm→execute path, a different `execute` handler.
-- Dropping the legacy depth-preference boolean columns once nothing reads them (02).
-- Community-shared capability plugins (leaning on the `approved` column pattern
-  already in `Practice`).
+- The contract is Creek's; do not fork it. If a needed field is missing,
+  change `creek-tools-mcp` first (it versions via `contract_version`).
+- Remote calls are consent-gated and minimal-payload; the privacy floor is a
+  hard gate enforced from the **persisted** classification, never client input.
+- This is the reference remote-MCP integration; keep the client shape generic
+  enough that a second remote server is config, not code.

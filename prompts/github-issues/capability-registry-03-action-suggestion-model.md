@@ -55,15 +55,30 @@ with no per-type FK; that generic shape is what new capabilities need.
    project from it (habit ⇒ needs `goal_id`, practice ⇒ `user_practice_id`,
    resolved from `target_type`+`target_id`). Existing endpoints and their tests
    stay green.
-4. **Tests:** round-trip a non-completion suggestion (e.g. `capability_key="wheel"`,
+4. **Dangling-target policy (verified gap):** today the FK chain
+   Habit → Goal (`cascade="all, delete-orphan"`, `models/habit.py:36-39`) →
+   CompletionSuggestion (`ondelete="CASCADE"`,
+   `models/completion_suggestion.py:117-124`) auto-deletes suggestions when
+   their target dies. Generic addressing loses that. Preserve the semantics
+   explicitly:
+   - a capability-registered `on_target_deleted(target_type, target_id)` hook
+     invoked from the existing habit/user-practice delete paths, deleting that
+     target's suggestions; **and**
+   - list reads filter (and lazily prune) suggestions whose target no longer
+     resolves — belt for non-hook deleters;
+   - accept-time re-validation (05) remains the hard gate.
+5. **Tests:** round-trip a non-completion suggestion (e.g. `capability_key="wheel"`,
    `verb="note"`, arbitrary `params`); backfill parity test proving migrated
-   completion rows still serialize identically through the legacy response.
+   completion rows still serialize identically through the legacy response;
+   **deleting a habit removes/hides its pending suggestions (parity with
+   today's CASCADE behaviour)**.
 
 ## Acceptance Criteria
 
 - [ ] `ActionSuggestion` stores an arbitrary capability action with no schema change per target type.
 - [ ] Every existing `CompletionSuggestion` endpoint + test passes unchanged (via projection/backfill).
 - [ ] Migration backfills losslessly and rolls back on empty table.
+- [ ] Deleting a target cleans up its suggestions (hook + read-filter), matching today's CASCADE semantics.
 - [ ] Anchor + lifecycle invariants match the `CompletionSuggestion` precedent.
 - [ ] `pytest backend/` + `pre-commit run --all-files` green; coverage unchanged.
 

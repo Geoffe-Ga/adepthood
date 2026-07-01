@@ -1,4 +1,4 @@
-# capability-registry-08: MCP client + tool-calling in the LLM layer
+# capability-registry-08: Provider tool-calling + MCP client seam
 
 **Labels:** `enhancement`, `architecture`, `backend`, `mcp`, `capability-registry`
 **Epic:** [The Capability Registry](capability-registry-epic.md)
@@ -7,59 +7,84 @@
 
 ## Role
 
-You are a backend engineer adding the Model Context Protocol seam the north star
-names but the code does not yet have (`NORTH-STAR.md:70`). The LLM today is
-purely conversational — it returns JSON the server parses
-(`services/botmason.py:99-123`, no tool-calling). You give it *tools*, sourced
-from the capability registry, while keeping every action behind a human-confirmed
-suggestion.
+You are a backend engineer giving the LLM layer structured *tools* while keeping
+every action behind a human-confirmed suggestion. Two distinct mechanisms, one
+schema source:
+
+- **In-process (this app's own LLM calls):** use the providers' **native
+  tool-use APIs** (Anthropic/OpenAI `tools` parameter). MCP is unnecessary
+  overhead for in-process capabilities.
+- **Cross-process (remote servers, e.g. the Creek Vault):** an **MCP client**
+  seam using the official `mcp` Python SDK — the same SDK the Vault's server is
+  built on (`mcp.server.fastmcp`, verified in `geoffe-ga/creek-vault`
+  `creek-tools/creek_mcp/server.py`).
+
+Both take their schemas from the capability registry (01) — no hand-written
+tool definitions anywhere.
+
+## Context (verified)
+
+The LLM layer is pure text-in/text-out today: `_call_openai` /
+`_call_anthropic` pass no `tools` parameter, and the injected seam is
+
+```python
+class ResonanceLLM(Protocol):
+    """Minimal injected LLM seam: prompt in, raw completion text out."""
+    async def complete(self, prompt: str) -> str: ...
+```
+
+(`backend/src/domain/resonance.py:52-55`). Detection therefore parses JSON out
+of prose (`domain/detection.py`), which works but is weaker than native
+tool-use: no schema enforcement at the API layer, and no path to remote tools.
 
 ## Goal
 
-Expose registered capabilities as **MCP tools** so a tool-capable provider can
-propose capability invocations as structured tool calls instead of hand-parsed
-JSON — and stand up an MCP **client** seam so those tools can be served either
-in-process (local capabilities) or, later, by a remote server (Creek Vault, 09).
-Tool calls do not execute anything; they resolve to `ActionSuggestion`s (03) the
-user still accepts (05).
-
-## Context
-
-The provider layer (`PROVIDER_REGISTRY`) abstracts openai/anthropic/stub. Both
-real SDKs support tool-calling; the stub does not. The capability registry (01)
-already describes verbs + params schemas — exactly what an MCP/tool schema needs.
+(a) Generate tool schemas from capability `params_model`s (JSON Schema); (b)
+add a tool-loop path to the provider layer so tool-capable models emit
+capability invocations as structured tool calls; (c) map every tool call to a
+`(capability_key, verb, params)` triple validated against the registry and
+landed as a **pending** `ActionSuggestion` (03) — never an execution; (d) stand
+up the MCP **client** seam for remote servers (consumed by 09), off by default.
 
 ## Tasks
 
-1. **Add an MCP client dependency** (Python `mcp` SDK) to
-   `backend/requirements.txt`, pinned; document it in the deploy notes.
-2. **`backend/src/services/mcp_client.py`:** a thin seam that (a) can register
-   **local** capability verbs as MCP tools (name = `f"{key}.{verb}"`, input
-   schema = the capability's params model JSON schema), and (b) can connect to a
-   **remote** MCP server by config (URL/stdio + auth) — remote wiring is stubbed
-   here and completed in 09. Config via env (`MCP_SERVERS=...`), off by default.
-3. **Tool-calling path in botmason:** when the active provider supports tools,
-   pass the local capability tool schemas; map any tool call the model makes to a
-   `(capability_key, verb, params)` triple, **validate against the registry**,
-   and hand it to the detection→suggestion path so it lands as a *pending*
-   `ActionSuggestion`. When the provider can't tool-call (stub, or a text-only
-   tier), fall back to the current conversational/JSON detection (04) — no
-   regression.
-4. **Guardrails:** tool calls are proposals, never executions; `MEDICATION_GUARDRAIL`
-   and distress suppression still apply; privacy floor — the tool path sends no
-   more of the entry than the conversational path already does, and never sends
-   to a *remote* server in this issue.
-5. **Tests:** local tool schemas generate from the registry; a simulated
-   tool-calling provider produces a pending suggestion; stub provider still uses
-   the JSON path; malformed/unknown tool calls are dropped (trust model).
+1. **Schema generation** in `domain/capabilities.py`: `tool_schema(cap, verb)`
+   → JSON Schema from the verb's Pydantic `params_model`
+   (`model_json_schema()`), tool name `f"{cap.key}.{verb.name}"`. One source of
+   truth for provider tools, MCP client expectations, and (later, ticket 11)
+   the outbound MCP server.
+2. **Widen the LLM seam:** add a tool-aware variant alongside `ResonanceLLM` —
+   e.g. `ToolCallingLLM` with
+   `complete_with_tools(prompt, tools) -> ToolLoopResult` (final text + zero or
+   more validated tool calls). The existing `complete()` path stays untouched;
+   the stub provider implements only `complete()`.
+3. **Provider layer:** pass registry-generated `tools` to Anthropic/OpenAI when
+   the provider supports it; run the standard tool-use loop; collect tool calls
+   *as data* (do not execute inside the loop). When the provider/tier can't
+   tool-call, fall back to the conversational JSON detection (04) — identical
+   behaviour, no regression.
+4. **Trust boundary:** each collected tool call is validated exactly like a
+   detection hit — known capability, allowed verb, `extra="forbid"` params —
+   then persisted as a pending `ActionSuggestion`. Unknown/malformed calls are
+   dropped and logged. `MEDICATION_GUARDRAIL` and the care-only early return
+   (04) apply unchanged.
+5. **MCP client seam** (`backend/src/services/mcp_client.py`): connect to
+   configured remote servers (env `MCP_SERVERS`; `streamable-http` + bearer
+   token to match the Vault's `ConsumerTokenVerifier`, `stdio` for local dev),
+   list their tools, and expose them behind the same validation boundary.
+   **No servers configured by default; no journal text leaves the app in this
+   issue** — 09 does the first real binding with its own consent gates.
+6. **Tests:** schema generation from params models; simulated tool-calling
+   provider → pending suggestion; stub provider unaffected; malformed/unknown
+   tool calls dropped; MCP client against an in-test FastMCP fixture server.
 
 ## Acceptance Criteria
 
-- [ ] Capabilities are exposed as local MCP tools generated from their params schemas — no hand-written tool defs.
-- [ ] A tool-capable provider's tool call becomes a **pending** `ActionSuggestion`, never an auto-execution.
-- [ ] Non-tool providers fall back to conversational detection with no behaviour change.
-- [ ] Unknown/invalid tool calls are rejected (index+verb+params trust model preserved).
-- [ ] Remote MCP is present but **off by default**; no journal text leaves the app in this issue.
+- [ ] Tool schemas are generated from the registry — zero hand-written tool defs.
+- [ ] A tool call becomes a **pending** `ActionSuggestion`; nothing executes without an accept (05).
+- [ ] Non-tool providers (incl. stub) keep today's behaviour byte-for-byte.
+- [ ] Unknown tools/verbs/params are rejected and logged (trust model intact).
+- [ ] MCP client connects to a test server; ships with no servers configured.
 - [ ] `pytest backend/` + `pre-commit run --all-files` green; coverage/complexity unchanged.
 
 ## Files
@@ -67,16 +92,17 @@ already describes verbs + params schemas — exactly what an MCP/tool schema nee
 | File | Action |
 |------|--------|
 | `backend/requirements.txt` | Modify (add `mcp`) |
+| `backend/src/domain/capabilities.py` | Modify (tool_schema) |
+| `backend/src/domain/resonance.py` | Modify (ToolCallingLLM protocol) |
+| `backend/src/services/botmason.py` | Modify (tool loop per provider) |
 | `backend/src/services/mcp_client.py` | **Create** |
-| `backend/src/services/botmason.py` | Modify (tool-calling path) |
-| `backend/src/domain/capabilities.py` | Modify (params → JSON-schema helper) |
+| `backend/tests/test_tool_calling.py` | **Create** |
 | `backend/tests/test_mcp_client.py` | **Create** |
-| `backend/tests/test_botmason.py` | Modify (tool path + fallback) |
 
 ## Constraints
 
-- **Confirm creek-vault manifest first if 09 is imminent** — see epic open
-  questions; the remote transport/auth shape may inform the client seam. Local
-  tools are the shippable target here and do not need creek-vault.
-- Tool-calling degrades gracefully; the stub provider path must stay fully working.
+- Native tool-use for in-process; MCP only across a process boundary. Do not
+  wrap local capabilities in MCP for the app's own LLM calls.
+- The tool loop must respect the existing wallet/usage accounting — a tool-use
+  round trip is still one metered resonance interaction.
 - No new autonomy: the model proposes, the registry validates, the user accepts.

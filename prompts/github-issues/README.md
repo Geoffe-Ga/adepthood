@@ -309,10 +309,14 @@ entry** through one generalized detection→suggestion→confirm pipeline. Build
 directly on the existing detection (`domain/detection.py`), suggestion
 lifecycle (`CompletionSuggestion`), generic invitation addressing
 (`InvitationSignal`), store-reset registry (`store/registry.ts`), and the
-provider-registry LLM layer. Adds the MCP seam `NORTH-STAR.md` names but the
-code does not yet have. Every step holds the vision's guardrails: human-in-the-
-loop (no auto-execution from text), opt-in + declinable, anti-guru, privacy
-floor, care boundaries.
+provider-registry LLM layer. Adds the two-way MCP seam: client of the Creek
+Vault's existing `creek-tools-mcp` server (whose `creek.journal` tool already
+names Adepthood as its consumer), and an outbound Adepthood MCP server so
+external agents (Claude Desktop/Code, Apple Shortcuts via HTTPS, bots) can
+drive scoped capabilities. Every step holds the vision's guardrails:
+human-in-the-loop (no auto-execution from journal text), opt-in + declinable,
+anti-guru, privacy floor (intimate never leaves the app), care boundaries.
+Audited 2026-07-01 against the codebase and the live creek-vault contract.
 
 | # | Issue | Scope | Est. LoC |
 |---|-------|-------|----------|
@@ -324,8 +328,10 @@ floor, care boundaries.
 | 05 | [Capability execute handlers + generic accept endpoint](capability-registry-05-execute-handlers.md) | Backend | ~300 |
 | 06 | [Frontend feature manifest → registry-driven nav/store/flags](capability-registry-06-frontend-manifest.md) | Frontend | ~300 |
 | 07 | [Capability-agnostic suggestion inbox UI](capability-registry-07-suggestion-inbox.md) | Frontend | ~250 |
-| 08 | [MCP client + tool-calling in the LLM layer](capability-registry-08-mcp-client-tool-calling.md) | Backend | ~300 |
-| 09 | [Creek Vault MCP binding + external capability](capability-registry-09-creek-vault-binding.md) *(blocked on creek-vault repo access)* | Full-stack | ~300 |
+| 08 | [Provider tool-calling + MCP client seam](capability-registry-08-mcp-client-tool-calling.md) | Backend | ~300 |
+| 09 | [Creek Vault MCP binding (client of `creek-tools-mcp`)](capability-registry-09-creek-vault-binding.md) | Full-stack | ~300 |
+| 10 | [First new capability — self-care strategies (proof of pluggability)](capability-registry-10-self-care-capability.md) | Full-stack | ~300 |
+| 11 | [Expose Adepthood as an MCP server (external control surface)](capability-registry-11-adepthood-mcp-server.md) | Backend | ~350 |
 
 Dependency graph:
 
@@ -334,7 +340,9 @@ Dependency graph:
                       ├── 03 action-suggestion-model ─┤
                       │                               ├── 04 intent-detection ── 05 execute-handlers ──┐
                       └───────────────────────────────┘                                                │
-                                                                                                       ├── 07 suggestion-inbox
-06 frontend-manifest (needs 01, 02) ───────────────────────────────────────────────────────────────── ┘
-05 ── 08 mcp-client-tool-calling ── 09 creek-vault-binding  (09 BLOCKED on creek-vault repo access)
+                                                                                                       ├── 07 suggestion-inbox ──┐
+06 frontend-manifest (needs 01, 02) ──────────────────────────────────────────────────────────────────┤                         ├── 10 self-care (proof)
+                                                                                                       │                         │
+                                                                                                       └── 08 tool-calling ──┬── 09 creek-vault-client
+                                                                                                                             └── 11 adepthood-mcp-server
 ```

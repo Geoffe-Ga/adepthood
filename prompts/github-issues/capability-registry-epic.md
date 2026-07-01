@@ -1,8 +1,9 @@
 # Epic: The Capability Registry — journal-driven, pluggable features
 
 **Labels:** `enhancement`, `architecture`, `backend`, `frontend`, `capability-registry`
-**Scope:** A registry that makes every feature a pluggable, opt-in, journal-addressable unit — plus the generalized detection/suggestion pipeline and MCP seam that let a user drive those features simply by writing.
-**Estimated total LoC:** ~2,700 across 9 sub-issues
+**Scope:** A registry that makes every feature a pluggable, opt-in, journal-addressable unit — plus the generalized detection/suggestion pipeline and the two-way MCP seam (client of the Creek Vault, server for external agents) that let a user drive those features simply by writing.
+**Estimated total LoC:** ~3,350 across 11 sub-issues
+**Audited:** 2026-07-01 (Fable) — assumptions verified against the codebase and the live `geoffe-ga/creek-vault` contract; see the per-ticket "verified" notes.
 
 ## Role
 
@@ -86,6 +87,8 @@ The audit confirms most of the substrate is already here.
 | Depth-preference opt-in toggles | ✓ (one boolean column per ring) | `backend/src/models/user_depth_preferences.py:30-49`, `frontend/src/store/useDepthPreferencesStore.ts` |
 | Practice **mode/engine** discriminator — a working in-feature plugin system | ✓ | `backend/src/domain/practice_modes.py`, `frontend/src/features/Practice/engine/` |
 | Wheel-of-wholeness / Wavelength fullness view (derived, not its own store) | ✓ | `backend/src/domain/wheel.py` |
+| Journal privacy tiers (`public/personal/intimate`) with a hard "intimate never reaches a cloud LLM" gate (#895) | ✓ | `backend/src/models/journal_entry.py:43-54`, `routers/journal.py` |
+| **Creek Vault MCP server** (`creek-tools-mcp`, external repo): FastMCP on the official `mcp` SDK; `stdio` + `streamable-http` + bearer auth; 31 `creek.*` tools incl. `creek.journal` (an **Adepthood-named idempotent ingest**), `creek.wheel`, `creek.handshake`; tier ceilings with intimate-never-remote | ✓ (server side built & waiting) | `geoffe-ga/creek-vault` → `creek-tools/creek_mcp/` |
 
 ## Context — what's missing (the gaps this epic fills)
 
@@ -98,8 +101,10 @@ The audit confirms most of the substrate is already here.
 | No generic accept/execute path — accept handlers are hand-written per target in the journal router | 05 |
 | No frontend feature manifest; `RING_TABS`, depth flags, deep-links all hard-coded | 06 |
 | Suggestion UI is completion-specific, not capability-agnostic | 07 |
-| LLM cannot call tools; no MCP client; the "Creek Vault MCP seam" is doc-only | 08, 09 |
-| No outbound integration (Creek Vault, Apple Shortcuts, other apps) | 09 (+ future) |
+| LLM cannot call tools (verified: no `tools` param; `ResonanceLLM` is `complete(prompt) -> str`); no MCP client | 08 |
+| The Creek Vault's server side is built and names Adepthood as consumer — but Adepthood has **no client** for it | 09 |
+| No feature has ever been born inside the registry — the pluggability claim is unproven | 10 |
+| No inbound surface for external agents (Claude Desktop/Code, Shortcuts, bots) to reference or drive the app | 11 |
 
 ## The core abstraction: a Capability
 
@@ -118,8 +123,12 @@ feature/plugin contributes. Each descriptor carries:
 - `execute(target, verb, params, ctx)` — the server-side handler the *accept*
   path dispatches to (generalizes the per-target accept handlers in the journal
   router).
-- optional `mcp_tool` — binds the verb to an MCP tool (local in-process or a
-  remote server like the Creek Vault) for 08/09.
+
+Tool schemas are *generated* from each verb's params model (08) and consumed
+three ways: native provider tool-use for the in-app LLM (08), the MCP client
+for remote servers like the Creek Vault (09), and the outbound Adepthood MCP
+server for external agents (11). One descriptor, four surfaces (detection,
+accept, tools, nav).
 
 Features register their capabilities at import, exactly as stores publish their
 reset today (`frontend/src/store/registry.ts`) and as providers register in
@@ -129,11 +138,12 @@ layer all read from — so a new plugin is *one manifest*, not fourteen edits.
 
 ## Output format
 
-Nine sub-issues. Tracer-code order (see the repo's `tracer-code` skill): build a
-thin end-to-end skeleton first (registry → generic suggestion → generic detect →
-generic accept), retrofit the two existing features onto it so behaviour is
-provably unchanged, then light up new capabilities and the MCP seam. Each
-sub-issue is independently shippable and stays green.
+Eleven sub-issues. Tracer-code order (see the repo's `tracer-code` skill): build
+a thin end-to-end skeleton first (registry → generic suggestion → generic detect
+→ generic accept), retrofit the two existing features onto it so behaviour is
+provably unchanged, then prove pluggability with a born-in-the-registry feature
+and light up the two-way MCP seam. Each sub-issue is independently shippable and
+stays green.
 
 Dependency graph:
 
@@ -142,9 +152,11 @@ Dependency graph:
                       ├── 03 action-suggestion-model ─┤
                       │                               ├── 04 intent-detection ── 05 execute-handlers ──┐
                       └───────────────────────────────┘                                                │
-                                                                                                       ├── 07 suggestion-inbox
-06 frontend-manifest (needs 01, 02) ───────────────────────────────────────────────────────────────── ┘
-05 ── 08 mcp-client-tool-calling ── 09 creek-vault-binding  (09 BLOCKED on creek-vault repo access)
+                                                                                                       ├── 07 suggestion-inbox ──┐
+06 frontend-manifest (needs 01, 02) ──────────────────────────────────────────────────────────────────┤                         ├── 10 self-care (proof)
+                                                                                                       │                         │
+                                                                                                       └── 08 tool-calling ──┬── 09 creek-vault-client
+                                                                                                                             └── 11 adepthood-mcp-server
 ```
 
 ## Sub-issues
@@ -158,8 +170,10 @@ Dependency graph:
 | 05 | [Capability execute handlers + generic accept endpoint](capability-registry-05-execute-handlers.md) | Backend | ~300 |
 | 06 | [Frontend feature manifest → registry-driven nav/store/flags](capability-registry-06-frontend-manifest.md) | Frontend | ~300 |
 | 07 | [Capability-agnostic suggestion inbox UI](capability-registry-07-suggestion-inbox.md) | Frontend | ~250 |
-| 08 | [MCP client + tool-calling in the LLM layer](capability-registry-08-mcp-client-tool-calling.md) | Backend | ~300 |
-| 09 | [Creek Vault MCP binding + external capability](capability-registry-09-creek-vault-binding.md) | Full-stack | ~300 |
+| 08 | [Provider tool-calling + MCP client seam](capability-registry-08-mcp-client-tool-calling.md) | Backend | ~300 |
+| 09 | [Creek Vault MCP binding (client of `creek-tools-mcp`)](capability-registry-09-creek-vault-binding.md) | Full-stack | ~300 |
+| 10 | [First new capability — self-care strategies (proof of pluggability)](capability-registry-10-self-care-capability.md) | Full-stack | ~300 |
+| 11 | [Expose Adepthood as an MCP server (external control surface)](capability-registry-11-adepthood-mcp-server.md) | Backend | ~350 |
 
 ## Acceptance Criteria (epic-level)
 
@@ -168,8 +182,12 @@ Dependency graph:
 - [ ] Adding an opt-in feature requires **no new DB column** (feature flags are generic — 02).
 - [ ] Writing a journal entry that mentions completing a habit, doing a practice, or (new) leaving a wheel/wavelength note surfaces a confirmable proposal for each — all through one pipeline and one inbox.
 - [ ] Existing habit + practice completion detection behaviour is **provably unchanged** (their tests pass untouched; they now run through the generalized path).
-- [ ] The LLM can invoke a **local** capability as an MCP tool call, still gated behind a human-confirmed suggestion (08).
-- [ ] Every guardrail above holds: no auto-execution, opt-in + declinable, privacy floor intact, care/safety passes retained.
+- [ ] Deleting a target still cleans up its suggestions — parity with today's FK CASCADE semantics (03).
+- [ ] The LLM can invoke a capability via native provider tool-calling, still gated behind a human-confirmed suggestion (08).
+- [ ] A journal entry round-trips into the Creek Vault (`creek.journal`, idempotent, tier-mapped) through a confirmed proposal (09).
+- [ ] The self-care feature ships **entirely through the registry** — the diff touches no core detection/inbox/nav internals (10).
+- [ ] An external MCP client can read the wheel and drive an explicitly-scoped verb via the Adepthood MCP server (11).
+- [ ] Every guardrail above holds: no auto-execution from journal text, opt-in + declinable, privacy floor intact (intimate never leaves the app — in-app LLM, Vault, or MCP server alike), care/safety passes retained.
 - [ ] `pre-commit run --all-files` green and coverage/complexity thresholds unchanged on every sub-issue PR.
 
 ## Constraints
@@ -204,14 +222,21 @@ Dependency graph:
 
 ## Open questions (resolve before/inside the relevant sub-issue)
 
-- **Creek Vault manifest (blocks 09).** The `geoffe-ga/creek-vault` repo is
-  **not in this session's GitHub scope**, so its MCP server framework, transport
-  (stdio vs HTTP/SSE), exposed tools/resources, auth model, and the concrete
-  shared-ontology representation are unconfirmed. Add `geoffe-ga/creek-vault` to
-  the environment's allowed repositories and pin 08/09's tool schemas to the
-  real manifest before implementing them. Until then, treat 08's *local* tools
-  as the shippable target and 09 as design-complete-but-blocked.
+- ~~Creek Vault manifest (blocks 09).~~ **Resolved 2026-07-01:** the contract
+  was read from the public repo (`creek-tools/creek_mcp/`) and 09 is pinned to
+  it — FastMCP, `stdio`/`streamable-http` + bearer, `creek.handshake` version
+  negotiation, `creek.journal` idempotent ingest, tier ceilings with
+  intimate-never-remote.
+- **Deployment topology for the Vault binding (09).** `creek-tools-mcp` is
+  local-first (default `127.0.0.1:8000`); the Adepthood backend is
+  cloud-deployed and cannot reach a laptop's loopback. Ticket 09 names three
+  options (self-hosted endpoint / device-mediated / outbox queue) and
+  recommends self-hosted-endpoint for v1 — confirm before implementation.
+- **Tier-name mismatch:** Adepthood `public` vs Creek `open`. 09's ontology
+  module translates; decide whether to also rename one side eventually.
 - Whether generic feature flags (02) should fully replace the four boolean
   columns or run alongside them for one release before the columns are dropped.
 - Whether `CompletionSuggestion` rows are migrated in place (03) or the old model
   is kept as a read adapter over `ActionSuggestion`.
+- Whether externally-originated proposals (11's propose-mode) need a distinct
+  `origin` column on `ActionSuggestion` or nullable anchors suffice (03/11).

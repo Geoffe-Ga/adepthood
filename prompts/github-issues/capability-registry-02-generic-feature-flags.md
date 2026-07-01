@@ -29,6 +29,13 @@ enabled. The frontend mirrors them as named selectors. The registry (01) now
 knows the full set of flags, so the source of truth for "which flags exist"
 moves to the registry; the DB only needs to store the user's *opt-outs*.
 
+**Verified:** the frontend comment claiming "a backend rule may force a
+dependent ring off" (`useDepthPreferencesStore.ts:14`) describes logic that
+does **not exist** — `routers/depth_preferences.py` is a plain `setattr` CRUD
+pass-through with no flag interaction. Do not build interaction rules here, and
+correct that misleading comment while touching the store. (Keep the
+non-optimistic echo-the-server pattern anyway; it's still the right shape.)
+
 ## Tasks
 
 1. **Model:** add `disabled_features: list[str]` to `UserDepthPreferences`
