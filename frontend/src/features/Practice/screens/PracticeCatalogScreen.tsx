@@ -111,7 +111,7 @@ export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Eleme
         keyExtractor={catalogKeyExtractor}
         renderItem={renderItem}
         renderSectionHeader={renderSectionHeader}
-        renderSectionFooter={makeSectionFooter(onCreate)}
+        renderSectionFooter={makeSectionFooter(onCreate, sections)}
         ListHeaderComponent={
           <CatalogHeader
             query={query}
@@ -264,13 +264,18 @@ const SECTION_EMPTY_COPY: Readonly<Record<Section, { title: string; body: string
 /**
  * An empty catalog section reads as an editorial empty state that points to the
  * create wizard, rather than the old passive "Nothing here yet." line.
+ *
+ * The empty-state footer only renders when the WHOLE visible catalog is empty:
+ * once any sibling section has rows, an empty section shows nothing so its
+ * footer can't stack over and swallow taps on the populated list.
  */
-/** A SectionList footer renderer that shows the empty state only for empty sections. */
 function makeSectionFooter(
   onCreate: () => void,
+  sections: readonly CatalogSection[],
 ): (info: { section: CatalogSection }) => React.JSX.Element | null {
+  const allEmpty = sections.every((s) => s.data.length === 0);
   return ({ section }) =>
-    section.data.length === 0 ? (
+    allEmpty && section.data.length === 0 ? (
       <SectionFooter section={section.section} onCreate={onCreate} />
     ) : null;
 }
@@ -279,6 +284,7 @@ const SectionFooter = ({ section, onCreate }: SectionFooterProps): React.JSX.Ele
   const copy = SECTION_EMPTY_COPY[section];
   return (
     <EmptyState
+      inline
       glyph="🪶"
       title={copy.title}
       body={copy.body}
@@ -726,7 +732,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     marginBottom: SPACING.sm,
   },
-  sectionEmpty: { flex: 0, alignItems: 'stretch', paddingVertical: SPACING.md, gap: SPACING.sm },
+  sectionEmpty: { paddingVertical: SPACING.md, gap: SPACING.sm },
   rowContainer: {
     flexDirection: 'row',
     alignItems: 'stretch',
