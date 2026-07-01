@@ -30,7 +30,7 @@ class User(SQLModel, table=True):
     Tracks relationships to habits, journal entries, weekly responses,
     and APTITUDE stage progress.
 
-    BotMason access uses a two-bucket wallet:
+    AI resonance access uses a two-bucket wallet:
 
     * ``monthly_messages_used`` / ``monthly_reset_date`` — a free monthly
       allocation (see ``BOTMASON_MONTHLY_CAP``) that resets on the first of
