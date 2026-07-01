@@ -2,7 +2,7 @@ import enum
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Column, DateTime, Index
+from sqlalchemy import CheckConstraint, Column, DateTime, Index
 from sqlmodel import Field, Relationship, SQLModel
 
 from services.journal_encryption import EncryptedString
@@ -40,6 +40,29 @@ class EntryStatus(enum.StrEnum):
     FINISHED = "finished"
 
 
+class JournalClassification(enum.StrEnum):
+    """Privacy tier of a journal entry — "you choose your depth" (issue #894).
+
+    ``public`` may be shared; ``personal`` is the default private tier;
+    ``intimate`` is the most sensitive tier (issue #895 will keep intimate
+    entries away from cloud LLMs). Stored as a plain string column with a DB
+    CHECK so the persisted set can't drift from this enum.
+    """
+
+    PUBLIC = "public"
+    PERSONAL = "personal"
+    INTIMATE = "intimate"
+
+
+def _classification_check() -> CheckConstraint:
+    """CHECK derived from ``JournalClassification`` so the DB set can't drift."""
+    quoted = ", ".join(f"'{c.value}'" for c in JournalClassification)
+    return CheckConstraint(
+        f"classification IN ({quoted})",
+        name="ck_journalentry_classification_valid",
+    )
+
+
 class JournalEntry(SQLModel, table=True):
     """Stores a chat message between the user and BotMason.
 
@@ -62,6 +85,7 @@ class JournalEntry(SQLModel, table=True):
     __table_args__ = (
         Index("ix_journalentry_deleted_at", "deleted_at"),
         Index("ix_journalentry_user_sender_deleted", "user_id", "sender", "deleted_at"),
+        _classification_check(),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -79,6 +103,9 @@ class JournalEntry(SQLModel, table=True):
     # ``message`` remains the body. ``updated_at`` tracks the last edit.
     title: str | None = Field(default=None, max_length=200)
     status: str = Field(default=EntryStatus.DRAFT, max_length=20)
+    # Privacy tier; defaults to ``personal``. The DB CHECK in ``__table_args__``
+    # pins the persisted value to the JournalClassification set.
+    classification: str = Field(default=JournalClassification.PERSONAL, max_length=20)
     sender: str = Field(max_length=10)  # 'user' or 'bot'
     user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
     tag: str = Field(default=JournalTag.FREEFORM, max_length=50)

@@ -274,6 +274,8 @@ async def _apply_entry_update(
         entry.title = payload.title
     if payload.status is not None:
         entry.status = payload.status
+    if payload.classification is not None:
+        entry.classification = payload.classification
     # ``updated_at`` is bumped by the column's ``onupdate`` only when a value
     # actually changes, so a same-value PATCH doesn't move it.
 
