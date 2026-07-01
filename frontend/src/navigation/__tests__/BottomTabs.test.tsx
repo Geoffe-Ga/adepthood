@@ -1,7 +1,7 @@
 /* eslint-env jest */
 /* global describe, it, expect, beforeEach, jest */
-import { NavigationContainer } from '@react-navigation/native';
-import { render } from '@testing-library/react-native';
+import { NavigationContainer, type NavigationContainerRef } from '@react-navigation/native';
+import { render, waitFor } from '@testing-library/react-native';
 import {
   BookOpen,
   Compass,
@@ -30,7 +30,7 @@ jest.mock('@/features/Habits/components/ReorderHabitsModal', () => () => null);
 jest.mock('@/features/Habits/components/StatsModal', () => () => null);
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
-import BottomTabs from '../BottomTabs';
+import BottomTabs, { type RootTabParamList } from '../BottomTabs';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -83,5 +83,53 @@ describe('BottomTabs', () => {
 
     // LayoutGrid was the Catalog tab icon; it must be absent now (6 tabs).
     expect(UNSAFE_queryAllByType(LayoutGrid)).toHaveLength(0);
+  });
+
+  // Issue #900: Journal-first navigation — RED tests (fail until implementation).
+  // The fix sets initialRouteName="Journal" and moves Journal to TAB_CONFIGS[0].
+
+  it('opens into the Journal tab as the initial route (issue #900)', async () => {
+    // NavigationContainerRef exposes getCurrentRoute() after the navigation
+    // state commits. waitFor polls until the ref is populated, which also
+    // flushes the Animated(View) update that would otherwise surface as an
+    // act() warning.
+    const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
+
+    render(
+      <NavigationContainer ref={navRef}>
+        <BottomTabs />
+      </NavigationContainer>,
+    );
+
+    // getCurrentRoute() returns the leaf route that has focus. After mount with
+    // initialRouteName="Journal" this must be "Journal", not "Today".
+    await waitFor(() => {
+      expect(navRef.current?.getCurrentRoute()?.name).toBe('Journal');
+    });
+  });
+
+  it('Journal is the first tab in navigation order (issue #900)', async () => {
+    // getState() on NavigationContainerRef is not guaranteed to be populated
+    // synchronously at the point render() returns — the navigation state is
+    // committed asynchronously by @react-navigation/native. waitFor() polls
+    // until the assertion passes (or times out), giving the state time to
+    // commit. This also flushes pending Animated updates inside act(), so no
+    // act() warning is emitted.
+    const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
+
+    render(
+      <NavigationContainer ref={navRef}>
+        <BottomTabs />
+      </NavigationContainer>,
+    );
+
+    // getRootState() returns the committed root navigation state whose routes[]
+    // array reflects the physical left-to-right tab ordering (TAB_CONFIGS order).
+    // The container ref exposes getRootState() reliably (it backs
+    // getCurrentRoute()); a bare getState() can read undefined before commit.
+    // With TAB_CONFIGS[0] === Journal, routes[0].name must equal 'Journal'.
+    await waitFor(() => {
+      expect(navRef.current?.getRootState()?.routes?.[0]?.name).toBe('Journal');
+    });
   });
 });
