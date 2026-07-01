@@ -1205,3 +1205,123 @@ def test_journal_classification_migration_round_trip_on_sqlite(
     command.upgrade(cfg, _JOURNAL_CLASSIFICATION_REVISION)
     row_after = _journalentry_row(db_url, entry_id=1)
     assert row_after["classification"] == "personal"
+
+
+# -- depth-prefs-01 user_depth_preferences table migration round-trip -------
+
+# Revision anchors for the user_depth_preferences migration round-trip.
+_USER_DEPTH_PREFS_BASE_REVISION = "d8e9f0a1b2c3"  # pragma: allowlist secret
+_USER_DEPTH_PREFS_REVISION = "e2f3a4b5c6d8"  # pragma: allowlist secret
+
+
+def _bootstrap_user_table_for_depth_prefs(sync_url: str) -> None:
+    """Pre-create a minimal ``user`` table with two seeded rows.
+
+    Mirrors the schema the depth-prefs migration expects to find at
+    ``d8e9f0a1b2c3``.  Two rows are seeded so the backfill can be
+    verified for more than one user.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE user ( id INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL)")
+        )
+        conn.execute(text("INSERT INTO user (id, email) VALUES (1, 'alice@example.com')"))
+        conn.execute(text("INSERT INTO user (id, email) VALUES (2, 'bob@example.com')"))
+    engine.dispose()
+
+
+def _depth_prefs_rows(db_url: str) -> list[dict[str, Any]]:
+    """Return all rows from ``userdepthpreferences`` as a list of dicts."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            rows = (
+                conn.execute(
+                    text(
+                        "SELECT user_id, enable_habits, enable_practices,"
+                        " enable_course, enable_sangha"
+                        " FROM userdepthpreferences ORDER BY user_id"
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            return [dict(r) for r in rows]
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_user_depth_prefs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite Alembic config positioned just before the depth-prefs migration.
+
+    Bootstraps a minimal ``user`` table with two pre-existing rows so the
+    backfill step can be verified for multiple users, then stamps the DB at
+    ``d8e9f0a1b2c3`` (the current chain head before this migration).
+    """
+    db_path = tmp_path / "user_depth_prefs_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_user_table_for_depth_prefs(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _USER_DEPTH_PREFS_BASE_REVISION)
+    return cfg
+
+
+def test_user_depth_prefs_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_user_depth_prefs: Config,
+) -> None:
+    """Round-trip the depth-prefs migration: upgrade creates table + backfills; downgrade drops.
+
+    Phase 1: upgrade creates ``userdepthpreferences`` and backfills both
+    pre-existing user rows with all-True flags.
+    Phase 2: downgrade drops the table.
+    Phase 3: re-upgrade is idempotent — the backfill reproduces the same rows.
+    """
+    cfg = alembic_sqlite_config_user_depth_prefs
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade creates the table and backfills pre-existing users.
+    command.upgrade(cfg, _USER_DEPTH_PREFS_REVISION)
+    assert _table_exists(db_url, "userdepthpreferences")
+    cols = _columns_of(db_url, "userdepthpreferences")
+    assert {
+        "id",
+        "user_id",
+        "enable_habits",
+        "enable_practices",
+        "enable_course",
+        "enable_sangha",
+    }.issubset(cols)
+
+    rows = _depth_prefs_rows(db_url)
+    assert len(rows) == 2, "Both pre-existing users must be backfilled."
+    for row in rows:
+        assert bool(row["enable_habits"]) is True
+        assert bool(row["enable_practices"]) is True
+        assert bool(row["enable_course"]) is True
+        assert bool(row["enable_sangha"]) is True
+
+    # Phase 2: downgrade drops the table entirely.
+    command.downgrade(cfg, _USER_DEPTH_PREFS_BASE_REVISION)
+    assert not _table_exists(db_url, "userdepthpreferences")
+
+    # Phase 3: re-upgrade reproduces the same backfill (idempotent cycle).
+    command.upgrade(cfg, _USER_DEPTH_PREFS_REVISION)
+    assert _table_exists(db_url, "userdepthpreferences")
+    rows_again = _depth_prefs_rows(db_url)
+    assert len(rows_again) == 2
+    for row in rows_again:
+        assert bool(row["enable_habits"]) is True
+        assert bool(row["enable_sangha"]) is True
