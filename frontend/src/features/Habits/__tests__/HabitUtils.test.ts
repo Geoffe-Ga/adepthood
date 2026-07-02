@@ -13,6 +13,7 @@ import {
   calculateNetEnergy,
   calculateTodaysProgress,
   getProgressBarColor,
+  clampPercentage,
   isEarlyUnlocked,
   isGoalAchieved,
   isHabitLockedToday,
@@ -968,5 +969,144 @@ describe('isHabitLockedToday', () => {
     expect(isHabitLockedToday(make({ revealed: false, start_date: iso('2000-01-01') }), NOW)).toBe(
       false,
     );
+  });
+});
+
+describe('progress percentage, bar color, and clamp scenarios', () => {
+  const additiveGoals: Goal[] = [
+    {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 1,
+      target_unit: 'units',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: true,
+    },
+    {
+      id: 2,
+      tier: 'clear',
+      title: 'clear',
+      target: 2,
+      target_unit: 'units',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: true,
+    },
+    {
+      id: 3,
+      tier: 'stretch',
+      title: 'stretch',
+      target: 3,
+      target_unit: 'units',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: true,
+    },
+  ];
+
+  const subtractiveGoals: Goal[] = [
+    {
+      id: 4,
+      tier: 'low',
+      title: 'low',
+      target: 300,
+      target_unit: 'mg',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: false,
+    },
+    {
+      id: 5,
+      tier: 'clear',
+      title: 'clear',
+      target: 200,
+      target_unit: 'mg',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: false,
+    },
+    {
+      id: 6,
+      tier: 'stretch',
+      title: 'stretch',
+      target: 0,
+      target_unit: 'mg',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: false,
+    },
+  ];
+
+  const makeHabit = (stage: string, goals: Goal[], completedUnits: number | null): Habit => ({
+    id: 1,
+    stage,
+    name: 'Test',
+    icon: '🔥',
+    streak: 0,
+    energy_cost: 0,
+    energy_return: 0,
+    start_date: new Date(),
+    goals,
+    completions:
+      completedUnits === null
+        ? []
+        : [{ id: 'c-1', timestamp: new Date(), completed_units: completedUnits }],
+  });
+
+  test('reports additive progress against the stretch target on a unified 0-100 scale', () => {
+    const habit = makeHabit('Beige', additiveGoals, 2);
+    const { currentGoal } = getGoalTier(habit);
+    // 2 / 3 = 66.67% on the unified stretch-anchored scale.
+    expect(getProgressPercentage(habit, currentGoal)).toBeCloseTo(66.67, 1);
+  });
+
+  test('calculates progress percentage for subtractive habits', () => {
+    const habit = makeHabit('Blue', subtractiveGoals, 150);
+    const { currentGoal } = getGoalTier(habit);
+    expect(getProgressPercentage(habit, currentGoal)).toBeCloseTo(50);
+  });
+
+  test('returns victory color when the clear goal is met (additive)', () => {
+    const habit = makeHabit('Blue', additiveGoals, 2);
+    expect(getProgressBarColor(habit)).toBe(brightenColor(STAGE_COLORS.Blue!));
+  });
+
+  test('returns victory color when under the stretch target (subtractive)', () => {
+    // No completions = 0 progress, which is <= stretch target (0) → victory.
+    const habit = makeHabit('Blue', subtractiveGoals, null);
+    expect(getProgressBarColor(habit)).toBe(brightenColor(STAGE_COLORS.Blue!));
+  });
+
+  test('returns stage color when the stretch threshold is broken (subtractive)', () => {
+    // 150 > stretch target (0) → stage color.
+    const habit = makeHabit('Blue', subtractiveGoals, 150);
+    expect(getProgressBarColor(habit)).toBe(STAGE_COLORS[habit.stage]);
+  });
+
+  test('returns stage color for a habit with no goals', () => {
+    const habit = makeHabit('Green', [], null);
+    expect(getProgressBarColor(habit)).toBe(STAGE_COLORS[habit.stage]);
+  });
+
+  test('uses the explicit stageColor argument when habit.stage is empty', () => {
+    // Backend defaults habit.stage to "" (see backend/src/models/habit.py). The
+    // tile resolves its color from list position, so getProgressBarColor must
+    // honor that override instead of falling back to black.
+    const habit = makeHabit('', additiveGoals, 1);
+    expect(getProgressBarColor(habit, undefined, STAGE_COLORS.Orange)).toBe(STAGE_COLORS.Orange);
+  });
+
+  test('brightens the explicit stageColor when the clear goal is met', () => {
+    const habit = makeHabit('', additiveGoals, 2);
+    expect(getProgressBarColor(habit, undefined, STAGE_COLORS.Orange)).toBe(
+      brightenColor(STAGE_COLORS.Orange!),
+    );
+  });
+
+  test('clamps percentage values between 0 and 100', () => {
+    expect(clampPercentage(150)).toBe(100);
+    expect(clampPercentage(-20)).toBe(0);
   });
 });
