@@ -61,10 +61,11 @@ single most important behavior for keeping the hopper honest. Other scans may
 run concurrently, so re-run the dedupe search immediately before each create.
 
 ### Step 5 — Write the issue
-Fill `references/issue-body-template.md` completely — all six components, no
-placeholders left. An issue missing any component gets `needs-triage` instead
-of `agent-ready`, and the grooming pass finishes it. Write the body to a file
-and create with:
+Fill the canonical `prompts/templates/scan-issue-body.md` completely — all six
+components, no placeholders left. (It is the single source of truth;
+`references/issue-body-template.md` just points at it.) An issue missing any
+component gets `needs-triage` instead of `agent-ready`, and the grooming pass
+finishes it. Write the body to a file and create with:
 
 ```bash
 gh issue create --title "[scan:<name>] <specific finding>" \

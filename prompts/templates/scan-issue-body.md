@@ -30,7 +30,9 @@ assertion test."]
 
 ## Output Format
 A single PR that: (1) adds a failing test first, (2) makes it pass, (3) passes
-check-all.sh, (4) references this issue with "Closes #N".
+the relevant `./scripts/<side>/check-all.sh` — `scripts/backend/check-all.sh`
+for backend changes, `scripts/frontend/check-all.sh` for frontend changes, both
+if the change is cross-cutting — and (4) references this issue with "Closes #N".
 
 ## Examples
 [One concrete before/after sketch — e.g. the current loop-with-query vs. the
