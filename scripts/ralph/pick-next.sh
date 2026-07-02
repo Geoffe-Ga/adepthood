@@ -27,8 +27,9 @@
 #                         issue carrying no P-label. Default 1 (== P1). See the
 #                         priority-tiering block below.
 #
-# Priority ordering: candidates are walked by [priority tier, number ascending]
-# — P0 → P1 → P2 → P3, oldest-first within a tier (see the tiering block below).
+# Priority ordering: candidates are walked by [priority tier, number ascending],
+# oldest-first within a tier. Tier 0 = P0 / priority-critical … tier 3 = P3 /
+# priority-low (see the tiering block below — both label vocabularies are honored).
 #
 # Parallel awareness (see scripts/ralph/FLEET.md):
 #   Issues already being worked — either an open PR (`Closes|Fixes|Resolves #N`)
@@ -59,10 +60,18 @@ SOLO_LABEL="${RALPH_SOLO_LABEL:-solo}"
 PARALLEL_LABEL="${RALPH_PARALLEL_LABEL:-parallelizable}"
 RESPECT_EPICS="${RALPH_RESPECT_EPICS:-1}"
 
-# Priority tiering (autonomous maintenance pipeline). Candidates are ordered by
-# priority tier first, then oldest-first WITHIN a tier: P0 (security/breakage)
-# preempts P1 (bugs + Geoff's feature issues) preempts P2 (quality) preempts P3
-# (hygiene). An issue with no P-label sorts at RALPH_DEFAULT_PRIORITY_RANK.
+# Priority tiering. Candidates are ordered by priority tier first, then
+# oldest-first WITHIN a tier: tier 0 (critical/breakage) preempts tier 1
+# (bugs + feature issues) preempts tier 2 (quality) preempts tier 3 (hygiene).
+#
+# TWO label vocabularies map onto the same four tiers, so the picker honors both
+# the repo's long-standing `priority-*` labels AND the maintenance pipeline's
+# P0–P3 labels:
+#   tier 0  ← `P0` or `priority-critical`
+#   tier 1  ← `P1` or `priority-high`
+#   tier 2  ← `P2` or `priority-medium`
+#   tier 3  ← `P3` or `priority-low`
+# An issue with none of these sorts at RALPH_DEFAULT_PRIORITY_RANK.
 #
 #   RALPH_DEFAULT_PRIORITY_RANK  Tier an unlabeled issue is treated as. Default
 #                                1 (== P1), so legacy/unlabeled feature work
@@ -101,10 +110,10 @@ open_tsv=$(
               and ( \$exc | any(. as \$x | \$names | index(\$x)) | not )
             )
           | { number: \$i.number, names: \$names,
-              rank: ( if   (\$names | index(\"P0\")) then 0
-                      elif (\$names | index(\"P1\")) then 1
-                      elif (\$names | index(\"P2\")) then 2
-                      elif (\$names | index(\"P3\")) then 3
+              rank: ( if   ((\$names | index(\"P0\")) or (\$names | index(\"priority-critical\"))) then 0
+                      elif ((\$names | index(\"P1\")) or (\$names | index(\"priority-high\")))     then 1
+                      elif ((\$names | index(\"P2\")) or (\$names | index(\"priority-medium\")))   then 2
+                      elif ((\$names | index(\"P3\")) or (\$names | index(\"priority-low\")))      then 3
                       else $DEFAULT_RANK end ) })
       | sort_by([.rank, .number])
       | .[]
