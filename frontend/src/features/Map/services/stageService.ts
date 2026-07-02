@@ -83,6 +83,16 @@ export const isEndOfCycle = (
 ): boolean =>
   currentStage === STAGE_COUNT && (stagesByNumber[STAGE_COUNT]?.progress ?? 0) >= FULLY_COMPLETE;
 
+/** Seed the cycle indicator from the program calendar; a failure here must never break the stage list, so it is swallowed and the prior cycleNumber stands. */
+const seedCycleNumber = async (token?: string): Promise<void> => {
+  try {
+    const calendar = await stagesApi.programCalendar(token);
+    useStageStore.getState().setCycleNumber(calendar.cycle_number);
+  } catch {
+    // Non-fatal: cold-start cycle seeding is best-effort; keep the current value.
+  }
+};
+
 export const stageService = {
   /**
    * Fetch the stage list, map to StageData, and write it into the store. On
@@ -104,7 +114,9 @@ export const stageService = {
       const message = err instanceof Error ? err.message : 'Failed to load stages';
       useStageStore.getState().setError(message);
       useStageStore.getState().setLoading(false);
+      return;
     }
+    await seedCycleNumber(token);
   },
 
   /**

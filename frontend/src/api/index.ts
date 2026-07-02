@@ -23,6 +23,7 @@ import {
   practiceRecipeSchema,
   practiceSessionResponseSchema,
   practiceTagSchema,
+  programCalendarSchema,
   promptListResponseSchema,
   resonanceResponseSchema,
   stageIntroSchema,
@@ -46,6 +47,7 @@ import {
   type ReturnArcT,
   type ReturnWeekT,
   type PasswordResetAcceptedT,
+  type ProgramCalendarT,
   type StageProgressRecordT,
   type SuggestionStatusT,
   type Tier,
@@ -1509,10 +1511,20 @@ export const stages = {
       schema: stageProgressRecordSchema,
     });
   },
+  /** The server's date-derived program calendar, including the cold-start cycle pass. */
+  programCalendar(token?: string): Promise<ProgramCalendarT> {
+    return request<ProgramCalendarT>('/stages/program-calendar', {
+      token,
+      schema: programCalendarSchema,
+    });
+  },
 };
 
 /** Public alias of the zod-inferred stage-progress type so consumers avoid a duplicate shape. */
 export type { StageProgressRecordT as StageProgressRecord } from './schemas';
+
+/** Public alias of the zod-inferred program-calendar type so consumers avoid a duplicate shape. */
+export type { ProgramCalendarT as ProgramCalendar } from './schemas';
 
 // Wheel-of-wholeness balance types and client (Map balance reading)
 

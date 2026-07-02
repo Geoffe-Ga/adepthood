@@ -4,12 +4,25 @@ import { act } from '@testing-library/react-native';
 import type { Stage, StageProgressRecord } from '../../../../api';
 import { clampProgress, isStageUnlocked } from '../stageService';
 
+/** Minimal shape of the GET /stages/program-calendar payload. */
+interface ProgramCalendarPayload {
+  program_started_at: string | null;
+  calendar_stage: number;
+  calendar_week: number;
+  current_stage: number;
+  cycle_number: number;
+}
+
 const mockList = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<Stage[]>>;
 const mockBeginAgainClient = jest.fn() as jest.MockedFunction<() => Promise<StageProgressRecord>>;
+const mockProgramCalendar = jest.fn() as jest.MockedFunction<
+  (_token?: string) => Promise<ProgramCalendarPayload>
+>;
 jest.mock('../../../../api', () => ({
   stages: {
     listAll: (...args: [string?]) => mockList(...args),
     beginAgain: () => mockBeginAgainClient(),
+    programCalendar: (...args: [string?]) => mockProgramCalendar(...args),
   },
 }));
 
@@ -39,6 +52,14 @@ describe('stageService', () => {
     jest.resetModules();
     mockList.mockReset();
     mockBeginAgainClient.mockReset();
+    mockProgramCalendar.mockReset();
+    mockProgramCalendar.mockResolvedValue({
+      program_started_at: null,
+      calendar_stage: 1,
+      calendar_week: 1,
+      current_stage: 1,
+      cycle_number: 1,
+    });
     const { useStageStore } = require('../../../../store/useStageStore');
     act(() => {
       useStageStore.getState().setStages([]);
@@ -163,6 +184,69 @@ describe('stageService', () => {
     expect(mockList).toHaveBeenCalledWith('abc-token');
   });
 
+  describe('loadStages cycle-number sync', () => {
+    it('seeds cycleNumber from the program-calendar response', async () => {
+      mockList.mockResolvedValueOnce([makeApiStage(1)]);
+      mockProgramCalendar.mockResolvedValueOnce({
+        program_started_at: null,
+        calendar_stage: 1,
+        calendar_week: 1,
+        current_stage: 1,
+        cycle_number: 2,
+      });
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+
+      await act(async () => {
+        await stageService.loadStages();
+      });
+
+      expect(useStageStore.getState().cycleNumber).toBe(2);
+    });
+
+    it('sets cycleNumber to 1 when the calendar reports cycle_number 1', async () => {
+      mockList.mockResolvedValueOnce([makeApiStage(1)]);
+      mockProgramCalendar.mockResolvedValueOnce({
+        program_started_at: null,
+        calendar_stage: 1,
+        calendar_week: 1,
+        current_stage: 1,
+        cycle_number: 1,
+      });
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+      act(() => {
+        useStageStore.getState().setCycleNumber(4);
+      });
+
+      await act(async () => {
+        await stageService.loadStages();
+      });
+
+      expect(useStageStore.getState().cycleNumber).toBe(1);
+    });
+
+    it('leaves stages and cycleNumber intact when the program-calendar fetch rejects', async () => {
+      mockList.mockResolvedValueOnce([makeApiStage(1)]);
+      mockProgramCalendar.mockRejectedValueOnce(new Error('calendar down'));
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+      act(() => {
+        useStageStore.getState().setCycleNumber(3);
+      });
+
+      await act(async () => {
+        await stageService.loadStages();
+      });
+
+      expect(mockProgramCalendar).toHaveBeenCalledTimes(1);
+      const state = useStageStore.getState();
+      expect(state.stages).toHaveLength(1);
+      expect(state.error).toBeNull();
+      expect(state.cycleNumber).toBe(3);
+    });
+  });
+
   describe('clampProgress (BUG-FE-MAP-003)', () => {
     it('returns valid progress in [0, 1] unchanged', () => {
       expect(clampProgress(0)).toBe(0);
@@ -282,6 +366,14 @@ describe('stageService', () => {
     it('sets cycleNumber from the response record', async () => {
       mockBeginAgainClient.mockResolvedValueOnce(makeProgressRecord(2));
       mockList.mockResolvedValueOnce([makeApiStage(1)]);
+      // The reload's calendar fetch reports the same server-side cycle.
+      mockProgramCalendar.mockResolvedValueOnce({
+        program_started_at: null,
+        calendar_stage: 1,
+        calendar_week: 1,
+        current_stage: 1,
+        cycle_number: 2,
+      });
       const { stageService } = require('../stageService');
       const { useStageStore } = require('../../../../store/useStageStore');
 
@@ -325,6 +417,14 @@ describe('stageService', () => {
     it('reflects cycle_number 3 when the server returns it', async () => {
       mockBeginAgainClient.mockResolvedValueOnce(makeProgressRecord(3));
       mockList.mockResolvedValueOnce([makeApiStage(1)]);
+      // The reload's calendar fetch reports the same server-side cycle.
+      mockProgramCalendar.mockResolvedValueOnce({
+        program_started_at: null,
+        calendar_stage: 1,
+        calendar_week: 1,
+        current_stage: 1,
+        cycle_number: 3,
+      });
       const { stageService } = require('../stageService');
       const { useStageStore } = require('../../../../store/useStageStore');
 
