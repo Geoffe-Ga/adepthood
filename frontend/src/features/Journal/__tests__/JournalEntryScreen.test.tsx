@@ -282,6 +282,101 @@ describe('JournalEntryScreen', () => {
     }
   });
 
+  it('creates only once when a second save overlaps an in-flight create on a new entry', async () => {
+    jest.useFakeTimers();
+    try {
+      // A create that stays pending so the second save overlaps it.
+      mockCreate.mockReturnValue(new Promise<JournalMessage>(() => {}));
+      const { getByTestId } = renderScreen(undefined, { autosaveDelayMs: 100 });
+      fireEvent.changeText(getByTestId('journal-body-input'), 'First.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+
+      fireEvent.changeText(getByTestId('journal-body-input'), 'First and second.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      // The in-flight guard makes the overlapping save await the pending create
+      // instead of POSTing a duplicate — still exactly one create.
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('routes the overlapping save to update once the in-flight create resolves', async () => {
+    jest.useFakeTimers();
+    try {
+      let resolveCreate!: (_v: JournalMessage) => void;
+      mockCreate.mockReturnValue(
+        new Promise<JournalMessage>((res) => {
+          resolveCreate = res;
+        }),
+      );
+      const { getByTestId } = renderScreen(undefined, { autosaveDelayMs: 100 });
+      fireEvent.changeText(getByTestId('journal-body-input'), 'First.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      fireEvent.changeText(getByTestId('journal-body-input'), 'First and second.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      // Release the create: the queued save now sees the created id and PATCHes it
+      // rather than starting a second create.
+      await act(async () => {
+        resolveCreate(entry({ id: 42 }));
+        await jest.advanceTimersByTimeAsync(1);
+      });
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+      expect(mockUpdate).toHaveBeenCalledWith(
+        42,
+        expect.objectContaining({ message: 'First and second.' }),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('drains queued saves onto one retry when a create fails with saves piled behind it', async () => {
+    jest.useFakeTimers();
+    try {
+      let rejectCreate!: (_e: Error) => void;
+      // The first create stays pending, then fails; the retry (2nd call) resolves
+      // via the beforeEach default. Saves that pile up behind the failing create
+      // must serialize onto that single retry, never fan out into parallel creates.
+      mockCreate.mockReturnValueOnce(
+        new Promise<JournalMessage>((_res, rej) => {
+          rejectCreate = rej;
+        }),
+      );
+      const { getByTestId } = renderScreen(undefined, { autosaveDelayMs: 100 });
+      fireEvent.changeText(getByTestId('journal-body-input'), 'First.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      fireEvent.changeText(getByTestId('journal-body-input'), 'Second.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      fireEvent.changeText(getByTestId('journal-body-input'), 'Third.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      await act(async () => {
+        rejectCreate(new Error('network'));
+        await jest.advanceTimersByTimeAsync(1);
+      });
+      // One failed create + exactly one retry — never three concurrent creates.
+      expect(mockCreate).toHaveBeenCalledTimes(2);
+      expect(mockUpdate).toHaveBeenCalledWith(42, expect.objectContaining({ message: 'Third.' }));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('shows a distinct error hint when a save fails', async () => {
     mockCreate.mockRejectedValue(new Error('network'));
     jest.useFakeTimers();
