@@ -337,6 +337,84 @@ function useErrorSurfacingPersist<T>(
   );
 }
 
+/** Persist once, tracking the save state; the returned task never rejects. */
+function trackedWrite(
+  refs: WriteEntryRefs,
+  title: string,
+  body: string,
+  ctx: SaveContext,
+  setSaveState: (_state: SaveState) => void,
+  onSaved: (() => void) | undefined,
+): Promise<void> {
+  return (async () => {
+    try {
+      await writeEntry(refs, title, body, ctx);
+      setSaveState('saved');
+      onSaved?.();
+    } catch {
+      // Surface a distinct error state so the hint isn't mistaken for "untouched".
+      setSaveState('error');
+    }
+  })();
+}
+
+/** The refs the single-flight writer reads: the write payload plus its gates. */
+type SaveRunnerRefs = WriteEntryRefs & {
+  loadFailedRef: React.MutableRefObject<boolean>;
+  ctxRef: React.MutableRefObject<SaveContext>;
+  onSavedRef: React.MutableRefObject<(() => void) | undefined>;
+  inFlightRef: React.MutableRefObject<Promise<void> | null>;
+};
+
+/**
+ * The debounced writer, single-flighted: if a save is already in flight, this
+ * awaits it (letting a pending create set ``entryIdRef``) before starting, so two
+ * overlapping saves of an id-less entry never each fire ``journal.create``.
+ */
+function useSaveRunner(refs: SaveRunnerRefs, setSaveState: (_state: SaveState) => void): RunSave {
+  const { entryIdRef, respondedRef, classificationRef, chordRef } = refs;
+  const { loadFailedRef, ctxRef, onSavedRef, inFlightRef } = refs;
+  return useCallback<RunSave>(
+    async (title, body) => {
+      if (loadFailedRef.current) return; // never overwrite an entry that failed to load
+      if (!body.trim()) return; // never persist an empty draft
+      // Drain every in-flight save before starting: a released run re-registers
+      // inFlightRef synchronously, so this serializes the whole pile onto one
+      // create. Awaiting only once would let a create that fails release all
+      // queued saves together — each re-creating (the duplicate this guards).
+      // The tracked task never rejects, so awaiting a pending save never throws.
+      while (inFlightRef.current) await inFlightRef.current;
+      setSaveState('saving');
+      const writeRefs = { entryIdRef, respondedRef, classificationRef, chordRef };
+      const task = trackedWrite(
+        writeRefs,
+        title,
+        body,
+        ctxRef.current,
+        setSaveState,
+        onSavedRef.current,
+      );
+      inFlightRef.current = task;
+      try {
+        await task;
+      } finally {
+        if (inFlightRef.current === task) inFlightRef.current = null;
+      }
+    },
+    [
+      entryIdRef,
+      respondedRef,
+      classificationRef,
+      chordRef,
+      loadFailedRef,
+      ctxRef,
+      onSavedRef,
+      inFlightRef,
+      setSaveState,
+    ],
+  );
+}
+
 /** Debounced create-then-update draft saver; tracks the save state. */
 function useDebouncedSave(
   routeEntryId: number | null,
@@ -348,6 +426,9 @@ function useDebouncedSave(
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const entryIdRef = useRef<number | null>(routeEntryId);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Single-flight guard: the in-flight save, so overlapping saves of an id-less
+  // entry can't each fire journal.create (a duplicate-entry TOCTOU otherwise).
+  const inFlightRef = useRef<Promise<void> | null>(null);
   // A weekly-prompt response is write-once; this guards against the debounce or
   // flush submitting it twice (the backend 409s on a duplicate week).
   const respondedRef = useRef(false);
@@ -366,22 +447,18 @@ function useDebouncedSave(
   });
   useTimerCleanup(timerRef);
 
-  const run = useCallback<RunSave>(
-    async (title, body) => {
-      if (loadFailedRef.current) return; // never overwrite an entry that failed to load
-      if (!body.trim()) return; // never persist an empty draft
-      setSaveState('saving');
-      const refs = { entryIdRef, respondedRef, classificationRef, chordRef };
-      try {
-        await writeEntry(refs, title, body, ctxRef.current);
-        setSaveState('saved');
-        onSavedRef.current?.();
-      } catch {
-        // Surface a distinct error state so the hint isn't mistaken for "untouched".
-        setSaveState('error');
-      }
+  const run = useSaveRunner(
+    {
+      entryIdRef,
+      respondedRef,
+      classificationRef,
+      chordRef,
+      loadFailedRef,
+      ctxRef,
+      onSavedRef,
+      inFlightRef,
     },
-    [classificationRef, chordRef],
+    setSaveState,
   );
 
   const setTyping = useCallback(() => setSaveState('typing'), []);
