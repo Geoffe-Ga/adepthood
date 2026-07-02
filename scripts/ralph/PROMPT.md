@@ -96,8 +96,9 @@ drives Gates 3–4. The taxonomy you dispatch is mapped in
     auto-closes the issue on merge), and `Refs #<parent-epic>` if the issue
     names one.
 11. **Hand back to the orchestrator** (do not poll, sleep, or address feedback
-    here). It watches CI (Gate 3) and the verdict (Gate 4) with the Monitor
-    tool.
+    here). It drives CI (Gate 3) and the verdict (Gate 4) via per-PR webhook
+    subscriptions plus your background-worker completion wake — one lane per
+    worktree, none waiting on another.
 
 ## Hard constraints
 - One issue per call. Never chain.

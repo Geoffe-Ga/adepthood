@@ -14,6 +14,7 @@ import {
   showcaseShadow,
   spacing,
   surface,
+  surfaceShadow,
   touchTarget,
 } from '../../design/tokens';
 
@@ -109,13 +110,13 @@ const styles = StyleSheet.create({
     justifyContent: CENTER,
     paddingHorizontal: spacing(0.5),
   },
-  // Gentle alternating band (replaces the old absolute grey half-bands): even
-  // (Divine-Feminine) stages get a recessed tint, odd stages stay on canvas.
+  // Polarity is now carried by the sine-wave overlay, so the center cells stay
+  // transparent and let the wave read through the whole column.
   cellFeminine: {
-    backgroundColor: surface.sunken,
+    backgroundColor: 'transparent',
   },
   cellMasculine: {
-    backgroundColor: surface.canvas,
+    backgroundColor: 'transparent',
   },
   // Brighter "you are here" current-stage marker: a thicker accent halo +
   // recessed warm fill so the live stage reads at a glance.
@@ -141,11 +142,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.text.light,
     letterSpacing: 0.5,
-  },
-  arrowGlyph: {
-    fontSize: 22,
-    fontWeight: '700',
-    lineHeight: 26,
   },
   centerLabelRow: {
     flexDirection: 'row',
@@ -248,6 +244,57 @@ const styles = StyleSheet.create({
     color: ink.muted,
     marginTop: spacing(0.25),
     letterSpacing: 0.5,
+  },
+
+  // --- "How the Wavelength works" opt-in explainer -------------------------
+  // Gentle, declinable invitation in the journey header — never a demand.
+  explainerTrigger: {
+    marginTop: spacing(0.5),
+    paddingVertical: spacing(0.25),
+    paddingHorizontal: spacing(1),
+  },
+  explainerTriggerText: {
+    fontFamily: editorialType.serif,
+    fontSize: 13,
+    color: accent.primary,
+    letterSpacing: 0.25,
+  },
+  // Sheet body for the explainer modal, floating on the warm desk ground.
+  explainerSheet: {
+    width: '90%',
+    maxHeight: '82%',
+    backgroundColor: surface.canvas,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing(2.5),
+    paddingVertical: spacing(2.5),
+    borderTopWidth: 4,
+    borderTopColor: accent.primary,
+    ...surfaceShadow.card,
+  },
+  explainerScroll: {
+    paddingBottom: spacing(2),
+  },
+  explainerTitle: {
+    ...editorialType.title,
+    fontSize: 22,
+    color: ink.primary,
+    marginBottom: spacing(1),
+    paddingRight: spacing(3),
+  },
+  explainerClose: {
+    position: 'absolute',
+    top: spacing(1),
+    right: spacing(1),
+    minWidth: touchTarget.minimum,
+    minHeight: touchTarget.minimum,
+    alignItems: CENTER,
+    justifyContent: CENTER,
+    zIndex: 1,
+  },
+  explainerCloseText: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: ink.soft,
   },
 
   // --- Begin-again affordance (end-of-arc, declinable) ----------------------

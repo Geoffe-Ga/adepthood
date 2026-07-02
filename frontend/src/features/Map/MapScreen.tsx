@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Image,
   InteractionManager,
+  type LayoutChangeEvent,
   Modal,
   Pressable,
   ScrollView,
@@ -40,6 +41,8 @@ import { MAP_ROWS, STAGE_DISPLAY, TITLE_BY_STAGE } from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
 import { stageService, isStageUnlocked, isEndOfCycle } from './services/stageService';
 import { isLeftReturning, STAGE_COUNT, type StageData } from './stageData';
+import WavelengthExplainer from './WavelengthExplainer';
+import { WaveOverlay } from './WaveOverlay';
 import { BALANCE_COPY, emphasisStyle, FULLNESS_ALIVE_THRESHOLD, summaryFor } from './wheelBalance';
 
 import { Button } from '@/components/Button';
@@ -62,9 +65,6 @@ const balanceLabelSuffix = (fullness: number): string =>
 /** Full a11y label for a stage node: persona/descriptor plus the balance read. */
 const stageNodeLabel = (display: StageDisplay, fullness: number): string =>
   `${display.persona} - ${display.descriptor} - ${balanceLabelSuffix(fullness)}`;
-/** Directional spiral glyphs — the Map reads with no background PNG (#766). */
-const ARROW_GLYPH_LEFT = '↩';
-const ARROW_GLYPH_RIGHT = '↪';
 
 // --- Sub-components ---
 //
@@ -135,14 +135,13 @@ const StageTextBlock = ({
   </TouchableOpacity>
 );
 
-// --- Center cell: directional glyph + label/title, lock, badge (the -1 tap) -
+// --- Center cell: label/title, lock, badge (the -1 tap); the wave overlay now
+// carries the directional/polarity read behind these cells ----------------
 
 const CenterContent = ({ display }: { display: StageDisplay }): React.JSX.Element => {
-  const glyph = isLeftReturning(display.stageNumber) ? ARROW_GLYPH_LEFT : ARROW_GLYPH_RIGHT;
   const title = TITLE_BY_STAGE[display.stageNumber];
   return (
     <>
-      <Text style={[styles.arrowGlyph, { color: display.textColor }]}>{glyph}</Text>
       {title ? (
         <Text style={styles.titleText}>{title}</Text>
       ) : display.arrowLabel ? (
@@ -649,10 +648,18 @@ const FIRST_CYCLE = 1;
 interface JourneyHeaderProps {
   currentStage: number;
   cycleNumber: number;
+  onOpenExplainer: () => void;
 }
 
+/** Warm, declinable copy inviting the reader into the Wavelength explainer. */
+const EXPLAINER_TRIGGER_LABEL = 'How the Wavelength works';
+
 /** Compact momentum read at the top of the Map: "Stage N of 10 · Week W". */
-const JourneyHeader = ({ currentStage, cycleNumber }: JourneyHeaderProps): React.JSX.Element => {
+const JourneyHeader = ({
+  currentStage,
+  cycleNumber,
+  onOpenExplainer,
+}: JourneyHeaderProps): React.JSX.Element => {
   const week = useDerivedCurrentWeek(1);
   return (
     <View style={styles.journeyHeader} testID="journey-read">
@@ -662,6 +669,15 @@ const JourneyHeader = ({ currentStage, cycleNumber }: JourneyHeaderProps): React
           {cycleLabel(cycleNumber)}
         </Text>
       ) : null}
+      <TouchableOpacity
+        testID="wavelength-explainer-trigger"
+        style={styles.explainerTrigger}
+        onPress={onOpenExplainer}
+        accessibilityRole="button"
+        accessibilityLabel={EXPLAINER_TRIGGER_LABEL}
+      >
+        <Text style={styles.explainerTriggerText}>{EXPLAINER_TRIGGER_LABEL}</Text>
+      </TouchableOpacity>
     </View>
   );
 };
@@ -690,25 +706,47 @@ const BeginAgainBlock = ({
   </View>
 );
 
+/** Measured pixel size of the grid; zero until the first layout pass reports it. */
+interface GridSize {
+  width: number;
+  height: number;
+}
+
+const EMPTY_GRID_SIZE: GridSize = { width: 0, height: 0 };
+
+/** Track the grid's measured size, updated on every layout pass. */
+const useGridSize = (): [GridSize, (_event: LayoutChangeEvent) => void] => {
+  const [size, setSize] = useState<GridSize>(EMPTY_GRID_SIZE);
+  const onLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    setSize({ width, height });
+  }, []);
+  return [size, onLayout];
+};
+
 const MapGrid = ({
   lookup,
   fullnessByStage,
   currentStage,
   onSelectStage,
-}: MapGridProps): React.JSX.Element => (
-  <View style={styles.grid}>
-    {MAP_ROWS.map((row) => (
-      <MapRowView
-        key={row.rightLabel}
-        row={row}
-        lookup={lookup}
-        fullnessByStage={fullnessByStage}
-        currentStage={currentStage}
-        onPress={onSelectStage}
-      />
-    ))}
-  </View>
-);
+}: MapGridProps): React.JSX.Element => {
+  const [size, onLayout] = useGridSize();
+  return (
+    <View style={styles.grid} testID="map-grid" onLayout={onLayout}>
+      <WaveOverlay width={size.width} height={size.height} />
+      {MAP_ROWS.map((row) => (
+        <MapRowView
+          key={row.rightLabel}
+          row={row}
+          lookup={lookup}
+          fullnessByStage={fullnessByStage}
+          currentStage={currentStage}
+          onPress={onSelectStage}
+        />
+      ))}
+    </View>
+  );
+};
 
 /**
  * Whole-wheel balance read shown beneath the spiral: one balance-not-ladder
@@ -823,18 +861,25 @@ interface MapContentProps {
   showRefreshError: boolean;
   activeStage: StageData | null;
   celebration: CompletionCelebration;
+  explainerVisible: boolean;
   onRefresh: () => void;
   onBeginAgain: () => void;
   onSelectStage: (_stage: StageData) => void;
   onCloseModal: () => void;
   onNavigate: (_screen: NavTarget, _stage: StageData) => void;
+  onOpenExplainer: () => void;
+  onCloseExplainer: () => void;
 }
 
 /** The rendered Map: spiral grid + balance overlay + banners + stage modal. */
 const MapContent = (props: MapContentProps): React.JSX.Element => (
   <View style={styles.container}>
     <MapBackdrop />
-    <JourneyHeader currentStage={props.currentStage} cycleNumber={props.cycleNumber} />
+    <JourneyHeader
+      currentStage={props.currentStage}
+      cycleNumber={props.cycleNumber}
+      onOpenExplainer={props.onOpenExplainer}
+    />
     <MapGrid
       lookup={props.lookup}
       fullnessByStage={props.fullnessByStage}
@@ -856,6 +901,7 @@ const MapContent = (props: MapContentProps): React.JSX.Element => (
       onClose={props.onCloseModal}
       onNavigate={props.onNavigate}
     />
+    <WavelengthExplainer visible={props.explainerVisible} onClose={props.onCloseExplainer} />
   </View>
 );
 
@@ -872,6 +918,8 @@ const MapScreen = (): React.JSX.Element => {
   // Additive overlay: a failed/loading read leaves the map empty so every Aspect reads thin.
   const { fullnessByStage } = useWheelBalance();
   const [activeStage, setActiveStage] = useState<StageData | null>(null);
+  // The explainer is a declinable door: it starts closed and is never auto-shown.
+  const [explainerVisible, setExplainerVisible] = useState<boolean>(false);
   const { beginning, handleBeginAgain } = useBeginAgainGuard();
 
   // Resolve each row's stage numbers to their loaded StageData once per change.
@@ -888,6 +936,8 @@ const MapScreen = (): React.JSX.Element => {
 
   const handleRefresh = useCallback(() => void stageService.loadStages(), []);
   const handleCloseModal = useCallback(() => setActiveStage(null), []);
+  const handleOpenExplainer = useCallback(() => setExplainerVisible(true), []);
+  const handleCloseExplainer = useCallback(() => setExplainerVisible(false), []);
   const handleNavigate = useStageNavigation(handleCloseModal);
   const celebration = useStageCompletionCelebration(stages, lookup);
 
@@ -905,11 +955,14 @@ const MapScreen = (): React.JSX.Element => {
       showRefreshError={!!error && stages.length > 0}
       activeStage={activeStage}
       celebration={celebration}
+      explainerVisible={explainerVisible}
       onRefresh={handleRefresh}
       onBeginAgain={handleBeginAgain}
       onSelectStage={setActiveStage}
       onCloseModal={handleCloseModal}
       onNavigate={handleNavigate}
+      onOpenExplainer={handleOpenExplainer}
+      onCloseExplainer={handleCloseExplainer}
     />
   );
 };

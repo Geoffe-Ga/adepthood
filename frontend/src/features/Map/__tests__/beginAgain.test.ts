@@ -2,8 +2,7 @@
 /* global describe, it, expect */
 import { BEGIN_AGAIN_COPY, cycleLabel } from '../beginAgain';
 
-const BANNED =
-  /\b(level|climb|ascend|higher|rank|altitude|ladder|streak|forever|fall behind|miss out|keep going|must|don.t lose)\b/i;
+import { ranksOrShames } from './copyIntentRule';
 
 describe('BEGIN_AGAIN_COPY', () => {
   it('exports heading, body, and action keys', () => {
@@ -13,16 +12,16 @@ describe('BEGIN_AGAIN_COPY', () => {
     expect(Object.keys(BEGIN_AGAIN_COPY).sort()).toEqual(['action', 'body', 'heading'].sort());
   });
 
-  it('heading contains no banned ladder/streak/FOMO vocabulary', () => {
-    expect(BANNED.test(BEGIN_AGAIN_COPY.heading)).toBe(false);
+  it('heading ranks or shames no one (intent rule, not a wordlist)', () => {
+    expect(ranksOrShames(BEGIN_AGAIN_COPY.heading)).toBe(false);
   });
 
-  it('body contains no banned ladder/streak/FOMO vocabulary', () => {
-    expect(BANNED.test(BEGIN_AGAIN_COPY.body)).toBe(false);
+  it('body ranks or shames no one (intent rule, not a wordlist)', () => {
+    expect(ranksOrShames(BEGIN_AGAIN_COPY.body)).toBe(false);
   });
 
-  it('action contains no banned ladder/streak/FOMO vocabulary', () => {
-    expect(BANNED.test(BEGIN_AGAIN_COPY.action)).toBe(false);
+  it('action ranks or shames no one (intent rule, not a wordlist)', () => {
+    expect(ranksOrShames(BEGIN_AGAIN_COPY.action)).toBe(false);
   });
 
   it('copy contains leaving-whole language (the word "whole")', () => {

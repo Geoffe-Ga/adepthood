@@ -23,7 +23,11 @@ from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
 from models.user import User
-from seed_content import desired_content_records, seed_content
+from seed_content import (
+    SeedContentStageMissingError,
+    desired_content_records,
+    seed_content,
+)
 from services.content_repository import (
     ContentRepository,
     reset_content_repository_for_tests,
@@ -36,6 +40,9 @@ _PLACEHOLDER_COUNT = 6
 # Resolved once at import (not inside async tests — pathlib in an async def trips
 # ASYNC240) so the real vendored content dir is reusable across tests.
 _VENDORED_CONTENT_DIR = Path(__file__).resolve().parent.parent / "content"
+
+# Stage 1 (Beige) ships exactly 17 chapters in the vendored manifest.
+_VENDORED_STAGE_ONE_CHAPTER_COUNT = 17
 
 
 def _chapter(
@@ -66,6 +73,17 @@ _MANIFEST: dict[str, Any] = {
         _chapter("beige-1", 1, "Survival", 0),
         _chapter("beige-2", 1, "Breath as Anchor", 3, content_type="essay"),
         _chapter("teal-1", 4, "Systems Sight", 0),
+    ],
+    "site_resources": [],
+}
+
+# Covers only stage 1 -- used to isolate "placeholder unmapped stays quiet"
+# from "manifest-mapped stage missing its CourseStage row raises loudly".
+_STAGE_ONE_ONLY_MANIFEST: dict[str, Any] = {
+    "schema_version": "1.0.0",
+    "chapters": [
+        _chapter("beige-1", 1, "Survival", 0),
+        _chapter("beige-2", 1, "Breath as Anchor", 3, content_type="essay"),
     ],
     "site_resources": [],
 }
@@ -184,9 +202,56 @@ async def test_seed_content_populates_stage_one_from_vendored_manifest(
             .scalars()
             .all()
         )
-        assert rows, "Stage 1 must seed real course content from the vendored manifest"
+        assert len(rows) == _VENDORED_STAGE_ONE_CHAPTER_COUNT
     finally:
         reset_content_repository_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_seed_content_raises_when_manifest_stage_has_no_course_stage_row(
+    db_session: AsyncSession,
+) -> None:
+    """A manifest stage with no matching CourseStage row must fail loudly, not silently."""
+    set_content_repository_for_tests(ContentRepository(_VENDORED_CONTENT_DIR))
+    try:
+        with pytest.raises(SeedContentStageMissingError, match=r"no CourseStage row: \[1"):
+            await seed_content(db_session)
+    finally:
+        reset_content_repository_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_seed_content_raises_naming_only_the_unmapped_manifest_stage(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+) -> None:
+    """A partial seed raises for the missing manifest stage while mapped stages seed fine."""
+    install_manifest(_MANIFEST)  # ships stages 1 and 4
+    await _seed_stages(db_session, count=1)  # only stage 1 has a CourseStage row
+
+    with pytest.raises(SeedContentStageMissingError, match=r"no CourseStage row: \[4\]"):
+        await seed_content(db_session)
+
+    # The raise fires before any write, so stage 1's mapped chapters never land.
+    rows = (await db_session.execute(select(StageContent))).scalars().all()
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_seed_content_placeholder_stages_stay_quiet_when_unmapped(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+) -> None:
+    """Unmapped placeholder stages (no manifest coverage) never raise, unlike manifest stages."""
+    install_manifest(_STAGE_ONE_ONLY_MANIFEST)
+    await _seed_stages(db_session, count=1)
+
+    inserted = await seed_content(db_session)
+
+    assert inserted == len(_STAGE_ONE_ONLY_MANIFEST["chapters"])
+    result = await db_session.execute(select(StageContent))
+    rows = result.scalars().all()
+    assert [r.title for r in rows] == ["Survival", "Breath as Anchor"]
 
 
 def test_content_ref_format() -> None:
@@ -226,13 +291,14 @@ async def test_seed_content_idempotent(
 
 
 @pytest.mark.asyncio
-async def test_seed_content_no_stages(
+async def test_seed_content_no_stages_raises_for_manifest_coverage(
     db_session: AsyncSession,
     install_manifest: Callable[[dict[str, Any]], None],
 ) -> None:
-    install_manifest(_MANIFEST)
-    inserted = await seed_content(db_session)
-    assert inserted == 0
+    """No CourseStage rows at all means every manifest stage is unmapped -- loud, not silent."""
+    install_manifest(_MANIFEST)  # ships stages 1 and 4
+    with pytest.raises(SeedContentStageMissingError, match=r"no CourseStage row: \[1, 4\]"):
+        await seed_content(db_session)
 
 
 @pytest.mark.asyncio
