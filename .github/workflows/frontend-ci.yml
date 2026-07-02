@@ -49,6 +49,6 @@ jobs:
         working-directory: frontend
         run: npx prettier -c .
 
-      - name: Tests
+      - name: Tests (with coverage thresholds)
         working-directory: frontend
-        run: npx jest --passWithNoTests
+        run: npx jest --coverage --passWithNoTests

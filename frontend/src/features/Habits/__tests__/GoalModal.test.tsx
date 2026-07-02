@@ -2,6 +2,7 @@
 /* global describe, it, expect */
 import { jest } from '@jest/globals';
 import React from 'react';
+import { TouchableOpacity } from 'react-native';
 import renderer from 'react-test-renderer';
 
 import { GoalModal } from '../components/GoalModal';
@@ -498,5 +499,45 @@ describe('GoalModal edit toggle', () => {
     expect(
       testRenderer.root.findByProps({ testID: 'goal-modal-edit-toggle' }).props.accessibilityState,
     ).toEqual({ expanded: false });
+  });
+});
+
+describe('GoalModal icon editing', () => {
+  it('opens the emoji selector via the header icon and applies the selected emoji to the habit', () => {
+    const onUpdateHabit = jest.fn();
+    const testRenderer = renderer.create(
+      <GoalModal
+        visible
+        habit={sampleHabit}
+        onClose={() => {}}
+        onUpdateGoal={() => {}}
+        onUpdateGoalUnits={() => {}}
+        onLogUnit={() => {}}
+        onUpdateHabit={onUpdateHabit}
+      />,
+    );
+
+    expect(() => testRenderer.root.findByType('EmojiSelector')).toThrow();
+
+    const iconText = testRenderer.root.findByProps({ children: sampleHabit.icon });
+    let iconButton = iconText.parent;
+    while (iconButton && iconButton.type !== TouchableOpacity) {
+      iconButton = iconButton.parent;
+    }
+    if (!iconButton) throw new Error('Icon button not found');
+    const foundButton = iconButton;
+    renderer.act(() => {
+      foundButton.props.onPress();
+    });
+
+    const selector = testRenderer.root.findByType('EmojiSelector');
+    expect(selector).toBeTruthy();
+
+    renderer.act(() => {
+      selector.props.onEmojiSelected('🎉');
+    });
+
+    expect(onUpdateHabit).toHaveBeenCalledWith({ ...sampleHabit, icon: '🎉' });
+    expect(() => testRenderer.root.findByType('EmojiSelector')).toThrow();
   });
 });

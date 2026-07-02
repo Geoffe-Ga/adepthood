@@ -1,5 +1,5 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 import type { DimensionValue } from 'react-native';
 
@@ -342,6 +342,15 @@ describe('GoalModal direction toggle', () => {
     fireEvent.press(getByTestId('goal-direction-additive'));
     expect(props.onUpdateGoal).not.toHaveBeenCalled();
   });
+
+  it('skips a missing tier when flipping direction with fewer than three goals', () => {
+    const habit = makeHabit({
+      goals: [makeGoal('low', { target: 1 }), makeGoal('clear', { target: 2 })],
+    });
+    const { getByTestId, props } = renderModal(habit);
+    fireEvent.press(getByTestId('goal-direction-subtractive'));
+    expect(props.onUpdateGoal).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('GoalModal editor visibility guards', () => {
@@ -449,6 +458,31 @@ describe('GoalModal log-date stepper', () => {
   });
 });
 
+describe('GoalModal log-unit guards', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('skips logging when the habit has no id', () => {
+    const { getByText, props } = renderModal(makeHabit({ id: 0 }));
+    fireEvent.press(getByText('Log Units'));
+    expect(props.onLogUnit).not.toHaveBeenCalled();
+  });
+
+  it('falls back to an amount of 1 when the log-amount field is non-numeric', () => {
+    const { getByTestId, getByText, props } = renderModal();
+    const logSection = getByTestId('goal-modal-log-unit-section');
+    const amountInput = within(logSection).getByDisplayValue('1');
+    fireEvent.changeText(amountInput, 'abc');
+    fireEvent.press(getByText('Log Units'));
+
+    const calls = (props.onLogUnit as unknown as jest.Mock).mock.calls;
+    expect(calls).toHaveLength(1);
+    const [, amount] = calls[0] as [number, number, Date];
+    expect(amount).toBe(1);
+  });
+});
+
 describe('GoalModal progress-bar zero/equal-target guards', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -490,5 +524,61 @@ describe('GoalModal progress-bar zero/equal-target guards', () => {
     const width = fillWidth(habit);
     expect(width).toBe('0%');
     expect(String(width)).not.toContain('NaN');
+  });
+
+  it('falls back to the low goal for the progress percentage when no stretch goal exists', () => {
+    const habit = makeHabit({
+      goals: [makeGoal('low', { target: 4, frequency_unit: 'per_day' })],
+      completions: [{ timestamp: new Date(), completed_units: 2 }],
+    });
+    const width = fillWidth(habit);
+    expect(String(width)).not.toContain('NaN');
+  });
+
+  it('falls back to the first goal for the progress percentage when neither low nor stretch exists', () => {
+    const habit = makeHabit({
+      goals: [makeGoal('clear', { target: 4, frequency_unit: 'per_day' })],
+      completions: [{ timestamp: new Date(), completed_units: 2 }],
+    });
+    const width = fillWidth(habit);
+    expect(String(width)).not.toContain('NaN');
+  });
+});
+
+describe('GoalModal stretch marker tooltip', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('shows the stretch tooltip on press-in and hides it on press-out', () => {
+    const { getByTestId, queryByTestId } = renderModal();
+    const stretchMarker = getByTestId('modal-marker-stretch');
+    expect(queryByTestId('modal-tooltip-stretch')).toBeNull();
+
+    fireEvent(stretchMarker, 'pressIn');
+    expect(getByTestId('modal-tooltip-stretch')).toBeTruthy();
+
+    fireEvent(stretchMarker, 'pressOut');
+    expect(queryByTestId('modal-tooltip-stretch')).toBeNull();
+  });
+});
+
+describe('GoalModal goal-target editor sync guard', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('does not clobber an in-progress target draft when the goal prop updates externally', () => {
+    const { getByTestId, rerender, props } = renderModal();
+    fireEvent.press(getByTestId('goal-target-display-low'));
+    const input = getByTestId('goal-target-input-low');
+    fireEvent.changeText(input, '9');
+
+    const externallyUpdatedHabit = makeHabit({
+      goals: [makeGoal('low', { target: 42 }), makeGoal('clear'), makeGoal('stretch')],
+    });
+    rerender(<GoalModal {...props} habit={externallyUpdatedHabit} />);
+
+    expect(getByTestId('goal-target-input-low').props.value).toBe('9');
   });
 });

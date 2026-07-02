@@ -194,3 +194,34 @@ describe('JournalEntryScreen — chord change PATCH failure', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Chord chosen before the entry exists — rides the first create, no PATCH yet
+// ---------------------------------------------------------------------------
+
+describe('JournalEntryScreen — chord chosen before the first save', () => {
+  it('creates with the chosen aspect chord when set before the first save', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId } = renderScreen(undefined, { autosaveDelayMs: 100 });
+
+      const page = within(getByTestId('journal-page'));
+      fireEvent.press(page.getByTestId('aspect-chord-trigger'));
+      fireEvent.press(within(getByTestId('journal-page')).getByTestId('aspect-primary-5'));
+
+      fireEvent.changeText(getByTestId('journal-body-input'), 'An Aspect-tagged reflection.');
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ primary_aspect: 5, secondary_aspect: null }),
+      );
+      // No PATCH: the chord rode the create — there is no existing entry to update yet.
+      expect(mockUpdate).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
