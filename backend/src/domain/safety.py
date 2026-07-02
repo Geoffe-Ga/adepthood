@@ -22,9 +22,19 @@ human support (added later), while a false positive would shame someone in their
 darkness. The phrase lists below are explicit and auditable rather than clever;
 add to them only with a corresponding negative test guarding ordinary darkness.
 
-Negation is handled deterministically, not with a parser. Before matching, the
-Unicode curly apostrophe (U+2019) is folded to ASCII ``'`` so iOS smart
-punctuation matches the phrase lists. A candidate phrase match is suppressed only
+Before matching, text is normalized (see :func:`_normalize`): a curated set of
+alternate apostrophes is folded to ASCII ``'``, every Unicode format character
+(category ``Cf`` — zero-width and bidi controls) is neutralized to a space, and
+the result is passed through NFKC (folding fullwidth and other compatibility
+forms) before lowercasing and whitespace collapse. Invisible or confusable code
+points are folded up front because the dangerous failure direction for a crisis
+screen is a false negative — a phrase defeated by a spliced zero-width character
+or a fullwidth-keyboard rendering would silently miss a genuine signal.
+
+Negation is handled deterministically, not with a parser. Because apostrophes are
+folded before matching, denials written with any apostrophe variant ("I don't
+want to die") reach the negator machinery too. A candidate phrase match is
+suppressed only
 when a negator (e.g. "never", "not", "no plans to", "don't") appears in the
 window of :data:`_NEGATION_WINDOW_WORDS` whitespace tokens strictly *before* the
 match, within the same clause (the window is clipped at the last ``.``, ``!``,
@@ -44,6 +54,7 @@ Purity: no FastAPI, SQLModel, or network/LLM imports — only the standard libra
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
@@ -131,8 +142,23 @@ _COMPILED: tuple[tuple[DistressCategory, re.Pattern[str]], ...] = tuple(
     for category, phrases in _PATTERNS
 )
 
-# Unicode curly apostrophe (iOS smart punctuation) folded to ASCII before matching.
-_CURLY_APOSTROPHE = "\N{RIGHT SINGLE QUOTATION MARK}"
+# Alternate apostrophe code points folded to ASCII "'" before matching so iOS smart
+# punctuation and confusable variants match the phrase lists. Folded before NFKC
+# because NFKC decomposes U+00B4 ACUTE ACCENT into space + combining acute, which
+# would otherwise split the token and defeat the match.
+_APOSTROPHE_VARIANTS: tuple[str, ...] = (
+    "\N{LEFT SINGLE QUOTATION MARK}",
+    "\N{RIGHT SINGLE QUOTATION MARK}",
+    "\N{MODIFIER LETTER APOSTROPHE}",
+    "\N{FULLWIDTH APOSTROPHE}",
+    "\N{PRIME}",
+    "\N{ACUTE ACCENT}",
+)
+_APOSTROPHE_TABLE = str.maketrans(dict.fromkeys(_APOSTROPHE_VARIANTS, "'"))
+
+# Unicode general category for format characters (zero-width, bidi controls, soft
+# hyphen). Swept to a plain space so invisible splices cannot defeat matching.
+_FORMAT_CHAR_CATEGORY = "Cf"
 
 # Number of whitespace tokens before a match inspected for a negator.
 _NEGATION_WINDOW_WORDS = 5
@@ -187,6 +213,24 @@ def _is_negated(normalized: str, match_start: int) -> bool:
     return len(_LOGICAL_NEGATORS.findall(window)) % 2 == 1
 
 
+def _normalize(text: str) -> str:
+    """Fold ``text`` to a matchable form before pattern matching.
+
+    The pipeline order is load-bearing: alternate apostrophes are folded to ASCII
+    first (before NFKC would decompose U+00B4 into space + combining acute), then
+    every Unicode format character (category ``Cf``) is neutralized to a space so
+    invisible splices cannot break a phrase, then NFKC folds fullwidth and other
+    compatibility forms, and finally the text is lowercased and its whitespace
+    collapsed.
+    """
+    folded = text.translate(_APOSTROPHE_TABLE)
+    swept = "".join(
+        " " if unicodedata.category(ch) == _FORMAT_CHAR_CATEGORY else ch for ch in folded
+    )
+    normalized = unicodedata.normalize("NFKC", swept)
+    return re.sub(r"\s+", " ", normalized).strip().lower()
+
+
 def assess_distress(text: str) -> DistressSignal:
     """Screen ``text`` for an acute-distress signal; return a typed result.
 
@@ -203,9 +247,11 @@ def assess_distress(text: str) -> DistressSignal:
     myself") are suppressed by preceding-window negation handling. This is a
     screen, not a diagnosis, and introduces no medication, treatment, or medical
     advice.
+
+    Text is first normalized (:func:`_normalize`) so invisible or confusable
+    Unicode code points cannot defeat the phrase lists.
     """
-    folded = text.replace(_CURLY_APOSTROPHE, "'")
-    normalized = re.sub(r"\s+", " ", folded).strip().lower()
+    normalized = _normalize(text)
     if not normalized:
         return _NONE
     for category, pattern in _COMPILED:

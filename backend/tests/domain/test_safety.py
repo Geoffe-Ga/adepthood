@@ -133,3 +133,107 @@ def test_negated_denials_do_not_flag(text: str) -> None:
 )
 def test_negation_does_not_suppress_genuine_signals(text: str, category: DistressCategory) -> None:
     assert assess_distress(text) == DistressSignal(level="elevated", category=category)
+
+
+# Zero-width and bidi-format code points an attacker (or a stray copy-paste) can
+# splice into a phrase to defeat the whitespace-only normalization. Named via
+# escapes so the invisible characters read unambiguously in source.
+_ZERO_WIDTH_SPACE = "\N{ZERO WIDTH SPACE}"
+_ZERO_WIDTH_NON_JOINER = "\N{ZERO WIDTH NON-JOINER}"
+_ZERO_WIDTH_JOINER = "\N{ZERO WIDTH JOINER}"
+_WORD_JOINER = "\N{WORD JOINER}"
+_ZERO_WIDTH_NO_BREAK_SPACE = "\N{ZERO WIDTH NO-BREAK SPACE}"
+_LEFT_TO_RIGHT_MARK = "\N{LEFT-TO-RIGHT MARK}"
+_RIGHT_TO_LEFT_MARK = "\N{RIGHT-TO-LEFT MARK}"
+_LEFT_TO_RIGHT_EMBEDDING = "\N{LEFT-TO-RIGHT EMBEDDING}"
+_FIRST_STRONG_ISOLATE = "\N{FIRST STRONG ISOLATE}"
+_SOFT_HYPHEN = "\N{SOFT HYPHEN}"
+
+_ZERO_WIDTH_AND_FORMAT_VECTORS = [
+    _ZERO_WIDTH_SPACE,
+    _ZERO_WIDTH_NON_JOINER,
+    _ZERO_WIDTH_JOINER,
+    _WORD_JOINER,
+    _ZERO_WIDTH_NO_BREAK_SPACE,
+    _LEFT_TO_RIGHT_MARK,
+    _RIGHT_TO_LEFT_MARK,
+    _LEFT_TO_RIGHT_EMBEDDING,
+    _FIRST_STRONG_ISOLATE,
+]
+
+
+@pytest.mark.parametrize("hidden_char", _ZERO_WIDTH_AND_FORMAT_VECTORS)
+def test_zero_width_and_format_chars_do_not_defeat_suicidal_intent_match(hidden_char: str) -> None:
+    signal = assess_distress(f"I want to kill{hidden_char}myself")
+    assert signal == DistressSignal(level="elevated", category=DistressCategory.SUICIDAL_INTENT)
+
+
+def test_soft_hyphen_does_not_defeat_self_harm_match() -> None:
+    signal = assess_distress(f"the self{_SOFT_HYPHEN}harm urges came back")
+    assert signal == DistressSignal(level="elevated", category=DistressCategory.SELF_HARM)
+
+
+# Non-ASCII apostrophe variants beyond the curly one already folded above.
+_LEFT_SINGLE_QUOTATION_MARK = "\N{LEFT SINGLE QUOTATION MARK}"
+_MODIFIER_LETTER_APOSTROPHE = "\N{MODIFIER LETTER APOSTROPHE}"
+_FULLWIDTH_APOSTROPHE = "\N{FULLWIDTH APOSTROPHE}"
+_PRIME = "\N{PRIME}"
+_ACUTE_ACCENT = "\N{ACUTE ACCENT}"
+
+_ALTERNATE_APOSTROPHES = [
+    _LEFT_SINGLE_QUOTATION_MARK,
+    _MODIFIER_LETTER_APOSTROPHE,
+    _FULLWIDTH_APOSTROPHE,
+    _PRIME,
+    _ACUTE_ACCENT,
+]
+
+
+@pytest.mark.parametrize("apostrophe", _ALTERNATE_APOSTROPHES)
+def test_alternate_apostrophes_do_not_defeat_suicidal_intent_match(apostrophe: str) -> None:
+    signal = assess_distress(f"I don{apostrophe}t want to be alive anymore")
+    assert signal == DistressSignal(level="elevated", category=DistressCategory.SUICIDAL_INTENT)
+
+
+# Fullwidth (halfwidth-and-fullwidth-forms block) rendering of "kill myself", the
+# kind produced by some IME and CJK-locale keyboards.
+_FULLWIDTH_KILL_MYSELF = (
+    "\N{FULLWIDTH LATIN SMALL LETTER K}"
+    "\N{FULLWIDTH LATIN SMALL LETTER I}"
+    "\N{FULLWIDTH LATIN SMALL LETTER L}"
+    "\N{FULLWIDTH LATIN SMALL LETTER L}"
+    " "
+    "\N{FULLWIDTH LATIN SMALL LETTER M}"
+    "\N{FULLWIDTH LATIN SMALL LETTER Y}"
+    "\N{FULLWIDTH LATIN SMALL LETTER S}"
+    "\N{FULLWIDTH LATIN SMALL LETTER E}"
+    "\N{FULLWIDTH LATIN SMALL LETTER L}"
+    "\N{FULLWIDTH LATIN SMALL LETTER F}"
+)
+
+
+def test_fullwidth_form_does_not_defeat_suicidal_intent_match() -> None:
+    signal = assess_distress(f"I want to {_FULLWIDTH_KILL_MYSELF}")
+    assert signal == DistressSignal(level="elevated", category=DistressCategory.SUICIDAL_INTENT)
+
+
+# Regression guard: hardening normalization must not weaken negation handling.
+_NEGATION_REGRESSION_APOSTROPHES = [_MODIFIER_LETTER_APOSTROPHE, _PRIME, _ACUTE_ACCENT]
+
+
+@pytest.mark.parametrize("apostrophe", _NEGATION_REGRESSION_APOSTROPHES)
+def test_alternate_apostrophe_negation_still_suppresses(apostrophe: str) -> None:
+    signal = assess_distress(f"I don{apostrophe}t want to die")
+    assert signal == DistressSignal(level="none", category=DistressCategory.NONE)
+
+
+def test_zero_width_space_negation_still_suppresses() -> None:
+    signal = assess_distress(f"I would never kill{_ZERO_WIDTH_SPACE}myself")
+    assert signal == DistressSignal(level="none", category=DistressCategory.NONE)
+
+
+def test_zero_width_space_in_ordinary_darkness_does_not_flag() -> None:
+    text = f"I feel so{_ZERO_WIDTH_SPACE} empty today."
+    signal = assess_distress(text)
+    assert signal.level == "none"
+    assert signal.category is DistressCategory.NONE
