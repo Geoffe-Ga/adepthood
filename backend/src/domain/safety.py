@@ -5,8 +5,9 @@ reads text and returns a typed :class:`DistressSignal` saying whether the writin
 contains an **acute** distress signal (explicit suicidal intent, self-harm
 intent, medication cessation, or intent to harm another) and, if so, which
 category matched. Nothing here gives medical, medication, or treatment guidance;
-it only classifies. The signal is wired into the acute-distress care surface at
-the journal PATCH endpoint.
+it only classifies. The signal is consumed by the journal care path: the
+resonance endpoint (``POST /journal/{entry_id}/resonance``) screens the entry and,
+on an elevated signal, returns a care surface alongside the reflection.
 
 Design — deliberately conservative
 ----------------------------------
