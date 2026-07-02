@@ -74,8 +74,6 @@ MODEL_PRICING: dict[str, ModelPricing] = {
     # Anthropic — https://www.anthropic.com/pricing
     "claude-sonnet-4-20250514": _price("3.00", "15.00"),
     "claude-haiku-4-5-20251001": _price("1.00", "5.00"),
-    "claude-3-5-sonnet-20241022": _price("3.00", "15.00"),
-    "claude-3-5-haiku-20241022": _price("0.80", "4.00"),
     # Floating aliases (track the latest minor) — priced at the family's current
     # list price; the price follows the alias as Anthropic rolls it forward.
     "claude-opus-4-7": _price("15.00", "75.00"),
