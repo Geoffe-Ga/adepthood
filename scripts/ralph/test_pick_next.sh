@@ -44,7 +44,20 @@ cat > "$BIN/gh" <<'STUB'
 args="$*"
 case "$args" in
   *"issue list"*)
-    cat "$STUBDIR/issue_list.tsv" 2>/dev/null || true ;;
+    # Two modes. Default: emit the pre-jq'd TSV a scenario supplied (tests the
+    # bash walk logic). Opt-in JSON mode ($STUBDIR/issue_json present): apply the
+    # REAL --jq filter pick-next.sh passes to a JSON fixture, so the embedded
+    # filter/sort (require/exclude + priority tiering) is exercised end-to-end.
+    if [[ -f "$STUBDIR/issue_json" ]]; then
+      filter=""; prev=""
+      for a in "$@"; do
+        [[ "$prev" == "--jq" ]] && { filter="$a"; break; }
+        prev="$a"
+      done
+      jq -r "$filter" "$STUBDIR/issue_json"
+    else
+      cat "$STUBDIR/issue_list.tsv" 2>/dev/null || true
+    fi ;;
   *"pr list"*)
     cat "$STUBDIR/pr_bodies" 2>/dev/null || true ;;
   *"issue view"*)
@@ -74,6 +87,17 @@ set_labels() { printf '%s' "$2" > "$STUBDIR/labels/$1"; }                    # <
 pr_closes()  { printf 'Closes #%s\n' "$1" >> "$STUBDIR/pr_bodies"; }
 worktree()   { mkdir -p "$REPO/.ralph/worktrees/issue-$1"; }
 run_pick()   { (cd "$REPO" && PATH="$BIN:$PATH" "$PICK"); }
+
+# JSON-mode helpers: build the fixture the stub feeds to pick-next's REAL --jq
+# filter (mirrors `gh issue list --json number,labels`), so require/exclude
+# filtering AND the priority-tier sort are exercised, not bypassed.
+ij_add()      { # <num> <labels-csv>  — append one issue object
+  local names
+  names=$(jq -cn --arg s "$2" '$s | split(",") | map(select(length>0) | {name: .})')
+  jq -cn --argjson n "$1" --argjson l "$names" '{number:$n, labels:$l}' \
+    >> "$STUBDIR/issue_json.lines"
+}
+ij_finalize() { jq -s . "$STUBDIR/issue_json.lines" > "$STUBDIR/issue_json"; }
 
 # 1) First worker (empty fleet) gets the lowest candidate.
 new_scenario first
@@ -156,6 +180,44 @@ candidate 10 ""; candidate 11 ""
 mkdir -p "$REPO2/.ralph/worktrees/issue-10"
 check "path segment matching issue-<n> above worktrees dir is ignored" "11" \
   "$(cd "$REPO2" && PATH="$BIN:$PATH" "$PICK")"
+
+# --- priority tiering (JSON mode: exercises the real embedded --jq sort) ------
+
+# 11) P0 preempts a lower, older issue: #99 (P0) beats #10 (P3).
+new_scenario prio_p0_preempts
+ij_add 10 "P3,agent-ready"; ij_add 99 "P0,agent-ready"; ij_finalize
+check "P0 preempts older P3" "99" "$(run_pick)"
+
+# 12) Full tier order P0<P1<P2<P3, and oldest-first WITHIN a tier.
+new_scenario prio_full_order
+ij_add 40 "P3"; ij_add 30 "P2"; ij_add 21 "P1"; ij_add 20 "P1"; ij_add 10 "P0"
+ij_finalize
+check "lowest tier wins (P0)" "10" "$(run_pick)"
+
+new_scenario prio_within_tier
+ij_add 22 "P1"; ij_add 20 "P1"; ij_add 21 "P1"; ij_finalize
+check "oldest-first within a tier" "20" "$(run_pick)"
+
+# 13) Unlabeled issue defaults to rank 1 (== P1): it beats a P2 but loses to P0.
+new_scenario prio_default_rank
+ij_add 5 "P2"; ij_add 9 ""; ij_add 3 "P0"; ij_finalize
+check "unlabeled ranks as P1 (beats P2)" "3" \
+  "$(run_pick)"                                   # P0 #3 first
+new_scenario prio_default_beats_p2
+ij_add 5 "P2"; ij_add 9 ""; ij_finalize
+check "unlabeled (default P1) beats P2" "9" "$(run_pick)"
+
+# 14) RALPH_DEFAULT_PRIORITY_RANK override: push unlabeled to the back (rank 3).
+new_scenario prio_default_override
+ij_add 9 ""; ij_add 5 "P2"; ij_finalize
+check "default-rank override sends unlabeled behind P2" "5" \
+  "$(cd "$REPO" && PATH="$BIN:$PATH" RALPH_DEFAULT_PRIORITY_RANK=3 "$PICK")"
+
+# 15) require/exclude filtering still applies in JSON mode: agent-ready gate.
+new_scenario prio_require_gate
+ij_add 10 "P0"; ij_add 11 "P3,agent-ready"; ij_finalize
+check "require agent-ready filters out ungated P0" "11" \
+  "$(cd "$REPO" && PATH="$BIN:$PATH" RALPH_REQUIRE_LABELS=agent-ready "$PICK")"
 
 echo
 echo "pick-next tests: $PASS passed, $FAIL failed"
