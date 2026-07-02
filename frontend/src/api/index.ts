@@ -1085,6 +1085,10 @@ export interface JournalMessageCreate {
   user_practice_id?: number | null;
   /** Privacy tier chosen at creation; the backend defaults to ``personal``. */
   classification?: JournalClassification;
+  /** Primary chord Aspect (a stage 1..10); omitted when untagged. */
+  primary_aspect?: number | null;
+  /** Secondary chord Aspect (a stage 1..10); only meaningful with a primary. */
+  secondary_aspect?: number | null;
 }
 
 export type EntryStatus = 'draft' | 'finished';
@@ -1103,6 +1107,10 @@ export interface JournalMessage {
   updated_at?: string;
   /** Privacy tier; absent on older responses (defaults to ``personal``). */
   classification?: JournalClassification;
+  /** Primary chord Aspect (a stage 1..10); null/absent when untagged. */
+  primary_aspect?: number | null;
+  /** Secondary chord Aspect (a stage 1..10); only meaningful with a primary. */
+  secondary_aspect?: number | null;
 }
 
 /**
@@ -1116,6 +1124,10 @@ export interface JournalEntryUpdate {
   status?: EntryStatus;
   /** Re-classify an existing entry's privacy tier. */
   classification?: JournalClassification;
+  /** Update the primary chord Aspect (a stage 1..10); null clears it. */
+  primary_aspect?: number | null;
+  /** Update the secondary chord Aspect (a stage 1..10); null clears it. */
+  secondary_aspect?: number | null;
 }
 
 export type MarginaliaKind = 'theme' | 'connection' | 'symbol';

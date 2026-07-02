@@ -240,6 +240,11 @@ export const journalTagSchema = z.enum([
   'weekly_prompt',
 ]);
 
+/** Lowest Aspect tag (stage 1); the curriculum's first stage. */
+const MIN_ASPECT = 1;
+/** Highest Aspect tag (stage 10); the curriculum has ten stages. */
+const MAX_ASPECT = 10;
+
 /** One journal message (mirrors the backend ``JournalMessage`` response). */
 export const journalMessageSchema = z.object({
   id: z.number().int(),
@@ -259,6 +264,10 @@ export const journalMessageSchema = z.object({
   // Privacy tier. Optional so responses predating the column still
   // validate; the enum rejects any value that drifts from the backend set.
   classification: z.enum(['public', 'personal', 'intimate']).optional(),
+  // Chord Aspect tags (each a stage 1..MAX_ASPECT). Optional and nullable so
+  // untagged / pre-column responses still validate.
+  primary_aspect: z.number().int().min(MIN_ASPECT).max(MAX_ASPECT).nullable().optional(),
+  secondary_aspect: z.number().int().min(MIN_ASPECT).max(MAX_ASPECT).nullable().optional(),
 });
 
 /** Journal list envelope: ``{ items, total, has_more }`` (bespoke, not ``Page``). */

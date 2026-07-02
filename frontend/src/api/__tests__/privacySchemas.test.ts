@@ -145,3 +145,41 @@ describe('resonanceResponseSchema — private / private_message fields (issue #8
     expect(() => resonanceResponseSchema.parse(payload)).toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// journalMessageSchema — primary_aspect / secondary_aspect chord fields
+// ---------------------------------------------------------------------------
+
+describe('journalMessageSchema — chord fields (primary_aspect / secondary_aspect)', () => {
+  it('still parses a message WITHOUT chord fields (backward-compat)', () => {
+    expect(() => journalMessageSchema.parse(BASE_JOURNAL_MESSAGE)).not.toThrow();
+  });
+
+  it('parses a message with both primary_aspect and secondary_aspect', () => {
+    const payload = { ...BASE_JOURNAL_MESSAGE, primary_aspect: 3, secondary_aspect: 7 };
+    const parsed = journalMessageSchema.parse(payload);
+    expect(parsed.primary_aspect).toBe(3);
+    expect(parsed.secondary_aspect).toBe(7);
+  });
+
+  it('parses a message with only primary_aspect set', () => {
+    const payload = { ...BASE_JOURNAL_MESSAGE, primary_aspect: 5 };
+    const parsed = journalMessageSchema.parse(payload);
+    expect(parsed.primary_aspect).toBe(5);
+  });
+
+  it('rejects primary_aspect=0 (below range)', () => {
+    const payload = { ...BASE_JOURNAL_MESSAGE, primary_aspect: 0 };
+    expect(() => journalMessageSchema.parse(payload)).toThrow();
+  });
+
+  it('rejects primary_aspect=11 (above range)', () => {
+    const payload = { ...BASE_JOURNAL_MESSAGE, primary_aspect: 11 };
+    expect(() => journalMessageSchema.parse(payload)).toThrow();
+  });
+
+  it('rejects a non-integer primary_aspect', () => {
+    const payload = { ...BASE_JOURNAL_MESSAGE, primary_aspect: 3.5 };
+    expect(() => journalMessageSchema.parse(payload)).toThrow();
+  });
+});
