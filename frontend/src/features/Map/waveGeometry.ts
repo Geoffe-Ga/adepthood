@@ -7,8 +7,12 @@
  * math is testable in isolation from rendering.
  *
  * The wave wobbles left for even (Divine-Feminine / WE-returning) stages and
- * right for odd (I-pointing) stages, then converges toward center at the top
- * (stages 9-10) as the two poles resolve into the whole apex.
+ * right for odd (I-pointing) stages. Its horizontal swing tapers smoothly and
+ * monotonically from the widest stage-1 offset down to a tiny non-degenerate
+ * apex at stage 10, so the two poles resolve into the whole as the wave rises.
+ * Each segment also carries a mirrored far-side path (drawn faded behind the
+ * near side) so the whole reads as a three-dimensional coil rather than a flat
+ * wobble.
  */
 
 import { STAGE_DISPLAY } from './mapLayout';
@@ -24,34 +28,23 @@ const CENTER_X = 0.5;
 const Y_BAND_MIDPOINT = 0.5;
 
 /**
- * Base horizontal swing from center for stages 1-8. Kept below 0.5 so a pole at
+ * Widest horizontal swing from center, at stage 1. Kept below 0.5 so a pole at
  * full amplitude (x = CENTER_X +/- WAVE_AMPLITUDE) stays comfortably inside the
  * unit column with margin for the arrowhead.
  */
 const WAVE_AMPLITUDE = 0.32;
 
 /**
- * Stage 9 begins the convergence: its swing is the base amplitude tapered by
- * this ratio, so it sits inside stage 8 but outside the near-center apex.
+ * Converged swing at the stage-10 apex. A tiny non-zero offset keeps the path
+ * from degenerating to a vertical stub while reading as fully resolved; it is
+ * the lower bound of the smooth taper that starts from WAVE_AMPLITUDE.
  */
-const TAPER_9 = 0.45;
-
-/**
- * Stage 10 is the converged apex. A tiny non-zero offset keeps the path from
- * degenerating to a vertical stub while staying visually centered; it must be
- * smaller than every stage-9 swing so the wave reads as fully resolved.
- */
-const CONVERGENCE_OFFSET = 0.01;
+const APEX_AMPLITUDE = 0.02;
 
 /** Pole encoding: even stages return left, odd stages point right, apex neutral. */
 const POLE_LEFT = -1;
 const POLE_RIGHT = 1;
 const POLE_NEUTRAL = 0;
-
-/** Stages whose swing stays at full base amplitude (before convergence). */
-const FULL_AMPLITUDE_MAX_STAGE = 8;
-/** The lone taper stage that begins the convergence toward center. */
-const TAPER_STAGE = 9;
 
 /** Half-width of the arrowhead triangle base, in pixels. */
 const ARROWHEAD_HALF_WIDTH = 6;
@@ -90,12 +83,14 @@ export interface WavePoint {
   pole: -1 | 0 | 1;
 }
 
-/** Signed horizontal swing from center for a stage, in unit space. */
-const amplitudeFor = (stageNumber: number): number => {
-  if (stageNumber <= FULL_AMPLITUDE_MAX_STAGE) return WAVE_AMPLITUDE;
-  if (stageNumber === TAPER_STAGE) return WAVE_AMPLITUDE * TAPER_9;
-  return CONVERGENCE_OFFSET;
-};
+/**
+ * Horizontal swing from center for a stage, in unit space. Interpolates
+ * linearly from WAVE_AMPLITUDE at stage 1 down to APEX_AMPLITUDE at stage
+ * STAGE_COUNT, so the offset shrinks strictly and smoothly as the wave rises.
+ */
+const amplitudeFor = (stageNumber: number): number =>
+  APEX_AMPLITUDE +
+  ((WAVE_AMPLITUDE - APEX_AMPLITUDE) * (STAGE_COUNT - stageNumber)) / (STAGE_COUNT - 1);
 
 /** The pole a stage swings toward: left for even, right for odd, neutral at apex. */
 const poleFor = (stageNumber: number): -1 | 0 | 1 => {
@@ -106,10 +101,11 @@ const poleFor = (stageNumber: number): -1 | 0 | 1 => {
 /**
  * Anchor point for a stage on the rising wave, in unit space [0,1]. y strictly
  * decreases as stageNumber climbs (the wave rises); x swings around center by
- * the stage's amplitude toward its pole, converging near center at the top.
+ * the stage's amplitude toward its pole, tapering smoothly toward center at the
+ * top.
  *
  * The apex (stage 10) reports a neutral pole but its x still uses the left/right
- * rule, so it lands a hair off dead-center (by CONVERGENCE_OFFSET) rather than
+ * rule, so it lands a hair off dead-center (by APEX_AMPLITUDE) rather than
  * degenerating into a vertical stub. This apparent mismatch is deliberate.
  */
 export const stageWavePoint = (stageNumber: number): WavePoint => {
@@ -119,10 +115,15 @@ export const stageWavePoint = (stageNumber: number): WavePoint => {
   return { x, y, pole: poleFor(stageNumber) };
 };
 
-/** A rendered wave segment: its SVG path, stroke color, and lower stage number. */
+/** A rendered wave segment: its near and far SVG paths, color, and lower stage. */
 export interface WaveSegment {
   /** SVG path data in pixel space connecting the two stage points. */
   d: string;
+  /**
+   * The near-side bezier mirrored across the column center, drawn faded behind
+   * ``d`` to read as a coil's far side.
+   */
+  farD: string;
   /** Stroke color, taken from the lower stage's textColor. */
   color: string;
   /** The lower of the two stage numbers this segment connects (1..9). */
@@ -132,20 +133,50 @@ export interface WaveSegment {
 /** Round a unit coordinate into a pixel coordinate string at fixed precision. */
 const toPixel = (unit: number, extent: number): string => (unit * extent).toFixed(COORD_PRECISION);
 
+/** Reflect a unit x across the column center: same distance on the far side. */
+const mirrorAcrossCenter = (unitX: number): number => CENTER_X + (CENTER_X - unitX);
+
 /**
- * A smooth cubic Bezier between two stage points. The control points sit at the
- * vertical midpoint of the pair, each anchored to its own stage's x, giving the
- * center column its continuous sine wobble rather than straight zig-zags.
+ * A smooth cubic Bezier between two points given by their unit x's and y's. The
+ * control points sit at the vertical midpoint of the pair, each anchored to its
+ * own x, giving the center column its continuous sine wobble rather than
+ * straight zig-zags. Shared by the near and far paths so the string assembly
+ * lives in exactly one place.
  */
-const segmentPath = (lower: WavePoint, upper: WavePoint, width: number, height: number): string => {
-  const midY = (lower.y + upper.y) / 2;
-  const x1 = toPixel(lower.x, width);
-  const y1 = toPixel(lower.y, height);
-  const x2 = toPixel(upper.x, width);
-  const y2 = toPixel(upper.y, height);
+const bezierPath = (
+  lowerX: number,
+  upperX: number,
+  lowerY: number,
+  upperY: number,
+  width: number,
+  height: number,
+): string => {
+  const midY = (lowerY + upperY) / 2;
+  const x1 = toPixel(lowerX, width);
+  const y1 = toPixel(lowerY, height);
+  const x2 = toPixel(upperX, width);
+  const y2 = toPixel(upperY, height);
   const midYPixel = toPixel(midY, height);
   return `M ${x1} ${y1} C ${x1} ${midYPixel} ${x2} ${midYPixel} ${x2} ${y2}`;
 };
+
+/** Near-side and mirrored far-side bezier paths for a stage pair, in pixels. */
+const segmentPaths = (
+  lower: WavePoint,
+  upper: WavePoint,
+  width: number,
+  height: number,
+): { d: string; farD: string } => ({
+  d: bezierPath(lower.x, upper.x, lower.y, upper.y, width, height),
+  farD: bezierPath(
+    mirrorAcrossCenter(lower.x),
+    mirrorAcrossCenter(upper.x),
+    lower.y,
+    upper.y,
+    width,
+    height,
+  ),
+});
 
 /**
  * The full wave as STAGE_COUNT-1 (9) segments in pixel space. Segment i connects
@@ -159,8 +190,10 @@ export const waveSegments = (width: number, height: number): readonly WaveSegmen
     if (previous !== null) {
       const lower = stageWavePoint(previous.stageNumber);
       const upper = stageWavePoint(current.stageNumber);
+      const { d, farD } = segmentPaths(lower, upper, width, height);
       segments.push({
-        d: segmentPath(lower, upper, width, height),
+        d,
+        farD,
         color: previous.textColor,
         stageNumber: previous.stageNumber,
       });

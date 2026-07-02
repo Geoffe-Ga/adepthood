@@ -15,6 +15,20 @@ const LARGE_WIDTH = 200;
 const LARGE_HEIGHT = 400;
 const REPRESENTATIVE_STAGE = 4;
 
+/** Reads the number at ``index`` out of a parsed coordinate list. */
+const numberAt = (numbers: readonly number[], index: number): number => numbers[index] as number;
+
+/** The leading "M x y" and trailing "x y" point of an SVG path string. */
+const parsePathPoints = (d: string): { first: [number, number]; last: [number, number] } => {
+  const matches = d.match(/-?\d+\.?\d*/g);
+  const numbers = matches === null ? [] : matches.map(Number);
+  const lastIndex = numbers.length - 1;
+  return {
+    first: [numberAt(numbers, 0), numberAt(numbers, 1)],
+    last: [numberAt(numbers, lastIndex - 1), numberAt(numbers, lastIndex)],
+  };
+};
+
 describe('stageWavePoint', () => {
   it('rises upward: y strictly decreases as stageNumber climbs from 1 to 10', () => {
     const ys = Array.from({ length: STAGE_COUNT }, (_, i) => stageWavePoint(i + 1).y);
@@ -41,6 +55,21 @@ describe('stageWavePoint', () => {
     const offset10 = Math.abs(stageWavePoint(10).x - CENTER_X);
     expect(offset10).toBeLessThan(offset9);
     expect(offset9).toBeLessThan(offset8);
+    expect(offset10).toBeLessThan(CONVERGENCE_EPSILON);
+  });
+
+  it('tapers the horizontal offset strictly monotonically as stage rises from 1 to 10', () => {
+    const offsetAt = (stage: number): number => Math.abs(stageWavePoint(stage).x - CENTER_X);
+    for (let stage = 2; stage <= STAGE_COUNT; stage += 1) {
+      expect(offsetAt(stage)).toBeLessThan(offsetAt(stage - 1));
+    }
+  });
+
+  it('spans stage 1 (widest offset) to stage 10 (non-degenerate apex)', () => {
+    const offset1 = Math.abs(stageWavePoint(1).x - CENTER_X);
+    const offset10 = Math.abs(stageWavePoint(10).x - CENTER_X);
+    expect(offset1).toBeCloseTo(0.32, 2);
+    expect(offset10).toBeGreaterThan(0);
     expect(offset10).toBeLessThan(CONVERGENCE_EPSILON);
   });
 
@@ -97,6 +126,34 @@ describe('waveSegments', () => {
     const large = waveSegments(LARGE_WIDTH, LARGE_HEIGHT);
     for (let i = 0; i < small.length; i += 1) {
       expect(large[i]?.d).not.toBe(small[i]?.d);
+    }
+  });
+
+  it('gives every segment a non-empty farD distinct from its near-side d', () => {
+    const segments = waveSegments(SMALL_WIDTH, SMALL_HEIGHT);
+    for (const segment of segments) {
+      expect(segment.farD.length).toBeGreaterThan(0);
+      expect(segment.farD).not.toBe(segment.d);
+    }
+  });
+
+  it('mirrors farD across the column center: far x = width - near x, y unchanged', () => {
+    const segments = waveSegments(SMALL_WIDTH, SMALL_HEIGHT);
+    for (const segment of segments) {
+      const near = parsePathPoints(segment.d);
+      const far = parsePathPoints(segment.farD);
+      expect(far.first[0]).toBeCloseTo(SMALL_WIDTH - near.first[0], 2);
+      expect(far.first[1]).toBeCloseTo(near.first[1], 2);
+      expect(far.last[0]).toBeCloseTo(SMALL_WIDTH - near.last[0], 2);
+      expect(far.last[1]).toBeCloseTo(near.last[1], 2);
+    }
+  });
+
+  it('scales farD coordinates with width and height like d', () => {
+    const small = waveSegments(SMALL_WIDTH, SMALL_HEIGHT);
+    const large = waveSegments(LARGE_WIDTH, LARGE_HEIGHT);
+    for (let i = 0; i < small.length; i += 1) {
+      expect(large[i]?.farD).not.toBe(small[i]?.farD);
     }
   });
 });
