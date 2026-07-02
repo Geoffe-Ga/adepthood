@@ -7,6 +7,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from domain.care import CareKind
+from domain.contraction import ContractionVariant
 from models.marginalia import MarginaliaKind, MarginaliaStatus
 from schemas.completion_suggestion import CompletionSuggestionResponse
 
@@ -68,7 +69,7 @@ class ContractionReflectionResponse(BaseModel):
     choose your depth." Present only when a sustained contraction is detected.
     """
 
-    variant: str
+    variant: ContractionVariant
     message: str
 
 

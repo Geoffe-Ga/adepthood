@@ -25,7 +25,7 @@ from domain.contraction import (
     ContractionAggregates,
     HabitFoundationSignal,
 )
-from domain.dates import to_user_date_bucket, today_in_tz
+from domain.dates import day_bounds_in_tz, to_user_date_bucket, today_in_tz
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
@@ -66,17 +66,24 @@ async def _gather_completion_days(
 
     Keyed ``goal_id -> {local_day -> total_units}`` so the day-walk can ask, for
     any day, both "was there a check-in?" (key present) and "did it meet the
-    goal?" (value > 0).
+    goal?" (value > 0). The query is bounded on time as well as goals: it filters
+    at the SQL layer to rows on or after the UTC instant of local midnight on
+    ``since`` (:func:`day_bounds_in_tz`), so a long-lived user's whole completion
+    history is never loaded only to be discarded. The in-memory ``day >= since``
+    guard is retained as an exact-boundary backstop against any DST/edge skew
+    between the SQL bound and per-row user-local bucketing.
     """
     totals: dict[int, dict[date, float]] = defaultdict(lambda: defaultdict(float))
     if not goal_ids:
         return totals
+    since_utc, _ = day_bounds_in_tz(user_timezone, since)
     result = await session.execute(
         select(
             GoalCompletion.goal_id, GoalCompletion.timestamp, GoalCompletion.completed_units
         ).where(
             col(GoalCompletion.user_id) == user_id,
             col(GoalCompletion.goal_id).in_(goal_ids),
+            col(GoalCompletion.timestamp) >= since_utc,
         )
     )
     for goal_id, timestamp, units in result.all():
@@ -166,17 +173,17 @@ async def gather_contraction_aggregates(
     since = today - timedelta(days=_OBSERVATION_WINDOW_DAYS)
     habit_goal_rows = await _gather_habit_goal_rows(session, user_id)
     if not habit_goal_rows:
-        return ContractionAggregates(habits=[])
+        return ContractionAggregates(habits=())
     goal_ids = [goal_id for _, goal_id, _ in habit_goal_rows]
     completion_days = await _gather_completion_days(
         session, goal_ids, user_id, user_timezone, since
     )
     per_habit_totals, habit_start = _fold_by_habit(habit_goal_rows, completion_days)
     return ContractionAggregates(
-        habits=[
+        habits=tuple(
             _build_signal(
                 habit_id, per_habit_totals[habit_id], today=today, start_date=habit_start[habit_id]
             )
             for habit_id in habit_start
-        ]
+        )
     )

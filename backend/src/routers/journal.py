@@ -601,7 +601,7 @@ async def _contraction_reflection(
         highest_stage = derive_highest_stage_reached(
             progress.current_stage, progress.completed_stages, progress.cycle_number
         )
-    invitation = build_contraction_invitation(signal, highest_stage)
+    invitation = build_contraction_invitation(highest_stage)
     return ContractionReflectionResponse(variant=invitation.variant, message=invitation.message)
 
 

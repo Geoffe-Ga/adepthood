@@ -9,13 +9,13 @@ Pinned public surface:
   FOUNDATION_UNCHECKED_CONSECUTIVE_DAYS = 14
   RETURN_MIN_HIGHEST_STAGE = 5
   HabitFoundationSignal(habit_id, consecutive_unmet_days, consecutive_unchecked_days)
-  ContractionAggregates(habits: list[HabitFoundationSignal])
+  ContractionAggregates(habits: tuple[HabitFoundationSignal, ...])
   ContractionSignal (frozen; flagged marker, minimal fields)
-  ContractionInvitation(variant: str, message: str)  [frozen]
+  ContractionInvitation(variant: ContractionVariant, message: str)  [frozen]
   ContractionVariant(StrEnum): SIMPLE_EASE_OFF, RETURN_OFFER
   detect_contraction(aggregates) -> ContractionSignal | None
   derive_highest_stage_reached(current_stage, completed_stages, cycle_number) -> int
-  build_contraction_invitation(signal, highest_stage_reached) -> ContractionInvitation
+  build_contraction_invitation(highest_stage_reached) -> ContractionInvitation
 
 The detected condition is never framed as failure, a demotion, or a broken
 streak — it is a warm, declinable Higher Self reflection honoring
@@ -47,27 +47,20 @@ from domain.contraction import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-_EMPTY = ContractionAggregates(habits=[])
+_EMPTY = ContractionAggregates(habits=())
 
 
 def _agg(*, unmet: int = 0, unchecked: int = 0, habit_id: int = 1) -> ContractionAggregates:
     """Build a single-habit aggregates object for a scenario."""
     return ContractionAggregates(
-        habits=[
+        habits=(
             HabitFoundationSignal(
                 habit_id=habit_id,
                 consecutive_unmet_days=unmet,
                 consecutive_unchecked_days=unchecked,
-            )
-        ]
+            ),
+        )
     )
-
-
-def _flagged_signal() -> ContractionSignal:
-    """A clearly-flagged ContractionSignal, for invitation-building tests."""
-    signal = detect_contraction(_agg(unmet=FOUNDATION_UNMET_CONSECUTIVE_DAYS))
-    assert signal is not None
-    return signal
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +71,13 @@ def _flagged_signal() -> ContractionSignal:
 def test_empty_aggregates_returns_none() -> None:
     """No habits at all is a healthy/new-user state -- no contraction signal."""
     assert detect_contraction(_EMPTY) is None
+
+
+def test_flagged_signal_is_a_contraction_signal_with_habit_ids() -> None:
+    """A crossed window yields a ContractionSignal carrying the flagged habit ids."""
+    signal = detect_contraction(_agg(unmet=FOUNDATION_UNMET_CONSECUTIVE_DAYS, habit_id=7))
+    assert isinstance(signal, ContractionSignal)
+    assert signal.flagged_habit_ids == (7,)
 
 
 # ---------------------------------------------------------------------------
@@ -146,24 +146,19 @@ def test_highest_stage_reached_beyond_first_cycle_is_total_stages() -> None:
 
 def test_low_stage_yields_simple_ease_off_variant() -> None:
     """Highest stage reached <= 3 gets the simple ease-off invitation."""
-    signal = _flagged_signal()
-    invitation = build_contraction_invitation(signal, highest_stage_reached=3)
+    invitation = build_contraction_invitation(highest_stage_reached=3)
     assert invitation.variant == ContractionVariant.SIMPLE_EASE_OFF
 
 
 def test_blue_stage_itself_yields_simple_ease_off_variant() -> None:
     """Stage 4 (Blue) itself, not yet passed, still gets the simple variant."""
-    signal = _flagged_signal()
-    invitation = build_contraction_invitation(signal, highest_stage_reached=4)
+    invitation = build_contraction_invitation(highest_stage_reached=4)
     assert invitation.variant == ContractionVariant.SIMPLE_EASE_OFF
 
 
 def test_stage_at_return_threshold_yields_return_offer_variant() -> None:
     """Having reached RETURN_MIN_HIGHEST_STAGE or beyond offers the Return."""
-    signal = _flagged_signal()
-    invitation = build_contraction_invitation(
-        signal, highest_stage_reached=RETURN_MIN_HIGHEST_STAGE
-    )
+    invitation = build_contraction_invitation(highest_stage_reached=RETURN_MIN_HIGHEST_STAGE)
     assert invitation.variant == ContractionVariant.RETURN_OFFER
 
 
@@ -181,10 +176,9 @@ def test_detect_contraction_is_deterministic() -> None:
 
 
 def test_build_contraction_invitation_is_deterministic() -> None:
-    """Same signal + stage in -> equal ContractionInvitation out, every time."""
-    signal = _flagged_signal()
-    first = build_contraction_invitation(signal, highest_stage_reached=2)
-    second = build_contraction_invitation(signal, highest_stage_reached=2)
+    """Same stage in -> equal ContractionInvitation out, every time."""
+    first = build_contraction_invitation(highest_stage_reached=2)
+    second = build_contraction_invitation(highest_stage_reached=2)
     assert first == second
 
 
@@ -209,6 +203,18 @@ def test_contraction_invitation_is_frozen() -> None:
         invitation.message = "mutated"  # type: ignore[misc]
 
 
+def test_contraction_aggregates_habits_are_immutable_by_content() -> None:
+    """The ``habits`` tuple cannot be appended to -- a snapshot is immutable in full."""
+    aggregates = _agg(unmet=FOUNDATION_UNMET_CONSECUTIVE_DAYS)
+    assert isinstance(aggregates.habits, tuple)
+    with pytest.raises(AttributeError):
+        aggregates.habits.append(  # type: ignore[attr-defined]
+            HabitFoundationSignal(
+                habit_id=99, consecutive_unmet_days=0, consecutive_unchecked_days=0
+            )
+        )
+
+
 # ---------------------------------------------------------------------------
 # 9. Copy intent: warm, never shaming
 # ---------------------------------------------------------------------------
@@ -230,8 +236,7 @@ _FORBIDDEN_SUBSTRINGS = (
 
 def test_simple_ease_off_message_is_warm_and_non_shaming() -> None:
     """The ease-off message contains no shame/gamification language."""
-    signal = _flagged_signal()
-    invitation = build_contraction_invitation(signal, highest_stage_reached=1)
+    invitation = build_contraction_invitation(highest_stage_reached=1)
     assert invitation.message
     lowered = invitation.message.lower()
     for forbidden in _FORBIDDEN_SUBSTRINGS:
@@ -243,10 +248,7 @@ def test_simple_ease_off_message_is_warm_and_non_shaming() -> None:
 
 def test_return_offer_message_is_warm_and_non_shaming() -> None:
     """The Return-offer message contains no shame/gamification language."""
-    signal = _flagged_signal()
-    invitation = build_contraction_invitation(
-        signal, highest_stage_reached=RETURN_MIN_HIGHEST_STAGE
-    )
+    invitation = build_contraction_invitation(highest_stage_reached=RETURN_MIN_HIGHEST_STAGE)
     assert invitation.message
     lowered = invitation.message.lower()
     for forbidden in _FORBIDDEN_SUBSTRINGS:
@@ -264,6 +266,5 @@ def test_return_offer_message_is_warm_and_non_shaming() -> None:
 
 def test_simple_ease_off_message_does_not_mention_return() -> None:
     """The Return's specific wording is only emitted by the return variant."""
-    signal = _flagged_signal()
-    invitation = build_contraction_invitation(signal, highest_stage_reached=2)
+    invitation = build_contraction_invitation(highest_stage_reached=2)
     assert "return" not in invitation.message.lower()

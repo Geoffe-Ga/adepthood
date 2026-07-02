@@ -102,9 +102,15 @@ class HabitFoundationSignal:
 
 @dataclass(frozen=True)
 class ContractionAggregates:
-    """A snapshot of one user's habit-foundation signals for detection."""
+    """A snapshot of one user's habit-foundation signals for detection.
 
-    habits: list[HabitFoundationSignal]
+    ``habits`` is a tuple so the value object is immutable by content, not just
+    by attribute binding: a frozen dataclass forbids reassigning the field but
+    would still let a caller mutate a list in place, which a pure snapshot must
+    not permit.
+    """
+
+    habits: tuple[HabitFoundationSignal, ...]
 
 
 @dataclass(frozen=True)
@@ -124,7 +130,7 @@ class ContractionSignal:
 class ContractionInvitation:
     """The warm, declinable reflection copy chosen for a flagged contraction."""
 
-    variant: str
+    variant: ContractionVariant
     message: str
 
 
@@ -167,24 +173,21 @@ def derive_highest_stage_reached(
     return max(current_stage, max(completed_stages, default=0))
 
 
-def build_contraction_invitation(
-    signal: ContractionSignal,
-    highest_stage_reached: int,
-) -> ContractionInvitation:
+def build_contraction_invitation(highest_stage_reached: int) -> ContractionInvitation:
     """Choose the warm reflection copy for a flagged contraction, gated by stage.
 
     A user below :data:`RETURN_MIN_HIGHEST_STAGE` receives the simple ease-off
     invitation; one who has reached it or beyond additionally receives the
-    optional five-week Return. ``signal`` is accepted so the gating stays a pure
-    function of a detected contraction plus the user's furthest reach.
+    optional five-week Return. The precondition is that a contraction has already
+    been detected (:func:`detect_contraction` returned a signal); the copy itself
+    depends only on the user's furthest reach, so the signal is not an input here.
     """
-    del signal  # The copy depends only on the stage gate; the signal marks intent.
     if highest_stage_reached >= RETURN_MIN_HIGHEST_STAGE:
         return ContractionInvitation(
-            variant=ContractionVariant.RETURN_OFFER.value,
+            variant=ContractionVariant.RETURN_OFFER,
             message=_RETURN_OFFER_MESSAGE,
         )
     return ContractionInvitation(
-        variant=ContractionVariant.SIMPLE_EASE_OFF.value,
+        variant=ContractionVariant.SIMPLE_EASE_OFF,
         message=_SIMPLE_EASE_OFF_MESSAGE,
     )
