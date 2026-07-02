@@ -344,8 +344,8 @@ describe('Welcome → Journal landing', () => {
     });
   });
 
-  // Journal is TAB_CONFIGS[0] (physical tab order), end-to-end from the Welcome path.
-  it('Journal is the first route in the tab bar (TAB_CONFIGS[0])', async () => {
+  // Journal is LEADING_TABS[0] (physical tab order), end-to-end from the Welcome path.
+  it('Journal is the first route in the tab bar (LEADING_TABS[0])', async () => {
     const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
     act(() => useWelcomeStore.setState({ hasSeenWelcome: true }));
 
