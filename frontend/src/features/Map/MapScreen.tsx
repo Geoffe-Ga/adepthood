@@ -35,7 +35,13 @@ import {
 import { BEGIN_AGAIN_COPY, cycleLabel } from './beginAgain';
 import { useBeginAgainGuard } from './hooks/useBeginAgainGuard';
 import { useWheelBalance } from './hooks/useWheelBalance';
-import { journeyRead, progressionSentence, rankedStats, unlockTimeline } from './journeyNarrative';
+import {
+  formatMinutes,
+  journeyRead,
+  progressionSentence,
+  rankedStats,
+  unlockTimeline,
+} from './journeyNarrative';
 import styles from './Map.styles';
 import { MAP_ROWS, STAGE_DISPLAY, TITLE_BY_STAGE } from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
@@ -332,16 +338,6 @@ const GOAL_TIER_LABELS: Record<string, string> = {
   low: 'L',
   clear: 'C',
   stretch: 'S',
-};
-
-const MINUTES_PER_HOUR = 60;
-
-const formatMinutes = (minutes: number): string => {
-  if (minutes >= MINUTES_PER_HOUR) {
-    const hours = Math.round(minutes / MINUTES_PER_HOUR);
-    return `${hours} hr${hours !== 1 ? 's' : ''}`;
-  }
-  return `${Math.round(minutes)} min`;
 };
 
 const PracticeHistoryRow = ({ item }: { item: PracticeHistoryItem }): React.JSX.Element => (

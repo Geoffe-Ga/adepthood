@@ -1,7 +1,7 @@
 /**
  * ``GetResonanceButton`` — a soft floating affordance that fades in when the
  * user pauses writing and tucks away while they type. Presentational only: the
- * request is wired by the screen that hosts it (a later issue).
+ * hosting screen wires the resonance request.
  */
 import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, Text, TouchableOpacity } from 'react-native';

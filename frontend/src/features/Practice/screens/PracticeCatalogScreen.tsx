@@ -48,7 +48,7 @@ import {
   touchTarget,
 } from '@/design/tokens';
 import { MODE_CATEGORIES, type PickableMode } from '@/features/Practice/components/ModePicker';
-import { MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
+import { MIN_STAGE, stageRange } from '@/features/Practice/constants';
 import { useRecentPractices } from '@/features/Practice/hooks/useRecentPractices';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -499,7 +499,7 @@ interface StageChipsProps {
 }
 
 const StageChips = ({ selected, onSelect }: StageChipsProps): React.JSX.Element => {
-  const stages = Array.from({ length: MAX_STAGE - MIN_STAGE + 1 }, (_, i) => MIN_STAGE + i);
+  const stages = stageRange();
   return (
     <View style={styles.chipRow} testID="practice-catalog-stage-chips">
       {stages.map((n) => (

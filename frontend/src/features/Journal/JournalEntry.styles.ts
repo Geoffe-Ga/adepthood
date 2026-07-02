@@ -124,6 +124,21 @@ const styles = StyleSheet.create({
     color: colors.danger,
     paddingTop: spacing(1),
   },
+  /** Warm paper-toned notice (not a red panic block) for a failed entry load. */
+  loadErrorBanner: {
+    marginHorizontal: journalSheet.deskPaddingH,
+    marginTop: spacing(1),
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    backgroundColor: colors.paper.background,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.paper.sheetEdge,
+  },
+  loadErrorText: {
+    ...editorialType.caption,
+    color: colors.danger,
+  },
   marginNoteSlot: {
     marginBottom: journalLayout.marginNoteGap,
   },

@@ -21,3 +21,7 @@
 export const MIN_STAGE = 1;
 export const MAX_STAGE = 10;
 export const FALLBACK_STAGE = 1;
+
+/** The inclusive integer stage range ``MIN_STAGE..MAX_STAGE`` as an array. */
+export const stageRange = (): number[] =>
+  Array.from({ length: MAX_STAGE - MIN_STAGE + 1 }, (_, i) => MIN_STAGE + i);

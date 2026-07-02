@@ -53,8 +53,9 @@ import {
 } from '@/design/tokens';
 import ConfiguratorBody from '@/features/Practice/components/ConfiguratorBody';
 import ModePicker, { type PickableMode } from '@/features/Practice/components/ModePicker';
-import { FALLBACK_STAGE, MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
+import { FALLBACK_STAGE, stageRange } from '@/features/Practice/constants';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
+import { parsePositiveInt } from '@/features/Practice/utils/parsePositiveInt';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 export type CreatePracticeWizardProps = NativeStackScreenProps<
@@ -452,7 +453,9 @@ const DurationField = ({ state, setState }: MetadataFieldProps): React.JSX.Eleme
       <TextInput
         accessibilityLabel="Default duration in minutes"
         value={state.duration === 0 ? '' : String(state.duration)}
-        onChangeText={(raw) => setState((prev) => ({ ...prev, duration: parseDuration(raw) }))}
+        onChangeText={(raw) =>
+          setState((prev) => ({ ...prev, duration: parsePositiveInt(raw) ?? 0 }))
+        }
         keyboardType="number-pad"
         placeholder={String(suggested)}
         style={styles.input}
@@ -465,16 +468,8 @@ const DurationField = ({ state, setState }: MetadataFieldProps): React.JSX.Eleme
   );
 };
 
-function parseDuration(raw: string): number {
-  if (raw.length === 0) return 0;
-  const trimmed = raw.replace(/[^0-9]/g, '');
-  if (trimmed.length === 0) return 0;
-  const parsed = Number.parseInt(trimmed, 10);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 const StageField = ({ state, setState }: MetadataFieldProps): React.JSX.Element => {
-  const stages = Array.from({ length: MAX_STAGE - MIN_STAGE + 1 }, (_, i) => MIN_STAGE + i);
+  const stages = stageRange();
   return (
     <View style={styles.field} testID="create-practice-stage-field">
       <Text style={styles.fieldLabel}>Assign to a stage (optional)</Text>

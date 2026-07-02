@@ -33,6 +33,15 @@ export interface RankedStat {
 
 const MINUTES_PER_HOUR = 60;
 
+/** Human-friendly duration: whole minutes under an hour, else rounded hours. */
+export const formatMinutes = (minutes: number): string => {
+  if (minutes >= MINUTES_PER_HOUR) {
+    const hours = Math.round(minutes / MINUTES_PER_HOUR);
+    return `${hours} hr${hours === 1 ? '' : 's'}`;
+  }
+  return `${Math.round(minutes)} min`;
+};
+
 /** Total sessions + total minutes + best habit streak, derived once. */
 interface JourneyTotals {
   sessions: number;

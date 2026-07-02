@@ -59,6 +59,14 @@ const DEFAULT_CLASSIFICATION: JournalClassification = 'personal';
 /** Fallback reason shown when resonance is gated off for an intimate entry. */
 const INTIMATE_RESONANCE_REASON = 'Intimate entries are kept private — resonance is paused.';
 
+/**
+ * Shown when an existing entry fails to load. It also promises the entry is
+ * untouched — so a failed load must gate autosave off (see ``useDebouncedSave``)
+ * or that reassurance becomes a lie.
+ */
+const LOAD_ERROR_MESSAGE =
+  "We couldn't open this entry. Check your connection and try again — your existing writing is safe.";
+
 type SaveState = 'idle' | 'typing' | 'saving' | 'saved' | 'error';
 
 export type JournalEntryScreenProps = NativeStackScreenProps<RootStackParamList, 'JournalEntry'> & {
@@ -142,12 +150,15 @@ interface AutosaveApi {
   onChangeClassification: (_tier: PrivacyTier) => void;
   /** Persist the latest text immediately and resolve to the entry id (or null). */
   flush: () => Promise<number | null>;
+  /** Set when loading an existing entry failed; drives the banner + autosave gate. */
+  loadError: string | null;
 }
 
 /** Load an existing entry once (by route id) and hand it to ``apply``. */
 function useEntryLoadEffect(
   routeEntryId: number | null,
   apply: (_entry: JournalMessage) => void,
+  onError: () => void,
 ): void {
   useEffect(() => {
     if (routeEntryId == null) return undefined;
@@ -158,12 +169,14 @@ function useEntryLoadEffect(
         if (active) apply(entry);
       })
       .catch(() => {
-        // Load failures surface via a toast in the host screen (later issue).
+        // A failed load flags the entry as unloaded so autosave is gated off and
+        // the screen surfaces a banner; the untouched entry is never overwritten.
+        if (active) onError();
       });
     return () => {
       active = false;
     };
-  }, [routeEntryId, apply]);
+  }, [routeEntryId, apply, onError]);
 }
 
 /** Clear a pending timeout on unmount. */
@@ -245,6 +258,7 @@ function useDebouncedSave(
   routeEntryId: number | null,
   delayMs: number,
   ctx: SaveContext,
+  loadFailed: boolean,
   onSaved?: () => void,
 ) {
   const [saveState, setSaveState] = useState<SaveState>('idle');
@@ -257,14 +271,19 @@ function useDebouncedSave(
   // Refs so non-memoised inputs don't churn the save callbacks below.
   const onSavedRef = useRef(onSaved);
   const ctxRef = useRef(ctx);
+  // A failed load leaves entryIdRef pointing at the real, unloaded entry with a
+  // blank body — so any save here would overwrite it. Gate on the latest flag.
+  const loadFailedRef = useRef(loadFailed);
   useEffect(() => {
     onSavedRef.current = onSaved;
     ctxRef.current = ctx;
+    loadFailedRef.current = loadFailed;
   });
   useTimerCleanup(timerRef);
 
   const run = useCallback<RunSave>(
     async (title, body) => {
+      if (loadFailedRef.current) return; // never overwrite an entry that failed to load
       if (!body.trim()) return; // never persist an empty draft
       setSaveState('saving');
       const refs = { entryIdRef, respondedRef, classificationRef };
@@ -326,6 +345,8 @@ interface EntryState {
   setBody: (_v: string) => void;
   titleRef: StrRef;
   bodyRef: StrRef;
+  /** Set (to {@link LOAD_ERROR_MESSAGE}) when loading an existing entry failed. */
+  loadError: string | null;
 }
 
 /** The entry's editable state (title/body/status/tier) + one-time load-on-open. */
@@ -334,6 +355,7 @@ function useEntryState(routeEntryId: number | null, initialTitle: string): Entry
   const [body, setBody] = useState('');
   const [status, setStatus] = useState<EntryStatus>('draft');
   const [classification, setClassification] = useState<PrivacyTier>(DEFAULT_CLASSIFICATION);
+  const [loadError, setLoadError] = useState<string | null>(null);
   // Refs mirror the latest text so the change handlers stay referentially stable.
   const titleRef = useRef(initialTitle);
   const bodyRef = useRef('');
@@ -349,6 +371,7 @@ function useEntryState(routeEntryId: number | null, initialTitle: string): Entry
       // Pre-select the server's tier so an intimate entry loads intimate.
       setClassification(entry.classification ?? DEFAULT_CLASSIFICATION);
     }, []),
+    useCallback(() => setLoadError(LOAD_ERROR_MESSAGE), []),
   );
 
   return {
@@ -362,6 +385,7 @@ function useEntryState(routeEntryId: number | null, initialTitle: string): Entry
     setBody,
     titleRef,
     bodyRef,
+    loadError,
   };
 }
 
@@ -379,6 +403,7 @@ function useJournalAutosave(
     routeEntryId,
     delayMs,
     ctx,
+    entry.loadError != null,
     onSaved,
   );
 
@@ -413,6 +438,7 @@ function useJournalAutosave(
     onChangeBody,
     onChangeClassification,
     flush: flushNow,
+    loadError: entry.loadError,
   };
 }
 
@@ -903,6 +929,22 @@ function PrivacyResonanceReason({
   );
 }
 
+/**
+ * Warm inline notice shown when an existing entry fails to load. A sibling above
+ * the page (never a margin note) so it reads as the page's own — and its promise
+ * that writing is safe is kept true by the autosave gate in ``useDebouncedSave``.
+ */
+function LoadErrorBanner({ message }: { message: string | null }): React.JSX.Element | null {
+  if (message == null) return null;
+  return (
+    <View style={styles.loadErrorBanner}>
+      <Text style={styles.loadErrorText} testID="journal-load-error">
+        {message}
+      </Text>
+    </View>
+  );
+}
+
 function JournalEntryScreen({
   route,
   navigation,
@@ -927,6 +969,7 @@ function JournalEntryScreen({
           sibling rendered AFTER the care surface so an acute-distress signal
           always reads first. Hidden (renders nothing) on healthy passes. */}
       <ContractionReflectionNote contraction={ctl.resonance.contraction} />
+      <LoadErrorBanner message={ctl.autosave.loadError} />
       <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
       <PrivacyResonanceReason
         visible={ctl.visible && ctl.resonanceDisabled}

@@ -30,6 +30,7 @@ import {
 
 import { practiceShare, type ShareLinkResponse } from '@/api/practiceShare';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import { parsePositiveInt } from '@/features/Practice/utils/parsePositiveInt';
 
 const DEEP_LINK_PREFIX = 'adepthood://practices/share/';
 
@@ -108,14 +109,6 @@ interface SheetState {
 interface UseSheetStateOptions {
   visible: boolean;
   practiceId: number;
-}
-
-function parsePositiveInt(raw: string): number | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  const value = Number.parseInt(trimmed, 10);
-  if (!Number.isFinite(value) || value <= 0) return null;
-  return value;
 }
 
 interface LoadControl {
