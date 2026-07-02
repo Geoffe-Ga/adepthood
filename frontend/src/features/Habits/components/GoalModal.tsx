@@ -12,7 +12,6 @@ import {
   StyleSheet,
 } from 'react-native';
 import type { GestureResponderHandlers, LayoutChangeEvent, TextStyle } from 'react-native';
-import EmojiSelector from 'react-native-emoji-selector';
 
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
 import { Button } from '../../../components/Button';
@@ -47,6 +46,7 @@ import {
 } from '../TierMarkerOverlay';
 
 import ConfirmDialog from './ConfirmDialog';
+import HabitEmojiPicker from './HabitEmojiPicker';
 
 /** Height of the goal progress bar; tier star markers are centered on it. */
 const MODAL_BAR_HEIGHT = 12;
@@ -1005,14 +1005,11 @@ const GoalModalHeader = ({
     )}
     {showEmojiSelector && (
       <View style={styles.emojiSelectorContainer}>
-        <EmojiSelector
+        <HabitEmojiPicker
           onEmojiSelected={(emoji) => {
             onUpdateHabit({ ...habit, icon: emoji });
             setShowEmojiSelector(false);
           }}
-          showSearchBar
-          columns={6}
-          emojiSize={28}
         />
       </View>
     )}

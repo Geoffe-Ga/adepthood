@@ -10,7 +10,6 @@ import {
   ScrollView,
   Switch,
 } from 'react-native';
-import EmojiSelector from 'react-native-emoji-selector';
 
 import { STAGE_COLORS } from '../../../design/tokens';
 import { DAYS_OF_WEEK } from '../constants';
@@ -20,6 +19,7 @@ import { calculateNetEnergy } from '../HabitUtils';
 
 import ConfirmDialog from './ConfirmDialog';
 import { EnergyTextInput } from './EnergyTextInput';
+import HabitEmojiPicker from './HabitEmojiPicker';
 
 const cycleFrequency = (current: string | undefined): 'daily' | 'weekly' | 'custom' => {
   if (current === 'daily') return 'weekly';
@@ -325,15 +325,11 @@ const BasicFields = ({
     </View>
     {showEmojiSelector && (
       <View style={styles.emojiSelectorContainer}>
-        <EmojiSelector
+        <HabitEmojiPicker
           onEmojiSelected={(emoji) => {
             handleChange('icon', emoji);
             setShowEmojiSelector(false);
           }}
-          showSearchBar
-          columns={6}
-          emojiSize={28}
-          placeholder="Search emoji..."
         />
       </View>
     )}
