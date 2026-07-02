@@ -143,6 +143,14 @@ class TestAllowlistPricingReconciliation:
         )
         assert unpriced == [], f"allowlisted models missing a price: {unpriced}"
 
+    def test_every_priced_model_is_allowlisted(self) -> None:
+        """A pricing row for a model on no provider allowlist is dead config."""
+        allowlisted_union = {
+            model for spec in PROVIDER_REGISTRY.values() for model in spec.allowed_models
+        }
+        orphaned = sorted(set(MODEL_PRICING) - allowlisted_union)
+        assert orphaned == [], f"priced but not allowlisted (dead config): {orphaned}"
+
     def test_allowlisted_models_estimate_a_real_cost(self) -> None:
         """A reachable allowlisted model never estimates cost as None."""
         for spec in PROVIDER_REGISTRY.values():
