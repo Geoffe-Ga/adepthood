@@ -7,7 +7,10 @@ import { Text, TextInput, TouchableOpacity } from 'react-native';
 
 const OnboardingModal = require('../OnboardingModal').default;
 
-jest.mock('../../constants', () => ({ DEFAULT_ICONS: ['⭐'] }));
+jest.mock('../../constants', () => ({
+  ...(jest.requireActual('../../constants') as Record<string, unknown>),
+  DEFAULT_ICONS: ['⭐'],
+}));
 jest.mock('react-native-draggable-flatlist', () => {
   const React = require('react');
   const { View } = require('react-native');

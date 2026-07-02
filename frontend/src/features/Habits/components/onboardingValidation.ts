@@ -5,10 +5,9 @@
  * in the modal's React Native + reanimated + gesture-handler tree.  The
  * modal re-exports the same names for its own use.
  */
-import { DEFAULT_ICONS } from '../constants';
+import { DEFAULT_ICONS, MAX_HABITS } from '../constants';
 import type { OnboardingHabit } from '../Habits.types';
 
-export const MAX_HABITS = 10;
 const DEFAULT_ENERGY = 5;
 
 // BUG-FE-HABIT-105: maximum length for an onboarding habit name.  TextInput
