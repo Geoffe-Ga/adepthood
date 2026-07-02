@@ -7,6 +7,7 @@ import type { RitualControls, RitualState } from '../engine/types';
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import { useSessionSurface } from './sessionSurface';
+import { SessionContainer } from './shared';
 
 import { SPACING, shadows } from '@/design/tokens';
 
@@ -26,10 +27,7 @@ const MeditationTimerView = ({ state, controls }: Props): React.JSX.Element => {
   const dashOffset = CIRCUMFERENCE * (1 - Math.min(1, Math.max(0, state.progress)));
   const remainingMs = state.remainingMs ?? 0;
   return (
-    <View
-      style={[styles.container, { backgroundColor: surface.ground }]}
-      testID="meditation-timer-view"
-    >
+    <SessionContainer testID="meditation-timer-view">
       <View style={styles.ringContainer}>
         <Svg width={RING_SIZE} height={RING_SIZE} testID="meditation-timer-ring">
           <Circle
@@ -60,12 +58,11 @@ const MeditationTimerView = ({ state, controls }: Props): React.JSX.Element => {
         </View>
       </View>
       <RitualControlsBar status={state.status} controls={controls} />
-    </View>
+    </SessionContainer>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { alignItems: 'center', padding: SPACING.xl },
   ringContainer: {
     width: RING_SIZE,
     height: RING_SIZE,

@@ -6,6 +6,7 @@ import type { MetronomeConfig, RitualControls, RitualState } from '../engine/typ
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import { useSessionSurface } from './sessionSurface';
+import { SessionContainer } from './shared';
 
 import { SPACING } from '@/design/tokens';
 
@@ -42,7 +43,7 @@ const MetronomeView = ({ config, state, controls }: Props): React.JSX.Element =>
   const surface = useSessionSurface();
   const elapsedMs = state.elapsedMs;
   return (
-    <View style={[styles.container, { backgroundColor: surface.ground }]} testID="metronome-view">
+    <SessionContainer testID="metronome-view">
       <Text style={[styles.bpm, { color: surface.text }]} testID="metronome-bpm">
         {config.bpm}
       </Text>
@@ -56,12 +57,11 @@ const MetronomeView = ({ config, state, controls }: Props): React.JSX.Element =>
       </Text>
       <View style={styles.spacer} />
       <RitualControlsBar status={state.status} controls={controls} />
-    </View>
+    </SessionContainer>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { alignItems: 'center', padding: SPACING.xl },
   bpm: {
     fontSize: 84,
     fontWeight: '200',
