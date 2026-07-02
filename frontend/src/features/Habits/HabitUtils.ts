@@ -100,39 +100,6 @@ export const getMarkerPositions = (
   };
 };
 
-/**
- * Generate evenly-spaced increment values for a goal's progress stepper.
- *
- * The number of steps shown depends on the target magnitude:
- * - target <= 5: one button per unit (e.g. 1, 2, 3 for target=3)
- * - target <= 10: 5 evenly-spaced fractions
- * - target <= 100: 5 evenly-spaced increments, rounded up
- * - target > 100: 4 increments (avoids crowding the UI with a 5th
- *   button when increments are already large)
- */
-const MAX_INCREMENT_STEPS = 5;
-const LARGE_TARGET_STEPS = 4;
-
-export const calculateProgressIncrements = (goal: Goal): number[] => {
-  const { target } = goal;
-
-  if (target <= MAX_INCREMENT_STEPS) {
-    return Array.from({ length: target }, (_, i) => i + 1);
-  } else if (target <= 10) {
-    return Array.from(
-      { length: MAX_INCREMENT_STEPS },
-      (_, i) => ((i + 1) * target) / MAX_INCREMENT_STEPS,
-    );
-  } else if (target <= 100) {
-    return Array.from({ length: MAX_INCREMENT_STEPS }, (_, i) =>
-      Math.ceil(((i + 1) * target) / MAX_INCREMENT_STEPS),
-    );
-  } else {
-    const increment = Math.ceil(target / MAX_INCREMENT_STEPS);
-    return Array.from({ length: LARGE_TARGET_STEPS }, (_, i) => (i + 1) * increment);
-  }
-};
-
 const DAYS_PER_WEEK = 7;
 /** Average days per month (365.25 / 12) for daily-equivalent normalization. */
 const APPROX_DAYS_PER_MONTH = 30.437;
