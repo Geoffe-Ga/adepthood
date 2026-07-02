@@ -29,6 +29,7 @@ from domain.metta_return import (
     RETURN_SEQUENCE,
     active_return_week,
     current_offer_episode,
+    is_return_complete,
     is_return_eligible,
     resumed_start,
 )
@@ -62,6 +63,7 @@ def _to_arc_response(arc: MettaReturnArc, now: datetime) -> ReturnArcResponse:
         paused=arc.paused_at is not None,
         week=week,
         focus=_week_focus(week),
+        complete=is_return_complete(arc.started_at, arc.paused_at, now),
     )
 
 
@@ -309,6 +311,10 @@ async def dismiss_offer(
     if episode is None:
         raise conflict("return_not_eligible")
     await _record_dismissal(session, user_id, episode)
+    # ``_record_dismissal`` may roll back on a concurrent-insert IntegrityError,
+    # which expires every ORM instance (including ``progress``). Re-materialize it
+    # so the response projection never touches an expired attribute.
+    progress = await get_user_progress(session, user_id)
     arc = await _active_arc(session, user_id)
     now = datetime.now(UTC)
     return _build_state(progress, arc, offer_dismissed=True, now=now)

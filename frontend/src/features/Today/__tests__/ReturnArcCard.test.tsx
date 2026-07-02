@@ -59,6 +59,7 @@ function arc(overrides: Partial<ReturnArc> = {}): ReturnArc {
     paused: false,
     week: 1,
     focus: 'self',
+    complete: false,
     ...overrides,
   };
 }
@@ -176,5 +177,56 @@ describe('ReturnArcCard', () => {
     const label: string = leaveBtn.props.accessibilityLabel;
     expect(label).toBeTruthy();
     expect(label.length).toBeGreaterThan(0);
+  });
+
+  it('begin-session affordance renders with accessibilityRole button and a non-empty label', () => {
+    const { getByTestId } = render(
+      <ReturnArcCard
+        weeks={fiveWeeks()}
+        arc={arc()}
+        onPause={noop}
+        onResume={noop}
+        onLeave={noop}
+      />,
+    );
+    const beginSession = getByTestId('return-arc-begin-session');
+    expect(beginSession.props.accessibilityRole).toBe('button');
+    const label: string = beginSession.props.accessibilityLabel;
+    expect(label).toBeTruthy();
+    expect(label.length).toBeGreaterThan(0);
+  });
+
+  it('pressing begin-session reveals the guided Metta session', () => {
+    const { getByTestId } = render(
+      <ReturnArcCard
+        weeks={fiveWeeks()}
+        arc={arc({ week: 1, focus: 'self' })}
+        onPause={noop}
+        onResume={noop}
+        onLeave={noop}
+      />,
+    );
+    fireEvent.press(getByTestId('return-arc-begin-session'));
+    expect(getByTestId('metta-session-begin')).toBeTruthy();
+  });
+
+  it('opening then closing the session calls none of onPause, onResume, or onLeave', () => {
+    const onPause = jest.fn();
+    const onResume = jest.fn();
+    const onLeave = jest.fn();
+    const { getByTestId } = render(
+      <ReturnArcCard
+        weeks={fiveWeeks()}
+        arc={arc({ week: 1, focus: 'self' })}
+        onPause={onPause}
+        onResume={onResume}
+        onLeave={onLeave}
+      />,
+    );
+    fireEvent.press(getByTestId('return-arc-begin-session'));
+    fireEvent.press(getByTestId('metta-session-close'));
+    expect(onPause).not.toHaveBeenCalled();
+    expect(onResume).not.toHaveBeenCalled();
+    expect(onLeave).not.toHaveBeenCalled();
   });
 });

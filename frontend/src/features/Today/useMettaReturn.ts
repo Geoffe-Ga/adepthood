@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 
-import { isContractionSignalActive } from './contractionSignal';
+import { useContractionSignalActive } from './contractionSignal';
 
 import { mettaReturn } from '@/api';
 import type { ReturnArc, ReturnWeek } from '@/api';
@@ -92,6 +92,7 @@ function useLoadedReturn(): LoadedReturn {
 
 export function useMettaReturn(): UseMettaReturnResult {
   const { eligible, weeks, arc, dismissed, setArc, setDismissed, mountedRef } = useLoadedReturn();
+  const contractionActive = useContractionSignalActive();
   const arcRef = useRef<ReturnArc | null>(null);
 
   // Mirror the committed arc into a ref so a lifecycle call can snapshot it
@@ -137,7 +138,7 @@ export function useMettaReturn(): UseMettaReturnResult {
     if (mountedRef.current) setArc(null);
   }, [mountedRef, setArc]);
 
-  const offerVisible = eligible && isContractionSignalActive() && !dismissed && arc === null;
+  const offerVisible = eligible && contractionActive && !dismissed && arc === null;
 
   return { eligible, weeks, arc, offerVisible, dismissOffer, start, pause, resume, leave };
 }

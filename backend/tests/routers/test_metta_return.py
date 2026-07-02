@@ -698,6 +698,39 @@ async def test_dismiss_offer_twice_is_idempotent_single_row(
 
 
 @pytest.mark.asyncio
+async def test_dismiss_offer_concurrent_insert_race_returns_200_single_row(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A racing insert that trips the unique index rolls back yet still returns 200.
+
+    Forcing the pre-check to miss an already-persisted row drives the
+    ``except IntegrityError`` branch: the rollback expires ``progress``, so the
+    endpoint must re-materialize it instead of 500-ing on an expired attribute.
+    """
+    headers = await _signup(async_client, "mr_dismissrace26")
+    user = await _get_user(db_session, "mr_dismissrace26@example.com")
+    assert user.id is not None
+    user_id = user.id
+    await _seed_progress(db_session, user_id, current_stage=_ELIGIBLE_STAGE)
+
+    first = await async_client.post(_DISMISS_URL, headers=headers)
+    assert first.status_code == HTTPStatus.OK
+
+    async def _always_absent(*_args: object, **_kwargs: object) -> bool:
+        return False
+
+    monkeypatch.setattr(metta_return_router, "_offer_dismissed", _always_absent)
+
+    racing = await async_client.post(_DISMISS_URL, headers=headers)
+
+    assert racing.status_code == HTTPStatus.OK
+    assert racing.json()["offer_dismissed"] is True
+    assert await _dismissal_count(db_session, user_id) == 1
+
+
+@pytest.mark.asyncio
 async def test_dismiss_offer_ineligible_user_returns_409_and_persists_nothing(
     async_client: AsyncClient,
     db_session: AsyncSession,
@@ -808,3 +841,146 @@ async def test_dismiss_offer_does_not_mutate_stage_progress_or_create_arc(
         select(MettaReturnArc).where(col(MettaReturnArc.user_id) == user_id)
     )
     assert arc_result.scalars().first() is None
+
+
+# ---------------------------------------------------------------------------
+# 8. Completion: a finished arc reports a warm complete state.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_start_arc_fresh_returns_complete_false(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A freshly started arc is nowhere near finished: complete is False."""
+    headers = await _signup(async_client, "mr_freshcomplete17")
+    user = await _get_user(db_session, "mr_freshcomplete17@example.com")
+    assert user.id is not None
+    await _seed_progress(db_session, user.id, current_stage=_ELIGIBLE_STAGE)
+
+    resp = await async_client.post(_START_URL, headers=headers)
+
+    assert resp.status_code == HTTPStatus.CREATED
+    assert resp.json()["complete"] is False
+
+
+@pytest.mark.asyncio
+async def test_get_state_thirty_five_day_arc_is_complete_at_week_five(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """An arc backdated the full RETURN_TOTAL_DAYS reports week 5 and complete True."""
+    headers = await _signup(async_client, "mr_complete18")
+    user = await _get_user(db_session, "mr_complete18@example.com")
+    assert user.id is not None
+    await _seed_progress(db_session, user.id, current_stage=_ELIGIBLE_STAGE)
+    started_at = datetime.now(UTC) - timedelta(days=35)
+    await _seed_active_arc(db_session, user.id, started_at=started_at)
+
+    resp = await async_client.get(_BASE_URL, headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    arc = resp.json()["arc"]
+    assert arc["week"] == 5
+    assert arc["complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_state_thirty_day_arc_is_week_five_but_not_complete(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """An arc backdated 30 days sits in week 5 but has not finished living it."""
+    headers = await _signup(async_client, "mr_notcomplete19")
+    user = await _get_user(db_session, "mr_notcomplete19@example.com")
+    assert user.id is not None
+    await _seed_progress(db_session, user.id, current_stage=_ELIGIBLE_STAGE)
+    started_at = datetime.now(UTC) - timedelta(days=30)
+    await _seed_active_arc(db_session, user.id, started_at=started_at)
+
+    resp = await async_client.get(_BASE_URL, headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    arc = resp.json()["arc"]
+    assert arc["week"] == 5
+    assert arc["complete"] is False
+
+
+@pytest.mark.asyncio
+async def test_get_state_arc_payload_carries_complete_key_and_no_user_id(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """The arc payload carries a complete key and still leaks no user_id."""
+    headers = await _signup(async_client, "mr_completekey20")
+    user = await _get_user(db_session, "mr_completekey20@example.com")
+    assert user.id is not None
+    await _seed_progress(db_session, user.id, current_stage=_ELIGIBLE_STAGE)
+    await _seed_active_arc(db_session, user.id, started_at=datetime.now(UTC))
+
+    resp = await async_client.get(_BASE_URL, headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    arc = resp.json()["arc"]
+    assert "complete" in arc
+    assert _FORBIDDEN_KEY not in arc
+
+
+@pytest.mark.asyncio
+async def test_completion_never_mutates_stage_progress(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Reading a complete arc never touches current_stage/completed_stages/cycle_number."""
+    headers = await _signup(async_client, "mr_completenomutate21")
+    user = await _get_user(db_session, "mr_completenomutate21@example.com")
+    assert user.id is not None
+    user_id = user.id
+    progress = await _seed_progress(
+        db_session,
+        user_id,
+        current_stage=_ELIGIBLE_STAGE,
+        completed_stages=[1, 2, 3, 4],
+        cycle_number=1,
+    )
+    before_stage = progress.current_stage
+    before_completed = list(progress.completed_stages)
+    before_cycle = progress.cycle_number
+    started_at = datetime.now(UTC) - timedelta(days=35)
+    await _seed_active_arc(db_session, user_id, started_at=started_at)
+
+    resp = await async_client.get(_BASE_URL, headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["arc"]["complete"] is True
+
+    db_session.expire_all()
+    result = await db_session.execute(
+        select(StageProgress).where(col(StageProgress.user_id) == user_id)
+    )
+    refreshed = result.scalars().one()
+    assert refreshed.current_stage == before_stage
+    assert list(refreshed.completed_stages) == before_completed
+    assert refreshed.cycle_number == before_cycle
+
+
+@pytest.mark.asyncio
+async def test_leave_complete_arc_then_restart_lands_on_week_one_incomplete(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Setting down a finished arc frees the slot; the next arc starts fresh."""
+    headers = await _signup(async_client, "mr_leavecomplete22")
+    user = await _get_user(db_session, "mr_leavecomplete22@example.com")
+    assert user.id is not None
+    await _seed_progress(db_session, user.id, current_stage=_ELIGIBLE_STAGE)
+    started_at = datetime.now(UTC) - timedelta(days=35)
+    await _seed_active_arc(db_session, user.id, started_at=started_at)
+
+    leave_resp = await async_client.post(_LEAVE_URL, headers=headers)
+    assert leave_resp.status_code == HTTPStatus.OK
+
+    restart_resp = await async_client.post(_START_URL, headers=headers)
+    assert restart_resp.status_code == HTTPStatus.CREATED
+    assert restart_resp.json()["week"] == 1
+    assert restart_resp.json()["complete"] is False

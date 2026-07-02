@@ -32,12 +32,15 @@ class ReturnArcResponse(BaseModel):
 
     ``week`` is the arc's current (or, when paused, frozen) week; ``paused``
     reflects whether the arc is resting. No ``user_id`` or row ``id`` is exposed.
+    ``complete`` is True once the fifth week has fully closed — a reflective
+    close, never a reward or rank.
     """
 
     started_at: datetime
     paused: bool
     week: int
     focus: str
+    complete: bool
 
 
 class MettaReturnStateResponse(BaseModel):

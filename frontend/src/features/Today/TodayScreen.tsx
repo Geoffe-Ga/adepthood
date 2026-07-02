@@ -5,6 +5,7 @@ import { Animated, Pressable, Text } from 'react-native';
 
 import InvitationNote from './InvitationNote';
 import ReturnArcCard from './ReturnArcCard';
+import ReturnCompletionCard from './ReturnCompletionCard';
 import ReturnOfferCard from './ReturnOfferCard';
 import { todayStyles as s } from './Today.styles';
 import { useInvitations } from './useInvitations';
@@ -154,6 +155,9 @@ const InvitationStack = (): React.JSX.Element | null => {
 /** The Return surface: the soft-landing offer when invited, or the active arc. */
 const ReturnStack = (): React.JSX.Element | null => {
   const { weeks, arc, offerVisible, dismissOffer, start, pause, resume, leave } = useMettaReturn();
+  if (arc !== null && arc.complete) {
+    return <ReturnCompletionCard onLeave={() => void leave()} />;
+  }
   if (arc !== null) {
     return (
       <ReturnArcCard

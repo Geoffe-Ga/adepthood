@@ -1,11 +1,12 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text } from 'react-native';
 
 import type { RepCounterConfig, RitualControls, RitualState } from '../engine/types';
 
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import { useSessionSurface } from './sessionSurface';
+import { SessionContainer } from './shared';
 
 import { SPACING } from '@/design/tokens';
 
@@ -21,7 +22,7 @@ const RepCounterView = ({ config, state, controls }: Props): React.JSX.Element =
   const timeCapMs = config.time_cap_minutes != null ? config.time_cap_minutes * 60_000 : null;
   const remaining = timeCapMs !== null ? Math.max(0, timeCapMs - state.elapsedMs) : null;
   return (
-    <View style={[styles.container, { backgroundColor: surface.ground }]} testID="rep-counter-view">
+    <SessionContainer testID="rep-counter-view">
       <Pressable
         style={[styles.tapZone, { backgroundColor: surface.raised }]}
         onPress={canTap ? controls.tap : undefined}
@@ -44,12 +45,11 @@ const RepCounterView = ({ config, state, controls }: Props): React.JSX.Element =
         </Text>
       )}
       <RitualControlsBar status={state.status} controls={controls} />
-    </View>
+    </SessionContainer>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { alignItems: 'center', padding: SPACING.xl },
   tapZone: {
     width: '100%',
     minHeight: 260,

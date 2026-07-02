@@ -27,6 +27,7 @@ import type {
   Marginalia,
 } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
+import { useContractionSignalStore } from '@/store/useContractionSignalStore';
 
 const EMPTY_BODY_MESSAGE = 'Write a little first, then ask for its resonance.';
 
@@ -249,6 +250,8 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
       setCare(result.care ?? null);
       // ``contraction`` is nullable/absent on healthy entries — normalise to null.
       setContraction(result.contraction ?? null);
+      // Feed the shared signal only on a completed pass — never on loading/error.
+      useContractionSignalStore.getState().observe(result.contraction ?? null);
       // ``private_message`` is present only when the pass was withheld.
       setPrivateMessage(result.private_message ?? null);
     } catch (err) {

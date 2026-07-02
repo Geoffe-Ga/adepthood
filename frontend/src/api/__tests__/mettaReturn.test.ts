@@ -42,6 +42,7 @@ function arc(overrides: Partial<ReturnArc> = {}): ReturnArc {
     paused: false,
     week: 1,
     focus: 'self',
+    complete: false,
     ...overrides,
   };
 }
@@ -133,6 +134,15 @@ describe('mettaReturn.state', () => {
 
   test('rejects an over-bound arc week via Zod', async () => {
     const payload = { eligible: true, weeks: fiveWeeks(), arc: arc({ week: 6 }) };
+    mockFetch.mockReturnValueOnce(jsonResponse(payload));
+    await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
+  test('rejects an arc payload missing the required complete field via Zod', async () => {
+    const fullArc = arc();
+    const { complete: _omit, ...withoutComplete } = fullArc as ReturnArc & { complete: boolean };
+    void _omit;
+    const payload = { eligible: true, weeks: fiveWeeks(), arc: withoutComplete };
     mockFetch.mockReturnValueOnce(jsonResponse(payload));
     await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
   });

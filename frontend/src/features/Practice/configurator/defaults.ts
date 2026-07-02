@@ -10,6 +10,7 @@
  * round-trip to a 422.
  */
 
+import { SECONDS_PER_MINUTE } from '../engine/types';
 import type {
   CardMeditationConfig,
   CountUpConfig,
@@ -34,7 +35,6 @@ const DEFAULT_REP_TARGET = 10;
 const DEFAULT_TALLIED_ROUNDS = 3;
 const DEFAULT_TALLIED_TARGET = 3;
 const DEFAULT_MINDFUL_ANCHOR_MIN_SECONDS = 120;
-const SECONDS_PER_MINUTE = 60;
 
 const DEFAULT_SENSE_PROMPTS: SenseGroundingConfig['prompts'] = [
   { sense: 'sight', label: 'something blue' },

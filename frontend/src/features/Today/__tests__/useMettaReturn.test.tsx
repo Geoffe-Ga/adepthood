@@ -29,9 +29,9 @@ jest.mock('@/api', () => {
   };
 });
 
-const mockIsContractionSignalActive = jest.fn() as jest.MockedFunction<() => boolean>;
+const mockUseContractionSignalActive = jest.fn() as jest.MockedFunction<() => boolean>;
 jest.mock('../contractionSignal', () => ({
-  isContractionSignalActive: () => mockIsContractionSignalActive(),
+  useContractionSignalActive: () => mockUseContractionSignalActive(),
 }));
 
 const mockSaveDismissed = jest.fn() as jest.MockedFunction<(_value: boolean) => Promise<void>>;
@@ -65,6 +65,7 @@ function arc(overrides: Partial<ReturnArc> = {}): ReturnArc {
     paused: false,
     week: 1,
     focus: 'self',
+    complete: false,
     ...overrides,
   };
 }
@@ -80,7 +81,7 @@ beforeEach(() => {
   mockResume.mockReset();
   mockLeave.mockReset();
   mockDismissOffer.mockReset();
-  mockIsContractionSignalActive.mockReset();
+  mockUseContractionSignalActive.mockReset();
   mockSaveDismissed.mockReset();
   mockLoadDismissed.mockReset();
 
@@ -90,7 +91,7 @@ beforeEach(() => {
   mockResume.mockResolvedValue(arc({ paused: false }));
   mockLeave.mockResolvedValue(arc());
   mockDismissOffer.mockResolvedValue(stateResult({ offer_dismissed: true }));
-  mockIsContractionSignalActive.mockReturnValue(false);
+  mockUseContractionSignalActive.mockReturnValue(false);
   mockSaveDismissed.mockResolvedValue(undefined);
   mockLoadDismissed.mockResolvedValue(false);
 });
@@ -106,7 +107,7 @@ describe('useMettaReturn', () => {
   });
 
   it('offerVisible is false when the contraction signal is inactive, even if eligible', async () => {
-    mockIsContractionSignalActive.mockReturnValue(false);
+    mockUseContractionSignalActive.mockReturnValue(false);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
     const { result } = renderHook(() => useMettaReturn());
     await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
@@ -114,14 +115,22 @@ describe('useMettaReturn', () => {
   });
 
   it('offerVisible is true when eligible, no arc, and the contraction signal is active', async () => {
-    mockIsContractionSignalActive.mockReturnValue(true);
+    mockUseContractionSignalActive.mockReturnValue(true);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
     const { result } = renderHook(() => useMettaReturn());
     await waitFor(() => expect(result.current.offerVisible).toBe(true));
   });
 
+  it('offerVisible is false when ineligible, even with an active contraction signal', async () => {
+    mockUseContractionSignalActive.mockReturnValue(true);
+    mockState.mockResolvedValue(stateResult({ eligible: false, arc: null }));
+    const { result } = renderHook(() => useMettaReturn());
+    await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
+    expect(result.current.offerVisible).toBe(false);
+  });
+
   it('offerVisible is false when an arc already exists, even with an active signal', async () => {
-    mockIsContractionSignalActive.mockReturnValue(true);
+    mockUseContractionSignalActive.mockReturnValue(true);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: arc() }));
     const { result } = renderHook(() => useMettaReturn());
     await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
@@ -130,7 +139,7 @@ describe('useMettaReturn', () => {
   });
 
   it('dismissOffer hides the offer, calls the API, and persists the cache flag', async () => {
-    mockIsContractionSignalActive.mockReturnValue(true);
+    mockUseContractionSignalActive.mockReturnValue(true);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
     const { result } = renderHook(() => useMettaReturn());
     await waitFor(() => expect(result.current.offerVisible).toBe(true));
@@ -145,7 +154,7 @@ describe('useMettaReturn', () => {
   });
 
   it('server offer_dismissed true hides the offer even when the cache is empty', async () => {
-    mockIsContractionSignalActive.mockReturnValue(true);
+    mockUseContractionSignalActive.mockReturnValue(true);
     mockLoadDismissed.mockResolvedValue(false);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null, offer_dismissed: true }));
     const { result } = renderHook(() => useMettaReturn());
@@ -153,8 +162,17 @@ describe('useMettaReturn', () => {
     expect(result.current.offerVisible).toBe(false);
   });
 
+  it('a persisted dismissal keeps the offer hidden on reload', async () => {
+    mockUseContractionSignalActive.mockReturnValue(true);
+    mockLoadDismissed.mockResolvedValue(true);
+    mockState.mockResolvedValue(stateResult({ eligible: true, arc: null, offer_dismissed: true }));
+    const { result } = renderHook(() => useMettaReturn());
+    await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
+    expect(result.current.offerVisible).toBe(false);
+  });
+
   it('server offer_dismissed false overrides a stale cached-true (episode reset)', async () => {
-    mockIsContractionSignalActive.mockReturnValue(true);
+    mockUseContractionSignalActive.mockReturnValue(true);
     mockLoadDismissed.mockResolvedValue(true);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null, offer_dismissed: false }));
     const { result } = renderHook(() => useMettaReturn());
@@ -163,7 +181,7 @@ describe('useMettaReturn', () => {
   });
 
   it('falls back to the cached dismissal flag when state() rejects', async () => {
-    mockIsContractionSignalActive.mockReturnValue(true);
+    mockUseContractionSignalActive.mockReturnValue(true);
     mockLoadDismissed.mockResolvedValue(true);
     mockState.mockRejectedValue(new Error('network error'));
     const { result } = renderHook(() => useMettaReturn());
@@ -172,7 +190,7 @@ describe('useMettaReturn', () => {
   });
 
   it('dismissOffer keeps the offer hidden even if the API call rejects', async () => {
-    mockIsContractionSignalActive.mockReturnValue(true);
+    mockUseContractionSignalActive.mockReturnValue(true);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
     mockDismissOffer.mockRejectedValue(new Error('network error'));
     const { result } = renderHook(() => useMettaReturn());

@@ -4,9 +4,11 @@
  * rest (pause), continue (resume), or set the arc down (leave) at any time with
  * no penalty. Presentational + reduced-motion-safe; tokens only.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
+import { METTA_SESSION_BEGIN, METTA_SESSION_BEGIN_A11Y } from './mettaSessionCopy';
+import MettaSessionModal from './MettaSessionModal';
 import {
   RETURN_ARC_LEAVE,
   RETURN_ARC_LEAVE_A11Y,
@@ -103,6 +105,21 @@ function RestToggle({
   );
 }
 
+/** The begin-a-session affordance: opens the optional guided Metta practice. */
+function BeginSessionButton({ onPress }: { onPress: () => void }): React.JSX.Element {
+  return (
+    <TouchableOpacity
+      style={styles.action}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={METTA_SESSION_BEGIN_A11Y}
+      testID="return-arc-begin-session"
+    >
+      <Text style={styles.actionText}>{METTA_SESSION_BEGIN}</Text>
+    </TouchableOpacity>
+  );
+}
+
 function ReturnArcCard({
   weeks,
   arc,
@@ -112,6 +129,7 @@ function ReturnArcCard({
 }: ReturnArcCardProps): React.JSX.Element {
   const press = usePressScale(useReducedMotion());
   const focusWeek = currentWeek(weeks, arc.week);
+  const [sessionOpen, setSessionOpen] = useState(false);
   return (
     <Animated.View style={{ transform: [{ scale: press.scale }] }}>
       <View style={styles.card} testID="return-arc-card">
@@ -123,6 +141,7 @@ function ReturnArcCard({
         ) : null}
         <WeekSegments week={arc.week} />
         <View style={styles.actions}>
+          <BeginSessionButton onPress={() => setSessionOpen(true)} />
           <RestToggle paused={arc.paused} onPause={onPause} onResume={onResume} press={press} />
           <TouchableOpacity
             style={styles.leave}
@@ -135,6 +154,12 @@ function ReturnArcCard({
           </TouchableOpacity>
         </View>
       </View>
+      <MettaSessionModal
+        visible={sessionOpen}
+        focus={arc.focus}
+        weekTitle={focusWeek?.title}
+        onClose={() => setSessionOpen(false)}
+      />
     </Animated.View>
   );
 }
@@ -178,6 +203,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: spacing(1.5),
+    gap: spacing(1),
   },
   action: {
     minHeight: touchTarget.minimum,
@@ -198,7 +224,6 @@ const styles = StyleSheet.create({
     minWidth: touchTarget.minimum,
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.sm,
-    marginLeft: spacing(1),
     borderRadius: BORDER_RADIUS.sm,
     alignItems: 'center',
     justifyContent: 'center',

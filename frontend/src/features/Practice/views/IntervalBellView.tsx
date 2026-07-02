@@ -8,6 +8,7 @@ import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import type { SessionSurface } from './sessionSurface';
 import { useSessionSurface } from './sessionSurface';
+import { SessionContainer } from './shared';
 
 import { SPACING } from '@/design/tokens';
 
@@ -25,10 +26,7 @@ const IntervalBellView = ({ config, state, controls }: Props): React.JSX.Element
   const untilNextMs =
     state.nextCueAtMs !== null ? Math.max(0, state.nextCueAtMs - state.elapsedMs) : 0;
   return (
-    <View
-      style={[styles.container, { backgroundColor: surface.ground }]}
-      testID="interval-bell-view"
-    >
+    <SessionContainer testID="interval-bell-view" style={styles.container}>
       <Text style={[styles.label, { color: surface.textSoft }]}>next bell</Text>
       <Text style={[styles.time, { color: surface.text }]} testID="interval-bell-next">
         {formatTime(untilNextMs)}
@@ -53,7 +51,7 @@ const IntervalBellView = ({ config, state, controls }: Props): React.JSX.Element
         ))}
       </ScrollView>
       <RitualControlsBar status={state.status} controls={controls} />
-    </View>
+    </SessionContainer>
   );
 };
 
@@ -104,7 +102,7 @@ const OffsetRow = ({
 );
 
 const styles = StyleSheet.create({
-  container: { alignItems: 'center', padding: SPACING.xl, flex: 1 },
+  container: { flex: 1 },
   label: {
     fontSize: 14,
     textTransform: 'uppercase',
