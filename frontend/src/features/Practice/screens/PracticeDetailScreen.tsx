@@ -567,7 +567,7 @@ const styles = StyleSheet.create({
   },
   actionButtonPrimary: { backgroundColor: accent.primary, borderColor: accent.primary },
   actionButtonText: { color: ink.primary, fontWeight: '600', fontSize: 13 },
-  actionButtonTextPrimary: { color: surface.raised },
+  actionButtonTextPrimary: { color: accent.onPrimary },
   disabledButton: { opacity: 0.5 },
   pickerCard: {
     backgroundColor: surface.raised,

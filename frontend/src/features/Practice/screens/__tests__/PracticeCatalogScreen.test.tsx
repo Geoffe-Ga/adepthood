@@ -8,9 +8,7 @@ import { Alert, StyleSheet } from 'react-native';
 import type { PracticeItem } from '@/api';
 import { surface } from '@/design/tokens';
 
-// Each test renders the full catalog with an async practice load; the settle is
-// marginal against Jest's 5s default under CI parallel-worker contention. Give
-// this heavy integration suite generous headroom (tracked in #1062).
+// Async practice load settling is marginal against Jest's 5s default under CI parallel-worker contention; give this suite headroom.
 jest.setTimeout(15000);
 
 // The catalog reads useSafeAreaInsets; stub it with non-zero insets (no

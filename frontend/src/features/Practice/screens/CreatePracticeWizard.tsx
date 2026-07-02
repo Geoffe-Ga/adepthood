@@ -830,7 +830,7 @@ const styles = StyleSheet.create({
   },
   stageChipSelected: { backgroundColor: accent.primary, borderColor: accent.primary },
   stageChipText: { ...editorialType.note, color: ink.primary },
-  stageChipTextSelected: { color: surface.raised },
+  stageChipTextSelected: { color: accent.onPrimary },
   notice: {
     backgroundColor: surface.sunken,
     padding: SPACING.md,
@@ -852,7 +852,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.lg,
     borderRadius: BORDER_RADIUS.md,
   },
-  primaryButtonText: { color: surface.raised, fontWeight: '700', fontSize: 14 },
+  primaryButtonText: { color: accent.onPrimary, fontWeight: '700', fontSize: 14 },
   disabledButton: { opacity: 0.5 },
   apiError: {
     color: colors.destructive.text,

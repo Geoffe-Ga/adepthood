@@ -4,6 +4,7 @@ import { Modal, View } from 'react-native';
 import ChapterReader, { type ChapterReaderSource } from '../Course/ChapterReader';
 
 import styles from './Map.styles';
+import TorusSpiralVisual from './TorusSpiralVisual';
 
 /** Manifest slug of the vendored "How the Wavelength works" site resource. */
 const WAVELENGTH_EXPLAINER_SLUG = 'wavelength-explainer';
@@ -20,6 +21,13 @@ const EXPLAINER_SOURCE: ChapterReaderSource = {
   slug: WAVELENGTH_EXPLAINER_SLUG,
 };
 
+/**
+ * The torus/spiral illustration, re-homed from the retired local-content sheet
+ * into the reader's footer slot so the model stays drawn alongside the vendored
+ * copy. Built once so it keeps a stable identity across the reader's re-renders.
+ */
+const EXPLAINER_VISUAL = <TorusSpiralVisual />;
+
 interface WavelengthExplainerProps {
   visible: boolean;
   onClose: () => void;
@@ -30,7 +38,8 @@ interface WavelengthExplainerProps {
  * never ranking. The copy is served from the vendored content pipeline through
  * the shared {@link ChapterReader} (its back control doubles as the close
  * affordance) so the explainer stays in sync with the canonical site resource
- * rather than a frontend-local copy.
+ * rather than a frontend-local copy. The torus/spiral illustration rides in the
+ * reader's footer slot so the model stays drawn alongside its explanation.
  */
 export default function WavelengthExplainer({
   visible,
@@ -43,6 +52,7 @@ export default function WavelengthExplainer({
           <ChapterReader
             source={EXPLAINER_SOURCE}
             fallbackTitle={WAVELENGTH_EXPLAINER_TITLE}
+            footer={EXPLAINER_VISUAL}
             onBack={onClose}
           />
         </View>

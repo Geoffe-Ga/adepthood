@@ -27,6 +27,7 @@ from sqlmodel import col, select
 from domain.dates import now_in_tz, to_user_date_bucket
 from domain.invitations import (
     ENGAGEMENT_WINDOW_DAYS,
+    SUSTAINED_PRACTICE_WEEKS,
     HabitSignal,
     InvitationCandidate,
     PracticeSignal,
@@ -48,6 +49,16 @@ _NULL_TARGET = -1
 
 # Dedup / persisted-row identity: ``(target_type, target_id-or-sentinel, kind)``.
 _SignalKey = tuple[str, int, str]
+
+# Lower bound, in weeks, for the practice-session fetch. A streak needs only
+# the most recent SUSTAINED_PRACTICE_WEEKS calendar weeks of sessions, but
+# "N weeks ago" measured from *now* can land partway through the oldest of
+# those weeks -- the earliest instant a streak can still need is that week's
+# local Monday 00:00, which is strictly less than N*7 days before now. The
+# extra week is a calendar-alignment buffer, not slack for the streak logic
+# itself: it exists purely so a fetch anchored to the wall-clock "now" always
+# reaches back to the start of the oldest required week.
+_PRACTICE_SESSION_WINDOW_WEEKS = SUSTAINED_PRACTICE_WEEKS + 1
 
 
 def _signal_key(target_type: str, target_id: int | None, kind: str) -> _SignalKey:
@@ -71,12 +82,25 @@ async def _gather_practice_signals(
     A single query pulls the user's sessions with the resolved ``practice_id``
     (via ``PracticeSession.user_practice_id -> UserPractice.practice_id``); the
     rows are grouped in memory and each group's consecutive-week count is
-    derived by reusing :func:`domain.practice_insights.build_insights`.
+    derived by reusing :func:`domain.practice_insights.build_insights`. The
+    fetch itself is bounded to the trailing ``_PRACTICE_SESSION_WINDOW_WEEKS``
+    (UTC-normalized as in ``_gather_active_days``), so history far older than
+    the mastery threshold is never pulled in. Clamping the window is
+    semantically safe: the resulting ``sustained_weeks`` is only ever compared
+    against ``SUSTAINED_PRACTICE_WEEKS``, never persisted, and the required
+    weeks all sit fully inside the window, so the threshold comparison stays
+    exact even for streaks longer than the window.
     """
+    window_start = (
+        now_in_tz(user_timezone) - timedelta(weeks=_PRACTICE_SESSION_WINDOW_WEEKS)
+    ).astimezone(UTC)
     result = await session.execute(
         select(UserPractice.practice_id, PracticeSession)
         .join(UserPractice, col(PracticeSession.user_practice_id) == col(UserPractice.id))
-        .where(col(PracticeSession.user_id) == user_id)
+        .where(
+            col(PracticeSession.user_id) == user_id,
+            col(PracticeSession.timestamp) >= window_start,
+        )
     )
     sessions_by_practice: defaultdict[int, list[PracticeSession]] = defaultdict(list)
     for practice_id, practice_session in result.all():

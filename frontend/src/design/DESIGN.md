@@ -24,10 +24,13 @@ The language began on the journal-resonance surface (`colors.paper`,
 | `ink.muted`                   | `#6b6055`  | captions / placeholders — 5.7:1               |
 | `accent.primary`              | `#a5572f`  | terracotta accent — 4.9:1 (clears AA as text) |
 | `accent.strong`               | `#8f4a28`  | pressed / emphasis — 6.1:1                    |
+| `accent.onPrimary`            | `#ffffff`  | foreground on the accent fill — 5.3:1         |
 | `surfaceShadow.{card,raised}` | ink-tinted | warm downward elevation (iOS/web + Android)   |
 
-**Contrast contract:** every `ink.*` and `accent.*` value clears WCAG AA
-(≥ 4.5:1) on `surface.canvas`. Enforced by `__tests__/semanticTokens.test.ts`.
+**Contrast contract:** every `ink.*` value and the on-canvas `accent.*` values
+(`primary`, `strong`) clear WCAG AA (≥ 4.5:1) on `surface.canvas`;
+`accent.onPrimary` is a foreground that clears AA on the `accent.primary` fill
+instead. Enforced by `__tests__/semanticTokens.test.ts`.
 
 ## Palette provenance
 

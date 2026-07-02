@@ -23,16 +23,19 @@ jest.mock('../../Course/ChapterReader', () => {
     default: ({
       source,
       fallbackTitle,
+      footer,
       onBack,
     }: {
       source: { kind: string; slug?: string };
       fallbackTitle: string;
+      footer?: React.ReactNode;
       onBack: () => void;
     }) => (
       <MockPressable testID="reader-back-button" onPress={onBack}>
         <MockText testID="reader-source-kind">{source.kind}</MockText>
         <MockText testID="reader-source-slug">{source.slug ?? ''}</MockText>
         <MockText testID="reader-fallback-title">{fallbackTitle}</MockText>
+        {footer}
       </MockPressable>
     ),
   };
@@ -53,6 +56,11 @@ describe('WavelengthExplainer', () => {
     const { getByTestId } = render(<WavelengthExplainer visible onClose={() => {}} />);
     expect(getByTestId('reader-source-kind').props.children).toBe('resource');
     expect(getByTestId('reader-source-slug').props.children).toBe('wavelength-explainer');
+  });
+
+  it('re-homes the torus/spiral illustration into the reader footer', () => {
+    const { getByTestId } = render(<WavelengthExplainer visible onClose={() => {}} />);
+    expect(getByTestId('torus-spiral-visual')).toBeTruthy();
   });
 
   it('passes a human-readable fallback title to the reader', () => {

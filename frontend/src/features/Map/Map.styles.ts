@@ -264,6 +264,11 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: surface.canvas,
   },
+  // Decorative torus/spiral illustration, drawn in the reader's footer slot
+  // beneath the vendored explainer copy.
+  explainerVisual: {
+    marginBottom: spacing(1.5),
+  },
 
   // --- Begin-again affordance (end-of-arc, declinable) ----------------------
   beginAgain: {

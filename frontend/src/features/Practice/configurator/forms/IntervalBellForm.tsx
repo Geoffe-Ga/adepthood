@@ -165,7 +165,7 @@ const localStyles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.md,
     backgroundColor: accent.primary,
   },
-  addButtonText: { color: surface.raised, fontWeight: '600', fontSize: 13 },
+  addButtonText: { color: accent.onPrimary, fontWeight: '600', fontSize: 13 },
 });
 
 export default IntervalBellForm;

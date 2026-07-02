@@ -48,9 +48,17 @@ describe('semantic tokens (Candle & Ink)', () => {
     });
 
     it('every accent value clears WCAG AA on the canvas', () => {
-      for (const value of Object.values(accent)) {
-        expect(contrast(value, surface.canvas)).toBeGreaterThanOrEqual(AA_NORMAL);
+      // onPrimary is excluded: it is a foreground on the accent fill, not on canvas.
+      for (const key of ['primary', 'strong'] as const) {
+        expect(contrast(accent[key], surface.canvas)).toBeGreaterThanOrEqual(AA_NORMAL);
       }
+    });
+
+    it('accent.onPrimary clears WCAG AA on the accent fill', () => {
+      const onPrimary = accent.onPrimary;
+      expect(onPrimary).toEqual(expect.stringMatching(/^#[\da-f]{6}$/i));
+      expect(luminance(onPrimary)).toBeGreaterThan(luminance(accent.primary));
+      expect(contrast(onPrimary, accent.primary)).toBeGreaterThanOrEqual(AA_NORMAL);
     });
 
     it('keeps an original terracotta accent (not the graphical-only tier swatch)', () => {
