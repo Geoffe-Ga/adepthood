@@ -481,6 +481,19 @@ describe('GoalModal log-unit guards', () => {
     const [, amount] = calls[0] as [number, number, Date];
     expect(amount).toBe(1);
   });
+
+  it('logs an explicit 0 as 0 rather than coercing it to 1', () => {
+    const { getByTestId, getByText, props } = renderModal();
+    const logSection = getByTestId('goal-modal-log-unit-section');
+    const amountInput = within(logSection).getByDisplayValue('1');
+    fireEvent.changeText(amountInput, '0');
+    fireEvent.press(getByText('Log Units'));
+
+    const calls = (props.onLogUnit as unknown as jest.Mock).mock.calls;
+    expect(calls).toHaveLength(1);
+    const [, amount] = calls[0] as [number, number, Date];
+    expect(amount).toBe(0);
+  });
 });
 
 describe('GoalModal progress-bar zero/equal-target guards', () => {
