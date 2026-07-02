@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from datetime import date
 from http import HTTPStatus
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -20,7 +19,7 @@ from models.habit import Habit
 from models.marginalia import Marginalia
 from models.user import User
 from services import marginalia as marginalia_service
-from services.botmason import LLMProviderError
+from services.botmason import STUB_MODEL_NAME, LLMProviderError, LLMResponse
 
 _BODY = "I meditated by the river and the willow bent without breaking."
 _NOTE = {"kind": "theme", "quote": "the willow bent without breaking", "note": "It holds."}
@@ -90,9 +89,18 @@ def _fake(
     notes_payload = json.dumps({"notes": [_NOTE]})
     hits_payload = json.dumps({"hits": hits})
 
+    def _stub(text: str) -> LLMResponse:
+        return LLMResponse(
+            text=text,
+            provider="stub",
+            model=STUB_MODEL_NAME,
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
+
     async def _complete(
         prompt: str, history: object, *, system_prompt: object, api_key: object
-    ) -> SimpleNamespace:
+    ) -> LLMResponse:
         del history, system_prompt, api_key
         # Routes by prompt content: the detection prompt asks for a JSON ``{"hits": ...}``
         # payload and labels resolved spans ``COMPLETED``, while the literary/marginalia
@@ -103,8 +111,8 @@ def _fake(
                 detection_calls.append(prompt)
             if detection_raises:
                 raise LLMProviderError("detector down")
-            return SimpleNamespace(text=hits_payload)
-        return SimpleNamespace(text=notes_payload)
+            return _stub(hits_payload)
+        return _stub(notes_payload)
 
     monkeypatch.setattr(marginalia_service, "generate_response", _complete)
 

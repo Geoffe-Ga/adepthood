@@ -22,7 +22,6 @@ cloud call made by both endpoints.
 from __future__ import annotations
 
 from http import HTTPStatus
-from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -36,6 +35,7 @@ from models.llm_usage_log import LLMUsageLog
 from models.marginalia import Marginalia, MarginaliaKind
 from models.user import User
 from services import marginalia as marginalia_service
+from services.botmason import STUB_MODEL_NAME, LLMResponse
 
 # ---------------------------------------------------------------------------
 # Exact private-response copy (the implementation MUST match this string)
@@ -90,10 +90,16 @@ class _SpyLLM:
 
     async def __call__(
         self, prompt: str, history: object, *, system_prompt: object, api_key: object
-    ) -> SimpleNamespace:
+    ) -> LLMResponse:
         del prompt, history, system_prompt, api_key
         self.calls += 1
-        return SimpleNamespace(text=self._reply)
+        return LLMResponse(
+            text=self._reply,
+            provider="stub",
+            model=STUB_MODEL_NAME,
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
 
 
 async def _seed_marginalia_for_entry(session: AsyncSession, entry_id: int, user_id: int) -> int:
@@ -399,11 +405,17 @@ class _CapturingSpyLLM:
         *,
         system_prompt: object,
         api_key: object,
-    ) -> SimpleNamespace:
+    ) -> LLMResponse:
         del history, system_prompt, api_key
         self.calls += 1
         self.captured_prompts.append(prompt)
-        return SimpleNamespace(text=self._reply)
+        return LLMResponse(
+            text=self._reply,
+            provider="stub",
+            model=STUB_MODEL_NAME,
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
 
 
 @pytest.mark.asyncio

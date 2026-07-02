@@ -69,6 +69,7 @@ from services.botmason import LLMProviderError, resolve_chat_api_key
 from services.checkin import CheckInContext, current_check_in, record_goal_completion
 from services.completion_candidates import gather_candidates
 from services.contraction import gather_contraction_aggregates
+from services.llm_usage import record_llm_usage
 from services.marginalia import (
     BotmasonResonanceLLM,
     reanchor_entry_marginalia,
@@ -722,6 +723,12 @@ async def run_resonance(
         return await _care_only_response(session, current_user, cast("CareResponse", care))
     rows, suggestions = await _persist_resonance(session, entry, current_user, llm, anchored)
     spent_user = await require_user_fresh(session, current_user)
+    await record_llm_usage(
+        session,
+        user_id=current_user,
+        journal_entry_id=cast("int", entry.id),
+        responses=llm.usage,
+    )
     await session.commit()
     for row in (*rows, *suggestions):
         await session.refresh(row)
@@ -1036,6 +1043,12 @@ async def _cache_essay(
         raise bad_gateway("llm_provider_error") from exc
     note.essay = essay
     note.essay_generated_at = datetime.now(UTC)
+    await record_llm_usage(
+        session,
+        user_id=note.user_id,
+        journal_entry_id=note.journal_entry_id,
+        responses=llm.usage,
+    )
     await session.commit()
     await session.refresh(note)
     logger.info("marginalia_essay_generated", extra={"user_id": note.user_id, "id": note.id})
