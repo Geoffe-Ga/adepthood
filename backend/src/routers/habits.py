@@ -307,17 +307,8 @@ async def delete_habit(
     session: Annotated[AsyncSession, Depends(get_session)],
     habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Response:
-    """Delete a habit and cascade goals + completions; logs the cascade post-commit."""
+    """Delete a habit and cascade its goals + completions via the FK cascade."""
     habit_id = habit.id
-    cascade_goal_count = await session.scalar(
-        select(func.count()).select_from(Goal).where(Goal.habit_id == habit_id)
-    )
-    cascade_completion_count = await session.scalar(
-        select(func.count())
-        .select_from(GoalCompletion)
-        .join(Goal, col(Goal.id) == col(GoalCompletion.goal_id))
-        .where(Goal.habit_id == habit_id)
-    )
     await session.delete(habit)
     await session.commit()
     logger.info(
@@ -325,8 +316,6 @@ async def delete_habit(
         extra={
             "user_id": current_user,
             "habit_id": habit_id,
-            "cascade_goals": cascade_goal_count or 0,
-            "cascade_completions": cascade_completion_count or 0,
         },
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

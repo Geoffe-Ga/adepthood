@@ -505,37 +505,25 @@ async def test_habit_quota_caps_per_user(
 
 
 @pytest.mark.asyncio
-async def test_delete_habit_logs_cascade_counts(
+async def test_delete_habit_emits_audit_log(
     async_client: AsyncClient,
-    db_session: AsyncSession,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """``delete_habit`` emits a structured cascade-count audit row."""
+    """``delete_habit`` emits an audit log with user_id and habit_id, no cascade counts."""
     headers = await _signup(async_client, "cascade_user")
     create = await async_client.post("/habits/", json=sample_payload(), headers=headers)
     habit_id = create.json()["id"]
 
-    # Seed a goal so the cascade has something to count.
-    goal = Goal(
-        habit_id=habit_id,
-        title="g",
-        tier="clear",
-        target=1,
-        target_unit="glasses",
-        frequency=1,
-        frequency_unit="per_day",
-        is_additive=True,
-    )
-    db_session.add(goal)
-    await db_session.commit()
-
     with caplog.at_level(logging.INFO, logger="routers.habits"):
         resp = await async_client.delete(f"/habits/{habit_id}", headers=headers)
     assert resp.status_code == HTTPStatus.NO_CONTENT
-    cascade_logs = [r for r in caplog.records if r.message == "habit_deleted"]
-    assert cascade_logs, "expected a habit_deleted audit log entry"
-    # Three default goals (auto-seeded by POST /habits/) + one manually added.
-    assert getattr(cascade_logs[0], "cascade_goals", None) == 4
+    audit_logs = [r for r in caplog.records if r.message == "habit_deleted"]
+    assert audit_logs, "expected a habit_deleted audit log entry"
+    record = audit_logs[0]
+    assert getattr(record, "habit_id", None) == habit_id
+    assert getattr(record, "user_id", None) is not None
+    assert not hasattr(record, "cascade_goals")
+    assert not hasattr(record, "cascade_completions")
 
 
 @pytest.mark.asyncio

@@ -117,7 +117,7 @@ def _items_to_raw_dicts(items: list[StageContent]) -> list[dict[str, object]]:
 async def _check_stage_unlocked(session: AsyncSession, user_id: int, stage_number: int) -> None:
     """Raise 403 if the given stage is locked for the user.
 
-    Used by endpoints that take ``stage_number`` directly (1..36 are
+    Used by endpoints that take ``stage_number`` directly (1..10 are
     public knowledge), so the 403 carries no enumeration risk.
     """
     progress = await get_user_progress(session, user_id)
@@ -165,7 +165,7 @@ async def list_stage_content(
     # 404-then-403: missing stages return not_found regardless of caller so a
     # nonexistent stage_number can't be distinguished from a locked one by
     # response code (callers for this endpoint don't see a content_id oracle,
-    # so the existence of stages 1..36 is already public knowledge).
+    # so the existence of stages 1..10 is already public knowledge).
     stage = await _get_stage_by_number(session, stage_number)
     await _check_stage_unlocked(session, current_user, stage_number)
 

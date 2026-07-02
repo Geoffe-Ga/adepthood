@@ -39,7 +39,6 @@ class BotmasonResonanceLLM:
 
 async def reanchor_entry_marginalia(
     entry: JournalEntry,
-    old_message: str,
     new_message: str,
     session: AsyncSession,
 ) -> None:
@@ -50,9 +49,6 @@ async def reanchor_entry_marginalia(
     nothing is deleted. Matching is on ``anchor_text`` (the snapshot), never on
     offsets alone, so the new body is the only input the logic needs.
     """
-    # The match is against the snapshot text in the new body, so the pre-edit
-    # body isn't consulted here.
-    del old_message
     result = await session.execute(
         select(Marginalia).where(Marginalia.journal_entry_id == entry.id)
     )
