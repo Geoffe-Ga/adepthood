@@ -3,8 +3,17 @@ import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 import type { DimensionValue } from 'react-native';
 
-// EmojiSelector pulls in native bindings; render a stub.
-jest.mock('react-native-emoji-selector', () => () => null);
+// EmojiSelector pulls in native bindings; render a stub that exposes a
+// tappable node so a test can drive its onEmojiSelected callback.
+jest.mock('react-native-emoji-selector', () => {
+  const mockReact = require('react');
+  const { Pressable } = require('react-native');
+  return ({ onEmojiSelected }: { onEmojiSelected: (_emoji: string) => void }) =>
+    mockReact.createElement(Pressable, {
+      testID: 'emoji-selector-stub',
+      onPress: () => onEmojiSelected('🎉'),
+    });
+});
 
 jest.mock('../../../../api', () => ({
   __esModule: true,
@@ -51,20 +60,25 @@ const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   ...overrides,
 });
 
+const buildProps = (
+  habit: Habit | null = makeHabit(),
+  overrides: Partial<React.ComponentProps<typeof GoalModal>> = {},
+): React.ComponentProps<typeof GoalModal> => ({
+  visible: true,
+  habit,
+  onClose: jest.fn(),
+  onUpdateGoal: jest.fn(),
+  onUpdateGoalUnits: jest.fn(),
+  onLogUnit: jest.fn(),
+  onUpdateHabit: jest.fn(),
+  ...overrides,
+});
+
 const renderModal = (
   habit: Habit | null = makeHabit(),
   overrides: Partial<React.ComponentProps<typeof GoalModal>> = {},
 ) => {
-  const props = {
-    visible: true,
-    habit,
-    onClose: jest.fn(),
-    onUpdateGoal: jest.fn(),
-    onUpdateGoalUnits: jest.fn(),
-    onLogUnit: jest.fn(),
-    onUpdateHabit: jest.fn(),
-    ...overrides,
-  };
+  const props = buildProps(habit, overrides);
   const utils = render(<GoalModal {...props} />);
   const toggle = utils.queryByTestId('goal-modal-edit-toggle');
   if (toggle) fireEvent.press(toggle);
@@ -82,10 +96,13 @@ describe('GoalModal goal-target editor', () => {
     expect(getByTestId('goal-unit-editor')).toBeTruthy();
   });
 
-  it('shows the saved target value as a tappable chip by default', () => {
+  it('shows a saved-state chip for every tier and no open input by default', () => {
     const { getByTestId, queryByTestId } = renderModal();
     expect(getByTestId('goal-target-display-low')).toBeTruthy();
+    expect(getByTestId('goal-target-display-clear')).toBeTruthy();
+    expect(getByTestId('goal-target-display-stretch')).toBeTruthy();
     expect(queryByTestId('goal-target-input-low')).toBeNull();
+    expect(queryByTestId('goal-target-input-clear')).toBeNull();
   });
 
   it('switches the row to a recessed input plus Save button when the chip is tapped', () => {
@@ -481,6 +498,19 @@ describe('GoalModal log-unit guards', () => {
     const [, amount] = calls[0] as [number, number, Date];
     expect(amount).toBe(1);
   });
+
+  it('logs an explicit 0 as 0 rather than coercing it to 1', () => {
+    const { getByTestId, getByText, props } = renderModal();
+    const logSection = getByTestId('goal-modal-log-unit-section');
+    const amountInput = within(logSection).getByDisplayValue('1');
+    fireEvent.changeText(amountInput, '0');
+    fireEvent.press(getByText('Log Units'));
+
+    const calls = (props.onLogUnit as unknown as jest.Mock).mock.calls;
+    expect(calls).toHaveLength(1);
+    const [, amount] = calls[0] as [number, number, Date];
+    expect(amount).toBe(0);
+  });
 });
 
 describe('GoalModal progress-bar zero/equal-target guards', () => {
@@ -580,5 +610,130 @@ describe('GoalModal goal-target editor sync guard', () => {
     rerender(<GoalModal {...props} habit={externallyUpdatedHabit} />);
 
     expect(getByTestId('goal-target-input-low').props.value).toBe('9');
+  });
+});
+
+describe('GoalModal habit-prop lifecycle', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('mounts cleanly when the habit changes from null to present (stable hook order)', () => {
+    const props = buildProps(null);
+    const { rerender, queryByTestId, getByTestId } = render(<GoalModal {...props} />);
+    expect(queryByTestId('goal-modal-edit-toggle')).toBeNull();
+
+    expect(() => rerender(<GoalModal {...props} habit={makeHabit()} />)).not.toThrow();
+    expect(getByTestId('goal-modal-edit-toggle')).toBeTruthy();
+  });
+
+  it('updates the progress fill and keeps the stretch marker when the habit prop changes', () => {
+    const { getByTestId, rerender, props } = renderModal();
+    expect(getByTestId('modal-marker-stretch')).toBeTruthy();
+    expect(getByTestId('modal-progress-fill').props.style.width).toBe('0%');
+
+    const loggedToday = makeHabit({
+      completions: [{ id: 't-1', timestamp: new Date(), completed_units: 1 }],
+    });
+    rerender(<GoalModal {...props} habit={loggedToday} />);
+
+    // low=1, clear=2, stretch=3 → 1/3 of the stretch-anchored bar.
+    expect(parseFloat(getByTestId('modal-progress-fill').props.style.width as string)).toBeCloseTo(
+      33.33,
+      1,
+    );
+  });
+});
+
+describe('GoalModal low-tier marker tooltip', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('shows the low-tier tooltip on hover and hides it on leave', () => {
+    // Low/clear markers are draggable Views (not press targets), so their
+    // tooltip is driven by the overlay's hover handlers rather than press.
+    const { getByTestId, queryByTestId } = renderModal();
+    const lowMarker = getByTestId('modal-marker-low');
+    expect(queryByTestId('modal-tooltip-low')).toBeNull();
+
+    fireEvent(lowMarker, 'mouseEnter');
+    expect(getByTestId('modal-tooltip-low')).toBeTruthy();
+
+    fireEvent(lowMarker, 'mouseLeave');
+    expect(queryByTestId('modal-tooltip-low')).toBeNull();
+  });
+});
+
+describe('GoalModal backdrop dismissal', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('closes when the dedicated backdrop is pressed', () => {
+    const { getByTestId, props } = renderModal();
+    fireEvent.press(getByTestId('goal-modal-backdrop'));
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not close when a body control is pressed', () => {
+    const { getByTestId, props } = renderModal();
+    fireEvent.press(getByTestId('goal-target-display-low'));
+    expect(props.onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('GoalModal edit toggle', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('opens collapsed: the editor is hidden while Log Units and the progress bar stay visible', () => {
+    const { getByTestId, queryByTestId } = render(<GoalModal {...buildProps()} />);
+    expect(getByTestId('goal-modal-edit-toggle').props.accessibilityState).toEqual({
+      expanded: false,
+    });
+    expect(getByTestId('goal-modal-log-unit-section')).toBeTruthy();
+    // The progress bar is always visible now — only the editor collapses.
+    expect(getByTestId('modal-progress-fill')).toBeTruthy();
+    expect(queryByTestId('goal-modal-edit-region')).toBeNull();
+    expect(queryByTestId('goal-target-editor')).toBeNull();
+  });
+
+  it('mounts the editor on the first press and unmounts it on the second', () => {
+    const { getByTestId, queryByTestId } = render(<GoalModal {...buildProps()} />);
+    const toggle = getByTestId('goal-modal-edit-toggle');
+
+    fireEvent.press(toggle);
+    expect(getByTestId('goal-modal-edit-region')).toBeTruthy();
+    expect(getByTestId('goal-target-editor')).toBeTruthy();
+    expect(getByTestId('goal-modal-edit-toggle').props.accessibilityState).toEqual({
+      expanded: true,
+    });
+
+    fireEvent.press(getByTestId('goal-modal-edit-toggle'));
+    expect(queryByTestId('goal-modal-edit-region')).toBeNull();
+    expect(queryByTestId('goal-target-editor')).toBeNull();
+    expect(getByTestId('goal-modal-edit-toggle').props.accessibilityState).toEqual({
+      expanded: false,
+    });
+  });
+});
+
+describe('GoalModal icon editing', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('opens the emoji picker from the header icon and applies the chosen emoji', () => {
+    const { getByTestId, queryByTestId, props } = renderModal();
+    expect(queryByTestId('emoji-selector-stub')).toBeNull();
+
+    fireEvent.press(getByTestId('goal-modal-icon-button'));
+    fireEvent.press(getByTestId('emoji-selector-stub'));
+
+    expect(props.onUpdateHabit).toHaveBeenCalledWith(expect.objectContaining({ icon: '🎉' }));
+    // Selecting an emoji closes the picker.
+    expect(queryByTestId('emoji-selector-stub')).toBeNull();
   });
 });

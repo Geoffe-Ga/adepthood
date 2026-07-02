@@ -22,13 +22,14 @@ import Animated from 'react-native-reanimated';
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
 import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
 import { colors, STAGE_COLORS } from '../../../design/tokens';
+import { MAX_HABITS } from '../constants';
 import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { STAGE_ORDER, calculateHabitStartDate, calculateNetEnergy } from '../HabitUtils';
 
 import { ConfirmDialog } from './ConfirmDialog';
 import HabitEmojiPicker from './HabitEmojiPicker';
-import { HABIT_NAME_MAX_LENGTH, MAX_HABITS, validateAndAddHabit } from './onboardingValidation';
+import { HABIT_NAME_MAX_LENGTH, validateAndAddHabit } from './onboardingValidation';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -302,7 +303,10 @@ const AddHabitsStep = ({
       ))}
     </ScrollView>
     <View style={styles.bottomContainer}>
-      <Text style={styles.habitCount} testID="habit-count">{`${habits.length} / 10`}</Text>
+      <Text
+        style={styles.habitCount}
+        testID="habit-count"
+      >{`${habits.length} / ${MAX_HABITS}`}</Text>
       <TouchableOpacity
         testID="continue-button"
         style={[styles.onboardingContinueButton, habits.length === 0 && styles.disabledButton]}
@@ -580,11 +584,10 @@ const useOnboardingEffects = (
   }, [step, scrollRef]);
 
   useEffect(() => {
-    if (Platform.OS === 'web' && (step === 2 || step === 3)) {
+    if (Platform.OS === 'web' && step === 3) {
       const handler = (e: KeyboardEvent) => {
         if (!(e.metaKey || e.ctrlKey) || e.key !== 'Enter') return;
-        if (step === 2) return;
-        if (step === 3) prepareHabitsForReorder();
+        prepareHabitsForReorder();
       };
       document.addEventListener('keydown', handler);
       return () => document.removeEventListener('keydown', handler);
@@ -1064,7 +1067,7 @@ const OnboardingDialogs = ({ s }: { s: ReturnType<typeof useOnboardingState> }) 
     />
     <ConfirmDialog
       visible={s.showCountWarning}
-      title={`You've entered ${s.habits.length} of 10. Continue anyway?`}
+      title={`You've entered ${s.habits.length} of ${MAX_HABITS}. Continue anyway?`}
       testID="count-warning-modal"
       cancelTestID="count-warning-keep"
       confirmTestID="count-warning-continue"

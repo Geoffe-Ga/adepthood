@@ -989,7 +989,12 @@ const GoalModalHeader = ({
     <View style={styles.modalHeader}>
       <Text style={styles.modalTitle}>{habit.name}</Text>
       <EditToggleButton isEditing={isEditing} onToggle={onToggleEdit} />
-      <TouchableOpacity onPress={() => setShowEmojiSelector(true)}>
+      <TouchableOpacity
+        testID="goal-modal-icon-button"
+        accessibilityRole="button"
+        accessibilityLabel="Change habit icon"
+        onPress={() => setShowEmojiSelector(true)}
+      >
         <Text style={styles.iconLarge}>{habit.icon}</Text>
       </TouchableOpacity>
       <TouchableOpacity onPress={onClose} style={styles.closeButton}>
@@ -1094,7 +1099,8 @@ const useLogState = (
 
   const handleLogUnit = () => {
     if (!habit.id) return;
-    onLogUnit(habit.id, parseFloat(logAmount) || 1, logDate);
+    const parsed = Number.parseFloat(logAmount);
+    onLogUnit(habit.id, Number.isNaN(parsed) ? 1 : parsed, logDate);
     setLogAmount('1');
     setLogDate(new Date());
   };

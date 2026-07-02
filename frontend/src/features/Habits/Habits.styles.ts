@@ -37,38 +37,6 @@ export const styles = StyleSheet.create({
   iconLarge: {
     fontSize: 24,
   },
-  name: {
-    fontSize: 16,
-    fontWeight: '600',
-    textAlign: 'center',
-    color: COLORS.text.primary,
-  },
-
-  // ===== Progress Bars =====
-  progressBarContainer: {
-    width: '100%',
-    height: 16,
-    backgroundColor: COLORS.background.accent,
-    borderRadius: BORDER_RADIUS.xs,
-    marginTop: SPACING.xs,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  progressBar: {
-    height: '100%',
-    width: '100%',
-    backgroundColor: 'transparent', // Changed to transparent
-    borderRadius: BORDER_RADIUS.md,
-    position: 'relative',
-  },
-  progressBarFill: {
-    height: '100%',
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    borderRadius: BORDER_RADIUS.md,
-  },
-
   // ===== Modals =====
   modalOverlay: {
     flex: 1,
@@ -1053,12 +1021,6 @@ export const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 10,
-  },
-  streak: {
-    marginTop: 4,
-    fontSize: 12,
-    color: '#555',
-    fontWeight: '500',
   },
 });
 
