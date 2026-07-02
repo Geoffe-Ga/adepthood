@@ -14,10 +14,8 @@
  * The caller strips these fields before POSTing to ``/practice-sessions``.
  */
 
-import type { SenseKind } from '../engine/types';
+import { MS_PER_MINUTE, type SenseKind } from '../engine/types';
 import { formatTime } from '../views/formatTime';
-
-const MS_PER_MINUTE = 60_000;
 
 export interface ModeSummaryMeditationTimer {
   readonly mode: 'meditation_timer';
