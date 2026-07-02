@@ -13,6 +13,7 @@ Pinned public surface:
   DAYS_PER_WEEK = 7
   is_return_eligible(progress: StageProgress | None) -> bool
   active_return_week(started_at, paused_at, now) -> int
+  current_offer_episode(progress: StageProgress | None) -> str | None
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from domain.metta_return import (
     MettaFocus,
     ReturnWeek,
     active_return_week,
+    current_offer_episode,
     is_return_eligible,
     resumed_start,
 )
@@ -125,6 +127,49 @@ def test_eligibility_second_cycle_counts_even_at_stage_one() -> None:
     """A full prior cycle (cycle_number >= 2) implies Blue was passed, even mid-reset."""
     progress = StageProgress(user_id=1, current_stage=1, completed_stages=[], cycle_number=2)
     assert is_return_eligible(progress) is True
+
+
+# ---------------------------------------------------------------------------
+# current_offer_episode — the per-episode key backing dismissal.
+# ---------------------------------------------------------------------------
+
+
+def test_current_offer_episode_none_progress_is_none() -> None:
+    """No StageProgress row at all means there is no episode to key."""
+    assert current_offer_episode(None) is None
+
+
+def test_current_offer_episode_ineligible_progress_is_none() -> None:
+    """An ineligible stage has no offer, so there is no episode key either."""
+    progress = StageProgress(user_id=1, current_stage=3, completed_stages=[], cycle_number=1)
+    assert current_offer_episode(progress) is None
+
+
+def test_current_offer_episode_eligible_progress_returns_cycle_stage_key() -> None:
+    """An eligible progress row keys the episode as ``{cycle_number}:{current_stage}``."""
+    progress = StageProgress(
+        user_id=1, current_stage=5, completed_stages=[1, 2, 3, 4], cycle_number=1
+    )
+    assert current_offer_episode(progress) == "1:5"
+
+
+def test_current_offer_episode_key_changes_when_stage_advances() -> None:
+    """Advancing from stage 5 to stage 6 produces a distinct episode key."""
+    at_five = StageProgress(
+        user_id=1, current_stage=5, completed_stages=[1, 2, 3, 4], cycle_number=1
+    )
+    at_six = StageProgress(
+        user_id=1, current_stage=6, completed_stages=[1, 2, 3, 4, 5], cycle_number=1
+    )
+    assert current_offer_episode(at_five) == "1:5"
+    assert current_offer_episode(at_six) == "1:6"
+    assert current_offer_episode(at_six) != current_offer_episode(at_five)
+
+
+def test_current_offer_episode_key_changes_when_cycle_bumps() -> None:
+    """A second-cycle user at stage 2 is eligible via cycle_number and keys distinctly."""
+    progress = StageProgress(user_id=1, current_stage=2, completed_stages=[], cycle_number=2)
+    assert current_offer_episode(progress) == "2:2"
 
 
 # ---------------------------------------------------------------------------

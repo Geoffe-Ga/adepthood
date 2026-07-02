@@ -44,10 +44,12 @@ class MettaReturnStateResponse(BaseModel):
     """The full Return surface for the caller.
 
     ``eligible`` gates whether the arc may be started, ``weeks`` is the whole
-    five-week sequence in order, and ``arc`` is the caller's active arc or
-    ``None`` when there is none.
+    five-week sequence in order, ``arc`` is the caller's active arc or ``None``
+    when there is none, and ``offer_dismissed`` is whether the caller has waved
+    away the offer for the current episode.
     """
 
     eligible: bool
     weeks: list[ReturnWeekResponse]
     arc: ReturnArcResponse | None
+    offer_dismissed: bool

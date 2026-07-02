@@ -17,7 +17,7 @@ missing one — both raise the same 404.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.exc import IntegrityError
@@ -28,18 +28,23 @@ from database import get_session
 from domain.metta_return import (
     RETURN_SEQUENCE,
     active_return_week,
+    current_offer_episode,
     is_return_eligible,
     resumed_start,
 )
 from domain.stage_progress import get_user_progress
 from errors import conflict, not_found
 from models.metta_return_arc import MettaReturnArc
+from models.metta_return_offer_dismissal import MettaReturnOfferDismissal
 from routers.auth import get_current_user
 from schemas.metta_return import (
     MettaReturnStateResponse,
     ReturnArcResponse,
     ReturnWeekResponse,
 )
+
+if TYPE_CHECKING:
+    from models.stage_progress import StageProgress
 
 router = APIRouter(prefix="/metta-return", tags=["metta-return"])
 
@@ -110,25 +115,79 @@ async def _active_arc_for_update(session: AsyncSession, user_id: int) -> MettaRe
     return result.scalars().first()
 
 
+async def _offer_dismissed(session: AsyncSession, user_id: int, episode: str | None) -> bool:
+    """Return whether the caller has dismissed the offer for this episode; no row lock.
+
+    A ``None`` episode (ineligible or no progress) can never have been dismissed.
+    Otherwise this is a lock-free existence check, mirroring :func:`_active_arc`'s
+    plain ``select`` so the read path never serializes on a row.
+    """
+    if episode is None:
+        return False
+    result = await session.execute(
+        select(MettaReturnOfferDismissal).where(
+            col(MettaReturnOfferDismissal.user_id) == user_id,
+            col(MettaReturnOfferDismissal.episode_key) == episode,
+        ),
+    )
+    return result.scalars().first() is not None
+
+
+async def _record_dismissal(session: AsyncSession, user_id: int, episode: str) -> None:
+    """Idempotently persist a dismissal for (user, episode), tolerating races.
+
+    A pre-check skips a redundant insert when the episode is already dismissed. A
+    truly concurrent double-insert trips the unique index, whose ``IntegrityError``
+    is caught and treated as success, since the row now exists either way.
+    """
+    if await _offer_dismissed(session, user_id, episode):
+        return
+    session.add(
+        MettaReturnOfferDismissal(
+            user_id=user_id,
+            episode_key=episode,
+            dismissed_at=datetime.now(UTC),
+        ),
+    )
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+
+
+def _build_state(
+    progress: StageProgress | None,
+    arc: MettaReturnArc | None,
+    *,
+    offer_dismissed: bool,
+    now: datetime,
+) -> MettaReturnStateResponse:
+    """Project the caller's progress and arc onto the full Return state DTO."""
+    return MettaReturnStateResponse(
+        eligible=is_return_eligible(progress),
+        weeks=_sequence_response(),
+        arc=_to_arc_response(arc, now) if arc is not None else None,
+        offer_dismissed=offer_dismissed,
+    )
+
+
 @router.get("", response_model=MettaReturnStateResponse)
 async def get_state(
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> MettaReturnStateResponse:
-    """Return the caller's eligibility, the full week sequence, and their active arc.
+    """Return the caller's eligibility, week sequence, active arc, and offer state.
 
     Read-only: stage progress is fetched (never provisioned), so a brand-new
     user's row is not created as a side effect. ``arc`` is the caller's active
-    arc projected to its current week, or ``None`` when there is none.
+    arc projected to its current week, or ``None`` when there is none, and
+    ``offer_dismissed`` reflects any dismissal of the current offer episode.
     """
     progress = await get_user_progress(session, user_id)
     arc = await _active_arc(session, user_id)
+    dismissed = await _offer_dismissed(session, user_id, current_offer_episode(progress))
     now = datetime.now(UTC)
-    return MettaReturnStateResponse(
-        eligible=is_return_eligible(progress),
-        weeks=_sequence_response(),
-        arc=_to_arc_response(arc, now) if arc is not None else None,
-    )
+    return _build_state(progress, arc, offer_dismissed=dismissed, now=now)
 
 
 @router.post("/arc", status_code=status.HTTP_201_CREATED, response_model=ReturnArcResponse)
@@ -230,3 +289,26 @@ async def leave_arc(
     await session.commit()
     await session.refresh(arc)
     return _to_arc_response(arc, now)
+
+
+@router.post("/offer/dismiss", response_model=MettaReturnStateResponse)
+async def dismiss_offer(
+    user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> MettaReturnStateResponse:
+    """Dismiss the Return offer for the caller's current episode; idempotent.
+
+    Raises 409 when the caller is not eligible, since there is no offer to
+    dismiss. Stage progress is read (never provisioned) and no arc is opened.
+    A repeat dismiss of the same episode collapses to the same success backed by
+    a single row, and any stage or cycle advance opens a fresh episode whose
+    offer surfaces again.
+    """
+    progress = await get_user_progress(session, user_id)
+    episode = current_offer_episode(progress)
+    if episode is None:
+        raise conflict("return_not_eligible")
+    await _record_dismissal(session, user_id, episode)
+    arc = await _active_arc(session, user_id)
+    now = datetime.now(UTC)
+    return _build_state(progress, arc, offer_dismissed=True, now=now)

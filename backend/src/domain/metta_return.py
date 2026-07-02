@@ -145,6 +145,13 @@ def is_return_eligible(progress: StageProgress | None) -> bool:
     return _highest_stage_reached(progress) >= RETURN_MINIMUM_STAGE
 
 
+def current_offer_episode(progress: StageProgress | None) -> str | None:
+    """Key the current offer episode so any stage/cycle advance is a fresh episode."""
+    if progress is None or not is_return_eligible(progress):
+        return None
+    return f"{progress.cycle_number}:{progress.current_stage}"
+
+
 def _normalize(moment: datetime) -> datetime:
     """Strip tzinfo so naive (SQLite) and aware (Postgres) values compare.
 

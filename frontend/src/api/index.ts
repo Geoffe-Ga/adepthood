@@ -1409,6 +1409,13 @@ export const mettaReturn = {
       schema: returnArcSchema as unknown as z.ZodType<ReturnArc>,
     });
   },
+  dismissOffer(token?: string): Promise<MettaReturnState> {
+    return request<MettaReturnState>('/metta-return/offer/dismiss', {
+      method: 'POST',
+      token,
+      schema: mettaReturnStateSchema as unknown as z.ZodType<MettaReturnState>,
+    });
+  },
 };
 
 // Prompts types and client

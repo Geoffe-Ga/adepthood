@@ -9,6 +9,9 @@ const mockStart = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<
 const mockPause = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<ReturnArc>>;
 const mockResume = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<ReturnArc>>;
 const mockLeave = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<ReturnArc>>;
+const mockDismissOffer = jest.fn() as jest.MockedFunction<
+  (_token?: string) => Promise<MettaReturnState>
+>;
 
 jest.mock('@/api', () => {
   const actual = jest.requireActual('@/api') as Record<string, unknown>;
@@ -20,6 +23,8 @@ jest.mock('@/api', () => {
       pause: (...a: unknown[]) => (mockPause as unknown as (...x: unknown[]) => unknown)(...a),
       resume: (...a: unknown[]) => (mockResume as unknown as (...x: unknown[]) => unknown)(...a),
       leave: (...a: unknown[]) => (mockLeave as unknown as (...x: unknown[]) => unknown)(...a),
+      dismissOffer: (...a: unknown[]) =>
+        (mockDismissOffer as unknown as (...x: unknown[]) => unknown)(...a),
     },
   };
 });
@@ -29,7 +34,7 @@ jest.mock('../contractionSignal', () => ({
   isContractionSignalActive: () => mockIsContractionSignalActive(),
 }));
 
-const mockSaveDismissed = jest.fn() as jest.MockedFunction<() => Promise<void>>;
+const mockSaveDismissed = jest.fn() as jest.MockedFunction<(_value: boolean) => Promise<void>>;
 const mockLoadDismissed = jest.fn() as jest.MockedFunction<() => Promise<boolean>>;
 jest.mock('@/storage/returnOfferStorage', () => ({
   saveReturnOfferDismissed: (...a: unknown[]) =>
@@ -65,7 +70,7 @@ function arc(overrides: Partial<ReturnArc> = {}): ReturnArc {
 }
 
 function stateResult(overrides: Partial<MettaReturnState> = {}): MettaReturnState {
-  return { eligible: true, weeks: fiveWeeks(), arc: null, ...overrides };
+  return { eligible: true, weeks: fiveWeeks(), arc: null, offer_dismissed: false, ...overrides };
 }
 
 beforeEach(() => {
@@ -74,6 +79,7 @@ beforeEach(() => {
   mockPause.mockReset();
   mockResume.mockReset();
   mockLeave.mockReset();
+  mockDismissOffer.mockReset();
   mockIsContractionSignalActive.mockReset();
   mockSaveDismissed.mockReset();
   mockLoadDismissed.mockReset();
@@ -83,6 +89,7 @@ beforeEach(() => {
   mockPause.mockResolvedValue(arc({ paused: true }));
   mockResume.mockResolvedValue(arc({ paused: false }));
   mockLeave.mockResolvedValue(arc());
+  mockDismissOffer.mockResolvedValue(stateResult({ offer_dismissed: true }));
   mockIsContractionSignalActive.mockReturnValue(false);
   mockSaveDismissed.mockResolvedValue(undefined);
   mockLoadDismissed.mockResolvedValue(false);
@@ -122,26 +129,60 @@ describe('useMettaReturn', () => {
     expect(result.current.arc).not.toBeNull();
   });
 
-  it('dismissOffer hides the offer and persists the dismissal', async () => {
+  it('dismissOffer hides the offer, calls the API, and persists the cache flag', async () => {
     mockIsContractionSignalActive.mockReturnValue(true);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
     const { result } = renderHook(() => useMettaReturn());
     await waitFor(() => expect(result.current.offerVisible).toBe(true));
 
     await act(async () => {
-      result.current.dismissOffer();
+      await result.current.dismissOffer();
     });
 
     expect(result.current.offerVisible).toBe(false);
-    expect(mockSaveDismissed).toHaveBeenCalledTimes(1);
+    expect(mockDismissOffer).toHaveBeenCalledTimes(1);
+    expect(mockSaveDismissed).toHaveBeenCalledWith(true);
   });
 
-  it('a persisted dismissal keeps the offer hidden on reload', async () => {
+  it('server offer_dismissed true hides the offer even when the cache is empty', async () => {
     mockIsContractionSignalActive.mockReturnValue(true);
-    mockLoadDismissed.mockResolvedValue(true);
-    mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
+    mockLoadDismissed.mockResolvedValue(false);
+    mockState.mockResolvedValue(stateResult({ eligible: true, arc: null, offer_dismissed: true }));
     const { result } = renderHook(() => useMettaReturn());
     await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
+    expect(result.current.offerVisible).toBe(false);
+  });
+
+  it('server offer_dismissed false overrides a stale cached-true (episode reset)', async () => {
+    mockIsContractionSignalActive.mockReturnValue(true);
+    mockLoadDismissed.mockResolvedValue(true);
+    mockState.mockResolvedValue(stateResult({ eligible: true, arc: null, offer_dismissed: false }));
+    const { result } = renderHook(() => useMettaReturn());
+    await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
+    expect(result.current.offerVisible).toBe(true);
+  });
+
+  it('falls back to the cached dismissal flag when state() rejects', async () => {
+    mockIsContractionSignalActive.mockReturnValue(true);
+    mockLoadDismissed.mockResolvedValue(true);
+    mockState.mockRejectedValue(new Error('network error'));
+    const { result } = renderHook(() => useMettaReturn());
+    await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
+    expect(result.current.offerVisible).toBe(false);
+  });
+
+  it('dismissOffer keeps the offer hidden even if the API call rejects', async () => {
+    mockIsContractionSignalActive.mockReturnValue(true);
+    mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
+    mockDismissOffer.mockRejectedValue(new Error('network error'));
+    const { result } = renderHook(() => useMettaReturn());
+    await waitFor(() => expect(result.current.offerVisible).toBe(true));
+
+    await act(async () => {
+      await result.current.dismissOffer();
+    });
+
+    expect(mockDismissOffer).toHaveBeenCalledTimes(1);
     expect(result.current.offerVisible).toBe(false);
   });
 

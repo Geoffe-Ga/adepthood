@@ -5,8 +5,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const RETURN_OFFER_DISMISSED_KEY = '@adepthood/return_offer_dismissed';
 const FLAG_TRUE = 'true';
 
-export async function saveReturnOfferDismissed(): Promise<void> {
-  await AsyncStorage.setItem(RETURN_OFFER_DISMISSED_KEY, FLAG_TRUE);
+export async function saveReturnOfferDismissed(value: boolean): Promise<void> {
+  await AsyncStorage.setItem(RETURN_OFFER_DISMISSED_KEY, String(value));
 }
 
 export async function loadReturnOfferDismissed(): Promise<boolean> {
