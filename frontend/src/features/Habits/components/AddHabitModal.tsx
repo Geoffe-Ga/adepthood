@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import EmojiSelector from 'react-native-emoji-selector';
 
 import { DEFAULT_ICONS } from '../constants';
 import styles from '../Habits.styles';
@@ -8,6 +7,7 @@ import type { AddHabitInput } from '../Habits.types';
 import { calculateNetEnergy } from '../HabitUtils';
 
 import { EnergyTextInput } from './EnergyTextInput';
+import HabitEmojiPicker from './HabitEmojiPicker';
 
 interface AddHabitModalProps {
   visible: boolean;
@@ -68,15 +68,11 @@ const IconRow = ({ icon, showEmojiPicker, setShowEmojiPicker, setIcon }: IconRow
     </View>
     {showEmojiPicker && (
       <View style={styles.emojiSelectorContainer}>
-        <EmojiSelector
+        <HabitEmojiPicker
           onEmojiSelected={(emoji) => {
             setIcon(emoji);
             setShowEmojiPicker(false);
           }}
-          showSearchBar
-          columns={6}
-          emojiSize={28}
-          placeholder="Search emoji..."
         />
       </View>
     )}

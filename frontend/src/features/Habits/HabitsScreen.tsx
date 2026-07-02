@@ -12,7 +12,6 @@ import {
 } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, TouchableOpacity, View, Modal } from 'react-native';
-import EmojiSelector from 'react-native-emoji-selector';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { habits as habitsApi } from '../../api';
@@ -22,6 +21,7 @@ import useResponsive from '../../design/useResponsive';
 
 import AddHabitModal from './components/AddHabitModal';
 import GoalModal from './components/GoalModal';
+import HabitEmojiPicker from './components/HabitEmojiPicker';
 import { HabitsEmptyState } from './components/HabitsEmptyState';
 import HabitSettingsModal from './components/HabitSettingsModal';
 import MissedDaysModal from './components/MissedDaysModal';
@@ -221,7 +221,7 @@ const EmojiPickerModal = ({
             <Text style={styles.closeEmojiPickerText}>×</Text>
           </TouchableOpacity>
         </View>
-        <EmojiSelector onEmojiSelected={onSelect} showSearchBar columns={6} emojiSize={28} />
+        <HabitEmojiPicker onEmojiSelected={onSelect} />
       </View>
     </View>
   </Modal>
