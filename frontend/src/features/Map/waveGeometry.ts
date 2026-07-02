@@ -4,7 +4,9 @@
  * Pure geometry for the Map center column's continuous sine-wave (a
  * struck-tuning-fork rising upward). Every helper works in unit space [0,1] or
  * scales that unit space into pixel space; none of them touch React, so the wave
- * math is testable in isolation from rendering.
+ * math is testable in isolation from rendering. Horizontal unit space maps only
+ * across the center column's grid band, not the full grid width, so the wave
+ * stays inside its lane even though the SVG spans the whole screen.
  *
  * The wave wobbles left for even (Divine-Feminine / WE-returning) stages and
  * right for odd (I-pointing) stages. Its horizontal swing tapers smoothly and
@@ -15,8 +17,15 @@
  * wobble.
  */
 
-import { STAGE_DISPLAY } from './mapLayout';
+import { GRID_COLUMN_FLEX, STAGE_DISPLAY } from './mapLayout';
 import { STAGE_COUNT, isLeftReturning } from './stageData';
+
+/** Combined flex weight of all three row cells; the denominator for band fractions. */
+const TOTAL_COLUMN_FLEX = GRID_COLUMN_FLEX.left + GRID_COLUMN_FLEX.center + GRID_COLUMN_FLEX.right;
+/** Grid fraction where the center column begins (left flex over total flex). */
+const CENTER_COLUMN_START_FRACTION = GRID_COLUMN_FLEX.left / TOTAL_COLUMN_FLEX;
+/** Grid fraction the center column spans (center flex over total flex). */
+const CENTER_COLUMN_WIDTH_FRACTION = GRID_COLUMN_FLEX.center / TOTAL_COLUMN_FLEX;
 
 /** Horizontal midline of the column in unit space; both poles swing around it. */
 const CENTER_X = 0.5;
@@ -28,9 +37,10 @@ const CENTER_X = 0.5;
 const Y_BAND_MIDPOINT = 0.5;
 
 /**
- * Widest horizontal swing from center, at stage 1. Kept below 0.5 so a pole at
- * full amplitude (x = CENTER_X +/- WAVE_AMPLITUDE) stays comfortably inside the
- * unit column with margin for the arrowhead.
+ * Widest horizontal swing from center, at stage 1, as a fraction of the column
+ * half-lane. Kept below 0.5 so a pole at full amplitude (x = CENTER_X +/-
+ * WAVE_AMPLITUDE) stays comfortably inside the center column with margin for the
+ * arrowhead. It is the upper bound of the smooth taper down to APEX_AMPLITUDE.
  */
 const WAVE_AMPLITUDE = 0.32;
 
@@ -130,8 +140,24 @@ export interface WaveSegment {
   stageNumber: number;
 }
 
+/** Round a raw pixel value to a coordinate string at fixed precision. */
+const roundCoord = (value: number): string => value.toFixed(COORD_PRECISION);
+
 /** Round a unit coordinate into a pixel coordinate string at fixed precision. */
-const toPixel = (unit: number, extent: number): string => (unit * extent).toFixed(COORD_PRECISION);
+const toPixel = (unit: number, extent: number): string => roundCoord(unit * extent);
+
+/** Map a unit x within the center-column band to a pixel x across the grid. */
+const toColumnPixelX = (unitX: number, gridWidth: number): number =>
+  (CENTER_COLUMN_START_FRACTION + unitX * CENTER_COLUMN_WIDTH_FRACTION) * gridWidth;
+
+/**
+ * The center column's left/right pixel edges within a grid of the given width,
+ * derived from the shared flex weights.
+ */
+export const centerColumnBounds = (width: number): { left: number; right: number } => ({
+  left: CENTER_COLUMN_START_FRACTION * width,
+  right: (CENTER_COLUMN_START_FRACTION + CENTER_COLUMN_WIDTH_FRACTION) * width,
+});
 
 /** Reflect a unit x across the column center: same distance on the far side. */
 const mirrorAcrossCenter = (unitX: number): number => CENTER_X + (CENTER_X - unitX);
@@ -140,8 +166,10 @@ const mirrorAcrossCenter = (unitX: number): number => CENTER_X + (CENTER_X - uni
  * A smooth cubic Bezier between two points given by their unit x's and y's. The
  * control points sit at the vertical midpoint of the pair, each anchored to its
  * own x, giving the center column its continuous sine wobble rather than
- * straight zig-zags. Shared by the near and far paths so the string assembly
- * lives in exactly one place.
+ * straight zig-zags. x is confined to the center-column band via toColumnPixelX
+ * (so a unit x of 0.5 lands on the column midline); y spans the full height.
+ * Shared by the near and far paths so the string assembly lives in exactly one
+ * place — the far side simply passes x's mirrored across the column midline.
  */
 const bezierPath = (
   lowerX: number,
@@ -152,9 +180,9 @@ const bezierPath = (
   height: number,
 ): string => {
   const midY = (lowerY + upperY) / 2;
-  const x1 = toPixel(lowerX, width);
+  const x1 = roundCoord(toColumnPixelX(lowerX, width));
   const y1 = toPixel(lowerY, height);
-  const x2 = toPixel(upperX, width);
+  const x2 = roundCoord(toColumnPixelX(upperX, width));
   const y2 = toPixel(upperY, height);
   const midYPixel = toPixel(midY, height);
   return `M ${x1} ${y1} C ${x1} ${midYPixel} ${x2} ${midYPixel} ${x2} ${y2}`;
@@ -180,9 +208,9 @@ const segmentPaths = (
 
 /**
  * The full wave as STAGE_COUNT-1 (9) segments in pixel space. Segment i connects
- * stage i to stage i+1 and carries the lower stage's number and textColor.
- * Coordinates scale with width and height, so a larger layout yields a larger
- * wave.
+ * stage i to stage i+1 and carries the lower stage's number and textColor. y
+ * scales with height and x with width within the center-column band, so a larger
+ * layout yields a larger wave that still stays inside its lane.
  */
 export const waveSegments = (width: number, height: number): readonly WaveSegment[] => {
   const segments: WaveSegment[] = [];
@@ -212,20 +240,20 @@ export interface Arrowhead {
 /**
  * An upward-pointing triangle centered on a stage's wave point, in pixel space.
  * The apex sits ARROWHEAD_HEIGHT above the base (numerically smaller y) so the
- * arrow leads toward the higher stages at the top of the wave.
+ * arrow leads toward the higher stages at the top of the wave. cx is confined to
+ * the center-column band.
  */
 export const arrowheadAt = (stageNumber: number, width: number, height: number): Arrowhead => {
   const point = stageWavePoint(stageNumber);
-  const cx = point.x * width;
+  const cx = toColumnPixelX(point.x, width);
   const baseY = point.y * height;
   const apexY = baseY - ARROWHEAD_HEIGHT;
   const leftX = cx - ARROWHEAD_HALF_WIDTH;
   const rightX = cx + ARROWHEAD_HALF_WIDTH;
-  const fmt = (value: number): string => value.toFixed(COORD_PRECISION);
   const points = [
-    `${fmt(cx)},${fmt(apexY)}`,
-    `${fmt(leftX)},${fmt(baseY)}`,
-    `${fmt(rightX)},${fmt(baseY)}`,
+    `${roundCoord(cx)},${roundCoord(apexY)}`,
+    `${roundCoord(leftX)},${roundCoord(baseY)}`,
+    `${roundCoord(rightX)},${roundCoord(baseY)}`,
   ].join(' ');
   return { points };
 };

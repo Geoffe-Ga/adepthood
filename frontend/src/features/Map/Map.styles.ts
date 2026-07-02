@@ -17,13 +17,16 @@ import {
   touchTarget,
 } from '../../design/tokens';
 
+import { GRID_COLUMN_FLEX } from './mapLayout';
+
 // --- Grid weights for the three cells of every stage row -------------------
 // One responsive row grid is the single source of vertical truth: each stage
 // row is [LeftCell | CenterCell | RightCell] with these flex weights (≈40/40/20),
-// so the three columns are siblings in the same row and cannot drift.
-const LEFT_FLEX = 2;
-const CENTER_FLEX = 2;
-const RIGHT_FLEX = 1;
+// so the three columns are siblings in the same row and cannot drift. The
+// weights live in mapLayout so the wave geometry can share the same truth.
+const LEFT_FLEX = GRID_COLUMN_FLEX.left;
+const CENTER_FLEX = GRID_COLUMN_FLEX.center;
+const RIGHT_FLEX = GRID_COLUMN_FLEX.right;
 const CENTER = 'center';
 
 /**

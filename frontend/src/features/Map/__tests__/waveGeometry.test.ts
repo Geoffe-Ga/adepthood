@@ -2,7 +2,14 @@
 /* global describe, it, expect */
 import { STAGE_DISPLAY } from '../mapLayout';
 import { STAGE_COUNT, isLeftReturning } from '../stageData';
-import { arrowheadAt, stageWavePoint, waveSegments } from '../waveGeometry';
+import {
+  arrowheadAt,
+  centerColumnBounds,
+  stageWavePoint,
+  waveArrowheads,
+  waveSegments,
+} from '../waveGeometry';
+import type { WaveSegment } from '../waveGeometry';
 
 const CENTER_X = 0.5;
 const CONVERGENCE_EPSILON = 0.05;
@@ -28,6 +35,24 @@ const parsePathPoints = (d: string): { first: [number, number]; last: [number, n
     last: [numberAt(numbers, lastIndex - 1), numberAt(numbers, lastIndex)],
   };
 };
+
+const PHONE_WIDTHS = [320, 375, 393, 430];
+const REPRESENTATIVE_HEIGHT = 800;
+
+const WAVE_STROKE_HALF_WIDTH = 1.5;
+const HALF_ARROWHEAD_WIDTH = 6;
+const SAFE_MARGIN_PX = WAVE_STROKE_HALF_WIDTH + HALF_ARROWHEAD_WIDTH;
+
+const LEFT_COLUMN_FLEX = 2;
+const CENTER_COLUMN_FLEX = 2;
+const RIGHT_COLUMN_FLEX = 1;
+const TOTAL_COLUMN_FLEX = LEFT_COLUMN_FLEX + CENTER_COLUMN_FLEX + RIGHT_COLUMN_FLEX;
+const CENTER_LEFT_FRACTION = LEFT_COLUMN_FLEX / TOTAL_COLUMN_FLEX;
+const CENTER_RIGHT_FRACTION = (LEFT_COLUMN_FLEX + CENTER_COLUMN_FLEX) / TOTAL_COLUMN_FLEX;
+
+const WOBBLE_VISIBILITY_FRACTION = 0.4;
+const LEFT_WOBBLE_STAGE = 2;
+const RIGHT_WOBBLE_STAGE = 1;
 
 describe('stageWavePoint', () => {
   it('rises upward: y strictly decreases as stageNumber climbs from 1 to 10', () => {
@@ -137,14 +162,16 @@ describe('waveSegments', () => {
     }
   });
 
-  it('mirrors farD across the column center: far x = width - near x, y unchanged', () => {
+  it('mirrors farD across the column midline: far x = 2*midline - near x, y unchanged', () => {
+    const { left, right } = centerColumnBounds(SMALL_WIDTH);
+    const columnMidline = (left + right) / 2;
     const segments = waveSegments(SMALL_WIDTH, SMALL_HEIGHT);
     for (const segment of segments) {
       const near = parsePathPoints(segment.d);
       const far = parsePathPoints(segment.farD);
-      expect(far.first[0]).toBeCloseTo(SMALL_WIDTH - near.first[0], 2);
+      expect(far.first[0]).toBeCloseTo(2 * columnMidline - near.first[0], 2);
       expect(far.first[1]).toBeCloseTo(near.first[1], 2);
-      expect(far.last[0]).toBeCloseTo(SMALL_WIDTH - near.last[0], 2);
+      expect(far.last[0]).toBeCloseTo(2 * columnMidline - near.last[0], 2);
       expect(far.last[1]).toBeCloseTo(near.last[1], 2);
     }
   });
@@ -169,5 +196,86 @@ describe('arrowheadAt', () => {
     const apexY = Math.min(...ys);
     const baseY = Math.max(...ys);
     expect(apexY).toBeLessThan(baseY);
+  });
+});
+
+describe('center-column containment', () => {
+  // x tokens in the "M x1 y1 C x1 mY x2 mY x2 y2" segment path stream.
+  const SEGMENT_X_TOKEN_INDICES = [1, 4, 6, 8];
+  const segmentPathXs = (d: string): number[] => {
+    const tokens = d.trim().split(' ');
+    return SEGMENT_X_TOKEN_INDICES.map((index) => Number(tokens[index]));
+  };
+
+  const arrowheadXs = (points: string): number[] =>
+    points
+      .trim()
+      .split(' ')
+      .map((pair) => pair.split(',').map(Number))
+      .map(([x]) => x as number);
+
+  const findSegmentX = (segments: readonly WaveSegment[], stageNumber: number): number => {
+    for (const segment of segments) {
+      if (segment.stageNumber === stageNumber) {
+        const xs = segmentPathXs(segment.d);
+        return xs[0] as number;
+      }
+    }
+    throw new Error(`no segment found for stage ${stageNumber}`);
+  };
+
+  it('reports center-column bounds as flex-derived fractions of width', () => {
+    for (const width of PHONE_WIDTHS) {
+      const bounds = centerColumnBounds(width);
+      expect(bounds.left).toBeCloseTo(CENTER_LEFT_FRACTION * width);
+      expect(bounds.right).toBeCloseTo(CENTER_RIGHT_FRACTION * width);
+    }
+  });
+
+  it('keeps every wave-segment x-coordinate within the margin-shrunk center column', () => {
+    for (const width of PHONE_WIDTHS) {
+      const { left, right } = centerColumnBounds(width);
+      const minX = left + SAFE_MARGIN_PX;
+      const maxX = right - SAFE_MARGIN_PX;
+      const segments = waveSegments(width, REPRESENTATIVE_HEIGHT);
+      for (const segment of segments) {
+        for (const x of segmentPathXs(segment.d)) {
+          expect(x).toBeGreaterThanOrEqual(minX);
+          expect(x).toBeLessThanOrEqual(maxX);
+        }
+      }
+    }
+  });
+
+  it('keeps every arrowhead vertex x-coordinate within the margin-shrunk center column', () => {
+    for (const width of PHONE_WIDTHS) {
+      const { left, right } = centerColumnBounds(width);
+      const minX = left + SAFE_MARGIN_PX;
+      const maxX = right - SAFE_MARGIN_PX;
+      const arrowheads = waveArrowheads(width, REPRESENTATIVE_HEIGHT);
+      for (const arrowhead of arrowheads) {
+        for (const x of arrowheadXs(arrowhead.points)) {
+          expect(x).toBeGreaterThanOrEqual(minX);
+          expect(x).toBeLessThanOrEqual(maxX);
+        }
+      }
+    }
+  });
+
+  it('keeps the wobble visible: full-amplitude stages swing past 0.4 of the column half-width', () => {
+    for (const width of PHONE_WIDTHS) {
+      const { left, right } = centerColumnBounds(width);
+      const columnMidline = (left + right) / 2;
+      const columnHalfWidth = (right - left) / 2;
+      const segments = waveSegments(width, REPRESENTATIVE_HEIGHT);
+      const leftX = findSegmentX(segments, LEFT_WOBBLE_STAGE);
+      const rightX = findSegmentX(segments, RIGHT_WOBBLE_STAGE);
+      expect(Math.abs(leftX - columnMidline)).toBeGreaterThanOrEqual(
+        WOBBLE_VISIBILITY_FRACTION * columnHalfWidth,
+      );
+      expect(Math.abs(rightX - columnMidline)).toBeGreaterThanOrEqual(
+        WOBBLE_VISIBILITY_FRACTION * columnHalfWidth,
+      );
+    }
   });
 });
