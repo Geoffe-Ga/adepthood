@@ -518,17 +518,23 @@ def _unspent_resonance(
     )
 
 
-async def _private_response(session: AsyncSession, user_id: int) -> ResonanceResponse:
+async def _private_response(
+    session: AsyncSession, user_id: int, care: CareResponse | None
+) -> ResonanceResponse:
     """Resonance response for an intimate entry: no cloud call, no charge.
 
     An ``intimate`` entry is never sent to a cloud LLM (issue #895), so this is
     returned *before* any wallet deduction or LLM construction: no marginalia,
     no suggestions, unspent balances (read fresh, like :func:`_care_only_response`,
     with no ``preflight_deduction``), and the non-shaming private message.
+
+    ``care`` is the locally-screened surface (never None-forced): a distressed
+    intimate entry still points to human/professional support, with no cloud
+    call, charge, or usage-log — the privacy floor never suppresses crisis care.
     """
     user = await require_user_fresh(session, user_id)
     return _unspent_resonance(
-        user, care=None, private=True, private_message=_INTIMATE_PRIVATE_MESSAGE
+        user, care=care, private=True, private_message=_INTIMATE_PRIVATE_MESSAGE
     )
 
 
@@ -685,13 +691,14 @@ async def run_resonance(
         raise not_found("journal_entry")
     # Privacy floor (issue #895): an intimate entry is NEVER sent to a cloud LLM.
     # Decided from the *persisted* classification (never client-supplied) and
-    # returned here — before any care screen, wallet charge, LLM construction, or
-    # usage-log write — so the cloud is provably unreachable for intimate entries.
-    if entry.classification == JournalClassification.INTIMATE:
-        return await _private_response(session, current_user)
-    # Screen first, with a pure/local check that can't fail the request, so the
-    # care surface is decided independently of the LLM (NORTH-STAR §10).
+    # returned here — before wallet charge, LLM construction, or usage-log write —
+    # so the cloud is provably unreachable for intimate entries. The LOCAL care
+    # screen (pure; no cloud/charge/log) still runs, so the privacy floor never
+    # suppresses crisis support (NORTH-STAR §10) — the same screen feeds both
+    # the intimate and non-intimate paths.
     care = _care_response(_care_for(entry.message))
+    if entry.classification == JournalClassification.INTIMATE:
+        return await _private_response(session, current_user, care)
     spent = await preflight_deduction(session, current_user)
     prior = await _recent_prior_bodies(session, current_user, entry_id)
     llm = BotmasonResonanceLLM(resolve_chat_api_key(x_llm_api_key))
