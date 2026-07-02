@@ -58,6 +58,24 @@ jobs:
         with:
           fetch-depth: 50
 
+      - name: Validate scan_name and locate its definition
+        env:
+          SCAN_NAME: ${{ inputs.scan_name }}
+        run: |
+          set -euo pipefail
+          # Charset guard: scan_name is interpolated into a file path and the
+          # Claude prompt. GitHub Actions inputs have no `pattern:` field, so we
+          # fail fast here instead. Blocks path-traversal / injection from any
+          # future wrapper that wires scan_name to a workflow_dispatch input.
+          if ! printf '%s' "$SCAN_NAME" | grep -qE '^[a-z][a-z0-9-]+$'; then
+            echo "::error::Invalid scan_name '$SCAN_NAME' — must match ^[a-z][a-z0-9-]+$"
+            exit 1
+          fi
+          if [ ! -f "prompts/scans/$SCAN_NAME.md" ]; then
+            echo "::error::No scan definition at prompts/scans/$SCAN_NAME.md"
+            exit 1
+          fi
+
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
@@ -75,9 +93,17 @@ jobs:
           . .venv/bin/activate
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt -r backend/requirements-dev.txt
-          # Extra analyzers used by specific scans; failure here must not sink a
-          # scan that does not need them (e.g. the todo tracer needs only grep).
+          # Extra analyzers only some scans need (pip-audit→security,
+          # vulture→dead-code, mutmut→mutation). A failure here must not sink a
+          # scan that does not use them (the todo tracer needs only grep) — but
+          # it must be VISIBLE, not silent, so a scan that expected the tool and
+          # found it missing reports "tooling broken" (skill Troubleshooting)
+          # rather than a false "clean" result. Emit a ::warning:: per gap.
           pip install pip-audit vulture mutmut || true
+          for tool in pip-audit vulture mutmut; do
+            pip show "$tool" >/dev/null 2>&1 \
+              || echo "::warning::optional analyzer '$tool' is not installed; scans that rely on it should fail loudly, not report clean"
+          done
 
       - name: Install frontend toolbox
         run: |
