@@ -60,6 +60,7 @@ import type {
   TalliedGroundingConfig,
   TarotConfig,
 } from '@/features/Practice/engine/types';
+import { MS_PER_MINUTE } from '@/features/Practice/engine/types';
 import { useRitualEngine } from '@/features/Practice/engine/useRitualEngine';
 import type { ModeSummaryKind, ModeSummaryMetadata } from '@/features/Practice/insights/format';
 import CardMeditationView from '@/features/Practice/views/CardMeditationView';
@@ -77,7 +78,6 @@ import TarotMeditationView from '@/features/Practice/views/TarotMeditationView';
 import { useOptimisticMutation } from '@/hooks/useOptimisticMutation';
 import { MS_PER_DAY } from '@/utils/dateUtils';
 
-const MS_PER_MINUTE = 60_000;
 const TAROT_DECK_SIZE = 22;
 const KEEP_AWAKE_TAG = 'ritual-engine';
 const SAVE_FALLBACK =

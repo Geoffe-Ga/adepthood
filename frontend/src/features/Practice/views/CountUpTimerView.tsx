@@ -6,6 +6,7 @@ import type { RitualControls, RitualState } from '../engine/types';
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import { useSessionSurface } from './sessionSurface';
+import { SUCCESS_FILL, SessionContainer } from './shared';
 
 import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
 
@@ -17,17 +18,14 @@ interface Props {
 const CountUpTimerView = ({ state, controls }: Props): React.JSX.Element => {
   const surface = useSessionSurface();
   return (
-    <View
-      style={[styles.container, { backgroundColor: surface.ground }]}
-      testID="count-up-timer-view"
-    >
+    <SessionContainer testID="count-up-timer-view">
       <Text style={[styles.time, { color: surface.text }]} testID="count-up-elapsed">
         {formatTime(state.elapsedMs)}
       </Text>
       <Text style={[styles.label, { color: surface.textSoft }]}>elapsed</Text>
       {state.status === 'running' && (
         <TouchableOpacity
-          style={styles.endButton}
+          style={[styles.endButton, SUCCESS_FILL]}
           onPress={controls.complete}
           testID="count-up-end"
           accessibilityRole="button"
@@ -38,12 +36,11 @@ const CountUpTimerView = ({ state, controls }: Props): React.JSX.Element => {
       )}
       <View style={styles.spacer} />
       <RitualControlsBar status={state.status} controls={controls} />
-    </View>
+    </SessionContainer>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { alignItems: 'center', padding: SPACING.xl },
   time: {
     fontSize: 64,
     fontWeight: '200',
@@ -58,7 +55,6 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
   },
   endButton: {
-    backgroundColor: colors.success,
     paddingVertical: SPACING.md,
     paddingHorizontal: SPACING.xl,
     borderRadius: BORDER_RADIUS.lg,

@@ -22,15 +22,22 @@ import type {
   RitualControls,
   RitualState,
 } from '../engine/types';
+import { MS_PER_SECOND } from '../engine/types';
 
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import type { SessionSurface } from './sessionSurface';
 import { useSessionSurface } from './sessionSurface';
+import {
+  PRIMARY_FILL,
+  SESSION_BUTTON_BASE,
+  SESSION_BUTTON_TEXT,
+  SaveButton,
+  SessionContainer,
+} from './shared';
 
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 
-const MS_PER_SECOND = 1000;
 /** Caps the instruction card so long copy stays readable on wide screens. */
 const INSTRUCTION_CARD_MAX_WIDTH = 340;
 
@@ -126,10 +133,7 @@ const MindfulAnchorView = ({ config, state, controls, onComplete }: Props): Reac
   const anchor = useAnchorState(config, controls, status, onComplete);
   const beginDisabled = config.require_option_choice && anchor.selectedOptionKey === null;
   return (
-    <View
-      style={[styles.container, { backgroundColor: surface.ground }]}
-      testID="mindful-anchor-view"
-    >
+    <SessionContainer testID="mindful-anchor-view">
       <InstructionCard instruction={config.instruction} surface={surface} />
       {status === 'idle' && config.options.length > 0 && (
         <OptionChooser
@@ -145,14 +149,22 @@ const MindfulAnchorView = ({ config, state, controls, onComplete }: Props): Reac
       ) : (
         <RitualControlsBar status={status} controls={controls} startLabel="Begin" />
       )}
-      {status === 'running' && <SaveButton onPress={anchor.handleSave} />}
+      {status === 'running' && (
+        <SaveButton
+          label="Save session"
+          accessibilityLabel="Save session"
+          onPress={anchor.handleSave}
+          testID="mindful-anchor-save"
+          style={{ marginTop: SPACING.lg }}
+        />
+      )}
       <ConfirmDialog
         visible={anchor.confirmVisible}
         seconds={anchor.elapsedSeconds}
         onCancel={anchor.hideConfirm}
         onConfirm={anchor.commit}
       />
-    </View>
+    </SessionContainer>
   );
 };
 
@@ -270,18 +282,6 @@ const BeginButton = ({ disabled, onPress }: BeginButtonProps): React.JSX.Element
   </Pressable>
 );
 
-const SaveButton = ({ onPress }: { onPress: () => void }): React.JSX.Element => (
-  <Pressable
-    style={styles.save}
-    onPress={onPress}
-    testID="mindful-anchor-save"
-    accessibilityRole="button"
-    accessibilityLabel="Save session"
-  >
-    <Text style={styles.saveText}>Save session</Text>
-  </Pressable>
-);
-
 interface ConfirmDialogProps {
   visible: boolean;
   seconds: number;
@@ -338,7 +338,6 @@ const ConfirmDialog = ({
 };
 
 const styles = StyleSheet.create({
-  container: { alignItems: 'center', padding: SPACING.xl },
   instructionCard: {
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.xl,
@@ -379,28 +378,8 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 2,
   },
-  begin: {
-    backgroundColor: colors.primary,
-    paddingVertical: SPACING.buttonV,
-    paddingHorizontal: SPACING.xxl,
-    borderRadius: BORDER_RADIUS.lg,
-    marginBottom: SPACING.xl,
-    minWidth: 220,
-    alignItems: 'center',
-    ...shadows.small,
-  },
-  beginText: { color: colors.text.light, fontSize: 18, fontWeight: '600' },
-  save: {
-    backgroundColor: colors.success,
-    paddingVertical: SPACING.buttonV,
-    paddingHorizontal: SPACING.xxl,
-    borderRadius: BORDER_RADIUS.lg,
-    marginTop: SPACING.lg,
-    minWidth: 220,
-    alignItems: 'center',
-    ...shadows.small,
-  },
-  saveText: { color: colors.text.light, fontSize: 18, fontWeight: '600' },
+  begin: { ...SESSION_BUTTON_BASE, ...PRIMARY_FILL, marginBottom: SPACING.xl },
+  beginText: { ...SESSION_BUTTON_TEXT },
   disabled: { opacity: 0.5 },
   backdrop: {
     flex: 1,

@@ -1,13 +1,12 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import type { TarotCard } from '../data/tarot';
 import type { RitualControls, RitualState } from '../engine/types';
 
-import { formatTime } from './formatTime';
-import RitualControlsBar from './RitualControlsBar';
 import type { SessionSurface } from './sessionSurface';
 import { useSessionSurface } from './sessionSurface';
+import { MeditationCardShell, SaveButton } from './shared';
 
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 
@@ -44,29 +43,20 @@ const TarotMeditationView = ({
   onSave,
 }: Props): React.JSX.Element => {
   const surface = useSessionSurface();
-  const showTimer =
-    state.status === 'paused' ||
-    state.status === 'complete' ||
-    (state.status === 'running' && !hideTimer);
   return (
-    <View
-      style={[styles.container, { backgroundColor: surface.ground }]}
-      testID="tarot-meditation-view"
-    >
-      <TarotCardFace card={card} surface={surface} />
-      {showTimer && (
-        <Text style={[styles.timer, { color: surface.text }]} testID="tarot-time-remaining">
-          {formatTime(state.remainingMs ?? 0)}
-        </Text>
-      )}
-      <TarotFooter
-        state={state}
-        controls={controls}
-        hideTimer={hideTimer}
-        onSave={onSave}
-        surface={surface}
-      />
-    </View>
+    <MeditationCardShell
+      state={state}
+      controls={controls}
+      hideTimer={hideTimer}
+      face={<TarotCardFace card={card} surface={surface} />}
+      completeFooter={<TarotSaveButton onSave={onSave} />}
+      testIDs={{
+        view: 'tarot-meditation-view',
+        timer: 'tarot-time-remaining',
+        begin: 'tarot-begin',
+        cancelLongpress: 'tarot-cancel-longpress',
+      }}
+    />
   );
 };
 
@@ -92,76 +82,20 @@ const TarotCardFace = ({ card, surface }: TarotCardFaceProps): React.JSX.Element
   </View>
 );
 
-interface FooterProps {
-  state: RitualState;
-  controls: RitualControls;
-  hideTimer: boolean;
-  onSave?: () => void;
-  surface: SessionSurface;
-}
-
-const TarotFooter = ({
-  state,
-  controls,
-  hideTimer,
-  onSave,
-  surface,
-}: FooterProps): React.JSX.Element => {
-  if (state.status === 'idle') {
-    return (
-      <Pressable
-        style={styles.begin}
-        onPress={controls.start}
-        testID="tarot-begin"
-        accessibilityRole="button"
-        accessibilityLabel="Begin meditation"
-      >
-        <Text style={styles.beginText}>Begin meditation</Text>
-      </Pressable>
-    );
-  }
-  if (state.status === 'running' && hideTimer) {
-    return (
-      <Pressable
-        style={[styles.longCancel, { borderColor: surface.textMuted }]}
-        onLongPress={controls.cancel}
-        delayLongPress={800}
-        testID="tarot-cancel-longpress"
-        accessibilityRole="button"
-        accessibilityLabel="Long-press to cancel meditation"
-        accessibilityHint="Hold to end the sit early without revealing the timer."
-      >
-        <Text style={[styles.longCancelText, { color: surface.textMuted }]}>Hold to cancel</Text>
-      </Pressable>
-    );
-  }
-  if (state.status === 'paused') {
-    return <RitualControlsBar status={state.status} controls={controls} startLabel="Begin" />;
-  }
-  if (state.status === 'complete') return <TarotSaveButton onSave={onSave} />;
-  // status === 'running' && !hideTimer — let the parent surface the standard
-  // controls bar; the timer is already visible above.
-  return <RitualControlsBar status={state.status} controls={controls} startLabel="Begin" />;
-};
-
 const TarotSaveButton = ({ onSave }: { onSave?: () => void }): React.JSX.Element => (
   <View style={styles.completeRow}>
-    <Pressable
-      style={[styles.save, !onSave && styles.saveDisabled]}
-      onPress={onSave}
-      disabled={!onSave}
-      testID="tarot-save"
-      accessibilityRole="button"
+    <SaveButton
+      label="Save session"
       accessibilityLabel="Save session and reflect"
+      disabled={!onSave}
+      onPress={onSave}
+      testID="tarot-save"
       accessibilityState={{ disabled: !onSave }}
-    >
-      <Text style={styles.saveText}>Save session</Text>
-    </Pressable>
+    />
   </View>
 );
 
 const styles = StyleSheet.create({
-  container: { alignItems: 'center', padding: SPACING.xl },
   card: {
     width: 260,
     minHeight: 360,
@@ -197,44 +131,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     paddingHorizontal: SPACING.sm,
   },
-  timer: {
-    fontSize: 36,
-    fontWeight: '300',
-    fontVariant: ['tabular-nums'],
-    marginBottom: SPACING.lg,
-  },
-  begin: {
-    backgroundColor: colors.primary,
-    paddingVertical: SPACING.buttonV,
-    paddingHorizontal: SPACING.xxl,
-    borderRadius: BORDER_RADIUS.lg,
-    minWidth: 220,
-    alignItems: 'center',
-    ...shadows.small,
-  },
-  beginText: { color: colors.text.light, fontSize: 18, fontWeight: '600' },
-  longCancel: {
-    paddingVertical: SPACING.md,
-    paddingHorizontal: SPACING.xl,
-    borderRadius: BORDER_RADIUS.lg,
-    borderWidth: 1,
-  },
-  longCancelText: {
-    fontSize: 13,
-    letterSpacing: 1,
-  },
   completeRow: { alignItems: 'center', marginTop: SPACING.md },
-  save: {
-    backgroundColor: colors.success,
-    paddingVertical: SPACING.buttonV,
-    paddingHorizontal: SPACING.xxl,
-    borderRadius: BORDER_RADIUS.lg,
-    minWidth: 220,
-    alignItems: 'center',
-    ...shadows.small,
-  },
-  saveDisabled: { opacity: 0.5 },
-  saveText: { color: colors.text.light, fontSize: 18, fontWeight: '600' },
 });
 
 export default TarotMeditationView;

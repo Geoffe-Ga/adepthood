@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import type {
   RitualControls,
@@ -12,8 +12,9 @@ import type {
 import RitualControlsBar from './RitualControlsBar';
 import type { SessionSurface } from './sessionSurface';
 import { useSessionSurface } from './sessionSurface';
+import { PrimaryButton, SaveButton, SessionContainer } from './shared';
 
-import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, shadows } from '@/design/tokens';
 
 /**
  * Canonical 5-4-3-2-1 grounding counts.
@@ -57,10 +58,7 @@ const SenseGroundingView = ({ config, state, controls, onSave }: Props): React.J
   // Show the advance button only once started; idle shows a primer instead of a dead button.
   const inProgress = (state.status === 'running' || state.status === 'paused') && !isComplete;
   return (
-    <View
-      style={[styles.container, { backgroundColor: surface.ground }]}
-      testID="sense-grounding-view"
-    >
+    <SessionContainer testID="sense-grounding-view">
       <SenseHeader prompt={inProgress ? activePrompt : null} surface={surface} />
       <SenseBody
         isComplete={isComplete}
@@ -72,7 +70,7 @@ const SenseGroundingView = ({ config, state, controls, onSave }: Props): React.J
         surface={surface}
       />
       <RitualControlsBar status={state.status} controls={controls} startLabel="Begin grounding" />
-    </View>
+    </SessionContainer>
   );
 };
 
@@ -145,17 +143,14 @@ const CompleteCard = ({ onSave, surface }: CompleteCardProps): React.JSX.Element
     <Text style={[styles.completeBody, { color: surface.textSoft }]}>
       You moved through all five senses. Save the session below.
     </Text>
-    <Pressable
-      style={[styles.save, !onSave && styles.saveDisabled]}
-      onPress={onSave}
-      disabled={!onSave}
-      testID="sense-grounding-save"
-      accessibilityRole="button"
+    <SaveButton
+      label="Save session"
       accessibilityLabel="Save session and reflect"
+      disabled={!onSave}
+      onPress={onSave}
+      testID="sense-grounding-save"
       accessibilityState={{ disabled: !onSave }}
-    >
-      <Text style={styles.saveText}>Save session</Text>
-    </Pressable>
+    />
   </View>
 );
 
@@ -166,21 +161,18 @@ interface AdvanceButtonProps {
 }
 
 const AdvanceButton = ({ sense, canAdvance, onTap }: AdvanceButtonProps): React.JSX.Element => (
-  <Pressable
-    style={[styles.advance, !canAdvance && styles.advanceDisabled]}
-    onPress={canAdvance ? onTap : undefined}
-    disabled={!canAdvance}
-    testID="sense-grounding-advance"
-    accessibilityRole="button"
+  <PrimaryButton
+    label={`Mark ${sense} done`}
     accessibilityLabel={`Mark ${sense} done`}
+    disabled={!canAdvance}
+    onPress={onTap}
+    testID="sense-grounding-advance"
+    style={{ marginBottom: SPACING.xl }}
     accessibilityState={{ disabled: !canAdvance }}
-  >
-    <Text style={styles.advanceText}>{`Mark ${sense} done`}</Text>
-  </Pressable>
+  />
 );
 
 const styles = StyleSheet.create({
-  container: { alignItems: 'center', padding: SPACING.xl },
   header: { alignItems: 'center', marginBottom: SPACING.xl },
   badge: {
     fontSize: 36,
@@ -202,22 +194,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.lg,
     lineHeight: 24,
   },
-  advance: {
-    backgroundColor: colors.primary,
-    paddingVertical: SPACING.buttonV,
-    paddingHorizontal: SPACING.xxl,
-    borderRadius: BORDER_RADIUS.lg,
-    marginBottom: SPACING.xl,
-    minWidth: 220,
-    alignItems: 'center',
-    ...shadows.small,
-  },
-  advanceDisabled: { opacity: 0.5 },
-  advanceText: {
-    color: colors.text.light,
-    fontSize: 18,
-    fontWeight: '600',
-  },
   completeCard: {
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.xl,
@@ -236,17 +212,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: SPACING.lg,
   },
-  save: {
-    backgroundColor: colors.success,
-    paddingVertical: SPACING.buttonV,
-    paddingHorizontal: SPACING.xxl,
-    borderRadius: BORDER_RADIUS.lg,
-    minWidth: 220,
-    alignItems: 'center',
-    ...shadows.small,
-  },
-  saveDisabled: { opacity: 0.5 },
-  saveText: { color: colors.text.light, fontSize: 18, fontWeight: '600' },
 });
 
 export default SenseGroundingView;
