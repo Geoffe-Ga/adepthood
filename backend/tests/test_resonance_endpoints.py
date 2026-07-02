@@ -237,6 +237,25 @@ async def test_normal_entry_returns_no_care(
 
 
 @pytest.mark.asyncio
+async def test_denial_entry_returns_no_care(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit denial of distress is unchanged: care is None, marginalia intact."""
+    _fake_llm(
+        monkeypatch,
+        {"kind": "theme", "quote": "I would never kill myself", "note": "You are resolute."},
+    )
+    headers = await _signup(async_client, "denial")
+    entry_id = await _create_entry(async_client, headers, body="I would never kill myself")
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["care"] is None
+    assert len(body["marginalia"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_distress_entry_returns_care_alongside_reflection(
     async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
