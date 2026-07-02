@@ -24,9 +24,9 @@ jest.mock('@/api', () => {
   };
 });
 
-const mockIsContractionSignalActive = jest.fn() as jest.MockedFunction<() => boolean>;
+const mockUseContractionSignalActive = jest.fn() as jest.MockedFunction<() => boolean>;
 jest.mock('../contractionSignal', () => ({
-  isContractionSignalActive: () => mockIsContractionSignalActive(),
+  useContractionSignalActive: () => mockUseContractionSignalActive(),
 }));
 
 const mockSaveDismissed = jest.fn() as jest.MockedFunction<() => Promise<void>>;
@@ -74,7 +74,7 @@ beforeEach(() => {
   mockPause.mockReset();
   mockResume.mockReset();
   mockLeave.mockReset();
-  mockIsContractionSignalActive.mockReset();
+  mockUseContractionSignalActive.mockReset();
   mockSaveDismissed.mockReset();
   mockLoadDismissed.mockReset();
 
@@ -83,7 +83,7 @@ beforeEach(() => {
   mockPause.mockResolvedValue(arc({ paused: true }));
   mockResume.mockResolvedValue(arc({ paused: false }));
   mockLeave.mockResolvedValue(arc());
-  mockIsContractionSignalActive.mockReturnValue(false);
+  mockUseContractionSignalActive.mockReturnValue(false);
   mockSaveDismissed.mockResolvedValue(undefined);
   mockLoadDismissed.mockResolvedValue(false);
 });
@@ -99,7 +99,7 @@ describe('useMettaReturn', () => {
   });
 
   it('offerVisible is false when the contraction signal is inactive, even if eligible', async () => {
-    mockIsContractionSignalActive.mockReturnValue(false);
+    mockUseContractionSignalActive.mockReturnValue(false);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
     const { result } = renderHook(() => useMettaReturn());
     await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
@@ -107,14 +107,22 @@ describe('useMettaReturn', () => {
   });
 
   it('offerVisible is true when eligible, no arc, and the contraction signal is active', async () => {
-    mockIsContractionSignalActive.mockReturnValue(true);
+    mockUseContractionSignalActive.mockReturnValue(true);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
     const { result } = renderHook(() => useMettaReturn());
     await waitFor(() => expect(result.current.offerVisible).toBe(true));
   });
 
+  it('offerVisible is false when ineligible, even with an active contraction signal', async () => {
+    mockUseContractionSignalActive.mockReturnValue(true);
+    mockState.mockResolvedValue(stateResult({ eligible: false, arc: null }));
+    const { result } = renderHook(() => useMettaReturn());
+    await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
+    expect(result.current.offerVisible).toBe(false);
+  });
+
   it('offerVisible is false when an arc already exists, even with an active signal', async () => {
-    mockIsContractionSignalActive.mockReturnValue(true);
+    mockUseContractionSignalActive.mockReturnValue(true);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: arc() }));
     const { result } = renderHook(() => useMettaReturn());
     await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
@@ -123,7 +131,7 @@ describe('useMettaReturn', () => {
   });
 
   it('dismissOffer hides the offer and persists the dismissal', async () => {
-    mockIsContractionSignalActive.mockReturnValue(true);
+    mockUseContractionSignalActive.mockReturnValue(true);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
     const { result } = renderHook(() => useMettaReturn());
     await waitFor(() => expect(result.current.offerVisible).toBe(true));
@@ -137,7 +145,7 @@ describe('useMettaReturn', () => {
   });
 
   it('a persisted dismissal keeps the offer hidden on reload', async () => {
-    mockIsContractionSignalActive.mockReturnValue(true);
+    mockUseContractionSignalActive.mockReturnValue(true);
     mockLoadDismissed.mockResolvedValue(true);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
     const { result } = renderHook(() => useMettaReturn());
