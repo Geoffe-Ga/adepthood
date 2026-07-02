@@ -67,6 +67,17 @@ describe('API client request composition', () => {
 
   it('creates practice session with POST /practice-sessions/', async () => {
     const session = { user_practice_id: 1, duration_minutes: 10 };
+    // create() validates against practiceSessionResponseSchema, so return that shape.
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: 5,
+        user_practice_id: 1,
+        duration_minutes: 10,
+        timestamp: '2026-04-28T10:00:00.000Z',
+        reflection: null,
+      }),
+    });
     await api.practiceSessions.create(session);
     expect(fetch).toHaveBeenCalledWith(
       `${mockBaseUrl}/practice-sessions/`,

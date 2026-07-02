@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { flattenGoalCompletions } from './flattenGoalCompletions';
 import {
+  apiGoalGroupSchema,
   authResponseSchema,
   contentItemSchema,
   acceptSuggestionResultSchema,
@@ -18,10 +19,12 @@ import {
   passwordResetAcceptedSchema,
   practiceItemSchema,
   practiceRecipeSchema,
+  practiceSessionResponseSchema,
   practiceTagSchema,
   promptListResponseSchema,
   resonanceResponseSchema,
   stageIntroSchema,
+  userPracticeSchema,
   stageProgressRecordSchema,
   stageSchema,
   timezoneReadSchema,
@@ -1060,10 +1063,16 @@ export const goals = {
 // Goal group client
 export const goalGroups = {
   list(token?: string): Promise<ApiGoalGroup[]> {
-    return request<ApiGoalGroup[]>('/goal-groups/', { token });
+    return request<ApiGoalGroup[]>('/goal-groups/', {
+      token,
+      schema: z.array(apiGoalGroupSchema) as unknown as z.ZodType<ApiGoalGroup[]>,
+    });
   },
   get(groupId: number, token?: string): Promise<ApiGoalGroup> {
-    return request<ApiGoalGroup>(`/goal-groups/${groupId}`, { token });
+    return request<ApiGoalGroup>(`/goal-groups/${groupId}`, {
+      token,
+      schema: apiGoalGroupSchema as unknown as z.ZodType<ApiGoalGroup>,
+    });
   },
 };
 
@@ -1869,10 +1878,18 @@ export const practices = {
 
 export const userPractices = {
   create(payload: UserPracticeCreate, token?: string): Promise<UserPractice> {
-    return request<UserPractice>('/user-practices/', { method: 'POST', body: payload, token });
+    return request<UserPractice>('/user-practices/', {
+      method: 'POST',
+      body: payload,
+      token,
+      schema: userPracticeSchema as unknown as z.ZodType<UserPractice>,
+    });
   },
   list(token?: string): Promise<UserPractice[]> {
-    return request<UserPractice[]>('/user-practices/', { token });
+    return request<UserPractice[]>('/user-practices/', {
+      token,
+      schema: z.array(userPracticeSchema) as unknown as z.ZodType<UserPractice[]>,
+    });
   },
   /**
    * PATCH the per-user overrides (custom name + mode_config_override).
@@ -1892,6 +1909,7 @@ export const userPractices = {
       method: 'PATCH',
       body: payload,
       token,
+      schema: userPracticeSchema as unknown as z.ZodType<UserPractice>,
     });
   },
 };
@@ -2044,6 +2062,7 @@ export const practiceRecipes = {
     return request<UserPractice>(`/practice-recipes/${recipeId}/apply-to/${userPracticeId}`, {
       method: 'POST',
       token,
+      schema: userPracticeSchema as unknown as z.ZodType<UserPractice>,
     });
   },
 };
@@ -2094,6 +2113,7 @@ export const practiceSessions = {
       method: 'POST',
       body: payload,
       token,
+      schema: practiceSessionResponseSchema as unknown as z.ZodType<PracticeSessionResponse>,
     });
   },
   weekCount(token?: string): Promise<WeekCountResponse> {

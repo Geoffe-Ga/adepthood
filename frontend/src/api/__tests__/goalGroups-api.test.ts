@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import { goalGroups, ApiError } from '../index';
+import { goalGroups, ApiError, ApiValidationError } from '../index';
 
 const mockFetch = jest.fn() as jest.Mock;
 global.fetch = mockFetch;
@@ -53,5 +53,33 @@ describe('goalGroups API client', () => {
     );
 
     await expect(goalGroups.list('bad-token')).rejects.toThrow(ApiError);
+  });
+
+  test('goalGroups.list rejects a drifted row missing shared_template', async () => {
+    const drifted = [{ id: 1, name: 'Meditation Goals', goals: [] }];
+    mockFetch.mockReturnValueOnce(jsonResponse(drifted));
+
+    await expect(goalGroups.list('test-token')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
+  test('goalGroups.list rejects a row with a wrong-typed name', async () => {
+    const drifted = [{ id: 1, name: 123, shared_template: true, goals: [] }];
+    mockFetch.mockReturnValueOnce(jsonResponse(drifted));
+
+    await expect(goalGroups.list('test-token')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
+  test('goalGroups.get rejects a payload missing shared_template', async () => {
+    const drifted = { id: 1, name: 'Meditation Goals', goals: [] };
+    mockFetch.mockReturnValueOnce(jsonResponse(drifted));
+
+    await expect(goalGroups.get(1, 'test-token')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
+  test('goalGroups.get rejects a payload with a wrong-typed name', async () => {
+    const drifted = { id: 1, name: 123, shared_template: true, goals: [] };
+    mockFetch.mockReturnValueOnce(jsonResponse(drifted));
+
+    await expect(goalGroups.get(1, 'test-token')).rejects.toBeInstanceOf(ApiValidationError);
   });
 });
