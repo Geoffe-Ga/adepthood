@@ -105,8 +105,12 @@ function useRefreshAction(
         error: null,
       }));
       try {
+        // ``includeMine`` matters: a user-created practice is an unapproved
+        // draft the backend lets its author select, but the approved-only
+        // list omits it — without the flag the active row's practice never
+        // resolves and the screen wrongly shows the "No practice yet" state.
         const [practiceList, userPracticeList] = await Promise.all([
-          practices.listAll(stageNumber),
+          practices.listAll({ stageNumber, includeMine: true }),
           userPractices.list(),
         ]);
         if (!mountedRef.current) return;
