@@ -21,6 +21,22 @@ human support (added later), while a false positive would shame someone in their
 darkness. The phrase lists below are explicit and auditable rather than clever;
 add to them only with a corresponding negative test guarding ordinary darkness.
 
+Negation is handled deterministically, not with a parser. Before matching, the
+Unicode curly apostrophe (U+2019) is folded to ASCII ``'`` so iOS smart
+punctuation matches the phrase lists. A candidate phrase match is suppressed only
+when a negator (e.g. "never", "not", "no plans to", "don't") appears in the
+window of :data:`_NEGATION_WINDOW_WORDS` whitespace tokens strictly *before* the
+match, within the same clause (the window is clipped at the last ``.``, ``!``,
+``?``, ``;``, or ``,``, so a negator in an earlier clause cannot suppress genuine
+intent in a later one). Logical negators ("never", "not", "don't", …) are counted
+by parity: an odd count negates, an even count (including zero) does not, so
+double negation ("I can't say I don't want to die") still flags. Temporal
+negators ("used to", "no longer") negate only when they directly abut the match,
+so a present-tense signal is never suppressed by a distant one ("more than I used
+to I want to die" still flags). Because the window is strictly before the match, a
+negator that is itself part of a positive phrase (the "don't" in "don't want to
+be alive anymore") can never suppress that phrase.
+
 Purity: no FastAPI, SQLModel, or network/LLM imports — only the standard library.
 """
 
@@ -114,6 +130,61 @@ _COMPILED: tuple[tuple[DistressCategory, re.Pattern[str]], ...] = tuple(
     for category, phrases in _PATTERNS
 )
 
+# Unicode curly apostrophe (iOS smart punctuation) folded to ASCII before matching.
+_CURLY_APOSTROPHE = "\N{RIGHT SINGLE QUOTATION MARK}"
+
+# Number of whitespace tokens before a match inspected for a negator.
+_NEGATION_WINDOW_WORDS = 5
+
+# Logical negators that invert intent wherever they sit in the preceding window;
+# counted by parity. Multi-word alternatives come first so they win over their
+# single-word prefixes. Bare "no" is excluded: it would negate "No. I want to
+# kill myself".
+_LOGICAL_NEGATORS = re.compile(
+    r"\b(?:no plans? to|no intention|no desire|never|not|cannot"
+    r"|don'?t|won'?t|wouldn'?t|couldn'?t|can'?t|didn'?t|doesn'?t|haven'?t"
+    r"|isn'?t|ain'?t)\b",
+    re.IGNORECASE,
+)
+
+# Temporal negators only negate when they directly abut the matched phrase
+# ("I used to cut myself"). A distant one must not suppress a present-tense signal
+# ("more than I used to I want to die" still flags), so they are matched only at
+# the very end of the window rather than counted anywhere in it.
+_TEMPORAL_NEGATOR = re.compile(r"\b(?:no longer|used to)\s*$", re.IGNORECASE)
+
+# Clause boundaries clip the preceding window. Commas count: a negator in an
+# earlier clause must not suppress genuine intent in a later one, so a mixed
+# statement ("I would never hurt myself, but I want to kill him") still flags.
+_CLAUSE_BOUNDARY = re.compile(r"[.!?;,]")
+
+
+def _tail_window(prefix: str) -> str:
+    """Return the last :data:`_NEGATION_WINDOW_WORDS` tokens of ``prefix``.
+
+    ``prefix`` is first clipped to the current clause — only the text after the
+    last clause-boundary character (``.``, ``!``, ``?``, ``;``, ``,``) is kept.
+    """
+    boundaries = list(_CLAUSE_BOUNDARY.finditer(prefix))
+    if boundaries:
+        prefix = prefix[boundaries[-1].end() :]
+    return " ".join(prefix.split()[-_NEGATION_WINDOW_WORDS:])
+
+
+def _is_negated(normalized: str, match_start: int) -> bool:
+    """Return whether the match at ``match_start`` is negated by preceding text.
+
+    Only text strictly before the match is inspected, so a negator that is part of
+    a positive phrase cannot self-suppress. An odd number of logical negators in
+    the window negates; an even number (including zero) does not, so double
+    negation still flags. A temporal negator negates only when it directly abuts
+    the match.
+    """
+    window = _tail_window(normalized[:match_start])
+    if _TEMPORAL_NEGATOR.search(window):
+        return True
+    return len(_LOGICAL_NEGATORS.findall(window)) % 2 == 1
+
 
 def assess_distress(text: str) -> DistressSignal:
     """Screen ``text`` for an acute-distress signal; return a typed result.
@@ -127,13 +198,17 @@ def assess_distress(text: str) -> DistressSignal:
     Matching is conservative by design (see the module docstring): it fires only
     on explicit intent/action phrasing and lets ordinary sadness, grief,
     emptiness, and "dark night" reflection pass through unflagged, so the app does
-    not pathologize ordinary darkness. This is a screen, not a diagnosis, and
-    introduces no medication, treatment, or medical advice.
+    not pathologize ordinary darkness. Explicit denials ("I would never kill
+    myself") are suppressed by preceding-window negation handling. This is a
+    screen, not a diagnosis, and introduces no medication, treatment, or medical
+    advice.
     """
-    normalized = re.sub(r"\s+", " ", text).strip().lower()
+    folded = text.replace(_CURLY_APOSTROPHE, "'")
+    normalized = re.sub(r"\s+", " ", folded).strip().lower()
     if not normalized:
         return _NONE
     for category, pattern in _COMPILED:
-        if pattern.search(normalized):
-            return DistressSignal(level="elevated", category=category)
+        for match in pattern.finditer(normalized):
+            if not _is_negated(normalized, match.start()):
+                return DistressSignal(level="elevated", category=category)
     return _NONE

@@ -79,3 +79,57 @@ def test_matching_normalizes_internal_whitespace() -> None:
 def test_no_substring_false_positive_on_word_boundary() -> None:
     # "skill" contains "kill" but must not match "kill myself".
     assert assess_distress("I want to upskill myself professionally.").level == "none"
+
+
+# iOS smart punctuation emits this curly apostrophe; the screen must treat it like
+# a straight one. Built via a named escape so it reads unambiguously in source.
+_CURLY = "\N{RIGHT SINGLE QUOTATION MARK}"
+
+# Explicit denials of acute-distress phrasing. A negated statement must not flag
+# — matching only the negation-blind phrase would wrongly pathologize a denial.
+_NEGATED_DENIALS = [
+    "I would never kill myself",
+    "I do not want to die",
+    "I have no plans to kill myself",
+    "I am not going to hurt myself",
+    "I promised I would never cut myself again",
+    "I don't feel suicidal at all anymore",
+    "I won't hurt myself",
+    "I would never cut myself",
+    "I would never kill him",
+    "I don't want to hurt them",
+    "I'm not going to stop taking my meds",
+    "I would never quit my antidepressants",
+    "I no longer want to die",
+    "I used to cut myself",
+    f"I don{_CURLY}t want to die",
+]
+
+
+@pytest.mark.parametrize("text", _NEGATED_DENIALS)
+def test_negated_denials_do_not_flag(text: str) -> None:
+    assert assess_distress(text) == DistressSignal(level="none", category=DistressCategory.NONE)
+
+
+@pytest.mark.parametrize(
+    ("text", "category"),
+    [
+        ("I want to kill myself tonight", DistressCategory.SUICIDAL_INTENT),
+        ("I can't say I don't want to die", DistressCategory.SUICIDAL_INTENT),
+        (
+            "I would never hurt myself, but I want to kill him",
+            DistressCategory.INTENT_TO_HARM,
+        ),
+        (
+            "I said never before, but tonight I want to kill myself",
+            DistressCategory.SUICIDAL_INTENT,
+        ),
+        ("No. I want to kill myself tonight.", DistressCategory.SUICIDAL_INTENT),
+        ("I don't want to be alive anymore", DistressCategory.SUICIDAL_INTENT),
+        (f"I don{_CURLY}t want to be alive anymore", DistressCategory.SUICIDAL_INTENT),
+        ("Now more than I used to I want to die", DistressCategory.SUICIDAL_INTENT),
+        ("I am not okay and lonely and I want to die", DistressCategory.SUICIDAL_INTENT),
+    ],
+)
+def test_negation_does_not_suppress_genuine_signals(text: str, category: DistressCategory) -> None:
+    assert assess_distress(text) == DistressSignal(level="elevated", category=category)
