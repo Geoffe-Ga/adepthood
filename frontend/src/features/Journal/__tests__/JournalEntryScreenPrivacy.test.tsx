@@ -4,15 +4,10 @@ import { act, fireEvent, render, waitFor, within } from '@testing-library/react-
 import React from 'react';
 
 /**
- * RED tests for privacy classification control in JournalEntryScreen (#896).
- *
- * Failures until the implementation-specialist:
- * 1. Creates ``PrivacyTierControl`` and mounts it in ``WritingColumn``.
- * 2. Adds ``classification`` to ``JournalMessageCreate``, ``JournalEntryUpdate``,
- *    ``JournalMessage``, and ``ResonanceResponse`` in ``frontend/src/api/index.ts``.
- * 3. Passes ``classification`` through ``useJournalAutosave`` / ``writeEntry``.
- * 4. Wires ``GetResonanceButton disabled`` when ``classification === 'intimate'``
- *    and shows ``privacy-resonance-reason`` text.
+ * Verifies the privacy classification wiring in ``JournalEntryScreen``:
+ * ``PrivacyTierControl`` is mounted in the writing column, the chosen
+ * classification persists through autosave / create / update, and resonance is
+ * gated off for intimate entries.
  */
 import type { JournalMessage, ResonanceResponse } from '@/api';
 import { DEFAULT_IDLE_DELAY_MS } from '@/hooks/useIdle';

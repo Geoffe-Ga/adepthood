@@ -1090,6 +1090,7 @@ export type JournalTag = 'freeform' | 'stage_reflection' | 'practice_note' | 'ha
  * Privacy classification for a journal entry (mirrors the backend enum). An
  * ``intimate`` entry is never sent to AI: resonance is client-side gated off
  * for it. ``personal`` is the backend default; ``public`` is the most open.
+ * This is the canonical privacy-tier type; UI aliases (``PrivacyTier``) point here.
  */
 export type JournalClassification = 'public' | 'personal' | 'intimate';
 

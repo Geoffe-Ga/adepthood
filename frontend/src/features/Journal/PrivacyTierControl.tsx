@@ -15,11 +15,13 @@ import { Text, TouchableOpacity, View } from 'react-native';
 
 import styles from './JournalEntry.styles';
 
-/** Privacy tier for a journal entry (mirrors the backend classification enum). */
-export type PrivacyTier = 'public' | 'personal' | 'intimate';
+import type { JournalClassification } from '@/api';
 
-/** The backend default tier, used when no ``value`` is supplied. */
-const DEFAULT_TIER: PrivacyTier = 'personal';
+/** Privacy tier for a journal entry; alias of the canonical API type. */
+export type PrivacyTier = JournalClassification;
+
+/** The shared default privacy tier, used when no ``value`` is supplied. */
+export const DEFAULT_TIER: PrivacyTier = 'personal';
 
 /** One-line copy shown under the control when ``intimate`` is selected. */
 const INTIMATE_EXPLAINER = 'Intimate entries are never sent to AI.';
