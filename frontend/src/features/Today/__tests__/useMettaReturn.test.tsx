@@ -167,7 +167,7 @@ describe('useMettaReturn', () => {
     await waitFor(() => expect(result.current.arc).not.toBeNull());
 
     await act(async () => {
-      await result.current.pause().catch(() => undefined);
+      await expect(result.current.pause()).rejects.toThrow('network error');
     });
 
     expect(mockPause).toHaveBeenCalledTimes(1);

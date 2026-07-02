@@ -528,6 +528,11 @@ async def test_cross_user_lifecycle_posts_return_404_never_mutate_other_arc(
         HTTPStatus.NOT_FOUND
     )
 
+    # Bob's read path is isolated too: GET never surfaces Alice's active arc.
+    bob_get = await async_client.get(_BASE_URL, headers=bob_headers)
+    assert bob_get.status_code == HTTPStatus.OK
+    assert bob_get.json()["arc"] is None
+
     # Alice's arc remains untouched: still active, unpaused.
     alice_get = await async_client.get(_BASE_URL, headers=alice_headers)
     assert alice_get.status_code == HTTPStatus.OK
