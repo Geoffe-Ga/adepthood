@@ -1,6 +1,6 @@
 /** Session view for `random_interval_bell`: schedules its own bells (engine cues are empty). */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
 
 import { createExpoAudioAdapter } from '../engine/adapters/audio';
 import type {
@@ -10,15 +10,14 @@ import type {
   RitualControls,
   RitualState,
 } from '../engine/types';
-import { RANDOM_BELL_MAX_BELLS_CEILING, SECONDS_PER_MINUTE } from '../engine/types';
+import { MS_PER_SECOND, RANDOM_BELL_MAX_BELLS_CEILING, SECONDS_PER_MINUTE } from '../engine/types';
 
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import { useSessionSurface } from './sessionSurface';
+import { SessionContainer } from './shared';
 
 import { SPACING } from '@/design/tokens';
-
-const MS_PER_SECOND = 1000;
 
 interface Props {
   config: RandomIntervalBellConfig;
@@ -160,10 +159,7 @@ const RandomIntervalBellView = ({
   const total = schedule?.offsets.length ?? 0;
   const nextHint = nextBellHint(schedule, struckCount, state.elapsedMs, state.status);
   return (
-    <View
-      style={[styles.container, { backgroundColor: surface.ground }]}
-      testID="random-interval-bell-view"
-    >
+    <SessionContainer testID="random-interval-bell-view" style={styles.fill}>
       <Text style={[styles.label, { color: surface.textSoft }]}>elapsed</Text>
       <Text style={[styles.time, { color: surface.text }]} testID="random-interval-bell-elapsed">
         {formatTime(state.elapsedMs)}
@@ -177,7 +173,7 @@ const RandomIntervalBellView = ({
         </Text>
       )}
       <RitualControlsBar status={state.status} controls={controls} />
-    </View>
+    </SessionContainer>
   );
 };
 
@@ -196,7 +192,7 @@ function nextBellHint(
 }
 
 const styles = StyleSheet.create({
-  container: { alignItems: 'center', padding: SPACING.xl, flex: 1 },
+  fill: { flex: 1 },
   label: {
     fontSize: 14,
     textTransform: 'uppercase',

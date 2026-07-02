@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { decompose, totalSteps } from '../engine/tallied';
 import type { TalliedPosition } from '../engine/tallied';
@@ -8,8 +8,9 @@ import type { RitualControls, RitualState, TalliedGroundingConfig } from '../eng
 import RitualControlsBar from './RitualControlsBar';
 import type { SessionSurface } from './sessionSurface';
 import { useSessionSurface } from './sessionSurface';
+import { PrimaryButton, SaveButton, SessionContainer } from './shared';
 
-import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, shadows } from '@/design/tokens';
 
 /**
  * `TalliedGroundingView` drives the Find Shapes / Find Colors ritual UX.
@@ -36,10 +37,7 @@ const TalliedGroundingView = ({ config, state, controls, onSave }: Props): React
   const position = isComplete ? null : decompose(state.currentStepIndex, config);
   const canAdvance = state.status === 'running' && !isComplete;
   return (
-    <View
-      style={[styles.container, { backgroundColor: surface.ground }]}
-      testID="tallied-grounding-view"
-    >
+    <SessionContainer testID="tallied-grounding-view">
       <TalliedHeader config={config} position={position} surface={surface} />
       {position === null ? (
         <CompleteCard onSave={onSave} surface={surface} />
@@ -52,7 +50,7 @@ const TalliedGroundingView = ({ config, state, controls, onSave }: Props): React
         />
       )}
       <RitualControlsBar status={state.status} controls={controls} startLabel="Begin grounding" />
-    </View>
+    </SessionContainer>
   );
 };
 
@@ -94,17 +92,14 @@ const CompleteCard = ({ onSave, surface }: CompleteCardProps): React.JSX.Element
     <Text style={[styles.completeBody, { color: surface.textSoft }]}>
       You tallied every round. Save the session below.
     </Text>
-    <Pressable
-      style={[styles.save, !onSave && styles.saveDisabled]}
-      onPress={onSave}
-      disabled={!onSave}
-      testID="tallied-grounding-save"
-      accessibilityRole="button"
+    <SaveButton
+      label="Save session"
       accessibilityLabel="Save session and reflect"
+      disabled={!onSave}
+      onPress={onSave}
+      testID="tallied-grounding-save"
       accessibilityState={{ disabled: !onSave }}
-    >
-      <Text style={styles.saveText}>Save session</Text>
-    </Pressable>
+    />
   </View>
 );
 
@@ -128,23 +123,20 @@ const ActivePrompt = ({
       <Text style={[styles.prompt, { color: surface.text }]} testID="tallied-grounding-prompt">
         {promptText}
       </Text>
-      <Pressable
-        style={[styles.advance, !canAdvance && styles.advanceDisabled]}
-        onPress={canAdvance ? onTap : undefined}
-        disabled={!canAdvance}
-        testID="tallied-grounding-advance"
-        accessibilityRole="button"
+      <PrimaryButton
+        label="I found one"
         accessibilityLabel={`Tally ${category.label}`}
+        disabled={!canAdvance}
+        onPress={onTap}
+        testID="tallied-grounding-advance"
+        style={{ marginBottom: SPACING.xl }}
         accessibilityState={{ disabled: !canAdvance }}
-      >
-        <Text style={styles.advanceText}>I found one</Text>
-      </Pressable>
+      />
     </>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { alignItems: 'center', padding: SPACING.xl },
   header: { alignItems: 'center', marginBottom: SPACING.xl },
   badge: {
     fontSize: 36,
@@ -164,22 +156,6 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.xxl,
     paddingHorizontal: SPACING.lg,
   },
-  advance: {
-    backgroundColor: colors.primary,
-    paddingVertical: SPACING.buttonV,
-    paddingHorizontal: SPACING.xxl,
-    borderRadius: BORDER_RADIUS.lg,
-    marginBottom: SPACING.xl,
-    minWidth: 220,
-    alignItems: 'center',
-    ...shadows.small,
-  },
-  advanceDisabled: { opacity: 0.5 },
-  advanceText: {
-    color: colors.text.light,
-    fontSize: 18,
-    fontWeight: '600',
-  },
   completeCard: {
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.xl,
@@ -198,17 +174,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: SPACING.lg,
   },
-  save: {
-    backgroundColor: colors.success,
-    paddingVertical: SPACING.buttonV,
-    paddingHorizontal: SPACING.xxl,
-    borderRadius: BORDER_RADIUS.lg,
-    minWidth: 220,
-    alignItems: 'center',
-    ...shadows.small,
-  },
-  saveDisabled: { opacity: 0.5 },
-  saveText: { color: colors.text.light, fontSize: 18, fontWeight: '600' },
 });
 
 export default TalliedGroundingView;

@@ -266,6 +266,7 @@ export type EngineAction =
   | { type: 'ADVANCE_STEP' }
   | { type: 'CONFIG_CHANGED' };
 
+export const MS_PER_SECOND = 1000;
 export const MS_PER_MINUTE = 60_000;
 export const SECONDS_PER_MINUTE = 60;
 export const DEFAULT_TAROT_MINUTES = 5;

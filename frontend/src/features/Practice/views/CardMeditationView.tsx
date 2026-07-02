@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { ImageSourcePropType } from 'react-native';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
 
 import { resolveCardImage } from '../data/assetResolver';
 import type { PickedCard } from '../data/resolveCard';
@@ -8,9 +8,7 @@ import { pickCard } from '../data/resolveCard';
 import type { CardMeditationCard, CardMeditationConfig } from '../engine/types';
 import type { RitualControls, RitualState } from '../engine/types';
 
-import { formatTime } from './formatTime';
-import RitualControlsBar from './RitualControlsBar';
-import { useSessionSurface } from './sessionSurface';
+import { MeditationCardShell } from './shared';
 
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 
@@ -50,36 +48,23 @@ const CardMeditationView = ({
   controls,
   picked: pickedProp,
 }: Props): React.JSX.Element => {
-  const surface = useSessionSurface();
   const [picked] = useState<PickedCard>(() => pickedProp ?? pickCard(config));
   const reveal = config.reveal_after_meditation ?? false;
   const hideTimer = config.hide_timer_during_meditation ?? true;
   const showCard = !reveal || state.status === 'complete';
-  const showTimer =
-    state.status === 'paused' ||
-    state.status === 'complete' ||
-    (state.status === 'running' && !hideTimer);
   return (
-    <View
-      style={[styles.container, { backgroundColor: surface.ground }]}
-      testID="card-meditation-view"
-    >
-      {showCard ? <CardFace card={picked.card} /> : <RevealPlaceholder />}
-      {showTimer && (
-        <Text
-          style={[styles.timer, { color: surface.text }]}
-          testID="card-meditation-time-remaining"
-        >
-          {formatTime(state.remainingMs ?? 0)}
-        </Text>
-      )}
-      <CardFooter
-        state={state}
-        controls={controls}
-        hideTimer={hideTimer}
-        cancelTint={surface.textMuted}
-      />
-    </View>
+    <MeditationCardShell
+      state={state}
+      controls={controls}
+      hideTimer={hideTimer}
+      face={showCard ? <CardFace card={picked.card} /> : <RevealPlaceholder />}
+      testIDs={{
+        view: 'card-meditation-view',
+        timer: 'card-meditation-time-remaining',
+        begin: 'card-meditation-begin',
+        cancelLongpress: 'card-meditation-cancel-longpress',
+      }}
+    />
   );
 };
 
@@ -129,48 +114,6 @@ const CardFace = ({ card }: { card: CardMeditationCard }): React.JSX.Element => 
   );
 };
 
-interface FooterProps {
-  state: RitualState;
-  controls: RitualControls;
-  hideTimer: boolean;
-  /** Surface-aware tint for the timer-hidden long-press cancel affordance. */
-  cancelTint: string;
-}
-
-const CardFooter = ({ state, controls, hideTimer, cancelTint }: FooterProps): React.JSX.Element => {
-  if (state.status === 'idle') {
-    return (
-      <Pressable
-        style={styles.begin}
-        onPress={controls.start}
-        testID="card-meditation-begin"
-        accessibilityRole="button"
-        accessibilityLabel="Begin meditation"
-      >
-        <Text style={styles.beginText}>Begin meditation</Text>
-      </Pressable>
-    );
-  }
-  if (state.status === 'running' && hideTimer) {
-    return (
-      <Pressable
-        style={[styles.longCancel, { borderColor: cancelTint }]}
-        onLongPress={controls.cancel}
-        delayLongPress={800}
-        testID="card-meditation-cancel-longpress"
-        accessibilityRole="button"
-        accessibilityLabel="Long-press to cancel meditation"
-        accessibilityHint="Hold to end the sit early without revealing the timer."
-      >
-        <Text style={[styles.longCancelText, { color: cancelTint }]}>Hold to cancel</Text>
-      </Pressable>
-    );
-  }
-  // running (timer visible), paused, or complete — surface the standard
-  // controls bar; the parent opens the insight modal on completion.
-  return <RitualControlsBar status={state.status} controls={controls} startLabel="Begin" />;
-};
-
 const CARD_WIDTH = 280;
 const CARD_MIN_HEIGHT = 380;
 const CARD_IMAGE_HEIGHT = 280;
@@ -178,7 +121,6 @@ const CARD_IMAGE_HEIGHT = 280;
 const CARD_BORDER_WIDTH = 8;
 
 const styles = StyleSheet.create({
-  container: { alignItems: 'center', padding: SPACING.xl },
   card: {
     width: CARD_WIDTH,
     minHeight: CARD_MIN_HEIGHT,
@@ -219,32 +161,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 24,
     paddingHorizontal: SPACING.lg,
-  },
-  timer: {
-    fontSize: 36,
-    fontWeight: '300',
-    fontVariant: ['tabular-nums'],
-    marginBottom: SPACING.lg,
-  },
-  begin: {
-    backgroundColor: colors.primary,
-    paddingVertical: SPACING.buttonV,
-    paddingHorizontal: SPACING.xxl,
-    borderRadius: BORDER_RADIUS.lg,
-    minWidth: 220,
-    alignItems: 'center',
-    ...shadows.small,
-  },
-  beginText: { color: colors.text.light, fontSize: 18, fontWeight: '600' },
-  longCancel: {
-    paddingVertical: SPACING.md,
-    paddingHorizontal: SPACING.xl,
-    borderRadius: BORDER_RADIUS.lg,
-    borderWidth: 1,
-  },
-  longCancelText: {
-    fontSize: 13,
-    letterSpacing: 1,
   },
 });
 
