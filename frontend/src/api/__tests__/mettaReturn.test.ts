@@ -93,6 +93,30 @@ describe('mettaReturn.state', () => {
     mockFetch.mockReturnValueOnce(jsonResponse(payload));
     await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
   });
+
+  test('rejects an out-of-range week_number via Zod', async () => {
+    const payload = { eligible: true, weeks: [week({ week_number: 6 })], arc: null };
+    mockFetch.mockReturnValueOnce(jsonResponse(payload));
+    await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
+  test('rejects a zero week_number via Zod', async () => {
+    const payload = { eligible: true, weeks: [week({ week_number: 0 })], arc: null };
+    mockFetch.mockReturnValueOnce(jsonResponse(payload));
+    await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
+  test('rejects a zero arc week via Zod', async () => {
+    const payload = { eligible: true, weeks: fiveWeeks(), arc: arc({ week: 0 }) };
+    mockFetch.mockReturnValueOnce(jsonResponse(payload));
+    await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
+  test('rejects an over-bound arc week via Zod', async () => {
+    const payload = { eligible: true, weeks: fiveWeeks(), arc: arc({ week: 6 }) };
+    mockFetch.mockReturnValueOnce(jsonResponse(payload));
+    await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
+  });
 });
 
 describe('mettaReturn.start', () => {

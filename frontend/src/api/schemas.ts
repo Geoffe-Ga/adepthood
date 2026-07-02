@@ -532,9 +532,20 @@ export const mettaFocusSchema = z.enum([
   'all_beings',
 ]);
 
+/**
+ * The Return arc runs exactly five weeks, and the backend clamps every reported
+ * ordinal into ``[1, RETURN_WEEK_COUNT]`` (``domain.metta_return``). Pinning the
+ * bound here means an out-of-range week (``0``, ``-1``, ``999``) raises
+ * ``ApiValidationError`` at the client edge rather than rendering an undefined
+ * week card downstream.
+ */
+const RETURN_MIN_WEEK = 1;
+const RETURN_MAX_WEEK = 5;
+const returnWeekNumber = z.number().int().min(RETURN_MIN_WEEK).max(RETURN_MAX_WEEK);
+
 /** One week of the Return sequence: its ordinal, focus, and warm framing copy. */
 export const returnWeekSchema = z.object({
-  week_number: z.number(),
+  week_number: returnWeekNumber,
   focus: mettaFocusSchema,
   title: z.string(),
   framing: z.string(),
@@ -544,7 +555,7 @@ export const returnWeekSchema = z.object({
 export const returnArcSchema = z.object({
   started_at: z.string(),
   paused: z.boolean(),
-  week: z.number(),
+  week: returnWeekNumber,
   focus: mettaFocusSchema,
 });
 

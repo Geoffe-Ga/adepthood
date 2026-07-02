@@ -194,6 +194,36 @@ async def test_get_state_does_not_provision_stage_progress(
     assert result.scalars().first() is None
 
 
+@pytest.mark.asyncio
+async def test_get_state_reads_active_arc_without_row_lock(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GET projects the active arc via the lock-free reader, never ``FOR UPDATE``.
+
+    ``GET`` never writes, so it must use ``_active_arc`` (a plain ``select``) and
+    never ``_active_arc_for_update`` (``SELECT ... FOR UPDATE``), which would
+    serialize concurrent reads from one caller. Poison the write-lock reader so
+    any accidental call from the read path fails loudly.
+    """
+    headers = await _signup(async_client, "mr_getnolock5")
+    user = await _get_user(db_session, "mr_getnolock5@example.com")
+    assert user.id is not None
+    await _seed_active_arc(db_session, user.id, started_at=datetime.now(UTC))
+
+    def _forbidden(*_args: object, **_kwargs: object) -> None:
+        message = "GET must not acquire a row lock"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(metta_return_router, "_active_arc_for_update", _forbidden)
+
+    resp = await async_client.get(_BASE_URL, headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["arc"] is not None
+
+
 # ---------------------------------------------------------------------------
 # 3. Start: eligibility gate
 # ---------------------------------------------------------------------------

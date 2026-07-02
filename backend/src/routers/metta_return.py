@@ -73,6 +73,24 @@ def _sequence_response() -> list[ReturnWeekResponse]:
     ]
 
 
+async def _active_arc(session: AsyncSession, user_id: int) -> MettaReturnArc | None:
+    """Return the caller's active (``left_at IS NULL``) arc, or None — no row lock.
+
+    Used by the read-only ``GET`` handler, which never writes: it must not take
+    the exclusive ``FOR UPDATE`` lock the write handlers use, or concurrent GETs
+    from one caller would serialize on that caller's arc row for no reason.
+    Selecting by owner *and* active-ness means another user's arc is invisible
+    here, mirroring :func:`_active_arc_for_update`.
+    """
+    result = await session.execute(
+        select(MettaReturnArc).where(
+            col(MettaReturnArc.user_id) == user_id,
+            col(MettaReturnArc.left_at).is_(None),
+        ),
+    )
+    return result.scalars().first()
+
+
 async def _active_arc_for_update(session: AsyncSession, user_id: int) -> MettaReturnArc | None:
     """Return the caller's active (``left_at IS NULL``) arc under a row lock, or None.
 
@@ -104,7 +122,7 @@ async def get_state(
     arc projected to its current week, or ``None`` when there is none.
     """
     progress = await get_user_progress(session, user_id)
-    arc = await _active_arc_for_update(session, user_id)
+    arc = await _active_arc(session, user_id)
     now = datetime.now(UTC)
     return MettaReturnStateResponse(
         eligible=is_return_eligible(progress),
