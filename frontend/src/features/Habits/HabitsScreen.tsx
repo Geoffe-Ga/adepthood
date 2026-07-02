@@ -44,9 +44,6 @@ import { usePagination } from './hooks/usePagination';
 /** Habits per page. Ten is the design ceiling that fills the screen 1-up on mobile and 2x5 on landscape/desktop. */
 const HABITS_PER_PAGE = 10;
 
-export { DEFAULT_ICONS, TARGET_UNITS, FREQUENCY_UNITS, DAYS_OF_WEEK } from './constants';
-export { calculateNetEnergy } from './HabitUtils';
-
 interface MenuItemProps {
   icon: React.ReactNode;
   label: string;

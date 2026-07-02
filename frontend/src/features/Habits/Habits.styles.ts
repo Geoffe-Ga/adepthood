@@ -8,8 +8,6 @@ import {
   surface,
 } from '../../design/tokens';
 
-export { colors as COLORS } from '../../design/tokens';
-
 const JUSTIFY_SPACE_BETWEEN = 'space-between' as const;
 
 // Device dimensions (for responsive layouts)
@@ -31,22 +29,6 @@ export const styles = StyleSheet.create({
   },
 
   // ===== Habit Tiles =====
-  tile: {
-    flex: 1,
-    margin: SPACING.xs,
-    padding: SPACING.lg,
-    borderRadius: BORDER_RADIUS.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-    ...SHADOWS.medium,
-  },
-  glowEffect: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: BORDER_RADIUS.lg,
-    opacity: 0.2,
-    backgroundColor: COLORS.mystical.glowLight,
-  },
   icon: {
     fontSize: 40,
     marginTop: SPACING.sm,
@@ -60,35 +42,6 @@ export const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
     color: COLORS.text.primary,
-  },
-  menuShadow: {
-    shadowColor: SHADOWS.medium.shadowColor,
-    shadowOffset: SHADOWS.medium.shadowOffset,
-    shadowOpacity: SHADOWS.medium.shadowOpacity,
-    shadowRadius: SHADOWS.medium.shadowRadius,
-    elevation: 2,
-  },
-
-  // ===== Streaks =====
-  streakContainer: {
-    marginTop: SPACING.xs,
-    backgroundColor: COLORS.mystical.transparentLight,
-    borderRadius: BORDER_RADIUS.md,
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: SPACING.xs,
-  },
-  streakText: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: COLORS.text.primary,
-  },
-  streakBadge: {
-    fontSize: 16,
-    backgroundColor: COLORS.background.accent,
-    borderRadius: BORDER_RADIUS.md,
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: SPACING.xs,
-    marginHorizontal: SPACING.md,
   },
 
   // ===== Progress Bars =====
@@ -114,59 +67,6 @@ export const styles = StyleSheet.create({
     left: 0,
     top: 0,
     borderRadius: BORDER_RADIUS.md,
-  },
-  progressBarOverlay: {
-    height: '100%',
-    position: 'absolute',
-    top: 0,
-    borderRadius: BORDER_RADIUS.md,
-  },
-  goalMarker: {
-    position: 'absolute',
-    height: '100%',
-    width: SPACING.sm,
-    backgroundColor: COLORS.mystical.overlay,
-    zIndex: 1,
-  },
-  incrementMarker: {
-    position: 'absolute',
-    height: '70%',
-    width: SPACING.xs,
-    top: '15%',
-    backgroundColor: COLORS.mystical.overlay,
-    zIndex: 1,
-  },
-  goalIncrementMarker: {
-    position: 'absolute',
-    height: '70%',
-    width: SPACING.xs,
-    top: '15%',
-    backgroundColor: COLORS.mystical.overlay,
-    zIndex: 1,
-  },
-
-  // ===== Stats Button and Tooltips =====
-  statsButton: {
-    position: 'absolute',
-    top: SPACING.xs,
-    right: SPACING.xs,
-    padding: SPACING.xs,
-    zIndex: 2,
-  },
-  statsButtonText: {
-    fontSize: 20,
-  },
-  tooltip: {
-    position: 'absolute',
-    top: -40,
-    backgroundColor: COLORS.mystical.overlay,
-    padding: SPACING.sm,
-    borderRadius: BORDER_RADIUS.sm,
-    zIndex: 10,
-  },
-  tooltipText: {
-    color: COLORS.text.light,
-    fontSize: 12,
   },
 
   // ===== Modals =====
@@ -211,27 +111,6 @@ export const styles = StyleSheet.create({
   },
 
   // ===== Goal Items =====
-  goalsContainer: {
-    marginVertical: SPACING.md,
-    flex: 1,
-  },
-  goalItem: {
-    marginVertical: SPACING.sm,
-    padding: SPACING.md,
-    borderRadius: BORDER_RADIUS.md,
-    ...SHADOWS.small,
-  },
-  goalHeader: {
-    flexDirection: 'row',
-    justifyContent: JUSTIFY_SPACE_BETWEEN,
-    alignItems: 'center',
-    marginBottom: SPACING.xs,
-  },
-  goalTier: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: COLORS.text.primary,
-  },
   saveButton: {
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.sm,
@@ -242,88 +121,8 @@ export const styles = StyleSheet.create({
     color: COLORS.text.light,
     fontWeight: '600',
   },
-  goalTitle: {
-    fontSize: 16,
-    marginVertical: SPACING.xs,
-    fontWeight: '500',
-    color: COLORS.text.primary,
-  },
-  goalTitleInput: {
-    fontSize: 16,
-    marginVertical: SPACING.xs,
-    borderBottomWidth: 1,
-    borderColor: '#ccc',
-    padding: SPACING.xs,
-  },
-  goalDetailsContainer: {
-    marginVertical: SPACING.xs,
-  },
-  goalDetails: {
-    fontSize: 14,
-    color: COLORS.text.secondary,
-  },
-
-  // ===== Edit Forms =====
-  editRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: SPACING.xs,
-    flexWrap: 'wrap',
-  },
-  editLabel: {
-    width: 60,
-    fontSize: 14,
-    color: COLORS.text.primary,
-  },
-  editInput: {
-    borderWidth: 1,
-    borderColor: '#ccc',
-    padding: SPACING.sm,
-    marginHorizontal: SPACING.xs,
-    flex: 1,
-    borderRadius: BORDER_RADIUS.xs,
-  },
-  unitDropdownButton: {
-    backgroundColor: COLORS.background.accent,
-    padding: SPACING.sm,
-    borderRadius: BORDER_RADIUS.xs,
-    minWidth: 100,
-    alignItems: 'center',
-    marginLeft: SPACING.xs,
-  },
-  dropdown: {
-    position: 'absolute',
-    top: 30,
-    right: 0,
-    backgroundColor: COLORS.background.card,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: BORDER_RADIUS.xs,
-    maxHeight: 150,
-    width: 150,
-    zIndex: 999,
-    ...SHADOWS.medium,
-  },
-  dropdownItem: {
-    padding: SPACING.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
 
   // ===== Days Selector =====
-  daysSelectorButton: {
-    backgroundColor: COLORS.background.accent,
-    padding: SPACING.sm,
-    borderRadius: BORDER_RADIUS.xs,
-    flex: 1,
-    marginLeft: SPACING.xs,
-  },
-  daysSelector: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: SPACING.xs,
-    marginLeft: 60,
-  },
   dayOption: {
     backgroundColor: COLORS.background.accent,
     padding: SPACING.sm,
@@ -336,31 +135,6 @@ export const styles = StyleSheet.create({
   dayOptionText: {
     fontSize: 12,
     color: COLORS.text.primary,
-  },
-
-  // ===== Toggle Buttons =====
-  toggleButton: {
-    paddingVertical: SPACING.sm,
-    paddingHorizontal: SPACING.md,
-    borderRadius: BORDER_RADIUS.xs,
-    marginHorizontal: 3,
-    marginTop: SPACING.xs,
-  },
-  toggleText: {
-    color: COLORS.text.light,
-    fontWeight: '500',
-  },
-
-  // ===== Goal Progress =====
-  goalProgressContainer: {
-    marginTop: SPACING.sm,
-  },
-
-  goalProgressText: {
-    marginTop: 3,
-    fontSize: 12,
-    color: COLORS.text.tertiary,
-    textAlign: 'right',
   },
 
   // ===== Action Buttons =====
@@ -376,12 +150,6 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  // Updated log unit button with better visual feedback
-  logUnitButtonText: {
-    color: COLORS.text.light,
-    fontWeight: '600',
-    fontSize: 15,
-  },
 
   // Improved input field
   logUnitInput: {
@@ -393,24 +161,6 @@ export const styles = StyleSheet.create({
     borderRadius: SPACING.md,
     textAlign: 'center',
     fontSize: 16,
-  },
-  logUnitButton: {
-    backgroundColor: COLORS.success,
-    paddingVertical: SPACING.sm,
-    paddingHorizontal: SPACING.md,
-    borderRadius: BORDER_RADIUS.xs,
-    ...SHADOWS.small,
-  },
-  editButton: {
-    backgroundColor: COLORS.secondary,
-    paddingVertical: SPACING.sm,
-    paddingHorizontal: SPACING.md,
-    borderRadius: BORDER_RADIUS.xs,
-    ...SHADOWS.small,
-  },
-  editButtonText: {
-    color: COLORS.text.light,
-    fontWeight: '600',
   },
 
   // ===== Settings Modal =====
@@ -458,15 +208,6 @@ export const styles = StyleSheet.create({
   },
 
   // ===== Icon Selector =====
-  iconSelectorButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.background.accent,
-    paddingVertical: SPACING.sm,
-    paddingHorizontal: SPACING.md,
-    borderRadius: BORDER_RADIUS.xs,
-    ...SHADOWS.small,
-  },
   currentIcon: {
     fontSize: 24,
   },
@@ -984,10 +725,6 @@ export const styles = StyleSheet.create({
     color: COLORS.text.light,
     fontWeight: 'bold',
   },
-  habitList: {
-    maxHeight: 200,
-    marginVertical: SPACING.lg,
-  },
   habitDragInfo: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1081,17 +818,6 @@ export const styles = StyleSheet.create({
     marginRight: SPACING.md,
     color: COLORS.text.primary,
   },
-  startDateButton: {
-    backgroundColor: COLORS.secondary,
-    paddingVertical: SPACING.sm,
-    paddingHorizontal: SPACING.md,
-    borderRadius: BORDER_RADIUS.xs,
-    ...SHADOWS.small,
-  },
-  startDateButtonText: {
-    color: COLORS.text.light,
-    fontSize: 16,
-  },
 
   // ===== Habits List =====
   habitsList: {
@@ -1119,22 +845,6 @@ export const styles = StyleSheet.create({
     fontWeight: '500',
     color: COLORS.text.primary,
     flexShrink: 1,
-  },
-  removeHabitButton: {
-    marginLeft: SPACING.md,
-    backgroundColor: COLORS.danger,
-    borderRadius: 20,
-    width: 28,
-    height: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-    ...SHADOWS.small,
-  },
-  removeHabitButtonText: {
-    color: COLORS.text.light,
-    fontWeight: 'bold',
-    fontSize: 16,
-    lineHeight: 16,
   },
 
   habitChipContainer: {
@@ -1330,80 +1040,6 @@ export const styles = StyleSheet.create({
   overflowMenuContainer: {
     zIndex: 1001,
   },
-  habitSummary: {
-    backgroundColor: 'rgba(0, 0, 0, 0.05)',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-  },
-  habitSummaryText: {
-    fontSize: 14,
-    marginBottom: 4,
-    color: '#333',
-  },
-
-  // Goal header toggle styles
-  goalHeaderToggle: {
-    backgroundColor: 'rgba(0, 0, 0, 0.1)',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-    marginVertical: 4,
-  },
-  goalHeaderToggleText: {
-    fontWeight: '600',
-    fontSize: 13,
-    color: '#444',
-  },
-
-  // Enhanced progress bar styles
-  goalProgressBar: {
-    height: 12,
-    backgroundColor: surface.canvas,
-    borderRadius: 6,
-    overflow: 'hidden',
-    position: 'relative',
-    marginVertical: 8,
-    borderWidth: 1,
-    borderColor: COLORS.mystical.overlay,
-  },
-  goalProgressFill: {
-    height: '100%',
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    borderRadius: SPACING.md,
-  },
-
-  // Achievement indicator styles
-  achievementBadge: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    backgroundColor: 'rgba(255, 215, 0, 0.8)',
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  achievementBadgeText: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  menuIcon: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    zIndex: 5,
-    padding: 6,
-  },
-  desktopActions: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    flexDirection: 'row',
-    zIndex: 5,
-  },
   mobileMenu: {
     position: 'absolute',
     top: 36,
@@ -1418,42 +1054,11 @@ export const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 10,
   },
-  contentContainer: {
-    width: '100%',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 16,
-  },
   streak: {
     marginTop: 4,
     fontSize: 12,
     color: '#555',
     fontWeight: '500',
-  },
-  progressBarWrapper: {
-    width: '100%',
-    paddingHorizontal: 8,
-    marginTop: 12,
-  },
-  progressBarBackground: {
-    width: '100%',
-    height: 12,
-    backgroundColor: '#eee',
-    borderRadius: 6,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  markerTooltip: {
-    position: 'absolute',
-    top: -40,
-    transform: [{ translateX: -50 }],
-    backgroundColor: 'rgba(0,0,0,0.8)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    zIndex: 10,
-    minWidth: 100,
-    alignItems: 'center',
   },
 });
 
