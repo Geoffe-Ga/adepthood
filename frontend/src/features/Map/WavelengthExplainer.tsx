@@ -5,6 +5,7 @@ import Markdown from 'react-native-markdown-display';
 import { markdownStyles } from '../Course/Course.styles';
 
 import styles from './Map.styles';
+import TorusSpiralVisual from './TorusSpiralVisual';
 import { WAVELENGTH_EXPLAINER } from './wavelengthExplainerContent';
 
 interface WavelengthExplainerProps {
@@ -30,6 +31,7 @@ const ExplainerSheet = ({ onClose }: { onClose: () => void }): React.JSX.Element
       showsVerticalScrollIndicator={false}
     >
       <Text style={styles.explainerTitle}>{WAVELENGTH_EXPLAINER.title}</Text>
+      <TorusSpiralVisual />
       <Markdown style={markdownStyles}>{WAVELENGTH_EXPLAINER.markdown}</Markdown>
     </ScrollView>
   </Pressable>

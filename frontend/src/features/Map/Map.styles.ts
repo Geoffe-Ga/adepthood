@@ -274,6 +274,10 @@ const styles = StyleSheet.create({
   explainerScroll: {
     paddingBottom: spacing(2),
   },
+  // Decorative torus/spiral illustration sitting under the title, above the copy.
+  explainerVisual: {
+    marginBottom: spacing(1.5),
+  },
   explainerTitle: {
     ...editorialType.title,
     fontSize: 22,
