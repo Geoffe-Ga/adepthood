@@ -5,8 +5,8 @@ reads text and returns a typed :class:`DistressSignal` saying whether the writin
 contains an **acute** distress signal (explicit suicidal intent, self-harm
 intent, medication cessation, or intent to harm another) and, if so, which
 category matched. Nothing here gives medical, medication, or treatment guidance;
-it only classifies. Later sub-issues wire the signal into a care surface — this
-module is wired into nothing.
+it only classifies. The signal is wired into the acute-distress care surface at
+the journal PATCH endpoint.
 
 Design — deliberately conservative
 ----------------------------------

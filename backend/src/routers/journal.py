@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
-from sqlalchemy import ColumnElement, func
+from sqlalchemy import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -38,6 +38,7 @@ from models.journal_entry import JournalClassification, JournalEntry, JournalTag
 from models.marginalia import Marginalia, MarginaliaStatus
 from models.practice import Practice
 from models.practice_session import PracticeSession
+from models.user import User
 from models.user_practice import UserPractice
 from rate_limit import limiter
 from routers.auth import get_current_user
@@ -61,6 +62,7 @@ from schemas.marginalia import (
     MarginaliaResponse,
     ResonanceResponse,
 )
+from schemas.pagination import count_query_total, page_has_more
 from security import TextTooLongError, sanitize_user_text
 from services import journal_encryption
 from services.botmason import LLMProviderError, resolve_chat_api_key
@@ -210,7 +212,7 @@ async def _encrypted_search_page(
     return JournalListResponse(
         items=[JournalMessageResponse.model_validate(e, from_attributes=True) for e in page],
         total=len(matched),
-        has_more=(filters.offset + filters.limit) < len(matched),
+        has_more=page_has_more(filters.offset, filters.limit, len(matched)),
     )
 
 
@@ -240,8 +242,7 @@ async def list_journal_entries(
     )
 
     # Count total before pagination
-    count_query = select(func.count()).select_from(query.subquery())
-    total = (await session.execute(count_query)).scalar() or 0
+    total = await count_query_total(session, query)
 
     # Fetch paginated results, newest first
     query = query.order_by(col(JournalEntry.id).desc()).offset(filters.offset).limit(filters.limit)
@@ -251,7 +252,7 @@ async def list_journal_entries(
     return JournalListResponse(
         items=[JournalMessageResponse.model_validate(e, from_attributes=True) for e in items],
         total=total,
-        has_more=(filters.offset + filters.limit) < total,
+        has_more=page_has_more(filters.offset, filters.limit, total),
     )
 
 
@@ -278,7 +279,7 @@ async def _apply_message_edit(
     new_message = _sanitize_message(payload.message)
     if new_message != old_message:
         entry.message = new_message
-        await reanchor_entry_marginalia(entry, old_message, new_message, session)
+        await reanchor_entry_marginalia(entry, new_message, session)
         await reanchor_entry_suggestions(entry, new_message, session)
 
 
@@ -490,24 +491,50 @@ _INTIMATE_PRIVATE_MESSAGE = (
 )
 
 
-async def _private_response(session: AsyncSession, user_id: int) -> ResonanceResponse:
-    """Resonance response for an intimate entry: no cloud call, no charge.
+def _unspent_resonance(
+    user: User,
+    *,
+    care: CareResponse | None,
+    private: bool = False,
+    private_message: str | None = None,
+) -> ResonanceResponse:
+    """Build a no-reflection response over the caller's *unspent* wallet balances.
 
-    An ``intimate`` entry is never sent to a cloud LLM (issue #895), so this is
-    returned *before* any wallet deduction or LLM construction: no marginalia,
-    no suggestions, unspent balances (read fresh, like :func:`_care_only_response`,
-    with no ``preflight_deduction``), and the non-shaming private message.
+    Shared skeleton for the two paths that return before any charge lands: the
+    intimate/private path and the care-only fallback when an elevated entry's
+    LLM pass fails. Both surface empty marginalia + suggestions
+    and read the wallet fresh (no ``preflight_deduction``), differing only in
+    the ``care`` payload and the private-message fields.
     """
-    user = await require_user_fresh(session, user_id)
     return ResonanceResponse(
         marginalia=[],
         suggestions=[],
         remaining_messages=max(get_monthly_cap() - user.monthly_messages_used, 0),
         remaining_balance=user.offering_balance,
         monthly_reset_date=user.monthly_reset_date,
-        care=None,
-        private=True,
-        private_message=_INTIMATE_PRIVATE_MESSAGE,
+        care=care,
+        private=private,
+        private_message=private_message,
+    )
+
+
+async def _private_response(
+    session: AsyncSession, user_id: int, care: CareResponse | None
+) -> ResonanceResponse:
+    """Resonance response for an intimate entry: no cloud call, no charge.
+
+    An ``intimate`` entry is never sent to a cloud LLM (issue #895), so this is
+    returned *before* any wallet deduction or LLM construction: no marginalia,
+    no suggestions, unspent balances (read fresh, like :func:`_care_only_response`,
+    with no ``preflight_deduction``), and the non-shaming private message.
+
+    ``care`` is the locally-screened surface (never None-forced): a distressed
+    intimate entry still points to human/professional support, with no cloud
+    call, charge, or usage-log — the privacy floor never suppresses crisis care.
+    """
+    user = await require_user_fresh(session, user_id)
+    return _unspent_resonance(
+        user, care=care, private=True, private_message=_INTIMATE_PRIVATE_MESSAGE
     )
 
 
@@ -521,14 +548,7 @@ async def _care_only_response(
     depend on the LLM succeeding (NORTH-STAR §10).
     """
     user = await require_user_fresh(session, user_id)
-    return ResonanceResponse(
-        marginalia=[],
-        suggestions=[],
-        remaining_messages=max(get_monthly_cap() - user.monthly_messages_used, 0),
-        remaining_balance=user.offering_balance,
-        monthly_reset_date=user.monthly_reset_date,
-        care=care,
-    )
+    return _unspent_resonance(user, care=care)
 
 
 async def _resonance_pass_or_care(
@@ -671,13 +691,14 @@ async def run_resonance(
         raise not_found("journal_entry")
     # Privacy floor (issue #895): an intimate entry is NEVER sent to a cloud LLM.
     # Decided from the *persisted* classification (never client-supplied) and
-    # returned here — before any care screen, wallet charge, LLM construction, or
-    # usage-log write — so the cloud is provably unreachable for intimate entries.
-    if entry.classification == JournalClassification.INTIMATE:
-        return await _private_response(session, current_user)
-    # Screen first, with a pure/local check that can't fail the request, so the
-    # care surface is decided independently of the LLM (NORTH-STAR §10).
+    # returned here — before wallet charge, LLM construction, or usage-log write —
+    # so the cloud is provably unreachable for intimate entries. The LOCAL care
+    # screen (pure; no cloud/charge/log) still runs, so the privacy floor never
+    # suppresses crisis support (NORTH-STAR §10) — the same screen feeds both
+    # the intimate and non-intimate paths.
     care = _care_response(_care_for(entry.message))
+    if entry.classification == JournalClassification.INTIMATE:
+        return await _private_response(session, current_user, care)
     spent = await preflight_deduction(session, current_user)
     prior = await _recent_prior_bodies(session, current_user, entry_id)
     llm = BotmasonResonanceLLM(resolve_chat_api_key(x_llm_api_key))

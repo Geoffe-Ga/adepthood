@@ -74,59 +74,13 @@ const validContentItem = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-describe('paginated list endpoints (issue #221 — Page envelope)', () => {
-  test('practices.listPaginated opts into the envelope and forwards stage_number', async () => {
-    const envelope = page([validPractice()]);
-    mockFetch.mockReturnValueOnce(jsonResponse(envelope));
-
-    const result = await practices.listPaginated({ stageNumber: 3 }, 'tok');
-
-    const [url, init] = mockFetch.mock.calls[0];
-    expect(url).toBe('http://test/practices/?paginate=true&stage_number=3');
-    expect(init.method).toBeUndefined(); // GET
-    expect(init.headers).toMatchObject({ Authorization: 'Bearer tok' });
-    expect(result).toEqual(envelope);
-  });
-
-  test('practices.listPaginated forwards limit and offset when supplied', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse(page([], { total: 120, has_more: true })));
-
-    await practices.listPaginated({ stageNumber: 2, limit: 50, offset: 50 }, 'tok');
-
-    const [url] = mockFetch.mock.calls[0];
-    expect(url).toBe('http://test/practices/?paginate=true&stage_number=2&limit=50&offset=50');
-  });
-
-  test('stages.listPaginated hits /stages (no trailing slash) with the envelope flag', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse(page([validStage()])));
-
-    await stages.listPaginated({}, 'tok');
-
-    const [url] = mockFetch.mock.calls[0];
-    expect(url).toBe('http://test/stages?paginate=true');
-  });
-
-  test('course.stageContentPaginated targets the stage content path with the envelope flag', async () => {
-    const envelope = page([validContentItem()], {
-      total: 3,
-      has_more: true,
-    });
-    mockFetch.mockReturnValueOnce(jsonResponse(envelope));
-
-    const result = await course.stageContentPaginated(3, { limit: 50 }, 'tok');
-
-    const [url] = mockFetch.mock.calls[0];
-    expect(url).toBe('http://test/course/stages/3/content?paginate=true&limit=50');
-    expect(result.has_more).toBe(true);
-    expect(result.total).toBe(3);
-  });
-
+describe('paginated list endpoints (Page envelope)', () => {
   test('a malformed envelope (missing has_more) raises ApiValidationError', async () => {
     mockFetch.mockReturnValueOnce(
       jsonResponse({ items: [], total: 0, limit: 50, offset: 0 }), // no has_more
     );
 
-    await expect(stages.listPaginated({}, 'tok')).rejects.toThrow(ApiValidationError);
+    await expect(stages.listAll('tok')).rejects.toThrow(ApiValidationError);
   });
 
   test('a non-array items field raises ApiValidationError', async () => {
@@ -134,7 +88,7 @@ describe('paginated list endpoints (issue #221 — Page envelope)', () => {
       jsonResponse({ items: 'nope', total: 0, limit: 50, offset: 0, has_more: false }),
     );
 
-    await expect(stages.listPaginated({}, 'tok')).rejects.toThrow(ApiValidationError);
+    await expect(stages.listAll('tok')).rejects.toThrow(ApiValidationError);
   });
 });
 
@@ -217,26 +171,5 @@ describe('fetchAllPages + listAll helpers (issue #408 — screen adoption)', () 
     // whole page rather than being silently filtered (audit-contracts-04).
     mockFetch.mockReturnValueOnce(jsonResponse(page([validPractice(), { bogus: true }])));
     await expect(practices.listAll({ stageNumber: 3 })).rejects.toThrow(ApiValidationError);
-  });
-});
-
-describe('practices.list (bare array, audit-contracts-06)', () => {
-  test('round-trips every valid row intact', async () => {
-    const rows = [validPractice({ id: 1 }), validPractice({ id: 2 })];
-    mockFetch.mockReturnValueOnce(jsonResponse(rows));
-    const result = await practices.list({ stageNumber: 3 });
-    expect(result).toEqual(rows);
-  });
-
-  test('raises ApiValidationError on a drifted row instead of dropping it', async () => {
-    // A renamed field used to make the row silently fail the typeof guard and
-    // vanish from the catalog; it must now surface as a validation error.
-    const drifted = {
-      ...validPractice({ id: 2 }),
-      default_duration_minutes: undefined,
-      duration: 5,
-    };
-    mockFetch.mockReturnValueOnce(jsonResponse([validPractice({ id: 1 }), drifted]));
-    await expect(practices.list({ stageNumber: 3 })).rejects.toThrow(ApiValidationError);
   });
 });

@@ -225,7 +225,7 @@ export interface SubtractiveStreakInput {
  *   - The walk stops at ``startDate`` so the streak can never exceed
  *     the habit's life.
  *
- * Mirrors backend ``services.streaks._compute_subtractive_streak``
+ * Mirrors backend ``domain.streaks.subtractive_current_streak``
  * so the stats overlay and the tile-displayed ``habit.streak`` (which
  * comes from the backend's ``compute_habit_streak``) agree.
  */

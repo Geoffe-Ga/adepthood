@@ -29,6 +29,25 @@ MAX_PRIOR_ENTRIES = 5
 _PRIOR_ENTRY_CHARS = 1000
 
 
+class _AnchoredSpan(Protocol):
+    """Structural type for anything carrying integer ``anchor_start`` / ``anchor_end``.
+
+    Lets :func:`_overlaps` serve both :class:`MarginaliaAnchored` and the
+    detection module's ``CompletionDetected`` without either importing the
+    other's concrete type -- the half-open span check is identical for both.
+    Both concrete types are frozen dataclasses, so the members are declared
+    read-only to stay structurally compatible under strict typing.
+    """
+
+    @property
+    def anchor_start(self) -> int:
+        """Inclusive start offset of the span in the source text."""
+
+    @property
+    def anchor_end(self) -> int:
+        """Exclusive end offset of the span in the source text."""
+
+
 @dataclass(frozen=True)
 class MarginaliaDraft:
     """A model-proposed note before anchoring: a kind, a verbatim quote, a note."""
@@ -151,7 +170,7 @@ def _anchor(body: str, draft: MarginaliaDraft) -> MarginaliaAnchored | None:
     )
 
 
-def _overlaps(a: MarginaliaAnchored, b: MarginaliaAnchored) -> bool:
+def _overlaps(a: _AnchoredSpan, b: _AnchoredSpan) -> bool:
     """True when two anchored spans intersect."""
     return a.anchor_start < b.anchor_end and b.anchor_start < a.anchor_end
 
