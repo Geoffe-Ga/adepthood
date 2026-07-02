@@ -34,29 +34,14 @@ _PRACTICE_TARGET = "practice"
 def _pick_representative(goals: list[Goal]) -> Goal | None:
     """Return the goal that stands for a habit: clear-tier, else first, else None.
 
-    The single source of truth for "which goal represents this habit", shared by
-    :func:`gather_candidates` (over eager-loaded goals) and
-    :func:`representative_goal` (querying), so the accept path checks off exactly
-    the goal detection matched.
+    The single source of truth for "which goal represents this habit", used by
+    :func:`gather_candidates` over each habit's eager-loaded goals so the accept
+    path checks off exactly the goal detection matched.
     """
     if not goals:
         return None
     clear = next((g for g in goals if g.tier == GoalTier.CLEAR), None)
     return clear if clear is not None else goals[0]
-
-
-async def representative_goal(session: AsyncSession, habit: Habit) -> Goal | None:
-    """The goal that represents ``habit`` for completion check-off.
-
-    Clear-tier goal preferred, else the first goal (by id), else ``None`` when the
-    habit has no goals. Exported so the accept path (#818/#820) targets the same
-    goal :func:`gather_candidates` offered. Queries the goals so it is safe on a
-    habit loaded without them.
-    """
-    result = await session.execute(
-        select(Goal).where(Goal.habit_id == habit.id).order_by(col(Goal.id)),
-    )
-    return _pick_representative(list(result.scalars().all()))
 
 
 def _habit_candidates(habits: list[Habit]) -> list[DetectionCandidate]:

@@ -21,7 +21,6 @@ from models.user_practice import UserPractice
 from services.completion_candidates import (
     MAX_CANDIDATES,
     gather_candidates,
-    representative_goal,
 )
 
 _MAX_GATHER_QUERIES = 3  # habits + goals (selectinload) — constant in habit count
@@ -230,26 +229,6 @@ async def test_no_n_plus_one(db_session: AsyncSession) -> None:
     assert len(queries) <= _MAX_GATHER_QUERIES, (
         f"expected <= {_MAX_GATHER_QUERIES} SELECTs (no N+1), got {len(queries)}"
     )
-
-
-@pytest.mark.asyncio
-async def test_representative_goal_standalone(db_session: AsyncSession) -> None:
-    user_id = await _user(db_session)
-    with_clear = await _habit(db_session, user_id, "WithClear", tiers=("low", "clear"))
-    no_clear = await _habit(db_session, user_id, "NoClear", tiers=("low", "stretch"))
-    goalless = await _habit(db_session, user_id, "Goalless", tiers=())
-    assert with_clear.id is not None
-    assert no_clear.id is not None
-
-    clear_goal = await representative_goal(db_session, with_clear)
-    first_goal = await representative_goal(db_session, no_clear)
-    none_goal = await representative_goal(db_session, goalless)
-
-    assert clear_goal is not None
-    assert clear_goal.tier == "clear"
-    assert first_goal is not None
-    assert first_goal.tier == "low"  # first by id, no clear tier
-    assert none_goal is None
 
 
 @pytest.mark.asyncio
