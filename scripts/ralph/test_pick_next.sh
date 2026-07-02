@@ -219,6 +219,32 @@ ij_add 10 "P0"; ij_add 11 "P3,agent-ready"; ij_finalize
 check "require agent-ready filters out ungated P0" "11" \
   "$(cd "$REPO" && PATH="$BIN:$PATH" RALPH_REQUIRE_LABELS=agent-ready "$PICK")"
 
+# --- repo's native priority-* vocabulary maps onto the same tiers -------------
+
+# 16) The exact production bug: a `priority-critical` issue (#1175-style) must
+# preempt an OLDER non-critical backlog, not sit behind it by number.
+new_scenario prio_critical_preempts
+ij_add 100 "bug,frontend"; ij_add 101 "priority-medium"; ij_add 175 "bug,priority-critical,full-stack"
+ij_finalize
+check "priority-critical preempts older non-critical backlog" "175" "$(run_pick)"
+
+# 17) Full priority-* tier order, oldest-first within a tier.
+new_scenario prio_named_order
+ij_add 40 "priority-low"; ij_add 30 "priority-medium"; ij_add 20 "priority-high"
+ij_add 10 "priority-critical"; ij_finalize
+check "priority-critical is tier 0" "10" "$(run_pick)"
+
+# 18) The two vocabularies are interchangeable within a tier (P0 == critical):
+# oldest of the two tier-0 issues wins regardless of which label spelling.
+new_scenario prio_mixed_vocab
+ij_add 50 "P0"; ij_add 40 "priority-critical"; ij_add 30 "P1"; ij_finalize
+check "mixed P0/priority-critical share tier 0 (oldest wins)" "40" "$(run_pick)"
+
+# 19) priority-high outranks a P2 and an unlabeled default (rank 1 beats 2).
+new_scenario prio_high_beats_medium
+ij_add 5 "priority-medium"; ij_add 9 "priority-high"; ij_finalize
+check "priority-high (tier 1) beats priority-medium (tier 2)" "9" "$(run_pick)"
+
 echo
 echo "pick-next tests: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

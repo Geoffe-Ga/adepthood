@@ -463,7 +463,7 @@ describe('AuthContext', () => {
       expect(typeof refreshed).toBe('function');
 
       await act(async () => {
-        refreshed?.('fresh-jwt', undefined);
+        refreshed?.('fresh-jwt', undefined, 'old-jwt');
       });
 
       // Save is in-flight — state must not have flipped yet.
@@ -494,7 +494,7 @@ describe('AuthContext', () => {
       expect(typeof refreshed).toBe('function');
 
       await act(async () => {
-        refreshed?.('fresh-jwt', 'America/Los_Angeles');
+        refreshed?.('fresh-jwt', 'America/Los_Angeles', 'old-jwt');
       });
 
       await waitFor(() => expect(result.current.token).toBe('fresh-jwt'));
@@ -511,7 +511,7 @@ describe('AuthContext', () => {
 
       const refreshed = mockSetOnTokenRefreshed.mock.calls.at(-1)?.[0];
       await act(async () => {
-        refreshed?.('fresh-jwt', undefined);
+        refreshed?.('fresh-jwt', undefined, 'old-jwt');
       });
 
       await waitFor(() => expect(result.current.token).toBe('fresh-jwt'));
@@ -530,7 +530,7 @@ describe('AuthContext', () => {
       expect(typeof refreshed).toBe('function');
 
       await act(async () => {
-        refreshed?.('fresh-jwt', undefined);
+        refreshed?.('fresh-jwt', undefined, 'old-jwt');
       });
 
       expect(mockSaveToken).toHaveBeenCalledWith('fresh-jwt');
@@ -674,7 +674,7 @@ describe('AuthContext', () => {
       // Mid-flight refresh completes AFTER logout — do not resurrect the session.
       await act(async () => {
         resolveRefresh?.({ token: 'late-jwt', user_id: 1 });
-        refreshed?.('late-jwt', undefined);
+        refreshed?.('late-jwt', undefined, 'existing-jwt');
       });
       await waitFor(() => expect(result.current.token).toBeNull());
     });
@@ -693,6 +693,97 @@ describe('AuthContext', () => {
       await act(async () => {
         await result.current.login('new@test.com', 'p'); // pragma: allowlist secret
       });
+      expect(result.current.token).toBe('second-jwt');
+    });
+
+    it('a stale in-flight refresh must not clobber a fresh re-login token', async () => {
+      mockLoadToken.mockResolvedValue('existing-jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('existing-jwt'));
+
+      const refreshed = mockSetOnTokenRefreshed.mock.calls.at(-1)?.[0];
+      mockAuth.login.mockResolvedValue({ token: 'second-jwt', user_id: 2 });
+
+      await act(async () => {
+        await result.current.logout();
+      });
+      await act(async () => {
+        await result.current.login('new@test.com', 'p'); // pragma: allowlist secret
+      });
+      expect(result.current.token).toBe('second-jwt');
+
+      await act(async () => {
+        refreshed?.('late-jwt', undefined, 'existing-jwt');
+      });
+
+      expect(result.current.token).toBe('second-jwt');
+      expect(mockSaveToken).not.toHaveBeenCalledWith('late-jwt');
+    });
+
+    it('a stale save that resolves after re-login must not clobber the token', async () => {
+      mockLoadToken.mockResolvedValue('existing-jwt');
+      let resolveSave: (() => void) | null = null;
+      mockSaveToken.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSave = resolve;
+          }),
+      );
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('existing-jwt'));
+
+      const refreshed = mockSetOnTokenRefreshed.mock.calls.at(-1)?.[0];
+      mockAuth.login.mockResolvedValue({ token: 'second-jwt', user_id: 2 });
+
+      act(() => {
+        refreshed?.('late-jwt', undefined, 'existing-jwt');
+      });
+
+      await act(async () => {
+        await result.current.logout();
+      });
+      await act(async () => {
+        await result.current.login('new@test.com', 'p'); // pragma: allowlist secret
+      });
+      expect(result.current.token).toBe('second-jwt');
+
+      await act(async () => {
+        resolveSave?.();
+      });
+
+      expect(result.current.token).toBe('second-jwt');
+    });
+
+    it('a stale in-flight proactive refresh must not clobber a fresh re-login token', async () => {
+      mockLoadToken.mockResolvedValue('existing-jwt');
+      // Only the stale session is due for a proactive refresh; the fresh
+      // login token is not, so no second refresh races the assertion.
+      mockShouldRefreshToken.mockImplementation((t: string) => t === 'existing-jwt');
+      let resolveRefresh: ((value: { token: string; user_id: number }) => void) | null = null;
+      mockAuth.refresh.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      );
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('existing-jwt'));
+
+      expect(mockAuth.refresh).toHaveBeenCalledWith('existing-jwt');
+      mockAuth.login.mockResolvedValue({ token: 'second-jwt', user_id: 2 });
+
+      await act(async () => {
+        await result.current.logout();
+      });
+      await act(async () => {
+        await result.current.login('new@test.com', 'p'); // pragma: allowlist secret
+      });
+      expect(result.current.token).toBe('second-jwt');
+
+      await act(async () => {
+        resolveRefresh?.({ token: 'late-jwt', user_id: 1 });
+      });
+
       expect(result.current.token).toBe('second-jwt');
     });
   });
