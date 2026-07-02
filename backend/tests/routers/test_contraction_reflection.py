@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
-from types import SimpleNamespace
 
 import pytest
 from httpx import AsyncClient
@@ -29,6 +28,7 @@ from models.habit import Habit
 from models.journal_entry import JournalEntry
 from models.stage_progress import StageProgress
 from services import marginalia as marginalia_service
+from services.botmason import STUB_MODEL_NAME, LLMResponse
 
 _BODY = "I walked by the river and the willow bent without breaking."
 
@@ -71,9 +71,15 @@ def _fake_llm(monkeypatch: pytest.MonkeyPatch, *notes: dict[str, str]) -> None:
 
     async def _complete(
         prompt: str, history: object, *, system_prompt: object, api_key: object
-    ) -> SimpleNamespace:
+    ) -> LLMResponse:
         del prompt, history, system_prompt, api_key
-        return SimpleNamespace(text=payload)
+        return LLMResponse(
+            text=payload,
+            provider="stub",
+            model=STUB_MODEL_NAME,
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
 
     monkeypatch.setattr(marginalia_service, "generate_response", _complete)
 
@@ -231,10 +237,16 @@ async def test_intimate_entry_keeps_contraction_null_and_stays_private(
 
         async def __call__(
             self, prompt: str, history: object, *, system_prompt: object, api_key: object
-        ) -> SimpleNamespace:
+        ) -> LLMResponse:
             del prompt, history, system_prompt, api_key
             self.calls += 1
-            return SimpleNamespace(text='{"notes":[]}')
+            return LLMResponse(
+                text='{"notes":[]}',
+                provider="stub",
+                model=STUB_MODEL_NAME,
+                prompt_tokens=0,
+                completion_tokens=0,
+            )
 
     spy = _SpyLLM()
     monkeypatch.setattr(marginalia_service, "generate_response", spy)

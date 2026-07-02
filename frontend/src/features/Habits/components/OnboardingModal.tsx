@@ -16,7 +16,6 @@ import {
   type TextInputKeyPressEventData,
 } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
-import EmojiSelector from 'react-native-emoji-selector';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 
@@ -28,6 +27,7 @@ import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { STAGE_ORDER, calculateHabitStartDate, calculateNetEnergy } from '../HabitUtils';
 
 import { ConfirmDialog } from './ConfirmDialog';
+import HabitEmojiPicker from './HabitEmojiPicker';
 import { HABIT_NAME_MAX_LENGTH, MAX_HABITS, validateAndAddHabit } from './onboardingValidation';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -406,7 +406,7 @@ const ReorderEmojiOverlay = ({
         <Text style={styles.closeEmojiPickerText}>×</Text>
       </TouchableOpacity>
     </View>
-    <EmojiSelector onEmojiSelected={onEmojiSelected} showSearchBar columns={6} emojiSize={28} />
+    <HabitEmojiPicker onEmojiSelected={onEmojiSelected} />
   </View>
 );
 

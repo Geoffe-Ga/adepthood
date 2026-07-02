@@ -53,6 +53,10 @@ LLM_API_KEY_MAX_LENGTH = 256
 # module constant so callers can branch on it without magic strings.
 STUB_MODEL_NAME = "stub"
 
+# Identifier the stub provider reports as its ``provider`` in usage logs.  The
+# metering pipeline branches on it to skip stub traffic (zero real tokens).
+STUB_PROVIDER_NAME = "stub"
+
 
 @dataclass(frozen=True)
 class ProviderSpec:
@@ -644,7 +648,7 @@ def _stub_response(user_message: str) -> LLMResponse:
     )
     return LLMResponse(
         text=text,
-        provider="stub",
+        provider=STUB_PROVIDER_NAME,
         model=STUB_MODEL_NAME,
         prompt_tokens=0,
         completion_tokens=0,
