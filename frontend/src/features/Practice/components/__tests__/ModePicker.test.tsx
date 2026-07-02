@@ -98,13 +98,7 @@ describe('ModePicker — New badge', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Candle & Ink token guard for the ModePicker selected mode row.
-//
-// The selected row background is `surface.sunken` (#f3ecdf), migrated from the
-// legacy `colors.background.accent` (#f0f0f0); the negative pin guards the swap.
-// ---------------------------------------------------------------------------
-
+// Candle & Ink token guard: selected mode row background is surface.sunken (#f3ecdf), migrated from legacy colors.background.accent (#f0f0f0).
 describe('Candle & Ink token guard — ModePicker selected mode row', () => {
   const flatBackground = (style: unknown): string | undefined =>
     (StyleSheet.flatten(style as never) as { backgroundColor?: string }).backgroundColor;

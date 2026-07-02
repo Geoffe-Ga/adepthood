@@ -585,6 +585,7 @@ export const ink = {
 export const accent = {
   primary: '#a5572f', // 4.9:1 on canvas
   strong: '#8f4a28', // 6.1:1 — pressed / emphasis
+  onPrimary: '#ffffff', // light foreground on the accent fill (white on terracotta ~5:1, AA)
 } as const;
 
 /**
@@ -644,6 +645,7 @@ export const inkDark = {
 export const accentDark = {
   primary: '#e0895a', // 6.6:1 on the dark canvas
   strong: '#eaa078', // 8.2:1 — pressed / emphasis
+  onPrimary: surfaceDark.canvas, // dark ink foreground on the light dark-mode accent fill (~6.6:1, AA)
 } as const;
 
 /**

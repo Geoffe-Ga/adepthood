@@ -284,7 +284,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: BORDER_RADIUS.sm,
   },
-  newBadgeText: { color: surface.raised, fontSize: 10, fontWeight: '700' },
+  newBadgeText: { color: accent.onPrimary, fontSize: 10, fontWeight: '700' },
 });
 
 export default ModePicker;

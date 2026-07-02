@@ -44,8 +44,16 @@ describe('warm dark tokens (Candle & Ink, #804)', () => {
   });
 
   it('every accentDark value clears WCAG AA on the dark canvas', () => {
-    for (const value of Object.values(accentDark)) {
-      expect(contrast(value, surfaceDark.canvas)).toBeGreaterThanOrEqual(AA_NORMAL);
+    // onPrimary is excluded: it is a foreground on the accent fill, not on canvas.
+    for (const key of ['primary', 'strong'] as const) {
+      expect(contrast(accentDark[key], surfaceDark.canvas)).toBeGreaterThanOrEqual(AA_NORMAL);
     }
+  });
+
+  it('accentDark.onPrimary clears WCAG AA on the accentDark fill', () => {
+    const onPrimary = accentDark.onPrimary;
+    expect(onPrimary).toEqual(expect.stringMatching(/^#[\da-f]{6}$/i));
+    expect(luminance(onPrimary)).toBeLessThan(luminance(accentDark.primary));
+    expect(contrast(onPrimary, accentDark.primary)).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 });

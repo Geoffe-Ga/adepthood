@@ -70,7 +70,7 @@ const styles = StyleSheet.create({
 });
 
 const labelStyles = StyleSheet.create({
-  primary: { color: surface.raised }, // white on terracotta — 5.2:1 AA
+  primary: { color: accent.onPrimary }, // white on terracotta — 5.2:1 AA
   secondary: { color: accent.primary },
   tertiary: { color: accent.primary },
 });
