@@ -82,7 +82,7 @@ parallel edits) and invokes only the specialists the architect flagged.
 ### Step 0 — Pause check, reconcile, snapshot the pool
 ```bash
 if [ -f scripts/ralph/.paused ]; then echo "paused"; fi
-cat scripts/ralph/state.json                 # groom counters, max_workers, parallel_enabled
+cat scripts/ralph/state.json                 # groom + de-slop counters, max_workers, parallel_enabled
 scripts/ralph/fleet.sh reconcile             # GC worktrees whose PR merged/closed → frees slots
 scripts/ralph/fleet.sh list                  # occupied lanes: <issue> <branch> <path>
 scripts/ralph/fleet.sh free                  # open slots right now
@@ -121,7 +121,7 @@ For each PR, classify from the latest top-level `Verdict:` comment
   gh issue close "$ISSUE_N" --reason completed 2>/dev/null || true
   git checkout main && git pull --ff-only
   scripts/ralph/fleet.sh release "$ISSUE_N"        # frees the slot
-  python3 -c "import json;p='scripts/ralph/state.json';s=json.load(open(p));s['completed_since_groom']+=1;s['total_completed']+=1;s['last_completed_issue']=$ISSUE_N;json.dump(s,open(p,'w'),indent=2)"
+  python3 -c "import json;p='scripts/ralph/state.json';s=json.load(open(p));s['completed_since_groom']+=1;s['completed_since_deslop']=s.get('completed_since_deslop',0)+1;s['total_completed']+=1;s['last_completed_issue']=$ISSUE_N;json.dump(s,open(p,'w'),indent=2)"
   ```
   (Idempotent if `iteration-trigger.yml` or a prior wake already merged it — the
   PR shows MERGED; do the same close + `release` + state bump.)
@@ -177,6 +177,26 @@ When `completed_since_groom >= groom_interval`:
    python3 -c "import json,datetime;p='scripts/ralph/state.json';s=json.load(open(p));s['completed_since_groom']=0;s['last_groom_at']=datetime.datetime.now().isoformat();json.dump(s,open(p,'w'),indent=2)"
    ```
 3. Commit the state change (state-only changes may go directly on `main`).
+
+### Step 3.5 — De-slop gate (every `deslop_interval` completions)
+
+When `completed_since_deslop >= deslop_interval` (default 30; check after
+Step 1's bump):
+1. Dispatch the targeted de-slop scan matrix on GitHub's runners — never run
+   the audit inside the loop (it would eat a lane's context for hours):
+   ```bash
+   gh workflow run deslop.yml        # all areas from .github/deslop-areas.json
+   ```
+2. Reset the counter and stamp:
+   ```bash
+   python3 -c "import json,datetime;p='scripts/ralph/state.json';s=json.load(open(p));s['completed_since_deslop']=0;s['last_deslop_at']=datetime.datetime.now().isoformat();json.dump(s,open(p,'w'),indent=2)"
+   ```
+3. Commit the state change (state-only changes may go directly on `main`).
+
+This gate only ADDS scans when the loop is landing code quickly; the weekly
+Monday cron on `deslop.yml` runs every area regardless, as the floor. The
+scans file issues asynchronously — later wakes pick them up via `pick-next.sh`
+like any other backlog item.
 
 ### Step 4 — Refill EVERY open slot now (up to `max_workers`)
 
