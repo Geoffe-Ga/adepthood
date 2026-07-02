@@ -1,10 +1,9 @@
-"""Tests for the manifest-driven seed_content script (issue #392).
+"""Tests for the manifest-driven seed_content script.
 
 ``StageContent`` rows are now reconciled from the vendored content
 manifest via :class:`ContentRepository` — not from the deleted
 ``STAGE_PLANS`` hardcode. Chapters carry a local ``content://<id>``
-reference instead of a remote CMS URL; placeholder rows survive only
-for stages the manifest does not cover yet.
+reference instead of a remote CMS URL.
 """
 
 from __future__ import annotations
@@ -13,12 +12,13 @@ import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from content_config import all_chapter_records, content_ref
+from content_config import CONTENT_REF_SCHEME, all_chapter_records, content_ref
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
@@ -33,9 +33,6 @@ from services.content_repository import (
     reset_content_repository_for_tests,
     set_content_repository_for_tests,
 )
-
-# Placeholders kept for stages 2 and 3 (3 each) until the manifest covers them.
-_PLACEHOLDER_COUNT = 6
 
 # Resolved once at import (not inside async tests — pathlib in an async def trips
 # ASYNC240) so the real vendored content dir is reusable across tests.
@@ -77,8 +74,7 @@ _MANIFEST: dict[str, Any] = {
     "site_resources": [],
 }
 
-# Covers only stage 1 -- used to isolate "placeholder unmapped stays quiet"
-# from "manifest-mapped stage missing its CourseStage row raises loudly".
+# Covers only stage 1 -- a partial manifest whose only stage has a CourseStage row.
 _STAGE_ONE_ONLY_MANIFEST: dict[str, Any] = {
     "schema_version": "1.0.0",
     "chapters": [
@@ -238,11 +234,11 @@ async def test_seed_content_raises_naming_only_the_unmapped_manifest_stage(
 
 
 @pytest.mark.asyncio
-async def test_seed_content_placeholder_stages_stay_quiet_when_unmapped(
+async def test_seed_content_partial_manifest_seeds_when_its_stages_are_mapped(
     db_session: AsyncSession,
     install_manifest: Callable[[dict[str, Any]], None],
 ) -> None:
-    """Unmapped placeholder stages (no manifest coverage) never raise, unlike manifest stages."""
+    """A subset manifest seeds cleanly when its stages all have CourseStage rows."""
     install_manifest(_STAGE_ONE_ONLY_MANIFEST)
     await _seed_stages(db_session, count=1)
 
@@ -262,15 +258,15 @@ def test_content_ref_format() -> None:
 
 
 @pytest.mark.asyncio
-async def test_seed_content_inserts_manifest_chapters_and_placeholders(
+async def test_seed_content_inserts_manifest_chapters(
     db_session: AsyncSession,
     install_manifest: Callable[[dict[str, Any]], None],
 ) -> None:
-    """Every manifest chapter plus placeholders for uncovered stages."""
+    """Every manifest chapter is inserted as a StageContent row."""
     install_manifest(_MANIFEST)
     await _seed_stages(db_session, count=4)
     inserted = await seed_content(db_session)
-    expected_total = len(_MANIFEST["chapters"]) + _PLACEHOLDER_COUNT
+    expected_total = len(_MANIFEST["chapters"])
     assert inserted == expected_total
 
     result = await db_session.execute(select(StageContent))
@@ -320,7 +316,7 @@ async def test_seeded_rows_carry_local_refs_not_urls(
     assert [i.release_day for i in items] == [0, 3]
 
     everything = (await db_session.execute(select(StageContent))).scalars().all()
-    assert not any("aptitude.guru" in row.url for row in everything)
+    assert all(urlparse(row.url).scheme == CONTENT_REF_SCHEME for row in everything)
 
 
 @pytest.mark.asyncio
@@ -378,30 +374,10 @@ async def test_read_completions_survive_content_resync(
     assert completions[0].content_id == row.id
 
 
-@pytest.mark.asyncio
-async def test_placeholders_suppressed_when_manifest_covers_stage(
-    db_session: AsyncSession,
-    install_manifest: Callable[[dict[str, Any]], None],
-) -> None:
-    """Once the manifest ships a stage, its placeholders stop seeding."""
-    covering = json.loads(json.dumps(_MANIFEST))
-    covering["chapters"].append(_chapter("purple-1", 2, "Tribal Rhythm", 0))
-    install_manifest(covering)
-    await _seed_stages(db_session, count=4)
-    await seed_content(db_session)
-
-    result = await db_session.execute(
-        select(StageContent).join(CourseStage).where(CourseStage.stage_number == 2)
-    )
-    stage_two = result.scalars().all()
-    assert [i.title for i in stage_two] == ["Tribal Rhythm"]
-
-
 def test_desired_content_records_counts(
     install_manifest: Callable[[dict[str, Any]], None],
 ) -> None:
     install_manifest(_MANIFEST)
     records = desired_content_records()
-    assert len(records) == len(_MANIFEST["chapters"]) + _PLACEHOLDER_COUNT
-    manifest_urls = {content_ref(c["id"]) for c in _MANIFEST["chapters"]}
-    assert manifest_urls.issubset({r.url for r in records})
+    assert len(records) == len(_MANIFEST["chapters"])
+    assert {r.url for r in records} == {content_ref(c["id"]) for c in _MANIFEST["chapters"]}
