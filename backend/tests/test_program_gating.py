@@ -34,7 +34,11 @@ async def _signup(client: AsyncClient, username: str = "anchored") -> dict[str, 
 
 
 async def _plant_progress(
-    session: AsyncSession, *, days_into_program: int, current_stage: int = 1
+    session: AsyncSession,
+    *,
+    days_into_program: int,
+    current_stage: int = 1,
+    cycle_number: int = 1,
 ) -> StageProgress:
     """Create a StageProgress row anchored ``days_into_program`` days ago."""
     user = (await session.execute(select(User))).scalars().first()
@@ -47,6 +51,7 @@ async def _plant_progress(
         completed_stages=[],
         stage_started_at=anchor,
         program_started_at=anchor,
+        cycle_number=cycle_number,
     )
     session.add(progress)
     await session.commit()
@@ -139,6 +144,7 @@ async def test_program_calendar_endpoint_exposes_anchor_and_derivations(
     assert body["calendar_stage"] == 2
     assert body["calendar_week"] == 4
     assert body["current_stage"] == 1
+    assert body["cycle_number"] == 1
 
 
 @pytest.mark.asyncio
@@ -155,6 +161,21 @@ async def test_program_calendar_endpoint_day_zero_shape_without_progress(
     assert body["calendar_stage"] == 1
     assert body["calendar_week"] == 1
     assert body["current_stage"] == 1
+    assert body["cycle_number"] == 1
+
+
+@pytest.mark.asyncio
+async def test_program_calendar_endpoint_exposes_cycle_number_for_a_looper(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A returning looper on cycle 2 sees that cycle reflected on cold start."""
+    headers = await _signup(async_client, "loopercalendar")
+    await _plant_progress(db_session, days_into_program=1, cycle_number=2)
+
+    resp = await async_client.get("/stages/program-calendar", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["cycle_number"] == 2
 
 
 def test_is_stage_unlocked_accepts_an_explicit_now() -> None:

@@ -147,7 +147,11 @@ async def get_program_calendar(
     progress = await get_user_progress(session, current_user)
     if progress is None:
         return ProgramCalendarResponse(
-            program_started_at=None, calendar_stage=1, calendar_week=1, current_stage=1
+            program_started_at=None,
+            calendar_stage=1,
+            calendar_week=1,
+            current_stage=1,
+            cycle_number=1,
         )
     anchor = resolve_program_anchor(progress)
     return ProgramCalendarResponse(
@@ -155,6 +159,7 @@ async def get_program_calendar(
         calendar_stage=calendar_stage(anchor),
         calendar_week=calendar_week(anchor),
         current_stage=progress.current_stage,
+        cycle_number=progress.cycle_number,
     )
 
 

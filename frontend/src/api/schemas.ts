@@ -316,6 +316,17 @@ export const stageProgressRecordSchema = z.object({
 
 export type StageProgressRecordT = z.infer<typeof stageProgressRecordSchema>;
 
+/** The server's date-derived program calendar (mirrors ``ProgramCalendarResponse``). */
+export const programCalendarSchema = z.object({
+  program_started_at: z.string().nullable(),
+  calendar_stage: z.number(),
+  calendar_week: z.number(),
+  current_stage: z.number(),
+  cycle_number: z.number(),
+});
+
+export type ProgramCalendarT = z.infer<typeof programCalendarSchema>;
+
 /** A catalog practice (mirrors ``PracticeItem``); exported for reuse (issue 06). */
 export const practiceItemSchema = z.object({
   id: z.number().int(),

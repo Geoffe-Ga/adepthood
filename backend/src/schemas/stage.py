@@ -36,13 +36,15 @@ class ProgramCalendarResponse(BaseModel):
     are derived from ``program_started_at`` against the shared
     ``STAGE_DURATIONS_DAYS`` schedule; ``current_stage`` is the
     advancement-chain value.  Effective unlock is the max of the two —
-    the same reconciliation the gating endpoints apply.
+    the same reconciliation the gating endpoints apply.  ``cycle_number``
+    is exposed so the frontend can seed its "Cycle N" indicator on cold start.
     """
 
     program_started_at: datetime | None
     calendar_stage: int
     calendar_week: int
     current_stage: int
+    cycle_number: int = Field(default=1, ge=1)
 
 
 class StageProgressResponse(BaseModel):
