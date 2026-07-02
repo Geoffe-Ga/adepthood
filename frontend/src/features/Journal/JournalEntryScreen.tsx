@@ -21,6 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import CareSupportNote from './CareSupportNote';
 import CompletionSuggestionNote from './CompletionSuggestionNote';
+import ContractionReflectionNote from './ContractionReflectionNote';
 import EditConfirmDialog from './EditConfirmDialog';
 import GetResonanceButton, { shouldShowResonance } from './GetResonanceButton';
 import HighlightedBody from './HighlightedBody';
@@ -922,6 +923,10 @@ function JournalEntryScreen({
           never nested in the margin column — so on an acute-distress signal the
           human + professional support reads as the page's own, not a margin note. */}
       <CareSupportNote care={ctl.resonance.care} />
+      {/* Foundation reflection: a warm, declinable "tend your foundation"
+          sibling rendered AFTER the care surface so an acute-distress signal
+          always reads first. Hidden (renders nothing) on healthy passes. */}
+      <ContractionReflectionNote contraction={ctl.resonance.contraction} />
       <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
       <PrivacyResonanceReason
         visible={ctl.visible && ctl.resonanceDisabled}
