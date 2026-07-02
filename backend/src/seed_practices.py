@@ -57,6 +57,11 @@ def _meditation_timer(duration_minutes: float, *, halfway_bell: bool = False) ->
     }
 
 
+def _count_up() -> dict[str, Any]:
+    """Build a count_up ``mode_config`` payload (open-ended, no soft cap)."""
+    return {"mode": "count_up", "soft_cap_minutes": None}
+
+
 def _sense_grounding_prompts() -> list[dict[str, str]]:
     """5-4-3-2-1 prompts in the order the technique prescribes."""
     return [
@@ -163,6 +168,110 @@ def _build_preset(
     }
 
 
+def _timer_alternative(
+    stage_number: int, name: str, duration_minutes: float, *, halfway_bell: bool
+) -> dict[str, Any]:
+    """Compose one meditation_timer alternative preset from a spec row."""
+    return _build_preset(
+        stage_number,
+        name,
+        mode="meditation_timer",
+        mode_config=_meditation_timer(duration_minutes, halfway_bell=halfway_bell),
+        default_duration_minutes=duration_minutes,
+    )
+
+
+def _count_up_alternative(stage_number: int, name: str) -> dict[str, Any]:
+    """Compose one count_up alternative preset from a spec row."""
+    return _build_preset(
+        stage_number,
+        name,
+        mode="count_up",
+        mode_config=_count_up(),
+        default_duration_minutes=_COUNT_UP_NOMINAL_DURATION_MINUTES,
+    )
+
+
+#: Flat spec rows for every meditation_timer alternative preset:
+#: ``(stage_number, name, duration_minutes, halfway_bell)``. Band-section
+#: comments preserve the archetype grouping from the source catalog.
+_TIMER_ALTERNATIVE_SPECS: tuple[tuple[int, str, float, bool], ...] = (
+    # Stage 1 BEIGE — body-grounding / nervous-system regulation.
+    (1, "Crystal Charging", 5, False),
+    (1, "Tense and Release", 5, True),
+    (1, "Contact Points", 5, False),
+    (1, "Box Breathing", 5, True),
+    (1, "Toe Wiggling", 3, False),
+    (1, "Body Scan", 5, True),
+    (1, "Progressive Muscle Relaxation", 10, True),
+    # Stage 2 PURPLE — divination / symbolic intuition.
+    (2, "Traffic Lights", 5, False),
+    (2, "I Ching Toss", 10, True),
+    (2, "Bibliomancy", 5, False),
+    (2, "Synchronicity Sweep", 5, False),
+    (2, "Trataka Candle Gazing", 10, True),
+    (2, "Dream Recollection", 10, True),
+    (2, "Archetypal Mantra", 10, True),
+    (2, "Totem Meditation", 5, False),
+    # Stage 3 RED — energy / power.
+    (3, "Hand Energy Sensing", 5, False),
+    (3, "Windhorse Breathwork", 10, True),
+    (3, "Water Charging", 5, False),
+    (3, "Mini TED Talk", 10, False),
+    (3, "Power Posture", 10, False),
+    (3, "Mountain Pose Sit", 10, False),
+    (3, "Fire Gazing", 10, True),
+    (3, "Warrior Stillness", 10, False),
+    (3, "Red Sphere Visualization", 10, True),
+    # Stage 4 BLUE — heart / lovingkindness.
+    (4, "Tonglen", 15, True),
+    (4, "I Am Love Through", 15, True),
+    (4, "Heart Centered Breath", 15, True),
+    (4, "Animist Gratitude", 10, False),
+    (4, "Hug Visualization", 10, False),
+    (4, "Relational Gratitude", 15, True),
+    (4, "Blessing Strangers", 10, False),
+    (4, "Heart Imagery", 15, True),
+    (4, "Just Like Me", 15, True),
+    (4, "Ancestral Connection", 15, True),
+    # Re-homed from stage 3: a metta sit toward younger selves is heart-band.
+    (4, "Love to Past Selves", 15, True),
+    # Stage 5 ORANGE — activation / manifestation.
+    (5, "Kapalabhati Skull Shining", 15, True),
+    (5, "Middle Pillar", 20, True),
+    (5, "Sigil Dhyana", 20, True),
+    (5, "Reality Selection Visualization", 20, True),
+    (5, "Single Instrument Listening", 20, False),
+    (5, "Chanting or Kirtan", 20, False),
+    (5, "Breath of Fire + Silence", 20, True),
+    (5, "Lion's Breath", 10, False),
+    # Stage 6 GREEN — shadow work.
+    (6, "Chair Work", 30, True),
+    (6, "Wording Through It", 30, True),
+    (6, "Wilber 3-2-1", 30, True),
+    (6, "Emotion Transmutation", 30, True),
+    (6, "Pain Body Meditation", 30, True),
+    (6, "REACH Inward", 30, True),
+    # Stage 8 TEAL — integration / shamanic.
+    (8, "Clairaudient Listening", 20, True),
+    (8, "Active Imagination Dialogue", 30, True),
+    (8, "Aura Scanning", 15, False),
+    (8, "Sangha Field Tuning", 15, False),
+    (8, "Reflective Tarot Draw", 5, False),
+    (8, "Sacred Pause", 5, False),
+)
+
+#: Flat spec rows for count_up alternative presets: ``(stage_number, name)``.
+#: All share the count_up mode_config and the nominal fallback duration.
+_COUNT_UP_ALTERNATIVE_SPECS: tuple[tuple[int, str], ...] = (
+    (6, "Letter to the Repressed Self"),
+    (6, "Shadow Drawing"),
+    (8, "Channeling Writing"),
+    (8, "Freedom Log"),
+    (8, "Hierarchical Re-Feeling"),
+)
+
+
 #: The one canonical preset per stage. :data:`STAGE_TO_PRESET_NAME` and the
 #: frequency-banner endpoint resolve against exactly this list.
 _CANONICAL_PRESETS: list[dict[str, Any]] = [
@@ -231,7 +340,7 @@ _CANONICAL_PRESETS: list[dict[str, Any]] = [
         8,
         "Dog Walkin' Shamanism",
         mode="count_up",
-        mode_config={"mode": "count_up", "soft_cap_minutes": None},
+        mode_config=_count_up(),
         default_duration_minutes=_COUNT_UP_NOMINAL_DURATION_MINUTES,
     ),
     _build_preset(
@@ -311,435 +420,11 @@ _ALTERNATIVE_PRESETS: list[dict[str, Any]] = [
         },
         default_duration_minutes=5,
     ),
-    # Stage 1 BEIGE alternatives — body-grounding / nervous-system regulation.
-    _build_preset(
-        1,
-        "Crystal Charging",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(5),
-        default_duration_minutes=5,
+    *(
+        _timer_alternative(stage, name, duration, halfway_bell=halfway_bell)
+        for stage, name, duration, halfway_bell in _TIMER_ALTERNATIVE_SPECS
     ),
-    _build_preset(
-        1,
-        "Tense and Release",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(5, halfway_bell=True),
-        default_duration_minutes=5,
-    ),
-    _build_preset(
-        1,
-        "Contact Points",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(5),
-        default_duration_minutes=5,
-    ),
-    _build_preset(
-        1,
-        "Box Breathing",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(5, halfway_bell=True),
-        default_duration_minutes=5,
-    ),
-    _build_preset(
-        1,
-        "Toe Wiggling",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(3),
-        default_duration_minutes=3,
-    ),
-    _build_preset(
-        1,
-        "Body Scan",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(5, halfway_bell=True),
-        default_duration_minutes=5,
-    ),
-    _build_preset(
-        1,
-        "Progressive Muscle Relaxation",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(10, halfway_bell=True),
-        default_duration_minutes=10,
-    ),
-    # Stage 2 PURPLE alternatives — divination / symbolic intuition.
-    _build_preset(
-        2,
-        "Traffic Lights",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(5),
-        default_duration_minutes=5,
-    ),
-    _build_preset(
-        2,
-        "I Ching Toss",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(10, halfway_bell=True),
-        default_duration_minutes=10,
-    ),
-    _build_preset(
-        2,
-        "Bibliomancy",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(5),
-        default_duration_minutes=5,
-    ),
-    _build_preset(
-        2,
-        "Synchronicity Sweep",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(5),
-        default_duration_minutes=5,
-    ),
-    _build_preset(
-        2,
-        "Trataka Candle Gazing",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(10, halfway_bell=True),
-        default_duration_minutes=10,
-    ),
-    _build_preset(
-        2,
-        "Dream Recollection",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(10, halfway_bell=True),
-        default_duration_minutes=10,
-    ),
-    _build_preset(
-        2,
-        "Archetypal Mantra",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(10, halfway_bell=True),
-        default_duration_minutes=10,
-    ),
-    _build_preset(
-        2,
-        "Totem Meditation",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(5),
-        default_duration_minutes=5,
-    ),
-    # Stage 3 RED alternatives — energy / power.
-    _build_preset(
-        3,
-        "Hand Energy Sensing",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(5),
-        default_duration_minutes=5,
-    ),
-    _build_preset(
-        3,
-        "Windhorse Breathwork",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(10, halfway_bell=True),
-        default_duration_minutes=10,
-    ),
-    _build_preset(
-        3,
-        "Water Charging",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(5),
-        default_duration_minutes=5,
-    ),
-    _build_preset(
-        3,
-        "Mini TED Talk",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(10),
-        default_duration_minutes=10,
-    ),
-    _build_preset(
-        3,
-        "Power Posture",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(10),
-        default_duration_minutes=10,
-    ),
-    _build_preset(
-        3,
-        "Mountain Pose Sit",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(10),
-        default_duration_minutes=10,
-    ),
-    _build_preset(
-        3,
-        "Fire Gazing",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(10, halfway_bell=True),
-        default_duration_minutes=10,
-    ),
-    _build_preset(
-        3,
-        "Warrior Stillness",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(10),
-        default_duration_minutes=10,
-    ),
-    _build_preset(
-        3,
-        "Red Sphere Visualization",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(10, halfway_bell=True),
-        default_duration_minutes=10,
-    ),
-    # Stage 4 BLUE alternatives — heart / lovingkindness.
-    _build_preset(
-        4,
-        "Tonglen",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(15, halfway_bell=True),
-        default_duration_minutes=15,
-    ),
-    _build_preset(
-        4,
-        "I Am Love Through",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(15, halfway_bell=True),
-        default_duration_minutes=15,
-    ),
-    _build_preset(
-        4,
-        "Heart Centered Breath",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(15, halfway_bell=True),
-        default_duration_minutes=15,
-    ),
-    _build_preset(
-        4,
-        "Animist Gratitude",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(10),
-        default_duration_minutes=10,
-    ),
-    _build_preset(
-        4,
-        "Hug Visualization",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(10),
-        default_duration_minutes=10,
-    ),
-    _build_preset(
-        4,
-        "Relational Gratitude",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(15, halfway_bell=True),
-        default_duration_minutes=15,
-    ),
-    _build_preset(
-        4,
-        "Blessing Strangers",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(10),
-        default_duration_minutes=10,
-    ),
-    _build_preset(
-        4,
-        "Heart Imagery",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(15, halfway_bell=True),
-        default_duration_minutes=15,
-    ),
-    _build_preset(
-        4,
-        "Just Like Me",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(15, halfway_bell=True),
-        default_duration_minutes=15,
-    ),
-    _build_preset(
-        4,
-        "Ancestral Connection",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(15, halfway_bell=True),
-        default_duration_minutes=15,
-    ),
-    # Re-homed from stage 3 (source spreadsheet) at PR review request: a
-    # metta sit toward younger selves is heart-band, not energy-band.
-    _build_preset(
-        4,
-        "Love to Past Selves",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(15, halfway_bell=True),
-        default_duration_minutes=15,
-    ),
-    # Stage 5 ORANGE alternatives — activation / manifestation.
-    _build_preset(
-        5,
-        "Kapalabhati Skull Shining",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(15, halfway_bell=True),
-        default_duration_minutes=15,
-    ),
-    _build_preset(
-        5,
-        "Middle Pillar",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(20, halfway_bell=True),
-        default_duration_minutes=20,
-    ),
-    _build_preset(
-        5,
-        "Sigil Dhyana",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(20, halfway_bell=True),
-        default_duration_minutes=20,
-    ),
-    _build_preset(
-        5,
-        "Reality Selection Visualization",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(20, halfway_bell=True),
-        default_duration_minutes=20,
-    ),
-    _build_preset(
-        5,
-        "Single Instrument Listening",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(20),
-        default_duration_minutes=20,
-    ),
-    _build_preset(
-        5,
-        "Chanting or Kirtan",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(20),
-        default_duration_minutes=20,
-    ),
-    _build_preset(
-        5,
-        "Breath of Fire + Silence",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(20, halfway_bell=True),
-        default_duration_minutes=20,
-    ),
-    _build_preset(
-        5,
-        "Lion's Breath",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(10),
-        default_duration_minutes=10,
-    ),
-    # Stage 6 GREEN alternatives — shadow work.
-    _build_preset(
-        6,
-        "Chair Work",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(30, halfway_bell=True),
-        default_duration_minutes=30,
-    ),
-    _build_preset(
-        6,
-        "Wording Through It",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(30, halfway_bell=True),
-        default_duration_minutes=30,
-    ),
-    _build_preset(
-        6,
-        "Wilber 3-2-1",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(30, halfway_bell=True),
-        default_duration_minutes=30,
-    ),
-    _build_preset(
-        6,
-        "Emotion Transmutation",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(30, halfway_bell=True),
-        default_duration_minutes=30,
-    ),
-    _build_preset(
-        6,
-        "Pain Body Meditation",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(30, halfway_bell=True),
-        default_duration_minutes=30,
-    ),
-    _build_preset(
-        6,
-        "Letter to the Repressed Self",
-        mode="count_up",
-        mode_config={"mode": "count_up", "soft_cap_minutes": None},
-        default_duration_minutes=_COUNT_UP_NOMINAL_DURATION_MINUTES,
-    ),
-    _build_preset(
-        6,
-        "Shadow Drawing",
-        mode="count_up",
-        mode_config={"mode": "count_up", "soft_cap_minutes": None},
-        default_duration_minutes=_COUNT_UP_NOMINAL_DURATION_MINUTES,
-    ),
-    _build_preset(
-        6,
-        "REACH Inward",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(30, halfway_bell=True),
-        default_duration_minutes=30,
-    ),
-    # Stage 8 TEAL alternatives — integration / shamanic.
-    _build_preset(
-        8,
-        "Clairaudient Listening",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(20, halfway_bell=True),
-        default_duration_minutes=20,
-    ),
-    _build_preset(
-        8,
-        "Channeling Writing",
-        mode="count_up",
-        mode_config={"mode": "count_up", "soft_cap_minutes": None},
-        default_duration_minutes=_COUNT_UP_NOMINAL_DURATION_MINUTES,
-    ),
-    _build_preset(
-        8,
-        "Active Imagination Dialogue",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(30, halfway_bell=True),
-        default_duration_minutes=30,
-    ),
-    _build_preset(
-        8,
-        "Aura Scanning",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(15),
-        default_duration_minutes=15,
-    ),
-    _build_preset(
-        8,
-        "Sangha Field Tuning",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(15),
-        default_duration_minutes=15,
-    ),
-    _build_preset(
-        8,
-        "Freedom Log",
-        mode="count_up",
-        mode_config={"mode": "count_up", "soft_cap_minutes": None},
-        default_duration_minutes=_COUNT_UP_NOMINAL_DURATION_MINUTES,
-    ),
-    _build_preset(
-        8,
-        "Hierarchical Re-Feeling",
-        mode="count_up",
-        mode_config={"mode": "count_up", "soft_cap_minutes": None},
-        default_duration_minutes=_COUNT_UP_NOMINAL_DURATION_MINUTES,
-    ),
-    _build_preset(
-        8,
-        "Reflective Tarot Draw",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(5),
-        default_duration_minutes=5,
-    ),
-    _build_preset(
-        8,
-        "Sacred Pause",
-        mode="meditation_timer",
-        mode_config=_meditation_timer(5),
-        default_duration_minutes=5,
-    ),
+    *(_count_up_alternative(*spec) for spec in _COUNT_UP_ALTERNATIVE_SPECS),
 ]
 
 _PRESET_PRACTICES: list[dict[str, Any]] = [*_CANONICAL_PRESETS, *_ALTERNATIVE_PRESETS]
