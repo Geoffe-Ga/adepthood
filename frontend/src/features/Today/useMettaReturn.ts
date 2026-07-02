@@ -24,7 +24,7 @@ export interface UseMettaReturnResult {
   weeks: ReturnWeek[];
   arc: ReturnArc | null;
   offerVisible: boolean;
-  dismissOffer: () => void;
+  dismissOffer: () => Promise<void>;
   start: () => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
@@ -41,6 +41,13 @@ interface LoadedReturn {
   mountedRef: MutableRefObject<boolean>;
 }
 
+/** Persist the dismissal flag best-effort — a failed write leaves the server authoritative. */
+function cacheDismissed(value: boolean): void {
+  void saveReturnOfferDismissed(value).catch(() => {
+    // A failed cache write is harmless — the server flag remains the source of truth.
+  });
+}
+
 /** Own the Return state and load it (server state + persisted decline) once on mount. */
 function useLoadedReturn(): LoadedReturn {
   const [eligible, setEligible] = useState(false);
@@ -48,12 +55,15 @@ function useLoadedReturn(): LoadedReturn {
   const [arc, setArc] = useState<ReturnArc | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const mountedRef = useRef(true);
+  const serverAppliedRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
+    serverAppliedRef.current = false;
     void loadReturnOfferDismissed()
       .then((wasDismissed) => {
-        if (mountedRef.current) setDismissed(wasDismissed);
+        // Cache seeds the flag only until the server answers — server wins.
+        if (mountedRef.current && !serverAppliedRef.current) setDismissed(wasDismissed);
       })
       .catch(() => {
         // A failed flag read stays silent — the offer simply is not suppressed.
@@ -62,9 +72,12 @@ function useLoadedReturn(): LoadedReturn {
       .state()
       .then((state) => {
         if (!mountedRef.current) return;
+        serverAppliedRef.current = true;
         setEligible(state.eligible);
         setWeeks(state.weeks);
         setArc(state.arc);
+        setDismissed(state.offer_dismissed);
+        cacheDismissed(state.offer_dismissed);
       })
       .catch(() => {
         // A failed load stays silent — the Return must never nag or crash the tab.
@@ -88,11 +101,14 @@ export function useMettaReturn(): UseMettaReturnResult {
     arcRef.current = arc;
   }, [arc]);
 
-  const dismissOffer = useCallback((): void => {
+  const dismissOffer = useCallback(async (): Promise<void> => {
     setDismissed(true);
-    void saveReturnOfferDismissed().catch(() => {
-      // A failed persist is harmless — the offer is already hidden this session.
-    });
+    cacheDismissed(true);
+    try {
+      await mettaReturn.dismissOffer();
+    } catch {
+      // A failed dismiss stays silent — the offer must never re-show once declined.
+    }
   }, [setDismissed]);
 
   const start = useCallback(async (): Promise<void> => {

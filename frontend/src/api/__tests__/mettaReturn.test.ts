@@ -47,13 +47,17 @@ function arc(overrides: Partial<ReturnArc> = {}): ReturnArc {
   };
 }
 
+function state(overrides: Partial<MettaReturnState> = {}): MettaReturnState {
+  return { eligible: true, weeks: fiveWeeks(), arc: null, offer_dismissed: false, ...overrides };
+}
+
 beforeEach(() => {
   mockFetch.mockReset();
 });
 
 describe('mettaReturn.state', () => {
   test('GETs /metta-return and parses the full shape', async () => {
-    const payload: MettaReturnState = { eligible: true, weeks: fiveWeeks(), arc: null };
+    const payload: MettaReturnState = state();
     mockFetch.mockReturnValueOnce(jsonResponse(payload));
     const result = await mettaReturn.state('tok');
 
@@ -63,6 +67,20 @@ describe('mettaReturn.state', () => {
     expect(result.eligible).toBe(true);
     expect(result.weeks).toHaveLength(5);
     expect(result.arc).toBeNull();
+    expect(result.offer_dismissed).toBe(false);
+  });
+
+  test('rejects a payload missing the required offer_dismissed field via Zod', async () => {
+    const payload = { eligible: true, weeks: fiveWeeks(), arc: null };
+    mockFetch.mockReturnValueOnce(jsonResponse(payload));
+    await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
+  test('parses a valid payload that includes offer_dismissed true', async () => {
+    const payload: MettaReturnState = state({ offer_dismissed: true });
+    mockFetch.mockReturnValueOnce(jsonResponse(payload));
+    const result = await mettaReturn.state('tok');
+    expect(result.offer_dismissed).toBe(true);
   });
 
   test('parses an active arc when present', async () => {
@@ -70,6 +88,7 @@ describe('mettaReturn.state', () => {
       eligible: true,
       weeks: fiveWeeks(),
       arc: arc({ week: 3, focus: 'stranger' }),
+      offer_dismissed: false,
     };
     mockFetch.mockReturnValueOnce(jsonResponse(payload));
     const result = await mettaReturn.state('tok');
@@ -191,5 +210,17 @@ describe('mettaReturn.leave', () => {
     expect(url).toBe('http://test/metta-return/arc/leave');
     expect(init.method).toBe('POST');
     expect(result.week).toBe(1);
+  });
+});
+
+describe('mettaReturn.dismissOffer', () => {
+  test('POSTs /metta-return/offer/dismiss and returns the full dismissed state', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(state({ offer_dismissed: true })));
+    const result = await mettaReturn.dismissOffer('tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/metta-return/offer/dismiss');
+    expect(init.method).toBe('POST');
+    expect(result.offer_dismissed).toBe(true);
   });
 });
