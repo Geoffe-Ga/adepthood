@@ -1,11 +1,10 @@
 """DB-backed idempotency for practice-session creation.
 
 The read/insert primitives for the ``PracticeSessionSpend`` table that backs the
-``POST /practice-sessions`` ``Idempotency-Key`` dedup. Mirrors
-``services.chat_idempotency`` but is simpler: practice-session writes are fast and
-synchronous (no slow LLM call), so there is no in-flight tombstone window — the
-spend row is inserted in the same transaction as the session and always carries a
-real ``session_id``. Cross-worker serialisation comes from the
+``POST /practice-sessions`` ``Idempotency-Key`` dedup. Practice-session writes are
+fast and synchronous (no slow LLM call), so there is no in-flight tombstone
+window — the spend row is inserted in the same transaction as the session and
+always carries a real ``session_id``. Cross-worker serialisation comes from the
 ``UNIQUE(user_id, idem_key)`` constraint, not a process-local lock.
 """
 
@@ -26,7 +25,7 @@ def hash_idem_key(user_id: int, raw_key: str) -> str:
     The raw client header is never stored. Hashing keeps the column width
     bounded and one-way, and the ``user_id`` prefix keeps the hash space
     disjoint across users so a crafted key cannot collide into another user's
-    namespace (same scheme as ``services.chat_idempotency.hash_idem_key``).
+    namespace.
     """
     return hashlib.sha256(f"{user_id}:{raw_key}".encode()).hexdigest()
 
