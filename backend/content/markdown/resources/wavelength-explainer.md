@@ -1,6 +1,10 @@
-export const WAVELENGTH_EXPLAINER = {
-  title: 'How the Wavelength works',
-  markdown: `# How the Wavelength works
+---
+slug: wavelength-explainer
+title: "How the Wavelength works"
+content_type: essay
+description: "A living picture of the Wavelength — torus, spiral, compression waves, rising octaves, and the chord of a single act."
+media: []
+---
 
 This is a picture, not a measurement. Nothing here is a ladder to climb or a
 score to beat — it is simply a way of seeing the shape of a life as it turns.
@@ -60,5 +64,4 @@ one note alone.
 
 To hear your own chord — the many notes ringing together in a single act — is
 simply to know yourself more completely. That is all the Wavelength ever asks:
-that you listen.`,
-} as const;
+that you listen.

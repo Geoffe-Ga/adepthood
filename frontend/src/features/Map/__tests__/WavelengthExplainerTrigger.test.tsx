@@ -10,6 +10,21 @@ import { act, create } from 'react-test-renderer';
 
 import MapScreen from '../MapScreen';
 
+// Mock ChapterReader so the explainer's live content fetch never runs in this
+// MapScreen wiring test; its back control (testID="reader-back-button") is the
+// explainer's close affordance.
+jest.mock('../../Course/ChapterReader', () => {
+  const { Pressable, Text } = jest.requireActual('react-native');
+  return {
+    __esModule: true,
+    default: ({ fallbackTitle, onBack }: { fallbackTitle: string; onBack: () => void }) => (
+      <Pressable testID="reader-back-button" onPress={onBack}>
+        <Text>{fallbackTitle}</Text>
+      </Pressable>
+    ),
+  };
+});
+
 jest.mock('react-native/Libraries/Interaction/InteractionManager', () => ({
   runAfterInteractions: (cb: () => void) => {
     cb();
@@ -153,7 +168,7 @@ describe('MapScreen wavelength explainer trigger', () => {
       tree.root.findByProps({ testID: 'wavelength-explainer-trigger' }).props.onPress();
     });
     act(() => {
-      tree.root.findByProps({ testID: 'wavelength-explainer-close' }).props.onPress();
+      tree.root.findByProps({ testID: 'reader-back-button' }).props.onPress();
     });
     expect(
       tree.root.findAll((n: TestNode) => n.props.testID === 'wavelength-explainer'),
