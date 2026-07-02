@@ -147,6 +147,46 @@ describe('JournalShelfScreen', () => {
     expect(getByTestId('journal-shelf-card-3')).toBeTruthy();
   });
 
+  it('captions each page with a relative "saved ... ago" phrase by age', async () => {
+    const DAY_MS = 86_400_000;
+    const ago = (days: number) => new Date(Date.now() - days * DAY_MS).toISOString();
+    mockList.mockResolvedValue(
+      page([
+        entry(1, { timestamp: ago(0) }),
+        entry(2, { timestamp: ago(1) }),
+        entry(3, { timestamp: ago(5) }),
+      ]),
+    );
+    const { findByTestId, getByTestId } = render(<JournalShelfScreen />);
+    const card1 = await findByTestId('journal-shelf-card-1');
+    const card2 = getByTestId('journal-shelf-card-2');
+    const card3 = getByTestId('journal-shelf-card-3');
+    expect(within(card1).getByText(/saved today/)).toBeTruthy();
+    expect(within(card2).getByText(/saved 1 day ago/)).toBeTruthy();
+    expect(within(card3).getByText(/saved 5 days ago/)).toBeTruthy();
+  });
+
+  it('falls back to the absolute saved date once an entry is a month or older', async () => {
+    const DAY_MS = 86_400_000;
+    const oldTimestamp = new Date(Date.now() - 45 * DAY_MS).toISOString();
+    mockList.mockResolvedValue(page([entry(9, { timestamp: oldTimestamp })]));
+    const { findByTestId } = render(<JournalShelfScreen />);
+    const card = await findByTestId('journal-shelf-card-9');
+    // No relative "saved N days ago" phrasing once the entry ages out of that
+    // window — the caption falls back to the absolute saved date instead.
+    expect(within(card).queryByText(/saved \d+ days? ago/)).toBeNull();
+    expect(within(card).queryByText(/saved today/)).toBeNull();
+  });
+
+  it('truncates a long entry body to an ellipsis excerpt', async () => {
+    const longBody = 'word '.repeat(60).trim();
+    mockList.mockResolvedValue(page([entry(4, { message: longBody })]));
+    const { findByTestId } = render(<JournalShelfScreen />);
+    const card = await findByTestId('journal-shelf-card-4');
+    expect(within(card).getByText(new RegExp(`${String.fromCharCode(0x2026)}$`))).toBeTruthy();
+    expect(within(card).queryByText(longBody)).toBeNull();
+  });
+
   it('starts a blank page from the empty-state call to action', async () => {
     mockList.mockResolvedValue(page([]));
     const { findByTestId } = render(<JournalShelfScreen />);
@@ -313,6 +353,23 @@ describe('JournalShelfScreen', () => {
     const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
     await findByTestId('journal-shelf-error');
     expect(queryByTestId('journal-empty-first-prompt')).toBeNull();
+  });
+
+  it('falls back to "Untitled" and a matching a11y label when the entry has no title', async () => {
+    mockList.mockResolvedValue(page([entry(1, { title: null })]));
+    const { findByTestId } = render(<JournalShelfScreen />);
+    const card = await findByTestId('journal-shelf-card-1');
+    expect(within(card).getByText('Untitled')).toBeTruthy();
+    expect(card.props.accessibilityLabel).toBe('Open untitled entry');
+  });
+
+  it('drops the "saved" phrase from the caption for an unparseable timestamp', async () => {
+    mockList.mockResolvedValue(page([entry(1, { timestamp: 'not-a-real-date' })]));
+    const { findByTestId } = render(<JournalShelfScreen />);
+    const card = await findByTestId('journal-shelf-card-1');
+    // The "saved ... ago" half of the caption drops entirely instead of showing a garbled date.
+    expect(within(card).getByText('1 min read')).toBeTruthy();
+    expect(within(card).queryByText(/saved/)).toBeNull();
   });
 
   it('hides the warm affordance when a search returns no results', async () => {

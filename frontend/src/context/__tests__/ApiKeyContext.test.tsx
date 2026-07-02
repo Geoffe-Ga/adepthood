@@ -122,4 +122,98 @@ describe('ApiKeyProvider', () => {
     expect(() => render(<NakedConsumer />)).toThrow(/ApiKeyProvider/);
     suppress.mockRestore();
   });
+
+  test('sets loadError when the initial SecureStore read fails', async () => {
+    mockStorage.loadLlmApiKey.mockRejectedValueOnce(new Error('keychain locked'));
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let ctx: ReturnType<typeof useApiKey> | null = null;
+    render(
+      <ApiKeyProvider>
+        <TestConsumer
+          onValue={(v) => {
+            ctx = v;
+          }}
+        />
+      </ApiKeyProvider>,
+    );
+
+    await waitFor(() => expect(ctx?.isLoading).toBe(false));
+
+    expect(ctx!.apiKey).toBeNull();
+    expect(ctx!.loadError).toBeInstanceOf(Error);
+    expect(ctx!.loadError?.message).toBe('keychain locked');
+    warnSpy.mockRestore();
+  });
+
+  test('wraps a non-Error thrown value from the initial load in an Error', async () => {
+    mockStorage.loadLlmApiKey.mockRejectedValueOnce('string rejection');
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let ctx: ReturnType<typeof useApiKey> | null = null;
+    render(
+      <ApiKeyProvider>
+        <TestConsumer
+          onValue={(v) => {
+            ctx = v;
+          }}
+        />
+      </ApiKeyProvider>,
+    );
+
+    await waitFor(() => expect(ctx?.isLoading).toBe(false));
+
+    expect(ctx!.loadError).toBeInstanceOf(Error);
+    expect(ctx!.loadError?.message).toBe('string rejection');
+    warnSpy.mockRestore();
+  });
+
+  test('saveApiKey sets loadError but still updates the key when the write fails', async () => {
+    mockStorage.saveLlmApiKey.mockRejectedValueOnce(new Error('disk full'));
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let ctx: ReturnType<typeof useApiKey> | null = null;
+    render(
+      <ApiKeyProvider>
+        <TestConsumer
+          onValue={(v) => {
+            ctx = v;
+          }}
+        />
+      </ApiKeyProvider>,
+    );
+    await waitFor(() => expect(ctx?.isLoading).toBe(false));
+
+    await act(async () => {
+      await ctx!.saveApiKey('sk-fallback');
+    });
+
+    expect(ctx!.loadError).toBeInstanceOf(Error);
+    expect(ctx!.loadError?.message).toBe('disk full');
+    expect(ctx!.apiKey).toBe('sk-fallback');
+    warnSpy.mockRestore();
+  });
+
+  test('clearApiKey sets loadError but still nulls the key when the clear fails', async () => {
+    mockStorage.loadLlmApiKey.mockResolvedValueOnce('sk-existing');
+    mockStorage.clearLlmApiKey.mockRejectedValueOnce(new Error('locked'));
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let ctx: ReturnType<typeof useApiKey> | null = null;
+    render(
+      <ApiKeyProvider>
+        <TestConsumer
+          onValue={(v) => {
+            ctx = v;
+          }}
+        />
+      </ApiKeyProvider>,
+    );
+    await waitFor(() => expect(ctx?.apiKey).toBe('sk-existing'));
+
+    await act(async () => {
+      await ctx!.clearApiKey();
+    });
+
+    expect(ctx!.loadError).toBeInstanceOf(Error);
+    expect(ctx!.loadError?.message).toBe('locked');
+    expect(ctx!.apiKey).toBeNull();
+    warnSpy.mockRestore();
+  });
 });

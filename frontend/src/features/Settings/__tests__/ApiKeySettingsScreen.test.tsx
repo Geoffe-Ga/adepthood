@@ -196,4 +196,82 @@ describe('ApiKeySettingsScreen', () => {
     await waitFor(() => expect(state.clearApiKey).toHaveBeenCalled());
     alertSpy.mockRestore();
   });
+
+  test('dismissing the remove confirmation does not clear the key', async () => {
+    const state = setApiKeyState({ apiKey: VALID_KEY });
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
+      // Simulate the user tapping "Cancel" instead of the destructive action.
+      const cancel = buttons?.find((b) => b.style === 'cancel');
+      cancel?.onPress?.();
+    });
+
+    const { getByTestId } = render(<ApiKeySettingsScreen />);
+    await act(async () => {
+      fireEvent.press(getByTestId('remove-key-button'));
+    });
+
+    expect(state.clearApiKey).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+  });
+
+  test('shows an error banner when saving a well-formed key fails', async () => {
+    const state = setApiKeyState({
+      saveApiKey: jest.fn(() => Promise.reject(new Error('network unreachable'))),
+    });
+    const { getByTestId, findByTestId } = render(<ApiKeySettingsScreen />);
+
+    fireEvent.changeText(getByTestId('api-key-input'), VALID_KEY);
+    await act(async () => {
+      fireEvent.press(getByTestId('save-key-button'));
+    });
+
+    const error = await findByTestId('api-key-error');
+    expect(error.props.children).toContain('network unreachable');
+    expect(state.saveApiKey).toHaveBeenCalledWith(VALID_KEY);
+  });
+
+  test('shows an error banner when removing the stored key fails', async () => {
+    setApiKeyState({
+      apiKey: VALID_KEY,
+      clearApiKey: jest.fn(() => Promise.reject(new Error('keychain locked'))),
+    });
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
+      const destructive = buttons?.find((b) => b.style === 'destructive');
+      destructive?.onPress?.();
+    });
+
+    const { getByTestId, findByTestId } = render(<ApiKeySettingsScreen />);
+    await act(async () => {
+      fireEvent.press(getByTestId('remove-key-button'));
+    });
+
+    const error = await findByTestId('api-key-error');
+    expect(error.props.children).toContain('keychain locked');
+    alertSpy.mockRestore();
+  });
+
+  test('masks a short stored key entirely rather than partially revealing it', () => {
+    setApiKeyState({ apiKey: 'sk-short' }); // pragma: allowlist secret
+    const { getByText, queryByText } = render(<ApiKeySettingsScreen />);
+    expect(getByText('••••••••')).toBeTruthy();
+    expect(queryByText(/sk-s/)).toBeNull();
+  });
+
+  test('renders a Back link that navigates back when navigation.goBack is provided', () => {
+    setApiKeyState({});
+    const goBack = jest.fn();
+    const { getByLabelText } = render(<ApiKeySettingsScreen navigation={{ goBack }} />);
+
+    fireEvent.press(getByLabelText('Go back'));
+
+    expect(goBack).toHaveBeenCalledTimes(1);
+  });
+
+  test('omits the Back and Time zone links when no navigation is supplied', () => {
+    setApiKeyState({});
+    const { queryByLabelText, queryByTestId } = render(<ApiKeySettingsScreen />);
+
+    expect(queryByLabelText('Go back')).toBeNull();
+    expect(queryByTestId('open-timezone-settings')).toBeNull();
+  });
 });

@@ -2,8 +2,11 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { render, fireEvent, act } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import SearchBar from '../SearchBar';
+
+import { accent } from '@/design/tokens';
 
 describe('SearchBar', () => {
   let onSearch: jest.Mock;
@@ -98,5 +101,42 @@ describe('SearchBar', () => {
     );
     fireEvent.press(getByTestId('search-toggle'));
     expect(getByText("No results for 'willow'")).toBeTruthy();
+  });
+
+  it('applies the accent focus border on focus and reverts it on blur', () => {
+    const { getByTestId } = render(<SearchBar onSearch={onSearch} />);
+    fireEvent.press(getByTestId('search-toggle'));
+    const input = getByTestId('search-input');
+
+    expect(StyleSheet.flatten(input.props.style).borderColor).not.toBe(accent.primary);
+
+    fireEvent(input, 'focus');
+    expect(StyleSheet.flatten(input.props.style).borderColor).toBe(accent.primary);
+
+    fireEvent(input, 'blur');
+    expect(StyleSheet.flatten(input.props.style).borderColor).not.toBe(accent.primary);
+  });
+
+  it('syncs the input text when the parent resets searchQuery externally', () => {
+    const { getByTestId, rerender } = render(
+      <SearchBar onSearch={onSearch} searchQuery="willow" />,
+    );
+    expect(getByTestId('search-input').props.value).toBe('willow');
+
+    rerender(<SearchBar onSearch={onSearch} searchQuery="" />);
+    expect(getByTestId('search-input').props.value).toBe('');
+  });
+
+  it('clears a pending debounce timer on unmount without ever calling onSearch', () => {
+    const { getByTestId, unmount } = render(<SearchBar onSearch={onSearch} />);
+    fireEvent.press(getByTestId('search-toggle'));
+    fireEvent.changeText(getByTestId('search-input'), 'partial query');
+
+    unmount();
+
+    act(() => {
+      jest.advanceTimersByTime(300);
+    });
+    expect(onSearch).not.toHaveBeenCalled();
   });
 });

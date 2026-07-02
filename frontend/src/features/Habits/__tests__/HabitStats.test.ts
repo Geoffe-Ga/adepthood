@@ -348,6 +348,15 @@ describe('calculateMissedDays', () => {
     expect(missed).toEqual([]);
   });
 
+  test('returns empty array when there is exactly one completion (no span to bound a gap)', () => {
+    const habit: Habit = {
+      ...baseHabit,
+      completions: [{ id: 'c-1', timestamp: new Date('2024-01-01T08:00:00'), completed_units: 1 }],
+    };
+    const missed = calculateMissedDays(habit);
+    expect(missed).toEqual([]);
+  });
+
   test('identifies days without completions between first and last completion', () => {
     const habit: Habit = {
       ...baseHabit,

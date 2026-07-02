@@ -250,4 +250,57 @@ describe('MapScreen — Stage History', () => {
     });
     expect(mockHistoryFn).toHaveBeenCalledWith(1);
   });
+
+  it('shows the history loading spinner before the fetch resolves', async () => {
+    let resolveHistory: ((_v: StageHistoryData) => void) | undefined;
+    mockHistoryFn.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveHistory = resolve;
+      }),
+    );
+    const tree = create(<MapScreen />);
+
+    await act(async () => {
+      tree.root.findByProps({ testID: 'stage-hotspot-1-0' }).props.onPress();
+    });
+    act(() => {
+      tree.root.findByProps({ testID: 'history-toggle' }).props.onPress();
+    });
+
+    expect(tree.root.findByProps({ testID: 'history-loading' })).toBeTruthy();
+
+    await act(async () => {
+      resolveHistory?.(EMPTY_HISTORY);
+    });
+  });
+
+  it('does not refetch on collapse then re-expand once history has already loaded', async () => {
+    mockHistoryFn.mockResolvedValueOnce(HISTORY_WITH_DATA);
+    const tree = create(<MapScreen />);
+
+    await act(async () => {
+      tree.root.findByProps({ testID: 'stage-hotspot-1-0' }).props.onPress();
+    });
+    await act(async () => {
+      tree.root.findByProps({ testID: 'history-toggle' }).props.onPress();
+    });
+    expect(mockHistoryFn).toHaveBeenCalledTimes(1);
+
+    // Collapse — the history content leaves the tree.
+    await act(async () => {
+      tree.root.findByProps({ testID: 'history-toggle' }).props.onPress();
+    });
+    const collapsed = tree.root.findAll(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (node: any) => node.props.testID === 'history-content',
+    );
+    expect(collapsed.length).toBe(0);
+
+    // Re-expand — the already-loaded history renders without a second fetch.
+    await act(async () => {
+      tree.root.findByProps({ testID: 'history-toggle' }).props.onPress();
+    });
+    expect(mockHistoryFn).toHaveBeenCalledTimes(1);
+    expect(tree.root.findByProps({ testID: 'history-content' })).toBeTruthy();
+  });
 });

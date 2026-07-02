@@ -11,6 +11,7 @@ import {
   shadows,
   spacing,
   touchTarget,
+  type,
   typography,
 } from '../tokens';
 
@@ -232,6 +233,25 @@ describe('design tokens', () => {
       const sizes = typography(600);
       expect(sizes.title).toBeGreaterThan(sizes.body);
       expect(sizes.body).toBeGreaterThan(sizes.caption);
+    });
+
+    it('steps the base size across every breakpoint bracket', () => {
+      // Widths land in the sm, md, lg, xl and above-xl brackets in turn.
+      expect(typography(300).body).toBe(14);
+      expect(typography(400).body).toBe(16);
+      expect(typography(700).body).toBe(18);
+      expect(typography(1000).body).toBe(20);
+      expect(typography(1300).body).toBe(22);
+    });
+  });
+
+  describe('type', () => {
+    it('steps the base size across every breakpoint bracket', () => {
+      expect(type(300).body.fontSize).toBe(15);
+      expect(type(400).body.fontSize).toBe(16);
+      expect(type(700).body.fontSize).toBe(17);
+      expect(type(1000).body.fontSize).toBe(18);
+      expect(type(1300).body.fontSize).toBe(19);
     });
   });
 });

@@ -294,6 +294,27 @@ describe('CourseScreen', () => {
     expect(queryByTestId('chapter-reader')).toBeNull();
   });
 
+  it('opens a site resource in the reader and returns to the course on back', async () => {
+    const { getByTestId, findByText, queryByTestId } = render(<CourseScreen />);
+
+    await waitFor(() => expect(getByTestId('site-resources-panel')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('site-resource-chip-philosophy'));
+    });
+
+    await waitFor(() => expect(getByTestId('chapter-reader')).toBeTruthy());
+    expect(mockSiteResourceBody).toHaveBeenCalledWith('philosophy');
+    await findByText('philosophy');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('reader-back-button'));
+    });
+
+    expect(queryByTestId('chapter-reader')).toBeNull();
+    expect(getByTestId('stage-selector')).toBeTruthy();
+  });
+
   it('returns from content viewer when back is pressed', async () => {
     const { getByText, getByTestId, queryByTestId } = render(<CourseScreen />);
 

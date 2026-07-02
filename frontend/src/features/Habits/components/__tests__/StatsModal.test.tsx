@@ -3,12 +3,23 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
-// Mock chart libraries that don't render in test env
+// Mock chart libraries that don't render in test env. The captured-props refs
+// let branch tests inspect the color/config values computed by StatsModal
+// without needing the real chart/calendar implementations.
+const lastCalendarProps: { current: any } = { current: null };
+const lastLineChartProps: { current: any } = { current: null };
+
 jest.mock('react-native-calendars', () => ({
-  Calendar: () => null,
+  Calendar: (props: any) => {
+    lastCalendarProps.current = props;
+    return null;
+  },
 }));
 jest.mock('react-native-chart-kit', () => ({
-  LineChart: () => null,
+  LineChart: (props: any) => {
+    lastLineChartProps.current = props;
+    return null;
+  },
   BarChart: () => null,
 }));
 
@@ -158,6 +169,28 @@ describe('StatsModal', () => {
     // Switch to by-day tab
     fireEvent.press(getByText('By Day'));
     expect(getByText('Completions by Day of Week')).toBeTruthy();
+  });
+
+  it('falls back to the default calendar marker color for a stage without a design token', () => {
+    const habit = { ...baseHabit, stage: 'NotARealStage' };
+    const statsWithDates: HabitStatsData = { ...localStats, completionDates: ['2024-01-01'] };
+
+    render(
+      <StatsModal visible={true} habit={habit} stats={statsWithDates} onClose={jest.fn() as any} />,
+    );
+
+    expect(lastCalendarProps.current.markedDates['2024-01-01'].selectedColor).toBe('#50cebb');
+  });
+
+  it('falls back to the default chart color for a stage without a design token', () => {
+    const habit = { ...baseHabit, stage: 'NotARealStage' };
+
+    const { getByText } = render(
+      <StatsModal visible={true} habit={habit} stats={localStats} onClose={jest.fn() as any} />,
+    );
+    fireEvent.press(getByText('Progress'));
+
+    expect(lastLineChartProps.current.chartConfig.color()).toBe('rgba(134, 65, 244, 1)');
   });
 
   it('does not fetch when not visible', () => {

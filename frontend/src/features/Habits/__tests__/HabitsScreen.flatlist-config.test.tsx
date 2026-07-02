@@ -77,6 +77,27 @@ describe('Habits FlatList getItemLayout', () => {
   });
 });
 
+describe('Habits FlatList keyExtractor and column layout', () => {
+  it('keys rows by id, falling back to the habit name when id is missing', () => {
+    const habits = [1, 2].map(makeHabit);
+    const { getByTestId } = render(
+      <HabitList habits={habits} columns={1} gridGutter={8} renderItem={renderRow} />,
+    );
+    const keyExtractor = getByTestId('habits-list').props.keyExtractor as (_item: Habit) => string;
+    expect(keyExtractor(habits[0]!)).toBe(String(habits[0]!.id));
+    const noIdHabit = { ...habits[0]!, id: undefined } as unknown as Habit;
+    expect(keyExtractor(noIdHabit)).toBe(noIdHabit.name);
+  });
+
+  it('omits columnWrapperStyle in a single-column layout', () => {
+    const habits = [1, 2].map(makeHabit);
+    const { getByTestId } = render(
+      <HabitList habits={habits} columns={1} gridGutter={8} renderItem={renderRow} />,
+    );
+    expect(getByTestId('habits-list').props.columnWrapperStyle).toBeUndefined();
+  });
+});
+
 describe('missed-days computation gating', () => {
   it('does not scan completions while the modal is closed', () => {
     mockCalculateMissedDays.mockClear();

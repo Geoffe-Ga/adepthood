@@ -4,7 +4,23 @@ import React from 'react';
 
 import RecipePickerModal from '../RecipePickerModal';
 
+import { practiceTags } from '@/api';
 import type { PracticeRecipe, UserPractice } from '@/api';
+
+// RecipePickerModal mounts its nested RecipeEditorModal without injecting
+// listTags/create/update seams, so opening it falls through to the real
+// `@/api` bindings. Stub `practiceTags.list` so that fallthrough never
+// makes a real network call in tests; everything else stays real.
+jest.mock('@/api', () => {
+  const actual = jest.requireActual('@/api') as Record<string, unknown>;
+  return {
+    ...actual,
+    practiceTags: {
+      list: jest.fn(async () => []),
+      create: jest.fn(),
+    },
+  };
+});
 
 const systemRecipe: PracticeRecipe = {
   id: 1,
@@ -150,5 +166,69 @@ describe('RecipePickerModal', () => {
     const list = jest.fn(async () => []);
     const utils = mountPicker({ list: list as never });
     await waitFor(() => expect(utils.getByTestId('recipe-picker-empty')).toBeTruthy());
+  });
+
+  it('surfaces an apply failure inline and leaves the picker open', async () => {
+    const apply = jest.fn(async (_recipeId: number, _upId: number) => {
+      throw new Error('apply failed');
+    });
+    const utils = mountPicker({ apply: apply as never });
+    await waitFor(() => expect(utils.getByTestId('recipe-row-1')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('recipe-row-1-apply'));
+    });
+    await waitFor(() => expect(utils.getByTestId('recipe-picker-api-error')).toBeTruthy());
+    expect(utils.onApplied).not.toHaveBeenCalled();
+    expect(utils.onClose).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a delete failure inline and does not refresh the list', async () => {
+    const remove = jest.fn(async (_recipeId: number) => {
+      throw new Error('delete failed');
+    });
+    const utils = mountPicker({ remove: remove as never });
+    await waitFor(() => expect(utils.getByTestId('recipe-row-2')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('recipe-row-2-delete'));
+    });
+    await waitFor(() => expect(utils.getByTestId('recipe-picker-api-error')).toBeTruthy());
+    expect(utils.list).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the editor in create mode from the header + New button', async () => {
+    const utils = mountPicker();
+    await waitFor(() => expect(utils.getByTestId('recipe-row-1')).toBeTruthy());
+    fireEvent.press(utils.getByTestId('recipe-picker-new'));
+    expect(await utils.findByTestId('recipe-editor-sheet')).toBeTruthy();
+    expect(utils.getByText('New recipe')).toBeTruthy();
+    await waitFor(() => expect(practiceTags.list).toHaveBeenCalled());
+  });
+
+  it('opens the editor in edit mode for a personal recipe', async () => {
+    const utils = mountPicker();
+    await waitFor(() => expect(utils.getByTestId('recipe-row-2')).toBeTruthy());
+    fireEvent.press(utils.getByTestId('recipe-row-2-edit'));
+    expect(await utils.findByText('Edit recipe')).toBeTruthy();
+    expect(utils.getByTestId('recipe-editor-name').props.value).toBe('My Custom');
+    await waitFor(() => expect(practiceTags.list).toHaveBeenCalled());
+  });
+
+  it('forks a system recipe into a new draft named "<name> copy"', async () => {
+    const utils = mountPicker();
+    await waitFor(() => expect(utils.getByTestId('recipe-row-1')).toBeTruthy());
+    fireEvent.press(utils.getByTestId('recipe-row-1-fork'));
+    expect(await utils.findByText('New recipe')).toBeTruthy();
+    expect(utils.getByTestId('recipe-editor-name').props.value).toBe('5-4-3-2-1 Grounding copy');
+    await waitFor(() => expect(practiceTags.list).toHaveBeenCalled());
+  });
+
+  it('closing the forked editor returns to the closed state without a refresh', async () => {
+    const utils = mountPicker();
+    await waitFor(() => expect(utils.getByTestId('recipe-row-1')).toBeTruthy());
+    fireEvent.press(utils.getByTestId('recipe-row-1-fork'));
+    await waitFor(() => expect(practiceTags.list).toHaveBeenCalled());
+    fireEvent.press(utils.getByTestId('recipe-editor-cancel'));
+    expect(utils.queryByTestId('recipe-editor-sheet')).toBeNull();
+    expect(utils.list).toHaveBeenCalledTimes(1);
   });
 });

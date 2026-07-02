@@ -268,6 +268,39 @@ describe('ReorderHabitsModal — program-anchor wiring', () => {
     const data = result.getByTestId('reorder-list').props.data as Habit[];
     expect(new Date(data[0]!.start_date).toISOString().slice(0, 10)).toBe('2024-03-15');
   });
+
+  it('re-syncs the displayed start date to the program anchor after a dismiss and re-open', () => {
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    // Anchor changes while open, then the modal is dismissed: the not-visible
+    // effect re-seeds startDate from the anchor so the next open reflects it.
+    act(() => useProgramStore.getState().hydrateProgramStartDate(new Date(2025, 0, 10)));
+    result.rerender(
+      <ReorderHabitsModal
+        visible={false}
+        habits={HABITS}
+        onClose={jest.fn()}
+        onSaveOrder={jest.fn()}
+      />,
+    );
+    result.rerender(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    expect(result.getByTestId('reorder-start-date')).toHaveTextContent('Jan 10, 2025');
+  });
+});
+
+describe('ReorderHabitsModal — empty habit list', () => {
+  it('seeds no rows when the modal opens with zero habits', () => {
+    const result = render(
+      <ReorderHabitsModal visible habits={[]} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    expect(getOrderedIds(result)).toEqual([]);
+  });
 });
 
 describe('ReorderHabitsModal — save flow', () => {
@@ -374,5 +407,18 @@ describe('ReorderHabitsModal — date picker on web', () => {
     expect(stored.getFullYear()).toBe(2026);
     expect(stored.getMonth()).toBe(8);
     expect(stored.getDate()).toBe(1);
+  });
+
+  it('ignores an empty web date-input change without touching the program anchor', () => {
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    const input = result.UNSAFE_root.findByProps({ type: 'date' });
+    act(() => {
+      input.props.onChange({ target: { value: '' } });
+    });
+
+    expect(useProgramStore.getState().programStartDate).toBeNull();
   });
 });

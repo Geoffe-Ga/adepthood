@@ -181,6 +181,78 @@ describe('ShareSheet', () => {
     expect(typeof result).toBe('boolean');
   });
 
+  it('does not load links while the sheet is not visible', () => {
+    renderSheet({ visible: false });
+    expect(mockList).not.toHaveBeenCalled();
+  });
+
+  it('labels an exhausted link when use_count reaches max_uses', async () => {
+    const first = sampleLinks[0];
+    if (!first) throw new Error('test fixture missing');
+    mockList.mockResolvedValueOnce([{ ...first, max_uses: 2, use_count: 2 }]);
+    const { findByText } = renderSheet();
+    expect(await findByText(/Exhausted/)).toBeTruthy();
+  });
+
+  it('labels an expired link when expires_at is in the past', async () => {
+    const first = sampleLinks[0];
+    if (!first) throw new Error('test fixture missing');
+    mockList.mockResolvedValueOnce([{ ...first, expires_at: '2020-01-01T00:00:00Z' }]);
+    const { findByText } = renderSheet();
+    expect(await findByText(/Expired/)).toBeTruthy();
+  });
+
+  it('surfaces a revoke failure via the inline error banner', async () => {
+    mockList.mockResolvedValueOnce(sampleLinks);
+    mockRevoke.mockRejectedValueOnce(new Error('offline'));
+
+    const { findByTestId } = renderSheet();
+    const revokeBtn = await findByTestId('share-sheet-revoke-1');
+    fireEvent.press(revokeBtn);
+
+    const banner = await findByTestId('share-sheet-error');
+    expect(banner).toBeTruthy();
+    // The row is still active — the revoke button remains for a retry.
+    expect(await findByTestId('share-sheet-revoke-1')).toBeTruthy();
+  });
+
+  it('shows the copy-failed banner when the copy button is pressed and clipboard is unavailable', async () => {
+    mockList.mockResolvedValueOnce(sampleLinks);
+    const { findByTestId, getByText } = renderSheet();
+    const copyBtn = await findByTestId('share-sheet-copy-1');
+    fireEvent.press(copyBtn);
+    await waitFor(() => {
+      expect(getByText('Could not copy — long-press the link to copy manually.')).toBeTruthy();
+    });
+  });
+
+  it('shows a pending indicator on the mint button while the request is in flight', async () => {
+    mockList.mockResolvedValueOnce([]);
+    mockCreate.mockReturnValueOnce(new Promise<ShareLinkResponse>(() => {}));
+
+    const { findByTestId, getByTestId } = renderSheet();
+    await findByTestId('share-sheet-empty');
+    fireEvent.press(getByTestId('share-sheet-mint'));
+
+    await waitFor(() => {
+      expect(getByTestId('share-sheet-mint-pending')).toBeTruthy();
+    });
+  });
+
+  it('hides the Revoke label while a revoke request is in flight', async () => {
+    mockList.mockResolvedValueOnce(sampleLinks);
+    mockRevoke.mockReturnValueOnce(new Promise<void>(() => {}));
+
+    const { findByTestId, queryByText } = renderSheet();
+    const revokeBtn = await findByTestId('share-sheet-revoke-1');
+    fireEvent.press(revokeBtn);
+
+    await waitFor(() => {
+      expect(queryByText('Revoke')).toBeNull();
+    });
+    expect(await findByTestId('share-sheet-revoke-1')).toBeTruthy();
+  });
+
   describe('copy-banner auto-dismiss (PR #359 review)', () => {
     beforeEach(() => {
       jest.useFakeTimers();

@@ -63,6 +63,7 @@ function renderScreen(
     promptQuestion?: string;
     prefillTitle?: string;
     practiceSessionId?: number;
+    userPracticeId?: number;
   },
   extraProps: Record<string, unknown> = {},
 ) {
@@ -129,6 +130,52 @@ describe('JournalEntryScreen', () => {
         expect.objectContaining({ message: 'That was calming.', practice_session_id: 55 }),
       );
       expect(mockRespond).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('pre-links a user practice on the created entry', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId } = renderScreen(
+        { userPracticeId: 91, prefillTitle: 'After a habit check-in' },
+        { autosaveDelayMs: 100 },
+      );
+      fireEvent.changeText(getByTestId('journal-body-input'), 'That felt grounding.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'That felt grounding.', user_practice_id: 91 }),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('never double-submits a weekly-prompt response on a second autosave', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId } = renderScreen(
+        {
+          weekNumber: 3,
+          promptQuestion: 'What did you notice?',
+          prefillTitle: 'Week 3 Reflection',
+        },
+        { autosaveDelayMs: 100 },
+      );
+      fireEvent.changeText(getByTestId('journal-body-input'), 'I noticed the willow.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockRespond).toHaveBeenCalledTimes(1);
+
+      fireEvent.changeText(getByTestId('journal-body-input'), 'I noticed the willow and the oak.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockRespond).toHaveBeenCalledTimes(1);
     } finally {
       jest.useRealTimers();
     }
@@ -303,6 +350,15 @@ describe('JournalEntryScreen', () => {
     });
     expect(mockGet).toHaveBeenCalledWith(7);
     expect(getByTestId('journal-body-input').props.value).toBe('An existing page.');
+  });
+
+  it('loads an existing draft with no title into a blank title field', async () => {
+    mockGet.mockResolvedValue(entry({ id: 7, title: null, message: 'No title yet.' }));
+    const { getByTestId } = renderScreen({ entryId: 7 });
+    await waitFor(() => {
+      expect(getByTestId('journal-body-input').props.value).toBe('No title yet.');
+    });
+    expect(getByTestId('journal-title-input').props.value).toBe('');
   });
 
   describe('edit gate (finished entries)', () => {

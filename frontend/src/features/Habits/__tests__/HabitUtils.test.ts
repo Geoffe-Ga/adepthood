@@ -2,14 +2,18 @@
 /* global describe, test, expect, jest */
 import { validate as uuidValidate } from 'uuid';
 
-import { brightenColor, STAGE_COLORS } from '../../../design/tokens';
+import { brightenColor, colors, STAGE_COLORS } from '../../../design/tokens';
 import type { Habit, Goal } from '../Habits.types';
 import {
   getProgressPercentage,
   getMarkerPositions,
   getGoalTier,
+  getGoalTarget,
+  getTierColor,
+  calculateNetEnergy,
   calculateTodaysProgress,
   getProgressBarColor,
+  isEarlyUnlocked,
   isGoalAchieved,
   isHabitLockedToday,
   logHabitUnits,
@@ -628,6 +632,288 @@ describe('HabitUtils', () => {
       expect(currentGoal.tier).toBe('low');
       expect(completedAllGoals).toBe(false);
     });
+  });
+});
+
+describe('getTierColor', () => {
+  test('returns the low tier color', () => {
+    expect(getTierColor('low')).toBe(colors.tier.low);
+  });
+
+  test('returns the clear tier color', () => {
+    expect(getTierColor('clear')).toBe(colors.tier.clear);
+  });
+
+  test('returns the stretch tier color', () => {
+    expect(getTierColor('stretch')).toBe(colors.tier.stretch);
+  });
+
+  test('falls back to the default color for an unrecognized tier', () => {
+    expect(getTierColor('mystery' as unknown as 'low')).toBe(colors.tier.default);
+  });
+});
+
+describe('getGoalTarget frequency-unit normalization', () => {
+  test('per_day returns the raw target unchanged', () => {
+    const goal: Goal = {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 4,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: true,
+    };
+    expect(getGoalTarget(goal)).toBe(4);
+  });
+
+  test('per_week normalizes to a daily-equivalent target', () => {
+    const goal: Goal = {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 14,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_week',
+      is_additive: true,
+    };
+    expect(getGoalTarget(goal)).toBe(2);
+  });
+
+  test('per_month normalizes to a daily-equivalent target', () => {
+    const goal: Goal = {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 30.437,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_month',
+      is_additive: true,
+    };
+    expect(getGoalTarget(goal)).toBeCloseTo(1, 5);
+  });
+
+  test('an unrecognized frequency_unit falls back to the raw target', () => {
+    const goal: Goal = {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 9,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_fortnight',
+      is_additive: true,
+    };
+    expect(getGoalTarget(goal)).toBe(9);
+  });
+
+  test('a missing goal yields a zero target', () => {
+    expect(getGoalTarget(undefined as unknown as Goal)).toBe(0);
+  });
+});
+
+const makeBareHabit = (stage: string, goals: Goal[]): Habit =>
+  ({
+    id: 1,
+    name: 'Meditate',
+    icon: 'x',
+    stage,
+    streak: 0,
+    energy_cost: 1,
+    energy_return: 1,
+    start_date: new Date(2020, 0, 1),
+    goals,
+    completions: [],
+    revealed: true,
+  }) as unknown as Habit;
+
+describe('isGoalAchieved default timezone', () => {
+  test('falls back to the default timezone when none is supplied', () => {
+    const goal: Goal = {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 1,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: true,
+    };
+    expect(isGoalAchieved(goal, makeBareHabit('Beige', [goal]))).toBe(false);
+  });
+});
+
+describe('getProgressBarColor stage-color resolution', () => {
+  test('uses the explicit override and short-circuits when there is no clear goal', () => {
+    expect(getProgressBarColor(makeBareHabit('Beige', []), 'UTC', '#123456')).toBe('#123456');
+  });
+
+  test('falls back to #000 for an unrecognized stage with no clear goal', () => {
+    expect(getProgressBarColor(makeBareHabit('Unknown', []), 'UTC')).toBe('#000');
+  });
+});
+
+describe('calculateTodaysProgress guards', () => {
+  test('returns zero when the habit has no completions', () => {
+    expect(calculateTodaysProgress(makeBareHabit('Beige', []), 'UTC')).toBe(0);
+  });
+});
+
+describe('calculateNetEnergy', () => {
+  test('returns the difference between energy return and cost', () => {
+    expect(calculateNetEnergy(3, 8)).toBe(5);
+  });
+
+  test('returns a negative value when cost exceeds return', () => {
+    expect(calculateNetEnergy(10, 4)).toBe(-6);
+  });
+});
+
+describe('isEarlyUnlocked', () => {
+  const earlyUnlockedBase = {
+    id: 1,
+    name: 'H',
+    icon: '\u{1F512}',
+    stage: 'Purple',
+    streak: 0,
+    energy_cost: 0,
+    energy_return: 0,
+    goals: [] as Goal[],
+    completions: [],
+  };
+
+  test('true when manually revealed ahead of its start_date', () => {
+    const habit: Habit = {
+      ...earlyUnlockedBase,
+      revealed: true,
+      start_date: new Date(Date.now() + 1000 * 60 * 60 * 24),
+    };
+    expect(isEarlyUnlocked(habit)).toBe(true);
+  });
+
+  test('false when the start_date has already passed', () => {
+    const habit: Habit = {
+      ...earlyUnlockedBase,
+      revealed: true,
+      start_date: new Date(Date.now() - 1000 * 60 * 60 * 24),
+    };
+    expect(isEarlyUnlocked(habit)).toBe(false);
+  });
+
+  test('false when not revealed, regardless of start_date', () => {
+    const habit: Habit = {
+      ...earlyUnlockedBase,
+      revealed: false,
+      start_date: new Date(Date.now() + 1000 * 60 * 60 * 24),
+    };
+    expect(isEarlyUnlocked(habit)).toBe(false);
+  });
+});
+
+describe('isGoalAchieved for subtractive goals', () => {
+  const subtractiveBase = {
+    id: 1,
+    name: 'Test',
+    icon: '\u{1F525}',
+    stage: 'Beige',
+    streak: 0,
+    energy_cost: 0,
+    energy_return: 0,
+    start_date: new Date(),
+  };
+
+  test('achieved when todays progress stays at or under the target', () => {
+    const goal: Goal = {
+      id: 1,
+      tier: 'clear',
+      title: 'clear',
+      target: 5,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: false,
+    };
+    const habit: Habit = {
+      ...subtractiveBase,
+      goals: [goal],
+      completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 3 }],
+    };
+    expect(isGoalAchieved(goal, habit, 'UTC')).toBe(true);
+  });
+
+  test('not achieved once todays progress exceeds the target', () => {
+    const goal: Goal = {
+      id: 1,
+      tier: 'clear',
+      title: 'clear',
+      target: 5,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: false,
+    };
+    const habit: Habit = {
+      ...subtractiveBase,
+      goals: [goal],
+      completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 6 }],
+    };
+    expect(isGoalAchieved(goal, habit, 'UTC')).toBe(false);
+  });
+});
+
+describe('getGoalTier subtractive total-failure branch', () => {
+  test('falls back to the low tier with no next goal when todays total exceeds every limit', () => {
+    const goals: Goal[] = [
+      {
+        id: 1,
+        tier: 'low',
+        title: 'low',
+        target: 10,
+        target_unit: 'u',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: false,
+      },
+      {
+        id: 2,
+        tier: 'clear',
+        title: 'clear',
+        target: 5,
+        target_unit: 'u',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: false,
+      },
+      {
+        id: 3,
+        tier: 'stretch',
+        title: 'stretch',
+        target: 2,
+        target_unit: 'u',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: false,
+      },
+    ];
+    const habit: Habit = {
+      id: 1,
+      name: 'Test',
+      icon: '\u{1F525}',
+      stage: 'Beige',
+      streak: 0,
+      energy_cost: 0,
+      energy_return: 0,
+      start_date: new Date(),
+      goals,
+      completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 15 }],
+    };
+    const { currentGoal, nextGoal, completedAllGoals } = getGoalTier(habit, 'UTC');
+    expect(currentGoal.tier).toBe('low');
+    expect(nextGoal).toBeNull();
+    expect(completedAllGoals).toBe(false);
   });
 });
 
