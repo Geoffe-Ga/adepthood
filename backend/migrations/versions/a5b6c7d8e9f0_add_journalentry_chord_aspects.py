@@ -16,26 +16,30 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-from domain.constants import TOTAL_STAGES
-
 # revision identifiers, used by Alembic.
 revision: str = "a5b6c7d8e9f0"  # pragma: allowlist secret
 down_revision: str | Sequence[str] | None = "c9d0e1f2a3b4"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-# The inclusive lower bound of a valid Aspect; the upper bound is TOTAL_STAGES so
-# the persisted range never drifts from the curriculum length. Conditions below
-# are IDENTICAL to the model's ``__table_args__`` CHECKs.
+# A migration is a frozen historical snapshot and must be self-contained: it
+# cannot import live application code (``domain.constants``), because Alembic's
+# ScriptDirectory loads every revision module without the app's ``src`` on the
+# path, and a later curriculum change must never retroactively alter this file's
+# SQL. So the Aspect bounds are inlined literals here. ``_ASPECT_MIN`` is the
+# inclusive lower bound and ``_ASPECT_MAX`` mirrors ``TOTAL_STAGES`` (== 10) as
+# of this revision. Conditions below are IDENTICAL to the model's
+# ``__table_args__`` CHECKs; the model derives its bound from ``TOTAL_STAGES``.
 _ASPECT_MIN = 1
+_ASPECT_MAX = 10
 _PRIMARY_RANGE_CHECK = "ck_journalentry_primary_aspect_range"
 _SECONDARY_RANGE_CHECK = "ck_journalentry_secondary_aspect_range"
 _CHORD_SHAPE_CHECK = "ck_journalentry_chord_shape"
 _PRIMARY_RANGE_CONDITION = (
-    f"primary_aspect IS NULL OR primary_aspect BETWEEN {_ASPECT_MIN} AND {TOTAL_STAGES}"
+    f"primary_aspect IS NULL OR primary_aspect BETWEEN {_ASPECT_MIN} AND {_ASPECT_MAX}"
 )
 _SECONDARY_RANGE_CONDITION = (
-    f"secondary_aspect IS NULL OR secondary_aspect BETWEEN {_ASPECT_MIN} AND {TOTAL_STAGES}"
+    f"secondary_aspect IS NULL OR secondary_aspect BETWEEN {_ASPECT_MIN} AND {_ASPECT_MAX}"
 )
 _CHORD_SHAPE_CONDITION = (
     "secondary_aspect IS NULL "
