@@ -14,7 +14,7 @@ and returns only the newly inserted rows.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
@@ -25,6 +25,9 @@ from sqlmodel import col, select
 
 from conftest import test_engine
 from domain.dates import now_in_tz, to_user_date_bucket
+from domain.invitations import SUSTAINED_PRACTICE_WEEKS
+from domain.practice_insights import PracticeInsights
+from domain.practice_insights import build_insights as _real_build_insights
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
@@ -490,3 +493,214 @@ async def test_active_days_window_boundary_uses_utc_instant_under_non_utc_tz(
     assert not any(r.target_type == "embodied_community" for r in result)
     persisted = await _signals_for(db_session, user_id)
     assert not any(r.target_type == "embodied_community" for r in persisted)
+
+
+# ---------------------------------------------------------------------------
+# 15. Pinning: an exact-threshold streak still yields the mastery candidate
+#     once the practice-session gather is bounded to a lower time window.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_practice_streak_at_exact_threshold_yields_mastery_candidate(
+    db_session: AsyncSession,
+) -> None:
+    """A practice held for exactly SUSTAINED_PRACTICE_WEEKS weeks yields a mastery signal.
+
+    Pins the happy path so a bounded fetch of the practice-session gather
+    cannot regress the ordinary case while it is being narrowed to a window.
+    Sessions are anchored to calendar (Monday-start) weeks so each of the four
+    required weeks reliably clears the cadence target regardless of the weekday
+    the suite runs on.
+    """
+    user_id = await _make_user(db_session)
+    practice = Practice(
+        stage_number=1,
+        name="Threshold sit",
+        description="x",
+        instructions="x",
+        default_duration_minutes=10.0,
+        mode="meditation_timer",
+        mode_config={"mode": "meditation_timer", "duration_minutes": 10},
+    )
+    db_session.add(practice)
+    await db_session.commit()
+    await db_session.refresh(practice)
+    assert practice.id is not None
+
+    now = datetime.now(UTC)
+    current_monday = (now - timedelta(days=now.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    up = UserPractice(
+        user_id=user_id,
+        practice_id=practice.id,
+        stage_number=1,
+        start_date=(current_monday - timedelta(weeks=_SUSTAINED_WEEKS - 1)).date(),
+    )
+    db_session.add(up)
+    await db_session.commit()
+    await db_session.refresh(up)
+    assert up.id is not None
+
+    for week in range(_SUSTAINED_WEEKS):
+        week_monday = current_monday - timedelta(weeks=week)
+        for day_offset in (0, 1, 2, 3):
+            db_session.add(
+                PracticeSession(
+                    user_id=user_id,
+                    user_practice_id=up.id,
+                    duration_minutes=10.0,
+                    timestamp=week_monday + timedelta(days=day_offset),
+                )
+            )
+    await db_session.commit()
+
+    result = await generate_invitation_signals(db_session, user_id)
+
+    mastery = [r for r in result if r.target_type == "practice"]
+    assert len(mastery) == 1
+    assert mastery[0].target_id == practice.id
+    assert mastery[0].kind == "mastery"
+
+    persisted = await _signals_for(db_session, user_id)
+    persisted_mastery = [r for r in persisted if r.target_type == "practice"]
+    assert len(persisted_mastery) == 1
+    assert persisted_mastery[0].target_id == practice.id
+    assert persisted_mastery[0].kind == "mastery"
+
+
+# ---------------------------------------------------------------------------
+# 16. Boundary no-undercount: the oldest of the four required weeks sits at
+#     local Monday 00:00 under a non-UTC user timezone and must still count.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_practice_streak_oldest_week_at_local_midnight_still_counted_under_non_utc_tz(
+    db_session: AsyncSession,
+) -> None:
+    """A 4-week practice streak survives a bounded fetch under a non-UTC user timezone.
+
+    The oldest of the four required weeks is anchored at that week's local
+    Monday 00:00 -- the earliest instant a bounded fetch must still include.
+    A boundary derived from the user's wall-clock offset rather than the
+    UTC-normalized instant (mirroring ``_gather_active_days``) risks shaving
+    that week off the fetch and undercounting the streak.
+    """
+    user_id = await _make_user(db_session)
+    practice = Practice(
+        stage_number=1,
+        name="Boundary sit",
+        description="x",
+        instructions="x",
+        default_duration_minutes=10.0,
+        mode="meditation_timer",
+        mode_config={"mode": "meditation_timer", "duration_minutes": 10},
+    )
+    db_session.add(practice)
+    await db_session.commit()
+    await db_session.refresh(practice)
+    assert practice.id is not None
+
+    now_la = now_in_tz(_LA_TZ)
+    current_monday_la = (now_la - timedelta(days=now_la.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
+    up = UserPractice(
+        user_id=user_id,
+        practice_id=practice.id,
+        stage_number=1,
+        start_date=(current_monday_la - timedelta(weeks=3)).date(),
+    )
+    db_session.add(up)
+    await db_session.commit()
+    await db_session.refresh(up)
+    assert up.id is not None
+
+    # Four sessions per week for the current week plus the three prior weeks;
+    # the oldest week's sessions start exactly at its local Monday 00:00.
+    for week in range(_SUSTAINED_WEEKS):
+        week_monday_la = current_monday_la - timedelta(weeks=week)
+        for day_offset in (0, 1, 2, 3):
+            ts_la = week_monday_la + timedelta(days=day_offset)
+            db_session.add(
+                PracticeSession(
+                    user_id=user_id,
+                    user_practice_id=up.id,
+                    duration_minutes=10.0,
+                    timestamp=ts_la.astimezone(UTC),
+                )
+            )
+    await db_session.commit()
+
+    result = await generate_invitation_signals(db_session, user_id, user_timezone=_LA_TZ)
+
+    mastery = [r for r in result if r.target_type == "practice" and r.kind == "mastery"]
+    assert len(mastery) == 1
+    assert mastery[0].target_id == practice.id
+
+    persisted = await _signals_for(db_session, user_id)
+    persisted_mastery = [
+        r for r in persisted if r.target_type == "practice" and r.kind == "mastery"
+    ]
+    assert len(persisted_mastery) == 1
+    assert persisted_mastery[0].target_id == practice.id
+
+
+# ---------------------------------------------------------------------------
+# 17. Bound is applied: sessions older than the sustained-practice window are
+#     not fetched by _gather_practice_signals at all -- this is the actual
+#     behavior the bound must add over the current unbounded query.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_practice_gather_excludes_sessions_older_than_the_sustained_window(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The practice-session gather must not fetch rows outside its window.
+
+    A stale session placed comfortably beyond ``SUSTAINED_PRACTICE_WEEKS + 1``
+    weeks ago must never reach ``build_insights`` -- a spy wrapping the real
+    implementation records exactly how many session rows were handed to it.
+    Against the current unbounded gather the stale row is still fetched, so
+    this fails until the fetch carries a lower time bound.
+    """
+    user_id = await _make_user(db_session)
+    practice_id = await _make_practice_with_sessions(db_session, user_id, weeks=1)
+
+    up_result = await db_session.execute(
+        select(UserPractice.id).where(col(UserPractice.practice_id) == practice_id)
+    )
+    user_practice_id = up_result.scalar_one()
+
+    window_weeks = SUSTAINED_PRACTICE_WEEKS + 1
+    stale_offset_weeks = window_weeks + 5
+    now = datetime.now(UTC)
+    db_session.add(
+        PracticeSession(
+            user_id=user_id,
+            user_practice_id=user_practice_id,
+            duration_minutes=10.0,
+            timestamp=now - timedelta(weeks=stale_offset_weeks),
+        )
+    )
+    await db_session.commit()
+
+    fetched_counts: list[int] = []
+
+    def _spy(sessions: Iterable[PracticeSession], *, tz: str | None) -> PracticeInsights:
+        materialized = list(sessions)
+        fetched_counts.append(len(materialized))
+        return _real_build_insights(materialized, tz=tz)
+
+    monkeypatch.setattr("services.invitations.build_insights", _spy)
+
+    await generate_invitation_signals(db_session, user_id)
+
+    # _make_practice_with_sessions(weeks=1) seeds 4 rows in the current week;
+    # the stale row placed far outside the window must not be among them.
+    assert fetched_counts == [4]
