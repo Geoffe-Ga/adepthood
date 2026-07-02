@@ -472,13 +472,8 @@ def _build_messages(
 
 
 def _provider_default_model(provider: str) -> str:
-    """Return the built-in default model for ``provider``.
-
-    Unknown providers fall back to the OpenAI default — they never reach a
-    real provider, so the value is only a placeholder for logging.
-    """
-    spec = PROVIDER_REGISTRY.get(provider)
-    return spec.default_model if spec else PROVIDER_REGISTRY["openai"].default_model
+    """Return the built-in default model for ``provider``."""
+    return PROVIDER_REGISTRY[provider].default_model
 
 
 def _get_model(provider: str) -> str:

@@ -10,6 +10,9 @@ user to resolve. The PATCH endpoint calls this after persisting a body edit.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import Protocol
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -37,6 +40,30 @@ class BotmasonResonanceLLM:
         return response.text
 
 
+class _AnchoredRow(Protocol):
+    """Structural view of a re-anchorable row (marginalia or suggestion)."""
+
+    anchor_text: str
+    anchor_start: int
+    anchor_end: int
+    status: str
+
+
+def _reanchor(
+    rows: Iterable[_AnchoredRow],
+    new_message: str,
+    terminal_status: str,
+) -> None:
+    """Re-anchor each row to ``new_message`` or flip it to ``terminal_status``."""
+    for row in rows:
+        outcome = reanchor_one(row.anchor_text, row.anchor_start, new_message)
+        if outcome.stale:
+            row.status = terminal_status
+        else:
+            row.anchor_start = outcome.anchor_start
+            row.anchor_end = outcome.anchor_end
+
+
 async def reanchor_entry_marginalia(
     entry: JournalEntry,
     new_message: str,
@@ -50,17 +77,12 @@ async def reanchor_entry_marginalia(
     offsets alone, so the new body is the only input the logic needs.
     """
     result = await session.execute(
-        select(Marginalia).where(Marginalia.journal_entry_id == entry.id)
+        select(Marginalia).where(
+            Marginalia.journal_entry_id == entry.id,
+            Marginalia.status == MarginaliaStatus.ACTIVE,
+        )
     )
-    for note in result.scalars().all():
-        if note.status == MarginaliaStatus.STALE:
-            continue  # once stale, stays stale
-        outcome = reanchor_one(note.anchor_text, note.anchor_start, new_message)
-        if outcome.stale:
-            note.status = MarginaliaStatus.STALE
-        else:
-            note.anchor_start = outcome.anchor_start
-            note.anchor_end = outcome.anchor_end
+    _reanchor(result.scalars().all(), new_message, MarginaliaStatus.STALE)
 
 
 async def reanchor_entry_suggestions(
@@ -82,10 +104,4 @@ async def reanchor_entry_suggestions(
             CompletionSuggestion.status == SuggestionStatus.PENDING,
         )
     )
-    for suggestion in result.scalars().all():
-        outcome = reanchor_one(suggestion.anchor_text, suggestion.anchor_start, new_message)
-        if outcome.stale:
-            suggestion.status = SuggestionStatus.DISMISSED
-        else:
-            suggestion.anchor_start = outcome.anchor_start
-            suggestion.anchor_end = outcome.anchor_end
+    _reanchor(result.scalars().all(), new_message, SuggestionStatus.DISMISSED)
