@@ -1,0 +1,280 @@
+"""Pure-domain tests for the Metta "Return" arc sequence and eligibility.
+
+These tests FAIL on import until the implementation-specialist creates
+``backend/src/domain/metta_return.py`` with the contracts pinned below.
+That is the correct RED state for Gate 1.
+
+Pinned public surface:
+  MettaFocus(StrEnum): self, benefactor, stranger, antagonist, all_beings
+  ReturnWeek(week_number: int, focus: MettaFocus, title: str, framing: str)
+  RETURN_SEQUENCE: tuple[ReturnWeek, ...]  (5 entries, ordered)
+  RETURN_WEEK_COUNT = 5
+  RETURN_MINIMUM_STAGE = 5
+  DAYS_PER_WEEK = 7
+  is_return_eligible(progress: StageProgress | None) -> bool
+  active_return_week(started_at, paused_at, now) -> int
+"""
+
+from __future__ import annotations
+
+import re
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from domain.metta_return import (
+    DAYS_PER_WEEK,
+    RETURN_MINIMUM_STAGE,
+    RETURN_SEQUENCE,
+    RETURN_WEEK_COUNT,
+    MettaFocus,
+    ReturnWeek,
+    active_return_week,
+    is_return_eligible,
+    resumed_start,
+)
+from models.stage_progress import StageProgress
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+
+def test_return_week_count_constant_matches_sequence_length() -> None:
+    """RETURN_WEEK_COUNT pins the arc to exactly five weeks."""
+    assert RETURN_WEEK_COUNT == 5
+    assert len(RETURN_SEQUENCE) == RETURN_WEEK_COUNT
+
+
+def test_return_minimum_stage_is_orange() -> None:
+    """RETURN_MINIMUM_STAGE pins eligibility to Stage 5 (Orange) or higher."""
+    assert RETURN_MINIMUM_STAGE == 5
+
+
+def test_days_per_week_constant() -> None:
+    """DAYS_PER_WEEK pins the week-length used by active_return_week."""
+    assert DAYS_PER_WEEK == 7
+
+
+# ---------------------------------------------------------------------------
+# RETURN_SEQUENCE shape
+# ---------------------------------------------------------------------------
+
+
+def test_return_sequence_has_five_entries_in_week_order() -> None:
+    """Weeks are numbered 1..5 in ascending, contiguous order."""
+    week_numbers = [week.week_number for week in RETURN_SEQUENCE]
+    assert week_numbers == [1, 2, 3, 4, 5]
+
+
+def test_return_sequence_focus_progression() -> None:
+    """The owner-specified focus progression: self, benefactor, stranger, antagonist, all beings."""
+    expected = [
+        MettaFocus.SELF,
+        MettaFocus.BENEFACTOR,
+        MettaFocus.STRANGER,
+        MettaFocus.ANTAGONIST,
+        MettaFocus.ALL_BEINGS,
+    ]
+    actual = [week.focus for week in RETURN_SEQUENCE]
+    assert actual == expected
+
+
+def test_return_sequence_titles_and_framings_are_non_empty() -> None:
+    """Every week carries a real title and framing string, not a placeholder."""
+    for week in RETURN_SEQUENCE:
+        assert week.title.strip() != ""
+        assert week.framing.strip() != ""
+
+
+# ---------------------------------------------------------------------------
+# Eligibility gate for offering the Return.
+# ---------------------------------------------------------------------------
+
+
+def test_eligibility_none_progress_is_ineligible() -> None:
+    """A user with no StageProgress row has never advanced — ineligible."""
+    assert is_return_eligible(None) is False
+
+
+def test_eligibility_stage_three_is_ineligible() -> None:
+    """Well below the Blue-passed threshold."""
+    progress = StageProgress(user_id=1, current_stage=3, completed_stages=[])
+    assert is_return_eligible(progress) is False
+
+
+def test_eligibility_stage_four_in_progress_is_ineligible() -> None:
+    """Currently working Blue (stage 4) — Blue has not yet been passed."""
+    progress = StageProgress(user_id=1, current_stage=4, completed_stages=[1, 2, 3])
+    assert is_return_eligible(progress) is False
+
+
+def test_eligibility_stage_five_current_is_eligible() -> None:
+    """Reaching Orange (stage 5) means Blue was passed to get there."""
+    progress = StageProgress(user_id=1, current_stage=5, completed_stages=[1, 2, 3, 4])
+    assert is_return_eligible(progress) is True
+
+
+def test_eligibility_completed_stages_containing_five_is_eligible() -> None:
+    """A historical completed_stages record of reaching stage 5+ counts."""
+    progress = StageProgress(user_id=1, current_stage=6, completed_stages=[1, 2, 3, 4, 5])
+    assert is_return_eligible(progress) is True
+
+
+def test_eligibility_second_cycle_counts_even_at_stage_one() -> None:
+    """A full prior cycle (cycle_number >= 2) implies Blue was passed, even mid-reset."""
+    progress = StageProgress(user_id=1, current_stage=1, completed_stages=[], cycle_number=2)
+    assert is_return_eligible(progress) is True
+
+
+# ---------------------------------------------------------------------------
+# Week derivation from elapsed and paused time.
+# ---------------------------------------------------------------------------
+
+
+def test_active_return_week_day_zero_is_week_one() -> None:
+    """No elapsed time — the arc starts in week 1."""
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    assert active_return_week(now, None, now) == 1
+
+
+def test_active_return_week_day_seven_rolls_to_week_two() -> None:
+    """A full seven days elapsed advances to week 2."""
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    now = started_at + timedelta(days=7)
+    assert active_return_week(started_at, None, now) == 2
+
+
+def test_active_return_week_day_eight_is_still_week_two() -> None:
+    """Eight elapsed days is within week 2, not yet week 3."""
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    now = started_at + timedelta(days=8)
+    assert active_return_week(started_at, None, now) == 2
+
+
+def test_active_return_week_day_thirty_four_is_week_five() -> None:
+    """Day 34 (weeks 5's interior) lands on week 5."""
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    now = started_at + timedelta(days=34)
+    assert active_return_week(started_at, None, now) == 5
+
+
+def test_active_return_week_clamps_past_five_weeks() -> None:
+    """Far beyond the arc length, the week clamps to 5 rather than climbing forever."""
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    now = started_at + timedelta(days=100)
+    assert active_return_week(started_at, None, now) == 5
+
+
+def test_active_return_week_paused_freezes_at_pause_time() -> None:
+    """A paused arc reports the week it was paused at, ignoring further elapsed time."""
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    paused_at = started_at + timedelta(days=10)  # inside week 2
+    now = started_at + timedelta(days=40)  # would otherwise be week 5+
+    assert active_return_week(started_at, paused_at, now) == 2
+
+
+def test_active_return_week_handles_naive_and_aware_datetime_mix() -> None:
+    """Mixed naive/aware inputs must not raise (mirrors program_calendar normalization)."""
+    started_at_naive = datetime(2026, 1, 1)  # noqa: DTZ001 - deliberately naive
+    now_aware = datetime(2026, 1, 8, tzinfo=UTC)
+    week = active_return_week(started_at_naive, None, now_aware)
+    assert week == 2
+
+
+# ---------------------------------------------------------------------------
+# resumed_start
+# ---------------------------------------------------------------------------
+
+
+def test_resumed_start_shifts_start_forward_by_pause_duration() -> None:
+    """Resuming pushes started_at forward by exactly the time spent paused.
+
+    With started_at = T, paused_at = T+2d and now = T+5d (three paused days),
+    the shifted start is T+3d, so elapsed-since-shifted-start at now equals the
+    two pre-pause days — the frozen week is preserved and ticks from there.
+    """
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    paused_at = started_at + timedelta(days=2)
+    now = started_at + timedelta(days=5)
+    resumed = resumed_start(started_at, paused_at, now)
+    assert resumed == started_at + timedelta(days=3)
+    # Elapsed since the shifted start equals the pre-pause elapsed (2 days).
+    assert active_return_week(resumed, None, now) == active_return_week(
+        started_at, paused_at, paused_at
+    )
+
+
+def test_resumed_start_preserves_frozen_week_after_resume() -> None:
+    """A week frozen at pause resumes at that same week and ticks onward.
+
+    Paused inside week 2 (day 10) then resumed a long time later, the arc still
+    reports week 2 immediately at resume, and advances one week after a further
+    seven days — no elapsed weeks are lost or gained across the pause.
+    """
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    paused_at = started_at + timedelta(days=10)  # inside week 2
+    now = started_at + timedelta(days=40)
+    resumed = resumed_start(started_at, paused_at, now)
+    assert active_return_week(resumed, None, now) == 2
+    assert active_return_week(resumed, None, now + timedelta(days=7)) == 3
+
+
+def test_resumed_start_handles_naive_and_aware_datetime_mix() -> None:
+    """Mixed naive/aware inputs must not raise and yield the same day-delta."""
+    started_at_naive = datetime(2026, 1, 1)  # noqa: DTZ001 - deliberately naive
+    paused_at_naive = datetime(2026, 1, 3)  # noqa: DTZ001 - deliberately naive
+    now_aware = datetime(2026, 1, 6, tzinfo=UTC)
+    resumed = resumed_start(started_at_naive, paused_at_naive, now_aware)
+    # Three paused days push the start to Jan 4; week stays frozen at week 1.
+    assert resumed == started_at_naive + timedelta(days=3)
+    assert active_return_week(resumed, None, now_aware) == 1
+
+
+# ---------------------------------------------------------------------------
+# Copy guard: the Return must never rank, shame, or penalize
+# ---------------------------------------------------------------------------
+
+# Words/phrases that would turn a declinable invitation into gamified
+# pressure or moral judgment. This is an intent rule, not a fragile literal
+# check: any future week copy is held to the same non-shaming standard the
+# product principle ("you choose your depth") requires.
+_BANNED_VOCABULARY: tuple[str, ...] = (
+    "fail",
+    "failure",
+    "shame",
+    "behind",
+    "penalty",
+    "penalized",
+    "rank",
+    "ranked",
+    "should have",
+    "catch up",
+    "fell",
+    "fell behind",
+    "lost",
+    "loser",
+    "weak",
+    "quitter",
+    "giving up",
+)
+
+_BANNED_PATTERN = re.compile(
+    "|".join(re.escape(word) for word in _BANNED_VOCABULARY),
+    re.IGNORECASE,
+)
+
+
+@pytest.mark.parametrize("week", RETURN_SEQUENCE, ids=lambda w: f"week_{w.week_number}")
+def test_return_week_copy_never_ranks_or_shames(week: ReturnWeek) -> None:
+    """No week's title or framing contains shaming, ranking, or penalty language.
+
+    The Return is an explicitly declinable invitation — pause/resume/leave
+    carry no penalty. Copy that implies falling behind, failing, or being
+    ranked would contradict that guarantee, so this guards the whole
+    banned-vocabulary surface rather than one hard-coded phrase.
+    """
+    assert _BANNED_PATTERN.search(week.title) is None, f"banned word found in title: {week.title!r}"
+    assert _BANNED_PATTERN.search(week.framing) is None, (
+        f"banned word found in framing: {week.framing!r}"
+    )

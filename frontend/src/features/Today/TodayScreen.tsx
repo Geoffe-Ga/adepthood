@@ -4,8 +4,11 @@ import React from 'react';
 import { Animated, Pressable, Text } from 'react-native';
 
 import InvitationNote from './InvitationNote';
+import ReturnArcCard from './ReturnArcCard';
+import ReturnOfferCard from './ReturnOfferCard';
 import { todayStyles as s } from './Today.styles';
 import { useInvitations } from './useInvitations';
+import { useMettaReturn } from './useMettaReturn';
 
 import { EmptyState } from '@/components/feedback/EmptyState';
 import { SkeletonCard } from '@/components/feedback/Skeleton';
@@ -148,6 +151,26 @@ const InvitationStack = (): React.JSX.Element | null => {
   );
 };
 
+/** The Return surface: the soft-landing offer when invited, or the active arc. */
+const ReturnStack = (): React.JSX.Element | null => {
+  const { weeks, arc, offerVisible, dismissOffer, start, pause, resume, leave } = useMettaReturn();
+  if (arc !== null) {
+    return (
+      <ReturnArcCard
+        weeks={weeks}
+        arc={arc}
+        onPause={() => void pause()}
+        onResume={() => void resume()}
+        onLeave={() => void leave()}
+      />
+    );
+  }
+  if (offerVisible) {
+    return <ReturnOfferCard onAccept={() => void start()} onDismiss={dismissOffer} />;
+  }
+  return null;
+};
+
 /** The editorial home tab: where am I in the journey, and what's next today. */
 const TodayScreen = (): React.JSX.Element => {
   const navigation = useNavigation<TodayNav>();
@@ -157,6 +180,7 @@ const TodayScreen = (): React.JSX.Element => {
   return (
     <ScreenScaffold scroll testID="today-screen">
       <TodayHero week={week} stage={stage} />
+      <ReturnStack />
       <InvitationStack />
       <HabitsBand index={1} onPress={() => navigation.navigate('Habits')} />
       <TodayBand

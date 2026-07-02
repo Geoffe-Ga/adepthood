@@ -518,6 +518,60 @@ export type InvitationKindT = z.infer<typeof invitationKindSchema>;
 export type InvitationT = z.infer<typeof invitationSchema>;
 
 // ---------------------------------------------------------------------------
+// Metta Return — the declinable five-week soft-landing arc. Mirrors the backend
+// MettaReturnStateResponse: an eligibility flag, the full week sequence, and the
+// caller's active arc (or null). No user_id is ever exposed.
+// ---------------------------------------------------------------------------
+
+/** The five classic Metta foci, one per Return week, in progression order. */
+export const mettaFocusSchema = z.enum([
+  'self',
+  'benefactor',
+  'stranger',
+  'antagonist',
+  'all_beings',
+]);
+
+/**
+ * The Return arc runs exactly five weeks, and the backend clamps every reported
+ * ordinal into ``[1, RETURN_WEEK_COUNT]`` (``domain.metta_return``). Pinning the
+ * bound here means an out-of-range week (``0``, ``-1``, ``999``) raises
+ * ``ApiValidationError`` at the client edge rather than rendering an undefined
+ * week card downstream.
+ */
+const RETURN_MIN_WEEK = 1;
+const RETURN_MAX_WEEK = 5;
+const returnWeekNumber = z.number().int().min(RETURN_MIN_WEEK).max(RETURN_MAX_WEEK);
+
+/** One week of the Return sequence: its ordinal, focus, and warm framing copy. */
+export const returnWeekSchema = z.object({
+  week_number: returnWeekNumber,
+  focus: mettaFocusSchema,
+  title: z.string(),
+  framing: z.string(),
+});
+
+/** The caller's active arc projected to its current (possibly frozen) week. */
+export const returnArcSchema = z.object({
+  started_at: z.string(),
+  paused: z.boolean(),
+  week: returnWeekNumber,
+  focus: mettaFocusSchema,
+});
+
+/** Eligibility plus the full week sequence and the active arc, if any. */
+export const mettaReturnStateSchema = z.object({
+  eligible: z.boolean(),
+  weeks: z.array(returnWeekSchema),
+  arc: returnArcSchema.nullable(),
+});
+
+export type MettaFocusT = z.infer<typeof mettaFocusSchema>;
+export type ReturnWeekT = z.infer<typeof returnWeekSchema>;
+export type ReturnArcT = z.infer<typeof returnArcSchema>;
+export type MettaReturnStateT = z.infer<typeof mettaReturnStateSchema>;
+
+// ---------------------------------------------------------------------------
 // Resonance + marginalia + care (journal-resonance #891)
 // ---------------------------------------------------------------------------
 

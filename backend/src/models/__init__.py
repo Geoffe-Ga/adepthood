@@ -13,6 +13,7 @@ from .journal_entry import JournalEntry
 from .llm_usage_log import LLMUsageLog
 from .login_attempt import LoginAttempt
 from .marginalia import Marginalia
+from .metta_return_arc import MettaReturnArc
 from .password_reset_token import PasswordResetToken
 from .practice import Practice
 from .practice_recipe import PracticeRecipe, PracticeRecipeStep
@@ -43,6 +44,7 @@ __all__ = [
     "LLMUsageLog",
     "LoginAttempt",
     "Marginalia",
+    "MettaReturnArc",
     "PasswordResetToken",
     "Practice",
     "PracticeRecipe",
