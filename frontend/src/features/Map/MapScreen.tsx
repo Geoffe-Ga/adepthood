@@ -81,8 +81,8 @@ const stageNodeLabel = (display: StageDisplay, fullness: number): string =>
 // in the same row, so they cannot drift the way the old content-driven flex
 // table + absolute-percentage center overlay did. The Map reads with no PNG.
 
-const LockOverlay = (): React.JSX.Element => (
-  <View style={styles.lockOverlay}>
+const LockGlyph = (): React.JSX.Element => (
+  <View style={styles.lockRow}>
     <Text style={styles.lockText}>🔒</Text>
   </View>
 );
@@ -139,7 +139,7 @@ const StageTextBlock = ({
     <Text style={[styles.personaText, { color: display.textColor }]}>{display.persona}</Text>
     <Text style={[styles.lineText, { color: display.textColor }]}>{display.descriptor}</Text>
     <Text style={[styles.lineText, { color: display.textColor }]}>{display.practice}</Text>
-    {locked ? <LockOverlay /> : null}
+    {locked ? <LockGlyph /> : null}
   </TouchableOpacity>
 );
 
@@ -190,10 +190,10 @@ const StageCenterCell = ({
     accessibilityRole="button"
     accessibilityLabel={`${stage.title} - ${stage.subtitle}`}
   >
-    <CenterContent display={display} />
-    {locked ? <LockOverlay /> : null}
-    {locked ? <UnlockTimeline stageNumber={display.stageNumber} /> : null}
     {isCurrent ? <YouAreHereMarker /> : null}
+    <CenterContent display={display} />
+    {locked ? <LockGlyph /> : null}
+    {locked ? <UnlockTimeline stageNumber={display.stageNumber} /> : null}
     {stage.progress >= FULL_PROGRESS ? (
       <View style={styles.completedBadge} testID={`stage-complete-${stage.stageNumber}`}>
         <Text style={styles.completedBadgeText}>✓</Text>

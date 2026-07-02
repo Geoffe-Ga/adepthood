@@ -1,7 +1,7 @@
 /* eslint-env jest */
 /* global describe, it, expect, beforeEach, jest */
 import React from 'react';
-import { Image } from 'react-native';
+import { Image, StyleSheet } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
 import styles from '../Map.styles';
@@ -637,5 +637,99 @@ describe('MapScreen', () => {
 
     expect(midY).toBeCloseTo(measuredCenterY);
     expect(midY).not.toBeCloseTo(nominalPixelY(MEASURED_TARGET_STAGE, WAVE_LAYOUT_HEIGHT));
+  });
+});
+
+describe('MapScreen center-cell overlay layout', () => {
+  beforeEach(() => {
+    mockNavigate.mockClear();
+    mockLoadStages.mockClear();
+    mockBeginAgain.mockClear();
+    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
+      () => false,
+    );
+    mockCycleNumber = 1;
+    mockDerivedStage = 1;
+    mockDerivedWeek = 1;
+    mockDaysUntilStage = null;
+    mockWheelFullnessByStage = {};
+    mockWheelLoading = false;
+    mockWheelError = null;
+    jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
+  });
+
+  it('you-are-here pill is laid out in flow (not absolutely positioned)', () => {
+    const tree = create(<MapScreen />);
+    const pill = tree.root.findByProps({ testID: 'you-are-here' });
+    const flat = StyleSheet.flatten(pill.props.style) as { position?: string };
+    expect(flat.position).not.toBe('absolute');
+  });
+
+  it('locked center cell renders the unlock countdown in flow (not absolutely positioned)', () => {
+    mockDaysUntilStage = 42;
+    const tree = create(<MapScreen />);
+    const countdown = tree.root.findByProps({ testID: 'stage-unlock-8' });
+    const flat = StyleSheet.flatten(countdown.props.style) as {
+      position?: string;
+      bottom?: number;
+    };
+    expect(flat.position).not.toBe('absolute');
+    expect(flat.bottom).toBeUndefined();
+  });
+
+  it('locked cell lock glyph is not an absolute-fill overlay in either column', () => {
+    const tree = create(<MapScreen />);
+    const leftHotspot = tree.root.findByProps({ testID: 'stage-hotspot-8-0' });
+    const centerHotspot = tree.root.findByProps({ testID: 'stage-hotspot-8-1' });
+    for (const hotspot of [leftHotspot, centerHotspot]) {
+      const lockIcon = hotspot.findAll(isLockIcon)[0];
+      const lockWrapper = lockIcon.parent as TestNode;
+      const flat = StyleSheet.flatten(lockWrapper.props.style) as { position?: string };
+      expect(flat.position).not.toBe('absolute');
+    }
+  });
+
+  it('unlock countdown spans the full cell width so its centered copy stays centered', () => {
+    // Restores the full-width box the old ``left: 0, right: 0`` absolute
+    // positioning gave: without ``alignSelf: 'stretch'`` an in-flow Text
+    // shrink-wraps to its widest wrapped line and ``textAlign: 'center'``
+    // becomes a no-op for the multi-line unlock-condition copy.
+    mockDaysUntilStage = 42;
+    const tree = create(<MapScreen />);
+    const countdown = tree.root.findByProps({ testID: 'stage-unlock-8' });
+    const flat = StyleSheet.flatten(countdown.props.style) as {
+      alignSelf?: string;
+      textAlign?: string;
+    };
+    expect(flat.alignSelf).toBe('stretch');
+    expect(flat.textAlign).toBe('center');
+  });
+
+  it('locked stages keep the recessed opacity treatment', () => {
+    const tree = create(<MapScreen />);
+    const centerHotspot = tree.root.findByProps({ testID: 'stage-hotspot-8-1' });
+    const flat = StyleSheet.flatten(centerHotspot.props.style) as { opacity?: number };
+    expect(flat.opacity).toBe(0.4);
+  });
+
+  it('stacks the pill above the label and the countdown below the lock', () => {
+    mockDaysUntilStage = 42;
+    const tree = create(<MapScreen />);
+    const textOrder = (testID: string): string[] =>
+      tree.root
+        .findByProps({ testID })
+        .findAll((node: TestNode) => typeof node.props.children === 'string')
+        .map((node: TestNode) => node.props.children as string);
+
+    // Current stage 1: the pill renders before its centered label ('Agency').
+    const currentText = textOrder('stage-hotspot-1-1');
+    expect(currentText.indexOf('YOU ARE HERE')).toBeLessThan(currentText.indexOf('Agency'));
+    expect(currentText.indexOf('YOU ARE HERE')).toBeGreaterThanOrEqual(0);
+
+    // Locked stage 8: the lock renders before the countdown copy.
+    const lockedText = textOrder('stage-hotspot-8-1');
+    const countdownIndex = lockedText.findIndex((text) => text.startsWith('Unlocks'));
+    expect(lockedText.indexOf('🔒')).toBeGreaterThanOrEqual(0);
+    expect(lockedText.indexOf('🔒')).toBeLessThan(countdownIndex);
   });
 });

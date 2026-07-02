@@ -130,11 +130,9 @@ const styles = StyleSheet.create({
     backgroundColor: surface.desk,
     ...shadows.medium,
   },
-  // "You are here" pill anchored to the current stage's center cell.
+  // "You are here" pill stacked in flow above the current stage's label.
   youAreHere: {
-    position: 'absolute',
-    top: spacing(0.25),
-    left: spacing(0.25),
+    marginBottom: spacing(0.25),
     paddingVertical: spacing(0.25),
     paddingHorizontal: spacing(0.5),
     borderRadius: radius.sm,
@@ -176,11 +174,10 @@ const styles = StyleSheet.create({
     backgroundColor: surface.hairline,
   },
 
-  // Lock icon overlay for locked stages
-  lockOverlay: {
-    ...StyleSheet.absoluteFillObject,
+  // Lock glyph row, stacked in flow beneath a locked stage's label
+  lockRow: {
     alignItems: CENTER,
-    justifyContent: CENTER,
+    marginTop: spacing(0.25),
   },
   lockText: {
     fontSize: 14,
@@ -190,12 +187,13 @@ const styles = StyleSheet.create({
   locked: {
     opacity: 0.4,
   },
-  // Unlock timeline beneath the lock glyph ("Unlocks in N days").
+  // Unlock timeline stacked beneath the lock glyph ("Unlocks in N days").
+  // ``alignSelf: 'stretch'`` restores the full-width box the old absolute
+  // ``left: 0, right: 0`` gave, so ``textAlign: CENTER`` still centers the
+  // longer multi-line unlock-condition copy across the whole cell.
   unlockTimeline: {
-    position: 'absolute',
-    bottom: spacing(0.25),
-    left: 0,
-    right: 0,
+    alignSelf: 'stretch',
+    marginTop: spacing(0.25),
     fontSize: 9,
     color: ink.muted,
     textAlign: CENTER,
