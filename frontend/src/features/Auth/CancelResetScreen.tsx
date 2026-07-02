@@ -32,7 +32,7 @@ function TerminalView({ title, body, onBackToLogin }: TerminalViewProps): React.
   return (
     <AuthScreenContainer testID="cancel-reset">
       <Text style={localStyles.title}>{title}</Text>
-      <Text style={localStyles.subtitle}>{body}</Text>
+      <Text style={styles.subtitle}>{body}</Text>
       <Button
         accessibilityLabel="Back to log in"
         variant="secondary"
@@ -49,7 +49,7 @@ function PendingView(): React.JSX.Element {
   return (
     <AuthScreenContainer testID="cancel-reset">
       <ActivityIndicator size="large" testID="cancel-reset-pending" />
-      <Text style={localStyles.subtitle}>Cancelling that reset request...</Text>
+      <Text style={styles.subtitle}>Cancelling that reset request...</Text>
     </AuthScreenContainer>
   );
 }
@@ -104,14 +104,8 @@ export default function CancelResetScreen({ navigation, route }: Props) {
   return <TerminalView title={copy.title} body={copy.body} onBackToLogin={onBackToLogin} />;
 }
 
-// Confirmation-screen typography (smaller title than the form screens); the
-// container/button/buttonText come from the shared authStyles.
+// Confirmation-screen title (smaller marginBottom than the shared form title);
+// the container/subtitle/button come from the shared authStyles.
 const localStyles = StyleSheet.create({
   title: { ...TYPE.title, color: ink.primary, textAlign: 'center', marginBottom: SPACING.md },
-  subtitle: {
-    ...TYPE.body,
-    color: ink.soft,
-    textAlign: 'center',
-    marginBottom: SPACING.xl,
-  },
 });

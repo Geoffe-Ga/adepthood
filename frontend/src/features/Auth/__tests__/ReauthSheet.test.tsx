@@ -69,6 +69,28 @@ describe('ReauthSheet', () => {
     expect(await findByText('Invalid credentials')).toBeTruthy();
   });
 
+  it('marks the submit button busy and disabled while a login is in flight', () => {
+    const resolveLoginRef: { current: (() => void) | null } = { current: null };
+    mockLogin.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveLoginRef.current = () => resolve();
+        }),
+    );
+
+    const { getByTestId } = render(<ReauthSheet />);
+    fireEvent.changeText(getByTestId('reauth-email'), 'a@b.co');
+    fireEvent.changeText(getByTestId('reauth-password'), 'pw'); // pragma: allowlist secret
+    fireEvent.press(getByTestId('reauth-submit'));
+
+    const submit = getByTestId('reauth-submit');
+    expect(submit.props.accessibilityState?.busy).toBe(true);
+    expect(submit.props.accessibilityState?.disabled).toBe(true);
+    expect(submit.props.accessibilityLabel).toBe('Sign back in');
+
+    resolveLoginRef.current?.();
+  });
+
   it('calls dismissReauth when "Sign out instead" is pressed', () => {
     const { getByTestId } = render(<ReauthSheet />);
     fireEvent.press(getByTestId('reauth-dismiss'));

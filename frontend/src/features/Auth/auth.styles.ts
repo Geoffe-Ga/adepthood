@@ -1,7 +1,6 @@
 import { StyleSheet } from 'react-native';
 
 import {
-  BORDER_RADIUS,
   SPACING,
   accent,
   colors,
@@ -80,16 +79,6 @@ export const authStyles = StyleSheet.create({
   inputSpacing: { marginBottom: SPACING.md },
   buttonSpacing: { marginBottom: SPACING.lg },
   error: { color: colors.danger, marginBottom: SPACING.md, textAlign: 'center' },
-  button: {
-    backgroundColor: accent.primary,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.buttonV,
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: SPACING.lg,
-  },
-  buttonText: { color: colors.text.light, fontSize: 16, fontWeight: '600' },
   link: { textAlign: 'center', color: ink.soft },
   linkBold: { color: accent.primary, fontWeight: '600' },
   forgotLink: {
