@@ -15,6 +15,9 @@
  * match the supplied spiral PNG rather than the app-wide spiral-dynamics swatches.
  */
 
+/** Flex weights of each stage row's three cells (left / center / right). */
+export const GRID_COLUMN_FLEX = { left: 2, center: 2, right: 1 } as const;
+
 /** Static, design-specific copy + color for a single stage's left-column text. */
 export interface StageDisplay {
   stageNumber: number;

@@ -32,7 +32,7 @@ export const WELCOME_PILLARS: readonly WelcomePillar[] = [
   { glyph: '🧭', name: 'Map' },
 ];
 
-/** The 3–4 swipeable editorial panels, in order. */
+/** The four swipeable editorial panels, in order. */
 export const WELCOME_PANELS: readonly WelcomePanel[] = [
   {
     eyebrow: 'Welcome',
