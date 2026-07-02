@@ -14,9 +14,31 @@ jest.mock('../useInvitations', () => ({
   useInvitations: () => ({ invitations: mockInvitations, dismiss: mockDismiss }),
 }));
 
+const mockDismissOffer = jest.fn();
+const mockStart = jest.fn();
+const mockPause = jest.fn();
+const mockResume = jest.fn();
+const mockLeave = jest.fn();
+let mockMettaReturn: {
+  eligible: boolean;
+  weeks: ReturnWeek[];
+  arc: ReturnArc | null;
+  offerVisible: boolean;
+};
+jest.mock('../useMettaReturn', () => ({
+  useMettaReturn: () => ({
+    ...mockMettaReturn,
+    dismissOffer: mockDismissOffer,
+    start: mockStart,
+    pause: mockPause,
+    resume: mockResume,
+    leave: mockLeave,
+  }),
+}));
+
 import TodayScreen from '../TodayScreen';
 
-import type { Invitation } from '@/api';
+import type { Invitation, ReturnArc, ReturnWeek } from '@/api';
 import type { Habit } from '@/features/Habits/Habits.types';
 import { useHabitStore } from '@/store/useHabitStore';
 import { useProgramStore } from '@/store/useProgramStore';
@@ -45,10 +67,30 @@ const makeHabit = (id: number, completedToday: boolean): Habit =>
       : [],
   }) as Habit;
 
+const makeWeek = (weekNumber: number): ReturnWeek => ({
+  week_number: weekNumber,
+  focus: 'self',
+  title: `Toward yourself, week ${weekNumber}`,
+  framing: 'Begin where you already are.',
+});
+
+const makeArc = (weekNumber: number): ReturnArc => ({
+  started_at: '2026-06-24T00:00:00Z',
+  paused: false,
+  week: weekNumber,
+  focus: 'self',
+});
+
 beforeEach(() => {
   mockNavigate.mockClear();
   mockDismiss.mockClear();
+  mockDismissOffer.mockClear();
+  mockStart.mockClear();
+  mockPause.mockClear();
+  mockResume.mockClear();
+  mockLeave.mockClear();
   mockInvitations = [];
+  mockMettaReturn = { eligible: false, weeks: [], arc: null, offerVisible: false };
   useProgramStore.setState({ programStartDate: new Date() });
   useHabitStore.setState({ habits: [], loading: false });
 });
@@ -106,5 +148,34 @@ describe('TodayScreen', () => {
     expect(mockNavigate).toHaveBeenCalledWith('Practice');
     expect(mockNavigate).toHaveBeenCalledWith('Journal');
     expect(mockNavigate).toHaveBeenCalledWith('Course');
+  });
+
+  it('shows no Return offer card when offerVisible is false', () => {
+    mockMettaReturn = { eligible: true, weeks: [makeWeek(1)], arc: null, offerVisible: false };
+    const { queryByTestId } = render(<TodayScreen />);
+    expect(queryByTestId('return-offer-card')).toBeNull();
+  });
+
+  it('shows the Return offer card when offerVisible is true', () => {
+    mockMettaReturn = { eligible: true, weeks: [makeWeek(1)], arc: null, offerVisible: true };
+    const { getByTestId } = render(<TodayScreen />);
+    expect(getByTestId('return-offer-card')).toBeTruthy();
+  });
+
+  it('shows the Return arc card when an arc is active', () => {
+    mockMettaReturn = {
+      eligible: true,
+      weeks: [makeWeek(1)],
+      arc: makeArc(1),
+      offerVisible: false,
+    };
+    const { getByTestId } = render(<TodayScreen />);
+    expect(getByTestId('return-arc-card')).toBeTruthy();
+  });
+
+  it('shows no Return arc card when there is no active arc', () => {
+    mockMettaReturn = { eligible: true, weeks: [makeWeek(1)], arc: null, offerVisible: false };
+    const { queryByTestId } = render(<TodayScreen />);
+    expect(queryByTestId('return-arc-card')).toBeNull();
   });
 });

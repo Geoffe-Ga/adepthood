@@ -13,6 +13,8 @@ import {
   invitationSchema,
   isTier,
   journalListResponseSchema,
+  mettaReturnStateSchema,
+  returnArcSchema,
   loginAuthResponseSchema,
   pageSchema,
   passwordResetAcceptedSchema,
@@ -34,7 +36,10 @@ import {
   type CompletionTargetTypeT,
   type DepthPreferencesT,
   type InvitationT,
+  type MettaReturnStateT,
   type Page,
+  type ReturnArcT,
+  type ReturnWeekT,
   type PasswordResetAcceptedT,
   type StageProgressRecordT,
   type SuggestionStatusT,
@@ -1328,6 +1333,57 @@ export const invitations = {
       method: 'POST',
       token,
       headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey('dismiss-invitation', id) },
+    });
+  },
+};
+
+// Metta Return client (the declinable five-week soft-landing arc)
+export type MettaReturnState = MettaReturnStateT;
+export type ReturnArc = ReturnArcT;
+export type ReturnWeek = ReturnWeekT;
+
+/**
+ * The declinable Return arc surface. ``state`` reports eligibility, the full
+ * week sequence, and the caller's active arc (or null) — safe to poll on load.
+ * ``start`` accepts the arc with a deterministic idempotency key so a double-tap
+ * cannot open two arcs; ``pause``/``resume``/``leave`` drive the lifecycle, each
+ * returning the arc projected to its current week. None of these mutate stage
+ * progress, and no ``user_id`` is ever sent or returned.
+ */
+export const mettaReturn = {
+  state(token?: string): Promise<MettaReturnState> {
+    return request<MettaReturnState>('/metta-return', {
+      token,
+      schema: mettaReturnStateSchema as unknown as z.ZodType<MettaReturnState>,
+    });
+  },
+  start(token?: string): Promise<ReturnArc> {
+    return request<ReturnArc>('/metta-return/arc', {
+      method: 'POST',
+      token,
+      headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey('start-return') },
+      schema: returnArcSchema as unknown as z.ZodType<ReturnArc>,
+    });
+  },
+  pause(token?: string): Promise<ReturnArc> {
+    return request<ReturnArc>('/metta-return/arc/pause', {
+      method: 'POST',
+      token,
+      schema: returnArcSchema as unknown as z.ZodType<ReturnArc>,
+    });
+  },
+  resume(token?: string): Promise<ReturnArc> {
+    return request<ReturnArc>('/metta-return/arc/resume', {
+      method: 'POST',
+      token,
+      schema: returnArcSchema as unknown as z.ZodType<ReturnArc>,
+    });
+  },
+  leave(token?: string): Promise<ReturnArc> {
+    return request<ReturnArc>('/metta-return/arc/leave', {
+      method: 'POST',
+      token,
+      schema: returnArcSchema as unknown as z.ZodType<ReturnArc>,
     });
   },
 };
