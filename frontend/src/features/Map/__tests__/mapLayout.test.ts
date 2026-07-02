@@ -1,6 +1,12 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-import { MAP_ROWS, MAP_TITLE_LINES, STAGE_DISPLAY } from '../mapLayout';
+import {
+  GRID_COLUMN_FLEX,
+  MAP_ROWS,
+  MAP_TITLE_LINES,
+  RIGHT_LABEL_MIN_FONT_SCALE,
+  STAGE_DISPLAY,
+} from '../mapLayout';
 import { STAGE_COUNT } from '../stageData';
 
 const HEX_COLOR = /^#[\da-f]{6}$/i;
@@ -35,5 +41,14 @@ describe('mapLayout', () => {
 
   it('exposes the EMPTINESS / UNITY title', () => {
     expect(MAP_TITLE_LINES).toEqual(['EMPTINESS', 'UNITY']);
+  });
+
+  it('keeps the right-label font-scale floor within the auto-fit range', () => {
+    expect(RIGHT_LABEL_MIN_FONT_SCALE).toBeGreaterThan(0);
+    expect(RIGHT_LABEL_MIN_FONT_SCALE).toBeLessThan(1);
+  });
+
+  it('keeps the shared column-flex weights the wave geometry also depends on', () => {
+    expect(GRID_COLUMN_FLEX).toEqual({ left: 2, center: 2, right: 1 });
   });
 });

@@ -18,6 +18,14 @@
 /** Flex weights of each stage row's three cells (left / center / right). */
 export const GRID_COLUMN_FLEX = { left: 2, center: 2, right: 1 } as const;
 
+/**
+ * Minimum auto-fit font scale for the right-column aspect label. Worst case is
+ * "Understanding" (13 glyphs) on a ~320pt screen, where the ~20% right band
+ * leaves ~48pt of usable width; 0.55 lets that word shrink onto a single line
+ * without ellipsis or a mid-word break.
+ */
+export const RIGHT_LABEL_MIN_FONT_SCALE = 0.55;
+
 /** Static, design-specific copy + color for a single stage's left-column text. */
 export interface StageDisplay {
   stageNumber: number;
