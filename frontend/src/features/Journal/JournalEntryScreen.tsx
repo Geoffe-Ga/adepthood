@@ -242,25 +242,42 @@ function useClassificationPersist(
 
 interface ChordPersist {
   chordRef: React.MutableRefObject<AspectChordValue>;
-  /** Record the chord for the next create and PATCH it when the entry exists. */
-  changeChord: (_next: AspectChordValue) => void;
+  /**
+   * Record the chord for the next create and PATCH it when the entry exists.
+   * Resolves to the chord the UI should revert to when a PATCH fails and no
+   * later change has superseded it, else null.
+   */
+  changeChord: (_next: AspectChordValue) => Promise<AspectChordValue | null>;
 }
 
 /**
  * Owns the latest Aspect chord: it rides the first ``journal.create`` via the
  * ref, and on an existing entry a change is PATCHed immediately (both notes,
  * including explicit nulls) so re-tagging never waits on the body-save debounce.
+ * A failed PATCH resolves to the prior chord so the control reverts to the
+ * truth, mirroring the sibling privacy-tier control's revert-on-failure path.
  */
 function useChordPersist(entryIdRef: React.MutableRefObject<number | null>): ChordPersist {
   const chordRef = useRef<AspectChordValue>(EMPTY_CHORD);
   const changeChord = useCallback(
-    (next: AspectChordValue): void => {
+    async (next: AspectChordValue): Promise<AspectChordValue | null> => {
+      const previous = chordRef.current;
       chordRef.current = next;
-      if (entryIdRef.current != null) {
-        void journal.update(entryIdRef.current, {
+      // Create-time: the ref rides the next journal.create, nothing to PATCH yet.
+      if (entryIdRef.current == null) return null;
+      try {
+        await journal.update(entryIdRef.current, {
           primary_aspect: next.primary,
           secondary_aspect: next.secondary,
         });
+        return null;
+      } catch {
+        // A rapid superseding change already owns the ref and the UI — leave both
+        // to it rather than reverting to this now-stale chord. Assumes one PATCH in
+        // flight at a time; ``previous`` is the optimistic ref, not last-persisted.
+        if (chordRef.current !== next) return null;
+        chordRef.current = previous;
+        return previous;
       }
     },
     [entryIdRef],
@@ -303,6 +320,24 @@ function useSaveTimer(
     [run, timerRef, entryIdRef],
   );
   return { save, flush };
+}
+
+/**
+ * Wrap a revert-on-failure persister so a failed PATCH also surfaces the shared
+ * save-error hint (used identically by the privacy-tier and chord controls).
+ */
+function useErrorSurfacingPersist<T>(
+  change: (_value: T) => Promise<T | null>,
+  setSaveState: (_state: SaveState) => void,
+): (_value: T) => Promise<T | null> {
+  return useCallback(
+    async (value: T): Promise<T | null> => {
+      const revertTo = await change(value);
+      if (revertTo != null) setSaveState('error');
+      return revertTo;
+    },
+    [change, setSaveState],
+  );
 }
 
 /** Debounced create-then-update draft saver; tracks the save state. */
@@ -355,17 +390,17 @@ function useDebouncedSave(
   const setTyping = useCallback(() => setSaveState('typing'), []);
   const { save, flush } = useSaveTimer(run, timerRef, entryIdRef, delayMs, setTyping);
 
-  // A failed classification PATCH surfaces the same error hint as a body save.
-  const persistClassification = useCallback(
-    async (tier: JournalClassification): Promise<JournalClassification | null> => {
-      const revertTo = await changeClassification(tier);
-      if (revertTo != null) setSaveState('error');
-      return revertTo;
-    },
-    [changeClassification],
-  );
+  // A failed classification/chord PATCH surfaces the same error hint as a body save.
+  const persistClassification = useErrorSurfacingPersist(changeClassification, setSaveState);
+  const persistChord = useErrorSurfacingPersist(changeChord, setSaveState);
 
-  return { saveState, save, flush, changeClassification: persistClassification, changeChord };
+  return {
+    saveState,
+    save,
+    flush,
+    changeClassification: persistClassification,
+    changeChord: persistChord,
+  };
 }
 
 type StrRef = React.MutableRefObject<string>;
@@ -471,7 +506,7 @@ interface ChoiceHandlers {
 function useChoiceHandlers(
   entry: EntryState,
   changeClassification: (_tier: JournalClassification) => Promise<JournalClassification | null>,
-  changeChord: (_next: AspectChordValue) => void,
+  changeChord: (_next: AspectChordValue) => Promise<AspectChordValue | null>,
 ): ChoiceHandlers {
   const { setClassification, setChord } = entry;
   // Reflect the choice optimistically, then persist it (create-time ref or PATCH);
@@ -489,7 +524,9 @@ function useChoiceHandlers(
   const onChangeChord = useCallback(
     (next: AspectChordValue) => {
       setChord(next);
-      changeChord(next);
+      void changeChord(next).then((revertTo) => {
+        if (revertTo != null) setChord(revertTo);
+      });
     },
     [changeChord, setChord],
   );
