@@ -11,18 +11,11 @@ import {
   PanResponder,
   StyleSheet,
 } from 'react-native';
-import type {
-  DimensionValue,
-  GestureResponderHandlers,
-  LayoutChangeEvent,
-  ViewStyle,
-  TextStyle,
-} from 'react-native';
+import type { GestureResponderHandlers, LayoutChangeEvent, TextStyle } from 'react-native';
 import EmojiSelector from 'react-native-emoji-selector';
 
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
 import { Button } from '../../../components/Button';
-import { TierStar } from '../../../components/TierStar';
 import { useAuth } from '../../../context/AuthContext';
 import {
   colors,
@@ -35,7 +28,7 @@ import {
 import useResponsive from '../../../design/useResponsive';
 import { addDaysInTZ, dayKeyInTZ, todayInUserTZ } from '../../../utils/dateUtils';
 import { TARGET_UNITS, FREQUENCY_UNITS } from '../constants';
-import { TIER_LABELS, centeredTranslateX, tooltipBoxStyle } from '../goalMarker';
+import { TIER_LABELS, type TierType } from '../goalMarker';
 import styles from '../Habits.styles';
 import type { GoalModalProps, Goal } from '../Habits.types';
 import {
@@ -47,24 +40,16 @@ import {
   getGoalTarget,
   isGoalAchieved,
 } from '../HabitUtils';
+import {
+  TierMarkerOverlay,
+  type MarkerInteraction,
+  type TierMarkerSpec,
+} from '../TierMarkerOverlay';
 
 import ConfirmDialog from './ConfirmDialog';
 
 /** Height of the goal progress bar; tier star markers are centered on it. */
 const MODAL_BAR_HEIGHT = 12;
-
-/** Position a tier star marker on the bar: centered on its threshold and on the bar height. */
-const markerContainerStyle = (leftPct: number, z: number, starSize: number): ViewStyle => {
-  const clamped = clampPercentage(leftPct);
-  return {
-    position: 'absolute',
-    left: `${clamped}%` as DimensionValue,
-    top: (MODAL_BAR_HEIGHT - starSize) / 2,
-    transform: [{ translateX: centeredTranslateX(clamped, starSize) }],
-    zIndex: z,
-    alignItems: 'center',
-  };
-};
 
 const tooltipTextStyle: TextStyle = {
   fontSize: 10,
@@ -80,70 +65,18 @@ const formatGoalTooltip = (g: Goal | undefined): string => {
   return `${label}: ${g.target} ${g.target_unit} per ${g.frequency_unit.replace('_', ' ')}`;
 };
 
-interface GoalMarkerItemProps {
-  goal: Goal;
-  tier: 'low' | 'clear' | 'stretch';
-  position: number;
-  zIndex: number;
-  met: boolean;
-  tooltip: 'low' | 'clear' | 'stretch' | null;
-  setTooltip: (_v: 'low' | 'clear' | 'stretch' | null) => void;
+/** A modal marker spec carries its resolved `Goal` and (for draggable tiers) pan handlers. */
+interface ModalMarkerSpec extends TierMarkerSpec {
+  goal: Goal | undefined;
   panHandlers?: GestureResponderHandlers;
 }
-
-const GoalMarkerItem = ({
-  goal,
-  tier,
-  position,
-  zIndex,
-  met,
-  tooltip,
-  setTooltip,
-  panHandlers,
-}: GoalMarkerItemProps) => {
-  const { scale } = useResponsive();
-  // Match HabitTile's marker sizing so the two surfaces stay visually consistent.
-  const starSize = spacing(2, scale);
-  const Wrapper = tier === 'stretch' ? TouchableOpacity : View;
-  const interactionProps =
-    tier === 'stretch'
-      ? { onPressIn: () => setTooltip(tier), onPressOut: () => setTooltip(null) }
-      : panHandlers ?? {};
-
-  return (
-    <Wrapper
-      testID={`modal-marker-${tier}`}
-      {...interactionProps}
-      onMouseEnter={() => setTooltip(tier)}
-      onMouseLeave={() => setTooltip(null)}
-      style={markerContainerStyle(position, zIndex, starSize)}
-    >
-      {tooltip === tier && (
-        <View testID={`modal-tooltip-${tier}`} style={tooltipBoxStyle(getTierColor(tier))}>
-          <Text style={tooltipTextStyle}>{formatGoalTooltip(goal)}</Text>
-        </View>
-      )}
-      <TierStar tier={tier} met={met} size={starSize} />
-    </Wrapper>
-  );
-};
 
 interface GoalProgressBarProps {
   progressPercentage: number;
   progressBarColor: string;
-  lowGoal: Goal | undefined;
-  clearGoal: Goal | undefined;
-  stretchGoal: Goal | undefined;
-  lowMarker: number;
-  clearMarker: number;
-  stretchMarker: number;
-  lowMet: boolean;
-  clearMet: boolean;
-  stretchMet: boolean;
-  tooltip: 'low' | 'clear' | 'stretch' | null;
-  setTooltip: (_v: 'low' | 'clear' | 'stretch' | null) => void;
-  lowPanHandlers: GestureResponderHandlers;
-  clearPanHandlers: GestureResponderHandlers;
+  markers: ModalMarkerSpec[];
+  tooltip: TierType | null;
+  setTooltip: (_v: TierType | null) => void;
   onLayout: (_e: LayoutChangeEvent) => void;
 }
 
@@ -166,113 +99,49 @@ const ProgressFill = ({ progressPercentage, progressBarColor }: ProgressFillProp
   </View>
 );
 
-interface GoalMarkersRowProps {
-  lowGoal: Goal | undefined;
-  clearGoal: Goal | undefined;
-  stretchGoal: Goal | undefined;
-  lowMarker: number;
-  clearMarker: number;
-  stretchMarker: number;
-  lowMet: boolean;
-  clearMet: boolean;
-  stretchMet: boolean;
-  tooltip: 'low' | 'clear' | 'stretch' | null;
-  setTooltip: (_v: 'low' | 'clear' | 'stretch' | null) => void;
-  lowPanHandlers: GestureResponderHandlers;
-  clearPanHandlers: GestureResponderHandlers;
-}
-
-interface MarkerEntry {
-  tier: 'low' | 'clear' | 'stretch';
-  goal: Goal | undefined;
-  position: number;
-  zIndex: number;
-  met: boolean;
-  panHandlers?: GestureResponderHandlers;
-}
-
-const buildMarkerEntries = (p: GoalMarkersRowProps): MarkerEntry[] => [
-  {
-    tier: 'low',
-    goal: p.lowGoal,
-    position: p.lowMarker,
-    zIndex: 1,
-    met: p.lowMet,
-    panHandlers: p.lowPanHandlers,
-  },
-  {
-    tier: 'clear',
-    goal: p.clearGoal,
-    position: p.clearMarker,
-    zIndex: 2,
-    met: p.clearMet,
-    panHandlers: p.clearPanHandlers,
-  },
-  { tier: 'stretch', goal: p.stretchGoal, position: p.stretchMarker, zIndex: 3, met: p.stretchMet },
-];
-
-const GoalMarkersRow = (props: GoalMarkersRowProps) => {
-  const { tooltip, setTooltip } = props;
-  return (
-    <>
-      {buildMarkerEntries(props).map((it) =>
-        it.goal ? (
-          <GoalMarkerItem
-            key={it.tier}
-            goal={it.goal}
-            tier={it.tier}
-            position={it.position}
-            zIndex={it.zIndex}
-            met={it.met}
-            tooltip={tooltip}
-            setTooltip={setTooltip}
-            panHandlers={it.panHandlers}
-          />
-        ) : null,
-      )}
-    </>
-  );
-};
-
 const GoalProgressBar = ({
   progressPercentage,
   progressBarColor,
-  lowGoal,
-  clearGoal,
-  stretchGoal,
-  lowMarker,
-  clearMarker,
-  stretchMarker,
-  lowMet,
-  clearMet,
-  stretchMet,
+  markers,
   tooltip,
   setTooltip,
-  lowPanHandlers,
-  clearPanHandlers,
   onLayout,
-}: GoalProgressBarProps) => (
-  <View style={{ marginVertical: 16 }} onLayout={onLayout}>
-    <View style={{ height: MODAL_BAR_HEIGHT, position: 'relative' }}>
-      <ProgressFill progressPercentage={progressPercentage} progressBarColor={progressBarColor} />
-      <GoalMarkersRow
-        lowGoal={lowGoal}
-        clearGoal={clearGoal}
-        stretchGoal={stretchGoal}
-        lowMarker={lowMarker}
-        clearMarker={clearMarker}
-        stretchMarker={stretchMarker}
-        lowMet={lowMet}
-        clearMet={clearMet}
-        stretchMet={stretchMet}
-        tooltip={tooltip}
-        setTooltip={setTooltip}
-        lowPanHandlers={lowPanHandlers}
-        clearPanHandlers={clearPanHandlers}
-      />
+}: GoalProgressBarProps) => {
+  const { scale } = useResponsive();
+  const starSize = spacing(2, scale);
+
+  // Stretch markers open their tooltip on tap; low/clear are draggable, so they
+  // wrap a plain View and forward their pan handlers instead.
+  const resolveModalInteraction = (m: ModalMarkerSpec): MarkerInteraction =>
+    m.tier === 'stretch'
+      ? {
+          Wrapper: TouchableOpacity,
+          interactionProps: {
+            onPressIn: () => setTooltip('stretch'),
+            onPressOut: () => setTooltip(null),
+          },
+        }
+      : { Wrapper: View, interactionProps: { ...m.panHandlers } };
+
+  return (
+    <View style={{ marginVertical: 16 }} onLayout={onLayout}>
+      <View style={{ height: MODAL_BAR_HEIGHT, position: 'relative' }}>
+        <ProgressFill progressPercentage={progressPercentage} progressBarColor={progressBarColor} />
+        <TierMarkerOverlay<ModalMarkerSpec>
+          markers={markers}
+          barHeight={MODAL_BAR_HEIGHT}
+          starSize={starSize}
+          tooltip={tooltip}
+          setTooltip={setTooltip}
+          markerTestIDPrefix="modal-marker"
+          tooltipTestIDPrefix="modal-tooltip"
+          renderTooltip={(m) => <Text style={tooltipTextStyle}>{formatGoalTooltip(m.goal)}</Text>}
+          resolveInteraction={resolveModalInteraction}
+        />
+      </View>
     </View>
-  </View>
-);
+  );
+};
 
 // Layout constants for the log-date stepper.
 const LOG_DATE_NOON_HOUR = 12;
@@ -1177,24 +1046,46 @@ const buildProgressBarProps = (
   habit: NonNullable<GoalModalProps['habit']>,
   m: ReturnType<typeof useGoalMarkers>,
   tz: string,
-) => ({
-  progressPercentage: modalProgressPercentage(habit, m, tz),
-  progressBarColor: getProgressBarColor(habit, tz),
-  lowGoal: m.lowGoal,
-  clearGoal: m.clearGoal,
-  stretchGoal: m.stretchGoal,
-  lowMarker: m.lowMarker,
-  clearMarker: m.clearMarker,
-  stretchMarker: m.stretchMarker,
-  lowMet: m.lowGoal ? isGoalAchieved(m.lowGoal, habit, tz) : false,
-  clearMet: m.clearGoal ? isGoalAchieved(m.clearGoal, habit, tz) : false,
-  stretchMet: m.stretchGoal ? isGoalAchieved(m.stretchGoal, habit, tz) : false,
-  tooltip: m.tooltip,
-  setTooltip: m.setTooltip,
-  lowPanHandlers: m.lowPan.panHandlers,
-  clearPanHandlers: m.clearPan.panHandlers,
-  onLayout: m.handleBarLayout,
-});
+): GoalProgressBarProps => {
+  // ``met`` is only computed when the goal exists — an absent tier has nothing to achieve.
+  const markers: ModalMarkerSpec[] = [
+    {
+      tier: 'low',
+      goal: m.lowGoal,
+      position: m.lowMarker,
+      zIndex: 1,
+      met: m.lowGoal ? isGoalAchieved(m.lowGoal, habit, tz) : false,
+      visible: !!m.lowGoal,
+      panHandlers: m.lowPan.panHandlers,
+    },
+    {
+      tier: 'clear',
+      goal: m.clearGoal,
+      position: m.clearMarker,
+      zIndex: 2,
+      met: m.clearGoal ? isGoalAchieved(m.clearGoal, habit, tz) : false,
+      visible: !!m.clearGoal,
+      panHandlers: m.clearPan.panHandlers,
+    },
+    {
+      tier: 'stretch',
+      goal: m.stretchGoal,
+      position: m.stretchMarker,
+      zIndex: 3,
+      met: m.stretchGoal ? isGoalAchieved(m.stretchGoal, habit, tz) : false,
+      visible: !!m.stretchGoal,
+    },
+  ];
+
+  return {
+    progressPercentage: modalProgressPercentage(habit, m, tz),
+    progressBarColor: getProgressBarColor(habit, tz),
+    markers,
+    tooltip: m.tooltip,
+    setTooltip: m.setTooltip,
+    onLayout: m.handleBarLayout,
+  };
+};
 
 /** Amount + date draft state for the Log Units control. */
 const useLogState = (
