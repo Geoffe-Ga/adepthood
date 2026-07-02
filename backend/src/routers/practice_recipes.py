@@ -48,13 +48,13 @@ from models.user_practice import UserPractice
 from routers.auth import get_current_user
 from routers.user_practices import (
     EmbeddedSessionsParams,
+    _validate_mode_config_against_catalog,
     build_user_practice_detail,
     load_recent_sessions,
 )
 from schemas import Page, PaginationParams, build_page
 from schemas.pagination import paginate_query
 from schemas.practice import UserPracticeDetail
-from schemas.practice_mode_config import ModeConfigAdapter
 from schemas.practice_recipe import (
     PracticeRecipeCreate,
     PracticeRecipeOut,
@@ -335,24 +335,6 @@ async def delete_practice_recipe(
     logger.info("practice_recipe_deleted", extra={"recipe_id": recipe_id, "user_id": user_id})
 
 
-def _validate_materialised_against_catalog(
-    materialised: dict[str, Any], practice: Practice
-) -> None:
-    """Run the materialised config through the same gate the customise route uses.
-
-    Shared with ``user_practices.customize_user_practice`` in spirit:
-    both paths land in ``UserPractice.mode_config_override`` and both
-    must (a) parse cleanly under ``ModeConfigAdapter`` and (b) match
-    the catalog ``mode``.
-    """
-    try:
-        cfg = ModeConfigAdapter.validate_python(materialised)
-    except ValidationError as exc:
-        raise bad_request("recipe_invalid_for_mode") from exc
-    if cfg.mode != practice.mode:
-        raise bad_request("mode_mismatch")
-
-
 @router.post(
     "/{recipe_id}/apply-to/{user_practice_id}",
     response_model=UserPracticeDetail,
@@ -368,8 +350,11 @@ async def apply_recipe_to_user_practice(
 
     Re-uses ``require_owned_user_practice`` (the same dependency the
     customise endpoint uses) so the ownership rule for overrides is
-    enforced in exactly one place.  Mode mismatch returns ``400
-    mode_mismatch`` to mirror the customise endpoint's error shape.
+    enforced in exactly one place.  The materialised config runs through
+    ``_validate_mode_config_against_catalog`` -- literally the same gate
+    the customise route uses -- so a malformed config returns ``422`` with
+    structured per-field errors and a mode mismatch returns ``400
+    mode_mismatch``, identical to the customise endpoint's error shapes.
     """
     recipe = await _load_visible_recipe(recipe_id, user_id, session)
     steps = await _load_steps(recipe_id, session)
@@ -382,7 +367,7 @@ async def apply_recipe_to_user_practice(
     practice = practice_result.scalar_one_or_none()
     if practice is None:
         raise not_found("practice")
-    _validate_materialised_against_catalog(materialised, practice)
+    _validate_mode_config_against_catalog(materialised, practice)
 
     user_practice.mode_config_override = materialised
     session.add(user_practice)
