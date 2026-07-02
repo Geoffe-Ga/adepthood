@@ -989,7 +989,12 @@ const GoalModalHeader = ({
     <View style={styles.modalHeader}>
       <Text style={styles.modalTitle}>{habit.name}</Text>
       <EditToggleButton isEditing={isEditing} onToggle={onToggleEdit} />
-      <TouchableOpacity onPress={() => setShowEmojiSelector(true)}>
+      <TouchableOpacity
+        testID="goal-modal-icon-button"
+        accessibilityRole="button"
+        accessibilityLabel="Change habit icon"
+        onPress={() => setShowEmojiSelector(true)}
+      >
         <Text style={styles.iconLarge}>{habit.icon}</Text>
       </TouchableOpacity>
       <TouchableOpacity onPress={onClose} style={styles.closeButton}>
