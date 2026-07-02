@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
+from domain.dates import ensure_aware
 from domain.timezone import normalize_timezone
 from errors import bad_request
 from models.login_attempt import LoginAttempt
@@ -733,19 +734,6 @@ def _coerce_iat_to_datetime(payload: dict[str, object]) -> datetime | None:
     return datetime.fromtimestamp(iat, tz=UTC)
 
 
-def _as_utc_aware(value: datetime) -> datetime:
-    """Tag a naive datetime as UTC; pass aware datetimes through unchanged.
-
-    SQLite (used in tests) drops timezone info on round-trip, so a column
-    written as ``datetime.now(UTC)`` returns naive on read.  Forcing UTC
-    here keeps the SPEC R7 comparison correct on both backends; on
-    PostgreSQL the column is already aware and the call is a no-op.
-    """
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value
-
-
 def _token_predates_password_reset(
     token_iat: datetime | None,
     password_changed_at: datetime | None,
@@ -773,7 +761,7 @@ def _token_predates_password_reset(
     """
     if token_iat is None or password_changed_at is None:
         return False
-    return _as_utc_aware(token_iat) < _as_utc_aware(password_changed_at)
+    return ensure_aware(token_iat) < ensure_aware(password_changed_at)
 
 
 async def _check_user_active(

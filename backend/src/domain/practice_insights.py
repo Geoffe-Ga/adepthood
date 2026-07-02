@@ -17,9 +17,9 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 
-from domain.dates import to_user_date, today_in_tz
+from domain.dates import ensure_aware, to_user_date, today_in_tz
 from models.practice_session import PracticeSession
 
 # Weekly cadence the spec defines as "meeting the practice goal" (≥ 4 sessions
@@ -61,20 +61,6 @@ class PracticeInsights:
     last_insight: str | None
 
 
-def _as_utc_aware(moment: datetime) -> datetime:
-    """Return ``moment`` re-anchored as UTC if it arrived naive.
-
-    Production Postgres ``timestamptz`` columns yield tz-aware datetimes,
-    but SQLite (the test DB) silently drops the tzinfo on read.  The
-    stored value is always the UTC instant we wrote, so re-attaching UTC
-    is correct rather than a band-aid.  ``to_user_date`` raises on naive
-    input — funneling every session timestamp through this helper keeps
-    that strict guard intact without forcing every test fixture to know
-    the storage-layer quirk.
-    """
-    return moment.replace(tzinfo=UTC) if moment.tzinfo is None else moment
-
-
 def _monday_of(day: date) -> date:
     """Return the Monday on or before ``day``.
 
@@ -107,7 +93,7 @@ def _bucket_by_week(
             # Spec: partial sessions count toward weekly totals *iff* duration > 0.
             # Zero-duration aborts don't move the cadence needle.
             continue
-        local_day = to_user_date(tz, _as_utc_aware(session.timestamp))
+        local_day = to_user_date(tz, ensure_aware(session.timestamp))
         buckets[_monday_of(local_day)] += 1
     return buckets
 
@@ -138,7 +124,7 @@ def _is_in_30d_window(session: PracticeSession, today: date, tz: str | None) -> 
     Strict lower bound so the span is exactly ``ROLLING_30D_WINDOW_DAYS`` distinct
     calendar days (today-29 .. today); an inclusive lower bound would count 31.
     """
-    local_day = to_user_date(tz, _as_utc_aware(session.timestamp))
+    local_day = to_user_date(tz, ensure_aware(session.timestamp))
     return today - timedelta(days=ROLLING_30D_WINDOW_DAYS) < local_day <= today
 
 
@@ -184,7 +170,7 @@ def _last_insight(sessions: Iterable[PracticeSession]) -> str | None:
     with_insight = [s for s in sessions if s.insight is not None]
     if not with_insight:
         return None
-    latest = max(with_insight, key=lambda s: _as_utc_aware(s.timestamp))
+    latest = max(with_insight, key=lambda s: ensure_aware(s.timestamp))
     return latest.insight
 
 

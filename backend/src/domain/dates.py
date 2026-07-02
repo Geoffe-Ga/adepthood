@@ -75,6 +75,18 @@ def _resolve_zone(user_or_tz: _HasTimezone | str | None) -> ZoneInfo:
         return ZoneInfo(_FALLBACK_TZ)
 
 
+def ensure_aware(value: datetime) -> datetime:
+    """Return ``value`` tagged as UTC when naive; pass aware values through.
+
+    SQLite (the test DB) drops ``tzinfo`` when round-tripping a column
+    declared timezone-aware, so a value written as ``datetime.now(UTC)``
+    reads back naive.  The stored instant is always the UTC one we wrote,
+    so re-anchoring UTC is correct rather than a band-aid.  Aware values
+    keep their own offset unchanged (identical object returned).
+    """
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 def now_in_tz(user_or_tz: _HasTimezone | str | None) -> datetime:
     """Return ``datetime.now`` in the user's IANA timezone.
 
@@ -155,9 +167,5 @@ def to_user_date_bucket(ts: datetime | str, user_or_tz: _HasTimezone | str | Non
     storage. The single canonical owner of this coercion (was duplicated in the
     streak service and the subtractive domain).
     """
-    if isinstance(ts, datetime):
-        moment = ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
-    else:
-        parsed = datetime.fromisoformat(ts)
-        moment = parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
-    return to_user_date(user_or_tz, moment)
+    parsed = ts if isinstance(ts, datetime) else datetime.fromisoformat(ts)
+    return to_user_date(user_or_tz, ensure_aware(parsed))

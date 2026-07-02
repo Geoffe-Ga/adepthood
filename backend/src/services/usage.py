@@ -15,6 +15,8 @@ from __future__ import annotations
 import os
 from datetime import UTC, datetime
 
+from domain.dates import ensure_aware
+
 # Default monthly cap when ``BOTMASON_MONTHLY_CAP`` is not set.  Chosen as a
 # conservative free-tier that covers a handful of reflections per day without
 # opening the door to sustained abuse before a purchase is required.
@@ -54,8 +56,7 @@ def compute_next_reset(now: datetime) -> datetime:
     is always timezone-aware (UTC) so it can be compared safely against
     ``datetime.now(UTC)`` in SQL WHERE clauses.
     """
-    aware = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
-    utc = aware.astimezone(UTC)
+    utc = ensure_aware(now).astimezone(UTC)
     year, month = utc.year, utc.month
     if month == 12:  # noqa: PLR2004 - December rolls to January of next year
         return datetime(year + 1, 1, 1, tzinfo=UTC)
