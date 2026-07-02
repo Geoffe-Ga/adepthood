@@ -7,6 +7,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from domain.care import CareKind
+from domain.contraction import ContractionVariant
 from models.marginalia import MarginaliaKind, MarginaliaStatus
 from schemas.completion_suggestion import CompletionSuggestionResponse
 
@@ -59,6 +60,19 @@ class CareResponse(BaseModel):
     resources: list[CareResourceResponse]
 
 
+class ContractionReflectionResponse(BaseModel):
+    """A warm, declinable Higher Self reflection naming a foundation's contraction.
+
+    Mirrors :class:`domain.contraction.ContractionInvitation`: a ``variant`` drawn
+    from ``ContractionVariant`` and the deterministic ``message`` for it. Never a
+    demotion, never a broken-streak notice — a gentle naming that honors "you
+    choose your depth." Present only when a sustained contraction is detected.
+    """
+
+    variant: ContractionVariant
+    message: str
+
+
 class ResonanceResponse(BaseModel):
     """Result of a resonance pass: the new notes plus refreshed wallet balances.
 
@@ -75,6 +89,11 @@ class ResonanceResponse(BaseModel):
     and ``private_message`` carries the non-shaming explanation. Both fields are
     defaulted, so every existing (public/personal) response is byte-for-byte
     unchanged.
+
+    ``contraction`` is ``None`` for a healthy or new user; on a sustained thinning
+    of the habit foundation it carries a warm, declinable reflection. It is
+    computed locally (no LLM) and has zero side effects on progression, and — like
+    ``care`` / ``private`` — is defaulted so every existing response is unchanged.
     """
 
     marginalia: list[MarginaliaResponse]
@@ -85,6 +104,7 @@ class ResonanceResponse(BaseModel):
     care: CareResponse | None = None
     private: bool = False
     private_message: str | None = None
+    contraction: ContractionReflectionResponse | None = None
 
 
 class MarginaliaListResponse(BaseModel):

@@ -16,10 +16,16 @@ from database import get_session
 from dependencies.ownership import require_owned_journal_entry
 from dependencies.timezone import current_user_timezone
 from domain.care import CarePayload, build_care_payload
+from domain.contraction import (
+    build_contraction_invitation,
+    derive_highest_stage_reached,
+    detect_contraction,
+)
 from domain.detection import CompletionDetected, detect_completions
 from domain.practice_resolution import effective_config
 from domain.resonance import MarginaliaAnchored, generate_essay, generate_marginalia
 from domain.safety import assess_distress
+from domain.stage_progress import get_user_progress
 from errors import bad_gateway, conflict, not_found, unprocessable
 from models.completion_suggestion import (
     CompletionSuggestion,
@@ -50,6 +56,7 @@ from schemas.journal import (
 from schemas.marginalia import (
     CareResourceResponse,
     CareResponse,
+    ContractionReflectionResponse,
     MarginaliaListResponse,
     MarginaliaResponse,
     ResonanceResponse,
@@ -59,6 +66,7 @@ from services import journal_encryption
 from services.botmason import LLMProviderError, resolve_chat_api_key
 from services.checkin import CheckInContext, current_check_in, record_goal_completion
 from services.completion_candidates import gather_candidates
+from services.contraction import gather_contraction_aggregates
 from services.marginalia import (
     BotmasonResonanceLLM,
     reanchor_entry_marginalia,
@@ -66,6 +74,7 @@ from services.marginalia import (
 )
 from services.practice_session_idempotency import record_session, recorded_session_id
 from services.usage import get_monthly_cap
+from services.users import get_user_timezone
 from services.wallet import SpendResult, preflight_deduction, require_user_fresh
 
 
@@ -560,14 +569,63 @@ async def _persist_resonance(
     return rows, suggestions
 
 
+# A user with no StageProgress row yet is treated as the earliest reach: stage 1,
+# nothing completed, first cycle. This keeps the contraction gate on the simple
+# ease-off variant rather than the deeper Return, which is correct for someone
+# who has not begun the staged arc.
+_DEFAULT_CURRENT_STAGE = 1
+_DEFAULT_CYCLE_NUMBER = 1
+
+
+async def _contraction_reflection(
+    session: AsyncSession, user_id: int
+) -> ContractionReflectionResponse | None:
+    """Compute the warm, declinable contraction reflection, or ``None`` if healthy.
+
+    Read-only and deterministic: it gathers the user's habit-foundation signals,
+    detects a sustained contraction, and — only when flagged — gates the copy by
+    the highest stage the user has ever reached. It never writes and never touches
+    progression, so it is safe to run on the resonance happy path.
+    """
+    user_timezone = await get_user_timezone(session, user_id)
+    aggregates = await gather_contraction_aggregates(session, user_id, user_timezone)
+    signal = detect_contraction(aggregates)
+    if signal is None:
+        return None
+    progress = await get_user_progress(session, user_id)
+    if progress is None:
+        highest_stage = derive_highest_stage_reached(
+            _DEFAULT_CURRENT_STAGE, [], _DEFAULT_CYCLE_NUMBER
+        )
+    else:
+        highest_stage = derive_highest_stage_reached(
+            progress.current_stage, progress.completed_stages, progress.cycle_number
+        )
+    invitation = build_contraction_invitation(highest_stage)
+    return ContractionReflectionResponse(variant=invitation.variant, message=invitation.message)
+
+
+@dataclass(frozen=True)
+class _ResonanceSurfaces:
+    """The optional reflection surfaces layered onto a resonance response.
+
+    ``care`` is the acute-distress support surface; ``contraction`` is the warm,
+    declinable naming of a thinned foundation. Both are ``None`` for an ordinary,
+    healthy pass, and bundling them keeps the response builder's signature small.
+    """
+
+    care: CareResponse | None
+    contraction: ContractionReflectionResponse | None = None
+
+
 def _resonance_response(
     rows: list[Marginalia],
     suggestions: list[CompletionSuggestion],
     spent: SpendResult,
     reset_date: datetime,
-    care: CareResponse | None,
+    surfaces: _ResonanceSurfaces,
 ) -> ResonanceResponse:
-    """Build the success response: notes, suggestions, refreshed balances, care."""
+    """Build the success response: notes, suggestions, refreshed balances, surfaces."""
     return ResonanceResponse(
         marginalia=[MarginaliaResponse.model_validate(r, from_attributes=True) for r in rows],
         suggestions=[
@@ -577,7 +635,8 @@ def _resonance_response(
         remaining_messages=max(get_monthly_cap() - spent.monthly_used, 0),
         remaining_balance=spent.offering_balance,
         monthly_reset_date=reset_date,
-        care=care,
+        care=surfaces.care,
+        contraction=surfaces.contraction,
     )
 
 
@@ -601,6 +660,11 @@ async def run_resonance(
     professional support) that accompanies — never replaces — the reflection, and
     is returned even if the LLM pass fails, so care never depends on the LLM
     (NORTH-STAR §10). An ordinary entry behaves exactly as before (``care`` None).
+
+    After the pass commits, a read-only, deterministic contraction check may add a
+    warm, declinable reflection when the habit foundation has thinned. It runs
+    only on this non-intimate happy path — never for an intimate entry, whose
+    privacy floor returns above — and never mutates progression.
     """
     entry = await _load_user_entry(session, entry_id, current_user)
     if entry is None:
@@ -630,7 +694,9 @@ async def run_resonance(
         "journal_resonance_generated",
         extra={"user_id": current_user, "entry_id": entry_id, "count": len(rows)},
     )
-    return _resonance_response(rows, suggestions, spent, spent_user.monthly_reset_date, care)
+    contraction = await _contraction_reflection(session, current_user)
+    surfaces = _ResonanceSurfaces(care=care, contraction=contraction)
+    return _resonance_response(rows, suggestions, spent, spent_user.monthly_reset_date, surfaces)
 
 
 @router.get("/{entry_id}/marginalia", response_model=MarginaliaListResponse)
