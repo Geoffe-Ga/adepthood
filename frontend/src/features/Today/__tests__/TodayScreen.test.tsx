@@ -1,5 +1,5 @@
 /* eslint-env jest */
-import { jest, beforeEach, describe, it, expect } from '@jest/globals';
+import { jest, beforeEach, afterEach, describe, it, expect } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
@@ -103,12 +103,27 @@ describe('TodayScreen', () => {
     expect(getByText(/Week 1 of 36/)).toBeTruthy();
   });
 
+  it('shows a not-yet-started journey and a generic journal prompt with no program anchor', () => {
+    useProgramStore.setState({ programStartDate: null });
+    const { getByText } = render(<TodayScreen />);
+    expect(getByText('Your journey awaits')).toBeTruthy();
+    expect(getByText('Open your journal.')).toBeTruthy();
+  });
+
   it('summarises today’s habits and routes to Habits on press', () => {
     useHabitStore.setState({ habits: [makeHabit(1, true), makeHabit(2, false)], loading: false });
     const { getByTestId, getByText } = render(<TodayScreen />);
     expect(getByText('1/2 done')).toBeTruthy();
+    expect(getByText('Keep the streak alive.')).toBeTruthy();
     fireEvent.press(getByTestId('today-habits-band'));
     expect(mockNavigate).toHaveBeenCalledWith('Habits');
+  });
+
+  it('celebrates when every habit is done today', () => {
+    useHabitStore.setState({ habits: [makeHabit(1, true), makeHabit(2, true)], loading: false });
+    const { getByText } = render(<TodayScreen />);
+    expect(getByText('2/2 done')).toBeTruthy();
+    expect(getByText('All caught up — beautiful.')).toBeTruthy();
   });
 
   it('shows a habits skeleton while loading', () => {
@@ -178,6 +193,30 @@ describe('TodayScreen', () => {
     mockMettaReturn = { eligible: true, weeks: [makeWeek(1)], arc: null, offerVisible: false };
     const { queryByTestId } = render(<TodayScreen />);
     expect(queryByTestId('return-arc-card')).toBeNull();
+  });
+
+  describe('time-of-day greeting', () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('greets "Good morning" before noon', () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-01-01T08:00:00'));
+      const { getByText } = render(<TodayScreen />);
+      expect(getByText('Good morning')).toBeTruthy();
+    });
+
+    it('greets "Good afternoon" between noon and 6pm', () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-01-01T14:00:00'));
+      const { getByText } = render(<TodayScreen />);
+      expect(getByText('Good afternoon')).toBeTruthy();
+    });
+
+    it('greets "Good evening" after 6pm', () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-01-01T20:00:00'));
+      const { getByText } = render(<TodayScreen />);
+      expect(getByText('Good evening')).toBeTruthy();
+    });
   });
 
   it('shows the Return completion card, not the arc card, when the arc is complete', () => {

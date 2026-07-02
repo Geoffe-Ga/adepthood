@@ -663,6 +663,144 @@ describe('habitManager', () => {
         { goal_id: 3, did_complete: true, timestamp: '2025-04-03T00:00:00Z' },
       ]);
     });
+
+    it('keeps cached habits and does not set an error when a real cache exists and the API fails', async () => {
+      const cached: Habit[] = [makeHabit({ id: 5, name: 'From Cache' })];
+      (loadHabits as jest.Mock).mockResolvedValueOnce(cached as never);
+      (habitsApi.listAll as jest.Mock).mockRejectedValueOnce(new Error('boom') as never);
+
+      await habitManager.loadHabits();
+
+      const { habits, error } = useHabitStore.getState();
+      expect(habits).toHaveLength(1);
+      expect(habits[0]!.name).toBe('From Cache');
+      expect(error).toBeNull();
+    });
+
+    it('does not replay cached goal targets when the post-recovery refetch fails', async () => {
+      const cachedHabit = makeHabit({ id: 1, name: 'Pranayama' });
+      cachedHabit.goals = cachedHabit.goals.map((g) =>
+        g.tier === 'clear' ? { ...g, target: 30, target_unit: 'minutes' } : g,
+      );
+      (loadHabits as jest.Mock).mockResolvedValueOnce([cachedHabit] as never);
+      (habitsApi.listAll as jest.Mock)
+        .mockResolvedValueOnce([] as never)
+        .mockRejectedValueOnce(new Error('still down') as never);
+
+      await habitManager.loadHabits();
+
+      expect(habitsApi.create).toHaveBeenCalledWith(expect.objectContaining({ name: 'Pranayama' }));
+      expect(goalsApi.update).not.toHaveBeenCalled();
+      const stored = useHabitStore.getState().habits;
+      expect(stored).toHaveLength(1);
+      expect(stored[0]!.name).toBe('Pranayama');
+    });
+
+    it('replays a goal whose only difference from the server default is frequency', async () => {
+      const cachedHabit = makeHabit({ id: 1, name: 'Pranayama' });
+      cachedHabit.goals = cachedHabit.goals.map((g) =>
+        g.tier === 'clear' ? { ...g, frequency: 2 } : g,
+      );
+      (loadHabits as jest.Mock).mockResolvedValueOnce([cachedHabit] as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([
+        {
+          id: 99,
+          name: 'Pranayama',
+          icon: cachedHabit.icon,
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          goals: [
+            freshServerGoal(991, 'Low', 'low', 1),
+            freshServerGoal(992, 'Clear', 'clear', 2),
+            freshServerGoal(993, 'Stretch', 'stretch', 3),
+          ],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      expect(goalsApi.update).toHaveBeenCalledWith(992, expect.objectContaining({ frequency: 2 }));
+      const clear = useHabitStore.getState().habits[0]!.goals.find((g) => g.tier === 'clear')!;
+      expect(clear.frequency).toBe(2);
+    });
+
+    it('replays a goal whose only difference from the server default is is_additive', async () => {
+      const cachedHabit = makeHabit({ id: 1, name: 'Pranayama' });
+      cachedHabit.goals = cachedHabit.goals.map((g) =>
+        g.tier === 'clear' ? { ...g, is_additive: false } : g,
+      );
+      (loadHabits as jest.Mock).mockResolvedValueOnce([cachedHabit] as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never).mockResolvedValueOnce([
+        {
+          id: 99,
+          name: 'Pranayama',
+          icon: cachedHabit.icon,
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          goals: [
+            freshServerGoal(991, 'Low', 'low', 1),
+            freshServerGoal(992, 'Clear', 'clear', 2),
+            freshServerGoal(993, 'Stretch', 'stretch', 3),
+          ],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      expect(goalsApi.update).toHaveBeenCalledWith(
+        992,
+        expect.objectContaining({ is_additive: false }),
+      );
+      const clear = useHabitStore.getState().habits[0]!.goals.find((g) => g.tier === 'clear')!;
+      expect(clear.is_additive).toBe(false);
+    });
+
+    it('skips a habit with an unparseable start_date when computing the program anchor', async () => {
+      useProgramStore.getState().hydrateProgramStartDate(null);
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([
+        {
+          id: 1,
+          name: 'Broken Date',
+          icon: '\u{1F9D8}',
+          start_date: 'not-a-real-date',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          goals: [],
+        },
+        {
+          id: 2,
+          name: 'Valid Date',
+          icon: '\u{1F49C}',
+          start_date: '2026-02-15',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Purple',
+          streak: 0,
+          milestone_notifications: false,
+          goals: [],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      const anchor = useProgramStore.getState().programStartDate;
+      expect(anchor).not.toBeNull();
+      expect(anchor!.getFullYear()).toBe(2026);
+      expect(anchor!.getMonth()).toBe(1);
+      expect(anchor!.getDate()).toBe(15);
+    });
   });
 
   describe('updateGoalUnits', () => {
@@ -699,6 +837,29 @@ describe('habitManager', () => {
       expect(goals.every((g) => g.target_unit === 'units')).toBe(true);
       const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
       expect(Alert.alert).toHaveBeenCalled();
+    });
+
+    it('does nothing when no habit matches the given id', () => {
+      useHabitStore.setState({ habits: [makeHabit({ id: 1 })] });
+
+      habitManager.updateGoalUnits(999, { target_unit: 'hours' });
+
+      const goals = useHabitStore.getState().habits[0]!.goals;
+      expect(goals.every((g) => g.target_unit === 'units')).toBe(true);
+      expect(habitsApi.updateGoalUnits).not.toHaveBeenCalled();
+      expect(saveHabits).not.toHaveBeenCalled();
+    });
+
+    it('skips the network call when a tier goal has no synthetic id', () => {
+      const habit = makeHabit();
+      habit.goals = habit.goals.map((g, i) => (i === 0 ? { ...g, id: undefined } : g));
+      useHabitStore.setState({ habits: [habit] });
+
+      habitManager.updateGoalUnits(1, { target_unit: 'hours' });
+
+      const goals = useHabitStore.getState().habits[0]!.goals;
+      expect(goals.every((g) => g.target_unit === 'hours')).toBe(true);
+      expect(habitsApi.updateGoalUnits).not.toHaveBeenCalled();
     });
   });
 
@@ -1413,6 +1574,180 @@ describe('habitManager', () => {
       expect(saveHabits).toHaveBeenLastCalledWith(
         expect.arrayContaining([expect.objectContaining({ id: 1, icon: 'A' })]),
       );
+    });
+  });
+
+  describe('onboardingSave error handling', () => {
+    it('logs and continues when a single habit fails to sync during onboarding', async () => {
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      (habitsApi.create as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
+      const newHabits: OnboardingHabit[] = [
+        {
+          id: 'a',
+          name: 'Meditate',
+          icon: '\u{1F9D8}',
+          energy_cost: 1,
+          energy_return: 3,
+          stage: 'Beige',
+          start_date: new Date('2025-01-01'),
+        },
+      ];
+
+      await habitManager.onboardingSave(newHabits, jest.fn());
+
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Meditate'));
+      expect(useHabitStore.getState().habits).toHaveLength(1);
+      errorSpy.mockRestore();
+    });
+  });
+
+  describe('updateGoalUnits edge cases', () => {
+    it('does nothing when the matched habit has no goals to read a reference from', () => {
+      const emptyHabit = { ...makeHabit({ id: 5 }), goals: [] };
+      useHabitStore.setState({ habits: [emptyHabit] });
+
+      habitManager.updateGoalUnits(5, { target_unit: 'hours' });
+
+      expect(useHabitStore.getState().habits[0]!.goals).toEqual([]);
+      expect(habitsApi.updateGoalUnits).not.toHaveBeenCalled();
+      expect(saveHabits).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('saveHabitOrder with no server ids', () => {
+    it('stamps sort_order and persists locally without calling the API when no habit has an id', () => {
+      const local1 = { ...makeHabit({ id: 1 }), id: undefined } as unknown as Habit;
+      const local2 = { ...makeHabit({ id: 2 }), id: undefined } as unknown as Habit;
+      useHabitStore.setState({ habits: [local1, local2] });
+
+      habitManager.saveHabitOrder([local2, local1]);
+
+      const stored = useHabitStore.getState().habits;
+      expect(stored.map((h) => h.sort_order)).toEqual([0, 1]);
+      expect(saveHabits).toHaveBeenCalled();
+      expect(habitsApi.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('commitLogUnitContext with a synthetic (id-less) current goal', () => {
+    it('returns null and skips the API call when the current goal has no server id', async () => {
+      const habit = makeHabit();
+      habit.goals = habit.goals.map((g) => (g.tier === 'low' ? { ...g, id: undefined } : g));
+      useHabitStore.setState({ habits: [habit] });
+      const ctx = habitManager.prepareLogUnit(1, 1, 'UTC')!;
+
+      const result = await habitManager.commitLogUnitContext(ctx);
+
+      expect(result).toBeNull();
+      expect(goalCompletionsApi.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('buildLogUnitToast tier-specific milestone copy', () => {
+    it('returns the Clear Goal milestone toast when the log crosses the clear threshold', () => {
+      useHabitStore.setState({
+        habits: [
+          makeHabit({
+            completions: [{ id: 'pre', timestamp: new Date(), completed_units: 1 }],
+          }),
+        ],
+      });
+      const ctx = habitManager.prepareLogUnit(1, 1, 'UTC')!;
+
+      const toast = habitManager.buildLogUnitToast(ctx);
+
+      expect(toast.message).toMatch(/Clear Goal achieved/i);
+    });
+
+    it('returns the Stretch Goal milestone toast when the log crosses the stretch threshold', () => {
+      useHabitStore.setState({
+        habits: [
+          makeHabit({
+            completions: [{ id: 'pre', timestamp: new Date(), completed_units: 2 }],
+          }),
+        ],
+      });
+      const ctx = habitManager.prepareLogUnit(1, 1, 'UTC')!;
+
+      const toast = habitManager.buildLogUnitToast(ctx);
+
+      expect(toast.message).toMatch(/Stretch Goal achieved/i);
+    });
+
+    it('falls back to the confirmation toast for a subtractive goal even when a threshold is crossed', () => {
+      const subtractiveHabit = makeHabit();
+      subtractiveHabit.goals = subtractiveHabit.goals.map((g) => ({ ...g, is_additive: false }));
+      useHabitStore.setState({ habits: [subtractiveHabit] });
+      const ctx = habitManager.prepareLogUnit(1, 1, 'UTC')!;
+
+      const toast = habitManager.buildLogUnitToast(ctx);
+
+      expect(toast.message).toMatch(/logged/i);
+    });
+  });
+
+  describe('toApiPayload defensive start_date handling', () => {
+    it('stringifies a non-Date start_date instead of crashing (defensive cast)', () => {
+      const habit = { ...makeHabit(), start_date: '2025-06-01' } as unknown as Habit;
+      useHabitStore.setState({ habits: [habit] });
+
+      habitManager.updateHabit(habit);
+
+      expect(habitsApi.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ start_date: '2025-06-01' }),
+      );
+    });
+  });
+
+  describe('replayPendingCheckIns with an explicit completed_on already queued', () => {
+    it('forwards the explicit completed_on instead of re-deriving it from the timestamp', async () => {
+      (loadHabits as jest.Mock).mockResolvedValueOnce([] as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
+      (loadPendingCheckIns as jest.Mock).mockResolvedValueOnce([
+        {
+          goal_id: 1,
+          did_complete: true,
+          timestamp: '2025-04-05T00:00:00Z',
+          completed_on: '2025-03-01',
+        },
+      ] as never);
+
+      await habitManager.loadHabits('UTC');
+
+      expect(goalCompletionsApi.create).toHaveBeenCalledWith({
+        goal_id: 1,
+        did_complete: true,
+        completed_on: '2025-03-01',
+      });
+    });
+  });
+
+  describe('syncProgramAnchorFromHabits idempotency', () => {
+    it('does not re-set the program anchor when it already matches the earliest habit start date', async () => {
+      const anchor = new Date('2026-01-01T00:00:00Z');
+      useProgramStore.getState().hydrateProgramStartDate(anchor);
+      const setStateSpy = jest.spyOn(useProgramStore, 'setState');
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([
+        {
+          id: 1,
+          name: 'Survive',
+          icon: '\u{1F9D8}',
+          start_date: '2026-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          goals: [],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      expect(setStateSpy).not.toHaveBeenCalled();
+      setStateSpy.mockRestore();
     });
   });
 });

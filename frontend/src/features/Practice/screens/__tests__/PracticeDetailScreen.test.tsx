@@ -330,10 +330,54 @@ describe('PracticeDetailScreen — config summary variants', () => {
     ],
     [{ mode: 'tarot', deck: 'major_arcana' } as const],
     [{ mode: 'card_meditation', deck_id: 'rws' } as const],
+    [
+      {
+        mode: 'mindful_anchor',
+        instruction: 'Step outside.',
+        min_duration_seconds: 60,
+        options: [],
+        require_option_choice: false,
+      } as const,
+    ],
+    [
+      {
+        mode: 'mindful_anchor',
+        instruction: 'Step outside.',
+        min_duration_seconds: 60,
+        options: [{ key: 'touch_grass', label: 'Touch grass' }],
+        require_option_choice: false,
+      } as const,
+    ],
   ])('summarises %p', async (config) => {
     mockPracticesGet.mockResolvedValueOnce({ ...samplePractice, mode_config: config });
     const { view } = renderScreen();
     await waitForLoad();
     expect(view.getByTestId('practice-detail-config-summary')).toBeTruthy();
+  });
+});
+
+describe('PracticeDetailScreen — badge + body fallbacks', () => {
+  beforeEach(() => {
+    mockPracticesGet.mockReset();
+    mockUserPracticesCreate.mockReset();
+  });
+
+  it('falls back to the meditation_timer badge label when mode is absent', async () => {
+    const noMode: PracticeItem = { ...samplePractice, mode: undefined };
+    mockPracticesGet.mockResolvedValueOnce(noMode);
+    const { view } = renderScreen();
+    await waitForLoad();
+    expect(view.getByTestId('practice-detail-mode-badge').props.children.props.children).toBe(
+      'meditation_timer',
+    );
+  });
+
+  it('omits the description and instructions sections when both are blank', async () => {
+    const blankBody: PracticeItem = { ...samplePractice, description: '', instructions: '' };
+    mockPracticesGet.mockResolvedValueOnce(blankBody);
+    const { view } = renderScreen();
+    await waitForLoad();
+    expect(view.queryByTestId('practice-detail-description')).toBeNull();
+    expect(view.queryByTestId('practice-detail-instructions')).toBeNull();
   });
 });

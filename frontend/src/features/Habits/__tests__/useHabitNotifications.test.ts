@@ -116,6 +116,99 @@ describe('registerForPushNotificationsAsync', () => {
   });
 });
 
+describe('registerForPushNotificationsAsync retry behavior', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('retries after a registration error and eventually succeeds', async () => {
+    jest.useFakeTimers();
+    mockStorage.loadPushToken.mockResolvedValue(null);
+    mockNotifications.getPermissionsAsync
+      .mockRejectedValueOnce(new Error('transient'))
+      .mockResolvedValueOnce({ status: 'granted' });
+    mockNotifications.getExpoPushTokenAsync.mockResolvedValue({
+      data: 'ExponentPushToken[retry]',
+    });
+
+    const promise = registerForPushNotificationsAsync();
+    await jest.runAllTimersAsync();
+    const token = await promise;
+
+    expect(token).toBe('ExponentPushToken[retry]');
+    expect(mockNotifications.getPermissionsAsync).toHaveBeenCalledTimes(2);
+    jest.useRealTimers();
+  });
+
+  it('gives up and returns undefined after exhausting all registration retries', async () => {
+    jest.useFakeTimers();
+    mockStorage.loadPushToken.mockResolvedValue(null);
+    mockNotifications.getPermissionsAsync.mockRejectedValue(new Error('always fails'));
+
+    const promise = registerForPushNotificationsAsync();
+    await jest.runAllTimersAsync();
+    const token = await promise;
+
+    expect(token).toBeUndefined();
+    expect(mockNotifications.getPermissionsAsync).toHaveBeenCalledTimes(3);
+    jest.useRealTimers();
+  });
+});
+
+describe('scheduleHabitNotification fallback default', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockNotifications.scheduleNotificationAsync.mockResolvedValue('fallback-notif');
+  });
+
+  it('defaults to a single daily trigger when frequency is custom with no selected days', async () => {
+    const habit: Habit = {
+      ...baseHabit,
+      notificationFrequency: 'custom',
+      notificationDays: [],
+    };
+    const ids = await scheduleHabitNotification(habit, '06:15');
+    expect(ids).toEqual(['fallback-notif']);
+    expect(mockNotifications.scheduleNotificationAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trigger: expect.objectContaining({ type: 'daily', hour: 6, minute: 15 }),
+      }),
+    );
+  });
+
+  it('defaults to a single daily trigger when notificationFrequency is unset', async () => {
+    const habit: Habit = { ...baseHabit };
+    const ids = await scheduleHabitNotification(habit, '06:15');
+    expect(ids).toEqual(['fallback-notif']);
+  });
+});
+
+describe('updateHabitNotifications retry-then-succeed scheduling', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockStorage.loadNotificationIds.mockResolvedValue([]);
+  });
+
+  it('recovers on the retry attempt after the first scheduling pass fails', async () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    mockNotifications.scheduleNotificationAsync
+      .mockRejectedValueOnce(new Error('flaky'))
+      .mockResolvedValueOnce('recovered-notif');
+
+    const habit: Habit = {
+      ...baseHabit,
+      notificationFrequency: 'daily',
+      notificationTimes: ['08:00'],
+    };
+
+    const ids = await updateHabitNotifications(habit);
+
+    expect(ids).toEqual(['recovered-notif']);
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+});
+
 describe('scheduleHabitNotification', () => {
   beforeEach(() => {
     jest.clearAllMocks();

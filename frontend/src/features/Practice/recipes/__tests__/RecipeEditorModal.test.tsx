@@ -160,4 +160,69 @@ describe('RecipeEditorModal', () => {
     });
     expect(utils.queryByTestId('recipe-editor-rounds-value')).toBeNull();
   });
+
+  it('clamps the rounds stepper between 1 and the max', async () => {
+    const utils = mountEditor();
+    await waitFor(() => expect(utils.getByTestId('recipe-editor-step-0')).toBeTruthy());
+    expect(utils.getByTestId('recipe-editor-rounds-value').props.children).toBe(1);
+    fireEvent.press(utils.getByTestId('recipe-editor-rounds-minus'));
+    expect(utils.getByTestId('recipe-editor-rounds-value').props.children).toBe(1);
+    fireEvent.press(utils.getByTestId('recipe-editor-rounds-plus'));
+    expect(utils.getByTestId('recipe-editor-rounds-value').props.children).toBe(2);
+  });
+
+  it('clamps the per-step count stepper between 1 and the max', async () => {
+    const utils = mountEditor();
+    await waitFor(() => expect(utils.getByTestId('recipe-editor-step-0')).toBeTruthy());
+    const valueId = 'recipe-editor-step-0-count-value';
+    expect(utils.getByTestId(valueId).props.children).toBe(1);
+    fireEvent.press(utils.getByTestId('recipe-editor-step-0-count-minus'));
+    expect(utils.getByTestId(valueId).props.children).toBe(1);
+    fireEvent.press(utils.getByTestId('recipe-editor-step-0-count-plus'));
+    expect(utils.getByTestId(valueId).props.children).toBe(2);
+  });
+
+  it('moves a step down and disables the boundary move buttons', async () => {
+    const utils = mountEditor();
+    await waitFor(() => expect(utils.getByTestId('recipe-editor-step-0')).toBeTruthy());
+    fireEvent.press(utils.getByTestId('recipe-editor-add-step'));
+    expect(utils.getByTestId('recipe-editor-step-0-up').props.accessibilityState.disabled).toBe(
+      true,
+    );
+    expect(utils.getByTestId('recipe-editor-step-1-down').props.accessibilityState.disabled).toBe(
+      true,
+    );
+    fireEvent.changeText(utils.getByTestId('recipe-editor-step-0-prompt'), 'moved');
+    fireEvent.press(utils.getByTestId('recipe-editor-step-0-down'));
+    expect(utils.getByTestId('recipe-editor-step-1-prompt').props.value).toBe('moved');
+  });
+
+  it('pressing a disabled move button is a no-op', async () => {
+    const utils = mountEditor();
+    await waitFor(() => expect(utils.getByTestId('recipe-editor-step-0')).toBeTruthy());
+    fireEvent.press(utils.getByTestId('recipe-editor-step-0-up'));
+    expect(utils.getByTestId('recipe-editor-step-0-prompt').props.value).toBe('Find red');
+  });
+
+  it('renders an inline API error banner when save fails', async () => {
+    const create = jest.fn(async (_payload: unknown) => {
+      throw new Error('server exploded');
+    });
+    const utils = mountEditor({ create: create as never });
+    await waitFor(() => expect(utils.listTags).toHaveBeenCalled());
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('recipe-editor-save'));
+    });
+    await waitFor(() => expect(utils.getByTestId('recipe-editor-api-error')).toBeTruthy());
+    expect(utils.onSaved).not.toHaveBeenCalled();
+  });
+
+  it('leaves the tag library empty when listTags rejects', async () => {
+    const listTags = jest.fn(async (): Promise<PracticeTag[]> => {
+      throw new Error('tags down');
+    });
+    const utils = mountEditor({ listTags: listTags as never });
+    await waitFor(() => expect(listTags).toHaveBeenCalled());
+    expect(utils.getByTestId('recipe-editor-step-0')).toBeTruthy();
+  });
 });

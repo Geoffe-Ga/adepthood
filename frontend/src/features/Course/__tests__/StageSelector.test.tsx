@@ -1,10 +1,18 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { render, fireEvent } from '@testing-library/react-native';
+import { render, fireEvent, within } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 
 import type { Stage } from '../../../api';
+import { colors, STAGE_COLORS, STAGE_ORDER } from '../../../design/tokens';
 import StageSelector from '../StageSelector';
+
+function backgroundColorOf(style: StyleProp<ViewStyle>): string {
+  const flat = StyleSheet.flatten(style) ?? {};
+  return (flat.backgroundColor as string | undefined) ?? '';
+}
 
 const makeStage = (overrides: Partial<Stage> = {}): Stage => ({
   id: 1,
@@ -132,5 +140,87 @@ describe('StageSelector', () => {
       selected: false,
       disabled: true,
     });
+  });
+
+  it('renders no pills when the stages list is empty', () => {
+    const { queryByTestId } = render(
+      <StageSelector stages={[]} selectedStage={1} onSelectStage={onSelectStage} />,
+    );
+
+    expect(queryByTestId('stage-pill-1')).toBeNull();
+  });
+
+  it('falls back to the neutral color for an unrecognized spiral_dynamics_color', () => {
+    const stages = [makeStage({ stage_number: 1, spiral_dynamics_color: 'Mauve' })];
+    const { getByTestId } = render(
+      <StageSelector stages={stages} selectedStage={1} onSelectStage={onSelectStage} />,
+    );
+
+    const style = getByTestId('stage-pill-1').props.style as StyleProp<ViewStyle>;
+    expect(backgroundColorOf(style)).toBe(colors.neutral);
+  });
+
+  it('falls back to the STAGE_ORDER position color when the API omits a stage number', () => {
+    // Only stage 2 comes back from the API; pill 1 still renders and is
+    // colored by its STAGE_ORDER position (Beige) since it has no matching
+    // API record to read spiral_dynamics_color from.
+    const stages = [makeStage({ stage_number: 2, spiral_dynamics_color: 'Purple' })];
+    const { getByTestId } = render(
+      <StageSelector stages={stages} selectedStage={1} onSelectStage={onSelectStage} />,
+    );
+
+    const pill1 = getByTestId('stage-pill-1');
+    const style = pill1.props.style as StyleProp<ViewStyle>;
+    expect(backgroundColorOf(style)).toBe(STAGE_COLORS[STAGE_ORDER[0]!]);
+    expect(pill1.props.accessibilityState).toMatchObject({ selected: true, disabled: true });
+  });
+
+  it('falls back to neutral when a missing stage number also exceeds STAGE_ORDER', () => {
+    // stage_number 12 forces pills 1..12; pill 11 has neither an API record
+    // nor a STAGE_ORDER entry (only 10 named stages), so it resolves neutral.
+    const stages = [makeStage({ stage_number: 12 })];
+    const { getByTestId } = render(
+      <StageSelector stages={stages} selectedStage={1} onSelectStage={onSelectStage} />,
+    );
+
+    const pill11 = getByTestId('stage-pill-11');
+    const style = pill11.props.style as StyleProp<ViewStyle>;
+    expect(backgroundColorOf(style)).toBe(colors.neutral);
+  });
+
+  it('renders the checkmark glyph for a completed stage and the number for an active one', () => {
+    const stages = [
+      makeStage({ stage_number: 1, is_unlocked: true, progress: 1.0 }),
+      makeStage({ stage_number: 2, is_unlocked: true, progress: 0.2 }),
+    ];
+    const { getByTestId } = render(
+      <StageSelector stages={stages} selectedStage={2} onSelectStage={onSelectStage} />,
+    );
+
+    expect(within(getByTestId('stage-pill-1')).getByText('✓')).toBeTruthy();
+    expect(within(getByTestId('stage-pill-2')).getByText('2')).toBeTruthy();
+  });
+
+  it('renders the lock glyph for a locked, non-completed stage', () => {
+    const stages = [makeStage({ stage_number: 1, is_unlocked: false, progress: 0 })];
+    const { getByTestId } = render(
+      <StageSelector stages={stages} selectedStage={1} onSelectStage={onSelectStage} />,
+    );
+
+    expect(within(getByTestId('stage-pill-1')).getByText('🔒')).toBeTruthy();
+  });
+
+  it('prioritizes the completed checkmark over the lock glyph when a stage is both', () => {
+    // Unusual API data (progress complete but is_unlocked false) pins the
+    // ternary order: completed wins the glyph even though the pill is locked.
+    const stages = [makeStage({ stage_number: 1, is_unlocked: false, progress: 1.0 })];
+    const { getByTestId } = render(
+      <StageSelector stages={stages} selectedStage={1} onSelectStage={onSelectStage} />,
+    );
+
+    const pill1 = getByTestId('stage-pill-1');
+    expect(within(pill1).getByText('✓')).toBeTruthy();
+    expect(within(pill1).queryByText('🔒')).toBeNull();
+    expect(pill1.props.accessibilityLabel).toBe('Stage 1, locked, completed');
   });
 });

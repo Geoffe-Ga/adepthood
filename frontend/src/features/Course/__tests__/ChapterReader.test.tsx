@@ -262,6 +262,20 @@ describe('ChapterReader', () => {
     expect(queryByText(/title:/)).toBeNull();
   });
 
+  it('renders images from absolute URLs and drops repo-relative image references', async () => {
+    mockContentBody.mockResolvedValueOnce({
+      title: 'Image Test',
+      content_type: 'chapter',
+      body_markdown:
+        '# Image Test\n\n![Good Image](https://example.com/pic.png)\n\n![Bad Image](assets/relative.png)\n',
+    });
+    const { findByLabelText, queryByLabelText } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    await findByLabelText('Good Image');
+    expect(queryByLabelText('Bad Image')).toBeNull();
+  });
+
   it('renders the manifest title in the reader sheet header', async () => {
     const { findByTestId } = render(
       <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,

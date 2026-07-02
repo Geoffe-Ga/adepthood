@@ -84,20 +84,22 @@ async def _fetch_day_totals(
 
 
 def _additive_streak_from_day_totals(day_totals: dict[date, float], user_timezone: str) -> int:
-    """Additive consecutive-day streak from bucketed totals (incl. zero days).
+    """Additive consecutive-day streak from bucketed per-day totals.
 
-    A most-recent *logged* day that wasn't a completion (a persisted
-    ``completed_units == 0`` "did not complete" row) breaks the chain
-    immediately, so the streak is 0 even though earlier days completed.  The
-    leading completed days then go to the shared
-    :func:`domain.streaks.current_consecutive_streak`, which owns the recency
-    grace gate + backward walk that the frontend ``streakFromCompletions``
-    mirrors — keeping GET /habits and GET /habits/{id}/stats in lockstep.
+    Backs :func:`compute_consecutive_streak` and
+    :func:`compute_streak_before_and_after` — the per-goal DB / check-in +
+    milestone path.  It filters ``day_totals`` to the user-local days that were
+    actually completed (total > 0) and delegates the ordering-sensitive work to
+    the shared :func:`domain.streaks.current_consecutive_streak`, which owns the
+    recency grace gate + backward walk (and returns 0 for an empty sequence).
+
+    Because only completed days are passed on, a most-recent
+    ``completed_units == 0`` "did not complete" row is ignored like an absent
+    day.  That keeps this DB path in lockstep with the in-memory
+    :func:`domain.habit_stats.compute_habit_streak` path, which applies the same
+    completed-days filter + grace gate.
     """
-    sorted_days = sorted(day_totals, reverse=True)
-    completed_days = [d for d in sorted_days if day_totals[d] > 0]
-    if not completed_days or completed_days[0] != sorted_days[0]:
-        return 0
+    completed_days = sorted((d for d in day_totals if day_totals[d] > 0), reverse=True)
     return current_consecutive_streak(completed_days, today_in_tz(user_timezone))
 
 

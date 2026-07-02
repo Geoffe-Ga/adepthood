@@ -30,7 +30,7 @@ describe('usePagination', () => {
     expect(result.current.page).toBe(2);
   });
 
-  it('goLast jumps to the last page (clamped via internal state)', () => {
+  it('goLast jumps to the last page', () => {
     const { result } = renderHook(() => usePagination(35, PAGE_SIZE));
     act(() => result.current.goLast());
     expect(result.current.page).toBe(3);
@@ -59,5 +59,22 @@ describe('usePagination', () => {
     rerender({ count: 25 });
     act(() => result.current.goLast());
     expect(result.current.page).toBe(2);
+  });
+
+  it('goPrev after goLast steps back to the immediately-previous page', () => {
+    const { result } = renderHook(() => usePagination(12, PAGE_SIZE));
+    expect(result.current.pageCount).toBe(2);
+    act(() => result.current.goLast());
+    expect(result.current.page).toBe(1);
+    act(() => result.current.goPrev());
+    expect(result.current.page).toBe(0);
+  });
+
+  it('goNext after goLast stays on the last page', () => {
+    const { result } = renderHook(() => usePagination(12, PAGE_SIZE));
+    act(() => result.current.goLast());
+    expect(result.current.page).toBe(1);
+    act(() => result.current.goNext());
+    expect(result.current.page).toBe(1);
   });
 });

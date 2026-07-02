@@ -246,6 +246,42 @@ describe('AuthContext', () => {
       expect(mockClearToken).toHaveBeenCalled();
       expect(result.current.token).toBeNull();
     });
+
+    // BUG-API-018: an anonymous request that hits a protected endpoint never
+    // had a session, so the navigator should collapse straight to 'anonymous'
+    // rather than showing the "session expired" re-auth sheet.
+    it("collapses to 'anonymous' (not 'reauth-required') when reason is not_authenticated", async () => {
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+
+      const unauthorized = mockSetOnUnauthorized.mock.calls.at(-1)?.[0];
+      expect(typeof unauthorized).toBe('function');
+
+      await act(async () => {
+        unauthorized?.('not_authenticated');
+      });
+
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+      expect(result.current.token).toBeNull();
+    });
+
+    it('still transitions to reauth-required when clearToken rejects', async () => {
+      mockLoadToken.mockResolvedValue('existing-jwt');
+      mockClearToken.mockRejectedValueOnce(new Error('SecureStore unavailable'));
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.token).toBe('existing-jwt'));
+
+      await act(async () => {
+        result.current.onUnauthorized();
+      });
+
+      await waitFor(() => expect(result.current.authStatus).toBe('reauth-required'));
+      expect(result.current.token).toBeNull();
+      warnSpy.mockRestore();
+    });
   });
 
   // BUG-NAV-001 / BUG-NAV-002: the navigator must discriminate between
@@ -381,6 +417,30 @@ describe('AuthContext', () => {
       expect(result.current.token).toBe('valid-jwt');
       expect(mockClearToken).not.toHaveBeenCalled();
     });
+
+    it('resolves to anonymous when loadToken itself rejects on bootstrap', async () => {
+      mockLoadToken.mockRejectedValueOnce(new Error('storage unavailable'));
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+      expect(result.current.token).toBeNull();
+      warnSpy.mockRestore();
+    });
+
+    it('still resolves to anonymous when discarding an expired token fails to clear', async () => {
+      mockLoadToken.mockResolvedValue('expired-jwt');
+      mockIsTokenExpired.mockReturnValue(true);
+      mockClearToken.mockRejectedValueOnce(new Error('locked'));
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+      expect(result.current.token).toBeNull();
+      warnSpy.mockRestore();
+    });
   });
 
   describe('api-layer token callbacks (BUG-AUTH-001 / BUG-AUTH-005)', () => {
@@ -456,6 +516,26 @@ describe('AuthContext', () => {
 
       await waitFor(() => expect(result.current.token).toBe('fresh-jwt'));
       expect(result.current.userTimezone).toBe('UTC');
+    });
+
+    it('leaves the token untouched when saveToken fails during onTokenRefreshed', async () => {
+      mockLoadToken.mockResolvedValue('old-jwt');
+      mockSaveToken.mockRejectedValueOnce(new Error('disk full'));
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('old-jwt'));
+
+      const refreshed = mockSetOnTokenRefreshed.mock.calls.at(-1)?.[0];
+      expect(typeof refreshed).toBe('function');
+
+      await act(async () => {
+        refreshed?.('fresh-jwt', undefined);
+      });
+
+      expect(mockSaveToken).toHaveBeenCalledWith('fresh-jwt');
+      expect(result.current.token).toBe('old-jwt');
+      warnSpy.mockRestore();
     });
 
     it('awaits clearToken before nulling state when API reports 401', async () => {

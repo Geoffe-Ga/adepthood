@@ -144,7 +144,15 @@ Then act on `$STATUS`:
   Gate 1 (worker resolves the conflict as a root-cause change, re-greens, pushes).
 - **`pending`** / **`awaiting-review`** — CI is still running or no fresh LGTM
   verdict exists yet. Leave the lane; its Step 5 subscription wakes you when CI
-  or the verdict changes.
+  or the verdict changes. **Exception — missing review usually means a merge
+  conflict:** if the verdict never arrives and the `claude-review` check is
+  absent from the rollup entirely, check
+  `gh pr view N --json mergeable,mergeStateStatus` FIRST. A `CONFLICTING`/`DIRTY`
+  PR has no merge ref, so GitHub creates **no `pull_request`-event runs at all**
+  (any green checks are `push`-event runs on the branch) — no amount of
+  re-kicking (`gh run rerun`, empty commits) will produce a review. Resolve the
+  conflict (`fleet.sh sync` → conflict-fix worker → push); the post-resolution
+  push triggers the PR's real CI + review.
 - **`ci-failed`** — a check failed. Advance it via Step 2 (`ci-debugging`).
 
 You may merge more than one lane in a wake, but **re-check `mergeStateStatus`

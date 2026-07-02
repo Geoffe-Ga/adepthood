@@ -113,6 +113,10 @@ describe('addDaysInTZ', () => {
     expect(addDaysInTZ('2026-01-01', -1, 'UTC')).toBe('2025-12-31');
   });
 
+  it('returns the input unchanged when the day key has too few parts', () => {
+    expect(addDaysInTZ('baddate', 1, 'UTC')).toBe('baddate');
+  });
+
   it('does not skip leap day in 2024', () => {
     expect(addDaysInTZ('2024-02-28', 1, 'UTC')).toBe('2024-02-29');
     expect(addDaysInTZ('2024-02-29', 1, 'UTC')).toBe('2024-03-01');

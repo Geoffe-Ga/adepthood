@@ -131,6 +131,10 @@ repos:
         pass_filenames: false
         files: ^frontend/
         exclude: ^frontend/(?:node_modules|dist|build|coverage)/
+        # Fast (no-coverage) run for pre-commit only; pre-push runs the
+        # coverage-enforcing `frontend-tests-coverage` hook instead, so Jest
+        # is not executed twice on push.
+        stages: [pre-commit]
 
       # Expensive hooks run on pre-push only. This keeps `git commit` under
       # ~10s while still gating pushes on the full quality suite.
@@ -156,6 +160,15 @@ repos:
         entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; cd backend && pytest --cov=. --cov-report=term-missing --cov-fail-under=90'
         pass_filenames: false
         files: ^backend/
+        stages: [pre-push]
+
+      - id: frontend-tests-coverage
+        name: frontend tests (coverage required)
+        language: system
+        entry: bash -c 'cd frontend && npx jest --coverage --passWithNoTests'
+        pass_filenames: false
+        files: ^frontend/
+        exclude: ^frontend/(?:node_modules|dist|build|coverage)/
         stages: [pre-push]
 
       - id: commitlint
