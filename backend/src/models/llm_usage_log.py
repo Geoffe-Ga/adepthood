@@ -47,8 +47,10 @@ class LLMUsageLog(SQLModel, table=True):
     it" and is logged as a warning so ops can fill in the rate, not
     silently averaged in as ``$0`` (which the previous float default did).
 
-    ``journal_entry_id`` points at the bot's reply (``sender='bot'``) so a
-    single JOIN reconstructs the conversational context of any logged call.
+    ``journal_entry_id`` points at the journal entry the call was about — the
+    user's source entry on the resonance path, the annotated entry on the essay
+    path — so a single JOIN reconstructs the call's context and the soft-delete
+    audit trail stays intact.
     """
 
     id: int | None = Field(default=None, primary_key=True)

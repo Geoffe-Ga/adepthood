@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from http import HTTPStatus
-from types import SimpleNamespace
 
 import pytest
 from httpx import AsyncClient
@@ -13,6 +12,7 @@ from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
 from routers import journal as journal_router
 from services import marginalia as marginalia_service
+from services.botmason import STUB_MODEL_NAME, LLMResponse
 
 _BODY = "I walked by the river and the willow bent without breaking."
 
@@ -59,10 +59,16 @@ class _CountingLLM:
 
     async def __call__(
         self, prompt: str, history: object, *, system_prompt: object, api_key: object
-    ) -> SimpleNamespace:
+    ) -> LLMResponse:
         del prompt, history, system_prompt, api_key
         self.calls += 1
-        return SimpleNamespace(text=self.text)
+        return LLMResponse(
+            text=self.text,
+            provider="stub",
+            model=STUB_MODEL_NAME,
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
 
 
 @pytest.mark.asyncio
