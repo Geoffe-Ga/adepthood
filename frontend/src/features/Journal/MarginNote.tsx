@@ -1,8 +1,8 @@
 /**
  * ``MarginNote`` — one of the AI's margin notes, pinned beside the passage it
  * refers to. Presentational: a serif card with a kind pin (in the kind accent),
- * the note text, and a subtle open affordance. Stale notes render dimmed (full
- * staleness styling lands in a later issue). Tapping signals ``onOpen``.
+ * the note text, and a subtle open affordance. Stale notes render dimmed;
+ * staleness is not otherwise styled. Tapping signals ``onOpen``.
  */
 import React from 'react';
 import { Animated, StyleSheet, Text, TouchableOpacity } from 'react-native';

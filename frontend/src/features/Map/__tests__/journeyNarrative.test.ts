@@ -1,6 +1,12 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-import { journeyRead, progressionSentence, rankedStats, unlockTimeline } from '../journeyNarrative';
+import {
+  formatMinutes,
+  journeyRead,
+  progressionSentence,
+  rankedStats,
+  unlockTimeline,
+} from '../journeyNarrative';
 
 import type { StageHistoryResponse } from '@/api';
 
@@ -66,5 +72,30 @@ describe('rankedStats', () => {
 
   it('returns nothing for an empty history', () => {
     expect(rankedStats(EMPTY)).toEqual([]);
+  });
+});
+
+describe('formatMinutes', () => {
+  it('renders whole minutes with the "min" unit under an hour', () => {
+    expect(formatMinutes(0)).toBe('0 min');
+    expect(formatMinutes(59)).toBe('59 min');
+    expect(formatMinutes(45)).toBe('45 min');
+  });
+
+  it('rounds fractional minutes under an hour to the nearest whole minute', () => {
+    expect(formatMinutes(59.4)).toBe('59 min');
+  });
+
+  it('switches to hours at the 60-minute boundary, singular at exactly 1 hour', () => {
+    expect(formatMinutes(60)).toBe('1 hr');
+  });
+
+  it('rounds minutes-to-hours and pluralises once the rounded value is not 1', () => {
+    expect(formatMinutes(90)).toBe('2 hrs'); // 1.5 rounds up to 2
+    expect(formatMinutes(120)).toBe('2 hrs');
+  });
+
+  it('stays singular when the rounded hour count is still 1', () => {
+    expect(formatMinutes(89)).toBe('1 hr'); // 1.4833... rounds down to 1
   });
 });

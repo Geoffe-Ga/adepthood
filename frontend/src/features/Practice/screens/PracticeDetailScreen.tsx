@@ -28,7 +28,7 @@ import {
   surfaceShadow,
 } from '@/design/tokens';
 import ShareSheet from '@/features/Practice/components/ShareSheet';
-import { MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
+import { stageRange } from '@/features/Practice/constants';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
@@ -447,7 +447,7 @@ interface StagePickerProps {
 }
 
 const StagePicker = ({ assigning, onPick, onClose }: StagePickerProps): React.JSX.Element => {
-  const stages = Array.from({ length: MAX_STAGE - MIN_STAGE + 1 }, (_, i) => MIN_STAGE + i);
+  const stages = stageRange();
   return (
     <View style={styles.pickerCard} testID="practice-detail-stage-picker">
       <Text style={styles.pickerHeading}>Pick a stage</Text>
