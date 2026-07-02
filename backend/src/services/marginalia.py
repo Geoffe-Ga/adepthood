@@ -17,7 +17,7 @@ from domain.marginalia_anchoring import reanchor_one
 from models.completion_suggestion import CompletionSuggestion, SuggestionStatus
 from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia, MarginaliaStatus
-from services.botmason import generate_response
+from services.botmason import LLMResponse, generate_response
 
 
 class BotmasonResonanceLLM:
@@ -25,15 +25,19 @@ class BotmasonResonanceLLM:
 
     The domain only needs ``complete(prompt) -> text``; this maps that onto
     ``generate_response`` (no conversation history, no system prompt) so the
-    resonance feature reuses the single LLM integration / BYOK seam.
+    resonance feature reuses the single LLM integration / BYOK seam.  The
+    adapter also accumulates each call's full ``LLMResponse`` in ``self.usage``
+    (one entry per successful provider call) so the caller can meter cost.
     """
 
     def __init__(self, api_key: str | None) -> None:
-        """Store the optional BYOK key used for each completion."""
+        """Store the optional BYOK key and the per-instance usage accumulator."""
         self._api_key = api_key
+        self.usage: list[LLMResponse] = []
 
     async def complete(self, prompt: str) -> str:
         response = await generate_response(prompt, [], system_prompt=None, api_key=self._api_key)
+        self.usage.append(response)
         return response.text
 
 
