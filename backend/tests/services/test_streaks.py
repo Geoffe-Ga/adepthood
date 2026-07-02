@@ -178,10 +178,10 @@ async def test_compute_consecutive_streak_collapses_same_day_rows(
 
 
 @pytest.mark.asyncio
-async def test_compute_consecutive_streak_resets_on_most_recent_miss(
+async def test_compute_consecutive_streak_ignores_most_recent_zero_unit_row(
     db_session: AsyncSession,
 ) -> None:
-    """A miss day after completions zeros the reported streak."""
+    """A most-recent did-not-complete row is ignored, like an absent day."""
     user = await _make_user(db_session)
     assert user.id is not None
     goal = await _make_goal(db_session, user.id)
@@ -202,7 +202,71 @@ async def test_compute_consecutive_streak_resets_on_most_recent_miss(
     )
     await db_session.commit()
 
-    assert await compute_consecutive_streak(db_session, goal.id, user.id) == 0
+    assert await compute_consecutive_streak(db_session, goal.id, user.id) == 1
+
+
+@pytest.mark.asyncio
+async def test_compute_consecutive_streak_matches_compute_habit_streak_on_zero_unit_row(
+    db_session: AsyncSession,
+) -> None:
+    """The DB path and the in-memory path agree on a trailing zero-unit row."""
+    user = await _make_user(db_session)
+    assert user.id is not None
+    goal = await _make_goal(db_session, user.id)
+    assert goal.id is not None
+
+    now = datetime.now(UTC)
+    yesterday_completion = GoalCompletion(
+        goal_id=goal.id,
+        user_id=user.id,
+        completed_units=goal.target,
+        timestamp=now - timedelta(days=1),
+    )
+    today_zero_row = GoalCompletion(
+        goal_id=goal.id, user_id=user.id, completed_units=0, timestamp=now
+    )
+    db_session.add(yesterday_completion)
+    await db_session.commit()
+    db_session.add(today_zero_row)
+    await db_session.commit()
+
+    db_streak = await compute_consecutive_streak(db_session, goal.id, user.id, "UTC")
+    memory_streak = compute_habit_streak([yesterday_completion, today_zero_row], "UTC")
+
+    assert db_streak == memory_streak
+    assert db_streak == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("frozen_clock")
+async def test_compute_consecutive_streak_zero_unit_row_does_not_extend_grace(
+    db_session: AsyncSession,
+) -> None:
+    """A trailing zero-unit row cannot rescue a chain that is already stale."""
+    user = await _make_user(db_session)
+    assert user.id is not None
+    goal = await _make_goal(db_session, user.id)
+    assert goal.id is not None
+
+    stale_completion = datetime(2026, 6, 12, 12, 0, tzinfo=UTC)
+    today_zero_row = datetime(2026, 6, 15, 18, 0, tzinfo=UTC)
+    db_session.add(
+        GoalCompletion(
+            goal_id=goal.id,
+            user_id=user.id,
+            completed_units=goal.target,
+            timestamp=stale_completion,
+        )
+    )
+    await db_session.commit()
+    db_session.add(
+        GoalCompletion(
+            goal_id=goal.id, user_id=user.id, completed_units=0, timestamp=today_zero_row
+        )
+    )
+    await db_session.commit()
+
+    assert await compute_consecutive_streak(db_session, goal.id, user.id, "UTC") == 0
 
 
 @pytest.mark.asyncio

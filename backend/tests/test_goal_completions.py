@@ -210,7 +210,7 @@ async def test_consecutive_day_completions_build_streak(
     assert data["streak"] == expected_streak
 
 
-# ── Miss resets streak ───────────────────────────────────────────────────
+# ── Miss holds streak (recency grace) ─────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -278,7 +278,10 @@ async def test_miss_on_unscheduled_day_holds_streak(
 
 
 @pytest.mark.asyncio
-async def test_miss_resets_streak(async_client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_miss_within_grace_holds_streak(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A miss logged today does not zero a chain that is still within grace."""
     headers, user_id = await _signup(async_client)
     goal = await _seed_goal(db_session, user_id)
 
@@ -301,8 +304,8 @@ async def test_miss_resets_streak(async_client: AsyncClient, db_session: AsyncSe
     )
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
-    assert data["streak"] == 0
-    assert data["reason_code"] == "streak_reset"
+    assert data["streak"] == 1
+    assert data["reason_code"] == "streak_held"
     assert data["milestones"] == []
 
 
