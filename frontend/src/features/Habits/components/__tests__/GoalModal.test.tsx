@@ -1,6 +1,7 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 import type { DimensionValue } from 'react-native';
 
 // EmojiSelector pulls in native bindings; render a stub.
@@ -20,6 +21,7 @@ jest.mock('../../../../context/AuthContext', () => ({
 // Use real RN primitives — no global ``react-native`` mock — so
 // fireEvent.changeText / press behave as on a real device.
 
+import { SPACING } from '../../../../design/tokens';
 import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import type { Goal, Habit } from '../../Habits.types';
 import { GoalModal } from '../GoalModal';
@@ -490,5 +492,44 @@ describe('GoalModal progress-bar zero/equal-target guards', () => {
     const width = fillWidth(habit);
     expect(width).toBe('0%');
     expect(String(width)).not.toContain('NaN');
+  });
+});
+
+describe('GoalModal log-unit footer overflow guard (#1165)', () => {
+  // The footer's children carry fixed minimum widths that cannot shrink
+  // (Views default to flexShrink: 0): 44pt stepper arrows x2 + 116pt date
+  // label + 60pt input + the padded Log Units button sum to ~395pt+, but the
+  // modal content box is only ~305pt on a 375pt phone. RN never clips
+  // overflow, so unless the row may wrap, the Log Units button paints past
+  // the modal's right edge onto the overlay on every phone width.
+  it('lets the footer wrap so its fixed-width children never paint past the modal edge', () => {
+    const { getByTestId } = renderModal();
+    const style = StyleSheet.flatten(getByTestId('goal-modal-log-unit-section').props.style);
+    expect(style.flexWrap).toBe('wrap');
+  });
+
+  it('keeps breathing room between wrapped footer lines', () => {
+    const { getByTestId } = renderModal();
+    const style = StyleSheet.flatten(getByTestId('goal-modal-log-unit-section').props.style);
+    expect(style.rowGap).toBeGreaterThanOrEqual(SPACING.sm);
+  });
+
+  // Vertical counterpart of the same escape: modalContent caps at 80% screen
+  // height, but nothing inside scrolled, so on short screens (e.g. 375x667
+  // with the goal editor expanded) the footer rendered below the modal's
+  // bottom edge. The scrollable middle region absorbs the excess height while
+  // the footer stays pinned — and visible — inside the modal.
+  it('scrolls the modal body so the expanded editor cannot push the footer out the bottom', () => {
+    const { getByTestId } = renderModal();
+    expect(getByTestId('goal-modal-scroll')).toBeTruthy();
+    expect(within(getByTestId('goal-modal-scroll')).getByTestId('goal-target-editor')).toBeTruthy();
+  });
+
+  it('pins the log footer outside the scroll region so it is always reachable', () => {
+    const { getByTestId } = renderModal();
+    expect(
+      within(getByTestId('goal-modal-scroll')).queryByTestId('goal-modal-log-unit-section'),
+    ).toBeNull();
+    expect(getByTestId('goal-modal-log-unit-section')).toBeTruthy();
   });
 });

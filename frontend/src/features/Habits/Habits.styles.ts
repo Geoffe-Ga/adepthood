@@ -140,6 +140,13 @@ export const styles = StyleSheet.create({
   // ===== Action Buttons =====
   actionButtons: {
     flexDirection: 'row',
+    // The date stepper (two 44pt arrows + 116pt label) and the log group
+    // (60pt input + padded button) can't shrink and together outgrow the
+    // modal content box on phones — wrapping is what keeps the Log Units
+    // button inside the modal instead of painting over its right edge.
+    flexWrap: 'wrap',
+    rowGap: SPACING.sm,
+    alignItems: 'center',
     justifyContent: JUSTIFY_SPACE_BETWEEN,
     marginTop: SPACING.lg,
     paddingTop: SPACING.md,
@@ -149,6 +156,9 @@ export const styles = StyleSheet.create({
   logUnitContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    // When the row wraps, right-align the log group under the stepper so it
+    // stays anchored to the same edge as its single-line position.
+    marginLeft: 'auto',
   },
 
   // Improved input field

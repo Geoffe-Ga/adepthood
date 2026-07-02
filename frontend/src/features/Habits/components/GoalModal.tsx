@@ -1124,6 +1124,48 @@ const GoalEditConfirmDialog = ({
   />
 );
 
+interface GoalModalScrollRegionProps {
+  habit: NonNullable<GoalModalProps['habit']>;
+  isEditing: boolean;
+  m: ReturnType<typeof useGoalMarkers>;
+  tz: string;
+  onUpdateGoal: GoalModalProps['onUpdateGoal'];
+  onUpdateGoalUnits: GoalModalProps['onUpdateGoalUnits'];
+}
+
+/**
+ * The scrollable middle of the modal (progress bar + optional goal editor).
+ * It scrolls so the expanded editor can never push the log footer past the
+ * modal's 80% max height on short screens; header and footer stay pinned
+ * inside the modal.
+ */
+const GoalModalScrollRegion = ({
+  habit,
+  isEditing,
+  m,
+  tz,
+  onUpdateGoal,
+  onUpdateGoalUnits,
+}: GoalModalScrollRegionProps) => (
+  <ScrollView
+    testID="goal-modal-scroll"
+    style={modalScrollStyles.body}
+    showsVerticalScrollIndicator={false}
+  >
+    {/* Progress bar stays visible; the pencil only collapses the editor. */}
+    <GoalProgressBar {...buildProgressBarProps(habit, m, tz)} />
+    {isEditing && (
+      <View testID="goal-modal-edit-region">
+        <GoalTargetEditor
+          habit={habit}
+          onUpdateGoal={onUpdateGoal}
+          onUpdateGoalUnits={onUpdateGoalUnits}
+        />
+      </View>
+    )}
+  </ScrollView>
+);
+
 const GoalModalBody = ({
   habit,
   onClose,
@@ -1151,17 +1193,14 @@ const GoalModalBody = ({
         isEditing={isEditing}
         onToggleEdit={() => setIsEditing((prev) => !prev)}
       />
-      {/* Progress bar stays visible; the pencil only collapses the editor. */}
-      <GoalProgressBar {...buildProgressBarProps(habit, m, userTimezone)} />
-      {isEditing && (
-        <View testID="goal-modal-edit-region">
-          <GoalTargetEditor
-            habit={habit}
-            onUpdateGoal={onUpdateGoal}
-            onUpdateGoalUnits={onUpdateGoalUnits}
-          />
-        </View>
-      )}
+      <GoalModalScrollRegion
+        habit={habit}
+        isEditing={isEditing}
+        m={m}
+        tz={userTimezone}
+        onUpdateGoal={onUpdateGoal}
+        onUpdateGoalUnits={onUpdateGoalUnits}
+      />
       <LogUnitSection
         logAmount={log.logAmount}
         setLogAmount={log.setLogAmount}
@@ -1223,6 +1262,18 @@ const goalGroupBadgeStyles = StyleSheet.create({
     fontSize: 12,
     color: '#555',
     fontStyle: 'italic',
+  },
+});
+
+const modalScrollStyles = StyleSheet.create({
+  /**
+   * flexGrow 0 so a compact modal hugs its content instead of stretching to
+   * the 80% max height; flexShrink 1 so this region — not the pinned footer —
+   * gives up height and scrolls when the expanded editor outgrows the modal.
+   */
+  body: {
+    flexGrow: 0,
+    flexShrink: 1,
   },
 });
 
