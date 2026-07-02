@@ -5,10 +5,9 @@
  * in the modal's React Native + reanimated + gesture-handler tree.  The
  * modal re-exports the same names for its own use.
  */
-import { DEFAULT_ICONS, MAX_HABITS } from '../constants';
+import { MAX_HABITS } from '../constants';
+import { DEFAULT_ENERGY, randomDefaultIcon } from '../HabitDefaults';
 import type { OnboardingHabit } from '../Habits.types';
-
-const DEFAULT_ENERGY = 5;
 
 // BUG-FE-HABIT-105: maximum length for an onboarding habit name.  TextInput
 // also enforces the cap; the parse-time guard is defence in depth so a
@@ -42,7 +41,7 @@ export const sanitizeHabitName = (raw: string): string => {
 export const createNewHabit = (name: string): OnboardingHabit => ({
   id: generateHabitId(),
   name: sanitizeHabitName(name),
-  icon: DEFAULT_ICONS[Math.floor(Math.random() * DEFAULT_ICONS.length)] ?? '⭐',
+  icon: randomDefaultIcon(),
   energy_cost: DEFAULT_ENERGY,
   energy_return: DEFAULT_ENERGY,
   stage: 'Beige',

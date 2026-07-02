@@ -1099,7 +1099,8 @@ const useLogState = (
 
   const handleLogUnit = () => {
     if (!habit.id) return;
-    onLogUnit(habit.id, parseFloat(logAmount) || 1, logDate);
+    const parsed = Number.parseFloat(logAmount);
+    onLogUnit(habit.id, Number.isNaN(parsed) ? 1 : parsed, logDate);
     setLogAmount('1');
     setLogDate(new Date());
   };

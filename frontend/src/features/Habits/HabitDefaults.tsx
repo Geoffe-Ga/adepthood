@@ -1,4 +1,12 @@
+import { DEFAULT_ICONS } from './constants';
 import type { Habit } from './Habits.types';
+
+/** Default energy cost/return assigned to a newly-created habit. */
+export const DEFAULT_ENERGY = 5;
+
+/** Pick a random default icon, falling back to a star when the list is empty. */
+export const randomDefaultIcon = (): string =>
+  DEFAULT_ICONS[Math.floor(Math.random() * DEFAULT_ICONS.length)] ?? '⭐';
 
 /**
  * Default habit definitions for the APTITUDE onboarding flow.

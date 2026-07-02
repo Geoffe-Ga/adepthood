@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 
 import { course as courseApi, type SiteResource } from '../../api';
@@ -21,16 +21,9 @@ interface SiteResourcesPanelProps {
  */
 const SiteResourcesPanel = ({ onSelect }: SiteResourcesPanelProps): React.JSX.Element | null => {
   const [resources, setResources] = useState<SiteResource[]>([]);
-  const isMountedRef = useRef(true);
-
-  useEffect(
-    () => () => {
-      isMountedRef.current = false;
-    },
-    [],
-  );
 
   useEffect(() => {
+    let active = true;
     // ``siteResources()`` is called without an explicit token — the
     // shared ``request()`` helper in ``api/index.ts`` falls back to the
     // global ``tokenGetter`` set by ``AuthContext``, matching how
@@ -38,14 +31,16 @@ const SiteResourcesPanel = ({ onSelect }: SiteResourcesPanelProps): React.JSX.El
     courseApi
       .siteResources()
       .then((list) => {
-        if (!isMountedRef.current) return;
-        setResources(list);
+        if (active) setResources(list);
       })
       .catch((err: unknown) => {
         // Don't surface a banner — the resources panel is supplementary.
         // Logging keeps the failure visible in dev without spooking users.
         console.warn('Failed to load site resources:', err);
       });
+    return () => {
+      active = false;
+    };
   }, []);
 
   if (resources.length === 0) return null;

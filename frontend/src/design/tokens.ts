@@ -185,6 +185,15 @@ export const STAGE_ORDER: readonly string[] = [
   'Clear Light',
 ];
 
+/**
+ * Resolve a Spiral-Dynamics color name to its hex value, falling back to the
+ * neutral gray when the name is missing or unrecognized. This is the single
+ * resolution used across the Course stage cover, progress bar, and pill
+ * selector — keep it here so the fallback can never silently diverge.
+ */
+export const resolveStageColor = (spiralColor: string | undefined): string =>
+  spiralColor ? STAGE_COLORS[spiralColor] ?? colors.neutral : colors.neutral;
+
 /** How far each channel is pushed from the gray point when brightening. */
 const SATURATION_BOOST = 1.7;
 

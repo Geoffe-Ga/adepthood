@@ -584,11 +584,10 @@ const useOnboardingEffects = (
   }, [step, scrollRef]);
 
   useEffect(() => {
-    if (Platform.OS === 'web' && (step === 2 || step === 3)) {
+    if (Platform.OS === 'web' && step === 3) {
       const handler = (e: KeyboardEvent) => {
         if (!(e.metaKey || e.ctrlKey) || e.key !== 'Enter') return;
-        if (step === 2) return;
-        if (step === 3) prepareHabitsForReorder();
+        prepareHabitsForReorder();
       };
       document.addEventListener('keydown', handler);
       return () => document.removeEventListener('keydown', handler);

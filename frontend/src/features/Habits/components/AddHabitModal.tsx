@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-import { DEFAULT_ICONS } from '../constants';
+import { DEFAULT_ENERGY, randomDefaultIcon } from '../HabitDefaults';
 import styles from '../Habits.styles';
 import type { AddHabitInput } from '../Habits.types';
 
@@ -13,11 +13,6 @@ interface AddHabitModalProps {
   onClose: () => void;
   onAdd: (_input: AddHabitInput) => void | Promise<void>;
 }
-
-const DEFAULT_ENERGY = 5;
-
-const randomDefaultIcon = (): string =>
-  DEFAULT_ICONS[Math.floor(Math.random() * DEFAULT_ICONS.length)] ?? '⭐';
 
 const AddHabitHeader = ({ onClose }: { onClose: () => void }) => (
   <View style={styles.modalHeader}>
