@@ -42,6 +42,7 @@ import {
   type CompletionTargetTypeT,
   type DepthPreferencesT,
   type InvitationT,
+  type journalTagSchema,
   type MettaReturnStateT,
   type Page,
   type ReturnArcT,
@@ -1070,7 +1071,9 @@ export const goalGroups = {
 };
 
 // Journal types and client
-export type JournalTag = 'freeform' | 'stage_reflection' | 'practice_note' | 'habit_note';
+// Derived from the Zod schema so the TS union can't drift from the runtime
+// validator (or the backend enum it mirrors) — includes ``weekly_prompt``.
+export type JournalTag = z.infer<typeof journalTagSchema>;
 
 /**
  * Privacy classification for a journal entry (mirrors the backend enum). An
