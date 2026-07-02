@@ -41,3 +41,4 @@ jobs:
           git config --global user.name ci
           bash scripts/ralph/test_fleet.sh
           bash scripts/ralph/test_pick_next.sh
+          bash scripts/ralph/test_pr_ready.sh

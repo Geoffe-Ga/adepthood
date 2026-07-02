@@ -105,15 +105,23 @@ call `/loop` to **stop**.
 
 ### Step 1 — Merge every ready lane (serialized, up-to-date only)
 
-Read each in-flight PR once:
+Classify each in-flight PR with the authoritative readiness helper — never
+eyeball the CI rollup or grep `gh pr checks` (its output is TAB-delimited, so a
+`': pending'` grep silently misses a still-running check and a false READY can
+merge a pending/failing PR). The helper keys CI off the `gh pr checks` **exit
+code** (`0`=green, `8`=pending, else=failed) and only honours an LGTM verdict
+posted **after** the PR's HEAD commit (stale-verdict guard):
+```bash
+STATUS=$(scripts/ralph/pr-ready.sh "$PR_NUM")   # ready | behind | pending | ci-failed | awaiting-review
+```
+Read the PR's comments once for context (which issue it closes, verdict text):
 ```bash
 gh pr view "$PR_NUM" --comments --json state,mergeable,mergeStateStatus,statusCheckRollup,comments
 ```
-For each PR, classify from the latest top-level `Verdict:` comment
-(`claude-code-review.yml`), the CI rollup, and `mergeStateStatus`:
+Then act on `$STATUS`:
 
-- **Ready** = `Verdict: LGTM` AND CI fully green AND `mergeStateStatus` is `CLEAN`
-  (i.e. up-to-date with `main`). **Merge it now** — do not wait for any other
+- **`ready`** (`Verdict: LGTM` fresh + CI green + `mergeStateStatus` `CLEAN`,
+  i.e. up-to-date with `main`). **Merge it now** — do not wait for any other
   lane:
   ```bash
   gh pr merge "$PR_NUM" --squash --delete-branch
@@ -125,14 +133,19 @@ For each PR, classify from the latest top-level `Verdict:` comment
   ```
   (Idempotent if `iteration-trigger.yml` or a prior wake already merged it — the
   PR shows MERGED; do the same close + `release` + state bump.)
-- **Behind** = `LGTM` + green but `mergeStateStatus` is `BEHIND` (a sibling merged
-  after this lane went green). **Do not merge stale.** Sync it and let CI re-run:
+- **`behind`** (`LGTM` + green but `mergeStateStatus` is `BEHIND` — a sibling
+  merged after this lane went green). **Do not merge stale.** Sync it and let CI
+  re-run:
   ```bash
   scripts/ralph/fleet.sh sync "$ISSUE_N" || echo "SYNC-CONFLICT $ISSUE_N"
   ```
   A clean sync → dispatch its `ralph-worker` to re-clear Gate 2 locally and push;
   it re-merges on a later wake once green. `SYNC-CONFLICT` → that lane drops to
   Gate 1 (worker resolves the conflict as a root-cause change, re-greens, pushes).
+- **`pending`** / **`awaiting-review`** — CI is still running or no fresh LGTM
+  verdict exists yet. Leave the lane; its Step 5 subscription wakes you when CI
+  or the verdict changes.
+- **`ci-failed`** — a check failed. Advance it via Step 2 (`ci-debugging`).
 
 You may merge more than one lane in a wake, but **re-check `mergeStateStatus`
 before each merge** — merging one lane can push the others `BEHIND`. Serialized,
