@@ -388,7 +388,7 @@ const styles = StyleSheet.create({
     backgroundColor: accent.primary,
   },
   disabledButton: { opacity: 0.4 },
-  saveText: { color: surface.raised, fontSize: 14, fontWeight: '600' },
+  saveText: { color: accent.onPrimary, fontSize: 14, fontWeight: '600' },
   body: { padding: SPACING.lg },
   apiError: { color: colors.danger, fontSize: 13, marginTop: SPACING.sm },
   resetButton: {

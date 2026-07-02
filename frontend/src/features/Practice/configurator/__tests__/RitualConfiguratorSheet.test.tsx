@@ -247,14 +247,7 @@ describe('RitualConfiguratorSheet', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Candle & Ink token guard for the RitualConfiguratorSheet save button.
-//
-// The save button (`ritual-configurator-save`) background is `accent.primary`
-// (#a5572f), migrated from the legacy `colors.primary` (#1a1910); the negative
-// pin guards the swap.
-// ---------------------------------------------------------------------------
-
+// Candle & Ink token guard: save button background is accent.primary (#a5572f), migrated from legacy colors.primary (#1a1910).
 describe('Candle & Ink token guard — RitualConfiguratorSheet save button', () => {
   const flatBackground = (style: unknown): string | undefined =>
     (StyleSheet.flatten(style as never) as { backgroundColor?: string }).backgroundColor;

@@ -373,7 +373,7 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.xl,
   },
-  retryButtonText: { color: surface.raised, fontWeight: '600' },
+  retryButtonText: { color: accent.onPrimary, fontWeight: '600' },
   hero: { marginHorizontal: SPACING.md, marginBottom: SPACING.md },
   heroEyebrow: {
     ...editorialType.caption,

@@ -334,7 +334,7 @@ const formStyles = StyleSheet.create({
     color: ink.soft,
   },
   chipTextActive: {
-    color: surface.raised,
+    color: accent.onPrimary,
   },
   errors: {
     backgroundColor: surface.raised,
