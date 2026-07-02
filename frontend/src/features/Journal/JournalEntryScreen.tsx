@@ -19,7 +19,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import AspectChordControl, { type AspectChordValue } from './AspectChordControl';
+import AspectChordControl, { EMPTY_CHORD, type AspectChordValue } from './AspectChordControl';
 import CareSupportNote from './CareSupportNote';
 import CompletionSuggestionNote from './CompletionSuggestionNote';
 import ContractionReflectionNote from './ContractionReflectionNote';
@@ -53,9 +53,6 @@ export const AUTOSAVE_DELAY_MS = 1500;
 
 /** Below this width the margin column stacks under the writing column. */
 const NARROW_BREAKPOINT = 600;
-
-/** An untagged chord (no primary/secondary Aspect) for a fresh entry. */
-const EMPTY_CHORD: AspectChordValue = { primary: null, secondary: null };
 
 /** Fallback reason shown when resonance is gated off for an intimate entry. */
 const INTIMATE_RESONANCE_REASON = 'Intimate entries are kept private — resonance is paused.';

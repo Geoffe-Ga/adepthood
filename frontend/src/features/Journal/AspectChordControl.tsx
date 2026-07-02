@@ -24,7 +24,7 @@ export interface AspectChordValue {
 }
 
 /** The empty chord used when no ``value`` is supplied. */
-const EMPTY_CHORD: AspectChordValue = { primary: null, secondary: null };
+export const EMPTY_CHORD: AspectChordValue = { primary: null, secondary: null };
 
 /** Warm, declinable copy for the collapsed trigger. */
 const TRIGGER_LABEL = 'Name an Aspect (optional)';

@@ -75,22 +75,14 @@ export interface UseResonanceResult {
   dismissSuggestion: (_id: number) => Promise<void>;
 }
 
-/** Union of two note lists, keyed by id (incoming wins on conflict). */
-function mergeById(existing: Marginalia[], incoming: Marginalia[]): Marginalia[] {
-  const byId = new Map<number, Marginalia>();
-  for (const note of existing) byId.set(note.id, note);
-  for (const note of incoming) byId.set(note.id, note);
-  return [...byId.values()].sort((a, b) => a.anchor_start - b.anchor_start);
-}
-
-/** Union of two suggestion lists, keyed by id, sorted by anchor span. */
-function mergeSuggestionsById(
-  existing: CompletionSuggestion[],
-  incoming: CompletionSuggestion[],
-): CompletionSuggestion[] {
-  const byId = new Map<number, CompletionSuggestion>();
-  for (const s of existing) byId.set(s.id, s);
-  for (const s of incoming) byId.set(s.id, s);
+/** Union of two anchored lists, keyed by id (incoming wins), sorted by anchor span. */
+function mergeByIdSorted<T extends { id: number; anchor_start: number }>(
+  existing: T[],
+  incoming: T[],
+): T[] {
+  const byId = new Map<number, T>();
+  for (const item of existing) byId.set(item.id, item);
+  for (const item of incoming) byId.set(item.id, item);
   return [...byId.values()].sort((a, b) => a.anchor_start - b.anchor_start);
 }
 
@@ -136,7 +128,7 @@ function useSuggestions(routeEntryId: number | null, setError: SetError): Sugges
   useLoadOnOpen(routeEntryId, completionSuggestions.list, setSuggestions);
 
   const mergeFromGenerate = useCallback((incoming: CompletionSuggestion[]) => {
-    setSuggestions((prev) => mergeSuggestionsById(prev, incoming));
+    setSuggestions((prev) => mergeByIdSorted(prev, incoming));
   }, []);
 
   const acceptSuggestion = useCallback(
@@ -177,7 +169,7 @@ async function runAccept(id: number, deps: AcceptDeps): Promise<void> {
   deps.pendingIdsRef.current.add(id);
   try {
     const result = await completionSuggestions.accept(id);
-    deps.setSuggestions((prev) => mergeSuggestionsById(prev, [result.suggestion]));
+    deps.setSuggestions((prev) => mergeByIdSorted(prev, [result.suggestion]));
     deps.setAcceptedCheckIns((prev) => ({ ...prev, [id]: result.check_in }));
   } catch (err) {
     deps.setError(formatApiError(err)); // row stays pending; user can retry
@@ -251,7 +243,7 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
         return;
       }
       const result = await resonance.generate(entryId);
-      setMarginalia((prev) => mergeById(prev, result.marginalia));
+      setMarginalia((prev) => mergeByIdSorted(prev, result.marginalia));
       mergeFromGenerate(result.suggestions);
       // ``care`` is nullable/absent on ordinary entries — normalise to null.
       setCare(result.care ?? null);
@@ -303,7 +295,7 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
   });
 
   const updateNote = useCallback((updated: Marginalia) => {
-    setMarginalia((prev) => mergeById(prev, [updated]));
+    setMarginalia((prev) => mergeByIdSorted(prev, [updated]));
   }, []);
 
   const refresh = useCallback(async (): Promise<void> => {

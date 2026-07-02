@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-import { accent, ink, radius, SPACING, surface } from '../../design/tokens';
+import { accent, ink, radius, SPACING, surface } from '@/design/tokens';
 
 const DEBOUNCE_DELAY_MS = 300;
 
