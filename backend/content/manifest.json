@@ -2538,6 +2538,13 @@
       "description": "From Liminal Creep to Whole Adept: who this course is for.",
       "media": [],
       "path": "markdown/resources/liminal-creep.md"
+    },
+    {
+      "slug": "wavelength-explainer",
+      "title": "How the Wavelength works",
+      "description": "A living picture of the Wavelength — torus, spiral, compression waves, rising octaves, and the chord of a single act.",
+      "media": [],
+      "path": "markdown/resources/wavelength-explainer.md"
     }
   ]
 }
