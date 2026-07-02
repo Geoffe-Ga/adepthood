@@ -158,8 +158,6 @@ jest.mock('expo-notifications', () => ({
   cancelScheduledNotificationAsync: jest.fn(),
 }));
 
-jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
-
 // Never-settling persist: proves markWelcomeSeen flips state before (not after)
 // the fire-and-forget save — an awaited save would hang the shell render.
 jest.mock('@/storage/welcomeStorage', () => ({

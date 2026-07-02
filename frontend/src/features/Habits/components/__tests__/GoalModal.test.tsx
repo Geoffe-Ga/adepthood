@@ -3,18 +3,6 @@ import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 import type { DimensionValue } from 'react-native';
 
-// EmojiSelector pulls in native bindings; render a stub that exposes a
-// tappable node so a test can drive its onEmojiSelected callback.
-jest.mock('react-native-emoji-selector', () => {
-  const mockReact = require('react');
-  const { Pressable } = require('react-native');
-  return ({ onEmojiSelected }: { onEmojiSelected: (_emoji: string) => void }) =>
-    mockReact.createElement(Pressable, {
-      testID: 'emoji-selector-stub',
-      onPress: () => onEmojiSelected('🎉'),
-    });
-});
-
 jest.mock('../../../../api', () => ({
   __esModule: true,
   goalGroups: {
@@ -727,13 +715,15 @@ describe('GoalModal icon editing', () => {
 
   it('opens the emoji picker from the header icon and applies the chosen emoji', () => {
     const { getByTestId, queryByTestId, props } = renderModal();
-    expect(queryByTestId('emoji-selector-stub')).toBeNull();
+    expect(queryByTestId('emoji-picker')).toBeNull();
 
     fireEvent.press(getByTestId('goal-modal-icon-button'));
-    fireEvent.press(getByTestId('emoji-selector-stub'));
+    getByTestId('emoji-picker');
+    fireEvent.press(getByTestId('emoji-picker-select'));
 
-    expect(props.onUpdateHabit).toHaveBeenCalledWith(expect.objectContaining({ icon: '🎉' }));
-    // Selecting an emoji closes the picker.
-    expect(queryByTestId('emoji-selector-stub')).toBeNull();
+    expect(props.onUpdateHabit).toHaveBeenCalledWith(
+      expect.objectContaining({ icon: '\u{1F389}' }),
+    );
+    expect(queryByTestId('emoji-picker')).toBeNull();
   });
 });

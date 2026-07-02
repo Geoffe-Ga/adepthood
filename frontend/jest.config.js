@@ -33,6 +33,7 @@ module.exports = {
     '^expo-image-picker$': '<rootDir>/src/__mocks__/expo-image-picker.js',
     '^expo-keep-awake$': '<rootDir>/src/__mocks__/expo-keep-awake.js',
     '^@react-native-community/netinfo$': '<rootDir>/src/__mocks__/netinfo.js',
+    '^rn-emoji-keyboard$': '<rootDir>/src/__mocks__/rn-emoji-keyboard.js',
   },
   transformIgnorePatterns: [
     'node_modules/(?!(' +

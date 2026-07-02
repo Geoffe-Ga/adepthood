@@ -19,7 +19,6 @@ jest.mock('expo-notifications', () => ({
   cancelScheduledNotificationAsync: jest.fn(),
   getExpoPushTokenAsync: jest.fn(() => Promise.resolve({ data: 'token' })),
 }));
-jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 jest.mock('../components/AddHabitModal', () => () => null);
 jest.mock('../components/GoalModal', () => () => null);
 jest.mock('../components/HabitSettingsModal', () => () => null);

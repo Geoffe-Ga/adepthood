@@ -83,7 +83,6 @@ jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
 jest.mock('../components/AddHabitModal', () => () => null);
 jest.mock('../components/StatsModal', () => ({ __esModule: true, default: jest.fn(() => null) }));
-jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
 describe('Habits overflow menu lock-unstarted toggle', () => {
   it('locks an early-unlocked habit via Lock Unstarted Habits', async () => {

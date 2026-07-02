@@ -183,15 +183,6 @@ export const styles = StyleSheet.create({
     color: COLORS.secondary,
     fontWeight: '500',
   },
-  emojiSelectorContainer: {
-    height: 200,
-    marginVertical: SPACING.md,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: BORDER_RADIUS.md,
-    overflow: 'hidden',
-    backgroundColor: surface.raised,
-  },
 
   // ===== Reorder Button =====
   reorderButton: {
@@ -853,41 +844,6 @@ export const styles = StyleSheet.create({
     textAlign: 'center',
     color: COLORS.text.secondary,
     marginBottom: SPACING.md,
-  },
-
-  // ===== Emoji Picker =====
-  emojiPickerModal: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: surface.raised,
-    height: 280,
-    borderTopLeftRadius: BORDER_RADIUS.xl,
-    borderTopRightRadius: BORDER_RADIUS.xl,
-    ...SHADOWS.large,
-    zIndex: 1000,
-  },
-  emojiPickerHeader: {
-    flexDirection: 'row',
-    justifyContent: JUSTIFY_SPACE_BETWEEN,
-    alignItems: 'center',
-    padding: SPACING.lg,
-    borderBottomWidth: 1,
-    borderColor: '#eee',
-  },
-  emojiPickerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: COLORS.text.primary,
-  },
-  closeEmojiPicker: {
-    padding: SPACING.xs,
-  },
-  closeEmojiPickerText: {
-    fontSize: 24,
-    fontWeight: '300',
-    color: COLORS.text.secondary,
   },
 
   // ===== Onboarding Buttons =====

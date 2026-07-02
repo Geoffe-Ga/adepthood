@@ -57,7 +57,6 @@ jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
 jest.mock('../components/AddHabitModal', () => () => null);
 jest.mock('../components/StatsModal', () => ({ __esModule: true, default: jest.fn(() => null) }));
-jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
 describe('HabitsScreen icon chrome (lucide-react-native)', () => {
   afterEach(() => {

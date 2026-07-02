@@ -11,7 +11,7 @@ import {
   Zap,
 } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Text, TouchableOpacity, View, Modal } from 'react-native';
+import { ActivityIndicator, FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { habits as habitsApi } from '../../api';
@@ -206,28 +206,6 @@ export const OverflowMenu = ({
   );
 };
 
-const EmojiPickerModal = ({
-  onSelect,
-  onClose,
-}: {
-  onSelect: (_emoji: string) => void;
-  onClose: () => void;
-}) => (
-  <Modal transparent animationType="fade">
-    <View style={styles.modalOverlay}>
-      <View style={styles.emojiPickerModal}>
-        <View style={styles.emojiPickerHeader}>
-          <Text style={styles.emojiPickerTitle}>Select Icon</Text>
-          <TouchableOpacity style={styles.closeEmojiPicker} onPress={onClose}>
-            <Text style={styles.closeEmojiPickerText}>×</Text>
-          </TouchableOpacity>
-        </View>
-        <HabitEmojiPicker onEmojiSelected={onSelect} />
-      </View>
-    </View>
-  </Modal>
-);
-
 interface HabitModalsProps {
   modals: ReturnType<typeof useModalCoordinator>;
   selectedHabit: Habit | null;
@@ -316,12 +294,14 @@ const HabitWriteModals = ({
       onClose={() => modals.close('addHabit')}
       onAdd={onAddHabit}
     />
-    {modals.emojiPicker && (
-      <EmojiPickerModal
-        onSelect={actions.emojiSelect}
-        onClose={() => modals.close('emojiPicker')}
-      />
-    )}
+    <HabitEmojiPicker
+      visible={modals.emojiPicker}
+      onSelect={(emoji) => {
+        actions.emojiSelect(emoji);
+        modals.close('emojiPicker');
+      }}
+      onClose={() => modals.close('emojiPicker')}
+    />
   </>
 );
 
