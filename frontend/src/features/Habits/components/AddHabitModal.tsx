@@ -4,9 +4,8 @@ import { Modal, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { DEFAULT_ICONS } from '../constants';
 import styles from '../Habits.styles';
 import type { AddHabitInput } from '../Habits.types';
-import { calculateNetEnergy } from '../HabitUtils';
 
-import { EnergyTextInput } from './EnergyTextInput';
+import { EnergyCostReturnEditor } from './EnergyCostReturnEditor';
 import HabitEmojiPicker from './HabitEmojiPicker';
 
 interface AddHabitModalProps {
@@ -77,46 +76,6 @@ const IconRow = ({ icon, showEmojiPicker, setShowEmojiPicker, setIcon }: IconRow
       </View>
     )}
   </>
-);
-
-interface EnergyRowProps {
-  energyCost: number;
-  energyReturn: number;
-  setEnergyCost: (_v: number) => void;
-  setEnergyReturn: (_v: number) => void;
-}
-
-const EnergyRow = ({
-  energyCost,
-  energyReturn,
-  setEnergyCost,
-  setEnergyReturn,
-}: EnergyRowProps) => (
-  <View style={styles.energyContainer}>
-    <View style={styles.energyHeader}>
-      <Text style={styles.energyHeaderText}>Cost</Text>
-      <Text style={styles.energyHeaderText}>Return</Text>
-      <Text style={styles.energyHeaderText}>Net</Text>
-    </View>
-    <View style={styles.energyRow}>
-      <EnergyTextInput
-        testID="add-habit-cost"
-        style={styles.energyInput}
-        value={energyCost}
-        onCommit={setEnergyCost}
-      />
-      <EnergyTextInput
-        testID="add-habit-return"
-        style={styles.energyInput}
-        value={energyReturn}
-        onCommit={setEnergyReturn}
-      />
-      <Text style={styles.netEnergyValue}>{calculateNetEnergy(energyCost, energyReturn)}</Text>
-    </View>
-    <View style={styles.validationNote}>
-      <Text style={styles.validationText}>Enter a whole number from -10 to 10.</Text>
-    </View>
-  </View>
 );
 
 interface SaveRowProps {
@@ -230,11 +189,13 @@ export const AddHabitModal = ({ visible, onClose, onAdd }: AddHabitModalProps) =
             setShowEmojiPicker={f.setShowEmojiPicker}
             setIcon={f.setIcon}
           />
-          <EnergyRow
-            energyCost={f.energyCost}
+          <EnergyCostReturnEditor
+            cost={f.energyCost}
             energyReturn={f.energyReturn}
-            setEnergyCost={f.setEnergyCost}
-            setEnergyReturn={f.setEnergyReturn}
+            onCommitCost={f.setEnergyCost}
+            onCommitReturn={f.setEnergyReturn}
+            costTestID="add-habit-cost"
+            returnTestID="add-habit-return"
           />
           <SaveRow saving={saving} canSave={canSave} onSave={() => void handleSave()} />
         </View>

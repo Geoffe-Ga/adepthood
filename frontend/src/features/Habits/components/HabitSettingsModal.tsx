@@ -15,10 +15,9 @@ import { STAGE_COLORS } from '../../../design/tokens';
 import { DAYS_OF_WEEK } from '../constants';
 import styles from '../Habits.styles';
 import type { Habit, HabitSettingsModalProps } from '../Habits.types';
-import { calculateNetEnergy } from '../HabitUtils';
 
 import ConfirmDialog from './ConfirmDialog';
-import { EnergyTextInput } from './EnergyTextInput';
+import { EnergyCostReturnEditor } from './EnergyCostReturnEditor';
 import HabitEmojiPicker from './HabitEmojiPicker';
 
 const cycleFrequency = (current: string | undefined): 'daily' | 'weekly' | 'custom' => {
@@ -26,38 +25,6 @@ const cycleFrequency = (current: string | undefined): 'daily' | 'weekly' | 'cust
   if (current === 'weekly') return 'custom';
   return 'daily';
 };
-
-interface EnergySettingsProps {
-  habit: Habit;
-  netEnergy: number;
-  onChange: <K extends keyof Habit>(_field: K, _value: Habit[K]) => void;
-}
-
-const EnergySettings = ({ habit, netEnergy, onChange }: EnergySettingsProps) => (
-  <View style={styles.energyContainer}>
-    <View style={styles.energyHeader}>
-      <Text style={styles.energyHeaderText}>Cost</Text>
-      <Text style={styles.energyHeaderText}>Return</Text>
-      <Text style={styles.energyHeaderText}>Net</Text>
-    </View>
-    <View style={styles.energyRow}>
-      <EnergyTextInput
-        style={styles.energyInput}
-        value={habit.energy_cost}
-        onCommit={(value) => onChange('energy_cost', value)}
-      />
-      <EnergyTextInput
-        style={styles.energyInput}
-        value={habit.energy_return}
-        onCommit={(value) => onChange('energy_return', value)}
-      />
-      <Text style={styles.netEnergyValue}>{netEnergy}</Text>
-    </View>
-    <View style={styles.validationNote}>
-      <Text style={styles.validationText}>Enter a whole number from -10 to 10.</Text>
-    </View>
-  </View>
-);
 
 interface NotificationSettingsProps {
   habit: Habit;
@@ -354,10 +321,11 @@ const EnergyAndDateSection = ({
     <View style={styles.settingRow}>
       <Text style={styles.settingLabel}>Energy Rating:</Text>
     </View>
-    <EnergySettings
-      habit={editedHabit}
-      netEnergy={calculateNetEnergy(editedHabit.energy_cost, editedHabit.energy_return)}
-      onChange={handleChange}
+    <EnergyCostReturnEditor
+      cost={editedHabit.energy_cost}
+      energyReturn={editedHabit.energy_return}
+      onCommitCost={(value) => handleChange('energy_cost', value)}
+      onCommitReturn={(value) => handleChange('energy_return', value)}
     />
     <View style={styles.settingRow}>
       <Text style={styles.settingLabel}>Start Date:</Text>
