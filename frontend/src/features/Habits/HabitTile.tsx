@@ -6,6 +6,7 @@ import useResponsive from '../../design/useResponsive';
 import { DEFAULT_TIMEZONE, MS_PER_DAY } from '../../utils/dateUtils';
 
 import ConfirmDialog from './components/ConfirmDialog';
+import { MAX_HABITS } from './constants';
 import { TIER_LABELS, type TierType } from './goalMarker';
 import type { HabitTileProps, Goal, Habit } from './Habits.types';
 import {
@@ -152,7 +153,7 @@ const HabitHeader = ({
   );
 };
 
-const TOTAL_HABITS = 10;
+const TOTAL_HABITS = MAX_HABITS;
 
 /** Tile border thickness so the aptitude/stage color reads clearly at a glance. */
 export const TILE_BORDER_WIDTH = 3;

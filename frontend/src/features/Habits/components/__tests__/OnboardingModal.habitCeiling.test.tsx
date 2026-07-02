@@ -1,12 +1,14 @@
-import { describe, it, jest } from '@jest/globals';
-import { render, fireEvent } from '@testing-library/react-native';
+import { describe, expect, it, jest } from '@jest/globals';
+import { render } from '@testing-library/react-native';
 import React from 'react';
 
-const OnboardingModal = require('../OnboardingModal').default;
-
+// The onboarding counter must be built from the shared MAX_HABITS constant, not
+// a repeated literal. Mock the constant to a value distinct from its real 10 so
+// a hardcoded "/ 10" would render the wrong number and fail this test.
 jest.mock('../../constants', () => ({
   ...(jest.requireActual('../../constants') as Record<string, unknown>),
   DEFAULT_ICONS: ['⭐'],
+  MAX_HABITS: 7,
 }));
 jest.mock('react-native-draggable-flatlist', () => 'DraggableFlatList');
 jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
@@ -25,15 +27,15 @@ jest.mock('react-native-reanimated', () => ({
   View: require('react-native').View,
 }));
 
-describe('OnboardingModal Ctrl+Enter shortcut', () => {
-  it('advances to the cost step on Ctrl+Enter, not just Cmd+Enter', () => {
-    const { getByPlaceholderText, getByText } = render(
+const OnboardingModal = require('../OnboardingModal').default;
+const { MAX_HABITS } = require('../../constants') as { MAX_HABITS: number };
+
+describe('OnboardingModal habit-ceiling derivation', () => {
+  it('renders the habit counter denominator from the MAX_HABITS constant', () => {
+    const { getByTestId } = render(
       <OnboardingModal visible onClose={jest.fn()} onSaveHabits={jest.fn()} />,
     );
-    const input = getByPlaceholderText('Enter habit name');
-    fireEvent.changeText(input, 'Read');
-    fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
-    fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter', ctrlKey: true } });
-    getByText('Energy Cost');
+    expect(getByTestId('habit-count')).toHaveTextContent(`0 / ${MAX_HABITS}`);
+    expect(MAX_HABITS).not.toBe(10);
   });
 });
