@@ -404,6 +404,58 @@ async def test_apply_mode_mismatch_400(async_client: AsyncClient, db_session: As
 
 
 @pytest.mark.asyncio
+async def test_apply_invalid_materialised_config_returns_422_with_structured_detail(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers, user_id = await _signup(async_client)
+    catalog = await _seed_catalog_practice(
+        db_session,
+        mode="tallied_grounding",
+        mode_config={
+            "mode": "tallied_grounding",
+            "rounds": 1,
+            "categories": [{"key": "red", "label": "Red", "target_count": 1}],
+        },
+    )
+    up_id = await _setup_user_practice(async_client, db_session, headers, user_id, catalog)
+    # DB-seeded step bypasses create-time validation; its slug fails materialisation.
+    recipe = PracticeRecipe(
+        slug="apply_bad_key",
+        name="Bad Key Recipe",
+        description="",
+        owner_user_id=user_id,
+        mode="tallied_grounding",
+        rounds=1,
+    )
+    db_session.add(recipe)
+    await db_session.commit()
+    await db_session.refresh(recipe)
+    assert recipe.id is not None
+    db_session.add(
+        PracticeRecipeStep(
+            recipe_id=recipe.id,
+            position=0,
+            tag_slug="Not A Valid Slug!",
+            tag_label="Bad",
+            prompt_label="x",
+            target_count=1,
+        )
+    )
+    await db_session.commit()
+    recipe_id = recipe.id
+
+    resp = await async_client.post(
+        f"/practice-recipes/{recipe_id}/apply-to/{up_id}", headers=headers
+    )
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, resp.text
+    detail = resp.json()["detail"]
+    assert isinstance(detail, list)
+    assert detail
+    assert all("loc" in item and "msg" in item for item in detail)
+
+
+@pytest.mark.asyncio
 async def test_apply_other_users_practice_forbidden(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:

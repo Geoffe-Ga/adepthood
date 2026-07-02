@@ -29,7 +29,7 @@ import HighlightedBody from './HighlightedBody';
 import styles from './JournalEntry.styles';
 import MarginNote from './MarginNote';
 import { useSettleIn } from './motion';
-import PrivacyTierControl, { type PrivacyTier } from './PrivacyTierControl';
+import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import { useResonance } from './useResonance';
 
@@ -53,9 +53,6 @@ export const AUTOSAVE_DELAY_MS = 1500;
 
 /** Below this width the margin column stacks under the writing column. */
 const NARROW_BREAKPOINT = 600;
-
-/** Backend default privacy tier for a fresh entry. */
-const DEFAULT_CLASSIFICATION: JournalClassification = 'personal';
 
 /** An untagged chord (no primary/secondary Aspect) for a fresh entry. */
 const EMPTY_CHORD: AspectChordValue = { primary: null, secondary: null };
@@ -151,13 +148,13 @@ interface AutosaveApi {
   setStatus: (_status: EntryStatus) => void;
   saveState: SaveState;
   /** The entry's privacy tier; drives the control and the resonance gate. */
-  classification: PrivacyTier;
+  classification: JournalClassification;
   /** The entry's Aspect chord; drives the chord control. */
   chord: AspectChordValue;
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
   /** Set the privacy tier: updates the control and persists (create/PATCH). */
-  onChangeClassification: (_tier: PrivacyTier) => void;
+  onChangeClassification: (_tier: JournalClassification) => void;
   /** Set the Aspect chord: updates the control and persists (create/PATCH). */
   onChangeChord: (_next: AspectChordValue) => void;
   /** Persist the latest text immediately and resolve to the entry id (or null). */
@@ -203,8 +200,12 @@ function useTimerCleanup(timerRef: React.MutableRefObject<ReturnType<typeof setT
 
 interface ClassificationPersist {
   classificationRef: React.MutableRefObject<JournalClassification>;
-  /** Record the tier for the next create and PATCH it when the entry exists. */
-  changeClassification: (_tier: JournalClassification) => void;
+  /**
+   * Record the tier for the next create and PATCH it when the entry exists.
+   * Resolves to the tier the UI should revert to when a PATCH fails and no later
+   * change has superseded it, else null.
+   */
+  changeClassification: (_tier: JournalClassification) => Promise<JournalClassification | null>;
 }
 
 /**
@@ -215,12 +216,23 @@ interface ClassificationPersist {
 function useClassificationPersist(
   entryIdRef: React.MutableRefObject<number | null>,
 ): ClassificationPersist {
-  const classificationRef = useRef<JournalClassification>(DEFAULT_CLASSIFICATION);
+  const classificationRef = useRef<JournalClassification>(DEFAULT_TIER);
   const changeClassification = useCallback(
-    (tier: JournalClassification): void => {
+    async (tier: JournalClassification): Promise<JournalClassification | null> => {
+      const previous = classificationRef.current;
       classificationRef.current = tier;
-      if (entryIdRef.current != null) {
-        void journal.update(entryIdRef.current, { classification: tier });
+      // Create-time: the ref rides the next journal.create, nothing to PATCH yet.
+      if (entryIdRef.current == null) return null;
+      try {
+        await journal.update(entryIdRef.current, { classification: tier });
+        return null;
+      } catch {
+        // A rapid superseding change already owns the ref and the UI — leave both
+        // to it rather than reverting to this now-stale tier. Assumes one PATCH in
+        // flight at a time; ``previous`` is the optimistic ref, not last-persisted.
+        if (classificationRef.current !== tier) return null;
+        classificationRef.current = previous;
+        return previous;
       }
     },
     [entryIdRef],
@@ -343,7 +355,17 @@ function useDebouncedSave(
   const setTyping = useCallback(() => setSaveState('typing'), []);
   const { save, flush } = useSaveTimer(run, timerRef, entryIdRef, delayMs, setTyping);
 
-  return { saveState, save, flush, changeClassification, changeChord };
+  // A failed classification PATCH surfaces the same error hint as a body save.
+  const persistClassification = useCallback(
+    async (tier: JournalClassification): Promise<JournalClassification | null> => {
+      const revertTo = await changeClassification(tier);
+      if (revertTo != null) setSaveState('error');
+      return revertTo;
+    },
+    [changeClassification],
+  );
+
+  return { saveState, save, flush, changeClassification: persistClassification, changeChord };
 }
 
 type StrRef = React.MutableRefObject<string>;
@@ -380,8 +402,8 @@ interface EntryState {
   body: string;
   status: EntryStatus;
   setStatus: (_status: EntryStatus) => void;
-  classification: PrivacyTier;
-  setClassification: (_tier: PrivacyTier) => void;
+  classification: JournalClassification;
+  setClassification: (_tier: JournalClassification) => void;
   chord: AspectChordValue;
   setChord: (_next: AspectChordValue) => void;
   setTitle: (_v: string) => void;
@@ -397,7 +419,7 @@ function useEntryState(routeEntryId: number | null, initialTitle: string): Entry
   const [title, setTitle] = useState(initialTitle);
   const [body, setBody] = useState('');
   const [status, setStatus] = useState<EntryStatus>('draft');
-  const [classification, setClassification] = useState<PrivacyTier>(DEFAULT_CLASSIFICATION);
+  const [classification, setClassification] = useState<JournalClassification>(DEFAULT_TIER);
   const [chord, setChord] = useState<AspectChordValue>(EMPTY_CHORD);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Refs mirror the latest text so the change handlers stay referentially stable.
@@ -413,7 +435,7 @@ function useEntryState(routeEntryId: number | null, initialTitle: string): Entry
       setBody(bodyRef.current);
       setStatus(entry.status ?? 'draft');
       // Pre-select the server's tier so an intimate entry loads intimate.
-      setClassification(entry.classification ?? DEFAULT_CLASSIFICATION);
+      setClassification(entry.classification ?? DEFAULT_TIER);
       // Pre-select the server's chord so a tagged entry loads its Aspects.
       setChord({
         primary: entry.primary_aspect ?? null,
@@ -441,21 +463,26 @@ function useEntryState(routeEntryId: number | null, initialTitle: string): Entry
 }
 
 interface ChoiceHandlers {
-  onChangeClassification: (_tier: PrivacyTier) => void;
+  onChangeClassification: (_tier: JournalClassification) => void;
   onChangeChord: (_next: AspectChordValue) => void;
 }
 
 /** Reflect a privacy/chord choice in local state, then persist it (ref or PATCH). */
 function useChoiceHandlers(
   entry: EntryState,
-  changeClassification: (_tier: PrivacyTier) => void,
+  changeClassification: (_tier: JournalClassification) => Promise<JournalClassification | null>,
   changeChord: (_next: AspectChordValue) => void,
 ): ChoiceHandlers {
   const { setClassification, setChord } = entry;
+  // Reflect the choice optimistically, then persist it (create-time ref or PATCH);
+  // a failed PATCH resolves to the prior tier so the control reverts to the truth,
+  // unless a later change superseded it (then it resolves null and we keep that).
   const onChangeClassification = useCallback(
-    (tier: PrivacyTier) => {
+    (tier: JournalClassification) => {
       setClassification(tier);
-      changeClassification(tier);
+      void changeClassification(tier).then((revertTo) => {
+        if (revertTo != null) setClassification(revertTo);
+      });
     },
     [changeClassification, setClassification],
   );
@@ -525,11 +552,11 @@ interface WritingColumnProps {
   title: string;
   body: string;
   saveState: SaveState;
-  classification: PrivacyTier;
+  classification: JournalClassification;
   chord: AspectChordValue;
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
-  onChangeClassification: (_tier: PrivacyTier) => void;
+  onChangeClassification: (_tier: JournalClassification) => void;
   onChangeChord: (_next: AspectChordValue) => void;
   onFinish?: () => void;
   bodyPlaceholder?: string;
@@ -797,7 +824,7 @@ interface ResonanceGateArgs {
   isIdle: boolean;
   isLoading: boolean;
   body: string;
-  classification: PrivacyTier;
+  classification: JournalClassification;
   isPromptCompose: boolean;
   privateMessage: string | null;
 }

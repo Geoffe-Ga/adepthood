@@ -27,7 +27,7 @@ from models.user_practice import UserPractice
 from routers.auth import get_current_user
 from schemas import MAX_PAGE_SIZE, Page, PaginationParams, build_page
 from schemas.frequency import FrequencyResponse, render_banner_text
-from schemas.pagination import paginate_query
+from schemas.pagination import page_has_more, paginate_query
 from schemas.practice import (
     PracticeSessionSummary,
     UserPracticeCreate,
@@ -601,7 +601,7 @@ async def load_recent_sessions(
         limit=params.sessions_limit, offset=params.sessions_offset, paginate=True
     )
     sessions, total = await paginate_query(session, query, page_params)
-    has_more = (params.sessions_offset + params.sessions_limit) < total
+    has_more = page_has_more(params.sessions_offset, params.sessions_limit, total)
     return sessions, total, has_more
 
 
@@ -629,24 +629,26 @@ async def get_user_practice(
     )
 
 
-def _validate_override_against_catalog(override: dict[str, Any] | None, practice: Practice) -> None:
-    """Pre-flight validation: reject malformed or mode-mismatched overrides.
+def _validate_mode_config_against_catalog(
+    config: dict[str, Any] | None, practice: Practice
+) -> None:
+    """Pre-flight validation for a mode-config that will land in a UserPractice.
 
-    Raises ``HTTPException`` directly so the endpoint short-circuits
-    *before* persisting; without this guard, a bad override would land in
-    the DB and the post-write resolver would 500. Pydantic's
-    ``ValidationError`` is caught here and re-raised as a 422 with
-    structured error details so the client can show field-level messages.
-    Mode mismatch is mapped to a domain-meaningful 400.
+    The single gate shared by the customise route (per-user override) and the
+    recipe-apply route (materialised recipe): both write to
+    ``UserPractice.mode_config_override`` and both must (a) parse cleanly under
+    ``ModeConfigAdapter`` and (b) match the catalog ``mode``.  Runs *before*
+    persisting so a bad config never reaches the post-write resolver (which
+    would 500).  A ``ValidationError`` becomes a 422 carrying Pydantic's
+    structured per-field errors (``unprocessable()`` only takes a string
+    detail); a mode mismatch becomes a domain-meaningful 400.  ``None``
+    (the customise "clear the override" case) short-circuits.
     """
-    if override is None:
+    if config is None:
         return
     try:
-        cfg = ModeConfigAdapter.validate_python(override)
+        cfg = ModeConfigAdapter.validate_python(config)
     except ValidationError as exc:
-        # Preserve Pydantic's structured per-field errors so the client
-        # can render field-level messages — ``unprocessable()`` only
-        # accepts a string detail.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=exc.errors(),
@@ -673,7 +675,7 @@ async def customize_user_practice(
     fields_set = payload.model_fields_set
 
     if "mode_config_override" in fields_set:
-        _validate_override_against_catalog(payload.mode_config_override, practice)
+        _validate_mode_config_against_catalog(payload.mode_config_override, practice)
         user_practice.mode_config_override = payload.mode_config_override
     if "custom_name" in fields_set:
         user_practice.custom_name = payload.custom_name

@@ -33,7 +33,7 @@ from schemas.admin import (
     UsageStatsResponse,
     UserUsageBreakdown,
 )
-from schemas.pagination import count_query_total, paginate_query
+from schemas.pagination import count_query_total, page_has_more, paginate_query
 from services.energy import ENERGY_PLAN_RETENTION_DAYS, delete_expired_energy_plans
 
 # SQL ``SUM(NUMERIC)`` returns ``Decimal`` on Postgres but ``int`` (or
@@ -92,7 +92,7 @@ async def _fetch_per_user(
     has_more: bool | None = None
     if pagination.paginate:
         total = await count_query_total(session, query)
-        has_more = (pagination.offset + pagination.limit) < total
+        has_more = page_has_more(pagination.offset, pagination.limit, total)
         query = query.offset(pagination.offset).limit(pagination.limit)
     rows = (await session.execute(query)).all()
     breakdown = [
@@ -245,7 +245,7 @@ async def list_stage_progress_gaps(
             scanned_total=scanned_total,
             limit=pagination.limit,
             offset=pagination.offset,
-            has_more_rows=(pagination.offset + pagination.limit) < scanned_total,
+            has_more_rows=page_has_more(pagination.offset, pagination.limit, scanned_total),
         )
     all_rows = list((await session.execute(base_query)).scalars().all())
     gaps = _gaps_from_rows(all_rows)

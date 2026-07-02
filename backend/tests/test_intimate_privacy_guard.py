@@ -469,3 +469,139 @@ async def test_intimate_prior_body_excluded_from_resonance_prompt(
             "``_recent_prior_bodies`` is leaking intimate sibling bodies — "
             "the ``classification != INTIMATE`` filter is missing or not applied."
         )
+
+
+# ---------------------------------------------------------------------------
+# 9. Intimate entry + acute distress: local care must still surface, zero cloud
+# ---------------------------------------------------------------------------
+
+# A known elevated trigger for domain.safety.assess_distress.
+_DISTRESS_BODY = "I keep thinking I want to kill myself and end my life tonight."
+
+
+def _assert_local_care_shape(care: dict[str, object]) -> None:
+    """Assert the care payload carries the human + professional pointers."""
+    resources = care["resources"]
+    assert isinstance(resources, list)
+    kinds = {r["kind"] for r in resources if isinstance(r, dict)}
+    assert {"hotline", "text_line", "human", "professional"} <= kinds
+    blob = str(care).lower()
+    assert "988" in blob
+    assert "741741" in blob
+    assert "trust" in blob
+    assert "professional" in blob
+
+
+@pytest.mark.asyncio
+async def test_intimate_distress_surfaces_local_care_zero_cloud(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An intimate + distressed entry still gets the local care surface, zero cloud calls."""
+    spy = _SpyLLM()
+    monkeypatch.setattr(marginalia_service, "generate_response", spy)
+
+    headers, _ = await _signup(async_client, "intimate_distress_care")
+    entry_id = await _create_entry(
+        async_client, headers, classification="intimate", body=_DISTRESS_BODY
+    )
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+    assert resp.status_code == HTTPStatus.OK, resp.text
+
+    body = resp.json()
+    assert body["private"] is True
+    assert body["private_message"] == _INTIMATE_PRIVATE_MESSAGE
+    assert body["marginalia"] == []
+    assert body["suggestions"] == []
+    assert body["care"] is not None, "A distressed intimate entry must still surface local care."
+    _assert_local_care_shape(body["care"])
+    assert spy.calls == 0, (
+        f"Expected 0 cloud LLM calls for a distressed intimate entry; got {spy.calls}. "
+        "The care surface must be local-only and never route through the cloud."
+    )
+
+
+@pytest.mark.asyncio
+async def test_intimate_distress_care_no_wallet_charge_no_usage_log(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A distressed intimate entry's care surface still charges nothing and logs nothing."""
+    spy = _SpyLLM()
+    monkeypatch.setattr(marginalia_service, "generate_response", spy)
+
+    headers, email = await _signup(async_client, "intimate_distress_wallet")
+    entry_id = await _create_entry(
+        async_client, headers, classification="intimate", body=_DISTRESS_BODY
+    )
+
+    user_before = (
+        await db_session.execute(select(User).where(col(User.email) == email))
+    ).scalar_one()
+    messages_before = user_before.monthly_messages_used
+    balance_before = user_before.offering_balance
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert resp.json()["care"] is not None, "Care must surface even though nothing is charged."
+
+    await db_session.refresh(user_before)
+    assert user_before.monthly_messages_used == messages_before, (
+        "monthly_messages_used must not increase for a distressed intimate entry."
+    )
+    assert user_before.offering_balance == balance_before, (
+        "offering_balance must not decrease for a distressed intimate entry."
+    )
+
+    log_count = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(LLMUsageLog)
+            .where(col(LLMUsageLog.journal_entry_id) == entry_id)
+        )
+    ).scalar_one()
+    assert log_count == 0, (
+        f"Expected 0 LLMUsageLog rows for distressed intimate entry {entry_id}; found {log_count}."
+    )
+
+
+@pytest.mark.asyncio
+async def test_intimate_denial_gets_no_care(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit denial in an intimate entry must not false-trigger the care surface."""
+    spy = _SpyLLM()
+    monkeypatch.setattr(marginalia_service, "generate_response", spy)
+
+    headers, _ = await _signup(async_client, "intimate_denial")
+    entry_id = await _create_entry(
+        async_client, headers, classification="intimate", body="I would never kill myself"
+    )
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+    assert resp.status_code == HTTPStatus.OK, resp.text
+
+    body = resp.json()
+    assert body["private"] is True
+    assert body["care"] is None, "A negated denial must not surface the care screen."
+    assert spy.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_intimate_non_distress_unchanged(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A calm intimate entry is unchanged: private stub, no care, exact copy."""
+    spy = _SpyLLM()
+    monkeypatch.setattr(marginalia_service, "generate_response", spy)
+
+    headers, _ = await _signup(async_client, "intimate_calm")
+    entry_id = await _create_entry(async_client, headers, classification="intimate")
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+    assert resp.status_code == HTTPStatus.OK, resp.text
+
+    body = resp.json()
+    assert body["private"] is True
+    assert body["care"] is None
+    assert body["private_message"] == _INTIMATE_PRIVATE_MESSAGE
+    assert spy.calls == 0

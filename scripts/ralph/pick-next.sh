@@ -23,6 +23,12 @@
 #                         epic-prefixed label with an active issue is skipped
 #                         (likely ordered/overlapping) unless it carries the
 #                         parallel label. Set "0" to disable the guard.
+#   RALPH_DEFAULT_PRIORITY_RANK  Priority tier (0=P0 … 3=P3) assumed for an
+#                         issue carrying no P-label. Default 1 (== P1). See the
+#                         priority-tiering block below.
+#
+# Priority ordering: candidates are walked by [priority tier, number ascending]
+# — P0 → P1 → P2 → P3, oldest-first within a tier (see the tiering block below).
 #
 # Parallel awareness (see scripts/ralph/FLEET.md):
 #   Issues already being worked — either an open PR (`Closes|Fixes|Resolves #N`)
@@ -53,13 +59,34 @@ SOLO_LABEL="${RALPH_SOLO_LABEL:-solo}"
 PARALLEL_LABEL="${RALPH_PARALLEL_LABEL:-parallelizable}"
 RESPECT_EPICS="${RALPH_RESPECT_EPICS:-1}"
 
+# Priority tiering (autonomous maintenance pipeline). Candidates are ordered by
+# priority tier first, then oldest-first WITHIN a tier: P0 (security/breakage)
+# preempts P1 (bugs + Geoff's feature issues) preempts P2 (quality) preempts P3
+# (hygiene). An issue with no P-label sorts at RALPH_DEFAULT_PRIORITY_RANK.
+#
+#   RALPH_DEFAULT_PRIORITY_RANK  Tier an unlabeled issue is treated as. Default
+#                                1 (== P1), so legacy/unlabeled feature work
+#                                keeps flowing at feature priority and only P2/P3
+#                                scan hygiene sorts behind it. With no P-labels
+#                                anywhere, every issue ranks equal and ordering
+#                                collapses to the previous oldest-first behavior
+#                                — this change is backward compatible.
+#
+# To enforce the pipeline's stricter "agent-ready required" gate (so ONLY fully
+# specified scan/feature issues are picked), set RALPH_REQUIRE_LABELS=agent-ready.
+# It is left empty by default to avoid starving an existing unlabeled backlog.
+DEFAULT_RANK="${RALPH_DEFAULT_PRIORITY_RANK:-1}"
+if ! printf '%s' "$DEFAULT_RANK" | grep -qE '^[0-9]+$'; then
+  DEFAULT_RANK=1
+fi
+
 # jq array literals from the space-separated env vars.
 require_json=$(printf '%s\n' $REQUIRE_LABELS | jq -R . | jq -s .)
 exclude_json=$(printf '%s\n' $EXCLUDE_LABELS | jq -R . | jq -s .)
 
-# All open issues as "<number>\t<comma-separated-labels>", ascending by number,
-# filtered by require/exclude labels. Fetched once; reused for candidates and
-# for looking up active issues' labels.
+# All open issues as "<number>\t<comma-separated-labels>", filtered by
+# require/exclude labels and ordered by [priority-tier, number ascending].
+# Fetched once; reused for candidates and for looking up active issues' labels.
 open_tsv=$(
   gh issue list \
     --state open \
@@ -68,14 +95,20 @@ open_tsv=$(
     --jq "
       ( $require_json | map(select(length>0)) ) as \$req
       | ( $exclude_json | map(select(length>0)) ) as \$exc
-      | sort_by(.number)
       | map(. as \$i | (\$i.labels | map(.name)) as \$names
           | select(
               ( \$req | all(. as \$r | \$names | index(\$r)) )
               and ( \$exc | any(. as \$x | \$names | index(\$x)) | not )
             )
-          | \"\(\$i.number)\t\(\$names | join(\",\"))\")
+          | { number: \$i.number, names: \$names,
+              rank: ( if   (\$names | index(\"P0\")) then 0
+                      elif (\$names | index(\"P1\")) then 1
+                      elif (\$names | index(\"P2\")) then 2
+                      elif (\$names | index(\"P3\")) then 3
+                      else $DEFAULT_RANK end ) })
+      | sort_by([.rank, .number])
       | .[]
+      | \"\(.number)\t\(.names | join(\",\"))\"
     "
 )
 

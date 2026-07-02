@@ -133,10 +133,11 @@ async def create_goal_group(
     )
     session.add(group)
     await session.commit()
-    # Re-fetch with eager-loaded goals to avoid lazy-load greenlet errors
-    statement = select(GoalGroup).where(GoalGroup.id == group.id).options(GOAL_GROUP_WITH_GOALS)
-    result = await session.execute(statement)
-    refreshed = result.scalars().one()
+    await session.refresh(group)
+    # Re-fetch with eager-loaded goals (avoids lazy-load greenlet errors) via the
+    # shared helper, whose ``.first()`` + None-check turns a concurrent delete into
+    # a 404 rather than a ``NoResultFound`` 500.
+    refreshed = await _refetch_goal_group_with_goals(session, cast("int", group.id))
     logger.info(
         "goal_group_created", extra={"user_id": current_user, "goal_group_id": refreshed.id}
     )

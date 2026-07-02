@@ -2,20 +2,10 @@
 /* global describe, it, expect */
 
 /**
- * RED tests for the ``classification`` field on ``journalMessageSchema`` and
- * the ``private`` / ``private_message`` fields on ``resonanceResponseSchema``
- * (issue #896).
- *
- * These tests will fail until the implementation-specialist adds:
- * - ``classification`` (z.enum(['public','personal','intimate']).optional()) to
- *   ``journalMessageSchema`` in ``frontend/src/api/schemas.ts``.
- * - ``private`` (z.boolean().optional()) and
- *   ``private_message`` (z.string().nullish()) to ``resonanceResponseSchema``.
- * - The matching TypeScript fields on ``JournalMessage``, ``JournalMessageCreate``,
- *   ``JournalEntryUpdate``, and ``ResonanceResponse`` in ``frontend/src/api/index.ts``.
- *
- * The zod tests here are additive / non-breaking: a response WITHOUT the new
- * fields must still parse (backward-compat), and one WITH them must round-trip.
+ * Verifies that the ``classification`` field on ``journalMessageSchema`` and the
+ * ``private`` / ``private_message`` fields on ``resonanceResponseSchema`` parse
+ * correctly. The fields are backward-compatible: payloads without them still
+ * parse, and payloads with them round-trip.
  */
 import { journalMessageSchema, resonanceResponseSchema } from '../schemas';
 

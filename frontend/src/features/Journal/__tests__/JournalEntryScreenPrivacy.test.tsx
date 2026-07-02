@@ -4,15 +4,10 @@ import { act, fireEvent, render, waitFor, within } from '@testing-library/react-
 import React from 'react';
 
 /**
- * RED tests for privacy classification control in JournalEntryScreen (#896).
- *
- * Failures until the implementation-specialist:
- * 1. Creates ``PrivacyTierControl`` and mounts it in ``WritingColumn``.
- * 2. Adds ``classification`` to ``JournalMessageCreate``, ``JournalEntryUpdate``,
- *    ``JournalMessage``, and ``ResonanceResponse`` in ``frontend/src/api/index.ts``.
- * 3. Passes ``classification`` through ``useJournalAutosave`` / ``writeEntry``.
- * 4. Wires ``GetResonanceButton disabled`` when ``classification === 'intimate'``
- *    and shows ``privacy-resonance-reason`` text.
+ * Verifies the privacy classification wiring in ``JournalEntryScreen``:
+ * ``PrivacyTierControl`` is mounted in the writing column, the chosen
+ * classification persists through autosave / create / update, and resonance is
+ * gated off for intimate entries.
  */
 import type { JournalMessage, ResonanceResponse } from '@/api';
 import { DEFAULT_IDLE_DELAY_MS } from '@/hooks/useIdle';
@@ -265,6 +260,101 @@ describe('JournalEntryScreen — classification on first create (#896)', () => {
 
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({ classification: 'public' }),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2c. Persistence — PATCH failure surfaces the error and reverts the selection
+// ---------------------------------------------------------------------------
+
+describe('JournalEntryScreen — tier change PATCH failure', () => {
+  it('surfaces the save-error hint and reverts to the persisted tier when the PATCH rejects', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGet.mockResolvedValue(entry({ id: 7, classification: 'personal' }));
+      const { getByTestId } = renderScreen({ entryId: 7 }, { autosaveDelayMs: 100 });
+      await waitFor(() => {
+        expect(getByTestId('journal-body-input').props.value).toBeTruthy();
+      });
+      mockUpdate.mockClear();
+      mockUpdate.mockRejectedValueOnce(new Error('network'));
+
+      fireEvent.press(within(getByTestId('journal-page')).getByTestId('privacy-tier-intimate'));
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(getByTestId('journal-save-hint').props.children).toBe(
+        "Couldn't save — keep writing, we'll retry",
+      );
+      const page = within(getByTestId('journal-page'));
+      expect(page.getByTestId('privacy-tier-personal').props.accessibilityState.selected).toBe(
+        true,
+      );
+      expect(page.getByTestId('privacy-tier-intimate').props.accessibilityState.selected).toBe(
+        false,
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps the new tier selected with no error hint when the PATCH succeeds', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGet.mockResolvedValue(entry({ id: 7, classification: 'personal' }));
+      const { getByTestId } = renderScreen({ entryId: 7 }, { autosaveDelayMs: 100 });
+      await waitFor(() => {
+        expect(getByTestId('journal-body-input').props.value).toBeTruthy();
+      });
+      mockUpdate.mockClear();
+
+      fireEvent.press(within(getByTestId('journal-page')).getByTestId('privacy-tier-intimate'));
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(
+        within(getByTestId('journal-page')).getByTestId('privacy-tier-intimate').props
+          .accessibilityState.selected,
+      ).toBe(true);
+      expect(getByTestId('journal-save-hint').props.children).not.toBe(
+        "Couldn't save — keep writing, we'll retry",
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not revert a superseding change when the earlier PATCH rejects', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGet.mockResolvedValue(entry({ id: 7, classification: 'personal' }));
+      const { getByTestId } = renderScreen({ entryId: 7 }, { autosaveDelayMs: 100 });
+      await waitFor(() => {
+        expect(getByTestId('journal-body-input').props.value).toBeTruthy();
+      });
+      mockUpdate.mockClear();
+      // First PATCH (intimate) rejects; the superseding one (public) resolves.
+      mockUpdate.mockRejectedValueOnce(new Error('network'));
+
+      const page = within(getByTestId('journal-page'));
+      fireEvent.press(page.getByTestId('privacy-tier-intimate'));
+      fireEvent.press(page.getByTestId('privacy-tier-public'));
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(page.getByTestId('privacy-tier-public').props.accessibilityState.selected).toBe(true);
+      expect(page.getByTestId('privacy-tier-personal').props.accessibilityState.selected).toBe(
+        false,
       );
     } finally {
       jest.useRealTimers();

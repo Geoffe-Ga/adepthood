@@ -87,18 +87,17 @@ async def require_owned_habit(
     return habit
 
 
-async def require_owned_goal(
-    goal_id: int,
-    current_user: Annotated[int, Depends(get_current_user)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-) -> Goal:
-    """Resolve ``goal_id`` and verify the caller owns the parent habit.
+async def resolve_owned_goal_and_habit(
+    session: AsyncSession, goal_id: int, user_id: int
+) -> tuple[Goal, Habit]:
+    """Resolve ``goal_id`` to ``(goal, parent_habit)`` with enumeration-safe checks.
 
     Goal ownership rides on the parent habit's ``user_id`` -- the goal table
     itself has no ``user_id`` column.  We collapse "missing goal" and "not
-    yours" into a single 404 to deny enumeration (BUG-T7 / PR #265).  The
-    orphaned-FK branch (goal exists, parent habit gone) is a distinct
-    integrity-violation signal so it gets its own audit row.
+    yours" into a single 404 to deny enumeration.  The orphaned-FK branch
+    (goal exists, parent habit gone) is a distinct integrity-violation signal
+    so it gets its own audit row, but is still surfaced as 404.  Callers that
+    only need the goal (e.g. the goal-detail dependency) discard the habit.
     """
     goal = await session.get(Goal, goal_id)
     if goal is None:
@@ -107,12 +106,27 @@ async def require_owned_goal(
     if habit is None:
         logger.warning(
             "orphaned_goal_fk",
-            extra={"goal_id": goal_id, "habit_id": goal.habit_id, "user_id": current_user},
+            extra={"goal_id": goal_id, "habit_id": goal.habit_id, "user_id": user_id},
         )
         raise not_found("goal")
-    if habit.user_id != current_user:
-        log_ownership_denied("goal", goal_id, current_user)
+    if habit.user_id != user_id:
+        log_ownership_denied("goal", goal_id, user_id)
         raise not_found("goal")
+    return goal, habit
+
+
+async def require_owned_goal(
+    goal_id: int,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Goal:
+    """Resolve ``goal_id`` and verify the caller owns the parent habit.
+
+    Delegates to :func:`resolve_owned_goal_and_habit` and returns just the
+    goal; the parent-habit ownership rule and the enumeration-safe 404s live
+    there so the goal-completions route and this dependency stay in lockstep.
+    """
+    goal, _habit = await resolve_owned_goal_and_habit(session, goal_id, current_user)
     return goal
 
 

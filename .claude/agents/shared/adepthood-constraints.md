@@ -10,8 +10,10 @@ Adepthood is a **journal-first PKM** built on **graduated engagement** — "you
 choose your depth." Nothing is gated or mandatory; deeper rings surface only as
 resonant, one-tap-declinable invitations. **No gamified pressure** — no
 streak-shame, no guilt mechanics, no dark patterns. The thesis lives in
-`NORTH-STAR.md`; the visual direction ("Candle & Ink") in `DESIGN.md`; the
-development philosophy in `AGENTS.md`. Build accordingly.
+`NORTH-STAR.md`; the visual direction ("Candle & Ink") and implemented design
+system in `frontend/src/design/DESIGN.md` (root `DESIGN.md` is the external
+inspiration reference — a marketing-site aesthetic analysis, not the build
+target); the development philosophy in `AGENTS.md`. Build accordingly.
 
 ## The stack
 
