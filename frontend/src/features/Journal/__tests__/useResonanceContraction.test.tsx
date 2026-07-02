@@ -17,6 +17,7 @@ import type {
   Marginalia,
   ResonanceResponse,
 } from '@/api';
+import { useContractionSignalStore } from '@/store/useContractionSignalStore';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_id: number) => Promise<{ items: Marginalia[] }>
@@ -98,6 +99,7 @@ beforeEach(() => {
   mockSugList.mockReset();
   mockList.mockResolvedValue({ items: [] });
   mockSugList.mockResolvedValue({ items: [] });
+  useContractionSignalStore.getState().reset();
 });
 
 // ---------------------------------------------------------------------------
@@ -189,5 +191,69 @@ describe('useResonance — contraction field threading', () => {
 
     expect(result.current.marginalia).toHaveLength(1);
     expect(result.current.contraction).not.toBeNull();
+  });
+});
+
+describe('useResonance — wiring the contraction signal store', () => {
+  it('activates the signal when a generate pass returns a return_offer contraction', async () => {
+    const flush = jest.fn(async () => 42);
+    mockGenerate.mockResolvedValue(
+      resonancePayload({ contraction: contractionPayload({ variant: 'return_offer' }) }),
+    );
+    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+
+    await act(async () => {
+      await result.current.requestResonance();
+    });
+
+    expect(useContractionSignalStore.getState().active).toBe(true);
+  });
+
+  it('leaves the signal inactive when a generate pass returns a simple_ease_off contraction', async () => {
+    const flush = jest.fn(async () => 42);
+    mockGenerate.mockResolvedValue(
+      resonancePayload({ contraction: contractionPayload({ variant: 'simple_ease_off' }) }),
+    );
+    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+
+    await act(async () => {
+      await result.current.requestResonance();
+    });
+
+    expect(useContractionSignalStore.getState().active).toBe(false);
+  });
+
+  it('retracts a previously-active signal when a healthy pass returns no contraction', async () => {
+    act(() => {
+      useContractionSignalStore.getState().observe(contractionPayload({ variant: 'return_offer' }));
+    });
+    expect(useContractionSignalStore.getState().active).toBe(true);
+
+    const flush = jest.fn(async () => 42);
+    mockGenerate.mockResolvedValue(resonancePayload({ contraction: null }));
+    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+
+    await act(async () => {
+      await result.current.requestResonance();
+    });
+
+    expect(useContractionSignalStore.getState().active).toBe(false);
+  });
+
+  it('leaves the signal unchanged when a generate pass fails', async () => {
+    act(() => {
+      useContractionSignalStore.getState().observe(contractionPayload({ variant: 'return_offer' }));
+    });
+    expect(useContractionSignalStore.getState().active).toBe(true);
+
+    const flush = jest.fn(async () => 42);
+    mockGenerate.mockRejectedValue(new Error('network error'));
+    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+
+    await act(async () => {
+      await result.current.requestResonance();
+    });
+
+    expect(useContractionSignalStore.getState().active).toBe(true);
   });
 });

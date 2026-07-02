@@ -3,12 +3,13 @@
  * currently observed for the person. The Return offer is only ever surfaced
  * when this returns true AND the person is eligible.
  *
- * It returns ``false`` for now: the descriptive contraction detector lands in a
- * later slice, and until it does the offer stays quietly out of sight. Keeping
- * the decision behind this single named function means wiring the real detector
- * later is a one-line change, and every offer/accept path is already built and
- * tested against it.
+ * It reads the shared contraction-signal store, which the journal resonance
+ * pass feeds each time it observes a contraction. A reactive selector so a
+ * still-mounted Today tab re-renders the moment the signal flips.
  */
-export function isContractionSignalActive(): boolean {
-  return false;
+import { useContractionSignalStore } from '@/store/useContractionSignalStore';
+
+/** Reactive read of whether a contraction is currently observed for the person. */
+export function useContractionSignalActive(): boolean {
+  return useContractionSignalStore((s) => s.active);
 }
