@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -11,6 +12,9 @@ import {
 } from 'react-native';
 
 import { BYOK_PROVIDERS, providerForKey } from './byokProviders';
+import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
+import type { SettingsFormState } from './shared/useSettingsForm';
+import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
 
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { useApiKey } from '@/context/ApiKeyContext';
@@ -154,29 +158,6 @@ function useRemoveConfirmation(performClear: () => Promise<void>): () => void {
   }, [performClear]);
 }
 
-interface FeedbackBannerProps {
-  error: string | null;
-  status: string | null;
-}
-
-const FeedbackBanner = ({ error, status }: FeedbackBannerProps): React.JSX.Element | null => {
-  if (error) {
-    return (
-      <Text style={styles.error} testID="api-key-error">
-        {error}
-      </Text>
-    );
-  }
-  if (status) {
-    return (
-      <Text style={styles.success} testID="api-key-status">
-        {status}
-      </Text>
-    );
-  }
-  return null;
-};
-
 interface ScreenBodyProps {
   apiKey: string | null;
   draft: string;
@@ -314,7 +295,7 @@ const ScreenBody = ({
       onToggleReveal={onToggleReveal}
     />
     <DetectedProvider draft={draft} />
-    <FeedbackBanner error={error} status={status} />
+    <SettingsFeedbackBanner idPrefix="api-key" error={error} status={status} />
     <ScreenFooter
       submitting={submitting}
       onSave={onSave}
@@ -324,71 +305,31 @@ const ScreenBody = ({
   </>
 );
 
-interface ApiKeyScreenState {
-  draft: string;
-  reveal: boolean;
-  submitting: boolean;
-  error: string | null;
-  status: string | null;
-  setDraft: React.Dispatch<React.SetStateAction<string>>;
-  setReveal: React.Dispatch<React.SetStateAction<boolean>>;
-  setSubmitting: React.Dispatch<React.SetStateAction<boolean>>;
-  setError: React.Dispatch<React.SetStateAction<string | null>>;
-  setStatus: React.Dispatch<React.SetStateAction<string | null>>;
-}
-
-function useApiKeyScreenState(): ApiKeyScreenState {
-  const [draft, setDraft] = useState('');
-  const [reveal, setReveal] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
-  return {
-    draft,
-    reveal,
-    submitting,
-    error,
-    status,
-    setDraft,
-    setReveal,
-    setSubmitting,
-    setError,
-    setStatus,
-  };
-}
-
 function useSaveKeyHandler(
-  state: ApiKeyScreenState,
+  form: SettingsFormState,
+  setReveal: Dispatch<SetStateAction<boolean>>,
   saveApiKey: (_k: string) => Promise<void>,
 ): () => Promise<void> {
-  const { draft, setDraft, setReveal, setSubmitting, setError, setStatus } = state;
-  return useCallback(async () => {
-    setStatus(null);
-    const problem = validateUserApiKey(draft);
-    if (problem) {
-      setError(problem.message);
-      return;
-    }
-    setError(null);
-    setSubmitting(true);
-    try {
-      await saveApiKey(draft.trim());
-      setDraft('');
-      setReveal(false);
-      setStatus('API key saved on this device.');
-    } catch (err) {
-      setError((err as Error).message ?? 'Could not save the API key.');
-    } finally {
-      setSubmitting(false);
-    }
-  }, [draft, saveApiKey, setDraft, setReveal, setSubmitting, setError, setStatus]);
+  const { draft, setDraft, setStatus } = form;
+  const validate = useCallback(() => validateUserApiKey(draft)?.message ?? null, [draft]);
+  const perform = useCallback(async () => {
+    await saveApiKey(draft.trim());
+    setDraft('');
+    setReveal(false);
+    setStatus('API key saved on this device.');
+  }, [draft, saveApiKey, setDraft, setReveal, setStatus]);
+  const onError = useCallback(
+    (err: unknown) => (err as Error).message ?? 'Could not save the API key.',
+    [],
+  );
+  return useSettingsSubmit(form, { validate, perform, onError });
 }
 
 function useClearKeyHandler(
-  state: ApiKeyScreenState,
+  form: SettingsFormState,
   clearApiKey: () => Promise<void>,
 ): () => Promise<void> {
-  const { setStatus, setError, setSubmitting } = state;
+  const { setStatus, setError, setSubmitting } = form;
   return useCallback(async () => {
     setStatus(null);
     setSubmitting(true);
@@ -405,19 +346,21 @@ function useClearKeyHandler(
 
 export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.JSX.Element {
   const { apiKey, isLoading, saveApiKey, clearApiKey } = useApiKey();
-  const state = useApiKeyScreenState();
-  const handleSave = useSaveKeyHandler(state, saveApiKey);
-  const performClear = useClearKeyHandler(state, clearApiKey);
+  const form = useSettingsFormState('');
+  const [reveal, setReveal] = useState(false);
+  const handleSave = useSaveKeyHandler(form, setReveal, saveApiKey);
+  const performClear = useClearKeyHandler(form, clearApiKey);
   const handleRequestRemove = useRemoveConfirmation(performClear);
 
+  const { setDraft, setError } = form;
   const onChangeDraft = useCallback(
     (value: string) => {
-      state.setDraft(value);
-      state.setError(null);
+      setDraft(value);
+      setError(null);
     },
-    [state],
+    [setDraft, setError],
   );
-  const toggleReveal = useCallback(() => state.setReveal((prev) => !prev), [state]);
+  const toggleReveal = useCallback(() => setReveal((prev) => !prev), [setReveal]);
   const onBack = useMemo(
     () => (navigation?.goBack ? () => navigation.goBack?.() : undefined),
     [navigation],
@@ -439,11 +382,11 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
     <ScreenScaffold scroll testID="api-key-settings-screen">
       <ScreenBody
         apiKey={apiKey}
-        draft={state.draft}
-        reveal={state.reveal}
-        submitting={state.submitting}
-        error={state.error}
-        status={state.status}
+        draft={form.draft}
+        reveal={reveal}
+        submitting={form.submitting}
+        error={form.error}
+        status={form.status}
         onChangeDraft={onChangeDraft}
         onToggleReveal={toggleReveal}
         onRequestRemove={handleRequestRemove}
@@ -528,8 +471,6 @@ const styles = StyleSheet.create({
     backgroundColor: surface.sunken,
   },
   revealButtonText: { fontSize: 14, color: ink.primary, fontWeight: '600' },
-  error: { color: colors.destructive.text, marginBottom: SPACING.md },
-  success: { color: colors.successText, marginBottom: SPACING.md },
   button: { borderRadius: BORDER_RADIUS.md, padding: SPACING.md + 2, alignItems: 'center' },
   primaryButton: { backgroundColor: accent.primary, marginTop: SPACING.xs },
   primaryButtonText: { color: colors.text.light, fontSize: 16, fontWeight: '600' },

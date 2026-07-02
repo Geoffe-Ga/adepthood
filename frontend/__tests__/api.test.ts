@@ -57,10 +57,14 @@ describe('API client request composition', () => {
     );
   });
 
-  it('requests stage list with GET /stages', async () => {
-    await api.stages.list();
+  it('requests stage list with GET /stages via the paginated envelope', async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ items: [], total: 0, limit: 50, offset: 0, has_more: false }),
+    });
+    await api.stages.listAll();
     expect(fetch).toHaveBeenCalledWith(
-      `${mockBaseUrl}/stages`,
+      expect.stringContaining(`${mockBaseUrl}/stages?paginate=true`),
       expect.objectContaining(expectSignal),
     );
   });

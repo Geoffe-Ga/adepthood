@@ -1,5 +1,9 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+
+import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
+import type { SettingsFormState } from './shared/useSettingsForm';
+import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
 
 import { ApiError, users } from '@/api';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
@@ -56,77 +60,24 @@ const CurrentZoneCard = ({ zone }: { zone: string }): React.JSX.Element => (
   </View>
 );
 
-interface FeedbackBannerProps {
-  error: string | null;
-  status: string | null;
-}
-
-const FeedbackBanner = ({ error, status }: FeedbackBannerProps): React.JSX.Element | null => {
-  if (error) {
-    return (
-      <Text style={styles.error} testID="timezone-error">
-        {error}
-      </Text>
-    );
-  }
-  if (status) {
-    return (
-      <Text style={styles.success} testID="timezone-status">
-        {status}
-      </Text>
-    );
-  }
-  return null;
-};
-
-interface TimezoneScreenState {
-  draft: string;
-  submitting: boolean;
-  error: string | null;
-  status: string | null;
-  setDraft: React.Dispatch<React.SetStateAction<string>>;
-  setSubmitting: React.Dispatch<React.SetStateAction<boolean>>;
-  setError: React.Dispatch<React.SetStateAction<string | null>>;
-  setStatus: React.Dispatch<React.SetStateAction<string | null>>;
-}
-
-function useTimezoneScreenState(initialZone: string): TimezoneScreenState {
-  const [draft, setDraft] = useState(initialZone);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
-  return { draft, submitting, error, status, setDraft, setSubmitting, setError, setStatus };
-}
-
 function useSaveTimezoneHandler(
-  state: TimezoneScreenState,
+  form: SettingsFormState,
   applyTimezone: (_timezone: string) => void,
 ): () => Promise<void> {
-  const { draft, setSubmitting, setError, setStatus } = state;
-  return useCallback(async () => {
-    setStatus(null);
-    const candidate = draft.trim();
-    if (!candidate) {
-      setError(EMPTY_ZONE_MESSAGE);
-      return;
-    }
-    setError(null);
-    setSubmitting(true);
-    try {
-      const result = await users.updateMyTimezone({ timezone: candidate });
-      applyTimezone(result.timezone);
-      setStatus('Time zone updated. Streaks and daily stats now use it.');
-    } catch (err: unknown) {
-      setError(saveErrorMessage(err, candidate));
-    } finally {
-      setSubmitting(false);
-    }
-  }, [draft, applyTimezone, setSubmitting, setError, setStatus]);
+  const { draft, setStatus } = form;
+  const validate = useCallback(() => (draft.trim() ? null : EMPTY_ZONE_MESSAGE), [draft]);
+  const perform = useCallback(async () => {
+    const result = await users.updateMyTimezone({ timezone: draft.trim() });
+    applyTimezone(result.timezone);
+    setStatus('Time zone updated. Streaks and daily stats now use it.');
+  }, [draft, applyTimezone, setStatus]);
+  const onError = useCallback((err: unknown) => saveErrorMessage(err, draft.trim()), [draft]);
+  return useSettingsSubmit(form, { validate, perform, onError });
 }
 
 interface ScreenBodyProps {
   currentZone: string;
-  state: TimezoneScreenState;
+  state: SettingsFormState;
   onChangeDraft: (_value: string) => void;
   onUseDeviceZone: () => void;
   onSave: () => void;
@@ -221,14 +172,14 @@ const ScreenBody = ({
       onChangeDraft={onChangeDraft}
       onUseDeviceZone={onUseDeviceZone}
     />
-    <FeedbackBanner error={state.error} status={state.status} />
+    <SettingsFeedbackBanner idPrefix="timezone" error={state.error} status={state.status} />
     <ScreenFooter submitting={state.submitting} onSave={onSave} onBack={onBack} />
   </ScreenScaffold>
 );
 
 export default function TimezoneSettingsScreen({ navigation }: Props = {}): React.JSX.Element {
   const { userTimezone, setUserTimezone } = useAuth();
-  const state = useTimezoneScreenState(userTimezone);
+  const state = useSettingsFormState(userTimezone);
   const handleSave = useSaveTimezoneHandler(state, setUserTimezone);
 
   // Depend on the stable useState setters, not ``state`` itself — the hook
@@ -322,8 +273,6 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.md,
   },
   secondaryButtonText: { fontSize: 14, color: ink.primary, fontWeight: '600' },
-  error: { color: colors.destructive.text, marginBottom: SPACING.md },
-  success: { color: colors.successText, marginBottom: SPACING.md },
   primaryButton: {
     borderRadius: BORDER_RADIUS.md,
     padding: SAVE_BUTTON_PADDING,

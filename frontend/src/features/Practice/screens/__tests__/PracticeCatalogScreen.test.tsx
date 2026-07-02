@@ -272,7 +272,7 @@ describe('PracticeCatalogScreen — defaults wiring', () => {
     mockRoute.params = undefined;
   });
 
-  it('calls practices.list with includeMine when no override is provided', async () => {
+  it('calls practices.listAll with includeMine when no override is provided', async () => {
     mockPracticesList.mockResolvedValueOnce([presetA]);
     render(<PracticeCatalogScreen initialStage={3} />);
     await waitForLoad();

@@ -192,7 +192,7 @@ function useContentBody(source: ChapterReaderSource): {
     // The API call omits the explicit token — ``api/index.ts``'s
     // ``request()`` helper falls back to the global ``tokenGetter``
     // (set by ``AuthContext`` at sign-in), so the bearer header is
-    // attached automatically.  Same pattern as ``stagesApi.list()``
+    // attached automatically.  Same pattern as ``stagesApi.listAll()``
     // and the other "no explicit token" callers in the codebase.
     const promise = fetchBody(source);
 

@@ -98,7 +98,7 @@ const toApiPayload = (h: Habit): HabitCreatePayload => ({
   stage: h.stage,
 });
 
-const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.list>>): Habit[] =>
+const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.listAll>>): Habit[] =>
   apiHabits.map((h) => ({
     id: h.id,
     stage: h.stage ?? '',
@@ -439,7 +439,7 @@ const rescheduleAndPersist = (habit: Habit): Promise<void> => {
 // ---------------------------------------------------------------------------
 
 const handleApiSuccess = async (
-  apiHabits: Awaited<ReturnType<typeof habitsApi.list>>,
+  apiHabits: Awaited<ReturnType<typeof habitsApi.listAll>>,
   hasCachedData: boolean,
 ): Promise<boolean> => {
   // Only seed FALLBACK when the user is truly fresh: no cache, no live store, no API.

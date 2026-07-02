@@ -34,7 +34,7 @@ const SiteResourcesPanel = ({ onSelect }: SiteResourcesPanelProps): React.JSX.El
     // ``siteResources()`` is called without an explicit token — the
     // shared ``request()`` helper in ``api/index.ts`` falls back to the
     // global ``tokenGetter`` set by ``AuthContext``, matching how
-    // ``stagesApi.list()`` and other no-explicit-token callers work.
+    // ``stagesApi.listAll()`` and other no-explicit-token callers work.
     courseApi
       .siteResources()
       .then((list) => {
