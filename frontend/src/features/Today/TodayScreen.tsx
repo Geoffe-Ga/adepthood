@@ -16,6 +16,7 @@ import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { ShowcaseCard } from '@/components/layout/ShowcaseCard';
 import { STAGE_ORDER } from '@/design/tokens';
 import type { Habit } from '@/features/Habits/Habits.types';
+import { isHabitLockedToday } from '@/features/Habits/HabitUtils';
 import { useEntrance } from '@/hooks/useEntrance';
 import type { RootTabParamList } from '@/navigation/BottomTabs';
 import { useHabitStore } from '@/store/useHabitStore';
@@ -100,13 +101,17 @@ const TodayBand = ({ index, title, value, subtitle, onPress, testID }: BandProps
   );
 };
 
-/** Today's-habits band: skeleton while loading, empty state with no habits. */
+/** Today's-habits band: skeleton while loading, empty state with no habits.
+ *
+ * Counts only habits unlocked today (#1173): locked, not-yet-started habits
+ * cannot be completed, so including them made the denominator unreachable.
+ * Same lock rule as the Habits screen tiles (`isHabitLockedToday`).
+ */
 const HabitsBand = ({ index, onPress }: { index: number; onPress: () => void }) => {
   const loading = useHabitStore((state) => state.loading);
   const habits = useHabitStore((state) => state.habits);
-  const total = habits.length;
-  if (loading && total === 0) return <SkeletonCard testID="today-habits-skeleton" />;
-  if (total === 0) {
+  if (loading && habits.length === 0) return <SkeletonCard testID="today-habits-skeleton" />;
+  if (habits.length === 0) {
     return (
       <EmptyState
         glyph="🌱"
@@ -125,7 +130,21 @@ const HabitsBand = ({ index, onPress }: { index: number; onPress: () => void }) 
       />
     );
   }
-  const done = countDoneToday(habits);
+  const unlocked = habits.filter((h) => !isHabitLockedToday(h));
+  const total = unlocked.length;
+  if (total === 0) {
+    // Habits exist but none has unlocked yet — a count would read 0/0.
+    return (
+      <TodayBand
+        index={index}
+        title="Today's habits"
+        subtitle="Your first habit unlocks soon."
+        onPress={onPress}
+        testID="today-habits-band"
+      />
+    );
+  }
+  const done = countDoneToday(unlocked);
   return (
     <TodayBand
       index={index}

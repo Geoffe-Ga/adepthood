@@ -67,6 +67,14 @@ const makeHabit = (id: number, completedToday: boolean): Habit =>
       : [],
   }) as Habit;
 
+/** A habit still locked today: unrevealed with a calendar start_date in the future. */
+const makeLockedHabit = (id: number): Habit =>
+  ({
+    ...makeHabit(id, false),
+    revealed: false,
+    start_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+  }) as Habit;
+
 const makeWeek = (weekNumber: number): ReturnWeek => ({
   week_number: weekNumber,
   focus: 'self',
@@ -108,6 +116,44 @@ describe('TodayScreen', () => {
     expect(getByText('1/2 done')).toBeTruthy();
     fireEvent.press(getByTestId('today-habits-band'));
     expect(mockNavigate).toHaveBeenCalledWith('Habits');
+  });
+
+  it('excludes locked habits from the daily count (#1173)', () => {
+    useHabitStore.setState({
+      habits: [
+        makeHabit(1, true),
+        makeHabit(2, false),
+        makeHabit(3, false),
+        makeLockedHabit(4),
+        makeLockedHabit(5),
+        makeLockedHabit(6),
+        makeLockedHabit(7),
+      ],
+      loading: false,
+    });
+    const { getByText } = render(<TodayScreen />);
+    expect(getByText('1/3 done')).toBeTruthy();
+  });
+
+  it('celebrates completion of every unlocked habit even while later habits stay locked', () => {
+    useHabitStore.setState({
+      habits: [makeHabit(1, true), makeHabit(2, true), makeLockedHabit(3)],
+      loading: false,
+    });
+    const { getByText } = render(<TodayScreen />);
+    expect(getByText('2/2 done')).toBeTruthy();
+    expect(getByText('All caught up — beautiful.')).toBeTruthy();
+  });
+
+  it('shows neither the empty state nor a 0/0 count when every habit is still locked', () => {
+    useHabitStore.setState({
+      habits: [makeLockedHabit(1), makeLockedHabit(2)],
+      loading: false,
+    });
+    const { getByTestId, queryByTestId, queryByText } = render(<TodayScreen />);
+    expect(queryByTestId('today-habits-empty-cta')).toBeNull();
+    expect(queryByText('0/0 done')).toBeNull();
+    expect(getByTestId('today-habits-band')).toBeTruthy();
   });
 
   it('shows a habits skeleton while loading', () => {
