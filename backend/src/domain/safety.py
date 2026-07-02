@@ -93,7 +93,9 @@ _PATTERNS: tuple[tuple[DistressCategory, tuple[str, ...]], ...] = (
             r"better off dead",
             r"suicidal",
             r"commit suicide",
-            r"don'?t want to (?:be alive|live) anymore",
+            r"don'?t want to (?:be alive(?: anymore)?|live anymore)",
+            r"no longer want to (?:be alive|live anymore)",
+            r"wish i wasn'?t here",
         ),
     ),
     (
