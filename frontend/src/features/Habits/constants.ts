@@ -1,3 +1,13 @@
+/**
+ * The habit ceiling: the maximum number of habits a user can track.
+ *
+ * Ten is a causally-coupled product constant — it simultaneously drives the
+ * onboarding cap, the Habits list page size, and the tile-layout row divisor
+ * (see `useTileLayout`). These must move together, so they all derive from this
+ * single value rather than repeating the literal.
+ */
+export const MAX_HABITS = 10;
+
 export const DEFAULT_ICONS = [
   '🧘',
   '🏃',

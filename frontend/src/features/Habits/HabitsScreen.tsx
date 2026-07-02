@@ -28,6 +28,7 @@ import MissedDaysModal from './components/MissedDaysModal';
 import OnboardingModal from './components/OnboardingModal';
 import ReorderHabitsModal from './components/ReorderHabitsModal';
 import StatsModal from './components/StatsModal';
+import { MAX_HABITS } from './constants';
 import styles from './Habits.styles';
 import type { AddHabitInput, Habit, HabitStatsData } from './Habits.types';
 import HabitTile, { useTileLayout } from './HabitTile';
@@ -41,8 +42,8 @@ import { useHabits } from './hooks/useHabits';
 import { useModalCoordinator } from './hooks/useModalCoordinator';
 import { usePagination } from './hooks/usePagination';
 
-/** Habits per page. Ten is the design ceiling that fills the screen 1-up on mobile and 2x5 on landscape/desktop. */
-const HABITS_PER_PAGE = 10;
+/** Habits per page — the ceiling that fills the screen 1-up on mobile and 2x5 on landscape/desktop. */
+const HABITS_PER_PAGE = MAX_HABITS;
 
 interface MenuItemProps {
   icon: React.ReactNode;
