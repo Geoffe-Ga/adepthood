@@ -172,6 +172,65 @@ async def test_spend_one_message_returns_none_when_both_empty(db_session: AsyncS
 
 
 @pytest.mark.asyncio
+async def test_monthly_bucket_cannot_be_overspent_at_cap(db_session: AsyncSession) -> None:
+    """Two spends at monthly ``cap-1`` debit exactly once each; the second cannot exceed the cap.
+
+    Exercises the headline "concurrent requests can never overspend"
+    invariant at the boundary the docstring names: once
+    ``monthly_messages_used`` reaches the cap, the atomic
+    ``UPDATE ... WHERE monthly_messages_used < cap`` no longer matches, so
+    the second debit falls through to ``offering_balance`` instead of
+    pushing the monthly counter to ``cap + 1``.
+    """
+    user = await _make_user(db_session, monthly_used=_MONTHLY_CAP - 1, offering_balance=1)
+    assert user.id is not None
+
+    first = await spend_one_message(db_session, user.id, _MONTHLY_CAP)
+    await db_session.commit()
+    assert first == SpendResult(monthly_used=_MONTHLY_CAP, offering_balance=1)
+
+    second = await spend_one_message(db_session, user.id, _MONTHLY_CAP)
+    await db_session.commit()
+    # The monthly bucket is full, so the second debit is served by offerings.
+    assert second == SpendResult(monthly_used=_MONTHLY_CAP, offering_balance=0)
+
+    refreshed = await get_user_fresh(db_session, user.id)
+    assert refreshed is not None
+    assert refreshed.monthly_messages_used == _MONTHLY_CAP  # never cap + 1
+    assert refreshed.offering_balance == 0
+    # One monthly-spend row + one offering-spend row, and nothing over-debited.
+    rows = await _audit_rows(db_session, user.id)
+    assert [row.bucket for row in rows] == [BUCKET_MONTHLY, BUCKET_OFFERING]
+
+
+@pytest.mark.asyncio
+async def test_offering_bucket_cannot_be_overspent_at_zero(db_session: AsyncSession) -> None:
+    """Two spends against a single offering credit debit once, then floor at zero.
+
+    Pins the second half of the overspend invariant: with the monthly
+    bucket already full, the atomic ``UPDATE ... WHERE offering_balance > 0``
+    blocks the second debit rather than driving the balance negative, and
+    the blocked spend writes no audit row.
+    """
+    user = await _make_user(db_session, monthly_used=_MONTHLY_CAP, offering_balance=1)
+    assert user.id is not None
+
+    first = await spend_one_message(db_session, user.id, _MONTHLY_CAP)
+    await db_session.commit()
+    assert first == SpendResult(monthly_used=_MONTHLY_CAP, offering_balance=0)
+
+    second = await spend_one_message(db_session, user.id, _MONTHLY_CAP)
+    await db_session.commit()
+    assert second is None  # both buckets empty -> caller must 402
+
+    refreshed = await get_user_fresh(db_session, user.id)
+    assert refreshed is not None
+    assert refreshed.offering_balance == 0  # never -1
+    # Exactly one audit row: the blocked second spend stages nothing.
+    assert len(await _audit_rows(db_session, user.id)) == 1
+
+
+@pytest.mark.asyncio
 async def test_preflight_deduction_returns_spend_result(db_session: AsyncSession) -> None:
     user = await _make_user(db_session, monthly_used=0)
     assert user.id is not None
