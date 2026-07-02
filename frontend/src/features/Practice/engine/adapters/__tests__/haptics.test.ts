@@ -1,19 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import * as Haptics from 'expo-haptics';
 
-import { createExpoHapticsAdapter, createNoopHapticsAdapter } from '../haptics';
+import { createExpoHapticsAdapter } from '../haptics';
 
 const impactMock = Haptics.impactAsync as jest.MockedFunction<typeof Haptics.impactAsync>;
 const notificationMock = Haptics.notificationAsync as jest.MockedFunction<
   typeof Haptics.notificationAsync
 >;
-
-describe('createNoopHapticsAdapter', () => {
-  it('returns an adapter that ignores cue calls', () => {
-    const adapter = createNoopHapticsAdapter();
-    expect(() => adapter.cue('start_bell')).not.toThrow();
-  });
-});
 
 describe('createExpoHapticsAdapter', () => {
   beforeEach(() => {

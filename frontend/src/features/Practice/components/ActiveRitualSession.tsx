@@ -23,6 +23,7 @@
  *     `useWeeklyProgress` callbacks so the bar reconciles with server truth.
  *   - Activate keep-awake while the engine is `running` (not for the whole
  *     active-card lifetime).
+ *   - Inject the expo-haptics adapter so ritual cues emit tactile feedback.
  */
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -42,10 +43,12 @@ import RitualConfiguratorSheet from '@/features/Practice/configurator/RitualConf
 import type { PickedCard } from '@/features/Practice/data/resolveCard';
 import { buildCardMeditationMetadata, pickCard } from '@/features/Practice/data/resolveCard';
 import { cardForDayIndex } from '@/features/Practice/data/tarot';
+import { createExpoHapticsAdapter } from '@/features/Practice/engine/adapters/haptics';
 import { scheduledCues } from '@/features/Practice/engine/cues';
 import { totalSteps, totalStepsPerRound } from '@/features/Practice/engine/tallied';
 import type {
   CardMeditationConfig,
+  EngineDeps,
   IntervalBellConfig,
   MindfulAnchorMetadata,
   ModeConfig,
@@ -235,9 +238,14 @@ function useHarvestedMetadata(
   };
 }
 
+function useEngineDeps(tarotCardIndex: number): EngineDeps {
+  const [haptics] = useState(() => createExpoHapticsAdapter());
+  return useMemo(() => ({ startCardIndex: tarotCardIndex, haptics }), [tarotCardIndex, haptics]);
+}
+
 function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
   const tarotCardIndex = useTarotCardIndex(props);
-  const engineDeps = useMemo(() => ({ startCardIndex: tarotCardIndex }), [tarotCardIndex]);
+  const engineDeps = useEngineDeps(tarotCardIndex);
   const [state, controls] = useRitualEngine(props.effectiveConfig, engineDeps);
   useKeepAwakeWhileRunning(state.status);
   const window = useCompletionWindow(state.status);

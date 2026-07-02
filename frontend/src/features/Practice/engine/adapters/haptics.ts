@@ -5,11 +5,6 @@ import * as Haptics from 'expo-haptics';
 
 import type { CueKind, HapticsAdapter } from '../types';
 
-/** No-op adapter for tests and platforms without haptic hardware. */
-export function createNoopHapticsAdapter(): HapticsAdapter {
-  return { cue: () => undefined };
-}
-
 export function createExpoHapticsAdapter(): HapticsAdapter {
   return {
     cue: (kind) => {
