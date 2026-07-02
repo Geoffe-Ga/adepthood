@@ -10,8 +10,10 @@ import type { StageAnchors } from './waveGeometry';
 /**
  * Continuous sine-wave artwork for the Map's center column, rendered behind the
  * per-stage tap cells. The wave rises upward like a struck tuning fork, wobbling
- * left for even stages and right for odd ones and converging toward center at
- * the top. Each segment and arrowhead carries its stage's textColor.
+ * left for even stages and right for odd ones and tapering toward center at the
+ * top. Each segment draws a faded far-side path behind its full-opacity near
+ * side so the whole reads as a three-dimensional coil. Each segment and
+ * arrowhead carries its stage's textColor.
  *
  * The overlay is purely decorative: it is non-interactive and hidden from the
  * accessibility tree so the stage hotspots remain the sole tap/read targets.
@@ -19,6 +21,17 @@ import type { StageAnchors } from './waveGeometry';
 
 /** Stroke thickness of each wave segment, in pixels. */
 const WAVE_STROKE_WIDTH = 3;
+
+/** Stroke opacity of the faded far half of each coil turn (< 1). */
+const FAR_SIDE_OPACITY = 0.35;
+
+/** Stroke styling shared by every wave path, near and far alike. */
+const WAVE_STROKE_PROPS = {
+  fill: 'none',
+  strokeWidth: WAVE_STROKE_WIDTH,
+  strokeLinecap: 'round',
+  strokeLinejoin: 'round',
+} as const;
 
 /** Smallest positive layout extent worth drawing; below it there is no wave. */
 const MIN_DRAWABLE_EXTENT = 1;
@@ -53,13 +66,21 @@ export const WaveOverlay = ({
     >
       {segments.map((segment) => (
         <Path
-          key={segment.stageNumber}
+          key={`far-${segment.stageNumber}`}
+          testID={`far-${segment.stageNumber}`}
+          d={segment.farD}
+          stroke={segment.color}
+          strokeOpacity={FAR_SIDE_OPACITY}
+          {...WAVE_STROKE_PROPS}
+        />
+      ))}
+      {segments.map((segment) => (
+        <Path
+          key={`near-${segment.stageNumber}`}
+          testID={`near-${segment.stageNumber}`}
           d={segment.d}
           stroke={segment.color}
-          fill="none"
-          strokeWidth={WAVE_STROKE_WIDTH}
-          strokeLinecap="round"
-          strokeLinejoin="round"
+          {...WAVE_STROKE_PROPS}
         />
       ))}
       {arrowheads.map((arrowhead) => (
