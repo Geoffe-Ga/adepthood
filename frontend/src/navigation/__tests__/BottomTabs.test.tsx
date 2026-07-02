@@ -133,7 +133,7 @@ describe('BottomTabs', () => {
     // The focused tab's icon may render more than once (active-state
     // animation in @react-navigation/bottom-tabs); only assert each icon
     // appears at least once, which is what makeTabIcon being invoked
-    // for every TAB_CONFIGS entry guarantees.
+    // for every assembled tab (LEADING_TABS + rings + TRAILING_TABS) guarantees.
     for (const Icon of [Home, Sprout, Flower2, BookOpen, NotebookPen, Compass]) {
       expect(UNSAFE_getAllByType(Icon).length).toBeGreaterThanOrEqual(1);
     }
