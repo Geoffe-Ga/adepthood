@@ -17,7 +17,7 @@ import { EmptyState } from '../../components/feedback/EmptyState';
 import { EditorialSection } from '../../components/layout/EditorialSection';
 import { ScreenHeader } from '../../components/layout/ScreenHeader';
 import { ShowcaseCard } from '../../components/layout/ShowcaseCard';
-import { STAGE_COLORS, colors } from '../../design/tokens';
+import { resolveStageColor } from '../../design/tokens';
 import { useAppRoute } from '../../navigation/hooks';
 import type { RootStackParamList } from '../../navigation/RootStack';
 import { useProgramStore, programStage } from '../../store/useProgramStore';
@@ -125,9 +125,6 @@ function useStageContent(selectedStage: number, stagesLoaded: boolean) {
 
 // --- Sub-components ---
 
-const stageAccent = (spiralColor: string | undefined): string =>
-  spiralColor ? STAGE_COLORS[spiralColor] ?? colors.neutral : colors.neutral;
-
 const stageIsComplete = (progress: CourseProgress | null): boolean =>
   progress != null && progress.total_items > 0 && progress.read_items >= progress.total_items;
 
@@ -140,7 +137,7 @@ interface StageCoverProps {
 /** The showcase "book cover" for the selected stage: serif title, Spiral-Dynamics
  *  accent rule, progress arc, and a celebration when the stage is finished. */
 const StageCover = ({ stage, progress, spiralColor }: StageCoverProps): React.JSX.Element => {
-  const accentColor = stageAccent(spiralColor);
+  const accentColor = resolveStageColor(spiralColor);
   const percent = progress ? progress.progress_percent : 0;
   const complete = stageIsComplete(progress);
   return (
@@ -201,7 +198,7 @@ const CourseProgressBar = ({
   error = false,
 }: ProgressBarProps): React.JSX.Element => {
   const progressPercent = progress ? progress.progress_percent : 0;
-  const barColor = spiralColor ? STAGE_COLORS[spiralColor] ?? colors.neutral : colors.neutral;
+  const barColor = resolveStageColor(spiralColor);
 
   return (
     <View style={styles.progressBarContainer} testID="progress-bar">

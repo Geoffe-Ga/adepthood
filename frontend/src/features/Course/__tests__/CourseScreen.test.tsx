@@ -1,8 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { StyleSheet } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
+import { colors, STAGE_COLORS } from '../../../design/tokens';
+
+function backgroundColorOf(style: StyleProp<ViewStyle>): string {
+  const flat = StyleSheet.flatten(style) ?? {};
+  return (flat.backgroundColor as string | undefined) ?? '';
+}
 
 const makeStage = (overrides: Partial<Stage> = {}): Stage => ({
   id: 1,
@@ -523,5 +531,61 @@ describe('single scroll surface', () => {
     const list = within(getByTestId('content-list'));
     expect(list.getByText('Welcome Essay')).toBeTruthy();
     expect(list.getByTestId('stage-cover')).toBeTruthy();
+  });
+});
+
+// Pins the rendered Spiral-Dynamics accent so the shared color resolver can
+// never silently change what the cover and progress bar are tinted with.
+describe('CourseScreen Spiral-Dynamics accent colors', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockStagesList.mockResolvedValue(sampleStages);
+    mockStageContent.mockResolvedValue(sampleContent);
+    mockStageProgress.mockResolvedValue(sampleProgress);
+    mockStageIntro.mockRejectedValue({ detail: 'content_not_found' });
+  });
+
+  it('tints the stage cover progress with the selected stage color', async () => {
+    // Default selection is stage 2 (Purple).
+    const { getByTestId } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(backgroundColorOf(getByTestId('stage-cover-progress').props.style)).toBe(
+        STAGE_COLORS['Purple'],
+      );
+    });
+  });
+
+  it('tints the course progress bar fill with the same selected stage color', async () => {
+    const { getByTestId } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(backgroundColorOf(getByTestId('progress-bar-fill').props.style)).toBe(
+        STAGE_COLORS['Purple'],
+      );
+    });
+  });
+
+  it('falls back to the neutral color when the stage color is unrecognized', async () => {
+    const mauveStages: Stage[] = [
+      makeStage({ id: 1, stage_number: 1, is_unlocked: true, progress: 1 }),
+      makeStage({
+        id: 2,
+        stage_number: 2,
+        spiral_dynamics_color: 'Mauve',
+        is_unlocked: true,
+        progress: 0,
+      }),
+    ];
+    mockStagesList.mockResolvedValue(mauveStages);
+
+    const { getByTestId } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(backgroundColorOf(getByTestId('stage-cover-progress').props.style)).toBe(
+        colors.neutral,
+      );
+      expect(backgroundColorOf(getByTestId('progress-bar-fill').props.style)).toBe(colors.neutral);
+    });
   });
 });

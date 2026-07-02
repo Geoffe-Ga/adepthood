@@ -2,7 +2,7 @@ import React from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
 import type { Stage } from '../../api';
-import { STAGE_COLORS, STAGE_ORDER, colors } from '../../design/tokens';
+import { STAGE_ORDER, resolveStageColor } from '../../design/tokens';
 
 import styles from './Course.styles';
 
@@ -20,12 +20,11 @@ interface StageSelectorProps {
 
 /** Get the spiral dynamics color for a stage number (1-indexed). */
 function getStageColor(stageNumber: number, stageById: Map<number, Stage>): string {
-  const stage = stageById.get(stageNumber);
-  if (stage) {
-    return STAGE_COLORS[stage.spiral_dynamics_color] ?? colors.neutral;
-  }
-  const name = STAGE_ORDER[stageNumber - 1];
-  return name ? STAGE_COLORS[name] ?? colors.neutral : colors.neutral;
+  // Prefer the stage's own API color; fall back to its progression-order name
+  // when the API omits that stage number. The shared resolver handles the
+  // neutral fallback for missing or unrecognized names.
+  const name = stageById.get(stageNumber)?.spiral_dynamics_color ?? STAGE_ORDER[stageNumber - 1];
+  return resolveStageColor(name);
 }
 
 /** Determine if a stage is unlocked based on API data. */
