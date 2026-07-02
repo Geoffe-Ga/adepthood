@@ -85,11 +85,9 @@ Everything happens in the **content repo**, then gets vendored here:
 The seeder never deletes rows (deletion would orphan
 `ContentCompletion` read-marks). A chapter dropped from the manifest
 simply stops being referenced; write a one-off migration if a row must
-actually go. Stages the manifest does not cover yet keep placeholder
-rows (`seed_content.py`); those suppress automatically once the
-manifest ships the stage. If the manifest instead ships a stage with
-no matching `CourseStage` row (stages and content seeded out of
-order, or a stage rollback orphaned content), seeding fails loudly
+actually go. If the manifest instead ships a stage with no matching
+`CourseStage` row (stages and content seeded out of order, or a stage
+rollback orphaned content), seeding fails loudly
 before writing anything, surfacing as `seed_failed seeder=content` in
 the boot logs; boot continues regardless.
 
