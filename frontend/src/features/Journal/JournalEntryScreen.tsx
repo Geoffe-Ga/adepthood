@@ -191,8 +191,12 @@ function useTimerCleanup(timerRef: React.MutableRefObject<ReturnType<typeof setT
 
 interface ClassificationPersist {
   classificationRef: React.MutableRefObject<JournalClassification>;
-  /** Record the tier for the next create and PATCH it when the entry exists. */
-  changeClassification: (_tier: JournalClassification) => void;
+  /**
+   * Record the tier for the next create and PATCH it when the entry exists.
+   * Resolves to the tier the UI should revert to when a PATCH fails and no later
+   * change has superseded it, else null.
+   */
+  changeClassification: (_tier: JournalClassification) => Promise<JournalClassification | null>;
 }
 
 /**
@@ -205,10 +209,21 @@ function useClassificationPersist(
 ): ClassificationPersist {
   const classificationRef = useRef<JournalClassification>(DEFAULT_CLASSIFICATION);
   const changeClassification = useCallback(
-    (tier: JournalClassification): void => {
+    async (tier: JournalClassification): Promise<JournalClassification | null> => {
+      const previous = classificationRef.current;
       classificationRef.current = tier;
-      if (entryIdRef.current != null) {
-        void journal.update(entryIdRef.current, { classification: tier });
+      // Create-time: the ref rides the next journal.create, nothing to PATCH yet.
+      if (entryIdRef.current == null) return null;
+      try {
+        await journal.update(entryIdRef.current, { classification: tier });
+        return null;
+      } catch {
+        // A rapid superseding change already owns the ref and the UI — leave both
+        // to it rather than reverting to this now-stale tier. Assumes one PATCH in
+        // flight at a time; ``previous`` is the optimistic ref, not last-persisted.
+        if (classificationRef.current !== tier) return null;
+        classificationRef.current = previous;
+        return previous;
       }
     },
     [entryIdRef],
@@ -302,7 +317,17 @@ function useDebouncedSave(
   const setTyping = useCallback(() => setSaveState('typing'), []);
   const { save, flush } = useSaveTimer(run, timerRef, entryIdRef, delayMs, setTyping);
 
-  return { saveState, save, flush, changeClassification };
+  // A failed classification PATCH surfaces the same error hint as a body save.
+  const persistClassification = useCallback(
+    async (tier: JournalClassification): Promise<JournalClassification | null> => {
+      const revertTo = await changeClassification(tier);
+      if (revertTo != null) setSaveState('error');
+      return revertTo;
+    },
+    [changeClassification],
+  );
+
+  return { saveState, save, flush, changeClassification: persistClassification };
 }
 
 type StrRef = React.MutableRefObject<string>;
@@ -418,11 +443,15 @@ function useJournalAutosave(
     () => flush(titleRef.current, bodyRef.current),
     [flush, titleRef, bodyRef],
   );
-  // Reflect the choice in the control, then persist it (create-time ref or PATCH).
+  // Reflect the choice optimistically, then persist it (create-time ref or PATCH);
+  // a failed PATCH resolves to the prior tier so the control reverts to the truth,
+  // unless a later change superseded it (then it resolves null and we keep that).
   const onChangeClassification = useCallback(
     (tier: PrivacyTier) => {
       setClassification(tier);
-      changeClassification(tier);
+      void changeClassification(tier).then((revertTo) => {
+        if (revertTo != null) setClassification(revertTo);
+      });
     },
     [changeClassification, setClassification],
   );
