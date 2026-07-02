@@ -338,6 +338,31 @@ describe('PracticeScreen', () => {
     );
   });
 
+  it('renders an active custom (draft) practice by including own drafts in the catalogue fetch', async () => {
+    // A user-created practice is an unapproved draft: the backend lets its
+    // author select it (POST /user-practices/ succeeds), but the approved-only
+    // practices list omits it. The screen must fetch with includeMine so the
+    // active row's practice resolves — otherwise the saved selection falls
+    // into the "No practice yet" empty state (custom-practices selection bug).
+    const draft = samplePractice({
+      id: 42,
+      name: 'My Custom Sit',
+      approved: false,
+      submitted_by_user_id: 1,
+    });
+    mockPracticesList.mockImplementation((options: unknown) => {
+      const includeMine =
+        typeof options === 'object' &&
+        options !== null &&
+        (options as { includeMine?: boolean }).includeMine === true;
+      return Promise.resolve(includeMine ? [samplePractice(), draft] : [samplePractice()]);
+    });
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice({ practice_id: 42 })]);
+    const { getByTestId, queryByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+    expect(queryByTestId('practice-empty-state')).toBeNull();
+  });
+
   it('wraps the running session mode view in the calm SessionSurface', async () => {
     // The active session now provides the calm lifted-paper surface to the mode
     // view, so the interior renders on the light raised ground; the deep umber
