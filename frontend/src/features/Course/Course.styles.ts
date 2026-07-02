@@ -134,17 +134,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
   },
-  stageTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: ink.primary,
-    marginBottom: 2,
-  },
-  stageSubtitle: {
-    fontSize: 14,
-    color: ink.soft,
-    marginBottom: SPACING.sm,
-  },
   stageDetailRow: {
     flexDirection: 'row',
     gap: SPACING.md,

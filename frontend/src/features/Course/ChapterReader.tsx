@@ -46,7 +46,7 @@ interface ChapterReaderProps {
  * the content repo — nothing the OS can open — so taps on them are
  * swallowed rather than thrown at the system as broken URLs.
  */
-function handleLinkPress(url: string): boolean {
+function isExternalWebUrl(url: string): boolean {
   return url.startsWith('https://') || url.startsWith('http://');
 }
 
@@ -62,7 +62,7 @@ function handleLinkPress(url: string): boolean {
 const markdownRules = {
   image: (node: { key?: string; attributes?: { src?: string; alt?: string } }): React.ReactNode => {
     const src = node.attributes?.src ?? '';
-    if (!handleLinkPress(src)) {
+    if (!isExternalWebUrl(src)) {
       return null;
     }
     // RN's Image with bounded sizing instead of the library's FitImage
@@ -151,9 +151,7 @@ const EmptyView = (): React.JSX.Element => (
   </View>
 );
 
-function describeError(): string {
-  return 'This chapter couldn’t load right now. Please try again.';
-}
+const READER_ERROR_MESSAGE = 'This chapter couldn’t load right now. Please try again.';
 
 function fetchBody(source: ChapterReaderSource): Promise<ContentBody> {
   switch (source.kind) {
@@ -203,7 +201,7 @@ function useContentBody(source: ChapterReaderSource): {
       })
       .catch(() => {
         if (!isMountedRef.current) return;
-        setError(describeError());
+        setError(READER_ERROR_MESSAGE);
       })
       .finally(() => {
         if (!isMountedRef.current) return;
@@ -229,7 +227,7 @@ function renderBody(body: ContentBody): React.ReactElement {
     >
       <View style={styles.readerSheet}>
         <ReaderSheetHeader eyebrow={READER_EYEBROWS[body.content_type]} title={body.title} />
-        <Markdown style={markdownStyles} rules={markdownRules} onLinkPress={handleLinkPress}>
+        <Markdown style={markdownStyles} rules={markdownRules} onLinkPress={isExternalWebUrl}>
           {markdown}
         </Markdown>
       </View>
