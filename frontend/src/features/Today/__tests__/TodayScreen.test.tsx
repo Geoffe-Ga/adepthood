@@ -67,6 +67,23 @@ const makeHabit = (id: number, completedToday: boolean): Habit =>
       : [],
   }) as Habit;
 
+const DAYS_AHEAD_MS = 12 * 24 * 60 * 60 * 1000;
+
+const makeLockedHabit = (id: number): Habit =>
+  ({
+    id,
+    stage: 'beige',
+    name: `Habit ${id}`,
+    icon: '🌱',
+    streak: 0,
+    energy_cost: 1,
+    energy_return: 2,
+    start_date: new Date(Date.now() + DAYS_AHEAD_MS),
+    revealed: false,
+    goals: [],
+    completions: [],
+  }) as Habit;
+
 const makeWeek = (weekNumber: number): ReturnWeek => ({
   week_number: weekNumber,
   focus: 'self',
@@ -124,6 +141,48 @@ describe('TodayScreen', () => {
     const { getByText } = render(<TodayScreen />);
     expect(getByText('2/2 done')).toBeTruthy();
     expect(getByText('All caught up — beautiful.')).toBeTruthy();
+  });
+
+  it('counts only unlocked habits in the daily total (locked habits excluded)', () => {
+    useHabitStore.setState({
+      habits: [
+        makeHabit(1, true),
+        makeHabit(2, false),
+        makeHabit(3, false),
+        makeLockedHabit(4),
+        makeLockedHabit(5),
+        makeLockedHabit(6),
+        makeLockedHabit(7),
+      ],
+      loading: false,
+    });
+    const { getByText, queryByText } = render(<TodayScreen />);
+    expect(getByText('1/3 done')).toBeTruthy();
+    expect(queryByText('1/7 done')).toBeNull();
+  });
+
+  it('celebrates when every unlocked habit is done even while later habits stay locked', () => {
+    useHabitStore.setState({
+      habits: [makeHabit(1, true), makeHabit(2, true), makeLockedHabit(3)],
+      loading: false,
+    });
+    const { getByText } = render(<TodayScreen />);
+    expect(getByText('2/2 done')).toBeTruthy();
+    expect(getByText('All caught up — beautiful.')).toBeTruthy();
+  });
+
+  it('shows neither the empty state nor 0/0 when every habit is still locked', () => {
+    useHabitStore.setState({
+      habits: [makeLockedHabit(1), makeLockedHabit(2)],
+      loading: false,
+    });
+    const { queryByText, queryByTestId, getByTestId } = render(<TodayScreen />);
+    expect(queryByText('No habits yet')).toBeNull();
+    expect(queryByTestId('today-habits-empty-cta')).toBeNull();
+    // No misleading "x/y done" count when nothing is unlocked yet.
+    expect(queryByText(/done/)).toBeNull();
+    // The band still renders so the tab remains reachable.
+    expect(getByTestId('today-habits-band')).toBeTruthy();
   });
 
   it('shows a habits skeleton while loading', () => {
