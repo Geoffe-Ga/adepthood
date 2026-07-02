@@ -27,6 +27,11 @@ from domain.safety import DistressCategory, DistressSignal, assess_distress
         ("I'm quitting my antidepressants.", DistressCategory.MEDICATION_CESSATION),
         ("I went off my medication last week.", DistressCategory.MEDICATION_CESSATION),
         ("I flushed my pills down the toilet.", DistressCategory.MEDICATION_CESSATION),
+        ("I no longer want to be alive anymore", DistressCategory.SUICIDAL_INTENT),
+        ("I no longer want to be alive", DistressCategory.SUICIDAL_INTENT),
+        ("I don't want to be alive", DistressCategory.SUICIDAL_INTENT),
+        ("I no longer want to live anymore", DistressCategory.SUICIDAL_INTENT),
+        ("I wish I wasn't here", DistressCategory.SUICIDAL_INTENT),
     ],
 )
 def test_acute_phrases_flag_elevated_with_category(text: str, category: DistressCategory) -> None:
@@ -53,6 +58,7 @@ _ORDINARY_DARKNESS = [
     "I cried myself to sleep again.",
     "I feel hopeless about the future.",
     "My heart is broken after the breakup.",
+    "I no longer want to live in fear.",
 ]
 
 
@@ -103,6 +109,8 @@ _NEGATED_DENIALS = [
     "I no longer want to die",
     "I used to cut myself",
     f"I don{_CURLY}t want to die",
+    "I would never say I no longer want to be alive",
+    "I don't wish I wasn't here",
 ]
 
 
@@ -127,6 +135,7 @@ def test_negated_denials_do_not_flag(text: str) -> None:
         ("No. I want to kill myself tonight.", DistressCategory.SUICIDAL_INTENT),
         ("I don't want to be alive anymore", DistressCategory.SUICIDAL_INTENT),
         (f"I don{_CURLY}t want to be alive anymore", DistressCategory.SUICIDAL_INTENT),
+        (f"I wish I wasn{_CURLY}t here", DistressCategory.SUICIDAL_INTENT),
         ("Now more than I used to I want to die", DistressCategory.SUICIDAL_INTENT),
         ("I am not okay and lonely and I want to die", DistressCategory.SUICIDAL_INTENT),
     ],
