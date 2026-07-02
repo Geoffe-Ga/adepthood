@@ -1,9 +1,13 @@
+import asyncio
 import re
+from http import HTTPStatus
 
 import pytest
 from fastapi.testclient import TestClient
 from httpx import AsyncClient
 
+import main
+from conftest import db_error_session, failing_probe_session, probe_via_session
 from main import app
 
 client = TestClient(app)
@@ -66,3 +70,53 @@ async def test_health_reports_content_version(async_client: AsyncClient) -> None
     content_version = body["content_version"]
     assert content_version != "none"
     assert re.fullmatch(r"[0-9a-f]{40}", content_version)
+
+
+@pytest.mark.asyncio
+async def test_readiness_returns_503_when_db_unavailable() -> None:
+    """``/health/ready`` returns 503 ``not_ready`` when the DB probe errors.
+
+    Drives the readiness failure branch deterministically -- the probe's
+    ``SELECT 1`` raises ``SQLAlchemyError`` -- so a regression that swallowed the
+    error or returned 200 would fail this test (unlike the environment-dependent
+    tautology this replaces).
+    """
+    response = await probe_via_session("/health/ready", db_error_session())
+    assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert response.json()["detail"] == "not_ready"
+
+
+@pytest.mark.asyncio
+async def test_readiness_returns_503_when_db_socket_drops() -> None:
+    """``/health/ready`` returns 503 when the probe raises ``OSError``.
+
+    Pins the ``OSError`` member of the probe's caught-exception tuple (a dropped
+    socket / connection reset) alongside the ``SQLAlchemyError`` and timeout
+    cases, so narrowing the tuple would be caught.
+    """
+    response = await probe_via_session(
+        "/health/ready", db_error_session(OSError("connection reset"))
+    )
+    assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert response.json()["detail"] == "not_ready"
+
+
+@pytest.mark.asyncio
+async def test_readiness_returns_503_when_db_probe_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``/health/ready`` returns 503 when the DB probe exceeds its timeout.
+
+    The probe timeout is shrunk to a few milliseconds and ``execute`` stalls
+    past it, so ``asyncio.timeout`` raises ``TimeoutError`` into the 503 branch
+    without a multi-second wait.
+    """
+    monkeypatch.setattr(main, "_DB_PROBE_TIMEOUT_SECONDS", 0.01)
+
+    async def _stall(*_args: object, **_kwargs: object) -> object:
+        await asyncio.sleep(0.5)
+        return None
+
+    response = await probe_via_session("/health/ready", failing_probe_session(_stall))
+    assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert response.json()["detail"] == "not_ready"

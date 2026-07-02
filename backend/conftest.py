@@ -1,7 +1,9 @@
 import os
 import sys
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 # Set SECRET_KEY for tests before any app modules are imported
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-unit-tests-only")
@@ -19,9 +21,10 @@ sys.path.insert(0, str(REPO_ROOT / "backend/src"))
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
-from httpx import ASGITransport, AsyncClient  # noqa: E402
+from httpx import ASGITransport, AsyncClient, Response  # noqa: E402
 from sqlalchemy import JSON, text  # noqa: E402
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY  # noqa: E402
+from sqlalchemy.exc import SQLAlchemyError  # noqa: E402
 from sqlalchemy.ext.asyncio import (  # noqa: E402
     AsyncConnection,
     AsyncSession,
@@ -250,3 +253,48 @@ async def concurrent_session_factory(
         msg = "concurrent_async_client must be requested before concurrent_session_factory"
         raise RuntimeError(msg)
     return factory
+
+
+# ---------------------------------------------------------------------------
+# DB-probe failure helpers: drive the /health & /health/ready 503 branch
+# deterministically without a live (or broken) database.  The readiness /
+# health handlers touch the session only via ``execute(text("SELECT 1"))``, so
+# a ``SimpleNamespace`` with a single ``execute`` coroutine is a sufficient,
+# dependency-free stand-in.
+# ---------------------------------------------------------------------------
+def failing_probe_session(execute: Callable[..., Awaitable[object]]) -> AsyncSession:
+    """Return a stand-in session whose ``execute`` runs ``execute``."""
+    return cast("AsyncSession", SimpleNamespace(execute=execute))
+
+
+def db_error_session(exc: Exception | None = None) -> AsyncSession:
+    """Return a stand-in session whose probe ``execute`` raises ``exc``.
+
+    Defaults to ``SQLAlchemyError`` -- the dropped-connection failure the
+    readiness / health 503 branch exists to catch.
+    """
+    error = exc if exc is not None else SQLAlchemyError("connection refused")
+
+    async def _execute(*_args: object, **_kwargs: object) -> object:
+        raise error
+
+    return failing_probe_session(_execute)
+
+
+async def probe_via_session(path: str, session: AsyncSession) -> Response:
+    """GET ``path`` with ``get_session`` overridden to yield ``session``.
+
+    The override is always removed in ``finally`` so a stand-in session cannot
+    leak into other tests sharing the process.
+    """
+
+    async def _override() -> AsyncGenerator[AsyncSession, None]:
+        yield session
+
+    app.dependency_overrides[get_session] = _override
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.get(path)
+    finally:
+        app.dependency_overrides.pop(get_session, None)

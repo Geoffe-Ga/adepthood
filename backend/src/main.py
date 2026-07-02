@@ -354,7 +354,7 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     _get_secret_key()
 
     # ritual-practice ops: on every boot, seed the catalog (stages, presets,
-    # placeholder course content) so a fresh database is immediately usable.
+    # course content) so a fresh database is immediately usable.
     # Opt-out via ``SKIP_STARTUP_SEED=1`` for tests and contexts where the
     # database is intentionally empty (e.g. integration suites mounting a
     # mocked alembic chain). A seeder failure is logged and swallowed — the
@@ -460,6 +460,27 @@ app.include_router(metta_return_router)
 _DB_PROBE_TIMEOUT_SECONDS = 2.0
 
 
+async def _probe_db(session: AsyncSession, *, log_event: str, detail: str) -> None:
+    """Run the bounded ``SELECT 1`` readiness probe, raising 503 on failure.
+
+    Shared by ``readiness`` and ``health_check`` so the timeout window, the
+    caught-exception tuple, and the 503 contract live in one place -- the single
+    seam behind the BUG-APP-004 liveness/readiness split.  ``log_event`` and
+    ``detail`` let each caller keep its own log-event name and 503 ``detail``
+    (``"not_ready"`` vs. the legacy ``"Database unavailable"``) while sharing the
+    probe body.
+
+    Session lifecycle is owned by ``Depends(get_session)`` -- we don't open or
+    close the session here, so a failed ``SELECT 1`` cannot leak a connection.
+    """
+    try:
+        async with asyncio.timeout(_DB_PROBE_TIMEOUT_SECONDS):
+            await session.execute(text("SELECT 1"))
+    except (TimeoutError, OSError, SQLAlchemyError) as exc:
+        logger.exception(log_event)
+        raise HTTPException(status_code=503, detail=detail) from exc
+
+
 @app.get("/health/live")
 async def liveness() -> dict[str, str]:
     """Liveness probe: process is responsive (no DB dependency).
@@ -490,12 +511,7 @@ async def readiness(
     ``database.py``) guarantees ``close()`` runs even when the handler
     raises.
     """
-    try:
-        async with asyncio.timeout(_DB_PROBE_TIMEOUT_SECONDS):
-            await session.execute(text("SELECT 1"))
-    except (TimeoutError, OSError, SQLAlchemyError) as exc:
-        logger.exception("readiness_check_failed")
-        raise HTTPException(status_code=503, detail="not_ready") from exc
+    await _probe_db(session, log_event="readiness_check_failed", detail="not_ready")
     return {"status": "ready", "database": "connected"}
 
 
@@ -511,13 +527,8 @@ async def health_check(
     ``/health/live`` and ``/health/ready`` directly so liveness and
     readiness can be configured independently (BUG-APP-004).
     """
-    try:
-        async with asyncio.timeout(_DB_PROBE_TIMEOUT_SECONDS):
-            await session.execute(text("SELECT 1"))
-    except (TimeoutError, OSError, SQLAlchemyError) as exc:
-        logger.exception("health_check_failed")
-        raise HTTPException(status_code=503, detail="Database unavailable") from exc
-    # Issue #397: surface the live content pin so dashboards can alert on
-    # an unexpected value after a deploy. "none" = nothing vendored yet.
+    await _probe_db(session, log_event="health_check_failed", detail="Database unavailable")
+    # Surface the live content pin so dashboards can alert on an unexpected
+    # value after a deploy. "none" = nothing vendored yet.
     content_version = (content_version_info() or {}).get("sha", "none")
     return {"status": "healthy", "database": "connected", "content_version": content_version}
