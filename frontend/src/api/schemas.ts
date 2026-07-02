@@ -577,6 +577,8 @@ export const returnArcSchema = z.object({
   paused: z.boolean(),
   week: returnWeekNumber,
   focus: mettaFocusSchema,
+  // The backend always sends it; completion is the arc's reflective close.
+  complete: z.boolean(),
 });
 
 /** Eligibility plus the full week sequence and the active arc, if any. */

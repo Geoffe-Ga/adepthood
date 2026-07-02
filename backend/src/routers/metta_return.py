@@ -28,6 +28,7 @@ from database import get_session
 from domain.metta_return import (
     RETURN_SEQUENCE,
     active_return_week,
+    is_return_complete,
     is_return_eligible,
     resumed_start,
 )
@@ -57,6 +58,7 @@ def _to_arc_response(arc: MettaReturnArc, now: datetime) -> ReturnArcResponse:
         paused=arc.paused_at is not None,
         week=week,
         focus=_week_focus(week),
+        complete=is_return_complete(arc.started_at, arc.paused_at, now),
     )
 
 

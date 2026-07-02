@@ -60,6 +60,7 @@ function arc(overrides: Partial<ReturnArc> = {}): ReturnArc {
     paused: false,
     week: 1,
     focus: 'self',
+    complete: false,
     ...overrides,
   };
 }
