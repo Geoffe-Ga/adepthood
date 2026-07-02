@@ -587,6 +587,22 @@ describe('MapScreen center-cell overlay layout', () => {
     }
   });
 
+  it('unlock countdown spans the full cell width so its centered copy stays centered', () => {
+    // Restores the full-width box the old ``left: 0, right: 0`` absolute
+    // positioning gave: without ``alignSelf: 'stretch'`` an in-flow Text
+    // shrink-wraps to its widest wrapped line and ``textAlign: 'center'``
+    // becomes a no-op for the multi-line unlock-condition copy.
+    mockDaysUntilStage = 42;
+    const tree = create(<MapScreen />);
+    const countdown = tree.root.findByProps({ testID: 'stage-unlock-8' });
+    const flat = StyleSheet.flatten(countdown.props.style) as {
+      alignSelf?: string;
+      textAlign?: string;
+    };
+    expect(flat.alignSelf).toBe('stretch');
+    expect(flat.textAlign).toBe('center');
+  });
+
   it('locked stages keep the recessed opacity treatment', () => {
     const tree = create(<MapScreen />);
     const centerHotspot = tree.root.findByProps({ testID: 'stage-hotspot-8-1' });

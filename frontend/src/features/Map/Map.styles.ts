@@ -187,7 +187,11 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
   // Unlock timeline stacked beneath the lock glyph ("Unlocks in N days").
+  // ``alignSelf: 'stretch'`` restores the full-width box the old absolute
+  // ``left: 0, right: 0`` gave, so ``textAlign: CENTER`` still centers the
+  // longer multi-line unlock-condition copy across the whole cell.
   unlockTimeline: {
+    alignSelf: 'stretch',
     marginTop: spacing(0.25),
     fontSize: 9,
     color: ink.muted,
