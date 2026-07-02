@@ -1,13 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Text, TouchableOpacity, View, type DimensionValue } from 'react-native';
 
-import { TierStar } from '../../components/TierStar';
 import { colors, STAGE_COLORS, spacing, surface } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 import { DEFAULT_TIMEZONE, MS_PER_DAY } from '../../utils/dateUtils';
 
 import ConfirmDialog from './components/ConfirmDialog';
-import { TIER_LABELS, centeredTranslateX, tooltipBoxStyle, type TierType } from './goalMarker';
+import { TIER_LABELS, type TierType } from './goalMarker';
 import type { HabitTileProps, Goal, Habit } from './Habits.types';
 import {
   getProgressPercentage,
@@ -15,11 +14,15 @@ import {
   getGoalTier,
   getMarkerPositions,
   getProgressBarColor,
-  getTierColor,
   isGoalAchieved,
   isEarlyUnlocked,
   calculateTodaysProgress,
 } from './HabitUtils';
+import {
+  TierMarkerOverlay,
+  type MarkerInteraction,
+  type TierMarkerSpec,
+} from './TierMarkerOverlay';
 
 /** Marker star size: a touch larger than the bar so it reads as a sitting marker. */
 const markerStarSize = (scale: number): number => spacing(2, scale);
@@ -28,85 +31,6 @@ const formatGoalTooltip = (goal: Goal, habit: Habit, tz: string): string => {
   const label = TIER_LABELS[goal.tier];
   const progress = calculateTodaysProgress(habit, tz);
   return `${label}: ${progress}/${goal.target} ${goal.target_unit}`;
-};
-
-interface GoalTooltipProps {
-  goal: Goal;
-  habit: Habit;
-  tier: TierType;
-  scale: number;
-  tz: string;
-}
-
-const GoalTooltipContent = ({ goal, habit, tier, scale, tz }: GoalTooltipProps) => (
-  <View testID={`tooltip-${tier}`} style={tooltipBoxStyle(getTierColor(tier))}>
-    <Text
-      style={{
-        fontSize: spacing(1.5, scale),
-        color: '#333',
-        fontFamily: 'serif',
-        fontStyle: 'italic',
-        letterSpacing: 0.5,
-      }}
-    >
-      {formatGoalTooltip(goal, habit, tz)}
-    </Text>
-  </View>
-);
-
-interface GoalMarkerProps {
-  goal: Goal;
-  habit: Habit;
-  tier: TierType;
-  markerPosition: number;
-  barHeight: number;
-  zIndex: number;
-  scale: number;
-  tooltip: TierType | null;
-  setTooltip: (_v: TierType | null) => void;
-  tz: string;
-}
-
-const GoalMarker = ({
-  goal,
-  habit,
-  tier,
-  markerPosition,
-  barHeight,
-  zIndex,
-  scale,
-  tooltip,
-  setTooltip,
-  tz,
-}: GoalMarkerProps) => {
-  const clamped = clampPercentage(markerPosition);
-  const starSize = markerStarSize(scale);
-  const met = isGoalAchieved(goal, habit, tz);
-  return (
-    <View
-      style={{
-        position: 'absolute',
-        left: `${clamped}%`,
-        top: (barHeight - starSize) / 2,
-        transform: [{ translateX: centeredTranslateX(clamped, starSize) }],
-        zIndex,
-        alignItems: 'center',
-      }}
-    >
-      {tooltip === tier && (
-        <GoalTooltipContent goal={goal} habit={habit} tier={tier} scale={scale} tz={tz} />
-      )}
-      <TouchableOpacity
-        testID={`marker-${tier}`}
-        onPressIn={() => setTooltip(tier)}
-        onPressOut={() => setTooltip(null)}
-        onMouseEnter={() => setTooltip(tier)}
-        onMouseLeave={() => setTooltip(null)}
-      >
-        <TierStar tier={tier} met={met} size={starSize} />
-      </TouchableOpacity>
-    </View>
-  );
 };
 
 interface HabitHeaderProps {
@@ -242,65 +166,59 @@ export const useTileLayout = () => {
   return { columns, scale, gridGutter, tileMinHeight, iconInline };
 };
 
-interface GoalMarkerEntry {
+/** A tile marker spec carries its resolved `Goal` for tooltip formatting. */
+interface TileMarkerSpec extends TierMarkerSpec {
   goal: Goal;
-  tier: TierType;
-  markerPosition: number;
-  zIndex: number;
-  visible: boolean;
 }
+
+/** Tile tooltip body: the tier progress line, sized to scale with the tile. */
+const TileTooltipText = ({
+  goal,
+  habit,
+  tz,
+  scale,
+}: {
+  goal: Goal;
+  habit: Habit;
+  tz: string;
+  scale: number;
+}) => (
+  <Text
+    style={{
+      fontSize: spacing(1.5, scale),
+      color: '#333',
+      fontFamily: 'serif',
+      fontStyle: 'italic',
+      letterSpacing: 0.5,
+    }}
+  >
+    {formatGoalTooltip(goal, habit, tz)}
+  </Text>
+);
+
+/** Every tile marker is a press-to-reveal-tooltip touch target (no drag on the tile). */
+const tileMarkerInteraction = (
+  tier: TierType,
+  setTooltip: (_v: TierType | null) => void,
+): MarkerInteraction => ({
+  Wrapper: TouchableOpacity,
+  interactionProps: {
+    onPressIn: () => setTooltip(tier),
+    onPressOut: () => setTooltip(null),
+  },
+});
 
 interface ProgressBarProps {
   habit: Habit;
   barHeight: number;
   progressPercentage: number;
   progressBarColor: string;
-  markers: GoalMarkerEntry[];
+  markers: TileMarkerSpec[];
   scale: number;
   tooltip: TierType | null;
   setTooltip: (_v: TierType | null) => void;
   tz: string;
 }
-
-interface MarkerListProps {
-  markers: GoalMarkerEntry[];
-  habit: Habit;
-  barHeight: number;
-  scale: number;
-  tooltip: TierType | null;
-  setTooltip: (_v: TierType | null) => void;
-  tz: string;
-}
-
-const MarkerList = ({
-  markers,
-  habit,
-  barHeight,
-  scale,
-  tooltip,
-  setTooltip,
-  tz,
-}: MarkerListProps) => (
-  <>
-    {markers
-      .filter((m) => m.visible)
-      .map((m) => (
-        <GoalMarker
-          key={m.tier}
-          goal={m.goal}
-          habit={habit}
-          tier={m.tier}
-          markerPosition={m.markerPosition}
-          barHeight={barHeight}
-          zIndex={m.zIndex}
-          scale={scale}
-          tooltip={tooltip}
-          setTooltip={setTooltip}
-          tz={tz}
-        />
-      ))}
-  </>
-);
 
 const COLOR_TRANSITION_MS = 400;
 
@@ -392,14 +310,18 @@ const ProgressBar = ({
             borderRadius={borderR}
           />
         </View>
-        <MarkerList
+        <TierMarkerOverlay<TileMarkerSpec>
           markers={markers}
-          habit={habit}
           barHeight={barHeight}
-          scale={scale}
+          starSize={markerStarSize(scale)}
           tooltip={tooltip}
           setTooltip={setTooltip}
-          tz={tz}
+          markerTestIDPrefix="marker"
+          tooltipTestIDPrefix="tooltip"
+          renderTooltip={(m) => (
+            <TileTooltipText goal={m.goal} habit={habit} tz={tz} scale={scale} />
+          )}
+          resolveInteraction={(m) => tileMarkerInteraction(m.tier, setTooltip)}
         />
       </View>
     </View>
@@ -423,27 +345,31 @@ const useHabitTileData = (habit: Habit, tz: string, stageColor: string) => {
   } = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
 
   // SG is unconditionally visible (the prior ``hasCleared`` gate caused user-reported confusion).
-  const markers: GoalMarkerEntry[] = [
+  // ``met`` is only computed when the goal exists — an absent tier has no goal to achieve.
+  const markers: TileMarkerSpec[] = [
     {
       goal: lowGoal!,
       tier: 'low',
-      markerPosition: lowMarker,
+      position: lowMarker,
       zIndex: 1,
       visible: !!lowGoal,
+      met: lowGoal ? isGoalAchieved(lowGoal, habit, tz) : false,
     },
     {
       goal: clearGoal!,
       tier: 'clear',
-      markerPosition: clearMarker,
+      position: clearMarker,
       zIndex: 2,
       visible: !!clearGoal,
+      met: clearGoal ? isGoalAchieved(clearGoal, habit, tz) : false,
     },
     {
       goal: stretchGoal!,
       tier: 'stretch',
-      markerPosition: stretchMarker,
+      position: stretchMarker,
       zIndex: 3,
       visible: !!stretchGoal,
+      met: stretchGoal ? isGoalAchieved(stretchGoal, habit, tz) : false,
     },
   ];
 
