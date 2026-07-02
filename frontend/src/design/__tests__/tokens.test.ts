@@ -8,6 +8,7 @@ import {
   brightenColor,
   colors,
   radius,
+  resolveStageColor,
   shadows,
   spacing,
   touchTarget,
@@ -134,6 +135,26 @@ describe('design tokens', () => {
       const colorKeys = Object.keys(STAGE_COLORS).sort();
       const orderKeys = [...STAGE_ORDER].sort();
       expect(orderKeys).toEqual(colorKeys);
+    });
+  });
+
+  describe('resolveStageColor', () => {
+    it('maps a known Spiral-Dynamics color name to its hex value', () => {
+      expect(resolveStageColor('Beige')).toBe(STAGE_COLORS['Beige']);
+      expect(resolveStageColor('Purple')).toBe(STAGE_COLORS['Purple']);
+      expect(resolveStageColor('Clear Light')).toBe(STAGE_COLORS['Clear Light']);
+    });
+
+    it('falls back to the neutral gray for an unrecognized color name', () => {
+      expect(resolveStageColor('Mauve')).toBe(colors.neutral);
+    });
+
+    it('falls back to the neutral gray when the color name is undefined', () => {
+      expect(resolveStageColor(undefined)).toBe(colors.neutral);
+    });
+
+    it('falls back to the neutral gray for an empty color name', () => {
+      expect(resolveStageColor('')).toBe(colors.neutral);
     });
   });
 
