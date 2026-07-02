@@ -19,7 +19,13 @@ import {
 } from 'react';
 
 import { completionSuggestions, resonance } from '@/api';
-import type { CareResponse, CheckInResult, CompletionSuggestion, Marginalia } from '@/api';
+import type {
+  CareResponse,
+  CheckInResult,
+  CompletionSuggestion,
+  ContractionReflection,
+  Marginalia,
+} from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 
 const EMPTY_BODY_MESSAGE = 'Write a little first, then ask for its resonance.';
@@ -43,6 +49,13 @@ export interface UseResonanceResult {
    * new pass clears any stale care, and the load-on-open path never sets it.
    */
   care: CareResponse | null;
+  /**
+   * Warm, declinable "tend your foundation" reflection for the latest pass.
+   * Always ``null`` (never ``undefined``) until a generate pass returns one; a
+   * new pass clears any stale reflection, and the load-on-open path never sets
+   * it.
+   */
+  contraction: ContractionReflection | null;
   /**
    * Reason copy from a pass that was withheld for an intimate entry.
    * ``null`` until a generate pass returns a ``private_message``; the privacy
@@ -208,13 +221,15 @@ interface GeneratePassDeps {
   setMarginalia: Dispatch<SetStateAction<Marginalia[]>>;
   mergeFromGenerate: (_incoming: CompletionSuggestion[]) => void;
   setCare: Dispatch<SetStateAction<CareResponse | null>>;
+  setContraction: Dispatch<SetStateAction<ContractionReflection | null>>;
   setPrivateMessage: Dispatch<SetStateAction<string | null>>;
   setError: Dispatch<SetStateAction<string | null>>;
 }
 
 /** The charged "generate" pass: flush, generate, merge notes + suggestions + care. */
 function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
-  const { flush, setMarginalia, mergeFromGenerate, setCare, setPrivateMessage, setError } = deps;
+  const { flush, setMarginalia, mergeFromGenerate, setCare, setContraction } = deps;
+  const { setPrivateMessage, setError } = deps;
   const [loading, setLoading] = useState(false);
   const inFlightRef = useRef(false);
 
@@ -226,6 +241,9 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
     // Clear any care from a prior pass up front so a distressed-then-calm
     // sequence never leaves a stale crisis surface on the page.
     setCare(null);
+    // Likewise clear any prior contraction so an eased-then-healthy sequence
+    // never leaves a stale "tend your foundation" reflection on the page.
+    setContraction(null);
     try {
       const entryId = await flush();
       if (entryId == null) {
@@ -237,6 +255,8 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
       mergeFromGenerate(result.suggestions);
       // ``care`` is nullable/absent on ordinary entries — normalise to null.
       setCare(result.care ?? null);
+      // ``contraction`` is nullable/absent on healthy entries — normalise to null.
+      setContraction(result.contraction ?? null);
       // ``private_message`` is present only when the pass was withheld.
       setPrivateMessage(result.private_message ?? null);
     } catch (err) {
@@ -245,7 +265,15 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
       inFlightRef.current = false;
       setLoading(false);
     }
-  }, [flush, setMarginalia, mergeFromGenerate, setCare, setPrivateMessage, setError]);
+  }, [
+    flush,
+    setMarginalia,
+    mergeFromGenerate,
+    setCare,
+    setContraction,
+    setPrivateMessage,
+    setError,
+  ]);
 
   return { loading, requestResonance };
 }
@@ -255,6 +283,9 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
   // Default null (never undefined): the load-on-open path never sets care, so
   // the surface stays hidden until a generate pass returns one.
   const [care, setCare] = useState<CareResponse | null>(null);
+  // Default null (never undefined): the load-on-open path never sets it, so the
+  // reflection stays hidden until a generate pass returns one.
+  const [contraction, setContraction] = useState<ContractionReflection | null>(null);
   // Reason copy from a withheld (intimate) pass; null until one returns it.
   const [privateMessage, setPrivateMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -266,6 +297,7 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
     setMarginalia,
     mergeFromGenerate: sug.mergeFromGenerate,
     setCare,
+    setContraction,
     setPrivateMessage,
     setError,
   });
@@ -289,6 +321,7 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
     suggestions: sug.suggestions,
     acceptedCheckIns: sug.acceptedCheckIns,
     care,
+    contraction,
     privateMessage,
     loading,
     error,

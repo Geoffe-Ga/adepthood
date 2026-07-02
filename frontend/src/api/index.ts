@@ -34,6 +34,8 @@ import {
   type CareResourceT,
   type CareResponseT,
   type CompletionSuggestionT,
+  type ContractionReflectionT,
+  type ContractionVariantT,
   type CompletionTargetTypeT,
   type DepthPreferencesT,
   type InvitationT,
@@ -1150,6 +1152,10 @@ export type CareKind = CareKindT;
 export type CareResource = CareResourceT;
 /** The care surface (mirrors the backend ``CareResponse``); see ``CareSupportNote``. */
 export type CareResponse = CareResponseT;
+/** One of the two contraction routings (``simple_ease_off`` | ``return_offer``). */
+export type ContractionVariant = ContractionVariantT;
+/** The contraction reflection surface; see ``ContractionReflectionNote``. */
+export type ContractionReflection = ContractionReflectionT;
 
 export interface ResonanceResponse {
   marginalia: Marginalia[];
@@ -1164,6 +1170,12 @@ export interface ResonanceResponse {
    * without it parses and behaves exactly as before.
    */
   care?: CareResponse | null;
+  /**
+   * Warm, declinable "tend your foundation" reflection. ``null`` on every
+   * healthy or new entry; set only when a pass senses a foundation easing off.
+   * Additive — a response without it parses and behaves exactly as before.
+   */
+  contraction?: ContractionReflection | null;
   /**
    * True when the pass was withheld because the entry is intimate.
    * Absent on ordinary responses; additive — older responses parse unchanged.

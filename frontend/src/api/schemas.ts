@@ -567,6 +567,25 @@ export const careResponseSchema = z.object({
 });
 
 /**
+ * The two contraction routings (mirrors the backend contraction variants): a
+ * gentle ``simple_ease_off`` nudge to tend a slipping foundation, and a warmer
+ * ``return_offer`` inviting a fresh Return. Anything else is contract drift and
+ * is rejected at the boundary so an unknown variant can never render untitled.
+ */
+export const contractionVariantSchema = z.enum(['simple_ease_off', 'return_offer']);
+
+/**
+ * The contraction surface returned when a pass senses a foundation easing off:
+ * a variant that keys warm, declinable "tend your foundation" copy plus the
+ * backend's own message. Mirrors the backend contraction reflection; ``null``
+ * on every healthy or new entry.
+ */
+export const contractionReflectionSchema = z.object({
+  variant: contractionVariantSchema,
+  message: z.string(),
+});
+
+/**
  * Result of a resonance pass (mirrors the backend ``ResonanceResponse``).
  *
  * ``care`` is additive: it is ``None`` on every ordinary entry — absent on the
@@ -580,6 +599,10 @@ export const resonanceResponseSchema = z.object({
   remaining_balance: z.number().int(),
   monthly_reset_date: z.string(),
   care: careResponseSchema.nullish(),
+  // Contraction reflection: a warm, declinable "tend your foundation" surface.
+  // Additive/nullish so it is ``None`` (absent on the wire) on healthy or new
+  // entries and older responses still validate and behave exactly as before.
+  contraction: contractionReflectionSchema.nullish(),
   // Privacy gate: ``private`` is true when the pass was withheld for an
   // intimate entry, with optional reason copy. Additive/nullish so older
   // responses (which omit both) still validate and behave as before.
@@ -590,6 +613,8 @@ export const resonanceResponseSchema = z.object({
 export type CareKindT = z.infer<typeof careKindSchema>;
 export type CareResourceT = z.infer<typeof careResourceSchema>;
 export type CareResponseT = z.infer<typeof careResponseSchema>;
+export type ContractionVariantT = z.infer<typeof contractionVariantSchema>;
+export type ContractionReflectionT = z.infer<typeof contractionReflectionSchema>;
 export type ResonanceResponseT = z.infer<typeof resonanceResponseSchema>;
 
 // ---------------------------------------------------------------------------
