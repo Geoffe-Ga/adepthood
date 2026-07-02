@@ -37,11 +37,17 @@ from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.user import User
 from models.user_practice import UserPractice
-from services.invitations import generate_invitation_signals
+from services.invitations import _gather_aggregates, generate_invitation_signals
 
 # ---------------------------------------------------------------------------
 # Shared fixture helpers
 # ---------------------------------------------------------------------------
+
+# The readiness gather issues a fixed SELECT budget, independent of habit count:
+# one for habit streaks, one for practice sessions, and three for the
+# cross-feature active-days window (goal completions, practice sessions,
+# journal entries).  A per-habit N+1 would push this to 5 + N.
+_EXPECTED_GATHER_SELECTS = 5
 
 _SUSTAINED_STREAK = 21  # mirrors SUSTAINED_HABIT_STREAK_DAYS
 _SUSTAINED_WEEKS = 4  # mirrors SUSTAINED_PRACTICE_WEEKS
@@ -381,44 +387,38 @@ async def test_below_threshold_user_produces_no_signals(
 async def test_gather_does_not_produce_n_plus_one_queries(
     db_session: AsyncSession,
 ) -> None:
-    """Adding a second above-threshold habit must not add another round-trip.
+    """The readiness gather issues a fixed SELECT count regardless of habit count.
 
-    A fixed SELECT budget is generous; the point is that scaling habits does
-    not scale queries.  If the gather uses a single aggregation query this
-    passes trivially; if it issues per-habit SELECTs it fails at >= 2 habits.
+    Pins the exact query budget (:data:`_EXPECTED_GATHER_SELECTS`) for both a
+    one-habit and a five-habit user.  The gather is measured directly (rather
+    than through the full ``generate_invitation_signals`` path, whose insert
+    phase legitimately scales with the number of *candidates*) so the assertion
+    isolates the read side: a per-habit ``SELECT`` reintroduced anywhere in the
+    gather pushes the five-habit count to ``5 + N`` and fails the equality,
+    where the old ``<= +2`` tolerance silently swallowed it.
     """
-    user_id = await _make_user(db_session)
+    one_habit_user = await _make_user(db_session)
     await _make_habit_with_streak(
-        db_session, user_id, streak_days=_SUSTAINED_STREAK, name="Habit A"
+        db_session, one_habit_user, streak_days=_SUSTAINED_STREAK, name="Solo"
     )
-    await _make_habit_with_streak(
-        db_session, user_id, streak_days=_SUSTAINED_STREAK + 5, name="Habit B"
-    )
+    with _count_selects() as one_habit_selects:
+        await _gather_aggregates(db_session, one_habit_user, "UTC")
 
-    with _count_selects() as queries_one:
-        await generate_invitation_signals(db_session, user_id)
+    many_habit_user = await _make_user(db_session, "inv2@example.com")
+    for name in ("A", "B", "C", "D", "E"):
+        await _make_habit_with_streak(
+            db_session, many_habit_user, streak_days=_SUSTAINED_STREAK, name=name
+        )
+    with _count_selects() as many_habit_selects:
+        await _gather_aggregates(db_session, many_habit_user, "UTC")
 
-    # Now add a third habit and check that the count does not grow proportionally.
-    # We can't re-run on the same session (dedup blocks inserts), so we measure
-    # relative growth: two habits must use the same or fewer queries than three.
-    user_id_2 = await _make_user(db_session, "inv2@example.com")
-    await _make_habit_with_streak(
-        db_session, user_id_2, streak_days=_SUSTAINED_STREAK, name="Habit X"
+    assert len(one_habit_selects) == _EXPECTED_GATHER_SELECTS, (
+        f"gather query budget drifted: one-habit run used {len(one_habit_selects)} "
+        f"SELECTs, expected {_EXPECTED_GATHER_SELECTS}"
     )
-    await _make_habit_with_streak(
-        db_session, user_id_2, streak_days=_SUSTAINED_STREAK, name="Habit Y"
-    )
-    await _make_habit_with_streak(
-        db_session, user_id_2, streak_days=_SUSTAINED_STREAK, name="Habit Z"
-    )
-
-    with _count_selects() as queries_two:
-        await generate_invitation_signals(db_session, user_id_2)
-
-    # Both runs should use the same number of SELECT round-trips (constant query count).
-    assert len(queries_two) <= len(queries_one) + 2, (
-        f"N+1 suspected: 2-habit run used {len(queries_one)} SELECTs, "
-        f"3-habit run used {len(queries_two)}"
+    assert len(many_habit_selects) == _EXPECTED_GATHER_SELECTS, (
+        f"N+1 over habits: five-habit run used {len(many_habit_selects)} SELECTs, "
+        f"expected the same {_EXPECTED_GATHER_SELECTS} as the one-habit run"
     )
 
 
