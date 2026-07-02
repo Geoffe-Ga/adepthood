@@ -7,11 +7,16 @@ corpus by timing the responses.  We verify timing parity with a
 paired-sample comparison: the median of N ``hit`` calls and N ``miss``
 calls should differ by less than the SPEC's ±50 ms tolerance.
 
-The test is intentionally noisy under load (CI machines are not
-quiescent), so the tolerance is set generously and the iteration count
-is the smallest that still produces a stable median.  If this test
-flakes, double the iteration count rather than relax the tolerance --
-the constant-time guarantee is the actual security property.
+The request-path test derives its tolerance at runtime from the cost of
+one real cost-10 bcrypt on the host (``_consume_dummy_bcrypt``), so it
+tracks CPU speed instead of a hardcoded millisecond budget.  The miss
+path spends exactly one such bcrypt to mask enumeration; if that dummy
+is ever removed the hit/miss delta jumps by a whole budget, which the
+fractional tolerance below one bcrypt now catches.  The confirm-path
+test keeps a fixed generous budget because its cost-12 dummy already
+dominates the tolerance.  If either test flakes, raise the iteration
+count rather than relax the tolerance -- the constant-time guarantee is
+the actual security property.
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from models.user import User
-from routers.auth import _hash_password
+from routers.auth import _consume_dummy_bcrypt, _hash_password
 from services.email import RecordingEmailSender
 from tests.helpers.password_reset import extract_reset_token
 
@@ -37,12 +42,29 @@ if TYPE_CHECKING:
 
 
 # Number of iterations per arm (hit vs. miss).  Five is enough for a
-# stable median given bcrypt cost-10 dominates the per-call latency.
+# stable median given bcrypt cost-10/12 dominates the per-call latency.
 _ITERATIONS = 5
 
-# Allowed median-delta in milliseconds.  The SPEC sets ±50 ms; we use
-# 250 ms here to absorb CI noise -- the security property is constant-
-# time within an order of magnitude, not microsecond parity.
+# The request-path test medians more samples because its tolerance is a
+# fraction of a single cost-10 bcrypt (~tens of ms), so it must smooth
+# scheduler jitter that the wide confirm-path budget would have absorbed.
+_REQUEST_ITERATIONS = 11
+
+# Samples used to estimate the host's single cost-10 bcrypt budget.
+_BUDGET_SAMPLES = 9
+
+# Request-path tolerance as a fraction of one cost-10 bcrypt.  Both the
+# hit and miss paths spend exactly one such bcrypt, so their parity delta
+# is a few ms; deleting the miss-path dummy shifts the delta to a whole
+# budget (~1.0x).  Half a budget sits comfortably above the parity noise
+# and well below the removed-dummy signal, so the test fails on that
+# mutation without flaking on a quiescent-but-busy CI box.
+_REQUEST_TOLERANCE_FRACTION = 0.5
+
+# Allowed median-delta in milliseconds for the confirm-path test.  The
+# SPEC sets ±50 ms; we use 250 ms here to absorb CI noise -- the confirm
+# dummy is cost-12 (~an order of magnitude over the tolerance), so this
+# fixed budget already fails if that dummy is removed.
 _TOLERANCE_MS = 250
 
 _PASSWORD = "correct-horse-battery-staple"  # pragma: allowlist secret
@@ -66,6 +88,21 @@ async def _seed_user(db_session: AsyncSession, email: str) -> None:
     await db_session.commit()
 
 
+async def _cost10_bcrypt_budget_ms() -> float:
+    """Median wall-time of one cost-10 bcrypt verify on this host.
+
+    Ties the request-path tolerance to the exact operation the miss path
+    spends (``_consume_dummy_bcrypt``), so the threshold scales with the
+    machine rather than assuming a fixed millisecond budget.
+    """
+    samples: list[float] = []
+    for _ in range(_BUDGET_SAMPLES):
+        start = time.perf_counter()
+        await _consume_dummy_bcrypt()
+        samples.append((time.perf_counter() - start) * 1_000)
+    return median(samples)
+
+
 async def _measure(client: AsyncClient, email: str) -> float:
     start = time.perf_counter()
     response = await client.post("/auth/password-reset/request", json={"email": email})
@@ -80,22 +117,31 @@ async def test_request_timing_parity_hit_vs_miss(
     db_session: AsyncSession,
     disable_rate_limit: None,  # noqa: ARG001 -- need >3 calls per test
 ) -> None:
-    """Median latency for hits and misses must differ by less than the tolerance."""
+    """Hit/miss median latency must differ by less than half a cost-10 bcrypt.
+
+    Removing the miss-path ``_consume_dummy_bcrypt`` would shift the delta
+    to roughly a whole bcrypt budget, so the sub-budget tolerance fails on
+    that mutation -- the side channel the SPEC R4 dummy exists to close.
+    """
     await _seed_user(db_session, "hit@example.com")
+
+    tolerance_ms = _REQUEST_TOLERANCE_FRACTION * await _cost10_bcrypt_budget_ms()
 
     # Warm up bcrypt + JIT once so the first sample isn't an outlier.
     await _measure(async_client, "warmup@example.com")
 
     hits: list[float] = []
     misses: list[float] = []
-    for _ in range(_ITERATIONS):
+    for _ in range(_REQUEST_ITERATIONS):
         hits.append(await _measure(async_client, "hit@example.com"))
         misses.append(await _measure(async_client, f"miss-{time.time_ns()}@example.com"))
 
     delta = abs(median(hits) - median(misses))
-    assert delta < _TOLERANCE_MS, (
+    assert delta < tolerance_ms, (
         f"timing leak: hit median={median(hits):.1f}ms "
-        f"miss median={median(misses):.1f}ms delta={delta:.1f}ms"
+        f"miss median={median(misses):.1f}ms delta={delta:.1f}ms "
+        f"exceeds tolerance={tolerance_ms:.1f}ms "
+        f"(={_REQUEST_TOLERANCE_FRACTION} x one cost-10 bcrypt)"
     )
 
 
