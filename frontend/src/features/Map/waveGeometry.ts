@@ -17,7 +17,8 @@
  * wobble.
  */
 
-import { GRID_COLUMN_FLEX, STAGE_DISPLAY } from './mapLayout';
+import { GRID_COLUMN_FLEX, MAP_ROWS, STAGE_DISPLAY } from './mapLayout';
+import type { MapRow } from './mapLayout';
 import { STAGE_COUNT, isLeftReturning } from './stageData';
 
 /** Combined flex weight of all three row cells; the denominator for band fractions. */
@@ -60,6 +61,11 @@ const POLE_NEUTRAL = 0;
 const ARROWHEAD_HALF_WIDTH = 6;
 /** Distance from the arrowhead base up to its apex, in pixels. */
 const ARROWHEAD_HEIGHT = 10;
+/** Half the arrowhead height; the triangle straddles its anchor by this much. */
+const ARROWHEAD_HALF_HEIGHT = ARROWHEAD_HEIGHT / 2;
+
+/** Total row flex across the map: one unit per stage a row contains. */
+const TOTAL_ROW_FLEX = MAP_ROWS.reduce((sum, row) => sum + row.stageNumbers.length, 0);
 
 /** Decimal places kept in emitted SVG coordinates (matches TierStar). */
 const COORD_PRECISION = 3;
@@ -109,6 +115,41 @@ const poleFor = (stageNumber: number): -1 | 0 | 1 => {
 };
 
 /**
+ * Measured vertical centers keyed by stage number, in unit space [0,1]. May be
+ * partial or empty; any missing stage falls back to its nominal band center.
+ */
+export type StageAnchors = Readonly<Record<number, number>>;
+
+/** Unit-y center of stageNumber inside its row band, or undefined if absent. */
+const rowAnchorY = (row: MapRow, stageNumber: number, bandTop: number): number | undefined => {
+  const index = row.stageNumbers.indexOf(stageNumber);
+  if (index < 0) return undefined;
+  // Every stage owns an equal 1/TOTAL_ROW_FLEX sub-band inside its paired row.
+  const subBand = 1 / TOTAL_ROW_FLEX;
+  return bandTop + (index + Y_BAND_MIDPOINT) * subBand;
+};
+
+/**
+ * Fallback unit-y center for a stage, derived by walking MAP_ROWS top-to-bottom
+ * with each row weighted by how many stages it holds. This reproduces the legacy
+ * uniform-band formula ``(STAGE_COUNT - stageNumber + 0.5) / STAGE_COUNT`` while
+ * staying honest to the real row structure. Unknown stages get a safe midpoint.
+ */
+export const nominalAnchorY = (stageNumber: number): number => {
+  let bandTop = 0;
+  for (const row of MAP_ROWS) {
+    const center = rowAnchorY(row, stageNumber, bandTop);
+    if (center !== undefined) return center;
+    bandTop += row.stageNumbers.length / TOTAL_ROW_FLEX;
+  }
+  return Y_BAND_MIDPOINT;
+};
+
+/** Measured anchor for a stage when present, else its nominal band center. */
+const resolveAnchorY = (stageNumber: number, anchors: StageAnchors): number =>
+  anchors[stageNumber] ?? nominalAnchorY(stageNumber);
+
+/**
  * Anchor point for a stage on the rising wave, in unit space [0,1]. y strictly
  * decreases as stageNumber climbs (the wave rises); x swings around center by
  * the stage's amplitude toward its pole, tapering smoothly toward center at the
@@ -118,8 +159,8 @@ const poleFor = (stageNumber: number): -1 | 0 | 1 => {
  * rule, so it lands a hair off dead-center (by APEX_AMPLITUDE) rather than
  * degenerating into a vertical stub. This apparent mismatch is deliberate.
  */
-export const stageWavePoint = (stageNumber: number): WavePoint => {
-  const y = (STAGE_COUNT - stageNumber + Y_BAND_MIDPOINT) / STAGE_COUNT;
+export const stageWavePoint = (stageNumber: number, anchors: StageAnchors = {}): WavePoint => {
+  const y = resolveAnchorY(stageNumber, anchors);
   const direction = isLeftReturning(stageNumber) ? POLE_LEFT : POLE_RIGHT;
   const x = CENTER_X + amplitudeFor(stageNumber) * direction;
   return { x, y, pole: poleFor(stageNumber) };
@@ -212,12 +253,16 @@ const segmentPaths = (
  * scales with height and x with width within the center-column band, so a larger
  * layout yields a larger wave that still stays inside its lane.
  */
-export const waveSegments = (width: number, height: number): readonly WaveSegment[] => {
+export const waveSegments = (
+  width: number,
+  height: number,
+  anchors: StageAnchors = {},
+): readonly WaveSegment[] => {
   const segments: WaveSegment[] = [];
   STAGE_COLORS.reduce<StageColor | null>((previous, current) => {
     if (previous !== null) {
-      const lower = stageWavePoint(previous.stageNumber);
-      const upper = stageWavePoint(current.stageNumber);
+      const lower = stageWavePoint(previous.stageNumber, anchors);
+      const upper = stageWavePoint(current.stageNumber, anchors);
       const { d, farD } = segmentPaths(lower, upper, width, height);
       segments.push({
         d,
@@ -239,15 +284,21 @@ export interface Arrowhead {
 
 /**
  * An upward-pointing triangle centered on a stage's wave point, in pixel space.
- * The apex sits ARROWHEAD_HEIGHT above the base (numerically smaller y) so the
- * arrow leads toward the higher stages at the top of the wave. cx is confined to
- * the center-column band.
+ * The triangle straddles the resolved anchor: its apex sits half a height above
+ * and its base half a height below, so the arrow is centered on the stage row
+ * rather than hanging beneath it. cx is confined to the center-column band.
  */
-export const arrowheadAt = (stageNumber: number, width: number, height: number): Arrowhead => {
-  const point = stageWavePoint(stageNumber);
+export const arrowheadAt = (
+  stageNumber: number,
+  width: number,
+  height: number,
+  anchors: StageAnchors = {},
+): Arrowhead => {
+  const point = stageWavePoint(stageNumber, anchors);
   const cx = toColumnPixelX(point.x, width);
-  const baseY = point.y * height;
-  const apexY = baseY - ARROWHEAD_HEIGHT;
+  const yPx = point.y * height;
+  const apexY = yPx - ARROWHEAD_HALF_HEIGHT;
+  const baseY = yPx + ARROWHEAD_HALF_HEIGHT;
   const leftX = cx - ARROWHEAD_HALF_WIDTH;
   const rightX = cx + ARROWHEAD_HALF_WIDTH;
   const points = [
@@ -273,9 +324,13 @@ export interface WaveArrowhead {
  * stage's exact textColor. Built from ``STAGE_COLORS`` so the colors are total
  * (no optional-index fallback).
  */
-export const waveArrowheads = (width: number, height: number): readonly WaveArrowhead[] =>
+export const waveArrowheads = (
+  width: number,
+  height: number,
+  anchors: StageAnchors = {},
+): readonly WaveArrowhead[] =>
   STAGE_COLORS.map(({ stageNumber, textColor }) => ({
-    points: arrowheadAt(stageNumber, width, height).points,
+    points: arrowheadAt(stageNumber, width, height, anchors).points,
     color: textColor,
     stageNumber,
   }));
