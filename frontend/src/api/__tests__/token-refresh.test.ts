@@ -104,7 +104,7 @@ describe('retry-after-refresh on 401', () => {
     // server's stored timezone so the AuthContext can keep
     // ``userTimezone`` in sync.  ``undefined`` is the value when the
     // server omits the field (legacy / mocked responses).
-    expect(mockOnTokenRefreshed).toHaveBeenCalledWith(refreshedToken, undefined);
+    expect(mockOnTokenRefreshed).toHaveBeenCalledWith(refreshedToken, undefined, 'original-token');
 
     expect(result).toEqual([sampleHabit]);
   });
