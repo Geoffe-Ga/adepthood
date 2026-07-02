@@ -8,12 +8,7 @@ import PrivacyTierControl, { type PrivacyTier } from '../PrivacyTierControl';
 import { touchTarget } from '@/design/tokens';
 
 /**
- * RED tests for ``PrivacyTierControl`` (issue #896).
- *
- * These tests fail until the implementation-specialist creates
- * ``frontend/src/features/Journal/PrivacyTierControl.tsx``.
- *
- * Design requirements (from the chief architect):
+ * Verifies ``PrivacyTierControl`` behavior:
  * - 3-option segmented control: public / personal / intimate.
  * - Default selection when no ``value`` is supplied is ``personal``.
  * - Each option exposes ``accessibilityState.selected`` truthily.
