@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from domain.care import MEDICATION_GUARDRAIL
-from domain.resonance import ResonanceLLM, _quote_span
+from domain.resonance import ResonanceLLM, _overlaps, _quote_span
 from security import TextTooLongError, sanitize_user_text
 
 # Domain-level literals so this module stays free of DB/model imports (mirrors
@@ -150,11 +150,6 @@ def _anchor_hit(
         anchor_end=end,
         anchor_text=body[start:end],
     )
-
-
-def _overlaps(a: CompletionDetected, b: CompletionDetected) -> bool:
-    """True when two anchored spans intersect."""
-    return a.anchor_start < b.anchor_end and b.anchor_start < a.anchor_end
 
 
 def _is_duplicate(
