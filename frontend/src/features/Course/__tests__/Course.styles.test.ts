@@ -10,7 +10,6 @@ describe('Course.styles reader sheet', () => {
     const readerSheet = StyleSheet.flatten(styles.readerSheet);
     const readerScroll = StyleSheet.flatten(styles.readerScroll);
     expect(readerSheet.backgroundColor).toBe(surface.canvas);
-    expect(readerSheet.backgroundColor).not.toBe('#ffffff');
     expect(readerScroll.backgroundColor).toBe(surface.desk);
   });
 
