@@ -278,7 +278,7 @@ async def _apply_message_edit(
     new_message = _sanitize_message(payload.message)
     if new_message != old_message:
         entry.message = new_message
-        await reanchor_entry_marginalia(entry, old_message, new_message, session)
+        await reanchor_entry_marginalia(entry, new_message, session)
         await reanchor_entry_suggestions(entry, new_message, session)
 
 
