@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
-from sqlalchemy import ColumnElement, func
+from sqlalchemy import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -38,6 +38,7 @@ from models.journal_entry import JournalClassification, JournalEntry, JournalTag
 from models.marginalia import Marginalia, MarginaliaStatus
 from models.practice import Practice
 from models.practice_session import PracticeSession
+from models.user import User
 from models.user_practice import UserPractice
 from rate_limit import limiter
 from routers.auth import get_current_user
@@ -61,6 +62,7 @@ from schemas.marginalia import (
     MarginaliaResponse,
     ResonanceResponse,
 )
+from schemas.pagination import count_query_total, page_has_more
 from security import TextTooLongError, sanitize_user_text
 from services import journal_encryption
 from services.botmason import LLMProviderError, resolve_chat_api_key
@@ -210,7 +212,7 @@ async def _encrypted_search_page(
     return JournalListResponse(
         items=[JournalMessageResponse.model_validate(e, from_attributes=True) for e in page],
         total=len(matched),
-        has_more=(filters.offset + filters.limit) < len(matched),
+        has_more=page_has_more(filters.offset, filters.limit, len(matched)),
     )
 
 
@@ -240,8 +242,7 @@ async def list_journal_entries(
     )
 
     # Count total before pagination
-    count_query = select(func.count()).select_from(query.subquery())
-    total = (await session.execute(count_query)).scalar() or 0
+    total = await count_query_total(session, query)
 
     # Fetch paginated results, newest first
     query = query.order_by(col(JournalEntry.id).desc()).offset(filters.offset).limit(filters.limit)
@@ -251,7 +252,7 @@ async def list_journal_entries(
     return JournalListResponse(
         items=[JournalMessageResponse.model_validate(e, from_attributes=True) for e in items],
         total=total,
-        has_more=(filters.offset + filters.limit) < total,
+        has_more=page_has_more(filters.offset, filters.limit, total),
     )
 
 
@@ -490,6 +491,33 @@ _INTIMATE_PRIVATE_MESSAGE = (
 )
 
 
+def _unspent_resonance(
+    user: User,
+    *,
+    care: CareResponse | None,
+    private: bool = False,
+    private_message: str | None = None,
+) -> ResonanceResponse:
+    """Build a no-reflection response over the caller's *unspent* wallet balances.
+
+    Shared skeleton for the two paths that return before any charge lands: the
+    intimate/private path and the care-only fallback when an elevated entry's
+    LLM pass fails. Both surface empty marginalia + suggestions
+    and read the wallet fresh (no ``preflight_deduction``), differing only in
+    the ``care`` payload and the private-message fields.
+    """
+    return ResonanceResponse(
+        marginalia=[],
+        suggestions=[],
+        remaining_messages=max(get_monthly_cap() - user.monthly_messages_used, 0),
+        remaining_balance=user.offering_balance,
+        monthly_reset_date=user.monthly_reset_date,
+        care=care,
+        private=private,
+        private_message=private_message,
+    )
+
+
 async def _private_response(
     session: AsyncSession, user_id: int, care: CareResponse | None
 ) -> ResonanceResponse:
@@ -505,15 +533,8 @@ async def _private_response(
     call, charge, or usage-log — the privacy floor never suppresses crisis care.
     """
     user = await require_user_fresh(session, user_id)
-    return ResonanceResponse(
-        marginalia=[],
-        suggestions=[],
-        remaining_messages=max(get_monthly_cap() - user.monthly_messages_used, 0),
-        remaining_balance=user.offering_balance,
-        monthly_reset_date=user.monthly_reset_date,
-        care=care,
-        private=True,
-        private_message=_INTIMATE_PRIVATE_MESSAGE,
+    return _unspent_resonance(
+        user, care=care, private=True, private_message=_INTIMATE_PRIVATE_MESSAGE
     )
 
 
@@ -527,14 +548,7 @@ async def _care_only_response(
     depend on the LLM succeeding (NORTH-STAR §10).
     """
     user = await require_user_fresh(session, user_id)
-    return ResonanceResponse(
-        marginalia=[],
-        suggestions=[],
-        remaining_messages=max(get_monthly_cap() - user.monthly_messages_used, 0),
-        remaining_balance=user.offering_balance,
-        monthly_reset_date=user.monthly_reset_date,
-        care=care,
-    )
+    return _unspent_resonance(user, care=care)
 
 
 async def _resonance_pass_or_care(

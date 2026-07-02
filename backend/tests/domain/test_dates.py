@@ -22,6 +22,7 @@ import pytest
 
 from domain.dates import (
     day_bounds_in_tz,
+    ensure_aware,
     now_in_tz,
     to_user_date,
     today_in_tz,
@@ -202,6 +203,34 @@ class TestToUserDate:
 
 
 # ── Edge cases: year-boundary, leap-day ──────────────────────────────────
+
+
+class TestEnsureAware:
+    """ensure_aware tags naive datetimes UTC and passes aware ones through."""
+
+    def test_naive_datetime_is_tagged_utc(self) -> None:
+        naive = datetime(2026, 6, 15, 12, 0)  # noqa: DTZ001
+        result = ensure_aware(naive)
+        assert result.tzinfo is UTC
+
+    def test_naive_datetime_wall_clock_is_unchanged(self) -> None:
+        naive = datetime(2026, 6, 15, 12, 0)  # noqa: DTZ001
+        result = ensure_aware(naive)
+        assert result.replace(tzinfo=None) == naive
+
+    def test_aware_datetime_is_returned_unchanged(self) -> None:
+        zone = ZoneInfo("America/Los_Angeles")
+        aware = datetime(2026, 6, 15, 12, 0, tzinfo=zone)
+        result = ensure_aware(aware)
+        assert result == aware
+        assert result.tzinfo is aware.tzinfo
+
+    def test_aware_datetime_keeps_its_own_offset_not_utc(self) -> None:
+        zone = ZoneInfo("America/Los_Angeles")
+        aware = datetime(2026, 6, 15, 12, 0, tzinfo=zone)
+        result = ensure_aware(aware)
+        assert result.utcoffset() == aware.utcoffset()
+        assert result.utcoffset() != timedelta(0)
 
 
 class TestYearAndLeapBoundaries:

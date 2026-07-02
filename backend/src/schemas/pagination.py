@@ -68,6 +68,17 @@ class PaginationParams:
     )
 
 
+def page_has_more(offset: int, limit: int, total: int) -> bool:
+    """Return whether rows remain past the current ``offset`` + ``limit`` window.
+
+    The single source of truth for the ``has_more`` flag every paginated list
+    endpoint returns: ``True`` when the next page would contain at least one
+    row.  Equal ``offset + limit`` and ``total`` means the window ends exactly
+    at the last row, so there is no next page.
+    """
+    return (offset + limit) < total
+
+
 def build_page(items: list[T], total: int, params: PaginationParams) -> Page[T]:  # noqa: UP047
     """Construct a :class:`Page` envelope from sliced items + count + params."""
     return Page[T](
@@ -75,7 +86,7 @@ def build_page(items: list[T], total: int, params: PaginationParams) -> Page[T]:
         total=total,
         limit=params.limit,
         offset=params.offset,
-        has_more=(params.offset + params.limit) < total,
+        has_more=page_has_more(params.offset, params.limit, total),
     )
 
 

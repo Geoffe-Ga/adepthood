@@ -20,6 +20,7 @@ from errors import conflict, forbidden, not_found, unprocessable
 from models.journal_entry import JournalEntry, JournalTag
 from models.prompt_response import PromptResponse
 from routers.auth import get_current_user
+from schemas.pagination import page_has_more
 from schemas.prompt import (
     PROMPT_RESPONSE_MAX_LENGTH,
     PromptDetail,
@@ -160,7 +161,7 @@ async def list_prompt_history(
     if total is not None:
         page_query = query.offset(filters.offset).limit(filters.limit)
         items = list((await session.execute(page_query)).scalars().all())
-        has_more = (filters.offset + filters.limit) < total
+        has_more = page_has_more(filters.offset, filters.limit, total)
     else:
         peek_query = query.offset(filters.offset).limit(filters.limit + 1)
         rows = list((await session.execute(peek_query)).scalars().all())

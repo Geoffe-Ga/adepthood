@@ -428,6 +428,29 @@ def _entry_message(entry: dict[str, str]) -> str:
     return entry.get("message", "")
 
 
+def _wrap_history(
+    conversation_history: list[dict[str, str]],
+    user_message: str,
+    nonce: str,
+) -> list[dict[str, str]]:
+    """Build the nonce-wrapped turn list: history followed by the new user turn.
+
+    Shared by the OpenAI and Anthropic message builders (BUG-BM-004): every
+    user-role content (prior turns and the new message) is nonce-wrapped so
+    the delimiter tags cannot be forged from a prior conversation, while
+    assistant turns pass through verbatim.  The system prompt is *not* part
+    of this list -- each caller places it where its provider expects.
+    """
+    messages: list[dict[str, str]] = []
+    for entry in conversation_history:
+        role = "assistant" if entry.get("sender") == "bot" else "user"
+        message = _entry_message(entry)
+        content = _wrap_user_input(message, nonce) if role == "user" else message
+        messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": _wrap_user_input(user_message, nonce)})
+    return messages
+
+
 def _build_messages(
     user_message: str,
     conversation_history: list[dict[str, str]],
@@ -444,16 +467,8 @@ def _build_messages(
     """
     _check_prompt_injection(user_message)
     nonce = _make_nonce()
-    messages: list[dict[str, str]] = [
-        {"role": "system", "content": _augment_system_prompt(system_prompt, nonce)},
-    ]
-    for entry in conversation_history:
-        role = "assistant" if entry.get("sender") == "bot" else "user"
-        message = _entry_message(entry)
-        content = _wrap_user_input(message, nonce) if role == "user" else message
-        messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": _wrap_user_input(user_message, nonce)})
-    return messages
+    system_turn = {"role": "system", "content": _augment_system_prompt(system_prompt, nonce)}
+    return [system_turn, *_wrap_history(conversation_history, user_message, nonce)]
 
 
 def _provider_default_model(provider: str) -> str:
@@ -506,13 +521,7 @@ def _build_anthropic_messages(
     """
     _check_prompt_injection(user_message)
     nonce = _make_nonce()
-    messages: list[dict[str, str]] = []
-    for entry in conversation_history:
-        role = "assistant" if entry.get("sender") == "bot" else "user"
-        message = _entry_message(entry)
-        content = _wrap_user_input(message, nonce) if role == "user" else message
-        messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": _wrap_user_input(user_message, nonce)})
+    messages = _wrap_history(conversation_history, user_message, nonce)
     return messages, _augment_system_prompt(system_prompt, nonce)
 
 
