@@ -1,154 +1,47 @@
-"""Seed script for the 10 APTITUDE CourseStage definitions."""
+"""Seed script for the 10 APTITUDE CourseStage definitions.
+
+The Stage attributes are sourced from the vendored Archetypal Wavelength
+curriculum dataset (:mod:`curriculum`), the single source of truth for
+per-Stage copy.  The loader enforces that the ten Stages are present, unique,
+and complete, so this module maps that validated data into the seed dicts the
+ORM expects, adding the seeder-owned ``overview_url``.
+"""
 
 from __future__ import annotations
+
+from typing import Final
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+import curriculum
 from models.course_stage import CourseStage
 
-_STAGE_DEFINITIONS: list[dict[str, str | int]] = [
-    {
-        "stage_number": 1,
-        "title": "Survival",
-        "subtitle": "Active Yes-And-Ness",
-        "overview_url": "",
-        "category": "Pre-personal",
-        "aspect": "Body",
-        "spiral_dynamics_color": "Beige",
-        "growing_up_stage": "Archaic",
-        "divine_gender_polarity": "Masculine",
-        "relationship_to_free_will": "Reactive",
-        "free_will_description": "Instinctual response to environment",
-    },
-    {
-        "stage_number": 2,
-        "title": "Magick",
-        "subtitle": "Receptive Yes-And-Ness",
-        "overview_url": "",
-        "category": "Pre-personal",
-        "aspect": "Body",
-        "spiral_dynamics_color": "Purple",
-        "growing_up_stage": "Magic",
-        "divine_gender_polarity": "Feminine",
-        "relationship_to_free_will": "Receptive",
-        "free_will_description": "Surrender to tribal belonging",
-    },
-    {
-        "stage_number": 3,
-        "title": "Power",
-        "subtitle": "Self-Love",
-        "overview_url": "",
-        "category": "Pre-personal",
-        "aspect": "Emotion",
-        "spiral_dynamics_color": "Red",
-        "growing_up_stage": "Power Gods",
-        "divine_gender_polarity": "Masculine",
-        "relationship_to_free_will": "Assertive",
-        "free_will_description": "Willful self-assertion",
-    },
-    {
-        "stage_number": 4,
-        "title": "Conformity",
-        "subtitle": "Universal Love",
-        "overview_url": "",
-        "category": "Personal",
-        "aspect": "Emotion",
-        "spiral_dynamics_color": "Blue",
-        "growing_up_stage": "Mythic Order",
-        "divine_gender_polarity": "Feminine",
-        "relationship_to_free_will": "Obedient",
-        "free_will_description": "Submission to higher order",
-    },
-    {
-        "stage_number": 5,
-        "title": "Achievist",
-        "subtitle": "Intellectual Understanding",
-        "overview_url": "",
-        "category": "Personal",
-        "aspect": "Mind",
-        "spiral_dynamics_color": "Orange",
-        "growing_up_stage": "Scientific-Rational",
-        "divine_gender_polarity": "Masculine",
-        "relationship_to_free_will": "Strategic",
-        "free_will_description": "Calculated self-determination",
-    },
-    {
-        "stage_number": 6,
-        "title": "Pluralist",
-        "subtitle": "Embodied Understanding",
-        "overview_url": "",
-        "category": "Personal",
-        "aspect": "Mind",
-        "spiral_dynamics_color": "Green",
-        "growing_up_stage": "Sensitive Self",
-        "divine_gender_polarity": "Feminine",
-        "relationship_to_free_will": "Collaborative",
-        "free_will_description": "Co-creation through empathy",
-    },
-    {
-        "stage_number": 7,
-        "title": "Integrative",
-        "subtitle": "Systems Wisdom",
-        "overview_url": "",
-        "category": "Trans-personal",
-        "aspect": "Spirit",
-        "spiral_dynamics_color": "Yellow",
-        "growing_up_stage": "Integral",
-        "divine_gender_polarity": "Masculine",
-        "relationship_to_free_will": "Systemic",
-        "free_will_description": "Functional flow within systems",
-    },
-    {
-        "stage_number": 8,
-        "title": "Nondual",
-        "subtitle": "Transcendent Wisdom",
-        "overview_url": "",
-        "category": "Trans-personal",
-        "aspect": "Spirit",
-        "spiral_dynamics_color": "Turquoise",
-        "growing_up_stage": "Holistic",
-        "divine_gender_polarity": "Feminine",
-        "relationship_to_free_will": "Surrendered",
-        "free_will_description": "Alignment with universal flow",
-    },
-    {
-        "stage_number": 9,
-        "title": "Effortless Being",
-        "subtitle": "Unity of Being",
-        "overview_url": "",
-        "category": "Trans-personal",
-        "aspect": "Nondual",
-        "spiral_dynamics_color": "Ultraviolet",
-        "growing_up_stage": "Para-mind",
-        "divine_gender_polarity": "Integrated",
-        "relationship_to_free_will": "Effortless",
-        "free_will_description": "Spontaneous right action",
-    },
-    {
-        "stage_number": 10,
-        "title": "Pure Awareness",
-        "subtitle": "Emptiness and Awareness",
-        "overview_url": "",
-        "category": "Trans-personal",
-        "aspect": "Nondual",
-        "spiral_dynamics_color": "Clear Light",
-        "growing_up_stage": "Meta-mind",
-        "divine_gender_polarity": "Transcendent",
-        "relationship_to_free_will": "Witnessing",
-        "free_will_description": "Free will and determinism as one",
-    },
+#: The curriculum dataset does not carry per-Stage overview URLs; they are a
+#: seeder concern and default to empty until populated elsewhere.
+DEFAULT_OVERVIEW_URL: Final[str] = ""
+
+
+def _to_definition(stage: curriculum.StageCurriculum) -> dict[str, str | int]:
+    """Map a curriculum Stage to the ORM seed dict for :class:`CourseStage`."""
+    return {
+        "stage_number": stage.stage_number,
+        "title": stage.title,
+        "subtitle": stage.subtitle,
+        "overview_url": DEFAULT_OVERVIEW_URL,
+        "category": stage.category,
+        "aspect": stage.aspect,
+        "spiral_dynamics_color": stage.spiral_dynamics_color,
+        "growing_up_stage": stage.growing_up_stage,
+        "divine_gender_polarity": stage.divine_gender_polarity,
+        "relationship_to_free_will": stage.relationship_to_free_will,
+        "free_will_description": stage.free_will_description,
+    }
+
+
+STAGE_DEFINITIONS: list[dict[str, str | int]] = [
+    _to_definition(stage) for stage in curriculum.all_stages()
 ]
-
-# BUG-SEED-002: Assert uniqueness of stage_numbers at import time so a
-# duplicate definition is caught immediately, not silently ignored at runtime.
-_stage_numbers = [d["stage_number"] for d in _STAGE_DEFINITIONS]
-if len(set(_stage_numbers)) != len(_stage_numbers):
-    _dupes = sorted(n for n in _stage_numbers if _stage_numbers.count(n) > 1)
-    msg = f"Duplicate stage_number in STAGE_DEFINITIONS: {_dupes}"
-    raise ValueError(msg)
-
-STAGE_DEFINITIONS = _STAGE_DEFINITIONS
 
 
 async def seed_stages(session: AsyncSession) -> int:

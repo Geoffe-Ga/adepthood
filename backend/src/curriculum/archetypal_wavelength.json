@@ -1,0 +1,451 @@
+{
+  "dataset_version": "1.0.0",
+  "provenance": {
+    "source": "Archetypal Wavelength spreadsheet, 'Expanded List' sheet",
+    "extracted_from": "in-repo vendored course markdown (backend/content/markdown/backup/ and *full-6-phase-wavelength-breakdown chapters)",
+    "refresh_doc": "docs/curriculum.md"
+  },
+  "phases": ["Rising", "Peaking", "Withdrawal", "Diminishing", "Bottoming Out", "Restoration"],
+  "stages": [
+    {
+      "stage_number": 1,
+      "title": "Survival",
+      "subtitle": "Active Yes-And-Ness",
+      "category": "Pre-personal",
+      "aspect": "Body",
+      "spiral_dynamics_color": "Beige",
+      "growing_up_stage": "Archaic",
+      "divine_gender_polarity": "Masculine",
+      "relationship_to_free_will": "Reactive",
+      "free_will_description": "Instinctual response to environment",
+      "manifestations": [
+        {
+          "phase": "Rising",
+          "integrated": {"name": "Commitment", "description": "A grounded promise to begin showing up."},
+          "shadow": {"name": "Over-commitment", "description": "Taking on too much too fast."}
+        },
+        {
+          "phase": "Peaking",
+          "integrated": {"name": "Diligence", "description": "Steady effort anchored in habit and presence."},
+          "shadow": {"name": "Thriving", "description": "Overextending in a rush of manic progress."}
+        },
+        {
+          "phase": "Withdrawal",
+          "integrated": {"name": "Steadiness", "description": "Returning to baseline without abandoning routine."},
+          "shadow": {"name": "Burnout", "description": "Energetic collapse from unsustainable output."}
+        },
+        {
+          "phase": "Diminishing",
+          "integrated": {"name": "Security", "description": "Embracing contraction to restore safety and trust."},
+          "shadow": {"name": "Grasping", "description": "Clinging to momentum as it fades."}
+        },
+        {
+          "phase": "Bottoming Out",
+          "integrated": {"name": "Stability", "description": "Deep stillness that anchors your nervous system."},
+          "shadow": {"name": "Overwhelm", "description": "Flooded by unmet needs or collapsing structure."}
+        },
+        {
+          "phase": "Restoration",
+          "integrated": {"name": "Next Habit", "description": "Humble return with a manageable new step."},
+          "shadow": {"name": "New Plan", "description": "Drastic overhaul to escape discomfort."}
+        }
+      ]
+    },
+    {
+      "stage_number": 2,
+      "title": "Magick",
+      "subtitle": "Receptive Yes-And-Ness",
+      "category": "Pre-personal",
+      "aspect": "Body",
+      "spiral_dynamics_color": "Purple",
+      "growing_up_stage": "Magic",
+      "divine_gender_polarity": "Feminine",
+      "relationship_to_free_will": "Receptive",
+      "free_will_description": "Surrender to tribal belonging",
+      "manifestations": [
+        {
+          "phase": "Rising",
+          "integrated": {"name": "Inspiration", "description": "Guided by subtle symbols, dreams, or intuitive nudges."},
+          "shadow": {"name": "Self-aggrandizement", "description": "Mistaking inspiration for spiritual superiority or specialness."}
+        },
+        {
+          "phase": "Peaking",
+          "integrated": {"name": "Attunement", "description": "In sync with feelings, symbols, and unseen rhythms."},
+          "shadow": {"name": "Intoxication", "description": "Overwhelmed by meaning, chasing mystical highs."}
+        },
+        {
+          "phase": "Withdrawal",
+          "integrated": {"name": "Introspectivity", "description": "Quiet inner reflection and gentle emotional processing."},
+          "shadow": {"name": "Anxiety", "description": "Flooded by feelings, uncertain what is real."}
+        },
+        {
+          "phase": "Diminishing",
+          "integrated": {"name": "Coziness", "description": "Soft retreat into comfort, nesting, and gentle beauty."},
+          "shadow": {"name": "Self-doubt", "description": "Losing confidence, questioning intuition and worth."}
+        },
+        {
+          "phase": "Bottoming Out",
+          "integrated": {"name": "Fallow state", "description": "Restful emptiness, receptive to future renewal."},
+          "shadow": {"name": "Self-loathing", "description": "Turning symbolic failure inward as shame."}
+        },
+        {
+          "phase": "Restoration",
+          "integrated": {"name": "Recuperation", "description": "Energy slowly returns; meaning begins to glimmer again."},
+          "shadow": {"name": "Selfishness", "description": "Hoarding vitality instead of rejoining the collective vibe."}
+        }
+      ]
+    },
+    {
+      "stage_number": 3,
+      "title": "Power",
+      "subtitle": "Self-Love",
+      "category": "Pre-personal",
+      "aspect": "Emotion",
+      "spiral_dynamics_color": "Red",
+      "growing_up_stage": "Power Gods",
+      "divine_gender_polarity": "Masculine",
+      "relationship_to_free_will": "Assertive",
+      "free_will_description": "Willful self-assertion",
+      "manifestations": [
+        {
+          "phase": "Rising",
+          "integrated": {"name": "Leading", "description": "Stepping forward with clarity and initiative."},
+          "shadow": {"name": "Dominating", "description": "Steamrolling others to feel safe or seen."}
+        },
+        {
+          "phase": "Peaking",
+          "integrated": {"name": "Power-With", "description": "Collaborating with others while staying in your strength."},
+          "shadow": {"name": "Power-Over", "description": "Asserting control to suppress difference or dissent."}
+        },
+        {
+          "phase": "Withdrawal",
+          "integrated": {"name": "Stepping Back", "description": "The courage to pause, reassess, and make room."},
+          "shadow": {"name": "Crumbling", "description": "Losing grip, collapsing under the weight of unmet needs."}
+        },
+        {
+          "phase": "Diminishing",
+          "integrated": {"name": "Humility", "description": "Recognizing your limits without shame."},
+          "shadow": {"name": "Shame", "description": "Believing your worth depends on dominance or perfection."}
+        },
+        {
+          "phase": "Bottoming Out",
+          "integrated": {"name": "Following", "description": "Willingly receiving leadership or guidance."},
+          "shadow": {"name": "Subjugation", "description": "Losing yourself in order to avoid conflict or rejection."}
+        },
+        {
+          "phase": "Restoration",
+          "integrated": {"name": "Assembling", "description": "Rallying the right team, tools, and timing to re-engage."},
+          "shadow": {"name": "Revenge", "description": "Re-entering the ring just to punish or prove."}
+        }
+      ]
+    },
+    {
+      "stage_number": 4,
+      "title": "Conformity",
+      "subtitle": "Universal Love",
+      "category": "Personal",
+      "aspect": "Emotion",
+      "spiral_dynamics_color": "Blue",
+      "growing_up_stage": "Mythic Order",
+      "divine_gender_polarity": "Feminine",
+      "relationship_to_free_will": "Obedient",
+      "free_will_description": "Submission to higher order",
+      "manifestations": [
+        {
+          "phase": "Rising",
+          "integrated": {"name": "Ambition", "description": "Reaching toward connection and community from fullness."},
+          "shadow": {"name": "Voraciousness", "description": "Compulsive hunger for connection that clings and overshares."}
+        },
+        {
+          "phase": "Peaking",
+          "integrated": {"name": "Attunement", "description": "The felt sense of being in harmony with others."},
+          "shadow": {"name": "Leprosy", "description": "Merging so fully you abandon yourself and burn out."}
+        },
+        {
+          "phase": "Withdrawal",
+          "integrated": {"name": "Discernment", "description": "Tuning in to your own truth about the relationship."},
+          "shadow": {"name": "Self-Medication", "description": "Pulling back to numb and escape rather than reflect."}
+        },
+        {
+          "phase": "Diminishing",
+          "integrated": {"name": "Conviction", "description": "Staying true to what you value even when it costs you."},
+          "shadow": {"name": "Rage", "description": "Exploding and lashing out when you hit your limit."}
+        },
+        {
+          "phase": "Bottoming Out",
+          "integrated": {"name": "Surrender", "description": "Releasing control and trusting the love is still there."},
+          "shadow": {"name": "Misery", "description": "The despairing belief that you have been abandoned."}
+        },
+        {
+          "phase": "Restoration",
+          "integrated": {"name": "Catharsis", "description": "Emotional release that clears the system for new energy."},
+          "shadow": {"name": "Self-Repression", "description": "Burying what needs release and restarting the cycle."}
+        }
+      ]
+    },
+    {
+      "stage_number": 5,
+      "title": "Achievist",
+      "subtitle": "Intellectual Understanding",
+      "category": "Personal",
+      "aspect": "Mind",
+      "spiral_dynamics_color": "Orange",
+      "growing_up_stage": "Scientific-Rational",
+      "divine_gender_polarity": "Masculine",
+      "relationship_to_free_will": "Strategic",
+      "free_will_description": "Calculated self-determination",
+      "manifestations": [
+        {
+          "phase": "Rising",
+          "integrated": {"name": "Hypothesize", "description": "Proposing a tentative answer and holding it lightly."},
+          "shadow": {"name": "Assert", "description": "Declaring the answer and shutting collaboration down."}
+        },
+        {
+          "phase": "Peaking",
+          "integrated": {"name": "Experiment", "description": "Willingly trying something to see what you can learn."},
+          "shadow": {"name": "Crusade", "description": "Evangelizing a hypothesis you have mistaken for truth."}
+        },
+        {
+          "phase": "Withdrawal",
+          "integrated": {"name": "Collect Data", "description": "Gathering the feedback and documenting what happened."},
+          "shadow": {"name": "Overlook Details", "description": "Cherry-picking data and ignoring contrary evidence."}
+        },
+        {
+          "phase": "Diminishing",
+          "integrated": {"name": "Analyze", "description": "Sitting with complexity to draw tentative conclusions."},
+          "shadow": {"name": "Force It", "description": "Jamming the data into a conclusion that does not fit."}
+        },
+        {
+          "phase": "Bottoming Out",
+          "integrated": {"name": "Synthesize", "description": "Integrating what you learned into a truer understanding."},
+          "shadow": {"name": "Fail", "description": "Giving up and reading the low point as inadequacy."}
+        },
+        {
+          "phase": "Restoration",
+          "integrated": {"name": "Question", "description": "Returning to fresh curiosity for the next cycle."},
+          "shadow": {"name": "Presume", "description": "Assuming you already know and skipping the inquiry."}
+        }
+      ]
+    },
+    {
+      "stage_number": 6,
+      "title": "Pluralist",
+      "subtitle": "Embodied Understanding",
+      "category": "Personal",
+      "aspect": "Mind",
+      "spiral_dynamics_color": "Green",
+      "growing_up_stage": "Sensitive Self",
+      "divine_gender_polarity": "Feminine",
+      "relationship_to_free_will": "Collaborative",
+      "free_will_description": "Co-creation through empathy",
+      "manifestations": [
+        {
+          "phase": "Rising",
+          "integrated": {"name": "Connection", "description": "Showing up authentically and letting yourself be seen."},
+          "shadow": {"name": "Oversharing", "description": "Trauma-dumping intensity mistaken for intimacy."}
+        },
+        {
+          "phase": "Peaking",
+          "integrated": {"name": "Belonging", "description": "Being fully yourself and fully accepted in community."},
+          "shadow": {"name": "Megalomania", "description": "Making the group special and exclusionary."}
+        },
+        {
+          "phase": "Withdrawal",
+          "integrated": {"name": "Retirement", "description": "Consciously pulling back to replenish and rest."},
+          "shadow": {"name": "Social Anxiety", "description": "Isolating from the fear of being seen and judged."}
+        },
+        {
+          "phase": "Diminishing",
+          "integrated": {"name": "Unwinding", "description": "The natural release of tension after deep connection."},
+          "shadow": {"name": "Alienation", "description": "The story that no one understands you and you are alone."}
+        },
+        {
+          "phase": "Bottoming Out",
+          "integrated": {"name": "Repose", "description": "Deep rest and sacred solitude that feels full."},
+          "shadow": {"name": "Isolation", "description": "The despairing belief that solitude is a sentence."}
+        },
+        {
+          "phase": "Restoration",
+          "integrated": {"name": "Vulnerability", "description": "Re-entering connection with open authenticity."},
+          "shadow": {"name": "Bitterness", "description": "Re-entering guarded and resentful from old wounds."}
+        }
+      ]
+    },
+    {
+      "stage_number": 7,
+      "title": "Integrative",
+      "subtitle": "Systems Wisdom",
+      "category": "Trans-personal",
+      "aspect": "Spirit",
+      "spiral_dynamics_color": "Yellow",
+      "growing_up_stage": "Integral",
+      "divine_gender_polarity": "Masculine",
+      "relationship_to_free_will": "Systemic",
+      "free_will_description": "Functional flow within systems",
+      "manifestations": [
+        {
+          "phase": "Rising",
+          "integrated": {"name": "Focus", "description": "Bringing awareness to what matters and sustaining it."},
+          "shadow": {"name": "Hyperfocus", "description": "Locking on so hard you lose peripheral awareness."}
+        },
+        {
+          "phase": "Peaking",
+          "integrated": {"name": "Concentration", "description": "Effortless unified absorption where the mind rests."},
+          "shadow": {"name": "Obsession", "description": "Addiction to peak states you chase and grasp at."}
+        },
+        {
+          "phase": "Withdrawal",
+          "integrated": {"name": "Adjustment", "description": "Noticing you have drifted and gently course-correcting."},
+          "shadow": {"name": "Stagnation", "description": "Awareness of being off course without any action."}
+        },
+        {
+          "phase": "Diminishing",
+          "integrated": {"name": "Reorienting", "description": "Stepping back to reassess the approach and recalibrate."},
+          "shadow": {"name": "Dithering", "description": "Endlessly changing course without ever committing."}
+        },
+        {
+          "phase": "Bottoming Out",
+          "integrated": {"name": "Settling", "description": "Deep rest that comes from releasing all striving."},
+          "shadow": {"name": "Depression", "description": "The hopeless belief that the low point is permanent."}
+        },
+        {
+          "phase": "Restoration",
+          "integrated": {"name": "Reset", "description": "Beginning again fresh without the last cycle's baggage."},
+          "shadow": {"name": "Addiction", "description": "Reaching for a compulsive fix instead of a clean start."}
+        }
+      ]
+    },
+    {
+      "stage_number": 8,
+      "title": "Nondual",
+      "subtitle": "Transcendent Wisdom",
+      "category": "Trans-personal",
+      "aspect": "Spirit",
+      "spiral_dynamics_color": "Turquoise",
+      "growing_up_stage": "Holistic",
+      "divine_gender_polarity": "Feminine",
+      "relationship_to_free_will": "Surrendered",
+      "free_will_description": "Alignment with universal flow",
+      "manifestations": [
+        {
+          "phase": "Rising",
+          "integrated": {"name": "Focus", "description": "Attention that gathers on its own, allowed not forced."},
+          "shadow": {"name": "Hyperfocus", "description": "A tight, straining grip that constricts the body."}
+        },
+        {
+          "phase": "Peaking",
+          "integrated": {"name": "Concentration", "description": "Unified awareness recognized rather than achieved."},
+          "shadow": {"name": "Obsession", "description": "The subtle grasp of preferring the state to continue."}
+        },
+        {
+          "phase": "Withdrawal",
+          "integrated": {"name": "Adjustment", "description": "Spontaneous return, since noticing itself is presence."},
+          "shadow": {"name": "Stagnation", "description": "The false refuge of drifting under the guise of acceptance."}
+        },
+        {
+          "phase": "Diminishing",
+          "integrated": {"name": "Reorienting", "description": "Effortlessly letting awareness recalibrate the path."},
+          "shadow": {"name": "Dithering", "description": "Restlessly second-guessing without resting in any choice."}
+        },
+        {
+          "phase": "Bottoming Out",
+          "integrated": {"name": "Settling", "description": "Resting as awareness itself with nothing to make happen."},
+          "shadow": {"name": "Depression", "description": "Settling that has lost trust the wave will turn upward."}
+        },
+        {
+          "phase": "Restoration",
+          "integrated": {"name": "Reset", "description": "Renewing presence spontaneously as energy returns."},
+          "shadow": {"name": "Addiction", "description": "Clinging to an old comfort instead of fresh re-engagement."}
+        }
+      ]
+    },
+    {
+      "stage_number": 9,
+      "title": "Effortless Being",
+      "subtitle": "Unity of Being",
+      "category": "Trans-personal",
+      "aspect": "Nondual",
+      "spiral_dynamics_color": "Ultraviolet",
+      "growing_up_stage": "Para-mind",
+      "divine_gender_polarity": "Integrated",
+      "relationship_to_free_will": "Effortless",
+      "free_will_description": "Spontaneous right action",
+      "manifestations": [
+        {
+          "phase": "Rising",
+          "integrated": {"name": "Ascending", "description": "The natural deepening that comes from sustained practice."},
+          "shadow": {"name": "Transcending", "description": "Spiritual bypass that escapes rather than includes life."}
+        },
+        {
+          "phase": "Peaking",
+          "integrated": {"name": "Clarity", "description": "Seeing reality as it is, as lived truth not concept."},
+          "shadow": {"name": "Superiority", "description": "Using realization as proof you are better than others."}
+        },
+        {
+          "phase": "Withdrawal",
+          "integrated": {"name": "Discernment", "description": "Precise seeing of distinctions held with compassion."},
+          "shadow": {"name": "Judgment", "description": "Using clarity to condemn, dismiss, and reject others."}
+        },
+        {
+          "phase": "Diminishing",
+          "integrated": {"name": "Humility", "description": "Recognizing you are always the student before the mystery."},
+          "shadow": {"name": "Humiliation", "description": "Collapsing into shame that you are not enough."}
+        },
+        {
+          "phase": "Bottoming Out",
+          "integrated": {"name": "Devotion", "description": "Practicing because the practice itself is sacred."},
+          "shadow": {"name": "Dogma", "description": "Mistaking your tradition for the one true path."}
+        },
+        {
+          "phase": "Restoration",
+          "integrated": {"name": "Recommitment", "description": "Choosing the path again out of love, not obligation."},
+          "shadow": {"name": "Righteousness", "description": "Wielding devotion as a badge to judge others."}
+        }
+      ]
+    },
+    {
+      "stage_number": 10,
+      "title": "Pure Awareness",
+      "subtitle": "Emptiness and Awareness",
+      "category": "Trans-personal",
+      "aspect": "Nondual",
+      "spiral_dynamics_color": "Clear Light",
+      "growing_up_stage": "Meta-mind",
+      "divine_gender_polarity": "Transcendent",
+      "relationship_to_free_will": "Witnessing",
+      "free_will_description": "Free will and determinism as one",
+      "manifestations": [
+        {
+          "phase": "Rising",
+          "integrated": {"name": "Riding", "description": "Letting momentum carry you while staying rooted."},
+          "shadow": {"name": "Grasping", "description": "Clutching at the returning energy and believing the hype."}
+        },
+        {
+          "phase": "Peaking",
+          "integrated": {"name": "Gratitude", "description": "Enjoying the flow fully and letting it pass in time."},
+          "shadow": {"name": "Attachment", "description": "Clinging to the peak instead of releasing it."}
+        },
+        {
+          "phase": "Withdrawal",
+          "integrated": {"name": "Trust", "description": "Letting go as the descent unfolds its natural rhythm."},
+          "shadow": {"name": "Collapse", "description": "Reading the natural ebb as failure and falling apart."}
+        },
+        {
+          "phase": "Diminishing",
+          "integrated": {"name": "Patience", "description": "Knowing this too shall pass, having been here before."},
+          "shadow": {"name": "Despair", "description": "Believing the trough is permanent and hopeless."}
+        },
+        {
+          "phase": "Bottoming Out",
+          "integrated": {"name": "Rest", "description": "Ceasing to fix it and letting the ground hold you."},
+          "shadow": {"name": "Fixing", "description": "Straining to repair the bottom instead of resting."}
+        },
+        {
+          "phase": "Restoration",
+          "integrated": {"name": "Recommitment", "description": "Returning to the same practice, path, and truth again."},
+          "shadow": {"name": "Novelty-Seeking", "description": "Chasing something new instead of the proven path."}
+        }
+      ]
+    }
+  ]
+}
