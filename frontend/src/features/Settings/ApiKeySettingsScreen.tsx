@@ -13,6 +13,7 @@ import {
 
 import { BYOK_PROVIDERS, providerForKey } from './byokProviders';
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
+import { SETTINGS_BUTTON_PADDING } from './shared/settingsFormLayout';
 import type { SettingsFormState } from './shared/useSettingsForm';
 import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
 
@@ -38,7 +39,7 @@ const MASK_VISIBLE_CHARS = 4;
 
 // Built from the provider map so the error copy can never drift from the
 // supported set: e.g. `"sk-" (OpenAI) or "sk-ant-" (Anthropic)`.
-const _PREFIX_SUMMARY = BYOK_PROVIDERS.map((p) => `"${p.keyPrefix}" (${p.label})`).join(' or ');
+const PREFIX_SUMMARY = BYOK_PROVIDERS.map((p) => `"${p.keyPrefix}" (${p.label})`).join(' or ');
 
 interface KeyValidationError {
   code: 'empty' | 'too_short' | 'too_long' | 'bad_prefix';
@@ -59,7 +60,7 @@ export function validateUserApiKey(raw: string): KeyValidationError | null {
   if (providerForKey(key) === null) {
     return {
       code: 'bad_prefix',
-      message: `API keys start with ${_PREFIX_SUMMARY}.`,
+      message: `API keys start with ${PREFIX_SUMMARY}.`,
     };
   }
   return null;
@@ -319,7 +320,8 @@ function useSaveKeyHandler(
     setStatus('API key saved on this device.');
   }, [draft, saveApiKey, setDraft, setReveal, setStatus]);
   const onError = useCallback(
-    (err: unknown) => (err as Error).message ?? 'Could not save the API key.',
+    (err: unknown) =>
+      err instanceof Error && err.message ? err.message : 'Could not save the API key.',
     [],
   );
   return useSettingsSubmit(form, { validate, perform, onError });
@@ -329,19 +331,18 @@ function useClearKeyHandler(
   form: SettingsFormState,
   clearApiKey: () => Promise<void>,
 ): () => Promise<void> {
-  const { setStatus, setError, setSubmitting } = form;
-  return useCallback(async () => {
-    setStatus(null);
-    setSubmitting(true);
-    try {
-      await clearApiKey();
-      setStatus('API key removed from this device.');
-    } catch (err) {
-      setError((err as Error).message ?? 'Could not remove the API key.');
-    } finally {
-      setSubmitting(false);
-    }
-  }, [clearApiKey, setStatus, setError, setSubmitting]);
+  const { setStatus } = form;
+  const validate = useCallback(() => null, []);
+  const perform = useCallback(async () => {
+    await clearApiKey();
+    setStatus('API key removed from this device.');
+  }, [clearApiKey, setStatus]);
+  const onError = useCallback(
+    (err: unknown) =>
+      err instanceof Error && err.message ? err.message : 'Could not remove the API key.',
+    [],
+  );
+  return useSettingsSubmit(form, { validate, perform, onError });
 }
 
 export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.JSX.Element {
@@ -471,7 +472,11 @@ const styles = StyleSheet.create({
     backgroundColor: surface.sunken,
   },
   revealButtonText: { fontSize: 14, color: ink.primary, fontWeight: '600' },
-  button: { borderRadius: BORDER_RADIUS.md, padding: SPACING.md + 2, alignItems: 'center' },
+  button: {
+    borderRadius: BORDER_RADIUS.md,
+    padding: SETTINGS_BUTTON_PADDING,
+    alignItems: 'center',
+  },
   primaryButton: { backgroundColor: accent.primary, marginTop: SPACING.xs },
   primaryButtonText: { color: colors.text.light, fontSize: 16, fontWeight: '600' },
   destructiveButton: {
