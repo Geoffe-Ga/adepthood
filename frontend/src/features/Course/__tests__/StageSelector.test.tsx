@@ -72,14 +72,21 @@ describe('StageSelector', () => {
     expect(queryByTestId('stage-pill-4')).toBeNull();
   });
 
-  it('shows checkmark for completed stages', () => {
+  it('shows checkmark for completed stages and the number for uncompleted ones', () => {
     const { getByTestId } = render(
       <StageSelector stages={sampleStages} selectedStage={2} onSelectStage={onSelectStage} />,
     );
 
-    // Stage 1 has progress === 1.0, should show checkmark
+    // Stage 1 (progress 1.0) renders the checkmark glyph and flags completion.
     const pill1 = getByTestId('stage-pill-1');
-    expect(pill1).toBeTruthy();
+    expect(within(pill1).getByText('✓')).toBeTruthy();
+    expect(pill1.props.accessibilityLabel).toBe('Stage 1, completed');
+
+    // Stage 2 (unlocked, progress 0.5) renders its number, never the checkmark.
+    const pill2 = getByTestId('stage-pill-2');
+    expect(within(pill2).getByText('2')).toBeTruthy();
+    expect(within(pill2).queryByText('✓')).toBeNull();
+    expect(pill2.props.accessibilityLabel).toBe('Stage 2');
   });
 
   it('calls onSelectStage when an unlocked stage is tapped', () => {
@@ -186,19 +193,6 @@ describe('StageSelector', () => {
     const pill11 = getByTestId('stage-pill-11');
     const style = pill11.props.style as StyleProp<ViewStyle>;
     expect(backgroundColorOf(style)).toBe(colors.neutral);
-  });
-
-  it('renders the checkmark glyph for a completed stage and the number for an active one', () => {
-    const stages = [
-      makeStage({ stage_number: 1, is_unlocked: true, progress: 1.0 }),
-      makeStage({ stage_number: 2, is_unlocked: true, progress: 0.2 }),
-    ];
-    const { getByTestId } = render(
-      <StageSelector stages={stages} selectedStage={2} onSelectStage={onSelectStage} />,
-    );
-
-    expect(within(getByTestId('stage-pill-1')).getByText('✓')).toBeTruthy();
-    expect(within(getByTestId('stage-pill-2')).getByText('2')).toBeTruthy();
   });
 
   it('renders the lock glyph for a locked, non-completed stage', () => {
