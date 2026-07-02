@@ -1573,3 +1573,99 @@ def test_invitation_signal_migration_round_trip_on_sqlite(
     # Phase 3: re-upgrade is idempotent.
     command.upgrade(cfg, _INVITATION_SIGNAL_REVISION)
     assert _table_exists(db_url, "invitationsignal")
+
+
+# -- chord-journaling-01 primary_aspect / secondary_aspect migration round-trip ---
+
+# Revision anchors for the chord-journaling migration round-trip.
+# down_revision is c9d0e1f2a3b4 (the metta_return_arc migration, current head).
+_CHORD_BASE_REVISION = "c9d0e1f2a3b4"  # pragma: allowlist secret
+_CHORD_REVISION = "a5b6c7d8e9f0"  # pragma: allowlist secret
+
+
+def _bootstrap_journalentry_table_for_chord(sync_url: str) -> None:
+    """Pre-create a minimal journalentry table without the chord columns."""
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE journalentry ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " sender VARCHAR(10) NOT NULL,"
+                " message TEXT NOT NULL,"
+                " tag VARCHAR(50) NOT NULL DEFAULT 'freeform',"
+                " status VARCHAR(20) NOT NULL DEFAULT 'draft',"
+                " title VARCHAR(200),"
+                " classification VARCHAR(20) NOT NULL DEFAULT 'personal',"
+                " deleted_at DATETIME,"
+                " updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+                " timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO journalentry (id, user_id, sender, message)"
+                " VALUES (1, 1, 'user', 'Pre-chord entry.')"
+            )
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_journal_chord(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite Alembic config positioned just before the chord migration.
+
+    Bootstraps a minimal journalentry table (no chord columns) with one
+    pre-existing row, then stamps the DB at c9d0e1f2a3b4 (the chain head
+    before this migration) so the round-trip exercises only the new migration.
+    """
+    db_path = tmp_path / "journal_chord_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_journalentry_table_for_chord(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _CHORD_BASE_REVISION)
+    return cfg
+
+
+def test_journal_chord_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_journal_chord: Config,
+) -> None:
+    """Round-trip the chord migration: upgrade adds both columns; downgrade drops them.
+
+    Phase 1: upgrade adds primary_aspect and secondary_aspect (both nullable).
+    Phase 2: downgrade removes both columns.
+    Phase 3: re-upgrade is idempotent.
+    """
+    cfg = alembic_sqlite_config_journal_chord
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade adds both chord columns.
+    command.upgrade(cfg, _CHORD_REVISION)
+    cols = _columns_of(db_url, "journalentry")
+    assert "primary_aspect" in cols
+    assert "secondary_aspect" in cols
+
+    # Phase 2: downgrade removes both columns.
+    command.downgrade(cfg, _CHORD_BASE_REVISION)
+    cols_after = _columns_of(db_url, "journalentry")
+    assert "primary_aspect" not in cols_after
+    assert "secondary_aspect" not in cols_after
+
+    # Phase 3: re-upgrade is idempotent.
+    command.upgrade(cfg, _CHORD_REVISION)
+    cols_final = _columns_of(db_url, "journalentry")
+    assert "primary_aspect" in cols_final
+    assert "secondary_aspect" in cols_final

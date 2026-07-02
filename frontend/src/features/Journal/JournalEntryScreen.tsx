@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import AspectChordControl, { type AspectChordValue } from './AspectChordControl';
 import CareSupportNote from './CareSupportNote';
 import CompletionSuggestionNote from './CompletionSuggestionNote';
 import ContractionReflectionNote from './ContractionReflectionNote';
@@ -55,6 +56,9 @@ const NARROW_BREAKPOINT = 600;
 
 /** Backend default privacy tier for a fresh entry. */
 const DEFAULT_CLASSIFICATION: JournalClassification = 'personal';
+
+/** An untagged chord (no primary/secondary Aspect) for a fresh entry. */
+const EMPTY_CHORD: AspectChordValue = { primary: null, secondary: null };
 
 /** Fallback reason shown when resonance is gated off for an intimate entry. */
 const INTIMATE_RESONANCE_REASON = 'Intimate entries are kept private — resonance is paused.';
@@ -98,6 +102,8 @@ interface WriteEntryRefs {
   respondedRef: React.MutableRefObject<boolean>;
   /** Latest chosen privacy tier; carried on the first ``journal.create``. */
   classificationRef: React.MutableRefObject<JournalClassification>;
+  /** Latest chosen Aspect chord; carried on the first ``journal.create``. */
+  chordRef: React.MutableRefObject<AspectChordValue>;
 }
 
 /** Create on first save, then update; title is optional and saved separately. */
@@ -107,7 +113,7 @@ async function writeEntry(
   body: string,
   ctx: SaveContext,
 ): Promise<void> {
-  const { entryIdRef, respondedRef, classificationRef } = refs;
+  const { entryIdRef, respondedRef, classificationRef, chordRef } = refs;
   // Weekly-prompt mode: the respond endpoint persists the entry itself, so we
   // submit exactly once and never pair it with journal.create (no double-create).
   if (ctx.weekNumber != null) {
@@ -124,6 +130,8 @@ async function writeEntry(
     const created = await journal.create({
       message: body,
       classification: classificationRef.current,
+      primary_aspect: chordRef.current.primary,
+      secondary_aspect: chordRef.current.secondary,
       ...(ctx.practiceSessionId != null && { practice_session_id: ctx.practiceSessionId }),
       ...(ctx.userPracticeId != null && { user_practice_id: ctx.userPracticeId }),
     });
@@ -144,10 +152,14 @@ interface AutosaveApi {
   saveState: SaveState;
   /** The entry's privacy tier; drives the control and the resonance gate. */
   classification: PrivacyTier;
+  /** The entry's Aspect chord; drives the chord control. */
+  chord: AspectChordValue;
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
   /** Set the privacy tier: updates the control and persists (create/PATCH). */
   onChangeClassification: (_tier: PrivacyTier) => void;
+  /** Set the Aspect chord: updates the control and persists (create/PATCH). */
+  onChangeChord: (_next: AspectChordValue) => void;
   /** Persist the latest text immediately and resolve to the entry id (or null). */
   flush: () => Promise<number | null>;
   /** Set when loading an existing entry failed; drives the banner + autosave gate. */
@@ -216,6 +228,34 @@ function useClassificationPersist(
   return { classificationRef, changeClassification };
 }
 
+interface ChordPersist {
+  chordRef: React.MutableRefObject<AspectChordValue>;
+  /** Record the chord for the next create and PATCH it when the entry exists. */
+  changeChord: (_next: AspectChordValue) => void;
+}
+
+/**
+ * Owns the latest Aspect chord: it rides the first ``journal.create`` via the
+ * ref, and on an existing entry a change is PATCHed immediately (both notes,
+ * including explicit nulls) so re-tagging never waits on the body-save debounce.
+ */
+function useChordPersist(entryIdRef: React.MutableRefObject<number | null>): ChordPersist {
+  const chordRef = useRef<AspectChordValue>(EMPTY_CHORD);
+  const changeChord = useCallback(
+    (next: AspectChordValue): void => {
+      chordRef.current = next;
+      if (entryIdRef.current != null) {
+        void journal.update(entryIdRef.current, {
+          primary_aspect: next.primary,
+          secondary_aspect: next.secondary,
+        });
+      }
+    },
+    [entryIdRef],
+  );
+  return { chordRef, changeChord };
+}
+
 type TimerRef = React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
 type RunSave = (_title: string, _body: string) => Promise<void>;
 
@@ -268,6 +308,7 @@ function useDebouncedSave(
   // flush submitting it twice (the backend 409s on a duplicate week).
   const respondedRef = useRef(false);
   const { classificationRef, changeClassification } = useClassificationPersist(entryIdRef);
+  const { chordRef, changeChord } = useChordPersist(entryIdRef);
   // Refs so non-memoised inputs don't churn the save callbacks below.
   const onSavedRef = useRef(onSaved);
   const ctxRef = useRef(ctx);
@@ -286,7 +327,7 @@ function useDebouncedSave(
       if (loadFailedRef.current) return; // never overwrite an entry that failed to load
       if (!body.trim()) return; // never persist an empty draft
       setSaveState('saving');
-      const refs = { entryIdRef, respondedRef, classificationRef };
+      const refs = { entryIdRef, respondedRef, classificationRef, chordRef };
       try {
         await writeEntry(refs, title, body, ctxRef.current);
         setSaveState('saved');
@@ -296,13 +337,13 @@ function useDebouncedSave(
         setSaveState('error');
       }
     },
-    [classificationRef],
+    [classificationRef, chordRef],
   );
 
   const setTyping = useCallback(() => setSaveState('typing'), []);
   const { save, flush } = useSaveTimer(run, timerRef, entryIdRef, delayMs, setTyping);
 
-  return { saveState, save, flush, changeClassification };
+  return { saveState, save, flush, changeClassification, changeChord };
 }
 
 type StrRef = React.MutableRefObject<string>;
@@ -341,6 +382,8 @@ interface EntryState {
   setStatus: (_status: EntryStatus) => void;
   classification: PrivacyTier;
   setClassification: (_tier: PrivacyTier) => void;
+  chord: AspectChordValue;
+  setChord: (_next: AspectChordValue) => void;
   setTitle: (_v: string) => void;
   setBody: (_v: string) => void;
   titleRef: StrRef;
@@ -355,6 +398,7 @@ function useEntryState(routeEntryId: number | null, initialTitle: string): Entry
   const [body, setBody] = useState('');
   const [status, setStatus] = useState<EntryStatus>('draft');
   const [classification, setClassification] = useState<PrivacyTier>(DEFAULT_CLASSIFICATION);
+  const [chord, setChord] = useState<AspectChordValue>(EMPTY_CHORD);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Refs mirror the latest text so the change handlers stay referentially stable.
   const titleRef = useRef(initialTitle);
@@ -370,6 +414,11 @@ function useEntryState(routeEntryId: number | null, initialTitle: string): Entry
       setStatus(entry.status ?? 'draft');
       // Pre-select the server's tier so an intimate entry loads intimate.
       setClassification(entry.classification ?? DEFAULT_CLASSIFICATION);
+      // Pre-select the server's chord so a tagged entry loads its Aspects.
+      setChord({
+        primary: entry.primary_aspect ?? null,
+        secondary: entry.secondary_aspect ?? null,
+      });
     }, []),
     useCallback(() => setLoadError(LOAD_ERROR_MESSAGE), []),
   );
@@ -381,12 +430,43 @@ function useEntryState(routeEntryId: number | null, initialTitle: string): Entry
     setStatus,
     classification,
     setClassification,
+    chord,
+    setChord,
     setTitle,
     setBody,
     titleRef,
     bodyRef,
     loadError,
   };
+}
+
+interface ChoiceHandlers {
+  onChangeClassification: (_tier: PrivacyTier) => void;
+  onChangeChord: (_next: AspectChordValue) => void;
+}
+
+/** Reflect a privacy/chord choice in local state, then persist it (ref or PATCH). */
+function useChoiceHandlers(
+  entry: EntryState,
+  changeClassification: (_tier: PrivacyTier) => void,
+  changeChord: (_next: AspectChordValue) => void,
+): ChoiceHandlers {
+  const { setClassification, setChord } = entry;
+  const onChangeClassification = useCallback(
+    (tier: PrivacyTier) => {
+      setClassification(tier);
+      changeClassification(tier);
+    },
+    [changeClassification, setClassification],
+  );
+  const onChangeChord = useCallback(
+    (next: AspectChordValue) => {
+      setChord(next);
+      changeChord(next);
+    },
+    [changeChord, setChord],
+  );
+  return { onChangeClassification, onChangeChord };
 }
 
 /** Owns the entry's text + debounced draft autosave (create-then-update). */
@@ -398,8 +478,8 @@ function useJournalAutosave(
   onSaved?: () => void,
 ): AutosaveApi {
   const entry = useEntryState(routeEntryId, initialTitle);
-  const { titleRef, bodyRef, setClassification } = entry;
-  const { saveState, save, flush, changeClassification } = useDebouncedSave(
+  const { titleRef, bodyRef } = entry;
+  const { saveState, save, flush, changeClassification, changeChord } = useDebouncedSave(
     routeEntryId,
     delayMs,
     ctx,
@@ -418,13 +498,10 @@ function useJournalAutosave(
     () => flush(titleRef.current, bodyRef.current),
     [flush, titleRef, bodyRef],
   );
-  // Reflect the choice in the control, then persist it (create-time ref or PATCH).
-  const onChangeClassification = useCallback(
-    (tier: PrivacyTier) => {
-      setClassification(tier);
-      changeClassification(tier);
-    },
-    [changeClassification, setClassification],
+  const { onChangeClassification, onChangeChord } = useChoiceHandlers(
+    entry,
+    changeClassification,
+    changeChord,
   );
 
   return {
@@ -434,9 +511,11 @@ function useJournalAutosave(
     setStatus: entry.setStatus,
     saveState,
     classification: entry.classification,
+    chord: entry.chord,
     onChangeTitle,
     onChangeBody,
     onChangeClassification,
+    onChangeChord,
     flush: flushNow,
     loadError: entry.loadError,
   };
@@ -447,9 +526,11 @@ interface WritingColumnProps {
   body: string;
   saveState: SaveState;
   classification: PrivacyTier;
+  chord: AspectChordValue;
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
   onChangeClassification: (_tier: PrivacyTier) => void;
+  onChangeChord: (_next: AspectChordValue) => void;
   onFinish?: () => void;
   bodyPlaceholder?: string;
 }
@@ -473,9 +554,11 @@ function WritingColumn({
   body,
   saveState,
   classification,
+  chord,
   onChangeTitle,
   onChangeBody,
   onChangeClassification,
+  onChangeChord,
   onFinish,
   bodyPlaceholder = 'Begin writing…',
 }: WritingColumnProps) {
@@ -486,6 +569,7 @@ function WritingColumn({
       keyboardShouldPersistTaps="handled"
     >
       <PrivacyTierControl value={classification} onChange={onChangeClassification} />
+      <AspectChordControl value={chord} onChange={onChangeChord} />
       <TextInput
         style={styles.titleInput}
         value={title}
@@ -822,7 +906,7 @@ type Controller = ReturnType<typeof useJournalEntryController>;
 
 /** The body column: the editable writing surface, or the read-mode highlighted view. */
 function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
-  const { title, body, saveState, classification } = ctl.autosave;
+  const { title, body, saveState, classification, chord } = ctl.autosave;
   const { editMode, canFinish, markFinished, requestEdit } = ctl.editGate;
   return editMode ? (
     <WritingColumn
@@ -830,9 +914,11 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       body={body}
       saveState={saveState}
       classification={classification}
+      chord={chord}
       onChangeTitle={ctl.handleTitle}
       onChangeBody={ctl.handleBody}
       onChangeClassification={ctl.autosave.onChangeClassification}
+      onChangeChord={ctl.autosave.onChangeChord}
       onFinish={canFinish ? markFinished : undefined}
       bodyPlaceholder={bodyPlaceholder}
     />

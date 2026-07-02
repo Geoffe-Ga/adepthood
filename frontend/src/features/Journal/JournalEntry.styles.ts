@@ -191,6 +191,63 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.xl,
     paddingBottom: SPACING.sm,
   },
+  /** Optional chord (Aspect) tagging block above the growing body. */
+  aspectChordControl: {
+    paddingBottom: spacing(1),
+  },
+  /** The collapsed, declinable trigger that reveals the Aspect chips. */
+  aspectChordTrigger: {
+    minHeight: touchTarget.minimum,
+    justifyContent: 'center',
+    paddingHorizontal: SPACING.sm,
+  },
+  aspectChordTriggerLabel: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+  },
+  /** Section label above a row of Aspect chips (primary / secondary). */
+  aspectChordSectionLabel: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+    paddingTop: spacing(1),
+  },
+  /** Wrapping row of Aspect chips. */
+  aspectChordRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACING.xs,
+  },
+  /** A single Aspect chip; min dims hold the 44dp touch-target floor. */
+  aspectChordChip: {
+    minHeight: touchTarget.minimum,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.sm,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.paper.hairline,
+  },
+  aspectChordChipSelected: {
+    backgroundColor: colors.paper.anchorHighlight,
+    borderColor: colors.paper.inkSoft,
+  },
+  aspectChordChipLabel: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+  },
+  aspectChordChipLabelSelected: {
+    color: colors.paper.ink,
+  },
+  /** The clear affordance that resets the chord to untagged. */
+  aspectChordClear: {
+    minHeight: touchTarget.minimum,
+    justifyContent: 'center',
+    paddingHorizontal: SPACING.sm,
+  },
+  aspectChordClearLabel: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+  },
 });
 
 export default styles;

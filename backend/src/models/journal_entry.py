@@ -5,7 +5,13 @@ from typing import TYPE_CHECKING
 from sqlalchemy import CheckConstraint, Column, DateTime, Index
 from sqlmodel import Field, Relationship, SQLModel
 
+from domain.constants import TOTAL_STAGES
 from services.journal_encryption import EncryptedString
+
+# The inclusive lower bound of a valid Aspect tag. The upper bound is
+# ``TOTAL_STAGES`` (an Aspect == a stage 1..TOTAL_STAGES), so the range never
+# drifts from the curriculum length.
+ASPECT_MIN = 1
 
 if TYPE_CHECKING:
     from .completion_suggestion import CompletionSuggestion
@@ -63,6 +69,32 @@ def _classification_check() -> CheckConstraint:
     )
 
 
+def _aspect_range_check(column: str, name: str) -> CheckConstraint:
+    """CHECK that ``column`` is NULL or a valid Aspect (1..``TOTAL_STAGES``).
+
+    The bound is derived from ``TOTAL_STAGES`` so the persisted range can't
+    drift from the curriculum length. The migration installs the identical SQL.
+    """
+    return CheckConstraint(
+        f"{column} IS NULL OR {column} BETWEEN {ASPECT_MIN} AND {TOTAL_STAGES}",
+        name=name,
+    )
+
+
+def _chord_shape_check() -> CheckConstraint:
+    """CHECK that a secondary Aspect requires a distinct primary Aspect.
+
+    A secondary tag is only meaningful atop a primary, and a chord's two notes
+    must differ — so a secondary with no primary, or one equal to the primary,
+    is rejected. The migration installs the identical SQL.
+    """
+    return CheckConstraint(
+        "secondary_aspect IS NULL "
+        "OR (primary_aspect IS NOT NULL AND secondary_aspect != primary_aspect)",
+        name="ck_journalentry_chord_shape",
+    )
+
+
 class JournalEntry(SQLModel, table=True):
     """Stores a user's journal reflection, optionally paired with an AI resonance response.
 
@@ -88,6 +120,9 @@ class JournalEntry(SQLModel, table=True):
         Index("ix_journalentry_deleted_at", "deleted_at"),
         Index("ix_journalentry_user_sender_deleted", "user_id", "sender", "deleted_at"),
         _classification_check(),
+        _aspect_range_check("primary_aspect", "ck_journalentry_primary_aspect_range"),
+        _aspect_range_check("secondary_aspect", "ck_journalentry_secondary_aspect_range"),
+        _chord_shape_check(),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -108,6 +143,11 @@ class JournalEntry(SQLModel, table=True):
     # Privacy tier; defaults to ``personal``. The DB CHECK in ``__table_args__``
     # pins the persisted value to the JournalClassification set.
     classification: str = Field(default=JournalClassification.PERSONAL, max_length=20)
+    # Chord tagging: an optional primary Aspect (a stage 1..TOTAL_STAGES) and an
+    # optional secondary. The CHECKs in ``__table_args__`` pin both to the valid
+    # range and enforce the chord shape (a secondary requires a distinct primary).
+    primary_aspect: int | None = Field(default=None)
+    secondary_aspect: int | None = Field(default=None)
     sender: str = Field(max_length=10)  # 'user' or 'bot'
     user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
     tag: str = Field(default=JournalTag.FREEFORM, max_length=50)

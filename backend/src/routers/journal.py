@@ -282,6 +282,19 @@ async def _apply_message_edit(
         await reanchor_entry_suggestions(entry, new_message, session)
 
 
+def _apply_chord_update(entry: JournalEntry, payload: JournalEntryUpdate) -> None:
+    """Apply the chord (primary/secondary Aspect) as one atomic pair.
+
+    Sending either field marks the whole chord provided: both are written, so a
+    primary-only PATCH resets a stale secondary to ``None`` (the schema default),
+    keeping the persisted pair a valid chord shape.
+    """
+    chord_fields = {"primary_aspect", "secondary_aspect"}
+    if payload.model_fields_set & chord_fields:
+        entry.primary_aspect = payload.primary_aspect
+        entry.secondary_aspect = payload.secondary_aspect
+
+
 async def _apply_entry_update(
     entry: JournalEntry, payload: JournalEntryUpdate, session: AsyncSession
 ) -> None:
@@ -293,6 +306,7 @@ async def _apply_entry_update(
         entry.status = payload.status
     if payload.classification is not None:
         entry.classification = payload.classification
+    _apply_chord_update(entry, payload)
     # ``updated_at`` is bumped by the column's ``onupdate`` only when a value
     # actually changes, so a same-value PATCH doesn't move it.
 
