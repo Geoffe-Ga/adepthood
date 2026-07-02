@@ -15,6 +15,7 @@ from database import get_session
 from domain.constants import TOTAL_STAGES
 from domain.program_calendar import calendar_stage, calendar_week, resolve_program_anchor
 from domain.stage_progress import (
+    AllStagesCompletedError,
     compute_stage_progress,
     compute_stage_progress_batch,
     get_stage_habit_history,
@@ -22,6 +23,7 @@ from domain.stage_progress import (
     get_user_progress,
     get_user_progress_for_update,
     is_stage_unlocked,
+    next_stage_for,
     stage_exists,
 )
 from domain.wheel import compute_wheel_balance
@@ -269,22 +271,17 @@ async def _create_initial_progress(
     return _bootstrap_record(progress)
 
 
-def _derive_next_stage(existing: StageProgress) -> tuple[int, list[int]]:
-    """Return ``(current_stage + 1, [1..current_stage])``; raises 409 at curriculum end."""
-    if existing.current_stage >= TOTAL_STAGES:
-        raise conflict("all_stages_completed")
-    derived_next = existing.current_stage + 1
-    candidate_completed = list(range(1, derived_next))
-    return derived_next, candidate_completed
-
-
 async def _advance_existing_progress(
     session: AsyncSession,
     existing: StageProgress,
     payload: StageProgressUpdate,
 ) -> StageProgressRecord:
     """Validate the payload against the server-derived next stage, then commit."""
-    derived_next, candidate_completed = _derive_next_stage(existing)
+    try:
+        derived_next = next_stage_for(existing)
+    except AllStagesCompletedError as exc:
+        raise conflict("all_stages_completed") from exc
+    candidate_completed = list(range(1, derived_next))
     if payload.current_stage != derived_next:
         raise bad_request("stage_advance_mismatch")
 
@@ -385,11 +382,13 @@ async def update_progress(
 
     - **Create** (no prior row): ``current_stage`` is forced to 1; the
       payload must assert 1 or it's rejected as ``must_start_at_stage_one``.
-    - **Update**: the server marks ``existing.current_stage`` complete, then
-      recomputes the new ``current_stage`` via :func:`next_stage_for` over
-      the updated completion set.  The payload's ``current_stage`` must
-      equal that derived value — otherwise the request is a skip/rewind/
-      stale-client scenario and returns ``stage_advance_mismatch``.
+    - **Update**: the server marks ``existing.current_stage`` complete and
+      derives the sole legal next stage via :func:`next_stage_for` — the pure
+      ``current_stage + 1`` rule, with :class:`AllStagesCompletedError` at the
+      curriculum end mapped to a 409 ``all_stages_completed``. The payload's
+      ``current_stage`` must equal that derived value — otherwise the request
+      is a skip/rewind/stale-client scenario and returns
+      ``stage_advance_mismatch``.
 
     The ``completed_stages`` list is never read from the payload (the schema's
     ``extra='forbid'`` would 422 such a field anyway), so the client cannot
