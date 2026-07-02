@@ -577,13 +577,16 @@ export const returnArcSchema = z.object({
   paused: z.boolean(),
   week: returnWeekNumber,
   focus: mettaFocusSchema,
+  // The backend always sends it; completion is the arc's reflective close.
+  complete: z.boolean(),
 });
 
-/** Eligibility plus the full week sequence and the active arc, if any. */
+/** Eligibility, the week sequence, the active arc, and the persisted offer-dismissal flag. */
 export const mettaReturnStateSchema = z.object({
   eligible: z.boolean(),
   weeks: z.array(returnWeekSchema),
   arc: returnArcSchema.nullable(),
+  offer_dismissed: z.boolean(),
 });
 
 export type MettaFocusT = z.infer<typeof mettaFocusSchema>;

@@ -41,8 +41,7 @@ def _expected_content_count() -> int:
     """Rows the content seeder should produce in this environment.
 
     Sourced from ``desired_content_records()`` — manifest chapters (none
-    in the test environment until a content pin is vendored) plus the
-    placeholder rows for stages the manifest does not cover.  Computed at
+    in the test environment until a content pin is vendored).  Computed at
     call time because the manifest is runtime data.
     """
     return len(desired_content_records())
@@ -77,7 +76,7 @@ async def test_seed_startup_data_inserts_stages_practices_and_content(
     assert len(stages) == 10
     assert len(practices) == _EXPECTED_PRACTICE_COUNT
     assert len(contents) == _expected_content_count()
-    assert len(contents) > 0, "content seeder must produce rows even without a manifest"
+    assert len(contents) > 0, "content seeder must produce rows from the vendored manifest"
 
 
 @pytest.mark.asyncio

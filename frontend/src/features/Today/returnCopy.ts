@@ -45,6 +45,13 @@ export const RETURN_ARC_LEAVE = 'Set it down';
 /** The accessibility label for leaving the arc. */
 export const RETURN_ARC_LEAVE_A11Y = 'Set the Return down; nothing about your progress changes';
 
+/** The completion-card heading — a quiet, reflective close, not a reward. */
+export const RETURN_COMPLETE_HEADING = 'The circle has come full round';
+
+/** The completion-card body — all five foci met, self through all beings; a soft close. */
+export const RETURN_COMPLETE_BODY =
+  'Five weeks of loving-kindness, from yourself outward to all beings — every focus met, gently and in your own time. There is nothing more to reach for here; you might simply rest in the warmth you have grown, and set the arc down whenever it feels finished.';
+
 /** Every user-facing Return string, gathered for the balance-not-altitude sweep. */
 export const RETURN_COPY_ENTRIES: readonly string[] = [
   RETURN_OFFER_HEADING,
@@ -59,4 +66,6 @@ export const RETURN_COPY_ENTRIES: readonly string[] = [
   RETURN_ARC_RESUME_A11Y,
   RETURN_ARC_LEAVE,
   RETURN_ARC_LEAVE_A11Y,
+  RETURN_COMPLETE_HEADING,
+  RETURN_COMPLETE_BODY,
 ];

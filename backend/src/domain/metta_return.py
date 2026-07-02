@@ -29,6 +29,8 @@ RETURN_WEEK_COUNT = 5
 # Blue is stage 4; reaching stage 5 (Orange) means Blue was passed to get there.
 RETURN_MINIMUM_STAGE = 5
 DAYS_PER_WEEK = 7
+# The full arc: five weeks of seven days. Living all of them is completion.
+RETURN_TOTAL_DAYS = RETURN_WEEK_COUNT * DAYS_PER_WEEK
 # A user mid-way through a second 10-stage cycle has, by definition, already
 # passed Blue in the prior cycle, so the arc is offered regardless of where the
 # current cycle sits.
@@ -145,6 +147,13 @@ def is_return_eligible(progress: StageProgress | None) -> bool:
     return _highest_stage_reached(progress) >= RETURN_MINIMUM_STAGE
 
 
+def current_offer_episode(progress: StageProgress | None) -> str | None:
+    """Key the current offer episode so any stage/cycle advance is a fresh episode."""
+    if progress is None or not is_return_eligible(progress):
+        return None
+    return f"{progress.cycle_number}:{progress.current_stage}"
+
+
 def _normalize(moment: datetime) -> datetime:
     """Strip tzinfo so naive (SQLite) and aware (Postgres) values compare.
 
@@ -189,3 +198,18 @@ def active_return_week(started_at: datetime, paused_at: datetime | None, now: da
     reference = paused_at if paused_at is not None else now
     week = _elapsed_days(started_at, reference) // DAYS_PER_WEEK + 1
     return min(max(week, 1), RETURN_WEEK_COUNT)
+
+
+def is_return_complete(started_at: datetime, paused_at: datetime | None, now: datetime) -> bool:
+    """Return True once the arc's full five weeks have been lived through.
+
+    Completion is a pure time-derived predicate — nothing is written and no stage
+    is mutated. Elapsed time is frozen exactly as :func:`active_return_week` does:
+    measured to the pause instant when the arc is paused, otherwise to ``now``, so
+    a pause before the boundary keeps completion frozen at False. The arc is
+    complete once at least :data:`RETURN_TOTAL_DAYS` have elapsed — the fifth week
+    has fully closed, a reflective close rather than a reward. Mixed naive/aware
+    datetimes are normalized by the shared elapsed-day helper rather than raising.
+    """
+    reference = paused_at if paused_at is not None else now
+    return _elapsed_days(started_at, reference) >= RETURN_TOTAL_DAYS

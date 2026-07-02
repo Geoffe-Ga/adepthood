@@ -74,11 +74,12 @@ const makeWeek = (weekNumber: number): ReturnWeek => ({
   framing: 'Begin where you already are.',
 });
 
-const makeArc = (weekNumber: number): ReturnArc => ({
+const makeArc = (weekNumber: number, complete = false): ReturnArc => ({
   started_at: '2026-06-24T00:00:00Z',
   paused: false,
   week: weekNumber,
   focus: 'self',
+  complete,
 });
 
 beforeEach(() => {
@@ -216,5 +217,29 @@ describe('TodayScreen', () => {
       const { getByText } = render(<TodayScreen />);
       expect(getByText('Good evening')).toBeTruthy();
     });
+  });
+
+  it('shows the Return completion card, not the arc card, when the arc is complete', () => {
+    mockMettaReturn = {
+      eligible: true,
+      weeks: [makeWeek(5)],
+      arc: makeArc(5, true),
+      offerVisible: false,
+    };
+    const { getByTestId, queryByTestId } = render(<TodayScreen />);
+    expect(getByTestId('return-completion-card')).toBeTruthy();
+    expect(queryByTestId('return-arc-card')).toBeNull();
+  });
+
+  it('shows the Return arc card, not the completion card, when the arc is not complete', () => {
+    mockMettaReturn = {
+      eligible: true,
+      weeks: [makeWeek(2)],
+      arc: makeArc(2, false),
+      offerVisible: false,
+    };
+    const { getByTestId, queryByTestId } = render(<TodayScreen />);
+    expect(getByTestId('return-arc-card')).toBeTruthy();
+    expect(queryByTestId('return-completion-card')).toBeNull();
   });
 });

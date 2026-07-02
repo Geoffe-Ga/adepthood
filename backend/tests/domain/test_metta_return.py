@@ -1,8 +1,8 @@
 """Pure-domain tests for the Metta "Return" arc sequence and eligibility.
 
-These tests FAIL on import until the implementation-specialist creates
-``backend/src/domain/metta_return.py`` with the contracts pinned below.
-That is the correct RED state for Gate 1.
+The import of ``RETURN_TOTAL_DAYS`` and ``is_return_complete`` FAILs until the
+implementation-specialist adds them to ``backend/src/domain/metta_return.py``.
+That is the correct RED state for Gate 1 (warm completion state).
 
 Pinned public surface:
   MettaFocus(StrEnum): self, benefactor, stranger, antagonist, all_beings
@@ -11,8 +11,11 @@ Pinned public surface:
   RETURN_WEEK_COUNT = 5
   RETURN_MINIMUM_STAGE = 5
   DAYS_PER_WEEK = 7
+  RETURN_TOTAL_DAYS = RETURN_WEEK_COUNT * DAYS_PER_WEEK  (== 35)
   is_return_eligible(progress: StageProgress | None) -> bool
   active_return_week(started_at, paused_at, now) -> int
+  current_offer_episode(progress: StageProgress | None) -> str | None
+  is_return_complete(started_at, paused_at, now) -> bool
 """
 
 from __future__ import annotations
@@ -26,10 +29,13 @@ from domain.metta_return import (
     DAYS_PER_WEEK,
     RETURN_MINIMUM_STAGE,
     RETURN_SEQUENCE,
+    RETURN_TOTAL_DAYS,
     RETURN_WEEK_COUNT,
     MettaFocus,
     ReturnWeek,
     active_return_week,
+    current_offer_episode,
+    is_return_complete,
     is_return_eligible,
     resumed_start,
 )
@@ -128,6 +134,49 @@ def test_eligibility_second_cycle_counts_even_at_stage_one() -> None:
 
 
 # ---------------------------------------------------------------------------
+# current_offer_episode — the per-episode key backing dismissal.
+# ---------------------------------------------------------------------------
+
+
+def test_current_offer_episode_none_progress_is_none() -> None:
+    """No StageProgress row at all means there is no episode to key."""
+    assert current_offer_episode(None) is None
+
+
+def test_current_offer_episode_ineligible_progress_is_none() -> None:
+    """An ineligible stage has no offer, so there is no episode key either."""
+    progress = StageProgress(user_id=1, current_stage=3, completed_stages=[], cycle_number=1)
+    assert current_offer_episode(progress) is None
+
+
+def test_current_offer_episode_eligible_progress_returns_cycle_stage_key() -> None:
+    """An eligible progress row keys the episode as ``{cycle_number}:{current_stage}``."""
+    progress = StageProgress(
+        user_id=1, current_stage=5, completed_stages=[1, 2, 3, 4], cycle_number=1
+    )
+    assert current_offer_episode(progress) == "1:5"
+
+
+def test_current_offer_episode_key_changes_when_stage_advances() -> None:
+    """Advancing from stage 5 to stage 6 produces a distinct episode key."""
+    at_five = StageProgress(
+        user_id=1, current_stage=5, completed_stages=[1, 2, 3, 4], cycle_number=1
+    )
+    at_six = StageProgress(
+        user_id=1, current_stage=6, completed_stages=[1, 2, 3, 4, 5], cycle_number=1
+    )
+    assert current_offer_episode(at_five) == "1:5"
+    assert current_offer_episode(at_six) == "1:6"
+    assert current_offer_episode(at_six) != current_offer_episode(at_five)
+
+
+def test_current_offer_episode_key_changes_when_cycle_bumps() -> None:
+    """A second-cycle user at stage 2 is eligible via cycle_number and keys distinctly."""
+    progress = StageProgress(user_id=1, current_stage=2, completed_stages=[], cycle_number=2)
+    assert current_offer_episode(progress) == "2:2"
+
+
+# ---------------------------------------------------------------------------
 # Week derivation from elapsed and paused time.
 # ---------------------------------------------------------------------------
 
@@ -180,6 +229,69 @@ def test_active_return_week_handles_naive_and_aware_datetime_mix() -> None:
     now_aware = datetime(2026, 1, 8, tzinfo=UTC)
     week = active_return_week(started_at_naive, None, now_aware)
     assert week == 2
+
+
+# ---------------------------------------------------------------------------
+# RETURN_TOTAL_DAYS and is_return_complete.
+# ---------------------------------------------------------------------------
+
+
+def test_return_total_days_constant() -> None:
+    """RETURN_TOTAL_DAYS pins the full arc length to five weeks of seven days."""
+    assert RETURN_TOTAL_DAYS == 35
+    assert RETURN_TOTAL_DAYS == RETURN_WEEK_COUNT * DAYS_PER_WEEK
+
+
+def test_is_return_complete_day_thirty_four_is_not_complete() -> None:
+    """One day short of the full arc length has not yet completed."""
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    now = started_at + timedelta(days=34)
+    assert is_return_complete(started_at, None, now) is False
+
+
+def test_is_return_complete_day_thirty_five_is_complete() -> None:
+    """Exactly RETURN_TOTAL_DAYS elapsed is the completion boundary, inclusive."""
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    now = started_at + timedelta(days=35)
+    assert is_return_complete(started_at, None, now) is True
+
+
+def test_is_return_complete_day_one_hundred_is_complete() -> None:
+    """Far beyond the arc length remains complete."""
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    now = started_at + timedelta(days=100)
+    assert is_return_complete(started_at, None, now) is True
+
+
+def test_is_return_complete_day_thirty_is_week_five_but_not_complete() -> None:
+    """Day 30 sits in week 5 but has not finished living it: week5 != complete."""
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    now = started_at + timedelta(days=30)
+    assert active_return_week(started_at, None, now) == 5
+    assert is_return_complete(started_at, None, now) is False
+
+
+def test_is_return_complete_paused_before_boundary_stays_incomplete() -> None:
+    """A pause frozen before day 35 keeps completion frozen at False."""
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    paused_at = started_at + timedelta(days=30)
+    now = started_at + timedelta(days=50)
+    assert is_return_complete(started_at, paused_at, now) is False
+
+
+def test_is_return_complete_paused_at_or_after_boundary_is_complete() -> None:
+    """A pause frozen at or after day 35 reports the arc as already complete."""
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    paused_at = started_at + timedelta(days=40)
+    now = started_at + timedelta(days=50)
+    assert is_return_complete(started_at, paused_at, now) is True
+
+
+def test_is_return_complete_handles_naive_and_aware_datetime_mix() -> None:
+    """Mixed naive/aware inputs past the boundary must not raise."""
+    started_at_naive = datetime(2026, 1, 1)  # noqa: DTZ001 - deliberately naive
+    now_aware = datetime(2026, 2, 10, tzinfo=UTC)  # 40 days later
+    assert is_return_complete(started_at_naive, None, now_aware) is True
 
 
 # ---------------------------------------------------------------------------

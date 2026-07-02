@@ -758,3 +758,66 @@ def test_alternative_presets_never_shadow_the_canonical_pointer() -> None:
     assert alternative_names.isdisjoint(canonical_names)
     assert alternative_names.isdisjoint(STAGE_TO_PRESET_NAME.values())
     assert STAGE_TO_PRESET_NAME[1] == "5-4-3-2-1 grounding"
+
+
+#: Full catalog size, hardcoded independent of source so an ADDED preset
+#: (not just a dropped or mutated one) trips this test.
+_TOTAL_PRESET_COUNT = 74
+#: One canonical preset per course stage.
+_CANONICAL_PRESET_COUNT = 10
+
+#: The 10 canonical preset names, hardcoded by stage 1..10.
+_CANONICAL_PRESET_NAMES: tuple[str, ...] = (
+    "5-4-3-2-1 grounding",
+    "Tarot meditation",
+    "Belly breathing",
+    "Metta",
+    "Wim Hof method",
+    "Shadow work",
+    "Blissy meditation",
+    "Dog Walkin' Shamanism",
+    "Concentration practice",
+    "Insight practice",
+)
+
+#: The 4 stage-1 non-timer alternative preset names.
+_STAGE_1_NON_TIMER_ALTERNATIVE_NAMES: tuple[str, ...] = (
+    "Touch Grass",
+    "Mindful Eating",
+    "Find Shapes",
+    "Find Colors",
+)
+
+#: Every preset name the seeder is expected to insert, assembled from
+#: hardcoded names plus the ``*_SPECS`` tables already declared above — a
+#: closed-world set independent of ``PRESET_PRACTICES`` itself.
+_ALL_EXPECTED_PRESET_NAMES: frozenset[str] = frozenset(
+    {
+        *_CANONICAL_PRESET_NAMES,
+        *_STAGE_1_NON_TIMER_ALTERNATIVE_NAMES,
+        *(name for name, _, _ in _BEIGE_ALTERNATIVE_SPECS),
+        *(name for name, _, _ in _PURPLE_ALTERNATIVE_SPECS),
+        *(name for name, _, _ in _RED_ALTERNATIVE_SPECS),
+        *(name for name, _, _ in _BLUE_ALTERNATIVE_SPECS),
+        *(name for name, _, _ in _ORANGE_ALTERNATIVE_SPECS),
+        *(name for name, _, _ in _GREEN_TIMER_SPECS),
+        *_GREEN_COUNT_UP_NAMES,
+        *(name for name, _, _ in _TEAL_TIMER_SPECS),
+        *_TEAL_COUNT_UP_NAMES,
+    }
+)
+
+
+def test_preset_catalog_has_no_spuriously_added_names() -> None:
+    """Order-independent completeness pin: catalog names equal a hardcoded closed set.
+
+    ``_EXPECTED_PRESET_COUNT`` above is derived from ``PRESET_PRACTICES``
+    itself, so it can't catch a spuriously *added* preset — only a dropped
+    or mutated one. This set is hardcoded independent of the source module,
+    so a new row not covered by any existing spec table trips this
+    assertion even though every other test in this file still passes.
+    """
+    assert len(_ALL_EXPECTED_PRESET_NAMES) == _TOTAL_PRESET_COUNT
+    assert {p["name"] for p in PRESET_PRACTICES} == _ALL_EXPECTED_PRESET_NAMES
+    assert len(PRESET_PRACTICES) == _TOTAL_PRESET_COUNT
+    assert len(CANONICAL_PRESET_PRACTICES) == _CANONICAL_PRESET_COUNT
