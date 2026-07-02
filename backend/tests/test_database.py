@@ -3,12 +3,12 @@
 from http import HTTPStatus
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from conftest import db_error_session, probe_via_session
 from database import normalize_database_url
-from main import app
 
 
 @pytest.mark.asyncio
@@ -22,13 +22,18 @@ async def test_health_returns_db_status(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_health_returns_error_on_bad_db() -> None:
-    """GET /health without a working DB should still respond (gracefully)."""
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/health")
-        # Even without test override, endpoint should not crash
-        assert response.status_code in (HTTPStatus.OK, HTTPStatus.SERVICE_UNAVAILABLE)
+async def test_health_returns_503_when_db_unavailable() -> None:
+    """GET /health returns 503 ``Database unavailable`` when the DB probe errors.
+
+    Replaces the environment-dependent tautology that asserted
+    ``status in (200, 503)`` (which passed whether or not a DB was reachable and
+    checked nothing about the body): this drives the failure branch
+    deterministically -- the probe's ``SELECT 1`` raises ``SQLAlchemyError`` --
+    so a handler that returned 200 or swallowed the error would fail.
+    """
+    response = await probe_via_session("/health", db_error_session())
+    assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert response.json()["detail"] == "Database unavailable"
 
 
 @pytest.mark.asyncio
