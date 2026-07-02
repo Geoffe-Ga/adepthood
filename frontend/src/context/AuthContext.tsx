@@ -90,10 +90,10 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 function silentRefresh(
   currentToken: string,
-  onSuccess: (t: string, timezone: string | undefined) => void,
+  onSuccess: (t: string, timezone: string | undefined, expectedPriorToken: string) => void,
 ): void {
   authApi.refresh(currentToken).then(
-    (res) => onSuccess(res.token, res.timezone),
+    (res) => onSuccess(res.token, res.timezone, currentToken),
     () => {
       /* silent fail — 401 retry is the fallback */
     },
@@ -104,7 +104,7 @@ function silentRefresh(
 function useProactiveRefresh(
   token: string | null,
   tokenRef: React.MutableRefObject<string | null>,
-  applyNewToken: (t: string, timezone: string | undefined) => void,
+  applyNewToken: (t: string, timezone: string | undefined, expectedPriorToken: string) => void,
 ): void {
   useEffect(() => {
     if (!token || isTokenExpired(token)) return undefined;
@@ -199,9 +199,13 @@ async function clearTokenForReauth(
  * the app is killed between the refresh response and the secure-storage
  * write. Await the persistence before surfacing the token to React state.
  *
- * BUG-FRONTEND-INFRA-012: if the user logged out while a refresh was in
- * flight, ``tokenRef.current`` is ``null`` and we must NOT resurrect the
- * session. Apply the new token only when the ref still holds the old value.
+ * BUG-FRONTEND-INFRA-012: identity-guard the write against the exact token
+ * the refresh was issued FOR. Apply the new token only while
+ * ``tokenRef.current`` still equals ``expectedPriorToken`` (re-checked after
+ * the async save). This drops a late refresh after a plain logout (ref is
+ * null) AND a stale refresh of a prior session after logout->re-login (ref
+ * holds the new session token), so a stale refresh can never clobber a
+ * fresh login in React state.
  */
 async function saveTokenThenApply(
   newToken: string,
@@ -209,9 +213,10 @@ async function saveTokenThenApply(
   mutators: AuthMutators,
   tokenRef: React.MutableRefObject<string | null>,
   warnLabel: string,
+  expectedPriorToken: string,
 ): Promise<void> {
-  if (tokenRef.current === null) {
-    // Logout won the race — drop the late refresh response on the floor.
+  if (tokenRef.current !== expectedPriorToken) {
+    // Logout or a re-login won the race — drop the stale refresh response.
     return;
   }
   try {
@@ -220,7 +225,7 @@ async function saveTokenThenApply(
     console.warn(`saveToken failed in ${warnLabel}`, err);
     return;
   }
-  if (tokenRef.current === null) return;
+  if (tokenRef.current !== expectedPriorToken) return;
   mutators.setToken(newToken);
   // Refresh responses carry the user's stored IANA zone so a cold-start
   // → proactive-refresh sequence restores ``userTimezone`` without an
@@ -246,8 +251,8 @@ function useApiCallbacks(
     setOnUnauthorized((reason: UnauthorizedReason) => {
       void clearTokenForReauth(mutators, reason);
     });
-    setOnTokenRefreshed((t: string, tz: string | undefined) => {
-      void saveTokenThenApply(t, tz, mutators, tokenRef, 'onTokenRefreshed');
+    setOnTokenRefreshed((t: string, tz: string | undefined, prior: string) => {
+      void saveTokenThenApply(t, tz, mutators, tokenRef, 'onTokenRefreshed', prior);
     });
     return () => {
       setTokenGetter(null);
@@ -431,13 +436,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ``undefined`` falls back to UTC so a legacy API build that omits
   // the field still works.
   //
-  // The two ``tokenRef.current === null`` guards mirror
-  // ``saveTokenThenApply`` so a logout that wins the race against a
-  // proactive refresh does NOT silently resurrect the session by
-  // re-applying a stale token after the user explicitly signed out.
+  // ``expectedPriorToken`` is the token the proactive refresh was issued
+  // for; ``saveTokenThenApply`` applies the result only while
+  // ``tokenRef.current`` still equals it, so a logout OR a logout->re-login
+  // that wins the race against the refresh does NOT resurrect a prior
+  // session by re-applying its stale token.
   const applyNewToken = useCallback(
-    async (newToken: string, newTimezone: string | undefined) => {
-      await saveTokenThenApply(newToken, newTimezone, mutators, tokenRef, 'applyNewToken');
+    async (newToken: string, newTimezone: string | undefined, expectedPriorToken: string) => {
+      await saveTokenThenApply(
+        newToken,
+        newTimezone,
+        mutators,
+        tokenRef,
+        'applyNewToken',
+        expectedPriorToken,
+      );
     },
     [mutators],
   );

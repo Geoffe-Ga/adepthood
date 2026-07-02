@@ -78,23 +78,37 @@ async def test_console_sender_no_redact_hint_passes_body_through(
 
 
 @pytest.mark.asyncio
-async def test_console_sender_redacts_when_keyword_passed_at_call_site() -> None:
-    """Regression: the call site that forgets to pass redact_for_log gets a typed default.
+async def test_console_sender_send_redact_keyword_masks_only_when_token_passed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``send``'s ``redact_for_log`` keyword masks the token, and only then.
 
     Before this refactor, redaction relied on the caller setting a
     field on the sender instance before each call -- a foot-gun the PR
-    review flagged.  Now the keyword is part of ``send``'s signature
-    so a forgotten redaction is a missing keyword (still safe -- the
-    body is logged in full and you notice during review) rather than
-    a silently-disabled mask.
+    review flagged.  Now the keyword is part of ``send``'s signature,
+    so a forgotten redaction is a missing keyword (loud: the body is
+    logged in full and caught in review) rather than a silently-disabled
+    mask.  Pin both sides of that switch from the ``send`` boundary --
+    the same body logs masked when the token is passed and verbatim when
+    it is omitted -- so a mutation that ignores the keyword (verbatim
+    both times) or always masks (mangles the omitted call) fails here.
     """
     sender = ConsoleEmailSender()
-    payload = EmailMessagePayload(to="x@y.z", subject="s", body="b")
-    # Default: ``redact_for_log=None`` -- the body is logged verbatim,
-    # which is the documented behaviour for non-token emails.
-    await sender.send(payload)
-    # Explicit None is also accepted.
-    await sender.send(payload, redact_for_log=None)
+    token = "abcdefghijklmnop1234"  # pragma: allowlist secret
+    body = f"Reset via https://x.test/reset?token={token} now."
+    payload = EmailMessagePayload(to="x@y.z", subject="Reset", body=body)
+    with caplog.at_level(logging.INFO):
+        await sender.send(payload, redact_for_log=token)
+        await sender.send(payload)  # keyword omitted -> default None -> verbatim
+    logged = [
+        cast("str", record.__dict__["body"])
+        for record in caplog.records
+        if record.message == "email_console_send"
+    ]
+    masked, verbatim = logged
+    assert token not in masked
+    assert "abcdefgh..." in masked
+    assert verbatim == body  # omitted keyword must not mask
 
 
 def test_redact_token_in_body_returns_input_when_token_blank() -> None:

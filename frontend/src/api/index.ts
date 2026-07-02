@@ -162,12 +162,17 @@ let onUnauthorizedCallback: ((reason: UnauthorizedReason) => void) | null = null
 /**
  * Callback invoked when the API layer refreshes the JWT.
  *
- * Receives the new token plus the server's record of `User.timezone` so
- * the auth context can keep `userTimezone` in sync without a follow-up
- * `GET /users/me`.  The timezone is `string | undefined` because legacy
- * API builds may omit it; consumers should fall back to `'UTC'`.
+ * Receives the new token, the server's record of `User.timezone`, and the
+ * token the refresh was issued FOR (the third arg). The auth context uses
+ * the timezone to keep `userTimezone` in sync without a follow-up
+ * `GET /users/me`, and the prior token to identity-guard the write so a
+ * stale refresh cannot clobber a fresher session. The timezone is
+ * `string | undefined` because legacy API builds may omit it; consumers
+ * should fall back to `'UTC'`.
  */
-let onTokenRefreshedCallback: ((token: string, timezone: string | undefined) => void) | null = null;
+let onTokenRefreshedCallback:
+  | ((token: string, timezone: string | undefined, expectedPriorToken: string) => void)
+  | null = null;
 let llmApiKeyGetter: (() => string | null) | null = null;
 
 /** Header used to forward a user-provided LLM API key (BYOK, issue #185). */
@@ -211,7 +216,9 @@ export function setOnUnauthorized(callback: ((reason: UnauthorizedReason) => voi
 }
 
 export function setOnTokenRefreshed(
-  callback: ((token: string, timezone: string | undefined) => void) | null,
+  callback:
+    | ((token: string, timezone: string | undefined, expectedPriorToken: string) => void)
+    | null,
 ) {
   onTokenRefreshedCallback = callback;
 }
@@ -479,7 +486,7 @@ async function performTokenRefresh(currentToken: string): Promise<RefreshResult>
     // ``userTimezone`` in sync after a cold-start refresh.  Without
     // this, ``userTimezone`` would stay at its ``"UTC"`` default until
     // the user manually re-authenticated.
-    onTokenRefreshedCallback?.(data.token, data.timezone);
+    onTokenRefreshedCallback?.(data.token, data.timezone, currentToken);
     return { token: data.token, hadToken: true };
   } catch {
     return { token: null, hadToken: true };

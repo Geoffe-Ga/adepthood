@@ -123,10 +123,14 @@ async def test_habit_unmet_across_window_is_flagged(db_session: AsyncSession) ->
 
     matching = [h for h in aggregates.habits if h.habit_id == habit_id]
     assert matching
-    assert (
-        matching[0].consecutive_unmet_days >= FOUNDATION_UNMET_CONSECUTIVE_DAYS
-        or matching[0].consecutive_unchecked_days >= FOUNDATION_UNCHECKED_CONSECUTIVE_DAYS
-    )
+    # The fixture seeds one present-but-zero-unit completion per day across
+    # the whole window, so every day qualifies as *unmet* and none as
+    # *unchecked*.  Pin the unmet counter to the exact seeded run and hold
+    # the unchecked counter at zero: a mutation to the unmet branch of
+    # ``_consecutive_days`` now fails outright instead of being masked by
+    # the (dead-for-this-fixture) unchecked operand.
+    assert matching[0].consecutive_unmet_days == FOUNDATION_UNMET_CONSECUTIVE_DAYS
+    assert matching[0].consecutive_unchecked_days == 0
 
 
 # ---------------------------------------------------------------------------
