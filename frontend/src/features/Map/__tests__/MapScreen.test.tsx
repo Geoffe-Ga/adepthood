@@ -4,6 +4,8 @@ import React from 'react';
 import { Image } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
+import styles from '../Map.styles';
+import { RIGHT_LABEL_MIN_FONT_SCALE } from '../mapLayout';
 import MapScreen from '../MapScreen';
 import { STAGE_COUNT } from '../stageData';
 import { BALANCE_COPY, emphasisStyle, FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
@@ -527,6 +529,29 @@ describe('MapScreen', () => {
         0,
       );
     }
+  });
+
+  it('renders each right-column Aspect label as a single-line auto-fitting Text', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    const aspectLabels = ['Awareness', 'Being', 'Wisdom', 'Understanding', 'Love', 'Yes-And-Ness'];
+    for (const label of aspectLabels) {
+      const candidates = tree.root.findAll((n: TestNode) => n.props.children === label);
+      const autoFitting = candidates.some(
+        (n: TestNode) =>
+          n.props.numberOfLines === 1 &&
+          n.props.adjustsFontSizeToFit === true &&
+          n.props.minimumFontScale === RIGHT_LABEL_MIN_FONT_SCALE,
+      );
+      expect(autoFitting).toBe(true);
+    }
+  });
+
+  // --- right-cell edge padding ---
+
+  it('gives the right cell symmetric horizontal padding (no left-only padding)', () => {
+    expect(styles.rightCell.paddingHorizontal).toBeTruthy();
+    expect('paddingLeft' in styles.rightCell).toBe(false);
   });
 
   it('renders the wave overlay independent of MAP_BACKGROUND_URI (MapBackdrop is a no-op)', () => {

@@ -1,6 +1,5 @@
 import React, { useCallback, useState } from 'react';
 import {
-  ActivityIndicator,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -16,11 +15,11 @@ import { EmailField } from './components/EmailField';
 import { PasswordField } from './components/PasswordField';
 
 import { formatApiError } from '@/api/errorMessages';
+import { Button } from '@/components/Button';
 import { useAuth } from '@/context/AuthContext';
 import {
   BORDER_RADIUS,
   SPACING,
-  accent,
   colors,
   ink,
   surface,
@@ -55,21 +54,15 @@ function ReauthActions({
 }): React.JSX.Element {
   return (
     <>
-      <TouchableOpacity
+      <Button
         accessibilityLabel="Sign back in"
-        accessibilityRole="button"
-        accessibilityState={{ disabled: submitting, busy: submitting }}
-        style={localStyles.primaryButton}
-        onPress={onSubmit}
+        busy={submitting}
         disabled={submitting}
+        style={localStyles.submitSpacing}
+        onPress={onSubmit}
         testID="reauth-submit"
-      >
-        {submitting ? (
-          <ActivityIndicator color={colors.text.light} />
-        ) : (
-          <Text style={authStyles.buttonText}>Sign in</Text>
-        )}
-      </TouchableOpacity>
+        label="Sign in"
+      />
       <TouchableOpacity
         accessibilityLabel="Sign out"
         accessibilityRole="button"
@@ -171,7 +164,8 @@ export function ReauthSheet(): React.JSX.Element {
 }
 
 // Sheet-specific styling (overlay backdrop + compact left-aligned card header);
-// the shared input/error/buttonText come from authStyles.
+// the shared input/error come from authStyles and the submit action from the
+// warm Button primitive.
 const localStyles = StyleSheet.create({
   backdrop: {
     flex: 1,
@@ -195,13 +189,7 @@ const localStyles = StyleSheet.create({
     color: ink.soft,
     marginBottom: SPACING.lg,
   },
-  primaryButton: {
-    backgroundColor: accent.primary,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.buttonV,
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
+  submitSpacing: {
     marginBottom: SPACING.md,
   },
   secondaryLink: {
