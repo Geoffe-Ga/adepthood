@@ -354,7 +354,7 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     _get_secret_key()
 
     # ritual-practice ops: on every boot, seed the catalog (stages, presets,
-    # placeholder course content) so a fresh database is immediately usable.
+    # course content) so a fresh database is immediately usable.
     # Opt-out via ``SKIP_STARTUP_SEED=1`` for tests and contexts where the
     # database is intentionally empty (e.g. integration suites mounting a
     # mocked alembic chain). A seeder failure is logged and swallowed — the
