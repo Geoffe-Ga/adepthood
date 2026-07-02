@@ -43,7 +43,7 @@ import {
   unlockTimeline,
 } from './journeyNarrative';
 import styles from './Map.styles';
-import { MAP_ROWS, STAGE_DISPLAY, TITLE_BY_STAGE } from './mapLayout';
+import { MAP_ROWS, RIGHT_LABEL_MIN_FONT_SCALE, STAGE_DISPLAY, TITLE_BY_STAGE } from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
 import { stageService, isStageUnlocked, isEndOfCycle } from './services/stageService';
 import { isLeftReturning, STAGE_COUNT, type StageData } from './stageData';
@@ -241,7 +241,14 @@ const MapRowView = ({
         ))}
       </View>
       <View style={styles.rightCell}>
-        <Text style={styles.rightLabelText}>{row.rightLabel}</Text>
+        <Text
+          style={styles.rightLabelText}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={RIGHT_LABEL_MIN_FONT_SCALE}
+        >
+          {row.rightLabel}
+        </Text>
       </View>
     </View>
   );

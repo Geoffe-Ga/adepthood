@@ -77,7 +77,7 @@ const styles = StyleSheet.create({
   rightCell: {
     flex: RIGHT_FLEX,
     justifyContent: CENTER,
-    paddingLeft: spacing(1),
+    paddingHorizontal: spacing(1),
   },
 
   // Left-column stage text block (also the tap target -0)
@@ -97,7 +97,8 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 
-  // Right-column aspect label (wraps to fit — never clipped)
+  // Right-column aspect label: a single line that auto-scales down to fit its
+  // cell width, so the text is never clipped or broken mid-word.
   rightLabelText: {
     fontFamily: editorialType.serif,
     fontSize: 15,
