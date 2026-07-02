@@ -31,6 +31,11 @@ describe('WavelengthExplainer', () => {
     expect(getByTestId('wavelength-explainer')).toBeTruthy();
   });
 
+  it('renders the torus/spiral illustration inside the visible sheet', () => {
+    const { getByTestId } = render(<WavelengthExplainer visible onClose={() => {}} />);
+    expect(getByTestId('torus-spiral-visual')).toBeTruthy();
+  });
+
   it('renders the torus/auric-field concept', () => {
     const { getAllByText } = render(<WavelengthExplainer visible onClose={() => {}} />);
     expect(getAllByText(/torus/i).length).toBeGreaterThan(0);
