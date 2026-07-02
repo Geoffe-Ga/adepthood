@@ -640,7 +640,7 @@ describe('AuthContext', () => {
   // documented here exercises the full logout lifecycle rather than spot-
   // checking internals — matching how users actually hit these paths.
   describe('logout lifecycle (BUG-012)', () => {
-    it('handles back-to-back logout calls without double-clearing', async () => {
+    it('settles the token to null when two logout calls race, each tearing down independently', async () => {
       mockLoadToken.mockResolvedValue('existing-jwt');
       const { result } = renderHook(() => useAuth(), { wrapper });
       await waitFor(() => expect(result.current.token).toBe('existing-jwt'));
@@ -649,8 +649,10 @@ describe('AuthContext', () => {
         await Promise.all([result.current.logout(), result.current.logout()]);
       });
 
+      // Teardown is idempotent, not deduplicated: each logout runs its own
+      // clearToken, and the session still settles cleanly to a null token.
       expect(result.current.token).toBeNull();
-      expect(mockClearToken).toHaveBeenCalled();
+      expect(mockClearToken).toHaveBeenCalledTimes(2);
     });
 
     it('survives a logout that fires while a token refresh is in flight', async () => {

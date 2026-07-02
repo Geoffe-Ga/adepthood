@@ -19,8 +19,6 @@ type MockState = {
   enable_practices: boolean;
   enable_course: boolean;
   enable_sangha: boolean;
-  loading: boolean;
-  error: string | null;
 };
 
 let mockStoreState: MockState = {
@@ -28,8 +26,6 @@ let mockStoreState: MockState = {
   enable_practices: true,
   enable_course: true,
   enable_sangha: true,
-  loading: false,
-  error: null,
 };
 
 const setMockState = (patch: Partial<MockState>): void => {
@@ -44,8 +40,6 @@ jest.mock('@/store/useDepthPreferencesStore', () => ({
   selectEnablePractices: (s: MockState): boolean => s.enable_practices,
   selectEnableCourse: (s: MockState): boolean => s.enable_course,
   selectEnableSangha: (s: MockState): boolean => s.enable_sangha,
-  selectDepthPreferencesLoading: (s: MockState): boolean => s.loading,
-  selectDepthPreferencesError: (s: MockState): string | null => s.error,
   // Expose actions on the store mock so the component can call them
   get load() {
     return mockLoad;
@@ -91,8 +85,6 @@ beforeEach(() => {
     enable_practices: true,
     enable_course: true,
     enable_sangha: true,
-    loading: false,
-    error: null,
   };
 });
 
