@@ -638,15 +638,3 @@ export const wheelBalanceSchema = z.object({
 
 export type WheelAspectT = z.infer<typeof wheelAspectSchema>;
 export type WheelBalanceT = z.infer<typeof wheelBalanceSchema>;
-
-// ---------------------------------------------------------------------------
-// Lenient schemas for legacy endpoints (gradually tightened)
-// ---------------------------------------------------------------------------
-
-/**
- * Gateway for callers that do not yet have a strict schema. The
- * ``.passthrough()`` means the return value is validated as an object but
- * unknown keys pass through — useful for partial contracts that will be
- * tightened in follow-ups without breaking the wire right now.
- */
-export const unknownRecord = z.record(z.unknown());

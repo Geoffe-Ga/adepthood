@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import { userPractices } from '../index';
+import { userPractices, ApiValidationError } from '../index';
 
 const mockFetch = jest.fn() as jest.Mock;
 global.fetch = mockFetch;
@@ -53,12 +53,52 @@ describe('userPractices.customize', () => {
   });
 
   test('passes null overrides to clear server-side state', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse({}));
+    const updated = {
+      id: 42,
+      practice_id: 9,
+      stage_number: 3,
+      start_date: '2026-05-01',
+      end_date: null,
+    };
+    mockFetch.mockReturnValueOnce(jsonResponse(updated));
     await userPractices.customize(42, { custom_name: null, mode_config_override: null });
     const [, init] = mockFetch.mock.calls[0];
     expect(JSON.parse(init.body)).toEqual({
       custom_name: null,
       mode_config_override: null,
     });
+  });
+
+  test('accepts a valid UserPractice response', async () => {
+    const updated = {
+      id: 17,
+      practice_id: 9,
+      stage_number: 3,
+      start_date: '2026-05-01',
+      end_date: null,
+    };
+    mockFetch.mockReturnValueOnce(jsonResponse(updated));
+
+    const result = await userPractices.customize(17, {
+      custom_name: 'My Sit',
+      mode_config_override: null,
+    });
+
+    expect(result).toEqual(updated);
+  });
+
+  test('rejects a drifted response with a non-ISO start_date', async () => {
+    const drifted = {
+      id: 17,
+      practice_id: 9,
+      stage_number: 3,
+      start_date: 'not-a-date',
+      end_date: null,
+    };
+    mockFetch.mockReturnValueOnce(jsonResponse(drifted));
+
+    await expect(
+      userPractices.customize(17, { custom_name: 'My Sit', mode_config_override: null }),
+    ).rejects.toBeInstanceOf(ApiValidationError);
   });
 });

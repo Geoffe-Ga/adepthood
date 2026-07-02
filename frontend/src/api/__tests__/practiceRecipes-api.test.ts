@@ -161,6 +161,19 @@ describe('practiceRecipes.apply', () => {
     expect(url).toBe('http://test/practice-recipes/7/apply-to/99');
     expect(init.method).toBe('POST');
   });
+
+  test('raises ApiValidationError on a drifted UserPractice response', async () => {
+    const drifted = {
+      id: 99,
+      practice_id: 5,
+      stage_number: 1,
+      start_date: undefined,
+      end_date: null,
+    };
+    mockFetch.mockReturnValueOnce(jsonResponse(drifted));
+
+    await expect(practiceRecipes.apply(7, 99)).rejects.toBeInstanceOf(ApiValidationError);
+  });
 });
 
 describe('practiceTags', () => {
