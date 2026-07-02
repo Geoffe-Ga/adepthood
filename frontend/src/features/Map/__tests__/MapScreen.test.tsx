@@ -5,6 +5,7 @@ import { Image } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
 import MapScreen from '../MapScreen';
+import { STAGE_COUNT } from '../stageData';
 import { BALANCE_COPY, emphasisStyle, FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
 
 import { ranksOrShames } from './copyIntentRule';
@@ -535,5 +536,81 @@ describe('MapScreen', () => {
     // and the wave overlay renders alongside it with no dependency between them.
     expect(tree.root.findByProps({ testID: 'map-background' })).toBeTruthy();
     expect(tree.root.findByProps({ testID: 'map-wave' })).toBeTruthy();
+  });
+
+  // --- wave overlay follows measured row/cell centers, not nominal bands ---
+
+  const MAP_ROW_LABELS = [
+    'Awareness',
+    'Being',
+    'Wisdom',
+    'Understanding',
+    'Love',
+    'Yes-And-Ness',
+  ] as const;
+  type MapRowLabel = (typeof MAP_ROW_LABELS)[number];
+  const ROW_Y_BY_LABEL: Record<MapRowLabel, number> = {
+    Awareness: 0,
+    Being: 40,
+    Wisdom: 90,
+    Understanding: 260,
+    Love: 380,
+    'Yes-And-Ness': 500,
+  };
+  const TARGET_ROW_LABEL: MapRowLabel = 'Yes-And-Ness';
+  const CELL_LAYOUT_Y = 0;
+  const CELL_LAYOUT_HEIGHT = 40;
+  const CELL_LAYOUT_WIDTH = 100;
+  const NOMINAL_BAND_MIDPOINT = 0.5;
+  const MEASURED_TARGET_STAGE = 1;
+
+  const nominalPixelY = (stageNumber: number, height: number): number =>
+    ((STAGE_COUNT - stageNumber + NOMINAL_BAND_MIDPOINT) / STAGE_COUNT) * height;
+
+  const parseArrowMidY = (points: string): number => {
+    const ys = points
+      .trim()
+      .split(' ')
+      .map((pair) => Number(pair.split(',')[1]));
+    return (Math.min(...ys) + Math.max(...ys)) / 2;
+  };
+
+  it('reflects measured non-uniform row/cell centers in wave-arrow y-coordinates, not the nominal equal bands', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+
+    act(() => {
+      for (const label of MAP_ROW_LABELS) {
+        tree.root.findByProps({ testID: `map-row-${label}` }).props.onLayout({
+          nativeEvent: {
+            layout: {
+              x: 0,
+              y: ROW_Y_BY_LABEL[label],
+              width: WAVE_LAYOUT_WIDTH,
+              height: CELL_LAYOUT_HEIGHT,
+            },
+          },
+        });
+      }
+      for (let stage = 1; stage <= STAGE_COUNT; stage += 1) {
+        tree.root.findByProps({ testID: `stage-hotspot-${stage}-1` }).props.onLayout({
+          nativeEvent: {
+            layout: {
+              x: 0,
+              y: CELL_LAYOUT_Y,
+              width: CELL_LAYOUT_WIDTH,
+              height: CELL_LAYOUT_HEIGHT,
+            },
+          },
+        });
+      }
+    });
+
+    const arrow = tree.root.findByProps({ testID: `wave-arrow-${MEASURED_TARGET_STAGE}` });
+    const midY = parseArrowMidY(arrow.props.points as string);
+    const measuredCenterY = ROW_Y_BY_LABEL[TARGET_ROW_LABEL] + CELL_LAYOUT_HEIGHT / 2;
+
+    expect(midY).toBeCloseTo(measuredCenterY);
+    expect(midY).not.toBeCloseTo(nominalPixelY(MEASURED_TARGET_STAGE, WAVE_LAYOUT_HEIGHT));
   });
 });

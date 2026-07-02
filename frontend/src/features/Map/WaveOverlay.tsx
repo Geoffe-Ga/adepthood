@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native';
 import Svg, { Path, Polygon } from 'react-native-svg';
 
 import { waveArrowheads, waveSegments } from './waveGeometry';
+import type { StageAnchors } from './waveGeometry';
 
 /**
  * Continuous sine-wave artwork for the Map's center column, rendered behind the
@@ -27,14 +28,20 @@ interface WaveOverlayProps {
   width: number;
   /** Measured height of the grid the wave fills, in pixels. */
   height: number;
+  /** Measured per-stage vertical centers; missing stages use nominal bands. */
+  anchors?: StageAnchors;
 }
 
 /** SVG sine-wave overlay sized to the measured grid; null until measured. */
-export const WaveOverlay = ({ width, height }: WaveOverlayProps): React.JSX.Element | null => {
+export const WaveOverlay = ({
+  width,
+  height,
+  anchors = {},
+}: WaveOverlayProps): React.JSX.Element | null => {
   const smallerExtent = Math.min(width, height);
   if (smallerExtent < MIN_DRAWABLE_EXTENT) return null;
-  const segments = waveSegments(width, height);
-  const arrowheads = waveArrowheads(width, height);
+  const segments = waveSegments(width, height, anchors);
+  const arrowheads = waveArrowheads(width, height, anchors);
   return (
     <Svg
       testID="map-wave"

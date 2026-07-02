@@ -5,11 +5,12 @@ import { STAGE_COUNT, isLeftReturning } from '../stageData';
 import {
   arrowheadAt,
   centerColumnBounds,
+  nominalAnchorY,
   stageWavePoint,
   waveArrowheads,
   waveSegments,
 } from '../waveGeometry';
-import type { WaveSegment } from '../waveGeometry';
+import type { StageAnchors, WaveSegment } from '../waveGeometry';
 
 const CENTER_X = 0.5;
 const CONVERGENCE_EPSILON = 0.05;
@@ -39,6 +40,20 @@ const CENTER_RIGHT_FRACTION = (LEFT_COLUMN_FLEX + CENTER_COLUMN_FLEX) / TOTAL_CO
 const WOBBLE_VISIBILITY_FRACTION = 0.4;
 const LEFT_WOBBLE_STAGE = 2;
 const RIGHT_WOBBLE_STAGE = 1;
+
+// x tokens in the "M x1 y1 C x1 mY x2 mY x2 y2" segment path stream.
+const SEGMENT_X_TOKEN_INDICES = [1, 4, 6, 8];
+const segmentPathXs = (d: string): number[] => {
+  const tokens = d.trim().split(' ');
+  return SEGMENT_X_TOKEN_INDICES.map((index) => Number(tokens[index]));
+};
+
+const arrowheadXs = (points: string): number[] =>
+  points
+    .trim()
+    .split(' ')
+    .map((pair) => pair.split(',').map(Number))
+    .map(([x]) => x as number);
 
 describe('stageWavePoint', () => {
   it('rises upward: y strictly decreases as stageNumber climbs from 1 to 10', () => {
@@ -141,20 +156,6 @@ describe('arrowheadAt', () => {
 });
 
 describe('center-column containment', () => {
-  // x tokens in the "M x1 y1 C x1 mY x2 mY x2 y2" segment path stream.
-  const SEGMENT_X_TOKEN_INDICES = [1, 4, 6, 8];
-  const segmentPathXs = (d: string): number[] => {
-    const tokens = d.trim().split(' ');
-    return SEGMENT_X_TOKEN_INDICES.map((index) => Number(tokens[index]));
-  };
-
-  const arrowheadXs = (points: string): number[] =>
-    points
-      .trim()
-      .split(' ')
-      .map((pair) => pair.split(',').map(Number))
-      .map(([x]) => x as number);
-
   const findSegmentX = (segments: readonly WaveSegment[], stageNumber: number): number => {
     for (const segment of segments) {
       if (segment.stageNumber === stageNumber) {
@@ -217,6 +218,118 @@ describe('center-column containment', () => {
       expect(Math.abs(rightX - columnMidline)).toBeGreaterThanOrEqual(
         WOBBLE_VISIBILITY_FRACTION * columnHalfWidth,
       );
+    }
+  });
+});
+
+describe('measured anchors: nominal fallback and pixel-space threading', () => {
+  const NOMINAL_BAND_MIDPOINT = 0.5;
+  const OVERRIDE_STAGE = 4;
+  const OVERRIDE_UNIT_Y = 0.42;
+  const NON_UNIFORM_ANCHORS: StageAnchors = {
+    1: 0.94,
+    2: 0.83,
+    3: 0.76,
+    4: 0.68,
+    5: 0.57,
+    6: 0.49,
+    7: 0.39,
+    8: 0.31,
+    9: 0.18,
+    10: 0.06,
+  };
+  const SEGMENT_Y1_TOKEN_INDEX = 2;
+  const SEGMENT_Y2_TOKEN_INDEX = 9;
+  const ANCHOR_COORD_PRECISION = 3;
+  const EXPECTED_ARROWHEAD_HEIGHT = 10;
+
+  const findSegment = (segments: readonly WaveSegment[], stageNumber: number): WaveSegment => {
+    const segment = segments.find((s) => s.stageNumber === stageNumber);
+    if (!segment) throw new Error(`no segment found for stage ${stageNumber}`);
+    return segment;
+  };
+
+  it('nominalAnchorY matches the legacy uniform-band formula for every stage', () => {
+    for (let stage = 1; stage <= STAGE_COUNT; stage += 1) {
+      const expected = (STAGE_COUNT - stage + NOMINAL_BAND_MIDPOINT) / STAGE_COUNT;
+      expect(nominalAnchorY(stage)).toBeCloseTo(expected);
+    }
+  });
+
+  it('stageWavePoint(n) matches stageWavePoint(n, {}) for every stage', () => {
+    for (let stage = 1; stage <= STAGE_COUNT; stage += 1) {
+      expect(stageWavePoint(stage, {})).toEqual(stageWavePoint(stage));
+    }
+  });
+
+  it('a measured override wins for its own stage; every other stage falls back to nominalAnchorY', () => {
+    const anchors: StageAnchors = { [OVERRIDE_STAGE]: OVERRIDE_UNIT_Y };
+    expect(stageWavePoint(OVERRIDE_STAGE, anchors).y).toBe(OVERRIDE_UNIT_Y);
+    for (let stage = 1; stage <= STAGE_COUNT; stage += 1) {
+      if (stage === OVERRIDE_STAGE) continue;
+      const { y } = stageWavePoint(stage, anchors);
+      expect(Number.isNaN(y)).toBe(false);
+      expect(y).toBe(nominalAnchorY(stage));
+    }
+  });
+
+  it('non-uniform anchors flow into segment endpoints in pixel space', () => {
+    const segments = waveSegments(SMALL_WIDTH, SMALL_HEIGHT, NON_UNIFORM_ANCHORS);
+    for (let stage = 1; stage <= SEGMENT_COUNT; stage += 1) {
+      const segment = findSegment(segments, stage);
+      const tokens = segment.d.trim().split(' ');
+      const expectedY1 = ((NON_UNIFORM_ANCHORS[stage] ?? 0) * SMALL_HEIGHT).toFixed(
+        ANCHOR_COORD_PRECISION,
+      );
+      const expectedY2 = ((NON_UNIFORM_ANCHORS[stage + 1] ?? 0) * SMALL_HEIGHT).toFixed(
+        ANCHOR_COORD_PRECISION,
+      );
+      expect(tokens[SEGMENT_Y1_TOKEN_INDEX]).toBe(expectedY1);
+      expect(tokens[SEGMENT_Y2_TOKEN_INDEX]).toBe(expectedY2);
+    }
+  });
+
+  it('centers the arrowhead triangle exactly on the resolved anchor', () => {
+    const arrow = arrowheadAt(REPRESENTATIVE_STAGE, SMALL_WIDTH, SMALL_HEIGHT, NON_UNIFORM_ANCHORS);
+    const coordinatePairs = arrow.points
+      .trim()
+      .split(' ')
+      .map((pair) => pair.split(',').map(Number));
+    const ys = coordinatePairs.map(([, y]) => y as number);
+    const apexY = Math.min(...ys);
+    const baseY = Math.max(...ys);
+    const expectedCenter = (NON_UNIFORM_ANCHORS[REPRESENTATIVE_STAGE] ?? 0) * SMALL_HEIGHT;
+    expect((apexY + baseY) / 2).toBeCloseTo(expectedCenter);
+    expect(baseY - apexY).toBe(EXPECTED_ARROWHEAD_HEIGHT);
+  });
+
+  it('colors stay keyed to STAGE_DISPLAY textColor when anchors are non-uniform', () => {
+    const segments = waveSegments(SMALL_WIDTH, SMALL_HEIGHT, NON_UNIFORM_ANCHORS);
+    for (const segment of segments) {
+      expect(segment.color).toBe(STAGE_DISPLAY[segment.stageNumber]?.textColor);
+    }
+    const arrowheads = waveArrowheads(SMALL_WIDTH, SMALL_HEIGHT, NON_UNIFORM_ANCHORS);
+    for (const arrowhead of arrowheads) {
+      expect(arrowhead.color).toBe(STAGE_DISPLAY[arrowhead.stageNumber]?.textColor);
+    }
+  });
+
+  const expectXsWithin = (xs: number[], minX: number, maxX: number): void => {
+    for (const x of xs) {
+      expect(x).toBeGreaterThanOrEqual(minX);
+      expect(x).toBeLessThanOrEqual(maxX);
+    }
+  };
+
+  it('keeps x-coordinates within the margin-shrunk center column when anchors are non-uniform', () => {
+    for (const width of PHONE_WIDTHS) {
+      const { left, right } = centerColumnBounds(width);
+      const minX = left + SAFE_MARGIN_PX;
+      const maxX = right - SAFE_MARGIN_PX;
+      const segments = waveSegments(width, REPRESENTATIVE_HEIGHT, NON_UNIFORM_ANCHORS);
+      for (const segment of segments) expectXsWithin(segmentPathXs(segment.d), minX, maxX);
+      const arrowheads = waveArrowheads(width, REPRESENTATIVE_HEIGHT, NON_UNIFORM_ANCHORS);
+      for (const arrowhead of arrowheads) expectXsWithin(arrowheadXs(arrowhead.points), minX, maxX);
     }
   });
 });

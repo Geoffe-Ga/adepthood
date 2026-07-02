@@ -34,6 +34,8 @@ import {
 
 import { BEGIN_AGAIN_COPY, cycleLabel } from './beginAgain';
 import { useBeginAgainGuard } from './hooks/useBeginAgainGuard';
+import { useStageAnchors } from './hooks/useStageAnchors';
+import type { UseStageAnchorsResult } from './hooks/useStageAnchors';
 import { useWheelBalance } from './hooks/useWheelBalance';
 import {
   formatMinutes,
@@ -159,13 +161,22 @@ const CenterContent = ({ display }: { display: StageDisplay }): React.JSX.Elemen
   );
 };
 
+interface StageCenterCellProps extends StageCellProps {
+  /** Index of the row this cell sits in, for anchor measurement. */
+  rowIndex: number;
+  /** Record this cell's measured row-relative center on layout. */
+  onCellLayout: UseStageAnchorsResult['onCellLayout'];
+}
+
 const StageCenterCell = ({
   stage,
   display,
   locked,
   isCurrent,
   onPress,
-}: StageCellProps): React.JSX.Element => (
+  rowIndex,
+  onCellLayout,
+}: StageCenterCellProps): React.JSX.Element => (
   <TouchableOpacity
     testID={`stage-hotspot-${display.stageNumber}-1`}
     style={[
@@ -175,6 +186,7 @@ const StageCenterCell = ({
       isCurrent ? styles.cellCurrent : null,
     ]}
     onPress={() => onPress(stage)}
+    onLayout={(e) => onCellLayout(display.stageNumber, rowIndex, e)}
     accessibilityRole="button"
     accessibilityLabel={`${stage.title} - ${stage.subtitle}`}
   >
@@ -196,50 +208,111 @@ const StageCenterCell = ({
 
 interface MapRowProps {
   row: MapRow;
+  rowIndex: number;
   lookup: StageLookup;
   fullnessByStage: FullnessLookup;
   currentStage: number | null;
   onPress: (_stage: StageData) => void;
+  onRowLayout: UseStageAnchorsResult['onRowLayout'];
+  onCellLayout: UseStageAnchorsResult['onCellLayout'];
 }
+
+/** A row's stages resolved to their loaded StageData + display copy. */
+type ResolvedStage = { stage: StageData; display: StageDisplay };
+
+const resolveRowStages = (row: MapRow, lookup: StageLookup): ResolvedStage[] =>
+  row.stageNumbers
+    .map((n) => ({ stage: lookup[n], display: STAGE_DISPLAY[n] }))
+    .filter((r): r is ResolvedStage => !!r.stage && !!r.display);
+
+/** Left column of one row: the colored stage-text tap targets, stacked. */
+const RowLeftColumn = ({
+  resolved,
+  fullnessByStage,
+  currentStage,
+  onPress,
+}: {
+  resolved: ResolvedStage[];
+  fullnessByStage: FullnessLookup;
+  currentStage: number | null;
+  onPress: (_stage: StageData) => void;
+}): React.JSX.Element => (
+  <View style={styles.leftCell}>
+    {resolved.map(({ stage, display }) => (
+      <StageTextBlock
+        key={stage.stageNumber}
+        stage={stage}
+        display={display}
+        locked={!isStageUnlocked(stage, currentStage)}
+        isCurrent={stage.stageNumber === currentStage}
+        fullness={fullnessByStage[stage.stageNumber] ?? THIN_FULLNESS}
+        onPress={onPress}
+      />
+    ))}
+  </View>
+);
+
+/** Center column of one row: the per-stage glyph cells that anchor the wave. */
+const RowCenterColumn = ({
+  resolved,
+  rowIndex,
+  currentStage,
+  onPress,
+  onCellLayout,
+}: {
+  resolved: ResolvedStage[];
+  rowIndex: number;
+  currentStage: number | null;
+  onPress: (_stage: StageData) => void;
+  onCellLayout: UseStageAnchorsResult['onCellLayout'];
+}): React.JSX.Element => (
+  <View style={styles.centerCell}>
+    {resolved.map(({ stage, display }) => (
+      <StageCenterCell
+        key={stage.stageNumber}
+        stage={stage}
+        display={display}
+        locked={!isStageUnlocked(stage, currentStage)}
+        isCurrent={stage.stageNumber === currentStage}
+        onPress={onPress}
+        rowIndex={rowIndex}
+        onCellLayout={onCellLayout}
+      />
+    ))}
+  </View>
+);
 
 /** One grid row: left text + center glyph stacked per stage, one aspect label. */
 const MapRowView = ({
   row,
+  rowIndex,
   lookup,
   fullnessByStage,
   currentStage,
   onPress,
+  onRowLayout,
+  onCellLayout,
 }: MapRowProps): React.JSX.Element => {
-  const resolved = row.stageNumbers
-    .map((n) => ({ stage: lookup[n], display: STAGE_DISPLAY[n] }))
-    .filter((r): r is { stage: StageData; display: StageDisplay } => !!r.stage && !!r.display);
+  const resolved = resolveRowStages(row, lookup);
   return (
-    <View style={[styles.groupRow, { flex: row.stageNumbers.length }]}>
-      <View style={styles.leftCell}>
-        {resolved.map(({ stage, display }) => (
-          <StageTextBlock
-            key={stage.stageNumber}
-            stage={stage}
-            display={display}
-            locked={!isStageUnlocked(stage, currentStage)}
-            isCurrent={stage.stageNumber === currentStage}
-            fullness={fullnessByStage[stage.stageNumber] ?? THIN_FULLNESS}
-            onPress={onPress}
-          />
-        ))}
-      </View>
-      <View style={styles.centerCell}>
-        {resolved.map(({ stage, display }) => (
-          <StageCenterCell
-            key={stage.stageNumber}
-            stage={stage}
-            display={display}
-            locked={!isStageUnlocked(stage, currentStage)}
-            isCurrent={stage.stageNumber === currentStage}
-            onPress={onPress}
-          />
-        ))}
-      </View>
+    <View
+      style={[styles.groupRow, { flex: row.stageNumbers.length }]}
+      testID={`map-row-${row.rightLabel}`}
+      onLayout={(e) => onRowLayout(rowIndex, e)}
+    >
+      <RowLeftColumn
+        resolved={resolved}
+        fullnessByStage={fullnessByStage}
+        currentStage={currentStage}
+        onPress={onPress}
+      />
+      <RowCenterColumn
+        resolved={resolved}
+        rowIndex={rowIndex}
+        currentStage={currentStage}
+        onPress={onPress}
+        onCellLayout={onCellLayout}
+      />
       <View style={styles.rightCell}>
         <Text style={styles.rightLabelText}>{row.rightLabel}</Text>
       </View>
@@ -727,17 +800,21 @@ const MapGrid = ({
   onSelectStage,
 }: MapGridProps): React.JSX.Element => {
   const [size, onLayout] = useGridSize();
+  const { anchors, onRowLayout, onCellLayout } = useStageAnchors(size.height);
   return (
     <View style={styles.grid} testID="map-grid" onLayout={onLayout}>
-      <WaveOverlay width={size.width} height={size.height} />
-      {MAP_ROWS.map((row) => (
+      <WaveOverlay width={size.width} height={size.height} anchors={anchors} />
+      {MAP_ROWS.map((row, index) => (
         <MapRowView
           key={row.rightLabel}
           row={row}
+          rowIndex={index}
           lookup={lookup}
           fullnessByStage={fullnessByStage}
           currentStage={currentStage}
           onPress={onSelectStage}
+          onRowLayout={onRowLayout}
+          onCellLayout={onCellLayout}
         />
       ))}
     </View>
