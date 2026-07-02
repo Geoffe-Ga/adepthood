@@ -11,19 +11,19 @@ import type { Dispatch, SetStateAction } from 'react';
  * screen has to re-derive it.
  */
 
-export interface SettingsFormState<T = string> {
-  draft: T;
+export interface SettingsFormState {
+  draft: string;
   submitting: boolean;
   error: string | null;
   status: string | null;
-  setDraft: Dispatch<SetStateAction<T>>;
+  setDraft: Dispatch<SetStateAction<string>>;
   setSubmitting: Dispatch<SetStateAction<boolean>>;
   setError: Dispatch<SetStateAction<string | null>>;
   setStatus: Dispatch<SetStateAction<string | null>>;
 }
 
-export function useSettingsFormState<T = string>(initialDraft: T): SettingsFormState<T> {
-  const [draft, setDraft] = useState<T>(initialDraft);
+export function useSettingsFormState(initialDraft: string): SettingsFormState {
+  const [draft, setDraft] = useState<string>(initialDraft);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);

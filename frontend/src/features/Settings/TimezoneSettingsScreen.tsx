@@ -2,6 +2,7 @@ import React, { useCallback, useMemo } from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
+import { SETTINGS_BUTTON_PADDING } from './shared/settingsFormLayout';
 import type { SettingsFormState } from './shared/useSettingsForm';
 import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
 
@@ -22,10 +23,6 @@ import { detectDeviceTimezone } from '@/utils/dateUtils';
  */
 
 const EXAMPLE_ZONE = 'America/Los_Angeles';
-
-// Visual parity with ApiKeySettingsScreen's primary button, whose padding is
-// also SPACING.md nudged up to balance the larger label font.
-const SAVE_BUTTON_PADDING = SPACING.md + 2;
 
 const EMPTY_ZONE_MESSAGE =
   `Enter a time zone name like "${EXAMPLE_ZONE}", ` +
@@ -275,7 +272,7 @@ const styles = StyleSheet.create({
   secondaryButtonText: { fontSize: 14, color: ink.primary, fontWeight: '600' },
   primaryButton: {
     borderRadius: BORDER_RADIUS.md,
-    padding: SAVE_BUTTON_PADDING,
+    padding: SETTINGS_BUTTON_PADDING,
     alignItems: 'center',
     backgroundColor: accent.primary,
     marginTop: SPACING.xs,

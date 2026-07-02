@@ -250,6 +250,56 @@ describe('ApiKeySettingsScreen', () => {
     alertSpy.mockRestore();
   });
 
+  test('confirms with a status banner when the stored key is removed', async () => {
+    setApiKeyState({ apiKey: VALID_KEY });
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
+      const destructive = buttons?.find((b) => b.style === 'destructive');
+      destructive?.onPress?.();
+    });
+
+    const { getByTestId, findByTestId } = render(<ApiKeySettingsScreen />);
+    await act(async () => {
+      fireEvent.press(getByTestId('remove-key-button'));
+    });
+
+    const status = await findByTestId('api-key-status');
+    expect(status.props.children).toContain('removed from this device');
+    alertSpy.mockRestore();
+  });
+
+  test('falls back to a default message when saving fails with a blank error', async () => {
+    setApiKeyState({ saveApiKey: jest.fn(() => Promise.reject(new Error(''))) });
+    const { getByTestId, findByTestId } = render(<ApiKeySettingsScreen />);
+
+    fireEvent.changeText(getByTestId('api-key-input'), VALID_KEY);
+    await act(async () => {
+      fireEvent.press(getByTestId('save-key-button'));
+    });
+
+    const error = await findByTestId('api-key-error');
+    expect(error.props.children).toContain('Could not save the API key.');
+  });
+
+  test('falls back to a default message when removing fails with a blank error', async () => {
+    setApiKeyState({
+      apiKey: VALID_KEY,
+      clearApiKey: jest.fn(() => Promise.reject(new Error(''))),
+    });
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
+      const destructive = buttons?.find((b) => b.style === 'destructive');
+      destructive?.onPress?.();
+    });
+
+    const { getByTestId, findByTestId } = render(<ApiKeySettingsScreen />);
+    await act(async () => {
+      fireEvent.press(getByTestId('remove-key-button'));
+    });
+
+    const error = await findByTestId('api-key-error');
+    expect(error.props.children).toContain('Could not remove the API key.');
+    alertSpy.mockRestore();
+  });
+
   test('masks a short stored key entirely rather than partially revealing it', () => {
     setApiKeyState({ apiKey: 'sk-short' }); // pragma: allowlist secret
     const { getByText, queryByText } = render(<ApiKeySettingsScreen />);
