@@ -106,8 +106,17 @@ export const styles = StyleSheet.create({
   },
 
   // ===== Action Buttons =====
+  // The footer holds two fixed-min-width children (the ~204pt log-date stepper
+  // and the ~190pt input + "Log Units" group) whose combined width exceeds the
+  // modal content box on phone-sized viewports. RN Views can't shrink
+  // (flexShrink: 0) and don't clip overflow, so without wrap the button paints
+  // past the modal's right edge. flexWrap lets the group drop to a second line
+  // when tight while staying single-line on wide (tablet/desktop) layouts; the
+  // rowGap keeps the wrapped rows from touching.
   actionButtons: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: SPACING.sm,
     justifyContent: JUSTIFY_SPACE_BETWEEN,
     marginTop: SPACING.lg,
     paddingTop: SPACING.md,

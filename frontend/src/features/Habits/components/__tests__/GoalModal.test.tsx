@@ -1,6 +1,7 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 import type { DimensionValue } from 'react-native';
 
 // EmojiSelector pulls in native bindings; render a stub that exposes a
@@ -510,6 +511,39 @@ describe('GoalModal log-unit guards', () => {
     expect(calls).toHaveLength(1);
     const [, amount] = calls[0] as [number, number, Date];
     expect(amount).toBe(0);
+  });
+});
+
+describe('GoalModal footer layout contract', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  // The footer row holds two fixed-min-width children (date stepper +
+  // input+"Log Units" group) whose combined width exceeds the modal content
+  // box on phone viewports; RN Views don't clip and can't shrink, so without
+  // wrap the button paints past the modal's right edge. Wrap is the layout
+  // contract that lets the group drop to a second line instead of overflowing.
+  // (See Habits.styles.ts actionButtons for the measured widths.)
+  const flattenFooterStyle = (getByTestId: (_id: string) => { props: { style: unknown } }) =>
+    StyleSheet.flatten(getByTestId('goal-modal-log-unit-section').props.style) as {
+      flexWrap?: string;
+      rowGap?: number;
+    };
+
+  it('wrap-enables the footer row in the compact (editor-collapsed) state', () => {
+    const { getByTestId } = render(<GoalModal {...buildProps()} />);
+    const footer = flattenFooterStyle(getByTestId);
+    expect(footer.flexWrap).toBe('wrap');
+    // A row gap keeps the wrapped input+button group off the stepper above it.
+    expect(footer.rowGap).toBeGreaterThan(0);
+  });
+
+  it('wrap-enables the footer row in the edit-expanded state', () => {
+    const { getByTestId } = renderModal();
+    const footer = flattenFooterStyle(getByTestId);
+    expect(footer.flexWrap).toBe('wrap');
+    expect(footer.rowGap).toBeGreaterThan(0);
   });
 });
 
