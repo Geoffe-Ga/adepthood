@@ -224,20 +224,6 @@ export const brightenColor = (hex: string): string => {
   );
 };
 
-/** Colors for the map spiral visualization (indexed by stageNumber - 1). */
-export const MAP_STAGE_COLORS = [
-  '#7f1d1d',
-  '#9f1239',
-  '#c026d3',
-  '#6d28d9',
-  '#1d4ed8',
-  '#0ea5e9',
-  '#059669',
-  '#65a30d',
-  '#ca8a04',
-  '#ea580c',
-] as const;
-
 // ---------------------------------------------------------------------------
 // Spacing
 // ---------------------------------------------------------------------------

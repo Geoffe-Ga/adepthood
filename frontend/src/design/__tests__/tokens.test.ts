@@ -2,7 +2,6 @@
 /* global describe, it, expect */
 import {
   BORDER_RADIUS,
-  MAP_STAGE_COLORS,
   SPACING,
   STAGE_COLORS,
   STAGE_ORDER,
@@ -159,13 +158,6 @@ describe('design tokens', () => {
         return Math.max(...channels) - Math.min(...channels);
       };
       expect(spread(brightenColor('#6fa3d3'))).toBeGreaterThan(spread('#6fa3d3'));
-    });
-  });
-
-  describe('MAP_STAGE_COLORS', () => {
-    it('exports colors for the map spiral', () => {
-      expect(MAP_STAGE_COLORS).toHaveLength(10);
-      expect(MAP_STAGE_COLORS[0]).toBe('#7f1d1d');
     });
   });
 

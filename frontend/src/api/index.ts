@@ -889,37 +889,33 @@ const habitWithGoalsArraySchema = z.array(habitWithGoalsSchema);
 const habitPageSchema = pageSchema(habitWithGoalsSchema);
 
 /**
- * Standard ``limit`` / ``offset`` knobs every ``listPaginated`` helper accepts.
- * Both default to the server's values (limit 50, offset 0) when omitted.
+ * The single ``offset`` knob ``fetchAllPages`` threads through each page fetch.
+ * Defaults to the server's value (offset 0) when omitted.
  */
 export interface PaginationParams {
-  limit?: number;
   offset?: number;
 }
 
 /**
- * Build the query string shared by every ``listPaginated`` helper: always opt
+ * Build the query string shared by every ``listAll`` page fetch: always opt
  * into the ``Page`` envelope (``paginate=true``), append any endpoint-specific
- * filters (e.g. ``stage_number``), then ``limit`` / ``offset`` only when the
- * caller supplies them — mirroring ``habits.listPaginated`` above.
+ * filters (e.g. ``stage_number``), then ``offset`` only when the caller
+ * supplies one.
  */
 function pageQuery(extra: Record<string, string | number>, params: PaginationParams): string {
   const query = new URLSearchParams({ paginate: 'true' });
   for (const [key, value] of Object.entries(extra)) query.set(key, String(value));
-  if (params.limit != null) query.set('limit', String(params.limit));
   if (params.offset != null) query.set('offset', String(params.offset));
   return query.toString();
 }
 
 /**
- * Drain every page of a ``listPaginated``-style helper into one flat array.
+ * Drain every page of a paginated endpoint into one flat array.
  *
- * The screen-adoption path for the ``Page`` envelope (issue #408): every
- * list in the app is small today, so screens keep their whole-list render
- * while the wire contract moves to the envelope. A screen that later needs
- * true incremental loading calls its ``listPaginated`` helper directly with
- * offsets instead. The empty-page guard stops a buggy server from looping
- * forever on ``has_more: true``.
+ * The screen-adoption path for the ``Page`` envelope: every list in the app
+ * is small today, so screens keep their whole-list render while the wire
+ * contract moves to the envelope. The empty-page guard stops a buggy server
+ * from looping forever on ``has_more: true``.
  */
 export async function fetchAllPages<T>(
   fetchPage: (_params: PaginationParams) => Promise<Page<T>>,
@@ -942,33 +938,21 @@ export async function fetchAllPages<T>(
 // mobile web). Item-level URLs (`/habits/{id}`) are matched without the
 // trailing slash because their FastAPI routes are declared that way.
 export const habits = {
+  /** No production screen callers — screens use ``listAll``; retained as the request-machinery test vehicle and bare-array wire-contract guard. */
   list(token?: string): Promise<ApiHabitWithGoals[]> {
     return request<ApiHabitWithGoals[]>('/habits/', {
       token,
       schema: habitWithGoalsArraySchema as unknown as z.ZodType<ApiHabitWithGoals[]>,
     });
   },
-  /**
-   * Paginated habits list (BUG-INFRA-013). Opts into the server-side
-   * ``Page`` envelope introduced alongside the backend pagination change;
-   * callers that need ``total`` / ``has_more`` should prefer this over the
-   * bare-list variant above.
-   */
-  listPaginated(
-    params: { limit?: number; offset?: number } = {},
-    token?: string,
-  ): Promise<Page<ApiHabitWithGoals>> {
-    const query = new URLSearchParams({ paginate: 'true' });
-    if (params.limit != null) query.set('limit', String(params.limit));
-    if (params.offset != null) query.set('offset', String(params.offset));
-    return request<Page<ApiHabitWithGoals>>(`/habits/?${query.toString()}`, {
-      token,
-      schema: habitPageSchema as unknown as z.ZodType<Page<ApiHabitWithGoals>>,
-    });
-  },
-  /** Whole habits list via the ``Page`` envelope (issue #408). */
+  /** Whole habits list via the ``Page`` envelope. */
   listAll(token?: string): Promise<ApiHabitWithGoals[]> {
-    return fetchAllPages((params) => habits.listPaginated(params, token));
+    return fetchAllPages((params) =>
+      request<Page<ApiHabitWithGoals>>(`/habits/?${pageQuery({}, params)}`, {
+        token,
+        schema: habitPageSchema as unknown as z.ZodType<Page<ApiHabitWithGoals>>,
+      }),
+    );
   },
   create(payload: HabitCreatePayload, token?: string): Promise<ApiHabit> {
     return request<ApiHabit>('/habits/', { method: 'POST', body: payload, token });
@@ -1493,22 +1477,14 @@ export interface StageHistoryResponse {
 }
 
 export const stages = {
-  list(token?: string): Promise<Stage[]> {
-    return request<Stage[]>('/stages', { token });
-  },
-  /**
-   * Paginated stages list (BUG-INFRA-016). Opts into the ``Page`` envelope.
-   * Note the route has no trailing slash (``/stages``), matching the backend.
-   */
-  listPaginated(params: PaginationParams = {}, token?: string): Promise<Page<Stage>> {
-    return request<Page<Stage>>(`/stages?${pageQuery({}, params)}`, {
-      token,
-      schema: pageSchema(stageSchema),
-    });
-  },
-  /** Whole stages list via the ``Page`` envelope (issue #408). */
+  /** Whole stages list via the ``Page`` envelope (no trailing slash — matches the backend route). */
   listAll(token?: string): Promise<Stage[]> {
-    return fetchAllPages((params) => stages.listPaginated(params, token));
+    return fetchAllPages((params) =>
+      request<Page<Stage>>(`/stages?${pageQuery({}, params)}`, {
+        token,
+        schema: pageSchema(stageSchema),
+      }),
+    );
   },
   history(stageNumber: number, token?: string): Promise<StageHistoryResponse> {
     return request<StageHistoryResponse>(`/stages/${stageNumber}/history`, { token });
@@ -1589,29 +1565,14 @@ export interface StageIntro {
 }
 
 export const course = {
-  /**
-   * Paginated stage content (BUG-INFRA-018). Opts into the ``Page`` envelope.
-   *
-   * Caveat: pagination is applied *after* drip-feed filtering, so ``total``
-   * reflects only the items the user can currently see — it grows as content
-   * unlocks over time, without new database rows being added.
-   */
-  stageContentPaginated(
-    stageNumber: number,
-    params: PaginationParams = {},
-    token?: string,
-  ): Promise<Page<ContentItem>> {
-    return request<Page<ContentItem>>(
-      `/course/stages/${stageNumber}/content?${pageQuery({}, params)}`,
-      {
+  /** Whole stage-content list via the ``Page`` envelope. */
+  stageContentAll(stageNumber: number, token?: string): Promise<ContentItem[]> {
+    return fetchAllPages((params) =>
+      request<Page<ContentItem>>(`/course/stages/${stageNumber}/content?${pageQuery({}, params)}`, {
         token,
         schema: pageSchema(contentItemSchema) as unknown as z.ZodType<Page<ContentItem>>,
-      },
+      }),
     );
-  },
-  /** Whole stage-content list via the ``Page`` envelope (issue #408). */
-  stageContentAll(stageNumber: number, token?: string): Promise<ContentItem[]> {
-    return fetchAllPages((params) => course.stageContentPaginated(stageNumber, params, token));
   },
   markRead(contentId: number, token?: string): Promise<ContentCompletion> {
     return request<ContentCompletion>(`/course/content/${contentId}/mark-read`, {
@@ -1870,62 +1831,30 @@ export interface PracticeCreatePayload {
 
 export const practices = {
   /**
-   * List approved practices for a stage.
+   * Whole practices list for a stage via the ``Page`` envelope.
    *
    * ``includeMine`` opts in to the backend's ``?include_mine=true`` flag
-   * (custom-practices-07), which also returns the authenticated user's
-   * own unapproved drafts so the catalog can render a "My drafts"
-   * section. The default ``false`` preserves the legacy approved-only
-   * behaviour for existing callers (e.g. useActivePractice).
-   *
-   * The numeric overload retains the historic ``practices.list(stage)``
-   * signature so older call sites keep working without a churn pass.
-   */
-  async list(
-    options: { stageNumber: number; includeMine?: boolean } | number,
-    token?: string,
-  ): Promise<PracticeItem[]> {
-    const params = typeof options === 'number' ? { stageNumber: options } : options;
-    const query = new URLSearchParams();
-    query.set('stage_number', String(params.stageNumber));
-    if (params.includeMine === true) query.set('include_mine', 'true');
-    // Parse the array (don't filter): a drifted row now raises
-    // ApiValidationError instead of silently vanishing from the catalog.
-    return request<PracticeItem[]>(`/practices/?${query.toString()}`, {
-      token,
-      schema: z.array(practiceItemSchema) as unknown as z.ZodType<PracticeItem[]>,
-    });
-  },
-  /**
-   * Paginated practices list for a stage (BUG-INFRA-012). Opts into the
-   * ``Page`` envelope; ``stage_number`` is required (the backend route filters
-   * by stage). Prefer this over ``list`` when ``total`` / ``has_more`` matter.
-   */
-  listPaginated(
-    params: { stageNumber: number; includeMine?: boolean } & PaginationParams,
-    token?: string,
-  ): Promise<Page<PracticeItem>> {
-    const { stageNumber, includeMine, ...page } = params;
-    const extra: Record<string, string | number> = { stage_number: stageNumber };
-    if (includeMine === true) extra.include_mine = 'true';
-    return request<Page<PracticeItem>>(`/practices/?${pageQuery(extra, page)}`, {
-      token,
-      schema: pageSchema(practiceItemSchema) as unknown as z.ZodType<Page<PracticeItem>>,
-    });
-  },
-  /**
-   * Whole practices list via the ``Page`` envelope (issue #408). Items are
-   * validated per ``practiceItemSchema`` inside ``listPaginated``, so a
-   * malformed row rejects the page (``fetchAllPages`` propagates the
-   * ``ApiValidationError``) rather than being silently dropped.
+   * (custom-practices-07), which also returns the authenticated user's own
+   * unapproved drafts so the catalog can render a "My drafts" section; it
+   * defaults to the approved-only behaviour existing callers rely on. The
+   * numeric overload retains the historic ``practices.listAll(stage)``
+   * signature so older call sites keep working without a churn pass. Items are
+   * validated per ``practiceItemSchema``, so a malformed row rejects the page
+   * (``fetchAllPages`` propagates the ``ApiValidationError``) rather than
+   * being silently dropped.
    */
   async listAll(
     options: { stageNumber: number; includeMine?: boolean } | number,
     token?: string,
   ): Promise<PracticeItem[]> {
     const params = typeof options === 'number' ? { stageNumber: options } : options;
+    const extra: Record<string, string | number> = { stage_number: params.stageNumber };
+    if (params.includeMine === true) extra.include_mine = 'true';
     return fetchAllPages((pageParams) =>
-      practices.listPaginated({ ...params, ...pageParams }, token),
+      request<Page<PracticeItem>>(`/practices/?${pageQuery(extra, pageParams)}`, {
+        token,
+        schema: pageSchema(practiceItemSchema) as unknown as z.ZodType<Page<PracticeItem>>,
+      }),
     );
   },
   get(practiceId: number, token?: string): Promise<PracticeItem> {
