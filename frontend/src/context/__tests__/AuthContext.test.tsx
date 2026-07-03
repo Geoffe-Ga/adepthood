@@ -29,6 +29,9 @@ jest.mock('@/storage/authStorage', () => ({
   saveToken: jest.fn(() => Promise.resolve()),
   loadToken: jest.fn(() => Promise.resolve(null)),
   clearToken: jest.fn(() => Promise.resolve()),
+  markLogoutPending: jest.fn(() => Promise.resolve()),
+  isLogoutPending: jest.fn(() => Promise.resolve(false)),
+  clearLogoutPending: jest.fn(() => Promise.resolve()),
 }));
 
 // Mock token utilities
@@ -40,13 +43,23 @@ jest.mock('@/utils/token', () => ({
 }));
 
 import { auth, setOnTokenRefreshed, setOnUnauthorized, setTokenGetter } from '@/api';
-import { saveToken, loadToken, clearToken } from '@/storage/authStorage';
+import {
+  saveToken,
+  loadToken,
+  clearToken,
+  markLogoutPending,
+  isLogoutPending,
+  clearLogoutPending,
+} from '@/storage/authStorage';
 import { isTokenExpired, shouldRefreshToken } from '@/utils/token';
 
 const mockAuth = auth as jest.Mocked<typeof auth>;
 const mockLoadToken = loadToken as jest.MockedFunction<typeof loadToken>;
 const mockSaveToken = saveToken as jest.MockedFunction<typeof saveToken>;
 const mockClearToken = clearToken as jest.MockedFunction<typeof clearToken>;
+const mockMarkLogoutPending = markLogoutPending as jest.MockedFunction<typeof markLogoutPending>;
+const mockIsLogoutPending = isLogoutPending as jest.MockedFunction<typeof isLogoutPending>;
+const mockClearLogoutPending = clearLogoutPending as jest.MockedFunction<typeof clearLogoutPending>;
 const mockSetTokenGetter = setTokenGetter as jest.MockedFunction<typeof setTokenGetter>;
 const mockSetOnTokenRefreshed = setOnTokenRefreshed as jest.MockedFunction<
   typeof setOnTokenRefreshed
@@ -65,6 +78,7 @@ beforeEach(() => {
   mockLoadToken.mockResolvedValue(null);
   mockIsTokenExpired.mockReturnValue(false);
   mockShouldRefreshToken.mockReturnValue(false);
+  mockIsLogoutPending.mockResolvedValue(false);
 });
 
 afterEach(() => {
@@ -904,6 +918,119 @@ describe('AuthContext', () => {
       expect(result.current.authStatus).toBe('anonymous');
       expect(result.current.token).toBeNull();
       expect(mockSaveToken).not.toHaveBeenCalled();
+    });
+  });
+
+  // BUG-FE-STATE-001 follow-up: a failed clearToken() on logout/401 left the JWT on disk, resurrecting on cold start.
+  describe('logout-pending marker survives a failed clearToken (BUG-FE-STATE-001)', () => {
+    it('arms the marker when logout fails to clear, then wipes the stale token on next launch', async () => {
+      mockLoadToken.mockResolvedValue('existing-jwt');
+      mockClearToken.mockRejectedValueOnce(new Error('SecureStore unavailable'));
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const launch1 = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(launch1.result.current.token).toBe('existing-jwt'));
+
+      await act(async () => {
+        await launch1.result.current.logout();
+      });
+
+      expect(mockMarkLogoutPending).toHaveBeenCalled();
+      expect(launch1.result.current.authStatus).toBe('anonymous');
+      launch1.unmount();
+
+      mockIsLogoutPending.mockResolvedValueOnce(true);
+      mockLoadToken.mockResolvedValue('existing-jwt');
+      const launch2 = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(launch2.result.current.authStatus).toBe('anonymous'));
+      expect(launch2.result.current.token).toBeNull();
+      expect(mockClearToken).toHaveBeenCalledTimes(2);
+      expect(mockClearLogoutPending).toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+
+    it('arms the marker when a 401 reauth fails to clear, then lands anonymous on next launch', async () => {
+      mockLoadToken.mockResolvedValue('existing-jwt');
+      mockClearToken.mockRejectedValueOnce(new Error('SecureStore unavailable'));
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const launch1 = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(launch1.result.current.authStatus).toBe('authenticated'));
+
+      const unauthorized = mockSetOnUnauthorized.mock.calls.at(-1)?.[0];
+      await act(async () => {
+        unauthorized?.('session_expired');
+      });
+
+      await waitFor(() => expect(launch1.result.current.authStatus).toBe('reauth-required'));
+      expect(mockMarkLogoutPending).toHaveBeenCalled();
+      launch1.unmount();
+
+      mockIsLogoutPending.mockResolvedValueOnce(true);
+      mockLoadToken.mockResolvedValue('existing-jwt');
+      const launch2 = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(launch2.result.current.authStatus).toBe('anonymous'));
+      expect(launch2.result.current.token).toBeNull();
+      expect(mockClearLogoutPending).toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+
+    it('keeps the marker armed when the bootstrap re-clear also fails', async () => {
+      mockIsLogoutPending.mockResolvedValueOnce(true);
+      mockLoadToken.mockResolvedValue('existing-jwt');
+      mockClearToken.mockRejectedValueOnce(new Error('still unavailable'));
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+      expect(result.current.token).toBeNull();
+      expect(mockClearLogoutPending).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+
+    it('login success clears the logout-pending marker', async () => {
+      mockAuth.login.mockResolvedValue({ token: 'new-jwt', user_id: 1 });
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+
+      await act(async () => {
+        await result.current.login('user@test.com', 'password123');
+      });
+
+      expect(mockClearLogoutPending).toHaveBeenCalled();
+      expect(result.current.authStatus).toBe('authenticated');
+    });
+
+    it('still lands authenticated when clearing the logout-pending marker rejects', async () => {
+      mockAuth.login.mockResolvedValue({ token: 'new-jwt', user_id: 1 });
+      mockClearLogoutPending.mockRejectedValueOnce(new Error('disk full'));
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+
+      await act(async () => {
+        await result.current.login('user@test.com', 'password123');
+      });
+
+      expect(result.current.authStatus).toBe('authenticated');
+      expect(result.current.token).toBe('new-jwt');
+      warnSpy.mockRestore();
+    });
+
+    it('does not arm the marker when discarding an expired stored token fails to clear', async () => {
+      mockLoadToken.mockResolvedValue('expired-jwt');
+      mockIsTokenExpired.mockReturnValue(true);
+      mockClearToken.mockRejectedValueOnce(new Error('locked'));
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+      expect(mockMarkLogoutPending).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
     });
   });
 });
