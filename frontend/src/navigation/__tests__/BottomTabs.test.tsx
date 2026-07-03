@@ -28,7 +28,6 @@ jest.mock('@/features/Habits/components/MissedDaysModal', () => () => null);
 jest.mock('@/features/Habits/components/OnboardingModal', () => () => null);
 jest.mock('@/features/Habits/components/ReorderHabitsModal', () => () => null);
 jest.mock('@/features/Habits/components/StatsModal', () => () => null);
-jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
 // ---------------------------------------------------------------------------
 // Depth-preferences store mock — selector-based, mutable per test.

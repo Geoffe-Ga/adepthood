@@ -27,7 +27,6 @@ jest.mock('../src/features/Habits/components/MissedDaysModal', () => () => null)
 jest.mock('../src/features/Habits/components/OnboardingModal', () => () => null);
 jest.mock('../src/features/Habits/components/ReorderHabitsModal', () => () => null);
 jest.mock('../src/features/Habits/components/StatsModal', () => () => null);
-jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
 describe('App bootstrap', () => {
   it('includes SafeAreaProvider at the root', () => {

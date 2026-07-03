@@ -1028,16 +1028,14 @@ const GoalModalHeader = ({
         </Text>
       </View>
     )}
-    {showEmojiSelector && (
-      <View style={styles.emojiSelectorContainer}>
-        <HabitEmojiPicker
-          onEmojiSelected={(emoji) => {
-            onUpdateHabit({ ...habit, icon: emoji });
-            setShowEmojiSelector(false);
-          }}
-        />
-      </View>
-    )}
+    <HabitEmojiPicker
+      visible={showEmojiSelector}
+      onSelect={(emoji) => {
+        onUpdateHabit({ ...habit, icon: emoji });
+        setShowEmojiSelector(false);
+      }}
+      onClose={() => setShowEmojiSelector(false)}
+    />
   </>
 );
 

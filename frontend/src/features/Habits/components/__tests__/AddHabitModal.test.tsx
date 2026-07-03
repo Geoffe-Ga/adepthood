@@ -5,7 +5,6 @@ import React from 'react';
 import AddHabitModal from '../AddHabitModal';
 
 jest.mock('../../constants', () => ({ DEFAULT_ICONS: ['⭐'] }));
-jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
 const flushPromises = () => new Promise<void>((resolve) => setImmediate(resolve));
 

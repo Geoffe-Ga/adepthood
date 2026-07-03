@@ -34,6 +34,7 @@ module.exports = {
     '^expo-keep-awake$': '<rootDir>/src/__mocks__/expo-keep-awake.js',
     '^expo-notifications$': '<rootDir>/src/__mocks__/expo-notifications.js',
     '^@react-native-community/netinfo$': '<rootDir>/src/__mocks__/netinfo.js',
+    '^rn-emoji-keyboard$': '<rootDir>/src/__mocks__/rn-emoji-keyboard.js',
   },
   transformIgnorePatterns: [
     'node_modules/(?!(' +
