@@ -1,10 +1,10 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { WEEKLY_TARGET } from './constants';
+
 import { Celebration } from '@/components/feedback/Celebration';
 import { colors, SPACING, BORDER_RADIUS } from '@/design/tokens';
-
-const WEEKLY_TARGET = 4;
 
 /** Fixed segment indices so each completed session fills one visible block. */
 const SEGMENTS = Array.from({ length: WEEKLY_TARGET }, (_, i) => i);
