@@ -153,7 +153,14 @@ function AspectChordControl({
   if (!expanded) {
     return <CollapsedTrigger onExpand={() => setUserExpanded(true)} />;
   }
-  return <ExpandedChooser value={value} onChange={onChange} />;
+  // Latch the control open once the writer acts inside it, so pressing Clear on
+  // an edit-loaded chord leaves them on the chips to re-pick rather than snapping
+  // back to the collapsed "optional" trigger mid-edit.
+  const handleChange = (next: AspectChordValue): void => {
+    setUserExpanded(true);
+    onChange(next);
+  };
+  return <ExpandedChooser value={value} onChange={handleChange} />;
 }
 
 export default AspectChordControl;

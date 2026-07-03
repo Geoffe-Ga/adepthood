@@ -156,4 +156,18 @@ describe('AspectChordControl — clear affordance', () => {
     fireEvent.press(getByTestId('aspect-chord-clear'));
     expect(onChange).toHaveBeenCalledWith({ primary: null, secondary: null });
   });
+
+  it('stays expanded after clearing an edit-loaded chord (no snap back to the trigger)', () => {
+    const onChange = jest.fn();
+    const { getByTestId, queryByTestId, rerender } = render(
+      <AspectChordControl value={{ primary: 3, secondary: null }} onChange={onChange} />,
+    );
+    // Opened expanded via the loaded value, without ever tapping the trigger.
+    fireEvent.press(getByTestId('aspect-chord-clear'));
+    // Host clears the chord and re-renders; the control must remain open so the
+    // writer can immediately re-pick instead of being bounced mid-edit.
+    rerender(<AspectChordControl value={{ primary: null, secondary: null }} onChange={onChange} />);
+    expect(getByTestId('aspect-primary-1')).toBeTruthy();
+    expect(queryByTestId('aspect-chord-trigger')).toBeNull();
+  });
 });
