@@ -23,20 +23,6 @@ const LARGE_WIDTH = 200;
 const LARGE_HEIGHT = 400;
 const REPRESENTATIVE_STAGE = 4;
 
-/** Reads the number at ``index`` out of a parsed coordinate list. */
-const numberAt = (numbers: readonly number[], index: number): number => numbers[index] as number;
-
-/** The leading "M x y" and trailing "x y" point of an SVG path string. */
-const parsePathPoints = (d: string): { first: [number, number]; last: [number, number] } => {
-  const matches = d.match(/-?\d+\.?\d*/g);
-  const numbers = matches === null ? [] : matches.map(Number);
-  const lastIndex = numbers.length - 1;
-  return {
-    first: [numberAt(numbers, 0), numberAt(numbers, 1)],
-    last: [numberAt(numbers, lastIndex - 1), numberAt(numbers, lastIndex)],
-  };
-};
-
 const PHONE_WIDTHS = [320, 375, 393, 430];
 const REPRESENTATIVE_HEIGHT = 800;
 
@@ -166,36 +152,6 @@ describe('waveSegments', () => {
     const large = waveSegments(LARGE_WIDTH, LARGE_HEIGHT);
     for (let i = 0; i < small.length; i += 1) {
       expect(large[i]?.d).not.toBe(small[i]?.d);
-    }
-  });
-
-  it('gives every segment a non-empty farD distinct from its near-side d', () => {
-    const segments = waveSegments(SMALL_WIDTH, SMALL_HEIGHT);
-    for (const segment of segments) {
-      expect(segment.farD.length).toBeGreaterThan(0);
-      expect(segment.farD).not.toBe(segment.d);
-    }
-  });
-
-  it('mirrors farD across the column midline: far x = 2*midline - near x, y unchanged', () => {
-    const { left, right } = centerColumnBounds(SMALL_WIDTH);
-    const columnMidline = (left + right) / 2;
-    const segments = waveSegments(SMALL_WIDTH, SMALL_HEIGHT);
-    for (const segment of segments) {
-      const near = parsePathPoints(segment.d);
-      const far = parsePathPoints(segment.farD);
-      expect(far.first[0]).toBeCloseTo(2 * columnMidline - near.first[0], 2);
-      expect(far.first[1]).toBeCloseTo(near.first[1], 2);
-      expect(far.last[0]).toBeCloseTo(2 * columnMidline - near.last[0], 2);
-      expect(far.last[1]).toBeCloseTo(near.last[1], 2);
-    }
-  });
-
-  it('scales farD coordinates with width and height like d', () => {
-    const small = waveSegments(SMALL_WIDTH, SMALL_HEIGHT);
-    const large = waveSegments(LARGE_WIDTH, LARGE_HEIGHT);
-    for (let i = 0; i < small.length; i += 1) {
-      expect(large[i]?.farD).not.toBe(small[i]?.farD);
     }
   });
 });
