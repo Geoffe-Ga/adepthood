@@ -29,6 +29,11 @@ const CENTER_FLEX = GRID_COLUMN_FLEX.center;
 const RIGHT_FLEX = GRID_COLUMN_FLEX.right;
 const CENTER = 'center';
 
+// Line height for the right-column aspect label, tuned to its fontSize 15 so
+// the up-to-two hyphenated lines stay compact and centered without pushing
+// neighboring rows.
+const RIGHT_LABEL_LINE_HEIGHT = 19;
+
 /**
  * Styles for the Map's spiral-of-becoming grid + the rich stage-detail modal.
  * The grid is token-only and laid out purely with flex; the modal keeps the
@@ -97,11 +102,13 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 
-  // Right-column aspect label: a single line that auto-scales down to fit its
-  // cell width, so the text is never clipped or broken mid-word.
+  // Right-column aspect label: fixed serif size rendered on up to two
+  // pre-hyphenated lines, its line height kept compact so a two-line label
+  // stays vertically centered without pushing neighboring rows.
   rightLabelText: {
     fontFamily: editorialType.serif,
     fontSize: 15,
+    lineHeight: RIGHT_LABEL_LINE_HEIGHT,
     color: ink.primary,
   },
 

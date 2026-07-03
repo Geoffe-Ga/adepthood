@@ -5,7 +5,7 @@ import { Image, StyleSheet } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
 import styles from '../Map.styles';
-import { RIGHT_LABEL_MIN_FONT_SCALE } from '../mapLayout';
+import { MAP_ROWS } from '../mapLayout';
 import MapScreen from '../MapScreen';
 import { STAGE_COUNT } from '../stageData';
 import { BALANCE_COPY, emphasisStyle, FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
@@ -426,31 +426,44 @@ describe('MapScreen', () => {
     expect(tree.root.findByProps({ testID: 'you-are-here' })).toBeTruthy();
   });
 
+  // Right-column labels render as row.rightLabelLines joined by a newline in
+  // a single Text node (static hyphenation, not shrink-to-fit).
+  const findRightLabelNode = (
+    tree: ReturnType<typeof create>,
+    row: (typeof MAP_ROWS)[number],
+  ): TestNode => {
+    const expectedChildren = row.rightLabelLines.join('\n');
+    const matches = tree.root.findAll((n: TestNode) => n.props.children === expectedChildren);
+    const node = matches[0];
+    if (!node) {
+      throw new Error(`no right-label Text found for ${row.rightLabel}`);
+    }
+    return node;
+  };
+
   it('keeps all six Aspect labels present after the wave overlay renders', () => {
     const tree = create(<MapScreen />);
     fireGridLayout(tree);
-    const aspectLabels = ['Awareness', 'Being', 'Wisdom', 'Understanding', 'Love', 'Yes-And-Ness'];
-    for (const label of aspectLabels) {
-      expect(tree.root.findAll((n: TestNode) => n.props.children === label).length).toBeGreaterThan(
-        0,
-      );
+    for (const row of MAP_ROWS) {
+      expect(findRightLabelNode(tree, row)).toBeTruthy();
     }
   });
 
-  it('renders each right-column Aspect label as a single-line auto-fitting Text', () => {
+  it('renders each right-column Aspect label as a static two-line Text, no auto-fit', () => {
     const tree = create(<MapScreen />);
     fireGridLayout(tree);
-    const aspectLabels = ['Awareness', 'Being', 'Wisdom', 'Understanding', 'Love', 'Yes-And-Ness'];
-    for (const label of aspectLabels) {
-      const candidates = tree.root.findAll((n: TestNode) => n.props.children === label);
-      const autoFitting = candidates.some(
-        (n: TestNode) =>
-          n.props.numberOfLines === 1 &&
-          n.props.adjustsFontSizeToFit === true &&
-          n.props.minimumFontScale === RIGHT_LABEL_MIN_FONT_SCALE,
-      );
-      expect(autoFitting).toBe(true);
+    for (const row of MAP_ROWS) {
+      const node = findRightLabelNode(tree, row);
+      expect(node.props.numberOfLines).toBe(2);
+      expect(node.props.adjustsFontSizeToFit).toBeUndefined();
+      expect(node.props.minimumFontScale).toBeUndefined();
     }
+  });
+
+  it('still keys each right-column row by its rightLabel testID after hyphenation', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    expect(tree.root.findByProps({ testID: 'map-row-Understanding' })).toBeTruthy();
   });
 
   // --- right-cell edge padding ---
