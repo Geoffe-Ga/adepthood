@@ -9,6 +9,7 @@ reference instead of a remote CMS URL.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -23,11 +24,7 @@ from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
 from models.user import User
-from seed_content import (
-    SeedContentStageMissingError,
-    desired_content_records,
-    seed_content,
-)
+from seed_content import desired_content_records, seed_content
 from services.content_repository import (
     ContentRepository,
     reset_content_repository_for_tests,
@@ -204,33 +201,61 @@ async def test_seed_content_populates_stage_one_from_vendored_manifest(
 
 
 @pytest.mark.asyncio
-async def test_seed_content_raises_when_manifest_stage_has_no_course_stage_row(
+async def test_seed_content_with_no_stage_rows_writes_nothing_and_warns(
     db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A manifest stage with no matching CourseStage row must fail loudly, not silently."""
+    """No CourseStage rows at all: stays resilient, warns loudly, writes nothing."""
     set_content_repository_for_tests(ContentRepository(_VENDORED_CONTENT_DIR))
     try:
-        with pytest.raises(SeedContentStageMissingError, match=r"no CourseStage row: \[1"):
-            await seed_content(db_session)
+        with caplog.at_level(logging.WARNING, logger="seed_content"):
+            inserted = await seed_content(db_session)
+        assert inserted == 0
+        rows = (await db_session.execute(select(StageContent))).scalars().all()
+        assert rows == []
+        warnings = [record.getMessage() for record in caplog.records]
+        assert any("content_seed_partial" in message for message in warnings)
     finally:
         reset_content_repository_for_tests()
 
 
 @pytest.mark.asyncio
-async def test_seed_content_raises_naming_only_the_unmapped_manifest_stage(
+async def test_seed_content_seeds_stage_one_even_when_higher_stages_unmapped(
     db_session: AsyncSession,
     install_manifest: Callable[[dict[str, Any]], None],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A partial seed raises for the missing manifest stage while mapped stages seed fine."""
+    """A mapped stage seeds fully while an unmapped higher stage only draws a warning."""
     install_manifest(_MANIFEST)  # ships stages 1 and 4
     await _seed_stages(db_session, count=1)  # only stage 1 has a CourseStage row
 
-    with pytest.raises(SeedContentStageMissingError, match=r"no CourseStage row: \[4\]"):
-        await seed_content(db_session)
+    with caplog.at_level(logging.WARNING, logger="seed_content"):
+        inserted = await seed_content(db_session)
 
-    # The raise fires before any write, so stage 1's mapped chapters never land.
+    assert inserted == 2
     rows = (await db_session.execute(select(StageContent))).scalars().all()
-    assert rows == []
+    assert [r.title for r in rows] == ["Survival", "Breath as Anchor"]
+    warnings = [record.getMessage() for record in caplog.records]
+    assert any("4" in message for message in warnings)
+
+
+@pytest.mark.asyncio
+async def test_seed_content_preserves_stage_one_chapter_count_when_stage_four_unmapped(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+) -> None:
+    """Unlocked stages must always show their content, even with higher stages unmapped."""
+    install_manifest(_MANIFEST)  # ships stages 1 and 4
+    await _seed_stages(db_session, count=1)  # only stage 1 has a CourseStage row
+
+    await seed_content(db_session)
+
+    expected_stage_one_chapters = sum(1 for c in _MANIFEST["chapters"] if c["stage"] == 1)
+    result = await db_session.execute(
+        select(StageContent).join(CourseStage).where(CourseStage.stage_number == 1)
+    )
+    rows = result.scalars().all()
+    assert len(rows) == expected_stage_one_chapters
 
 
 @pytest.mark.asyncio
@@ -287,14 +312,22 @@ async def test_seed_content_idempotent(
 
 
 @pytest.mark.asyncio
-async def test_seed_content_no_stages_raises_for_manifest_coverage(
+async def test_seed_content_no_stages_warns_for_manifest_coverage(
     db_session: AsyncSession,
     install_manifest: Callable[[dict[str, Any]], None],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """No CourseStage rows at all means every manifest stage is unmapped -- loud, not silent."""
+    """No CourseStage rows at all means every manifest stage is unmapped -- warn, not raise."""
     install_manifest(_MANIFEST)  # ships stages 1 and 4
-    with pytest.raises(SeedContentStageMissingError, match=r"no CourseStage row: \[1, 4\]"):
-        await seed_content(db_session)
+
+    with caplog.at_level(logging.WARNING, logger="seed_content"):
+        inserted = await seed_content(db_session)
+
+    assert inserted == 0
+    rows = (await db_session.execute(select(StageContent))).scalars().all()
+    assert rows == []
+    warnings = [record.getMessage() for record in caplog.records]
+    assert any("1" in message and "4" in message for message in warnings)
 
 
 @pytest.mark.asyncio

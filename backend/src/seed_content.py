@@ -8,18 +8,20 @@ Reconciliation is idempotent and never destructive: rows update in place
 when their fields drift, and nothing is ever deleted — rows referenced
 by ``ContentCompletion`` stay put.
 
-Seeding fails loudly when the manifest ships a stage that has no matching
-``CourseStage`` row: that mismatch means stages and content were seeded
-out of order (or a stage rollback left content orphaned), so we raise
-``SeedContentStageMissingError`` before touching the DB rather than
-silently dropping the stage's chapters.  ``_seed_startup_data`` catches
-it per seeder and surfaces it as ``seed_failed seeder=content`` in the
-boot logs.
+Seeding is resilient, never all-or-nothing.  Every manifest stage that
+has a matching ``CourseStage`` row is reconciled and committed.  A
+manifest stage whose ``CourseStage`` row is absent (stages seeded out of
+order, or a stage rollback that left content orphaned) is skipped and
+surfaced as a ``content_seed_partial`` WARNING in the logs — never an
+abort.  This guarantees an always-unlocked stage such as Stage 1 always
+seeds even when higher stages have no row yet.
 
 Editing happens in the content repo; see ``docs/content.md``.
 """
 
 from __future__ import annotations
+
+import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -28,9 +30,7 @@ from content_config import ChapterRecord, all_chapter_records
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
 
-
-class SeedContentStageMissingError(ValueError):
-    """Raised when a manifest stage has no matching ``CourseStage`` row."""
+logger = logging.getLogger(__name__)
 
 
 def desired_content_records() -> list[ChapterRecord]:
@@ -116,12 +116,16 @@ def _reconcile_one(
     return False, False
 
 
-def _guard_manifest_stages_mapped(stage_map: dict[int, int]) -> None:
-    """Raise loudly when a manifest stage has no ``CourseStage`` row."""
+def _warn_unmapped_manifest_stages(stage_map: dict[int, int]) -> None:
+    """Emit a loud WARNING when a manifest stage has no ``CourseStage`` row.
+
+    Called after the commit so mapped rows persist regardless; the skipped
+    stages are surfaced (never raised) so an operator can spot the partial
+    seed and add the missing ``CourseStage`` rows.
+    """
     unmapped = _unmapped_manifest_stages(stage_map)
     if unmapped:
-        message = f"Manifest stages have no CourseStage row: {unmapped}"
-        raise SeedContentStageMissingError(message)
+        logger.warning("content_seed_partial stages_without_course_stage_row=%s", unmapped)
 
 
 def _reconcile_all(
@@ -145,14 +149,15 @@ async def seed_content(session: AsyncSession) -> int:
     Returns the number of newly-inserted rows.  Existing rows whose fields
     have drifted from the config are updated in place; the function is
     idempotent — running it twice with the same config inserts nothing the
-    second time.
+    second time.  Manifest stages without a ``CourseStage`` row are skipped
+    and warned about after the commit, never aborting the seed.
     """
     stage_map = await _load_stage_map(session)
-    _guard_manifest_stages_mapped(stage_map)
     existing = await _load_existing_keys(session)
 
     inserted, dirty = _reconcile_all(session, stage_map, existing)
 
     if dirty:
         await session.commit()
+    _warn_unmapped_manifest_stages(stage_map)
     return inserted

@@ -23,7 +23,7 @@ from content_config import CONTENT_REF_SCHEME
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
 from seed_content import seed_content
-from seed_stages import seed_stages
+from seed_stages import STAGE_DEFINITIONS, seed_stages
 from services.content_repository import (
     ContentRepository,
     reset_content_repository_for_tests,
@@ -34,6 +34,10 @@ _VENDORED_CONTENT_DIR = Path(__file__).resolve().parents[1] / "content"
 
 #: Stage 1 (Beige) ships exactly 17 chapters in the vendored manifest.
 _STAGE_ONE_CHAPTER_COUNT = 17
+
+#: Only the first three (unlocked) stages get a CourseStage row in the
+#: partial-coverage fixture -- the manifest still ships stages 4-10.
+_UNLOCKED_STAGE_COUNT = 3
 
 #: The first Beige chapter drips on day 0 (immediately visible at signup).
 _DAY_ZERO = 0
@@ -62,6 +66,40 @@ async def _signup(async_client: AsyncClient, username: str) -> dict[str, str]:
     )
     assert resp.status_code == HTTPStatus.OK
     return {"Authorization": f"Bearer {resp.json()['token']}"}
+
+
+@pytest_asyncio.fixture
+async def partially_seeded_vendored_course(db_session: AsyncSession) -> AsyncIterator[None]:
+    """Seed only the unlocked stages' CourseStage rows, then the real content.
+
+    Mirrors a production database whose CourseStage table does not cover
+    every manifest stage: the seeder must still populate the mapped
+    (unlocked) stages instead of aborting the whole seed and blanking
+    Stage 1.
+    """
+    set_content_repository_for_tests(ContentRepository(_VENDORED_CONTENT_DIR))
+    for definition in STAGE_DEFINITIONS[:_UNLOCKED_STAGE_COUNT]:
+        db_session.add(CourseStage(**definition))
+    await db_session.commit()
+    await seed_content(db_session)
+    yield
+    reset_content_repository_for_tests()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("partially_seeded_vendored_course")
+async def test_stage_one_serves_chapters_when_higher_stages_have_no_row(
+    async_client: AsyncClient,
+) -> None:
+    """P0: unlocked Stage 1 still shows all 17 chapters when stages 4-10 are unmapped."""
+    headers = await _signup(async_client, "partial-stage-adept")
+
+    resp = await async_client.get("/course/stages/1/progress", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["total_items"] == _STAGE_ONE_CHAPTER_COUNT
+    assert body["read_items"] == 0
 
 
 @pytest.mark.asyncio

@@ -85,11 +85,25 @@ Everything happens in the **content repo**, then gets vendored here:
 The seeder never deletes rows (deletion would orphan
 `ContentCompletion` read-marks). A chapter dropped from the manifest
 simply stops being referenced; write a one-off migration if a row must
-actually go. If the manifest instead ships a stage with no matching
-`CourseStage` row (stages and content seeded out of order, or a stage
-rollback orphaned content), seeding fails loudly
-before writing anything, surfacing as `seed_failed seeder=content` in
-the boot logs; boot continues regardless.
+actually go. Seeding is per-stage and resilient: the seeder reconciles
+and commits `StageContent` rows for every manifest stage that has a
+matching `CourseStage` row, so an always-unlocked stage (e.g. Stage 1)
+seeds even if other stages are missing theirs. If the manifest ships a
+stage with no matching `CourseStage` row (stages and content seeded
+out of order, or a stage rollback orphaned content), that stage's
+chapters are skipped and the seeder logs a loud
+`content_seed_partial` WARNING naming the unmapped stage numbers — it
+never aborts the seed for the stages it *can* map.
+
+A prior version of this guard was all-or-nothing: any unmapped
+manifest stage raised before a single row was written, so a gap in
+the `CourseStage` table (e.g. a failed `seed_stages` run) blanked
+*every* unlocked stage — including Stage 1 — not just the missing
+one, and surfaced in production as "0 of 0 read" / "No Content Yet"
+across the whole Course screen. The regression test suite had no case
+covering "one manifest stage is unmapped, do the mapped stages still
+seed?"; that gap is now pinned by a test asserting Stage 1 serves its
+17 chapters even when stages 4–10 have no `CourseStage` row.
 
 ## How the app serves it
 
