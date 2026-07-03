@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 
-import { resetCorruptKey } from './jsonStore';
+import { getJsonArray } from './jsonStore';
 
 const KEY_PREFIX = '@adepthood/notifications';
 // expo-secure-store only allows alphanumerics plus `.`, `-`, `_` in keys,
@@ -13,30 +13,13 @@ function keyFor(habitId: number): string {
   return `${KEY_PREFIX}/${habitId}`;
 }
 
-/**
- * BUG-FRONTEND-INFRA-011 — self-heal when AsyncStorage returns malformed JSON.
- */
-
 export async function saveNotificationIds(habitId: number, ids: string[]): Promise<void> {
   await AsyncStorage.setItem(keyFor(habitId), JSON.stringify(ids));
   await trackHabitId(habitId);
 }
 
 export async function loadNotificationIds(habitId: number): Promise<string[]> {
-  const key = keyFor(habitId);
-  try {
-    const raw = await AsyncStorage.getItem(key);
-    if (raw === null) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      await resetCorruptKey(key, new Error('expected array'));
-      return [];
-    }
-    return parsed as string[];
-  } catch (err: unknown) {
-    await resetCorruptKey(key, err);
-    return [];
-  }
+  return (await getJsonArray<string>(keyFor(habitId))) ?? [];
 }
 
 export async function clearNotificationIds(habitId: number): Promise<void> {
@@ -84,19 +67,7 @@ export async function loadPushToken(): Promise<string | null> {
 }
 
 async function loadTrackedHabitIds(): Promise<number[]> {
-  try {
-    const raw = await AsyncStorage.getItem(ALL_HABIT_IDS_KEY);
-    if (raw === null) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      await resetCorruptKey(ALL_HABIT_IDS_KEY, new Error('expected array'));
-      return [];
-    }
-    return parsed as number[];
-  } catch (err: unknown) {
-    await resetCorruptKey(ALL_HABIT_IDS_KEY, err);
-    return [];
-  }
+  return (await getJsonArray<number>(ALL_HABIT_IDS_KEY)) ?? [];
 }
 
 async function trackHabitId(habitId: number): Promise<void> {

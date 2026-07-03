@@ -138,12 +138,69 @@ describe('habitStorage', () => {
       const result = await loadHabits();
       expect(result).toBeNull();
     });
+
+    test('self-heals a non-array payload by clearing the key', async () => {
+      mockAsyncStorage.getItem.mockResolvedValueOnce(JSON.stringify({ not: 'an array' }));
+
+      const result = await loadHabits();
+      expect(result).toBeNull();
+      expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith('@adepthood/habits');
+    });
+
+    test('keeps stored habits on a transient read error (does not delete)', async () => {
+      mockAsyncStorage.getItem.mockRejectedValueOnce(new Error('SQLite hiccup'));
+
+      const result = await loadHabits();
+      expect(result).toBeNull();
+      expect(mockAsyncStorage.removeItem).not.toHaveBeenCalled();
+    });
   });
 
   describe('clearHabits', () => {
     test('removes habits from AsyncStorage', async () => {
       await clearHabits();
       expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith('@adepthood/habits');
+    });
+  });
+
+  describe('loadPendingCheckIns', () => {
+    test('returns an empty queue when nothing is stored', async () => {
+      mockAsyncStorage.getItem.mockResolvedValueOnce(null);
+
+      const result = await loadPendingCheckIns();
+      expect(result).toEqual([]);
+    });
+
+    test('returns the stored queue', async () => {
+      const queue = [{ goal_id: 1, did_complete: true, timestamp: 't1' }];
+      mockAsyncStorage.getItem.mockResolvedValueOnce(JSON.stringify(queue));
+
+      const result = await loadPendingCheckIns();
+      expect(result).toEqual(queue);
+    });
+
+    test('self-heals corrupt JSON by clearing the key', async () => {
+      mockAsyncStorage.getItem.mockResolvedValueOnce('not valid json{{{');
+
+      const result = await loadPendingCheckIns();
+      expect(result).toEqual([]);
+      expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith('@adepthood/pending_checkins');
+    });
+
+    test('self-heals a non-array payload by clearing the key', async () => {
+      mockAsyncStorage.getItem.mockResolvedValueOnce(JSON.stringify({ not: 'an array' }));
+
+      const result = await loadPendingCheckIns();
+      expect(result).toEqual([]);
+      expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith('@adepthood/pending_checkins');
+    });
+
+    test('keeps the offline queue on a transient read error (does not delete)', async () => {
+      mockAsyncStorage.getItem.mockRejectedValueOnce(new Error('disk pressure'));
+
+      const result = await loadPendingCheckIns();
+      expect(result).toEqual([]);
+      expect(mockAsyncStorage.removeItem).not.toHaveBeenCalled();
     });
   });
 

@@ -87,6 +87,29 @@ describe('notificationStorage', () => {
       const result = await loadNotificationIds(42);
       expect(result).toEqual([]);
     });
+
+    test('self-heals corrupt data by clearing the key', async () => {
+      mockAsyncStorage.getItem.mockResolvedValueOnce('bad json{');
+
+      await loadNotificationIds(42);
+      expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith('@adepthood/notifications/42');
+    });
+
+    test('self-heals a non-array payload by clearing the key', async () => {
+      mockAsyncStorage.getItem.mockResolvedValueOnce(JSON.stringify({ not: 'an array' }));
+
+      const result = await loadNotificationIds(42);
+      expect(result).toEqual([]);
+      expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith('@adepthood/notifications/42');
+    });
+
+    test('keeps stored IDs on a transient read error (does not delete)', async () => {
+      mockAsyncStorage.getItem.mockRejectedValueOnce(new Error('SQLite hiccup'));
+
+      const result = await loadNotificationIds(42);
+      expect(result).toEqual([]);
+      expect(mockAsyncStorage.removeItem).not.toHaveBeenCalled();
+    });
   });
 
   describe('clearNotificationIds', () => {
@@ -143,6 +166,14 @@ describe('notificationStorage', () => {
 
       const result = await loadAllNotificationMappings();
       expect(result).toEqual({ 1: ['a'] });
+    });
+
+    test('keeps the tracking list on a transient read error (does not delete)', async () => {
+      mockAsyncStorage.getItem.mockRejectedValueOnce(new Error('disk pressure'));
+
+      const result = await loadAllNotificationMappings();
+      expect(result).toEqual({});
+      expect(mockAsyncStorage.removeItem).not.toHaveBeenCalled();
     });
   });
 
