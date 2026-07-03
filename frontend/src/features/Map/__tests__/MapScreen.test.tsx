@@ -11,131 +11,38 @@ import { STAGE_COUNT } from '../stageData';
 import { BALANCE_COPY, emphasisStyle, FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
 
 import { ranksOrShames } from './copyIntentRule';
+import {
+  mockBeginAgain,
+  mockMakeStage,
+  mockMapState,
+  mockNavigate,
+  resetMapMocks,
+} from './mapTestHarness';
 
-// Mock InteractionManager to run callbacks synchronously in tests.
-jest.mock('react-native/Libraries/Interaction/InteractionManager', () => ({
-  runAfterInteractions: (cb: () => void) => {
-    cb();
-    return { then: () => {}, done: () => {}, cancel: () => {} };
-  },
-  createInteractionHandle: () => 1,
-  clearInteractionHandle: () => {},
-}));
-
-// Mock navigation so we can observe tab linking behaviour.
-const mockNavigate = jest.fn();
-jest.mock('../../../navigation/hooks', () => ({
-  useAppNavigation: () => ({ navigate: mockNavigate }),
-}));
-jest.mock('@react-navigation/bottom-tabs', () => ({
-  useBottomTabBarHeight: () => 0,
-}));
-jest.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-}));
-
-// Default wheel state: all stages thin (zero fullness). Override per-test.
-let mockWheelFullnessByStage: Record<number, number> = {};
-let mockWheelLoading = false;
-let mockWheelError: string | null = null;
-jest.mock('../hooks/useWheelBalance', () => ({
-  useWheelBalance: () => ({
-    fullnessByStage: mockWheelFullnessByStage,
-    loading: mockWheelLoading,
-    error: mockWheelError,
-  }),
-}));
-
-// Control the date-derived current stage without importing the real program
-// store (which trips this suite's brittle Image-effect teardown). MapScreen
-// consumes ``useDerivedCurrentStage`` directly, so mocking it here drives both
-// the "current" highlight and the calendar-based unlock.
-let mockDerivedStage = 1;
-let mockDerivedWeek = 1;
-let mockDaysUntilStage: number | null = null;
-jest.mock('../../../store/useProgramProgression', () => ({
-  useDerivedCurrentStage: (fallback: number) => mockDerivedStage ?? fallback,
-  useDerivedCurrentWeek: (fallback: number) => mockDerivedWeek ?? fallback,
-  useDaysUntilStage: () => mockDaysUntilStage,
-}));
-
-/** Build a realistic StageData for testing (must be prefixed with mock). */
-function mockMakeStage(stageNumber: number) {
-  return {
-    id: stageNumber,
-    title: `Stage ${stageNumber}`,
-    subtitle: `Subtitle ${stageNumber}`,
-    stageNumber,
-    progress: stageNumber === 1 ? 0.5 : 0,
-    color: '#aaa',
-    isUnlocked: stageNumber <= 2,
-    category: 'Test',
-    aspect: 'Aspect',
-    spiralDynamicsColor: 'Beige',
-    growingUpStage: 'Growing',
-    divineGenderPolarity: 'Polarity',
-    relationshipToFreeWill: 'Free Will',
-    freeWillDescription: 'Description of free will.',
-    overviewUrl: '',
-    hotspots: [
-      { top: (10 - stageNumber) * 8 + 4, left: 4, width: 32, height: 6 },
-      { top: (10 - stageNumber) * 8 + 4, left: 34, width: 40, height: 6 },
-    ],
-  };
-}
-
-const mockStages = Array.from({ length: 10 }, (_, i) => mockMakeStage(10 - i));
-
-let mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
-  () => false,
+jest.mock('react-native/Libraries/Interaction/InteractionManager', () =>
+  jest.requireActual('./mapTestHarness').mockInteractionManagerModule(),
 );
-let mockCycleNumber = 1;
-
-const mockLoadStages = jest.fn();
-const mockBeginAgain = jest.fn();
-jest.mock('../services/stageService', () => ({
-  stageService: {
-    loadStages: (...args: unknown[]) => mockLoadStages(...args),
-    beginAgain: (...args: unknown[]) => mockBeginAgain(...args),
-  },
-  isStageUnlocked: (
-    stage: { isUnlocked: boolean; stageNumber: number },
-    currentStage: number | null,
-  ) => stage.isUnlocked || (currentStage !== null && stage.stageNumber <= currentStage),
-  isEndOfCycle: (stagesByNumber: Record<number, { progress: number }>, currentStage: number) =>
-    mockIsEndOfCycle(stagesByNumber, currentStage),
-}));
-
-const buildMockStageState = () => ({
-  stages: mockStages,
-  stagesByNumber: Object.fromEntries(mockStages.map((s) => [s.stageNumber, s])),
-  stageOrder: mockStages.map((s) => s.stageNumber),
-  currentStage: 1,
-  loading: false,
-  error: null,
-  cycleNumber: mockCycleNumber,
-  setStages: jest.fn(),
-  setCurrentStage: jest.fn(),
-  setLoading: jest.fn(),
-  setError: jest.fn(),
-  updateStageProgress: jest.fn(),
-  setCycleNumber: jest.fn(),
-});
-
-jest.mock('../../../store/useStageStore', () => ({
-  useStageStore: jest.fn((selector) => {
-    const mockState = buildMockStageState();
-    return selector ? selector(mockState) : mockState;
-  }),
-  selectStages: (s: { stages: unknown }) => s.stages,
-  selectCurrentStage: (s: { currentStage: unknown }) => s.currentStage,
-  selectStagesLoading: (s: { loading: unknown }) => s.loading,
-  selectStagesError: (s: { error: unknown }) => s.error,
-  selectCycleNumber: (s: { cycleNumber: number }) => s.cycleNumber,
-  selectStageByNumber:
-    (n: number | null | undefined) => (s: { stagesByNumber: Record<number, unknown> }) =>
-      n == null ? undefined : s.stagesByNumber[n],
-}));
+jest.mock('../../../navigation/hooks', () =>
+  jest.requireActual('./mapTestHarness').mockNavigationModule(),
+);
+jest.mock('@react-navigation/bottom-tabs', () =>
+  jest.requireActual('./mapTestHarness').mockBottomTabsModule(),
+);
+jest.mock('react-native-safe-area-context', () =>
+  jest.requireActual('./mapTestHarness').mockSafeAreaModule(),
+);
+jest.mock('../hooks/useWheelBalance', () =>
+  jest.requireActual('./mapTestHarness').mockWheelBalanceModule(),
+);
+jest.mock('../../../store/useProgramProgression', () =>
+  jest.requireActual('./mapTestHarness').mockProgramProgressionModule(),
+);
+jest.mock('../services/stageService', () =>
+  jest.requireActual('./mapTestHarness').mockStageServiceModule(),
+);
+jest.mock('../../../store/useStageStore', () =>
+  jest.requireActual('./mapTestHarness').mockStageStoreModule(),
+);
 
 // react-test-renderer ships no node types, so structurally type just the props.
 type TestNode = { props: Record<string, unknown> };
@@ -153,19 +60,10 @@ const hotspotHasLock = (tree: ReturnType<typeof create>, stageNumber: number): b
 
 describe('MapScreen', () => {
   beforeEach(() => {
-    mockNavigate.mockClear();
-    mockLoadStages.mockClear();
-    mockBeginAgain.mockClear();
-    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
-      () => false,
+    resetMapMocks();
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
     );
-    mockCycleNumber = 1;
-    mockDerivedStage = 1;
-    mockDerivedWeek = 1;
-    mockDaysUntilStage = null;
-    mockWheelFullnessByStage = {};
-    mockWheelLoading = false;
-    mockWheelError = null;
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
 
@@ -278,7 +176,7 @@ describe('MapScreen', () => {
     // Calendar has reached stage 5. Stages 3–5 are server-locked
     // (isUnlocked: stageNumber <= 2) but the calendar overrides, so only
     // stages 6–10 stay padlocked: 5 stages × 2 hotspots = 10.
-    mockDerivedStage = 5;
+    mockMapState.derivedStage = 5;
     let tree!: ReturnType<typeof create>;
     act(() => {
       tree = create(<MapScreen />);
@@ -295,7 +193,7 @@ describe('MapScreen', () => {
 
   it('alive node (fullness >= threshold) renders with higher opacity than a thin node', () => {
     // Stage 3 is alive; stage 1 is thin.
-    mockWheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD, 1: 0.0 };
+    mockMapState.wheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD, 1: 0.0 };
     const tree = create(<MapScreen />);
 
     const aliveHotspot = tree.root.findByProps({ testID: 'stage-hotspot-3-0' });
@@ -322,21 +220,21 @@ describe('MapScreen', () => {
   });
 
   it('alive node accessibilityLabel contains "reads full" suffix', () => {
-    mockWheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD };
+    mockMapState.wheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD };
     const tree = create(<MapScreen />);
     const hotspot = tree.root.findByProps({ testID: 'stage-hotspot-3-0' });
     expect(hotspot.props.accessibilityLabel as string).toContain('reads full');
   });
 
   it('thin node accessibilityLabel contains "reads thin" suffix', () => {
-    mockWheelFullnessByStage = { 1: 0.0 };
+    mockMapState.wheelFullnessByStage = { 1: 0.0 };
     const tree = create(<MapScreen />);
     const hotspot = tree.root.findByProps({ testID: 'stage-hotspot-1-0' });
     expect(hotspot.props.accessibilityLabel as string).toContain('reads thin');
   });
 
   it('BalanceSummary renders all-thin copy when every stage is 0.0', () => {
-    mockWheelFullnessByStage = Object.fromEntries(
+    mockMapState.wheelFullnessByStage = Object.fromEntries(
       Array.from({ length: 10 }, (_, i) => [i + 1, 0.0]),
     );
     const tree = create(<MapScreen />);
@@ -345,14 +243,14 @@ describe('MapScreen', () => {
   });
 
   it('BalanceSummary renders mixed copy when some stages are alive', () => {
-    mockWheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD, 7: 0.9 };
+    mockMapState.wheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD, 7: 0.9 };
     const tree = create(<MapScreen />);
     const summary = tree.root.findByProps({ testID: 'balance-summary' });
     expect(summary.props.children as string).toBe(BALANCE_COPY.mixed);
   });
 
   it('BalanceSummary renders all-alive copy when every stage is at full fullness', () => {
-    mockWheelFullnessByStage = Object.fromEntries(
+    mockMapState.wheelFullnessByStage = Object.fromEntries(
       Array.from({ length: 10 }, (_, i) => [i + 1, 1.0]),
     );
     const tree = create(<MapScreen />);
@@ -368,7 +266,7 @@ describe('MapScreen', () => {
   });
 
   it('Map spiral grid remains visible while wheel data is loading', () => {
-    mockWheelLoading = true;
+    mockMapState.wheelLoading = true;
     const tree = create(<MapScreen />);
 
     // The grid must be present — wheel loading never blanks the spiral.
@@ -384,14 +282,18 @@ describe('MapScreen', () => {
   // --- begin-again affordance ---
 
   it('shows begin-again-button at end of cycle', () => {
-    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(() => true);
+    mockMapState.isEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
+      () => true,
+    );
     const tree = create(<MapScreen />);
     const btn = tree.root.findByProps({ testID: 'begin-again-button' });
     expect(btn).toBeTruthy();
   });
 
   it('pressing begin-again-button calls stageService.beginAgain', () => {
-    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(() => true);
+    mockMapState.isEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
+      () => true,
+    );
     mockBeginAgain.mockResolvedValue(undefined);
     const tree = create(<MapScreen />);
     act(() => {
@@ -401,7 +303,9 @@ describe('MapScreen', () => {
   });
 
   it('double-pressing begin-again-button sends exactly one request', () => {
-    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(() => true);
+    mockMapState.isEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
+      () => true,
+    );
     // Never-resolving so the in-flight guard stays true across both presses;
     // the second tap must be a no-op or a second POST would skip a cycle.
     mockBeginAgain.mockReturnValue(new Promise<void>(() => {}));
@@ -414,7 +318,9 @@ describe('MapScreen', () => {
   });
 
   it('disables begin-again-button while a begin-again request is in flight', () => {
-    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(() => true);
+    mockMapState.isEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
+      () => true,
+    );
     mockBeginAgain.mockReturnValue(new Promise<void>(() => {}));
     const tree = create(<MapScreen />);
     act(() => {
@@ -426,7 +332,7 @@ describe('MapScreen', () => {
   });
 
   it('begin-again-button is absent mid-cycle', () => {
-    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
+    mockMapState.isEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
       () => false,
     );
     const tree = create(<MapScreen />);
@@ -438,7 +344,7 @@ describe('MapScreen', () => {
   // --- cycle-indicator ---
 
   it('shows cycle-indicator with "Cycle 2" when cycleNumber is 2', () => {
-    mockCycleNumber = 2;
+    mockMapState.cycleNumber = 2;
     const tree = create(<MapScreen />);
     const indicator = tree.root.findByProps({ testID: 'cycle-indicator' });
     expect(indicator).toBeTruthy();
@@ -450,7 +356,7 @@ describe('MapScreen', () => {
   });
 
   it('cycle-indicator is absent when cycleNumber is 1', () => {
-    mockCycleNumber = 1;
+    mockMapState.cycleNumber = 1;
     const tree = create(<MapScreen />);
     expect(tree.root.findAll((n: TestNode) => n.props.testID === 'cycle-indicator')).toHaveLength(
       0,
@@ -642,19 +548,10 @@ describe('MapScreen', () => {
 
 describe('MapScreen center-cell overlay layout', () => {
   beforeEach(() => {
-    mockNavigate.mockClear();
-    mockLoadStages.mockClear();
-    mockBeginAgain.mockClear();
-    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
-      () => false,
+    resetMapMocks();
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
     );
-    mockCycleNumber = 1;
-    mockDerivedStage = 1;
-    mockDerivedWeek = 1;
-    mockDaysUntilStage = null;
-    mockWheelFullnessByStage = {};
-    mockWheelLoading = false;
-    mockWheelError = null;
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
 
@@ -666,7 +563,7 @@ describe('MapScreen center-cell overlay layout', () => {
   });
 
   it('locked center cell renders the unlock countdown in flow (not absolutely positioned)', () => {
-    mockDaysUntilStage = 42;
+    mockMapState.daysUntilStage = 42;
     const tree = create(<MapScreen />);
     const countdown = tree.root.findByProps({ testID: 'stage-unlock-8' });
     const flat = StyleSheet.flatten(countdown.props.style) as {
@@ -694,7 +591,7 @@ describe('MapScreen center-cell overlay layout', () => {
     // positioning gave: without ``alignSelf: 'stretch'`` an in-flow Text
     // shrink-wraps to its widest wrapped line and ``textAlign: 'center'``
     // becomes a no-op for the multi-line unlock-condition copy.
-    mockDaysUntilStage = 42;
+    mockMapState.daysUntilStage = 42;
     const tree = create(<MapScreen />);
     const countdown = tree.root.findByProps({ testID: 'stage-unlock-8' });
     const flat = StyleSheet.flatten(countdown.props.style) as {
@@ -713,7 +610,7 @@ describe('MapScreen center-cell overlay layout', () => {
   });
 
   it('stacks the pill above the label and the countdown below the lock', () => {
-    mockDaysUntilStage = 42;
+    mockMapState.daysUntilStage = 42;
     const tree = create(<MapScreen />);
     const textOrder = (testID: string): string[] =>
       tree.root

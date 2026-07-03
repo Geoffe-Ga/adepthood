@@ -4,23 +4,25 @@ import React from 'react';
 import { Image } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
-jest.mock('react-native/Libraries/Interaction/InteractionManager', () => ({
-  runAfterInteractions: (cb: () => void) => {
-    cb();
-    return { then: () => {}, done: () => {}, cancel: () => {} };
-  },
-}));
+import MapScreen from '../MapScreen';
 
-const mockNavigate = jest.fn();
-jest.mock('../../../navigation/hooks', () => ({
-  useAppNavigation: () => ({ navigate: mockNavigate }),
-}));
-jest.mock('@react-navigation/bottom-tabs', () => ({
-  useBottomTabBarHeight: () => 0,
-}));
-jest.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-}));
+import type { StageHistoryData } from './mapTestHarness';
+import { mockMakeStage, mockMapState, mockNavigate, resetMapMocks } from './mapTestHarness';
+
+import { showcase } from '@/design/tokens';
+
+jest.mock('react-native/Libraries/Interaction/InteractionManager', () =>
+  jest.requireActual('./mapTestHarness').mockInteractionManagerModule(),
+);
+jest.mock('../../../navigation/hooks', () =>
+  jest.requireActual('./mapTestHarness').mockNavigationModule(),
+);
+jest.mock('@react-navigation/bottom-tabs', () =>
+  jest.requireActual('./mapTestHarness').mockBottomTabsModule(),
+);
+jest.mock('react-native-safe-area-context', () =>
+  jest.requireActual('./mapTestHarness').mockSafeAreaModule(),
+);
 
 // Reduced-motion-safe path: no Animated pulse (Animated trips the test
 // renderer's InteractionManager). Asserts the celebration still renders at rest.
@@ -28,31 +30,15 @@ jest.mock('@/hooks/useReducedMotion', () => ({
   useReducedMotion: () => true,
 }));
 
-let mockDerivedStage = 1;
-let mockDerivedWeek = 1;
-let mockDaysUntilStage: number | null = null;
-jest.mock('../../../store/useProgramProgression', () => ({
-  useDerivedCurrentStage: (fallback: number) => mockDerivedStage ?? fallback,
-  useDerivedCurrentWeek: (fallback: number) => mockDerivedWeek ?? fallback,
-  useDaysUntilStage: () => mockDaysUntilStage,
-}));
-
-interface StageHistoryData {
-  stage_number: number;
-  practices: Array<{
-    name: string;
-    sessions_completed: number;
-    total_minutes: number;
-    last_session: string | null;
-  }>;
-  habits: Array<{
-    name: string;
-    icon: string;
-    goals_achieved: Record<string, boolean>;
-    best_streak: number;
-    total_completions: number;
-  }>;
-}
+jest.mock('../../../store/useProgramProgression', () =>
+  jest.requireActual('./mapTestHarness').mockProgramProgressionModule(),
+);
+jest.mock('../services/stageService', () =>
+  jest.requireActual('./mapTestHarness').mockStageServiceModule(),
+);
+jest.mock('../../../store/useStageStore', () =>
+  jest.requireActual('./mapTestHarness').mockStageStoreModule(),
+);
 
 const mockHistoryFn = jest.fn<Promise<StageHistoryData>, [number, string?]>();
 jest.mock('../../../api', () => ({
@@ -60,67 +46,6 @@ jest.mock('../../../api', () => ({
     history: (...args: [number, string?]) => mockHistoryFn(...args),
   },
 }));
-
-function mockMakeStage(stageNumber: number, progress = 0) {
-  return {
-    id: stageNumber,
-    title: `Stage ${stageNumber}`,
-    subtitle: `Subtitle ${stageNumber}`,
-    stageNumber,
-    progress,
-    color: '#abcdef',
-    isUnlocked: stageNumber <= 2,
-    category: 'Test',
-    aspect: 'Aspect',
-    spiralDynamicsColor: 'Beige',
-    growingUpStage: 'Growing',
-    divineGenderPolarity: 'Polarity',
-    relationshipToFreeWill: 'Free Will',
-    freeWillDescription: 'Description of free will.',
-    overviewUrl: '',
-  };
-}
-
-let mockStages = Array.from({ length: 10 }, (_, i) => mockMakeStage(10 - i));
-
-const mockLoadStages = jest.fn();
-jest.mock('../services/stageService', () => ({
-  stageService: { loadStages: (...args: unknown[]) => mockLoadStages(...args) },
-  isEndOfCycle: () => false,
-  isStageUnlocked: (
-    stage: { isUnlocked: boolean; stageNumber: number },
-    currentStage: number | null,
-  ) => stage.isUnlocked || (currentStage !== null && stage.stageNumber <= currentStage),
-}));
-
-const buildMockStageState = () => ({
-  stages: mockStages,
-  stagesByNumber: Object.fromEntries(mockStages.map((s) => [s.stageNumber, s])),
-  stageOrder: mockStages.map((s) => s.stageNumber),
-  currentStage: 1,
-  loading: false,
-  error: null,
-  setStages: jest.fn(),
-  setCurrentStage: jest.fn(),
-  setLoading: jest.fn(),
-  setError: jest.fn(),
-  updateStageProgress: jest.fn(),
-});
-
-jest.mock('../../../store/useStageStore', () => ({
-  useStageStore: jest.fn((selector) => {
-    const mockState = buildMockStageState();
-    return selector ? selector(mockState) : mockState;
-  }),
-  selectStages: (s: { stages: unknown }) => s.stages,
-  selectCurrentStage: (s: { currentStage: unknown }) => s.currentStage,
-  selectStagesLoading: (s: { loading: unknown }) => s.loading,
-  selectStagesError: (s: { error: unknown }) => s.error,
-}));
-
-import MapScreen from '../MapScreen';
-
-import { showcase } from '@/design/tokens';
 
 const findText = (tree: ReturnType<typeof create>, fragment: string): boolean =>
   tree.root.findAll(
@@ -137,13 +62,13 @@ const openStage = (tree: ReturnType<typeof create>, stageNumber: number): void =
 
 describe('MapScreen — journey narrative', () => {
   beforeEach(() => {
-    mockNavigate.mockClear();
-    mockLoadStages.mockClear();
+    resetMapMocks();
     mockHistoryFn.mockReset();
-    mockDerivedStage = 5;
-    mockDerivedWeek = 12;
-    mockDaysUntilStage = null;
-    mockStages = Array.from({ length: 10 }, (_, i) => mockMakeStage(10 - i));
+    mockMapState.derivedStage = 5;
+    mockMapState.derivedWeek = 12;
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, { color: '#abcdef' }),
+    );
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
 
@@ -166,7 +91,7 @@ describe('MapScreen — journey narrative', () => {
 
   it('shows an "Unlocks in N days" timeline on a locked stage', () => {
     // Calendar at stage 5, so stage 8 is locked.
-    mockDaysUntilStage = 9;
+    mockMapState.daysUntilStage = 9;
     const tree = create(<MapScreen />);
     const unlock = tree.root.findByProps({ testID: 'stage-unlock-8' });
     expect(unlock).toBeTruthy();
@@ -255,7 +180,9 @@ describe('MapScreen — journey narrative', () => {
     expect(celebrations.length).toBe(0);
 
     // Stage 3 completes → re-render with the new progress.
-    mockStages = mockStages.map((s) => (s.stageNumber === 3 ? { ...s, progress: 1 } : s));
+    mockMapState.stages = mockMapState.stages.map((s) =>
+      s.stageNumber === 3 ? { ...s, progress: 1 } : s,
+    );
     act(() => {
       tree.update(<MapScreen />);
     });

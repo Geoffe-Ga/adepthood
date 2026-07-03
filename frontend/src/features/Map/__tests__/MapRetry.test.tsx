@@ -7,116 +7,37 @@ import React from 'react';
 import { Image } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
-jest.mock('react-native/Libraries/Interaction/InteractionManager', () => ({
-  runAfterInteractions: (cb: () => void) => {
-    cb();
-    return { then: () => {}, done: () => {}, cancel: () => {} };
-  },
-}));
+import MapScreen from '../MapScreen';
 
-const mockNavigate = jest.fn();
-jest.mock('../../../navigation/hooks', () => ({
-  useAppNavigation: () => ({ navigate: mockNavigate }),
-}));
-jest.mock('@react-navigation/bottom-tabs', () => ({
-  useBottomTabBarHeight: () => 0,
-}));
-jest.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-}));
-jest.mock('../../../store/useProgramProgression', () => ({
-  useDerivedCurrentStage: (fallback: number) => fallback,
-  useDerivedCurrentWeek: (fallback: number) => fallback,
-  useDaysUntilStage: () => null,
-}));
+import type { StageHistoryData } from './mapTestHarness';
+import { mockLoadStages, mockMapState, resetMapMocks } from './mapTestHarness';
 
-interface StageHistoryData {
-  stage_number: number;
-  practices: Array<{
-    name: string;
-    sessions_completed: number;
-    total_minutes: number;
-    last_session: string | null;
-  }>;
-  habits: Array<{
-    name: string;
-    icon: string;
-    goals_achieved: Record<string, boolean>;
-    best_streak: number;
-    total_completions: number;
-  }>;
-}
+jest.mock('react-native/Libraries/Interaction/InteractionManager', () =>
+  jest.requireActual('./mapTestHarness').mockInteractionManagerModule(),
+);
+jest.mock('../../../navigation/hooks', () =>
+  jest.requireActual('./mapTestHarness').mockNavigationModule(),
+);
+jest.mock('@react-navigation/bottom-tabs', () =>
+  jest.requireActual('./mapTestHarness').mockBottomTabsModule(),
+);
+jest.mock('react-native-safe-area-context', () =>
+  jest.requireActual('./mapTestHarness').mockSafeAreaModule(),
+);
+jest.mock('../../../store/useProgramProgression', () =>
+  jest.requireActual('./mapTestHarness').mockProgramProgressionModule(),
+);
+jest.mock('../services/stageService', () =>
+  jest.requireActual('./mapTestHarness').mockStageServiceModule(),
+);
+jest.mock('../../../store/useStageStore', () =>
+  jest.requireActual('./mapTestHarness').mockStageStoreModule(),
+);
 
 const mockHistoryFn = jest.fn<Promise<StageHistoryData>, [number, string?]>();
 jest.mock('../../../api', () => ({
   stages: { history: (...args: [number, string?]) => mockHistoryFn(...args) },
 }));
-
-function mockMakeStage(stageNumber: number) {
-  return {
-    id: stageNumber,
-    title: `Stage ${stageNumber}`,
-    subtitle: `Subtitle ${stageNumber}`,
-    stageNumber,
-    progress: 0,
-    color: '#aaa',
-    isUnlocked: stageNumber <= 2,
-    category: 'Test',
-    aspect: 'Aspect',
-    spiralDynamicsColor: 'Beige',
-    growingUpStage: 'Growing',
-    divineGenderPolarity: 'Polarity',
-    relationshipToFreeWill: 'Free Will',
-    freeWillDescription: 'Description',
-    overviewUrl: '',
-    hotspots: [{ top: (10 - stageNumber) * 8 + 4, left: 4, width: 32, height: 6 }],
-  };
-}
-
-const mockStages = Array.from({ length: 10 }, (_, i) => mockMakeStage(10 - i));
-const mockLoadStages = jest.fn();
-// Mutable so each test drives the store's error field (prefixed ``mock`` so the
-// jest.mock factory may reference it).
-let mockError: string | null = null;
-
-jest.mock('../services/stageService', () => ({
-  stageService: { loadStages: (...args: unknown[]) => mockLoadStages(...args) },
-  isEndOfCycle: () => false,
-  isStageUnlocked: (
-    stage: { isUnlocked: boolean; stageNumber: number },
-    currentStage: number | null,
-  ) => stage.isUnlocked || (currentStage !== null && stage.stageNumber <= currentStage),
-}));
-
-const buildMockStageState = () => ({
-  stages: mockStages,
-  stagesByNumber: Object.fromEntries(mockStages.map((s) => [s.stageNumber, s])),
-  stageOrder: mockStages.map((s) => s.stageNumber),
-  currentStage: 1,
-  loading: false,
-  error: mockError,
-  setStages: jest.fn(),
-  setCurrentStage: jest.fn(),
-  setLoading: jest.fn(),
-  setError: jest.fn(),
-  updateStageProgress: jest.fn(),
-});
-
-jest.mock('../../../store/useStageStore', () => ({
-  useStageStore: jest.fn((selector) => {
-    const state = buildMockStageState();
-    return selector ? selector(state) : state;
-  }),
-  selectStages: (s: { stages: unknown }) => s.stages,
-  selectCurrentStage: (s: { currentStage: unknown }) => s.currentStage,
-  selectStagesLoading: (s: { loading: unknown }) => s.loading,
-  selectStagesError: (s: { error: unknown }) => s.error,
-  selectStageByNumber:
-    (n: number | null | undefined) => (s: { stagesByNumber: Record<number, unknown> }) =>
-      n == null ? undefined : s.stagesByNumber[n],
-}));
-
-import MapScreen from '../MapScreen';
 
 const EMPTY_HISTORY: StageHistoryData = { stage_number: 1, practices: [], habits: [] };
 
@@ -126,15 +47,15 @@ const countByTestId = (tree: ReturnType<typeof create>, testID: string): number 
 
 describe('MapScreen — refresh retry', () => {
   beforeEach(() => {
-    mockNavigate.mockClear();
-    mockLoadStages.mockClear();
+    resetMapMocks();
     mockHistoryFn.mockReset();
-    mockError = null;
+    mockMapState.derivedStage = null;
+    mockMapState.derivedWeek = null;
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
 
   it('shows a retry banner when a refresh fails while stages are cached', () => {
-    mockError = 'Network error';
+    mockMapState.error = 'Network error';
     const tree = create(<MapScreen />);
     expect(tree.root.findByProps({ testID: 'map-refresh-error' })).toBeTruthy();
     const retry = tree.root.findByProps({ testID: 'map-refresh-retry' });
@@ -151,10 +72,10 @@ describe('MapScreen — refresh retry', () => {
 
 describe('MapScreen — stage history error vs empty', () => {
   beforeEach(() => {
-    mockNavigate.mockClear();
-    mockLoadStages.mockClear();
+    resetMapMocks();
     mockHistoryFn.mockReset();
-    mockError = null;
+    mockMapState.derivedStage = null;
+    mockMapState.derivedWeek = null;
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
 

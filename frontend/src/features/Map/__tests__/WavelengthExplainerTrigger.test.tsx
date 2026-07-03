@@ -10,6 +10,8 @@ import { act, create } from 'react-test-renderer';
 
 import MapScreen from '../MapScreen';
 
+import { mockMapState, resetMapMocks } from './mapTestHarness';
+
 // Mock ChapterReader so the explainer's live content fetch never runs in this
 // MapScreen wiring test; its back control (testID="reader-back-button") is the
 // explainer's close affordance.
@@ -25,118 +27,38 @@ jest.mock('../../Course/ChapterReader', () => {
   };
 });
 
-jest.mock('react-native/Libraries/Interaction/InteractionManager', () => ({
-  runAfterInteractions: (cb: () => void) => {
-    cb();
-    return { then: () => {}, done: () => {}, cancel: () => {} };
-  },
-  createInteractionHandle: () => 1,
-  clearInteractionHandle: () => {},
-}));
-
-const mockNavigate = jest.fn();
-jest.mock('../../../navigation/hooks', () => ({
-  useAppNavigation: () => ({ navigate: mockNavigate }),
-}));
-jest.mock('@react-navigation/bottom-tabs', () => ({
-  useBottomTabBarHeight: () => 0,
-}));
-jest.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-}));
-
-let mockWheelFullnessByStage: Record<number, number> = {};
-jest.mock('../hooks/useWheelBalance', () => ({
-  useWheelBalance: () => ({
-    fullnessByStage: mockWheelFullnessByStage,
-    loading: false,
-    error: null,
-  }),
-}));
-
-let mockDerivedStage = 1;
-jest.mock('../../../store/useProgramProgression', () => ({
-  useDerivedCurrentStage: (fallback: number) => mockDerivedStage ?? fallback,
-  useDerivedCurrentWeek: (fallback: number) => fallback,
-  useDaysUntilStage: () => null,
-}));
-
-function mockMakeStage(stageNumber: number) {
-  return {
-    id: stageNumber,
-    title: `Stage ${stageNumber}`,
-    subtitle: `Subtitle ${stageNumber}`,
-    stageNumber,
-    progress: 0,
-    color: '#aaa',
-    isUnlocked: stageNumber <= 2,
-    category: 'Test',
-    aspect: 'Aspect',
-    spiralDynamicsColor: 'Beige',
-    growingUpStage: 'Growing',
-    divineGenderPolarity: 'Polarity',
-    relationshipToFreeWill: 'Free Will',
-    freeWillDescription: 'Description of free will.',
-    overviewUrl: '',
-    hotspots: [
-      { top: (10 - stageNumber) * 8 + 4, left: 4, width: 32, height: 6 },
-      { top: (10 - stageNumber) * 8 + 4, left: 34, width: 40, height: 6 },
-    ],
-  };
-}
-
-const mockStages = Array.from({ length: 10 }, (_, i) => mockMakeStage(10 - i));
-
-jest.mock('../services/stageService', () => ({
-  stageService: {
-    loadStages: jest.fn(),
-    beginAgain: jest.fn(),
-  },
-  isStageUnlocked: (
-    stage: { isUnlocked: boolean; stageNumber: number },
-    currentStage: number | null,
-  ) => stage.isUnlocked || (currentStage !== null && stage.stageNumber <= currentStage),
-  isEndOfCycle: () => false,
-}));
-
-const buildMockStageState = () => ({
-  stages: mockStages,
-  stagesByNumber: Object.fromEntries(mockStages.map((s) => [s.stageNumber, s])),
-  stageOrder: mockStages.map((s) => s.stageNumber),
-  currentStage: 1,
-  loading: false,
-  error: null,
-  cycleNumber: 1,
-  setStages: jest.fn(),
-  setCurrentStage: jest.fn(),
-  setLoading: jest.fn(),
-  setError: jest.fn(),
-  updateStageProgress: jest.fn(),
-  setCycleNumber: jest.fn(),
-});
-
-jest.mock('../../../store/useStageStore', () => ({
-  useStageStore: jest.fn((selector) => {
-    const mockState = buildMockStageState();
-    return selector ? selector(mockState) : mockState;
-  }),
-  selectStages: (s: { stages: unknown }) => s.stages,
-  selectCurrentStage: (s: { currentStage: unknown }) => s.currentStage,
-  selectStagesLoading: (s: { loading: unknown }) => s.loading,
-  selectStagesError: (s: { error: unknown }) => s.error,
-  selectCycleNumber: (s: { cycleNumber: number }) => s.cycleNumber,
-  selectStageByNumber:
-    (n: number | null | undefined) => (s: { stagesByNumber: Record<number, unknown> }) =>
-      n == null ? undefined : s.stagesByNumber[n],
-}));
+jest.mock('react-native/Libraries/Interaction/InteractionManager', () =>
+  jest.requireActual('./mapTestHarness').mockInteractionManagerModule(),
+);
+jest.mock('../../../navigation/hooks', () =>
+  jest.requireActual('./mapTestHarness').mockNavigationModule(),
+);
+jest.mock('@react-navigation/bottom-tabs', () =>
+  jest.requireActual('./mapTestHarness').mockBottomTabsModule(),
+);
+jest.mock('react-native-safe-area-context', () =>
+  jest.requireActual('./mapTestHarness').mockSafeAreaModule(),
+);
+jest.mock('../hooks/useWheelBalance', () =>
+  jest.requireActual('./mapTestHarness').mockWheelBalanceModule(),
+);
+jest.mock('../../../store/useProgramProgression', () =>
+  jest.requireActual('./mapTestHarness').mockProgramProgressionModule(),
+);
+jest.mock('../services/stageService', () =>
+  jest.requireActual('./mapTestHarness').mockStageServiceModule(),
+);
+jest.mock('../../../store/useStageStore', () =>
+  jest.requireActual('./mapTestHarness').mockStageStoreModule(),
+);
 
 type TestNode = { props: Record<string, unknown> };
 
 describe('MapScreen wavelength explainer trigger', () => {
   beforeEach(() => {
-    mockNavigate.mockClear();
-    mockDerivedStage = 1;
-    mockWheelFullnessByStage = {};
+    resetMapMocks();
+    mockMapState.derivedStage = 1;
+    mockMapState.derivedWeek = null;
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
 
