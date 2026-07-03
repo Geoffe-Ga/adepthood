@@ -146,9 +146,9 @@ const StageTextBlock = ({
     accessibilityRole="button"
     accessibilityLabel={stageNodeLabel(display, fullness)}
   >
-    <Text style={[styles.personaText, { color: display.textColor }]}>{display.persona}</Text>
-    <Text style={[styles.lineText, { color: display.textColor }]}>{display.descriptor}</Text>
-    <Text style={[styles.lineText, { color: display.textColor }]}>{display.practice}</Text>
+    <Text style={[styles.personaText, { color: display.leftTextColor }]}>{display.persona}</Text>
+    <Text style={[styles.lineText, { color: display.leftTextColor }]}>{display.descriptor}</Text>
+    <Text style={[styles.lineText, { color: display.leftTextColor }]}>{display.practice}</Text>
     {locked ? <LockGlyph /> : null}
   </TouchableOpacity>
 );
@@ -186,7 +186,11 @@ const CenterContent = ({
 }): React.JSX.Element | null => {
   const title = TITLE_BY_STAGE[display.stageNumber];
   if (title) {
-    return <Text style={styles.titleText}>{title}</Text>;
+    return (
+      <Text style={styles.titleText} adjustsFontSizeToFit numberOfLines={1}>
+        {title}
+      </Text>
+    );
   }
   if (!display.arrowLabel) {
     return null;

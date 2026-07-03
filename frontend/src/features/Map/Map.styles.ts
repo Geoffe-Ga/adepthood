@@ -172,7 +172,7 @@ const styles = StyleSheet.create({
   // 40px overlay): the serif ramp scales rather than overflowing the column.
   titleText: {
     ...editorialType.title,
-    color: ink.primary,
+    color: ink.muted,
     letterSpacing: 1,
     textAlign: CENTER,
   },

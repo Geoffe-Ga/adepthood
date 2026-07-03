@@ -4,8 +4,9 @@ import React from 'react';
 import { Image, StyleSheet } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
+import { ink } from '../../../design/tokens';
 import styles from '../Map.styles';
-import { MAP_ROWS } from '../mapLayout';
+import { MAP_ROWS, STAGE_DISPLAY } from '../mapLayout';
 import MapScreen from '../MapScreen';
 import { STAGE_COUNT } from '../stageData';
 import { emphasisStyle, FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
@@ -653,5 +654,58 @@ describe('MapScreen center-cell overlay layout', () => {
     const countdown = block.findByProps({ testID: 'stage-unlock-3' });
     const flat = StyleSheet.flatten(countdown.props.style) as { textAlign?: string };
     expect(flat.textAlign).toBe('left');
+  });
+});
+
+describe('MapScreen left-column stage text color', () => {
+  beforeEach(() => {
+    resetMapMocks();
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+    );
+    jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
+  });
+
+  // Sample rows spanning the top, a paired middle row, and the two bottom rows.
+  const SAMPLE_STAGES = [10, 8, 3, 1];
+
+  const requireDisplay = (stageNumber: number) => {
+    const display = STAGE_DISPLAY[stageNumber];
+    if (!display) {
+      throw new Error(`no STAGE_DISPLAY entry for stage ${stageNumber}`);
+    }
+    return display;
+  };
+
+  it('renders persona, descriptor, and practice in the leftTextColor, not the wave textColor', () => {
+    const tree = create(<MapScreen />);
+    for (const stageNumber of SAMPLE_STAGES) {
+      const display = requireDisplay(stageNumber);
+      const hotspot = tree.root.findByProps({ testID: `stage-hotspot-${stageNumber}-0` });
+      for (const line of [display.persona, display.descriptor, display.practice]) {
+        const textNode = hotspot.findAll((n: TestNode) => n.props.children === line)[0];
+        const flat = StyleSheet.flatten(textNode.props.style) as { color?: string };
+        expect(flat.color).toBe(display.leftTextColor);
+        expect(flat.color).not.toBe(display.textColor);
+      }
+    }
+  });
+
+  it('shrinks the EMPTINESS / UNITY title watermark to fit on one line', () => {
+    const tree = create(<MapScreen />);
+    for (const title of ['EMPTINESS', 'UNITY']) {
+      const node = tree.root.findByProps({ children: title });
+      expect(node.props.adjustsFontSizeToFit).toBe(true);
+      expect(node.props.numberOfLines).toBe(1);
+    }
+  });
+
+  it('renders the EMPTINESS / UNITY title watermark in the muted ink, not the primary ink', () => {
+    const tree = create(<MapScreen />);
+    for (const title of ['EMPTINESS', 'UNITY']) {
+      const node = tree.root.findByProps({ children: title });
+      const flat = StyleSheet.flatten(node.props.style) as { color?: string };
+      expect(flat.color).toBe(ink.muted);
+    }
   });
 });
