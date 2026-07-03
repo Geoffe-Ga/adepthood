@@ -384,4 +384,28 @@ describe('JournalShelfScreen', () => {
     await findByTestId('journal-shelf-no-results');
     expect(queryByTestId('journal-empty-first-prompt')).toBeNull();
   });
+
+  it('renders the hero above the header in the top matter', async () => {
+    const { findByTestId } = render(<JournalShelfScreen />);
+    expect(await findByTestId('journal-hero')).toBeTruthy();
+  });
+
+  it('shows "Journal" as the header title and drops "Your shelf"', async () => {
+    const { findByTestId, getByText, queryByText } = render(<JournalShelfScreen />);
+    await findByTestId('journal-hero');
+    expect(getByText('Journal')).toBeTruthy();
+    expect(queryByText('Your shelf')).toBeNull();
+  });
+
+  it('renames the empty-state title to "Your journal is empty"', async () => {
+    mockList.mockResolvedValue(page([]));
+    const { findByText } = render(<JournalShelfScreen />);
+    expect(await findByText('Your journal is empty')).toBeTruthy();
+  });
+
+  it('navigates to the Map tab when the hero position line is pressed', async () => {
+    const { findByTestId } = render(<JournalShelfScreen />);
+    fireEvent.press(await findByTestId('journal-hero-position'));
+    expect(mockNavigate).toHaveBeenCalledWith('Map');
+  });
 });

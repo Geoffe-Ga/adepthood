@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Animated, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import type { SectionListData, SectionListRenderItemInfo } from 'react-native';
 
+import JournalHero from './JournalHero';
 import styles from './JournalShelf.styles';
 import { usePressScale } from './motion';
 import SearchBar from './SearchBar';
@@ -251,7 +252,7 @@ function ShelfEmpty({
   return (
     <EmptyState
       glyph="📖"
-      title="Your shelf is empty"
+      title="Your journal is empty"
       body="Start your first page — a quiet place to think out loud."
       cta={
         <View style={styles.emptyCtaGroup}>
@@ -343,9 +344,9 @@ function ShelfTopMatter({
 }: TopMatterProps): React.JSX.Element {
   return (
     <View>
+      <JournalHero />
       <ScreenHeader
-        title="Your shelf"
-        eyebrow="Journal"
+        title="Journal"
         action={<Button label="New entry" onPress={onNew} testID="journal-new-entry" />}
       />
       {prompt ? <PromptCard week={week} question={prompt.question} onOpen={onPrompt} /> : null}

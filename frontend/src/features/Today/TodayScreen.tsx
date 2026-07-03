@@ -29,16 +29,9 @@ import {
   useProgramStore,
 } from '@/store/useProgramStore';
 import { DEFAULT_TIMEZONE, dayKeyInTZ } from '@/utils/dateUtils';
+import { greeting } from '@/utils/greeting';
 
 type TodayNav = BottomTabNavigationProp<RootTabParamList>;
-
-/** A morning/afternoon/evening greeting from the local clock. */
-function greeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 18) return 'Good afternoon';
-  return 'Good evening';
-}
 
 /** Count habits with a real completion on today's calendar day.
  *
