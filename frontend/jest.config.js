@@ -32,6 +32,7 @@ module.exports = {
     '^expo-haptics$': '<rootDir>/src/__mocks__/expo-haptics.js',
     '^expo-image-picker$': '<rootDir>/src/__mocks__/expo-image-picker.js',
     '^expo-keep-awake$': '<rootDir>/src/__mocks__/expo-keep-awake.js',
+    '^expo-notifications$': '<rootDir>/src/__mocks__/expo-notifications.js',
     '^@react-native-community/netinfo$': '<rootDir>/src/__mocks__/netinfo.js',
   },
   transformIgnorePatterns: [
