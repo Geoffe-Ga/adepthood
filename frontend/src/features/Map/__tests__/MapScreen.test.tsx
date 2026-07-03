@@ -4,7 +4,7 @@ import React from 'react';
 import { Image, StyleSheet } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
-import { ink } from '../../../design/tokens';
+import { ink, surface } from '../../../design/tokens';
 import styles from '../Map.styles';
 import { MAP_ROWS, STAGE_DISPLAY } from '../mapLayout';
 import MapScreen from '../MapScreen';
@@ -706,6 +706,72 @@ describe('MapScreen left-column stage text color', () => {
       const node = tree.root.findByProps({ children: title });
       const flat = StyleSheet.flatten(node.props.style) as { color?: string };
       expect(flat.color).toBe(ink.muted);
+    }
+  });
+});
+
+// The Map is a table, and a table reads as one through its rules: gentle
+// horizontal lines between the aspect bands (and the stacked stages within
+// them) and vertical lines between the three columns. They are rendered as the
+// thinnest possible hairline in the faint warm rule colour so they whisper the
+// grid rather than caging it.
+describe('MapScreen soft grid lines', () => {
+  type BorderStyle = {
+    borderTopWidth?: number;
+    borderTopColor?: string;
+    borderRightWidth?: number;
+    borderRightColor?: string;
+  };
+
+  const topBorder = (tree: ReturnType<typeof create>, testID: string): BorderStyle =>
+    StyleSheet.flatten(tree.root.findByProps({ testID }).props.style) as BorderStyle;
+
+  beforeEach(() => {
+    resetMapMocks();
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+    );
+    jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
+  });
+
+  it('draws soft vertical dividers between the three columns in the faint rule colour', () => {
+    expect(styles.leftCell.borderRightWidth).toBeGreaterThan(0);
+    expect(styles.leftCell.borderRightColor).toBe(surface.hairline);
+    expect(styles.centerCell.borderRightWidth).toBeGreaterThan(0);
+    expect(styles.centerCell.borderRightColor).toBe(surface.hairline);
+  });
+
+  it('renders the column dividers as the thinnest hairline so they read gently', () => {
+    expect(styles.leftCell.borderRightWidth).toBe(StyleSheet.hairlineWidth);
+    expect(styles.centerCell.borderRightWidth).toBe(StyleSheet.hairlineWidth);
+  });
+
+  it('draws a soft full-width horizontal rule above every aspect row except the first', () => {
+    const tree = create(<MapScreen />);
+    const awareness = topBorder(tree, 'map-row-Awareness');
+    const being = topBorder(tree, 'map-row-Being');
+    expect(awareness.borderTopWidth ?? 0).toBe(0);
+    expect(being.borderTopWidth).toBe(StyleSheet.hairlineWidth);
+    expect(being.borderTopColor).toBe(surface.hairline);
+  });
+
+  it('divides stacked stages within a paired row with a soft line across left + center', () => {
+    const tree = create(<MapScreen />);
+    // The Yes-And-Ness row pairs stage 2 (top) over stage 1 (bottom). The top
+    // stage sits on the row boundary (drawn by the row itself), so only the
+    // bottom stage carries the within-row rule — across both its columns.
+    for (const column of [0, 1]) {
+      expect(topBorder(tree, `stage-hotspot-2-${column}`).borderTopWidth ?? 0).toBe(0);
+      const bottom = topBorder(tree, `stage-hotspot-1-${column}`);
+      expect(bottom.borderTopWidth).toBe(StyleSheet.hairlineWidth);
+      expect(bottom.borderTopColor).toBe(surface.hairline);
+    }
+  });
+
+  it('never draws a rule above the topmost stage (no double line under the header)', () => {
+    const tree = create(<MapScreen />);
+    for (const column of [0, 1]) {
+      expect(topBorder(tree, `stage-hotspot-10-${column}`).borderTopWidth ?? 0).toBe(0);
     }
   });
 });
