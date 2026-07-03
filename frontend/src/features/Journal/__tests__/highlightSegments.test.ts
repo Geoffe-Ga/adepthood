@@ -78,4 +78,32 @@ describe('buildHighlightSegments', () => {
     const segments = buildHighlightSegments(BODY, [stale]);
     expect(segments.every((s) => s.note == null)).toBe(true);
   });
+
+  it('drops an anchor whose start is negative', () => {
+    const n = note({ id: 10, anchor_start: -1, anchor_end: 4 });
+    const segments = buildHighlightSegments(BODY, [n]);
+    expect(segments).toEqual([{ start: 0, text: BODY, note: null }]);
+  });
+
+  it('drops an empty anchor whose start equals its end', () => {
+    const at = BODY.indexOf('willow');
+    const n = note({ id: 11, anchor_start: at, anchor_end: at });
+    const segments = buildHighlightSegments(BODY, [n]);
+    expect(segments).toEqual([{ start: 0, text: BODY, note: null }]);
+  });
+
+  it('includes an anchor that ends exactly at the end of the body', () => {
+    const end = BODY.length;
+    const tail = 'bent.';
+    const n = note({ id: 12, anchor_start: end - tail.length, anchor_end: end });
+    const segments = buildHighlightSegments(BODY, [n]);
+    const last = segments[segments.length - 1]!;
+    expect(last.note?.id).toBe(12);
+    expect(last.text).toBe(tail);
+  });
+
+  it('returns a single plain segment for an empty body', () => {
+    const segments = buildHighlightSegments('', []);
+    expect(segments).toEqual([{ start: 0, text: '', note: null }]);
+  });
 });

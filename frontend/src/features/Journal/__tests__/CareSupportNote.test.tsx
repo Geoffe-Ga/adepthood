@@ -4,20 +4,15 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
 /**
- * RED tests for ``CareSupportNote`` (issue #891).
- *
- * These tests fail until the implementation-specialist creates
- * ``frontend/src/features/Journal/CareSupportNote.tsx``.
- *
- * Design requirements from the architect:
+ * Specs for ``CareSupportNote`` — the crisis-care surface. It:
  * - Renders a warm ``message`` with ``accessibilityRole="header"``.
  * - Lists every resource with name, contact, and what_it_is text visible.
- * - Each resource has a descriptive accessibilityLabel (not just the kind slug).
- * - A dismiss control collapses the resource list to a compact re-opener.
- * - The re-opener brings resources back (not a dead-end).
+ * - Gives each resource a descriptive accessibilityLabel (not just the kind slug).
+ * - Collapses the resource list to a compact re-opener via a dismiss control,
+ *   and the re-opener brings resources back (not a dead-end).
  * - Renders nothing when ``care`` is null.
- * - Interactive elements meet the 44dp ``touchTarget.minimum``.
- * - No chat/bot affordances (no sender, avatar, reply testIDs).
+ * - Meets the 44dp ``touchTarget.minimum`` on interactive elements.
+ * - Carries no chat/bot affordances (no sender, avatar, reply testIDs).
  */
 import CareSupportNote from '../CareSupportNote';
 
@@ -261,38 +256,14 @@ describe('CareSupportNote — no chat UI', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Issue #892 regression — care-resource-${kind} testIDs survive the
-// ResourceCard → CareResourceCard extraction.
-//
-// After issue #892 the inline ``ResourceCard`` function in ``CareSupportNote``
-// is extracted to ``components/care/CareResourceCard`` and re-imported.
-// These tests confirm that the testID contract on the reactive (journal)
-// surface is IDENTICAL after the refactor — the implementation-specialist
-// must NOT rename the testIDs or alter the accessibilityLabel formula.
+// accessibilityLabel composition — the label must read
+// "{name}. {contact}. {what_it_is}" so a screen reader hears the whole
+// resource in one pass. (The per-resource testIDs and the non-empty-label
+// contract are already covered above; only the exact format is asserted here.)
 // ---------------------------------------------------------------------------
 
-describe('CareSupportNote — regression: care-resource testIDs after CareResourceCard extraction (issue #892)', () => {
-  it('still mounts "care-resource-hotline" after the extraction refactor', () => {
-    const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
-    expect(getByTestId('care-resource-hotline')).toBeTruthy();
-  });
-
-  it('still mounts "care-resource-text_line" after the extraction refactor', () => {
-    const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
-    expect(getByTestId('care-resource-text_line')).toBeTruthy();
-  });
-
-  it('still mounts "care-resource-human" after the extraction refactor', () => {
-    const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
-    expect(getByTestId('care-resource-human')).toBeTruthy();
-  });
-
-  it('still mounts "care-resource-professional" after the extraction refactor', () => {
-    const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
-    expect(getByTestId('care-resource-professional')).toBeTruthy();
-  });
-
-  it('accessibilityLabel format is preserved: "{name}. {contact}. {what_it_is}"', () => {
+describe('CareSupportNote — accessibilityLabel composition', () => {
+  it('composes the label as "{name}. {contact}. {what_it_is}"', () => {
     const payload = carePayload();
     const { getByTestId } = render(<CareSupportNote care={payload} />);
     const hotlineResource = payload.resources.find((r) => r.kind === 'hotline');

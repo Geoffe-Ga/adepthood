@@ -87,12 +87,20 @@ beforeEach(() => {
 });
 
 describe('JournalShelfScreen', () => {
-  it('renders page cards from the shelf (newest-first order as returned)', async () => {
+  it('renders page cards in the newest-first order the API returns', async () => {
     mockList.mockResolvedValue(page([entry(3), entry(2), entry(1)]));
-    const { findByTestId, getByTestId } = render(<JournalShelfScreen />);
-    expect(await findByTestId('journal-shelf-card-3')).toBeTruthy();
-    expect(getByTestId('journal-shelf-card-2')).toBeTruthy();
-    expect(getByTestId('journal-shelf-card-1')).toBeTruthy();
+    const { findByTestId, getAllByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-shelf-card-3');
+    // Assert the rendered *sequence*, not mere existence — a reordering
+    // mutation must fail this test.
+    const renderedIds = getAllByTestId(/^journal-shelf-card-\d+$/).map(
+      (node) => node.props.testID as string,
+    );
+    expect(renderedIds).toEqual([
+      'journal-shelf-card-3',
+      'journal-shelf-card-2',
+      'journal-shelf-card-1',
+    ]);
   });
 
   it('floats each entry as a warm paper tile lifted off the canvas ground', async () => {

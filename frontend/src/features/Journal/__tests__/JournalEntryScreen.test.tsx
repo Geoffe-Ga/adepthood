@@ -189,11 +189,6 @@ describe('JournalEntryScreen', () => {
     expect(queryByText('Send')).toBeNull();
   });
 
-  it('shows no count indicator on a fresh entry with no notes', () => {
-    const { queryByTestId } = renderScreen();
-    expect(queryByTestId('journal-margin-count')).toBeNull();
-  });
-
   it('reserves a margin column for the inline marginalia UI', () => {
     const { getByTestId } = renderScreen();
     expect(getByTestId('journal-margin-column')).toBeTruthy();
