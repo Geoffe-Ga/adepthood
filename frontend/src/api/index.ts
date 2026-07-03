@@ -1344,6 +1344,11 @@ export const completionSuggestions = {
 // Invitations client (subtle invitation surface, NORTH-STAR §6)
 export type Invitation = InvitationT;
 
+// Re-export the invitation enums so callers derive target/kind values and types
+// from this single API-owned source rather than hand-rolling parallel copies.
+export { invitationTargetTypeSchema, invitationKindSchema } from './schemas';
+export type { InvitationTargetTypeT, InvitationKindT } from './schemas';
+
 /**
  * The declinable invitation surface (silent-by-default, one-tap decline). ``list``
  * returns a bare array (not an ``{ items }`` envelope); ``dismiss`` permanently
