@@ -33,6 +33,15 @@ export interface StageDisplay {
   arrowLabel: string;
   /** Text color matching this stage's arrow in the artwork. */
   textColor: string;
+  /**
+   * Darker variant of ``textColor`` for the left-column stage text. Same hue as
+   * ``textColor`` with HSL lightness reduced until it clears WCAG AA 4.5:1
+   * (~6.5:1 with margin) on the Map's parchment ground (``surface.canvas``
+   * #faf6ef), landing strictly darker (lower relative luminance) than both its
+   * own ``textColor`` and the UNITY/EMPTINESS watermark ink. Precomputed — no
+   * runtime color math.
+   */
+  leftTextColor: string;
 }
 
 /** A horizontal band of the table: one aspect label over one or two stages. */
@@ -70,6 +79,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Cultivate Vipassana',
     arrowLabel: '',
     textColor: '#1a1a1a',
+    leftTextColor: '#141414',
   },
   9: {
     stageNumber: 9,
@@ -78,6 +88,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Cultivate Samatha Jhanas',
     arrowLabel: '',
     textColor: '#9a5a78',
+    leftTextColor: '#7d4961',
   },
   8: {
     stageNumber: 8,
@@ -86,6 +97,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Deep Intuition',
     arrowLabel: 'Nondual',
     textColor: '#6d92a6',
+    leftTextColor: '#415b6a',
   },
   7: {
     stageNumber: 7,
@@ -94,6 +106,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Blissy Meditation',
     arrowLabel: 'Systems',
     textColor: '#c9a43c',
+    leftTextColor: '#6b561e',
   },
   6: {
     stageNumber: 6,
@@ -102,6 +115,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Shadow Work',
     arrowLabel: 'Embodied',
     textColor: '#7cb273',
+    leftTextColor: '#3c6135',
   },
   5: {
     stageNumber: 5,
@@ -110,6 +124,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Wim Hof Method',
     arrowLabel: 'Intellectual',
     textColor: '#dc9a5b',
+    leftTextColor: '#804d1b',
   },
   4: {
     stageNumber: 4,
@@ -118,6 +133,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Metta Meditation',
     arrowLabel: 'Community',
     textColor: '#6f9bd4',
+    leftTextColor: '#2c5993',
   },
   3: {
     stageNumber: 3,
@@ -126,6 +142,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Confidence Meditation',
     arrowLabel: 'Self-Love',
     textColor: '#b14a3a',
+    leftTextColor: '#943e31',
   },
   2: {
     stageNumber: 2,
@@ -134,6 +151,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Divination',
     arrowLabel: 'Receptivity',
     textColor: '#5d4e9e',
+    leftTextColor: '#5c4d9c',
   },
   1: {
     stageNumber: 1,
@@ -142,6 +160,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: '5-4-3-2-1 Technique',
     arrowLabel: 'Agency',
     textColor: '#cdb079',
+    leftTextColor: '#6b5428',
   },
 };
 

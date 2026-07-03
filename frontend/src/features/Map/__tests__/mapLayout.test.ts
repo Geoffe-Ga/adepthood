@@ -1,5 +1,6 @@
 /* eslint-env jest */
 /* global describe, it, expect */
+import { ink, surface } from '../../../design/tokens';
 import {
   GRID_COLUMN_FLEX,
   labelCorner,
@@ -12,6 +13,36 @@ import { isLeftReturning, STAGE_COUNT } from '../stageData';
 const HEX_COLOR = /^#[\da-f]{6}$/i;
 const ALL_STAGES = Array.from({ length: STAGE_COUNT }, (_, i) => STAGE_COUNT - i);
 const MAX_RIGHT_LABEL_LINE_LENGTH = 9;
+
+/** WCAG relative luminance of a #rrggbb color. */
+const luminance = (hex: string): number => {
+  const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex);
+  if (!match) throw new Error(`not a 6-digit hex: ${hex}`);
+  const channels = [match[1], match[2], match[3]].map((pair) => {
+    const c = Number.parseInt(pair!, 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!;
+};
+
+const contrast = (a: string, b: string): number => {
+  const la = luminance(a);
+  const lb = luminance(b);
+  const [hi, lo] = la > lb ? [la, lb] : [lb, la];
+  return (hi + 0.05) / (lo + 0.05);
+};
+
+const AA_NORMAL = 4.5;
+
+// Locate a stage's display copy, failing loudly (not with a false-positive
+// undefined) if a stage number is ever missing from STAGE_DISPLAY.
+const requireDisplay = (stageNumber: number) => {
+  const display = STAGE_DISPLAY[stageNumber];
+  if (!display) {
+    throw new Error(`no STAGE_DISPLAY entry for stage ${stageNumber}`);
+  }
+  return display;
+};
 
 // Locate a row by its rightLabel, failing loudly (not with a false-positive
 // undefined) if the expected copy ever moves or is renamed.
@@ -103,5 +134,34 @@ describe('mapLayout', () => {
       const expected = isLeftReturning(stageNumber) ? 'right' : 'left';
       expect(labelCorner(stageNumber)).toBe(expected);
     }
+  });
+});
+
+describe('left-column stage text color', () => {
+  it('gives every stage a valid left-column text hex color', () => {
+    ALL_STAGES.forEach((stageNumber) => {
+      expect(requireDisplay(stageNumber).leftTextColor).toMatch(HEX_COLOR);
+    });
+  });
+
+  it('meets WCAG AA for the left-column text on the canvas ground', () => {
+    ALL_STAGES.forEach((stageNumber) => {
+      const display = requireDisplay(stageNumber);
+      expect(contrast(display.leftTextColor, surface.canvas)).toBeGreaterThanOrEqual(AA_NORMAL);
+    });
+  });
+
+  it('is strictly darker than the matching wave color', () => {
+    ALL_STAGES.forEach((stageNumber) => {
+      const display = requireDisplay(stageNumber);
+      expect(luminance(display.leftTextColor)).toBeLessThan(luminance(display.textColor));
+    });
+  });
+
+  it('is darker than the EMPTINESS / UNITY title watermark ink', () => {
+    ALL_STAGES.forEach((stageNumber) => {
+      const display = requireDisplay(stageNumber);
+      expect(luminance(display.leftTextColor)).toBeLessThan(luminance(ink.muted));
+    });
   });
 });
