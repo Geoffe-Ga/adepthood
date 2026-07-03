@@ -6,9 +6,10 @@
  * the tab, and the offer only becomes visible when the person is eligible, a
  * contraction is currently observed, they have not already set the offer aside,
  * and no arc is running. ``dismissOffer`` hides the offer and persists the
- * decline; ``start``/``pause``/``resume``/``leave`` update the local arc
- * optimistically and revert on error. An unmount guard keeps late resolutions
- * from setting state on a dead hook.
+ * decline; ``start``/``pause``/``resume``/``leave`` commit the local arc only
+ * after the API confirms — a rejected call propagates the error and leaves the
+ * arc unchanged. An unmount guard keeps late resolutions from setting state on a
+ * dead hook.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
@@ -93,13 +94,6 @@ function useLoadedReturn(): LoadedReturn {
 export function useMettaReturn(): UseMettaReturnResult {
   const { eligible, weeks, arc, dismissed, setArc, setDismissed, mountedRef } = useLoadedReturn();
   const contractionActive = useContractionSignalActive();
-  const arcRef = useRef<ReturnArc | null>(null);
-
-  // Mirror the committed arc into a ref so a lifecycle call can snapshot it
-  // synchronously for the revert branch when the API rejects immediately.
-  useEffect(() => {
-    arcRef.current = arc;
-  }, [arc]);
 
   const dismissOffer = useCallback(async (): Promise<void> => {
     setDismissed(true);
@@ -118,14 +112,8 @@ export function useMettaReturn(): UseMettaReturnResult {
 
   const runLifecycle = useCallback(
     async (call: () => Promise<ReturnArc>): Promise<void> => {
-      const snapshot = arcRef.current;
-      try {
-        const updated = await call();
-        if (mountedRef.current) setArc(updated);
-      } catch (err) {
-        if (mountedRef.current) setArc(snapshot);
-        throw err;
-      }
+      const updated = await call();
+      if (mountedRef.current) setArc(updated);
     },
     [mountedRef, setArc],
   );
