@@ -9,7 +9,14 @@ import {
   type AuthResponse,
   type UnauthorizedReason,
 } from '@/api';
-import { clearToken, loadToken, saveToken } from '@/storage/authStorage';
+import {
+  clearLogoutPending,
+  clearToken,
+  isLogoutPending,
+  loadToken,
+  markLogoutPending,
+  saveToken,
+} from '@/storage/authStorage';
 import { clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import { clearLlmApiKey } from '@/storage/llmKeyStorage';
 import { clearAllNotificationData } from '@/storage/notificationStorage';
@@ -164,6 +171,35 @@ async function wipeUserState(): Promise<void> {
 }
 
 /**
+ * Best-effort ``clearToken`` shared by every teardown path. Returns ``true``
+ * when the delete succeeded and ``false`` when it rejected (warned inside), so
+ * the caller can decide whether to arm the BUG-FE-STATE-001 logout-pending
+ * marker.
+ */
+async function clearTokenSafely(label: string): Promise<boolean> {
+  try {
+    await clearToken();
+    return true;
+  } catch (err: unknown) {
+    console.warn(`clearToken failed in ${label}`, err);
+    return false;
+  }
+}
+
+/**
+ * BUG-FE-STATE-001: a logout/401 clear that failed left the JWT on disk to
+ * resurrect on cold start. Arm the logout-pending marker (best-effort) so the
+ * next bootstrap retries the delete before hydrating.
+ */
+async function armLogoutPending(label: string): Promise<void> {
+  try {
+    await markLogoutPending();
+  } catch (err: unknown) {
+    console.warn(`markLogoutPending failed in ${label}`, err);
+  }
+}
+
+/**
  * BUG-AUTH-005 / BUG-NAV-001: the storage write must complete before we drop
  * the token from state; otherwise a crash between the two leaves a stale
  * token in secure storage that hydrates on next launch. When the API layer
@@ -181,10 +217,8 @@ async function clearTokenForReauth(
   mutators: AuthMutators,
   reason: UnauthorizedReason,
 ): Promise<void> {
-  try {
-    await clearToken();
-  } catch (err: unknown) {
-    console.warn('clearToken failed in onUnauthorized', err);
+  if (!(await clearTokenSafely('onUnauthorized'))) {
+    await armLogoutPending('onUnauthorized');
   }
   mutators.setToken(null);
   mutators.setAuthStatus((prev) => {
@@ -263,32 +297,53 @@ function useApiCallbacks(
 }
 
 /**
- * Load token from storage on mount, discarding expired tokens. Terminates
- * in either ``'authenticated'`` or ``'anonymous'`` — ``'loading'`` is a
- * one-shot state, so later effects must not rewind it (BUG-NAV-002).
+ * BUG-FE-STATE-001: a prior logout/401 armed the marker because ``clearToken``
+ * failed, stranding the JWT on disk. Retry the delete now; disarm the marker
+ * only if the retry succeeds so a still-failing store is tried again next
+ * launch. Either way the session lands ``'anonymous'``.
  */
+async function drainPendingLogout(mutators: AuthMutators): Promise<void> {
+  if (await clearTokenSafely('bootstrap')) {
+    try {
+      await clearLogoutPending();
+    } catch (err: unknown) {
+      console.warn('clearLogoutPending failed on bootstrap', err);
+    }
+  }
+  mutators.setAuthStatus('anonymous');
+}
+
+/**
+ * Cold-start bootstrap: honor a pending logout before hydrating, then load the
+ * stored token and discard it if expired. Terminates in ``'authenticated'`` or
+ * ``'anonymous'`` — ``'loading'`` is one-shot, so later effects must not rewind
+ * it (BUG-NAV-002).
+ */
+async function bootstrapStoredToken(mutators: AuthMutators): Promise<void> {
+  if (await isLogoutPending()) {
+    await drainPendingLogout(mutators);
+    return;
+  }
+  const stored = await loadToken();
+  if (stored && !isTokenExpired(stored)) {
+    mutators.setToken(stored);
+    mutators.setAuthStatus('authenticated');
+    return;
+  }
+  if (stored) {
+    // Expired token: discard without arming the marker — the user did not ask
+    // to log out, so a failed clear should not force a wipe next launch.
+    await clearTokenSafely('bootstrap discard expired');
+  }
+  mutators.setAuthStatus('anonymous');
+}
+
 function useLoadStoredToken(mutators: AuthMutators): void {
   useEffect(() => {
-    loadToken()
-      .then(async (stored) => {
-        if (stored && !isTokenExpired(stored)) {
-          mutators.setToken(stored);
-          mutators.setAuthStatus('authenticated');
-          return;
-        }
-        if (stored) {
-          try {
-            await clearToken();
-          } catch (err: unknown) {
-            console.warn('clearToken failed discarding expired stored token', err);
-          }
-        }
-        mutators.setAuthStatus('anonymous');
-      })
-      .catch((err: unknown) => {
-        console.warn('loadToken failed on bootstrap', err);
-        mutators.setAuthStatus('anonymous');
-      });
+    bootstrapStoredToken(mutators).catch((err: unknown) => {
+      console.warn('loadToken failed on bootstrap', err);
+      mutators.setAuthStatus('anonymous');
+    });
   }, [mutators]);
 }
 
@@ -313,6 +368,13 @@ interface AuthActions {
  */
 async function applyAuthResponse(response: AuthResponse, mutators: AuthMutators): Promise<void> {
   await saveToken(response.token);
+  // BUG-FE-STATE-001: a fresh auth supersedes any stale pending-logout marker;
+  // a clear failure here must not break login / signup / password-reset.
+  try {
+    await clearLogoutPending();
+  } catch (err: unknown) {
+    console.warn('clearLogoutPending failed in applyAuthResponse', err);
+  }
   mutators.setToken(response.token);
   mutators.setUserTimezone(response.timezone ?? 'UTC');
   mutators.setAuthStatus('authenticated');
@@ -354,10 +416,8 @@ async function signupWithDeviceTimezone(email: string, password: string): Promis
  * duplicated across two callbacks.
  */
 async function tearDownSession(mutators: AuthMutators, where: string): Promise<void> {
-  try {
-    await clearToken();
-  } catch (err: unknown) {
-    console.warn(`clearToken failed in ${where}`, err);
+  if (!(await clearTokenSafely(where))) {
+    await armLogoutPending(where);
   }
   await wipeUserState();
   mutators.setToken(null);

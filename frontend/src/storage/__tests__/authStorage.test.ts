@@ -3,6 +3,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 
+import { clearLogoutPending, isLogoutPending, markLogoutPending } from '../authStorage';
 import type * as AuthStorageModule from '../authStorage';
 
 const platformRef = { value: 'ios' as 'ios' | 'android' | 'web' };
@@ -115,5 +116,38 @@ describe('authStorage (web)', () => {
     await expect(saveToken('')).rejects.toBeInstanceOf(EmptyAuthTokenError);
     await expect(saveToken('   ')).rejects.toBeInstanceOf(EmptyAuthTokenError);
     expect(mockAsyncStorage.setItem).not.toHaveBeenCalled();
+  });
+});
+
+// BUG-FE-STATE-001: independent of the SecureStore JWT, always AsyncStorage-backed.
+describe('authStorage logout-pending marker (BUG-FE-STATE-001)', () => {
+  const LOGOUT_PENDING_KEY = '@adepthood/logout_pending';
+
+  test('markLogoutPending writes the pending flag', async () => {
+    await markLogoutPending();
+    expect(mockAsyncStorage.setItem).toHaveBeenCalledWith(LOGOUT_PENDING_KEY, 'true');
+  });
+
+  test('isLogoutPending returns false when unset', async () => {
+    mockAsyncStorage.getItem.mockResolvedValueOnce(null);
+    expect(await isLogoutPending()).toBe(false);
+  });
+
+  test('isLogoutPending returns true once marked', async () => {
+    mockAsyncStorage.getItem.mockResolvedValueOnce('true');
+    expect(await isLogoutPending()).toBe(true);
+  });
+
+  test('isLogoutPending swallows storage errors as false', async () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mockAsyncStorage.getItem.mockRejectedValueOnce(new Error('boom'));
+    expect(await isLogoutPending()).toBe(false);
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  test('clearLogoutPending removes the pending flag', async () => {
+    await clearLogoutPending();
+    expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith(LOGOUT_PENDING_KEY);
   });
 });
