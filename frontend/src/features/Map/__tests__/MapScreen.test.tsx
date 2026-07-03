@@ -8,9 +8,8 @@ import styles from '../Map.styles';
 import { MAP_ROWS } from '../mapLayout';
 import MapScreen from '../MapScreen';
 import { STAGE_COUNT } from '../stageData';
-import { BALANCE_COPY, emphasisStyle, FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
+import { emphasisStyle, FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
 
-import { ranksOrShames } from './copyIntentRule';
 import {
   mockBeginAgain,
   mockMakeStage,
@@ -233,38 +232,6 @@ describe('MapScreen', () => {
     expect(hotspot.props.accessibilityLabel as string).toContain('reads thin');
   });
 
-  it('BalanceSummary renders all-thin copy when every stage is 0.0', () => {
-    mockMapState.wheelFullnessByStage = Object.fromEntries(
-      Array.from({ length: 10 }, (_, i) => [i + 1, 0.0]),
-    );
-    const tree = create(<MapScreen />);
-    const summary = tree.root.findByProps({ testID: 'balance-summary' });
-    expect(summary.props.children as string).toBe(BALANCE_COPY.allThin);
-  });
-
-  it('BalanceSummary renders mixed copy when some stages are alive', () => {
-    mockMapState.wheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD, 7: 0.9 };
-    const tree = create(<MapScreen />);
-    const summary = tree.root.findByProps({ testID: 'balance-summary' });
-    expect(summary.props.children as string).toBe(BALANCE_COPY.mixed);
-  });
-
-  it('BalanceSummary renders all-alive copy when every stage is at full fullness', () => {
-    mockMapState.wheelFullnessByStage = Object.fromEntries(
-      Array.from({ length: 10 }, (_, i) => [i + 1, 1.0]),
-    );
-    const tree = create(<MapScreen />);
-    const summary = tree.root.findByProps({ testID: 'balance-summary' });
-    expect(summary.props.children as string).toBe(BALANCE_COPY.allAlive);
-  });
-
-  it('BALANCE_COPY ranks or shames no one (intent rule, not a wordlist)', () => {
-    for (const [key, value] of Object.entries(BALANCE_COPY)) {
-      expect(ranksOrShames(value)).toBe(false);
-      expect(['allThin', 'mixed', 'allAlive']).toContain(key);
-    }
-  });
-
   it('Map spiral grid remains visible while wheel data is loading', () => {
     mockMapState.wheelLoading = true;
     const tree = create(<MapScreen />);
@@ -277,6 +244,16 @@ describe('MapScreen', () => {
     expect(hotspots.length).toBeGreaterThan(0);
     // No full-screen loader should obscure the grid.
     expect(() => tree.root.findByProps({ testID: 'map-loading' })).toThrow();
+  });
+
+  it('does not render the wavelength explainer trigger', () => {
+    const tree = create(<MapScreen />);
+    expect(() => tree.root.findByProps({ testID: 'wavelength-explainer-trigger' })).toThrow();
+  });
+
+  it('does not render the balance summary', () => {
+    const tree = create(<MapScreen />);
+    expect(() => tree.root.findByProps({ testID: 'balance-summary' })).toThrow();
   });
 
   // --- begin-again affordance ---
