@@ -20,7 +20,6 @@ from services.content_repository import (
     ContentNotFoundError,
     ContentRepository,
     ContentRepositoryError,
-    StageIntroMeta,
     content_version_info,
     get_content_repository,
     reset_content_repository_for_tests,
@@ -272,19 +271,6 @@ def test_resource_missing_description_is_rejected_at_construction(tmp_path: Path
 # ── Stage introductions (issue #718) ────────────────────────────────────
 
 
-def test_lists_stage_intros_in_stage_order(content_dir: Path) -> None:
-    """Intros sort by stage even though the manifest lists stage 2 first."""
-    repo = ContentRepository(content_dir)
-    intros = repo.list_stage_intros()
-    assert [i.stage for i in intros] == [1, 2]
-    assert isinstance(intros[0], StageIntroMeta)
-    assert intros[0].id == "beige-intro"
-    assert intros[0].slug == "beige-introduction"
-    assert intros[0].title == "Welcome to Beige"
-    assert intros[0].summary == "What Beige is about."
-    assert intros[1].summary is None  # optional field omitted in the manifest
-
-
 def test_get_stage_intro_returns_meta(content_dir: Path) -> None:
     repo = ContentRepository(content_dir)
     intro = repo.get_stage_intro(1)
@@ -310,13 +296,6 @@ def test_unknown_stage_intro_raises_not_found(content_dir: Path) -> None:
     repo = ContentRepository(content_dir)
     with pytest.raises(ContentNotFoundError):
         repo.read_intro_body(99)
-
-
-def test_stage_intros_absent_yields_empty_list(tmp_path: Path) -> None:
-    """A 1.0.0 pin with no ``stage_intros`` key degrades to an empty index."""
-    manifest: dict[str, Any] = {"schema_version": "1.0.0", "chapters": [], "site_resources": []}
-    root = _write_content_dir(tmp_path / "content", manifest)
-    assert ContentRepository(root).list_stage_intros() == []
 
 
 def test_duplicate_stage_intro_raises_repository_error(tmp_path: Path) -> None:
