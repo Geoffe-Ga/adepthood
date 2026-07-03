@@ -54,9 +54,26 @@ const findText = (tree: ReturnType<typeof create>, fragment: string): boolean =>
       typeof node.props.children === 'string' && node.props.children.includes(fragment),
   ).length > 0;
 
+// The first tap on a non-focused stage sends the magnifier lens gliding there;
+// the second tap (now on the focused stage) opens the detail modal. Pressing
+// twice is idempotent when the stage is already focused.
 const openStage = (tree: ReturnType<typeof create>, stageNumber: number): void => {
   act(() => {
     tree.root.findByProps({ testID: `stage-hotspot-${stageNumber}-0` }).props.onPress();
+  });
+  act(() => {
+    tree.root.findByProps({ testID: `stage-hotspot-${stageNumber}-0` }).props.onPress();
+  });
+};
+
+const GRID_LAYOUT = { width: 300, height: 600 };
+
+/** Report a measured grid size so the wave overlay + magnifier lens mount. */
+const fireGridLayout = (tree: ReturnType<typeof create>): void => {
+  act(() => {
+    tree.root.findByProps({ testID: 'map-grid' }).props.onLayout({
+      nativeEvent: { layout: GRID_LAYOUT },
+    });
   });
 };
 
@@ -79,13 +96,11 @@ describe('MapScreen — journey narrative', () => {
     expect(findText(tree, 'Stage 5 of 10 · Week 12')).toBe(true);
   });
 
-  it('marks the current stage with a "you are here" marker + halo', () => {
+  it('marks the current stage with the you-are-here chip riding the magnifier lens', () => {
     const tree = create(<MapScreen />);
-    const markers = tree.root.findAll(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (node: any) => node.props.testID === 'you-are-here',
-    );
-    expect(markers.length).toBeGreaterThanOrEqual(1);
+    fireGridLayout(tree);
+    const lens = tree.root.findByProps({ testID: 'map-magnifier' });
+    expect(lens.findByProps({ testID: 'you-are-here' })).toBeTruthy();
     expect(findText(tree, 'YOU ARE HERE')).toBe(true);
   });
 

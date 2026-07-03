@@ -38,6 +38,12 @@ interface WaveOverlayProps {
   height: number;
   /** Measured per-stage vertical centers; missing stages use nominal bands. */
   anchors?: StageAnchors;
+  /**
+   * Prefix for every testID this overlay emits. The magnifier lens renders a
+   * second, magnified copy of the wave; the prefix keeps the two copies'
+   * testIDs distinct so each remains uniquely findable.
+   */
+  idPrefix?: string;
 }
 
 /** SVG sine-wave overlay sized to the measured grid; null until measured. */
@@ -45,6 +51,7 @@ export const WaveOverlay = ({
   width,
   height,
   anchors = {},
+  idPrefix = '',
 }: WaveOverlayProps): React.JSX.Element | null => {
   const smallerExtent = Math.min(width, height);
   if (smallerExtent < MIN_DRAWABLE_EXTENT) return null;
@@ -52,7 +59,7 @@ export const WaveOverlay = ({
   const arrowheads = waveArrowheads(width, height, anchors);
   return (
     <Svg
-      testID="map-wave"
+      testID={`${idPrefix}map-wave`}
       width={width}
       height={height}
       style={StyleSheet.absoluteFill}
@@ -62,7 +69,7 @@ export const WaveOverlay = ({
       {segments.map((segment) => (
         <Path
           key={`near-${segment.stageNumber}-${segment.half}`}
-          testID={`near-${segment.stageNumber}-${segment.half}`}
+          testID={`${idPrefix}near-${segment.stageNumber}-${segment.half}`}
           d={segment.d}
           stroke={segment.color}
           {...WAVE_STROKE_PROPS}
@@ -71,7 +78,7 @@ export const WaveOverlay = ({
       {arrowheads.map((arrowhead) => (
         <Polygon
           key={arrowhead.stageNumber}
-          testID={`wave-arrow-${arrowhead.stageNumber}`}
+          testID={`${idPrefix}wave-arrow-${arrowhead.stageNumber}`}
           points={arrowhead.points}
           fill={arrowhead.color}
         />
