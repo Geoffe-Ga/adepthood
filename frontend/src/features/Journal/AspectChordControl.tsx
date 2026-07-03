@@ -145,9 +145,13 @@ function AspectChordControl({
   value = EMPTY_CHORD,
   onChange,
 }: AspectChordControlProps): React.JSX.Element {
-  const [expanded, setExpanded] = useState(false);
+  // Derive expansion from the value so a loaded (pre-tagged) entry opens on its
+  // chips instead of the "optional" trigger — even when the chord arrives after
+  // mount, as it does on the edit screen. The user's own tap latches it open too.
+  const [userExpanded, setUserExpanded] = useState(false);
+  const expanded = userExpanded || value.primary !== null;
   if (!expanded) {
-    return <CollapsedTrigger onExpand={() => setExpanded(true)} />;
+    return <CollapsedTrigger onExpand={() => setUserExpanded(true)} />;
   }
   return <ExpandedChooser value={value} onChange={onChange} />;
 }

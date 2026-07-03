@@ -39,6 +39,35 @@ describe('AspectChordControl — collapsed by default', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Loaded value (editing a pre-tagged entry)
+// ---------------------------------------------------------------------------
+
+describe('AspectChordControl — loaded value', () => {
+  it('opens expanded showing the selected primary chip when value.primary is set', () => {
+    const { getByTestId, queryByTestId } = renderControl({ primary: 3, secondary: null });
+    expect(getByTestId('aspect-primary-3')).toBeTruthy();
+    expect(queryByTestId('aspect-chord-trigger')).toBeNull();
+  });
+
+  it('never fires onChange on mount for a pre-tagged value', () => {
+    const onChange = jest.fn();
+    renderControl({ primary: 3, secondary: null }, onChange);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('expands to reveal the loaded chip when the value arrives after mount (edit load)', () => {
+    const onChange = jest.fn();
+    const { getByTestId, queryByTestId, rerender } = render(
+      <AspectChordControl value={{ primary: null, secondary: null }} onChange={onChange} />,
+    );
+    expect(getByTestId('aspect-chord-trigger')).toBeTruthy();
+    rerender(<AspectChordControl value={{ primary: 3, secondary: null }} onChange={onChange} />);
+    expect(getByTestId('aspect-primary-3')).toBeTruthy();
+    expect(queryByTestId('aspect-chord-trigger')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Expanding reveals primary chips
 // ---------------------------------------------------------------------------
 
