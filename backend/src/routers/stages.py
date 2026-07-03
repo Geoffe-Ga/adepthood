@@ -292,6 +292,7 @@ async def _advance_existing_progress(
 
     existing.completed_stages = candidate_completed
     existing.current_stage = derived_next
+    existing.highest_stage_reached = max(existing.highest_stage_reached, derived_next)
     existing.stage_started_at = datetime.now(UTC)
     session.add(existing)
     await session.commit()

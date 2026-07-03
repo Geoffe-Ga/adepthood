@@ -14,6 +14,10 @@ class StageProgress(SQLModel, table=True):
 
     __table_args__ = (
         CheckConstraint("cycle_number >= 1", name="ck_stageprogress_cycle_number_positive"),
+        CheckConstraint(
+            "highest_stage_reached >= 1",
+            name="ck_stageprogress_highest_stage_reached_positive",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -38,5 +42,9 @@ class StageProgress(SQLModel, table=True):
     )
     # Loop index for the 36-week arc; progression/loop logic lands in a later issue.
     cycle_number: int = Field(default=1, ge=1)
+    # Lifetime high-water mark: the highest stage ever reached by advancement.
+    # Monotone — bumped on advance, never cleared by begin-again — so a Return
+    # stays eligible from any current stage once Blue was ever passed.
+    highest_stage_reached: int = Field(default=1, ge=1)
     user_id: int = Field(foreign_key="user.id", unique=True, ondelete="CASCADE")
     user: "User" = Relationship(back_populates="stage_progress")
