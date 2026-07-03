@@ -18,14 +18,6 @@
 /** Flex weights of each stage row's three cells (left / center / right). */
 export const GRID_COLUMN_FLEX = { left: 2, center: 2, right: 1 } as const;
 
-/**
- * Minimum auto-fit font scale for the right-column aspect label. Worst case is
- * "Understanding" (13 glyphs) on a ~320pt screen, where the ~20% right band
- * leaves ~48pt of usable width; 0.55 lets that word shrink onto a single line
- * without ellipsis or a mid-word break.
- */
-export const RIGHT_LABEL_MIN_FONT_SCALE = 0.55;
-
 /** Static, design-specific copy + color for a single stage's left-column text. */
 export interface StageDisplay {
   stageNumber: number;
@@ -45,6 +37,8 @@ export interface StageDisplay {
 export interface MapRow {
   /** Aspect-of-wholeness label shown in the right column. */
   rightLabel: string;
+  /** Pre-hyphenated right-column label lines (<= 2), avoiding shrink-to-fit. */
+  rightLabelLines: readonly string[];
   /** Stage numbers contained in this row, ordered top → bottom. */
   stageNumbers: readonly number[];
 }
@@ -155,10 +149,10 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
  * "feminine" stage above a warm-color "masculine" stage.
  */
 export const MAP_ROWS: readonly MapRow[] = [
-  { rightLabel: 'Awareness', stageNumbers: [10] },
-  { rightLabel: 'Being', stageNumbers: [9] },
-  { rightLabel: 'Wisdom', stageNumbers: [8, 7] },
-  { rightLabel: 'Understanding', stageNumbers: [6, 5] },
-  { rightLabel: 'Love', stageNumbers: [4, 3] },
-  { rightLabel: 'Yes-And-Ness', stageNumbers: [2, 1] },
+  { rightLabel: 'Awareness', rightLabelLines: ['Awareness'], stageNumbers: [10] },
+  { rightLabel: 'Being', rightLabelLines: ['Being'], stageNumbers: [9] },
+  { rightLabel: 'Wisdom', rightLabelLines: ['Wisdom'], stageNumbers: [8, 7] },
+  { rightLabel: 'Understanding', rightLabelLines: ['Under-', 'standing'], stageNumbers: [6, 5] },
+  { rightLabel: 'Love', rightLabelLines: ['Love'], stageNumbers: [4, 3] },
+  { rightLabel: 'Yes-And-Ness', rightLabelLines: ['Yes-And-', 'Ness'], stageNumbers: [2, 1] },
 ];

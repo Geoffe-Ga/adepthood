@@ -1,16 +1,21 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-import {
-  GRID_COLUMN_FLEX,
-  MAP_ROWS,
-  MAP_TITLE_LINES,
-  RIGHT_LABEL_MIN_FONT_SCALE,
-  STAGE_DISPLAY,
-} from '../mapLayout';
+import { GRID_COLUMN_FLEX, MAP_ROWS, MAP_TITLE_LINES, STAGE_DISPLAY } from '../mapLayout';
 import { STAGE_COUNT } from '../stageData';
 
 const HEX_COLOR = /^#[\da-f]{6}$/i;
 const ALL_STAGES = Array.from({ length: STAGE_COUNT }, (_, i) => STAGE_COUNT - i);
+const MAX_RIGHT_LABEL_LINE_LENGTH = 9;
+
+// Locate a row by its rightLabel, failing loudly (not with a false-positive
+// undefined) if the expected copy ever moves or is renamed.
+const findRowByLabel = (label: string) => {
+  const row = MAP_ROWS.find((r) => r.rightLabel === label);
+  if (!row) {
+    throw new Error(`no MAP_ROWS entry with rightLabel ${label}`);
+  }
+  return row;
+};
 
 describe('mapLayout', () => {
   it('defines display copy for every stage', () => {
@@ -43,9 +48,29 @@ describe('mapLayout', () => {
     expect(MAP_TITLE_LINES).toEqual(['EMPTINESS', 'UNITY']);
   });
 
-  it('keeps the right-label font-scale floor within the auto-fit range', () => {
-    expect(RIGHT_LABEL_MIN_FONT_SCALE).toBeGreaterThan(0);
-    expect(RIGHT_LABEL_MIN_FONT_SCALE).toBeLessThan(1);
+  it('gives every right-label at most two hyphenated lines, each within the cell width', () => {
+    MAP_ROWS.forEach((row) => {
+      expect(row.rightLabelLines.length).toBeGreaterThanOrEqual(1);
+      expect(row.rightLabelLines.length).toBeLessThanOrEqual(2);
+      row.rightLabelLines.forEach((line) => {
+        expect(line.length).toBeLessThanOrEqual(MAX_RIGHT_LABEL_LINE_LENGTH);
+      });
+    });
+  });
+
+  it('rejoins each rightLabelLines back to its rightLabel, ignoring hyphen placement', () => {
+    MAP_ROWS.forEach((row) => {
+      const rejoined = row.rightLabelLines.join('').replaceAll('-', '');
+      expect(rejoined).toBe(row.rightLabel.replaceAll('-', ''));
+    });
+  });
+
+  it('hyphenates Understanding as Under- / standing', () => {
+    expect(findRowByLabel('Understanding').rightLabelLines).toEqual(['Under-', 'standing']);
+  });
+
+  it('hyphenates Yes-And-Ness as Yes-And- / Ness', () => {
+    expect(findRowByLabel('Yes-And-Ness').rightLabelLines).toEqual(['Yes-And-', 'Ness']);
   });
 
   it('keeps the shared column-flex weights the wave geometry also depends on', () => {
