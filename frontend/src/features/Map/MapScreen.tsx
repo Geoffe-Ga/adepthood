@@ -128,6 +128,8 @@ interface StageCellProps {
 interface StageTextBlockProps extends StageCellProps {
   /** Wheel-of-wholeness fullness (0..1) for this Aspect; drives emphasis + a11y. */
   fullness: number;
+  /** Draw the soft within-row rule above this stage (false for a row's top stage). */
+  showTopDivider: boolean;
 }
 
 // Left cell: colored stage text (the -0 tap target); wheel overlay adds emphasis opacity + a11y only.
@@ -137,11 +139,17 @@ const StageTextBlock = ({
   display,
   locked,
   fullness,
+  showTopDivider,
   onPress,
 }: StageTextBlockProps): React.JSX.Element => (
   <TouchableOpacity
     testID={`stage-hotspot-${display.stageNumber}-0`}
-    style={[styles.stageBlock, locked ? styles.locked : null, emphasisStyle(fullness)]}
+    style={[
+      styles.stageBlock,
+      showTopDivider ? styles.horizontalDivider : null,
+      locked ? styles.locked : null,
+      emphasisStyle(fullness),
+    ]}
     onPress={() => onPress(stage)}
     accessibilityRole="button"
     accessibilityLabel={stageNodeLabel(display, fullness)}
@@ -201,6 +209,8 @@ const CenterContent = ({
 interface StageCenterCellProps extends StageCellProps {
   /** Index of the row this cell sits in, for anchor measurement. */
   rowIndex: number;
+  /** Draw the soft within-row rule above this stage (false for a row's top stage). */
+  showTopDivider: boolean;
   /** Record this cell's measured row-relative center on layout. */
   onCellLayout: UseStageAnchorsResult['onCellLayout'];
 }
@@ -212,12 +222,14 @@ const StageCenterCell = ({
   isCurrent,
   onPress,
   rowIndex,
+  showTopDivider,
   onCellLayout,
 }: StageCenterCellProps): React.JSX.Element => (
   <TouchableOpacity
     testID={`stage-hotspot-${display.stageNumber}-1`}
     style={[
       styles.centerStageCell,
+      showTopDivider ? styles.horizontalDivider : null,
       isLeftReturning(display.stageNumber) ? styles.cellFeminine : styles.cellMasculine,
       locked ? styles.locked : null,
       isCurrent ? styles.cellCurrent : null,
@@ -274,7 +286,7 @@ const RowLeftColumn = ({
   onPress: (_stage: StageData) => void;
 }): React.JSX.Element => (
   <View style={styles.leftCell}>
-    {resolved.map(({ stage, display }) => (
+    {resolved.map(({ stage, display }, index) => (
       <StageTextBlock
         key={stage.stageNumber}
         stage={stage}
@@ -282,6 +294,9 @@ const RowLeftColumn = ({
         locked={!isStageUnlocked(stage, currentStage)}
         isCurrent={stage.stageNumber === currentStage}
         fullness={fullnessByStage[stage.stageNumber] ?? THIN_FULLNESS}
+        // A row's top stage sits on the row boundary the group row already
+        // rules; only the stacked stage(s) below it carry the within-row line.
+        showTopDivider={index > 0}
         onPress={onPress}
       />
     ))}
@@ -303,7 +318,7 @@ const RowCenterColumn = ({
   onCellLayout: UseStageAnchorsResult['onCellLayout'];
 }): React.JSX.Element => (
   <View style={styles.centerCell}>
-    {resolved.map(({ stage, display }) => (
+    {resolved.map(({ stage, display }, index) => (
       <StageCenterCell
         key={stage.stageNumber}
         stage={stage}
@@ -312,6 +327,9 @@ const RowCenterColumn = ({
         isCurrent={stage.stageNumber === currentStage}
         onPress={onPress}
         rowIndex={rowIndex}
+        // Match the left column: only stages stacked below a row's top stage
+        // carry the within-row rule, so left + center lines align.
+        showTopDivider={index > 0}
         onCellLayout={onCellLayout}
       />
     ))}
@@ -332,7 +350,13 @@ const MapRowView = ({
   const resolved = resolveRowStages(row, lookup);
   return (
     <View
-      style={[styles.groupRow, { flex: row.stageNumbers.length }]}
+      style={[
+        styles.groupRow,
+        { flex: row.stageNumbers.length },
+        // Full-width rule between aspect bands; the first row hugs the header,
+        // so it takes no top line (avoids a double rule under it).
+        rowIndex > 0 ? styles.horizontalDivider : null,
+      ]}
       testID={`map-row-${row.rightLabel}`}
       onLayout={(e) => onRowLayout(rowIndex, e)}
     >
