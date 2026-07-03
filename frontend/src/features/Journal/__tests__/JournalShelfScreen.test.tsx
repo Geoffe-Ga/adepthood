@@ -37,9 +37,18 @@ jest.mock('@react-navigation/native', () => {
 
 // Isolate the shelf's search wiring from SearchBar's own debounce/expand UI.
 jest.mock('../SearchBar', () => {
-  const { TextInput } = require('react-native');
-  const Stub = ({ onSearch }: { onSearch: (_q: string) => void }) => (
-    <TextInput testID="shelf-search" onChangeText={onSearch} />
+  const { Text, TextInput, View } = require('react-native');
+  const Stub = ({
+    onSearch,
+    resultCount,
+  }: {
+    onSearch: (_q: string) => void;
+    resultCount?: number;
+  }) => (
+    <View>
+      <TextInput testID="shelf-search" onChangeText={onSearch} />
+      {resultCount == null ? null : <Text testID="shelf-result-count">{String(resultCount)}</Text>}
+    </View>
   );
   return { __esModule: true, default: Stub };
 });
@@ -282,6 +291,31 @@ describe('JournalShelfScreen', () => {
     expect(mockList).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 2 }));
   });
 
+  it('captions a multi-page search with the backend total, stable across paging', async () => {
+    mockList.mockResolvedValue(page([entry(1)]));
+    const { findByTestId, getByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-shelf-card-1');
+
+    // A large match set: one page of 20 loaded, but 57 matches in total.
+    const firstPage = Array.from({ length: 20 }, (_, i) => entry(i + 1));
+    mockList.mockResolvedValueOnce({ items: firstPage, total: 57, has_more: true });
+    await act(async () => {
+      fireEvent.changeText(getByTestId('shelf-search'), 'river');
+    });
+    await waitFor(() => expect(getByTestId('shelf-result-count')).toHaveTextContent('57'));
+
+    // Paging in the next 20 must not inflate the caption toward the loaded count.
+    const secondPage = Array.from({ length: 20 }, (_, i) => entry(i + 21));
+    mockList.mockResolvedValueOnce({ items: secondPage, total: 57, has_more: true });
+    await act(async () => {
+      fireEvent(getByTestId('journal-shelf-list'), 'onEndReached');
+    });
+    await waitFor(() =>
+      expect(mockList).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 20 })),
+    );
+    expect(getByTestId('shelf-result-count')).toHaveTextContent('57');
+  });
+
   it('surfaces an unanswered weekly prompt and opens it as a pre-titled page', async () => {
     mockPromptCurrent.mockResolvedValue(prompt({ week_number: 3, has_responded: false }));
     const { findByTestId } = render(<JournalShelfScreen />);
@@ -391,5 +425,29 @@ describe('JournalShelfScreen', () => {
     });
     await findByTestId('journal-shelf-no-results');
     expect(queryByTestId('journal-empty-first-prompt')).toBeNull();
+  });
+
+  it('renders the hero above the header in the top matter', async () => {
+    const { findByTestId } = render(<JournalShelfScreen />);
+    expect(await findByTestId('journal-hero')).toBeTruthy();
+  });
+
+  it('shows "Journal" as the header title and drops "Your shelf"', async () => {
+    const { findByTestId, getByText, queryByText } = render(<JournalShelfScreen />);
+    await findByTestId('journal-hero');
+    expect(getByText('Journal')).toBeTruthy();
+    expect(queryByText('Your shelf')).toBeNull();
+  });
+
+  it('renames the empty-state title to "Your journal is empty"', async () => {
+    mockList.mockResolvedValue(page([]));
+    const { findByText } = render(<JournalShelfScreen />);
+    expect(await findByText('Your journal is empty')).toBeTruthy();
+  });
+
+  it('navigates to the Map tab when the hero position line is pressed', async () => {
+    const { findByTestId } = render(<JournalShelfScreen />);
+    fireEvent.press(await findByTestId('journal-hero-position'));
+    expect(mockNavigate).toHaveBeenCalledWith('Map');
   });
 });

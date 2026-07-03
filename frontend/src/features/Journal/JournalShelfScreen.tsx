@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Animated, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import type { SectionListData, SectionListRenderItemInfo } from 'react-native';
 
+import JournalHero from './JournalHero';
 import styles from './JournalShelf.styles';
 import { usePressScale } from './motion';
 import SearchBar from './SearchBar';
@@ -107,6 +108,7 @@ function searchParam(query: string): string | undefined {
 
 interface ShelfState {
   items: JournalMessage[];
+  total: number;
   loading: boolean;
   error: string | null;
   query: string;
@@ -125,6 +127,7 @@ function isSearchable(next: string): boolean {
 /** Loads the shelf with offset paging + debounced search (via SearchBar). */
 function useShelf(): ShelfState {
   const [items, setItems] = useState<JournalMessage[]>([]);
+  const [total, setTotal] = useState(0);
   const [query, setQuery] = useState('');
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -136,6 +139,7 @@ function useShelf(): ShelfState {
     try {
       const page = await journal.list({ search, limit: PAGE_SIZE, offset });
       setItems((prev) => (offset === 0 ? page.items : [...prev, ...page.items]));
+      setTotal(page.total);
       setHasMore(page.has_more);
     } catch (err) {
       // Surface the failure so a cold-start network error isn't mistaken for an
@@ -164,7 +168,7 @@ function useShelf(): ShelfState {
     if (hasMore && !loading) void load(searchParam(query), items.length);
   }, [hasMore, loading, load, query, items.length]);
 
-  return { items, loading, error, query, hasMore, onSearch, loadMore };
+  return { items, total, loading, error, query, hasMore, onSearch, loadMore };
 }
 
 function PageCard({
@@ -251,7 +255,7 @@ function ShelfEmpty({
   return (
     <EmptyState
       glyph="📖"
-      title="Your shelf is empty"
+      title="Your journal is empty"
       body="Start your first page — a quiet place to think out loud."
       cta={
         <View style={styles.emptyCtaGroup}>
@@ -343,9 +347,9 @@ function ShelfTopMatter({
 }: TopMatterProps): React.JSX.Element {
   return (
     <View>
+      <JournalHero />
       <ScreenHeader
-        title="Your shelf"
-        eyebrow="Journal"
+        title="Journal"
         action={<Button label="New entry" onPress={onNew} testID="journal-new-entry" />}
       />
       {prompt ? <PromptCard week={week} question={prompt.question} onOpen={onPrompt} /> : null}
@@ -399,14 +403,14 @@ function renderSectionHeader({
 
 function JournalShelfScreen(): React.JSX.Element {
   const navigation = useNavigation<ShelfNavigation>();
-  const { items, loading, error, query, hasMore, onSearch, loadMore } = useShelf();
+  const { items, total, loading, error, query, hasMore, onSearch, loadMore } = useShelf();
   const prompt = usePrompt();
   const week = useDerivedCurrentWeek(prompt?.week_number ?? 1);
   const nav = useShelfNavigation(navigation, prompt, week);
   const now = Date.now();
   const sections = groupByRecency(items, now);
   const searching = query.length >= SEARCH_MIN_LENGTH;
-  const resultCount = searching ? items.length : undefined;
+  const resultCount = searching ? total : undefined;
 
   const renderItem = ({ item }: SectionListRenderItemInfo<JournalMessage, ShelfSection>) => (
     <PageCard entry={item} onOpen={nav.openEntry} now={now} />
