@@ -31,6 +31,7 @@ jest.mock('../../../../context/AuthContext', () => ({
 // fireEvent.changeText / press behave as on a real device.
 
 import { dayKeyInTZ } from '../../../../utils/dateUtils';
+import { TARGET_UNITS, FREQUENCY_UNITS } from '../../constants';
 import type { Goal, Habit } from '../../Habits.types';
 import { GoalModal } from '../GoalModal';
 
@@ -769,5 +770,44 @@ describe('GoalModal icon editing', () => {
     expect(props.onUpdateHabit).toHaveBeenCalledWith(expect.objectContaining({ icon: '🎉' }));
     // Selecting an emoji closes the picker.
     expect(queryByTestId('emoji-selector-stub')).toBeNull();
+  });
+});
+
+describe('GoalModal chip-row scroll affordance', () => {
+  // The Type / Unit / Every chip rows are all horizontal ScrollViews. Without a
+  // scroll hint a half-clipped pill at the modal edge reads as broken layout, so
+  // each row must advertise that it scrolls.
+  const CHIP_ROW_TEST_IDS = ['goal-direction-chips', 'goal-target-unit', 'goal-frequency-unit'];
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it.each(CHIP_ROW_TEST_IDS)('shows a horizontal scroll indicator on %s', (rowTestID) => {
+    const { getByTestId } = renderModal();
+    expect(getByTestId(rowTestID).props.showsHorizontalScrollIndicator).toBe(true);
+  });
+
+  it.each(CHIP_ROW_TEST_IDS)(
+    'gives %s trailing content padding so the last chip clears the modal edge',
+    (rowTestID) => {
+      const { getByTestId } = renderModal();
+      const contentStyle = StyleSheet.flatten(getByTestId(rowTestID).props.contentContainerStyle);
+      expect(contentStyle.paddingRight as number).toBeGreaterThan(0);
+    },
+  );
+
+  it('keeps every target-unit chip reachable inside its scroll row', () => {
+    const { getByTestId } = renderModal();
+    for (const unit of TARGET_UNITS) {
+      expect(getByTestId(`goal-target-unit-${unit}`)).toBeTruthy();
+    }
+  });
+
+  it('keeps every frequency-unit chip reachable inside its scroll row', () => {
+    const { getByTestId } = renderModal();
+    for (const unit of FREQUENCY_UNITS) {
+      expect(getByTestId(`goal-frequency-unit-${unit}`)).toBeTruthy();
+    }
   });
 });
