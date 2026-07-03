@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "chapters": [
     {
       "id": "beige-1",
@@ -2545,6 +2545,78 @@
       "description": "A living picture of the Wavelength — torus, spiral, compression waves, rising octaves, and the chord of a single act.",
       "media": [],
       "path": "markdown/resources/wavelength-explainer.md"
+    }
+  ],
+  "stage_intros": [
+    {
+      "stage": 1,
+      "id": "beige-intro",
+      "slug": "beige-introduction",
+      "title": "What is Beige?",
+      "path": "markdown/01-beige/01-what-is-beige.md"
+    },
+    {
+      "stage": 2,
+      "id": "purple-intro",
+      "slug": "purple-introduction",
+      "title": "What is Purple?",
+      "path": "markdown/02-purple/01-what-is-purple.md"
+    },
+    {
+      "stage": 3,
+      "id": "red-intro",
+      "slug": "red-introduction",
+      "title": "What is Red?",
+      "path": "markdown/03-red/01-what-is-red.md"
+    },
+    {
+      "stage": 4,
+      "id": "blue-intro",
+      "slug": "blue-introduction",
+      "title": "What is Blue?",
+      "path": "markdown/04-blue/01-what-is-blue.md"
+    },
+    {
+      "stage": 5,
+      "id": "orange-intro",
+      "slug": "orange-introduction",
+      "title": "What is Orange?",
+      "path": "markdown/05-orange/01-what-is-orange.md"
+    },
+    {
+      "stage": 6,
+      "id": "green-intro",
+      "slug": "green-introduction",
+      "title": "What is Green?",
+      "path": "markdown/06-green/01-what-is-green.md"
+    },
+    {
+      "stage": 7,
+      "id": "yellow-intro",
+      "slug": "yellow-introduction",
+      "title": "What is Yellow?",
+      "path": "markdown/07-yellow/01-what-is-yellow.md"
+    },
+    {
+      "stage": 8,
+      "id": "teal-intro",
+      "slug": "teal-introduction",
+      "title": "What is Teal?",
+      "path": "markdown/08-teal/01-what-is-teal.md"
+    },
+    {
+      "stage": 9,
+      "id": "ultraviolet-intro",
+      "slug": "ultraviolet-introduction",
+      "title": "What is Ultraviolet?",
+      "path": "markdown/09-ultraviolet/01-what-is-ultraviolet.md"
+    },
+    {
+      "stage": 10,
+      "id": "clearlight-intro",
+      "slug": "clearlight-introduction",
+      "title": "What is Clear Light?",
+      "path": "markdown/10-clearlight/01-what-is-clear-light.md"
     }
   ]
 }

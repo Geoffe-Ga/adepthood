@@ -166,6 +166,25 @@ def test_vendored_content_pin_lists_real_chapters_and_resources() -> None:
     assert resources, "vendored manifest should list site resources"
 
 
+def test_vendored_content_pin_lists_stage_intros() -> None:
+    """The vendored content pin (course-cms-07, #723) carries stage_intros[].
+
+    Guards the activation this issue is for: a pin from before the content
+    repo shipped ``stage_intros[]`` (schema 1.0.0) would leave every stage's
+    intro card 404ing. Checks all 10 stages (not just stage 1) so a future
+    re-vendor that silently drops some stages' intros is caught, and
+    exercises ``read_intro_body`` end-to-end against the real vendored
+    Markdown, not a fixture.
+    """
+    repo = ContentRepository(_VENDORED_CONTENT_DIR)
+    for stage in range(1, 11):
+        intro = repo.get_stage_intro(stage)
+        assert intro is not None, f"vendored manifest should expose a stage {stage} intro"
+        body = repo.read_intro_body(stage)
+        assert body.body, f"read_intro_body({stage}) should return non-empty Markdown"
+        assert body.title == intro.title
+
+
 @pytest.mark.asyncio
 async def test_seed_content_populates_stage_one_from_vendored_manifest(
     db_session: AsyncSession,
