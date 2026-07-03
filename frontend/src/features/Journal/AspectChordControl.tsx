@@ -15,6 +15,7 @@ import { Text, TouchableOpacity, View } from 'react-native';
 
 import styles from './JournalEntry.styles';
 
+import { RadioGroup, RadioOption } from '@/components/RadioOption';
 import { STAGE_DISPLAY } from '@/features/Map/mapLayout';
 
 /** The controlled chord value: a primary Aspect and an optional secondary. */
@@ -47,31 +48,6 @@ export interface AspectChordControlProps {
   onChange: (_next: AspectChordValue) => void;
 }
 
-interface AspectChipProps {
-  option: AspectOption;
-  selected: boolean;
-  testID: string;
-  onPress: () => void;
-}
-
-/** A single Aspect chip; announces its selection state to screen readers. */
-function AspectChip({ option, selected, testID, onPress }: AspectChipProps): React.JSX.Element {
-  return (
-    <TouchableOpacity
-      style={[styles.aspectChordChip, selected && styles.aspectChordChipSelected]}
-      onPress={onPress}
-      accessibilityRole="radio"
-      accessibilityLabel={option.label}
-      accessibilityState={{ selected }}
-      testID={testID}
-    >
-      <Text style={[styles.aspectChordChipLabel, selected && styles.aspectChordChipLabelSelected]}>
-        {option.label}
-      </Text>
-    </TouchableOpacity>
-  );
-}
-
 interface AspectChipRowProps {
   prefix: string;
   selectedStage: number | null;
@@ -87,17 +63,21 @@ function AspectChipRow({
   onSelect,
 }: AspectChipRowProps): React.JSX.Element {
   return (
-    <View style={styles.aspectChordRow} accessibilityRole="radiogroup">
+    <RadioGroup style={styles.aspectChordRow}>
       {ASPECT_OPTIONS.filter((option) => option.stage !== omitStage).map((option) => (
-        <AspectChip
+        <RadioOption
           key={option.stage}
-          option={option}
+          label={option.label}
           selected={option.stage === selectedStage}
-          testID={`${prefix}-${option.stage}`}
           onPress={() => onSelect(option.stage)}
+          testID={`${prefix}-${option.stage}`}
+          style={styles.aspectChordChip}
+          selectedStyle={styles.aspectChordChipSelected}
+          labelStyle={styles.aspectChordChipLabel}
+          selectedLabelStyle={styles.aspectChordChipLabelSelected}
         />
       ))}
-    </View>
+    </RadioGroup>
   );
 }
 
