@@ -203,6 +203,11 @@ interface ClassificationPersist {
    * change has superseded it, else null.
    */
   changeClassification: (_tier: JournalClassification) => Promise<JournalClassification | null>;
+  /**
+   * Seed the last-persisted tier from a loaded entry so a failed re-tag reverts
+   * to the entry's real tier rather than the module default.
+   */
+  seedClassification: (_tier: JournalClassification) => void;
 }
 
 /**
@@ -234,7 +239,10 @@ function useClassificationPersist(
     },
     [entryIdRef],
   );
-  return { classificationRef, changeClassification };
+  const seedClassification = useCallback((tier: JournalClassification): void => {
+    classificationRef.current = tier;
+  }, []);
+  return { classificationRef, changeClassification, seedClassification };
 }
 
 interface ChordPersist {
@@ -245,6 +253,11 @@ interface ChordPersist {
    * later change has superseded it, else null.
    */
   changeChord: (_next: AspectChordValue) => Promise<AspectChordValue | null>;
+  /**
+   * Seed the last-persisted chord from a loaded entry so a failed re-tag reverts
+   * to the entry's real chord rather than the empty default.
+   */
+  seedChord: (_next: AspectChordValue) => void;
 }
 
 /**
@@ -279,7 +292,10 @@ function useChordPersist(entryIdRef: React.MutableRefObject<number | null>): Cho
     },
     [entryIdRef],
   );
-  return { chordRef, changeChord };
+  const seedChord = useCallback((next: AspectChordValue): void => {
+    chordRef.current = next;
+  }, []);
+  return { chordRef, changeChord, seedChord };
 }
 
 type TimerRef = React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
@@ -415,6 +431,33 @@ function useSaveRunner(refs: SaveRunnerRefs, setSaveState: (_state: SaveState) =
   );
 }
 
+/**
+ * Compose the tier + chord persisters: their refs (read by the writer), their
+ * seeders (for load), and error-surfacing change wrappers sharing the save hint.
+ */
+function usePersistControls(
+  entryIdRef: React.MutableRefObject<number | null>,
+  setSaveState: (_state: SaveState) => void,
+) {
+  const { classificationRef, changeClassification, seedClassification } =
+    useClassificationPersist(entryIdRef);
+  const { chordRef, changeChord, seedChord } = useChordPersist(entryIdRef);
+  const seedPersist = useCallback(
+    (tier: JournalClassification, chord: AspectChordValue): void => {
+      seedClassification(tier);
+      seedChord(chord);
+    },
+    [seedClassification, seedChord],
+  );
+  return {
+    classificationRef,
+    chordRef,
+    seedPersist,
+    persistClassification: useErrorSurfacingPersist(changeClassification, setSaveState),
+    persistChord: useErrorSurfacingPersist(changeChord, setSaveState),
+  };
+}
+
 /** Debounced create-then-update draft saver; tracks the save state. */
 function useDebouncedSave(
   routeEntryId: number | null,
@@ -432,8 +475,7 @@ function useDebouncedSave(
   // A weekly-prompt response is write-once; this guards against the debounce or
   // flush submitting it twice (the backend 409s on a duplicate week).
   const respondedRef = useRef(false);
-  const { classificationRef, changeClassification } = useClassificationPersist(entryIdRef);
-  const { chordRef, changeChord } = useChordPersist(entryIdRef);
+  const persist = usePersistControls(entryIdRef, setSaveState);
   // Refs so non-memoised inputs don't churn the save callbacks below.
   const onSavedRef = useRef(onSaved);
   const ctxRef = useRef(ctx);
@@ -451,8 +493,8 @@ function useDebouncedSave(
     {
       entryIdRef,
       respondedRef,
-      classificationRef,
-      chordRef,
+      classificationRef: persist.classificationRef,
+      chordRef: persist.chordRef,
       loadFailedRef,
       ctxRef,
       onSavedRef,
@@ -464,16 +506,13 @@ function useDebouncedSave(
   const setTyping = useCallback(() => setSaveState('typing'), []);
   const { save, flush } = useSaveTimer(run, timerRef, entryIdRef, delayMs, setTyping);
 
-  // A failed classification/chord PATCH surfaces the same error hint as a body save.
-  const persistClassification = useErrorSurfacingPersist(changeClassification, setSaveState);
-  const persistChord = useErrorSurfacingPersist(changeChord, setSaveState);
-
   return {
     saveState,
     save,
     flush,
-    changeClassification: persistClassification,
-    changeChord: persistChord,
+    changeClassification: persist.persistClassification,
+    changeChord: persist.persistChord,
+    seedPersist: persist.seedPersist,
   };
 }
 
@@ -521,6 +560,8 @@ interface EntryState {
   bodyRef: StrRef;
   /** Set (to {@link LOAD_ERROR_MESSAGE}) when loading an existing entry failed. */
   loadError: string | null;
+  /** Flips true once an existing entry's values have been applied to state. */
+  loaded: boolean;
 }
 
 /** The entry's editable state (title/body/status/tier) + one-time load-on-open. */
@@ -531,6 +572,7 @@ function useEntryState(routeEntryId: number | null, initialTitle: string): Entry
   const [classification, setClassification] = useState<JournalClassification>(DEFAULT_TIER);
   const [chord, setChord] = useState<AspectChordValue>(EMPTY_CHORD);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
   // Refs mirror the latest text so the change handlers stay referentially stable.
   const titleRef = useRef(initialTitle);
   const bodyRef = useRef('');
@@ -550,6 +592,8 @@ function useEntryState(routeEntryId: number | null, initialTitle: string): Entry
         primary: entry.primary_aspect ?? null,
         secondary: entry.secondary_aspect ?? null,
       });
+      // Signal the load so the persist refs can be seeded from these values.
+      setLoaded(true);
     }, []),
     useCallback(() => setLoadError(LOAD_ERROR_MESSAGE), []),
   );
@@ -568,6 +612,7 @@ function useEntryState(routeEntryId: number | null, initialTitle: string): Entry
     titleRef,
     bodyRef,
     loadError,
+    loaded,
   };
 }
 
@@ -607,6 +652,24 @@ function useChoiceHandlers(
   return { onChangeClassification, onChangeChord };
 }
 
+/**
+ * Seed the persist refs from a loaded entry exactly once, so a failed re-tag
+ * reverts to the entry's real tier/chord rather than the module default. The
+ * guard keeps later optimistic changes (which own the refs themselves) from
+ * being clobbered.
+ */
+function useSeedPersistOnLoad(
+  entry: Pick<EntryState, 'loaded' | 'classification' | 'chord'>,
+  seedPersist: (_tier: JournalClassification, _chord: AspectChordValue) => void,
+): void {
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (seededRef.current || !entry.loaded) return;
+    seededRef.current = true;
+    seedPersist(entry.classification, entry.chord);
+  }, [entry.loaded, entry.classification, entry.chord, seedPersist]);
+}
+
 /** Owns the entry's text + debounced draft autosave (create-then-update). */
 function useJournalAutosave(
   routeEntryId: number | null,
@@ -617,13 +680,9 @@ function useJournalAutosave(
 ): AutosaveApi {
   const entry = useEntryState(routeEntryId, initialTitle);
   const { titleRef, bodyRef } = entry;
-  const { saveState, save, flush, changeClassification, changeChord } = useDebouncedSave(
-    routeEntryId,
-    delayMs,
-    ctx,
-    entry.loadError != null,
-    onSaved,
-  );
+  const { saveState, save, flush, changeClassification, changeChord, seedPersist } =
+    useDebouncedSave(routeEntryId, delayMs, ctx, entry.loadError != null, onSaved);
+  useSeedPersistOnLoad(entry, seedPersist);
 
   const { onChangeTitle, onChangeBody } = useFieldHandlers(
     titleRef,
