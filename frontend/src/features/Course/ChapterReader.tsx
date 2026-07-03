@@ -164,6 +164,25 @@ function fetchBody(source: ChapterReaderSource): Promise<ContentBody> {
   }
 }
 
+/**
+ * Stable primitive identity for a source.  Callers construct ``source`` as a
+ * fresh inline literal on every render, so keying the fetch effect on the
+ * object by reference re-runs it — and flashes the body back to a spinner — on
+ * every parent re-render (e.g. mark-as-read).  Reducing the source to its
+ * discriminants lets the effect fire only when the chapter actually changes,
+ * and does so inside the hook so no caller can reintroduce the defect.
+ */
+function sourceKey(source: ChapterReaderSource): string {
+  switch (source.kind) {
+    case 'content':
+      return `content:${source.id}`;
+    case 'resource':
+      return `resource:${source.slug}`;
+    case 'intro':
+      return `intro:${source.stageNumber}`;
+  }
+}
+
 function useContentBody(source: ChapterReaderSource): {
   body: ContentBody | null;
   loading: boolean;
@@ -175,6 +194,11 @@ function useContentBody(source: ChapterReaderSource): {
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const isMountedRef = useRef(true);
+  // Hold the latest ``source`` so the fetch effect can read it without taking
+  // the (referentially unstable) object as a dependency — see ``sourceKey``.
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
+  const fetchKey = sourceKey(source);
 
   useEffect(
     () => () => {
@@ -192,7 +216,7 @@ function useContentBody(source: ChapterReaderSource): {
     // (set by ``AuthContext`` at sign-in), so the bearer header is
     // attached automatically.  Same pattern as ``stagesApi.listAll()``
     // and the other "no explicit token" callers in the codebase.
-    const promise = fetchBody(source);
+    const promise = fetchBody(sourceRef.current);
 
     promise
       .then((result) => {
@@ -207,7 +231,7 @@ function useContentBody(source: ChapterReaderSource): {
         if (!isMountedRef.current) return;
         setLoading(false);
       });
-  }, [source, refreshKey]);
+  }, [fetchKey, refreshKey]);
 
   const retry = useCallback(() => setRefreshKey((n) => n + 1), []);
   return { body, loading, error, retry };
