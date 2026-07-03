@@ -21,7 +21,7 @@ const VALID_WHEEL: WheelBalance = {
   aspects: [
     { stage_number: 1, aspect: 'Agency', fullness: 0.1 },
     { stage_number: 2, aspect: 'Receptivity', fullness: 0.2 },
-    { stage_number: 3, aspect: 'Self-Interest', fullness: 0.85 },
+    { stage_number: 3, aspect: 'Self-Love', fullness: 0.85 },
     { stage_number: 4, aspect: 'Community', fullness: 0.0 },
     { stage_number: 5, aspect: 'Intellectual', fullness: 0.5 },
     { stage_number: 6, aspect: 'Embodied', fullness: 0.6 },
@@ -47,7 +47,7 @@ describe('wheel.get', () => {
     expect(result.aspects).toHaveLength(10);
     expect(result.aspects[2]?.stage_number).toBe(3);
     expect(result.aspects[2]?.fullness).toBe(0.85);
-    expect(result.aspects[2]?.aspect).toBe('Self-Interest');
+    expect(result.aspects[2]?.aspect).toBe('Self-Love');
   });
 
   test('surfaces a 401 as ApiError with status 401', async () => {

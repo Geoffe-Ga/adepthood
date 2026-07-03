@@ -45,7 +45,7 @@ import {
   unlockTimeline,
 } from './journeyNarrative';
 import styles from './Map.styles';
-import { MAP_ROWS, STAGE_DISPLAY, TITLE_BY_STAGE } from './mapLayout';
+import { labelCorner, MAP_ROWS, STAGE_DISPLAY, TITLE_BY_STAGE } from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
 import { stageService, isStageUnlocked, isEndOfCycle } from './services/stageService';
 import { isLeftReturning, STAGE_COUNT, type StageData } from './stageData';
@@ -86,15 +86,26 @@ const LockGlyph = (): React.JSX.Element => (
   </View>
 );
 
+/** Aspect label / unlock estimate corner within a center cell. */
+type LabelCorner = 'left' | 'right';
+
 /**
  * "Unlocks in N days" / unlock-condition copy for a locked stage, computed from
  * the existing calendar drip (no new backend). Falls back to the condition when
- * no program anchor is set.
+ * no program anchor is set. Its text aligns to the block's corner so the copy
+ * reads away from the wave strand.
  */
-const UnlockTimeline = ({ stageNumber }: { stageNumber: number }): React.JSX.Element => {
+const UnlockTimeline = ({
+  stageNumber,
+  corner,
+}: {
+  stageNumber: number;
+  corner: LabelCorner;
+}): React.JSX.Element => {
   const daysUntil = useDaysUntilStage(stageNumber);
+  const alignStyle = corner === 'left' ? styles.unlockTimelineLeft : styles.unlockTimelineRight;
   return (
-    <Text style={styles.unlockTimeline} testID={`stage-unlock-${stageNumber}`}>
+    <Text style={[styles.unlockTimeline, alignStyle]} testID={`stage-unlock-${stageNumber}`}>
       {unlockTimeline(daysUntil)}
     </Text>
   );
@@ -145,19 +156,42 @@ const StageTextBlock = ({
 // --- Center cell: label/title, lock, badge (the -1 tap); the wave overlay now
 // carries the directional/polarity read behind these cells ----------------
 
-const CenterContent = ({ display }: { display: StageDisplay }): React.JSX.Element => {
-  const title = TITLE_BY_STAGE[display.stageNumber];
+// Corner-hugging Aspect-label block: the arrow word plus, when locked, its
+// unlock estimate, grouped against the corner opposite the wave's return pole.
+const AspectLabelBlock = ({
+  display,
+  locked,
+}: {
+  display: StageDisplay;
+  locked: boolean;
+}): React.JSX.Element => {
+  const corner = labelCorner(display.stageNumber);
+  const blockStyle = corner === 'left' ? styles.labelBlockLeft : styles.labelBlockRight;
   return (
-    <>
-      {title ? (
-        <Text style={styles.titleText}>{title}</Text>
-      ) : display.arrowLabel ? (
-        <View style={styles.centerLabelRow}>
-          <Text style={styles.arrowLabelText}>{display.arrowLabel}</Text>
-        </View>
-      ) : null}
-    </>
+    <View style={blockStyle} testID={`aspect-label-${display.stageNumber}`}>
+      <Text style={styles.arrowLabelText}>{display.arrowLabel}</Text>
+      {locked ? <UnlockTimeline stageNumber={display.stageNumber} corner={corner} /> : null}
+    </View>
   );
+};
+
+// Title rows (9, 10) keep their centered serif heading; every other stage shows
+// its corner-hugging Aspect-label block instead of a centered word.
+const CenterContent = ({
+  display,
+  locked,
+}: {
+  display: StageDisplay;
+  locked: boolean;
+}): React.JSX.Element | null => {
+  const title = TITLE_BY_STAGE[display.stageNumber];
+  if (title) {
+    return <Text style={styles.titleText}>{title}</Text>;
+  }
+  if (!display.arrowLabel) {
+    return null;
+  }
+  return <AspectLabelBlock display={display} locked={locked} />;
 };
 
 interface StageCenterCellProps extends StageCellProps {
@@ -190,9 +224,8 @@ const StageCenterCell = ({
     accessibilityLabel={`${stage.title} - ${stage.subtitle}`}
   >
     {isCurrent ? <YouAreHereMarker /> : null}
-    <CenterContent display={display} />
+    <CenterContent display={display} locked={locked} />
     {locked ? <LockGlyph /> : null}
-    {locked ? <UnlockTimeline stageNumber={display.stageNumber} /> : null}
     {stage.progress >= FULL_PROGRESS ? (
       <View style={styles.completedBadge} testID={`stage-complete-${stage.stageNumber}`}>
         <Text style={styles.completedBadgeText}>✓</Text>

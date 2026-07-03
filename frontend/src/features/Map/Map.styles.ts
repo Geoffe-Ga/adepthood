@@ -151,17 +151,21 @@ const styles = StyleSheet.create({
     color: colors.text.light,
     letterSpacing: 0.5,
   },
-  centerLabelRow: {
-    flexDirection: 'row',
-    alignItems: CENTER,
-    justifyContent: CENTER,
-    gap: spacing(0.5),
+  // Aspect-label block hugging a center-cell corner (opposite the wave's
+  // return pole). ``alignSelf`` escapes the cell's centering so the word +
+  // its unlock estimate group against the edge, in flow (no absolute overlay).
+  labelBlockLeft: {
+    alignSelf: 'flex-start',
+    alignItems: 'flex-start',
+  },
+  labelBlockRight: {
+    alignSelf: 'flex-end',
+    alignItems: 'flex-end',
   },
   arrowLabelText: {
     fontWeight: '700',
     fontSize: 12,
     color: ink.soft,
-    textAlign: CENTER,
     flexShrink: 1,
   },
   // Responsive title carried in the top stage rows' own grid cells (no fixed
@@ -194,17 +198,21 @@ const styles = StyleSheet.create({
   locked: {
     opacity: 0.4,
   },
-  // Unlock timeline stacked beneath the lock glyph ("Unlocks in N days").
-  // ``alignSelf: 'stretch'`` restores the full-width box the old absolute
-  // ``left: 0, right: 0`` gave, so ``textAlign: CENTER`` still centers the
-  // longer multi-line unlock-condition copy across the whole cell.
+  // Unlock estimate ("Unlocks in N days") grouped under the Aspect word inside
+  // the corner-hugging label block. Its text aligns to the same corner as the
+  // block via the left/right variants below, so the copy reads away from the
+  // wave strand rather than spanning and centering across the cell.
   unlockTimeline: {
-    alignSelf: 'stretch',
     marginTop: spacing(0.25),
     fontSize: 9,
     color: ink.muted,
-    textAlign: CENTER,
     paddingHorizontal: spacing(0.25),
+  },
+  unlockTimelineLeft: {
+    textAlign: 'left',
+  },
+  unlockTimelineRight: {
+    textAlign: 'right',
   },
 
   // --- Stage-completion celebration banner ----------------------------------

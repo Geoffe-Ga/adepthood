@@ -1,7 +1,13 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-import { GRID_COLUMN_FLEX, MAP_ROWS, MAP_TITLE_LINES, STAGE_DISPLAY } from '../mapLayout';
-import { STAGE_COUNT } from '../stageData';
+import {
+  GRID_COLUMN_FLEX,
+  labelCorner,
+  MAP_ROWS,
+  MAP_TITLE_LINES,
+  STAGE_DISPLAY,
+} from '../mapLayout';
+import { isLeftReturning, STAGE_COUNT } from '../stageData';
 
 const HEX_COLOR = /^#[\da-f]{6}$/i;
 const ALL_STAGES = Array.from({ length: STAGE_COUNT }, (_, i) => STAGE_COUNT - i);
@@ -75,5 +81,27 @@ describe('mapLayout', () => {
 
   it('keeps the shared column-flex weights the wave geometry also depends on', () => {
     expect(GRID_COLUMN_FLEX).toEqual({ left: 2, center: 2, right: 1 });
+  });
+
+  it('renames stage 3 arrow label from Self-Interest to Self-Love', () => {
+    expect(STAGE_DISPLAY[3]?.arrowLabel).toBe('Self-Love');
+  });
+
+  it('hugs odd stages left and even stages right', () => {
+    expect(labelCorner(1)).toBe('left');
+    expect(labelCorner(2)).toBe('right');
+    expect(labelCorner(3)).toBe('left');
+    expect(labelCorner(4)).toBe('right');
+    expect(labelCorner(5)).toBe('left');
+    expect(labelCorner(6)).toBe('right');
+    expect(labelCorner(7)).toBe('left');
+    expect(labelCorner(8)).toBe('right');
+  });
+
+  it('always hugs the corner opposite the wave return pole', () => {
+    for (let stageNumber = 1; stageNumber <= 8; stageNumber += 1) {
+      const expected = isLeftReturning(stageNumber) ? 'right' : 'left';
+      expect(labelCorner(stageNumber)).toBe(expected);
+    }
   });
 });

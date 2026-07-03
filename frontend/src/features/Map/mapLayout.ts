@@ -15,6 +15,8 @@
  * match the supplied spiral PNG rather than the app-wide spiral-dynamics swatches.
  */
 
+import { isLeftReturning } from './stageData';
+
 /** Flex weights of each stage row's three cells (left / center / right). */
 export const GRID_COLUMN_FLEX = { left: 2, center: 2, right: 1 } as const;
 
@@ -122,7 +124,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     persona: 'Dominator',
     descriptor: 'Power',
     practice: 'Confidence Meditation',
-    arrowLabel: 'Self-Interest',
+    arrowLabel: 'Self-Love',
     textColor: '#b14a3a',
   },
   2: {
@@ -156,3 +158,12 @@ export const MAP_ROWS: readonly MapRow[] = [
   { rightLabel: 'Love', rightLabelLines: ['Love'], stageNumbers: [4, 3] },
   { rightLabel: 'Yes-And-Ness', rightLabelLines: ['Yes-And-', 'Ness'], stageNumbers: [2, 1] },
 ];
+
+/**
+ * Which corner of the center panel a stage's Aspect label hugs. The label sits
+ * on the corner opposite the wave's return pole, so the word never lands under
+ * the strand: even (left-returning) stages hug the right corner, odd stages the
+ * left. Title stages (9, 10) carry no arrow label and never call this.
+ */
+export const labelCorner = (stageNumber: number): 'left' | 'right' =>
+  isLeftReturning(stageNumber) ? 'right' : 'left';
