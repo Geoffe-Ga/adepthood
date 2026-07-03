@@ -219,7 +219,7 @@ describe('useMettaReturn', () => {
     expect(result.current.arc?.focus).toBe('self');
   });
 
-  it('pause calls the API and updates arc.paused optimistically, reverting on error', async () => {
+  it('pause surfaces the API error and leaves the arc unchanged', async () => {
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: arc({ paused: false }) }));
     mockPause.mockRejectedValue(new Error('network error'));
     const { result } = renderHook(() => useMettaReturn());
