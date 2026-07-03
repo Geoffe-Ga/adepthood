@@ -44,6 +44,7 @@ import {
   rankedStats,
   unlockTimeline,
 } from './journeyNarrative';
+import { MagnifierLens } from './MagnifierLens';
 import styles from './Map.styles';
 import {
   fittedTitleFontSize,
@@ -117,17 +118,10 @@ const UnlockTimeline = ({
   );
 };
 
-const YouAreHereMarker = (): React.JSX.Element => (
-  <View style={styles.youAreHere} testID="you-are-here">
-    <Text style={styles.youAreHereText}>YOU ARE HERE</Text>
-  </View>
-);
-
 interface StageCellProps {
   stage: StageData;
   display: StageDisplay;
   locked: boolean;
-  isCurrent: boolean;
   onPress: (_stage: StageData) => void;
 }
 
@@ -250,7 +244,6 @@ const StageCenterCell = ({
   stage,
   display,
   locked,
-  isCurrent,
   onPress,
   rowIndex,
   showTopDivider,
@@ -263,14 +256,12 @@ const StageCenterCell = ({
       showTopDivider ? styles.horizontalDivider : null,
       isLeftReturning(display.stageNumber) ? styles.cellFeminine : styles.cellMasculine,
       locked ? styles.locked : null,
-      isCurrent ? styles.cellCurrent : null,
     ]}
     onPress={() => onPress(stage)}
     onLayout={(e) => onCellLayout(display.stageNumber, rowIndex, e)}
     accessibilityRole="button"
     accessibilityLabel={`${stage.title} - ${stage.subtitle}`}
   >
-    {isCurrent ? <YouAreHereMarker /> : null}
     <CenterContent display={display} locked={locked} />
     {locked ? <LockGlyph /> : null}
     {stage.progress >= FULL_PROGRESS ? (
@@ -323,7 +314,6 @@ const RowLeftColumn = ({
         stage={stage}
         display={display}
         locked={!isStageUnlocked(stage, currentStage)}
-        isCurrent={stage.stageNumber === currentStage}
         fullness={fullnessByStage[stage.stageNumber] ?? THIN_FULLNESS}
         // A row's top stage sits on the row boundary the group row already
         // rules; only the stacked stage(s) below it carry the within-row line.
@@ -355,7 +345,6 @@ const RowCenterColumn = ({
         stage={stage}
         display={display}
         locked={!isStageUnlocked(stage, currentStage)}
-        isCurrent={stage.stageNumber === currentStage}
         onPress={onPress}
         rowIndex={rowIndex}
         // Match the left column: only stages stacked below a row's top stage
@@ -787,7 +776,13 @@ interface MapGridProps {
   lookup: StageLookup;
   fullnessByStage: FullnessLookup;
   currentStage: number | null;
+  /** The stage the magnifier lens rests on. */
+  focusedStage: number;
   onSelectStage: (_stage: StageData) => void;
+  /** A lens drag released over a new stage settles focus there. */
+  onSettleStage: (_stageNumber: number) => void;
+  /** A tap on the lens opens the focused stage's detail modal. */
+  onOpenStage: (_stageNumber: number) => void;
 }
 
 // Optional decorative backdrop. The grid is fully legible without it (#766), so
@@ -869,14 +864,21 @@ const useGridSize = (): [GridSize, (_event: LayoutChangeEvent) => void] => {
   return [size, onLayout];
 };
 
+/** Smallest measured grid extent the lens can meaningfully float over. */
+const MIN_LENS_GRID_EXTENT = 1;
+
 const MapGrid = ({
   lookup,
   fullnessByStage,
   currentStage,
+  focusedStage,
   onSelectStage,
+  onSettleStage,
+  onOpenStage,
 }: MapGridProps): React.JSX.Element => {
   const [size, onLayout] = useGridSize();
   const { anchors, onRowLayout, onCellLayout } = useStageAnchors(size.height);
+  const lensReady = size.width >= MIN_LENS_GRID_EXTENT && size.height >= MIN_LENS_GRID_EXTENT;
   return (
     <View style={styles.grid} testID="map-grid" onLayout={onLayout}>
       <WaveOverlay width={size.width} height={size.height} anchors={anchors} />
@@ -893,6 +895,17 @@ const MapGrid = ({
           onCellLayout={onCellLayout}
         />
       ))}
+      {lensReady ? (
+        <MagnifierLens
+          gridWidth={size.width}
+          gridHeight={size.height}
+          anchors={anchors}
+          focusedStage={focusedStage}
+          currentStage={currentStage}
+          onSettleStage={onSettleStage}
+          onOpenStage={onOpenStage}
+        />
+      ) : null}
     </View>
   );
 };
@@ -927,6 +940,59 @@ const useStageNavigation = (onBeforeNavigate: () => void) => {
     },
     [navigation, onBeforeNavigate],
   );
+};
+
+/** The magnifier-lens focus state + the tap semantics it drives. */
+interface LensFocus {
+  focusedStage: number;
+  setFocusedStage: (_stageNumber: number) => void;
+  /** Stage tap: glide the lens there, or open the modal if already focused. */
+  handleSelectStage: (_stage: StageData) => void;
+  /** Lens tap: open the focused stage's modal. */
+  handleOpenStage: (_stageNumber: number) => void;
+}
+
+/**
+ * Own where the magnifier lens rests. It seeds on the live stage, glides
+ * wherever the user sends it (stage taps, lens drags), and comes home when
+ * the live stage actually advances (a new week, a new cycle) — but never on
+ * mount, so a user-directed glide is not undone. Tapping the stage the lens
+ * already rests on opens its detail modal — the same read the lens's own tap
+ * gives.
+ */
+const useLensFocus = (
+  currentStage: number,
+  lookup: StageLookup,
+  openStage: (_stage: StageData) => void,
+): LensFocus => {
+  const [focusedStage, setFocusedStage] = useState<number>(currentStage);
+  const prevCurrentStageRef = useRef(currentStage);
+
+  useEffect(() => {
+    if (prevCurrentStageRef.current !== currentStage) setFocusedStage(currentStage);
+    prevCurrentStageRef.current = currentStage;
+  }, [currentStage]);
+
+  const handleSelectStage = useCallback(
+    (stage: StageData) => {
+      if (stage.stageNumber === focusedStage) {
+        openStage(stage);
+        return;
+      }
+      setFocusedStage(stage.stageNumber);
+    },
+    [focusedStage, openStage],
+  );
+
+  const handleOpenStage = useCallback(
+    (stageNumber: number) => {
+      const stage = lookup[stageNumber];
+      if (stage) openStage(stage);
+    },
+    [lookup, openStage],
+  );
+
+  return { focusedStage, setFocusedStage, handleSelectStage, handleOpenStage };
 };
 
 /** Highest stage number whose progress has reached 100%, or 0 when none. */
@@ -990,6 +1056,7 @@ interface MapContentProps {
   lookup: StageLookup;
   fullnessByStage: FullnessLookup;
   currentStage: number;
+  focusedStage: number;
   cycleNumber: number;
   showBeginAgain: boolean;
   beginning: boolean;
@@ -999,11 +1066,13 @@ interface MapContentProps {
   onRefresh: () => void;
   onBeginAgain: () => void;
   onSelectStage: (_stage: StageData) => void;
+  onSettleStage: (_stageNumber: number) => void;
+  onOpenStage: (_stageNumber: number) => void;
   onCloseModal: () => void;
   onNavigate: (_screen: NavTarget, _stage: StageData) => void;
 }
 
-/** The rendered Map: spiral grid + banners + stage modal. */
+/** The rendered Map: spiral grid + magnifier lens + banners + stage modal. */
 const MapContent = (props: MapContentProps): React.JSX.Element => (
   <View style={styles.container}>
     <MapBackdrop />
@@ -1012,7 +1081,10 @@ const MapContent = (props: MapContentProps): React.JSX.Element => (
       lookup={props.lookup}
       fullnessByStage={props.fullnessByStage}
       currentStage={props.currentStage}
+      focusedStage={props.focusedStage}
       onSelectStage={props.onSelectStage}
+      onSettleStage={props.onSettleStage}
+      onOpenStage={props.onOpenStage}
     />
     {props.showBeginAgain && (
       <BeginAgainBlock onBeginAgain={props.onBeginAgain} beginning={props.beginning} />
@@ -1062,6 +1134,7 @@ const MapScreen = (): React.JSX.Element => {
   const handleCloseModal = useCallback(() => setActiveStage(null), []);
   const handleNavigate = useStageNavigation(handleCloseModal);
   const celebration = useStageCompletionCelebration(stages, lookup);
+  const lens = useLensFocus(currentStage, lookup, setActiveStage);
 
   if (loading && stages.length === 0) return <MapLoading />;
   if (error && stages.length === 0) return <MapError message={error} />;
@@ -1071,6 +1144,7 @@ const MapScreen = (): React.JSX.Element => {
       lookup={lookup}
       fullnessByStage={fullnessByStage}
       currentStage={currentStage}
+      focusedStage={lens.focusedStage}
       cycleNumber={cycleNumber}
       showBeginAgain={isEndOfCycle(lookup, currentStage)}
       beginning={beginning}
@@ -1079,7 +1153,9 @@ const MapScreen = (): React.JSX.Element => {
       celebration={celebration}
       onRefresh={handleRefresh}
       onBeginAgain={handleBeginAgain}
-      onSelectStage={setActiveStage}
+      onSelectStage={lens.handleSelectStage}
+      onSettleStage={lens.setFocusedStage}
+      onOpenStage={lens.handleOpenStage}
       onCloseModal={handleCloseModal}
       onNavigate={handleNavigate}
     />

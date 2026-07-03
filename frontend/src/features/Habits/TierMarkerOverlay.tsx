@@ -5,6 +5,7 @@ import { TierStar } from '../../components/TierStar';
 
 import { centeredTranslateX, tooltipBoxStyle, type TierType } from './goalMarker';
 import { clampPercentage, getTierColor } from './HabitUtils';
+import { longPressGestureStyle } from './longPressGestureStyle';
 
 /**
  * One tier marker's render spec: which tier, where it sits on the bar
@@ -45,6 +46,7 @@ const markerContainerStyle = (
     transform: [{ translateX: centeredTranslateX(clamped, starSize) }],
     zIndex,
     alignItems: 'center',
+    ...longPressGestureStyle,
   };
 };
 

@@ -157,16 +157,48 @@ const styles = StyleSheet.create({
   cellMasculine: {
     backgroundColor: 'transparent',
   },
-  // Brighter "you are here" current-stage marker: a thicker accent halo +
-  // recessed warm fill so the live stage reads at a glance.
-  cellCurrent: {
-    borderWidth: 3,
+  // --- The glass magnifier lens (the "you are here" box, grown up) ----------
+  // A translucent pill floating over the center column. Width / height /
+  // borderRadius and its transform are computed per-layout in the component;
+  // here lives only the glass treatment itself.
+  magnifier: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    borderWidth: 2,
     borderColor: accent.strong,
-    borderRadius: radius.md,
-    backgroundColor: surface.desk,
+    backgroundColor: colors.mystical.glowLight,
+    alignItems: CENTER,
+    justifyContent: CENTER,
     ...shadows.medium,
   },
-  // "You are here" pill stacked in flow above the current stage's label.
+  // Clipping bowl for the magnified artwork + frost wash; radius set inline to
+  // match the pill so the magnified wave never bleeds past the glass edge.
+  magnifierClip: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: 'hidden',
+  },
+  // Frost wash that rises while the lens is in motion (the "blur" read on
+  // native; the web build adds a true backdrop blur on the pill itself).
+  magnifierFrost: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.mystical.transparentLight,
+  },
+  magnifierCaption: {
+    alignItems: CENTER,
+    paddingHorizontal: spacing(1),
+  },
+  magnifierHeadline: {
+    fontFamily: editorialType.serif,
+    fontSize: 16,
+    fontWeight: '700',
+    color: ink.primary,
+  },
+  magnifierDetail: {
+    fontSize: 10,
+    color: ink.soft,
+  },
+  // "You are here" chip riding the lens when it rests on the current stage.
   youAreHere: {
     marginBottom: spacing(0.25),
     paddingVertical: spacing(0.25),

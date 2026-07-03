@@ -34,6 +34,13 @@ jest.mock('react-native-safe-area-context', () =>
 jest.mock('../hooks/useWheelBalance', () =>
   jest.requireActual('./mapTestHarness').mockWheelBalanceModule(),
 );
+// Reduced-motion-safe path: the magnifier lens repositions instantly instead
+// of gliding, and the hook's async AccessibilityInfo read never resolves
+// outside act(). The glide/frost animation paths are covered in
+// MagnifierLens.test.tsx under fake timers.
+jest.mock('@/hooks/useReducedMotion', () => ({
+  useReducedMotion: () => true,
+}));
 jest.mock('../../../store/useProgramProgression', () =>
   jest.requireActual('./mapTestHarness').mockProgramProgressionModule(),
 );
@@ -152,6 +159,66 @@ describe('MapScreen', () => {
       tree.root.findByProps({ testID: 'modal-overlay' }).props.onPress();
     });
     expect(() => tree.root.findByProps({ testID: 'stage-modal' })).toThrow();
+  });
+
+  // --- magnifier lens interaction -----------------------------------------
+
+  it('first tap on a non-focused stage glides the lens there without opening the modal', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-3-0' }).props.onPress();
+    });
+    // No modal yet — the tap moved the lens instead.
+    expect(() => tree.root.findByProps({ testID: 'stage-modal' })).toThrow();
+    // The lens caption now reads the tapped stage's Aspect word.
+    const headline = tree.root.findByProps({ testID: 'magnifier-headline' });
+    expect(headline.props.children).toBe('Self-Love');
+    // And the chip hides, since the lens left the current stage.
+    expect(tree.root.findAll((n: TestNode) => n.props.testID === 'you-are-here')).toHaveLength(0);
+  });
+
+  it('second tap on the now-focused stage opens its modal', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-3-0' }).props.onPress();
+    });
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-3-1' }).props.onPress();
+    });
+    expect(tree.root.findByProps({ testID: 'stage-modal' })).toBeTruthy();
+  });
+
+  it('tapping the lens itself opens the focused stage modal', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    const lens = tree.root.findByProps({ testID: 'map-magnifier' });
+    const touch = { nativeEvent: { pageX: 150, pageY: 570 } };
+    act(() => {
+      lens.props.onResponderGrant(touch);
+      lens.props.onResponderRelease(touch);
+    });
+    expect(tree.root.findByProps({ testID: 'stage-modal' })).toBeTruthy();
+  });
+
+  it('a lens drag released over another stage settles focus there', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    const lens = tree.root.findByProps({ testID: 'map-magnifier' });
+    // Stage 1 rests near y=570 (0.95 * 600); stage 3's band center is y=450.
+    act(() => {
+      lens.props.onResponderGrant({ nativeEvent: { pageX: 150, pageY: 570 } });
+      lens.props.onResponderMove({ nativeEvent: { pageX: 150, pageY: 450 } });
+      lens.props.onResponderRelease({ nativeEvent: { pageX: 150, pageY: 450 } });
+    });
+    const headline = tree.root.findByProps({ testID: 'magnifier-headline' });
+    expect(headline.props.children).toBe('Self-Love');
+    // The settled stage now opens on a single stage tap (it is focused).
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-3-0' }).props.onPress();
+    });
+    expect(tree.root.findByProps({ testID: 'stage-modal' })).toBeTruthy();
   });
 
   it('renders connection lines between adjacent stages', () => {
@@ -531,11 +598,40 @@ describe('MapScreen center-cell overlay layout', () => {
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
 
-  it('you-are-here pill is laid out in flow (not absolutely positioned)', () => {
+  const fireOverlayGridLayout = (tree: ReturnType<typeof create>) => {
+    act(() => {
+      tree.root.findByProps({ testID: 'map-grid' }).props.onLayout({
+        nativeEvent: { layout: { width: 300, height: 600 } },
+      });
+    });
+  };
+
+  it('you-are-here chip rides the magnifier lens, not the center cell', () => {
     const tree = create(<MapScreen />);
-    const pill = tree.root.findByProps({ testID: 'you-are-here' });
-    const flat = StyleSheet.flatten(pill.props.style) as { position?: string };
-    expect(flat.position).not.toBe('absolute');
+    // Before the grid reports a size there is no lens (and no chip).
+    expect(tree.root.findAll((n: TestNode) => n.props.testID === 'you-are-here')).toHaveLength(0);
+    fireOverlayGridLayout(tree);
+    const lens = tree.root.findByProps({ testID: 'map-magnifier' });
+    expect(lens.findByProps({ testID: 'you-are-here' })).toBeTruthy();
+    // The chip no longer stacks inside the current stage's center cell.
+    const cell = tree.root.findByProps({ testID: 'stage-hotspot-1-1' });
+    expect(cell.findAll((n: TestNode) => n.props.testID === 'you-are-here')).toHaveLength(0);
+  });
+
+  it('the magnifier lens floats absolutely over the grid as a glass pill', () => {
+    const tree = create(<MapScreen />);
+    fireOverlayGridLayout(tree);
+    const lens = tree.root.findByProps({ testID: 'map-magnifier' });
+    const flat = StyleSheet.flatten(lens.props.style) as {
+      position?: string;
+      borderRadius?: number;
+      height?: number;
+    };
+    expect(flat.position).toBe('absolute');
+    // Full pill: radius is half the lens height.
+    expect(flat.borderRadius).toBe((flat.height ?? 0) / 2);
+    // The glass magnifies the wave: a second, prefixed copy of the overlay.
+    expect(lens.findByProps({ testID: 'magnifier-map-wave' })).toBeTruthy();
   });
 
   it('locked center cell renders the unlock countdown in flow (not absolutely positioned)', () => {
@@ -613,7 +709,9 @@ describe('MapScreen center-cell overlay layout', () => {
     expect(styles.stageLines.flex).toBe(1);
   });
 
-  it('stacks the pill above the label and the countdown above the lock', () => {
+  // The YOU ARE HERE pill now rides the magnifier lens, so the center cell of
+  // a locked stage only needs to keep the countdown above its padlock.
+  it('stacks the countdown above the lock in a locked center cell', () => {
     mockMapState.daysUntilStage = 42;
     const tree = create(<MapScreen />);
     const textOrder = (testID: string): string[] =>
@@ -622,12 +720,7 @@ describe('MapScreen center-cell overlay layout', () => {
         .findAll((node: TestNode) => typeof node.props.children === 'string')
         .map((node: TestNode) => node.props.children as string);
 
-    // Current stage 1: the pill renders before its centered label ('Agency').
-    const currentText = textOrder('stage-hotspot-1-1');
-    expect(currentText.indexOf('YOU ARE HERE')).toBeLessThan(currentText.indexOf('Agency'));
-    expect(currentText.indexOf('YOU ARE HERE')).toBeGreaterThanOrEqual(0);
-
-    // Locked stage 8: the countdown copy now renders before the lock glyph.
+    // Locked stage 8: the countdown copy renders before the lock glyph.
     const lockedText = textOrder('stage-hotspot-8-1');
     const countdownIndex = lockedText.findIndex((text) => text.startsWith('Unlocks'));
     expect(countdownIndex).toBeGreaterThanOrEqual(0);
