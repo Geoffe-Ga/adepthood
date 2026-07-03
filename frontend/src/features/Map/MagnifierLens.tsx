@@ -268,7 +268,8 @@ const useLensDrag = (params: LensDragParams): LensDragHandlers => {
  * pill's own center (see ``magnifierTransform`` for the derivation).
  */
 const magnifiedContentStyle = (
-  motion: LensMotion,
+  center: Animated.ValueXY,
+  frost: Animated.Value,
   frame: LensFrame,
   gridWidth: number,
   gridHeight: number,
@@ -281,7 +282,7 @@ const magnifiedContentStyle = (
     left: 0,
     width: gridWidth,
     height: gridHeight,
-    opacity: motion.frost.interpolate({
+    opacity: frost.interpolate({
       inputRange: [0, 1],
       outputRange: [1, MOTION_CONTENT_OPACITY],
     }),
@@ -289,13 +290,13 @@ const magnifiedContentStyle = (
       {
         translateX: Animated.add(
           new Animated.Value(t.kx),
-          Animated.multiply(motion.center.x, negativeScale),
+          Animated.multiply(center.x, negativeScale),
         ),
       },
       {
         translateY: Animated.add(
           new Animated.Value(t.ky),
-          Animated.multiply(motion.center.y, negativeScale),
+          Animated.multiply(center.y, negativeScale),
         ),
       },
       { scale: MAGNIFICATION },
@@ -317,9 +318,14 @@ const LensGlass = ({
   gridHeight: number;
   anchors: StageAnchors;
 }): React.JSX.Element => {
+  const contentStyle = useMemo(
+    () => magnifiedContentStyle(motion.center, motion.frost, frame, gridWidth, gridHeight),
+    [motion.center, motion.frost, frame, gridWidth, gridHeight],
+  );
+
   return (
     <View style={[styles.magnifierClip, { borderRadius: frame.radius }]} pointerEvents="none">
-      <Animated.View style={magnifiedContentStyle(motion, frame, gridWidth, gridHeight)}>
+      <Animated.View style={contentStyle}>
         <WaveOverlay
           width={gridWidth}
           height={gridHeight}
