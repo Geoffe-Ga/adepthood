@@ -44,6 +44,14 @@ jest.mock('../SearchBar', () => {
   return { __esModule: true, default: Stub };
 });
 
+// The stat-tile row owns its own stores, hooks, and dedicated suite; stub it so
+// the shelf tests stay focused on list/prompt/search behavior.
+jest.mock('../StatTileRow', () => {
+  const { View } = require('react-native');
+  const Stub = () => <View testID="stat-tile-row-stub" />;
+  return { __esModule: true, default: Stub };
+});
+
 const JournalShelfScreen = require('../JournalShelfScreen').default;
 
 function entry(id: number, overrides: Partial<JournalMessage> = {}): JournalMessage {

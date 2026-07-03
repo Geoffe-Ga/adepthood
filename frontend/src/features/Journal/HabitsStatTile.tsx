@@ -1,0 +1,99 @@
+/**
+ * The journal "Today's habits" stat tile: a compact summary of how many of the
+ * user's unlocked habits are done today, with graceful loading, empty, and
+ * still-locked states. Loads habits on mount and taps through to the Habits tab.
+ */
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import { useNavigation } from '@react-navigation/native';
+import React, { useEffect } from 'react';
+
+import StatTile from './StatTile';
+
+import { useAuth } from '@/context/AuthContext';
+import { countDoneToday, unlockedToday } from '@/features/Habits/habitCounts';
+import { habitManager } from '@/features/Habits/services/habitManager';
+import type { RootTabParamList } from '@/navigation/BottomTabs';
+import { useHabitStore } from '@/store/useHabitStore';
+
+type HabitsTileNav = BottomTabNavigationProp<RootTabParamList>;
+
+const TITLE = "Today's habits";
+const OPEN_CUE = 'Open habits →';
+const ADD_CUE = 'Add a habit →';
+
+interface HabitsDescriptor {
+  loading: boolean;
+  stat?: string;
+  cue: string;
+  accessibilityLabel: string;
+}
+
+/**
+ * Resolve the tile's stat line, cue, loading flag, and a11y label from plain
+ * counts — pure so the loading branch reads the store's flag directly.
+ */
+function describeHabits(
+  loading: boolean,
+  habitCount: number,
+  unlockedCount: number,
+  doneCount: number,
+): HabitsDescriptor {
+  if (loading && habitCount === 0) {
+    return { loading: true, cue: OPEN_CUE, accessibilityLabel: `${TITLE}, loading. Open habits` };
+  }
+  if (habitCount === 0) {
+    return {
+      loading: false,
+      stat: 'No habits yet',
+      cue: ADD_CUE,
+      accessibilityLabel: `${TITLE}, no habits yet. Add a habit`,
+    };
+  }
+  if (unlockedCount === 0) {
+    return {
+      loading: false,
+      stat: 'Unlocks soon',
+      cue: OPEN_CUE,
+      accessibilityLabel: `${TITLE}, unlocks soon. Open habits`,
+    };
+  }
+  return {
+    loading: false,
+    stat: `${doneCount}/${unlockedCount} done`,
+    cue: OPEN_CUE,
+    accessibilityLabel: `${TITLE}, ${doneCount} of ${unlockedCount} done. Open habits`,
+  };
+}
+
+const HabitsStatTile = (): React.JSX.Element => {
+  const navigation = useNavigation<HabitsTileNav>();
+  const { userTimezone } = useAuth();
+  const loading = useHabitStore((state) => state.loading);
+  const habits = useHabitStore((state) => state.habits);
+
+  useEffect(() => {
+    void habitManager.loadHabits(userTimezone);
+  }, [userTimezone]);
+
+  const unlocked = unlockedToday(habits);
+  const descriptor = describeHabits(
+    loading,
+    habits.length,
+    unlocked.length,
+    countDoneToday(unlocked, userTimezone),
+  );
+
+  return (
+    <StatTile
+      testID="journal-habits-tile"
+      title={TITLE}
+      cue={descriptor.cue}
+      stat={descriptor.stat}
+      loading={descriptor.loading}
+      accessibilityLabel={descriptor.accessibilityLabel}
+      onPress={() => navigation.navigate('Habits')}
+    />
+  );
+};
+
+export default HabitsStatTile;

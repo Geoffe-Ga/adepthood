@@ -16,6 +16,7 @@ import JournalHero from './JournalHero';
 import styles from './JournalShelf.styles';
 import { usePressScale } from './motion';
 import SearchBar from './SearchBar';
+import StatTileRow from './StatTileRow';
 
 import { journal, prompts } from '@/api';
 import type { JournalMessage, PromptDetail } from '@/api';
@@ -345,6 +346,7 @@ function ShelfTopMatter({
   return (
     <View>
       <JournalHero />
+      <StatTileRow />
       <ScreenHeader
         title="Journal"
         action={<Button label="New entry" onPress={onNew} testID="journal-new-entry" />}
