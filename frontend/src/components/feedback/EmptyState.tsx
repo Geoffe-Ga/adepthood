@@ -40,7 +40,7 @@ interface EmptyStateProps {
    * settle so it doesn't read as floating over the content beneath it.
    *
    * Defaults to ``false``: the full-screen centered/opaque behavior the
-   * Today / Course / Journal / Practice screens rely on is preserved untouched.
+   * Course / Journal / Practice screens rely on is preserved untouched.
    */
   inline?: boolean;
   testID?: string;
