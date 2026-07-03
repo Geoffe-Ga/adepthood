@@ -162,3 +162,18 @@ describe('WelcomeScreen — onboarding privacy note (issue #897)', () => {
     expect(onBegin).toHaveBeenCalledTimes(1);
   });
 });
+
+// The Today tab was removed; the Journal shelf is now the daily home.
+describe('WelcomeScreen — final panel names the Journal as the daily home', () => {
+  const finalBody = WELCOME_PANELS[WELCOME_PANELS.length - 1]?.body ?? '';
+
+  it('names the Journal as the daily home', () => {
+    expect(finalBody).toMatch(/land on your Journal/);
+    expect(finalBody).toMatch(/daily home/);
+  });
+
+  it('no panel points new users at the removed Today tab', () => {
+    expect(WELCOME_PANELS.every((p) => !/land on Today/.test(p.body))).toBe(true);
+    expect(WELCOME_PANELS.every((p) => !/Today, your daily home/.test(p.body))).toBe(true);
+  });
+});

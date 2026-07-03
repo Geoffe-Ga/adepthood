@@ -148,8 +148,7 @@ describe('JournalEntryScreen — chord change PATCH failure', () => {
       mockUpdate.mockClear();
       mockUpdate.mockRejectedValueOnce(new Error('network'));
 
-      const page = within(getByTestId('journal-page'));
-      fireEvent.press(page.getByTestId('aspect-chord-trigger'));
+      // A tagged entry loads expanded on its chips, so no trigger tap is needed.
       fireEvent.press(within(getByTestId('journal-page')).getByTestId('aspect-primary-5'));
 
       await act(async () => {
