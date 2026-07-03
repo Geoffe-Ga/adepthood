@@ -42,13 +42,6 @@ jest.mock('@/features/Journal/JournalShelfScreen', () => {
   return { __esModule: true, default: Stub };
 });
 
-jest.mock('@/features/Today/TodayScreen', () => {
-  const React = require('react');
-  const { Text } = require('react-native');
-  const Stub = () => React.createElement(Text, { testID: 'today-screen' }, 'Today');
-  return { __esModule: true, default: Stub };
-});
-
 jest.mock('@/features/Habits/HabitsScreen', () => {
   const React = require('react');
   const { Text } = require('react-native');
@@ -157,8 +150,6 @@ jest.mock('expo-notifications', () => ({
   scheduleNotificationAsync: jest.fn(),
   cancelScheduledNotificationAsync: jest.fn(),
 }));
-
-jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
 // Never-settling persist: proves markWelcomeSeen flips state before (not after)
 // the fire-and-forget save — an awaited save would hang the shell render.

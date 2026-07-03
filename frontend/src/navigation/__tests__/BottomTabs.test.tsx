@@ -6,7 +6,6 @@ import {
   BookOpen,
   Compass,
   Flower2,
-  Home,
   LayoutGrid,
   NotebookPen,
   Settings,
@@ -28,7 +27,6 @@ jest.mock('@/features/Habits/components/MissedDaysModal', () => () => null);
 jest.mock('@/features/Habits/components/OnboardingModal', () => () => null);
 jest.mock('@/features/Habits/components/ReorderHabitsModal', () => () => null);
 jest.mock('@/features/Habits/components/StatsModal', () => () => null);
-jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
 // ---------------------------------------------------------------------------
 // Depth-preferences store mock — selector-based, mutable per test.
@@ -123,7 +121,7 @@ describe('BottomTabs', () => {
     expect(queryByText('Logout')).toBeNull();
   });
 
-  it('renders a lucide icon for each of the six tabs', () => {
+  it('renders a lucide icon for each of the five tabs', () => {
     const { UNSAFE_getAllByType } = render(
       <NavigationContainer>
         <BottomTabs />
@@ -134,7 +132,7 @@ describe('BottomTabs', () => {
     // animation in @react-navigation/bottom-tabs); only assert each icon
     // appears at least once, which is what makeTabIcon being invoked
     // for every assembled tab (LEADING_TABS + rings + TRAILING_TABS) guarantees.
-    for (const Icon of [Home, Sprout, Flower2, BookOpen, NotebookPen, Compass]) {
+    for (const Icon of [NotebookPen, Sprout, Flower2, BookOpen, Compass]) {
       expect(UNSAFE_getAllByType(Icon).length).toBeGreaterThanOrEqual(1);
     }
   });
@@ -146,7 +144,7 @@ describe('BottomTabs', () => {
       </NavigationContainer>,
     );
 
-    // LayoutGrid was the Catalog tab icon; it must be absent now (6 tabs).
+    // LayoutGrid was the Catalog tab icon; it must be absent now (5 tabs).
     expect(UNSAFE_queryAllByType(LayoutGrid)).toHaveLength(0);
   });
 
@@ -188,15 +186,15 @@ describe('BottomTabs', () => {
 // ---------------------------------------------------------------------------
 
 describe('BottomTabs — conditional ring tabs: all-on regression', () => {
-  it('all six lucide tab icons render when all ring flags are true', () => {
-    // Store defaults to all-on; this is the regression guard for the six-tab set.
+  it('all five lucide tab icons render when all ring flags are true', () => {
+    // Store defaults to all-on; this is the regression guard for the five-tab set.
     const { UNSAFE_getAllByType } = render(
       <NavigationContainer>
         <BottomTabs />
       </NavigationContainer>,
     );
 
-    for (const Icon of [NotebookPen, Home, Sprout, Flower2, BookOpen, Compass]) {
+    for (const Icon of [NotebookPen, Sprout, Flower2, BookOpen, Compass]) {
       expect(UNSAFE_getAllByType(Icon).length).toBeGreaterThanOrEqual(1);
     }
   });
@@ -215,7 +213,7 @@ describe('BottomTabs — conditional ring tabs: enable_habits=false', () => {
     expect(UNSAFE_queryAllByType(Sprout)).toHaveLength(0);
   });
 
-  it('Journal/Today/Map tabs still render when enable_habits is false', () => {
+  it('Journal/Map tabs still render when enable_habits is false', () => {
     setMockState({ enable_habits: false });
 
     const { UNSAFE_getAllByType } = render(
@@ -225,7 +223,6 @@ describe('BottomTabs — conditional ring tabs: enable_habits=false', () => {
     );
 
     expect(UNSAFE_getAllByType(NotebookPen).length).toBeGreaterThanOrEqual(1);
-    expect(UNSAFE_getAllByType(Home).length).toBeGreaterThanOrEqual(1);
     expect(UNSAFE_getAllByType(Compass).length).toBeGreaterThanOrEqual(1);
   });
 
@@ -256,7 +253,7 @@ describe('BottomTabs — conditional ring tabs: enable_practices=false', () => {
     expect(UNSAFE_queryAllByType(Flower2)).toHaveLength(0);
   });
 
-  it('Journal/Today/Map/Habits/Course render when only enable_practices is false', () => {
+  it('Journal/Map/Habits/Course render when only enable_practices is false', () => {
     setMockState({ enable_practices: false });
 
     const { UNSAFE_getAllByType } = render(
@@ -266,7 +263,6 @@ describe('BottomTabs — conditional ring tabs: enable_practices=false', () => {
     );
 
     expect(UNSAFE_getAllByType(NotebookPen).length).toBeGreaterThanOrEqual(1);
-    expect(UNSAFE_getAllByType(Home).length).toBeGreaterThanOrEqual(1);
     expect(UNSAFE_getAllByType(Sprout).length).toBeGreaterThanOrEqual(1);
     expect(UNSAFE_getAllByType(BookOpen).length).toBeGreaterThanOrEqual(1);
     expect(UNSAFE_getAllByType(Compass).length).toBeGreaterThanOrEqual(1);
@@ -286,7 +282,7 @@ describe('BottomTabs — conditional ring tabs: enable_course=false', () => {
     expect(UNSAFE_queryAllByType(BookOpen)).toHaveLength(0);
   });
 
-  it('Journal/Today/Map/Habits/Practice render when only enable_course is false', () => {
+  it('Journal/Map/Habits/Practice render when only enable_course is false', () => {
     setMockState({ enable_course: false });
 
     const { UNSAFE_getAllByType } = render(
@@ -296,7 +292,6 @@ describe('BottomTabs — conditional ring tabs: enable_course=false', () => {
     );
 
     expect(UNSAFE_getAllByType(NotebookPen).length).toBeGreaterThanOrEqual(1);
-    expect(UNSAFE_getAllByType(Home).length).toBeGreaterThanOrEqual(1);
     expect(UNSAFE_getAllByType(Sprout).length).toBeGreaterThanOrEqual(1);
     expect(UNSAFE_getAllByType(Flower2).length).toBeGreaterThanOrEqual(1);
     expect(UNSAFE_getAllByType(Compass).length).toBeGreaterThanOrEqual(1);
@@ -304,7 +299,7 @@ describe('BottomTabs — conditional ring tabs: enable_course=false', () => {
 });
 
 describe('BottomTabs — conditional ring tabs: all three rings off', () => {
-  it('only Journal/Today/Map icons render when all ring flags are false', () => {
+  it('only Journal/Map icons render when all ring flags are false', () => {
     setMockState({ enable_habits: false, enable_practices: false, enable_course: false });
 
     const { UNSAFE_getAllByType, UNSAFE_queryAllByType } = render(
@@ -315,7 +310,6 @@ describe('BottomTabs — conditional ring tabs: all three rings off', () => {
 
     // Always-present tabs.
     expect(UNSAFE_getAllByType(NotebookPen).length).toBeGreaterThanOrEqual(1);
-    expect(UNSAFE_getAllByType(Home).length).toBeGreaterThanOrEqual(1);
     expect(UNSAFE_getAllByType(Compass).length).toBeGreaterThanOrEqual(1);
 
     // Gated tabs must be absent.
@@ -395,7 +389,7 @@ describe('BottomTabs — conditional ring tabs: focus-redirect on disable', () =
 });
 
 describe('BottomTabs — conditional ring tabs: tab-count invariant', () => {
-  it('renders exactly 3 tabs (Journal+Today+Map) when all rings are off', async () => {
+  it('renders exactly 2 tabs (Journal+Map) when all rings are off', async () => {
     setMockState({ enable_habits: false, enable_practices: false, enable_course: false });
 
     const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
@@ -409,11 +403,11 @@ describe('BottomTabs — conditional ring tabs: tab-count invariant', () => {
     // getRootState().routes[] length equals the number of mounted tabs.
     await waitFor(() => {
       const routes = navRef.current?.getRootState()?.routes ?? [];
-      expect(routes).toHaveLength(3);
+      expect(routes).toHaveLength(2);
     });
   });
 
-  it('renders exactly 6 tabs (Journal+Today+3 rings+Map) when all rings are on', async () => {
+  it('renders exactly 5 tabs (Journal+3 rings+Map) when all rings are on', async () => {
     const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
 
     render(
@@ -424,11 +418,11 @@ describe('BottomTabs — conditional ring tabs: tab-count invariant', () => {
 
     await waitFor(() => {
       const routes = navRef.current?.getRootState()?.routes ?? [];
-      expect(routes).toHaveLength(6);
+      expect(routes).toHaveLength(5);
     });
   });
 
-  it('renders exactly 4 tabs when only enable_habits is true', async () => {
+  it('renders exactly 3 tabs when only enable_habits is true', async () => {
     setMockState({ enable_practices: false, enable_course: false });
 
     const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
@@ -441,7 +435,7 @@ describe('BottomTabs — conditional ring tabs: tab-count invariant', () => {
 
     await waitFor(() => {
       const routes = navRef.current?.getRootState()?.routes ?? [];
-      expect(routes).toHaveLength(4);
+      expect(routes).toHaveLength(3);
     });
   });
 
@@ -463,7 +457,7 @@ describe('BottomTabs — conditional ring tabs: tab-count invariant', () => {
 });
 
 describe('BottomTabs — conditional ring tabs: tab render order', () => {
-  it('tab order is [Journal, Today, Habits, Practice, Course, Map] when all rings on', async () => {
+  it('tab order is [Journal, Habits, Practice, Course, Map] when all rings on', async () => {
     const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
 
     render(
@@ -475,11 +469,11 @@ describe('BottomTabs — conditional ring tabs: tab render order', () => {
     await waitFor(() => {
       const routes = navRef.current?.getRootState()?.routes ?? [];
       const names = routes.map((r: { name: string }) => r.name);
-      expect(names).toEqual(['Journal', 'Today', 'Habits', 'Practice', 'Course', 'Map']);
+      expect(names).toEqual(['Journal', 'Habits', 'Practice', 'Course', 'Map']);
     });
   });
 
-  it('tab order is [Journal, Today, Map] when all rings are off', async () => {
+  it('tab order is [Journal, Map] when all rings are off', async () => {
     setMockState({ enable_habits: false, enable_practices: false, enable_course: false });
 
     const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
@@ -493,11 +487,11 @@ describe('BottomTabs — conditional ring tabs: tab render order', () => {
     await waitFor(() => {
       const routes = navRef.current?.getRootState()?.routes ?? [];
       const names = routes.map((r: { name: string }) => r.name);
-      expect(names).toEqual(['Journal', 'Today', 'Map']);
+      expect(names).toEqual(['Journal', 'Map']);
     });
   });
 
-  it('tab order is [Journal, Today, Practice, Map] when only practices is enabled', async () => {
+  it('tab order is [Journal, Practice, Map] when only practices is enabled', async () => {
     setMockState({ enable_habits: false, enable_course: false });
 
     const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
@@ -511,7 +505,7 @@ describe('BottomTabs — conditional ring tabs: tab render order', () => {
     await waitFor(() => {
       const routes = navRef.current?.getRootState()?.routes ?? [];
       const names = routes.map((r: { name: string }) => r.name);
-      expect(names).toEqual(['Journal', 'Today', 'Practice', 'Map']);
+      expect(names).toEqual(['Journal', 'Practice', 'Map']);
     });
   });
 });

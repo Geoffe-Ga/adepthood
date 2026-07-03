@@ -15,7 +15,7 @@ import {
   type NativeSyntheticEvent,
   type TextInputKeyPressEventData,
 } from 'react-native';
-import DraggableFlatList from 'react-native-draggable-flatlist';
+import DraggableFlatList, { type RenderItemParams } from 'react-native-draggable-flatlist';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 
@@ -396,24 +396,6 @@ const ReorderHeader = ({ startDate, onDateChange, postReveal }: ReorderHeaderPro
   </>
 );
 
-const ReorderEmojiOverlay = ({
-  onCloseEmoji,
-  onEmojiSelected,
-}: {
-  onCloseEmoji: () => void;
-  onEmojiSelected: (_emoji: string) => void;
-}) => (
-  <View style={styles.emojiPickerModal}>
-    <View style={styles.emojiPickerHeader}>
-      <Text style={styles.emojiPickerTitle}>Select Icon</Text>
-      <TouchableOpacity style={styles.closeEmojiPicker} onPress={onCloseEmoji}>
-        <Text style={styles.closeEmojiPickerText}>×</Text>
-      </TouchableOpacity>
-    </View>
-    <HabitEmojiPicker onEmojiSelected={onEmojiSelected} />
-  </View>
-);
-
 const ContinueToTemplatesButton = ({ onPress }: { onPress: () => void }) => (
   <TouchableOpacity
     testID="continue-to-templates"
@@ -474,6 +456,18 @@ interface ReorderStepProps {
   onEmojiSelected: (_emoji: string) => void;
 }
 
+const renderReorderItem =
+  (onEditIcon: (_index: number) => void) =>
+  ({ item, drag, isActive, getIndex }: RenderItemParams<OnboardingHabit>) => (
+    <ReorderItem
+      item={item}
+      index={getIndex() ?? 0}
+      drag={drag}
+      isActive={isActive}
+      onEditIcon={onEditIcon}
+    />
+  );
+
 const ReorderStep = ({
   habits,
   startDate,
@@ -507,21 +501,15 @@ const ReorderStep = ({
           />
         }
         ListFooterComponent={<ContinueToTemplatesButton onPress={onGoToTemplates} />}
-        renderItem={({ item, drag, isActive, getIndex }) => (
-          <ReorderItem
-            item={item}
-            index={getIndex() ?? 0}
-            drag={drag}
-            isActive={isActive}
-            onEditIcon={onEditIcon}
-          />
-        )}
+        renderItem={renderReorderItem(onEditIcon)}
         onDragEnd={onDragEnd}
       />
     </View>
-    {showEmojiPicker && selectedHabitIndex !== null && (
-      <ReorderEmojiOverlay onCloseEmoji={onCloseEmoji} onEmojiSelected={onEmojiSelected} />
-    )}
+    <HabitEmojiPicker
+      visible={showEmojiPicker && selectedHabitIndex !== null}
+      onSelect={onEmojiSelected}
+      onClose={onCloseEmoji}
+    />
   </View>
 );
 

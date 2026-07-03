@@ -91,7 +91,6 @@ jest.mock('../components/MissedDaysModal', () => () => null);
 jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
 jest.mock('../components/AddHabitModal', () => () => null);
-jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
 describe('Habits stats modal fetch dedup', () => {
   it('fires getStats exactly once when the stats modal opens', async () => {

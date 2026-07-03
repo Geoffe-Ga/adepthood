@@ -4,18 +4,6 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 import type { DimensionValue } from 'react-native';
 
-// EmojiSelector pulls in native bindings; render a stub that exposes a
-// tappable node so a test can drive its onEmojiSelected callback.
-jest.mock('react-native-emoji-selector', () => {
-  const mockReact = require('react');
-  const { Pressable } = require('react-native');
-  return ({ onEmojiSelected }: { onEmojiSelected: (_emoji: string) => void }) =>
-    mockReact.createElement(Pressable, {
-      testID: 'emoji-selector-stub',
-      onPress: () => onEmojiSelected('🎉'),
-    });
-});
-
 jest.mock('../../../../api', () => ({
   __esModule: true,
   goalGroups: {
@@ -31,6 +19,7 @@ jest.mock('../../../../context/AuthContext', () => ({
 // fireEvent.changeText / press behave as on a real device.
 
 import { dayKeyInTZ } from '../../../../utils/dateUtils';
+import { TARGET_UNITS, FREQUENCY_UNITS } from '../../constants';
 import type { Goal, Habit } from '../../Habits.types';
 import { GoalModal } from '../GoalModal';
 
@@ -761,13 +750,54 @@ describe('GoalModal icon editing', () => {
 
   it('opens the emoji picker from the header icon and applies the chosen emoji', () => {
     const { getByTestId, queryByTestId, props } = renderModal();
-    expect(queryByTestId('emoji-selector-stub')).toBeNull();
+    expect(queryByTestId('emoji-picker')).toBeNull();
 
     fireEvent.press(getByTestId('goal-modal-icon-button'));
-    fireEvent.press(getByTestId('emoji-selector-stub'));
+    getByTestId('emoji-picker');
+    fireEvent.press(getByTestId('emoji-picker-select'));
 
-    expect(props.onUpdateHabit).toHaveBeenCalledWith(expect.objectContaining({ icon: '🎉' }));
-    // Selecting an emoji closes the picker.
-    expect(queryByTestId('emoji-selector-stub')).toBeNull();
+    expect(props.onUpdateHabit).toHaveBeenCalledWith(
+      expect.objectContaining({ icon: '\u{1F389}' }),
+    );
+    expect(queryByTestId('emoji-picker')).toBeNull();
+  });
+});
+
+describe('GoalModal chip-row scroll affordance', () => {
+  // The Type / Unit / Every chip rows are all horizontal ScrollViews. Without a
+  // scroll hint a half-clipped pill at the modal edge reads as broken layout, so
+  // each row must advertise that it scrolls.
+  const CHIP_ROW_TEST_IDS = ['goal-direction-chips', 'goal-target-unit', 'goal-frequency-unit'];
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it.each(CHIP_ROW_TEST_IDS)('shows a horizontal scroll indicator on %s', (rowTestID) => {
+    const { getByTestId } = renderModal();
+    expect(getByTestId(rowTestID).props.showsHorizontalScrollIndicator).toBe(true);
+  });
+
+  it.each(CHIP_ROW_TEST_IDS)(
+    'gives %s trailing content padding so the last chip clears the modal edge',
+    (rowTestID) => {
+      const { getByTestId } = renderModal();
+      const contentStyle = StyleSheet.flatten(getByTestId(rowTestID).props.contentContainerStyle);
+      expect(contentStyle.paddingRight as number).toBeGreaterThan(0);
+    },
+  );
+
+  it('keeps every target-unit chip reachable inside its scroll row', () => {
+    const { getByTestId } = renderModal();
+    for (const unit of TARGET_UNITS) {
+      expect(getByTestId(`goal-target-unit-${unit}`)).toBeTruthy();
+    }
+  });
+
+  it('keeps every frequency-unit chip reachable inside its scroll row', () => {
+    const { getByTestId } = renderModal();
+    for (const unit of FREQUENCY_UNITS) {
+      expect(getByTestId(`goal-frequency-unit-${unit}`)).toBeTruthy();
+    }
   });
 });

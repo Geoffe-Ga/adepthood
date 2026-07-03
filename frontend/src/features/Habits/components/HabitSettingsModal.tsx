@@ -290,16 +290,14 @@ const BasicFields = ({
         <Text style={styles.currentIcon}>{editedHabit.icon}</Text>
       </TouchableOpacity>
     </View>
-    {showEmojiSelector && (
-      <View style={styles.emojiSelectorContainer}>
-        <HabitEmojiPicker
-          onEmojiSelected={(emoji) => {
-            handleChange('icon', emoji);
-            setShowEmojiSelector(false);
-          }}
-        />
-      </View>
-    )}
+    <HabitEmojiPicker
+      visible={showEmojiSelector}
+      onSelect={(emoji) => {
+        handleChange('icon', emoji);
+        setShowEmojiSelector(false);
+      }}
+      onClose={() => setShowEmojiSelector(false)}
+    />
     <View style={styles.settingRow}>
       <Text style={styles.settingLabel}>Stage:</Text>
       <Text style={styles.settingValue}>{editedHabit.stage}</Text>

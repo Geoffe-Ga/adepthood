@@ -1,30 +1,47 @@
 /* eslint-env jest */
 import { describe, it, expect, jest } from '@jest/globals';
-import { render } from '@testing-library/react-native';
+import { render, fireEvent } from '@testing-library/react-native';
 import React from 'react';
 
 import HabitEmojiPicker from '../HabitEmojiPicker';
 
-jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
-
 describe('HabitEmojiPicker', () => {
-  it('renders the emoji selector with the consistent search placeholder', () => {
-    const { UNSAFE_root } = render(<HabitEmojiPicker onEmojiSelected={() => {}} />);
-    const selector = UNSAFE_root.findByType('EmojiSelector');
+  it('renders nothing when not visible', () => {
+    const { queryByTestId } = render(
+      <HabitEmojiPicker visible={false} onSelect={() => {}} onClose={() => {}} />,
+    );
 
-    expect(selector.props.placeholder).toBe('Search emoji...');
-    expect(selector.props.showSearchBar).toBe(true);
-    expect(selector.props.columns).toBe(6);
-    expect(selector.props.emojiSize).toBe(28);
+    expect(queryByTestId('emoji-picker')).toBeNull();
   });
 
-  it('forwards the selected emoji to the onEmojiSelected callback', () => {
-    const onEmojiSelected = jest.fn();
-    const { UNSAFE_root } = render(<HabitEmojiPicker onEmojiSelected={onEmojiSelected} />);
-    const selector = UNSAFE_root.findByType('EmojiSelector');
+  it('renders the picker when visible', () => {
+    const { getByTestId } = render(
+      <HabitEmojiPicker visible onSelect={() => {}} onClose={() => {}} />,
+    );
 
-    selector.props.onEmojiSelected('\u{1F600}');
+    expect(getByTestId('emoji-picker')).toBeTruthy();
+  });
 
-    expect(onEmojiSelected).toHaveBeenCalledWith('\u{1F600}');
+  it('forwards the selected emoji string to onSelect', () => {
+    const onSelect = jest.fn();
+    const { getByTestId } = render(
+      <HabitEmojiPicker visible onSelect={onSelect} onClose={() => {}} />,
+    );
+
+    fireEvent.press(getByTestId('emoji-picker-select'));
+
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith('\u{1F389}');
+  });
+
+  it('calls onClose when the picker is dismissed', () => {
+    const onClose = jest.fn();
+    const { getByTestId } = render(
+      <HabitEmojiPicker visible onSelect={() => {}} onClose={onClose} />,
+    );
+
+    fireEvent.press(getByTestId('emoji-picker-close'));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

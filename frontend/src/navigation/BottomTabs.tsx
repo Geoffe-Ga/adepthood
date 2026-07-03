@@ -11,7 +11,6 @@ import {
   BookOpen,
   Compass,
   Flower2,
-  Home,
   NotebookPen,
   Settings,
   Sprout,
@@ -28,7 +27,6 @@ import HabitsScreen from '../features/Habits/HabitsScreen';
 import JournalShelfScreen from '../features/Journal/JournalShelfScreen';
 import MapScreen from '../features/Map/MapScreen';
 import PracticeScreen from '../features/Practice/PracticeScreen';
-import TodayScreen from '../features/Today/TodayScreen';
 
 import type { RootStackParamList } from './RootStack';
 
@@ -42,7 +40,6 @@ import {
 } from '@/store/useDepthPreferencesStore';
 
 export type RootTabParamList = {
-  Today: undefined;
   Habits: undefined;
   Practice: { stageNumber?: number } | undefined;
   Course: { stageNumber?: number } | undefined;
@@ -79,7 +76,6 @@ function withBoundary<P extends object>(
   return Wrapped;
 }
 
-const TodayTab = withBoundary('Today', TodayScreen);
 const HabitsTab = withBoundary('Habits', HabitsScreen);
 const PracticeTab = withBoundary('Practice', PracticeScreen);
 const CourseTab = withBoundary('Course', CourseScreen);
@@ -106,17 +102,16 @@ type TabConfig = {
 /** Which depth-ring flag each optional tab depends on, keyed for the enable map. */
 type RingKey = 'habits' | 'practices' | 'course';
 
-/** The three ring tabs, in the fixed order they slot between Today and Map. */
+/** The three ring tabs, in the fixed order they slot between Journal and Map. */
 const RING_TABS: ReadonlyArray<{ key: RingKey; config: TabConfig }> = [
   { key: 'habits', config: { name: 'Habits', component: HabitsTab, icon: Sprout } },
   { key: 'practices', config: { name: 'Practice', component: PracticeTab, icon: Flower2 } },
   { key: 'course', config: { name: 'Course', component: CourseTab, icon: BookOpen } },
 ];
 
-/** Journal and Today always lead; Map always trails — none are ring-gated. */
+/** Journal always leads; Map always trails — neither is ring-gated. */
 const LEADING_TABS: ReadonlyArray<TabConfig> = [
   { name: 'Journal', component: JournalTab, icon: NotebookPen },
-  { name: 'Today', component: TodayTab, icon: Home },
 ];
 const TRAILING_TABS: ReadonlyArray<TabConfig> = [{ name: 'Map', component: MapTab, icon: Compass }];
 
@@ -135,8 +130,8 @@ type RingEnabledMap = Record<RingKey, boolean>;
 
 /**
  * Subscribe to the three ring toggles and assemble the visible tab list in the
- * fixed order ``[Journal, Today, ...enabledRings, Map]``. Reactive: a store
- * flip re-renders the caller with the tab added or removed live.
+ * fixed order ``[Journal, ...enabledRings, Map]``. Reactive: a store flip
+ * re-renders the caller with the tab added or removed live.
  */
 const useEnabledTabs = (): { tabs: ReadonlyArray<TabConfig>; enabled: RingEnabledMap } => {
   const enabled: RingEnabledMap = {

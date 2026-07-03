@@ -7,7 +7,6 @@ import type { Habit, HabitSettingsModalProps } from '../../Habits.types';
 import { HabitSettingsModal } from '../HabitSettingsModal';
 
 jest.mock('react-native-draggable-flatlist', () => 'DraggableFlatList');
-jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
 jest.mock('react-native-gesture-handler', () => ({
   GestureDetector: ({ children }: { children: React.ReactNode }) => children,
@@ -94,14 +93,14 @@ describe('HabitSettingsModal name and icon editing', () => {
   });
 
   it('selecting an emoji updates the icon and closes the selector', () => {
-    const { getByText, UNSAFE_root } = renderModal();
+    const { getByText, getByTestId, queryByTestId } = renderModal();
     fireEvent.press(getByText('🚶'));
 
-    const selector = UNSAFE_root.findByType('EmojiSelector');
-    fireEvent(selector, 'onEmojiSelected', '🔥');
+    getByTestId('emoji-picker');
+    fireEvent.press(getByTestId('emoji-picker-select'));
 
-    getByText('🔥');
-    expect(() => UNSAFE_root.findByType('EmojiSelector')).toThrow();
+    getByText('\u{1F389}');
+    expect(queryByTestId('emoji-picker')).toBeNull();
   });
 });
 

@@ -16,6 +16,7 @@ import JournalHero from './JournalHero';
 import styles from './JournalShelf.styles';
 import { usePressScale } from './motion';
 import SearchBar from './SearchBar';
+import StatTileRow from './StatTileRow';
 
 import { journal, prompts } from '@/api';
 import type { JournalMessage, PromptDetail } from '@/api';
@@ -24,6 +25,8 @@ import { Button } from '@/components/Button';
 import { EmptyState } from '@/components/feedback/EmptyState';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
+import InvitationStack from '@/features/Invitations/InvitationStack';
+import ReturnStack from '@/features/Return/ReturnStack';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { useDerivedCurrentWeek } from '@/store/useProgramProgression';
@@ -348,6 +351,9 @@ function ShelfTopMatter({
   return (
     <View>
       <JournalHero />
+      <StatTileRow />
+      <ReturnStack />
+      <InvitationStack />
       <ScreenHeader
         title="Journal"
         action={<Button label="New entry" onPress={onNew} testID="journal-new-entry" />}

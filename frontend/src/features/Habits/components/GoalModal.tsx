@@ -383,6 +383,11 @@ const goalEditorStyles = StyleSheet.create({
   chipRow: {
     paddingVertical: SPACING.xs,
   },
+  // Trailing gap so the last chip clears the modal border with breathing room
+  // instead of terminating in a hard flush cut that reads as broken layout.
+  chipRowContent: {
+    paddingRight: SPACING.md,
+  },
   chip: {
     paddingVertical: GOAL_CHIP_VERTICAL_PADDING,
     paddingHorizontal: GOAL_CHIP_HORIZONTAL_PADDING,
@@ -527,6 +532,31 @@ interface UnitChipRowProps {
 
 const formatUnitLabel = (value: string): string => value.replace(/_/g, ' ');
 
+interface ChipScrollRowProps {
+  testID: string;
+  children: React.ReactNode;
+}
+
+/**
+ * Horizontal scroller shared by every editor chip row (Type / Unit / Every).
+ * The visible scroll indicator plus trailing content padding are the scroll
+ * *affordance*: a half-clipped pill flush against the modal border reads as
+ * broken layout, so the row must advertise that more options lie off-screen
+ * — done in the Candle & Ink language without a native picker or gradient
+ * dependency.
+ */
+const ChipScrollRow = ({ testID, children }: ChipScrollRowProps) => (
+  <ScrollView
+    horizontal
+    showsHorizontalScrollIndicator
+    style={goalEditorStyles.chipRow}
+    contentContainerStyle={goalEditorStyles.chipRowContent}
+    testID={testID}
+  >
+    {children}
+  </ScrollView>
+);
+
 /**
  * Horizontal chip selector used for ``target_unit`` and ``frequency_unit``.
  * A chip set fits the existing modal aesthetic without pulling in
@@ -540,12 +570,7 @@ const formatUnitLabel = (value: string): string => value.replace(/_/g, ' ');
  * "per day" rather than reading the raw "per_day" backend token.
  */
 const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) => (
-  <ScrollView
-    horizontal
-    showsHorizontalScrollIndicator={false}
-    style={goalEditorStyles.chipRow}
-    testID={testID}
-  >
+  <ChipScrollRow testID={testID}>
     {options.map((opt) => {
       const isSelected = opt === selected;
       const label = formatUnitLabel(opt);
@@ -567,7 +592,7 @@ const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) 
         </TouchableOpacity>
       );
     })}
-  </ScrollView>
+  </ChipScrollRow>
 );
 
 /**
@@ -676,12 +701,7 @@ interface GoalDirectionRowProps {
 const GoalDirectionRow = ({ isAdditive, onChange }: GoalDirectionRowProps) => (
   <View style={goalEditorStyles.row} testID="goal-direction-row">
     <Text style={goalEditorStyles.fieldLabel}>Type</Text>
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={goalEditorStyles.chipRow}
-      testID="goal-direction-chips"
-    >
+    <ChipScrollRow testID="goal-direction-chips">
       {DIRECTION_OPTIONS.map((opt) => {
         const selected = opt.value === isAdditive;
         return (
@@ -702,7 +722,7 @@ const GoalDirectionRow = ({ isAdditive, onChange }: GoalDirectionRowProps) => (
           </TouchableOpacity>
         );
       })}
-    </ScrollView>
+    </ChipScrollRow>
   </View>
 );
 
@@ -1008,16 +1028,14 @@ const GoalModalHeader = ({
         </Text>
       </View>
     )}
-    {showEmojiSelector && (
-      <View style={styles.emojiSelectorContainer}>
-        <HabitEmojiPicker
-          onEmojiSelected={(emoji) => {
-            onUpdateHabit({ ...habit, icon: emoji });
-            setShowEmojiSelector(false);
-          }}
-        />
-      </View>
-    )}
+    <HabitEmojiPicker
+      visible={showEmojiSelector}
+      onSelect={(emoji) => {
+        onUpdateHabit({ ...habit, icon: emoji });
+        setShowEmojiSelector(false);
+      }}
+      onClose={() => setShowEmojiSelector(false)}
+    />
   </>
 );
 

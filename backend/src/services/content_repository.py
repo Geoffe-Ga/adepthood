@@ -355,13 +355,6 @@ class ContentRepository:
             content_type=_RESOURCE_CONTENT_TYPE,
         )
 
-    def list_stage_intros(self) -> list[StageIntroMeta]:
-        """Every per-stage introduction, ordered by stage.
-
-        Empty when the manifest carries no ``stage_intros`` (a 1.0.0 pin).
-        """
-        return [_intro_meta(self._intros[stage]) for stage in sorted(self._intros)]
-
     def get_stage_intro(self, stage: int) -> StageIntroMeta | None:
         """The introduction for ``stage``, or ``None`` when unknown.
 
