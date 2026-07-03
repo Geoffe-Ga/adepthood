@@ -9,7 +9,7 @@ import type { ContractionReflection } from '@/api';
 
 /**
  * Shared contraction-signal store. The journal resonance pass feeds it each
- * observed contraction; the Today seam reads ``active`` to decide whether the
+ * observed contraction; the Journal shelf reads ``active`` to decide whether the
  * declinable Return offer may surface. Latest pass wins, so a healthy or
  * simple-ease-off pass retracts a prior offer signal.
  */
