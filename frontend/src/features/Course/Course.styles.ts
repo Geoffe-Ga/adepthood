@@ -4,11 +4,13 @@ import {
   accent,
   editorialType,
   ink,
+  onShowcase,
   paperShadow,
   radius,
   rhythm,
   SPACING,
   shadows,
+  showcase,
   surface,
   surfaceShadow,
   touchTarget,
@@ -79,18 +81,18 @@ const styles = StyleSheet.create({
   },
   stageCoverEyebrow: {
     ...editorialType.caption,
-    color: '#a8967c', // onShowcase.muted — small-caps eyebrow on the umber
+    color: onShowcase.muted,
     textTransform: 'uppercase',
     letterSpacing: 1,
     marginBottom: SPACING.xs,
   },
   stageCoverTitle: {
     ...editorialType.title,
-    color: '#f3ece0', // onShowcase.primary
+    color: onShowcase.primary,
   },
   stageCoverSubtitle: {
     ...editorialType.note,
-    color: '#cdbfae', // onShowcase.soft
+    color: onShowcase.soft,
     marginTop: 2,
   },
   // Spiral-Dynamics accent rule under the title.
@@ -103,7 +105,7 @@ const styles = StyleSheet.create({
   stageCoverProgressTrack: {
     height: STAGE_COVER_ARC,
     borderRadius: STAGE_COVER_ARC / 2,
-    backgroundColor: '#352a20', // showcase.raised — a recessed step on the band
+    backgroundColor: showcase.raised,
     overflow: 'hidden',
     marginTop: SPACING.md,
   },
@@ -113,7 +115,7 @@ const styles = StyleSheet.create({
   },
   stageCoverProgressLabel: {
     ...editorialType.caption,
-    color: '#a8967c', // onShowcase.muted
+    color: onShowcase.muted,
     marginTop: SPACING.xs,
   },
 

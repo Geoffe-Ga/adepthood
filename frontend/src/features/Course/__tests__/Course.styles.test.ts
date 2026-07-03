@@ -2,7 +2,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { StyleSheet } from 'react-native';
 
-import { accent, editorialType, ink, surface } from '../../../design/tokens';
+import { accent, editorialType, ink, onShowcase, showcase, surface } from '../../../design/tokens';
 import styles, { markdownStyles } from '../Course.styles';
 
 describe('Course.styles reader sheet', () => {
@@ -39,5 +39,21 @@ describe('Course.styles reader sheet', () => {
     const hr = StyleSheet.flatten(markdownStyles.hr);
     expect(blockquote.borderLeftColor).toBe(accent.primary);
     expect(hr.backgroundColor).toBe(accent.primary);
+  });
+
+  it('reads the stage-cover ink from the WCAG-asserted showcase tokens', () => {
+    const eyebrow = StyleSheet.flatten(styles.stageCoverEyebrow);
+    const title = StyleSheet.flatten(styles.stageCoverTitle);
+    const subtitle = StyleSheet.flatten(styles.stageCoverSubtitle);
+    const progressLabel = StyleSheet.flatten(styles.stageCoverProgressLabel);
+    expect(eyebrow.color).toBe(onShowcase.muted);
+    expect(title.color).toBe(onShowcase.primary);
+    expect(subtitle.color).toBe(onShowcase.soft);
+    expect(progressLabel.color).toBe(onShowcase.muted);
+  });
+
+  it('recesses the stage-cover progress track with the showcase.raised step', () => {
+    const track = StyleSheet.flatten(styles.stageCoverProgressTrack);
+    expect(track.backgroundColor).toBe(showcase.raised);
   });
 });
