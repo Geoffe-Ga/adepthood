@@ -247,31 +247,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
-  // --- "How the Wavelength works" opt-in explainer -------------------------
-  // Gentle, declinable invitation in the journey header — never a demand.
-  explainerTrigger: {
-    marginTop: spacing(0.5),
-    paddingVertical: spacing(0.25),
-    paddingHorizontal: spacing(1),
-  },
-  explainerTriggerText: {
-    fontFamily: editorialType.serif,
-    fontSize: 13,
-    color: accent.primary,
-    letterSpacing: 0.25,
-  },
-  // Full-surface host for the explainer modal: the shared ChapterReader fills
-  // it and carries its own header/back (close) control.
-  explainerModalRoot: {
-    flex: 1,
-    backgroundColor: surface.canvas,
-  },
-  // Decorative torus/spiral illustration, drawn in the reader's footer slot
-  // beneath the vendored explainer copy.
-  explainerVisual: {
-    marginBottom: spacing(1.5),
-  },
-
   // --- Begin-again affordance (end-of-arc, declinable) ----------------------
   beginAgain: {
     marginTop: spacing(1.5),
@@ -291,16 +266,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     color: onShowcase.soft,
     textAlign: CENTER,
-  },
-
-  // Wheel-of-wholeness balance read beneath the spiral (balance, not ladder).
-  balanceSummary: {
-    fontFamily: editorialType.serif,
-    fontSize: 15,
-    color: ink.soft,
-    textAlign: CENTER,
-    paddingHorizontal: spacing(2),
-    paddingVertical: spacing(1),
   },
 
   // Completed stage checkmark
