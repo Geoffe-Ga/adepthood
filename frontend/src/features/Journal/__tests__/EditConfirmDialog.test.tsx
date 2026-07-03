@@ -40,4 +40,12 @@ describe('EditConfirmDialog', () => {
     fireEvent.press(getByTestId('edit-confirm-scrim'));
     expect(props.onCancel).toHaveBeenCalledTimes(1);
   });
+
+  it('does not cancel when the dialog card itself is tapped', () => {
+    // The card stops the tap from bubbling to the scrim, so pressing the body
+    // must never dismiss the dialog.
+    const { getByTestId, props } = renderDialog();
+    fireEvent.press(getByTestId('edit-confirm-dialog'));
+    expect(props.onCancel).not.toHaveBeenCalled();
+  });
 });

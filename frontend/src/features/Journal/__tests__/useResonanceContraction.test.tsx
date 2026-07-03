@@ -2,21 +2,10 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 
-/**
- * RED tests for the ``contraction`` field threading through ``useResonance``.
- *
- * All tests fail until the implementation-specialist adds ``contraction`` to
- * ``UseResonanceResult``, ``useGeneratePass``, and the hook's return value.
- *
- * The mock surface matches ``useResonanceCare.test.tsx`` exactly so the two
- * files can be merged or colocated without conflict.
- */
-import type {
-  CompletionSuggestion,
-  ContractionReflection,
-  Marginalia,
-  ResonanceResponse,
-} from '@/api';
+/** Specs for the ``contraction`` field threading through ``useResonance``. */
+import { contractionPayload, note, resonancePayload } from './resonanceTestKit';
+
+import type { CompletionSuggestion, Marginalia, ResonanceResponse } from '@/api';
 import { useContractionSignalStore } from '@/store/useContractionSignalStore';
 
 const mockList = jest.fn() as jest.MockedFunction<
@@ -45,53 +34,6 @@ jest.mock('@/api', () => {
 });
 
 const { useResonance } = require('../useResonance');
-
-// ---------------------------------------------------------------------------
-// Factories
-// ---------------------------------------------------------------------------
-
-function note(overrides: Partial<Marginalia> = {}): Marginalia {
-  return {
-    id: 1,
-    journal_entry_id: 7,
-    kind: 'theme',
-    anchor_start: 0,
-    anchor_end: 4,
-    anchor_text: 'walk',
-    note: 'A beginning.',
-    essay: null,
-    essay_generated_at: null,
-    status: 'active',
-    created_at: '2026-06-01T00:00:00Z',
-    updated_at: '2026-06-01T00:00:00Z',
-    ...overrides,
-  };
-}
-
-function contractionPayload(overrides: Partial<ContractionReflection> = {}): ContractionReflection {
-  return {
-    variant: 'simple_ease_off',
-    message: 'Your practice has eased off a little. No rush back.',
-    ...overrides,
-  };
-}
-
-function resonancePayload(overrides: Partial<ResonanceResponse> = {}): ResonanceResponse {
-  return {
-    marginalia: [],
-    suggestions: [],
-    remaining_messages: 48,
-    remaining_balance: 0,
-    monthly_reset_date: '2026-07-01T00:00:00Z',
-    care: null,
-    contraction: null,
-    ...overrides,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 beforeEach(() => {
   mockList.mockReset();
