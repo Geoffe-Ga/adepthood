@@ -11,11 +11,12 @@
  * the tier and persists it (create/update).
  */
 import React from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { Text, View } from 'react-native';
 
 import styles from './JournalEntry.styles';
 
 import type { JournalClassification } from '@/api';
+import { RadioGroup, RadioOption } from '@/components/RadioOption';
 
 /** Privacy tier for a journal entry; alias of the canonical API type. */
 export type PrivacyTier = JournalClassification;
@@ -47,31 +48,6 @@ export interface PrivacyTierControlProps {
   onChange: (_tier: PrivacyTier) => void;
 }
 
-interface TierButtonProps {
-  option: TierOption;
-  selected: boolean;
-  onChange: (_tier: PrivacyTier) => void;
-}
-
-/** A single radio-like tier option; announces its selection state. */
-function TierButton({ option, selected, onChange }: TierButtonProps): React.JSX.Element {
-  return (
-    <TouchableOpacity
-      style={[styles.privacyTierOption, selected && styles.privacyTierOptionSelected]}
-      onPress={() => onChange(option.tier)}
-      accessibilityRole="radio"
-      accessibilityLabel={option.label}
-      accessibilityHint={option.hint}
-      accessibilityState={{ selected }}
-      testID={`privacy-tier-${option.tier}`}
-    >
-      <Text style={[styles.privacyTierLabel, selected && styles.privacyTierLabelSelected]}>
-        {option.label}
-      </Text>
-    </TouchableOpacity>
-  );
-}
-
 /**
  * The privacy tier segmented control plus its intimate-only explainer. Rendered
  * in the writing column of {@link JournalEntryScreen}.
@@ -82,20 +58,22 @@ function PrivacyTierControl({
 }: PrivacyTierControlProps): React.JSX.Element {
   return (
     <View style={styles.privacyTierControl}>
-      <View
-        style={styles.privacyTierRow}
-        accessibilityRole="radiogroup"
-        accessibilityLabel="Entry privacy"
-      >
+      <RadioGroup style={styles.privacyTierRow} accessibilityLabel="Entry privacy">
         {TIER_OPTIONS.map((option) => (
-          <TierButton
+          <RadioOption
             key={option.tier}
-            option={option}
+            label={option.label}
             selected={option.tier === value}
-            onChange={onChange}
+            onPress={() => onChange(option.tier)}
+            testID={`privacy-tier-${option.tier}`}
+            accessibilityHint={option.hint}
+            style={styles.privacyTierOption}
+            selectedStyle={styles.privacyTierOptionSelected}
+            labelStyle={styles.privacyTierLabel}
+            selectedLabelStyle={styles.privacyTierLabelSelected}
           />
         ))}
-      </View>
+      </RadioGroup>
       {value === 'intimate' ? (
         <Text style={styles.privacyTierExplainer} testID="privacy-tier-explainer">
           {INTIMATE_EXPLAINER}
