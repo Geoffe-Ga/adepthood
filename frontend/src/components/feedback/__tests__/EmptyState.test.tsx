@@ -49,7 +49,7 @@ describe('EmptyState', () => {
     const flat = StyleSheet.flatten(
       getByTestId('es-default').props.style as Parameters<typeof StyleSheet.flatten>[0],
     ) as { flex?: number; justifyContent?: string; backgroundColor?: string };
-    // These must never regress — Today/Course/Journal/Practice screens depend on them.
+    // These must never regress — Course/Journal/Practice screens depend on them.
     expect(flat.flex).toBe(1);
     expect(flat.justifyContent).toBe('center');
     expect(flat.backgroundColor).toBe(surface.canvas);

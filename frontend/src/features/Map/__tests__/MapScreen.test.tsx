@@ -4,12 +4,12 @@ import React from 'react';
 import { Image, StyleSheet } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
-import { ink } from '../../../design/tokens';
+import { ink, surface } from '../../../design/tokens';
 import styles from '../Map.styles';
-import { MAP_ROWS, STAGE_DISPLAY } from '../mapLayout';
+import { fittedTitleFontSize, MAP_ROWS, STAGE_DISPLAY } from '../mapLayout';
 import MapScreen from '../MapScreen';
 import { STAGE_COUNT } from '../stageData';
-import { emphasisStyle, FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
+import { FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
 
 import {
   mockBeginAgain,
@@ -258,32 +258,17 @@ describe('MapScreen', () => {
 
   // --- Wheel-of-wholeness balance tests ---
 
-  it('alive node (fullness >= threshold) renders with higher opacity than a thin node', () => {
-    // Stage 3 is alive; stage 1 is thin.
-    mockMapState.wheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD, 1: 0.0 };
+  it('renders unlocked stages at full opacity even when the wheel reads thin', () => {
+    // Stage 1 is unlocked but reads thin — the balance must stay an a11y-only
+    // read, never a washed-out (greyed) stage block.
+    mockMapState.wheelFullnessByStage = { 1: 0.0 };
     const tree = create(<MapScreen />);
 
-    const aliveHotspot = tree.root.findByProps({ testID: 'stage-hotspot-3-0' });
-    const thinHotspot = tree.root.findByProps({ testID: 'stage-hotspot-1-0' });
-
-    const aliveOpacity = emphasisStyle(FULLNESS_ALIVE_THRESHOLD).opacity;
-    const thinOpacity = emphasisStyle(0.0).opacity;
-
-    // The alive node must render with a visually distinct (higher) opacity.
-    expect(aliveOpacity).toBeGreaterThan(thinOpacity as number);
-
-    // The alive hotspot carries the alive-emphasis style; the thin does not.
-    const aliveStyles = (aliveHotspot.props.style as unknown[]).flat(10);
-    const thinStyles = (thinHotspot.props.style as unknown[]).flat(10);
-    const opacityOf = (styles: unknown[]) =>
-      styles.reduce<number | undefined>((acc, s) => {
-        if (s && typeof s === 'object' && 'opacity' in (s as object)) {
-          return (s as { opacity: number }).opacity;
-        }
-        return acc;
-      }, undefined);
-
-    expect(opacityOf(aliveStyles)).toBeGreaterThan(opacityOf(thinStyles) ?? 0);
+    const unlockedHotspot = tree.root.findByProps({ testID: 'stage-hotspot-1-0' });
+    const flat = StyleSheet.flatten(unlockedHotspot.props.style as unknown[]) as {
+      opacity?: number;
+    };
+    expect(flat.opacity ?? 1).toBe(1);
   });
 
   it('alive node accessibilityLabel contains "reads full" suffix', () => {
@@ -693,6 +678,39 @@ describe('MapScreen center-cell overlay layout', () => {
     expect(flat.opacity).toBe(0.4);
   });
 
+  it('puts the left-column lock on the far left, not on a fourth stacked line', () => {
+    const tree = create(<MapScreen />);
+    const leftHotspot = tree.root.findByProps({ testID: 'stage-hotspot-8-0' });
+
+    // The block lays out as a row with its content vertically centered, so
+    // the padlock sits beside the three text lines, never below them.
+    const flat = StyleSheet.flatten(leftHotspot.props.style) as {
+      flexDirection?: string;
+      alignItems?: string;
+    };
+    expect(flat.flexDirection).toBe('row');
+    expect(flat.alignItems).toBe('center');
+
+    // The lock renders before the persona text (far left of the row).
+    const texts = leftHotspot
+      .findAll((node: TestNode) => typeof node.props.children === 'string')
+      .map((node: TestNode) => node.props.children as string);
+    const display = STAGE_DISPLAY[8];
+    expect(texts.indexOf('🔒')).toBeGreaterThanOrEqual(0);
+    expect(texts.indexOf('🔒')).toBeLessThan(texts.indexOf(display!.persona));
+  });
+
+  it('centers the three text lines of an unlocked left block across its height', () => {
+    const tree = create(<MapScreen />);
+    const leftHotspot = tree.root.findByProps({ testID: 'stage-hotspot-1-0' });
+    // No lock for an unlocked stage, and the text column centers vertically.
+    expect(leftHotspot.findAll(isLockIcon)).toHaveLength(0);
+    expect(styles.stageLines.justifyContent).toBe('center');
+    expect(styles.stageLines.flex).toBe(1);
+  });
+
+  // The YOU ARE HERE pill now rides the magnifier lens, so the center cell of
+  // a locked stage only needs to keep the countdown above its padlock.
   it('stacks the countdown above the lock in a locked center cell', () => {
     mockMapState.daysUntilStage = 42;
     const tree = create(<MapScreen />);
@@ -791,12 +809,96 @@ describe('MapScreen left-column stage text color', () => {
     }
   });
 
+  it('sizes the title watermark from its measured cell width (react-native-web fit)', () => {
+    // adjustsFontSizeToFit is a no-op on react-native-web, so the title must
+    // carry a deterministic fitted fontSize computed from the measured width.
+    const MEASURED_WIDTH = 140;
+    const tree = create(<MapScreen />);
+    for (const title of ['EMPTINESS', 'UNITY']) {
+      const wrapper = tree.root.findByProps({ testID: `title-fit-${title}` });
+      act(() => {
+        (wrapper.props.onLayout as (e: unknown) => void)({
+          nativeEvent: { layout: { width: MEASURED_WIDTH, height: 40 } },
+        });
+      });
+      const node = tree.root.findByProps({ children: title });
+      const flat = StyleSheet.flatten(node.props.style) as { fontSize?: number };
+      expect(flat.fontSize).toBe(fittedTitleFontSize(title, MEASURED_WIDTH));
+    }
+  });
+
   it('renders the EMPTINESS / UNITY title watermark in the muted ink, not the primary ink', () => {
     const tree = create(<MapScreen />);
     for (const title of ['EMPTINESS', 'UNITY']) {
       const node = tree.root.findByProps({ children: title });
       const flat = StyleSheet.flatten(node.props.style) as { color?: string };
       expect(flat.color).toBe(ink.muted);
+    }
+  });
+});
+
+// The Map is a table, and a table reads as one through its rules: gentle
+// horizontal lines between the aspect bands (and the stacked stages within
+// them) and vertical lines between the three columns. They are rendered as the
+// thinnest possible hairline in the faint warm rule colour so they whisper the
+// grid rather than caging it.
+describe('MapScreen soft grid lines', () => {
+  type BorderStyle = {
+    borderTopWidth?: number;
+    borderTopColor?: string;
+    borderRightWidth?: number;
+    borderRightColor?: string;
+  };
+
+  const topBorder = (tree: ReturnType<typeof create>, testID: string): BorderStyle =>
+    StyleSheet.flatten(tree.root.findByProps({ testID }).props.style) as BorderStyle;
+
+  beforeEach(() => {
+    resetMapMocks();
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+    );
+    jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
+  });
+
+  it('draws soft vertical dividers between the three columns in the faint rule colour', () => {
+    expect(styles.leftCell.borderRightWidth).toBeGreaterThan(0);
+    expect(styles.leftCell.borderRightColor).toBe(surface.hairline);
+    expect(styles.centerCell.borderRightWidth).toBeGreaterThan(0);
+    expect(styles.centerCell.borderRightColor).toBe(surface.hairline);
+  });
+
+  it('renders the column dividers as the thinnest hairline so they read gently', () => {
+    expect(styles.leftCell.borderRightWidth).toBe(StyleSheet.hairlineWidth);
+    expect(styles.centerCell.borderRightWidth).toBe(StyleSheet.hairlineWidth);
+  });
+
+  it('draws a soft full-width horizontal rule above every aspect row except the first', () => {
+    const tree = create(<MapScreen />);
+    const awareness = topBorder(tree, 'map-row-Awareness');
+    const being = topBorder(tree, 'map-row-Being');
+    expect(awareness.borderTopWidth ?? 0).toBe(0);
+    expect(being.borderTopWidth).toBe(StyleSheet.hairlineWidth);
+    expect(being.borderTopColor).toBe(surface.hairline);
+  });
+
+  it('divides stacked stages within a paired row with a soft line across left + center', () => {
+    const tree = create(<MapScreen />);
+    // The Yes-And-Ness row pairs stage 2 (top) over stage 1 (bottom). The top
+    // stage sits on the row boundary (drawn by the row itself), so only the
+    // bottom stage carries the within-row rule — across both its columns.
+    for (const column of [0, 1]) {
+      expect(topBorder(tree, `stage-hotspot-2-${column}`).borderTopWidth ?? 0).toBe(0);
+      const bottom = topBorder(tree, `stage-hotspot-1-${column}`);
+      expect(bottom.borderTopWidth).toBe(StyleSheet.hairlineWidth);
+      expect(bottom.borderTopColor).toBe(surface.hairline);
+    }
+  });
+
+  it('never draws a rule above the topmost stage (no double line under the header)', () => {
+    const tree = create(<MapScreen />);
+    for (const column of [0, 1]) {
+      expect(topBorder(tree, `stage-hotspot-10-${column}`).borderTopWidth ?? 0).toBe(0);
     }
   });
 });

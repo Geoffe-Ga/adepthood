@@ -54,6 +54,6 @@ export const WELCOME_PANELS: readonly WelcomePanel[] = [
   {
     eyebrow: 'Ready',
     title: 'Let’s begin',
-    body: 'Press Begin to land on Today, your daily home. From the Habits tab you can plant your first habits whenever you’re ready.',
+    body: 'Press Begin to land on your Journal, your daily home. From the Habits tab you can plant your first habits whenever you’re ready.',
   },
 ] as const;

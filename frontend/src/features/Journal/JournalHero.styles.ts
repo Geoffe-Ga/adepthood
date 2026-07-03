@@ -4,7 +4,7 @@ import { SPACING, editorialType, onShowcase, touchTarget } from '@/design/tokens
 
 const EYEBROW_TRACKING = 1;
 
-/** Token-only styles for the journal showcase hero, mirroring the Today hub. */
+/** Token-only styles for the journal showcase hero. */
 export const journalHeroStyles = StyleSheet.create({
   eyebrow: {
     ...editorialType.caption,

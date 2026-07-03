@@ -46,12 +46,18 @@ import {
 } from './journeyNarrative';
 import { MagnifierLens } from './MagnifierLens';
 import styles from './Map.styles';
-import { labelCorner, MAP_ROWS, STAGE_DISPLAY, TITLE_BY_STAGE } from './mapLayout';
+import {
+  fittedTitleFontSize,
+  labelCorner,
+  MAP_ROWS,
+  STAGE_DISPLAY,
+  TITLE_BY_STAGE,
+} from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
 import { stageService, isStageUnlocked, isEndOfCycle } from './services/stageService';
 import { isLeftReturning, STAGE_COUNT, type StageData } from './stageData';
 import { WaveOverlay } from './WaveOverlay';
-import { emphasisStyle, FULLNESS_ALIVE_THRESHOLD } from './wheelBalance';
+import { FULLNESS_ALIVE_THRESHOLD } from './wheelBalance';
 
 import { Button } from '@/components/Button';
 import { Celebration } from '@/components/feedback/Celebration';
@@ -122,28 +128,40 @@ interface StageCellProps {
 interface StageTextBlockProps extends StageCellProps {
   /** Wheel-of-wholeness fullness (0..1) for this Aspect; drives emphasis + a11y. */
   fullness: number;
+  /** Draw the soft within-row rule above this stage (false for a row's top stage). */
+  showTopDivider: boolean;
 }
 
-// Left cell: colored stage text (the -0 tap target); wheel overlay adds emphasis opacity + a11y only.
+// Left cell: colored stage text (the -0 tap target); the wheel overlay adds
+// a11y only — unlocked stages always render at full opacity. A locked stage's
+// padlock sits inline on the far left, so the three text lines keep the full
+// height of the box and stay vertically centered.
 
 const StageTextBlock = ({
   stage,
   display,
   locked,
   fullness,
+  showTopDivider,
   onPress,
 }: StageTextBlockProps): React.JSX.Element => (
   <TouchableOpacity
     testID={`stage-hotspot-${display.stageNumber}-0`}
-    style={[styles.stageBlock, locked ? styles.locked : null, emphasisStyle(fullness)]}
+    style={[
+      styles.stageBlock,
+      showTopDivider ? styles.horizontalDivider : null,
+      locked ? styles.locked : null,
+    ]}
     onPress={() => onPress(stage)}
     accessibilityRole="button"
     accessibilityLabel={stageNodeLabel(display, fullness)}
   >
-    <Text style={[styles.personaText, { color: display.leftTextColor }]}>{display.persona}</Text>
-    <Text style={[styles.lineText, { color: display.leftTextColor }]}>{display.descriptor}</Text>
-    <Text style={[styles.lineText, { color: display.leftTextColor }]}>{display.practice}</Text>
-    {locked ? <LockGlyph /> : null}
+    {locked ? <Text style={styles.lockLeft}>🔒</Text> : null}
+    <View style={styles.stageLines}>
+      <Text style={[styles.personaText, { color: display.leftTextColor }]}>{display.persona}</Text>
+      <Text style={[styles.lineText, { color: display.leftTextColor }]}>{display.descriptor}</Text>
+      <Text style={[styles.lineText, { color: display.leftTextColor }]}>{display.practice}</Text>
+    </View>
   </TouchableOpacity>
 );
 
@@ -169,6 +187,31 @@ const AspectLabelBlock = ({
   );
 };
 
+/**
+ * EMPTINESS / UNITY watermark sized to its measured cell width. The native
+ * ``adjustsFontSizeToFit`` (kept as a belt-and-braces net) is a no-op on
+ * react-native-web, so the deterministic ``fittedTitleFontSize`` does the real
+ * work of guaranteeing a single un-truncated, un-hyphenated line everywhere.
+ */
+const FittedTitle = ({ title }: { title: string }): React.JSX.Element => {
+  const [width, setWidth] = useState(0);
+  return (
+    <View
+      style={styles.titleFit}
+      testID={`title-fit-${title}`}
+      onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+    >
+      <Text
+        style={[styles.titleText, { fontSize: fittedTitleFontSize(title, width) }]}
+        adjustsFontSizeToFit
+        numberOfLines={1}
+      >
+        {title}
+      </Text>
+    </View>
+  );
+};
+
 // Title rows (9, 10) keep their centered serif heading; every other stage shows
 // its corner-hugging Aspect-label block instead of a centered word.
 const CenterContent = ({
@@ -180,11 +223,7 @@ const CenterContent = ({
 }): React.JSX.Element | null => {
   const title = TITLE_BY_STAGE[display.stageNumber];
   if (title) {
-    return (
-      <Text style={styles.titleText} adjustsFontSizeToFit numberOfLines={1}>
-        {title}
-      </Text>
-    );
+    return <FittedTitle title={title} />;
   }
   if (!display.arrowLabel) {
     return null;
@@ -195,6 +234,8 @@ const CenterContent = ({
 interface StageCenterCellProps extends StageCellProps {
   /** Index of the row this cell sits in, for anchor measurement. */
   rowIndex: number;
+  /** Draw the soft within-row rule above this stage (false for a row's top stage). */
+  showTopDivider: boolean;
   /** Record this cell's measured row-relative center on layout. */
   onCellLayout: UseStageAnchorsResult['onCellLayout'];
 }
@@ -205,12 +246,14 @@ const StageCenterCell = ({
   locked,
   onPress,
   rowIndex,
+  showTopDivider,
   onCellLayout,
 }: StageCenterCellProps): React.JSX.Element => (
   <TouchableOpacity
     testID={`stage-hotspot-${display.stageNumber}-1`}
     style={[
       styles.centerStageCell,
+      showTopDivider ? styles.horizontalDivider : null,
       isLeftReturning(display.stageNumber) ? styles.cellFeminine : styles.cellMasculine,
       locked ? styles.locked : null,
     ]}
@@ -265,13 +308,16 @@ const RowLeftColumn = ({
   onPress: (_stage: StageData) => void;
 }): React.JSX.Element => (
   <View style={styles.leftCell}>
-    {resolved.map(({ stage, display }) => (
+    {resolved.map(({ stage, display }, index) => (
       <StageTextBlock
         key={stage.stageNumber}
         stage={stage}
         display={display}
         locked={!isStageUnlocked(stage, currentStage)}
         fullness={fullnessByStage[stage.stageNumber] ?? THIN_FULLNESS}
+        // A row's top stage sits on the row boundary the group row already
+        // rules; only the stacked stage(s) below it carry the within-row line.
+        showTopDivider={index > 0}
         onPress={onPress}
       />
     ))}
@@ -293,7 +339,7 @@ const RowCenterColumn = ({
   onCellLayout: UseStageAnchorsResult['onCellLayout'];
 }): React.JSX.Element => (
   <View style={styles.centerCell}>
-    {resolved.map(({ stage, display }) => (
+    {resolved.map(({ stage, display }, index) => (
       <StageCenterCell
         key={stage.stageNumber}
         stage={stage}
@@ -301,6 +347,9 @@ const RowCenterColumn = ({
         locked={!isStageUnlocked(stage, currentStage)}
         onPress={onPress}
         rowIndex={rowIndex}
+        // Match the left column: only stages stacked below a row's top stage
+        // carry the within-row rule, so left + center lines align.
+        showTopDivider={index > 0}
         onCellLayout={onCellLayout}
       />
     ))}
@@ -321,7 +370,13 @@ const MapRowView = ({
   const resolved = resolveRowStages(row, lookup);
   return (
     <View
-      style={[styles.groupRow, { flex: row.stageNumbers.length }]}
+      style={[
+        styles.groupRow,
+        { flex: row.stageNumbers.length },
+        // Full-width rule between aspect bands; the first row hugs the header,
+        // so it takes no top line (avoids a double rule under it).
+        rowIndex > 0 ? styles.horizontalDivider : null,
+      ]}
       testID={`map-row-${row.rightLabel}`}
       onLayout={(e) => onRowLayout(rowIndex, e)}
     >

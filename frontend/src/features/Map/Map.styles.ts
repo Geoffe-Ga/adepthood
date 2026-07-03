@@ -34,6 +34,15 @@ const CENTER = 'center';
 // neighboring rows.
 const RIGHT_LABEL_LINE_HEIGHT = 19;
 
+// --- Soft grid rules -------------------------------------------------------
+// The Map is a table, and a table reads as one through its rules: gentle
+// horizontal lines between the aspect bands (and the stacked stages within
+// them) and vertical lines between the three columns. Drawn as the thinnest
+// hairline the platform can render, in the faint warm rule colour, so they
+// whisper the grid over the parchment rather than caging it.
+const GRID_LINE_COLOR = surface.hairline;
+const GRID_LINE_WIDTH = StyleSheet.hairlineWidth;
+
 /**
  * Styles for the Map's spiral-of-becoming grid + the rich stage-detail modal.
  * The grid is token-only and laid out purely with flex; the modal keeps the
@@ -75,22 +84,42 @@ const styles = StyleSheet.create({
   },
   leftCell: {
     flex: LEFT_FLEX,
+    borderRightWidth: GRID_LINE_WIDTH,
+    borderRightColor: GRID_LINE_COLOR,
   },
   centerCell: {
     flex: CENTER_FLEX,
+    borderRightWidth: GRID_LINE_WIDTH,
+    borderRightColor: GRID_LINE_COLOR,
   },
   rightCell: {
     flex: RIGHT_FLEX,
     justifyContent: CENTER,
     paddingHorizontal: spacing(1),
   },
+  // Shared soft horizontal rule: a row boundary (applied to the group row) or a
+  // within-row stage boundary (applied to a stacked stage's cell). Both share
+  // the same faint hairline so the table's lines read as one gentle system.
+  horizontalDivider: {
+    borderTopWidth: GRID_LINE_WIDTH,
+    borderTopColor: GRID_LINE_COLOR,
+  },
 
-  // Left-column stage text block (also the tap target -0)
+  // Left-column stage text block (also the tap target -0). A row so a locked
+  // stage's padlock sits on the far left while the three text lines keep the
+  // box's full height, vertically centered — never a fourth stacked line.
   stageBlock: {
     flex: 1,
-    justifyContent: CENTER,
+    flexDirection: 'row',
+    alignItems: CENTER,
     paddingHorizontal: spacing(1),
     paddingVertical: spacing(0.5),
+  },
+  // The persona / descriptor / practice column fills the remaining width and
+  // centers its three lines across the block's height.
+  stageLines: {
+    flex: 1,
+    justifyContent: CENTER,
   },
   personaText: {
     fontWeight: '700',
@@ -200,6 +229,12 @@ const styles = StyleSheet.create({
     color: ink.soft,
     flexShrink: 1,
   },
+  // Measured wrapper for the EMPTINESS / UNITY watermark: stretches to the
+  // cell's inner width so the fitted font size is computed from real pixels.
+  titleFit: {
+    alignSelf: 'stretch',
+    alignItems: CENTER,
+  },
   // Responsive title carried in the top stage rows' own grid cells (no fixed
   // 40px overlay): the serif ramp scales rather than overflowing the column.
   titleText: {
@@ -225,6 +260,13 @@ const styles = StyleSheet.create({
   lockText: {
     fontSize: 14,
     color: ink.muted,
+  },
+  // Left-column padlock: pinned to the far left of the stage block's row,
+  // vertically centered by the row's alignItems.
+  lockLeft: {
+    fontSize: 14,
+    color: ink.muted,
+    marginRight: spacing(0.5),
   },
   // Locked stages read recessed
   locked: {
