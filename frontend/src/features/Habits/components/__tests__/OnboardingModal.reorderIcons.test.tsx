@@ -8,7 +8,6 @@ jest.mock('../../constants', () => ({
   ...(jest.requireActual('../../constants') as Record<string, unknown>),
   DEFAULT_ICONS: ['⭐'],
 }));
-jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
 jest.mock('react-native-gesture-handler', () => ({
   GestureDetector: ({ children }: { children: ReactNode }) => children,
@@ -98,26 +97,25 @@ describe('OnboardingModal reorder step icon editing', () => {
   });
 
   it('opens the emoji picker for a habit and applies the selected icon', () => {
-    const { getAllByText, getByText, UNSAFE_root } = setupToReorder();
+    const { getAllByText, getByText, getByTestId, queryByTestId } = setupToReorder();
     fireEvent.press(getAllByText('📝')[0]!);
 
-    const selector = UNSAFE_root.findByType('EmojiSelector');
-    fireEvent(selector, 'onEmojiSelected', '🎯');
+    getByTestId('emoji-picker');
+    fireEvent.press(getByTestId('emoji-picker-select'));
 
-    getByText('🎯 Habit A');
-    expect(() => UNSAFE_root.findByType('EmojiSelector')).toThrow();
+    getByText('\u{1F389} Habit A');
+    expect(queryByTestId('emoji-picker')).toBeNull();
   });
 
   it('closes the emoji picker without changing the icon when dismissed via the close button', () => {
-    const { getAllByText, getByText, queryByText, UNSAFE_root } = setupToReorder();
+    const { getAllByText, getByText, queryByText, getByTestId, queryByTestId } = setupToReorder();
     fireEvent.press(getAllByText('📝')[0]!);
-    expect(UNSAFE_root.findByType('EmojiSelector')).toBeTruthy();
+    getByTestId('emoji-picker');
 
-    const closeButtons = getAllByText('×');
-    fireEvent.press(closeButtons[closeButtons.length - 1]!);
+    fireEvent.press(getByTestId('emoji-picker-close'));
 
-    expect(() => UNSAFE_root.findByType('EmojiSelector')).toThrow();
-    expect(queryByText('🎯 Habit A')).toBeNull();
+    expect(queryByTestId('emoji-picker')).toBeNull();
+    expect(queryByText('\u{1F389} Habit A')).toBeNull();
     getByText('⭐ Habit A');
   });
 });

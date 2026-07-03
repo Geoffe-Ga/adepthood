@@ -1,11 +1,12 @@
 /* eslint-env jest */
-// Pins the emoji-picker branch: pressing a tile's icon opens the picker
-// modal (``modals.emojiPicker && <EmojiPickerModal ... />``).
+// Pins the icon-tap flow: opening the picker, selecting a tile, updating the habit icon, and closing.
 import { describe, it, expect, jest } from '@jest/globals';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
 import HabitsScreen from '../HabitsScreen';
+
+const mockUpdateHabit = jest.fn((..._args: unknown[]) => Promise.resolve());
 
 jest.mock('../../../api', () => ({
   habits: {
@@ -36,7 +37,7 @@ jest.mock('../../../api', () => ({
         },
       ]),
     create: jest.fn(),
-    update: jest.fn(),
+    update: (...args: unknown[]) => mockUpdateHabit(...args),
     delete: jest.fn(),
     getStats: () =>
       Promise.resolve({
@@ -82,15 +83,22 @@ jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
 jest.mock('../components/AddHabitModal', () => () => null);
 jest.mock('../components/StatsModal', () => ({ __esModule: true, default: jest.fn(() => null) }));
-jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
 describe('Habits icon-tap emoji picker', () => {
-  it('opens the emoji picker modal when a tile icon is pressed', async () => {
-    const { getAllByTestId, findByText } = render(<HabitsScreen />);
+  it('opens the picker, selects a tile, updates the icon, and closes', async () => {
+    const { getAllByTestId, getByTestId, queryByTestId } = render(<HabitsScreen />);
 
     const icons = await waitFor(() => getAllByTestId('habit-icon'));
     fireEvent.press(icons[0]!);
 
-    expect(await findByText('Select Icon')).toBeTruthy();
+    await waitFor(() => expect(getByTestId('emoji-picker')).toBeTruthy());
+
+    fireEvent.press(getByTestId('emoji-picker-select'));
+
+    await waitFor(() => expect(mockUpdateHabit).toHaveBeenCalledTimes(1));
+    expect(mockUpdateHabit.mock.calls[0]![0]).toBe(1);
+    expect(mockUpdateHabit.mock.calls[0]![1]).toMatchObject({ icon: '\u{1F389}' });
+
+    await waitFor(() => expect(queryByTestId('emoji-picker')).toBeNull());
   });
 });

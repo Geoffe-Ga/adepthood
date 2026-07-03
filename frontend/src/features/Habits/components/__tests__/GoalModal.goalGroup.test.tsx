@@ -2,9 +2,6 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
-// EmojiSelector pulls in native bindings; render a stub.
-jest.mock('react-native-emoji-selector', () => () => null);
-
 jest.mock('../../../../api', () => ({
   __esModule: true,
   goalGroups: {

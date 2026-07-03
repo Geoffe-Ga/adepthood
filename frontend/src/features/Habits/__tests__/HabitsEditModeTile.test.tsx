@@ -91,7 +91,6 @@ jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
 jest.mock('../components/AddHabitModal', () => () => null);
 jest.mock('../components/StatsModal', () => ({ __esModule: true, default: jest.fn(() => null) }));
-jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
 describe('Habits Edit-mode tile tap', () => {
   it('opens the habit settings modal when a tile is tapped in Edit mode', async () => {

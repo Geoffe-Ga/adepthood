@@ -86,7 +86,6 @@ jest.mock('../components/StatsModal', () => ({
   __esModule: true,
   default: jest.fn(() => null),
 }));
-jest.mock('react-native-emoji-selector', () => 'EmojiSelector');
 
 const { habits: habitsApi } = require('../../../api');
 const HabitsScreen = require('../HabitsScreen').default;

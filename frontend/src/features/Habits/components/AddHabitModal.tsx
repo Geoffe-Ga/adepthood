@@ -60,16 +60,14 @@ const IconRow = ({ icon, showEmojiPicker, setShowEmojiPicker, setIcon }: IconRow
         <Text style={styles.currentIcon}>{icon}</Text>
       </TouchableOpacity>
     </View>
-    {showEmojiPicker && (
-      <View style={styles.emojiSelectorContainer}>
-        <HabitEmojiPicker
-          onEmojiSelected={(emoji) => {
-            setIcon(emoji);
-            setShowEmojiPicker(false);
-          }}
-        />
-      </View>
-    )}
+    <HabitEmojiPicker
+      visible={showEmojiPicker}
+      onSelect={(emoji) => {
+        setIcon(emoji);
+        setShowEmojiPicker(false);
+      }}
+      onClose={() => setShowEmojiPicker(false)}
+    />
   </>
 );
 
