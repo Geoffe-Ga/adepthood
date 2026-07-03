@@ -61,14 +61,14 @@ jest.mock('../StatTileRow', () => {
   return { __esModule: true, default: Stub };
 });
 
-// The Return and invitation surfaces render on the shelf from Today; stub them
-// so shelf tests stay focused on ordering, not on Return/invitation state.
-jest.mock('@/features/Today/ReturnStack', () => {
+// The Return and invitation surfaces render on the shelf; stub them so shelf
+// tests stay focused on ordering, not on Return/invitation state.
+jest.mock('@/features/Return/ReturnStack', () => {
   const { View } = require('react-native');
   const Stub = () => <View testID="return-stack-stub" />;
   return { __esModule: true, default: Stub };
 });
-jest.mock('@/features/Today/InvitationStack', () => {
+jest.mock('@/features/Invitations/InvitationStack', () => {
   const { View } = require('react-native');
   const Stub = () => <View testID="invitation-stack-stub" />;
   return { __esModule: true, default: Stub };

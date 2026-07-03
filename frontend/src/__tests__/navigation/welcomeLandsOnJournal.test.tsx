@@ -42,13 +42,6 @@ jest.mock('@/features/Journal/JournalShelfScreen', () => {
   return { __esModule: true, default: Stub };
 });
 
-jest.mock('@/features/Today/TodayScreen', () => {
-  const React = require('react');
-  const { Text } = require('react-native');
-  const Stub = () => React.createElement(Text, { testID: 'today-screen' }, 'Today');
-  return { __esModule: true, default: Stub };
-});
-
 jest.mock('@/features/Habits/HabitsScreen', () => {
   const React = require('react');
   const { Text } = require('react-native');

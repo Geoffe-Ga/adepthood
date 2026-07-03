@@ -4,8 +4,8 @@
  * when this returns true AND the person is eligible.
  *
  * It reads the shared contraction-signal store, which the journal resonance
- * pass feeds each time it observes a contraction. A reactive selector so a
- * still-mounted Today tab re-renders the moment the signal flips.
+ * pass feeds each time it observes a contraction. A reactive selector so the
+ * Return offer on the Journal shelf re-renders the moment the signal flips.
  */
 import { useContractionSignalStore } from '@/store/useContractionSignalStore';
 
