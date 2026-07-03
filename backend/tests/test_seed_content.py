@@ -171,15 +171,18 @@ def test_vendored_content_pin_lists_stage_intros() -> None:
 
     Guards the activation this issue is for: a pin from before the content
     repo shipped ``stage_intros[]`` (schema 1.0.0) would leave every stage's
-    intro card 404ing. Also exercises ``read_intro_body`` end-to-end against
-    the real vendored Markdown, not a fixture.
+    intro card 404ing. Checks all 10 stages (not just stage 1) so a future
+    re-vendor that silently drops some stages' intros is caught, and
+    exercises ``read_intro_body`` end-to-end against the real vendored
+    Markdown, not a fixture.
     """
     repo = ContentRepository(_VENDORED_CONTENT_DIR)
-    intro = repo.get_stage_intro(1)
-    assert intro is not None, "vendored manifest should expose a stage 1 intro"
-    body = repo.read_intro_body(1)
-    assert body.body, "read_intro_body should return non-empty Markdown"
-    assert body.title == intro.title
+    for stage in range(1, 11):
+        intro = repo.get_stage_intro(stage)
+        assert intro is not None, f"vendored manifest should expose a stage {stage} intro"
+        body = repo.read_intro_body(stage)
+        assert body.body, f"read_intro_body({stage}) should return non-empty Markdown"
+        assert body.title == intro.title
 
 
 @pytest.mark.asyncio
