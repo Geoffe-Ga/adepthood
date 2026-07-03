@@ -171,7 +171,10 @@ const normalizeGoalTiers = (goals: Goal[], updatedGoal: Goal): void => {
 export const applyGoalUpdate = (habits: Habit[], habitId: number, updatedGoal: Goal): Habit[] =>
   habits.map((h) => {
     if (h.id !== habitId) return h;
-    const goals = h.goals.map((goal) => (goal.id === updatedGoal.id ? updatedGoal : goal));
+    // Copy every goal before normalizing — the caller's ``prev`` rollback
+    // snapshot shares these object refs, so mutating in place would corrupt
+    // the untouched tiers of the pre-edit state.
+    const goals = h.goals.map((goal) => ({ ...(goal.id === updatedGoal.id ? updatedGoal : goal) }));
     normalizeGoalTiers(goals, updatedGoal);
     return { ...h, goals };
   });
