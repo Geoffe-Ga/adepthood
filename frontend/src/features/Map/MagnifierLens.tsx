@@ -23,6 +23,7 @@ import {
   clampLensCenter,
   DRAG_TAP_SLOP,
   glideDurationMs,
+  inertialStageTarget,
   lensCaption,
   lensCenterForStage,
   lensFrame,
@@ -97,6 +98,9 @@ interface DragOrigin {
   touchX: number;
   touchY: number;
   center: LensCenter;
+  lastY: number;
+  lastTime: number | null;
+  velocityY: number;
 }
 
 /** Run one glide: ease the center over, then clear the frost on arrival. */
@@ -205,6 +209,62 @@ interface LensDragHandlers {
   onResponderTerminate: () => void;
 }
 
+const newDragOrigin = (event: GestureResponderEvent, center: LensCenter): DragOrigin => ({
+  touchX: event.nativeEvent.pageX,
+  touchY: event.nativeEvent.pageY,
+  center: { ...center },
+  lastY: center.y,
+  lastTime: event.nativeEvent.timestamp ?? null,
+  velocityY: 0,
+});
+
+const rememberVerticalVelocity = (
+  origin: React.MutableRefObject<DragOrigin>,
+  nextY: number,
+  eventTime: number | undefined,
+): void => {
+  if (typeof eventTime === 'number' && origin.current.lastTime !== null) {
+    const dt = eventTime - origin.current.lastTime;
+    if (dt > 0) origin.current.velocityY = (nextY - origin.current.lastY) / dt;
+    origin.current.lastTime = eventTime;
+  }
+  origin.current.lastY = nextY;
+};
+
+const settleStageWithMomentum = (
+  centerY: number,
+  velocityY: number,
+  gridHeight: number,
+  anchors: StageAnchors,
+): number => inertialStageTarget(centerY, velocityY, gridHeight, anchors);
+
+const dragCenterOnRail = (
+  event: GestureResponderEvent,
+  origin: DragOrigin,
+  frame: LensFrame,
+  gridWidth: number,
+  gridHeight: number,
+): LensCenter =>
+  clampLensCenter(
+    { x: origin.center.x, y: origin.center.y + event.nativeEvent.pageY - origin.touchY },
+    frame,
+    gridWidth,
+    gridHeight,
+  );
+
+const settleDraggedLens = (params: LensDragParams, dragOrigin: DragOrigin): void => {
+  const { motion, gridHeight, anchors } = params;
+  motion.dragging.current = false;
+  const settled = settleStageWithMomentum(
+    motion.lastCenter.current.y,
+    dragOrigin.velocityY,
+    gridHeight,
+    anchors,
+  );
+  motion.glideTo(params.restingCenter(settled));
+  if (settled !== params.focusedStage) params.onSettleStage(settled);
+};
+
 /**
  * Drag the lens with a plain responder: releases within ``DRAG_TAP_SLOP`` are
  * taps (open the stage); real drags track the finger, re-caption the stage
@@ -212,43 +272,38 @@ interface LensDragHandlers {
  */
 const useLensDrag = (params: LensDragParams): LensDragHandlers => {
   const { motion, frame, gridWidth, gridHeight, anchors } = params;
-  const dragOrigin = useRef<DragOrigin>({ touchX: 0, touchY: 0, center: { x: 0, y: 0 } });
+  const dragOrigin = useRef<DragOrigin>({
+    touchX: 0,
+    touchY: 0,
+    center: { x: 0, y: 0 },
+    lastY: 0,
+    lastTime: null,
+    velocityY: 0,
+  });
 
   const handleMove = (event: GestureResponderEvent): void => {
     const dx = event.nativeEvent.pageX - dragOrigin.current.touchX;
     const dy = event.nativeEvent.pageY - dragOrigin.current.touchY;
+    const eventTime = event.nativeEvent.timestamp;
     if (!motion.dragging.current) {
       if (Math.hypot(dx, dy) < DRAG_TAP_SLOP) return;
       motion.dragging.current = true;
       if (!params.reducedMotion) motion.raiseFrost();
     }
-    const next = clampLensCenter(
-      { x: dragOrigin.current.center.x + dx, y: dragOrigin.current.center.y + dy },
-      frame,
-      gridWidth,
-      gridHeight,
-    );
+    const next = dragCenterOnRail(event, dragOrigin.current, frame, gridWidth, gridHeight);
+    rememberVerticalVelocity(dragOrigin, next.y, eventTime);
     motion.center.setValue(next);
     params.onHoverStage(nearestStage(next.y, gridHeight, anchors));
   };
 
-  const settleDrag = (): void => {
-    motion.dragging.current = false;
-    const settled = nearestStage(motion.lastCenter.current.y, gridHeight, anchors);
-    motion.glideTo(params.restingCenter(settled));
-    if (settled !== params.focusedStage) params.onSettleStage(settled);
-  };
+  const settleDrag = (): void => settleDraggedLens(params, dragOrigin.current);
 
   return {
     onStartShouldSetResponder: () => true,
     onResponderTerminationRequest: () => false,
     onResponderGrant: (event) => {
       motion.dragging.current = false;
-      dragOrigin.current = {
-        touchX: event.nativeEvent.pageX,
-        touchY: event.nativeEvent.pageY,
-        center: { ...motion.lastCenter.current },
-      };
+      dragOrigin.current = newDragOrigin(event, motion.lastCenter.current);
     },
     onResponderMove: handleMove,
     onResponderRelease: () => {

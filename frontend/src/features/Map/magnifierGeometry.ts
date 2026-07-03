@@ -49,6 +49,9 @@ const GLIDE_MAX_MS = 900;
 /** Additional glide time per pixel of travel between resting points. */
 const GLIDE_MS_PER_PX = 1.1;
 
+/** Momentum look-ahead window: fast swipes project a few stage bands forward. */
+const INERTIA_PROJECTION_MS = 120;
+
 /** Clamp ``value`` into [min, max]; min wins when the range is degenerate. */
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(Math.max(value, min), max);
@@ -128,6 +131,18 @@ export const nearestStage = (
   }
   return best;
 };
+
+/**
+ * Choose the stage a released swipe should coast toward. ``velocityY`` is in
+ * px/ms (positive downward), so projecting the release point forward keeps the
+ * lens on its vertical rail while making faster swipes coast across more rows.
+ */
+export const inertialStageTarget = (
+  centerY: number,
+  velocityY: number,
+  gridHeight: number,
+  anchors: StageAnchors = {},
+): number => nearestStage(centerY + velocityY * INERTIA_PROJECTION_MS, gridHeight, anchors);
 
 /**
  * Constants of the magnified-content mapping. A full-size copy of the grid
