@@ -105,12 +105,21 @@ const styles = StyleSheet.create({
     borderTopColor: GRID_LINE_COLOR,
   },
 
-  // Left-column stage text block (also the tap target -0)
+  // Left-column stage text block (also the tap target -0). A row so a locked
+  // stage's padlock sits on the far left while the three text lines keep the
+  // box's full height, vertically centered — never a fourth stacked line.
   stageBlock: {
     flex: 1,
-    justifyContent: CENTER,
+    flexDirection: 'row',
+    alignItems: CENTER,
     paddingHorizontal: spacing(1),
     paddingVertical: spacing(0.5),
+  },
+  // The persona / descriptor / practice column fills the remaining width and
+  // centers its three lines across the block's height.
+  stageLines: {
+    flex: 1,
+    justifyContent: CENTER,
   },
   personaText: {
     fontWeight: '700',
@@ -188,6 +197,12 @@ const styles = StyleSheet.create({
     color: ink.soft,
     flexShrink: 1,
   },
+  // Measured wrapper for the EMPTINESS / UNITY watermark: stretches to the
+  // cell's inner width so the fitted font size is computed from real pixels.
+  titleFit: {
+    alignSelf: 'stretch',
+    alignItems: CENTER,
+  },
   // Responsive title carried in the top stage rows' own grid cells (no fixed
   // 40px overlay): the serif ramp scales rather than overflowing the column.
   titleText: {
@@ -213,6 +228,13 @@ const styles = StyleSheet.create({
   lockText: {
     fontSize: 14,
     color: ink.muted,
+  },
+  // Left-column padlock: pinned to the far left of the stage block's row,
+  // vertically centered by the row's alignItems.
+  lockLeft: {
+    fontSize: 14,
+    color: ink.muted,
+    marginRight: spacing(0.5),
   },
   // Locked stages read recessed
   locked: {

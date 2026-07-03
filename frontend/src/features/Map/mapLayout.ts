@@ -57,6 +57,37 @@ export interface MapRow {
 /** The serif title across the top of the spiral (top → bottom). */
 export const MAP_TITLE_LINES = ['EMPTINESS', 'UNITY'] as const;
 
+/** Ceiling for the title watermark — ``editorialType.title``'s 26px. */
+export const TITLE_MAX_FONT_SIZE = 26;
+
+/** Floor below which the watermark would stop reading as a title. */
+export const TITLE_MIN_FONT_SIZE = 12;
+
+/** Letter spacing (px) the title style renders with; part of the fit budget. */
+export const TITLE_LETTER_SPACING = 1;
+
+/**
+ * Conservative average advance width of an uppercase serif glyph, in ems.
+ * Deliberately generous (Georgia caps average ≈0.63em) so the estimate only
+ * ever errs toward a smaller, guaranteed-fitting size.
+ */
+const TITLE_GLYPH_EM_WIDTH = 0.72;
+
+/**
+ * Largest font size (capped at ``TITLE_MAX_FONT_SIZE``) at which ``title``
+ * fits ``width`` on a single line. The native ``adjustsFontSizeToFit`` is not
+ * implemented by react-native-web, so the watermark sizes itself from the
+ * measured cell width instead — EMPTINESS / UNITY must never truncate or
+ * hyphenate on any target. An unmeasured width (0) renders at the ceiling
+ * until layout reports.
+ */
+export const fittedTitleFontSize = (title: string, width: number): number => {
+  if (width <= 0 || title.length === 0) return TITLE_MAX_FONT_SIZE;
+  const glyphBudget = width - TITLE_LETTER_SPACING * title.length;
+  const fitted = Math.floor(glyphBudget / (title.length * TITLE_GLYPH_EM_WIDTH));
+  return Math.max(TITLE_MIN_FONT_SIZE, Math.min(TITLE_MAX_FONT_SIZE, fitted));
+};
+
 /**
  * The title line each top stage carries in its own grid row (no absolute
  * overlay): stage 10 reads EMPTINESS, stage 9 reads UNITY. Stages 1–8 have none.

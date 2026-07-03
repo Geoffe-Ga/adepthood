@@ -2,11 +2,14 @@
 /* global describe, it, expect */
 import { ink, surface } from '../../../design/tokens';
 import {
+  fittedTitleFontSize,
   GRID_COLUMN_FLEX,
   labelCorner,
   MAP_ROWS,
   MAP_TITLE_LINES,
   STAGE_DISPLAY,
+  TITLE_MAX_FONT_SIZE,
+  TITLE_MIN_FONT_SIZE,
 } from '../mapLayout';
 import { isLeftReturning, STAGE_COUNT } from '../stageData';
 
@@ -133,6 +136,46 @@ describe('mapLayout', () => {
     for (let stageNumber = 1; stageNumber <= 8; stageNumber += 1) {
       const expected = isLeftReturning(stageNumber) ? 'right' : 'left';
       expect(labelCorner(stageNumber)).toBe(expected);
+    }
+  });
+});
+
+describe('fittedTitleFontSize', () => {
+  // The conservative glyph-advance estimate the fit is computed against; a
+  // fitted size is correct when estimated line width never exceeds the cell.
+  const GLYPH_EM_WIDTH = 0.72;
+  const LETTER_SPACING = 1;
+  const estimatedWidth = (title: string, fontSize: number): number =>
+    title.length * fontSize * GLYPH_EM_WIDTH + title.length * LETTER_SPACING;
+
+  it('renders at the ceiling before layout reports a width', () => {
+    expect(fittedTitleFontSize('EMPTINESS', 0)).toBe(TITLE_MAX_FONT_SIZE);
+  });
+
+  it('caps a short word in a wide cell at the type ramp ceiling', () => {
+    expect(fittedTitleFontSize('UNITY', 400)).toBe(TITLE_MAX_FONT_SIZE);
+  });
+
+  it('shrinks EMPTINESS so its estimated width fits a phone-width center cell', () => {
+    for (const width of [120, 140, 160, 200]) {
+      const size = fittedTitleFontSize('EMPTINESS', width);
+      expect(size).toBeLessThanOrEqual(TITLE_MAX_FONT_SIZE);
+      expect(estimatedWidth('EMPTINESS', size)).toBeLessThanOrEqual(width);
+    }
+  });
+
+  it('never shrinks below the legibility floor', () => {
+    expect(fittedTitleFontSize('EMPTINESS', 10)).toBe(TITLE_MIN_FONT_SIZE);
+  });
+
+  it('fits every configured title line, not just the current copy', () => {
+    const NARROW_CELL = 130;
+    for (const title of MAP_TITLE_LINES) {
+      const size = fittedTitleFontSize(title, NARROW_CELL);
+      expect(size).toBeGreaterThanOrEqual(TITLE_MIN_FONT_SIZE);
+      if (size > TITLE_MIN_FONT_SIZE) {
+        expect(estimatedWidth(title, size)).toBeLessThanOrEqual(NARROW_CELL);
+      }
     }
   });
 });
