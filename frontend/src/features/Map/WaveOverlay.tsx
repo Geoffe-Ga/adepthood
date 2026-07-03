@@ -61,8 +61,8 @@ export const WaveOverlay = ({
     >
       {segments.map((segment) => (
         <Path
-          key={`near-${segment.stageNumber}`}
-          testID={`near-${segment.stageNumber}`}
+          key={`near-${segment.stageNumber}-${segment.half}`}
+          testID={`near-${segment.stageNumber}-${segment.half}`}
           d={segment.d}
           stroke={segment.color}
           {...WAVE_STROKE_PROPS}
