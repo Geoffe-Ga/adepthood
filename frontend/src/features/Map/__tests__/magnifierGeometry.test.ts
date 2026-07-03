@@ -6,6 +6,7 @@ import {
   contentOffset,
   DRAG_TAP_SLOP,
   glideDurationMs,
+  inertialStageTarget,
   lensCaption,
   lensCenterForStage,
   lensFrame,
@@ -118,6 +119,25 @@ describe('nearestStage', () => {
   it('clamps to the arc extremes above and below the strand', () => {
     expect(nearestStage(-100, GRID_HEIGHT)).toBe(STAGE_COUNT);
     expect(nearestStage(GRID_HEIGHT + 100, GRID_HEIGHT)).toBe(1);
+  });
+});
+
+describe('inertialStageTarget', () => {
+  it('projects a fast upward swipe several stages along the vertical track', () => {
+    const stage3Y = stageWavePoint(3).y * GRID_HEIGHT;
+    expect(inertialStageTarget(stage3Y, -1.4, GRID_HEIGHT)).toBe(6);
+  });
+
+  it('keeps slow releases at the nearest stage', () => {
+    const stage3Y = stageWavePoint(3).y * GRID_HEIGHT;
+    expect(inertialStageTarget(stage3Y, -0.05, GRID_HEIGHT)).toBe(3);
+  });
+
+  it('clamps projected momentum to the map ends', () => {
+    const stage9Y = stageWavePoint(9).y * GRID_HEIGHT;
+    expect(inertialStageTarget(stage9Y, -4, GRID_HEIGHT)).toBe(STAGE_COUNT);
+    const stage2Y = stageWavePoint(2).y * GRID_HEIGHT;
+    expect(inertialStageTarget(stage2Y, 4, GRID_HEIGHT)).toBe(1);
   });
 });
 

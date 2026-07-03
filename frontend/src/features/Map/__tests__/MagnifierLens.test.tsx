@@ -3,7 +3,7 @@
 import React from 'react';
 import { act, create } from 'react-test-renderer';
 
-import { lensCenterForStage } from '../magnifierGeometry';
+import { lensCenterForStage, lensFrame } from '../magnifierGeometry';
 import MagnifierLens from '../MagnifierLens';
 import { stageWavePoint } from '../waveGeometry';
 
@@ -52,7 +52,9 @@ const headlineText = (tree: ReturnType<typeof create>): string =>
   tree.root.findByProps({ testID: 'magnifier-headline' }).props.children as string;
 
 /** Synthetic responder touch event at a page position. */
-const touch = (pageX: number, pageY: number) => ({ nativeEvent: { pageX, pageY } });
+const touch = (pageX: number, pageY: number, timestamp = 0) => ({
+  nativeEvent: { pageX, pageY, timestamp },
+});
 
 /** Drive a full grant → move → release drag on the lens. */
 const drag = (
@@ -135,6 +137,36 @@ describe('MagnifierLens', () => {
     const lens = lensNode(tree);
     expect(lens.props.onStartShouldSetResponder()).toBe(true);
     expect(lens.props.onResponderTerminationRequest()).toBe(false);
+  });
+
+  it('locks horizontal dragging to the center-column rail', () => {
+    const { tree } = renderLens({ focusedStage: 1 });
+    const lens = lensNode(tree);
+    const start = lensCenterForStage(1, GRID_WIDTH, GRID_HEIGHT);
+    const stage2Y = stageWavePoint(2).y * GRID_HEIGHT;
+    act(() => {
+      lens.props.onResponderGrant(touch(150, start.y, 0));
+      lens.props.onResponderMove(touch(260, stage2Y, 100));
+    });
+    const style = lensNode(tree).props.style[2];
+    expect(style.transform[0].translateX.__getValue()).toBeCloseTo(
+      start.x - lensFrame(GRID_WIDTH, GRID_HEIGHT).width / 2,
+    );
+    expect(headlineText(tree)).toBe('Receptivity');
+  });
+
+  it('uses release velocity to coast a fast swipe farther than the finger position', () => {
+    const { tree, onSettleStage } = renderLens({ focusedStage: 1 });
+    const lens = lensNode(tree);
+    const start = lensCenterForStage(1, GRID_WIDTH, GRID_HEIGHT);
+    const stage3Y = stageWavePoint(3).y * GRID_HEIGHT;
+    act(() => {
+      lens.props.onResponderGrant(touch(150, start.y, 0));
+      lens.props.onResponderMove(touch(150, stage3Y + 28, 80));
+      lens.props.onResponderMove(touch(150, stage3Y, 100));
+      lens.props.onResponderRelease(touch(150, stage3Y, 100));
+    });
+    expect(onSettleStage).toHaveBeenCalledWith(6);
   });
 
   it('drag past the slop settles on the nearest stage instead of tapping', () => {
