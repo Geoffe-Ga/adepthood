@@ -6,10 +6,10 @@ import { act, create } from 'react-test-renderer';
 
 import { ink, surface } from '../../../design/tokens';
 import styles from '../Map.styles';
-import { MAP_ROWS, STAGE_DISPLAY } from '../mapLayout';
+import { fittedTitleFontSize, MAP_ROWS, STAGE_DISPLAY } from '../mapLayout';
 import MapScreen from '../MapScreen';
 import { STAGE_COUNT } from '../stageData';
-import { emphasisStyle, FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
+import { FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
 
 import {
   mockBeginAgain,
@@ -191,32 +191,17 @@ describe('MapScreen', () => {
 
   // --- Wheel-of-wholeness balance tests ---
 
-  it('alive node (fullness >= threshold) renders with higher opacity than a thin node', () => {
-    // Stage 3 is alive; stage 1 is thin.
-    mockMapState.wheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD, 1: 0.0 };
+  it('renders unlocked stages at full opacity even when the wheel reads thin', () => {
+    // Stage 1 is unlocked but reads thin — the balance must stay an a11y-only
+    // read, never a washed-out (greyed) stage block.
+    mockMapState.wheelFullnessByStage = { 1: 0.0 };
     const tree = create(<MapScreen />);
 
-    const aliveHotspot = tree.root.findByProps({ testID: 'stage-hotspot-3-0' });
-    const thinHotspot = tree.root.findByProps({ testID: 'stage-hotspot-1-0' });
-
-    const aliveOpacity = emphasisStyle(FULLNESS_ALIVE_THRESHOLD).opacity;
-    const thinOpacity = emphasisStyle(0.0).opacity;
-
-    // The alive node must render with a visually distinct (higher) opacity.
-    expect(aliveOpacity).toBeGreaterThan(thinOpacity as number);
-
-    // The alive hotspot carries the alive-emphasis style; the thin does not.
-    const aliveStyles = (aliveHotspot.props.style as unknown[]).flat(10);
-    const thinStyles = (thinHotspot.props.style as unknown[]).flat(10);
-    const opacityOf = (styles: unknown[]) =>
-      styles.reduce<number | undefined>((acc, s) => {
-        if (s && typeof s === 'object' && 'opacity' in (s as object)) {
-          return (s as { opacity: number }).opacity;
-        }
-        return acc;
-      }, undefined);
-
-    expect(opacityOf(aliveStyles)).toBeGreaterThan(opacityOf(thinStyles) ?? 0);
+    const unlockedHotspot = tree.root.findByProps({ testID: 'stage-hotspot-1-0' });
+    const flat = StyleSheet.flatten(unlockedHotspot.props.style as unknown[]) as {
+      opacity?: number;
+    };
+    expect(flat.opacity ?? 1).toBe(1);
   });
 
   it('alive node accessibilityLabel contains "reads full" suffix', () => {
@@ -597,6 +582,37 @@ describe('MapScreen center-cell overlay layout', () => {
     expect(flat.opacity).toBe(0.4);
   });
 
+  it('puts the left-column lock on the far left, not on a fourth stacked line', () => {
+    const tree = create(<MapScreen />);
+    const leftHotspot = tree.root.findByProps({ testID: 'stage-hotspot-8-0' });
+
+    // The block lays out as a row with its content vertically centered, so
+    // the padlock sits beside the three text lines, never below them.
+    const flat = StyleSheet.flatten(leftHotspot.props.style) as {
+      flexDirection?: string;
+      alignItems?: string;
+    };
+    expect(flat.flexDirection).toBe('row');
+    expect(flat.alignItems).toBe('center');
+
+    // The lock renders before the persona text (far left of the row).
+    const texts = leftHotspot
+      .findAll((node: TestNode) => typeof node.props.children === 'string')
+      .map((node: TestNode) => node.props.children as string);
+    const display = STAGE_DISPLAY[8];
+    expect(texts.indexOf('🔒')).toBeGreaterThanOrEqual(0);
+    expect(texts.indexOf('🔒')).toBeLessThan(texts.indexOf(display!.persona));
+  });
+
+  it('centers the three text lines of an unlocked left block across its height', () => {
+    const tree = create(<MapScreen />);
+    const leftHotspot = tree.root.findByProps({ testID: 'stage-hotspot-1-0' });
+    // No lock for an unlocked stage, and the text column centers vertically.
+    expect(leftHotspot.findAll(isLockIcon)).toHaveLength(0);
+    expect(styles.stageLines.justifyContent).toBe('center');
+    expect(styles.stageLines.flex).toBe(1);
+  });
+
   it('stacks the pill above the label and the countdown above the lock', () => {
     mockMapState.daysUntilStage = 42;
     const tree = create(<MapScreen />);
@@ -697,6 +713,24 @@ describe('MapScreen left-column stage text color', () => {
       const node = tree.root.findByProps({ children: title });
       expect(node.props.adjustsFontSizeToFit).toBe(true);
       expect(node.props.numberOfLines).toBe(1);
+    }
+  });
+
+  it('sizes the title watermark from its measured cell width (react-native-web fit)', () => {
+    // adjustsFontSizeToFit is a no-op on react-native-web, so the title must
+    // carry a deterministic fitted fontSize computed from the measured width.
+    const MEASURED_WIDTH = 140;
+    const tree = create(<MapScreen />);
+    for (const title of ['EMPTINESS', 'UNITY']) {
+      const wrapper = tree.root.findByProps({ testID: `title-fit-${title}` });
+      act(() => {
+        (wrapper.props.onLayout as (e: unknown) => void)({
+          nativeEvent: { layout: { width: MEASURED_WIDTH, height: 40 } },
+        });
+      });
+      const node = tree.root.findByProps({ children: title });
+      const flat = StyleSheet.flatten(node.props.style) as { fontSize?: number };
+      expect(flat.fontSize).toBe(fittedTitleFontSize(title, MEASURED_WIDTH));
     }
   });
 

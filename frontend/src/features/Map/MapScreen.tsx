@@ -45,12 +45,18 @@ import {
   unlockTimeline,
 } from './journeyNarrative';
 import styles from './Map.styles';
-import { labelCorner, MAP_ROWS, STAGE_DISPLAY, TITLE_BY_STAGE } from './mapLayout';
+import {
+  fittedTitleFontSize,
+  labelCorner,
+  MAP_ROWS,
+  STAGE_DISPLAY,
+  TITLE_BY_STAGE,
+} from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
 import { stageService, isStageUnlocked, isEndOfCycle } from './services/stageService';
 import { isLeftReturning, STAGE_COUNT, type StageData } from './stageData';
 import { WaveOverlay } from './WaveOverlay';
-import { emphasisStyle, FULLNESS_ALIVE_THRESHOLD } from './wheelBalance';
+import { FULLNESS_ALIVE_THRESHOLD } from './wheelBalance';
 
 import { Button } from '@/components/Button';
 import { Celebration } from '@/components/feedback/Celebration';
@@ -132,7 +138,10 @@ interface StageTextBlockProps extends StageCellProps {
   showTopDivider: boolean;
 }
 
-// Left cell: colored stage text (the -0 tap target); wheel overlay adds emphasis opacity + a11y only.
+// Left cell: colored stage text (the -0 tap target); the wheel overlay adds
+// a11y only — unlocked stages always render at full opacity. A locked stage's
+// padlock sits inline on the far left, so the three text lines keep the full
+// height of the box and stay vertically centered.
 
 const StageTextBlock = ({
   stage,
@@ -148,16 +157,17 @@ const StageTextBlock = ({
       styles.stageBlock,
       showTopDivider ? styles.horizontalDivider : null,
       locked ? styles.locked : null,
-      emphasisStyle(fullness),
     ]}
     onPress={() => onPress(stage)}
     accessibilityRole="button"
     accessibilityLabel={stageNodeLabel(display, fullness)}
   >
-    <Text style={[styles.personaText, { color: display.leftTextColor }]}>{display.persona}</Text>
-    <Text style={[styles.lineText, { color: display.leftTextColor }]}>{display.descriptor}</Text>
-    <Text style={[styles.lineText, { color: display.leftTextColor }]}>{display.practice}</Text>
-    {locked ? <LockGlyph /> : null}
+    {locked ? <Text style={styles.lockLeft}>🔒</Text> : null}
+    <View style={styles.stageLines}>
+      <Text style={[styles.personaText, { color: display.leftTextColor }]}>{display.persona}</Text>
+      <Text style={[styles.lineText, { color: display.leftTextColor }]}>{display.descriptor}</Text>
+      <Text style={[styles.lineText, { color: display.leftTextColor }]}>{display.practice}</Text>
+    </View>
   </TouchableOpacity>
 );
 
@@ -183,6 +193,31 @@ const AspectLabelBlock = ({
   );
 };
 
+/**
+ * EMPTINESS / UNITY watermark sized to its measured cell width. The native
+ * ``adjustsFontSizeToFit`` (kept as a belt-and-braces net) is a no-op on
+ * react-native-web, so the deterministic ``fittedTitleFontSize`` does the real
+ * work of guaranteeing a single un-truncated, un-hyphenated line everywhere.
+ */
+const FittedTitle = ({ title }: { title: string }): React.JSX.Element => {
+  const [width, setWidth] = useState(0);
+  return (
+    <View
+      style={styles.titleFit}
+      testID={`title-fit-${title}`}
+      onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+    >
+      <Text
+        style={[styles.titleText, { fontSize: fittedTitleFontSize(title, width) }]}
+        adjustsFontSizeToFit
+        numberOfLines={1}
+      >
+        {title}
+      </Text>
+    </View>
+  );
+};
+
 // Title rows (9, 10) keep their centered serif heading; every other stage shows
 // its corner-hugging Aspect-label block instead of a centered word.
 const CenterContent = ({
@@ -194,11 +229,7 @@ const CenterContent = ({
 }): React.JSX.Element | null => {
   const title = TITLE_BY_STAGE[display.stageNumber];
   if (title) {
-    return (
-      <Text style={styles.titleText} adjustsFontSizeToFit numberOfLines={1}>
-        {title}
-      </Text>
-    );
+    return <FittedTitle title={title} />;
   }
   if (!display.arrowLabel) {
     return null;
