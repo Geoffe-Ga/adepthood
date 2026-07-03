@@ -6,6 +6,7 @@ import renderer from 'react-test-renderer';
 
 import { HabitTile } from '../HabitTile';
 import type { Habit } from '../Habits.types';
+import { buildLongPressGestureStyle } from '../longPressGestureStyle';
 
 describe('HabitTile interactions', () => {
   it('dims tiles with future start dates and responds to icon press', () => {
@@ -66,5 +67,21 @@ describe('HabitTile interactions', () => {
       icon.props.onPress();
     });
     expect(onIconPress).toHaveBeenCalled();
+  });
+});
+
+describe('habit long-press browser gesture suppression', () => {
+  it('disables web text selection and callouts so Safari long-press can log progress', () => {
+    expect(buildLongPressGestureStyle('web')).toMatchObject({
+      userSelect: 'none',
+      WebkitUserSelect: 'none',
+      WebkitTouchCallout: 'none',
+      touchAction: 'manipulation',
+    });
+  });
+
+  it('leaves native platforms unchanged', () => {
+    expect(buildLongPressGestureStyle('ios')).toEqual({});
+    expect(buildLongPressGestureStyle('android')).toEqual({});
   });
 });
