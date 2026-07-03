@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { Habit } from '../features/Habits/Habits.types';
 
-import { resetCorruptKey } from './jsonStore';
+import { getJsonArray } from './jsonStore';
 import { serialize } from './serializedWrite';
 
 const STORAGE_KEY = '@adepthood/habits';
@@ -36,19 +36,9 @@ export async function saveHabits(habits: Habit[]): Promise<void> {
 }
 
 export async function loadHabits(): Promise<Habit[] | null> {
-  try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    if (raw === null) return null;
-    const parsed = JSON.parse(raw) as Habit[];
-    if (!Array.isArray(parsed)) {
-      await resetCorruptKey(STORAGE_KEY, new Error('expected array'));
-      return null;
-    }
-    return parsed.map(rehydrateHabit);
-  } catch (err: unknown) {
-    await resetCorruptKey(STORAGE_KEY, err);
-    return null;
-  }
+  const parsed = await getJsonArray<Habit>(STORAGE_KEY);
+  if (parsed === null) return null;
+  return parsed.map(rehydrateHabit);
 }
 
 export async function clearHabits(): Promise<void> {
@@ -86,19 +76,7 @@ export async function replacePendingCheckIns(checkIns: PendingCheckIn[]): Promis
 }
 
 export async function loadPendingCheckIns(): Promise<PendingCheckIn[]> {
-  try {
-    const raw = await AsyncStorage.getItem(PENDING_CHECKINS_KEY);
-    if (raw === null) return [];
-    const parsed = JSON.parse(raw) as PendingCheckIn[];
-    if (!Array.isArray(parsed)) {
-      await resetCorruptKey(PENDING_CHECKINS_KEY, new Error('expected array'));
-      return [];
-    }
-    return parsed;
-  } catch (err: unknown) {
-    await resetCorruptKey(PENDING_CHECKINS_KEY, err);
-    return [];
-  }
+  return (await getJsonArray<PendingCheckIn>(PENDING_CHECKINS_KEY)) ?? [];
 }
 
 /**
