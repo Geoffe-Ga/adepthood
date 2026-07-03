@@ -61,7 +61,7 @@ import { useHabitStore } from '../../../../store/useHabitStore';
 import { useProgramStore } from '../../../../store/useProgramStore';
 import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import type { Goal, Habit, OnboardingHabit } from '../../Habits.types';
-import { habitManager } from '../habitManager';
+import { applyGoalUpdate, habitManager } from '../habitManager';
 
 const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   id: 1,
@@ -957,6 +957,55 @@ describe('habitManager', () => {
         const goal = goals.find((g) => g.tier === tier)!;
         expect(goal.is_additive).toBe(false);
       }
+    });
+
+    it('does not mutate the goal objects of its input array', () => {
+      // The optimistic snapshot in ``updateGoal`` shares goal object refs with
+      // the ``prev`` rollback array; an in-place normalize would silently
+      // corrupt the tiers the user never edited before the PUT even resolves.
+      const habit = makeHabit();
+      const low = habit.goals.find((g) => g.tier === 'low')!;
+      const stretch = habit.goals.find((g) => g.tier === 'stretch')!;
+
+      const editedClear: Goal = {
+        ...habit.goals.find((g) => g.tier === 'clear')!,
+        target: 10,
+        target_unit: 'minutes',
+      };
+
+      applyGoalUpdate([habit], 1, editedClear);
+
+      expect(low.target_unit).toBe('units');
+      expect(low.target).toBe(1);
+      expect(stretch.target_unit).toBe('units');
+      expect(stretch.target).toBe(3);
+    });
+
+    it('rolls every tier back to its pre-edit state when the PUT rejects', async () => {
+      const original = makeHabit();
+      useHabitStore.setState({ habits: [original] });
+      (goalsApi.update as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
+
+      const editedClear: Goal = {
+        ...original.goals.find((g) => g.tier === 'clear')!,
+        target: 10,
+        target_unit: 'minutes',
+      };
+
+      habitManager.updateGoal(1, editedClear);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const { goals } = useHabitStore.getState().habits[0]!;
+      const byTier = (tier: string): Goal => goals.find((g) => g.tier === tier)!;
+      // Every tier — including the untouched low + stretch — restores to the
+      // exact pre-edit snapshot, not the corrupted optimistic values.
+      expect(byTier('low').target_unit).toBe('units');
+      expect(byTier('low').target).toBe(1);
+      expect(byTier('clear').target_unit).toBe('units');
+      expect(byTier('clear').target).toBe(2);
+      expect(byTier('stretch').target_unit).toBe('units');
+      expect(byTier('stretch').target).toBe(3);
     });
 
     it('skips the network call for synthetic goals with no id', async () => {
