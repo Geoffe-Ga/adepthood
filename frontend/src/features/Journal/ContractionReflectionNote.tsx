@@ -11,19 +11,13 @@
  * Presentational, reduced-motion-safe, tokens only.
  */
 import React, { useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+
+import { reflectionCardStyles } from './noteCards';
+import ReflectionDismiss from './ReflectionDismiss';
 
 import type { ContractionReflection, ContractionVariant } from '@/api';
-import {
-  BORDER_RADIUS,
-  SPACING,
-  accent,
-  editorialType,
-  ink,
-  paperShadow,
-  surface,
-  touchTarget,
-} from '@/design/tokens';
+import { editorialType, ink } from '@/design/tokens';
 
 /** Warm, declinable titles per contraction variant — never punishing copy. */
 const VARIANT_TITLES: Record<ContractionVariant, string> = {
@@ -33,8 +27,6 @@ const VARIANT_TITLES: Record<ContractionVariant, string> = {
 
 const DISMISS_LABEL = 'Not now';
 const DISMISS_A11Y = 'Set this reflection aside';
-/** The warm accent stripe width; matches the care surface's foundation cue. */
-const ACCENT_STRIPE_WIDTH = 4;
 
 export interface ContractionReflectionNoteProps {
   /** The contraction surface from the latest pass; ``null`` hides everything. */
@@ -50,56 +42,29 @@ function ContractionReflectionNote({
   const [dismissedFor, setDismissedFor] = useState<ContractionReflection | null>(null);
   if (contraction == null || dismissedFor === contraction) return null;
   return (
-    <View style={styles.root} testID="contraction-reflection">
-      <Text style={styles.title} accessibilityRole="header" testID="contraction-reflection-title">
+    <View style={reflectionCardStyles.root} testID="contraction-reflection">
+      <Text
+        style={reflectionCardStyles.header}
+        accessibilityRole="header"
+        testID="contraction-reflection-title"
+      >
         {VARIANT_TITLES[contraction.variant]}
       </Text>
       <Text style={styles.message}>{contraction.message}</Text>
-      <TouchableOpacity
-        style={styles.dismiss}
-        onPress={() => setDismissedFor(contraction)}
-        accessibilityRole="button"
+      <ReflectionDismiss
+        label={DISMISS_LABEL}
         accessibilityLabel={DISMISS_A11Y}
         testID="contraction-dismiss"
-      >
-        <Text style={styles.dismissText}>{DISMISS_LABEL}</Text>
-      </TouchableOpacity>
+        onPress={() => setDismissedFor(contraction)}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: {
-    margin: SPACING.lg,
-    padding: SPACING.lg,
-    borderRadius: BORDER_RADIUS.lg,
-    backgroundColor: surface.raised,
-    borderLeftWidth: ACCENT_STRIPE_WIDTH,
-    borderLeftColor: accent.primary,
-    ...paperShadow.card,
-  },
-  title: {
-    ...editorialType.title,
-    color: ink.primary,
-    marginBottom: SPACING.md,
-  },
   message: {
     ...editorialType.body,
     color: ink.primary,
-  },
-  dismiss: {
-    minHeight: touchTarget.minimum,
-    minWidth: touchTarget.minimum,
-    alignSelf: 'flex-start',
-    paddingHorizontal: SPACING.md,
-    marginTop: SPACING.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dismissText: {
-    ...editorialType.note,
-    fontWeight: '600',
-    color: ink.soft,
   },
 });
 

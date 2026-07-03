@@ -10,23 +10,17 @@
  * of resources. ``Dismiss`` collapses the list to a persistent ``Re-open``
  * affordance rather than removing the surface entirely, so the user can never
  * lose their way back to help. Presentational, reduced-motion-safe, tokens only
- * (mirrors ``CompletionSuggestionNote``).
+ * (mirrors ``ContractionReflectionNote``).
  */
 import React, { useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
+import { reflectionCardStyles } from './noteCards';
+import ReflectionDismiss from './ReflectionDismiss';
+
 import type { CareResource, CareResponse } from '@/api';
 import CareResourceCard from '@/components/care/CareResourceCard';
-import {
-  BORDER_RADIUS,
-  SPACING,
-  accent,
-  editorialType,
-  ink,
-  paperShadow,
-  surface,
-  touchTarget,
-} from '@/design/tokens';
+import { SPACING, accent, editorialType, touchTarget } from '@/design/tokens';
 
 const DISMISS_LABEL = 'Dismiss';
 const REOPEN_LABEL = 'Show support options';
@@ -66,15 +60,12 @@ function ExpandedBody({
       {resources.map((resource) => (
         <CareResourceCard key={resource.kind} resource={resource} />
       ))}
-      <TouchableOpacity
-        style={styles.dismiss}
-        onPress={onDismiss}
-        accessibilityRole="button"
+      <ReflectionDismiss
+        label={DISMISS_LABEL}
         accessibilityLabel={DISMISS_A11Y}
         testID="care-dismiss"
-      >
-        <Text style={styles.dismissText}>{DISMISS_LABEL}</Text>
-      </TouchableOpacity>
+        onPress={onDismiss}
+      />
     </>
   );
 }
@@ -83,8 +74,8 @@ function CareSupportNote({ care }: CareSupportNoteProps): React.JSX.Element | nu
   const [expanded, setExpanded] = useState(true);
   if (care == null) return null;
   return (
-    <View style={styles.root} testID="care-support">
-      <Text style={styles.message} accessibilityRole="header">
+    <View style={reflectionCardStyles.root} testID="care-support">
+      <Text style={reflectionCardStyles.header} accessibilityRole="header">
         {care.message}
       </Text>
       {expanded ? (
@@ -97,34 +88,6 @@ function CareSupportNote({ care }: CareSupportNoteProps): React.JSX.Element | nu
 }
 
 const styles = StyleSheet.create({
-  root: {
-    margin: SPACING.lg,
-    padding: SPACING.lg,
-    borderRadius: BORDER_RADIUS.lg,
-    backgroundColor: surface.raised,
-    borderLeftWidth: 4,
-    borderLeftColor: accent.primary,
-    ...paperShadow.card,
-  },
-  message: {
-    ...editorialType.title,
-    color: ink.primary,
-    marginBottom: SPACING.md,
-  },
-  dismiss: {
-    minHeight: touchTarget.minimum,
-    minWidth: touchTarget.minimum,
-    alignSelf: 'flex-start',
-    paddingHorizontal: SPACING.md,
-    marginTop: SPACING.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dismissText: {
-    ...editorialType.note,
-    fontWeight: '600',
-    color: ink.soft,
-  },
   reopen: {
     minHeight: touchTarget.minimum,
     minWidth: touchTarget.minimum,

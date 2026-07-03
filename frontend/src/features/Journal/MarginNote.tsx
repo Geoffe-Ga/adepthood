@@ -1,24 +1,17 @@
 /**
  * ``MarginNote`` — one of the AI's margin notes, pinned beside the passage it
  * refers to. Presentational: a serif card with a kind pin (in the kind accent),
- * the note text, and a subtle open affordance. Stale notes render dimmed;
- * staleness is not otherwise styled. Tapping signals ``onOpen``.
+ * the note text, and a subtle open affordance. Stale notes render dimmed and
+ * show a caption noting the passage has changed. Tapping signals ``onOpen``.
  */
 import React from 'react';
 import { Animated, StyleSheet, Text, TouchableOpacity } from 'react-native';
 
 import { usePressScale } from './motion';
+import { paperMarginCard } from './noteCards';
 
 import type { Marginalia } from '@/api';
-import {
-  BORDER_RADIUS,
-  SPACING,
-  colors,
-  editorialType,
-  paperShadow,
-  spacing,
-  touchTarget,
-} from '@/design/tokens';
+import { colors, editorialType, spacing } from '@/design/tokens';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 export interface MarginNoteProps {
@@ -58,18 +51,8 @@ function MarginNote({ note, onOpen }: MarginNoteProps): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
-  card: {
-    minHeight: touchTarget.minimum,
-    padding: SPACING.md,
-    borderRadius: BORDER_RADIUS.md,
-    // Sits a touch above the page, lifted by paperShadow.card — the shadow does
-    // the separation, so the slip can match the page ground (was backgroundAlt)
-    // and still read as a lifted note pinned to the margin.
-    backgroundColor: colors.paper.background,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.paper.hairline, // default; overridden per kind inline
-    ...paperShadow.card,
-  },
+  // default hairline stripe; overridden per kind inline at the callsite
+  card: paperMarginCard(colors.paper.hairline),
   cardStale: {
     opacity: 0.55,
   },

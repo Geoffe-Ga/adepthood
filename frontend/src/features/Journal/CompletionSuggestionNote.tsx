@@ -14,6 +14,7 @@ import React, { useState } from 'react';
 import { Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { usePressScale } from './motion';
+import { paperMarginCard } from './noteCards';
 
 import type { CheckInResult, CompletionSuggestion } from '@/api';
 import {
@@ -21,7 +22,6 @@ import {
   SPACING,
   colors,
   editorialType,
-  paperShadow,
   spacing,
   touchTarget,
 } from '@/design/tokens';
@@ -174,15 +174,7 @@ function CompletionSuggestionNote({
 }
 
 const styles = StyleSheet.create({
-  card: {
-    minHeight: touchTarget.minimum,
-    padding: SPACING.md,
-    borderRadius: BORDER_RADIUS.md,
-    backgroundColor: colors.paper.background,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.tier.clear,
-    ...paperShadow.card,
-  },
+  card: paperMarginCard(colors.tier.clear),
   question: {
     ...editorialType.marginNote,
     color: colors.paper.ink,
