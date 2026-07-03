@@ -576,11 +576,7 @@ describe('MapScreen center-cell overlay layout', () => {
     }
   });
 
-  it('unlock countdown spans the full cell width so its centered copy stays centered', () => {
-    // Restores the full-width box the old ``left: 0, right: 0`` absolute
-    // positioning gave: without ``alignSelf: 'stretch'`` an in-flow Text
-    // shrink-wraps to its widest wrapped line and ``textAlign: 'center'``
-    // becomes a no-op for the multi-line unlock-condition copy.
+  it('unlock countdown hugs its corner instead of spanning and centering', () => {
     mockMapState.daysUntilStage = 42;
     const tree = create(<MapScreen />);
     const countdown = tree.root.findByProps({ testID: 'stage-unlock-8' });
@@ -588,8 +584,9 @@ describe('MapScreen center-cell overlay layout', () => {
       alignSelf?: string;
       textAlign?: string;
     };
-    expect(flat.alignSelf).toBe('stretch');
-    expect(flat.textAlign).toBe('center');
+    expect(flat.textAlign).toBe('right');
+    expect(flat.textAlign).not.toBe('center');
+    expect(flat.alignSelf).not.toBe('stretch');
   });
 
   it('locked stages keep the recessed opacity treatment', () => {
@@ -599,7 +596,7 @@ describe('MapScreen center-cell overlay layout', () => {
     expect(flat.opacity).toBe(0.4);
   });
 
-  it('stacks the pill above the label and the countdown below the lock', () => {
+  it('stacks the pill above the label and the countdown above the lock', () => {
     mockMapState.daysUntilStage = 42;
     const tree = create(<MapScreen />);
     const textOrder = (testID: string): string[] =>
@@ -613,10 +610,48 @@ describe('MapScreen center-cell overlay layout', () => {
     expect(currentText.indexOf('YOU ARE HERE')).toBeLessThan(currentText.indexOf('Agency'));
     expect(currentText.indexOf('YOU ARE HERE')).toBeGreaterThanOrEqual(0);
 
-    // Locked stage 8: the lock renders before the countdown copy.
+    // Locked stage 8: the countdown copy now renders before the lock glyph.
     const lockedText = textOrder('stage-hotspot-8-1');
     const countdownIndex = lockedText.findIndex((text) => text.startsWith('Unlocks'));
-    expect(lockedText.indexOf('🔒')).toBeGreaterThanOrEqual(0);
-    expect(lockedText.indexOf('🔒')).toBeLessThan(countdownIndex);
+    expect(countdownIndex).toBeGreaterThanOrEqual(0);
+    expect(countdownIndex).toBeLessThan(lockedText.indexOf('🔒'));
+  });
+
+  it('groups stage 1 (Agency) label in the left corner, unlocked with no countdown', () => {
+    const tree = create(<MapScreen />);
+    const block = tree.root.findByProps({ testID: 'aspect-label-1' });
+    const flat = StyleSheet.flatten(block.props.style) as { alignSelf?: string };
+    expect(flat.alignSelf).toBe('flex-start');
+    expect(block.findAll((node: TestNode) => node.props.testID === 'stage-unlock-1')).toHaveLength(
+      0,
+    );
+  });
+
+  it('groups stage 2 (Receptivity) label in the right corner, unlocked', () => {
+    const tree = create(<MapScreen />);
+    const block = tree.root.findByProps({ testID: 'aspect-label-2' });
+    const flat = StyleSheet.flatten(block.props.style) as { alignSelf?: string };
+    expect(flat.alignSelf).toBe('flex-end');
+  });
+
+  it('nests the locked stage 8 (Nondual) countdown inside its right-corner block', () => {
+    mockMapState.daysUntilStage = 42;
+    const tree = create(<MapScreen />);
+    const block = tree.root.findByProps({ testID: 'aspect-label-8' });
+    const countdown = block.findByProps({ testID: 'stage-unlock-8' });
+    expect(countdown).toBeTruthy();
+    const flat = StyleSheet.flatten(countdown.props.style) as { textAlign?: string };
+    expect(flat.textAlign).toBe('right');
+  });
+
+  it('nests the locked stage 3 (Self-Love) countdown inside its left-corner block', () => {
+    mockMapState.daysUntilStage = 42;
+    const tree = create(<MapScreen />);
+    const block = tree.root.findByProps({ testID: 'aspect-label-3' });
+    const label = block.findAll((node: TestNode) => node.props.children === 'Self-Love');
+    expect(label.length).toBeGreaterThan(0);
+    const countdown = block.findByProps({ testID: 'stage-unlock-3' });
+    const flat = StyleSheet.flatten(countdown.props.style) as { textAlign?: string };
+    expect(flat.textAlign).toBe('left');
   });
 });
