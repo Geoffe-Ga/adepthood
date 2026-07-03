@@ -451,16 +451,30 @@ export const generateStatsForHabit = (
   habit: Habit,
   tz: string = DEFAULT_TIMEZONE,
 ): HabitStatsData => {
-  const completions = habit.completions;
-  if (!completions || completions.length === 0) {
-    // Subtractive habits accrue a streak even with zero rows — abstaining
-    // every day since `start_date` is the success case, not the no-data
-    // case — so emptyStats() would zero out an active abstention chain.
-    return {
-      ...emptyStats(),
-      currentStreak: computeCurrentStreak(habit, [], tz),
-      longestStreak: computeLongestStreakFor(habit, [], [], tz),
-    };
+  const rawCompletions = habit.completions;
+  // Subtractive habits accrue a streak even with zero rows — abstaining every
+  // day since `start_date` is the success case, not the no-data case — so
+  // emptyStats() would zero out an active abstention chain.
+  const emptyStreakStats = (): HabitStatsData => ({
+    ...emptyStats(),
+    currentStreak: computeCurrentStreak(habit, [], tz),
+    longestStreak: computeLongestStreakFor(habit, [], [], tz),
+  });
+  if (!rawCompletions || rawCompletions.length === 0) {
+    return emptyStreakStats();
+  }
+
+  // Additive habits: a persisted "did not complete" (`completed_units == 0`)
+  // row is ignored like an absent day across every stat field — matching the
+  // backend owner `_additive_stats`, which filters once at entry so buckets,
+  // streaks, rate, and total all describe actual completions. Subtractive
+  // habits keep those rows — a zero-log day is an abstention win, not a gap.
+  const isSubtractive = subtractiveStreakInputs(habit, tz) !== null;
+  const completions = isSubtractive
+    ? rawCompletions
+    : rawCompletions.filter((c) => c.completed_units > 0);
+  if (completions.length === 0) {
+    return emptyStreakStats();
   }
 
   const { unitsByDay, countsByDay, daysWithCompletions } = aggregateByDayOfWeek(completions, tz);

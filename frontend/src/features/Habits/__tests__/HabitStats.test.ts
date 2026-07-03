@@ -153,6 +153,41 @@ describe('generateStatsForHabit', () => {
     }
   });
 
+  test('additive stats ignore a trailing did-not-complete (0-unit) row', () => {
+    // Mirrors the backend owner `_additive_stats`, which filters
+    // `completed_units > 0` once at entry: a persisted "did not complete" row
+    // is ignored like an absent day across every field, so a set with a
+    // trailing 0-unit row yields the same stats as the same set without it.
+    // Without the filter the client counted the 0-unit "today" as a completed
+    // day, over-reporting currentStreak, longestStreak, and totalCompletions.
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-15T18:00:00Z'));
+    try {
+      const base = [
+        { id: 'c-2', timestamp: new Date('2026-06-13T18:00:00Z'), completed_units: 1 },
+        { id: 'c-3', timestamp: new Date('2026-06-14T18:00:00Z'), completed_units: 1 },
+      ];
+      const withDidNotComplete: Habit = {
+        ...baseHabit,
+        completions: [
+          ...base,
+          { id: 'c-4', timestamp: new Date('2026-06-15T18:00:00Z'), completed_units: 0 },
+        ],
+      };
+      const withoutRow: Habit = { ...baseHabit, completions: base };
+      const stats = generateStatsForHabit(withDidNotComplete);
+      const baseline = generateStatsForHabit(withoutRow);
+      // A 0-unit today is ignored, so yesterday-grace keeps the two-day chain.
+      expect(stats.currentStreak).toBe(2);
+      expect(stats.longestStreak).toBe(2);
+      expect(stats.totalCompletions).toBe(2);
+      expect(stats.currentStreak).toBe(baseline.currentStreak);
+      expect(stats.longestStreak).toBe(baseline.longestStreak);
+      expect(stats.totalCompletions).toBe(baseline.totalCompletions);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test('currentStreak is 0 when last completion is more than yesterday', () => {
     // Pin BUG-FE-HABIT-207 directly: a stale chain that ended a week
     // ago must not still report a non-zero streak.
