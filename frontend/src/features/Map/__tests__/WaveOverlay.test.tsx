@@ -15,10 +15,9 @@ const WIDTH = 100;
 const HEIGHT = 200;
 const SEGMENT_COUNT = STAGE_COUNT - 1;
 const FULL_OPACITY = 1;
-const NOT_FOUND = -1;
 
-const FAR_PREFIX = 'far-';
 const NEAR_PREFIX = 'near-';
+const FAR_PREFIX = 'far-';
 
 // react-native-svg's Polygon renders an internal Path, so raw findAllByType(Path)
 // over-counts. Select wave paths by our explicit testIDs and the Path type only.
@@ -28,28 +27,11 @@ const testIdOf = (node: WavePath): string =>
 const wavePathsWithPrefix = (tree: Renderer, prefix: string): WavePath[] =>
   tree.root.findAll((node: WavePath) => node.type === Path && testIdOf(node).startsWith(prefix));
 
-const orderedWavePaths = (tree: Renderer): WavePath[] =>
-  tree.root.findAll(
-    (node: WavePath) =>
-      node.type === Path &&
-      (testIdOf(node).startsWith(FAR_PREFIX) || testIdOf(node).startsWith(NEAR_PREFIX)),
-  );
-
 describe('WaveOverlay', () => {
-  it('renders one far and one near wave path per segment', () => {
+  it('renders exactly one wave path per segment and no far-side strand', () => {
     const tree = create(<WaveOverlay width={WIDTH} height={HEIGHT} />);
-    expect(wavePathsWithPrefix(tree, FAR_PREFIX)).toHaveLength(SEGMENT_COUNT);
     expect(wavePathsWithPrefix(tree, NEAR_PREFIX)).toHaveLength(SEGMENT_COUNT);
-  });
-
-  it('gives each far-<stage> path the exact stage color and reduced opacity', () => {
-    const tree = create(<WaveOverlay width={WIDTH} height={HEIGHT} />);
-    for (let stage = 1; stage <= SEGMENT_COUNT; stage += 1) {
-      const far = tree.root.findByProps({ testID: `${FAR_PREFIX}${stage}` });
-      const expectedColor = STAGE_DISPLAY[stage]?.textColor;
-      expect(far.props.stroke).toBe(expectedColor);
-      expect(far.props.strokeOpacity).toBeLessThan(FULL_OPACITY);
-    }
+    expect(wavePathsWithPrefix(tree, FAR_PREFIX)).toHaveLength(0);
   });
 
   it('leaves every near-<stage> path at full opacity', () => {
@@ -63,7 +45,7 @@ describe('WaveOverlay', () => {
     }
   });
 
-  it('colors each near-<stage> path the same exact stage color as its far path', () => {
+  it('colors each near-<stage> path the exact stage textColor', () => {
     const tree = create(<WaveOverlay width={WIDTH} height={HEIGHT} />);
     for (let stage = 1; stage <= SEGMENT_COUNT; stage += 1) {
       const near = tree.root.findByProps({ testID: `${NEAR_PREFIX}${stage}` });
@@ -71,19 +53,7 @@ describe('WaveOverlay', () => {
     }
   });
 
-  it('renders the far path before the near path for every segment', () => {
-    const tree = create(<WaveOverlay width={WIDTH} height={HEIGHT} />);
-    const ordered = orderedWavePaths(tree);
-    for (let stage = 1; stage <= SEGMENT_COUNT; stage += 1) {
-      const farIndex = ordered.findIndex((path) => testIdOf(path) === `${FAR_PREFIX}${stage}`);
-      const nearIndex = ordered.findIndex((path) => testIdOf(path) === `${NEAR_PREFIX}${stage}`);
-      expect(farIndex).toBeGreaterThan(NOT_FOUND);
-      expect(nearIndex).toBeGreaterThan(NOT_FOUND);
-      expect(farIndex).toBeLessThan(nearIndex);
-    }
-  });
-
-  it('still renders all 10 arrowheads on top of the far and near paths', () => {
+  it('still renders all 10 arrowheads on top of the wave paths', () => {
     const tree = create(<WaveOverlay width={WIDTH} height={HEIGHT} />);
     const arrowheads = tree.root.findAllByType(Polygon);
     expect(arrowheads).toHaveLength(STAGE_COUNT);

@@ -12,9 +12,6 @@
  * right for odd (I-pointing) stages. Its horizontal swing tapers smoothly and
  * monotonically from the widest stage-1 offset down to a tiny non-degenerate
  * apex at stage 10, so the two poles resolve into the whole as the wave rises.
- * Each segment also carries a mirrored far-side path (drawn faded behind the
- * near side) so the whole reads as a three-dimensional coil rather than a flat
- * wobble.
  */
 
 import { GRID_COLUMN_FLEX, MAP_ROWS, STAGE_DISPLAY } from './mapLayout';
@@ -166,15 +163,10 @@ export const stageWavePoint = (stageNumber: number, anchors: StageAnchors = {}):
   return { x, y, pole: poleFor(stageNumber) };
 };
 
-/** A rendered wave segment: its near and far SVG paths, color, and lower stage. */
+/** A rendered wave segment: its SVG path, color, and lower stage. */
 export interface WaveSegment {
   /** SVG path data in pixel space connecting the two stage points. */
   d: string;
-  /**
-   * The near-side bezier mirrored across the column center, drawn faded behind
-   * ``d`` to read as a coil's far side.
-   */
-  farD: string;
   /** Stroke color, taken from the lower stage's textColor. */
   color: string;
   /** The lower of the two stage numbers this segment connects (1..9). */
@@ -200,17 +192,12 @@ export const centerColumnBounds = (width: number): { left: number; right: number
   right: (CENTER_COLUMN_START_FRACTION + CENTER_COLUMN_WIDTH_FRACTION) * width,
 });
 
-/** Reflect a unit x across the column center: same distance on the far side. */
-const mirrorAcrossCenter = (unitX: number): number => CENTER_X + (CENTER_X - unitX);
-
 /**
  * A smooth cubic Bezier between two points given by their unit x's and y's. The
  * control points sit at the vertical midpoint of the pair, each anchored to its
  * own x, giving the center column its continuous sine wobble rather than
  * straight zig-zags. x is confined to the center-column band via toColumnPixelX
  * (so a unit x of 0.5 lands on the column midline); y spans the full height.
- * Shared by the near and far paths so the string assembly lives in exactly one
- * place — the far side simply passes x's mirrored across the column midline.
  */
 const bezierPath = (
   lowerX: number,
@@ -229,24 +216,6 @@ const bezierPath = (
   return `M ${x1} ${y1} C ${x1} ${midYPixel} ${x2} ${midYPixel} ${x2} ${y2}`;
 };
 
-/** Near-side and mirrored far-side bezier paths for a stage pair, in pixels. */
-const segmentPaths = (
-  lower: WavePoint,
-  upper: WavePoint,
-  width: number,
-  height: number,
-): { d: string; farD: string } => ({
-  d: bezierPath(lower.x, upper.x, lower.y, upper.y, width, height),
-  farD: bezierPath(
-    mirrorAcrossCenter(lower.x),
-    mirrorAcrossCenter(upper.x),
-    lower.y,
-    upper.y,
-    width,
-    height,
-  ),
-});
-
 /**
  * The full wave as STAGE_COUNT-1 (9) segments in pixel space. Segment i connects
  * stage i to stage i+1 and carries the lower stage's number and textColor. y
@@ -263,10 +232,8 @@ export const waveSegments = (
     if (previous !== null) {
       const lower = stageWavePoint(previous.stageNumber, anchors);
       const upper = stageWavePoint(current.stageNumber, anchors);
-      const { d, farD } = segmentPaths(lower, upper, width, height);
       segments.push({
-        d,
-        farD,
+        d: bezierPath(lower.x, upper.x, lower.y, upper.y, width, height),
         color: previous.textColor,
         stageNumber: previous.stageNumber,
       });
