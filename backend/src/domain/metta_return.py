@@ -1,12 +1,13 @@
 """The Return — a declinable five-week Metta arc, offered as a skillful rest.
 
-The Return is an optional, self-chosen depth offered only once the program's
-Blue stage has been passed (highest stage reached >= ``RETURN_MINIMUM_STAGE``).
-Following the "Contraction follows Expansion" rhythm, it reframes a natural
-easing-off as a warm invitation to turn toward loving-kindness rather than a
-failure to keep pushing. Nothing here ranks, shames, or penalizes: eligibility
-is derived from advancement the user already earned, and the week the arc sits
-in is a gentle pacing hint, never a deadline.
+The Return is an optional, self-chosen depth offered once a user has EVER
+passed the program's Blue stage — read from the persisted lifetime high-water
+mark (``highest_stage_reached >= RETURN_MINIMUM_STAGE``), so it stays available
+from any current stage and on any run. Following the "Contraction follows
+Expansion" rhythm, it reframes a natural easing-off as a warm invitation to
+turn toward loving-kindness. Nothing here ranks, shames, or penalizes:
+eligibility is a lifetime property the user already earned, and the week the arc
+sits in is a gentle pacing hint, never a deadline.
 
 These helpers are pure: they read :class:`StageProgress` and datetimes and
 never mutate stage progress or any other state. The router that persists an arc
@@ -31,10 +32,6 @@ RETURN_MINIMUM_STAGE = 5
 DAYS_PER_WEEK = 7
 # The full arc: five weeks of seven days. Living all of them is completion.
 RETURN_TOTAL_DAYS = RETURN_WEEK_COUNT * DAYS_PER_WEEK
-# A user mid-way through a second 10-stage cycle has, by definition, already
-# passed Blue in the prior cycle, so the arc is offered regardless of where the
-# current cycle sits.
-_SECOND_CYCLE = 2
 
 
 class MettaFocus(enum.StrEnum):
@@ -70,11 +67,13 @@ RETURN_SEQUENCE: tuple[ReturnWeek, ...] = (
     ReturnWeek(
         week_number=1,
         focus=MettaFocus.SELF,
-        title="Turning kindness inward",
+        title="Coming home to steady ground",
         framing=(
-            "Contraction follows expansion, and resting here is its own kind of "
-            "practice. This week, offer yourself the warmth you so freely offer "
-            "others — you are welcome exactly as you are."
+            "Contraction follows expansion, and settling back onto solid ground "
+            "is its own kind of practice. This week, offer yourself the same "
+            "warmth you so freely offer others, and let any commitments be "
+            "right-sized to the energy you actually have — steadiness first. You "
+            "are secure and welcome here, exactly as you are."
         ),
     ),
     ReturnWeek(
@@ -120,31 +119,20 @@ RETURN_SEQUENCE: tuple[ReturnWeek, ...] = (
 )
 
 
-def _highest_stage_reached(progress: StageProgress) -> int:
-    """Return the highest stage this user reached by advancement, not by calendar.
-
-    Advancement-granted stages are the current stage plus any historically
-    completed stages; the date-derived calendar unlock is deliberately excluded
-    so merely waiting can never confer eligibility.
-    """
-    return max({progress.current_stage, *progress.completed_stages})
-
-
 def is_return_eligible(progress: StageProgress | None) -> bool:
-    """Return True iff the user has passed Blue by advancement (never by calendar).
+    """Return True iff the user has EVER passed Blue, read from the lifetime mark.
 
-    A user with no :class:`StageProgress` row has never advanced and is
-    ineligible. Otherwise eligibility holds when the highest stage reached by
-    advancement is at least :data:`RETURN_MINIMUM_STAGE`, or when the user is in
-    a second-or-later cycle (a full prior 10-stage cycle implies Blue was
-    passed, even mid-reset). This is a read-only check that never mutates
-    progress.
+    Eligibility is the persisted lifetime high-water mark alone: a user with no
+    :class:`StageProgress` row has never advanced and is ineligible; otherwise
+    it holds when ``highest_stage_reached`` is at least
+    :data:`RETURN_MINIMUM_STAGE`. Every row created through the stage-advance
+    flow keeps the mark monotone (bumped on advance, backfilled by migration,
+    never cleared by begin-again) and so >= ``current_stage``, which is why the
+    offer holds from any current stage — Beige, Purple, or Red included — on any
+    run, with no runtime max needed. This is a read-only check that never
+    mutates progress.
     """
-    if progress is None:
-        return False
-    if progress.cycle_number >= _SECOND_CYCLE:
-        return True
-    return _highest_stage_reached(progress) >= RETURN_MINIMUM_STAGE
+    return progress is not None and progress.highest_stage_reached >= RETURN_MINIMUM_STAGE
 
 
 def current_offer_episode(progress: StageProgress | None) -> str | None:

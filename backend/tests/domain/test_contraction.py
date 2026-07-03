@@ -14,7 +14,6 @@ Pinned public surface:
   ContractionInvitation(variant: ContractionVariant, message: str)  [frozen]
   ContractionVariant(StrEnum): SIMPLE_EASE_OFF, RETURN_OFFER
   detect_contraction(aggregates) -> ContractionSignal | None
-  derive_highest_stage_reached(current_stage, completed_stages, cycle_number) -> int
   build_contraction_invitation(highest_stage_reached) -> ContractionInvitation
 
 The detected condition is never framed as failure, a demotion, or a broken
@@ -28,7 +27,6 @@ import dataclasses
 
 import pytest
 
-from domain.constants import TOTAL_STAGES
 from domain.contraction import (
     FOUNDATION_UNCHECKED_CONSECUTIVE_DAYS,
     FOUNDATION_UNMET_CONSECUTIVE_DAYS,
@@ -39,7 +37,6 @@ from domain.contraction import (
     ContractionVariant,
     HabitFoundationSignal,
     build_contraction_invitation,
-    derive_highest_stage_reached,
     detect_contraction,
 )
 
@@ -115,32 +112,7 @@ def test_unchecked_days_below_window_returns_none() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. derive_highest_stage_reached
-# ---------------------------------------------------------------------------
-
-
-def test_highest_stage_reached_prefers_completed_over_lower_current() -> None:
-    """Current stage 3 with completed [1, 2] in cycle 1 stays at 3 (max)."""
-    assert derive_highest_stage_reached(3, [1, 2], 1) == 3
-
-
-def test_highest_stage_reached_prefers_completed_when_higher() -> None:
-    """Completed stages above the current stage win the max."""
-    assert derive_highest_stage_reached(2, [1, 2, 3, 4], 1) == 4
-
-
-def test_highest_stage_reached_with_no_completed_stages() -> None:
-    """No completed stages at all: highest reached is just the current stage."""
-    assert derive_highest_stage_reached(1, [], 1) == 1
-
-
-def test_highest_stage_reached_beyond_first_cycle_is_total_stages() -> None:
-    """Having looped at least once means the full curriculum has been reached."""
-    assert derive_highest_stage_reached(2, [1], 2) == TOTAL_STAGES
-
-
-# ---------------------------------------------------------------------------
-# 6. Stage-gating via build_contraction_invitation
+# 5. Stage-gating via build_contraction_invitation
 # ---------------------------------------------------------------------------
 
 

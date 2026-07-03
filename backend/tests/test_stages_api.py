@@ -388,6 +388,33 @@ async def test_update_progress_cannot_stay_same(
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
+@pytest.mark.asyncio
+async def test_advance_persists_highest_stage_reached(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Advancing to a new stage bumps the persisted lifetime high-water mark."""
+    headers, user_id = await _signup(async_client, "highwater_advance")
+    progress = StageProgress(user_id=user_id, current_stage=4, completed_stages=[1, 2, 3])
+    db_session.add(progress)
+    await db_session.commit()
+
+    expected_stage = 5
+    resp = await async_client.put(
+        "/stages/progress",
+        json={"current_stage": expected_stage},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+
+    db_session.expire_all()
+    row_result = await db_session.execute(
+        select(StageProgress).where(col(StageProgress.user_id) == user_id)
+    )
+    row = row_result.scalar_one()
+    assert row.highest_stage_reached == expected_stage
+
+
 # ── BUG-SCHEMA-006: server derives stage, rejects client-supplied shortcuts ──
 
 
@@ -740,13 +767,22 @@ async def _seed_stage_10_progress(
     user_id: int,
     *,
     cycle_number: int = 1,
+    highest_stage_reached: int | None = None,
 ) -> StageProgress:
-    """Insert a completed-cycle StageProgress row (current_stage == TOTAL_STAGES)."""
+    """Insert a completed-cycle StageProgress row (current_stage == TOTAL_STAGES).
+
+    ``highest_stage_reached`` defaults to ``TOTAL_STAGES`` (matching
+    ``current_stage``, the ordinary case for a freshly-completed cycle); pass
+    it explicitly to pin a persisted lifetime high-water mark ahead of a
+    begin-again reset.
+    """
+    resolved_mark = TOTAL_STAGES if highest_stage_reached is None else highest_stage_reached
     progress = StageProgress(
         user_id=user_id,
         current_stage=TOTAL_STAGES,
         completed_stages=list(range(1, TOTAL_STAGES)),
         cycle_number=cycle_number,
+        highest_stage_reached=resolved_mark,
     )
     db_session.add(progress)
     await db_session.commit()
@@ -847,6 +883,29 @@ async def test_begin_again_preserves_journal_habit_and_goal_completion(
         select(GoalCompletion).where(col(GoalCompletion.id) == completion_id)
     )
     assert gc_result.scalar_one_or_none() is not None
+
+
+@pytest.mark.asyncio
+async def test_begin_again_preserves_high_water_mark_across_reset(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """begin-again resets current_stage to 1 but the persisted mark survives at its high value."""
+    headers, user_id = await _signup(async_client, "beginagain_highwater")
+    await _seed_stage_10_progress(
+        db_session, user_id, cycle_number=1, highest_stage_reached=TOTAL_STAGES
+    )
+
+    resp = await async_client.post("/stages/begin-again", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["current_stage"] == 1
+
+    db_session.expire_all()
+    row_result = await db_session.execute(
+        select(StageProgress).where(col(StageProgress.user_id) == user_id)
+    )
+    row = row_result.scalar_one()
+    assert row.highest_stage_reached == TOTAL_STAGES
 
 
 @pytest.mark.asyncio

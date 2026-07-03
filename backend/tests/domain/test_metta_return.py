@@ -4,6 +4,18 @@ The import of ``RETURN_TOTAL_DAYS`` and ``is_return_complete`` FAILs until the
 implementation-specialist adds them to ``backend/src/domain/metta_return.py``.
 That is the correct RED state for Gate 1 (warm completion state).
 
+Eligibility is now MARK-ONLY: ``is_return_eligible(progress)`` reads solely
+``progress.highest_stage_reached`` against ``RETURN_MINIMUM_STAGE``.
+``current_stage`` and ``completed_stages`` no longer factor into the domain
+eligibility check at all (the mark is guaranteed >= current_stage by the
+monotone bump on advance plus the migration backfill, so re-deriving from
+them here would be redundant). Every ``StageProgress`` constructed below for
+an eligibility assertion sets ``highest_stage_reached`` explicitly. Until the
+model gains that field and ``is_return_eligible`` reads it (mark-only, with
+the old ``current_stage``/``completed_stages``/``cycle_number`` special-casing
+removed entirely), the tests below that pin a low current_stage with a high
+mark — or a high current_stage with a low mark — fail.
+
 Pinned public surface:
   MettaFocus(StrEnum): self, benefactor, stranger, antagonist, all_beings
   ReturnWeek(week_number: int, focus: MettaFocus, title: str, framing: str)
@@ -103,34 +115,139 @@ def test_eligibility_none_progress_is_ineligible() -> None:
     assert is_return_eligible(None) is False
 
 
-def test_eligibility_stage_three_is_ineligible() -> None:
-    """Well below the Blue-passed threshold."""
-    progress = StageProgress(user_id=1, current_stage=3, completed_stages=[])
+def test_eligibility_boundary_mark_four_ineligible_mark_five_eligible() -> None:
+    """The mark alone decides the boundary: 4 is ineligible, 5 (RETURN_MINIMUM_STAGE) is eligible.
+
+    ``current_stage`` is held fixed at 1 for both rows so only the mark
+    varies — proof that the boundary check reads the mark, not current_stage.
+    """
+    assert RETURN_MINIMUM_STAGE == 5
+    below = StageProgress(
+        user_id=1,
+        current_stage=1,
+        completed_stages=[],
+        highest_stage_reached=4,
+    )
+    at_threshold = StageProgress(
+        user_id=1,
+        current_stage=1,
+        completed_stages=[],
+        highest_stage_reached=5,
+    )
+    assert is_return_eligible(below) is False
+    assert is_return_eligible(at_threshold) is True
+
+
+def test_eligibility_orange_burnout_mid_cycle_is_eligible() -> None:
+    """Reaching Orange (mark 5) this cycle is eligible via the persisted mark."""
+    progress = StageProgress(
+        user_id=1,
+        current_stage=5,
+        completed_stages=[1, 2, 3, 4],
+        highest_stage_reached=5,
+    )
+    assert is_return_eligible(progress) is True
+
+
+def test_eligibility_persisted_high_water_mark_counts_even_at_stage_one() -> None:
+    """A persisted lifetime high-water mark, not cycle_number, grants eligibility.
+
+    A cycle-2 row whose mark was bumped to 10 by advancement (the migration
+    only floors a legacy completed-prior-cycle row's mark to 5; a mark this
+    high reflects further advancement since). Eligibility reads solely the
+    persisted mark — ``current_stage`` and ``cycle_number`` are not
+    consulted by the domain check at all.
+    """
+    progress = StageProgress(
+        user_id=1,
+        current_stage=1,
+        completed_stages=[],
+        cycle_number=2,
+        highest_stage_reached=10,
+    )
+    assert is_return_eligible(progress) is True
+
+
+def test_eligibility_survives_begin_again_loop_to_stage_one() -> None:
+    """A begin-again loop resets current_stage to 1 but the mark survives it."""
+    progress = StageProgress(
+        user_id=1,
+        current_stage=1,
+        completed_stages=[],
+        cycle_number=2,
+        highest_stage_reached=10,
+    )
+    assert is_return_eligible(progress) is True
+
+
+def test_eligibility_high_water_mark_dominates_a_lower_current_run() -> None:
+    """Crux case: a prior run reached Green (mark 6), the current run burned out in Red (3).
+
+    Current stage alone (3) sits below Blue, yet the lifetime high-water mark
+    (6) makes the user eligible — eligibility is a lifetime property, not a
+    per-cycle or per-current-stage one.
+    """
+    progress = StageProgress(
+        user_id=1,
+        current_stage=3,
+        completed_stages=[1, 2],
+        cycle_number=1,
+        highest_stage_reached=6,
+    )
+    assert is_return_eligible(progress) is True
+
+
+def test_eligibility_never_passed_blue_stays_ineligible_at_stage_four() -> None:
+    """A first-run user working Blue (mark 4) has never passed it — ineligible."""
+    progress = StageProgress(
+        user_id=1,
+        current_stage=4,
+        completed_stages=[1, 2, 3],
+        highest_stage_reached=4,
+    )
     assert is_return_eligible(progress) is False
 
 
-def test_eligibility_stage_four_in_progress_is_ineligible() -> None:
-    """Currently working Blue (stage 4) — Blue has not yet been passed."""
-    progress = StageProgress(user_id=1, current_stage=4, completed_stages=[1, 2, 3])
+def test_eligibility_never_passed_blue_stays_ineligible_at_stage_one() -> None:
+    """A brand-new user at stage 1 with a mark of 1 has never passed Blue — ineligible."""
+    progress = StageProgress(
+        user_id=1,
+        current_stage=1,
+        completed_stages=[],
+        highest_stage_reached=1,
+    )
     assert is_return_eligible(progress) is False
 
 
-def test_eligibility_stage_five_current_is_eligible() -> None:
-    """Reaching Orange (stage 5) means Blue was passed to get there."""
-    progress = StageProgress(user_id=1, current_stage=5, completed_stages=[1, 2, 3, 4])
+def test_eligibility_mark_dominates_a_lower_current_stage_read() -> None:
+    """A lower current_stage is irrelevant when the persisted mark already clears the bar.
+
+    Eligibility is mark-only: ``current_stage`` is not read at all, so a high
+    mark with a low current_stage is eligible exactly like a high mark with a
+    high current_stage would be.
+    """
+    progress = StageProgress(
+        user_id=1,
+        current_stage=2,
+        completed_stages=[],
+        highest_stage_reached=7,
+    )
     assert is_return_eligible(progress) is True
 
 
-def test_eligibility_completed_stages_containing_five_is_eligible() -> None:
-    """A historical completed_stages record of reaching stage 5+ counts."""
-    progress = StageProgress(user_id=1, current_stage=6, completed_stages=[1, 2, 3, 4, 5])
-    assert is_return_eligible(progress) is True
+def test_eligibility_completed_stages_are_not_consulted() -> None:
+    """A rich completed_stages history does not by itself grant eligibility.
 
-
-def test_eligibility_second_cycle_counts_even_at_stage_one() -> None:
-    """A full prior cycle (cycle_number >= 2) implies Blue was passed, even mid-reset."""
-    progress = StageProgress(user_id=1, current_stage=1, completed_stages=[], cycle_number=2)
-    assert is_return_eligible(progress) is True
+    Only the persisted mark matters now; a low mark stays ineligible even
+    with a completed_stages array that reaches stage 5.
+    """
+    progress = StageProgress(
+        user_id=1,
+        current_stage=6,
+        completed_stages=[1, 2, 3, 4, 5],
+        highest_stage_reached=4,
+    )
+    assert is_return_eligible(progress) is False
 
 
 # ---------------------------------------------------------------------------
@@ -144,15 +261,25 @@ def test_current_offer_episode_none_progress_is_none() -> None:
 
 
 def test_current_offer_episode_ineligible_progress_is_none() -> None:
-    """An ineligible stage has no offer, so there is no episode key either."""
-    progress = StageProgress(user_id=1, current_stage=3, completed_stages=[], cycle_number=1)
+    """An ineligible mark has no offer, so there is no episode key either."""
+    progress = StageProgress(
+        user_id=1,
+        current_stage=3,
+        completed_stages=[],
+        cycle_number=1,
+        highest_stage_reached=3,
+    )
     assert current_offer_episode(progress) is None
 
 
 def test_current_offer_episode_eligible_progress_returns_cycle_stage_key() -> None:
     """An eligible progress row keys the episode as ``{cycle_number}:{current_stage}``."""
     progress = StageProgress(
-        user_id=1, current_stage=5, completed_stages=[1, 2, 3, 4], cycle_number=1
+        user_id=1,
+        current_stage=5,
+        completed_stages=[1, 2, 3, 4],
+        cycle_number=1,
+        highest_stage_reached=5,
     )
     assert current_offer_episode(progress) == "1:5"
 
@@ -160,10 +287,18 @@ def test_current_offer_episode_eligible_progress_returns_cycle_stage_key() -> No
 def test_current_offer_episode_key_changes_when_stage_advances() -> None:
     """Advancing from stage 5 to stage 6 produces a distinct episode key."""
     at_five = StageProgress(
-        user_id=1, current_stage=5, completed_stages=[1, 2, 3, 4], cycle_number=1
+        user_id=1,
+        current_stage=5,
+        completed_stages=[1, 2, 3, 4],
+        cycle_number=1,
+        highest_stage_reached=5,
     )
     at_six = StageProgress(
-        user_id=1, current_stage=6, completed_stages=[1, 2, 3, 4, 5], cycle_number=1
+        user_id=1,
+        current_stage=6,
+        completed_stages=[1, 2, 3, 4, 5],
+        cycle_number=1,
+        highest_stage_reached=6,
     )
     assert current_offer_episode(at_five) == "1:5"
     assert current_offer_episode(at_six) == "1:6"
@@ -171,8 +306,14 @@ def test_current_offer_episode_key_changes_when_stage_advances() -> None:
 
 
 def test_current_offer_episode_key_changes_when_cycle_bumps() -> None:
-    """A second-cycle user at stage 2 is eligible via cycle_number and keys distinctly."""
-    progress = StageProgress(user_id=1, current_stage=2, completed_stages=[], cycle_number=2)
+    """A second-cycle user at stage 2 is eligible via the persisted mark and keys distinctly."""
+    progress = StageProgress(
+        user_id=1,
+        current_stage=2,
+        completed_stages=[],
+        cycle_number=2,
+        highest_stage_reached=10,
+    )
     assert current_offer_episode(progress) == "2:2"
 
 

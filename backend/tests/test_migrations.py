@@ -1452,6 +1452,183 @@ def test_stageprogress_cycle_migration_round_trip_on_sqlite(
     assert row_after["cycle_number"] == 1
 
 
+# -- high-water-01 highest_stage_reached column migration round-trip ---------
+
+# Revision anchors for the highest_stage_reached migration round-trip.
+# down_revision is a7b8c9d0e1f2 (the current chain head at authoring time).
+_HIGH_WATER_BASE_REVISION = "a7b8c9d0e1f2"  # pragma: allowlist secret
+# The implementer must replace this with the real revision ID they author.
+_HIGH_WATER_REVISION = "d3e4f5a6b7c8"  # pragma: allowlist secret
+
+
+def _bootstrap_stageprogress_high_water(sync_url: str) -> None:
+    """Pre-create a ``stageprogress`` table matching the schema at head, seeded with four rows.
+
+    Each row exercises a different branch of the
+    ``GREATEST(current_stage, max(completed_stages), cycle-case)`` backfill:
+
+    - Row 1 (current_stage=3, completed_stages=[1, 2], cycle_number=1):
+      plain mid-cycle row, ``current_stage`` wins -> 3.
+    - Row 2 (current_stage=2, completed_stages=[1..6], cycle_number=1): the
+      completed_stages array-max (6) wins over ``current_stage`` -> 6.
+    - Row 3 (current_stage=1, completed_stages=[], cycle_number=2): a completed
+      prior cycle reached the final stage, so it backfills to TOTAL_STAGES -> 10.
+    - Row 4 (current_stage=1, completed_stages=[], cycle_number=1): nothing
+      to inherit, floors at ``current_stage`` -> 1.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE user ( id INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL)")
+        )
+        # One user per stageprogress row: stageprogress.user_id is UNIQUE.
+        for uid in (1, 2, 3, 4):
+            conn.execute(
+                text("INSERT INTO user (id, email) VALUES (:id, :email)"),
+                {"id": uid, "email": f"highwater{uid}@example.com"},
+            )
+        conn.execute(
+            text(
+                "CREATE TABLE stageprogress ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL UNIQUE,"
+                " current_stage INTEGER NOT NULL,"
+                " completed_stages TEXT NOT NULL DEFAULT '[]',"
+                " stage_started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+                " program_started_at DATETIME,"
+                " cycle_number INTEGER NOT NULL DEFAULT 1"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO stageprogress"
+                " (id, user_id, current_stage, completed_stages, cycle_number)"
+                " VALUES (1, 1, 3, '[1, 2]', 1)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO stageprogress"
+                " (id, user_id, current_stage, completed_stages, cycle_number)"
+                " VALUES (2, 2, 2, '[1, 2, 3, 4, 5, 6]', 1)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO stageprogress"
+                " (id, user_id, current_stage, completed_stages, cycle_number)"
+                " VALUES (3, 3, 1, '[]', 2)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO stageprogress"
+                " (id, user_id, current_stage, completed_stages, cycle_number)"
+                " VALUES (4, 4, 1, '[]', 1)"
+            )
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_stageprogress_high_water(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite Alembic config positioned just before the high-water migration.
+
+    Bootstraps the head-shape ``stageprogress`` table with four seeded rows
+    (see :func:`_bootstrap_stageprogress_high_water`) and stamps the DB at
+    ``a7b8c9d0e1f2`` so the round-trip exercises only the new migration.
+    """
+    db_path = tmp_path / "stageprogress_high_water_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_stageprogress_high_water(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _HIGH_WATER_BASE_REVISION)
+    return cfg
+
+
+def _stageprogress_high_water_row(db_url: str, row_id: int) -> dict[str, Any]:
+    """Fetch a ``stageprogress`` row including the new highest_stage_reached column."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT id, current_stage, cycle_number, highest_stage_reached"
+                        " FROM stageprogress WHERE id = :id"
+                    ),
+                    {"id": row_id},
+                )
+                .mappings()
+                .first()
+            )
+            assert row is not None
+            return dict(row)
+    finally:
+        engine.dispose()
+
+
+def _assert_backfilled_rows(db_url: str) -> None:
+    """Assert all four seeded rows backfilled per the GREATEST(...) branches."""
+    row_1 = _stageprogress_high_water_row(db_url, row_id=1)
+    assert row_1["highest_stage_reached"] == 3
+    row_2 = _stageprogress_high_water_row(db_url, row_id=2)
+    assert row_2["highest_stage_reached"] == 6
+    row_3 = _stageprogress_high_water_row(db_url, row_id=3)
+    assert row_3["highest_stage_reached"] == 10
+    row_4 = _stageprogress_high_water_row(db_url, row_id=4)
+    assert row_4["highest_stage_reached"] == 1
+
+
+def test_high_water_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_stageprogress_high_water: Config,
+) -> None:
+    """Round-trip the highest_stage_reached migration: backfill, downgrade, re-upgrade.
+
+    Phase 1: upgrade adds ``highest_stage_reached`` NOT NULL and backfills
+    each seeded row via ``GREATEST(current_stage, max(completed_stages),
+    cycle-case)``: row 1's ``current_stage`` (3) wins; row 2's
+    completed_stages array-max (6) wins over its lower current_stage (2);
+    row 3's completed prior cycle reached the final stage, so it backfills to
+    TOTAL_STAGES (10); row 4 has nothing to inherit and floors at its own
+    ``current_stage`` (1).
+    Phase 2: downgrade removes the column.
+    Phase 3: re-upgrade reproduces the same backfill.
+
+    This test fails until the implementer authors the migration and sets
+    ``_HIGH_WATER_REVISION`` to its real revision ID.
+    """
+    cfg = alembic_sqlite_config_stageprogress_high_water
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade adds the column and backfills the four seeded rows.
+    command.upgrade(cfg, _HIGH_WATER_REVISION)
+    cols = _columns_of(db_url, "stageprogress")
+    assert "highest_stage_reached" in cols
+    _assert_backfilled_rows(db_url)
+
+    # Phase 2: downgrade drops the highest_stage_reached column.
+    command.downgrade(cfg, _HIGH_WATER_BASE_REVISION)
+    cols_after = _columns_of(db_url, "stageprogress")
+    assert "highest_stage_reached" not in cols_after
+
+    # Phase 3: re-upgrade — backfill must reproduce the same values.
+    command.upgrade(cfg, _HIGH_WATER_REVISION)
+    _assert_backfilled_rows(db_url)
+
+
 # -- invitation-signal-01 invitationsignal table migration round-trip ---------
 
 # Revision anchors for the invitation_signal migration round-trip.
