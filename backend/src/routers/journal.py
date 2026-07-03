@@ -16,11 +16,7 @@ from database import get_session
 from dependencies.ownership import require_owned_journal_entry
 from dependencies.timezone import current_user_timezone
 from domain.care import CarePayload, build_care_payload
-from domain.contraction import (
-    build_contraction_invitation,
-    derive_highest_stage_reached,
-    detect_contraction,
-)
+from domain.contraction import build_contraction_invitation, detect_contraction
 from domain.detection import CompletionDetected, detect_completions
 from domain.practice_resolution import effective_config
 from domain.resonance import MarginaliaAnchored, generate_essay, generate_marginalia
@@ -604,12 +600,11 @@ async def _persist_resonance(
     return rows, suggestions
 
 
-# A user with no StageProgress row yet is treated as the earliest reach: stage 1,
-# nothing completed, first cycle. This keeps the contraction gate on the simple
-# ease-off variant rather than the deeper Return, which is correct for someone
-# who has not begun the staged arc.
-_DEFAULT_CURRENT_STAGE = 1
-_DEFAULT_CYCLE_NUMBER = 1
+# A user with no StageProgress row yet has never reached any stage, so their
+# lifetime high-water mark is the earliest reach. This keeps the contraction gate
+# on the simple ease-off variant rather than the deeper Return, which is correct
+# for someone who has not begun the staged arc.
+_NO_PROGRESS_HIGHEST_STAGE = 1
 
 
 async def _contraction_reflection(
@@ -628,14 +623,9 @@ async def _contraction_reflection(
     if signal is None:
         return None
     progress = await get_user_progress(session, user_id)
-    if progress is None:
-        highest_stage = derive_highest_stage_reached(
-            _DEFAULT_CURRENT_STAGE, [], _DEFAULT_CYCLE_NUMBER
-        )
-    else:
-        highest_stage = derive_highest_stage_reached(
-            progress.current_stage, progress.completed_stages, progress.cycle_number
-        )
+    highest_stage = (
+        _NO_PROGRESS_HIGHEST_STAGE if progress is None else progress.highest_stage_reached
+    )
     invitation = build_contraction_invitation(highest_stage)
     return ContractionReflectionResponse(variant=invitation.variant, message=invitation.message)
 
