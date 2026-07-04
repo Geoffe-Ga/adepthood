@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { jest, describe, afterEach, it, expect } from '@jest/globals';
 
-import { brightenColor, STAGE_COLORS } from '../../../design/tokens';
+import { brightenColor, STAGE_COLORS, SPACING } from '../../../design/tokens';
 
 const renderer = require('react-test-renderer');
 
@@ -62,14 +62,19 @@ const widths = [320, 390, 600, 900, 1200];
 
 const colorValues = Object.values(STAGE_COLORS);
 
+// Proves SOME reserve exists beyond the raw per-row split; the realistic budget lives in HabitTileFit.test.tsx.
+const CHROME_RESERVE = SPACING.sm;
+
 const assertTileLayout = (tile: any, height: number, expectedColumns: number): void => {
   const style = Array.isArray(tile.props.style)
     ? tile.props.style.reduce((acc: any, s: any) => ({ ...acc, ...s }), {})
     : tile.props.style;
 
-  const tileHeight = (style.minHeight ?? 0) + 2 * (style.padding ?? 0) + 2 * (style.margin ?? 0);
+  const verticalPadding = style.paddingVertical ?? style.padding ?? 0;
+  const tileHeight = (style.minHeight ?? 0) + 2 * verticalPadding + 2 * (style.margin ?? 0);
 
-  const maxTileHeight = (height * expectedColumns) / 10;
+  const rows = expectedColumns === 2 ? 5 : 10;
+  const maxTileHeight = (height - CHROME_RESERVE) / rows;
   expect(tileHeight).toBeLessThanOrEqual(maxTileHeight);
   if (expectedColumns === 2) {
     expect(style.flex).toBe(1);
