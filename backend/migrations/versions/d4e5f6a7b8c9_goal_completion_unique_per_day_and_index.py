@@ -14,8 +14,12 @@ speed up streak computation queries.
 is only STABLE because it depends on the session timezone, and Postgres
 refuses to index non-IMMUTABLE expressions. Pinning the conversion to UTC
 with ``AT TIME ZONE 'UTC'`` yields a ``TIMESTAMP WITHOUT TIME ZONE`` whose
-``::date`` cast is IMMUTABLE. The app always writes ``datetime.now(UTC)``,
-so "one completion per UTC calendar day" matches the intended semantics.
+``::date`` cast is IMMUTABLE.
+
+Note: a later migration replaces this UTC-day index with one keyed off a
+``local_day`` column, because bucketing on the UTC date dropped legitimate
+completions for users east/west of UTC whose distinct local days shared a UTC
+calendar date.
 """
 
 from typing import Sequence, Union
@@ -39,10 +43,7 @@ def upgrade() -> None:
         "ON goalcompletion "
         "(goal_id, user_id, ((timestamp AT TIME ZONE 'UTC')::date))"
     )
-    op.execute(
-        f'CREATE INDEX "{_COMPOUND_INDEX}" '
-        "ON goalcompletion (goal_id, user_id, timestamp)"
-    )
+    op.execute(f'CREATE INDEX "{_COMPOUND_INDEX}" ON goalcompletion (goal_id, user_id, timestamp)')
 
 
 def downgrade() -> None:

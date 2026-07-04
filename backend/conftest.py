@@ -87,12 +87,12 @@ _SQLITE_ALWAYS_INDEXES: tuple[str, ...] = (
 # reject.  Concurrency tests opt in to exercise the
 # ``IntegrityError -> idempotent`` path.
 _SQLITE_CONCURRENT_ONLY_INDEXES: tuple[str, ...] = (
-    # goal_completion: one row per (goal, user, calendar day).  Production
-    # uses ``((timestamp AT TIME ZONE 'UTC')::date)`` for IMMUTABLE-ness
-    # under a non-UTC server zone; SQLite stores ``timestamp`` as ISO
-    # text and ``date(timestamp)`` is sufficient at test scale.
+    # goal_completion: one row per (goal, user, user-local calendar day).
+    # Production keys uniqueness off the ``local_day`` column the check-in
+    # service writes, so the mirror indexes the same column rather than
+    # re-deriving a day from ``timestamp``.
     'CREATE UNIQUE INDEX IF NOT EXISTS "ix_goal_completion_unique_per_day_test" '
-    "ON goalcompletion (goal_id, user_id, date(timestamp))",
+    "ON goalcompletion (goal_id, user_id, local_day)",
 )
 
 

@@ -56,6 +56,9 @@ class _CheckInJob:
     did_complete: bool
     old_streak: int
     new_streak: int
+    # The user-local calendar day the completion belongs to; stored on the row
+    # as the per-user-day uniqueness key.
+    target_day: date
     # Explicit completion time for a backfilled past day; ``None`` lets the
     # ``GoalCompletion`` model default (``datetime.now(UTC)``) stand.
     timestamp: datetime | None
@@ -178,7 +181,7 @@ def _completion_timestamp(completed_on: date | None, user_timezone: str) -> date
     ``None`` lets the model default (now) stand for a same-day log. For a
     backfilled day, anchors mid-day in the user's TZ so the value lands
     unambiguously inside that local calendar day regardless of DST shoulder
-    days, and buckets on it under the unique-per-day index.
+    days. Per-day uniqueness is keyed off ``local_day``, not this timestamp.
     """
     if completed_on is None:
         return None
@@ -207,6 +210,7 @@ async def _persist_and_build_response(session: AsyncSession, job: _CheckInJob) -
     completion = GoalCompletion(
         goal_id=job.goal_id,
         user_id=job.user_id,
+        local_day=job.target_day,
         completed_units=job.target if job.did_complete else 0,
     )
     if job.timestamp is not None:
@@ -328,6 +332,7 @@ async def record_goal_completion(
         did_complete=did_complete,
         old_streak=old_streak,
         new_streak=new_streak,
+        target_day=target_day,
         timestamp=_completion_timestamp(completed_on, ctx.user_timezone),
         subtractive=subtractive,
     )

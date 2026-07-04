@@ -1980,3 +1980,207 @@ def test_habit_revealed_migration_round_trip_on_sqlite(
     command.upgrade(cfg, _HABIT_REVEALED_REVISION)
     row_1_again = _habit_revealed_row(db_url, habit_id=1)
     assert bool(row_1_again["revealed"]) is True
+
+
+# -- goalcompletion.local_day column migration round-trip --------------------
+
+_LOCAL_DAY_BASE_REVISION = "e6f7a8b9c0d2"  # pragma: allowlist secret
+_LOCAL_DAY_REVISION = "f7a8b9c0d1e3"  # pragma: allowlist secret
+
+
+def _bootstrap_local_day_baseline(sync_url: str) -> None:
+    """Pre-create a minimal ``goalcompletion`` table (no ``local_day``) with two seeded rows.
+
+    Rows sit on two distinct calendar days so both the new local-day unique
+    index and the restored UTC-day index remain satisfiable across the
+    round-trip.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE user ( id INTEGER PRIMARY KEY, timezone VARCHAR(64))"))
+        conn.execute(text("INSERT INTO user (id, timezone) VALUES (1, 'UTC')"))
+        conn.execute(
+            text(
+                "CREATE TABLE goalcompletion ("
+                " id INTEGER PRIMARY KEY,"
+                " goal_id INTEGER NOT NULL,"
+                " user_id INTEGER NOT NULL,"
+                " timestamp DATETIME NOT NULL,"
+                " completed_units FLOAT NOT NULL,"
+                " via_timer BOOLEAN NOT NULL DEFAULT 0"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO goalcompletion"
+                " (id, goal_id, user_id, timestamp, completed_units)"
+                " VALUES (1, 1, 1, '2025-03-01 10:00:00', 10.0)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO goalcompletion"
+                " (id, goal_id, user_id, timestamp, completed_units)"
+                " VALUES (2, 1, 1, '2025-03-02 10:00:00', 10.0)"
+            )
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_local_day(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config positioned just before the local_day migration."""
+    db_path = tmp_path / "local_day_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_local_day_baseline(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _LOCAL_DAY_BASE_REVISION)
+    return cfg
+
+
+def _local_day_of(db_url: str, completion_id: int) -> dict[str, Any]:
+    """Fetch the ``id`` + ``local_day`` of one goalcompletion row."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            row = (
+                conn.execute(
+                    text("SELECT id, local_day FROM goalcompletion WHERE id = :id"),
+                    {"id": completion_id},
+                )
+                .mappings()
+                .first()
+            )
+            assert row is not None
+            return dict(row)
+    finally:
+        engine.dispose()
+
+
+def test_local_day_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_local_day: Config,
+) -> None:
+    """Round-trip the local_day migration: upgrade adds + backfills; downgrade drops.
+
+    Upgrade adds ``local_day`` and backfills it from ``date(timestamp)`` on
+    SQLite; downgrade drops the column; re-upgrade reproduces the backfill.
+    """
+    cfg = alembic_sqlite_config_local_day
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _LOCAL_DAY_REVISION)
+    cols = _columns_of(db_url, "goalcompletion")
+    assert "local_day" in cols
+    assert str(_local_day_of(db_url, completion_id=1)["local_day"]) == "2025-03-01"
+    assert str(_local_day_of(db_url, completion_id=2)["local_day"]) == "2025-03-02"
+
+    command.downgrade(cfg, _LOCAL_DAY_BASE_REVISION)
+    cols_after = _columns_of(db_url, "goalcompletion")
+    assert "local_day" not in cols_after
+
+    command.upgrade(cfg, _LOCAL_DAY_REVISION)
+    assert str(_local_day_of(db_url, completion_id=1)["local_day"]) == "2025-03-01"
+
+
+def _bootstrap_local_day_collision_baseline(sync_url: str) -> None:
+    """Seed two rows that share a calendar day so backfill makes them collide.
+
+    Both rows bucket to ``2025-03-01`` under ``date(timestamp)``, so the new
+    ``(goal_id, user_id, local_day)`` unique index cannot be created until the
+    dedup step archives one of them.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE user ( id INTEGER PRIMARY KEY, timezone VARCHAR(64))"))
+        conn.execute(text("INSERT INTO user (id, timezone) VALUES (1, 'UTC')"))
+        conn.execute(
+            text(
+                "CREATE TABLE goalcompletion ("
+                " id INTEGER PRIMARY KEY,"
+                " goal_id INTEGER NOT NULL,"
+                " user_id INTEGER NOT NULL,"
+                " timestamp DATETIME NOT NULL,"
+                " completed_units FLOAT NOT NULL,"
+                " via_timer BOOLEAN NOT NULL DEFAULT 0"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO goalcompletion"
+                " (id, goal_id, user_id, timestamp, completed_units)"
+                " VALUES (1, 1, 1, '2025-03-01 08:00:00', 10.0)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO goalcompletion"
+                " (id, goal_id, user_id, timestamp, completed_units)"
+                " VALUES (2, 1, 1, '2025-03-01 20:00:00', 5.0)"
+            )
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_local_day_collision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config seeded with a same-local-day collision pair."""
+    db_path = tmp_path / "local_day_collision_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_local_day_collision_baseline(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _LOCAL_DAY_BASE_REVISION)
+    return cfg
+
+
+def _ids_from_query(db_url: str, query: str) -> list[int]:
+    """Return the sorted ``id`` values yielded by a literal SELECT ``query``."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(query)).scalars().all()
+            return [int(value) for value in rows]
+    finally:
+        engine.dispose()
+
+
+def test_local_day_migration_archives_same_day_duplicate_on_sqlite(
+    alembic_sqlite_config_local_day_collision: Config,
+) -> None:
+    """A same-local-day collision keeps the min-id row and archives the loser, never dropping it.
+
+    This exercises the data-safety-critical dedup branch: the higher-id row must
+    move into ``_duplicates_goalcompletion`` (recoverable) rather than vanish,
+    and the surviving completion row must be the first-logged (lowest id).
+    """
+    cfg = alembic_sqlite_config_local_day_collision
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _LOCAL_DAY_REVISION)
+
+    assert _ids_from_query(db_url, "SELECT id FROM goalcompletion ORDER BY id") == [1]
+    assert _table_exists(db_url, "_duplicates_goalcompletion")
+    assert _ids_from_query(db_url, "SELECT id FROM _duplicates_goalcompletion ORDER BY id") == [2]
