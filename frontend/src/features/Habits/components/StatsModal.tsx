@@ -8,6 +8,8 @@ import styles from '../Habits.styles';
 import type { HabitStatsData, StatsModalProps } from '../Habits.types';
 import { generateStatsForHabit } from '../HabitUtils';
 
+import ModalHeader from './ModalHeader';
+
 const FALLBACK_CHART_COLOR = 'rgba(134, 65, 244, 1)';
 const FALLBACK_CALENDAR_COLOR = '#50cebb';
 
@@ -166,21 +168,10 @@ const ChartTab = ({ title, children }: ChartTabProps) => (
   </View>
 );
 
-const StatsModalHeader = ({
-  habit,
-  onClose,
-}: {
-  habit: { name: string; icon: string };
-  onClose: () => void;
-}) => (
-  <View style={styles.modalHeader}>
-    <Text style={styles.modalTitle}>
-      {habit.name} Stats <Text style={styles.iconLarge}>{habit.icon}</Text>
-    </Text>
-    <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-      <Text style={styles.closeButtonText}>×</Text>
-    </TouchableOpacity>
-  </View>
+const StatsHeaderTitle = ({ habit }: { habit: { name: string; icon: string } }) => (
+  <>
+    {habit.name} Stats <Text style={styles.iconLarge}>{habit.icon}</Text>
+  </>
 );
 
 interface StatsContentProps {
@@ -200,7 +191,7 @@ const StatsContent = (props: StatsContentProps) => {
 
   return (
     <View style={[styles.statsModalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}>
-      <StatsModalHeader habit={habit} onClose={onClose} />
+      <ModalHeader title={<StatsHeaderTitle habit={habit} />} onClose={onClose} />
       <TabBar selectedTab={selectedTab} onSelect={onSelectTab} />
       <ScrollView style={styles.statsContainer}>
         {loading && (

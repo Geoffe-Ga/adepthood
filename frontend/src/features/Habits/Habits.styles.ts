@@ -53,31 +53,6 @@ export const styles = StyleSheet.create({
     borderTopWidth: 5,
     ...SHADOWS.large,
   },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: JUSTIFY_SPACE_BETWEEN,
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderColor: '#eee',
-    paddingBottom: SPACING.md,
-    marginBottom: SPACING.md,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    flex: 1,
-    color: COLORS.text.primary,
-  },
-  closeButton: {
-    padding: SPACING.xs,
-  },
-  closeButtonText: {
-    fontSize: 28,
-    lineHeight: 28,
-    fontWeight: '300',
-    color: COLORS.text.secondary,
-  },
-
   // ===== Goal Items =====
   saveButton: {
     paddingVertical: SPACING.xs,

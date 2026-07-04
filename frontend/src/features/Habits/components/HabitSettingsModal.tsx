@@ -19,6 +19,7 @@ import type { Habit, HabitSettingsModalProps } from '../Habits.types';
 import ConfirmDialog from './ConfirmDialog';
 import { EnergyCostReturnEditor } from './EnergyCostReturnEditor';
 import HabitEmojiPicker from './HabitEmojiPicker';
+import ModalHeader from './ModalHeader';
 
 const cycleFrequency = (current: string | undefined): 'daily' | 'weekly' | 'custom' => {
   if (current === 'daily') return 'weekly';
@@ -484,15 +485,6 @@ const useSettingsHandlers = (
   };
 };
 
-const SettingsModalHeader = ({ onClose }: { onClose: () => void }) => (
-  <View style={styles.modalHeader}>
-    <Text style={styles.modalTitle}>Edit Habit</Text>
-    <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-      <Text style={styles.closeButtonText}>×</Text>
-    </TouchableOpacity>
-  </View>
-);
-
 interface SettingsBodyProps {
   editedHabit: Habit;
   showEmojiSelector: boolean;
@@ -518,7 +510,7 @@ const SettingsModalBody = ({
     <View
       style={[styles.settingsModalContent, { borderTopColor: STAGE_COLORS[editedHabit.stage] }]}
     >
-      <SettingsModalHeader onClose={onClose} />
+      <ModalHeader title="Edit Habit" onClose={onClose} />
       <SettingsForm
         editedHabit={editedHabit}
         showEmojiSelector={showEmojiSelector}
