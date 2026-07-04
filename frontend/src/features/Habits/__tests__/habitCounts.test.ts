@@ -105,3 +105,29 @@ describe('unlockedHabits', () => {
     expect(unlockedHabits([])).toEqual([]);
   });
 });
+
+describe('second habit set (lap-agnostic counting)', () => {
+  // 15 habits spanning both laps: indices 0-9 are the first lap, 10-14 are
+  // the second. Revealed state and completions are mixed across the
+  // boundary so lap position cannot leak into either count.
+  const buildTwoLapHabits = (): Habit[] =>
+    Array.from({ length: 15 }, (_, i) =>
+      makeHabit({
+        id: i + 1,
+        revealed: i % 3 === 0, // revealed at 0, 3, 6, 9, 12 -- spans both laps
+        completions: i === 12 ? [{ id: `c-${i}`, timestamp: new Date(), completed_units: 1 }] : [],
+      }),
+    );
+
+  it('unlockedHabits returns exactly the revealed habits regardless of lap position', () => {
+    const habits = buildTwoLapHabits();
+    const unlocked = unlockedHabits(habits);
+    expect(unlocked.map((h) => h.id)).toEqual([1, 4, 7, 10, 13]);
+  });
+
+  it('countDoneToday counts a completion on a second-lap habit (index >= 10)', () => {
+    const habits = buildTwoLapHabits();
+    // Only index 12 (the 13th habit, second lap) has a today completion.
+    expect(countDoneToday(habits)).toBe(1);
+  });
+});

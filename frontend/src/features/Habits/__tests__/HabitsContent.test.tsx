@@ -157,4 +157,56 @@ describe('HabitsContent', () => {
     );
     expect(queryByTestId('habits-pagination')).toBeNull();
   });
+
+  it('keeps the pagination bar visible on an empty second-lap invite page (stranded-page trap)', () => {
+    const { getByTestId } = render(
+      <HabitsContent
+        habits={[]}
+        loading={false}
+        error={null}
+        columns={1}
+        gridGutter={8}
+        renderItem={renderRow}
+        onRetry={jest.fn()}
+        onAddHabit={jest.fn()}
+        pagination={{
+          page: 1,
+          pageCount: 2,
+          onPrev: jest.fn(),
+          onNext: jest.fn(),
+          scale: 1,
+          stageStart: 11,
+          stageEnd: 20,
+        }}
+      />,
+    );
+    expect(getByTestId('habits-empty-state')).toBeTruthy();
+    expect(getByTestId('habits-pagination')).toBeTruthy();
+  });
+
+  it('shows the stage range as the visible pagination label', () => {
+    const habits = [makeHabit(1)];
+    const { getByText } = render(
+      <HabitsContent
+        habits={habits}
+        loading={false}
+        error={null}
+        columns={1}
+        gridGutter={8}
+        renderItem={renderRow}
+        onRetry={jest.fn()}
+        onAddHabit={jest.fn()}
+        pagination={{
+          page: 0,
+          pageCount: 2,
+          onPrev: jest.fn(),
+          onNext: jest.fn(),
+          scale: 1,
+          stageStart: 1,
+          stageEnd: 10,
+        }}
+      />,
+    );
+    expect(getByText(/Stages\s*1[\s\S]*10/)).toBeTruthy();
+  });
 });
