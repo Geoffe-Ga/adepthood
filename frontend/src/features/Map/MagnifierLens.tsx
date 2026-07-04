@@ -89,7 +89,7 @@ interface LensMotion {
   lastCenter: React.MutableRefObject<LensCenter>;
   /** True while a finger owns the lens; the glide effect defers to it. */
   dragging: React.MutableRefObject<boolean>;
-  glideTo: (_target: LensCenter) => void;
+  glideTo: (_target: LensCenter, _decelerate?: boolean) => void;
   raiseFrost: () => void;
 }
 
@@ -107,17 +107,28 @@ interface DragOrigin {
 const sameLensCenter = (a: LensCenter | null, b: LensCenter): boolean =>
   a !== null && a.x === b.x && a.y === b.y;
 
+/** A tap or focus change starts from rest, so its glide eases in and out — gather, glide, slow. */
+const FOCUS_EASING = Easing.inOut(Easing.cubic);
+
+/**
+ * A released swipe already carries the finger's speed, so its settle only
+ * decelerates: easing *out* keeps that momentum and slides to a slowing stop,
+ * never braking to zero and re-accelerating (the jerk of an ease-in restart).
+ */
+const SETTLE_EASING = Easing.out(Easing.cubic);
+
 const runGlide = (
   center: Animated.ValueXY,
   frost: Animated.Value,
   target: LensCenter,
   distance: number,
+  easing: (_value: number) => number,
   onDone: () => void,
 ): void => {
   Animated.timing(center, {
     toValue: target,
     duration: glideDurationMs(distance),
-    easing: Easing.inOut(Easing.cubic),
+    easing,
     useNativeDriver: false,
   }).start(({ finished }) => {
     if (finished) {
@@ -166,7 +177,7 @@ const useLensMotion = (
   }, [frost]);
 
   const glideTo = useCallback(
-    (target: LensCenter) => {
+    (target: LensCenter, decelerate = false) => {
       if (sameLensCenter(activeGlideTarget.current, target)) return;
 
       if (reducedMotion) {
@@ -178,7 +189,7 @@ const useLensMotion = (
       activeGlideTarget.current = target;
       const distance = Math.hypot(target.x - lastCenter.current.x, target.y - lastCenter.current.y);
       raiseFrost();
-      runGlide(center, frost, target, distance, () => {
+      runGlide(center, frost, target, distance, decelerate ? SETTLE_EASING : FOCUS_EASING, () => {
         activeGlideTarget.current = null;
       });
     },
@@ -273,7 +284,7 @@ const settleDraggedLens = (params: LensDragParams, dragOrigin: DragOrigin): void
     gridHeight,
     anchors,
   );
-  motion.glideTo(params.restingCenter(settled));
+  motion.glideTo(params.restingCenter(settled), true);
   if (settled !== params.focusedStage) params.onSettleStage(settled);
 };
 
