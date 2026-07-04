@@ -18,8 +18,6 @@ export interface DatePickerProps {
   maxDate?: string;
   disabledDate?: (_date: Date) => boolean;
   locale?: string;
-  mode?: 'scaffoldingStart' | 'courseStart';
-  stageColor?: string;
 }
 
 export const toISODate = (date: Date): string => {
@@ -39,7 +37,7 @@ export const parseISODate = (iso: string): Date => {
   return new Date(y, m - 1, d);
 };
 
-export const formatDisplayDate = (date: Date, locale = 'en-US'): string =>
+const formatDisplayDate = (date: Date, locale = 'en-US'): string =>
   date.toLocaleDateString(locale, {
     weekday: 'short',
     month: 'short',
@@ -105,7 +103,7 @@ const validateDate = (
   return null;
 };
 
-export const getLocalToday = (): Date => {
+const getLocalToday = (): Date => {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 };
@@ -118,7 +116,7 @@ export const getNextMonday = (): Date => {
   return local;
 };
 
-export const getFirstOfNextMonth = (): Date => {
+const getFirstOfNextMonth = (): Date => {
   const d = new Date();
   d.setMonth(d.getMonth() + 1, 1);
   return d;
@@ -343,18 +341,6 @@ const makeHandleChangeText = (
   };
 };
 
-interface NativePickerSlotProps {
-  value: string;
-  minDate?: string;
-  maxDate?: string;
-  pickerVisible: boolean;
-  setPickerVisible: (_v: boolean) => void;
-  commitDate: (_d: Date) => void;
-}
-
-const NativePickerSlot: React.FC<NativePickerSlotProps> = (props) =>
-  Platform.OS === 'web' ? null : <NativePicker {...props} />;
-
 const DatePicker: React.FC<DatePickerProps> = ({
   value,
   onChange,
@@ -388,14 +374,16 @@ const DatePicker: React.FC<DatePickerProps> = ({
         commitDate={commitDate}
       />
       {error && <Text accessibilityRole="alert">{error}</Text>}
-      <NativePickerSlot
-        value={value}
-        minDate={minDate}
-        maxDate={maxDate}
-        pickerVisible={pickerVisible}
-        setPickerVisible={setPickerVisible}
-        commitDate={commitDate}
-      />
+      {Platform.OS !== 'web' && (
+        <NativePicker
+          value={value}
+          minDate={minDate}
+          maxDate={maxDate}
+          pickerVisible={pickerVisible}
+          setPickerVisible={setPickerVisible}
+          commitDate={commitDate}
+        />
+      )}
       <QuickDateButtons
         onSelectDate={commitDate}
         minDate={minDate}
