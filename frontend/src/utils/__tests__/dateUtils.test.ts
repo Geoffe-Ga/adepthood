@@ -4,6 +4,7 @@ import {
   DEFAULT_TIMEZONE,
   addDaysInTZ,
   dayKeyInTZ,
+  dayKeyToInstant,
   dayLabel,
   detectDeviceTimezone,
   streakFromCompletions,
@@ -363,6 +364,36 @@ describe('subtractiveLongestStreakFromCompletions', () => {
         TODAY,
       ),
     ).toBe(0);
+  });
+});
+
+describe('dayKeyToInstant', () => {
+  it('round-trips through dayKeyInTZ for a negative-offset zone', () => {
+    const tz = 'America/Los_Angeles';
+    const instant = dayKeyToInstant('2026-01-02', tz);
+    expect(dayKeyInTZ(instant, tz)).toBe('2026-01-02');
+  });
+
+  it('round-trips through dayKeyInTZ for a far-eastern zone', () => {
+    const tz = 'Pacific/Kiritimati';
+    const instant = dayKeyToInstant('2026-06-15', tz);
+    expect(dayKeyInTZ(instant, tz)).toBe('2026-06-15');
+  });
+
+  it('round-trips across a DST spring-forward boundary', () => {
+    const tz = 'America/Los_Angeles';
+    const instant = dayKeyToInstant('2026-03-08', tz);
+    expect(dayKeyInTZ(instant, tz)).toBe('2026-03-08');
+  });
+
+  it('anchors at UTC midday for UTC itself', () => {
+    const instant = dayKeyToInstant('2026-01-02', 'UTC');
+    expect(instant.toISOString()).toBe('2026-01-02T12:00:00.000Z');
+  });
+
+  it('falls back to UTC midnight for a malformed day key', () => {
+    const instant = dayKeyToInstant('not-a-date', 'America/Los_Angeles');
+    expect(Number.isNaN(instant.getTime())).toBe(true);
   });
 });
 

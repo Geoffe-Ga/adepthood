@@ -1,5 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, jest */
+import { dayKeyInTZ } from '../../../utils/dateUtils';
 import type { Habit, Goal } from '../Habits.types';
 import { generateStatsForHabit, toLocalHabitStats, calculateMissedDays } from '../HabitUtils';
 
@@ -432,5 +433,61 @@ describe('calculateMissedDays', () => {
     const missed = calculateMissedDays(habit);
     expect(missed).toHaveLength(1);
     expect(missed[0]!.toISOString().slice(0, 10)).toBe('2024-01-02');
+  });
+
+  test('does not flag a missed day for consecutive local days that straddle the UTC boundary', () => {
+    const habit: Habit = {
+      ...baseHabit,
+      completions: [
+        // Jan 1 08:00 PST
+        { id: 'c-1', timestamp: new Date('2026-01-01T16:00:00.000Z'), completed_units: 1 },
+        // Jan 2 23:00 PST
+        { id: 'c-2', timestamp: new Date('2026-01-03T07:00:00.000Z'), completed_units: 1 },
+      ],
+    };
+    const missed = calculateMissedDays(habit, 'America/Los_Angeles');
+    expect(missed).toEqual([]);
+  });
+
+  test('buckets by UTC by default (unchanged legacy behavior)', () => {
+    const habit: Habit = {
+      ...baseHabit,
+      completions: [
+        { id: 'c-1', timestamp: new Date('2026-01-01T16:00:00.000Z'), completed_units: 1 },
+        { id: 'c-2', timestamp: new Date('2026-01-03T07:00:00.000Z'), completed_units: 1 },
+      ],
+    };
+    const missed = calculateMissedDays(habit);
+    expect(missed).toHaveLength(1);
+    expect(missed[0]!.toISOString().slice(0, 10)).toBe('2026-01-02');
+  });
+
+  test('emits missed days that re-bucket to the same local day when backfilled', () => {
+    const tz = 'America/Los_Angeles';
+    const habit: Habit = {
+      ...baseHabit,
+      completions: [
+        // Jan 1 08:00 PST, then a three-day gap to Jan 5 08:00 PST.
+        { id: 'c-1', timestamp: new Date('2026-01-01T16:00:00.000Z'), completed_units: 1 },
+        { id: 'c-2', timestamp: new Date('2026-01-05T16:00:00.000Z'), completed_units: 1 },
+      ],
+    };
+    const missed = calculateMissedDays(habit, tz);
+    expect(missed.map((d) => dayKeyInTZ(d, tz))).toEqual([
+      '2026-01-02',
+      '2026-01-03',
+      '2026-01-04',
+    ]);
+
+    // Backfilling those instants and re-detecting must leave no gap: the
+    // emitted Date has to land on the same local day it represents.
+    const backfilled: Habit = {
+      ...habit,
+      completions: [
+        ...habit.completions!,
+        ...missed.map((d, i) => ({ id: `b-${i}`, timestamp: d, completed_units: 1 })),
+      ],
+    };
+    expect(calculateMissedDays(backfilled, tz)).toEqual([]);
   });
 });
