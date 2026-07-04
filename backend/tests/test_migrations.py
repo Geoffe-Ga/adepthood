@@ -1846,3 +1846,137 @@ def test_journal_chord_migration_round_trip_on_sqlite(
     cols_final = _columns_of(db_url, "journalentry")
     assert "primary_aspect" in cols_final
     assert "secondary_aspect" in cols_final
+
+
+# -- habit.revealed column migration round-trip ------------------------------
+
+# down_revision is d3e4f5a6b7c8 (the highest_stage_reached migration, the
+# current chain head at authoring time).
+_HABIT_REVEALED_BASE_REVISION = "d3e4f5a6b7c8"  # pragma: allowlist secret
+# The implementer must replace this with the real revision ID they author.
+_HABIT_REVEALED_REVISION = "e6f7a8b9c0d2"  # pragma: allowlist secret
+
+
+def _bootstrap_habit_revealed_baseline(sync_url: str) -> None:
+    """Pre-create a minimal ``habit`` table (no ``revealed`` column) with two seeded rows.
+
+    Mirrors the schema in place just before the revealed-column migration,
+    without pulling in every preceding migration. Two pre-existing rows let
+    the "upgrade backfills every existing row to True" assertion cover more
+    than a single row.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE user ( id INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL)")
+        )
+        conn.execute(text("INSERT INTO user (id, email) VALUES (1, 'revealed@example.com')"))
+        conn.execute(
+            text(
+                "CREATE TABLE habit ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " name VARCHAR(255) NOT NULL,"
+                " icon VARCHAR(100) NOT NULL,"
+                " start_date DATE NOT NULL,"
+                " energy_cost INTEGER NOT NULL,"
+                " energy_return INTEGER NOT NULL,"
+                " stage VARCHAR(100) NOT NULL DEFAULT '',"
+                " streak INTEGER NOT NULL DEFAULT 0"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO habit"
+                " (id, user_id, name, icon, start_date, energy_cost, energy_return)"
+                " VALUES (1, 1, 'Existing Habit', 'leaf', '2025-01-01', 1, 2)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO habit"
+                " (id, user_id, name, icon, start_date, energy_cost, energy_return)"
+                " VALUES (2, 1, 'Second Habit', 'drop', '2025-02-01', 1, 2)"
+            )
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_habit_revealed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config positioned just before the habit.revealed migration."""
+    db_path = tmp_path / "habit_revealed_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_habit_revealed_baseline(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _HABIT_REVEALED_BASE_REVISION)
+    return cfg
+
+
+def _habit_revealed_row(db_url: str, habit_id: int) -> dict[str, Any]:
+    """Fetch a ``habit`` row including the new ``revealed`` column."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            row = (
+                conn.execute(
+                    text("SELECT id, revealed FROM habit WHERE id = :id"),
+                    {"id": habit_id},
+                )
+                .mappings()
+                .first()
+            )
+            assert row is not None
+            return dict(row)
+    finally:
+        engine.dispose()
+
+
+def test_habit_revealed_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_habit_revealed: Config,
+) -> None:
+    """Round-trip the habit.revealed migration: upgrade adds + backfills; downgrade drops.
+
+    Phase 1: upgrade adds ``revealed`` NOT NULL and backfills every EXISTING
+    row to ``true`` -- accounts that pre-date the locked-by-default model keep
+    their habits unlocked; only NEW/seeded habits created after this migration
+    start locked (that default lives in the model/schema, not this backfill).
+    Phase 2: downgrade drops the column.
+    Phase 3: re-upgrade reproduces the same backfill (idempotent).
+
+    This test fails until the implementer authors the migration and sets
+    ``_HABIT_REVEALED_REVISION`` to its real revision ID.
+    """
+    cfg = alembic_sqlite_config_habit_revealed
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade adds the column and backfills both seeded rows to True.
+    command.upgrade(cfg, _HABIT_REVEALED_REVISION)
+    cols = _columns_of(db_url, "habit")
+    assert "revealed" in cols
+    row_1 = _habit_revealed_row(db_url, habit_id=1)
+    assert bool(row_1["revealed"]) is True
+    row_2 = _habit_revealed_row(db_url, habit_id=2)
+    assert bool(row_2["revealed"]) is True
+
+    # Phase 2: downgrade drops the revealed column.
+    command.downgrade(cfg, _HABIT_REVEALED_BASE_REVISION)
+    cols_after = _columns_of(db_url, "habit")
+    assert "revealed" not in cols_after
+
+    # Phase 3: re-upgrade -- backfill must reproduce the same values.
+    command.upgrade(cfg, _HABIT_REVEALED_REVISION)
+    row_1_again = _habit_revealed_row(db_url, habit_id=1)
+    assert bool(row_1_again["revealed"]) is True

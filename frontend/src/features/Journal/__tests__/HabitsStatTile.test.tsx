@@ -33,8 +33,6 @@ import type { StageData } from '@/features/Map/stageData';
 import { useHabitStore } from '@/store/useHabitStore';
 import { useStageStore } from '@/store/useStageStore';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   id: 1,
   stage: 'Beige',
@@ -49,10 +47,6 @@ const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   revealed: true,
   ...overrides,
 });
-
-// Ascending Spiral-Dynamics stages so each habit's own stage (not its list
-// position) drives its unlock threshold — see isHabitUnlockedAtStage.
-const STAGES = ['Beige', 'Purple', 'Red', 'Blue', 'Orange', 'Green', 'Yellow'] as const;
 
 const makeStage = (stageNumber: number): StageData => ({
   id: stageNumber,
@@ -83,6 +77,9 @@ beforeEach(() => {
     habitOrder: [],
     error: null,
   });
+  // Seeded so the (currently still present) stage-store gate never blocks
+  // these tests on its own skeleton — the denominator itself must not
+  // depend on this value.
   useStageStore.setState({
     stages: [makeStage(1), makeStage(2), makeStage(3)],
     currentStage: 3,
@@ -122,38 +119,14 @@ describe('HabitsStatTile', () => {
     expect(mockLoadHabits).toHaveBeenCalledWith('UTC');
   });
 
-  it('anchors the denominator to currentStage, not the raw habit count', () => {
-    const habits = Array.from({ length: 7 }, (_, i) =>
-      makeHabit({
-        id: 100 + i,
-        stage: STAGES[i],
-        revealed: true,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-      }),
-    );
-    useHabitStore.setState({ loading: false, habits });
-    useStageStore.setState({ currentStage: 3 });
-    const { getByText } = render(<HabitsStatTile />);
-    expect(getByText('0/3 done')).toBeTruthy();
-  });
-
-  it('shows "0/1 done" at stage 1 Beige with a single habit', () => {
+  it('counts a manually-unlocked habit toward the denominator regardless of its stage', () => {
+    // Blue is well above currentStage 1 -- under the old stage-gated model
+    // this habit would stay excluded from the denominator. Under the new
+    // model only `revealed` decides, so it counts.
     const habits = [
       makeHabit({
-        id: 200,
-        stage: 'Beige',
-        revealed: true,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-      }),
-      makeHabit({
-        id: 201,
-        stage: 'Purple',
-        revealed: true,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-      }),
-      makeHabit({
-        id: 202,
-        stage: 'Red',
+        id: 500,
+        stage: 'Blue',
         revealed: true,
         start_date: new Date('2020-01-01T00:00:00Z'),
       }),
@@ -164,146 +137,60 @@ describe('HabitsStatTile', () => {
     expect(getByText('0/1 done')).toBeTruthy();
   });
 
-  it('shows "1/1 done" at stage 1 once the first habit is completed today', () => {
+  it('excludes a locked (revealed: false) habit from the denominator even at a low stage', () => {
+    // Beige is the very first stage -- under the old stage-gated model this
+    // habit would already count regardless of `revealed`. The new model
+    // requires an explicit manual unlock.
     const habits = [
       makeHabit({
-        id: 210,
+        id: 501,
         stage: 'Beige',
-        revealed: true,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-        completions: [{ id: 'c1', timestamp: new Date(), completed_units: 1 }],
-      }),
-      makeHabit({
-        id: 211,
-        stage: 'Purple',
-        revealed: true,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-      }),
-      makeHabit({
-        id: 212,
-        stage: 'Red',
-        revealed: true,
+        revealed: false,
         start_date: new Date('2020-01-01T00:00:00Z'),
       }),
     ];
     useHabitStore.setState({ loading: false, habits });
-    useStageStore.setState({ currentStage: 1 });
+    useStageStore.setState({ currentStage: 5 });
+    const { queryByText } = render(<HabitsStatTile />);
+    expect(queryByText(/\/1 done/)).toBeNull();
+  });
+
+  it('counts done-today progress only against manually-unlocked habits', () => {
+    const habits = [
+      makeHabit({
+        id: 510,
+        stage: 'Beige',
+        revealed: true,
+        completions: [{ id: 'c1', timestamp: new Date(), completed_units: 1 }],
+      }),
+      makeHabit({ id: 511, stage: 'Purple', revealed: false }),
+    ];
+    useHabitStore.setState({ loading: false, habits });
     const { getByText } = render(<HabitsStatTile />);
     expect(getByText('1/1 done')).toBeTruthy();
   });
 
-  it('never counts a locked habit with a past start_date toward the denominator', () => {
+  it('shows a manual-unlock invitation instead of "Unlocks soon" for a zero-unlocked corpus', () => {
+    // Both habits sit at the highest stages so the OLD stage-gated model
+    // would also report zero-unlocked here -- isolating this test to the
+    // copy itself, not the count.
     const habits = [
-      makeHabit({
-        id: 220,
-        stage: 'Beige',
-        revealed: true,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-      }),
-      makeHabit({
-        id: 221,
-        stage: 'Purple',
-        revealed: true,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-      }),
-      makeHabit({
-        id: 222,
-        stage: 'Red',
-        revealed: true,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-      }),
-      // Blue sits above currentStage 3, so a past start_date can't unlock it.
-      makeHabit({
-        id: 223,
-        stage: 'Blue',
-        revealed: false,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-      }),
-    ];
-    useHabitStore.setState({ loading: false, habits });
-    useStageStore.setState({ currentStage: 3 });
-    const { getByText } = render(<HabitsStatTile />);
-    expect(getByText('0/3 done')).toBeTruthy();
-  });
-
-  it('counts an early-unlocked habit at a high stage toward the denominator', () => {
-    const habits = [
-      makeHabit({
-        id: 230,
-        stage: 'Beige',
-        revealed: true,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-      }),
-      makeHabit({
-        id: 231,
-        stage: 'Purple',
-        revealed: false,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-      }),
-      makeHabit({
-        id: 232,
-        stage: 'Red',
-        revealed: false,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-      }),
-      // Blue is above currentStage 1, so only its early-unlock reveal counts it.
-      makeHabit({
-        id: 233,
-        stage: 'Blue',
-        revealed: true,
-        start_date: new Date(Date.now() + 30 * DAY_MS),
-      }),
+      makeHabit({ id: 520, stage: 'Ultraviolet', revealed: false }),
+      makeHabit({ id: 521, stage: 'Clear Light', revealed: false }),
     ];
     useHabitStore.setState({ loading: false, habits });
     useStageStore.setState({ currentStage: 1 });
-    const { getByText } = render(<HabitsStatTile />);
-    expect(getByText('0/2 done')).toBeTruthy();
-  });
-
-  it('shows the skeleton and self-hydrates stages on a cold entry with no stages loaded yet', () => {
-    useHabitStore.setState({ loading: false, habits: [makeHabit({ id: 300 })] });
-    useStageStore.setState({ stages: [], currentStage: 1, loading: false, error: null });
-    const { getByTestId } = render(<HabitsStatTile />);
-    expect(getByTestId('journal-habits-tile-skeleton')).toBeTruthy();
-    expect(mockLoadStages).toHaveBeenCalledTimes(1);
-  });
-
-  it('falls back to currentStage 1 (ignoring a stale store value) and renders a determinate stat when stage loading errored', () => {
-    const habits = [
-      makeHabit({
-        id: 310,
-        stage: 'Beige',
-        revealed: true,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-        completions: [{ id: 'c1', timestamp: new Date(), completed_units: 1 }],
-      }),
-      makeHabit({
-        id: 311,
-        stage: 'Purple',
-        revealed: true,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-      }),
-      makeHabit({
-        id: 312,
-        stage: 'Red',
-        revealed: true,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-      }),
-    ];
-    useHabitStore.setState({ loading: false, habits });
-    // currentStage 5 is a stale value from a prior session; the error means it must not be trusted.
-    useStageStore.setState({ stages: [], currentStage: 5, loading: false, error: 'boom' });
-    const { getByText, queryByTestId } = render(<HabitsStatTile />);
-    expect(getByText('1/1 done')).toBeTruthy();
-    expect(queryByTestId('journal-habits-tile-skeleton')).toBeNull();
+    const { getByText, queryByText } = render(<HabitsStatTile />);
+    expect(queryByText('Unlocks soon')).toBeNull();
+    expect(getByText('Unlock a habit to begin')).toBeTruthy();
   });
 });
 
 describe('describeHabits', () => {
-  it('returns the "Unlocks soon" stat and cue when there are habits but none unlocked yet', () => {
+  it('returns the manual-unlock invitation stat and cue when there are habits but none unlocked yet', () => {
     const result = describeHabits(false, 2, 0, 0);
-    expect(result.stat).toBe('Unlocks soon');
+    expect(result.stat).toBe('Unlock a habit to begin');
     expect(result.cue).toBe('Open habits →');
-    expect(result.accessibilityLabel).toBe("Today's habits, unlocks soon. Open habits");
+    expect(result.accessibilityLabel).toBe("Today's habits, unlock a habit to begin. Open habits");
   });
 });

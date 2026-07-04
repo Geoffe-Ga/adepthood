@@ -169,7 +169,7 @@ export const useHabitActions = (
       iconPress,
       emojiSelect,
       revealAllHabits: habitManager.revealAllHabits,
-      lockUnstartedHabits: habitManager.lockUnstartedHabits,
+      lockUntouchedHabits: habitManager.lockUntouchedHabits,
       unlockHabit: habitManager.unlockHabit,
     }),
     [logUnit, iconPress, emojiSelect, onboardingSave, tz],

@@ -4,7 +4,7 @@
  * list they already subscribe to, rather than reading an imperative snapshot.
  */
 import type { Habit } from '@/features/Habits/Habits.types';
-import { isHabitUnlockedAtStage } from '@/features/Habits/HabitUtils';
+import { isHabitUnlocked } from '@/features/Habits/HabitUtils';
 import { DEFAULT_TIMEZONE, dayKeyInTZ } from '@/utils/dateUtils';
 
 /**
@@ -25,11 +25,11 @@ export function countDoneToday(habits: readonly Habit[], tz: string = DEFAULT_TI
 }
 
 /**
- * The subset of habits unlocked at the user's current stage — a habit unlocks
- * once `currentStage` reaches its own Spiral-Dynamics stage (list position is
- * only a fallback for stage-less habits), plus any habit manually revealed
- * ahead of its start_date. See {@link isHabitUnlockedAtStage}.
+ * The subset of unlocked habits — those the user has revealed. Unlock is
+ * governed solely by `revealed` (see {@link isHabitUnlocked}); neither the
+ * Spiral-Dynamics stage nor the calendar `start_date` participates, so no
+ * current-stage argument is needed.
  */
-export function unlockedAtStage(habits: readonly Habit[], currentStage: number): Habit[] {
-  return habits.filter((h, i) => isHabitUnlockedAtStage(h, i, currentStage));
+export function unlockedHabits(habits: readonly Habit[]): Habit[] {
+  return habits.filter((h) => isHabitUnlocked(h));
 }

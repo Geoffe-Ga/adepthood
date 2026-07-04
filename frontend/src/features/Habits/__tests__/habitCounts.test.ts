@@ -1,7 +1,7 @@
 /* eslint-env jest */
 import { jest, afterEach, describe, it, expect } from '@jest/globals';
 
-import { countDoneToday, unlockedAtStage } from '../habitCounts';
+import { countDoneToday, unlockedHabits } from '../habitCounts';
 import type { Habit } from '../Habits.types';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -64,65 +64,44 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
-describe('unlockedAtStage', () => {
-  it('returns only the first-stage habit at stage 1', () => {
-    const habit0 = makeHabit({ id: 10, stage: 'Beige' });
-    const habit1 = makeHabit({ id: 11, stage: 'Purple' });
-    expect(unlockedAtStage([habit0, habit1], 1)).toEqual([habit0]);
+describe('unlockedHabits', () => {
+  it('returns only the revealed habit out of two', () => {
+    const habit0 = makeHabit({ id: 10, revealed: true });
+    const habit1 = makeHabit({ id: 11, revealed: false });
+    expect(unlockedHabits([habit0, habit1])).toEqual([habit0]);
   });
 
-  it('returns the first three stages at stage 3 regardless of revealed/start_date', () => {
-    const habits = [
-      makeHabit({
-        id: 20,
-        stage: 'Beige',
-        revealed: false,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-      }),
-      makeHabit({
-        id: 21,
-        stage: 'Purple',
-        revealed: false,
-        start_date: new Date(Date.now() + 7 * DAY_MS),
-      }),
-      makeHabit({ id: 22, stage: 'Red' }),
-    ];
-    expect(unlockedAtStage(habits, 3)).toEqual(habits);
+  it('returns only the middle habit for an out-of-order revealed set', () => {
+    const habit0 = makeHabit({ id: 20, revealed: false });
+    const habit1 = makeHabit({ id: 21, revealed: true });
+    const habit2 = makeHabit({ id: 22, revealed: false });
+    expect(unlockedHabits([habit0, habit1, habit2])).toEqual([habit1]);
   });
 
-  it('excludes a habit whose stage is above currentStage even with a past start_date', () => {
+  it('ignores stage and start_date entirely — only revealed matters', () => {
     const habits = [
-      makeHabit({ id: 30, stage: 'Beige' }),
-      makeHabit({ id: 31, stage: 'Purple' }),
-      makeHabit({ id: 32, stage: 'Red' }),
-      makeHabit({ id: 33, stage: 'Blue' }),
-      makeHabit({ id: 34, stage: 'Orange' }),
       makeHabit({
-        id: 35,
-        stage: 'Green',
-        revealed: false,
-        start_date: new Date('2020-01-01T00:00:00Z'),
-      }),
-    ];
-    const result = unlockedAtStage(habits, 3);
-    expect(result).toEqual(habits.slice(0, 3));
-    expect(result).not.toContain(habits[5]);
-  });
-
-  it('includes an early-unlocked habit whose stage is at or above currentStage', () => {
-    const habits = [
-      makeHabit({ id: 40, stage: 'Beige' }),
-      makeHabit({
-        id: 41,
-        stage: 'Purple',
+        id: 30,
+        stage: 'Clear Light',
         revealed: true,
         start_date: new Date(Date.now() + 7 * DAY_MS),
       }),
+      makeHabit({
+        id: 31,
+        stage: 'Beige',
+        revealed: false,
+        start_date: new Date('2000-01-01T00:00:00Z'),
+      }),
     ];
-    expect(unlockedAtStage(habits, 1)).toEqual(habits);
+    expect(unlockedHabits(habits)).toEqual([habits[0]]);
+  });
+
+  it('returns an empty array when no habit is revealed', () => {
+    const habits = [makeHabit({ id: 40, revealed: false }), makeHabit({ id: 41, revealed: false })];
+    expect(unlockedHabits(habits)).toEqual([]);
   });
 
   it('returns an empty array for an empty habit list', () => {
-    expect(unlockedAtStage([], 3)).toEqual([]);
+    expect(unlockedHabits([])).toEqual([]);
   });
 });

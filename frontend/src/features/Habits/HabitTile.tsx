@@ -13,7 +13,7 @@ import {
   touchTarget,
 } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
-import { DEFAULT_TIMEZONE, MS_PER_DAY } from '../../utils/dateUtils';
+import { DEFAULT_TIMEZONE } from '../../utils/dateUtils';
 
 import ConfirmDialog from './components/ConfirmDialog';
 import { MAX_HABITS } from './constants';
@@ -27,7 +27,6 @@ import {
   getMarkerPositions,
   getProgressBarColor,
   isGoalAchieved,
-  isEarlyUnlocked,
   calculateTodaysProgress,
 } from './HabitUtils';
 import { longPressGestureStyle } from './longPressGestureStyle';
@@ -414,17 +413,10 @@ const useHabitTileData = (habit: Habit, tz: string, stageColor: string) => {
 const LOCKED_BACKGROUND = '#e8e8e8';
 const LOCKED_OPACITY = 0.4;
 
-const calculateDaysUntilUnlock = (startDate: Date): number => {
-  const now = new Date();
-  const start = new Date(startDate);
-  return Math.max(0, Math.ceil((start.getTime() - now.getTime()) / MS_PER_DAY));
-};
-
-const getUnlockLabel = (habit: Habit): string => {
-  const days = calculateDaysUntilUnlock(habit.start_date);
-  if (days > 0) return `Unlocks in ${days} day${days === 1 ? '' : 's'}`;
-  return `Stage ${habit.stage} · Locked`;
-};
+// The calendar no longer participates in unlock — a locked habit is a standing
+// invitation the user accepts by tapping, never a timer that counts down. So
+// the label is a static "Stage X · Locked" regardless of start_date.
+const getUnlockLabel = (habit: Habit): string => `Stage ${habit.stage} · Locked`;
 
 interface LockedTileProps {
   habit: Habit;
@@ -467,12 +459,15 @@ const LockedTileButton = ({
   scale,
   gridGutter,
   tileMinHeight,
-  onLongPress,
-}: Omit<LockedTileProps, 'onUnlockHabit'> & { onLongPress?: () => void }) => (
+  onUnlock,
+}: Omit<LockedTileProps, 'onUnlockHabit'> & { onUnlock?: () => void }) => (
   <TouchableOpacity
     testID="habit-tile"
     accessibilityLabel={`${habit.name} locked`}
-    onLongPress={onLongPress}
+    // A locked tile's only affordance is the unlock invitation — both a tap and
+    // a long-press open the same confirm dialog. No goal editor / stats behind it.
+    onPress={onUnlock}
+    onLongPress={onUnlock}
     style={getLockedTileStyle(stageColor, scale, gridGutter, tileMinHeight)}
   >
     <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -495,15 +490,14 @@ const LockedTileButton = ({
 
 const LockedTile = ({ onUnlockHabit, ...rest }: LockedTileProps) => {
   const [showUnlockConfirm, setShowUnlockConfirm] = useState(false);
-  const handleLongPress = onUnlockHabit ? () => setShowUnlockConfirm(true) : undefined;
-  const dateStr = new Date(rest.habit.start_date).toLocaleDateString();
+  const handleUnlock = onUnlockHabit ? () => setShowUnlockConfirm(true) : undefined;
   return (
     <>
-      <LockedTileButton {...rest} onLongPress={handleLongPress} />
+      <LockedTileButton {...rest} onUnlock={handleUnlock} />
       <ConfirmDialog
         visible={showUnlockConfirm}
-        title="Unlock Early?"
-        message={`Unlock "${rest.habit.name}" early? The recommended start date is ${dateStr}.`}
+        title={`Unlock "${rest.habit.name}"?`}
+        message="This habit is yours to begin whenever you choose. Unlock it now, or leave it locked and come back to it later."
         testID="unlock-habit-confirm"
         cancelTestID="unlock-habit-cancel"
         confirmTestID="unlock-habit-confirm-button"
@@ -529,7 +523,6 @@ interface UnlockedTileProps {
 
 const buildUnlockedTileStyle = (
   stageColor: string,
-  earlyUnlocked: boolean,
   scale: number,
   gridGutter: number,
   tileMinHeight: number,
@@ -537,7 +530,6 @@ const buildUnlockedTileStyle = (
   flex: 1 as const,
   borderWidth: TILE_BORDER_WIDTH,
   borderColor: stageColor,
-  borderStyle: (earlyUnlocked ? 'dashed' : undefined) as 'dashed' | undefined,
   paddingVertical: spacing(tileDensity.paddingV, scale),
   paddingHorizontal: spacing(1, scale),
   margin: gridGutter / 2,
@@ -566,12 +558,11 @@ const UnlockedTile = ({
   const streakText =
     `${habit.streak} days${hasCompletedGoal ? ' — Achieved Today!' : ''}`.toUpperCase();
   const barHeight = Math.max(8, spacing(2, scale));
-  const earlyUnlocked = isEarlyUnlocked(habit);
 
   return (
     <TouchableOpacity
       testID="habit-tile"
-      style={buildUnlockedTileStyle(stageColor, earlyUnlocked, scale, gridGutter, tileMinHeight)}
+      style={buildUnlockedTileStyle(stageColor, scale, gridGutter, tileMinHeight)}
       onPress={onOpenGoals}
       onLongPress={onLongPress}
     >

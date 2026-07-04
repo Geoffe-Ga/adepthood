@@ -196,6 +196,10 @@ export const habitSchema = z.object({
   sort_order: z.number().int().nullish(),
   stage: z.string(),
   streak: z.number().int(),
+  // Persisted unlock flag (revealed === unlocked). Optional on the wire so
+  // payloads captured before the column shipped still validate; the live
+  // backend always sends it.
+  revealed: z.boolean().optional(),
 });
 
 export const habitWithGoalsSchema = habitSchema.extend({

@@ -10,31 +10,16 @@ import React, { useEffect } from 'react';
 import StatTile from './StatTile';
 
 import { useAuth } from '@/context/AuthContext';
-import { countDoneToday, unlockedAtStage } from '@/features/Habits/habitCounts';
+import { countDoneToday, unlockedHabits } from '@/features/Habits/habitCounts';
 import { habitManager } from '@/features/Habits/services/habitManager';
-import { stageService } from '@/features/Map/services/stageService';
 import type { RootTabParamList } from '@/navigation/BottomTabs';
 import { useHabitStore } from '@/store/useHabitStore';
-import {
-  selectCurrentStage,
-  selectStages,
-  selectStagesError,
-  selectStagesLoading,
-  useStageStore,
-} from '@/store/useStageStore';
 
 type HabitsTileNav = BottomTabNavigationProp<RootTabParamList>;
 
 const TITLE = "Today's habits";
 const OPEN_CUE = 'Open habits →';
 const ADD_CUE = 'Add a habit →';
-
-/**
- * Stage to assume when stage loading has failed and left the store empty: one
- * habit is always unlocked, so falling back to 1 (rather than a possibly-stale
- * store value) keeps the denominator conservative.
- */
-const FALLBACK_STAGE = 1;
 
 interface HabitsDescriptor {
   loading: boolean;
@@ -45,9 +30,9 @@ interface HabitsDescriptor {
 
 /**
  * Resolve the tile's stat line, cue, loading flag, and a11y label from plain
- * counts. `loading` is the caller's precomputed "show skeleton" flag (habits or
- * stages still resolving) — not the raw habit-store `loading` — so this stays
- * pure and flat.
+ * counts. `loading` is the caller's precomputed "show skeleton" flag (habits
+ * still resolving) — not the raw habit-store `loading` — so this stays pure and
+ * flat.
  */
 export function describeHabits(
   loading: boolean,
@@ -67,13 +52,13 @@ export function describeHabits(
     };
   }
   if (unlockedCount === 0) {
-    // Defensive: the current stage always floors at 1, so the first habit is
-    // unlocked whenever any exist. Kept as a guard for a zero-unlocked corpus.
+    // Habits are locked by default now; with a corpus but nothing unlocked,
+    // invite the user to open one rather than implying a timed auto-unlock.
     return {
       loading: false,
-      stat: 'Unlocks soon',
+      stat: 'Unlock a habit to begin',
       cue: OPEN_CUE,
-      accessibilityLabel: `${TITLE}, unlocks soon. Open habits`,
+      accessibilityLabel: `${TITLE}, unlock a habit to begin. Open habits`,
     };
   }
   return {
@@ -89,30 +74,15 @@ const HabitsStatTile = (): React.JSX.Element => {
   const { userTimezone } = useAuth();
   const habitsLoading = useHabitStore((state) => state.loading);
   const habits = useHabitStore((state) => state.habits);
-  const currentStage = useStageStore(selectCurrentStage);
-  const stages = useStageStore(selectStages);
-  const stagesLoading = useStageStore(selectStagesLoading);
-  const stagesError = useStageStore(selectStagesError);
 
   useEffect(() => {
     void habitManager.loadHabits(userTimezone);
   }, [userTimezone]);
 
-  useEffect(() => {
-    if (stages.length === 0) void stageService.loadStages();
-  }, [stages.length]);
-
-  // Stages have not resolved yet — either nothing has errored, or a (re)load is
-  // in flight. Hold the skeleton so the tile never flashes a denominator
-  // computed against an empty stage list.
-  const stagesPending = stages.length === 0 && (stagesError === null || stagesLoading);
-  // A failed load leaves stages empty; trust the always-unlocked floor rather
-  // than a possibly-stale store `currentStage`.
-  const stagesFailed = stagesError !== null && stages.length === 0;
-  const effectiveStage = stagesFailed ? FALLBACK_STAGE : currentStage;
-
-  const unlocked = unlockedAtStage(habits, effectiveStage);
-  const showSkeleton = (habitsLoading && habits.length === 0) || stagesPending;
+  // Unlock is governed solely by the persisted ``revealed`` flag, so the
+  // denominator no longer depends on the user's current stage.
+  const unlocked = unlockedHabits(habits);
+  const showSkeleton = habitsLoading && habits.length === 0;
   const descriptor = describeHabits(
     showSkeleton,
     habits.length,

@@ -743,6 +743,88 @@ async def test_cross_tenant_completions_survive_a_commit_after_get(
     assert persisted.user_id == 999_999
 
 
+# ── Locked-by-default / manual unlock persistence ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_create_habit_without_revealed_defaults_to_locked(async_client: AsyncClient) -> None:
+    """POST /habits/ omitting ``revealed`` locks the new habit by default."""
+    headers = await _signup(async_client, "locked_default")
+    resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["revealed"] is False
+
+
+@pytest.mark.asyncio
+async def test_create_habit_with_revealed_true_stays_unlocked(async_client: AsyncClient) -> None:
+    """POST /habits/ with ``revealed: true`` persists unlocked.
+
+    A stuck-user recovery re-push (``recoverStuckHabits``) replays the
+    client's cached habits, including an already-unlocked one; the server
+    must not silently re-lock it.
+    """
+    headers = await _signup(async_client, "recovery_repush")
+    resp = await async_client.post("/habits/", json=sample_payload(revealed=True), headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["revealed"] is True
+
+
+@pytest.mark.asyncio
+async def test_update_habit_revealed_persists(async_client: AsyncClient) -> None:
+    """PUT revealed:true, then GET, round-trips the unlock flag."""
+    headers = await _signup(async_client, "persist_reveal")
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    habit_id = create_resp.json()["id"]
+
+    put_resp = await async_client.put(
+        f"/habits/{habit_id}", json=sample_payload(revealed=True), headers=headers
+    )
+    assert put_resp.status_code == HTTPStatus.OK
+
+    get_resp = await async_client.get(f"/habits/{habit_id}", headers=headers)
+    assert get_resp.status_code == HTTPStatus.OK
+    assert get_resp.json()["revealed"] is True
+
+
+@pytest.mark.asyncio
+async def test_relock_preserves_completions(async_client: AsyncClient) -> None:
+    """Re-locking a habit (PUT revealed:false) must not drop its logged completions."""
+    headers = await _signup(async_client, "relock_preserve")
+    create_resp = await async_client.post(
+        "/habits/", json=sample_payload(revealed=True), headers=headers
+    )
+    habit_id = create_resp.json()["id"]
+    goal_id = next(g["id"] for g in create_resp.json()["goals"] if g["tier"] == "clear")
+
+    log_resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal_id, "did_complete": True},
+        headers=headers,
+    )
+    assert log_resp.status_code == HTTPStatus.OK
+
+    put_resp = await async_client.put(
+        f"/habits/{habit_id}", json=sample_payload(revealed=False), headers=headers
+    )
+    assert put_resp.status_code == HTTPStatus.OK
+    assert put_resp.json()["revealed"] is False
+
+    stats_resp = await async_client.get(f"/habits/{habit_id}/stats", headers=headers)
+    assert stats_resp.status_code == HTTPStatus.OK
+    assert stats_resp.json()["total_completions"] == 1
+
+
+@pytest.mark.asyncio
+async def test_list_habits_includes_revealed(async_client: AsyncClient) -> None:
+    """GET /habits/ list items include the ``revealed`` unlock flag."""
+    headers = await _signup(async_client, "list_revealed")
+    await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    resp = await async_client.get("/habits/", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    [habit] = resp.json()
+    assert habit["revealed"] is False
+
+
 @pytest.mark.asyncio
 async def test_subtractive_habit_no_logs_streaks_from_start_date_via_list(
     async_client: AsyncClient, db_session: AsyncSession
