@@ -45,7 +45,10 @@ describe('RadioOption', () => {
         selectedLabelStyle={selectedLabelStyle}
       />,
     );
-    expect(getByTestId('opt-morning').props.accessibilityState).toEqual({ selected: true });
+    expect(getByTestId('opt-morning').props.accessibilityState).toEqual({
+      selected: true,
+      disabled: false,
+    });
   });
 
   it('reflects selected=false in accessibilityState', () => {
@@ -61,7 +64,30 @@ describe('RadioOption', () => {
         selectedLabelStyle={selectedLabelStyle}
       />,
     );
-    expect(getByTestId('opt-morning').props.accessibilityState).toEqual({ selected: false });
+    expect(getByTestId('opt-morning').props.accessibilityState).toEqual({
+      selected: false,
+      disabled: false,
+    });
+  });
+
+  it('announces disabled in accessibilityState when disabled', () => {
+    const { getByTestId } = render(
+      <RadioOption
+        label="Morning"
+        selected={false}
+        disabled
+        onPress={jest.fn()}
+        testID="opt-morning"
+        style={baseStyle}
+        selectedStyle={selectedStyle}
+        labelStyle={baseLabelStyle}
+        selectedLabelStyle={selectedLabelStyle}
+      />,
+    );
+    expect(getByTestId('opt-morning').props.accessibilityState).toEqual({
+      selected: false,
+      disabled: true,
+    });
   });
 
   it('fires onPress exactly once when pressed', () => {

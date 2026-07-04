@@ -46,6 +46,8 @@ export interface PrivacyTierControlProps {
   value?: PrivacyTier;
   /** Called with the chosen tier when an option is pressed. */
   onChange: (_tier: PrivacyTier) => void;
+  /** When true, taps are inert — used while an entry's load has failed. */
+  disabled?: boolean;
 }
 
 /**
@@ -55,6 +57,7 @@ export interface PrivacyTierControlProps {
 function PrivacyTierControl({
   value = DEFAULT_TIER,
   onChange,
+  disabled = false,
 }: PrivacyTierControlProps): React.JSX.Element {
   return (
     <View style={styles.privacyTierControl}>
@@ -64,7 +67,10 @@ function PrivacyTierControl({
             key={option.tier}
             label={option.label}
             selected={option.tier === value}
-            onPress={() => onChange(option.tier)}
+            onPress={() => {
+              if (!disabled) onChange(option.tier);
+            }}
+            disabled={disabled}
             testID={`privacy-tier-${option.tier}`}
             accessibilityHint={option.hint}
             style={styles.privacyTierOption}
