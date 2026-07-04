@@ -10,6 +10,8 @@ import styles from '../Habits.styles';
 import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
 import { calculateHabitStartDate, stageAtIndex } from '../HabitUtils';
 
+import ModalHeader from './ModalHeader';
+
 // Lazy require so jest (which doesn't transform this ES-module package) can load this file.
 let DateTimePickerModal: ComponentType<Record<string, unknown>> = () => null;
 if (Platform.OS !== 'web') {
@@ -224,12 +226,7 @@ const ReorderBody = ({
   onSave,
 }: ReorderBodyProps) => (
   <View style={styles.reorderModalContent}>
-    <View style={styles.modalHeader}>
-      <Text style={styles.modalTitle}>Reorder Habits</Text>
-      <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-        <Text style={styles.closeButtonText}>×</Text>
-      </TouchableOpacity>
-    </View>
+    <ModalHeader title="Reorder Habits" onClose={onClose} />
     <ReorderDateButton
       startDate={startDate}
       onOpenPicker={onOpenPicker}

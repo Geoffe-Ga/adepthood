@@ -7,21 +7,13 @@ import type { AddHabitInput } from '../Habits.types';
 
 import { EnergyCostReturnEditor } from './EnergyCostReturnEditor';
 import HabitEmojiPicker from './HabitEmojiPicker';
+import ModalHeader from './ModalHeader';
 
 interface AddHabitModalProps {
   visible: boolean;
   onClose: () => void;
   onAdd: (_input: AddHabitInput) => void | Promise<void>;
 }
-
-const AddHabitHeader = ({ onClose }: { onClose: () => void }) => (
-  <View style={styles.modalHeader}>
-    <Text style={styles.modalTitle}>Add Habit</Text>
-    <TouchableOpacity onPress={onClose} style={styles.closeButton} testID="add-habit-close">
-      <Text style={styles.closeButtonText}>×</Text>
-    </TouchableOpacity>
-  </View>
-);
 
 interface NameRowProps {
   name: string;
@@ -174,7 +166,7 @@ export const AddHabitModal = ({ visible, onClose, onAdd }: AddHabitModalProps) =
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
         <View style={styles.settingsModalContent} testID="add-habit-modal">
-          <AddHabitHeader onClose={onClose} />
+          <ModalHeader title="Add Habit" onClose={onClose} closeTestID="add-habit-close" />
           <NameRow name={f.name} setName={f.setName} />
           <IconRow
             icon={f.icon}

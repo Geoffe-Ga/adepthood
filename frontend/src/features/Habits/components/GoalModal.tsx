@@ -50,6 +50,7 @@ import {
 
 import ConfirmDialog from './ConfirmDialog';
 import HabitEmojiPicker from './HabitEmojiPicker';
+import ModalHeader from './ModalHeader';
 
 /** Height of the goal progress bar; tier star markers are centered on it. */
 const MODAL_BAR_HEIGHT = 12;
@@ -1038,8 +1039,7 @@ const GoalModalHeader = ({
   onToggleEdit,
 }: GoalModalHeaderProps) => (
   <>
-    <View style={styles.modalHeader}>
-      <Text style={styles.modalTitle}>{habit.name}</Text>
+    <ModalHeader title={habit.name} onClose={onClose}>
       <EditToggleButton isEditing={isEditing} onToggle={onToggleEdit} />
       <TouchableOpacity
         testID="goal-modal-icon-button"
@@ -1049,10 +1049,7 @@ const GoalModalHeader = ({
       >
         <Text style={styles.iconLarge}>{habit.icon}</Text>
       </TouchableOpacity>
-      <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-        <Text style={styles.closeButtonText}>×</Text>
-      </TouchableOpacity>
-    </View>
+    </ModalHeader>
     {goalGroup && (
       <View testID="goal-group-badge" style={goalGroupBadgeStyles.container}>
         <Text style={goalGroupBadgeStyles.text}>
