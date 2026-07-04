@@ -8,7 +8,7 @@
  */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import type { SectionListData, SectionListRenderItemInfo } from 'react-native';
 
@@ -135,21 +135,26 @@ function useShelf(): ShelfState {
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestSeq = useRef(0);
 
   const load = useCallback(async (search: string | undefined, offset: number) => {
+    // Only the newest in-flight request may settle; stale ones are dropped.
+    const requestId = (requestSeq.current += 1);
+    const isLatest = () => requestId === requestSeq.current;
     setLoading(true);
     setError(null);
     try {
       const page = await journal.list({ search, limit: PAGE_SIZE, offset });
+      if (!isLatest()) return;
       setItems((prev) => (offset === 0 ? page.items : [...prev, ...page.items]));
       setTotal(page.total);
       setHasMore(page.has_more);
     } catch (err) {
       // Surface the failure so a cold-start network error isn't mistaken for an
       // empty shelf; the current items (if any) stay in place for retry.
-      setError(formatApiError(err));
+      if (isLatest()) setError(formatApiError(err));
     } finally {
-      setLoading(false);
+      if (isLatest()) setLoading(false);
     }
   }, []);
 

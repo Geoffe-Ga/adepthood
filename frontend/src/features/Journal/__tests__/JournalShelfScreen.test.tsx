@@ -319,6 +319,48 @@ describe('JournalShelfScreen', () => {
     expect(queryByTestId('journal-shelf-empty')).toBeNull();
   });
 
+  it('does not let a stale mount response overwrite a newer search result', async () => {
+    let resolveMount: (_value: JournalListResponse) => void = () => undefined;
+    const mountPromise = new Promise<JournalListResponse>((resolve) => {
+      resolveMount = resolve;
+    });
+    mockList.mockImplementation((p) =>
+      p?.search === 'willow' ? Promise.resolve(page([entry(2)])) : mountPromise,
+    );
+    const { getByTestId, queryByTestId } = render(<JournalShelfScreen />);
+
+    fireEvent.changeText(getByTestId('shelf-search'), 'willow');
+    await waitFor(() => expect(queryByTestId('journal-shelf-card-2')).toBeTruthy());
+    expect(queryByTestId('journal-shelf-card-1')).toBeNull();
+
+    resolveMount(page([entry(1), entry(2)]));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(queryByTestId('journal-shelf-card-1')).toBeNull();
+  });
+
+  it('does not let a stale mount failure clobber a newer search-empty result', async () => {
+    let rejectMount: (_reason: unknown) => void = () => undefined;
+    const mountPromise = new Promise<JournalListResponse>((_resolve, reject) => {
+      rejectMount = reject;
+    });
+    mockList.mockImplementation((p) =>
+      p?.search === 'willow' ? Promise.resolve(page([])) : mountPromise,
+    );
+    const { getByTestId, findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+
+    fireEvent.changeText(getByTestId('shelf-search'), 'willow');
+    await findByTestId('journal-shelf-no-results');
+
+    rejectMount(new Error('network down'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(queryByTestId('journal-shelf-error')).toBeNull();
+    expect(queryByTestId('journal-shelf-no-results')).toBeTruthy();
+  });
+
   it('appends the next page when more are available', async () => {
     mockList.mockResolvedValueOnce(page([entry(1), entry(2)], true));
     const { findByTestId, getByTestId } = render(<JournalShelfScreen />);
