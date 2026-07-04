@@ -12,6 +12,7 @@ import type { HabitTileProps, Goal, Habit } from './Habits.types';
 import {
   getProgressPercentage,
   clampPercentage,
+  getGoalTarget,
   getGoalTier,
   getMarkerPositions,
   getProgressBarColor,
@@ -19,6 +20,7 @@ import {
   isEarlyUnlocked,
   calculateTodaysProgress,
 } from './HabitUtils';
+import { longPressGestureStyle } from './longPressGestureStyle';
 import {
   TierMarkerOverlay,
   type MarkerInteraction,
@@ -28,10 +30,18 @@ import {
 /** Marker star size: a touch larger than the bar so it reads as a sitting marker. */
 const markerStarSize = (scale: number): number => spacing(2, scale);
 
+/** Round to at most two decimals and drop trailing zeros so the fraction reads cleanly. */
+const formatAmount = (value: number): string => String(Math.round(value * 100) / 100);
+
 const formatGoalTooltip = (goal: Goal, habit: Habit, tz: string): string => {
   const label = TIER_LABELS[goal.tier];
   const progress = calculateTodaysProgress(habit, tz);
-  return `${label}: ${progress}/${goal.target} ${goal.target_unit}`;
+  // Divide by the daily-normalized target the "met" star and bar use
+  // (getGoalTarget), not the raw weekly/monthly goal.target — otherwise a
+  // per_week/per_month goal whose star is filled still shows a sub-100%
+  // fraction because numerator (today) and denominator (week/month) mixed scales.
+  const target = getGoalTarget(goal);
+  return `${label}: ${formatAmount(progress)}/${formatAmount(target)} ${goal.target_unit}`;
 };
 
 interface HabitHeaderProps {
@@ -416,6 +426,7 @@ const getLockedTileStyle = (
   borderRadius: spacing(1, scale),
   backgroundColor: LOCKED_BACKGROUND,
   opacity: LOCKED_OPACITY,
+  ...longPressGestureStyle,
 });
 
 const LOCKED_NAME_STYLE = {
@@ -507,6 +518,7 @@ const buildUnlockedTileStyle = (
   minHeight: tileMinHeight,
   borderRadius: spacing(1, scale),
   backgroundColor: surface.canvas,
+  ...longPressGestureStyle,
 });
 
 const UnlockedTile = ({

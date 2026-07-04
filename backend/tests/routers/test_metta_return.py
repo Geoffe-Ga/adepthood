@@ -69,14 +69,23 @@ async def _seed_progress(
     *,
     current_stage: int,
     completed_stages: list[int] | None = None,
-    cycle_number: int = 1,
+    highest_stage_reached: int | None = None,
 ) -> StageProgress:
-    """Insert a StageProgress row for a user at the given stage."""
+    """Insert a StageProgress row for a user at the given stage.
+
+    Eligibility is mark-only, so ``highest_stage_reached`` defaults to
+    ``current_stage`` (the ordinary case: reaching a stage for the first
+    time sets the mark to it) for every existing caller that only cares
+    about ``current_stage``. Pass it explicitly to seed a persisted lifetime
+    high-water mark that diverges from ``current_stage`` (e.g. a prior-run
+    high water mark above a lower current-run stage).
+    """
+    resolved_mark = current_stage if highest_stage_reached is None else highest_stage_reached
     progress = StageProgress(
         user_id=user_id,
         current_stage=current_stage,
         completed_stages=completed_stages or [],
-        cycle_number=cycle_number,
+        highest_stage_reached=resolved_mark,
     )
     session.add(progress)
     await session.commit()
@@ -273,6 +282,36 @@ async def test_start_arc_ineligible_user_returns_409(
         select(MettaReturnArc).where(col(MettaReturnArc.user_id) == user_id)
     )
     assert result.scalars().first() is None
+
+
+@pytest.mark.asyncio
+async def test_get_and_start_eligible_via_high_water_mark_below_blue(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A lifetime high-water mark above Blue grants eligibility even below Blue now.
+
+    A user who reached Green (stage 6) on a prior run but is currently
+    burned out in Red (stage 3) this run is eligible purely because the
+    persisted mark, not the current stage, crossed Orange.
+    """
+    headers = await _signup(async_client, "mr_highwater17")
+    user = await _get_user(db_session, "mr_highwater17@example.com")
+    assert user.id is not None
+    await _seed_progress(
+        db_session,
+        user.id,
+        current_stage=3,
+        completed_stages=[1, 2],
+        highest_stage_reached=6,
+    )
+
+    get_resp = await async_client.get(_BASE_URL, headers=headers)
+    assert get_resp.status_code == HTTPStatus.OK
+    assert get_resp.json()["eligible"] is True
+
+    start_resp = await async_client.post(_START_URL, headers=headers)
+    assert start_resp.status_code == HTTPStatus.CREATED
 
 
 @pytest.mark.asyncio
@@ -562,7 +601,6 @@ async def test_full_lifecycle_never_mutates_stage_progress(
         user_id,
         current_stage=_ELIGIBLE_STAGE,
         completed_stages=[1, 2, 3, 4],
-        cycle_number=1,
     )
     before_stage = progress.current_stage
     before_completed = list(progress.completed_stages)
@@ -819,7 +857,6 @@ async def test_dismiss_offer_does_not_mutate_stage_progress_or_create_arc(
         user_id,
         current_stage=_ELIGIBLE_STAGE,
         completed_stages=[1, 2, 3, 4],
-        cycle_number=1,
     )
     before_stage = progress.current_stage
     before_completed = list(progress.completed_stages)
@@ -942,7 +979,6 @@ async def test_completion_never_mutates_stage_progress(
         user_id,
         current_stage=_ELIGIBLE_STAGE,
         completed_stages=[1, 2, 3, 4],
-        cycle_number=1,
     )
     before_stage = progress.current_stage
     before_completed = list(progress.completed_stages)

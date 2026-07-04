@@ -25,6 +25,8 @@ import { Button } from '@/components/Button';
 import { EmptyState } from '@/components/feedback/EmptyState';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
+import InvitationStack from '@/features/Invitations/InvitationStack';
+import ReturnStack from '@/features/Return/ReturnStack';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { useDerivedCurrentWeek } from '@/store/useProgramProgression';
@@ -350,6 +352,8 @@ function ShelfTopMatter({
     <View>
       <JournalHero />
       <StatTileRow />
+      <ReturnStack />
+      <InvitationStack />
       <ScreenHeader
         title="Journal"
         action={<Button label="New entry" onPress={onNew} testID="journal-new-entry" />}

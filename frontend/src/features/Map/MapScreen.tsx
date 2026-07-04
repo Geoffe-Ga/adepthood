@@ -44,14 +44,20 @@ import {
   rankedStats,
   unlockTimeline,
 } from './journeyNarrative';
+import { MagnifierLens } from './MagnifierLens';
 import styles from './Map.styles';
-import { MAP_ROWS, RIGHT_LABEL_MIN_FONT_SCALE, STAGE_DISPLAY, TITLE_BY_STAGE } from './mapLayout';
+import {
+  fittedTitleFontSize,
+  labelCorner,
+  MAP_ROWS,
+  STAGE_DISPLAY,
+  TITLE_BY_STAGE,
+} from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
 import { stageService, isStageUnlocked, isEndOfCycle } from './services/stageService';
 import { isLeftReturning, STAGE_COUNT, type StageData } from './stageData';
-import WavelengthExplainer from './WavelengthExplainer';
 import { WaveOverlay } from './WaveOverlay';
-import { BALANCE_COPY, emphasisStyle, FULLNESS_ALIVE_THRESHOLD, summaryFor } from './wheelBalance';
+import { FULLNESS_ALIVE_THRESHOLD } from './wheelBalance';
 
 import { Button } from '@/components/Button';
 import { Celebration } from '@/components/feedback/Celebration';
@@ -87,83 +93,149 @@ const LockGlyph = (): React.JSX.Element => (
   </View>
 );
 
+/** Aspect label / unlock estimate corner within a center cell. */
+type LabelCorner = 'left' | 'right';
+
 /**
  * "Unlocks in N days" / unlock-condition copy for a locked stage, computed from
  * the existing calendar drip (no new backend). Falls back to the condition when
- * no program anchor is set.
+ * no program anchor is set. Its text aligns to the block's corner so the copy
+ * reads away from the wave strand.
  */
-const UnlockTimeline = ({ stageNumber }: { stageNumber: number }): React.JSX.Element => {
+const UnlockTimeline = ({
+  stageNumber,
+  corner,
+}: {
+  stageNumber: number;
+  corner: LabelCorner;
+}): React.JSX.Element => {
   const daysUntil = useDaysUntilStage(stageNumber);
+  const alignStyle = corner === 'left' ? styles.unlockTimelineLeft : styles.unlockTimelineRight;
   return (
-    <Text style={styles.unlockTimeline} testID={`stage-unlock-${stageNumber}`}>
+    <Text style={[styles.unlockTimeline, alignStyle]} testID={`stage-unlock-${stageNumber}`}>
       {unlockTimeline(daysUntil)}
     </Text>
   );
 };
 
-const YouAreHereMarker = (): React.JSX.Element => (
-  <View style={styles.youAreHere} testID="you-are-here">
-    <Text style={styles.youAreHereText}>YOU ARE HERE</Text>
-  </View>
-);
-
 interface StageCellProps {
   stage: StageData;
   display: StageDisplay;
   locked: boolean;
-  isCurrent: boolean;
   onPress: (_stage: StageData) => void;
 }
 
 interface StageTextBlockProps extends StageCellProps {
   /** Wheel-of-wholeness fullness (0..1) for this Aspect; drives emphasis + a11y. */
   fullness: number;
+  /** Draw the soft within-row rule above this stage (false for a row's top stage). */
+  showTopDivider: boolean;
 }
 
-// Left cell: colored stage text (the -0 tap target); wheel overlay adds emphasis opacity + a11y only.
+// Left cell: colored stage text (the -0 tap target); the wheel overlay adds
+// a11y only — unlocked stages always render at full opacity. A locked stage's
+// padlock sits inline on the far left, so the three text lines keep the full
+// height of the box and stay vertically centered.
 
 const StageTextBlock = ({
   stage,
   display,
   locked,
   fullness,
+  showTopDivider,
   onPress,
 }: StageTextBlockProps): React.JSX.Element => (
   <TouchableOpacity
     testID={`stage-hotspot-${display.stageNumber}-0`}
-    style={[styles.stageBlock, locked ? styles.locked : null, emphasisStyle(fullness)]}
+    style={[
+      styles.stageBlock,
+      showTopDivider ? styles.horizontalDivider : null,
+      locked ? styles.locked : null,
+    ]}
     onPress={() => onPress(stage)}
     accessibilityRole="button"
     accessibilityLabel={stageNodeLabel(display, fullness)}
   >
-    <Text style={[styles.personaText, { color: display.textColor }]}>{display.persona}</Text>
-    <Text style={[styles.lineText, { color: display.textColor }]}>{display.descriptor}</Text>
-    <Text style={[styles.lineText, { color: display.textColor }]}>{display.practice}</Text>
-    {locked ? <LockGlyph /> : null}
+    {locked ? <Text style={styles.lockLeft}>🔒</Text> : null}
+    <View style={styles.stageLines}>
+      <Text style={[styles.personaText, { color: display.leftTextColor }]}>{display.persona}</Text>
+      <Text style={[styles.lineText, { color: display.leftTextColor }]}>{display.descriptor}</Text>
+      <Text style={[styles.lineText, { color: display.leftTextColor }]}>{display.practice}</Text>
+    </View>
   </TouchableOpacity>
 );
 
 // --- Center cell: label/title, lock, badge (the -1 tap); the wave overlay now
 // carries the directional/polarity read behind these cells ----------------
 
-const CenterContent = ({ display }: { display: StageDisplay }): React.JSX.Element => {
-  const title = TITLE_BY_STAGE[display.stageNumber];
+// Corner-hugging Aspect-label block: the arrow word plus, when locked, its
+// unlock estimate, grouped against the corner opposite the wave's return pole.
+const AspectLabelBlock = ({
+  display,
+  locked,
+}: {
+  display: StageDisplay;
+  locked: boolean;
+}): React.JSX.Element => {
+  const corner = labelCorner(display.stageNumber);
+  const blockStyle = corner === 'left' ? styles.labelBlockLeft : styles.labelBlockRight;
   return (
-    <>
-      {title ? (
-        <Text style={styles.titleText}>{title}</Text>
-      ) : display.arrowLabel ? (
-        <View style={styles.centerLabelRow}>
-          <Text style={styles.arrowLabelText}>{display.arrowLabel}</Text>
-        </View>
-      ) : null}
-    </>
+    <View style={blockStyle} testID={`aspect-label-${display.stageNumber}`}>
+      <Text style={styles.arrowLabelText}>{display.arrowLabel}</Text>
+      {locked ? <UnlockTimeline stageNumber={display.stageNumber} corner={corner} /> : null}
+    </View>
   );
+};
+
+/**
+ * EMPTINESS / UNITY watermark sized to its measured cell width. The native
+ * ``adjustsFontSizeToFit`` (kept as a belt-and-braces net) is a no-op on
+ * react-native-web, so the deterministic ``fittedTitleFontSize`` does the real
+ * work of guaranteeing a single un-truncated, un-hyphenated line everywhere.
+ */
+const FittedTitle = ({ title }: { title: string }): React.JSX.Element => {
+  const [width, setWidth] = useState(0);
+  return (
+    <View
+      style={styles.titleFit}
+      testID={`title-fit-${title}`}
+      onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+    >
+      <Text
+        style={[styles.titleText, { fontSize: fittedTitleFontSize(title, width) }]}
+        adjustsFontSizeToFit
+        numberOfLines={1}
+      >
+        {title}
+      </Text>
+    </View>
+  );
+};
+
+// Title rows (9, 10) keep their centered serif heading; every other stage shows
+// its corner-hugging Aspect-label block instead of a centered word.
+const CenterContent = ({
+  display,
+  locked,
+}: {
+  display: StageDisplay;
+  locked: boolean;
+}): React.JSX.Element | null => {
+  const title = TITLE_BY_STAGE[display.stageNumber];
+  if (title) {
+    return <FittedTitle title={title} />;
+  }
+  if (!display.arrowLabel) {
+    return null;
+  }
+  return <AspectLabelBlock display={display} locked={locked} />;
 };
 
 interface StageCenterCellProps extends StageCellProps {
   /** Index of the row this cell sits in, for anchor measurement. */
   rowIndex: number;
+  /** Draw the soft within-row rule above this stage (false for a row's top stage). */
+  showTopDivider: boolean;
   /** Record this cell's measured row-relative center on layout. */
   onCellLayout: UseStageAnchorsResult['onCellLayout'];
 }
@@ -172,28 +244,26 @@ const StageCenterCell = ({
   stage,
   display,
   locked,
-  isCurrent,
   onPress,
   rowIndex,
+  showTopDivider,
   onCellLayout,
 }: StageCenterCellProps): React.JSX.Element => (
   <TouchableOpacity
     testID={`stage-hotspot-${display.stageNumber}-1`}
     style={[
       styles.centerStageCell,
+      showTopDivider ? styles.horizontalDivider : null,
       isLeftReturning(display.stageNumber) ? styles.cellFeminine : styles.cellMasculine,
       locked ? styles.locked : null,
-      isCurrent ? styles.cellCurrent : null,
     ]}
     onPress={() => onPress(stage)}
     onLayout={(e) => onCellLayout(display.stageNumber, rowIndex, e)}
     accessibilityRole="button"
     accessibilityLabel={`${stage.title} - ${stage.subtitle}`}
   >
-    {isCurrent ? <YouAreHereMarker /> : null}
-    <CenterContent display={display} />
+    <CenterContent display={display} locked={locked} />
     {locked ? <LockGlyph /> : null}
-    {locked ? <UnlockTimeline stageNumber={display.stageNumber} /> : null}
     {stage.progress >= FULL_PROGRESS ? (
       <View style={styles.completedBadge} testID={`stage-complete-${stage.stageNumber}`}>
         <Text style={styles.completedBadgeText}>✓</Text>
@@ -238,14 +308,16 @@ const RowLeftColumn = ({
   onPress: (_stage: StageData) => void;
 }): React.JSX.Element => (
   <View style={styles.leftCell}>
-    {resolved.map(({ stage, display }) => (
+    {resolved.map(({ stage, display }, index) => (
       <StageTextBlock
         key={stage.stageNumber}
         stage={stage}
         display={display}
         locked={!isStageUnlocked(stage, currentStage)}
-        isCurrent={stage.stageNumber === currentStage}
         fullness={fullnessByStage[stage.stageNumber] ?? THIN_FULLNESS}
+        // A row's top stage sits on the row boundary the group row already
+        // rules; only the stacked stage(s) below it carry the within-row line.
+        showTopDivider={index > 0}
         onPress={onPress}
       />
     ))}
@@ -267,15 +339,17 @@ const RowCenterColumn = ({
   onCellLayout: UseStageAnchorsResult['onCellLayout'];
 }): React.JSX.Element => (
   <View style={styles.centerCell}>
-    {resolved.map(({ stage, display }) => (
+    {resolved.map(({ stage, display }, index) => (
       <StageCenterCell
         key={stage.stageNumber}
         stage={stage}
         display={display}
         locked={!isStageUnlocked(stage, currentStage)}
-        isCurrent={stage.stageNumber === currentStage}
         onPress={onPress}
         rowIndex={rowIndex}
+        // Match the left column: only stages stacked below a row's top stage
+        // carry the within-row rule, so left + center lines align.
+        showTopDivider={index > 0}
         onCellLayout={onCellLayout}
       />
     ))}
@@ -296,7 +370,13 @@ const MapRowView = ({
   const resolved = resolveRowStages(row, lookup);
   return (
     <View
-      style={[styles.groupRow, { flex: row.stageNumbers.length }]}
+      style={[
+        styles.groupRow,
+        { flex: row.stageNumbers.length },
+        // Full-width rule between aspect bands; the first row hugs the header,
+        // so it takes no top line (avoids a double rule under it).
+        rowIndex > 0 ? styles.horizontalDivider : null,
+      ]}
       testID={`map-row-${row.rightLabel}`}
       onLayout={(e) => onRowLayout(rowIndex, e)}
     >
@@ -314,13 +394,8 @@ const MapRowView = ({
         onCellLayout={onCellLayout}
       />
       <View style={styles.rightCell}>
-        <Text
-          style={styles.rightLabelText}
-          numberOfLines={1}
-          adjustsFontSizeToFit
-          minimumFontScale={RIGHT_LABEL_MIN_FONT_SCALE}
-        >
-          {row.rightLabel}
+        <Text style={styles.rightLabelText} numberOfLines={2}>
+          {row.rightLabelLines.join('\n')}
         </Text>
       </View>
     </View>
@@ -701,7 +776,13 @@ interface MapGridProps {
   lookup: StageLookup;
   fullnessByStage: FullnessLookup;
   currentStage: number | null;
+  /** The stage the magnifier lens rests on. */
+  focusedStage: number;
   onSelectStage: (_stage: StageData) => void;
+  /** A lens drag released over a new stage settles focus there. */
+  onSettleStage: (_stageNumber: number) => void;
+  /** A tap on the lens opens the focused stage's detail modal. */
+  onOpenStage: (_stageNumber: number) => void;
 }
 
 // Optional decorative backdrop. The grid is fully legible without it (#766), so
@@ -724,18 +805,10 @@ const FIRST_CYCLE = 1;
 interface JourneyHeaderProps {
   currentStage: number;
   cycleNumber: number;
-  onOpenExplainer: () => void;
 }
 
-/** Warm, declinable copy inviting the reader into the Wavelength explainer. */
-const EXPLAINER_TRIGGER_LABEL = 'How the Wavelength works';
-
 /** Compact momentum read at the top of the Map: "Stage N of 10 · Week W". */
-const JourneyHeader = ({
-  currentStage,
-  cycleNumber,
-  onOpenExplainer,
-}: JourneyHeaderProps): React.JSX.Element => {
+const JourneyHeader = ({ currentStage, cycleNumber }: JourneyHeaderProps): React.JSX.Element => {
   const week = useDerivedCurrentWeek(1);
   return (
     <View style={styles.journeyHeader} testID="journey-read">
@@ -745,15 +818,6 @@ const JourneyHeader = ({
           {cycleLabel(cycleNumber)}
         </Text>
       ) : null}
-      <TouchableOpacity
-        testID="wavelength-explainer-trigger"
-        style={styles.explainerTrigger}
-        onPress={onOpenExplainer}
-        accessibilityRole="button"
-        accessibilityLabel={EXPLAINER_TRIGGER_LABEL}
-      >
-        <Text style={styles.explainerTriggerText}>{EXPLAINER_TRIGGER_LABEL}</Text>
-      </TouchableOpacity>
     </View>
   );
 };
@@ -800,14 +864,21 @@ const useGridSize = (): [GridSize, (_event: LayoutChangeEvent) => void] => {
   return [size, onLayout];
 };
 
+/** Smallest measured grid extent the lens can meaningfully float over. */
+const MIN_LENS_GRID_EXTENT = 1;
+
 const MapGrid = ({
   lookup,
   fullnessByStage,
   currentStage,
+  focusedStage,
   onSelectStage,
+  onSettleStage,
+  onOpenStage,
 }: MapGridProps): React.JSX.Element => {
   const [size, onLayout] = useGridSize();
   const { anchors, onRowLayout, onCellLayout } = useStageAnchors(size.height);
+  const lensReady = size.width >= MIN_LENS_GRID_EXTENT && size.height >= MIN_LENS_GRID_EXTENT;
   return (
     <View style={styles.grid} testID="map-grid" onLayout={onLayout}>
       <WaveOverlay width={size.width} height={size.height} anchors={anchors} />
@@ -824,23 +895,20 @@ const MapGrid = ({
           onCellLayout={onCellLayout}
         />
       ))}
+      {lensReady ? (
+        <MagnifierLens
+          gridWidth={size.width}
+          gridHeight={size.height}
+          anchors={anchors}
+          focusedStage={focusedStage}
+          currentStage={currentStage}
+          onSettleStage={onSettleStage}
+          onOpenStage={onOpenStage}
+        />
+      ) : null}
     </View>
   );
 };
-
-/**
- * Whole-wheel balance read shown beneath the spiral: one balance-not-ladder
- * sentence keyed to whether every Aspect is thin, alive, or a mix.
- */
-const BalanceSummary = ({
-  fullnessByStage,
-}: {
-  fullnessByStage: FullnessLookup;
-}): React.JSX.Element => (
-  <Text style={styles.balanceSummary} testID="balance-summary">
-    {BALANCE_COPY[summaryFor(fullnessByStage)]}
-  </Text>
-);
 
 // --- Main component ---
 
@@ -872,6 +940,59 @@ const useStageNavigation = (onBeforeNavigate: () => void) => {
     },
     [navigation, onBeforeNavigate],
   );
+};
+
+/** The magnifier-lens focus state + the tap semantics it drives. */
+interface LensFocus {
+  focusedStage: number;
+  setFocusedStage: (_stageNumber: number) => void;
+  /** Stage tap: glide the lens there, or open the modal if already focused. */
+  handleSelectStage: (_stage: StageData) => void;
+  /** Lens tap: open the focused stage's modal. */
+  handleOpenStage: (_stageNumber: number) => void;
+}
+
+/**
+ * Own where the magnifier lens rests. It seeds on the live stage, glides
+ * wherever the user sends it (stage taps, lens drags), and comes home when
+ * the live stage actually advances (a new week, a new cycle) — but never on
+ * mount, so a user-directed glide is not undone. Tapping the stage the lens
+ * already rests on opens its detail modal — the same read the lens's own tap
+ * gives.
+ */
+const useLensFocus = (
+  currentStage: number,
+  lookup: StageLookup,
+  openStage: (_stage: StageData) => void,
+): LensFocus => {
+  const [focusedStage, setFocusedStage] = useState<number>(currentStage);
+  const prevCurrentStageRef = useRef(currentStage);
+
+  useEffect(() => {
+    if (prevCurrentStageRef.current !== currentStage) setFocusedStage(currentStage);
+    prevCurrentStageRef.current = currentStage;
+  }, [currentStage]);
+
+  const handleSelectStage = useCallback(
+    (stage: StageData) => {
+      if (stage.stageNumber === focusedStage) {
+        openStage(stage);
+        return;
+      }
+      setFocusedStage(stage.stageNumber);
+    },
+    [focusedStage, openStage],
+  );
+
+  const handleOpenStage = useCallback(
+    (stageNumber: number) => {
+      const stage = lookup[stageNumber];
+      if (stage) openStage(stage);
+    },
+    [lookup, openStage],
+  );
+
+  return { focusedStage, setFocusedStage, handleSelectStage, handleOpenStage };
 };
 
 /** Highest stage number whose progress has reached 100%, or 0 when none. */
@@ -935,38 +1056,36 @@ interface MapContentProps {
   lookup: StageLookup;
   fullnessByStage: FullnessLookup;
   currentStage: number;
+  focusedStage: number;
   cycleNumber: number;
   showBeginAgain: boolean;
   beginning: boolean;
   showRefreshError: boolean;
   activeStage: StageData | null;
   celebration: CompletionCelebration;
-  explainerVisible: boolean;
   onRefresh: () => void;
   onBeginAgain: () => void;
   onSelectStage: (_stage: StageData) => void;
+  onSettleStage: (_stageNumber: number) => void;
+  onOpenStage: (_stageNumber: number) => void;
   onCloseModal: () => void;
   onNavigate: (_screen: NavTarget, _stage: StageData) => void;
-  onOpenExplainer: () => void;
-  onCloseExplainer: () => void;
 }
 
-/** The rendered Map: spiral grid + balance overlay + banners + stage modal. */
+/** The rendered Map: spiral grid + magnifier lens + banners + stage modal. */
 const MapContent = (props: MapContentProps): React.JSX.Element => (
   <View style={styles.container}>
     <MapBackdrop />
-    <JourneyHeader
-      currentStage={props.currentStage}
-      cycleNumber={props.cycleNumber}
-      onOpenExplainer={props.onOpenExplainer}
-    />
+    <JourneyHeader currentStage={props.currentStage} cycleNumber={props.cycleNumber} />
     <MapGrid
       lookup={props.lookup}
       fullnessByStage={props.fullnessByStage}
       currentStage={props.currentStage}
+      focusedStage={props.focusedStage}
       onSelectStage={props.onSelectStage}
+      onSettleStage={props.onSettleStage}
+      onOpenStage={props.onOpenStage}
     />
-    <BalanceSummary fullnessByStage={props.fullnessByStage} />
     {props.showBeginAgain && (
       <BeginAgainBlock onBeginAgain={props.onBeginAgain} beginning={props.beginning} />
     )}
@@ -981,7 +1100,6 @@ const MapContent = (props: MapContentProps): React.JSX.Element => (
       onClose={props.onCloseModal}
       onNavigate={props.onNavigate}
     />
-    <WavelengthExplainer visible={props.explainerVisible} onClose={props.onCloseExplainer} />
   </View>
 );
 
@@ -998,8 +1116,6 @@ const MapScreen = (): React.JSX.Element => {
   // Additive overlay: a failed/loading read leaves the map empty so every Aspect reads thin.
   const { fullnessByStage } = useWheelBalance();
   const [activeStage, setActiveStage] = useState<StageData | null>(null);
-  // The explainer is a declinable door: it starts closed and is never auto-shown.
-  const [explainerVisible, setExplainerVisible] = useState<boolean>(false);
   const { beginning, handleBeginAgain } = useBeginAgainGuard();
 
   // Resolve each row's stage numbers to their loaded StageData once per change.
@@ -1016,10 +1132,9 @@ const MapScreen = (): React.JSX.Element => {
 
   const handleRefresh = useCallback(() => void stageService.loadStages(), []);
   const handleCloseModal = useCallback(() => setActiveStage(null), []);
-  const handleOpenExplainer = useCallback(() => setExplainerVisible(true), []);
-  const handleCloseExplainer = useCallback(() => setExplainerVisible(false), []);
   const handleNavigate = useStageNavigation(handleCloseModal);
   const celebration = useStageCompletionCelebration(stages, lookup);
+  const lens = useLensFocus(currentStage, lookup, setActiveStage);
 
   if (loading && stages.length === 0) return <MapLoading />;
   if (error && stages.length === 0) return <MapError message={error} />;
@@ -1029,20 +1144,20 @@ const MapScreen = (): React.JSX.Element => {
       lookup={lookup}
       fullnessByStage={fullnessByStage}
       currentStage={currentStage}
+      focusedStage={lens.focusedStage}
       cycleNumber={cycleNumber}
       showBeginAgain={isEndOfCycle(lookup, currentStage)}
       beginning={beginning}
       showRefreshError={!!error && stages.length > 0}
       activeStage={activeStage}
       celebration={celebration}
-      explainerVisible={explainerVisible}
       onRefresh={handleRefresh}
       onBeginAgain={handleBeginAgain}
-      onSelectStage={setActiveStage}
+      onSelectStage={lens.handleSelectStage}
+      onSettleStage={lens.setFocusedStage}
+      onOpenStage={lens.handleOpenStage}
       onCloseModal={handleCloseModal}
       onNavigate={handleNavigate}
-      onOpenExplainer={handleOpenExplainer}
-      onCloseExplainer={handleCloseExplainer}
     />
   );
 };

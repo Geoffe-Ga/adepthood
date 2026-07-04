@@ -67,6 +67,52 @@ describe('HabitTile tooltips', () => {
   });
 });
 
+// Regression: the tile tooltip once rendered today-only progress over the raw
+// weekly/monthly target, so a `per_week` goal whose "met" star was already
+// filled still showed a sub-100% fraction. The tooltip must divide by the same
+// daily-normalized target the star uses.
+describe('HabitTile tooltip fraction matches the met star', () => {
+  const readTooltipFraction = (
+    component: ReturnType<typeof renderer.create>,
+    tier: string,
+  ): { numerator: number; denominator: number } => {
+    const bubble = component.root.findByProps({ testID: `tooltip-${tier}` });
+    const text = bubble.findByType('Text' as unknown as React.ComponentType);
+    const children = text.props.children as unknown;
+    const rendered = Array.isArray(children) ? children.join('') : String(children);
+    const match = /:\s*([\d.]+)\/([\d.]+)/.exec(rendered);
+    if (!match) throw new Error(`no fraction in tooltip: ${rendered}`);
+    return { numerator: Number(match[1]), denominator: Number(match[2]) };
+  };
+
+  it('renders numerator >= denominator for a met per_week goal', () => {
+    // Shipped default "High Flow Activity" low tier: 3 hours per_week (frequency 1).
+    // The daily-normalized target is 3/7 hours, so a single 1-hour log today
+    // already fills the "met" star; the tooltip fraction must read >= 100%.
+    const perWeek: Habit = {
+      ...habit,
+      goals: [
+        { ...habit.goals[0]!, target: 3, target_unit: 'hours', frequency_unit: 'per_week' },
+        { ...habit.goals[1]!, target: 5, target_unit: 'hours', frequency_unit: 'per_week' },
+        { ...habit.goals[2]!, target: 7, target_unit: 'hours', frequency_unit: 'per_week' },
+      ],
+      completions: [{ id: 'w-1', timestamp: new Date(), completed_units: 1 }],
+    };
+    const component = renderer.create(
+      <HabitTile habit={perWeek} onOpenGoals={() => {}} tz="UTC" />,
+    );
+    const marker = component.root.findByProps({ testID: 'marker-low' });
+    // The star is rendered "met" (throws if no met star exists under the marker),
+    // so we assert the tooltip fraction agrees with it rather than merely implying it.
+    expect(marker.findByProps({ met: true })).toBeTruthy();
+    renderer.act(() => {
+      marker.props.onMouseEnter();
+    });
+    const { numerator, denominator } = readTooltipFraction(component, 'low');
+    expect(numerator).toBeGreaterThanOrEqual(denominator);
+  });
+});
+
 // All three tier markers visible whenever the goal exists (no ``hasCleared`` gate).
 describe('HabitTile markers', () => {
   it('renders all three tier markers at zero progress', () => {

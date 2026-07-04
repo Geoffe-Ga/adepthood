@@ -13,12 +13,14 @@ type WavePath = ReturnType<Renderer['root']['findAll']>[number];
 
 const WIDTH = 100;
 const HEIGHT = 200;
-const SEGMENT_COUNT = STAGE_COUNT - 1;
+const PAIR_COUNT = STAGE_COUNT - 1;
+const TOTAL_NEAR_PATH_COUNT = PAIR_COUNT * 2;
 const FULL_OPACITY = 1;
-const NOT_FOUND = -1;
 
-const FAR_PREFIX = 'far-';
+const HALF_LOWER = 'lower';
+const HALF_UPPER = 'upper';
 const NEAR_PREFIX = 'near-';
+const FAR_PREFIX = 'far-';
 
 // react-native-svg's Polygon renders an internal Path, so raw findAllByType(Path)
 // over-counts. Select wave paths by our explicit testIDs and the Path type only.
@@ -28,34 +30,37 @@ const testIdOf = (node: WavePath): string =>
 const wavePathsWithPrefix = (tree: Renderer, prefix: string): WavePath[] =>
   tree.root.findAll((node: WavePath) => node.type === Path && testIdOf(node).startsWith(prefix));
 
-const orderedWavePaths = (tree: Renderer): WavePath[] =>
-  tree.root.findAll(
-    (node: WavePath) =>
-      node.type === Path &&
-      (testIdOf(node).startsWith(FAR_PREFIX) || testIdOf(node).startsWith(NEAR_PREFIX)),
-  );
+const nearTestId = (stageNumber: number, half: string): string =>
+  `${NEAR_PREFIX}${stageNumber}-${half}`;
 
 describe('WaveOverlay', () => {
-  it('renders one far and one near wave path per segment', () => {
+  it('renders exactly two wave paths per pair (a lower and an upper half) and no far-side strand', () => {
     const tree = create(<WaveOverlay width={WIDTH} height={HEIGHT} />);
-    expect(wavePathsWithPrefix(tree, FAR_PREFIX)).toHaveLength(SEGMENT_COUNT);
-    expect(wavePathsWithPrefix(tree, NEAR_PREFIX)).toHaveLength(SEGMENT_COUNT);
+    expect(wavePathsWithPrefix(tree, NEAR_PREFIX)).toHaveLength(TOTAL_NEAR_PATH_COUNT);
+    expect(wavePathsWithPrefix(tree, FAR_PREFIX)).toHaveLength(0);
   });
 
-  it('gives each far-<stage> path the exact stage color and reduced opacity', () => {
+  it('gives every near-<stage>-<half> path a unique testID', () => {
     const tree = create(<WaveOverlay width={WIDTH} height={HEIGHT} />);
-    for (let stage = 1; stage <= SEGMENT_COUNT; stage += 1) {
-      const far = tree.root.findByProps({ testID: `${FAR_PREFIX}${stage}` });
-      const expectedColor = STAGE_DISPLAY[stage]?.textColor;
-      expect(far.props.stroke).toBe(expectedColor);
-      expect(far.props.strokeOpacity).toBeLessThan(FULL_OPACITY);
-    }
+    const testIds = wavePathsWithPrefix(tree, NEAR_PREFIX).map(testIdOf);
+    expect(new Set(testIds).size).toBe(TOTAL_NEAR_PATH_COUNT);
   });
 
-  it('leaves every near-<stage> path at full opacity', () => {
+  it('prefixes every testID when idPrefix is set (the magnifier copy)', () => {
+    const tree = create(<WaveOverlay width={WIDTH} height={HEIGHT} idPrefix="magnifier-" />);
+    expect(tree.root.findByProps({ testID: 'magnifier-map-wave' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'magnifier-wave-arrow-1' })).toBeTruthy();
+    expect(wavePathsWithPrefix(tree, `magnifier-${NEAR_PREFIX}`)).toHaveLength(
+      TOTAL_NEAR_PATH_COUNT,
+    );
+    // The unprefixed ids are gone, so the two overlay copies never collide.
+    expect(tree.root.findAll((n: WavePath) => testIdOf(n) === 'map-wave')).toHaveLength(0);
+  });
+
+  it('leaves every near-<stage>-<half> path at full opacity', () => {
     const tree = create(<WaveOverlay width={WIDTH} height={HEIGHT} />);
     const nearPaths = wavePathsWithPrefix(tree, NEAR_PREFIX);
-    expect(nearPaths).toHaveLength(SEGMENT_COUNT);
+    expect(nearPaths).toHaveLength(TOTAL_NEAR_PATH_COUNT);
     for (const near of nearPaths) {
       const opacity = near.props.strokeOpacity;
       const isFullOpacity = opacity === undefined || opacity === FULL_OPACITY;
@@ -63,29 +68,29 @@ describe('WaveOverlay', () => {
     }
   });
 
-  it('colors each near-<stage> path the same exact stage color as its far path', () => {
+  it('colors each near-<stage>-lower path with that stage textColor', () => {
     const tree = create(<WaveOverlay width={WIDTH} height={HEIGHT} />);
-    for (let stage = 1; stage <= SEGMENT_COUNT; stage += 1) {
-      const near = tree.root.findByProps({ testID: `${NEAR_PREFIX}${stage}` });
+    for (let stage = 1; stage <= PAIR_COUNT; stage += 1) {
+      const near = tree.root.findByProps({ testID: nearTestId(stage, HALF_LOWER) });
       expect(near.props.stroke).toBe(STAGE_DISPLAY[stage]?.textColor);
     }
   });
 
-  it('renders the far path before the near path for every segment', () => {
+  it('colors each near-<stage>-upper path with the next stage textColor', () => {
     const tree = create(<WaveOverlay width={WIDTH} height={HEIGHT} />);
-    const ordered = orderedWavePaths(tree);
-    for (let stage = 1; stage <= SEGMENT_COUNT; stage += 1) {
-      const farIndex = ordered.findIndex((path) => testIdOf(path) === `${FAR_PREFIX}${stage}`);
-      const nearIndex = ordered.findIndex((path) => testIdOf(path) === `${NEAR_PREFIX}${stage}`);
-      expect(farIndex).toBeGreaterThan(NOT_FOUND);
-      expect(nearIndex).toBeGreaterThan(NOT_FOUND);
-      expect(farIndex).toBeLessThan(nearIndex);
+    for (let stage = 1; stage <= PAIR_COUNT; stage += 1) {
+      const near = tree.root.findByProps({ testID: nearTestId(stage, HALF_UPPER) });
+      expect(near.props.stroke).toBe(STAGE_DISPLAY[stage + 1]?.textColor);
     }
   });
 
-  it('still renders all 10 arrowheads on top of the far and near paths', () => {
+  it('still renders all 10 arrowheads on top of the wave paths, with unchanged colors', () => {
     const tree = create(<WaveOverlay width={WIDTH} height={HEIGHT} />);
     const arrowheads = tree.root.findAllByType(Polygon);
     expect(arrowheads).toHaveLength(STAGE_COUNT);
+    for (let stage = 1; stage <= STAGE_COUNT; stage += 1) {
+      const arrow = tree.root.findByProps({ testID: `wave-arrow-${stage}` });
+      expect(arrow.props.fill).toBe(STAGE_DISPLAY[stage]?.textColor);
+    }
   });
 });

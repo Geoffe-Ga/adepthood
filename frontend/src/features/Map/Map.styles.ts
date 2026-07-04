@@ -29,6 +29,20 @@ const CENTER_FLEX = GRID_COLUMN_FLEX.center;
 const RIGHT_FLEX = GRID_COLUMN_FLEX.right;
 const CENTER = 'center';
 
+// Line height for the right-column aspect label, tuned to its fontSize 15 so
+// the up-to-two hyphenated lines stay compact and centered without pushing
+// neighboring rows.
+const RIGHT_LABEL_LINE_HEIGHT = 19;
+
+// --- Soft grid rules -------------------------------------------------------
+// The Map is a table, and a table reads as one through its rules: gentle
+// horizontal lines between the aspect bands (and the stacked stages within
+// them) and vertical lines between the three columns. Drawn as the thinnest
+// hairline the platform can render, in the faint warm rule colour, so they
+// whisper the grid over the parchment rather than caging it.
+const GRID_LINE_COLOR = surface.hairline;
+const GRID_LINE_WIDTH = StyleSheet.hairlineWidth;
+
 /**
  * Styles for the Map's spiral-of-becoming grid + the rich stage-detail modal.
  * The grid is token-only and laid out purely with flex; the modal keeps the
@@ -70,22 +84,42 @@ const styles = StyleSheet.create({
   },
   leftCell: {
     flex: LEFT_FLEX,
+    borderRightWidth: GRID_LINE_WIDTH,
+    borderRightColor: GRID_LINE_COLOR,
   },
   centerCell: {
     flex: CENTER_FLEX,
+    borderRightWidth: GRID_LINE_WIDTH,
+    borderRightColor: GRID_LINE_COLOR,
   },
   rightCell: {
     flex: RIGHT_FLEX,
     justifyContent: CENTER,
     paddingHorizontal: spacing(1),
   },
+  // Shared soft horizontal rule: a row boundary (applied to the group row) or a
+  // within-row stage boundary (applied to a stacked stage's cell). Both share
+  // the same faint hairline so the table's lines read as one gentle system.
+  horizontalDivider: {
+    borderTopWidth: GRID_LINE_WIDTH,
+    borderTopColor: GRID_LINE_COLOR,
+  },
 
-  // Left-column stage text block (also the tap target -0)
+  // Left-column stage text block (also the tap target -0). A row so a locked
+  // stage's padlock sits on the far left while the three text lines keep the
+  // box's full height, vertically centered — never a fourth stacked line.
   stageBlock: {
     flex: 1,
-    justifyContent: CENTER,
+    flexDirection: 'row',
+    alignItems: CENTER,
     paddingHorizontal: spacing(1),
     paddingVertical: spacing(0.5),
+  },
+  // The persona / descriptor / practice column fills the remaining width and
+  // centers its three lines across the block's height.
+  stageLines: {
+    flex: 1,
+    justifyContent: CENTER,
   },
   personaText: {
     fontWeight: '700',
@@ -97,11 +131,13 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 
-  // Right-column aspect label: a single line that auto-scales down to fit its
-  // cell width, so the text is never clipped or broken mid-word.
+  // Right-column aspect label: fixed serif size rendered on up to two
+  // pre-hyphenated lines, its line height kept compact so a two-line label
+  // stays vertically centered without pushing neighboring rows.
   rightLabelText: {
     fontFamily: editorialType.serif,
     fontSize: 15,
+    lineHeight: RIGHT_LABEL_LINE_HEIGHT,
     color: ink.primary,
   },
 
@@ -121,16 +157,48 @@ const styles = StyleSheet.create({
   cellMasculine: {
     backgroundColor: 'transparent',
   },
-  // Brighter "you are here" current-stage marker: a thicker accent halo +
-  // recessed warm fill so the live stage reads at a glance.
-  cellCurrent: {
-    borderWidth: 3,
+  // --- The glass magnifier lens (the "you are here" box, grown up) ----------
+  // A translucent pill floating over the center column. Width / height /
+  // borderRadius and its transform are computed per-layout in the component;
+  // here lives only the glass treatment itself.
+  magnifier: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    borderWidth: 2,
     borderColor: accent.strong,
-    borderRadius: radius.md,
-    backgroundColor: surface.desk,
+    backgroundColor: colors.mystical.glowLight,
+    alignItems: CENTER,
+    justifyContent: CENTER,
     ...shadows.medium,
   },
-  // "You are here" pill stacked in flow above the current stage's label.
+  // Clipping bowl for the magnified artwork + frost wash; radius set inline to
+  // match the pill so the magnified wave never bleeds past the glass edge.
+  magnifierClip: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: 'hidden',
+  },
+  // Frost wash that rises while the lens is in motion (the "blur" read on
+  // native; the web build adds a true backdrop blur on the pill itself).
+  magnifierFrost: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.mystical.transparentLight,
+  },
+  magnifierCaption: {
+    alignItems: CENTER,
+    paddingHorizontal: spacing(1),
+  },
+  magnifierHeadline: {
+    fontFamily: editorialType.serif,
+    fontSize: 16,
+    fontWeight: '700',
+    color: ink.primary,
+  },
+  magnifierDetail: {
+    fontSize: 10,
+    color: ink.soft,
+  },
+  // "You are here" chip riding the lens when it rests on the current stage.
   youAreHere: {
     marginBottom: spacing(0.25),
     paddingVertical: spacing(0.25),
@@ -144,24 +212,34 @@ const styles = StyleSheet.create({
     color: colors.text.light,
     letterSpacing: 0.5,
   },
-  centerLabelRow: {
-    flexDirection: 'row',
-    alignItems: CENTER,
-    justifyContent: CENTER,
-    gap: spacing(0.5),
+  // Aspect-label block hugging a center-cell corner (opposite the wave's
+  // return pole). ``alignSelf`` escapes the cell's centering so the word +
+  // its unlock estimate group against the edge, in flow (no absolute overlay).
+  labelBlockLeft: {
+    alignSelf: 'flex-start',
+    alignItems: 'flex-start',
+  },
+  labelBlockRight: {
+    alignSelf: 'flex-end',
+    alignItems: 'flex-end',
   },
   arrowLabelText: {
     fontWeight: '700',
     fontSize: 12,
     color: ink.soft,
-    textAlign: CENTER,
     flexShrink: 1,
+  },
+  // Measured wrapper for the EMPTINESS / UNITY watermark: stretches to the
+  // cell's inner width so the fitted font size is computed from real pixels.
+  titleFit: {
+    alignSelf: 'stretch',
+    alignItems: CENTER,
   },
   // Responsive title carried in the top stage rows' own grid cells (no fixed
   // 40px overlay): the serif ramp scales rather than overflowing the column.
   titleText: {
     ...editorialType.title,
-    color: ink.primary,
+    color: ink.muted,
     letterSpacing: 1,
     textAlign: CENTER,
   },
@@ -183,21 +261,32 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: ink.muted,
   },
+  // Left-column padlock: pinned to the far left of the stage block's row,
+  // vertically centered by the row's alignItems.
+  lockLeft: {
+    fontSize: 14,
+    color: ink.muted,
+    marginRight: spacing(0.5),
+  },
   // Locked stages read recessed
   locked: {
     opacity: 0.4,
   },
-  // Unlock timeline stacked beneath the lock glyph ("Unlocks in N days").
-  // ``alignSelf: 'stretch'`` restores the full-width box the old absolute
-  // ``left: 0, right: 0`` gave, so ``textAlign: CENTER`` still centers the
-  // longer multi-line unlock-condition copy across the whole cell.
+  // Unlock estimate ("Unlocks in N days") grouped under the Aspect word inside
+  // the corner-hugging label block. Its text aligns to the same corner as the
+  // block via the left/right variants below, so the copy reads away from the
+  // wave strand rather than spanning and centering across the cell.
   unlockTimeline: {
-    alignSelf: 'stretch',
     marginTop: spacing(0.25),
     fontSize: 9,
     color: ink.muted,
-    textAlign: CENTER,
     paddingHorizontal: spacing(0.25),
+  },
+  unlockTimelineLeft: {
+    textAlign: 'left',
+  },
+  unlockTimelineRight: {
+    textAlign: 'right',
   },
 
   // --- Stage-completion celebration banner ----------------------------------
@@ -247,31 +336,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
-  // --- "How the Wavelength works" opt-in explainer -------------------------
-  // Gentle, declinable invitation in the journey header — never a demand.
-  explainerTrigger: {
-    marginTop: spacing(0.5),
-    paddingVertical: spacing(0.25),
-    paddingHorizontal: spacing(1),
-  },
-  explainerTriggerText: {
-    fontFamily: editorialType.serif,
-    fontSize: 13,
-    color: accent.primary,
-    letterSpacing: 0.25,
-  },
-  // Full-surface host for the explainer modal: the shared ChapterReader fills
-  // it and carries its own header/back (close) control.
-  explainerModalRoot: {
-    flex: 1,
-    backgroundColor: surface.canvas,
-  },
-  // Decorative torus/spiral illustration, drawn in the reader's footer slot
-  // beneath the vendored explainer copy.
-  explainerVisual: {
-    marginBottom: spacing(1.5),
-  },
-
   // --- Begin-again affordance (end-of-arc, declinable) ----------------------
   beginAgain: {
     marginTop: spacing(1.5),
@@ -291,16 +355,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     color: onShowcase.soft,
     textAlign: CENTER,
-  },
-
-  // Wheel-of-wholeness balance read beneath the spiral (balance, not ladder).
-  balanceSummary: {
-    fontFamily: editorialType.serif,
-    fontSize: 15,
-    color: ink.soft,
-    textAlign: CENTER,
-    paddingHorizontal: spacing(2),
-    paddingVertical: spacing(1),
   },
 
   // Completed stage checkmark

@@ -304,6 +304,38 @@ describe('JournalEntryScreen — tier change PATCH failure', () => {
     }
   });
 
+  it('reverts to the loaded non-default tier (not the module default) when the PATCH rejects', async () => {
+    jest.useFakeTimers();
+    try {
+      // Loaded as intimate — a failed re-tag must fall back to the persisted
+      // intimate, never the personal default (which would read as less private).
+      mockGet.mockResolvedValue(entry({ id: 7, classification: 'intimate' }));
+      const { getByTestId } = renderScreen({ entryId: 7 }, { autosaveDelayMs: 100 });
+      await waitFor(() => {
+        expect(getByTestId('journal-body-input').props.value).toBeTruthy();
+      });
+      mockUpdate.mockClear();
+      mockUpdate.mockRejectedValueOnce(new Error('network'));
+
+      fireEvent.press(within(getByTestId('journal-page')).getByTestId('privacy-tier-public'));
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      const page = within(getByTestId('journal-page'));
+      expect(page.getByTestId('privacy-tier-intimate').props.accessibilityState.selected).toBe(
+        true,
+      );
+      expect(page.getByTestId('privacy-tier-personal').props.accessibilityState.selected).toBe(
+        false,
+      );
+      expect(page.getByTestId('privacy-tier-public').props.accessibilityState.selected).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('keeps the new tier selected with no error hint when the PATCH succeeds', async () => {
     jest.useFakeTimers();
     try {

@@ -12,9 +12,15 @@
  * right for odd (I-pointing) stages. Its horizontal swing tapers smoothly and
  * monotonically from the widest stage-1 offset down to a tiny non-degenerate
  * apex at stage 10, so the two poles resolve into the whole as the wave rises.
- * Each segment also carries a mirrored far-side path (drawn faded behind the
- * near side) so the whole reads as a three-dimensional coil rather than a flat
- * wobble.
+ *
+ * Each stage's color resolves near the centerline: rather than a stage's hue
+ * changing at the outside pole extremes where the anchors sit, every pair's
+ * cubic is split at its parametric midpoint (t = 0.5) into a lower and an upper
+ * half. That midpoint is where the swing hands off between the pair's two
+ * opposite poles, close to the column centerline. Each stage's hue then wraps
+ * symmetrically around its own pole extreme, changing over at those seams.
+ * Splitting a bezier at a parameter reproduces the identical curve, so only the
+ * color phase shifts.
  */
 
 import { GRID_COLUMN_FLEX, MAP_ROWS, STAGE_DISPLAY } from './mapLayout';
@@ -166,26 +172,28 @@ export const stageWavePoint = (stageNumber: number, anchors: StageAnchors = {}):
   return { x, y, pole: poleFor(stageNumber) };
 };
 
-/** A rendered wave segment: its near and far SVG paths, color, and lower stage. */
+/** Which centerline-split piece of a stage pair's cubic a segment carries. */
+export type SegmentHalf = 'lower' | 'upper';
+
+/** The lower half runs from the pair's anchor up to the midline seam. */
+const HALF_LOWER: SegmentHalf = 'lower';
+/** The upper half runs from the midline seam up to the next pair's anchor. */
+const HALF_UPPER: SegmentHalf = 'upper';
+
+/** One centerline-split half of a stage pair's cubic: its path, color, band. */
 export interface WaveSegment {
-  /** SVG path data in pixel space connecting the two stage points. */
+  /** SVG path data in pixel space for this half of the pair's cubic. */
   d: string;
-  /**
-   * The near-side bezier mirrored across the column center, drawn faded behind
-   * ``d`` to read as a coil's far side.
-   */
-  farD: string;
-  /** Stroke color, taken from the lower stage's textColor. */
+  /** Stroke color: the textColor of the stage whose band this half belongs to. */
   color: string;
-  /** The lower of the two stage numbers this segment connects (1..9). */
+  /** The pair's lower stage number (1..9); both halves of a pair share it. */
   stageNumber: number;
+  /** Discriminates the two centerline-split pieces of the pair's cubic. */
+  half: SegmentHalf;
 }
 
 /** Round a raw pixel value to a coordinate string at fixed precision. */
 const roundCoord = (value: number): string => value.toFixed(COORD_PRECISION);
-
-/** Round a unit coordinate into a pixel coordinate string at fixed precision. */
-const toPixel = (unit: number, extent: number): string => roundCoord(unit * extent);
 
 /** Map a unit x within the center-column band to a pixel x across the grid. */
 const toColumnPixelX = (unitX: number, gridWidth: number): number =>
@@ -200,58 +208,89 @@ export const centerColumnBounds = (width: number): { left: number; right: number
   right: (CENTER_COLUMN_START_FRACTION + CENTER_COLUMN_WIDTH_FRACTION) * width,
 });
 
-/** Reflect a unit x across the column center: same distance on the far side. */
-const mirrorAcrossCenter = (unitX: number): number => CENTER_X + (CENTER_X - unitX);
+/** A point in pixel space; a cubic's endpoints and controls are all points. */
+interface Point {
+  x: number;
+  y: number;
+}
 
-/**
- * A smooth cubic Bezier between two points given by their unit x's and y's. The
- * control points sit at the vertical midpoint of the pair, each anchored to its
- * own x, giving the center column its continuous sine wobble rather than
- * straight zig-zags. x is confined to the center-column band via toColumnPixelX
- * (so a unit x of 0.5 lands on the column midline); y spans the full height.
- * Shared by the near and far paths so the string assembly lives in exactly one
- * place — the far side simply passes x's mirrored across the column midline.
- */
-const bezierPath = (
-  lowerX: number,
-  upperX: number,
-  lowerY: number,
-  upperY: number,
-  width: number,
-  height: number,
-): string => {
-  const midY = (lowerY + upperY) / 2;
-  const x1 = roundCoord(toColumnPixelX(lowerX, width));
-  const y1 = toPixel(lowerY, height);
-  const x2 = roundCoord(toColumnPixelX(upperX, width));
-  const y2 = toPixel(upperY, height);
-  const midYPixel = toPixel(midY, height);
-  return `M ${x1} ${y1} C ${x1} ${midYPixel} ${x2} ${midYPixel} ${x2} ${y2}`;
-};
+/** A cubic Bezier in pixel space: two endpoints and their two control points. */
+interface Cubic {
+  start: Point;
+  control1: Point;
+  control2: Point;
+  end: Point;
+}
 
-/** Near-side and mirrored far-side bezier paths for a stage pair, in pixels. */
-const segmentPaths = (
-  lower: WavePoint,
-  upper: WavePoint,
-  width: number,
-  height: number,
-): { d: string; farD: string } => ({
-  d: bezierPath(lower.x, upper.x, lower.y, upper.y, width, height),
-  farD: bezierPath(
-    mirrorAcrossCenter(lower.x),
-    mirrorAcrossCenter(upper.x),
-    lower.y,
-    upper.y,
-    width,
-    height,
-  ),
+/** The two centerline-split halves of a pair's cubic, still in pixel space. */
+interface SplitCubic {
+  lower: Cubic;
+  upper: Cubic;
+}
+
+/** The midpoint of two points; averaging is the de Casteljau step itself. */
+const midpoint = (a: Point, b: Point): Point => ({
+  x: (a.x + b.x) / 2,
+  y: (a.y + b.y) / 2,
 });
 
 /**
- * The full wave as STAGE_COUNT-1 (9) segments in pixel space. Segment i connects
- * stage i to stage i+1 and carries the lower stage's number and textColor. y
- * scales with height and x with width within the center-column band, so a larger
- * layout yields a larger wave that still stays inside its lane.
+ * The pair's cubic in raw (unrounded) pixel space. Control points share the
+ * pair's vertical midpoint midY, each anchored to its own endpoint x, giving the
+ * column its continuous sine wobble rather than straight zig-zags. x is confined
+ * to the center-column band via toColumnPixelX (so a unit x of 0.5 lands on the
+ * column midline); y spans the full height. Endpoints stay unrounded so the two
+ * split halves share an exact seam.
+ */
+const pairCubic = (lower: WavePoint, upper: WavePoint, width: number, height: number): Cubic => {
+  const x1 = toColumnPixelX(lower.x, width);
+  const x2 = toColumnPixelX(upper.x, width);
+  const y1 = lower.y * height;
+  const y2 = upper.y * height;
+  const midY = (y1 + y2) / 2;
+  return {
+    start: { x: x1, y: y1 },
+    control1: { x: x1, y: midY },
+    control2: { x: x2, y: midY },
+    end: { x: x2, y: y2 },
+  };
+};
+
+/**
+ * Split a cubic at its parameter midpoint (t = 0.5) via de Casteljau, using only
+ * midpoint averaging. The seam is the shared point where the lower half ends and
+ * the upper half begins; because the pair's controls sit at midY, the seam lands
+ * at the pair's horizontal midpoint (x1 + x2) / 2, close to the column
+ * centerline. The two halves together retrace the original curve byte-for-byte.
+ */
+const splitCubicAtMidpoint = (cubic: Cubic): SplitCubic => {
+  const lowerControl1 = midpoint(cubic.start, cubic.control1);
+  const mid = midpoint(cubic.control1, cubic.control2);
+  const upperControl2 = midpoint(cubic.control2, cubic.end);
+  const lowerControl2 = midpoint(lowerControl1, mid);
+  const upperControl1 = midpoint(mid, upperControl2);
+  const seam = midpoint(lowerControl2, upperControl1);
+  return {
+    lower: { start: cubic.start, control1: lowerControl1, control2: lowerControl2, end: seam },
+    upper: { start: seam, control1: upperControl1, control2: upperControl2, end: cubic.end },
+  };
+};
+
+/** Format a pixel-space cubic as an "M x y C cx1 cy1 cx2 cy2 x y" path string. */
+const cubicPath = ({ start, control1, control2, end }: Cubic): string =>
+  `M ${roundCoord(start.x)} ${roundCoord(start.y)} ` +
+  `C ${roundCoord(control1.x)} ${roundCoord(control1.y)} ` +
+  `${roundCoord(control2.x)} ${roundCoord(control2.y)} ` +
+  `${roundCoord(end.x)} ${roundCoord(end.y)}`;
+
+/**
+ * The full wave as 2*(STAGE_COUNT-1) = 18 centerline-split halves in pixel space.
+ * Each stage pair's cubic is split at its midline crossing into a lower and an
+ * upper half: the lower keeps the pair's own stage color and the upper takes the
+ * next stage's, so each stage's hue wraps symmetrically around its pole extreme
+ * and changes over at the midline seams. y scales with height and x with width
+ * within the center-column band, so a larger layout yields a larger wave that
+ * still stays inside its lane.
  */
 export const waveSegments = (
   width: number,
@@ -263,13 +302,21 @@ export const waveSegments = (
     if (previous !== null) {
       const lower = stageWavePoint(previous.stageNumber, anchors);
       const upper = stageWavePoint(current.stageNumber, anchors);
-      const { d, farD } = segmentPaths(lower, upper, width, height);
-      segments.push({
-        d,
-        farD,
-        color: previous.textColor,
-        stageNumber: previous.stageNumber,
-      });
+      const halves = splitCubicAtMidpoint(pairCubic(lower, upper, width, height));
+      segments.push(
+        {
+          d: cubicPath(halves.lower),
+          color: previous.textColor,
+          stageNumber: previous.stageNumber,
+          half: HALF_LOWER,
+        },
+        {
+          d: cubicPath(halves.upper),
+          color: current.textColor,
+          stageNumber: previous.stageNumber,
+          half: HALF_UPPER,
+        },
+      );
     }
     return current;
   }, null);

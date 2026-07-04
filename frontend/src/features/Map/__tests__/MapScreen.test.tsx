@@ -4,138 +4,52 @@ import React from 'react';
 import { Image, StyleSheet } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
+import { ink, surface } from '../../../design/tokens';
 import styles from '../Map.styles';
-import { RIGHT_LABEL_MIN_FONT_SCALE } from '../mapLayout';
+import { fittedTitleFontSize, MAP_ROWS, STAGE_DISPLAY } from '../mapLayout';
 import MapScreen from '../MapScreen';
 import { STAGE_COUNT } from '../stageData';
-import { BALANCE_COPY, emphasisStyle, FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
+import { FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
 
-import { ranksOrShames } from './copyIntentRule';
+import {
+  mockBeginAgain,
+  mockMakeStage,
+  mockMapState,
+  mockNavigate,
+  resetMapMocks,
+} from './mapTestHarness';
 
-// Mock InteractionManager to run callbacks synchronously in tests.
-jest.mock('react-native/Libraries/Interaction/InteractionManager', () => ({
-  runAfterInteractions: (cb: () => void) => {
-    cb();
-    return { then: () => {}, done: () => {}, cancel: () => {} };
-  },
-  createInteractionHandle: () => 1,
-  clearInteractionHandle: () => {},
-}));
-
-// Mock navigation so we can observe tab linking behaviour.
-const mockNavigate = jest.fn();
-jest.mock('../../../navigation/hooks', () => ({
-  useAppNavigation: () => ({ navigate: mockNavigate }),
-}));
-jest.mock('@react-navigation/bottom-tabs', () => ({
-  useBottomTabBarHeight: () => 0,
-}));
-jest.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-}));
-
-// Default wheel state: all stages thin (zero fullness). Override per-test.
-let mockWheelFullnessByStage: Record<number, number> = {};
-let mockWheelLoading = false;
-let mockWheelError: string | null = null;
-jest.mock('../hooks/useWheelBalance', () => ({
-  useWheelBalance: () => ({
-    fullnessByStage: mockWheelFullnessByStage,
-    loading: mockWheelLoading,
-    error: mockWheelError,
-  }),
-}));
-
-// Control the date-derived current stage without importing the real program
-// store (which trips this suite's brittle Image-effect teardown). MapScreen
-// consumes ``useDerivedCurrentStage`` directly, so mocking it here drives both
-// the "current" highlight and the calendar-based unlock.
-let mockDerivedStage = 1;
-let mockDerivedWeek = 1;
-let mockDaysUntilStage: number | null = null;
-jest.mock('../../../store/useProgramProgression', () => ({
-  useDerivedCurrentStage: (fallback: number) => mockDerivedStage ?? fallback,
-  useDerivedCurrentWeek: (fallback: number) => mockDerivedWeek ?? fallback,
-  useDaysUntilStage: () => mockDaysUntilStage,
-}));
-
-/** Build a realistic StageData for testing (must be prefixed with mock). */
-function mockMakeStage(stageNumber: number) {
-  return {
-    id: stageNumber,
-    title: `Stage ${stageNumber}`,
-    subtitle: `Subtitle ${stageNumber}`,
-    stageNumber,
-    progress: stageNumber === 1 ? 0.5 : 0,
-    color: '#aaa',
-    isUnlocked: stageNumber <= 2,
-    category: 'Test',
-    aspect: 'Aspect',
-    spiralDynamicsColor: 'Beige',
-    growingUpStage: 'Growing',
-    divineGenderPolarity: 'Polarity',
-    relationshipToFreeWill: 'Free Will',
-    freeWillDescription: 'Description of free will.',
-    overviewUrl: '',
-    hotspots: [
-      { top: (10 - stageNumber) * 8 + 4, left: 4, width: 32, height: 6 },
-      { top: (10 - stageNumber) * 8 + 4, left: 34, width: 40, height: 6 },
-    ],
-  };
-}
-
-const mockStages = Array.from({ length: 10 }, (_, i) => mockMakeStage(10 - i));
-
-let mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
-  () => false,
+jest.mock('react-native/Libraries/Interaction/InteractionManager', () =>
+  jest.requireActual('./mapTestHarness').mockInteractionManagerModule(),
 );
-let mockCycleNumber = 1;
-
-const mockLoadStages = jest.fn();
-const mockBeginAgain = jest.fn();
-jest.mock('../services/stageService', () => ({
-  stageService: {
-    loadStages: (...args: unknown[]) => mockLoadStages(...args),
-    beginAgain: (...args: unknown[]) => mockBeginAgain(...args),
-  },
-  isStageUnlocked: (
-    stage: { isUnlocked: boolean; stageNumber: number },
-    currentStage: number | null,
-  ) => stage.isUnlocked || (currentStage !== null && stage.stageNumber <= currentStage),
-  isEndOfCycle: (stagesByNumber: Record<number, { progress: number }>, currentStage: number) =>
-    mockIsEndOfCycle(stagesByNumber, currentStage),
+jest.mock('../../../navigation/hooks', () =>
+  jest.requireActual('./mapTestHarness').mockNavigationModule(),
+);
+jest.mock('@react-navigation/bottom-tabs', () =>
+  jest.requireActual('./mapTestHarness').mockBottomTabsModule(),
+);
+jest.mock('react-native-safe-area-context', () =>
+  jest.requireActual('./mapTestHarness').mockSafeAreaModule(),
+);
+jest.mock('../hooks/useWheelBalance', () =>
+  jest.requireActual('./mapTestHarness').mockWheelBalanceModule(),
+);
+// Reduced-motion-safe path: the magnifier lens repositions instantly instead
+// of gliding, and the hook's async AccessibilityInfo read never resolves
+// outside act(). The glide/frost animation paths are covered in
+// MagnifierLens.test.tsx under fake timers.
+jest.mock('@/hooks/useReducedMotion', () => ({
+  useReducedMotion: () => true,
 }));
-
-const buildMockStageState = () => ({
-  stages: mockStages,
-  stagesByNumber: Object.fromEntries(mockStages.map((s) => [s.stageNumber, s])),
-  stageOrder: mockStages.map((s) => s.stageNumber),
-  currentStage: 1,
-  loading: false,
-  error: null,
-  cycleNumber: mockCycleNumber,
-  setStages: jest.fn(),
-  setCurrentStage: jest.fn(),
-  setLoading: jest.fn(),
-  setError: jest.fn(),
-  updateStageProgress: jest.fn(),
-  setCycleNumber: jest.fn(),
-});
-
-jest.mock('../../../store/useStageStore', () => ({
-  useStageStore: jest.fn((selector) => {
-    const mockState = buildMockStageState();
-    return selector ? selector(mockState) : mockState;
-  }),
-  selectStages: (s: { stages: unknown }) => s.stages,
-  selectCurrentStage: (s: { currentStage: unknown }) => s.currentStage,
-  selectStagesLoading: (s: { loading: unknown }) => s.loading,
-  selectStagesError: (s: { error: unknown }) => s.error,
-  selectCycleNumber: (s: { cycleNumber: number }) => s.cycleNumber,
-  selectStageByNumber:
-    (n: number | null | undefined) => (s: { stagesByNumber: Record<number, unknown> }) =>
-      n == null ? undefined : s.stagesByNumber[n],
-}));
+jest.mock('../../../store/useProgramProgression', () =>
+  jest.requireActual('./mapTestHarness').mockProgramProgressionModule(),
+);
+jest.mock('../services/stageService', () =>
+  jest.requireActual('./mapTestHarness').mockStageServiceModule(),
+);
+jest.mock('../../../store/useStageStore', () =>
+  jest.requireActual('./mapTestHarness').mockStageStoreModule(),
+);
 
 // react-test-renderer ships no node types, so structurally type just the props.
 type TestNode = { props: Record<string, unknown> };
@@ -153,19 +67,10 @@ const hotspotHasLock = (tree: ReturnType<typeof create>, stageNumber: number): b
 
 describe('MapScreen', () => {
   beforeEach(() => {
-    mockNavigate.mockClear();
-    mockLoadStages.mockClear();
-    mockBeginAgain.mockClear();
-    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
-      () => false,
+    resetMapMocks();
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
     );
-    mockCycleNumber = 1;
-    mockDerivedStage = 1;
-    mockDerivedWeek = 1;
-    mockDaysUntilStage = null;
-    mockWheelFullnessByStage = {};
-    mockWheelLoading = false;
-    mockWheelError = null;
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
 
@@ -256,6 +161,66 @@ describe('MapScreen', () => {
     expect(() => tree.root.findByProps({ testID: 'stage-modal' })).toThrow();
   });
 
+  // --- magnifier lens interaction -----------------------------------------
+
+  it('first tap on a non-focused stage glides the lens there without opening the modal', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-3-0' }).props.onPress();
+    });
+    // No modal yet — the tap moved the lens instead.
+    expect(() => tree.root.findByProps({ testID: 'stage-modal' })).toThrow();
+    // The lens caption now reads the tapped stage's Aspect word.
+    const headline = tree.root.findByProps({ testID: 'magnifier-headline' });
+    expect(headline.props.children).toBe('Self-Love');
+    // And the chip hides, since the lens left the current stage.
+    expect(tree.root.findAll((n: TestNode) => n.props.testID === 'you-are-here')).toHaveLength(0);
+  });
+
+  it('second tap on the now-focused stage opens its modal', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-3-0' }).props.onPress();
+    });
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-3-1' }).props.onPress();
+    });
+    expect(tree.root.findByProps({ testID: 'stage-modal' })).toBeTruthy();
+  });
+
+  it('tapping the lens itself opens the focused stage modal', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    const lens = tree.root.findByProps({ testID: 'map-magnifier' });
+    const touch = { nativeEvent: { pageX: 150, pageY: 570 } };
+    act(() => {
+      lens.props.onResponderGrant(touch);
+      lens.props.onResponderRelease(touch);
+    });
+    expect(tree.root.findByProps({ testID: 'stage-modal' })).toBeTruthy();
+  });
+
+  it('a lens drag released over another stage settles focus there', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    const lens = tree.root.findByProps({ testID: 'map-magnifier' });
+    // Stage 1 rests near y=570 (0.95 * 600); stage 3's band center is y=450.
+    act(() => {
+      lens.props.onResponderGrant({ nativeEvent: { pageX: 150, pageY: 570 } });
+      lens.props.onResponderMove({ nativeEvent: { pageX: 150, pageY: 450 } });
+      lens.props.onResponderRelease({ nativeEvent: { pageX: 150, pageY: 450 } });
+    });
+    const headline = tree.root.findByProps({ testID: 'magnifier-headline' });
+    expect(headline.props.children).toBe('Self-Love');
+    // The settled stage now opens on a single stage tap (it is focused).
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-3-0' }).props.onPress();
+    });
+    expect(tree.root.findByProps({ testID: 'stage-modal' })).toBeTruthy();
+  });
+
   it('renders connection lines between adjacent stages', () => {
     const tree = create(<MapScreen />);
     const connections = tree.root.findAll(
@@ -278,7 +243,7 @@ describe('MapScreen', () => {
     // Calendar has reached stage 5. Stages 3–5 are server-locked
     // (isUnlocked: stageNumber <= 2) but the calendar overrides, so only
     // stages 6–10 stay padlocked: 5 stages × 2 hotspots = 10.
-    mockDerivedStage = 5;
+    mockMapState.derivedStage = 5;
     let tree!: ReturnType<typeof create>;
     act(() => {
       tree = create(<MapScreen />);
@@ -293,82 +258,35 @@ describe('MapScreen', () => {
 
   // --- Wheel-of-wholeness balance tests ---
 
-  it('alive node (fullness >= threshold) renders with higher opacity than a thin node', () => {
-    // Stage 3 is alive; stage 1 is thin.
-    mockWheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD, 1: 0.0 };
+  it('renders unlocked stages at full opacity even when the wheel reads thin', () => {
+    // Stage 1 is unlocked but reads thin — the balance must stay an a11y-only
+    // read, never a washed-out (greyed) stage block.
+    mockMapState.wheelFullnessByStage = { 1: 0.0 };
     const tree = create(<MapScreen />);
 
-    const aliveHotspot = tree.root.findByProps({ testID: 'stage-hotspot-3-0' });
-    const thinHotspot = tree.root.findByProps({ testID: 'stage-hotspot-1-0' });
-
-    const aliveOpacity = emphasisStyle(FULLNESS_ALIVE_THRESHOLD).opacity;
-    const thinOpacity = emphasisStyle(0.0).opacity;
-
-    // The alive node must render with a visually distinct (higher) opacity.
-    expect(aliveOpacity).toBeGreaterThan(thinOpacity as number);
-
-    // The alive hotspot carries the alive-emphasis style; the thin does not.
-    const aliveStyles = (aliveHotspot.props.style as unknown[]).flat(10);
-    const thinStyles = (thinHotspot.props.style as unknown[]).flat(10);
-    const opacityOf = (styles: unknown[]) =>
-      styles.reduce<number | undefined>((acc, s) => {
-        if (s && typeof s === 'object' && 'opacity' in (s as object)) {
-          return (s as { opacity: number }).opacity;
-        }
-        return acc;
-      }, undefined);
-
-    expect(opacityOf(aliveStyles)).toBeGreaterThan(opacityOf(thinStyles) ?? 0);
+    const unlockedHotspot = tree.root.findByProps({ testID: 'stage-hotspot-1-0' });
+    const flat = StyleSheet.flatten(unlockedHotspot.props.style as unknown[]) as {
+      opacity?: number;
+    };
+    expect(flat.opacity ?? 1).toBe(1);
   });
 
   it('alive node accessibilityLabel contains "reads full" suffix', () => {
-    mockWheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD };
+    mockMapState.wheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD };
     const tree = create(<MapScreen />);
     const hotspot = tree.root.findByProps({ testID: 'stage-hotspot-3-0' });
     expect(hotspot.props.accessibilityLabel as string).toContain('reads full');
   });
 
   it('thin node accessibilityLabel contains "reads thin" suffix', () => {
-    mockWheelFullnessByStage = { 1: 0.0 };
+    mockMapState.wheelFullnessByStage = { 1: 0.0 };
     const tree = create(<MapScreen />);
     const hotspot = tree.root.findByProps({ testID: 'stage-hotspot-1-0' });
     expect(hotspot.props.accessibilityLabel as string).toContain('reads thin');
   });
 
-  it('BalanceSummary renders all-thin copy when every stage is 0.0', () => {
-    mockWheelFullnessByStage = Object.fromEntries(
-      Array.from({ length: 10 }, (_, i) => [i + 1, 0.0]),
-    );
-    const tree = create(<MapScreen />);
-    const summary = tree.root.findByProps({ testID: 'balance-summary' });
-    expect(summary.props.children as string).toBe(BALANCE_COPY.allThin);
-  });
-
-  it('BalanceSummary renders mixed copy when some stages are alive', () => {
-    mockWheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD, 7: 0.9 };
-    const tree = create(<MapScreen />);
-    const summary = tree.root.findByProps({ testID: 'balance-summary' });
-    expect(summary.props.children as string).toBe(BALANCE_COPY.mixed);
-  });
-
-  it('BalanceSummary renders all-alive copy when every stage is at full fullness', () => {
-    mockWheelFullnessByStage = Object.fromEntries(
-      Array.from({ length: 10 }, (_, i) => [i + 1, 1.0]),
-    );
-    const tree = create(<MapScreen />);
-    const summary = tree.root.findByProps({ testID: 'balance-summary' });
-    expect(summary.props.children as string).toBe(BALANCE_COPY.allAlive);
-  });
-
-  it('BALANCE_COPY ranks or shames no one (intent rule, not a wordlist)', () => {
-    for (const [key, value] of Object.entries(BALANCE_COPY)) {
-      expect(ranksOrShames(value)).toBe(false);
-      expect(['allThin', 'mixed', 'allAlive']).toContain(key);
-    }
-  });
-
   it('Map spiral grid remains visible while wheel data is loading', () => {
-    mockWheelLoading = true;
+    mockMapState.wheelLoading = true;
     const tree = create(<MapScreen />);
 
     // The grid must be present — wheel loading never blanks the spiral.
@@ -381,17 +299,31 @@ describe('MapScreen', () => {
     expect(() => tree.root.findByProps({ testID: 'map-loading' })).toThrow();
   });
 
+  it('does not render the wavelength explainer trigger', () => {
+    const tree = create(<MapScreen />);
+    expect(() => tree.root.findByProps({ testID: 'wavelength-explainer-trigger' })).toThrow();
+  });
+
+  it('does not render the balance summary', () => {
+    const tree = create(<MapScreen />);
+    expect(() => tree.root.findByProps({ testID: 'balance-summary' })).toThrow();
+  });
+
   // --- begin-again affordance ---
 
   it('shows begin-again-button at end of cycle', () => {
-    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(() => true);
+    mockMapState.isEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
+      () => true,
+    );
     const tree = create(<MapScreen />);
     const btn = tree.root.findByProps({ testID: 'begin-again-button' });
     expect(btn).toBeTruthy();
   });
 
   it('pressing begin-again-button calls stageService.beginAgain', () => {
-    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(() => true);
+    mockMapState.isEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
+      () => true,
+    );
     mockBeginAgain.mockResolvedValue(undefined);
     const tree = create(<MapScreen />);
     act(() => {
@@ -401,7 +333,9 @@ describe('MapScreen', () => {
   });
 
   it('double-pressing begin-again-button sends exactly one request', () => {
-    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(() => true);
+    mockMapState.isEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
+      () => true,
+    );
     // Never-resolving so the in-flight guard stays true across both presses;
     // the second tap must be a no-op or a second POST would skip a cycle.
     mockBeginAgain.mockReturnValue(new Promise<void>(() => {}));
@@ -414,7 +348,9 @@ describe('MapScreen', () => {
   });
 
   it('disables begin-again-button while a begin-again request is in flight', () => {
-    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(() => true);
+    mockMapState.isEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
+      () => true,
+    );
     mockBeginAgain.mockReturnValue(new Promise<void>(() => {}));
     const tree = create(<MapScreen />);
     act(() => {
@@ -426,7 +362,7 @@ describe('MapScreen', () => {
   });
 
   it('begin-again-button is absent mid-cycle', () => {
-    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
+    mockMapState.isEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
       () => false,
     );
     const tree = create(<MapScreen />);
@@ -438,7 +374,7 @@ describe('MapScreen', () => {
   // --- cycle-indicator ---
 
   it('shows cycle-indicator with "Cycle 2" when cycleNumber is 2', () => {
-    mockCycleNumber = 2;
+    mockMapState.cycleNumber = 2;
     const tree = create(<MapScreen />);
     const indicator = tree.root.findByProps({ testID: 'cycle-indicator' });
     expect(indicator).toBeTruthy();
@@ -450,7 +386,7 @@ describe('MapScreen', () => {
   });
 
   it('cycle-indicator is absent when cycleNumber is 1', () => {
-    mockCycleNumber = 1;
+    mockMapState.cycleNumber = 1;
     const tree = create(<MapScreen />);
     expect(tree.root.findAll((n: TestNode) => n.props.testID === 'cycle-indicator')).toHaveLength(
       0,
@@ -520,31 +456,44 @@ describe('MapScreen', () => {
     expect(tree.root.findByProps({ testID: 'you-are-here' })).toBeTruthy();
   });
 
+  // Right-column labels render as row.rightLabelLines joined by a newline in
+  // a single Text node (static hyphenation, not shrink-to-fit).
+  const findRightLabelNode = (
+    tree: ReturnType<typeof create>,
+    row: (typeof MAP_ROWS)[number],
+  ): TestNode => {
+    const expectedChildren = row.rightLabelLines.join('\n');
+    const matches = tree.root.findAll((n: TestNode) => n.props.children === expectedChildren);
+    const node = matches[0];
+    if (!node) {
+      throw new Error(`no right-label Text found for ${row.rightLabel}`);
+    }
+    return node;
+  };
+
   it('keeps all six Aspect labels present after the wave overlay renders', () => {
     const tree = create(<MapScreen />);
     fireGridLayout(tree);
-    const aspectLabels = ['Awareness', 'Being', 'Wisdom', 'Understanding', 'Love', 'Yes-And-Ness'];
-    for (const label of aspectLabels) {
-      expect(tree.root.findAll((n: TestNode) => n.props.children === label).length).toBeGreaterThan(
-        0,
-      );
+    for (const row of MAP_ROWS) {
+      expect(findRightLabelNode(tree, row)).toBeTruthy();
     }
   });
 
-  it('renders each right-column Aspect label as a single-line auto-fitting Text', () => {
+  it('renders each right-column Aspect label as a static two-line Text, no auto-fit', () => {
     const tree = create(<MapScreen />);
     fireGridLayout(tree);
-    const aspectLabels = ['Awareness', 'Being', 'Wisdom', 'Understanding', 'Love', 'Yes-And-Ness'];
-    for (const label of aspectLabels) {
-      const candidates = tree.root.findAll((n: TestNode) => n.props.children === label);
-      const autoFitting = candidates.some(
-        (n: TestNode) =>
-          n.props.numberOfLines === 1 &&
-          n.props.adjustsFontSizeToFit === true &&
-          n.props.minimumFontScale === RIGHT_LABEL_MIN_FONT_SCALE,
-      );
-      expect(autoFitting).toBe(true);
+    for (const row of MAP_ROWS) {
+      const node = findRightLabelNode(tree, row);
+      expect(node.props.numberOfLines).toBe(2);
+      expect(node.props.adjustsFontSizeToFit).toBeUndefined();
+      expect(node.props.minimumFontScale).toBeUndefined();
     }
+  });
+
+  it('still keys each right-column row by its rightLabel testID after hyphenation', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    expect(tree.root.findByProps({ testID: 'map-row-Understanding' })).toBeTruthy();
   });
 
   // --- right-cell edge padding ---
@@ -642,31 +591,51 @@ describe('MapScreen', () => {
 
 describe('MapScreen center-cell overlay layout', () => {
   beforeEach(() => {
-    mockNavigate.mockClear();
-    mockLoadStages.mockClear();
-    mockBeginAgain.mockClear();
-    mockIsEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
-      () => false,
+    resetMapMocks();
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
     );
-    mockCycleNumber = 1;
-    mockDerivedStage = 1;
-    mockDerivedWeek = 1;
-    mockDaysUntilStage = null;
-    mockWheelFullnessByStage = {};
-    mockWheelLoading = false;
-    mockWheelError = null;
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
 
-  it('you-are-here pill is laid out in flow (not absolutely positioned)', () => {
+  const fireOverlayGridLayout = (tree: ReturnType<typeof create>) => {
+    act(() => {
+      tree.root.findByProps({ testID: 'map-grid' }).props.onLayout({
+        nativeEvent: { layout: { width: 300, height: 600 } },
+      });
+    });
+  };
+
+  it('you-are-here chip rides the magnifier lens, not the center cell', () => {
     const tree = create(<MapScreen />);
-    const pill = tree.root.findByProps({ testID: 'you-are-here' });
-    const flat = StyleSheet.flatten(pill.props.style) as { position?: string };
-    expect(flat.position).not.toBe('absolute');
+    // Before the grid reports a size there is no lens (and no chip).
+    expect(tree.root.findAll((n: TestNode) => n.props.testID === 'you-are-here')).toHaveLength(0);
+    fireOverlayGridLayout(tree);
+    const lens = tree.root.findByProps({ testID: 'map-magnifier' });
+    expect(lens.findByProps({ testID: 'you-are-here' })).toBeTruthy();
+    // The chip no longer stacks inside the current stage's center cell.
+    const cell = tree.root.findByProps({ testID: 'stage-hotspot-1-1' });
+    expect(cell.findAll((n: TestNode) => n.props.testID === 'you-are-here')).toHaveLength(0);
+  });
+
+  it('the magnifier lens floats absolutely over the grid as a glass pill', () => {
+    const tree = create(<MapScreen />);
+    fireOverlayGridLayout(tree);
+    const lens = tree.root.findByProps({ testID: 'map-magnifier' });
+    const flat = StyleSheet.flatten(lens.props.style) as {
+      position?: string;
+      borderRadius?: number;
+      height?: number;
+    };
+    expect(flat.position).toBe('absolute');
+    // Full pill: radius is half the lens height.
+    expect(flat.borderRadius).toBe((flat.height ?? 0) / 2);
+    // The glass magnifies the wave: a second, prefixed copy of the overlay.
+    expect(lens.findByProps({ testID: 'magnifier-map-wave' })).toBeTruthy();
   });
 
   it('locked center cell renders the unlock countdown in flow (not absolutely positioned)', () => {
-    mockDaysUntilStage = 42;
+    mockMapState.daysUntilStage = 42;
     const tree = create(<MapScreen />);
     const countdown = tree.root.findByProps({ testID: 'stage-unlock-8' });
     const flat = StyleSheet.flatten(countdown.props.style) as {
@@ -689,20 +658,17 @@ describe('MapScreen center-cell overlay layout', () => {
     }
   });
 
-  it('unlock countdown spans the full cell width so its centered copy stays centered', () => {
-    // Restores the full-width box the old ``left: 0, right: 0`` absolute
-    // positioning gave: without ``alignSelf: 'stretch'`` an in-flow Text
-    // shrink-wraps to its widest wrapped line and ``textAlign: 'center'``
-    // becomes a no-op for the multi-line unlock-condition copy.
-    mockDaysUntilStage = 42;
+  it('unlock countdown hugs its corner instead of spanning and centering', () => {
+    mockMapState.daysUntilStage = 42;
     const tree = create(<MapScreen />);
     const countdown = tree.root.findByProps({ testID: 'stage-unlock-8' });
     const flat = StyleSheet.flatten(countdown.props.style) as {
       alignSelf?: string;
       textAlign?: string;
     };
-    expect(flat.alignSelf).toBe('stretch');
-    expect(flat.textAlign).toBe('center');
+    expect(flat.textAlign).toBe('right');
+    expect(flat.textAlign).not.toBe('center');
+    expect(flat.alignSelf).not.toBe('stretch');
   });
 
   it('locked stages keep the recessed opacity treatment', () => {
@@ -712,8 +678,41 @@ describe('MapScreen center-cell overlay layout', () => {
     expect(flat.opacity).toBe(0.4);
   });
 
-  it('stacks the pill above the label and the countdown below the lock', () => {
-    mockDaysUntilStage = 42;
+  it('puts the left-column lock on the far left, not on a fourth stacked line', () => {
+    const tree = create(<MapScreen />);
+    const leftHotspot = tree.root.findByProps({ testID: 'stage-hotspot-8-0' });
+
+    // The block lays out as a row with its content vertically centered, so
+    // the padlock sits beside the three text lines, never below them.
+    const flat = StyleSheet.flatten(leftHotspot.props.style) as {
+      flexDirection?: string;
+      alignItems?: string;
+    };
+    expect(flat.flexDirection).toBe('row');
+    expect(flat.alignItems).toBe('center');
+
+    // The lock renders before the persona text (far left of the row).
+    const texts = leftHotspot
+      .findAll((node: TestNode) => typeof node.props.children === 'string')
+      .map((node: TestNode) => node.props.children as string);
+    const display = STAGE_DISPLAY[8];
+    expect(texts.indexOf('🔒')).toBeGreaterThanOrEqual(0);
+    expect(texts.indexOf('🔒')).toBeLessThan(texts.indexOf(display!.persona));
+  });
+
+  it('centers the three text lines of an unlocked left block across its height', () => {
+    const tree = create(<MapScreen />);
+    const leftHotspot = tree.root.findByProps({ testID: 'stage-hotspot-1-0' });
+    // No lock for an unlocked stage, and the text column centers vertically.
+    expect(leftHotspot.findAll(isLockIcon)).toHaveLength(0);
+    expect(styles.stageLines.justifyContent).toBe('center');
+    expect(styles.stageLines.flex).toBe(1);
+  });
+
+  // The YOU ARE HERE pill now rides the magnifier lens, so the center cell of
+  // a locked stage only needs to keep the countdown above its padlock.
+  it('stacks the countdown above the lock in a locked center cell', () => {
+    mockMapState.daysUntilStage = 42;
     const tree = create(<MapScreen />);
     const textOrder = (testID: string): string[] =>
       tree.root
@@ -721,15 +720,185 @@ describe('MapScreen center-cell overlay layout', () => {
         .findAll((node: TestNode) => typeof node.props.children === 'string')
         .map((node: TestNode) => node.props.children as string);
 
-    // Current stage 1: the pill renders before its centered label ('Agency').
-    const currentText = textOrder('stage-hotspot-1-1');
-    expect(currentText.indexOf('YOU ARE HERE')).toBeLessThan(currentText.indexOf('Agency'));
-    expect(currentText.indexOf('YOU ARE HERE')).toBeGreaterThanOrEqual(0);
-
-    // Locked stage 8: the lock renders before the countdown copy.
+    // Locked stage 8: the countdown copy renders before the lock glyph.
     const lockedText = textOrder('stage-hotspot-8-1');
     const countdownIndex = lockedText.findIndex((text) => text.startsWith('Unlocks'));
-    expect(lockedText.indexOf('🔒')).toBeGreaterThanOrEqual(0);
-    expect(lockedText.indexOf('🔒')).toBeLessThan(countdownIndex);
+    expect(countdownIndex).toBeGreaterThanOrEqual(0);
+    expect(countdownIndex).toBeLessThan(lockedText.indexOf('🔒'));
+  });
+
+  it('groups stage 1 (Agency) label in the left corner, unlocked with no countdown', () => {
+    const tree = create(<MapScreen />);
+    const block = tree.root.findByProps({ testID: 'aspect-label-1' });
+    const flat = StyleSheet.flatten(block.props.style) as { alignSelf?: string };
+    expect(flat.alignSelf).toBe('flex-start');
+    expect(block.findAll((node: TestNode) => node.props.testID === 'stage-unlock-1')).toHaveLength(
+      0,
+    );
+  });
+
+  it('groups stage 2 (Receptivity) label in the right corner, unlocked', () => {
+    const tree = create(<MapScreen />);
+    const block = tree.root.findByProps({ testID: 'aspect-label-2' });
+    const flat = StyleSheet.flatten(block.props.style) as { alignSelf?: string };
+    expect(flat.alignSelf).toBe('flex-end');
+  });
+
+  it('nests the locked stage 8 (Nondual) countdown inside its right-corner block', () => {
+    mockMapState.daysUntilStage = 42;
+    const tree = create(<MapScreen />);
+    const block = tree.root.findByProps({ testID: 'aspect-label-8' });
+    const countdown = block.findByProps({ testID: 'stage-unlock-8' });
+    expect(countdown).toBeTruthy();
+    const flat = StyleSheet.flatten(countdown.props.style) as { textAlign?: string };
+    expect(flat.textAlign).toBe('right');
+  });
+
+  it('nests the locked stage 3 (Self-Love) countdown inside its left-corner block', () => {
+    mockMapState.daysUntilStage = 42;
+    const tree = create(<MapScreen />);
+    const block = tree.root.findByProps({ testID: 'aspect-label-3' });
+    const label = block.findAll((node: TestNode) => node.props.children === 'Self-Love');
+    expect(label.length).toBeGreaterThan(0);
+    const countdown = block.findByProps({ testID: 'stage-unlock-3' });
+    const flat = StyleSheet.flatten(countdown.props.style) as { textAlign?: string };
+    expect(flat.textAlign).toBe('left');
+  });
+});
+
+describe('MapScreen left-column stage text color', () => {
+  beforeEach(() => {
+    resetMapMocks();
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+    );
+    jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
+  });
+
+  // Sample rows spanning the top, a paired middle row, and the two bottom rows.
+  const SAMPLE_STAGES = [10, 8, 3, 1];
+
+  const requireDisplay = (stageNumber: number) => {
+    const display = STAGE_DISPLAY[stageNumber];
+    if (!display) {
+      throw new Error(`no STAGE_DISPLAY entry for stage ${stageNumber}`);
+    }
+    return display;
+  };
+
+  it('renders persona, descriptor, and practice in the leftTextColor, not the wave textColor', () => {
+    const tree = create(<MapScreen />);
+    for (const stageNumber of SAMPLE_STAGES) {
+      const display = requireDisplay(stageNumber);
+      const hotspot = tree.root.findByProps({ testID: `stage-hotspot-${stageNumber}-0` });
+      for (const line of [display.persona, display.descriptor, display.practice]) {
+        const textNode = hotspot.findAll((n: TestNode) => n.props.children === line)[0];
+        const flat = StyleSheet.flatten(textNode.props.style) as { color?: string };
+        expect(flat.color).toBe(display.leftTextColor);
+        expect(flat.color).not.toBe(display.textColor);
+      }
+    }
+  });
+
+  it('shrinks the EMPTINESS / UNITY title watermark to fit on one line', () => {
+    const tree = create(<MapScreen />);
+    for (const title of ['EMPTINESS', 'UNITY']) {
+      const node = tree.root.findByProps({ children: title });
+      expect(node.props.adjustsFontSizeToFit).toBe(true);
+      expect(node.props.numberOfLines).toBe(1);
+    }
+  });
+
+  it('sizes the title watermark from its measured cell width (react-native-web fit)', () => {
+    // adjustsFontSizeToFit is a no-op on react-native-web, so the title must
+    // carry a deterministic fitted fontSize computed from the measured width.
+    const MEASURED_WIDTH = 140;
+    const tree = create(<MapScreen />);
+    for (const title of ['EMPTINESS', 'UNITY']) {
+      const wrapper = tree.root.findByProps({ testID: `title-fit-${title}` });
+      act(() => {
+        (wrapper.props.onLayout as (e: unknown) => void)({
+          nativeEvent: { layout: { width: MEASURED_WIDTH, height: 40 } },
+        });
+      });
+      const node = tree.root.findByProps({ children: title });
+      const flat = StyleSheet.flatten(node.props.style) as { fontSize?: number };
+      expect(flat.fontSize).toBe(fittedTitleFontSize(title, MEASURED_WIDTH));
+    }
+  });
+
+  it('renders the EMPTINESS / UNITY title watermark in the muted ink, not the primary ink', () => {
+    const tree = create(<MapScreen />);
+    for (const title of ['EMPTINESS', 'UNITY']) {
+      const node = tree.root.findByProps({ children: title });
+      const flat = StyleSheet.flatten(node.props.style) as { color?: string };
+      expect(flat.color).toBe(ink.muted);
+    }
+  });
+});
+
+// The Map is a table, and a table reads as one through its rules: gentle
+// horizontal lines between the aspect bands (and the stacked stages within
+// them) and vertical lines between the three columns. They are rendered as the
+// thinnest possible hairline in the faint warm rule colour so they whisper the
+// grid rather than caging it.
+describe('MapScreen soft grid lines', () => {
+  type BorderStyle = {
+    borderTopWidth?: number;
+    borderTopColor?: string;
+    borderRightWidth?: number;
+    borderRightColor?: string;
+  };
+
+  const topBorder = (tree: ReturnType<typeof create>, testID: string): BorderStyle =>
+    StyleSheet.flatten(tree.root.findByProps({ testID }).props.style) as BorderStyle;
+
+  beforeEach(() => {
+    resetMapMocks();
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+    );
+    jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
+  });
+
+  it('draws soft vertical dividers between the three columns in the faint rule colour', () => {
+    expect(styles.leftCell.borderRightWidth).toBeGreaterThan(0);
+    expect(styles.leftCell.borderRightColor).toBe(surface.hairline);
+    expect(styles.centerCell.borderRightWidth).toBeGreaterThan(0);
+    expect(styles.centerCell.borderRightColor).toBe(surface.hairline);
+  });
+
+  it('renders the column dividers as the thinnest hairline so they read gently', () => {
+    expect(styles.leftCell.borderRightWidth).toBe(StyleSheet.hairlineWidth);
+    expect(styles.centerCell.borderRightWidth).toBe(StyleSheet.hairlineWidth);
+  });
+
+  it('draws a soft full-width horizontal rule above every aspect row except the first', () => {
+    const tree = create(<MapScreen />);
+    const awareness = topBorder(tree, 'map-row-Awareness');
+    const being = topBorder(tree, 'map-row-Being');
+    expect(awareness.borderTopWidth ?? 0).toBe(0);
+    expect(being.borderTopWidth).toBe(StyleSheet.hairlineWidth);
+    expect(being.borderTopColor).toBe(surface.hairline);
+  });
+
+  it('divides stacked stages within a paired row with a soft line across left + center', () => {
+    const tree = create(<MapScreen />);
+    // The Yes-And-Ness row pairs stage 2 (top) over stage 1 (bottom). The top
+    // stage sits on the row boundary (drawn by the row itself), so only the
+    // bottom stage carries the within-row rule — across both its columns.
+    for (const column of [0, 1]) {
+      expect(topBorder(tree, `stage-hotspot-2-${column}`).borderTopWidth ?? 0).toBe(0);
+      const bottom = topBorder(tree, `stage-hotspot-1-${column}`);
+      expect(bottom.borderTopWidth).toBe(StyleSheet.hairlineWidth);
+      expect(bottom.borderTopColor).toBe(surface.hairline);
+    }
+  });
+
+  it('never draws a rule above the topmost stage (no double line under the header)', () => {
+    const tree = create(<MapScreen />);
+    for (const column of [0, 1]) {
+      expect(topBorder(tree, `stage-hotspot-10-${column}`).borderTopWidth ?? 0).toBe(0);
+    }
   });
 });

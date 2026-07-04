@@ -11,9 +11,9 @@
 /** The offer card heading — an invitation, softly phrased. */
 export const RETURN_OFFER_HEADING = 'A gentle Return, if you would like one';
 
-/** The offer card body — what the arc is, framed as rest rather than retreat. */
+/** The offer card body — what the arc is, framed as a return to steady ground. */
 export const RETURN_OFFER_BODY =
-  'Contraction follows expansion. If it feels right, there is a five-week Metta arc here — a soft landing you can begin, pause, or set down whenever you choose.';
+  'Contraction follows expansion. If it feels right, there is a five-week Metta arc here — a return to steadier, more secure ground you can begin, pause, or set down whenever you choose. It only adds to what you have already grown.';
 
 /** The accept affordance label. */
 export const RETURN_OFFER_ACCEPT = 'Begin the Return';

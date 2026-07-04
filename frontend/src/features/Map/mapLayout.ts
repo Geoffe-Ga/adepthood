@@ -15,16 +15,10 @@
  * match the supplied spiral PNG rather than the app-wide spiral-dynamics swatches.
  */
 
+import { isLeftReturning } from './stageData';
+
 /** Flex weights of each stage row's three cells (left / center / right). */
 export const GRID_COLUMN_FLEX = { left: 2, center: 2, right: 1 } as const;
-
-/**
- * Minimum auto-fit font scale for the right-column aspect label. Worst case is
- * "Understanding" (13 glyphs) on a ~320pt screen, where the ~20% right band
- * leaves ~48pt of usable width; 0.55 lets that word shrink onto a single line
- * without ellipsis or a mid-word break.
- */
-export const RIGHT_LABEL_MIN_FONT_SCALE = 0.55;
 
 /** Static, design-specific copy + color for a single stage's left-column text. */
 export interface StageDisplay {
@@ -39,18 +33,60 @@ export interface StageDisplay {
   arrowLabel: string;
   /** Text color matching this stage's arrow in the artwork. */
   textColor: string;
+  /**
+   * Darker variant of ``textColor`` for the left-column stage text. Same hue as
+   * ``textColor`` with HSL lightness reduced until it clears WCAG AA 4.5:1
+   * (~6.5:1 with margin) on the Map's parchment ground (``surface.canvas``
+   * #faf6ef), landing strictly darker (lower relative luminance) than both its
+   * own ``textColor`` and the UNITY/EMPTINESS watermark ink. Precomputed — no
+   * runtime color math.
+   */
+  leftTextColor: string;
 }
 
 /** A horizontal band of the table: one aspect label over one or two stages. */
 export interface MapRow {
   /** Aspect-of-wholeness label shown in the right column. */
   rightLabel: string;
+  /** Pre-hyphenated right-column label lines (<= 2), avoiding shrink-to-fit. */
+  rightLabelLines: readonly string[];
   /** Stage numbers contained in this row, ordered top → bottom. */
   stageNumbers: readonly number[];
 }
 
 /** The serif title across the top of the spiral (top → bottom). */
 export const MAP_TITLE_LINES = ['EMPTINESS', 'UNITY'] as const;
+
+/** Ceiling for the title watermark — ``editorialType.title``'s 26px. */
+export const TITLE_MAX_FONT_SIZE = 26;
+
+/** Floor below which the watermark would stop reading as a title. */
+export const TITLE_MIN_FONT_SIZE = 12;
+
+/** Letter spacing (px) the title style renders with; part of the fit budget. */
+export const TITLE_LETTER_SPACING = 1;
+
+/**
+ * Conservative average advance width of an uppercase serif glyph, in ems.
+ * Deliberately generous (Georgia caps average ≈0.63em) so the estimate only
+ * ever errs toward a smaller, guaranteed-fitting size.
+ */
+const TITLE_GLYPH_EM_WIDTH = 0.72;
+
+/**
+ * Largest font size (capped at ``TITLE_MAX_FONT_SIZE``) at which ``title``
+ * fits ``width`` on a single line. The native ``adjustsFontSizeToFit`` is not
+ * implemented by react-native-web, so the watermark sizes itself from the
+ * measured cell width instead — EMPTINESS / UNITY must never truncate or
+ * hyphenate on any target. An unmeasured width (0) renders at the ceiling
+ * until layout reports.
+ */
+export const fittedTitleFontSize = (title: string, width: number): number => {
+  if (width <= 0 || title.length === 0) return TITLE_MAX_FONT_SIZE;
+  const glyphBudget = width - TITLE_LETTER_SPACING * title.length;
+  const fitted = Math.floor(glyphBudget / (title.length * TITLE_GLYPH_EM_WIDTH));
+  return Math.max(TITLE_MIN_FONT_SIZE, Math.min(TITLE_MAX_FONT_SIZE, fitted));
+};
 
 /**
  * The title line each top stage carries in its own grid row (no absolute
@@ -74,6 +110,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Cultivate Vipassana',
     arrowLabel: '',
     textColor: '#1a1a1a',
+    leftTextColor: '#141414',
   },
   9: {
     stageNumber: 9,
@@ -82,6 +119,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Cultivate Samatha Jhanas',
     arrowLabel: '',
     textColor: '#9a5a78',
+    leftTextColor: '#7d4961',
   },
   8: {
     stageNumber: 8,
@@ -90,6 +128,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Deep Intuition',
     arrowLabel: 'Nondual',
     textColor: '#6d92a6',
+    leftTextColor: '#415b6a',
   },
   7: {
     stageNumber: 7,
@@ -98,6 +137,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Blissy Meditation',
     arrowLabel: 'Systems',
     textColor: '#c9a43c',
+    leftTextColor: '#6b561e',
   },
   6: {
     stageNumber: 6,
@@ -106,6 +146,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Shadow Work',
     arrowLabel: 'Embodied',
     textColor: '#7cb273',
+    leftTextColor: '#3c6135',
   },
   5: {
     stageNumber: 5,
@@ -114,6 +155,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Wim Hof Method',
     arrowLabel: 'Intellectual',
     textColor: '#dc9a5b',
+    leftTextColor: '#804d1b',
   },
   4: {
     stageNumber: 4,
@@ -122,14 +164,16 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Metta Meditation',
     arrowLabel: 'Community',
     textColor: '#6f9bd4',
+    leftTextColor: '#2c5993',
   },
   3: {
     stageNumber: 3,
     persona: 'Dominator',
     descriptor: 'Power',
     practice: 'Confidence Meditation',
-    arrowLabel: 'Self-Interest',
+    arrowLabel: 'Self-Love',
     textColor: '#b14a3a',
+    leftTextColor: '#943e31',
   },
   2: {
     stageNumber: 2,
@@ -138,6 +182,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: 'Divination',
     arrowLabel: 'Receptivity',
     textColor: '#5d4e9e',
+    leftTextColor: '#5c4d9c',
   },
   1: {
     stageNumber: 1,
@@ -146,6 +191,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
     practice: '5-4-3-2-1 Technique',
     arrowLabel: 'Agency',
     textColor: '#cdb079',
+    leftTextColor: '#6b5428',
   },
 };
 
@@ -155,10 +201,19 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
  * "feminine" stage above a warm-color "masculine" stage.
  */
 export const MAP_ROWS: readonly MapRow[] = [
-  { rightLabel: 'Awareness', stageNumbers: [10] },
-  { rightLabel: 'Being', stageNumbers: [9] },
-  { rightLabel: 'Wisdom', stageNumbers: [8, 7] },
-  { rightLabel: 'Understanding', stageNumbers: [6, 5] },
-  { rightLabel: 'Love', stageNumbers: [4, 3] },
-  { rightLabel: 'Yes-And-Ness', stageNumbers: [2, 1] },
+  { rightLabel: 'Awareness', rightLabelLines: ['Awareness'], stageNumbers: [10] },
+  { rightLabel: 'Being', rightLabelLines: ['Being'], stageNumbers: [9] },
+  { rightLabel: 'Wisdom', rightLabelLines: ['Wisdom'], stageNumbers: [8, 7] },
+  { rightLabel: 'Understanding', rightLabelLines: ['Under-', 'standing'], stageNumbers: [6, 5] },
+  { rightLabel: 'Love', rightLabelLines: ['Love'], stageNumbers: [4, 3] },
+  { rightLabel: 'Yes-And-Ness', rightLabelLines: ['Yes-And-', 'Ness'], stageNumbers: [2, 1] },
 ];
+
+/**
+ * Which corner of the center panel a stage's Aspect label hugs. The label sits
+ * on the corner opposite the wave's return pole, so the word never lands under
+ * the strand: even (left-returning) stages hug the right corner, odd stages the
+ * left. Title stages (9, 10) carry no arrow label and never call this.
+ */
+export const labelCorner = (stageNumber: number): 'left' | 'right' =>
+  isLeftReturning(stageNumber) ? 'right' : 'left';

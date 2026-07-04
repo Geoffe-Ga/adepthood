@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from domain.constants import TOTAL_STAGES
+from domain.metta_return import RETURN_MINIMUM_STAGE
 
 # How many consecutive days a scheduled goal can go *logged-but-unmet* (a
 # check-in recorded, but at zero units) before the foundation is named as
@@ -41,11 +41,12 @@ FOUNDATION_UNMET_CONSECUTIVE_DAYS = 14
 FOUNDATION_UNCHECKED_CONSECUTIVE_DAYS = 14
 
 # The highest stage a user must have *reached* before the reflection offers the
-# five-week Return rather than the simple ease-off. Orange (stage 5) reached
-# means Blue (stage 4) has been passed; Stage 4 itself stays just below the
-# threshold, so only someone who has integrated the earlier arc is invited into
-# the deeper, more structured Return.
-RETURN_MIN_HIGHEST_STAGE = 5
+# five-week Return rather than the simple ease-off. This is the same threshold
+# that gates Return eligibility everywhere else, so it is sourced from the one
+# canonical constant rather than re-declared: Orange (stage 5) reached means Blue
+# (stage 4) has been passed, and only someone who has integrated the earlier arc
+# is invited into the deeper, more structured Return.
+RETURN_MIN_HIGHEST_STAGE = RETURN_MINIMUM_STAGE
 
 # The ease-off invitation for someone still early on the path: no elaborate
 # structure, just permission to soften. Names the contraction plainly and hands
@@ -154,23 +155,6 @@ def detect_contraction(aggregates: ContractionAggregates) -> ContractionSignal |
     if not flagged:
         return None
     return ContractionSignal(flagged_habit_ids=flagged)
-
-
-def derive_highest_stage_reached(
-    current_stage: int,
-    completed_stages: list[int],
-    cycle_number: int,
-) -> int:
-    """Return the highest stage this user has ever reached.
-
-    Gating is by the *highest* stage reached, not the current one, so a user who
-    climbed high and later eased off is still met with the deeper Return offer.
-    Having looped the curriculum at least once (``cycle_number > 1``) means the
-    whole arc has been reached, so the full :data:`TOTAL_STAGES` applies.
-    """
-    if cycle_number > 1:
-        return TOTAL_STAGES
-    return max(current_stage, max(completed_stages, default=0))
 
 
 def build_contraction_invitation(highest_stage_reached: int) -> ContractionInvitation:

@@ -305,7 +305,47 @@ async def test_resonance_pass_does_not_mutate_progression(
 
 
 # ---------------------------------------------------------------------------
-# 5. Schema<->enum drift guard
+# 5. The persisted lifetime mark — not the current stage — gates the offer
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_contraction_offer_reads_persisted_high_water_mark(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Return-tier offer follows the persisted mark, not the current stage.
+
+    A flagged user whose ``current_stage`` has eased back to 1 (nothing completed
+    this run, first cycle) but whose ``highest_stage_reached`` records a lifetime
+    reach of Orange must still receive the deeper ``RETURN_OFFER`` — proving the
+    reflection reads the single persisted high-water mark rather than
+    re-deriving it from the mutable current-run fields.
+    """
+    _fake_llm(monkeypatch, {"kind": "theme", "quote": "the willow bent", "note": "It holds."})
+    headers, user_id = await _signup(async_client, "highwatermarkoffer")
+    await _make_flagged_habit(db_session, user_id)
+
+    progress = StageProgress(
+        user_id=user_id,
+        current_stage=1,
+        completed_stages=[],
+        cycle_number=1,
+        highest_stage_reached=5,
+    )
+    db_session.add(progress)
+    await db_session.commit()
+
+    entry_id = await _create_entry(async_client, headers, classification="personal")
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    contraction = resp.json()["contraction"]
+    assert contraction is not None
+    assert contraction["variant"] == ContractionVariant.RETURN_OFFER.value
+
+
+# ---------------------------------------------------------------------------
+# 6. Schema<->enum drift guard
 # ---------------------------------------------------------------------------
 
 

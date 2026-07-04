@@ -135,6 +135,36 @@ describe('JournalEntryScreen — chord change PATCH failure', () => {
     }
   });
 
+  it('reverts to the loaded (tagged) chord, not the empty default, when the PATCH rejects', async () => {
+    jest.useFakeTimers();
+    try {
+      // Loaded with a primary Aspect — a failed re-tag must fall back to the
+      // persisted chord (primary 3), not the empty default the ref started at.
+      mockGet.mockResolvedValue(entry({ id: 7, primary_aspect: 3, secondary_aspect: null }));
+      const { getByTestId } = renderScreen({ entryId: 7 }, { autosaveDelayMs: 100 });
+      await waitFor(() => {
+        expect(getByTestId('journal-body-input').props.value).toBeTruthy();
+      });
+      mockUpdate.mockClear();
+      mockUpdate.mockRejectedValueOnce(new Error('network'));
+
+      // A tagged entry loads expanded on its chips, so no trigger tap is needed.
+      fireEvent.press(within(getByTestId('journal-page')).getByTestId('aspect-primary-5'));
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(getByTestId('journal-save-hint').props.children).toBe(ERROR_HINT);
+      const after = within(getByTestId('journal-page'));
+      // Reverted to the persisted chord (primary 3), not the empty default.
+      expect(after.getByTestId('aspect-primary-3').props.accessibilityState.selected).toBe(true);
+      expect(after.getByTestId('aspect-primary-5').props.accessibilityState.selected).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('keeps the new chord selected with no error hint when the PATCH succeeds', async () => {
     jest.useFakeTimers();
     try {

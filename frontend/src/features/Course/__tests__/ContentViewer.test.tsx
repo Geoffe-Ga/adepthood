@@ -183,6 +183,29 @@ describe('ContentViewer', () => {
     expect(queryByTestId('reflect-button')).toBeNull();
   });
 
+  it('does not refetch the body when marking as read', async () => {
+    const item = makeItem();
+    const { getByTestId, queryByTestId, findByTestId } = render(
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+    );
+    await findByTestId('reader-markdown');
+    expect(courseApi.contentBody).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      fireEvent.press(getByTestId('mark-read-button'));
+    });
+    await waitFor(() => {
+      expect(onMarkRead).toHaveBeenCalledTimes(1);
+    });
+
+    // The mark-as-read re-render passes a fresh ``source`` literal; the reader
+    // must key its fetch on the primitive identity, so the body is fetched once
+    // across the whole cycle and never flashes back to the loading spinner.
+    expect(courseApi.contentBody).toHaveBeenCalledTimes(1);
+    expect(queryByTestId('reader-loading')).toBeNull();
+    expect(queryByTestId('reader-markdown')).not.toBeNull();
+  });
+
   it('surfaces a retry UI when the content body fails to load', async () => {
     courseApi.contentBody.mockRejectedValueOnce({ detail: 'content_unavailable' });
     const item = makeItem();

@@ -11,9 +11,7 @@ import type { StageAnchors } from './waveGeometry';
  * Continuous sine-wave artwork for the Map's center column, rendered behind the
  * per-stage tap cells. The wave rises upward like a struck tuning fork, wobbling
  * left for even stages and right for odd ones and tapering toward center at the
- * top. Each segment draws a faded far-side path behind its full-opacity near
- * side so the whole reads as a three-dimensional coil. Each segment and
- * arrowhead carries its stage's textColor.
+ * top. Each segment and arrowhead carries its stage's textColor.
  *
  * The overlay is purely decorative: it is non-interactive and hidden from the
  * accessibility tree so the stage hotspots remain the sole tap/read targets.
@@ -22,10 +20,7 @@ import type { StageAnchors } from './waveGeometry';
 /** Stroke thickness of each wave segment, in pixels. */
 const WAVE_STROKE_WIDTH = 3;
 
-/** Stroke opacity of the faded far half of each coil turn (< 1). */
-const FAR_SIDE_OPACITY = 0.35;
-
-/** Stroke styling shared by every wave path, near and far alike. */
+/** Stroke styling shared by every wave path. */
 const WAVE_STROKE_PROPS = {
   fill: 'none',
   strokeWidth: WAVE_STROKE_WIDTH,
@@ -43,6 +38,12 @@ interface WaveOverlayProps {
   height: number;
   /** Measured per-stage vertical centers; missing stages use nominal bands. */
   anchors?: StageAnchors;
+  /**
+   * Prefix for every testID this overlay emits. The magnifier lens renders a
+   * second, magnified copy of the wave; the prefix keeps the two copies'
+   * testIDs distinct so each remains uniquely findable.
+   */
+  idPrefix?: string;
 }
 
 /** SVG sine-wave overlay sized to the measured grid; null until measured. */
@@ -50,6 +51,7 @@ export const WaveOverlay = ({
   width,
   height,
   anchors = {},
+  idPrefix = '',
 }: WaveOverlayProps): React.JSX.Element | null => {
   const smallerExtent = Math.min(width, height);
   if (smallerExtent < MIN_DRAWABLE_EXTENT) return null;
@@ -57,7 +59,7 @@ export const WaveOverlay = ({
   const arrowheads = waveArrowheads(width, height, anchors);
   return (
     <Svg
-      testID="map-wave"
+      testID={`${idPrefix}map-wave`}
       width={width}
       height={height}
       style={StyleSheet.absoluteFill}
@@ -66,18 +68,8 @@ export const WaveOverlay = ({
     >
       {segments.map((segment) => (
         <Path
-          key={`far-${segment.stageNumber}`}
-          testID={`far-${segment.stageNumber}`}
-          d={segment.farD}
-          stroke={segment.color}
-          strokeOpacity={FAR_SIDE_OPACITY}
-          {...WAVE_STROKE_PROPS}
-        />
-      ))}
-      {segments.map((segment) => (
-        <Path
-          key={`near-${segment.stageNumber}`}
-          testID={`near-${segment.stageNumber}`}
+          key={`near-${segment.stageNumber}-${segment.half}`}
+          testID={`${idPrefix}near-${segment.stageNumber}-${segment.half}`}
           d={segment.d}
           stroke={segment.color}
           {...WAVE_STROKE_PROPS}
@@ -86,7 +78,7 @@ export const WaveOverlay = ({
       {arrowheads.map((arrowhead) => (
         <Polygon
           key={arrowhead.stageNumber}
-          testID={`wave-arrow-${arrowhead.stageNumber}`}
+          testID={`${idPrefix}wave-arrow-${arrowhead.stageNumber}`}
           points={arrowhead.points}
           fill={arrowhead.color}
         />

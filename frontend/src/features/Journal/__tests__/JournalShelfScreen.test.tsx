@@ -61,7 +61,40 @@ jest.mock('../StatTileRow', () => {
   return { __esModule: true, default: Stub };
 });
 
+// The Return and invitation surfaces render on the shelf; stub them so shelf
+// tests stay focused on ordering, not on Return/invitation state.
+jest.mock('@/features/Return/ReturnStack', () => {
+  const { View } = require('react-native');
+  const Stub = () => <View testID="return-stack-stub" />;
+  return { __esModule: true, default: Stub };
+});
+jest.mock('@/features/Invitations/InvitationStack', () => {
+  const { View } = require('react-native');
+  const Stub = () => <View testID="invitation-stack-stub" />;
+  return { __esModule: true, default: Stub };
+});
+
 const JournalShelfScreen = require('../JournalShelfScreen').default;
+
+type RenderedNode = {
+  props: { testID?: unknown };
+  children: (RenderedNode | string)[] | null;
+};
+
+// Depth-first list of testID markers (#id) and raw text nodes, in render order.
+// Walks only children (never props) so React element props stay non-circular.
+function flattenOrder(node: RenderedNode | RenderedNode[] | string | null): string[] {
+  if (node === null) return [];
+  if (typeof node === 'string') return [node];
+  if (Array.isArray(node)) return node.flatMap((child) => flattenOrder(child));
+  const out: string[] = [];
+  const testID = node.props.testID;
+  if (typeof testID === 'string') out.push(`#${testID}`);
+  const children = node.children;
+  if (children === null) return out;
+  for (const child of children) out.push(...flattenOrder(child));
+  return out;
+}
 
 function entry(id: number, overrides: Partial<JournalMessage> = {}): JournalMessage {
   return {
@@ -457,5 +490,19 @@ describe('JournalShelfScreen', () => {
     const { findByTestId } = render(<JournalShelfScreen />);
     fireEvent.press(await findByTestId('journal-hero-position'));
     expect(mockNavigate).toHaveBeenCalledWith('Map');
+  });
+
+  it('stacks Return above invitations, after the stat tiles and before the header', async () => {
+    const { findByTestId, toJSON } = render(<JournalShelfScreen />);
+    await findByTestId('stat-tile-row-stub');
+    const order = flattenOrder(toJSON());
+    const statIndex = order.indexOf('#stat-tile-row-stub');
+    const returnIndex = order.indexOf('#return-stack-stub');
+    const invitationIndex = order.indexOf('#invitation-stack-stub');
+    const headerIndex = order.indexOf('Journal');
+    expect(statIndex).toBeGreaterThan(-1);
+    expect(returnIndex).toBeGreaterThan(statIndex);
+    expect(invitationIndex).toBeGreaterThan(returnIndex);
+    expect(headerIndex).toBeGreaterThan(invitationIndex);
   });
 });
