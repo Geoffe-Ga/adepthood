@@ -188,16 +188,19 @@ interface DismissDeps {
 /** Dismiss a suggestion: per-id guarded; optimistic remove, revert on error. */
 async function runDismiss(
   id: number,
-  snapshot: CompletionSuggestion[],
+  current: CompletionSuggestion[],
   deps: DismissDeps,
 ): Promise<void> {
   if (deps.pendingIdsRef.current.has(id)) return;
   deps.pendingIdsRef.current.add(id);
-  deps.setSuggestions(snapshot.filter((s) => s.id !== id)); // optimistic
+  const dismissed = current.find((s) => s.id === id);
+  deps.setSuggestions((prev) => prev.filter((s) => s.id !== id)); // optimistic
   try {
     await completionSuggestions.dismiss(id);
   } catch (err) {
-    deps.setSuggestions(snapshot); // revert
+    if (dismissed) {
+      deps.setSuggestions((prev) => mergeByIdSorted([dismissed], prev)); // revert
+    }
     deps.setError(formatApiError(err));
   } finally {
     deps.pendingIdsRef.current.delete(id);

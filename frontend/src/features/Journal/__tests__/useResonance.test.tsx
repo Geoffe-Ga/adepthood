@@ -206,4 +206,38 @@ describe('useResonance — suggestions', () => {
     expect(result.current.suggestions.map((s: CompletionSuggestion) => s.id)).toEqual([1, 2]); // reverted
     expect(result.current.error).toBeTruthy();
   });
+
+  it('a suggestion generated mid-dismiss survives a failed dismiss', async () => {
+    mockSugList.mockResolvedValue({ items: [suggestion({ id: 1 })] });
+    const flush = jest.fn(async () => 7);
+    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    await waitFor(() => expect(result.current.suggestions).toHaveLength(1));
+
+    let rejectDismiss: (_e: unknown) => void = () => {};
+    mockDismiss.mockReturnValue(
+      new Promise<CompletionSuggestion>((_resolve, reject) => {
+        rejectDismiss = reject;
+      }),
+    );
+    let dismissPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      dismissPromise = result.current.dismissSuggestion(1);
+    });
+    expect(result.current.suggestions).toHaveLength(0);
+
+    mockGenerate.mockResolvedValue(
+      resonancePayload({ suggestions: [suggestion({ id: 2, anchor_start: 20 })] }),
+    );
+    await act(async () => {
+      await result.current.requestResonance();
+    });
+    expect(result.current.suggestions.map((s: CompletionSuggestion) => s.id)).toContain(2);
+
+    await act(async () => {
+      rejectDismiss(new ApiError(500, 'boom'));
+      await dismissPromise;
+    });
+    expect(result.current.suggestions.map((s: CompletionSuggestion) => s.id)).toEqual([1, 2]);
+    expect(result.current.error).toBeTruthy();
+  });
 });
