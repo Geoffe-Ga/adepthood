@@ -8,6 +8,8 @@ export interface RadioOptionProps {
   onPress: () => void;
   testID: string;
   accessibilityHint?: string;
+  /** When true, the option is announced as disabled to assistive tech. */
+  disabled?: boolean;
   style: StyleProp<ViewStyle>;
   selectedStyle: StyleProp<ViewStyle>;
   labelStyle: StyleProp<TextStyle>;
@@ -31,6 +33,7 @@ export function RadioOption({
   onPress,
   testID,
   accessibilityHint,
+  disabled = false,
   style,
   selectedStyle,
   labelStyle,
@@ -43,7 +46,7 @@ export function RadioOption({
       accessibilityRole="radio"
       accessibilityLabel={label}
       accessibilityHint={accessibilityHint}
-      accessibilityState={{ selected }}
+      accessibilityState={{ selected, disabled }}
       testID={testID}
     >
       <Text style={[labelStyle, selected && selectedLabelStyle]}>{label}</Text>
