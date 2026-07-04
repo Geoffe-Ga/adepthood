@@ -173,15 +173,28 @@ jobs:
             # A re-run cannot re-reach this check (the PR body now links the
             # issue, so `body_links_issue` short-circuits), so both branches
             # point to the same one-time manual fix: add the label by hand.
-            local labels
+            local labels label_error=""
             if ! labels="$(gh issue view "$issue_num" --repo "$REPO" \
               --json labels --jq '.labels[].name')"; then
-              echo "::error::Could not verify the label on issue #$issue_num (transient GitHub API error); the re-apply may have succeeded — if the issue is missing the label, add it once: gh issue edit $issue_num --add-label dependencies" >&2
-              exit 1
+              label_error="Could not verify the label on issue #$issue_num (transient GitHub API error); the re-apply may have succeeded — if the issue is missing the label, add it once: gh issue edit $issue_num --add-label dependencies"
+            elif ! printf '%s\n' "$labels" | grep -qx dependencies; then
+              label_error="The 'dependencies' label is absent on issue #$issue_num after re-apply (the token likely lacks Issues/triage permission); add it once by hand: gh issue edit $issue_num --add-label dependencies"
             fi
-            if ! printf '%s\n' "$labels" | grep -qx dependencies; then
-              echo "::error::The 'dependencies' label is absent on issue #$issue_num after re-apply (the token likely lacks Issues/triage permission); add it once by hand: gh issue edit $issue_num --add-label dependencies" >&2
-              exit 1
+
+            # Failure handling differs by path. The single-PR event path fails
+            # loud and immediate (exit 1). The reconciler processes a whole
+            # batch, so one PR's label-verify failure must NOT skip every later
+            # PR: record the diagnosis and let the caller continue, then fail
+            # the run once at the end. The issue is filed and its PR is already
+            # linked, so `body_links_issue` short-circuits any re-run — no
+            # duplicate is ever minted while the label is added by hand.
+            if [ -n "$label_error" ]; then
+              if [ "$EVENT_NAME" = "pull_request_target" ]; then
+                echo "::error::$label_error" >&2
+                exit 1
+              fi
+              reconcile_failures+=("$label_error")
+              echo "Label-verify failed for issue #$issue_num — recorded; continuing the batch." >&2
             fi
           }
 
@@ -202,6 +215,11 @@ jobs:
           count="$(printf '%s' "$prs" | jq 'length')"
           echo "Found $count open Dependabot PR(s)."
 
+          # Collects label-verify diagnoses across the batch so one PR's
+          # failure never skips the rest; the run fails once at the end if any
+          # were recorded.
+          reconcile_failures=()
+
           # Iterate without piping into a subshell so set -e propagates.
           for i in $(seq 0 $((count - 1))); do
             num="$(printf '%s' "$prs" | jq -r ".[$i].number")"
@@ -213,5 +231,17 @@ jobs:
             fi
             bridge_pr "$num" "$ttl"
           done
+
+          # Surface every deferred label-verify failure at once and fail the
+          # run, so the batch completes but a permission gap or persistent API
+          # flake is never silently swallowed. Each issue is filed and its PR
+          # linked, so the only manual step is adding the missing label(s).
+          if [ "${#reconcile_failures[@]}" -gt 0 ]; then
+            echo "::error::${#reconcile_failures[@]} bridged PR(s) could not have their 'dependencies' label verified; add the label(s) by hand (details below)." >&2
+            for failure in "${reconcile_failures[@]}"; do
+              echo "::error::$failure" >&2
+            done
+            exit 1
+          fi
 
           echo "Reconciler complete."
