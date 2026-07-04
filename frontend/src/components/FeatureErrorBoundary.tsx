@@ -1,6 +1,8 @@
 import { useNavigation } from '@react-navigation/native';
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+
+import { ErrorFallback } from './ErrorFallback';
 
 import { colors, SPACING } from '@/design/tokens';
 import { reportException } from '@/observability/sentry';
@@ -101,24 +103,21 @@ class FeatureErrorBoundaryClass extends React.Component<
     const { name } = this.props;
     return (
       <View style={styles.container} testID={`feature-error-${name.toLowerCase()}`}>
-        <Text style={styles.heading}>{name} hit a snag</Text>
-        <Text style={styles.body}>
-          Something went wrong while loading this section. The rest of the app is still usable.
-        </Text>
-        {/* Dev-only: a thrown error's message can carry internal detail (paths,
-            library internals). Unlike the top-level ErrorBoundary — which shows
-            the message in every build alongside a "copy to support" prompt — this
-            inline recovery card has no such affordance, so a production user has
-            no safe channel for the raw text. Hide it here. (audit-ux-05) */}
-        {__DEV__ && <Text style={styles.message}>{this.state.error.message}</Text>}
-        <TouchableOpacity
-          accessibilityLabel={`Retry loading ${name}`}
-          accessibilityRole="button"
-          onPress={this.handleReset}
-          style={styles.retry}
+        <ErrorFallback
+          heading={`${name} hit a snag`}
+          onRetry={this.handleReset}
+          retryAccessibilityLabel={`Retry loading ${name}`}
         >
-          <Text style={styles.retryText}>Try again</Text>
-        </TouchableOpacity>
+          <Text style={styles.body}>
+            Something went wrong while loading this section. The rest of the app is still usable.
+          </Text>
+          {/* Dev-only: a thrown error's message can carry internal detail (paths,
+              library internals). Unlike the top-level ErrorBoundary — which shows
+              the message in every build alongside a "copy to support" prompt — this
+              inline recovery card has no such affordance, so a production user has
+              no safe channel for the raw text. Hide it here. (audit-ux-05) */}
+          {__DEV__ && <Text style={styles.message}>{this.state.error.message}</Text>}
+        </ErrorFallback>
       </View>
     );
   }
@@ -154,12 +153,6 @@ const styles = StyleSheet.create({
     padding: SPACING.xl,
     justifyContent: 'center',
   },
-  heading: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: colors.danger,
-    marginBottom: SPACING.md,
-  },
   body: {
     fontSize: 15,
     color: colors.text.primary,
@@ -170,16 +163,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.text.secondary,
     marginBottom: SPACING.xl,
-  },
-  retry: {
-    alignSelf: 'flex-start',
-    backgroundColor: colors.primary,
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.sm,
-    borderRadius: 8,
-  },
-  retryText: {
-    color: colors.text.light,
-    fontWeight: '600',
   },
 });

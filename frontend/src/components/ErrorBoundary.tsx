@@ -1,8 +1,10 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { colors, SPACING } from '../design/tokens';
 import { reportException } from '../observability/sentry';
+
+import { ErrorFallback } from './ErrorFallback';
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -58,29 +60,27 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     return (
       <View style={styles.container} testID="error-boundary">
         <ScrollView contentContainerStyle={styles.content}>
-          <Text style={styles.heading}>Something went wrong</Text>
-          <Text style={styles.guidance}>
-            Try closing and reopening the app. If this keeps happening, copy the details below and
-            send them to support so we can fix it.
-          </Text>
-          <Text style={styles.message}>{this.state.error.message}</Text>
-          {/* Issue #272: the verbatim JS stack leaks file paths and internal
-              function names — development builds only. Production users get
-              the message plus the copy-to-support guidance above. */}
-          {__DEV__ && this.state.error.stack ? (
-            <Text style={styles.stack} testID="error-boundary-stack">
-              {this.state.error.stack}
-            </Text>
-          ) : null}
-          <TouchableOpacity
-            accessibilityLabel="Try again"
-            accessibilityRole="button"
-            onPress={this.handleRetry}
-            style={styles.retry}
-            testID="error-boundary-retry"
+          <ErrorFallback
+            heading="Something went wrong"
+            onRetry={this.handleRetry}
+            retryAccessibilityLabel="Try again"
+            retryTestID="error-boundary-retry"
+            retryStyle={styles.retrySpacing}
           >
-            <Text style={styles.retryText}>Try again</Text>
-          </TouchableOpacity>
+            <Text style={styles.guidance}>
+              Try closing and reopening the app. If this keeps happening, copy the details below and
+              send them to support so we can fix it.
+            </Text>
+            <Text style={styles.message}>{this.state.error.message}</Text>
+            {/* Issue #272: the verbatim JS stack leaks file paths and internal
+                function names — development builds only. Production users get
+                the message plus the copy-to-support guidance above. */}
+            {__DEV__ && this.state.error.stack ? (
+              <Text style={styles.stack} testID="error-boundary-stack">
+                {this.state.error.stack}
+              </Text>
+            ) : null}
+          </ErrorFallback>
         </ScrollView>
       </View>
     );
@@ -94,12 +94,6 @@ const styles = StyleSheet.create({
   content: {
     padding: SPACING.xl,
     paddingTop: SPACING.xxl + SPACING.lg,
-  },
-  heading: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: colors.danger,
-    marginBottom: SPACING.md,
   },
   guidance: {
     fontSize: 15,
@@ -117,16 +111,7 @@ const styles = StyleSheet.create({
     color: colors.text.secondaryAccessible,
     fontFamily: 'monospace',
   },
-  retry: {
-    alignSelf: 'flex-start',
+  retrySpacing: {
     marginTop: SPACING.xl,
-    backgroundColor: colors.primary,
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.sm,
-    borderRadius: 8,
-  },
-  retryText: {
-    color: colors.text.light,
-    fontWeight: '600',
   },
 });
