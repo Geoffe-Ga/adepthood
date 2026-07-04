@@ -170,3 +170,90 @@ describe('JournalEntryScreen load error', () => {
     );
   });
 });
+
+describe('in-flight load window', () => {
+  it('does not PATCH the privacy tier when the user taps a tier while the load is still in flight', async () => {
+    mockGet.mockReturnValue(new Promise(() => {}));
+    const { getByTestId } = renderScreen({ entryId: 7 });
+    fireEvent.press(getByTestId('privacy-tier-public'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('does not PATCH the chord and keeps its chips hidden when tapped while the load is in flight', async () => {
+    mockGet.mockReturnValue(new Promise(() => {}));
+    const { getByTestId, queryByTestId } = renderScreen({ entryId: 7 });
+    fireEvent.press(getByTestId('aspect-chord-trigger'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(queryByTestId('aspect-primary-5')).toBeNull();
+  });
+
+  it('announces the tier and chord controls as inert while the load is in flight', () => {
+    mockGet.mockReturnValue(new Promise(() => {}));
+    const { getByTestId } = renderScreen({ entryId: 7 });
+    expect(getByTestId('privacy-tier-personal').props.accessibilityState.disabled).toBe(true);
+    expect(getByTestId('aspect-chord-trigger').props.accessibilityState.disabled).toBe(true);
+  });
+
+  it('enables the controls and PATCHes the tier once the in-flight load resolves', async () => {
+    const deferred: { resolve: (_e: JournalMessage) => void } = { resolve: () => {} };
+    mockGet.mockReturnValue(
+      new Promise((res) => {
+        deferred.resolve = res;
+      }),
+    );
+    const { getByTestId } = renderScreen({ entryId: 7 }, { autosaveDelayMs: 100 });
+
+    fireEvent.press(getByTestId('privacy-tier-public'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockUpdate).not.toHaveBeenCalled();
+
+    act(() => {
+      deferred.resolve(entry({ id: 7, classification: 'intimate' }));
+    });
+    await waitFor(() => {
+      expect(getByTestId('journal-body-input').props.value).toBeTruthy();
+    });
+    expect(getByTestId('privacy-tier-personal').props.accessibilityState.disabled).toBeFalsy();
+
+    mockUpdate.mockClear();
+    fireEvent.press(getByTestId('privacy-tier-personal'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockUpdate).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ classification: 'personal' }),
+    );
+  });
+
+  it('never overwrites the real entry when the user types while the load is in flight', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGet.mockReturnValue(new Promise(() => {}));
+      const { getByTestId } = renderScreen({ entryId: 7 }, { autosaveDelayMs: 100 });
+      fireEvent.changeText(getByTestId('journal-body-input'), 'A blank editor draft.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockUpdate).not.toHaveBeenCalled();
+      expect(mockCreate).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('leaves the controls enabled immediately for a fresh entry with no id', () => {
+    const { getByTestId } = renderScreen();
+    expect(getByTestId('privacy-tier-personal').props.accessibilityState.disabled).toBeFalsy();
+    expect(getByTestId('aspect-chord-trigger').props.accessibilityState.disabled).toBeFalsy();
+  });
+});
