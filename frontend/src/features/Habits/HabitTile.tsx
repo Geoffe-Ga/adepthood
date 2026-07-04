@@ -1,7 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Text, TouchableOpacity, View, type DimensionValue } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { colors, STAGE_COLORS, spacing, surface } from '../../design/tokens';
+import {
+  BOTTOM_TAB_BAR_CONTENT_HEIGHT,
+  colors,
+  SPACING,
+  STAGE_COLORS,
+  spacing,
+  surface,
+  tileDensity,
+  touchTarget,
+} from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 import { DEFAULT_TIMEZONE, MS_PER_DAY } from '../../utils/dateUtils';
 
@@ -168,10 +178,24 @@ const TOTAL_HABITS = MAX_HABITS;
 /** Tile border thickness so the aptitude/stage color reads clearly at a glance. */
 export const TILE_BORDER_WIDTH = 3;
 
+// Empirical vertical budget reserved for the screen chrome the hook cannot
+// measure directly: the top action bar, the SafeAreaView container padding, a
+// footer/pagination allowance, and one grid gutter. Kept flat so the hook stays
+// A-grade. When a footer or pagination bar is visible the small remainder falls
+// to the FlatList scroll (the documented short-viewport degrade).
+const habitGridChrome = (scale: number, gridGutter: number): number =>
+  2 * spacing(1, scale) + spacing(3, scale) + 2 * spacing(1, scale) + SPACING.sm + gridGutter;
+
 export const useTileLayout = () => {
   const { width, height, columns, scale, gridGutter } = useResponsive();
+  const insets = useSafeAreaInsets();
   const rows = columns === 2 ? TOTAL_HABITS / columns : TOTAL_HABITS;
-  const tileMinHeight = height / rows - 2 * spacing(1, scale) - gridGutter;
+  const chrome = habitGridChrome(scale, gridGutter);
+  const bottomBarReserve = BOTTOM_TAB_BAR_CONTENT_HEIGHT + insets.bottom;
+  const availableHeight = height - insets.top - bottomBarReserve - chrome;
+  const rowPitch = availableHeight / rows;
+  // Floor to whole pixels so the reserved stack never rounds above the viewport.
+  const tileMinHeight = Math.max(touchTarget.minimum, Math.floor(rowPitch - gridGutter));
   const tileWidth = width / columns;
   const iconInline = columns === 1 || tileWidth < 400;
   return { columns, scale, gridGutter, tileMinHeight, iconInline };
@@ -303,7 +327,7 @@ const ProgressBar = ({
   const borderR = barHeight / 2;
 
   return (
-    <View style={{ marginTop: spacing(1, scale) }}>
+    <View style={{ marginTop: spacing(tileDensity.barGap, scale) }}>
       <View style={{ height: barHeight, position: 'relative' }}>
         <View
           style={{
@@ -420,7 +444,8 @@ const getLockedTileStyle = (
   flex: 1 as const,
   borderWidth: TILE_BORDER_WIDTH,
   borderColor: stageColor,
-  padding: spacing(1, scale),
+  paddingVertical: spacing(tileDensity.paddingV, scale),
+  paddingHorizontal: spacing(1, scale),
   margin: gridGutter / 2,
   minHeight: tileMinHeight,
   borderRadius: spacing(1, scale),
@@ -513,7 +538,8 @@ const buildUnlockedTileStyle = (
   borderWidth: TILE_BORDER_WIDTH,
   borderColor: stageColor,
   borderStyle: (earlyUnlocked ? 'dashed' : undefined) as 'dashed' | undefined,
-  padding: spacing(1, scale),
+  paddingVertical: spacing(tileDensity.paddingV, scale),
+  paddingHorizontal: spacing(1, scale),
   margin: gridGutter / 2,
   minHeight: tileMinHeight,
   borderRadius: spacing(1, scale),

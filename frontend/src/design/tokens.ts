@@ -362,6 +362,12 @@ export const touchTarget = {
   minimum: 44,
 } as const;
 
+/** Habit-tile density in spacing UNITS (fed to `spacing(n, scale)`), not px. */
+export const tileDensity = { paddingV: 0.5, barGap: 0.5 } as const;
+
+/** React Navigation's default bottom tab-bar content height; bump if the tab bar is restyled taller. */
+export const BOTTOM_TAB_BAR_CONTENT_HEIGHT = 49;
+
 /** WCAG-AA on the white modal card: #555 = 7.22:1 on #ffffff (AAA normal). */
 export const CHART_AXIS_LABEL_COLOR = '#555555';
 
