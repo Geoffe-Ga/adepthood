@@ -10,16 +10,31 @@ import React, { useEffect } from 'react';
 import StatTile from './StatTile';
 
 import { useAuth } from '@/context/AuthContext';
-import { countDoneToday, unlockedToday } from '@/features/Habits/habitCounts';
+import { countDoneToday, unlockedAtStage } from '@/features/Habits/habitCounts';
 import { habitManager } from '@/features/Habits/services/habitManager';
+import { stageService } from '@/features/Map/services/stageService';
 import type { RootTabParamList } from '@/navigation/BottomTabs';
 import { useHabitStore } from '@/store/useHabitStore';
+import {
+  selectCurrentStage,
+  selectStages,
+  selectStagesError,
+  selectStagesLoading,
+  useStageStore,
+} from '@/store/useStageStore';
 
 type HabitsTileNav = BottomTabNavigationProp<RootTabParamList>;
 
 const TITLE = "Today's habits";
 const OPEN_CUE = 'Open habits →';
 const ADD_CUE = 'Add a habit →';
+
+/**
+ * Stage to assume when stage loading has failed and left the store empty: one
+ * habit is always unlocked, so falling back to 1 (rather than a possibly-stale
+ * store value) keeps the denominator conservative.
+ */
+const FALLBACK_STAGE = 1;
 
 interface HabitsDescriptor {
   loading: boolean;
@@ -30,15 +45,17 @@ interface HabitsDescriptor {
 
 /**
  * Resolve the tile's stat line, cue, loading flag, and a11y label from plain
- * counts — pure so the loading branch reads the store's flag directly.
+ * counts. `loading` is the caller's precomputed "show skeleton" flag (habits or
+ * stages still resolving) — not the raw habit-store `loading` — so this stays
+ * pure and flat.
  */
-function describeHabits(
+export function describeHabits(
   loading: boolean,
   habitCount: number,
   unlockedCount: number,
   doneCount: number,
 ): HabitsDescriptor {
-  if (loading && habitCount === 0) {
+  if (loading) {
     return { loading: true, cue: OPEN_CUE, accessibilityLabel: `${TITLE}, loading. Open habits` };
   }
   if (habitCount === 0) {
@@ -50,6 +67,8 @@ function describeHabits(
     };
   }
   if (unlockedCount === 0) {
+    // Defensive: the current stage always floors at 1, so the first habit is
+    // unlocked whenever any exist. Kept as a guard for a zero-unlocked corpus.
     return {
       loading: false,
       stat: 'Unlocks soon',
@@ -68,16 +87,34 @@ function describeHabits(
 const HabitsStatTile = (): React.JSX.Element => {
   const navigation = useNavigation<HabitsTileNav>();
   const { userTimezone } = useAuth();
-  const loading = useHabitStore((state) => state.loading);
+  const habitsLoading = useHabitStore((state) => state.loading);
   const habits = useHabitStore((state) => state.habits);
+  const currentStage = useStageStore(selectCurrentStage);
+  const stages = useStageStore(selectStages);
+  const stagesLoading = useStageStore(selectStagesLoading);
+  const stagesError = useStageStore(selectStagesError);
 
   useEffect(() => {
     void habitManager.loadHabits(userTimezone);
   }, [userTimezone]);
 
-  const unlocked = unlockedToday(habits);
+  useEffect(() => {
+    if (stages.length === 0) void stageService.loadStages();
+  }, [stages.length]);
+
+  // Stages have not resolved yet — either nothing has errored, or a (re)load is
+  // in flight. Hold the skeleton so the tile never flashes a denominator
+  // computed against an empty stage list.
+  const stagesPending = stages.length === 0 && (stagesError === null || stagesLoading);
+  // A failed load leaves stages empty; trust the always-unlocked floor rather
+  // than a possibly-stale store `currentStage`.
+  const stagesFailed = stagesError !== null && stages.length === 0;
+  const effectiveStage = stagesFailed ? FALLBACK_STAGE : currentStage;
+
+  const unlocked = unlockedAtStage(habits, effectiveStage);
+  const showSkeleton = (habitsLoading && habits.length === 0) || stagesPending;
   const descriptor = describeHabits(
-    loading,
+    showSkeleton,
     habits.length,
     unlocked.length,
     countDoneToday(unlocked, userTimezone),

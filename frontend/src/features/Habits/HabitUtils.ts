@@ -593,6 +593,27 @@ export const isEarlyUnlocked = (habit: Habit): boolean => {
   return habit.revealed === true && new Date(habit.start_date).getTime() > Date.now();
 };
 
+/**
+ * A habit is unlocked once the user's current stage has reached the habit's own
+ * Spiral-Dynamics stage — the threshold is derived from `habit.stage` (its
+ * position in `STAGE_ORDER`, 1-based) so drag-and-drop reordering of the list
+ * never changes which habits are unlocked. When `habit.stage` is missing or
+ * unrecognized, we fall back to the list position (`index`), preserving the
+ * legacy `index < currentStage` behavior for stage-less habits. A habit is also
+ * unlocked when manually revealed ahead of its start_date (early unlock),
+ * regardless of stage.
+ */
+export const isHabitUnlockedAtStage = (
+  habit: Habit,
+  index: number,
+  currentStage: number,
+): boolean => {
+  if (isEarlyUnlocked(habit)) return true;
+  const stageIndex = STAGE_ORDER.indexOf(habit.stage);
+  const threshold = stageIndex >= 0 ? stageIndex + 1 : index + 1;
+  return threshold <= currentStage;
+};
+
 /** Locked today iff unrevealed AND its calendar-anchored `start_date` is still in the future; once that date arrives the habit unlocks regardless of a stale `revealed` flag (which only gates manual early-unlock). */
 export const isHabitLockedToday = (habit: Habit, now: number = Date.now()): boolean => {
   return habit.revealed === false && new Date(habit.start_date).getTime() > now;
