@@ -4,11 +4,7 @@
 export type EngineStatus = 'idle' | 'running' | 'paused' | 'complete';
 
 export type CueKind =
-  | 'start_bell'
-  | 'halfway_bell'
-  | 'end_bell'
-  | 'interval_bell'
-  | 'metronome_tick';
+  'start_bell' | 'halfway_bell' | 'end_bell' | 'interval_bell' | 'metronome_tick';
 
 export interface Cue {
   readonly atMs: number;

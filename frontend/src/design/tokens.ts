@@ -192,7 +192,7 @@ export const STAGE_ORDER: readonly string[] = [
  * selector — keep it here so the fallback can never silently diverge.
  */
 export const resolveStageColor = (spiralColor: string | undefined): string =>
-  spiralColor ? STAGE_COLORS[spiralColor] ?? colors.neutral : colors.neutral;
+  spiralColor ? (STAGE_COLORS[spiralColor] ?? colors.neutral) : colors.neutral;
 
 /** How far each channel is pushed from the gray point when brightening. */
 const SATURATION_BOOST = 1.7;

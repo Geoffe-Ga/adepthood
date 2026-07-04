@@ -171,8 +171,7 @@ let onUnauthorizedCallback: ((reason: UnauthorizedReason) => void) | null = null
  * should fall back to `'UTC'`.
  */
 let onTokenRefreshedCallback:
-  | ((token: string, timezone: string | undefined, expectedPriorToken: string) => void)
-  | null = null;
+  ((token: string, timezone: string | undefined, expectedPriorToken: string) => void) | null = null;
 let llmApiKeyGetter: (() => string | null) | null = null;
 
 /** Header used to forward a user-provided LLM API key (BYOK, issue #185). */
@@ -217,8 +216,7 @@ export function setOnUnauthorized(callback: ((reason: UnauthorizedReason) => voi
 
 export function setOnTokenRefreshed(
   callback:
-    | ((token: string, timezone: string | undefined, expectedPriorToken: string) => void)
-    | null,
+    ((token: string, timezone: string | undefined, expectedPriorToken: string) => void) | null,
 ) {
   onTokenRefreshedCallback = callback;
 }

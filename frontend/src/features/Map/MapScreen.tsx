@@ -519,7 +519,7 @@ const HabitHistoryRow = ({ item }: { item: HabitHistoryItem }): React.JSX.Elemen
             styles.goalBadge,
             {
               backgroundColor: achieved
-                ? GOAL_TIER_COLORS[tier] ?? colors.text.tertiary
+                ? (GOAL_TIER_COLORS[tier] ?? colors.text.tertiary)
                 : 'rgba(255,255,255,0.15)',
             },
           ]}

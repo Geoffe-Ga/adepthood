@@ -20,9 +20,12 @@ export function deriveSlug(name: string): string {
 }
 
 // Major arcana derive from the canonical MAJOR_ARCANA (tarot.ts) so the two decks cannot drift.
-const MAJOR_ARCANA_ROWS: readonly CardRow[] = MAJOR_ARCANA.map(
-  (card): CardRow => [deriveSlug(card.name), card.name, card.keyword, card.symbolism],
-);
+const MAJOR_ARCANA_ROWS: readonly CardRow[] = MAJOR_ARCANA.map((card): CardRow => [
+  deriveSlug(card.name),
+  card.name,
+  card.keyword,
+  card.symbolism,
+]);
 
 const SUITS = [
   { slug: 'wands', display: 'Wands' },
