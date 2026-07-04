@@ -6,11 +6,12 @@ import asyncio
 import logging
 from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
+from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlmodel import select
+from sqlmodel import col, select
 
 from domain.dates import today_in_tz
 from models.goal import Goal
@@ -958,3 +959,164 @@ async def test_subtractive_check_in_fails_loudly_on_duplicate_clear_tier(
     )
     assert resp.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     assert resp.json()["detail"] == "duplicate_clear_tier_goals"
+
+
+# ── Local-day bucketing: distinct local days sharing a UTC calendar date ──
+
+
+async def _seed_karachi_swallowed_completion(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    email: str,
+) -> tuple[dict[str, str], int, date]:
+    """Signup a Karachi user and seed a completion for today; return (headers, goal_id, today).
+
+    Row A sits at 00:30 local time, so its UTC instant falls on the prior UTC
+    calendar day -- reproducing the collision the old UTC-day unique index hits
+    when a backfill for the prior local day is submitted next.
+    """
+    signup_resp = await concurrent_async_client.post(
+        "/auth/signup",
+        json={
+            "email": email,
+            "password": "securepassword123",  # pragma: allowlist secret
+            "timezone": "Asia/Karachi",
+        },
+    )
+    headers = {"Authorization": f"Bearer {signup_resp.json()['token']}"}
+    user_id = signup_resp.json()["user_id"]
+    today = today_in_tz("Asia/Karachi")
+
+    async with concurrent_session_factory() as session:
+        habit = Habit(
+            name="Karachi habit",
+            icon="🕌",
+            start_date=date(2025, 1, 1),
+            energy_cost=1,
+            energy_return=1,
+            user_id=user_id,
+        )
+        session.add(habit)
+        await session.commit()
+        await session.refresh(habit)
+        goal = Goal(
+            habit_id=habit.id,
+            title="Daily sit",
+            tier="clear",
+            target=10.0,
+            target_unit="minutes",
+            frequency=1.0,
+            frequency_unit="per_day",
+            is_additive=True,
+        )
+        session.add(goal)
+        await session.commit()
+        await session.refresh(goal)
+        goal_id = goal.id
+
+        row_a_timestamp = datetime(
+            today.year, today.month, today.day, 0, 30, tzinfo=ZoneInfo("Asia/Karachi")
+        ).astimezone(UTC)
+        session.add(
+            GoalCompletion(
+                goal_id=goal_id,
+                user_id=user_id,
+                completed_units=goal.target,
+                timestamp=row_a_timestamp,
+                local_day=today,
+            )
+        )
+        await session.commit()
+
+    assert goal_id is not None
+    return headers, goal_id, today
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_karachi_backfill_on_distinct_local_day_is_not_swallowed(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Two Karachi completions on distinct local days sharing a UTC date both persist."""
+    headers, goal_id, today = await _seed_karachi_swallowed_completion(
+        concurrent_async_client, concurrent_session_factory, "karachigoal@example.com"
+    )
+    backfill_day = today - timedelta(days=1)
+
+    resp = await concurrent_async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal_id, "completed_on": backfill_day.isoformat()},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["reason_code"] == "streak_incremented"
+
+    async with concurrent_session_factory() as session:
+        result = await session.execute(
+            select(GoalCompletion).where(GoalCompletion.goal_id == goal_id)
+        )
+        rows = list(result.scalars().all())
+    assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_karachi_repeat_backfill_on_same_local_day_stays_idempotent(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Re-submitting the same Karachi backfill day still short-circuits as already_logged_today."""
+    headers, goal_id, today = await _seed_karachi_swallowed_completion(
+        concurrent_async_client, concurrent_session_factory, "karachirepeat@example.com"
+    )
+    backfill_day = today - timedelta(days=1)
+    payload = {"goal_id": goal_id, "completed_on": backfill_day.isoformat()}
+
+    first = await concurrent_async_client.post("/goal_completions/", json=payload, headers=headers)
+    assert first.status_code == HTTPStatus.OK
+
+    second = await concurrent_async_client.post("/goal_completions/", json=payload, headers=headers)
+    assert second.status_code == HTTPStatus.OK
+    assert second.json()["reason_code"] == "already_logged_today"
+
+    async with concurrent_session_factory() as session:
+        result = await session.execute(
+            select(GoalCompletion).where(GoalCompletion.goal_id == goal_id)
+        )
+        rows = list(result.scalars().all())
+    assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_local_day_column_matches_target_day_for_backfill_and_same_day(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The persisted local_day column equals the intended user-local day, not the UTC day."""
+    headers, user_id = await _signup(async_client, "localday_user")
+    goal = await _seed_goal(db_session, user_id)
+    yesterday = today_in_tz("UTC") - timedelta(days=1)
+
+    backfill = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "completed_on": yesterday.isoformat()},
+        headers=headers,
+    )
+    assert backfill.status_code == HTTPStatus.OK
+
+    today_log = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "did_complete": True},
+        headers=headers,
+    )
+    assert today_log.status_code == HTTPStatus.OK
+
+    result = await db_session.execute(
+        select(GoalCompletion)
+        .where(GoalCompletion.goal_id == goal.id)
+        .order_by(col(GoalCompletion.timestamp))
+    )
+    rows = list(result.scalars().all())
+    assert len(rows) == 2
+    assert rows[0].local_day == yesterday
+    assert rows[1].local_day == today_in_tz("UTC")

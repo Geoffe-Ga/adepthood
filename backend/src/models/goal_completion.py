@@ -1,7 +1,7 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Index
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -18,6 +18,11 @@ class GoalCompletion(SQLModel, table=True):
     successful if total >= target.
     For subtractive goals, all logs in a day are summed, and the day is
     successful if total < target.
+
+    ``local_day`` is the user-local calendar day the completion belongs to and
+    is the per-user-day uniqueness key: the migration-owned unique index over
+    ``(goal_id, user_id, local_day)`` guarantees one completion per goal per
+    user-local day, independent of the row's UTC ``timestamp``.
     """
 
     # ``ix_goalcompletion_goal_user_ts`` is created by migration
@@ -36,6 +41,10 @@ class GoalCompletion(SQLModel, table=True):
     timestamp: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    local_day: date = Field(
+        default_factory=lambda: datetime.now(UTC).date(),
+        sa_column=Column(Date, nullable=False),
     )
     completed_units: float
     via_timer: bool = False

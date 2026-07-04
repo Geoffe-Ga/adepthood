@@ -56,7 +56,7 @@ _RAW_SQL_MANAGED_INDEXES: frozenset[str] = frozenset(
         # 78b1620cafde aside, every index here is created via op.execute
         # because SQLAlchemy's Index() can't render the expression on SQLite.
         "ix_user_lower_email_unique",  # e8376b41c6a1: lower(email)
-        "ix_goal_completion_unique_per_day",  # d4e5f6a7b8c9: (timestamp AT TIME ZONE 'UTC')::date
+        "ix_goal_completion_unique_per_day",  # f7a8b9c0d1e3: (goal_id, user_id, local_day)
         "ix_goal_completion_goal_user_timestamp",  # d4e5f6a7b8c9: composite
         "ix_user_practice_active_stage",  # f6a7b8c9d0e1: partial unique
         "ix_habit_user_lower_name_unique",  # b5c6d7e8f9a0: lower(trim(name))
@@ -91,11 +91,7 @@ def _include_object(
     """
     if type_ == "index" and name in _RAW_SQL_MANAGED_INDEXES:
         return False
-    if (
-        type_ == "table"
-        and name is not None
-        and name.startswith(_MIGRATION_ARCHIVE_TABLE_PREFIX)
-    ):
+    if type_ == "table" and name is not None and name.startswith(_MIGRATION_ARCHIVE_TABLE_PREFIX):
         return False
     return True
 
