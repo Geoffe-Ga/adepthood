@@ -1,13 +1,33 @@
 /* eslint-env jest */
 /* global describe, it, expect, beforeEach, jest */
 import React from 'react';
-import { Image } from 'react-native';
+import { Image, StyleSheet, Text, type ViewStyle } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
 import MapScreen from '../MapScreen';
 
 import type { StageHistoryData } from './mapTestHarness';
 import { resetMapMocks } from './mapTestHarness';
+
+import { colors } from '@/design/tokens';
+
+const UNACHIEVED_BADGE_BG = 'rgba(255,255,255,0.15)';
+
+/** Minimal shape of a react-test-renderer node used by the queries below. */
+interface TestNode {
+  type: unknown;
+  props: Record<string, unknown>;
+  findAll: (predicate: (node: TestNode) => boolean) => TestNode[];
+  findByProps: (props: Record<string, unknown>) => TestNode;
+}
+
+/** Joins a node's descendant Text children into one string for content assertions. */
+const collectText = (node: TestNode): string =>
+  node
+    .findAll((n) => n.type === Text)
+    .flatMap((n) => n.props.children)
+    .filter((child) => typeof child === 'string' || typeof child === 'number')
+    .join('');
 
 jest.mock('../../../navigation/hooks', () =>
   jest.requireActual('./mapTestHarness').mockNavigationModule(),
@@ -73,7 +93,8 @@ describe('MapScreen — Stage History', () => {
       tree.root.findByProps({ testID: 'stage-hotspot-1-0' }).props.onPress();
     });
     const section = tree.root.findByProps({ testID: 'history-section' });
-    expect(section).toBeTruthy();
+    expect(collectText(section)).toContain('Your Journey');
+    expect(section.findByProps({ testID: 'history-toggle' })).toBeTruthy();
   });
 
   it('does not show history section for locked stages', () => {
@@ -120,19 +141,20 @@ describe('MapScreen — Stage History', () => {
     const content = tree.root.findByProps({ testID: 'history-content' });
     expect(content).toBeTruthy();
 
-    // Practice items — findAll may return duplicates from deep traversal
+    // findAll may return duplicates from deep traversal; all refer to the same content.
     const practiceItems = tree.root.findAll(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (node: any) => node.props.testID === 'practice-history-item',
+      (node: TestNode) => node.props.testID === 'practice-history-item',
     );
     expect(practiceItems.length).toBeGreaterThanOrEqual(1);
+    expect(collectText(practiceItems[0]!)).toContain('Breath of Fire');
+    expect(collectText(practiceItems[0]!)).toContain('12 sessions');
+    expect(collectText(practiceItems[0]!)).toContain('3 hrs');
 
-    // Habit items
     const habitItems = tree.root.findAll(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (node: any) => node.props.testID === 'habit-history-item',
+      (node: TestNode) => node.props.testID === 'habit-history-item',
     );
     expect(habitItems.length).toBeGreaterThanOrEqual(1);
+    expect(collectText(habitItems[0]!)).toContain('Morning Exercise · 14d streak');
   });
 
   it('renders goal tier badges for habits', async () => {
@@ -146,14 +168,19 @@ describe('MapScreen — Stage History', () => {
       tree.root.findByProps({ testID: 'history-toggle' }).props.onPress();
     });
 
-    // Should have 3 goal badges (low, clear, stretch)
-    const badges = tree.root.findAll(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (node: any) =>
-        typeof node.props.testID === 'string' && node.props.testID.startsWith('goal-badge-'),
-    );
-    // Deep traversal may find duplicates; at minimum 3 unique tiers
-    expect(badges.length).toBeGreaterThanOrEqual(3);
+    const badgeBg = (tier: string): unknown => {
+      const nodes = tree.root.findAll(
+        (node: TestNode) => node.props.testID === `goal-badge-${tier}`,
+      );
+      expect(nodes.length).toBeGreaterThanOrEqual(1);
+      return StyleSheet.flatten(nodes[0]!.props.style as ViewStyle).backgroundColor;
+    };
+
+    expect(badgeBg('low')).toBe(colors.medal.bronze);
+    expect(badgeBg('clear')).toBe(colors.medal.silver);
+    const stretchBg = badgeBg('stretch');
+    expect(stretchBg).toBe(UNACHIEVED_BADGE_BG);
+    expect(stretchBg).not.toBe(colors.medal.gold);
   });
 
   it('lazy loads history data only when expanded', async () => {
