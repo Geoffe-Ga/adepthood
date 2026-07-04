@@ -156,8 +156,13 @@ interface AutosaveApi {
   onChangeChord: (_next: AspectChordValue) => void;
   /** Persist the latest text immediately and resolve to the entry id (or null). */
   flush: () => Promise<number | null>;
-  /** Set when loading an existing entry failed; drives the banner + autosave gate. */
+  /** Set when loading an existing entry failed; drives the banner. */
   loadError: string | null;
+  /**
+   * True until an existing entry's load settles (still in flight or failed), so
+   * the tier + chord controls stay inert until we know the entry's real values.
+   */
+  controlsLocked: boolean;
 }
 
 /** Load an existing entry once (by route id) and hand it to ``apply``. */
@@ -217,14 +222,15 @@ interface ClassificationPersist {
  */
 function useClassificationPersist(
   entryIdRef: React.MutableRefObject<number | null>,
-  loadFailedRef: React.MutableRefObject<boolean>,
+  entryUnsettledRef: React.MutableRefObject<boolean>,
 ): ClassificationPersist {
   const classificationRef = useRef<JournalClassification>(DEFAULT_TIER);
   const changeClassification = useCallback(
     async (tier: JournalClassification): Promise<JournalClassification | null> => {
-      // Never PATCH against an entry that failed to load — the ref is stale and a
-      // write here could silently downgrade the stored (unseen) privacy tier.
-      if (loadFailedRef.current) return null;
+      // Never PATCH until the entry's load settles (still in flight or failed) —
+      // the ref is stale and a write here could silently downgrade the stored
+      // (unseen) privacy tier.
+      if (entryUnsettledRef.current) return null;
       const previous = classificationRef.current;
       classificationRef.current = tier;
       // Create-time: the ref rides the next journal.create, nothing to PATCH yet.
@@ -241,7 +247,7 @@ function useClassificationPersist(
         return previous;
       }
     },
-    [entryIdRef, loadFailedRef],
+    [entryIdRef, entryUnsettledRef],
   );
   const seedClassification = useCallback((tier: JournalClassification): void => {
     classificationRef.current = tier;
@@ -273,14 +279,14 @@ interface ChordPersist {
  */
 function useChordPersist(
   entryIdRef: React.MutableRefObject<number | null>,
-  loadFailedRef: React.MutableRefObject<boolean>,
+  entryUnsettledRef: React.MutableRefObject<boolean>,
 ): ChordPersist {
   const chordRef = useRef<AspectChordValue>(EMPTY_CHORD);
   const changeChord = useCallback(
     async (next: AspectChordValue): Promise<AspectChordValue | null> => {
-      // Never PATCH against an entry that failed to load — the ref is stale and a
-      // write here could overwrite the stored (unseen) chord.
-      if (loadFailedRef.current) return null;
+      // Never PATCH until the entry's load settles (still in flight or failed) —
+      // the ref is stale and a write here could overwrite the stored (unseen) chord.
+      if (entryUnsettledRef.current) return null;
       const previous = chordRef.current;
       chordRef.current = next;
       // Create-time: the ref rides the next journal.create, nothing to PATCH yet.
@@ -300,7 +306,7 @@ function useChordPersist(
         return previous;
       }
     },
-    [entryIdRef, loadFailedRef],
+    [entryIdRef, entryUnsettledRef],
   );
   const seedChord = useCallback((next: AspectChordValue): void => {
     chordRef.current = next;
@@ -386,7 +392,7 @@ function trackedWrite(
 
 /** The refs the single-flight writer reads: the write payload plus its gates. */
 type SaveRunnerRefs = WriteEntryRefs & {
-  loadFailedRef: React.MutableRefObject<boolean>;
+  entryUnsettledRef: React.MutableRefObject<boolean>;
   ctxRef: React.MutableRefObject<SaveContext>;
   onSavedRef: React.MutableRefObject<(() => void) | undefined>;
   inFlightRef: React.MutableRefObject<Promise<void> | null>;
@@ -399,10 +405,11 @@ type SaveRunnerRefs = WriteEntryRefs & {
  */
 function useSaveRunner(refs: SaveRunnerRefs, setSaveState: (_state: SaveState) => void): RunSave {
   const { entryIdRef, respondedRef, classificationRef, chordRef } = refs;
-  const { loadFailedRef, ctxRef, onSavedRef, inFlightRef } = refs;
+  const { entryUnsettledRef, ctxRef, onSavedRef, inFlightRef } = refs;
   return useCallback<RunSave>(
     async (title, body) => {
-      if (loadFailedRef.current) return; // never overwrite an entry that failed to load
+      // Never overwrite an entry until its load settles (still in flight or failed).
+      if (entryUnsettledRef.current) return;
       if (!body.trim()) return; // never persist an empty draft
       // Drain every in-flight save before starting: a released run re-registers
       // inFlightRef synchronously, so this serializes the whole pile onto one
@@ -432,7 +439,7 @@ function useSaveRunner(refs: SaveRunnerRefs, setSaveState: (_state: SaveState) =
       respondedRef,
       classificationRef,
       chordRef,
-      loadFailedRef,
+      entryUnsettledRef,
       ctxRef,
       onSavedRef,
       inFlightRef,
@@ -448,13 +455,13 @@ function useSaveRunner(refs: SaveRunnerRefs, setSaveState: (_state: SaveState) =
 function usePersistControls(
   entryIdRef: React.MutableRefObject<number | null>,
   setSaveState: (_state: SaveState) => void,
-  loadFailedRef: React.MutableRefObject<boolean>,
+  entryUnsettledRef: React.MutableRefObject<boolean>,
 ) {
   const { classificationRef, changeClassification, seedClassification } = useClassificationPersist(
     entryIdRef,
-    loadFailedRef,
+    entryUnsettledRef,
   );
-  const { chordRef, changeChord, seedChord } = useChordPersist(entryIdRef, loadFailedRef);
+  const { chordRef, changeChord, seedChord } = useChordPersist(entryIdRef, entryUnsettledRef);
   const seedPersist = useCallback(
     (tier: JournalClassification, chord: AspectChordValue): void => {
       seedClassification(tier);
@@ -476,7 +483,7 @@ function useDebouncedSave(
   routeEntryId: number | null,
   delayMs: number,
   ctx: SaveContext,
-  loadFailed: boolean,
+  entryUnsettled: boolean,
   onSaved?: () => void,
 ) {
   const [saveState, setSaveState] = useState<SaveState>('idle');
@@ -491,15 +498,16 @@ function useDebouncedSave(
   // Refs so non-memoised inputs don't churn the save callbacks below.
   const onSavedRef = useRef(onSaved);
   const ctxRef = useRef(ctx);
-  // A failed load leaves entryIdRef pointing at the real, unloaded entry with a
-  // blank body — so any save (or tier/chord PATCH) here would overwrite it. Gate
-  // on the latest flag; declared before the persisters so they can read it too.
-  const loadFailedRef = useRef(loadFailed);
-  const persist = usePersistControls(entryIdRef, setSaveState, loadFailedRef);
+  // Until an existing entry's load settles (still in flight or failed), entryIdRef
+  // points at the real, unloaded entry with a blank body — so any save (or
+  // tier/chord PATCH) here would overwrite it. Gate on the latest flag; declared
+  // before the persisters so they can read it too.
+  const entryUnsettledRef = useRef(entryUnsettled);
+  const persist = usePersistControls(entryIdRef, setSaveState, entryUnsettledRef);
   useEffect(() => {
     onSavedRef.current = onSaved;
     ctxRef.current = ctx;
-    loadFailedRef.current = loadFailed;
+    entryUnsettledRef.current = entryUnsettled;
   });
   useTimerCleanup(timerRef);
 
@@ -509,7 +517,7 @@ function useDebouncedSave(
       respondedRef,
       classificationRef: persist.classificationRef,
       chordRef: persist.chordRef,
-      loadFailedRef,
+      entryUnsettledRef,
       ctxRef,
       onSavedRef,
       inFlightRef,
@@ -694,8 +702,13 @@ function useJournalAutosave(
 ): AutosaveApi {
   const entry = useEntryState(routeEntryId, initialTitle);
   const { titleRef, bodyRef } = entry;
+  // An existing entry is "unsettled" until its load settles: entry.loaded flips
+  // true only in the success apply, so it stays false through both the in-flight
+  // and failed-load windows (and is irrelevant for a new entry — routeEntryId is
+  // null). Gate the writer + controls on this so neither touches an unseen entry.
+  const entryUnsettled = routeEntryId != null && !entry.loaded;
   const { saveState, save, flush, changeClassification, changeChord, seedPersist } =
-    useDebouncedSave(routeEntryId, delayMs, ctx, entry.loadError != null, onSaved);
+    useDebouncedSave(routeEntryId, delayMs, ctx, entryUnsettled, onSaved);
   useSeedPersistOnLoad(entry, seedPersist);
 
   const { onChangeTitle, onChangeBody } = useFieldHandlers(
@@ -729,6 +742,7 @@ function useJournalAutosave(
     onChangeChord,
     flush: flushNow,
     loadError: entry.loadError,
+    controlsLocked: entryUnsettled,
   };
 }
 
@@ -744,7 +758,10 @@ interface WritingColumnProps {
   onChangeChord: (_next: AspectChordValue) => void;
   onFinish?: () => void;
   bodyPlaceholder?: string;
-  /** Disables the tier + chord controls while an entry's load has failed. */
+  /**
+   * Disables the tier + chord controls until an existing entry's load settles
+   * (still in flight or failed), so they never write against an unseen entry.
+   */
   controlsDisabled: boolean;
 }
 
@@ -761,7 +778,7 @@ function FinishControl({ onFinish }: { onFinish: () => void }) {
   );
 }
 
-/** The privacy-tier + Aspect-chord choosers, both gated off when load failed. */
+/** The privacy-tier + Aspect-chord choosers, both gated off until load settles. */
 function EntryTagControls({
   classification,
   chord,
@@ -1173,8 +1190,9 @@ type Controller = ReturnType<typeof useJournalEntryController>;
 function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
   const { title, body, saveState, classification, chord } = ctl.autosave;
   const { editMode, canFinish, markFinished, requestEdit } = ctl.editGate;
-  // A failed load leaves the controls bound to an unseen entry, so disable them.
-  const controlsDisabled = ctl.autosave.loadError != null;
+  // Until an existing entry's load settles (still in flight or failed) the
+  // controls are bound to an unseen entry, so disable them.
+  const controlsDisabled = ctl.autosave.controlsLocked;
   return editMode ? (
     <WritingColumn
       title={title}
