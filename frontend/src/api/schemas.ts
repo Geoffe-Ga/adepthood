@@ -347,7 +347,7 @@ export const practiceItemSchema = z.object({
   submitted_by_user_id: z.number().int().nullish(),
   approved: z.boolean(),
   mode: z.string().optional(),
-  mode_config: z.record(z.unknown()).optional(),
+  mode_config: z.record(z.string(), z.unknown()).optional(),
 });
 
 /** One step of a practice recipe (mirrors ``PracticeRecipeStep``). */
@@ -383,9 +383,9 @@ export const userPracticeSchema = z.object({
   start_date: isoDate,
   end_date: isoDate.nullable(),
   custom_name: z.string().nullish(),
-  mode_config_override: z.record(z.unknown()).nullish(),
+  mode_config_override: z.record(z.string(), z.unknown()).nullish(),
   effective_name: z.string().nullish(),
-  effective_config: z.record(z.unknown()).nullish(),
+  effective_config: z.record(z.string(), z.unknown()).nullish(),
 });
 
 /** A logged practice session (mirrors ``PracticeSessionResponse``). */
@@ -399,7 +399,7 @@ export const practiceSessionResponseSchema = z.object({
   timestamp: isoDateTime,
   reflection: z.string().nullable(),
   mode: z.string().optional(),
-  mode_metadata: z.record(z.unknown()).nullish(),
+  mode_metadata: z.record(z.string(), z.unknown()).nullish(),
   completed: z.boolean().optional(),
   insight: z.string().nullish(),
 });
