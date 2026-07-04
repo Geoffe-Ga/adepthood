@@ -801,6 +801,9 @@ export interface ApiHabit {
   sort_order?: number | null;
   stage: string;
   streak: number;
+  // Persisted unlock flag (revealed === unlocked). Optional so fixtures/payloads
+  // predating the column still typecheck; the live backend always sends it.
+  revealed?: boolean;
 }
 
 export interface ApiHabitWithGoals extends ApiHabit {
@@ -830,6 +833,7 @@ export interface HabitCreatePayload {
   milestone_notifications?: boolean;
   sort_order?: number | null;
   stage?: string;
+  revealed?: boolean;
 }
 
 /**
@@ -884,6 +888,7 @@ export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
       days_of_week: g.days_of_week ?? undefined,
     })),
     completions: flattenGoalCompletions(apiHabit.goals),
+    revealed: apiHabit.revealed,
     notificationTimes: apiHabit.notification_times ?? undefined,
     notificationFrequency: isNotificationFrequency(apiHabit.notification_frequency)
       ? apiHabit.notification_frequency

@@ -100,7 +100,9 @@ describe('HabitTile locked state', () => {
     expect(hasStreakText).toBe(false);
   });
 
-  it('shows "Unlocks in X days" countdown for future start dates', () => {
+  it('never shows an "Unlocks in N days" countdown, even for a future start_date', () => {
+    // The calendar no longer drives unlock at all -- a day-count countdown
+    // would misleadingly imply this habit unlocks itself over time.
     const habit = makeHabit({ start_date: new Date('2026-04-13T00:00:00Z') });
 
     const component = renderer.create(
@@ -108,32 +110,20 @@ describe('HabitTile locked state', () => {
     );
 
     const unlockLabel = component.root.findByProps({ testID: 'unlock-label' });
-    expect(unlockLabel.props.children).toBe('Unlocks in 7 days');
+    expect(unlockLabel.props.children).not.toMatch(/Unlocks in \d+ day/);
   });
 
-  it('shows singular "day" for 1 day remaining', () => {
-    const habit = makeHabit({ start_date: new Date('2026-04-07T12:00:00Z') });
+  it('renders a locked tile for revealed: false even when start_date is in the PAST, with no countdown label and "Stage X · Locked" copy regardless of date', () => {
+    const future = makeHabit({ stage: 'Purple', start_date: new Date('2026-04-13T00:00:00Z') });
+    const past = makeHabit({ stage: 'Purple', start_date: new Date('2026-04-01T00:00:00Z') });
 
-    const component = renderer.create(
-      <HabitTile habit={habit} locked onOpenGoals={() => {}} onLongPress={() => {}} />,
-    );
-
-    const unlockLabel = component.root.findByProps({ testID: 'unlock-label' });
-    expect(unlockLabel.props.children).toBe('Unlocks in 1 day');
-  });
-
-  it('shows "Stage X · Locked" when start date has passed', () => {
-    const habit = makeHabit({
-      stage: 'Purple',
-      start_date: new Date('2026-04-01T00:00:00Z'),
-    });
-
-    const component = renderer.create(
-      <HabitTile habit={habit} locked onOpenGoals={() => {}} onLongPress={() => {}} />,
-    );
-
-    const unlockLabel = component.root.findByProps({ testID: 'unlock-label' });
-    expect(unlockLabel.props.children).toBe('Stage Purple · Locked');
+    for (const habit of [future, past]) {
+      const component = renderer.create(
+        <HabitTile habit={habit} locked onOpenGoals={() => {}} onLongPress={() => {}} />,
+      );
+      const unlockLabel = component.root.findByProps({ testID: 'unlock-label' });
+      expect(unlockLabel.props.children).toBe('Stage Purple · Locked');
+    }
   });
 
   it('does not render progress bar for locked tiles', () => {

@@ -142,6 +142,45 @@ describe('habitManager', () => {
       expect(useHabitStore.getState().habits.length).toBeGreaterThan(0);
     });
 
+    it('FALLBACK_HABITS (offline demo seed) stay unlocked so the degraded state is interactable', async () => {
+      // The locked-by-default rule targets real onboarding-seeded and
+      // user-created habits. FALLBACK_HABITS is a placeholder demo shown only
+      // when the server is unreachable and no cache exists; locking it would
+      // render every tile behind the padlock during an outage, with no real
+      // data to unlock. It stays revealed so the offline demo remains usable.
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
+
+      await habitManager.loadHabits();
+
+      const habits = useHabitStore.getState().habits;
+      expect(habits.length).toBeGreaterThan(0);
+      expect(habits.every((h) => h.revealed === true)).toBe(true);
+    });
+
+    it('mapApiHabits reads the revealed flag from the API response instead of hardcoding true', async () => {
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([
+        {
+          id: 5,
+          name: 'Stretch',
+          icon: '\u{1F9D8}',
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          revealed: false,
+          goals: [],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      expect(useHabitStore.getState().habits[0]!.revealed).toBe(false);
+    });
+
     it('does NOT seed FALLBACK_HABITS when the live store already has habits', async () => {
       // Cache empty + API empty + live store has habits → leave them alone.
       const userBuilt: Habit[] = [makeHabit({ id: 1, name: 'My Habit' })];
@@ -1051,6 +1090,18 @@ describe('habitManager', () => {
 
       expect(habitsApi.update).not.toHaveBeenCalled();
     });
+
+    it('includes the revealed flag in the PUT payload so the lock state round-trips', () => {
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, revealed: true })] });
+      const updated = { ...makeHabit(), revealed: false };
+
+      habitManager.updateHabit(updated);
+
+      expect(habitsApi.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ revealed: false }),
+      );
+    });
   });
 
   describe('deleteHabit', () => {
@@ -1092,6 +1143,22 @@ describe('habitManager', () => {
       await habitManager.addHabit({ name: 'First', icon: '1️⃣' });
       const { habits } = useHabitStore.getState();
       expect(habits[habits.length - 1]!.stage).toBe('Beige');
+    });
+
+    it('buildAddedHabit defaults the new habit to locked', () => {
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Existing' })] });
+      let resolveCreate: (() => void) | undefined;
+      (habitsApi.create as jest.Mock).mockImplementationOnce(
+        () => new Promise<unknown>((r) => (resolveCreate = () => r({}))),
+      );
+
+      const inFlight = habitManager.addHabit({ name: 'Brand New', icon: '🆕' });
+
+      const optimistic = useHabitStore.getState().habits;
+      expect(optimistic[1]!.revealed).toBe(false);
+
+      resolveCreate?.();
+      return inFlight;
     });
 
     it('posts the new habit to the server and reloads to pick up server ids', async () => {
@@ -1418,6 +1485,34 @@ describe('habitManager', () => {
       expect(showToast).toHaveBeenCalled();
     });
 
+    it('buildOnboardingHabits defaults every habit to locked, regardless of stage', async () => {
+      const newHabits: OnboardingHabit[] = [
+        {
+          id: 'a',
+          name: 'Meditate',
+          icon: '\u{1F9D8}',
+          energy_cost: 1,
+          energy_return: 3,
+          stage: 'Beige',
+          start_date: new Date('2025-01-01'),
+        },
+        {
+          id: 'b',
+          name: 'Journal',
+          icon: '\u{1F4D3}',
+          energy_cost: 1,
+          energy_return: 3,
+          stage: 'Purple',
+          start_date: new Date('2025-01-22'),
+        },
+      ];
+
+      await habitManager.onboardingSave(newHabits, jest.fn());
+
+      const habits = useHabitStore.getState().habits;
+      expect(habits.every((h) => h.revealed === false)).toBe(true);
+    });
+
     it('anchors the universal program calendar to the earliest habit start date', async () => {
       useProgramStore.getState().hydrateProgramStartDate(null);
       const newHabits: OnboardingHabit[] = [
@@ -1527,34 +1622,72 @@ describe('habitManager', () => {
   });
 
   describe('reveal helpers', () => {
-    it('revealAllHabits flips every habit to revealed=true', () => {
+    it('revealAllHabits flips every habit to revealed=true and PUTs each to the API', async () => {
       useHabitStore.setState({
         habits: [makeHabit({ id: 1, revealed: false }), makeHabit({ id: 2, revealed: false })],
       });
 
       habitManager.revealAllHabits();
+      await Promise.resolve();
 
       expect(useHabitStore.getState().habits.every((h) => h.revealed === true)).toBe(true);
+      expect(habitsApi.update).toHaveBeenCalledWith(1, expect.objectContaining({ revealed: true }));
+      expect(habitsApi.update).toHaveBeenCalledWith(2, expect.objectContaining({ revealed: true }));
     });
 
-    it('lockUnstartedHabits reveals only habits whose start_date is in the past', () => {
-      const past = new Date(Date.now() - 1000 * 60 * 60 * 24);
-      const future = new Date(Date.now() + 1000 * 60 * 60 * 24);
+    it('revealAllHabits rolls every habit back to its pre-unlock state when a PUT rejects', async () => {
+      useHabitStore.setState({
+        habits: [makeHabit({ id: 1, revealed: false }), makeHabit({ id: 2, revealed: false })],
+      });
+      (habitsApi.update as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
+
+      habitManager.revealAllHabits();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const habits = useHabitStore.getState().habits;
+      expect(habits.every((h) => h.revealed === false)).toBe(true);
+    });
+
+    it('lockUntouchedHabits re-locks only habits with zero logged completions', () => {
       useHabitStore.setState({
         habits: [
-          makeHabit({ id: 1, start_date: past, revealed: true }),
-          makeHabit({ id: 2, start_date: future, revealed: true }),
+          makeHabit({ id: 1, revealed: true, completions: [] }),
+          makeHabit({
+            id: 2,
+            revealed: true,
+            completions: [{ id: 'c1', timestamp: new Date(), completed_units: 1 }],
+          }),
         ],
       });
 
-      habitManager.lockUnstartedHabits();
+      habitManager.lockUntouchedHabits();
 
       const habits = useHabitStore.getState().habits;
-      expect(habits[0]!.revealed).toBe(true);
-      expect(habits[1]!.revealed).toBe(false);
+      expect(habits[0]!.revealed).toBe(false);
+      expect(habits[1]!.revealed).toBe(true);
     });
 
-    it('unlockHabit reveals a single habit by id', () => {
+    it('lockUntouchedHabits leaves a zero-completion habit locked even with a past start_date', () => {
+      // The old ``lockUnstartedHabits`` kept a past-start_date habit revealed;
+      // the new re-lock affordance keys ONLY off completions, so a
+      // never-touched habit re-locks regardless of its calendar date.
+      useHabitStore.setState({
+        habits: [
+          makeHabit({
+            id: 1,
+            revealed: true,
+            start_date: new Date(Date.now() - 1000 * 60 * 60 * 24),
+            completions: [],
+          }),
+        ],
+      });
+
+      habitManager.lockUntouchedHabits();
+
+      expect(useHabitStore.getState().habits[0]!.revealed).toBe(false);
+    });
+
+    it('unlockHabit reveals a single habit by id and PUTs it to the API', () => {
       useHabitStore.setState({
         habits: [makeHabit({ id: 1, revealed: false }), makeHabit({ id: 2, revealed: false })],
       });
@@ -1564,6 +1697,18 @@ describe('habitManager', () => {
       const habits = useHabitStore.getState().habits;
       expect(habits[0]!.revealed).toBe(true);
       expect(habits[1]!.revealed).toBe(false);
+      expect(habitsApi.update).toHaveBeenCalledWith(1, expect.objectContaining({ revealed: true }));
+    });
+
+    it('unlockHabit rolls the store back when the API rejects', async () => {
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, revealed: false })] });
+      (habitsApi.update as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
+
+      habitManager.unlockHabit(1);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(useHabitStore.getState().habits[0]!.revealed).toBe(false);
     });
   });
 

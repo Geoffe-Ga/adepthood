@@ -62,8 +62,9 @@ describe('HabitsScreen chrome accessibility', () => {
       for (const name of ['Quick Log', 'Stats', 'Edit', 'Add Habit', 'Energy Scaffolding']) {
         expect(getByRole('button', { name })).toBeTruthy();
       }
-      // The reveal toggle reflects the current allRevealed state in its label.
-      expect(getByRole('button', { name: 'Reveal All Habits' })).toBeTruthy();
+      // The reveal toggle reflects the current allRevealed state in its label
+      // (renamed from "Reveal All" to the plainer "Unlock All").
+      expect(getByRole('button', { name: 'Unlock All Habits' })).toBeTruthy();
     });
 
     it('switches the reveal-toggle label when all habits are revealed', () => {

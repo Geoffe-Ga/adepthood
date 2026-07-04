@@ -49,6 +49,10 @@ import { updateHabitNotifications, cancelForHabit } from '../hooks/useHabitNotif
 
 export type ShowToast = (_config: ToastConfig) => void;
 
+// The offline/demo seed is shown only when the server is unreachable and no
+// cache exists. Unlike server-seeded habits (locked by default), these demo
+// tiles stay revealed so the offline experience is explorable rather than a
+// wall of locked tiles.
 const FALLBACK_HABITS: Habit[] = HABIT_DEFAULTS.map((habit) => ({
   ...habit,
   revealed: true,
@@ -102,6 +106,9 @@ const toApiPayload = (h: Habit): HabitCreatePayload => ({
   // insertion order with the original onboarding stage label.
   sort_order: h.sort_order ?? null,
   stage: h.stage,
+  // ``revealed`` is the persisted unlock flag; default locked when absent so a
+  // client that never set it does not accidentally unlock the row server-side.
+  revealed: h.revealed ?? false,
 });
 
 const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.listAll>>): Habit[] =>
@@ -128,7 +135,9 @@ const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.listAll>>):
     })),
     // Shared with ``toLocalHabit`` -- single-source dedupe + Date rehydration.
     completions: flattenGoalCompletions(h.goals ?? []),
-    revealed: true,
+    // The server owns the unlock flag now; mirror it instead of forcing every
+    // fetched habit unlocked (which would defeat locked-by-default).
+    revealed: h.revealed,
     notificationTimes: h.notification_times ?? undefined,
     notificationFrequency:
       (h.notification_frequency as Habit['notificationFrequency']) ?? undefined,
@@ -262,7 +271,7 @@ const buildOnboardingHabits = (newHabits: OnboardingHabit[]) =>
     ...habit,
     id: index + 1,
     streak: 0,
-    revealed: habit.stage === 'Beige',
+    revealed: false,
     completions: [] as Habit['completions'],
     goals: GOAL_TIERS.map((t, ti) => ({
       id: index * 3 + ti + 1,
@@ -299,7 +308,7 @@ const buildAddedHabit = (input: AddHabitInput, existingCount: number): Habit => 
       target: t.target,
     })),
     completions: [],
-    revealed: true,
+    revealed: false,
     sort_order: existingCount,
   };
 };
@@ -663,6 +672,31 @@ const revertOnFailure = (prev: Habit[], fallback: string): ((err: unknown) => vo
     void persistHabits(prev);
     Alert.alert("Couldn't sync", formatApiError(err, { fallback }));
   };
+};
+
+/**
+ * Optimistically apply a new unlock (``revealed``) state and PUT each affected
+ * row to the API. Shared by the bulk reveal/re-lock affordances and the
+ * single-habit unlock so all three persist the flag server-side rather than
+ * only in the store. Fans the PUTs out via ``Promise.all`` so a single
+ * rejection triggers one deterministic rollback to ``prev`` (mirrors
+ * ``saveHabitOrder``), restoring both the store and the on-disk snapshot.
+ */
+const syncRevealState = (next: Habit[], failureMessage: string): void => {
+  const prev = getHabits();
+  const revealedBefore = new Map(prev.map((h) => [h.id, h.revealed]));
+  setHabits(next);
+  void persistHabits(next);
+  const updates: Array<Promise<unknown>> = [];
+  for (const habit of next) {
+    if (habit.id == null) continue;
+    // Only PUT rows whose unlock flag actually flipped, so a single unlock
+    // does not rewrite every untouched row.
+    if (habit.revealed === revealedBefore.get(habit.id)) continue;
+    updates.push(habitsApi.update(habit.id, toApiPayload(habit)));
+  }
+  if (updates.length === 0) return;
+  Promise.all(updates).catch(revertOnFailure(prev, failureMessage));
 };
 
 /**
@@ -1065,24 +1099,36 @@ export const habitManager = {
 
   revealAllHabits: (): void => {
     const next = getHabits().map((h) => ({ ...h, revealed: true }));
-    setHabits(next);
-    void persistHabits(next);
+    syncRevealState(
+      next,
+      "We couldn't unlock every habit. Your previous state was restored — check your connection and try again.",
+    );
   },
 
-  lockUnstartedHabits: (): void => {
-    const now = Date.now();
+  /**
+   * Re-lock affordance: flips every UNTOUCHED habit (zero logged completions)
+   * back to locked, leaving any habit the user has already logged against
+   * unlocked. Re-locking is an allowed, declinable bulk action; it only hides
+   * the tile — the underlying completions are preserved, so unlocking again
+   * restores full history. Keys strictly off completions, never the calendar.
+   */
+  lockUntouchedHabits: (): void => {
     const next = getHabits().map((h) => ({
       ...h,
-      revealed: new Date(h.start_date).getTime() <= now,
+      revealed: (h.completions?.length ?? 0) > 0,
     }));
-    setHabits(next);
-    void persistHabits(next);
+    syncRevealState(
+      next,
+      "We couldn't re-lock those habits. Your previous state was restored — check your connection and try again.",
+    );
   },
 
   unlockHabit: (habitId: number): void => {
     const next = getHabits().map((h) => (h.id === habitId ? { ...h, revealed: true } : h));
-    setHabits(next);
-    void persistHabits(next);
+    syncRevealState(
+      next,
+      "We couldn't unlock that habit. Your previous state was restored — check your connection and try again.",
+    );
   },
 
   /**

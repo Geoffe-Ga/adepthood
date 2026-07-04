@@ -12,7 +12,15 @@ if TYPE_CHECKING:
 
 
 class Habit(SQLModel, table=True):
-    """Tracks a user's habit and related goals."""
+    """Tracks a user's habit and related goals.
+
+    ``revealed`` is the single source of truth for whether a habit is unlocked
+    ("unlocked" == ``revealed is True`` in product terms). New and seeded
+    habits default to locked; the user opts each one in. Re-locking (flipping
+    ``revealed`` back to ``False``) preserves logged completions — those live
+    on the habit's goals, never on this flag — so a re-locked habit keeps its
+    history for when the user unlocks it again.
+    """
 
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(max_length=255)
@@ -32,6 +40,7 @@ class Habit(SQLModel, table=True):
     sort_order: int | None = None
     stage: str = Field(default="", max_length=100)
     streak: int = 0
+    revealed: bool = Field(default=False)
     user: "User" = Relationship(back_populates="habits")
     goals: list["Goal"] = Relationship(
         back_populates="habit",

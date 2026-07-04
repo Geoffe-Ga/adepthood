@@ -14,10 +14,8 @@ import {
   calculateTodaysProgress,
   getProgressBarColor,
   clampPercentage,
-  isEarlyUnlocked,
   isGoalAchieved,
-  isHabitLockedToday,
-  isHabitUnlockedAtStage,
+  isHabitUnlocked,
   isSubtractiveHabit,
   goalsAreSubtractive,
   logHabitUnits,
@@ -778,8 +776,8 @@ describe('calculateNetEnergy', () => {
   });
 });
 
-describe('isEarlyUnlocked', () => {
-  const earlyUnlockedBase = {
+describe('isHabitUnlocked', () => {
+  const base = {
     id: 1,
     name: 'H',
     icon: '\u{1F512}',
@@ -791,31 +789,49 @@ describe('isEarlyUnlocked', () => {
     completions: [],
   };
 
-  test('true when manually revealed ahead of its start_date', () => {
+  test('true when revealed is true, regardless of a future start_date', () => {
     const habit: Habit = {
-      ...earlyUnlockedBase,
+      ...base,
       revealed: true,
       start_date: new Date(Date.now() + 1000 * 60 * 60 * 24),
     };
-    expect(isEarlyUnlocked(habit)).toBe(true);
+    expect(isHabitUnlocked(habit)).toBe(true);
   });
 
-  test('false when the start_date has already passed', () => {
+  test('true when revealed is true, regardless of a past start_date', () => {
     const habit: Habit = {
-      ...earlyUnlockedBase,
+      ...base,
       revealed: true,
       start_date: new Date(Date.now() - 1000 * 60 * 60 * 24),
     };
-    expect(isEarlyUnlocked(habit)).toBe(false);
+    expect(isHabitUnlocked(habit)).toBe(true);
   });
 
-  test('false when not revealed, regardless of start_date', () => {
+  test('false when revealed is false, even with a past start_date', () => {
     const habit: Habit = {
-      ...earlyUnlockedBase,
+      ...base,
+      revealed: false,
+      start_date: new Date(Date.now() - 1000 * 60 * 60 * 24),
+    };
+    expect(isHabitUnlocked(habit)).toBe(false);
+  });
+
+  test('false when revealed is false, regardless of a future start_date', () => {
+    const habit: Habit = {
+      ...base,
       revealed: false,
       start_date: new Date(Date.now() + 1000 * 60 * 60 * 24),
     };
-    expect(isEarlyUnlocked(habit)).toBe(false);
+    expect(isHabitUnlocked(habit)).toBe(false);
+  });
+
+  test('false when revealed is undefined', () => {
+    const habit: Habit = {
+      ...base,
+      revealed: undefined,
+      start_date: new Date(Date.now() - 1000 * 60 * 60 * 24),
+    };
+    expect(isHabitUnlocked(habit)).toBe(false);
   });
 });
 
@@ -923,61 +939,7 @@ describe('getGoalTier subtractive total-failure branch', () => {
   });
 });
 
-describe('isHabitLockedToday', () => {
-  const NOW = new Date('2026-04-06T12:00:00Z').getTime();
-  const make = (overrides: Partial<Habit>): Habit =>
-    ({
-      id: 1,
-      name: 'H',
-      icon: '🔒',
-      stage: 'Purple',
-      streak: 0,
-      energy_cost: 0,
-      energy_return: 0,
-      start_date: new Date('2026-04-06T00:00:00Z'),
-      goals: [],
-      completions: [],
-      ...overrides,
-    }) as Habit;
-
-  test('locked when unrevealed and start_date is still in the future', () => {
-    const habit = make({ revealed: false, start_date: new Date('2026-05-01T00:00:00Z') });
-    expect(isHabitLockedToday(habit, NOW)).toBe(true);
-  });
-
-  test('unlocked once the calendar reaches its start_date, even if revealed is stale-false', () => {
-    // The Purple habit: start_date has passed but the server flag was never
-    // flipped. The calendar (start_date <= today) must win so the screen
-    // tracks the same stage the Map/Practice show.
-    const habit = make({ revealed: false, start_date: new Date('2026-04-01T00:00:00Z') });
-    expect(isHabitLockedToday(habit, NOW)).toBe(false);
-  });
-
-  test('unlocked when manually revealed ahead of its start_date', () => {
-    const habit = make({ revealed: true, start_date: new Date('2026-05-01T00:00:00Z') });
-    expect(isHabitLockedToday(habit, NOW)).toBe(false);
-  });
-
-  test('unrevealed (undefined) future habit is treated as unlocked, matching prior contract', () => {
-    const habit = make({ revealed: undefined, start_date: new Date('2026-05-01T00:00:00Z') });
-    expect(isHabitLockedToday(habit, NOW)).toBe(false);
-  });
-
-  test('accepts ISO string start dates (server payloads arrive unparsed)', () => {
-    // The API delivers ``start_date`` as an ISO string before it is mapped to
-    // a Date, so the helper must tolerate both. Cast through ``unknown`` since
-    // the Habit type declares the post-parse ``Date``.
-    const iso = (value: string) => value as unknown as Date;
-    expect(isHabitLockedToday(make({ revealed: false, start_date: iso('2999-01-01') }), NOW)).toBe(
-      true,
-    );
-    expect(isHabitLockedToday(make({ revealed: false, start_date: iso('2000-01-01') }), NOW)).toBe(
-      false,
-    );
-  });
-});
-
-describe('isHabitUnlockedAtStage', () => {
+describe('isHabitUnlocked (stage/calendar no longer participate)', () => {
   const make = (overrides: Partial<Habit>): Habit =>
     ({
       id: 1,
@@ -994,44 +956,36 @@ describe('isHabitUnlockedAtStage', () => {
       ...overrides,
     }) as Habit;
 
-  test('unlocked when the habit stage sits at or below currentStage', () => {
-    // Purple is the 2nd stage (STAGE_ORDER index 1 -> threshold 2).
-    const habit = make({ stage: 'Purple' });
-    expect(isHabitUnlockedAtStage(habit, 0, 2)).toBe(true);
+  test('a high-stage habit stays locked even with a past start_date, unless revealed', () => {
+    // Under the old stage/calendar model this Clear Light habit (10th stage)
+    // would have unlocked once its start_date passed. Now only `revealed`
+    // decides, so it stays locked.
+    const habit = make({ stage: 'Clear Light', start_date: new Date('2000-01-01T00:00:00Z') });
+    expect(isHabitUnlocked(habit)).toBe(false);
   });
 
-  test('locked when the habit stage sits above currentStage', () => {
-    // Red is the 3rd stage (threshold 3) and currentStage is 2.
-    const habit = make({ stage: 'Red' });
-    expect(isHabitUnlockedAtStage(habit, 0, 2)).toBe(false);
+  test('a Beige (first-stage) habit stays locked with revealed: false', () => {
+    const habit = make({ stage: 'Beige' });
+    expect(isHabitUnlocked(habit)).toBe(false);
   });
 
-  test('unlock follows the habit stage, not list position, after a reorder', () => {
-    // A Red habit dragged to the top of the list (index 0) stays locked at
-    // currentStage 2, while the lower-stage habits below it stay unlocked.
-    const red = make({ stage: 'Red' });
-    const beige = make({ stage: 'Beige' });
-    const purple = make({ stage: 'Purple' });
-    expect(isHabitUnlockedAtStage(red, 0, 2)).toBe(false);
-    expect(isHabitUnlockedAtStage(beige, 1, 2)).toBe(true);
-    expect(isHabitUnlockedAtStage(purple, 2, 2)).toBe(true);
-  });
-
-  test('unlocked regardless of stage when the habit is early-unlocked', () => {
+  test('unlocked once revealed: true, regardless of stage or start_date', () => {
     const habit = make({
       stage: 'Clear Light',
       revealed: true,
       start_date: new Date(Date.now() + 1000 * 60 * 60 * 24),
     });
-    expect(isHabitUnlockedAtStage(habit, 9, 1)).toBe(true);
+    expect(isHabitUnlocked(habit)).toBe(true);
   });
 
-  test('falls back to list position when the stage is unknown or missing', () => {
-    const habit = make({ stage: '' });
-    // index 0 -> threshold 1, unlocked at currentStage 1.
-    expect(isHabitUnlockedAtStage(habit, 0, 1)).toBe(true);
-    // index 3 -> threshold 4, locked at currentStage 3.
-    expect(isHabitUnlockedAtStage(habit, 3, 3)).toBe(false);
+  test('accepts ISO string start dates without affecting the result (server payloads arrive unparsed)', () => {
+    // The API delivers ``start_date`` as an ISO string before it is mapped to
+    // a Date, so the helper must tolerate both without letting the date value
+    // change the unlock outcome. Cast through ``unknown`` since the Habit type
+    // declares the post-parse ``Date``.
+    const iso = (value: string) => value as unknown as Date;
+    expect(isHabitUnlocked(make({ revealed: false, start_date: iso('2000-01-01') }))).toBe(false);
+    expect(isHabitUnlocked(make({ revealed: true, start_date: iso('2999-01-01') }))).toBe(true);
   });
 });
 

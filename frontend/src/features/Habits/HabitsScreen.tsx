@@ -20,6 +20,7 @@ import { STAGE_COLORS, spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 
 import AddHabitModal from './components/AddHabitModal';
+import ConfirmDialog from './components/ConfirmDialog';
 import GoalModal from './components/GoalModal';
 import HabitEmojiPicker from './components/HabitEmojiPicker';
 import { HabitsEmptyState } from './components/HabitsEmptyState';
@@ -36,7 +37,7 @@ import {
   generateStatsForHabit,
   toLocalHabitStats,
   calculateMissedDays,
-  isHabitLockedToday,
+  isHabitUnlocked,
   stageAtIndex,
 } from './HabitUtils';
 import { useHabits } from './hooks/useHabits';
@@ -143,7 +144,15 @@ const OverflowMenuList = ({
   onToggleReveal,
 }: OverflowMenuListProps) => {
   const RevealIcon = allRevealed ? Lock : Unlock;
-  const revealLabel = allRevealed ? 'Lock Unstarted Habits' : 'Reveal All Habits';
+  // Locking re-locks only untouched habits; the toggle label reflects that
+  // it acts on unstarted habits. Unlocking-all is destructive enough (it
+  // bypasses every per-tile confirm) to warrant its own confirmation.
+  const revealLabel = allRevealed ? 'Lock Unstarted Habits' : 'Unlock All Habits';
+  const [showUnlockAllConfirm, setShowUnlockAllConfirm] = useState(false);
+  const handleRevealPress = () => {
+    if (allRevealed) onToggleReveal();
+    else setShowUnlockAllConfirm(true);
+  };
   return (
     <View testID="overflow-menu" style={[styles.mobileMenu, { top: spacing(4, scale), right: 0 }]}>
       {MENU_ITEMS.map((item) => (
@@ -159,8 +168,22 @@ const OverflowMenuList = ({
         key="reveal-toggle"
         icon={<RevealIcon size={spacing(2, scale)} style={iconMargin} />}
         label={revealLabel}
-        onPress={onToggleReveal}
+        onPress={handleRevealPress}
         scale={scale}
+      />
+      <ConfirmDialog
+        visible={showUnlockAllConfirm}
+        title="Unlock all habits?"
+        message="This opens every locked habit at once. You can always re-lock the ones you haven't started."
+        testID="unlock-all-confirm"
+        cancelTestID="unlock-all-cancel"
+        confirmTestID="unlock-all-confirm-button"
+        confirmLabel="Unlock All"
+        onCancel={() => setShowUnlockAllConfirm(false)}
+        onConfirm={() => {
+          setShowUnlockAllConfirm(false);
+          onToggleReveal();
+        }}
       />
     </View>
   );
@@ -539,8 +562,9 @@ const useHabitTileRenderer = (
   const { unlockHabit } = actions;
   const renderHabitTile = useCallback(
     ({ item, index }: { item: Habit; index: number }) => {
-      // Calendar-driven: unlocks when the anchored start_date arrives, not on the stale `revealed` flag — keeps Habits in lockstep with Map/Practice/Course.
-      const isLocked = isHabitLockedToday(item);
+      // Unlock is governed solely by the persisted ``revealed`` flag — locked by
+      // default, opened only when the user chooses. Stage/calendar never gate it.
+      const isLocked = !isHabitUnlocked(item);
       const globalIndex = pageOffset + index;
       // index is page-relative, so each page restarts the Beige → Clear Light gradient.
       const stageColor = STAGE_COLORS[stageAtIndex(index)]!;
@@ -611,10 +635,10 @@ const useToggleReveal = (
   actions: ReturnType<typeof useHabits>['actions'],
   closeAll: () => void,
 ) => {
-  const allRevealed = habits.every((h) => h.revealed !== false);
+  const allRevealed = habits.every(isHabitUnlocked);
   const handleToggleReveal = useCallback(() => {
     if (allRevealed) {
-      actions.lockUnstartedHabits();
+      actions.lockUntouchedHabits();
     } else {
       actions.revealAllHabits();
     }
