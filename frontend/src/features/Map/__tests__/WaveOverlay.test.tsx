@@ -46,6 +46,17 @@ describe('WaveOverlay', () => {
     expect(new Set(testIds).size).toBe(TOTAL_NEAR_PATH_COUNT);
   });
 
+  it('prefixes every testID when idPrefix is set (the magnifier copy)', () => {
+    const tree = create(<WaveOverlay width={WIDTH} height={HEIGHT} idPrefix="magnifier-" />);
+    expect(tree.root.findByProps({ testID: 'magnifier-map-wave' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'magnifier-wave-arrow-1' })).toBeTruthy();
+    expect(wavePathsWithPrefix(tree, `magnifier-${NEAR_PREFIX}`)).toHaveLength(
+      TOTAL_NEAR_PATH_COUNT,
+    );
+    // The unprefixed ids are gone, so the two overlay copies never collide.
+    expect(tree.root.findAll((n: WavePath) => testIdOf(n) === 'map-wave')).toHaveLength(0);
+  });
+
   it('leaves every near-<stage>-<half> path at full opacity', () => {
     const tree = create(<WaveOverlay width={WIDTH} height={HEIGHT} />);
     const nearPaths = wavePathsWithPrefix(tree, NEAR_PREFIX);

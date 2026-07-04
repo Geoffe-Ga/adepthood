@@ -20,6 +20,7 @@ import {
   isEarlyUnlocked,
   calculateTodaysProgress,
 } from './HabitUtils';
+import { longPressGestureStyle } from './longPressGestureStyle';
 import {
   TierMarkerOverlay,
   type MarkerInteraction,
@@ -425,6 +426,7 @@ const getLockedTileStyle = (
   borderRadius: spacing(1, scale),
   backgroundColor: LOCKED_BACKGROUND,
   opacity: LOCKED_OPACITY,
+  ...longPressGestureStyle,
 });
 
 const LOCKED_NAME_STYLE = {
@@ -516,6 +518,7 @@ const buildUnlockedTileStyle = (
   minHeight: tileMinHeight,
   borderRadius: spacing(1, scale),
   backgroundColor: surface.canvas,
+  ...longPressGestureStyle,
 });
 
 const UnlockedTile = ({

@@ -39,6 +39,9 @@ import {
   getGoalTarget,
   isGoalAchieved,
 } from '../HabitUtils';
+import { useStarFill, type StarFill, type StarFillControls } from '../hooks/useStarFill';
+import { createMarkerGesture } from '../markerGesture';
+import { STAR_LONG_PRESS_MS } from '../starFill';
 import {
   TierMarkerOverlay,
   type MarkerInteraction,
@@ -78,6 +81,7 @@ interface GoalProgressBarProps {
   tooltip: TierType | null;
   setTooltip: (_v: TierType | null) => void;
   onLayout: (_e: LayoutChangeEvent) => void;
+  starFill: StarFillControls;
 }
 
 interface ProgressFillProps {
@@ -106,19 +110,26 @@ const GoalProgressBar = ({
   tooltip,
   setTooltip,
   onLayout,
+  starFill,
 }: GoalProgressBarProps) => {
   const { scale } = useResponsive();
   const starSize = spacing(2, scale);
 
-  // Stretch markers open their tooltip on tap; low/clear are draggable, so they
-  // wrap a plain View and forward their pan handlers instead.
+  // Stretch markers open their tooltip on tap and fill-to-star on long press;
+  // low/clear are draggable, so they wrap a plain View and forward their pan
+  // handlers (whose gesture machine arbitrates long-press vs drag) instead.
   const resolveModalInteraction = (m: ModalMarkerSpec): MarkerInteraction =>
     m.tier === 'stretch'
       ? {
           Wrapper: TouchableOpacity,
           interactionProps: {
             onPressIn: () => setTooltip('stretch'),
-            onPressOut: () => setTooltip(null),
+            onPressOut: () => {
+              setTooltip(null);
+              starFill.release();
+            },
+            onLongPress: () => starFill.begin('stretch'),
+            delayLongPress: STAR_LONG_PRESS_MS,
           },
         }
       : { Wrapper: View, interactionProps: { ...m.panHandlers } };
@@ -860,23 +871,42 @@ function useMarkerPanResponders(
   setClearMarker: (_v: number) => void,
   setTooltip: (_v: null | 'low' | 'clear' | 'stretch') => void,
   onConfirm: (_tier: 'low' | 'clear', _pct: number) => void,
+  starFill: React.MutableRefObject<StarFillControls>,
 ) {
-  const createPanResponder = (tier: 'low' | 'clear') =>
-    PanResponder.create({
+  const dragTo = (tier: 'low' | 'clear', dx: number) => {
+    const init = tier === 'low' ? tiers.markers.low : tiers.markers.clear;
+    const pct = (((init / 100) * barWidth.current + dx) / barWidth.current) * 100;
+    if (tier === 'low') setLowMarker(Math.min(clampPercentage(pct), clearMarker - 5));
+    else setClearMarker(Math.max(clampPercentage(pct), lowMarker + 5));
+  };
+
+  const createPanResponder = (tier: 'low' | 'clear') => {
+    // The machine arbitrates the marker's two gestures: a held press becomes
+    // a fill-to-star (routed through the ref so the once-created responder
+    // always reaches the current hook instance), movement becomes the drag.
+    const gesture = createMarkerGesture({
+      onFillStart: () => starFill.current.begin(tier),
+      onFillRelease: () => starFill.current.release(),
+      onDragMove: (dx) => dragTo(tier, dx),
+      onDragRelease: () => onConfirm(tier, tier === 'low' ? lowMarker : clearMarker),
+    });
+    return PanResponder.create({
       onStartShouldSetPanResponder: () => true,
-      onPanResponderGrant: () => setTooltip(tier),
-      onPanResponderMove: (_, gesture) => {
-        const init = tier === 'low' ? tiers.markers.low : tiers.markers.clear;
-        const pct = (((init / 100) * barWidth.current + gesture.dx) / barWidth.current) * 100;
-        if (tier === 'low') setLowMarker(Math.min(clampPercentage(pct), clearMarker - 5));
-        else setClearMarker(Math.max(clampPercentage(pct), lowMarker + 5));
+      onPanResponderGrant: () => {
+        setTooltip(tier);
+        gesture.grant();
       },
+      onPanResponderMove: (_, g) => gesture.move(g.dx),
       onPanResponderRelease: () => {
         setTooltip(null);
-        onConfirm(tier, tier === 'low' ? lowMarker : clearMarker);
+        gesture.release();
       },
-      onPanResponderTerminate: () => setTooltip(null),
+      onPanResponderTerminate: () => {
+        setTooltip(null);
+        gesture.terminate();
+      },
     });
+  };
 
   const lowPan = useRef(createPanResponder('low')).current;
   const clearPan = useRef(createPanResponder('clear')).current;
@@ -910,6 +940,7 @@ function useGoalConfirm(
 const useGoalMarkers = (
   habit: GoalModalProps['habit'],
   onUpdateGoal: GoalModalProps['onUpdateGoal'],
+  starFill: React.MutableRefObject<StarFillControls>,
 ) => {
   const barWidth = useRef(0);
   const [lowMarker, setLowMarker] = useState(0);
@@ -942,6 +973,7 @@ const useGoalMarkers = (
     setClearMarker,
     setTooltip,
     onConfirm,
+    starFill,
   );
 
   return {
@@ -1066,6 +1098,7 @@ const buildProgressBarProps = (
   habit: NonNullable<GoalModalProps['habit']>,
   m: ReturnType<typeof useGoalMarkers>,
   tz: string,
+  fill: StarFill,
 ): GoalProgressBarProps => {
   // ``met`` is only computed when the goal exists — an absent tier has nothing to achieve.
   const markers: ModalMarkerSpec[] = [
@@ -1098,12 +1131,15 @@ const buildProgressBarProps = (
   ];
 
   return {
-    progressPercentage: modalProgressPercentage(habit, m, tz),
+    // While a fill or revert is running the animated frame wins; otherwise
+    // the bar renders the canonical prop-derived percent.
+    progressPercentage: fill.displayPercent ?? modalProgressPercentage(habit, m, tz),
     progressBarColor: getProgressBarColor(habit, tz),
     markers,
     tooltip: m.tooltip,
     setTooltip: m.setTooltip,
     onLayout: m.handleBarLayout,
+    starFill: fill,
   };
 };
 
@@ -1145,6 +1181,31 @@ const GoalEditConfirmDialog = ({
   />
 );
 
+/**
+ * Bind the marker layer to the star-fill animation. The pan responders are
+ * created once, so they reach the star-fill hook through a ref that is
+ * re-pointed at the current instance after every render.
+ */
+const useMarkersWithStarFill = (
+  habit: NonNullable<GoalModalProps['habit']>,
+  onUpdateGoal: GoalModalProps['onUpdateGoal'],
+  onLogUnit: GoalModalProps['onLogUnit'],
+  tz: string,
+) => {
+  const starFillRef = useRef<StarFillControls>({ begin: () => {}, release: () => {} });
+  const m = useGoalMarkers(habit, onUpdateGoal, starFillRef);
+  const fill = useStarFill({
+    habit,
+    tz,
+    progressPercent: modalProgressPercentage(habit, m, tz),
+    onLogUnit,
+  });
+  useEffect(() => {
+    starFillRef.current = fill;
+  });
+  return { m, fill };
+};
+
 const GoalModalBody = ({
   habit,
   onClose,
@@ -1156,8 +1217,8 @@ const GoalModalBody = ({
   const [showEmojiSelector, setShowEmojiSelector] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const goalGroup = useGoalGroup(habit);
-  const m = useGoalMarkers(habit, onUpdateGoal);
   const { userTimezone } = useAuth();
+  const { m, fill } = useMarkersWithStarFill(habit, onUpdateGoal, onLogUnit, userTimezone);
   const log = useLogState(habit, onLogUnit);
 
   return (
@@ -1173,7 +1234,7 @@ const GoalModalBody = ({
         onToggleEdit={() => setIsEditing((prev) => !prev)}
       />
       {/* Progress bar stays visible; the pencil only collapses the editor. */}
-      <GoalProgressBar {...buildProgressBarProps(habit, m, userTimezone)} />
+      <GoalProgressBar {...buildProgressBarProps(habit, m, userTimezone, fill)} />
       {isEditing && (
         <View testID="goal-modal-edit-region">
           <GoalTargetEditor

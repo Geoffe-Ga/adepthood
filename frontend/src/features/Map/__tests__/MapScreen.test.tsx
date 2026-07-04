@@ -6,10 +6,10 @@ import { act, create } from 'react-test-renderer';
 
 import { ink, surface } from '../../../design/tokens';
 import styles from '../Map.styles';
-import { MAP_ROWS, STAGE_DISPLAY } from '../mapLayout';
+import { fittedTitleFontSize, MAP_ROWS, STAGE_DISPLAY } from '../mapLayout';
 import MapScreen from '../MapScreen';
 import { STAGE_COUNT } from '../stageData';
-import { emphasisStyle, FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
+import { FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
 
 import {
   mockBeginAgain,
@@ -34,6 +34,13 @@ jest.mock('react-native-safe-area-context', () =>
 jest.mock('../hooks/useWheelBalance', () =>
   jest.requireActual('./mapTestHarness').mockWheelBalanceModule(),
 );
+// Reduced-motion-safe path: the magnifier lens repositions instantly instead
+// of gliding, and the hook's async AccessibilityInfo read never resolves
+// outside act(). The glide/frost animation paths are covered in
+// MagnifierLens.test.tsx under fake timers.
+jest.mock('@/hooks/useReducedMotion', () => ({
+  useReducedMotion: () => true,
+}));
 jest.mock('../../../store/useProgramProgression', () =>
   jest.requireActual('./mapTestHarness').mockProgramProgressionModule(),
 );
@@ -154,6 +161,66 @@ describe('MapScreen', () => {
     expect(() => tree.root.findByProps({ testID: 'stage-modal' })).toThrow();
   });
 
+  // --- magnifier lens interaction -----------------------------------------
+
+  it('first tap on a non-focused stage glides the lens there without opening the modal', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-3-0' }).props.onPress();
+    });
+    // No modal yet — the tap moved the lens instead.
+    expect(() => tree.root.findByProps({ testID: 'stage-modal' })).toThrow();
+    // The lens caption now reads the tapped stage's Aspect word.
+    const headline = tree.root.findByProps({ testID: 'magnifier-headline' });
+    expect(headline.props.children).toBe('Self-Love');
+    // And the chip hides, since the lens left the current stage.
+    expect(tree.root.findAll((n: TestNode) => n.props.testID === 'you-are-here')).toHaveLength(0);
+  });
+
+  it('second tap on the now-focused stage opens its modal', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-3-0' }).props.onPress();
+    });
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-3-1' }).props.onPress();
+    });
+    expect(tree.root.findByProps({ testID: 'stage-modal' })).toBeTruthy();
+  });
+
+  it('tapping the lens itself opens the focused stage modal', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    const lens = tree.root.findByProps({ testID: 'map-magnifier' });
+    const touch = { nativeEvent: { pageX: 150, pageY: 570 } };
+    act(() => {
+      lens.props.onResponderGrant(touch);
+      lens.props.onResponderRelease(touch);
+    });
+    expect(tree.root.findByProps({ testID: 'stage-modal' })).toBeTruthy();
+  });
+
+  it('a lens drag released over another stage settles focus there', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    const lens = tree.root.findByProps({ testID: 'map-magnifier' });
+    // Stage 1 rests near y=570 (0.95 * 600); stage 3's band center is y=450.
+    act(() => {
+      lens.props.onResponderGrant({ nativeEvent: { pageX: 150, pageY: 570 } });
+      lens.props.onResponderMove({ nativeEvent: { pageX: 150, pageY: 450 } });
+      lens.props.onResponderRelease({ nativeEvent: { pageX: 150, pageY: 450 } });
+    });
+    const headline = tree.root.findByProps({ testID: 'magnifier-headline' });
+    expect(headline.props.children).toBe('Self-Love');
+    // The settled stage now opens on a single stage tap (it is focused).
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-3-0' }).props.onPress();
+    });
+    expect(tree.root.findByProps({ testID: 'stage-modal' })).toBeTruthy();
+  });
+
   it('renders connection lines between adjacent stages', () => {
     const tree = create(<MapScreen />);
     const connections = tree.root.findAll(
@@ -191,32 +258,17 @@ describe('MapScreen', () => {
 
   // --- Wheel-of-wholeness balance tests ---
 
-  it('alive node (fullness >= threshold) renders with higher opacity than a thin node', () => {
-    // Stage 3 is alive; stage 1 is thin.
-    mockMapState.wheelFullnessByStage = { 3: FULLNESS_ALIVE_THRESHOLD, 1: 0.0 };
+  it('renders unlocked stages at full opacity even when the wheel reads thin', () => {
+    // Stage 1 is unlocked but reads thin — the balance must stay an a11y-only
+    // read, never a washed-out (greyed) stage block.
+    mockMapState.wheelFullnessByStage = { 1: 0.0 };
     const tree = create(<MapScreen />);
 
-    const aliveHotspot = tree.root.findByProps({ testID: 'stage-hotspot-3-0' });
-    const thinHotspot = tree.root.findByProps({ testID: 'stage-hotspot-1-0' });
-
-    const aliveOpacity = emphasisStyle(FULLNESS_ALIVE_THRESHOLD).opacity;
-    const thinOpacity = emphasisStyle(0.0).opacity;
-
-    // The alive node must render with a visually distinct (higher) opacity.
-    expect(aliveOpacity).toBeGreaterThan(thinOpacity as number);
-
-    // The alive hotspot carries the alive-emphasis style; the thin does not.
-    const aliveStyles = (aliveHotspot.props.style as unknown[]).flat(10);
-    const thinStyles = (thinHotspot.props.style as unknown[]).flat(10);
-    const opacityOf = (styles: unknown[]) =>
-      styles.reduce<number | undefined>((acc, s) => {
-        if (s && typeof s === 'object' && 'opacity' in (s as object)) {
-          return (s as { opacity: number }).opacity;
-        }
-        return acc;
-      }, undefined);
-
-    expect(opacityOf(aliveStyles)).toBeGreaterThan(opacityOf(thinStyles) ?? 0);
+    const unlockedHotspot = tree.root.findByProps({ testID: 'stage-hotspot-1-0' });
+    const flat = StyleSheet.flatten(unlockedHotspot.props.style as unknown[]) as {
+      opacity?: number;
+    };
+    expect(flat.opacity ?? 1).toBe(1);
   });
 
   it('alive node accessibilityLabel contains "reads full" suffix', () => {
@@ -546,11 +598,40 @@ describe('MapScreen center-cell overlay layout', () => {
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
 
-  it('you-are-here pill is laid out in flow (not absolutely positioned)', () => {
+  const fireOverlayGridLayout = (tree: ReturnType<typeof create>) => {
+    act(() => {
+      tree.root.findByProps({ testID: 'map-grid' }).props.onLayout({
+        nativeEvent: { layout: { width: 300, height: 600 } },
+      });
+    });
+  };
+
+  it('you-are-here chip rides the magnifier lens, not the center cell', () => {
     const tree = create(<MapScreen />);
-    const pill = tree.root.findByProps({ testID: 'you-are-here' });
-    const flat = StyleSheet.flatten(pill.props.style) as { position?: string };
-    expect(flat.position).not.toBe('absolute');
+    // Before the grid reports a size there is no lens (and no chip).
+    expect(tree.root.findAll((n: TestNode) => n.props.testID === 'you-are-here')).toHaveLength(0);
+    fireOverlayGridLayout(tree);
+    const lens = tree.root.findByProps({ testID: 'map-magnifier' });
+    expect(lens.findByProps({ testID: 'you-are-here' })).toBeTruthy();
+    // The chip no longer stacks inside the current stage's center cell.
+    const cell = tree.root.findByProps({ testID: 'stage-hotspot-1-1' });
+    expect(cell.findAll((n: TestNode) => n.props.testID === 'you-are-here')).toHaveLength(0);
+  });
+
+  it('the magnifier lens floats absolutely over the grid as a glass pill', () => {
+    const tree = create(<MapScreen />);
+    fireOverlayGridLayout(tree);
+    const lens = tree.root.findByProps({ testID: 'map-magnifier' });
+    const flat = StyleSheet.flatten(lens.props.style) as {
+      position?: string;
+      borderRadius?: number;
+      height?: number;
+    };
+    expect(flat.position).toBe('absolute');
+    // Full pill: radius is half the lens height.
+    expect(flat.borderRadius).toBe((flat.height ?? 0) / 2);
+    // The glass magnifies the wave: a second, prefixed copy of the overlay.
+    expect(lens.findByProps({ testID: 'magnifier-map-wave' })).toBeTruthy();
   });
 
   it('locked center cell renders the unlock countdown in flow (not absolutely positioned)', () => {
@@ -597,7 +678,40 @@ describe('MapScreen center-cell overlay layout', () => {
     expect(flat.opacity).toBe(0.4);
   });
 
-  it('stacks the pill above the label and the countdown above the lock', () => {
+  it('puts the left-column lock on the far left, not on a fourth stacked line', () => {
+    const tree = create(<MapScreen />);
+    const leftHotspot = tree.root.findByProps({ testID: 'stage-hotspot-8-0' });
+
+    // The block lays out as a row with its content vertically centered, so
+    // the padlock sits beside the three text lines, never below them.
+    const flat = StyleSheet.flatten(leftHotspot.props.style) as {
+      flexDirection?: string;
+      alignItems?: string;
+    };
+    expect(flat.flexDirection).toBe('row');
+    expect(flat.alignItems).toBe('center');
+
+    // The lock renders before the persona text (far left of the row).
+    const texts = leftHotspot
+      .findAll((node: TestNode) => typeof node.props.children === 'string')
+      .map((node: TestNode) => node.props.children as string);
+    const display = STAGE_DISPLAY[8];
+    expect(texts.indexOf('🔒')).toBeGreaterThanOrEqual(0);
+    expect(texts.indexOf('🔒')).toBeLessThan(texts.indexOf(display!.persona));
+  });
+
+  it('centers the three text lines of an unlocked left block across its height', () => {
+    const tree = create(<MapScreen />);
+    const leftHotspot = tree.root.findByProps({ testID: 'stage-hotspot-1-0' });
+    // No lock for an unlocked stage, and the text column centers vertically.
+    expect(leftHotspot.findAll(isLockIcon)).toHaveLength(0);
+    expect(styles.stageLines.justifyContent).toBe('center');
+    expect(styles.stageLines.flex).toBe(1);
+  });
+
+  // The YOU ARE HERE pill now rides the magnifier lens, so the center cell of
+  // a locked stage only needs to keep the countdown above its padlock.
+  it('stacks the countdown above the lock in a locked center cell', () => {
     mockMapState.daysUntilStage = 42;
     const tree = create(<MapScreen />);
     const textOrder = (testID: string): string[] =>
@@ -606,12 +720,7 @@ describe('MapScreen center-cell overlay layout', () => {
         .findAll((node: TestNode) => typeof node.props.children === 'string')
         .map((node: TestNode) => node.props.children as string);
 
-    // Current stage 1: the pill renders before its centered label ('Agency').
-    const currentText = textOrder('stage-hotspot-1-1');
-    expect(currentText.indexOf('YOU ARE HERE')).toBeLessThan(currentText.indexOf('Agency'));
-    expect(currentText.indexOf('YOU ARE HERE')).toBeGreaterThanOrEqual(0);
-
-    // Locked stage 8: the countdown copy now renders before the lock glyph.
+    // Locked stage 8: the countdown copy renders before the lock glyph.
     const lockedText = textOrder('stage-hotspot-8-1');
     const countdownIndex = lockedText.findIndex((text) => text.startsWith('Unlocks'));
     expect(countdownIndex).toBeGreaterThanOrEqual(0);
@@ -697,6 +806,24 @@ describe('MapScreen left-column stage text color', () => {
       const node = tree.root.findByProps({ children: title });
       expect(node.props.adjustsFontSizeToFit).toBe(true);
       expect(node.props.numberOfLines).toBe(1);
+    }
+  });
+
+  it('sizes the title watermark from its measured cell width (react-native-web fit)', () => {
+    // adjustsFontSizeToFit is a no-op on react-native-web, so the title must
+    // carry a deterministic fitted fontSize computed from the measured width.
+    const MEASURED_WIDTH = 140;
+    const tree = create(<MapScreen />);
+    for (const title of ['EMPTINESS', 'UNITY']) {
+      const wrapper = tree.root.findByProps({ testID: `title-fit-${title}` });
+      act(() => {
+        (wrapper.props.onLayout as (e: unknown) => void)({
+          nativeEvent: { layout: { width: MEASURED_WIDTH, height: 40 } },
+        });
+      });
+      const node = tree.root.findByProps({ children: title });
+      const flat = StyleSheet.flatten(node.props.style) as { fontSize?: number };
+      expect(flat.fontSize).toBe(fittedTitleFontSize(title, MEASURED_WIDTH));
     }
   });
 
