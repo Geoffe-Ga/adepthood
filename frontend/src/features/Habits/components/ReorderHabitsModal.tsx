@@ -8,7 +8,7 @@ import { STAGE_COLORS } from '../../../design/tokens';
 import { useProgramStore } from '../../../store/useProgramStore';
 import styles from '../Habits.styles';
 import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
-import { STAGE_ORDER, calculateHabitStartDate } from '../HabitUtils';
+import { calculateHabitStartDate, stageAtIndex } from '../HabitUtils';
 
 // Lazy require so jest (which doesn't transform this ES-module package) can load this file.
 let DateTimePickerModal: ComponentType<Record<string, unknown>> = () => null;
@@ -29,10 +29,6 @@ const updateStartDates = (habits: Habit[], startDate: Date): Habit[] =>
     start_date: calculateHabitStartDate(startDate, index),
   }));
 
-/** Stage at this position; matches HabitsScreen's index-based coloring. */
-const stageAtPosition = (index: number): string =>
-  STAGE_ORDER[index % STAGE_ORDER.length] ?? 'Clear Light';
-
 interface ReorderItemProps {
   item: Habit;
   index: number;
@@ -41,7 +37,7 @@ interface ReorderItemProps {
 }
 
 const ReorderHabitItem = ({ item, index, drag, isActive }: ReorderItemProps) => {
-  const stage = stageAtPosition(index);
+  const stage = stageAtIndex(index);
   const color = STAGE_COLORS[stage] ?? '#ccc';
   return (
     <TouchableOpacity

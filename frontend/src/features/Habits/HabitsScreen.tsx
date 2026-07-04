@@ -16,7 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { habits as habitsApi } from '../../api';
 import { useAuth } from '../../context/AuthContext';
-import { STAGE_COLORS, STAGE_ORDER, spacing } from '../../design/tokens';
+import { STAGE_COLORS, spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 
 import AddHabitModal from './components/AddHabitModal';
@@ -37,6 +37,7 @@ import {
   toLocalHabitStats,
   calculateMissedDays,
   isHabitLockedToday,
+  stageAtIndex,
 } from './HabitUtils';
 import { useHabits } from './hooks/useHabits';
 import { useModalCoordinator } from './hooks/useModalCoordinator';
@@ -542,7 +543,7 @@ const useHabitTileRenderer = (
       const isLocked = isHabitLockedToday(item);
       const globalIndex = pageOffset + index;
       // index is page-relative, so each page restarts the Beige → Clear Light gradient.
-      const stageColor = STAGE_COLORS[STAGE_ORDER[index % STAGE_ORDER.length]!]!;
+      const stageColor = STAGE_COLORS[stageAtIndex(index)]!;
       return (
         <HabitTile
           habit={item}
